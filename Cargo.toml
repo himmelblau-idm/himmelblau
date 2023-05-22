@@ -1,0 +1,19 @@
+[workspace]
+members = [
+	"src/pam_himmelblau"
+]
+
+[workspace.package]
+version = "0.1.0"
+authors = [
+    "David Mulder <dmulder@suse.com>"
+]
+rust-version = "1.66"
+edition = "2021"
+license = "MPL-2.0"
+homepage = "https://codeberg.org/dmulder/himmelblau/"
+repository = "https://codeberg.org/dmulder/himmelblau/"
+
+[workspace.dependencies]
+libc = "^0.2.144"
+pkg-config = "^0.3.27"

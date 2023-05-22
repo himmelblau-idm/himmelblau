@@ -1,0 +1,22 @@
+[package]
+name = "pam_himmelblau"
+links = "pam"
+
+version.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+edition.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[lib]
+name = "pam_himmelblau"
+crate-type = [ "cdylib" ]
+path =  "src/lib.rs"
+
+[dependencies]
+libc.workspace = true
+
+[build-dependencies]
+pkg-config.workspace = true
