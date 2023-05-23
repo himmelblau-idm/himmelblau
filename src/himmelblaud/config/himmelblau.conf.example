@@ -1,0 +1,10 @@
+[global]
+# For instructions on setting up application authentication for Azure AD, see
+# https://docs.microsoft.com/en-us/azure/active-directory/develop/howto-create-service-principal-portal
+# tenant_id = XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX
+# app_id = XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX
+
+# Values overridden for a specific domain
+# [domain.com]
+# tenant_id = XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX
+# app_id = XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX
