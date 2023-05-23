@@ -5,10 +5,12 @@ import argparse
 import logging
 from configparser import ConfigParser
 from pathlib import Path
+import json
 from msal import PublicClientApplication
 
 DEFAULT_CONFIG_PATH = '/etc/himmelblau/himmelblau.conf'
 DEFAULT_CONFIG_DIR = '/etc/himmelblau/himmelblau.d'
+DEFAULT_SOCK_PATH = '/var/run/himmelblaud/socket'
 
 class Himmelblaud:
     def __init__(self, configfile, debuglevel):
@@ -18,7 +20,7 @@ class Himmelblaud:
         self.logger.setLevel(debuglevel)
         self.logger.info('Loading configuration from %s' % self.configfile)
         self.config = ConfigParser()
-        self.config['DEFAULT'] = { 'socket_path': '/var/run/himmelblaud/socket' }
+        self.config['DEFAULT'] = { 'socket_path': DEFAULT_SOCK_PATH }
         if os.path.exists(self.configfile):
             try:
                 self.config.read(self.configfile)
@@ -32,9 +34,43 @@ class Himmelblaud:
                     self.config.read(configfile)
                 except Exception as e:
                     self.logger.warning(str(e))
+        if not self.config.has_section('global'):
+            self.config.add_section('global')
+
+    def handle_msg_recv(self, conn):
+        msg = b''
+        while True:
+            try:
+                data = conn.recv(1024)
+            except Exception as e:
+                self.logger.error('Failed receiving data from socket')
+                return
+            if len(data) == 0:
+                self.logger.debug('No more bytes received, we have completed')
+                break
+            elif len(data) == 1024:
+                msg += data
+                self.logger.debug('Filled 1024 bytes, continuing')
+                continue
+            else:
+                msg += data
+                self.logger.debug('Filled %d bytes, complete' % len(data))
+                break
+        return json.loads(msg)
+
+    def handle_msg_resp(self, msg, conn):
+        pass
 
     def run(self):
-        pass
+        socket_path = self.config.get('global', 'socket_path')
+        sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        sock.bind(SOCKET_PATH)
+        while True:
+            sock.listen(1)
+            conn, addr = sock.accept()
+            msg = self.handle_msg_recv(conn)
+            self.handle_msg_resp(msg, conn)
+            conn.close()
 
 desc = '''
 Himmelblau is an interoperability suite for Microsoft Azure AD and Intune.
