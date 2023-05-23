@@ -1,0 +1,66 @@
+#!/usr/bin/python3
+import socket
+import os
+import argparse
+import logging
+from configparser import ConfigParser
+from pathlib import Path
+from msal import PublicClientApplication
+
+DEFAULT_CONFIG_PATH = '/etc/himmelblau/himmelblau.conf'
+DEFAULT_CONFIG_DIR = '/etc/himmelblau/himmelblau.d'
+
+class Himmelblaud:
+    def __init__(self, configfile, debuglevel):
+        self.configfile = configfile
+        logging.basicConfig() # Initialize the log handlers
+        self.logger = logging.getLogger('himmelblau')
+        self.logger.setLevel(debuglevel)
+        self.logger.info('Loading configuration from %s' % self.configfile)
+        self.config = ConfigParser()
+        self.config['DEFAULT'] = { 'socket_path': '/var/run/himmelblaud/socket' }
+        if os.path.exists(self.configfile):
+            try:
+                self.config.read(self.configfile)
+            except Exception as e:
+                self.logger.warning(str(e))
+        cdir = Path(DEFAULT_CONFIG_DIR)
+        if cdir.is_dir():
+            for configfile in sorted([x for x in cdir.iterdir() if x.is_file()]):
+                self.logger.info('Loading configuration from %s' % configfile)
+                try:
+                    self.config.read(configfile)
+                except Exception as e:
+                    self.logger.warning(str(e))
+
+    def run(self):
+        pass
+
+desc = '''
+Himmelblau is an interoperability suite for Microsoft Azure AD and Intune.
+The Himmelblau daemon is the primary communication interface between Azure
+and the Linux PAM and NSS services.
+'''
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description=desc)
+    parser.add_argument("--configfile", "-s", help="Configuration file")
+    parser.add_argument("--debuglevel", "-d",
+                        help="Debug level. Default is WARNING.",
+                        choices=['CRITICAL', 'ERROR', 'WARNING',
+                                 'INFO', 'DEBUG', 'NOTSET'],
+                        default='WARNING')
+    parser.add_argument("--version", "-v", help="Display version number",
+                        action="store_true")
+    args = parser.parse_args()
+
+    if args.version:
+        print('himmelblau 0.1.0')
+        exit(0)
+
+    config = DEFAULT_CONFIG_PATH
+    if args.configfile:
+        config = args.configfile
+
+    d = Himmelblaud(config, args.debuglevel)
+    d.run()
