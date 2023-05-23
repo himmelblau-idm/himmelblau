@@ -63,8 +63,10 @@ class Himmelblaud:
 
     def run(self):
         socket_path = self.config.get('global', 'socket_path')
+        if os.path.exists(socket_path):
+            os.remove(socket_path)
         sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        sock.bind(SOCKET_PATH)
+        sock.bind(socket_path)
         while True:
             sock.listen(1)
             conn, addr = sock.accept()
