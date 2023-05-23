@@ -17,6 +17,7 @@ path =  "src/lib.rs"
 
 [dependencies]
 libc.workspace = true
+himmelblau_unix_common = { version = "0.1.0", path = "../himmelblau_unix_common" }
 
 [build-dependencies]
 pkg-config.workspace = true
