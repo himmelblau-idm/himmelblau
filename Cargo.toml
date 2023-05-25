@@ -1,7 +1,7 @@
 [workspace]
 members = [
-	"src/himmelblau_unix_common",
-	"src/pam_himmelblau"
+	"src/unix_common",
+	"src/pam"
 ]
 
 [workspace.package]
