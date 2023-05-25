@@ -1,7 +1,8 @@
 [workspace]
 members = [
 	"src/unix_common",
-	"src/pam"
+	"src/pam",
+	"src/nss"
 ]
 
 [workspace.package]
@@ -18,3 +19,6 @@ repository = "https://codeberg.org/dmulder/himmelblau/"
 [workspace.dependencies]
 libc = "^0.2.144"
 pkg-config = "^0.3.27"
+lazy_static = "^1.4.0"
+libnss = "^0.4.0"
+paste = "^1.0.12"
