@@ -6,11 +6,22 @@ import logging
 from configparser import ConfigParser
 from pathlib import Path
 import json
+from enum import Enum
 from msal import PublicClientApplication
 
 DEFAULT_CONFIG_PATH = '/etc/himmelblau/himmelblau.conf'
 DEFAULT_CONFIG_DIR = '/etc/himmelblau/himmelblau.d'
 DEFAULT_SOCK_PATH = '/var/run/himmelblaud/socket'
+
+class ConfigError(Exception):
+    pass
+
+class AzureError(Enum):
+    INVALID_CRED = 0xC3CE
+    REQUIRES_MFA = 0xC39C
+    INVALID_USER = 0xC372
+    NO_CONSENT   = 0xFDE9
+    NO_SECRET    = 0x6AD09A
 
 class Himmelblaud:
     def __init__(self, configfile, debuglevel):
@@ -58,8 +69,66 @@ class Himmelblaud:
                 break
         return json.loads(msg)
 
-    def handle_msg_resp(self, msg, conn):
-        pass
+    def fetch_tenant_app_ids(self, uname):
+        # Get the tenant and app ids from the config
+        if not self.config.has_option('global', 'tenant_id'):
+            self.logger.error('The tenant id was not set in the configuration')
+            raise ConfigError()
+        tenant_id = self.config.get('global', 'tenant_id')
+        if not self.config.has_option('global', 'app_id'):
+            self.logger.error('The app id was not set in the configuration')
+            raise ConfigError()
+        app_id = self.config.get('global', 'app_id')
+        # TODO: Check for domain specific tenant and app ids
+        return tenant_id, app_id
+
+    def handle_authenticate(self, uname, passwd):
+        self.logger.debug('Authentication was requested for user "%s"' % uname)
+        try:
+            tenant_id, app_id = self.fetch_tenant_app_ids(uname)
+        except ConfigError:
+            return None
+
+        # Create the app for connecting to Azure AD
+        authority_url = 'https://login.microsoftonline.com/%s' % tenant_id
+        app = PublicClientApplication(app_id, authority=authority_url)
+
+        # Authenticate to Azure AD
+        token = app.acquire_token_by_username_password(uname, passwd, [])
+        if 'access_token' in token.keys():
+            self.logger.debug('Authentication successful for user "%s"' % uname)
+        elif 'error_codes' in token.keys() and AzureError.INVALID_USER in token['error_codes']:
+            return None
+        else:
+            if 'error_codes' in token.keys():
+                if AzureError.REQUIRES_MFA in token['error_codes']:
+                    self.logger.info('Azure AD application requires MFA')
+                    token = app.acquire_token_interactive([], login_hint=uname)
+                    if 'access_token' in token.keys():
+                        self.logger.debug('Authentication successful for user "%s"' % uname)
+                        return True
+                if AzureError.NO_CONSENT in token['error_codes']:
+                    url = '%s/adminconsent?client_id=%s' % (authority_url, app_id)
+                    self.logger.error('Azure AD application requires consent,' +
+                                      ' either from tenant, or from user.' +
+                                      'If you\'re a tenant\'s administrator,' +
+                                      ' go to: ' + url)
+                if AzureError.NO_SECRET in token['error_codes']:
+                    url = 'https://learn.microsoft.com/en-us/azure/' + \
+                        'active-directory/develop/scenario-desktop-app' + \
+                        '-registration#redirect-uris'
+                    self.logger.error('Azure AD application requires enabling' +
+                                      ' \'Allow public client flows\'. ' + url)
+            if 'error_description' in token.keys():
+                self.logger.error(token['error_description'])
+            return False
+        return True
+
+    def handle_msg_resp(self, msg):
+        resp = {}
+        if 'PamAuthenticate' in msg.keys():
+            resp['PamStatus'] = self.handle_authenticate(*tuple(msg['PamAuthenticate']))
+        return json.dumps(resp).encode()
 
     def run(self):
         socket_path = self.config.get('global', 'socket_path')
@@ -71,7 +140,8 @@ class Himmelblaud:
             sock.listen(1)
             conn, addr = sock.accept()
             msg = self.handle_msg_recv(conn)
-            self.handle_msg_resp(msg, conn)
+            resp = self.handle_msg_resp(msg)
+            conn.send(resp)
             conn.close()
 
 desc = '''
