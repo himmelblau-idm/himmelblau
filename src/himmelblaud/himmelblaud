@@ -3,6 +3,7 @@ import socket
 import os
 import argparse
 import logging
+from systemd.journal import JournalHandler
 from configparser import ConfigParser
 from pathlib import Path
 import json
@@ -27,7 +28,13 @@ class Himmelblaud:
     def __init__(self, configfile, debuglevel):
         self.configfile = configfile
         logging.basicConfig() # Initialize the log handlers
-        self.logger = logging.getLogger('himmelblau')
+        self.logger = logging.getLogger(__name__)
+        # Send the logs to systemd
+        journald_handler = JournalHandler()
+        journald_handler.setFormatter(logging.Formatter(
+            '[%(levelname)s] %(message)s'
+        ))
+        self.logger.addHandler(journald_handler)
         self.logger.setLevel(debuglevel)
         self.logger.info('Loading configuration from %s' % self.configfile)
         self.config = ConfigParser()
