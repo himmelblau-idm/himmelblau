@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Serialize, Deserialize, Debug)]
 pub struct NssUser {
     pub name: String,
+    pub uid: u32,
     pub gid: u32,
     pub gecos: String,
     pub homedir: String,
