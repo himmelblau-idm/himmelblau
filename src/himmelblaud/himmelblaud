@@ -8,6 +8,7 @@ from configparser import ConfigParser
 from pathlib import Path
 import json
 from enum import Enum
+import random
 from msal import PublicClientApplication
 
 DEFAULT_CONFIG_PATH = '/etc/himmelblau/himmelblau.conf'
@@ -88,6 +89,18 @@ class Himmelblaud:
         # TODO: Check for domain specific tenant and app ids
         return tenant_id, app_id
 
+    def handle_nss_account_by_name(self, uname):
+        random.seed(uname)
+        uid = random.randint(10000, 500000)
+        return {
+            'name': uname,
+            'uid': uid,
+            'gid': uid,
+            'gecos': uname,
+            'homedir': '/home/%s' % uname,
+            'shell': '/bin/bash'
+        }
+
     def handle_authenticate(self, uname, passwd):
         try:
             tenant_id, app_id = self.fetch_tenant_app_ids(uname)
@@ -131,8 +144,10 @@ class Himmelblaud:
 
     def handle_msg_resp(self, msg):
         resp = {}
-        if 'PamAuthenticate' in msg.keys():
+        if type(msg) == dict and 'PamAuthenticate' in msg.keys():
             resp['PamStatus'] = self.handle_authenticate(*tuple(msg['PamAuthenticate']))
+        if type(msg) == dict and 'NssAccountByName' in msg.keys():
+            resp['NssAccount'] = self.handle_nss_account_by_name(msg['NssAccountByName'])
         self.logger.debug(json.dumps(resp, indent=4))
         return json.dumps(resp).encode()
 
