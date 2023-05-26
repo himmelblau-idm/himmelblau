@@ -94,59 +94,7 @@ impl PamHooks for PamHimmelBlau {
             println!("tty -> {:?} rhost -> {:?}", tty, rhost);
         }
 
-        let account_id = match pamh.get_user(None) {
-            Ok(aid) => aid,
-            Err(e) => {
-                if opts.debug {
-                    println!("Error get_user -> {:?}", e);
-                }
-                return e;
-            }
-        };
-
-        let req = ClientRequest::PamAccountAllowed(account_id);
-
-        match call_daemon_blocking(DEFAULT_SOCK_PATH, &req, 10) {
-            Ok(r) => match r {
-                ClientResponse::PamStatus(Some(true)) => {
-                    if opts.debug {
-                        println!("PamResultCode::PAM_SUCCESS");
-                    }
-                    PamResultCode::PAM_SUCCESS
-                }
-                ClientResponse::PamStatus(Some(false)) => {
-                    if opts.debug {
-                        println!("PamResultCode::PAM_AUTH_ERR");
-                    }
-                    PamResultCode::PAM_AUTH_ERR
-                }
-                ClientResponse::PamStatus(None) => {
-                    if opts.ignore_unknown_user {
-                        if opts.debug {
-                            println!("PamResultCode::PAM_IGNORE");
-                        }
-                        PamResultCode::PAM_IGNORE
-                    } else {
-                        if opts.debug {
-                            println!("PamResultCode::PAM_USER_UNKNOWN");
-                        }
-                        PamResultCode::PAM_USER_UNKNOWN
-                    }
-                }
-                _ => {
-                    if opts.debug {
-                        println!("PamResultCode::PAM_IGNORE -> {:?}", r);
-                    }
-                    PamResultCode::PAM_IGNORE
-                }
-            },
-            Err(e) => {
-                if opts.debug {
-                    println!("PamResultCode::PAM_IGNORE  -> {:?}", e);
-                }
-                PamResultCode::PAM_IGNORE
-            }
-        }
+        PamResultCode::PAM_SUCCESS
     }
 
     fn sm_authenticate(pamh: &PamHandle, args: Vec<&CStr>, _flags: PamFlag) -> PamResultCode {
@@ -297,29 +245,7 @@ impl PamHooks for PamHimmelBlau {
             println!("opts -> {:?}", opts);
         }
 
-        let account_id = match pamh.get_user(None) {
-            Ok(aid) => aid,
-            Err(e) => {
-                if opts.debug {
-                    println!("Error get_user -> {:?}", e);
-                }
-                return e;
-            }
-        };
-
-        let req = ClientRequest::PamAccountBeginSession(account_id);
-
-        match call_daemon_blocking(DEFAULT_SOCK_PATH, &req, 10) {
-            Ok(ClientResponse::Ok) => {
-                PamResultCode::PAM_SUCCESS
-            }
-            other => {
-                if opts.debug {
-                    println!("PAM_IGNORE  -> {:?}", other);
-                }
-                PamResultCode::PAM_IGNORE
-            }
-        }
+        PamResultCode::PAM_SUCCESS
     }
 
     fn sm_setcred(_pamh: &PamHandle, args: Vec<&CStr>, _flags: PamFlag) -> PamResultCode {
