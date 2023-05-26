@@ -157,6 +157,7 @@ class Himmelblaud:
             os.remove(socket_path)
         sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         sock.bind(socket_path)
+        os.chmod(socket_path, 0o777)
         while True:
             sock.listen(1)
             conn, addr = sock.accept()
