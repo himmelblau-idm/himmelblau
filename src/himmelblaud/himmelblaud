@@ -54,6 +54,7 @@ class Himmelblaud:
                     self.logger.warning(str(e))
         if not self.config.has_section('global'):
             self.config.add_section('global')
+        self.connect_application()
 
     def handle_msg_recv(self, conn):
         msg = b''
@@ -76,43 +77,68 @@ class Himmelblaud:
                 break
         return json.loads(msg)
 
-    def fetch_tenant_app_ids(self, uname):
+    def connect_application(self, uname=None):
         # Get the tenant and app ids from the config
         if not self.config.has_option('global', 'tenant_id'):
             self.logger.error('The tenant id was not set in the configuration')
             raise ConfigError()
-        tenant_id = self.config.get('global', 'tenant_id')
+        self.tenant_id = self.config.get('global', 'tenant_id')
         if not self.config.has_option('global', 'app_id'):
             self.logger.error('The app id was not set in the configuration')
             raise ConfigError()
-        app_id = self.config.get('global', 'app_id')
+        self.app_id = self.config.get('global', 'app_id')
+
         # TODO: Check for domain specific tenant and app ids
-        return tenant_id, app_id
-
-    def handle_nss_account_by_name(self, uname):
-        random.seed(uname)
-        uid = random.randint(10000, 500000)
-        return {
-            'name': uname,
-            'uid': uid,
-            'gid': uid,
-            'gecos': uname,
-            'homedir': '/home/%s' % uname,
-            'shell': '/bin/bash'
-        }
-
-    def handle_authenticate(self, uname, passwd):
-        try:
-            tenant_id, app_id = self.fetch_tenant_app_ids(uname)
-        except ConfigError:
-            return None
+        if uname != None:
+            pass
 
         # Create the app for connecting to Azure AD
-        authority_url = 'https://login.microsoftonline.com/%s' % tenant_id
-        app = PublicClientApplication(app_id, authority=authority_url)
+        self.authority_url = 'https://login.microsoftonline.com/%s' % self.tenant_id
+        self.app = PublicClientApplication(self.app_id, authority=self.authority_url)
 
+    def find_account(self, uname):
+        # Fetch an account from the list of cached accounts
+        accounts = self.app.get_accounts()
+        for account in accounts:
+            if account['username'] == uname:
+                return account
+        return None
+
+    def handle_nss_account_by_name(self, uname):
+        account = self.find_account(uname)
+        if account != None:
+            random.seed(account['home_account_id'])
+            uid = random.randint(10000, 2**32) # TODO: Config opt for uid range
+            return {
+                'name': uname,
+                'uid': uid,
+                'gid': uid, # TODO: How do I find group memberships?
+                'gecos': uname, # TODO: We can get this from the token
+                'homedir': '/home/%s' % uname,
+                'shell': '/bin/bash'
+            }
+        else:
+            return None
+
+    def handle_nss_accounts(self):
+        result = []
+        accounts = self.app.get_accounts()
+        for account in accounts:
+            random.seed(account['home_account_id'])
+            uid = random.randint(10000, 2**32) # TODO: Config opt for uid range
+            result.append({
+                'name': account['username'],
+                'uid': uid,
+                'gid': uid, # TODO: How do I find group memberships?
+                'gecos': account['username'], # TODO: We can get this from the token
+                'homedir': '/home/%s' % account['username'],
+                'shell': '/bin/bash'
+            })
+        return result
+
+    def handle_authenticate(self, uname, passwd):
         # Authenticate to Azure AD
-        token = app.acquire_token_by_username_password(uname, passwd, [])
+        token = self.app.acquire_token_by_username_password(uname, passwd, [])
         if 'access_token' in token.keys():
             self.logger.info('Authentication successful for user "%s"' % uname)
         elif 'error_codes' in token.keys() and AzureError.INVALID_USER in token['error_codes']:
@@ -121,12 +147,13 @@ class Himmelblaud:
             if 'error_codes' in token.keys():
                 if AzureError.REQUIRES_MFA in token['error_codes']:
                     self.logger.info('Azure AD application requires MFA')
-                    token = app.acquire_token_interactive([], login_hint=uname)
+                    token = self.app.acquire_token_interactive([], login_hint=uname)
                     if 'access_token' in token.keys():
                         self.logger.info('Authentication successful for user "%s"' % uname)
                         return True
                 if AzureError.NO_CONSENT in token['error_codes']:
-                    url = '%s/adminconsent?client_id=%s' % (authority_url, app_id)
+                    url = '%s/adminconsent?client_id=%s' % (self.authority_url,
+                                                            self.app_id)
                     self.logger.error('Azure AD application requires consent,' +
                                       ' either from tenant, or from user.' +
                                       'If you\'re a tenant\'s administrator,' +
@@ -144,9 +171,15 @@ class Himmelblaud:
 
     def handle_msg_resp(self, msg):
         resp = {}
-        if type(msg) == dict and 'PamAuthenticate' in msg.keys():
+        if msg == 'NssGroup':
+            resp['NssGroup'] = None # TODO: How do I find groups?
+        elif msg == 'NssGroups':
+            resp['NssGroups'] = [] # TODO: How do I find groups?
+        elif msg == 'NssAccounts':
+            resp['NssAccounts'] = self.handle_nss_accounts()
+        elif type(msg) == dict and 'PamAuthenticate' in msg.keys():
             resp['PamStatus'] = self.handle_authenticate(*tuple(msg['PamAuthenticate']))
-        if type(msg) == dict and 'NssAccountByName' in msg.keys():
+        elif type(msg) == dict and 'NssAccountByName' in msg.keys():
             resp['NssAccount'] = self.handle_nss_account_by_name(msg['NssAccountByName'])
         self.logger.debug(json.dumps(resp, indent=4))
         return json.dumps(resp).encode()
