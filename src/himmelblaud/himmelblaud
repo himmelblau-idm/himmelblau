@@ -89,7 +89,6 @@ class Himmelblaud:
         return tenant_id, app_id
 
     def handle_authenticate(self, uname, passwd):
-        self.logger.debug('Authentication was requested for user "%s"' % uname)
         try:
             tenant_id, app_id = self.fetch_tenant_app_ids(uname)
         except ConfigError:
@@ -102,7 +101,7 @@ class Himmelblaud:
         # Authenticate to Azure AD
         token = app.acquire_token_by_username_password(uname, passwd, [])
         if 'access_token' in token.keys():
-            self.logger.debug('Authentication successful for user "%s"' % uname)
+            self.logger.info('Authentication successful for user "%s"' % uname)
         elif 'error_codes' in token.keys() and AzureError.INVALID_USER in token['error_codes']:
             return None
         else:
@@ -111,7 +110,7 @@ class Himmelblaud:
                     self.logger.info('Azure AD application requires MFA')
                     token = app.acquire_token_interactive([], login_hint=uname)
                     if 'access_token' in token.keys():
-                        self.logger.debug('Authentication successful for user "%s"' % uname)
+                        self.logger.info('Authentication successful for user "%s"' % uname)
                         return True
                 if AzureError.NO_CONSENT in token['error_codes']:
                     url = '%s/adminconsent?client_id=%s' % (authority_url, app_id)
@@ -134,6 +133,7 @@ class Himmelblaud:
         resp = {}
         if 'PamAuthenticate' in msg.keys():
             resp['PamStatus'] = self.handle_authenticate(*tuple(msg['PamAuthenticate']))
+        self.logger.debug(json.dumps(resp, indent=4))
         return json.dumps(resp).encode()
 
     def run(self):
@@ -146,6 +146,13 @@ class Himmelblaud:
             sock.listen(1)
             conn, addr = sock.accept()
             msg = self.handle_msg_recv(conn)
+            if type(msg) == dict and 'PamAuthenticate' in msg.keys():
+                # Censor the password from the logs
+                self.logger.debug(json.dumps({'PamAuthenticate': [
+                    msg['PamAuthenticate'][0], 'X'*10
+                ]}, indent=4))
+            else:
+                self.logger.debug(json.dumps(msg, indent=4))
             resp = self.handle_msg_resp(msg)
             conn.send(resp)
             conn.close()
