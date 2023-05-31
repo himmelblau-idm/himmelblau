@@ -1,6 +1,7 @@
 [workspace]
 members = [
 	"src/unix_common",
+	"src/msal",
 	"src/pam",
 	"src/nss"
 ]
