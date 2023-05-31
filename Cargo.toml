@@ -1,5 +1,6 @@
 [workspace]
 members = [
+	"src/himmelblaud",
 	"src/unix_common",
 	"src/msal",
 	"src/pam",
