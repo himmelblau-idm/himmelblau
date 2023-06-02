@@ -58,4 +58,11 @@ impl PublicClientApplication {
                 .expect("Extraction to a list of hashmaps failed")
         })
     }
+
+    pub fn get_account(&self, account_id: &String) -> Option<HashMap<String, String>> {
+        self.get_accounts()
+            .iter()
+            .find(|tok| tok.get("name") == Some(account_id))
+            .cloned()
+    }
 }

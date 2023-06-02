@@ -115,6 +115,18 @@ async fn handle_client(
                     })
                     .collect())
             }
+            ClientRequest::NssAccountByName(account_id) => {
+                debug!("nssaccountbyname req");
+                ClientResponse::NssAccount(app.get_account(&account_id)
+                    .map(|tok| NssUser {
+                        homedir: format!("/home/{}", tok["username"]), //TODO: Determine from config
+                        name: tok["username"].clone(),
+                        uid: 1010, //TODO: Generate UID/GID
+                        gid: 1010,
+                        gecos: tok["username"].clone(), //TODO: Fetch gecos from token cache
+                        shell: String::from("/bin/sh"), //TODO: Determine from config
+                    }))
+            }
             _ => todo!()
         };
         reqs.send(resp).await?;
