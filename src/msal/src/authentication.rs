@@ -3,10 +3,30 @@ use pyo3::types::IntoPyDict;
 use pyo3::types::PyString;
 use pyo3::types::PyTuple;
 use pyo3::types::PyList;
+use pyo3::types::PyDict;
 use std::collections::HashMap;
+use log::debug;
 
 pub struct PublicClientApplication {
     app: Py<PyAny>
+}
+
+fn extract_pydict_as_hashmap(obj: &PyDict) -> HashMap<String, String> {
+    let mut res = HashMap::new();
+    for (key, val) in obj.iter() {
+        let py_key: &PyString = key.extract().expect("Failed parsing dict key");
+        let k: String = py_key.to_string_lossy().into_owned();
+        let py_val: &PyString = match val.extract() {
+            Ok(val) => val,
+            Err(error) => {
+                debug!("Unable to extract key '{}': {}", k, error);
+                continue;
+            }
+        };
+        let v: String = py_val.to_string_lossy().into_owned();
+        res.insert(k, v);
+    }
+    res
 }
 
 impl PublicClientApplication {
@@ -40,10 +60,12 @@ impl PublicClientApplication {
             largs.append(py_scopes)
                 .expect("Failed appending scopes to the args list");
             let args: &PyTuple = PyTuple::new(py, largs);
-            func.call1(py, args)
+            extract_pydict_as_hashmap(
+                func.call1(py, args)
                 .expect("Failed calling acquire_token_by_username_password")
-                .extract(py)
-                .expect("Extraction to a hashmap failed")
+                .downcast(py)
+                .expect("Failed downcasting the PyAny to a PyDict")
+            )
         })
     }
 
