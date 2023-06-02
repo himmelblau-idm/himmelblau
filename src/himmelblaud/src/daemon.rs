@@ -157,6 +157,16 @@ async fn handle_client(
                         shell: String::from("/bin/sh"), //TODO: Determine from config
                     }))
             }
+            ClientRequest::NssGroups => {
+                debug!("nssgroups req");
+                // TODO: How do I find groups?
+                ClientResponse::NssGroups(Vec::new())
+            }
+            ClientRequest::NssGroupByName(_grp_id) => {
+                debug!("nssgroupbyname req");
+                // TODO: How do I find groups?
+                ClientResponse::NssGroup(None)
+            }
             _ => todo!()
         };
         reqs.send(resp).await?;
