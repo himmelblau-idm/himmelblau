@@ -21,7 +21,7 @@ use clap::{Arg, ArgAction, Command};
 use himmelblau_unix_common::constants::DEFAULT_CONFIG_PATH;
 use himmelblau_unix_common::constants::DEFAULT_SOCK_PATH;
 use himmelblau_unix_common::unix_proto::{ClientRequest, ClientResponse, NssUser};
-use msal::authentication::PublicClientApplication;
+use msal::authentication::{PublicClientApplication, REQUIRES_MFA, NO_CONSENT, NO_SECRET};
 use futures::{SinkExt, StreamExt};
 
 use std::path::{Path, PathBuf};
@@ -29,7 +29,7 @@ use tokio::net::{UnixListener, UnixStream};
 use tokio::sync::Mutex;
 use tokio_util::codec::{Decoder, Encoder, Framed};
 
-use log::{error, debug, info, LevelFilter};
+use log::{warn, error, debug, info, LevelFilter};
 use systemd_journal_logger::JournalLog;
 use configparser::ini::Ini;
 
@@ -88,6 +88,8 @@ impl ClientCodec {
 
 async fn handle_client(
     sock: UnixStream,
+    authority_url: String,
+    app_id: String,
     capp: Arc<Mutex<PublicClientApplication>>,
 ) -> Result<(), Box<dyn Error>> {
     debug!("Accepted connection");
@@ -99,8 +101,29 @@ async fn handle_client(
         let resp = match req {
             ClientRequest::PamAuthenticate(account_id, cred) => {
                 debug!("pam authenticate");
-                let token = app.acquire_token_by_username_password(account_id.as_str(), cred.as_str(), vec![]);
-                ClientResponse::PamStatus(token.contains_key("access_token").then(|| true))
+                let (token, err) = app.acquire_token_by_username_password(account_id.as_str(), cred.as_str(), vec![]);
+                ClientResponse::PamStatus(
+                    if token.contains_key("access_token") {
+                        info!("Authentication successful for user '{}'", account_id);
+                        Some(true)
+                    } else {
+                        if err.contains(&REQUIRES_MFA) {
+                            info!("Azure AD application requires MFA");
+                            //TODO: Attempt an interactive auth via the browser
+                        }
+                        if err.contains(&NO_CONSENT) {
+                            let url = format!("{}/adminconsent?client_id={}", authority_url, app_id);
+                            error!("Azure AD application requires consent, either from tenant, or from user, go to: {}", url);
+                        }
+                        if err.contains(&NO_SECRET) {
+                            let url = "https://learn.microsoft.com/en-us/azure/active-directory/develop/scenario-desktop-app-registration#redirect-uris";
+                            error!("Azure AD application requires enabling 'Allow public client flows'. {}",
+                                   url);
+                        }
+                        error!("{:?}: {:?}", token.get("error"), token.get("error_description"));
+                        Some(false)
+                    }
+                )
             }
             ClientRequest::NssAccounts => {
                 debug!("nssaccounts req");
@@ -183,11 +206,16 @@ async fn main() -> ExitCode {
         }
 
         // Connect to the broker
+        let tenant_id = String::from(config.get("global", "tenant_id")
+            .as_deref()
+            .unwrap_or_else(|| panic!("The tenant id was not set in the configuration")));
         let authority_url = format!("https://login.microsoftonline.com/{}",
-                                    config.get("global", "tenant_id").as_deref().unwrap());
+                                    &tenant_id);
+        let app_id = String::from(config.get("global", "app_id")
+            .as_deref()
+            .unwrap_or_else(|| panic!("The app id was not set in the configuration")));
         let app = Arc::new(Mutex::new(PublicClientApplication::new(
-                    config.get("global", "app_id").as_deref().unwrap(),
-                    authority_url.as_str())));
+                    &app_id, authority_url.as_str())));
 
         let listener = match UnixListener::bind(DEFAULT_SOCK_PATH) {
             Ok(l) => l,
@@ -200,10 +228,12 @@ async fn main() -> ExitCode {
         let server = async move {
             loop {
                 let capp = app.clone();
+                let cauthority_url = authority_url.clone();
+                let capp_id = app_id.clone();
                 match listener.accept().await {
                     Ok((socket, _addr)) => {
                         tokio::spawn(async move {
-                            if let Err(e) = handle_client(socket, capp).await
+                            if let Err(e) = handle_client(socket, cauthority_url, capp_id, capp).await
                             {
                                 error!("handle_client error occurred; error = {:?}", e);
                             }

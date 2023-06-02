@@ -7,15 +7,28 @@ use pyo3::types::PyDict;
 use std::collections::HashMap;
 use log::debug;
 
+pub const INVALID_CRED: u32 = 0xC3CE;
+pub const REQUIRES_MFA: u32 = 0xC39C;
+pub const INVALID_USER: u32 = 0xC372;
+pub const NO_CONSENT:   u32 = 0xFDE9;
+pub const NO_SECRET:    u32 = 0x6AD09A;
+
 pub struct PublicClientApplication {
     app: Py<PyAny>
 }
 
-fn extract_pydict_as_hashmap(obj: &PyDict) -> HashMap<String, String> {
+fn extract_pydict_as_hashmap(obj: &PyDict) -> (HashMap<String, String>, Vec<u32>) {
     let mut res = HashMap::new();
+    let mut err: Vec<u32> = vec![];
     for (key, val) in obj.iter() {
         let py_key: &PyString = key.extract().expect("Failed parsing dict key");
         let k: String = py_key.to_string_lossy().into_owned();
+        if k == "error_codes" {
+            let error_codes: &PyList = val.extract().expect("Failed parsing error list");
+            let vec_error_codes: Vec<u32> = error_codes.extract().expect("Failed parsing error list");
+            err.extend(vec_error_codes);
+            continue;
+        }
         let py_val: &PyString = match val.extract() {
             Ok(val) => val,
             Err(error) => {
@@ -26,7 +39,7 @@ fn extract_pydict_as_hashmap(obj: &PyDict) -> HashMap<String, String> {
         let v: String = py_val.to_string_lossy().into_owned();
         res.insert(k, v);
     }
-    res
+    (res, err)
 }
 
 impl PublicClientApplication {
@@ -48,7 +61,7 @@ impl PublicClientApplication {
         })
     }
 
-    pub fn acquire_token_by_username_password(&self, username: &str, password: &str, scopes: Vec<&str>) -> HashMap<String, String> {
+    pub fn acquire_token_by_username_password(&self, username: &str, password: &str, scopes: Vec<&str>) -> (HashMap<String, String>, Vec<u32>) {
         Python::with_gil(|py| {
             let func: Py<PyAny> = self.app.getattr(py, "acquire_token_by_username_password")
                 .expect("Failed loading function acquire_token_by_username_password")
