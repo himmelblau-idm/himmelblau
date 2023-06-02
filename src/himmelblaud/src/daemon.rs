@@ -14,6 +14,8 @@ use std::error::Error;
 use std::io;
 use std::process::ExitCode;
 use std::sync::Arc;
+use std::fs::{set_permissions, Permissions};
+use std::os::unix::fs::PermissionsExt;
 
 use bytes::{BufMut, BytesMut};
 use clap::{Arg, ArgAction, Command};
@@ -217,6 +219,7 @@ async fn main() -> ExitCode {
         let app = Arc::new(Mutex::new(PublicClientApplication::new(
                     &app_id, authority_url.as_str())));
 
+        // Open the socket for all to read and write
         let listener = match UnixListener::bind(DEFAULT_SOCK_PATH) {
             Ok(l) => l,
             Err(_e) => {
@@ -224,6 +227,8 @@ async fn main() -> ExitCode {
                 return ExitCode::FAILURE
             }
         };
+        set_permissions(DEFAULT_SOCK_PATH, Permissions::from_mode(0o777))
+            .expect(format!("Failed to set permissions for {}", DEFAULT_SOCK_PATH).as_str());
 
         let server = async move {
             loop {
