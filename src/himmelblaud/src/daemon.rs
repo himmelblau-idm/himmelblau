@@ -122,7 +122,11 @@ async fn handle_client(
                             error!("Azure AD application requires enabling 'Allow public client flows'. {}",
                                    url);
                         }
-                        error!("{:?}: {:?}", token.get("error"), token.get("error_description"));
+                        error!("{}: {}",
+                               token.get("error")
+                               .expect("Failed fetching error code"),
+                               token.get("error_description")
+                               .expect("Failed fetching error description"));
                         Some(false)
                     }
                 )
