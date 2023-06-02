@@ -1,4 +1,4 @@
-#![warn(unused_variables)]
+#![deny(warnings)]
 #![warn(unused_extern_crates)]
 #![deny(clippy::todo)]
 #![deny(clippy::unimplemented)]
