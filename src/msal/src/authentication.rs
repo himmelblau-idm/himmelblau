@@ -97,7 +97,7 @@ impl PublicClientApplication {
     pub fn get_account(&self, account_id: &String) -> Option<HashMap<String, String>> {
         self.get_accounts()
             .iter()
-            .find(|tok| tok.get("name") == Some(account_id))
+            .find(|tok| tok.get("username").expect("Failed to find username in account") == account_id)
             .cloned()
     }
 }
