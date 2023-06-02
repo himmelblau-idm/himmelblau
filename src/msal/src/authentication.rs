@@ -46,4 +46,16 @@ impl PublicClientApplication {
                 .expect("Extraction to a hashmap failed")
         })
     }
+
+    pub fn get_accounts(&self) -> Vec<HashMap<String, String>> {
+        Python::with_gil(|py| {
+            let func: Py<PyAny> = self.app.getattr(py, "get_accounts")
+                .expect("Failed loading function get_accounts")
+                .into();
+            func.call0(py)
+                .expect("Failed calling get_accounts")
+                .extract(py)
+                .expect("Extraction to a list of hashmaps failed")
+        })
+    }
 }

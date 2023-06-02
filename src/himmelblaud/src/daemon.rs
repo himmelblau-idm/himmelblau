@@ -20,7 +20,7 @@ use clap::{Arg, ArgAction, Command};
 
 use himmelblau_unix_common::constants::DEFAULT_CONFIG_PATH;
 use himmelblau_unix_common::constants::DEFAULT_SOCK_PATH;
-use himmelblau_unix_common::unix_proto::{ClientRequest, ClientResponse};
+use himmelblau_unix_common::unix_proto::{ClientRequest, ClientResponse, NssUser};
 use msal::authentication::PublicClientApplication;
 use futures::{SinkExt, StreamExt};
 
@@ -100,7 +100,21 @@ async fn handle_client(
                 debug!("pam authenticate");
                 let token = app.acquire_token_by_username_password(account_id.as_str(), cred.as_str(), vec![]);
                 ClientResponse::PamStatus(token.contains_key("access_token").then(|| true))
-            },
+            }
+            ClientRequest::NssAccounts => {
+                debug!("nssaccounts req");
+                //TODO: Accounts should be fetched from cache
+                ClientResponse::NssAccounts(app.get_accounts().into_iter()
+                    .map(|tok| NssUser {
+                        homedir: format!("/home/{}", tok["username"]), //TODO: Determine from config
+                        name: tok["username"].clone(),
+                        uid: 1010, //TODO: Generate UID/GID
+                        gid: 1010,
+                        gecos: tok["username"].clone(), //TODO: Fetch gecos from token cache
+                        shell: String::from("/bin/sh"), //TODO: Determine from config
+                    })
+                    .collect())
+            }
             _ => todo!()
         };
         reqs.send(resp).await?;
