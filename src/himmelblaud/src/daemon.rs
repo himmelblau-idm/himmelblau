@@ -29,7 +29,8 @@ use tokio::net::{UnixListener, UnixStream};
 use tokio::sync::Mutex;
 use tokio_util::codec::{Decoder, Encoder, Framed};
 
-use log::{error, debug, info};
+use log::{error, debug, info, LevelFilter};
+use systemd_journal_logger::JournalLog;
 use configparser::ini::Ini;
 
 /// Pass this a file path and it'll look for the file and remove it if it's there.
@@ -153,8 +154,9 @@ async fn main() -> ExitCode {
         )
         .get_matches();
 
+    JournalLog::default().install().unwrap();
     if clap_args.get_flag("debug") {
-        std::env::set_var("RUST_LOG", "debug");
+        log::set_max_level(LevelFilter::Debug);
     }
 
     async {
