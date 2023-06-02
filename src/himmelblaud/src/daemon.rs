@@ -135,27 +135,31 @@ async fn handle_client(
                 debug!("nssaccounts req");
                 //TODO: Accounts should be fetched from cache
                 ClientResponse::NssAccounts(app.get_accounts().into_iter()
-                    .map(|tok| NssUser {
+                    .map(|tok| {
+                        let uid: u32 = tok["uid"].parse().expect("Failed parsing uid");
+                        NssUser {
                         homedir: format!("/home/{}", tok["username"]), //TODO: Determine from config
                         name: tok["username"].clone(),
-                        uid: 1010, //TODO: Generate UID/GID
-                        gid: 1010,
+                        uid: uid,
+                        gid: uid,
                         gecos: tok["username"].clone(), //TODO: Fetch gecos from token cache
                         shell: String::from("/bin/sh"), //TODO: Determine from config
-                    })
+                    }})
                     .collect())
             }
             ClientRequest::NssAccountByName(account_id) => {
                 debug!("nssaccountbyname req");
                 ClientResponse::NssAccount(app.get_account(&account_id)
-                    .map(|tok| NssUser {
+                    .map(|tok| {
+                        let uid: u32 = tok["uid"].parse().expect("Failed parsing uid");
+                        NssUser {
                         homedir: format!("/home/{}", tok["username"]), //TODO: Determine from config
                         name: tok["username"].clone(),
-                        uid: 1010, //TODO: Generate UID/GID
-                        gid: 1010,
+                        uid: uid,
+                        gid: uid,
                         gecos: tok["username"].clone(), //TODO: Fetch gecos from token cache
                         shell: String::from("/bin/sh"), //TODO: Determine from config
-                    }))
+                    }}))
             }
             ClientRequest::NssGroups => {
                 debug!("nssgroups req");

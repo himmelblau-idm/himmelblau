@@ -7,6 +7,12 @@ use pyo3::types::PyDict;
 use std::collections::HashMap;
 use log::debug;
 
+use rand::Rng;
+use rand_chacha::ChaCha8Rng;
+use rand::SeedableRng;
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
+
 pub const INVALID_CRED: u32 = 0xC3CE;
 pub const REQUIRES_MFA: u32 = 0xC39C;
 pub const INVALID_USER: u32 = 0xC372;
@@ -82,8 +88,17 @@ impl PublicClientApplication {
         })
     }
 
+    pub fn gen_unique_account_uid(&self, oid: &str) -> u32 {
+        let mut hash = DefaultHasher::new();
+        oid.hash(&mut hash);
+        let seed = hash.finish();
+        let mut rng = ChaCha8Rng::seed_from_u64(seed);
+
+        rng.gen_range(10000..=4294967295)
+    }
+
     pub fn get_accounts(&self) -> Vec<HashMap<String, String>> {
-        Python::with_gil(|py| {
+        let mut accounts: Vec<HashMap<String, String>> = Python::with_gil(|py| {
             let func: Py<PyAny> = self.app.getattr(py, "get_accounts")
                 .expect("Failed loading function get_accounts")
                 .into();
@@ -91,7 +106,13 @@ impl PublicClientApplication {
                 .expect("Failed calling get_accounts")
                 .extract(py)
                 .expect("Extraction to a list of hashmaps failed")
-        })
+        });
+        for account in accounts.iter_mut() {
+            let oid = account.get("local_account_id").expect("Failed fetching oid");
+            let uid_str = self.gen_unique_account_uid(oid).to_string();
+            account.insert("uid".to_string(), uid_str);
+        }
+        accounts
     }
 
     pub fn get_account(&self, account_id: &String) -> Option<HashMap<String, String>> {

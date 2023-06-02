@@ -16,3 +16,5 @@ path = "src/lib.rs"
 [dependencies]
 pyo3 = { version = "^0.18.3", features = ["auto-initialize"] }
 log = "^0.4.17"
+rand = "^0.8"
+rand_chacha = "^0.3"
