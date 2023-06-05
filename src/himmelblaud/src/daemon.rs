@@ -231,9 +231,13 @@ async fn main() -> ExitCode {
             .unwrap_or_else(|| panic!("The tenant id was not set in the configuration")));
         let authority_url = format!("https://login.microsoftonline.com/{}",
                                     &tenant_id);
-        let app_id = String::from(config.get("global", "app_id")
-            .as_deref()
-            .unwrap_or_else(|| panic!("The app id was not set in the configuration")));
+        let app_id = match config.get("global", "app_id") {
+                Some(val) => String::from(val),
+                None => {
+                    debug!("app_id unset, defaulting to Intune Portal for Linux");
+                    String::from("b743a22d-6705-4147-8670-d92fa515ee2b")
+                }
+        };
         let app = Arc::new(Mutex::new(PublicClientApplication::new(
                     &app_id, authority_url.as_str())));
 
