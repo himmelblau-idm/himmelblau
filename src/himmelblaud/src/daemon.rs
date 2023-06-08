@@ -223,9 +223,13 @@ async fn main() -> ExitCode {
         rm_if_exist(&socket_path);
 
         // Connect to the broker
-        let tenant_id = String::from(config.get("global", "tenant_id")
-            .as_deref()
-            .unwrap_or_else(|| panic!("The tenant id was not set in the configuration")));
+        let tenant_id = match config.get("global", "tenant_id") {
+            Some(val) => String::from(val),
+            None => {
+                error!("The tenant id was not set in the configuration");
+                return ExitCode::FAILURE
+            }
+        };
         let authority_url = format!("https://login.microsoftonline.com/{}",
                                     &tenant_id);
         let app_id = match config.get("global", "app_id") {
