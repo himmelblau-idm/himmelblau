@@ -222,7 +222,6 @@ async fn main() -> ExitCode {
         debug!("🧹 Cleaning up socket from previous invocations");
         rm_if_exist(&socket_path);
 
-        // Connect to the broker
         let tenant_id = match config.get("global", "tenant_id") {
             Some(val) => String::from(val),
             None => {
