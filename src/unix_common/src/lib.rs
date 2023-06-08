@@ -16,3 +16,5 @@ pub mod client_sync;
 pub mod constants;
 #[cfg(target_family = "unix")]
 pub mod unix_proto;
+#[cfg(target_family = "unix")]
+pub mod config;

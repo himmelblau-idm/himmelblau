@@ -23,17 +23,17 @@ use clap::{Arg, ArgAction, Command};
 use himmelblau_unix_common::constants::DEFAULT_CONFIG_PATH;
 use himmelblau_unix_common::constants::DEFAULT_SOCK_PATH;
 use himmelblau_unix_common::unix_proto::{ClientRequest, ClientResponse, NssUser};
+use himmelblau_unix_common::config::HimmelblauConfig;
 use msal::authentication::{PublicClientApplication, REQUIRES_MFA, NO_CONSENT, NO_SECRET};
 use futures::{SinkExt, StreamExt};
 
-use std::path::{Path, PathBuf};
+use std::path::{Path};
 use tokio::net::{UnixListener, UnixStream};
 use tokio::sync::Mutex;
 use tokio_util::codec::{Decoder, Encoder, Framed};
 
 use log::{warn, error, debug, info, LevelFilter};
 use systemd_journal_logger::JournalLog;
-use configparser::ini::Ini;
 
 /// Pass this a file path and it'll look for the file and remove it if it's there.
 fn rm_if_exist(p: &str) {
@@ -204,23 +204,13 @@ async fn main() -> ExitCode {
 
     async {
         // Read the configuration
-        let mut config = Ini::new();
-        let cfg_path: PathBuf = PathBuf::from(DEFAULT_CONFIG_PATH);
-        if !cfg_path.exists() {
-            // there's no point trying to start up if we can't read a usable config!
-            error!("config missing from {} - cannot start up. Quitting.",
-                   DEFAULT_CONFIG_PATH);
-            return ExitCode::FAILURE
-        } else {
-            match config.load(DEFAULT_CONFIG_PATH) {
-                Ok(c) => c,
-                Err(_e) => {
-                    error!("failed to read config from {} - cannot start up. Quitting.",
-                           DEFAULT_CONFIG_PATH);
-                    return ExitCode::FAILURE
-                }
-            };
-        }
+        let config = match HimmelblauConfig::new(DEFAULT_CONFIG_PATH) {
+            Ok(c) => c,
+            Err(e) => {
+                error!("{}", e);
+                return ExitCode::FAILURE
+            }
+        };
 
         let socket_path = match config.get("global", "socket_path") {
             Some(val) => String::from(val),
