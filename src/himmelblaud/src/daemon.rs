@@ -203,9 +203,6 @@ async fn main() -> ExitCode {
     }
 
     async {
-        debug!("🧹 Cleaning up socket from previous invocations");
-        rm_if_exist(DEFAULT_SOCK_PATH);
-
         // Read the configuration
         let mut config = Ini::new();
         let cfg_path: PathBuf = PathBuf::from(DEFAULT_CONFIG_PATH);
@@ -225,6 +222,16 @@ async fn main() -> ExitCode {
             };
         }
 
+        let socket_path = match config.get("global", "socket_path") {
+            Some(val) => String::from(val),
+            None => {
+                debug!("Using default socket path {}", DEFAULT_SOCK_PATH);
+                String::from(DEFAULT_SOCK_PATH)
+            }
+        };
+        debug!("🧹 Cleaning up socket from previous invocations");
+        rm_if_exist(&socket_path);
+
         // Connect to the broker
         let tenant_id = String::from(config.get("global", "tenant_id")
             .as_deref()
@@ -242,15 +249,15 @@ async fn main() -> ExitCode {
                     &app_id, authority_url.as_str())));
 
         // Open the socket for all to read and write
-        let listener = match UnixListener::bind(DEFAULT_SOCK_PATH) {
+        let listener = match UnixListener::bind(&socket_path) {
             Ok(l) => l,
             Err(_e) => {
-                error!("Failed to bind UNIX socket at {}", DEFAULT_SOCK_PATH);
+                error!("Failed to bind UNIX socket at {}", &socket_path);
                 return ExitCode::FAILURE
             }
         };
-        set_permissions(DEFAULT_SOCK_PATH, Permissions::from_mode(0o777))
-            .expect(format!("Failed to set permissions for {}", DEFAULT_SOCK_PATH).as_str());
+        set_permissions(&socket_path, Permissions::from_mode(0o777))
+            .expect(format!("Failed to set permissions for {}", &socket_path).as_str());
 
         let server = async move {
             loop {

@@ -3,6 +3,7 @@
 # https://docs.microsoft.com/en-us/azure/active-directory/develop/howto-create-service-principal-portal
 # tenant_id = XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX
 # app_id = XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX
+# socket_path = /var/run/himmelblaud/socket
 
 # Values overridden for a specific domain
 # [domain.com]
