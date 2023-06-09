@@ -40,6 +40,15 @@ fn extract_pydict_as_hashmap(obj: &PyDict) -> (HashMap<String, String>, Vec<u32>
                 Some(pname) => pname,
                 None => "",
             }.to_string());
+            match id_token_claims.get("oid") {
+                Some(oid) => {
+                    res.insert("local_account_id".to_string(), oid.to_string())
+                },
+                None => {
+                    debug!("oid not found in id_token_claims");
+                    None
+                },
+            };
             continue;
         }
         let py_val: &PyString = match val.extract() {
