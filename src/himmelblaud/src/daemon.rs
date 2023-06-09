@@ -105,10 +105,9 @@ fn gen_unique_account_uid(config: &Arc<HimmelblauConfig>, domain: &str, oid: &st
     rng.gen_range(min..=max)
 }
 
-fn nss_account_from_cache(config: Arc<HimmelblauConfig>, account_id: &str, oid: &str, name: &str) -> NssUser {
+fn nss_account_from_cache(config: Arc<HimmelblauConfig>, account_id: &str, uid: u32, name: &str) -> NssUser {
     let (sam, domain) = split_username(account_id)
         .expect("Failed splitting the username");
-    let uid: u32 = gen_unique_account_uid(&config, domain, oid);
     NssUser {
         homedir: config.get_homedir(account_id, uid, sam, domain),
         name: account_id.to_string(),
@@ -119,10 +118,7 @@ fn nss_account_from_cache(config: Arc<HimmelblauConfig>, account_id: &str, oid: 
     }
 }
 
-fn nss_group_from_cache(config: Arc<HimmelblauConfig>, account_id: &str, oid: &str) -> NssGroup {
-    let (_sam, domain) = split_username(account_id)
-        .expect("Failed splitting the username");
-    let gid: u32 = gen_unique_account_uid(&config, domain, oid);
+fn nss_group_from_cache(account_id: &str, gid: u32) -> NssGroup {
     NssGroup {
         name: account_id.to_string(),
         gid,
@@ -132,7 +128,7 @@ fn nss_group_from_cache(config: Arc<HimmelblauConfig>, account_id: &str, oid: &s
 
 async fn handle_client(
     sock: UnixStream,
-    cmem_cache: Arc<Mutex<HashMap<String, (String, String)>>>,
+    cmem_cache: Arc<Mutex<HashMap<String, (u32, String)>>>,
 ) -> Result<(), Box<dyn Error>> {
     debug!("Accepted connection");
 
@@ -164,7 +160,10 @@ async fn handle_client(
                             None => &name_def,
                         };
                         match token.get("local_account_id") {
-                            Some(oid) => mem_cache.insert(account_id, (oid.to_string(), name.to_string())),
+                            Some(oid) => {
+                                let uid: u32 = gen_unique_account_uid(&config, domain, oid);
+                                mem_cache.insert(account_id, (uid, name.to_string()))
+                            }
                             None => {
                                 warn!("Failed caching user {}", account_id);
                                 None
@@ -198,9 +197,9 @@ async fn handle_client(
                 debug!("nssaccounts req");
                 let mem_cache = cmem_cache.lock().await;
                 let resp = ClientResponse::NssAccounts(mem_cache.iter()
-                    .map(|(account_id, (oid, name))| {
+                    .map(|(account_id, (uid, name))| {
                         let config = Arc::clone(&cconfig);
-                        nss_account_from_cache(config, account_id, oid, name)
+                        nss_account_from_cache(config, account_id, *uid, name)
                     }).collect()
                 );
                 resp
@@ -209,9 +208,19 @@ async fn handle_client(
                 debug!("nssaccountbyname req");
                 let mem_cache = cmem_cache.lock().await;
                 match mem_cache.get(account_id.to_string().as_str()) {
-                    Some((oid, name)) => {
+                    Some((uid, name)) => {
                         let config = Arc::clone(&cconfig);
-                        ClientResponse::NssAccount(Some(nss_account_from_cache(config, &account_id, &oid, &name)))
+                        ClientResponse::NssAccount(Some(nss_account_from_cache(config, &account_id, *uid, &name)))
+                    },
+                    None => ClientResponse::NssAccount(None),
+                }
+            }
+            ClientRequest::NssAccountByUid(uid) => {
+                let mem_cache = cmem_cache.lock().await;
+                match mem_cache.iter().find(|(_, (fuid, _))| *fuid == uid) {
+                    Some((account_id, (uid, name))) => {
+                        let config = Arc::clone(&cconfig);
+                        ClientResponse::NssAccount(Some(nss_account_from_cache(config, &account_id, *uid, &name)))
                     },
                     None => ClientResponse::NssAccount(None),
                 }
@@ -221,9 +230,8 @@ async fn handle_client(
                 // Generate a group for each user (with matching gid)
                 let mem_cache = cmem_cache.lock().await;
                 let resp = ClientResponse::NssGroups(mem_cache.iter()
-                    .map(|(account_id, (oid, _name))| {
-                        let config = Arc::clone(&cconfig);
-                        nss_group_from_cache(config, account_id, oid)
+                    .map(|(account_id, (gid, _name))| {
+                        nss_group_from_cache(account_id, *gid)
                     }).collect()
                 );
                 resp
@@ -233,9 +241,18 @@ async fn handle_client(
                 // Generate a group that maches the user
                 let mem_cache = cmem_cache.lock().await;
                 match mem_cache.get(grp_id.to_string().as_str()) {
-                    Some((oid, _name)) => {
-                        let config = Arc::clone(&cconfig);
-                        ClientResponse::NssGroup(Some(nss_group_from_cache(config, &grp_id, &oid)))
+                    Some((gid, _name)) => {
+                        ClientResponse::NssGroup(Some(nss_group_from_cache(&grp_id, *gid)))
+                    },
+                    None => ClientResponse::NssGroup(None),
+                }
+            }
+            ClientRequest::NssGroupByGid(gid) => {
+                // Generate a group that maches the user
+                let mem_cache = cmem_cache.lock().await;
+                match mem_cache.iter().find(|(_, (fgid, _))| *fgid == gid) {
+                    Some((grp_id, (gid, _name))) => {
+                        ClientResponse::NssGroup(Some(nss_group_from_cache(&grp_id, *gid)))
                     },
                     None => ClientResponse::NssGroup(None),
                 }
