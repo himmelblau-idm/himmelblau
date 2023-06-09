@@ -1,5 +1,14 @@
 use configparser::ini::Ini;
-use std::path::{PathBuf};
+use std::path::PathBuf;
+use log::{debug, error};
+
+pub fn split_username(username: &str) -> Option<(&str, &str)> {
+    let tup: Vec<&str> = username.split('@').collect();
+    if tup.len() == 2 {
+        return Some((tup[0], tup[1]));
+    }
+    None
+}
 
 pub struct HimmelblauConfig {
     config: Ini
@@ -26,5 +35,94 @@ impl HimmelblauConfig {
 
     pub fn get(&self, section: &str, option: &str) -> Option<String> {
         self.config.get(section, option)
+    }
+
+    pub fn get_homedir(&self, username: &str, uid: u32, sam: &str, domain: &str) -> String {
+        let homedir = match self.config.get(domain, "homedir") {
+            Some(val) => val,
+            None => match self.config.get("global", "homedir") {
+                Some(val) => val,
+                None => String::from("/home/%f"),
+            }
+        };
+        homedir.replace("%f", username).replace("%U", &uid.to_string()).replace("%u", sam).replace("%d", domain)
+    }
+
+    pub fn get_shell(&self, domain: &str) -> String {
+        match self.config.get(domain, "shell") {
+            Some(val) => val,
+            None => match self.config.get("global", "shell") {
+                Some(val) => val,
+                None => String::from("/bin/bash"),
+            }
+        }
+    }
+
+    pub fn get_tenant_id(&self, domain: &str) -> Option<String> {
+        match self.config.get(domain, "tenant_id") {
+            Some(val) => Some(val),
+            None => {
+                self.config.get("global", "tenant_id")
+            }
+        }
+    }
+
+    pub fn get_authority_url(&self, domain: &str, authority: Option<&str>) -> Option<(String, String)> {
+        let tenant_id = match self.get_tenant_id(domain) {
+            Some(val) => val,
+            None => return None,
+        };
+        let authority_url = match authority {
+            Some(val) => format!("{}/{}", val, tenant_id),
+            None => format!("https://login.microsoftonline.com/{}", tenant_id),
+        };
+        Some((tenant_id, authority_url))
+    }
+
+    pub fn get_app_id(&self, domain: &str) -> String {
+        match self.config.get(domain, "app_id") {
+            Some(val) => String::from(val),
+            None => match self.config.get("global", "app_id") {
+                Some(val) => String::from(val),
+                None => {
+                    debug!("app_id unset, defaulting to Intune Portal for Linux");
+                    String::from("b743a22d-6705-4147-8670-d92fa515ee2b")
+                }
+            }
+        }
+    }
+
+    pub fn get_idmap_range(&self, domain: &str) -> (u32, u32) {
+        let default_range = (1000000, 6999999);
+        match self.config.get(domain, "idmap_range") {
+            Some(val) => {
+                let vals: Vec<u32> = val.split('-').map(|m| m.parse().unwrap()).collect();
+                match vals.as_slice() {
+                    [min, max] => (*min, *max),
+                    _ => {
+                        error!("Invalid range specified [{}] idmap_range = {}", domain, val);
+                        default_range
+                    }
+                }
+            },
+            None => {
+                match self.config.get("global", "idmap_range") {
+                    Some(val) => {
+                        let vals: Vec<u32> = val.split('-').map(|m| m.parse().unwrap()).collect();
+                        match vals.as_slice() {
+                            [min, max] => (*min, *max),
+                            _ => {
+                                error!("Invalid range specified [global] idmap_range = {}", val);
+                                default_range
+                            }
+                        }
+                    },
+                    None => {
+                        error!("No idmap_range range specified in config, using 1000000-6999999!");
+                        default_range
+                    },
+                }
+            },
+        }
     }
 }

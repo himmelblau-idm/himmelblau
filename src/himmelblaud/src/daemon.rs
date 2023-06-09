@@ -16,6 +16,7 @@ use std::process::ExitCode;
 use std::sync::Arc;
 use std::fs::{set_permissions, Permissions};
 use std::os::unix::fs::PermissionsExt;
+use std::collections::HashMap;
 
 use bytes::{BufMut, BytesMut};
 use clap::{Arg, ArgAction, Command};
@@ -23,7 +24,7 @@ use clap::{Arg, ArgAction, Command};
 use himmelblau_unix_common::constants::DEFAULT_CONFIG_PATH;
 use himmelblau_unix_common::constants::DEFAULT_SOCK_PATH;
 use himmelblau_unix_common::unix_proto::{ClientRequest, ClientResponse, NssUser};
-use himmelblau_unix_common::config::HimmelblauConfig;
+use himmelblau_unix_common::config::{HimmelblauConfig, split_username};
 use msal::authentication::{PublicClientApplication, REQUIRES_MFA, NO_CONSENT, NO_SECRET};
 use futures::{SinkExt, StreamExt};
 
@@ -31,6 +32,12 @@ use std::path::{Path};
 use tokio::net::{UnixListener, UnixStream};
 use tokio::sync::Mutex;
 use tokio_util::codec::{Decoder, Encoder, Framed};
+
+use rand::Rng;
+use rand_chacha::ChaCha8Rng;
+use rand::SeedableRng;
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
 
 use log::{warn, error, debug, info, LevelFilter};
 use systemd_journal_logger::JournalLog;
@@ -88,25 +95,65 @@ impl ClientCodec {
     }
 }
 
+fn gen_unique_account_uid(config: &Arc<HimmelblauConfig>, domain: &str, oid: &str) -> u32 {
+    let mut hash = DefaultHasher::new();
+    oid.hash(&mut hash);
+    let seed = hash.finish();
+    let mut rng = ChaCha8Rng::seed_from_u64(seed);
+
+    let (min, max): (u32, u32) = config.get_idmap_range(domain);
+    rng.gen_range(min..=max)
+}
+
+fn nss_account_from_cache(config: Arc<HimmelblauConfig>, account_id: &str, oid: &str) -> NssUser {
+    let (sam, domain) = split_username(account_id)
+        .expect("Failed splitting the username");
+    let uid: u32 = gen_unique_account_uid(&config, domain, oid);
+    NssUser {
+        homedir: config.get_homedir(account_id, uid, sam, domain),
+        name: account_id.to_string(),
+        uid: uid,
+        gid: uid,
+        gecos: account_id.to_string(), //TODO: Include this in the cache
+        shell: config.get_shell(domain),
+    }
+}
+
 async fn handle_client(
     sock: UnixStream,
-    authority_url: String,
-    app_id: String,
-    capp: Arc<Mutex<PublicClientApplication>>,
+    cmem_cache: Arc<Mutex<HashMap<String, String>>>,
 ) -> Result<(), Box<dyn Error>> {
     debug!("Accepted connection");
 
     let mut reqs = Framed::new(sock, ClientCodec::new());
-    let app = capp.lock().await;
+
+    // Read the configuration
+    let cconfig = Arc::new(HimmelblauConfig::new(DEFAULT_CONFIG_PATH)
+        .expect("Failed loading configuration"));
 
     while let Some(Ok(req)) = reqs.next().await {
         let resp = match req {
             ClientRequest::PamAuthenticate(account_id, cred) => {
                 debug!("pam authenticate");
+                let (_sam, domain) = split_username(&account_id)
+                    .expect("Failed splitting the username");
+                let config = Arc::clone(&cconfig);
+                let (_tenant_id, authority_url) = config.get_authority_url(domain, None)
+                    .expect("The tenant id was not set in the configuration");
+                let app_id = config.get_app_id(domain);
+                let app = PublicClientApplication::new(&app_id, authority_url.as_str());
                 let (token, err) = app.acquire_token_by_username_password(account_id.as_str(), cred.as_str(), vec![]);
                 ClientResponse::PamStatus(
                     if token.contains_key("access_token") {
                         info!("Authentication successful for user '{}'", account_id);
+                        let mut mem_cache = cmem_cache.lock().await;
+                        match token.get("local_account_id") {
+                            Some(oid) => mem_cache.insert(account_id, oid.to_string()),
+                            None => {
+                                warn!("Failed caching user {}", account_id);
+                                None
+                            }
+                        };
                         Some(true)
                     } else {
                         if err.contains(&REQUIRES_MFA) {
@@ -133,33 +180,25 @@ async fn handle_client(
             }
             ClientRequest::NssAccounts => {
                 debug!("nssaccounts req");
-                //TODO: Accounts should be fetched from cache
-                ClientResponse::NssAccounts(app.get_accounts().into_iter()
-                    .map(|tok| {
-                        let uid: u32 = tok["uid"].parse().expect("Failed parsing uid");
-                        NssUser {
-                        homedir: format!("/home/{}", tok["username"]), //TODO: Determine from config
-                        name: tok["username"].clone(),
-                        uid: uid,
-                        gid: uid,
-                        gecos: tok["username"].clone(), //TODO: Fetch gecos from token cache
-                        shell: String::from("/bin/sh"), //TODO: Determine from config
-                    }})
-                    .collect())
+                let mem_cache = cmem_cache.lock().await;
+                let resp = ClientResponse::NssAccounts(mem_cache.iter()
+                    .map(|(account_id, oid)| {
+                        let config = Arc::clone(&cconfig);
+                        nss_account_from_cache(config, account_id, oid)
+                    }).collect()
+                );
+                resp
             }
             ClientRequest::NssAccountByName(account_id) => {
                 debug!("nssaccountbyname req");
-                ClientResponse::NssAccount(app.get_account(&account_id)
-                    .map(|tok| {
-                        let uid: u32 = tok["uid"].parse().expect("Failed parsing uid");
-                        NssUser {
-                        homedir: format!("/home/{}", tok["username"]), //TODO: Determine from config
-                        name: tok["username"].clone(),
-                        uid: uid,
-                        gid: uid,
-                        gecos: tok["username"].clone(), //TODO: Fetch gecos from token cache
-                        shell: String::from("/bin/sh"), //TODO: Determine from config
-                    }}))
+                let mem_cache = cmem_cache.lock().await;
+                match mem_cache.get(account_id.to_string().as_str()) {
+                    Some(&ref oid) => {
+                        let config = Arc::clone(&cconfig);
+                        ClientResponse::NssAccount(Some(nss_account_from_cache(config, &account_id, &oid)))
+                    },
+                    None => ClientResponse::NssAccount(None),
+                }
             }
             ClientRequest::NssGroups => {
                 debug!("nssgroups req");
@@ -222,24 +261,7 @@ async fn main() -> ExitCode {
         debug!("🧹 Cleaning up socket from previous invocations");
         rm_if_exist(&socket_path);
 
-        let tenant_id = match config.get("global", "tenant_id") {
-            Some(val) => String::from(val),
-            None => {
-                error!("The tenant id was not set in the configuration");
-                return ExitCode::FAILURE
-            }
-        };
-        let authority_url = format!("https://login.microsoftonline.com/{}",
-                                    &tenant_id);
-        let app_id = match config.get("global", "app_id") {
-                Some(val) => String::from(val),
-                None => {
-                    debug!("app_id unset, defaulting to Intune Portal for Linux");
-                    String::from("b743a22d-6705-4147-8670-d92fa515ee2b")
-                }
-        };
-        let app = Arc::new(Mutex::new(PublicClientApplication::new(
-                    &app_id, authority_url.as_str())));
+        let mem_cache = Arc::new(Mutex::new(HashMap::new()));
 
         // Open the socket for all to read and write
         let listener = match UnixListener::bind(&socket_path) {
@@ -254,13 +276,11 @@ async fn main() -> ExitCode {
 
         let server = async move {
             loop {
-                let capp = app.clone();
-                let cauthority_url = authority_url.clone();
-                let capp_id = app_id.clone();
+                let cmem_cache = mem_cache.clone();
                 match listener.accept().await {
                     Ok((socket, _addr)) => {
                         tokio::spawn(async move {
-                            if let Err(e) = handle_client(socket, cauthority_url, capp_id, capp).await
+                            if let Err(e) = handle_client(socket, cmem_cache).await
                             {
                                 error!("handle_client error occurred; error = {:?}", e);
                             }
