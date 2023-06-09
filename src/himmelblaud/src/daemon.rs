@@ -193,6 +193,15 @@ async fn handle_client(
                     }
                 )
             }
+            ClientRequest::PamAccountAllowed(_account_id) => {
+                debug!("pam account allowed");
+                // TODO: How to determine if user is allowed logon?
+                ClientResponse::PamStatus(Some(true))
+            }
+            ClientRequest::PamAccountBeginSession(_account_id) => {
+                debug!("pam account begin session");
+                ClientResponse::PamStatus(Some(true))
+            }
             ClientRequest::NssAccounts => {
                 debug!("nssaccounts req");
                 let mem_cache = cmem_cache.lock().await;
@@ -257,7 +266,6 @@ async fn handle_client(
                     None => ClientResponse::NssGroup(None),
                 }
             }
-            _ => todo!()
         };
         reqs.send(resp).await?;
         reqs.flush().await?;

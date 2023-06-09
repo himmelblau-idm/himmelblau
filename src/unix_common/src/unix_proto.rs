@@ -19,7 +19,6 @@ pub struct NssGroup {
 
 #[derive(Serialize, Deserialize, Debug)]
 pub enum ClientRequest {
-    SshKey(String),
     NssAccounts,
     NssAccountByUid(u32),
     NssAccountByName(String),
@@ -29,9 +28,6 @@ pub enum ClientRequest {
     PamAuthenticate(String, String),
     PamAccountAllowed(String),
     PamAccountBeginSession(String),
-    InvalidateCache,
-    ClearCache,
-    Status,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
