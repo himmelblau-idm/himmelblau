@@ -28,6 +28,19 @@ fn extract_pydict_as_hashmap(obj: &PyDict) -> (HashMap<String, String>, Vec<u32>
             let vec_error_codes: Vec<u32> = error_codes.extract().expect("Failed parsing error list");
             err.extend(vec_error_codes);
             continue;
+        } else if k == "id_token_claims" {
+            let py_val: &PyDict = val.extract().expect("Failed parsing id_token_claims dict");
+            let (id_token_claims, _e) = extract_pydict_as_hashmap(py_val);
+            // Populate some of the id_token_claims values into the main result
+            res.insert("name".to_string(), match id_token_claims.get("name") {
+                Some(name) => name,
+                None => "",
+            }.to_string());
+            res.insert("preferred_username".to_string(), match id_token_claims.get("preferred_username") {
+                Some(pname) => pname,
+                None => "",
+            }.to_string());
+            continue;
         }
         let py_val: &PyString = match val.extract() {
             Ok(val) => val,

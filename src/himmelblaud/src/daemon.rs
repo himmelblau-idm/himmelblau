@@ -105,7 +105,7 @@ fn gen_unique_account_uid(config: &Arc<HimmelblauConfig>, domain: &str, oid: &st
     rng.gen_range(min..=max)
 }
 
-fn nss_account_from_cache(config: Arc<HimmelblauConfig>, account_id: &str, oid: &str) -> NssUser {
+fn nss_account_from_cache(config: Arc<HimmelblauConfig>, account_id: &str, oid: &str, name: &str) -> NssUser {
     let (sam, domain) = split_username(account_id)
         .expect("Failed splitting the username");
     let uid: u32 = gen_unique_account_uid(&config, domain, oid);
@@ -114,14 +114,14 @@ fn nss_account_from_cache(config: Arc<HimmelblauConfig>, account_id: &str, oid: 
         name: account_id.to_string(),
         uid: uid,
         gid: uid,
-        gecos: account_id.to_string(), //TODO: Include this in the cache
+        gecos: name.to_string(),
         shell: config.get_shell(domain),
     }
 }
 
 async fn handle_client(
     sock: UnixStream,
-    cmem_cache: Arc<Mutex<HashMap<String, String>>>,
+    cmem_cache: Arc<Mutex<HashMap<String, (String, String)>>>,
 ) -> Result<(), Box<dyn Error>> {
     debug!("Accepted connection");
 
@@ -147,8 +147,13 @@ async fn handle_client(
                     if token.contains_key("access_token") {
                         info!("Authentication successful for user '{}'", account_id);
                         let mut mem_cache = cmem_cache.lock().await;
+                        let name_def = "".to_string();
+                        let name = match token.get("name") {
+                            Some(name) => name,
+                            None => &name_def,
+                        };
                         match token.get("local_account_id") {
-                            Some(oid) => mem_cache.insert(account_id, oid.to_string()),
+                            Some(oid) => mem_cache.insert(account_id, (oid.to_string(), name.to_string())),
                             None => {
                                 warn!("Failed caching user {}", account_id);
                                 None
@@ -182,9 +187,9 @@ async fn handle_client(
                 debug!("nssaccounts req");
                 let mem_cache = cmem_cache.lock().await;
                 let resp = ClientResponse::NssAccounts(mem_cache.iter()
-                    .map(|(account_id, oid)| {
+                    .map(|(account_id, (oid, name))| {
                         let config = Arc::clone(&cconfig);
-                        nss_account_from_cache(config, account_id, oid)
+                        nss_account_from_cache(config, account_id, oid, name)
                     }).collect()
                 );
                 resp
@@ -193,9 +198,9 @@ async fn handle_client(
                 debug!("nssaccountbyname req");
                 let mem_cache = cmem_cache.lock().await;
                 match mem_cache.get(account_id.to_string().as_str()) {
-                    Some(&ref oid) => {
+                    Some((oid, name)) => {
                         let config = Arc::clone(&cconfig);
-                        ClientResponse::NssAccount(Some(nss_account_from_cache(config, &account_id, &oid)))
+                        ClientResponse::NssAccount(Some(nss_account_from_cache(config, &account_id, &oid, &name)))
                     },
                     None => ClientResponse::NssAccount(None),
                 }
