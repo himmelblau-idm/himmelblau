@@ -23,7 +23,7 @@ use clap::{Arg, ArgAction, Command};
 
 use himmelblau_unix_common::constants::DEFAULT_CONFIG_PATH;
 use himmelblau_unix_common::constants::DEFAULT_SOCK_PATH;
-use himmelblau_unix_common::unix_proto::{ClientRequest, ClientResponse, NssUser};
+use himmelblau_unix_common::unix_proto::{ClientRequest, ClientResponse, NssUser, NssGroup};
 use himmelblau_unix_common::config::{HimmelblauConfig, split_username};
 use msal::authentication::{PublicClientApplication, REQUIRES_MFA, NO_CONSENT, NO_SECRET};
 use futures::{SinkExt, StreamExt};
@@ -119,6 +119,17 @@ fn nss_account_from_cache(config: Arc<HimmelblauConfig>, account_id: &str, oid: 
     }
 }
 
+fn nss_group_from_cache(config: Arc<HimmelblauConfig>, account_id: &str, oid: &str) -> NssGroup {
+    let (_sam, domain) = split_username(account_id)
+        .expect("Failed splitting the username");
+    let gid: u32 = gen_unique_account_uid(&config, domain, oid);
+    NssGroup {
+        name: account_id.to_string(),
+        gid,
+        members: vec![account_id.to_string()],
+    }
+}
+
 async fn handle_client(
     sock: UnixStream,
     cmem_cache: Arc<Mutex<HashMap<String, (String, String)>>>,
@@ -207,13 +218,27 @@ async fn handle_client(
             }
             ClientRequest::NssGroups => {
                 debug!("nssgroups req");
-                // TODO: How do I find groups?
-                ClientResponse::NssGroups(Vec::new())
+                // Generate a group for each user (with matching gid)
+                let mem_cache = cmem_cache.lock().await;
+                let resp = ClientResponse::NssGroups(mem_cache.iter()
+                    .map(|(account_id, (oid, _name))| {
+                        let config = Arc::clone(&cconfig);
+                        nss_group_from_cache(config, account_id, oid)
+                    }).collect()
+                );
+                resp
             }
-            ClientRequest::NssGroupByName(_grp_id) => {
+            ClientRequest::NssGroupByName(grp_id) => {
                 debug!("nssgroupbyname req");
-                // TODO: How do I find groups?
-                ClientResponse::NssGroup(None)
+                // Generate a group that maches the user
+                let mem_cache = cmem_cache.lock().await;
+                match mem_cache.get(grp_id.to_string().as_str()) {
+                    Some((oid, _name)) => {
+                        let config = Arc::clone(&cconfig);
+                        ClientResponse::NssGroup(Some(nss_group_from_cache(config, &grp_id, &oid)))
+                    },
+                    None => ClientResponse::NssGroup(None),
+                }
             }
             _ => todo!()
         };
