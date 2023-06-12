@@ -221,7 +221,10 @@ async fn handle_client(
                         let config = Arc::clone(&cconfig);
                         ClientResponse::NssAccount(Some(nss_account_from_cache(config, &account_id, *uid, &name)))
                     },
-                    None => ClientResponse::NssAccount(None),
+                    None => {
+                        debug!("Failed to find account '{}'", account_id);
+                        ClientResponse::NssAccount(None)
+                    }
                 }
             }
             ClientRequest::NssAccountByUid(uid) => {
@@ -231,7 +234,10 @@ async fn handle_client(
                         let config = Arc::clone(&cconfig);
                         ClientResponse::NssAccount(Some(nss_account_from_cache(config, &account_id, *uid, &name)))
                     },
-                    None => ClientResponse::NssAccount(None),
+                    None => {
+                        debug!("Failed to find account '{}'", uid);
+                        ClientResponse::NssAccount(None)
+                    }
                 }
             }
             ClientRequest::NssGroups => {
@@ -253,7 +259,10 @@ async fn handle_client(
                     Some((gid, _name)) => {
                         ClientResponse::NssGroup(Some(nss_group_from_cache(&grp_id, *gid)))
                     },
-                    None => ClientResponse::NssGroup(None),
+                    None => {
+                        debug!("Failed to find group '{}'", grp_id);
+                        ClientResponse::NssGroup(None)
+                    }
                 }
             }
             ClientRequest::NssGroupByGid(gid) => {
@@ -263,7 +272,10 @@ async fn handle_client(
                     Some((grp_id, (gid, _name))) => {
                         ClientResponse::NssGroup(Some(nss_group_from_cache(&grp_id, *gid)))
                     },
-                    None => ClientResponse::NssGroup(None),
+                    None => {
+                        debug!("Failed to find group '{}'", gid);
+                        ClientResponse::NssGroup(None)
+                    }
                 }
             }
         };
