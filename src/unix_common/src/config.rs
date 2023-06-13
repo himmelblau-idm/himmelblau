@@ -3,7 +3,8 @@ use std::path::PathBuf;
 use log::{debug, error};
 
 use msal::misc::request_tenant_id_and_authority;
-use crate::constants::{DEFAULT_HOMEDIR, DEFAULT_SHELL, DEFAULT_ODC_PROVIDER, DEFAULT_APP_ID, DEFAULT_IDMAP_RANGE};
+use crate::constants::{DEFAULT_HOMEDIR, DEFAULT_SHELL, DEFAULT_ODC_PROVIDER,
+    DEFAULT_APP_ID, DEFAULT_IDMAP_RANGE, DEFAULT_AUTHORITY_HOST};
 
 pub fn split_username(username: &str) -> Option<(&str, &str)> {
     let tup: Vec<&str> = username.split('@').collect();
@@ -98,10 +99,10 @@ impl HimmelblauConfig {
                     Some(val) => val,
                     None => {
                         let authority_host_req = req.as_ref();
-                        String::from(match authority_host_req {
-                            Ok(val) => val,
-                            Err(e) => panic!("Failed fetching authority_host: {}", e),
-                        }.0.clone())
+                        match authority_host_req {
+                            Ok(val) => val.0.clone(),
+                            Err(_e) => String::from(DEFAULT_AUTHORITY_HOST),
+                        }
                     }
                 }
             }
