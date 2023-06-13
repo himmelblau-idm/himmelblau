@@ -22,5 +22,9 @@ repository = "https://codeberg.org/dmulder/himmelblau/"
 libc = "^0.2.144"
 pkg-config = "^0.3.27"
 lazy_static = "^1.4.0"
-libnss = "^0.4.0"
 paste = "^1.0.12"
+serde = { version = "^1.0.163", features = ["derive"] }
+serde_json = "^1.0.96"
+log = "^0.4.17"
+himmelblau_unix_common = { version = "^0.1.0", path = "src/unix_common" }
+msal = { version = "^0.1.0", path = "src/msal" }

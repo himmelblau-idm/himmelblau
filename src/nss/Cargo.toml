@@ -15,10 +15,8 @@ crate-type = [ "cdylib" ]
 path =  "src/lib.rs"
 
 [dependencies]
-himmelblau_unix_common = { version = "0.1.0", path = "../unix_common" }
-
-[target.'cfg(not(target_family = "windows"))'.dependencies]
-libnss = { workspace = true }
+himmelblau_unix_common = { workspace = true }
+libnss = "^0.4.0"
 libc = { workspace = true }
 paste = { workspace = true }
 lazy_static = { workspace = true }

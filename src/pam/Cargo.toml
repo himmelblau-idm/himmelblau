@@ -16,8 +16,8 @@ crate-type = [ "cdylib" ]
 path =  "src/lib.rs"
 
 [dependencies]
-libc.workspace = true
-himmelblau_unix_common = { version = "0.1.0", path = "../unix_common" }
+libc = { workspace = true }
+himmelblau_unix_common = { workspace = true }
 
 [build-dependencies]
 pkg-config.workspace = true
