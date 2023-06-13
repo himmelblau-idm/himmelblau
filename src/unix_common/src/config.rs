@@ -2,6 +2,8 @@ use configparser::ini::Ini;
 use std::path::PathBuf;
 use log::{debug, error};
 
+use msal::misc::request_tenant_id;
+
 pub fn split_username(username: &str) -> Option<(&str, &str)> {
     let tup: Vec<&str> = username.split('@').collect();
     if tup.len() == 2 {
@@ -58,17 +60,26 @@ impl HimmelblauConfig {
         }
     }
 
-    pub fn get_tenant_id(&self, domain: &str) -> Option<String> {
+    pub async fn get_tenant_id(&self, domain: &str) -> Option<String> {
         match self.config.get(domain, "tenant_id") {
             Some(val) => Some(val),
             None => {
-                self.config.get("global", "tenant_id")
+                match self.config.get("global", "tenant_id") {
+                    Some(val) => Some(val),
+                    None => {
+                        /* It's ok to panic here if no tenant id is found,
+                         * since we need to terminate the connection at this
+                         * point. If we panic here, either the network is down,
+                         * or the specified domain is invalid. */
+                        Some(request_tenant_id(domain).await.unwrap())
+                    }
+                }
             }
         }
     }
 
-    pub fn get_authority_url(&self, domain: &str, authority: Option<&str>) -> Option<(String, String)> {
-        let tenant_id = match self.get_tenant_id(domain) {
+    pub async fn get_authority_url(&self, domain: &str, authority: Option<&str>) -> Option<(String, String)> {
+        let tenant_id = match self.get_tenant_id(domain).await {
             Some(val) => val,
             None => return None,
         };

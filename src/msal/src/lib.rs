@@ -12,3 +12,6 @@
 
 #[cfg(target_family = "unix")]
 pub mod authentication;
+
+#[cfg(target_family = "unix")]
+pub mod misc;
