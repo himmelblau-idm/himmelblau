@@ -1,4 +1,4 @@
-== Items that need completed ==
+# Items that need completed
 
 * A persistent user/auth cache to disk (which is different from the MS auth cache).
 * Is it possible to run the daemon not as root?
@@ -6,7 +6,7 @@
 * Offline logon.
 * Use tracing module for debug.
 
-=== Major Requirements ===
+## Major Requirements
 
 * Device enrollment.
 * Policy application.
