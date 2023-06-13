@@ -3,6 +3,7 @@ use std::path::PathBuf;
 use log::{debug, error};
 
 use msal::misc::request_tenant_id_and_authority;
+use crate::constants::{DEFAULT_HOMEDIR, DEFAULT_SHELL, DEFAULT_ODC_PROVIDER, DEFAULT_APP_ID, DEFAULT_IDMAP_RANGE};
 
 pub fn split_username(username: &str) -> Option<(&str, &str)> {
     let tup: Vec<&str> = username.split('@').collect();
@@ -44,7 +45,7 @@ impl HimmelblauConfig {
             Some(val) => val,
             None => match self.config.get("global", "homedir") {
                 Some(val) => val,
-                None => String::from("/home/%f"),
+                None => String::from(DEFAULT_HOMEDIR),
             }
         };
         homedir.replace("%f", username).replace("%U", &uid.to_string()).replace("%u", sam).replace("%d", domain)
@@ -55,7 +56,7 @@ impl HimmelblauConfig {
             Some(val) => val,
             None => match self.config.get("global", "shell") {
                 Some(val) => val,
-                None => String::from("/bin/bash"),
+                None => String::from(DEFAULT_SHELL),
             }
         }
     }
@@ -66,7 +67,7 @@ impl HimmelblauConfig {
             None => {
                 match self.config.get("global", "odc_provider") {
                     Some(val) => val,
-                    None => String::from("odc.officeapps.live.com"),
+                    None => String::from(DEFAULT_ODC_PROVIDER),
                 }
             }
         }
@@ -121,14 +122,14 @@ impl HimmelblauConfig {
                 Some(val) => String::from(val),
                 None => {
                     debug!("app_id unset, defaulting to Intune Portal for Linux");
-                    String::from("b743a22d-6705-4147-8670-d92fa515ee2b")
+                    String::from(DEFAULT_APP_ID)
                 }
             }
         }
     }
 
     pub fn get_idmap_range(&self, domain: &str) -> (u32, u32) {
-        let default_range = (1000000, 6999999);
+        let default_range = DEFAULT_IDMAP_RANGE;
         match self.config.get(domain, "idmap_range") {
             Some(val) => {
                 let vals: Vec<u32> = val.split('-').map(|m| m.parse().unwrap()).collect();
@@ -153,7 +154,8 @@ impl HimmelblauConfig {
                         }
                     },
                     None => {
-                        error!("No idmap_range range specified in config, using 1000000-6999999!");
+                        error!("No idmap_range range specified in config, using {}-{}!",
+                               DEFAULT_IDMAP_RANGE.0, DEFAULT_IDMAP_RANGE.1);
                         default_range
                     },
                 }
