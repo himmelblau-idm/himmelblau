@@ -1,6 +1,6 @@
 use configparser::ini::Ini;
 use std::path::PathBuf;
-use log::{debug, error};
+use tracing::{debug, error};
 use std::io::Error;
 
 use msal::misc::request_federation_provider;

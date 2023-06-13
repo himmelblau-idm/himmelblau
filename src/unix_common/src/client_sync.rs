@@ -2,7 +2,7 @@ use std::error::Error;
 use std::io::{Error as IoError, ErrorKind, Read, Write};
 use std::os::unix::net::UnixStream;
 use std::time::{Duration, SystemTime};
-use log::{debug, error};
+use tracing::{debug, error};
 
 use crate::unix_proto::{ClientRequest, ClientResponse};
 
