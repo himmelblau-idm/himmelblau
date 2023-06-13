@@ -1,7 +1,13 @@
 [global]
-# For instructions on setting up application authentication for Azure AD, see
-# https://docs.microsoft.com/en-us/azure/active-directory/develop/howto-create-service-principal-portal
+# If you have an ODC provider (the default being odc.officeapps.live.com), specify
+# the hostname for sending a federationProvider request. If the federationProvider
+# request is successful, the tenant_id and authority_host options do not need to
+# be specified.
+#
+# odc_provider = odc.officeapps.live.com
+#
 # tenant_id = XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX
+# authority_host = login.microsoftonline.com
 
 ### Optional values
 # Default app_id is Intune Portal for Linux
@@ -17,7 +23,9 @@
 
 # Values overridden for a specific domain
 # [domain.com]
+# odc_provider = odc.officeapps.live.com
 # tenant_id = XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX
+# authority_host = login.microsoftonline.com
 # app_id = XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX
 # homedir = /home/domain.com/%u
 # shell = /bin/zsh

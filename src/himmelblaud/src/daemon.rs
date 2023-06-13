@@ -145,8 +145,7 @@ async fn handle_client(
                 let (_sam, domain) = split_username(&account_id)
                     .expect("Failed splitting the username");
                 let config = Arc::clone(&cconfig);
-                let (_tenant_id, authority_url) = config.get_authority_url(domain, None).await
-                    .expect("The tenant id was not set in the configuration");
+                let (_tenant_id, authority_url) = config.get_authority_url(domain).await;
                 let app_id = config.get_app_id(domain);
                 let app = PublicClientApplication::new(&app_id, authority_url.as_str());
                 let (token, err) = app.acquire_token_by_username_password(account_id.as_str(), cred.as_str(), vec![]);

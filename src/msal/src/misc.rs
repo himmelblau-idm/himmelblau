@@ -7,11 +7,12 @@ use log::debug;
 struct FederationProvider {
     #[serde(rename = "tenantId")]
     tenant_id: String,
+    authority_host: String,
 }
 
-pub async fn request_tenant_id(domain: &str) -> Result<String> {
+pub async fn request_tenant_id_and_authority(odc_provider: &str, domain: &str) -> Result<(String, String)> {
     let url = Url::parse_with_params(
-        "https://odc.officeapps.live.com/odc/v2.1/federationProvider",
+        &format!("https://{}/odc/v2.1/federationProvider", odc_provider),
         &[("domain", domain)],
     )?;
 
@@ -19,8 +20,9 @@ pub async fn request_tenant_id(domain: &str) -> Result<String> {
     if resp.status().is_success() {
         let json_resp: FederationProvider = resp.json().await?;
         debug!("Discovered tenant_id: {}", json_resp.tenant_id);
-        Ok(json_resp.tenant_id)
+        debug!("Discovered authority_host: {}", json_resp.authority_host);
+        Ok((json_resp.authority_host, json_resp.tenant_id))
     } else {
-        Err(anyhow!("Failed fetching the tenant id"))
+        Err(anyhow!(resp.status()))
     }
 }

@@ -2,7 +2,7 @@ use configparser::ini::Ini;
 use std::path::PathBuf;
 use log::{debug, error};
 
-use msal::misc::request_tenant_id;
+use msal::misc::request_tenant_id_and_authority;
 
 pub fn split_username(username: &str) -> Option<(&str, &str)> {
     let tup: Vec<&str> = username.split('@').collect();
@@ -60,34 +60,58 @@ impl HimmelblauConfig {
         }
     }
 
-    pub async fn get_tenant_id(&self, domain: &str) -> Option<String> {
-        match self.config.get(domain, "tenant_id") {
-            Some(val) => Some(val),
+    fn get_odc_provider(&self, domain: &str) -> String {
+        match self.config.get(domain, "odc_provider") {
+            Some(val) => val,
             None => {
-                match self.config.get("global", "tenant_id") {
-                    Some(val) => Some(val),
-                    None => {
-                        /* It's ok to panic here if no tenant id is found,
-                         * since we need to terminate the connection at this
-                         * point. If we panic here, either the network is down,
-                         * or the specified domain is invalid. */
-                        Some(request_tenant_id(domain).await.unwrap())
-                    }
+                match self.config.get("global", "odc_provider") {
+                    Some(val) => val,
+                    None => String::from("odc.officeapps.live.com"),
                 }
             }
         }
     }
 
-    pub async fn get_authority_url(&self, domain: &str, authority: Option<&str>) -> Option<(String, String)> {
-        let tenant_id = match self.get_tenant_id(domain).await {
+    async fn get_tenant_id_and_authority(&self, domain: &str) -> (String, String) {
+        let odc_provider = self.get_odc_provider(domain);
+        let req = request_tenant_id_and_authority(&odc_provider, domain).await;
+        let tenant_id = match self.config.get(domain, "tenant_id") {
             Some(val) => val,
-            None => return None,
+            None => {
+                match self.config.get("global", "tenant_id") {
+                    Some(val) => val,
+                    None => {
+                        let tenant_id_req = req.as_ref();
+                        String::from(match tenant_id_req {
+                            Ok(val) => val,
+                            Err(e) => panic!("Failed fetching tenant_id: {}", e),
+                        }.1.clone())
+                    },
+                }
+            }
         };
-        let authority_url = match authority {
-            Some(val) => format!("{}/{}", val, tenant_id),
-            None => format!("https://login.microsoftonline.com/{}", tenant_id),
+        let authority_host = match self.config.get(domain, "authority_host") {
+            Some(val) => val,
+            None => {
+                match self.config.get("global", "authority_host") {
+                    Some(val) => val,
+                    None => {
+                        let authority_host_req = req.as_ref();
+                        String::from(match authority_host_req {
+                            Ok(val) => val,
+                            Err(e) => panic!("Failed fetching authority_host: {}", e),
+                        }.0.clone())
+                    }
+                }
+            }
         };
-        Some((tenant_id, authority_url))
+        (authority_host, tenant_id)
+    }
+
+    pub async fn get_authority_url(&self, domain: &str) -> (String, String) {
+        let (authority_host, tenant_id) = self.get_tenant_id_and_authority(domain).await;
+        let authority_url = format!("https://{}/{}", authority_host, tenant_id);
+        (tenant_id, authority_url)
     }
 
     pub fn get_app_id(&self, domain: &str) -> String {
