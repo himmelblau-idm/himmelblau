@@ -6,6 +6,7 @@
 * Offline logon.
 * Use tracing module for debug.
 * Fudge an initial NSS request (against un-cached users) via GET requests for tenant and emailAddress. Succesful responses indicate the user and tenant exist.
+* Determine group memberships via the graph API.
 
 ## Major Requirements
 
