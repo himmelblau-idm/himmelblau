@@ -119,7 +119,9 @@ impl HimmelblauMemcache {
                     let display_name = group.get("display_name")
                         .expect("Failed fetching group display_name");
                     group_entry.display_name = String::from(display_name);
-                    group_entry.members.push(member.to_string());
+                    if !group_entry.members.contains(&member.to_string()) {
+                        group_entry.members.push(member.to_string());
+                    }
                 } else {
                     error!("Failed fetching existing group from cache");
                 }
