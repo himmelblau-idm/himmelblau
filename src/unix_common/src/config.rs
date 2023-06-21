@@ -2,9 +2,9 @@ use configparser::ini::Ini;
 use std::path::PathBuf;
 use log::{debug, error};
 
-use msal::misc::request_tenant_id_and_authority;
+use msal::misc::request_federation_provider;
 use crate::constants::{DEFAULT_HOMEDIR, DEFAULT_SHELL, DEFAULT_ODC_PROVIDER,
-    DEFAULT_APP_ID, DEFAULT_IDMAP_RANGE, DEFAULT_AUTHORITY_HOST};
+    DEFAULT_APP_ID, DEFAULT_IDMAP_RANGE, DEFAULT_AUTHORITY_HOST, DEFAULT_GRAPH};
 
 pub fn split_username(username: &str) -> Option<(&str, &str)> {
     let tup: Vec<&str> = username.split('@').collect();
@@ -74,9 +74,9 @@ impl HimmelblauConfig {
         }
     }
 
-    async fn get_tenant_id_and_authority(&self, domain: &str) -> (String, String) {
+    async fn get_tenant_id_authority_and_graph(&self, domain: &str) -> (String, String, String) {
         let odc_provider = self.get_odc_provider(domain);
-        let req = request_tenant_id_and_authority(&odc_provider, domain).await;
+        let req = request_federation_provider(&odc_provider, domain).await;
         let tenant_id = match self.config.get(domain, "tenant_id") {
             Some(val) => val,
             None => {
@@ -107,13 +107,28 @@ impl HimmelblauConfig {
                 }
             }
         };
-        (authority_host, tenant_id)
+        let graph = match self.config.get(domain, "graph") {
+            Some(val) => val,
+            None => {
+                match self.config.get("global", "graph") {
+                    Some(val) => val,
+                    None => {
+                        let graph_req = req.as_ref();
+                        match graph_req {
+                            Ok(val) => val.2.clone(),
+                            Err(_e) => String::from(DEFAULT_GRAPH),
+                        }
+                    }
+                }
+            }
+        };
+        (authority_host, tenant_id, graph)
     }
 
-    pub async fn get_authority_url(&self, domain: &str) -> (String, String) {
-        let (authority_host, tenant_id) = self.get_tenant_id_and_authority(domain).await;
+    pub async fn get_authority_url(&self, domain: &str) -> (String, String, String) {
+        let (authority_host, tenant_id, graph) = self.get_tenant_id_authority_and_graph(domain).await;
         let authority_url = format!("https://{}/{}", authority_host, tenant_id);
-        (tenant_id, authority_url)
+        (tenant_id, authority_url, graph)
     }
 
     pub fn get_app_id(&self, domain: &str) -> String {

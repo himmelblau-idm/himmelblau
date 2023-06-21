@@ -26,5 +26,3 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 futures = "^0.3.28"
 systemd-journal-logger = "^1.0.0"
-rand = "^0.8"
-rand_chacha = "^0.3"
