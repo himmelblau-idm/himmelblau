@@ -11,6 +11,7 @@ pub const INVALID_CRED: u32 = 0xC3CE;
 pub const REQUIRES_MFA: u32 = 0xC39C;
 pub const INVALID_USER: u32 = 0xC372;
 pub const NO_CONSENT:   u32 = 0xFDE9;
+pub const NO_GROUP_CONSENT: u32 = 0xFDEA;
 pub const NO_SECRET:    u32 = 0x6AD09A;
 
 pub struct PublicClientApplication {

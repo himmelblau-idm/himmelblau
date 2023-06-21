@@ -25,7 +25,7 @@ use himmelblau_unix_common::constants::DEFAULT_SOCK_PATH;
 use himmelblau_unix_common::unix_proto::{ClientRequest, ClientResponse, NssUser, NssGroup};
 use himmelblau_unix_common::config::{HimmelblauConfig, split_username};
 use himmelblau_unix_common::memcache::{HimmelblauMemcache, UserCacheEntry};
-use msal::authentication::{PublicClientApplication, REQUIRES_MFA, NO_CONSENT, NO_SECRET};
+use msal::authentication::{PublicClientApplication, REQUIRES_MFA, NO_CONSENT, NO_SECRET, NO_GROUP_CONSENT};
 use msal::misc::{request_user_groups, DirectoryObject};
 use futures::{SinkExt, StreamExt};
 
@@ -140,7 +140,14 @@ async fn handle_client(
                 let app = PublicClientApplication::new(&app_id, authority_url.as_str());
                 let (mut token, mut err) = app.acquire_token_by_username_password(account_id.as_str(), cred.as_str(), vec!["GroupMember.Read.All"]);
                 // We may have been denied GroupMember.Read.All, try again without it
-                if err.contains(&NO_CONSENT) {
+                if err.contains(&NO_GROUP_CONSENT) || err.contains(&NO_CONSENT) {
+                    debug!("Failed auth with GroupMember.Read.All permissions.");
+                    debug!("Group memberships will be missing display names.");
+                    debug!("{}: {}",
+                           token.get("error")
+                           .expect("Failed fetching error code"),
+                           token.get("error_description")
+                           .expect("Failed fetching error description"));
                     (token, err) = app.acquire_token_by_username_password(account_id.as_str(), cred.as_str(), vec![]);
                 }
                 ClientResponse::PamStatus(
