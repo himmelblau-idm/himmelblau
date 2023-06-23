@@ -105,6 +105,32 @@ impl PublicClientApplication {
         })
     }
 
+    pub fn acquire_token_interactive(&self, scopes: Vec<&str>, prompt: &str, login_hint: &str, domain_hint: &str) -> (HashMap<String, String>, Vec<u32>) {
+        Python::with_gil(|py| {
+            let func: Py<PyAny> = self.app.getattr(py, "acquire_token_interactive")
+                .expect("Failed loading function acquire_token_interactive")
+                .into();
+            let py_scopes: &PyList = PyList::new(py, scopes);
+            let py_prompt: &PyString = PyString::new(py, prompt);
+            let py_login_hint: &PyString = PyString::new(py, login_hint);
+            let py_domain_hint: &PyString = PyString::new(py, domain_hint);
+            let largs: &PyList = PyList::new(py, vec![py_scopes]);
+            largs.append(py_prompt)
+                .expect("Failed appending prompt to the args list");
+            largs.append(py_login_hint)
+                .expect("Failed appending login_hint to the args list");
+            largs.append(py_domain_hint)
+                .expect("Failed appending domain_hint to the args list");
+            let args: &PyTuple = PyTuple::new(py, largs);
+            extract_pydict_as_hashmap(
+                func.call1(py, args)
+                .expect("Failed calling acquire_token_interactive")
+                .downcast(py)
+                .expect("Failed downcasting the PyAny to a PyDict")
+            )
+        })
+    }
+
     pub fn get_accounts(&self) -> Vec<HashMap<String, String>> {
         Python::with_gil(|py| {
             let func: Py<PyAny> = self.app.getattr(py, "get_accounts")
