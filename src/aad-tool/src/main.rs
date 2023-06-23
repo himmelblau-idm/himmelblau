@@ -15,6 +15,15 @@ use serde_json::{json, to_string_pretty};
 use reqwest::header;
 use serde::Deserialize;
 
+#[derive(Debug, Deserialize)]
+pub struct Device {
+    id: String,
+    #[serde(rename = "deviceId")]
+    device_id: String,
+    #[serde(rename = "displayName")]
+    display_name: String,
+}
+
 async fn enroll(config: HimmelblauConfig, domain: &str, admin: &str) -> Result<()> {
     let password = prompt_password("Password: ")?;
     let (_tenant_id, authority_url, graph) = config.get_authority_url(domain).await;
@@ -62,6 +71,8 @@ async fn enroll(config: HimmelblauConfig, domain: &str, admin: &str) -> Result<(
             .send()
             .await?;
         if resp.status().is_success() {
+            let mut res: Device = resp.json().await?;
+            info!("Device enrolled with object id {}", res.id);
             Ok(())
         } else {
             Err(anyhow!(resp.status()))
