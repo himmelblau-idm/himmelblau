@@ -1,6 +1,7 @@
 use configparser::ini::Ini;
 use std::path::PathBuf;
 use log::{debug, error};
+use std::io::Error;
 
 use msal::misc::request_federation_provider;
 use crate::constants::{DEFAULT_HOMEDIR, DEFAULT_SHELL, DEFAULT_ODC_PROVIDER,
@@ -177,5 +178,13 @@ impl HimmelblauConfig {
                 }
             },
         }
+    }
+
+    pub fn write(&self, config_file: &str) -> Result<(), Error> {
+        self.config.write(config_file)
+    }
+
+    pub fn set(&mut self, section: &str, key: &str, value: &str) {
+        self.config.set(section, key, Some(value.to_string()));
     }
 }

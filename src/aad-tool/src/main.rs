@@ -1,4 +1,4 @@
-use clap::{App, Arg, SubCommand, ArgAction};
+use clap::{arg, App, Arg, SubCommand, ArgAction};
 use tracing::{debug, error, info};
 use anyhow::{anyhow, Result};
 use std::process::ExitCode;
@@ -24,7 +24,7 @@ pub struct Device {
     display_name: String,
 }
 
-async fn enroll(config: HimmelblauConfig, domain: &str, admin: &str) -> Result<()> {
+async fn enroll(mut config: HimmelblauConfig, domain: &str, admin: &str) -> Result<()> {
     let password = prompt_password("Password: ")?;
     let (_tenant_id, authority_url, graph) = config.get_authority_url(domain).await;
     let app_id = config.get_app_id(domain);
@@ -77,6 +77,8 @@ async fn enroll(config: HimmelblauConfig, domain: &str, admin: &str) -> Result<(
         if resp.status().is_success() {
             let res: Device = resp.json().await?;
             info!("Device enrolled with object id {}", res.id);
+            config.set("global", "device_id", &res.id);
+            config.write(DEFAULT_CONFIG_PATH);
             Ok(())
         } else {
             Err(anyhow!(resp.status()))
@@ -110,6 +112,14 @@ async fn main() -> ExitCode {
                     Arg::with_name("administrator")
                         .help("The calling user must be in one of the following Azure AD roles: Global Administrator, Intune Administrator, or Windows 365 Administrator.")
                 )
+                .arg(
+                    Arg::new("app-id")
+                        .help("Sets the Application (client) ID")
+                        .short('a')
+                        .long("app-id")
+                        .multiple_values(false)
+                        .takes_value(true)
+                )
         ).get_matches();
 
     if args.get_flag("debug") {
@@ -118,7 +128,7 @@ async fn main() -> ExitCode {
     tracing_subscriber::fmt::init();
 
     // Read the configuration
-    let config = match HimmelblauConfig::new(DEFAULT_CONFIG_PATH) {
+    let mut config = match HimmelblauConfig::new(DEFAULT_CONFIG_PATH) {
         Ok(c) => c,
         Err(e) => {
             error!("{}", e);
@@ -132,6 +142,12 @@ async fn main() -> ExitCode {
                 .expect("Failed unwrapping the domain name");
             let admin: &str = enroll_args.value_of("administrator")
                 .expect("Failed unwrapping the administrator name");
+            match enroll_args.value_of("app-id") {
+                Some(app_id) => {
+                    config.set("global", "app_id", app_id);
+                },
+                None => {},
+            }
             match enroll(config, domain, admin).await {
                 Ok(()) => debug!("Success"),
                 Err(e) => {

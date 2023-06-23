@@ -8,6 +8,9 @@
 #
 # tenant_id = XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX
 # authority_host = login.microsoftonline.com
+#
+# The enrolled device id.
+# device_id = XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX
 
 ### Optional values
 # Default app_id is Intune Portal for Linux
