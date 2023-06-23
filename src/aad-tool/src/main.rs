@@ -4,8 +4,8 @@ use anyhow::{anyhow, Result};
 use std::process::ExitCode;
 use rpassword::prompt_password;
 use msal::authentication::{PublicClientApplication, REQUIRES_MFA};
-use himmelblau_unix_common::constants::DEFAULT_CONFIG_PATH;
-use himmelblau_unix_common::config::{HimmelblauConfig, split_username};
+use himmelblau_unix_common::constants::{DEFAULT_CONFIG_PATH, DEFAULT_APP_ID};
+use himmelblau_unix_common::config::HimmelblauConfig;
 use hostname;
 use os_release::OsRelease;
 use uuid::Uuid;
@@ -28,6 +28,10 @@ async fn enroll(config: HimmelblauConfig, domain: &str, admin: &str) -> Result<(
     let password = prompt_password("Password: ")?;
     let (_tenant_id, authority_url, graph) = config.get_authority_url(domain).await;
     let app_id = config.get_app_id(domain);
+    if app_id == DEFAULT_APP_ID {
+        error!("Please specify an app_id in himmelblau.conf.");
+        return Err(anyhow!("Enrollment directly in the Intune Portal for Linux is not possible."));
+    }
     let app = PublicClientApplication::new(&app_id, authority_url.as_str());
     let scopes = vec!["Directory.AccessAsUser.All"];
     let (mut token, mut err) = app.acquire_token_by_username_password(admin, &password, scopes.clone());
@@ -71,7 +75,7 @@ async fn enroll(config: HimmelblauConfig, domain: &str, admin: &str) -> Result<(
             .send()
             .await?;
         if resp.status().is_success() {
-            let mut res: Device = resp.json().await?;
+            let res: Device = resp.json().await?;
             info!("Device enrolled with object id {}", res.id);
             Ok(())
         } else {
