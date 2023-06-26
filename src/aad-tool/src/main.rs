@@ -25,7 +25,6 @@ pub struct Device {
 }
 
 async fn enroll(mut config: HimmelblauConfig, domain: &str, admin: &str) -> Result<()> {
-    let password = prompt_password("Password: ")?;
     let (_tenant_id, authority_url, graph) = config.get_authority_url(domain).await;
     let app_id = config.get_app_id(domain);
     if app_id == DEFAULT_APP_ID {
@@ -34,12 +33,8 @@ async fn enroll(mut config: HimmelblauConfig, domain: &str, admin: &str) -> Resu
     }
     let app = PublicClientApplication::new(&app_id, authority_url.as_str());
     let scopes = vec!["Directory.AccessAsUser.All"];
-    let (mut token, mut err) = app.acquire_token_by_username_password(admin, &password, scopes.clone());
-    if err.contains(&REQUIRES_MFA) {
-        info!("Azure AD application requires MFA");
-        info!("If you get error AADSTS500113 during authentication, you need to configure the Redirect URI of your \"Mobile and Desktop application\" as ``http://localhost`` for your Application in Azure.");
-        (token, err) = app.acquire_token_interactive(scopes, "login", admin, domain);
-    }
+    info!("If you get error AADSTS500113 during authentication, you need to configure the Redirect URI of your \"Mobile and Desktop application\" as ``http://localhost`` for your Application in Azure.");
+    let (token, err) = app.acquire_token_interactive(scopes, "login", admin, domain);
     if token.contains_key("access_token") {
         debug!("Authentication successful");
         let access_token: &str = match token.get("access_token") {
@@ -62,7 +57,7 @@ async fn enroll(mut config: HimmelblauConfig, domain: &str, admin: &str) -> Resu
             ],
             "deviceId": Uuid::new_v4(),
             "displayName": host,
-            "operatingSystem": "linux",
+            "operatingSystem": "Linux",
             "operatingSystemVersion": format!("{} {}", os_release.pretty_name, os_release.version_id),
         });
         debug!("POST {}: {}", url, to_string_pretty(&payload).unwrap());
