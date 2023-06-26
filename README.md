@@ -25,7 +25,7 @@ link the libraries to the correct locations
 > recover with single user mode.
 
     # You must use the full paths!
-    ln -s /root/himmelblau/target/debug/libpam_himmelblau.so /usr/lib64/security/libpam_himmelblau.so
+    ln -s /root/himmelblau/target/debug/libpam_himmelblau.so /usr/lib64/security/pam_himmelblau.so
     ln -s /root/himmelblau/target/debug/libnss_himmelblau.so /usr/lib64/libnss_himmelblau.so.2
 
 Configure your instance
@@ -71,14 +71,12 @@ Setup PAM
     auth        required      pam_env.so
     auth        [default=1 ignore=ignore success=ok] pam_localuser.so
     auth        sufficient    pam_unix.so nullok try_first_pass
-    auth        requisite     pam_succeed_if.so uid >= 1000 quiet_success
     auth        sufficient    pam_himmelblau.so ignore_unknown_user
     auth        required      pam_deny.so
 
     # vim /etc/pam.d/common-account
     account    [default=1 ignore=ignore success=ok] pam_localuser.so
     account    sufficient    pam_unix.so
-    account    [default=1 ignore=ignore success=ok]  pam_succeed_if.so uid >= 1000 quiet_success quiet_fail
     account    sufficient    pam_himmelblau.so ignore_unknown_user
     account    required      pam_deny.so
 
@@ -87,7 +85,6 @@ Setup PAM
     session required    pam_limits.so
     session optional    pam_unix.so try_first_pass
     session optional    pam_umask.so
-    session [default=1 ignore=ignore success=ok] pam_succeed_if.so uid >= 1000 quiet_success quiet_fail
     session optional    pam_himmelblau.so
     session optional    pam_env.so
 
