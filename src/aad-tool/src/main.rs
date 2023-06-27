@@ -29,6 +29,8 @@ async fn enroll(mut config: HimmelblauConfig, domain: &str, admin: &str) -> Resu
     let app_id = config.get_app_id(domain);
     if app_id == DEFAULT_APP_ID {
         error!("Please specify an app_id in himmelblau.conf.");
+        /* TODO: Figure out how to join via Intune Portal for Linux. Currently
+         * it throws Access Denied errors. */
         return Err(anyhow!("Enrollment directly in the Intune Portal for Linux is not possible."));
     }
     let app = PublicClientApplication::new(&app_id, authority_url.as_str());
@@ -52,6 +54,10 @@ async fn enroll(mut config: HimmelblauConfig, domain: &str, admin: &str) -> Resu
             [
                 {
                     "type": 2,
+                    /* TODO: This needs to be a real Alt-Security-Identity
+                     * associated with an X.509 cert which will allow us to
+                     * authenticate later. Otherwise this machine account is
+                     * useless. */
                     "key": "Y3YxN2E1MWFlYw=="
                 }
             ],
@@ -59,6 +65,10 @@ async fn enroll(mut config: HimmelblauConfig, domain: &str, admin: &str) -> Resu
             "displayName": host,
             "operatingSystem": "Linux",
             "operatingSystemVersion": format!("{} {}", os_release.pretty_name, os_release.version_id),
+            /* TODO: Figure out how to set the trustType (probably to
+             * "AzureAd"). This appears to be necessary for fetching policy
+             * later, but Access Denied errors are being thrown when this is
+             * set. */
         });
         debug!("POST {}: {}", url, to_string_pretty(&payload).unwrap());
         let client = reqwest::Client::new();
@@ -73,6 +83,9 @@ async fn enroll(mut config: HimmelblauConfig, domain: &str, admin: &str) -> Resu
             let res: Device = resp.json().await?;
             info!("Device enrolled with object id {}", res.id);
             config.set("global", "device_id", &res.id);
+            /* FIXME: We need to write the config as root, but the
+             * authentication can only happen with a graphical login (so no
+             * sudo). */
             config.write(DEFAULT_CONFIG_PATH);
             Ok(())
         } else {
