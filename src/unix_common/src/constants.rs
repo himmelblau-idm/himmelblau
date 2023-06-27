@@ -1,5 +1,6 @@
 pub const DEFAULT_CONFIG_PATH: &str = "/etc/himmelblau/himmelblau.conf";
 pub const DEFAULT_SOCK_PATH: &str = "/var/run/himmelblaud/socket";
+pub const DEFAULT_CACHE_PATH: &str = "/var/lib/himmelblau/private/cache.p";
 pub const DEFAULT_HOMEDIR: &str = "/home/%f";
 pub const DEFAULT_SHELL: &str = "/bin/bash";
 pub const DEFAULT_ODC_PROVIDER: &str = "odc.officeapps.live.com";
