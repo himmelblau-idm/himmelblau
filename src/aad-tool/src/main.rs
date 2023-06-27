@@ -1,9 +1,8 @@
-use clap::{arg, App, Arg, SubCommand, ArgAction};
+use clap::{App, Arg, SubCommand, ArgAction};
 use tracing::{debug, error, info};
 use anyhow::{anyhow, Result};
 use std::process::ExitCode;
-use rpassword::prompt_password;
-use msal::authentication::{PublicClientApplication, REQUIRES_MFA};
+use msal::authentication::PublicClientApplication;
 use himmelblau_unix_common::constants::{DEFAULT_CONFIG_PATH, DEFAULT_APP_ID};
 use himmelblau_unix_common::config::HimmelblauConfig;
 use hostname;
@@ -36,7 +35,7 @@ async fn enroll(mut config: HimmelblauConfig, domain: &str, admin: &str) -> Resu
     let app = PublicClientApplication::new(&app_id, authority_url.as_str());
     let scopes = vec!["Directory.AccessAsUser.All"];
     info!("If you get error AADSTS500113 during authentication, you need to configure the Redirect URI of your \"Mobile and Desktop application\" as ``http://localhost`` for your Application in Azure.");
-    let (token, err) = app.acquire_token_interactive(scopes, "login", admin, domain);
+    let (token, _err) = app.acquire_token_interactive(scopes, "login", admin, domain);
     if token.contains_key("access_token") {
         debug!("Authentication successful");
         let access_token: &str = match token.get("access_token") {
@@ -86,7 +85,10 @@ async fn enroll(mut config: HimmelblauConfig, domain: &str, admin: &str) -> Resu
             /* FIXME: We need to write the config as root, but the
              * authentication can only happen with a graphical login (so no
              * sudo). */
-            config.write(DEFAULT_CONFIG_PATH);
+            match config.write(DEFAULT_CONFIG_PATH) {
+                Ok(()) => debug!("Successfully wrote configuration."),
+                Err(e) => error!("Failed writing configuration: {}", e),
+            };
             Ok(())
         } else {
             Err(anyhow!(resp.status()))
