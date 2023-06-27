@@ -5,7 +5,7 @@ use pyo3::types::PyTuple;
 use pyo3::types::PyList;
 use pyo3::types::PyDict;
 use std::collections::HashMap;
-use log::debug;
+use tracing::debug;
 
 pub const INVALID_CRED: u32 = 0xC3CE;
 pub const REQUIRES_MFA: u32 = 0xC39C;

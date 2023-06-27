@@ -1,7 +1,7 @@
 use reqwest::{Url, header};
 use serde::Deserialize;
 use anyhow::{anyhow, Result};
-use log::debug;
+use tracing::debug;
 
 #[derive(Debug, Deserialize)]
 struct FederationProvider {

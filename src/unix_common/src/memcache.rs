@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use msal::misc::DirectoryObject;
 use std::sync::Arc;
 use crate::config::{HimmelblauConfig, split_username};
-use log::error;
+use tracing::error;
 
 use rand::Rng;
 use rand_chacha::ChaCha8Rng;
