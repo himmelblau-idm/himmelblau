@@ -2,7 +2,13 @@ use std::collections::HashMap;
 use msal::misc::DirectoryObject;
 use std::sync::Arc;
 use crate::config::{HimmelblauConfig, split_username};
-use tracing::error;
+use tracing::{info, error};
+use serde::{Serialize, Deserialize};
+use serde_pickle::{to_writer, from_reader, SerOptions, DeOptions};
+use std::fs::File;
+use std::fs::OpenOptions;
+use std::os::unix::fs::OpenOptionsExt;
+use crate::constants::DEFAULT_CACHE_PATH;
 
 use rand::Rng;
 use rand_chacha::ChaCha8Rng;
@@ -20,6 +26,7 @@ fn gen_unique_account_uid(config: &Arc<HimmelblauConfig>, domain: &str, oid: &st
     rng.gen_range(min..=max)
 }
 
+#[derive(Serialize, Deserialize)]
 pub struct UserCacheEntry {
     uid: u32,
     access_token: String,
@@ -54,6 +61,7 @@ impl UserCacheEntry {
     }
 }
 
+#[derive(Serialize, Deserialize)]
 pub struct GroupCacheEntry {
     gid: u32,
     id: String,
@@ -88,17 +96,50 @@ impl GroupCacheEntry {
     }
 }
 
-pub struct HimmelblauMemcache {
+#[derive(Serialize, Deserialize)]
+pub struct HimmelblauCache {
     user_cache: HashMap<String, UserCacheEntry>,
     group_cache: HashMap<String, GroupCacheEntry>,
 }
 
-impl HimmelblauMemcache {
-    pub fn new() -> HimmelblauMemcache {
-        HimmelblauMemcache {
-            user_cache: HashMap::new(),
-            group_cache: HashMap::new(),
+impl HimmelblauCache {
+    pub fn new() -> HimmelblauCache {
+        match File::open(DEFAULT_CACHE_PATH) {
+            Ok(file) => {
+                match from_reader(file, DeOptions::new()) {
+                    Ok(cache) => {
+                        info!("Cache was read from {}", DEFAULT_CACHE_PATH);
+                        cache
+                    },
+                    Err(e) => {
+                        error!("Failed parsing cache: {}", e);
+                        HimmelblauCache {
+                            user_cache: HashMap::new(),
+                            group_cache: HashMap::new(),
+                        }
+                    },
+                }
+            },
+            Err(_e) => {
+                HimmelblauCache {
+                    user_cache: HashMap::new(),
+                    group_cache: HashMap::new(),
+                }
+            },
         }
+    }
+
+    pub fn store(&mut self) {
+        /* Stash the cache to disk */
+        let mut file = OpenOptions::new()
+            .write(true)
+            .truncate(true)
+            .mode(0o600)
+            .create(true)
+            .open(DEFAULT_CACHE_PATH)
+            .expect("Failed to open the Himmelblau cache");
+        to_writer(&mut file, self, SerOptions::new())
+            .expect("Failed writing to cache");
     }
 
     pub fn insert_user(&mut self, config: &Arc<HimmelblauConfig>, account_id: &str, access_token: &str, oid: &str, display_name: &str) {

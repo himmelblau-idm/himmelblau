@@ -24,7 +24,7 @@ use himmelblau_unix_common::constants::DEFAULT_CONFIG_PATH;
 use himmelblau_unix_common::constants::DEFAULT_SOCK_PATH;
 use himmelblau_unix_common::unix_proto::{ClientRequest, ClientResponse, NssUser, NssGroup};
 use himmelblau_unix_common::config::{HimmelblauConfig, split_username};
-use himmelblau_unix_common::memcache::{HimmelblauMemcache, UserCacheEntry};
+use himmelblau_unix_common::cache::{HimmelblauCache, UserCacheEntry};
 use msal::authentication::{PublicClientApplication, REQUIRES_MFA, NO_CONSENT, NO_SECRET, NO_GROUP_CONSENT};
 use msal::misc::{request_user_groups, DirectoryObject};
 use futures::{SinkExt, StreamExt};
@@ -33,6 +33,9 @@ use std::path::{Path};
 use tokio::net::{UnixListener, UnixStream};
 use tokio::sync::Mutex;
 use tokio_util::codec::{Decoder, Encoder, Framed};
+
+use tokio::signal::unix::{signal, SignalKind};
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use tracing::{warn, error, debug, info};
 
@@ -117,7 +120,7 @@ fn nss_group_from_cache(account_id: &str, gid: u32, members: Vec<String>) -> Nss
 
 async fn handle_client(
     sock: UnixStream,
-    cmem_cache: Arc<Mutex<HimmelblauMemcache>>,
+    ccache: Arc<Mutex<HimmelblauCache>>,
 ) -> Result<(), Box<dyn Error>> {
     debug!("Accepted connection");
 
@@ -152,7 +155,7 @@ async fn handle_client(
                 ClientResponse::PamStatus(
                     if token.contains_key("access_token") {
                         info!("Authentication successful for user '{}'", account_id);
-                        let mut mem_cache = cmem_cache.lock().await;
+                        let mut cache = ccache.lock().await;
                         let name_def = "".to_string();
                         let name = match token.get("name") {
                             Some(name) => name,
@@ -162,7 +165,7 @@ async fn handle_client(
                             Some(oid) => {
                                 let access_token = token.get("access_token")
                                     .expect("Failed addressing access_token after confirmed presence");
-                                mem_cache.insert_user(&config, &account_id, access_token, oid, name);
+                                cache.insert_user(&config, &account_id, access_token, oid, name);
                                 let groups: Vec<DirectoryObject> = match request_user_groups(&graph, access_token).await
                                 {
                                     Ok(groups) => groups,
@@ -171,7 +174,7 @@ async fn handle_client(
                                         vec![]
                                     },
                                 };
-                                mem_cache.insert_user_groups(&config, domain, groups, &account_id);
+                                cache.insert_user_groups(&config, domain, groups, &account_id);
                             },
                             None => {
                                 warn!("Failed caching user {}", account_id);
@@ -212,8 +215,8 @@ async fn handle_client(
             }
             ClientRequest::NssAccounts => {
                 debug!("nssaccounts req");
-                let mem_cache = cmem_cache.lock().await;
-                let resp = ClientResponse::NssAccounts(mem_cache.user_iter()
+                let cache = ccache.lock().await;
+                let resp = ClientResponse::NssAccounts(cache.user_iter()
                     .map(|(_, user_entry)| {
                         let config = Arc::clone(&cconfig);
                         nss_account_from_cache(config, user_entry)
@@ -223,8 +226,8 @@ async fn handle_client(
             }
             ClientRequest::NssAccountByName(account_id) => {
                 debug!("nssaccountbyname req");
-                let mem_cache = cmem_cache.lock().await;
-                match mem_cache.get_user(&account_id) {
+                let cache = ccache.lock().await;
+                match cache.get_user(&account_id) {
                     Some(user_entry) => {
                         let config = Arc::clone(&cconfig);
                         ClientResponse::NssAccount(Some(nss_account_from_cache(config, user_entry)))
@@ -236,8 +239,8 @@ async fn handle_client(
                 }
             }
             ClientRequest::NssAccountByUid(uid) => {
-                let mem_cache = cmem_cache.lock().await;
-                let resp = match mem_cache.user_iter().find(|(_, user_entry)| user_entry.get_uid() == uid) {
+                let cache = ccache.lock().await;
+                let resp = match cache.user_iter().find(|(_, user_entry)| user_entry.get_uid() == uid) {
                     Some((_, user_entry)) => {
                         let config = Arc::clone(&cconfig);
                         ClientResponse::NssAccount(Some(nss_account_from_cache(config, user_entry)))
@@ -251,14 +254,14 @@ async fn handle_client(
             ClientRequest::NssGroups => {
                 debug!("nssgroups req");
                 // Generate a group for each user (with matching gid)
-                let mem_cache = cmem_cache.lock().await;
-                let mut resp: Vec<NssGroup> = mem_cache.user_iter()
+                let cache = ccache.lock().await;
+                let mut resp: Vec<NssGroup> = cache.user_iter()
                     .map(|(account_id, user_entry)| {
                         nss_group_from_cache(account_id, user_entry.get_uid(), vec![account_id.to_string()])
                     }).collect();
                 resp.extend(
                     // Extend the list from the cache of group memberships
-                    mem_cache.group_iter()
+                    cache.group_iter()
                         .map(|(_, group_entry)| {
                             let members: Vec<String> = group_entry.iter_members()
                                 .map(|member| member.to_owned()).collect();
@@ -272,14 +275,14 @@ async fn handle_client(
             ClientRequest::NssGroupByName(grp_id) => {
                 debug!("nssgroupbyname req");
                 // Generate a group that maches the user
-                let mem_cache = cmem_cache.lock().await;
-                match mem_cache.get_user(&grp_id) {
+                let cache = ccache.lock().await;
+                match cache.get_user(&grp_id) {
                     Some(user_entry) => {
                         ClientResponse::NssGroup(Some(nss_group_from_cache(&grp_id, user_entry.get_uid(), vec![grp_id.to_string()])))
                     },
                     None => {
                         // Also check the cache of group memberships
-                        match mem_cache.group_iter().find(|(_, group_entry)| *group_entry.get("display_name").unwrap() == grp_id) {
+                        match cache.group_iter().find(|(_, group_entry)| *group_entry.get("display_name").unwrap() == grp_id) {
                             Some((_, group_entry)) => {
                                 let members: Vec<String> = group_entry.iter_members()
                                     .map(|member| member.to_owned()).collect();
@@ -298,14 +301,14 @@ async fn handle_client(
             }
             ClientRequest::NssGroupByGid(gid) => {
                 // Generate a group that maches the user
-                let mem_cache = cmem_cache.lock().await;
-                let resp = match mem_cache.user_iter().find(|(_, user_entry)| user_entry.get_uid() == gid) {
+                let cache = ccache.lock().await;
+                let resp = match cache.user_iter().find(|(_, user_entry)| user_entry.get_uid() == gid) {
                     Some((grp_id, _user_entry)) => {
                         ClientResponse::NssGroup(Some(nss_group_from_cache(&grp_id, gid, vec![grp_id.to_string()])))
                     },
                     None => {
                         // Also check the cache of group memberships
-                        match mem_cache.group_iter().find(|(_, group_entry)| group_entry.get_gid() == gid) {
+                        match cache.group_iter().find(|(_, group_entry)| group_entry.get_gid() == gid) {
                             Some((_, group_entry)) => {
                                 let members: Vec<String> = group_entry.iter_members()
                                     .map(|member| member.to_owned()).collect();
@@ -351,6 +354,11 @@ async fn main() -> ExitCode {
     }
     tracing_subscriber::fmt::init();
 
+    let stop_now = Arc::new(AtomicBool::new(false));
+    let terminate_now = Arc::clone(&stop_now);
+    let quit_now = Arc::clone(&stop_now);
+    let interrupt_now = Arc::clone(&stop_now);
+
     async {
         // Read the configuration
         let config = match HimmelblauConfig::new(DEFAULT_CONFIG_PATH) {
@@ -371,7 +379,8 @@ async fn main() -> ExitCode {
         debug!("🧹 Cleaning up socket from previous invocations");
         rm_if_exist(&socket_path);
 
-        let mem_cache = Arc::new(Mutex::new(HimmelblauMemcache::new()));
+        let cache = Arc::new(Mutex::new(HimmelblauCache::new()));
+        let fcache = cache.clone();
 
         // Open the socket for all to read and write
         let listener = match UnixListener::bind(&socket_path) {
@@ -384,13 +393,13 @@ async fn main() -> ExitCode {
         set_permissions(&socket_path, Permissions::from_mode(0o777))
             .expect(format!("Failed to set permissions for {}", &socket_path).as_str());
 
-        let server = async move {
-            loop {
-                let cmem_cache = mem_cache.clone();
+        let server = tokio::spawn(async move {
+            while !stop_now.load(Ordering::Relaxed) {
+                let ccache = cache.clone();
                 match listener.accept().await {
                     Ok((socket, _addr)) => {
                         tokio::spawn(async move {
-                            if let Err(e) = handle_client(socket, cmem_cache).await
+                            if let Err(e) = handle_client(socket, ccache).await
                             {
                                 error!("handle_client error occurred; error = {:?}", e);
                             }
@@ -401,11 +410,51 @@ async fn main() -> ExitCode {
                     }
                 }
             }
-        };
+        });
+
+        let terminate_task = tokio::spawn(async move {
+            let mut stream = signal(SignalKind::terminate())
+                .expect("Failed registering terminate signal");
+            stream.recv().await;
+            terminate_now.store(true, Ordering::Relaxed);
+        });
+
+        let quit_task = tokio::spawn(async move {
+            let mut stream = signal(SignalKind::quit())
+                .expect("Failed registering quit signal");
+            stream.recv().await;
+            quit_now.store(true, Ordering::Relaxed);
+        });
+
+        let interrupt_task = tokio::spawn(async move {
+            let mut stream = signal(SignalKind::interrupt())
+                .expect("Failed registering interrupt signal");
+            stream.recv().await;
+            interrupt_now.store(true, Ordering::Relaxed);
+        });
 
         info!("Server started ...");
 
-        server.await;
+        tokio::select! {
+            _ = server => {
+                debug!("Main listener task is terminating");
+            },
+            _ = terminate_task => {
+                debug!("Received signal to terminate");
+            },
+            _ = quit_task => {
+                debug!("Received signal to quit");
+            },
+            _ = interrupt_task => {
+                debug!("Received signal to interrupt");
+            }
+        }
+
+        /* Store the cache to disk before exiting */
+        info!("Storing cache to disk ...");
+        let mut cache = fcache.lock().await;
+        cache.store();
+
         ExitCode::SUCCESS
     }
     .await

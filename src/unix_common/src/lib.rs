@@ -19,4 +19,4 @@ pub mod unix_proto;
 #[cfg(target_family = "unix")]
 pub mod config;
 #[cfg(target_family = "unix")]
-pub mod memcache;
+pub mod cache;

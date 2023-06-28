@@ -33,5 +33,5 @@ msal = { version = "^0.1.0", path = "src/msal" }
 clap = { version = "^3.2", features = ["derive", "env"] }
 reqwest = { version = "^0.11.18", features = ["json"] }
 anyhow = "^1.0.71"
-tokio = { version = "^1.28.1", features = ["rt", "macros", "sync", "time", "net", "io-util"] }
+tokio = { version = "^1.28.1", features = ["rt", "macros", "sync", "time", "net", "io-util", "signal"] }
 tokio-util = { version = "^0.7.8", features = ["codec"] }
