@@ -131,6 +131,34 @@ impl PublicClientApplication {
         })
     }
 
+    pub fn get_authorization_request_url(&self, scopes: Vec<&str>, login_hint: &str, prompt: &str, domain_hint: &str) -> String {
+        Python::with_gil(|py| {
+            let func: Py<PyAny> = self.app.getattr(py, "get_authorization_request_url")
+                .expect("Failed loading function get_authorization_request_url")
+                .into();
+            let py_scopes: &PyList = PyList::new(py, scopes);
+            let py_login_hint: &PyString = PyString::new(py, login_hint);
+            let py_redirect_uri: &PyString = PyString::new(py, "http://localhost");
+            let py_prompt: &PyString = PyString::new(py, prompt);
+            let py_domain_hint: &PyString = PyString::new(py, domain_hint);
+            let args = (py_scopes,);
+            let kwargs = PyDict::new(py);
+            kwargs.set_item("login_hint", py_login_hint)
+                .expect("Failed setting login_hint");
+            kwargs.set_item("redirect_uri", py_redirect_uri)
+                .expect("Failed setting redirect_uri");
+            kwargs.set_item("prompt", py_prompt)
+                .expect("Failed setting prompt");
+            kwargs.set_item("domain_hint", py_domain_hint)
+                .expect("Failed setting domain_hint");
+            func.call(py, args, Some(kwargs))
+                .expect("Failed calling acquire_token_interactive")
+                .downcast::<PyString>(py)
+                .expect("Failed downcasting the PyAny to a PyString")
+                .to_string()
+        })
+    }
+
     pub fn get_accounts(&self) -> Vec<HashMap<String, String>> {
         Python::with_gil(|py| {
             let func: Py<PyAny> = self.app.getattr(py, "get_accounts")
