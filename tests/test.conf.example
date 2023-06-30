@@ -1,0 +1,18 @@
+[global]
+# If you have an ODC provider (the default being odc.officeapps.live.com), specify
+# the hostname for sending a federationProvider request. If the federationProvider
+# request is successful, the tenant_id and authority_host options do not need to
+# be specified. These options match the global options from himmelblau.conf.
+#
+# odc_provider = odc.officeapps.live.com
+#
+# tenant_id = XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX
+# authority_host = login.microsoftonline.com
+#
+# Specify an admin user and password (these are required for testing).
+# admin_user = admin@test.onmicrosoft.com
+# admin_pass = password
+
+# Specify users to test against.
+# [users]
+# test@test.onmicrosoft.com = password
