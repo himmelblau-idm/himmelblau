@@ -1,6 +1,7 @@
 #!/usr/bin/python3
 import unittest
 import pamtest
+import nsstest
 import signal
 import argparse
 
@@ -14,6 +15,7 @@ if __name__ == "__main__":
     suite = unittest.TestSuite()
 
     suite.addTests(loader.loadTestsFromModule(pamtest))
+    suite.addTests(loader.loadTestsFromModule(nsstest))
 
     runner = unittest.TextTestRunner(verbosity=3, failfast=True)
     runner.run(suite)
