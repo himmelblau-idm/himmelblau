@@ -4,6 +4,7 @@ import os
 from configparser import ConfigParser
 from string import ascii_uppercase, digits
 from random import choices
+import pwd
 
 def split_username(username):
     return tuple(username.split('@'))
@@ -30,3 +31,12 @@ class TestPamHimmelblau(unittest.TestCase):
             p = pam.pam()
             p.authenticate('%s@%s' % (user, self.domain), user)
             self.assertNotEqual(p.code, 0, "Authenication succeeded for a fake user")
+
+        # Ensure the fake users weren't cached
+        for user in users:
+            try:
+                entry = pwd.getpwnam('%s@%s' % (user, self.domain))
+            except KeyError:
+                pass
+            else:
+                self.fail("himmelblaud responded to a nonsense pwent")
