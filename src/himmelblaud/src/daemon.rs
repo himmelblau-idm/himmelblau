@@ -182,6 +182,7 @@ async fn handle_client(
                         };
                         Some(true)
                     } else {
+                        info!("Authentication failed for user '{}'", account_id);
                         if err.contains(&REQUIRES_MFA) {
                             info!("Azure AD application requires MFA");
                             //TODO: Attempt an interactive auth via the browser
