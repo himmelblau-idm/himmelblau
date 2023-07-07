@@ -2,7 +2,7 @@ use crate::unix_config::HomeAttr;
 
 pub const DEFAULT_CONFIG_PATH: &str = "/etc/himmelblau/himmelblau.conf";
 pub const DEFAULT_SOCK_PATH: &str = "/var/run/himmelblaud/socket";
-pub const DEFAULT_DB_PATH: &str = "/var/cache/himmelblau/himmelblau.cache.db";
+pub const DEFAULT_DB_PATH: &str = "/var/cache/himmelblaud/himmelblau.cache.db";
 pub const DEFAULT_HOME_PREFIX: &str = "/home/";
 pub const DEFAULT_HOME_ATTR: HomeAttr = HomeAttr::Uuid;
 pub const DEFAULT_HOME_ALIAS: Option<HomeAttr> = Some(HomeAttr::Spn);

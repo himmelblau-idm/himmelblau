@@ -6,7 +6,13 @@ Description=Himmelblau Authentication Daemon
 After=chronyd.service ntpd.service network-online.target
 
 [Service]
-User=root
+DynamicUser=yes
+UMask=0027
+CacheDirectory=himmelblaud # /var/cache/himmelblaud
+RuntimeDirectory=himmelblaud # /run/himmelblaud
+StateDirectory=himmelblaud # /var/lib/himmelblaud
+
+Type=simple
 ExecStart=/usr/sbin/himmelblaud
 
 [Install]

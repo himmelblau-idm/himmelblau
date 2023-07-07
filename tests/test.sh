@@ -15,7 +15,7 @@ popd
 /root/tests/buildconfig.py
 
 # Start the daemon
-/usr/sbin/himmelblaud -d &
+/usr/sbin/himmelblaud -d --skip-root-check &
 
 # Run the tests
 /root/tests/runner.py $@

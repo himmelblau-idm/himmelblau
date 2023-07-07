@@ -38,6 +38,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::signal::unix::{signal, SignalKind};
 
 use tracing::{debug, error, info, warn};
+use users::{get_current_gid, get_current_uid, get_effective_gid, get_effective_uid};
 
 /// Pass this a file path and it'll look for the file and remove it if it's there.
 fn rm_if_exist(p: &str) {
@@ -268,9 +269,21 @@ async fn handle_client(
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> ExitCode {
+    let cuid = get_current_uid();
+    let ceuid = get_effective_uid();
+    let cgid = get_current_gid();
+    let cegid = get_effective_gid();
+
     let clap_args = Command::new("himmelblaud")
         .version(env!("CARGO_PKG_VERSION"))
         .about("Himmelblau Authentication Daemon")
+        .arg(
+            Arg::new("skip-root-check")
+                .help("Allow running as root. Don't use this in production as it is risky!")
+                .short('r')
+                .long("skip-root-check")
+                .action(ArgAction::SetTrue),
+        )
         .arg(
             Arg::new("debug")
                 .help("Show extra debug information")
@@ -291,6 +304,13 @@ async fn main() -> ExitCode {
     let interrupt_now = Arc::clone(&stop_now);
 
     async {
+        if clap_args.get_flag("skip-root-check") {
+            warn!("Skipping root user check.")
+        } else if cuid == 0 || ceuid == 0 || cgid == 0 || cegid == 0 {
+            error!("Refusing to run - this process must not operate as root.");
+            return ExitCode::FAILURE;
+        };
+
         // Read the configuration
         let config = match HimmelblauConfig::new(DEFAULT_CONFIG_PATH) {
             Ok(c) => c,
