@@ -81,6 +81,7 @@ Setup PAM
     account    required      pam_deny.so
 
     # vim /etc/pam.d/common-session
+    session required    pam_mkhomedir.so
     session optional    pam_systemd.so
     session required    pam_limits.so
     session optional    pam_unix.so try_first_pass
@@ -88,4 +89,4 @@ Setup PAM
     session optional    pam_himmelblau.so
     session optional    pam_env.so
 
-
+Be sure to include `pam_mkhomedir.so` in the pam session configuration, or your home directory will not be created.
