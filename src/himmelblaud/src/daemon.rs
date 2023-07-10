@@ -25,7 +25,7 @@ use himmelblau_unix_common::unix_proto::{ClientRequest, ClientResponse, NssUser,
 use himmelblau_unix_common::config::{HimmelblauConfig, split_username};
 use himmelblau_unix_common::cache::{HimmelblauCache, UserCacheEntry};
 use msal::authentication::{PublicClientApplication, REQUIRES_MFA, NO_CONSENT, NO_SECRET, NO_GROUP_CONSENT};
-use msal::misc::{request_user_groups, DirectoryObject};
+use msal::misc::{request_user_groups, DirectoryObject, enroll_device};
 use futures::{SinkExt, StreamExt};
 
 use std::path::{Path};
@@ -329,6 +329,25 @@ async fn handle_client(
                         }
                     }
                 }; resp
+            }
+            ClientRequest::EnrollDevice(graph, access_token) => {
+                debug!("EnrollDevice req");
+                match enroll_device(&graph, &access_token).await {
+                    Ok(device) => {
+                        let mut config = HimmelblauConfig::new(DEFAULT_CONFIG_PATH)
+                            .expect("Failed loading configuration");
+                        config.set("global", "device_id", &device.id);
+                        match config.write(DEFAULT_CONFIG_PATH) {
+                            Ok(()) => debug!("Successfully wrote configuration."),
+                            Err(e) => error!("Failed writing configuration: {}", e),
+                        };
+                        ClientResponse::Ok
+                    },
+                    Err(e) => {
+                        error!("{}", e);
+                        ClientResponse::Error
+                    }
+                }
             }
         };
         reqs.send(resp).await?;
