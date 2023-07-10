@@ -5,7 +5,8 @@ use std::io::Error;
 
 use msal::misc::request_federation_provider;
 use crate::constants::{DEFAULT_HOMEDIR, DEFAULT_SHELL, DEFAULT_ODC_PROVIDER,
-    DEFAULT_APP_ID, DEFAULT_IDMAP_RANGE, DEFAULT_AUTHORITY_HOST, DEFAULT_GRAPH};
+    DEFAULT_APP_ID, DEFAULT_IDMAP_RANGE, DEFAULT_AUTHORITY_HOST, DEFAULT_GRAPH,
+    DEFAULT_SOCK_PATH};
 
 pub fn split_username(username: &str) -> Option<(&str, &str)> {
     let tup: Vec<&str> = username.split('@').collect();
@@ -177,6 +178,13 @@ impl HimmelblauConfig {
                     },
                 }
             },
+        }
+    }
+
+    pub fn get_socket_path(&self) -> String {
+        match self.config.get("global", "socket_path") {
+            Some(val) => val,
+            None => DEFAULT_SOCK_PATH.to_string(),
         }
     }
 
