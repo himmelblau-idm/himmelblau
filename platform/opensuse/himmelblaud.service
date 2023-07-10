@@ -1,0 +1,13 @@
+# You should not need to edit this file. Instead, use a drop-in file:
+#   systemctl edit himmelblaud.service
+
+[Unit]
+Description=Himmelblau Authentication Daemon
+After=chronyd.service ntpd.service network-online.target
+
+[Service]
+User=root
+ExecStart=/usr/sbin/himmelblaud
+
+[Install]
+WantedBy=multi-user.target
