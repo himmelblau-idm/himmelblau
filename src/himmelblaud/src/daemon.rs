@@ -20,8 +20,7 @@ use std::os::unix::fs::PermissionsExt;
 use bytes::{BufMut, BytesMut};
 use clap::{Arg, ArgAction, Command};
 
-use himmelblau_unix_common::constants::DEFAULT_CONFIG_PATH;
-use himmelblau_unix_common::constants::DEFAULT_SOCK_PATH;
+use himmelblau_unix_common::constants::{DEFAULT_CONFIG_PATH, DEFAULT_SOCK_PATH, DEFAULT_APP_ID};
 use himmelblau_unix_common::unix_proto::{ClientRequest, ClientResponse, NssUser, NssGroup};
 use himmelblau_unix_common::config::{HimmelblauConfig, split_username};
 use himmelblau_unix_common::cache::{HimmelblauCache, UserCacheEntry};
@@ -140,7 +139,13 @@ async fn handle_client(
                 let (_tenant_id, authority_url, graph) = config.get_authority_url(domain).await;
                 let app_id = config.get_app_id(domain);
                 let app = PublicClientApplication::new(&app_id, authority_url.as_str());
-                let (mut token, mut err) = app.acquire_token_by_username_password(account_id.as_str(), cred.as_str(), vec!["GroupMember.Read.All"]);
+                /* Authenticating with GroupMember.Read.All always fails when using
+                 * Intune portal, so skip this scope if we are */
+                let mut scopes = vec![];
+                if app_id != DEFAULT_APP_ID {
+                    scopes.push("GroupMember.Read.All");
+                }
+                let (mut token, mut err) = app.acquire_token_by_username_password(account_id.as_str(), cred.as_str(), scopes);
                 // We may have been denied GroupMember.Read.All, try again without it
                 if err.contains(&NO_GROUP_CONSENT) || err.contains(&NO_CONSENT) {
                     debug!("Failed auth with GroupMember.Read.All permissions.");
