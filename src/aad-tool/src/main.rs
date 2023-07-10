@@ -1,31 +1,18 @@
 use clap::{App, Arg, SubCommand, ArgAction};
-use tracing::{debug, error, info};
+use tracing::{warn, debug, error, info};
 use anyhow::{anyhow, Result};
 use std::process::ExitCode;
 use msal::authentication::PublicClientApplication;
 use himmelblau_unix_common::constants::{DEFAULT_CONFIG_PATH, DEFAULT_APP_ID};
 use himmelblau_unix_common::config::HimmelblauConfig;
-use hostname;
-use os_release::OsRelease;
-use uuid::Uuid;
 use std::io;
 use std::io::Write;
-
+use himmelblau_unix_common::client_sync::call_daemon_blocking;
+use himmelblau_unix_common::unix_proto::{ClientRequest, ClientResponse};
+use users::{get_current_gid, get_current_uid, get_effective_gid, get_effective_uid};
 use tokio;
-use serde_json::{json, to_string_pretty};
-use reqwest::header;
-use serde::Deserialize;
 
-#[derive(Debug, Deserialize)]
-pub struct Device {
-    id: String,
-    #[serde(rename = "deviceId")]
-    device_id: String,
-    #[serde(rename = "displayName")]
-    display_name: String,
-}
-
-async fn enroll(mut config: HimmelblauConfig, domain: &str, admin: &str) -> Result<()> {
+async fn enroll(config: HimmelblauConfig, domain: &str, admin: &str) -> Result<()> {
     let (_tenant_id, authority_url, graph) = config.get_authority_url(domain).await;
     let app_id = config.get_app_id(domain);
     if app_id == DEFAULT_APP_ID {
@@ -46,54 +33,20 @@ async fn enroll(mut config: HimmelblauConfig, domain: &str, admin: &str) -> Resu
                 return Err(anyhow!("Failed fetching access_token"));
             }
         };
-        let url = &format!("{}/v1.0/devices", graph);
-        let host: String = String::from(hostname::get()?.to_str().unwrap());
-        let os_release = OsRelease::new()?;
-        let payload = json!({
-            "accountEnabled": true,
-            "alternativeSecurityIds":
-            [
-                {
-                    "type": 2,
-                    /* TODO: This needs to be a real Alt-Security-Identity
-                     * associated with an X.509 cert which will allow us to
-                     * authenticate later. Otherwise this machine account is
-                     * useless. */
-                    "key": "Y3YxN2E1MWFlYw=="
-                }
-            ],
-            "deviceId": Uuid::new_v4(),
-            "displayName": host,
-            "operatingSystem": "Linux",
-            "operatingSystemVersion": format!("{} {}", os_release.pretty_name, os_release.version_id),
-            /* TODO: Figure out how to set the trustType (probably to
-             * "AzureAd"). This appears to be necessary for fetching policy
-             * later, but Access Denied errors are being thrown when this is
-             * set. */
-        });
-        debug!("POST {}: {}", url, to_string_pretty(&payload).unwrap());
-        let client = reqwest::Client::new();
-        let resp = client
-            .post(url)
-            .header(header::AUTHORIZATION, format!("Bearer {}", access_token))
-            .header(header::CONTENT_TYPE, "application/json")
-            .json(&payload)
-            .send()
-            .await?;
-        if resp.status().is_success() {
-            let res: Device = resp.json().await?;
-            info!("Device enrolled with object id {}", res.id);
-            config.set("global", "device_id", &res.id);
-            /* FIXME: We need to write the config as root, but the
-             * authentication can only happen with a graphical login (so no
-             * sudo). */
-            match config.write(DEFAULT_CONFIG_PATH) {
-                Ok(()) => debug!("Successfully wrote configuration."),
-                Err(e) => error!("Failed writing configuration: {}", e),
-            };
-            Ok(())
-        } else {
-            Err(anyhow!(resp.status()))
+        let req = ClientRequest::EnrollDevice(graph.to_string(), access_token.to_string());
+        let socket_path = config.get_socket_path();
+        match call_daemon_blocking(&socket_path, &req, 10) {
+            Ok(r) => match r {
+                ClientResponse::Ok => {
+                    Ok(())
+                },
+                _ => {
+                    Err(anyhow!("Failed enrolling the machine. Invalid response!"))
+                },
+            },
+            Err(e) => {
+                Err(anyhow!("Failed enrolling the machine: {}", e))
+            }
         }
     } else {
         Err(anyhow!("{}: {}",
@@ -104,12 +57,24 @@ async fn enroll(mut config: HimmelblauConfig, domain: &str, admin: &str) -> Resu
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> ExitCode {
+    let cuid = get_current_uid();
+    let ceuid = get_effective_uid();
+    let cgid = get_current_gid();
+    let cegid = get_effective_gid();
+
     let args = App::new("aad-tool")
         .arg(
             Arg::new("debug")
                 .help("Show extra debug information")
                 .short('d')
                 .long("debug")
+                .action(ArgAction::SetTrue),
+        )
+        .arg(
+            Arg::new("skip-root-check")
+                .help("Allow running as root. This should not be necessary!")
+                .short('r')
+                .long("skip-root-check")
                 .action(ArgAction::SetTrue),
         )
         .subcommand(
@@ -142,6 +107,13 @@ async fn main() -> ExitCode {
         std::env::set_var("RUST_LOG", "debug");
     }
     tracing_subscriber::fmt::init();
+
+    if args.get_flag("skip-root-check") {
+        warn!("Skipping root user check.")
+    } else if cuid == 0 || ceuid == 0 || cgid == 0 || cegid == 0 {
+        error!("Refusing to run - this process need not run as root.");
+        return ExitCode::FAILURE
+    };
 
     // Read the configuration
     let mut config = match HimmelblauConfig::new(DEFAULT_CONFIG_PATH) {
