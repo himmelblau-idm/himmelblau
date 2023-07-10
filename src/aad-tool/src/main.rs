@@ -8,6 +8,8 @@ use himmelblau_unix_common::config::HimmelblauConfig;
 use hostname;
 use os_release::OsRelease;
 use uuid::Uuid;
+use std::io;
+use std::io::Write;
 
 use tokio;
 use serde_json::{json, to_string_pretty};
@@ -117,10 +119,14 @@ async fn main() -> ExitCode {
                     Arg::with_name("domain")
                         .value_name("DOMAIN")
                         .help("Sets the Azure AD domain to enroll in")
+                        .required(true)
                 )
                 .arg(
-                    Arg::with_name("administrator")
+                    Arg::with_name("username")
                         .help("The calling user must be in one of the following Azure AD roles: Global Administrator, Intune Administrator, or Windows 365 Administrator.")
+                        .short('U')
+                        .long("username")
+                        .takes_value(true)
                 )
                 .arg(
                     Arg::new("app-id")
@@ -150,15 +156,25 @@ async fn main() -> ExitCode {
         Some(("enroll", enroll_args)) => {
             let domain: &str = enroll_args.value_of("domain")
                 .expect("Failed unwrapping the domain name");
-            let admin: &str = enroll_args.value_of("administrator")
-                .expect("Failed unwrapping the administrator name");
+            let admin: String = match enroll_args.value_of("username") {
+                Some(username) => username.to_owned(),
+                None => {
+                    print!("Username: ");
+                    io::stdout().flush()
+                        .expect("Failed flushing prompt");
+                    let mut buf = String::new();
+                    io::stdin().read_line(&mut buf)
+                        .expect("Failed reading username");
+                    buf.to_owned()
+                },
+            };
             match enroll_args.value_of("app-id") {
                 Some(app_id) => {
                     config.set("global", "app_id", app_id);
                 },
                 None => {},
             }
-            match enroll(config, domain, admin).await {
+            match enroll(config, domain, &admin).await {
                 Ok(()) => debug!("Success"),
                 Err(e) => {
                     error!("{}", e);
