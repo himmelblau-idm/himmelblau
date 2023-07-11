@@ -26,6 +26,7 @@ use himmelblau_unix_common::config::{HimmelblauConfig, split_username};
 use himmelblau_unix_common::cache::{HimmelblauCache, UserCacheEntry};
 use msal::authentication::{PublicClientApplication, REQUIRES_MFA, NO_CONSENT, NO_SECRET, NO_GROUP_CONSENT};
 use msal::misc::{request_user_groups, DirectoryObject, enroll_device};
+use himmelblau_policies::policies::apply_group_policy;
 use futures::{SinkExt, StreamExt};
 
 use std::path::{Path};
@@ -34,6 +35,7 @@ use tokio::sync::Mutex;
 use tokio_util::codec::{Decoder, Encoder, Framed};
 
 use tokio::signal::unix::{signal, SignalKind};
+use tokio::task::JoinHandle;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use tracing::{warn, error, debug, info};
@@ -129,6 +131,8 @@ async fn handle_client(
     let cconfig = Arc::new(HimmelblauConfig::new(DEFAULT_CONFIG_PATH)
         .expect("Failed loading configuration"));
 
+    let mut gpupdate: Option<JoinHandle<()>> = None;
+
     while let Some(Ok(req)) = reqs.next().await {
         let resp = match req {
             ClientRequest::PamAuthenticate(account_id, cred) => {
@@ -180,6 +184,22 @@ async fn handle_client(
                                     },
                                 };
                                 cache.insert_user_groups(&config, domain, groups, &account_id);
+                                let caccess_token = access_token.clone();
+                                let coid = oid.clone();
+                                gpupdate = Some(tokio::spawn(async move {
+                                    match apply_group_policy(&graph, &caccess_token, &coid).await {
+                                        Ok(res) => {
+                                            if res {
+                                                info!("Successfully applied group policies");
+                                            } else {
+                                                error!("Failed to apply group policies");
+                                            }
+                                        },
+                                        Err(res) => {
+                                            error!("Failed to apply group policies: {}", res);
+                                        },
+                                    }
+                                }));
                             },
                             None => {
                                 warn!("Failed caching user {}", account_id);
@@ -353,6 +373,20 @@ async fn handle_client(
         reqs.send(resp).await?;
         reqs.flush().await?;
         debug!("flushed response!");
+    }
+
+    // Wait for group policy to finish processing
+    match gpupdate {
+        Some(gpupdate) => {
+            tokio::select! {
+                _ = gpupdate => {
+                    debug!("Group policy processing has completed");
+                },
+            }
+        },
+        None => {
+            debug!("No group policy processing was spawned");
+        }
     }
 
     // Disconnect them
