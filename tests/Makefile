@@ -1,5 +1,5 @@
 all: clean
-	tar --exclude-vcs --exclude="target" -zcvf himmelblau.tar.gz ../
+	tar --exclude-vcs --exclude="target" --exclude="himmelblau.tar.gz" -zcvf himmelblau.tar.gz ../
 	podman build -t himmelblau:testing .
 
 test:
