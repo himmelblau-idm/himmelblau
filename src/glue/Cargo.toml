@@ -1,0 +1,20 @@
+# This package is glue code for allowing us to build the kanidm pam module
+# as though it were part of himmelblau.
+
+[package]
+name = "kanidm_unix_common"
+
+version.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+edition.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[lib]
+name = "kanidm_unix_common"
+path = "src/lib.rs"
+
+[dependencies]
+himmelblau_unix_common = { workspace = true }

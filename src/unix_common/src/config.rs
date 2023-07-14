@@ -6,7 +6,7 @@ use std::io::Error;
 use msal::misc::request_federation_provider;
 use crate::constants::{DEFAULT_HOMEDIR, DEFAULT_SHELL, DEFAULT_ODC_PROVIDER,
     DEFAULT_APP_ID, DEFAULT_IDMAP_RANGE, DEFAULT_AUTHORITY_HOST, DEFAULT_GRAPH,
-    DEFAULT_SOCK_PATH};
+    DEFAULT_SOCK_PATH, DEFAULT_CONN_TIMEOUT};
 
 pub fn split_username(username: &str) -> Option<(&str, &str)> {
     let tup: Vec<&str> = username.split('@').collect();
@@ -185,6 +185,21 @@ impl HimmelblauConfig {
         match self.config.get("global", "socket_path") {
             Some(val) => val,
             None => DEFAULT_SOCK_PATH.to_string(),
+        }
+    }
+
+    pub fn get_connection_timeout(&self) -> u64 {
+        match self.config.get("global", "connection_timeout") {
+            Some(val) => {
+                match val.parse::<u64>() {
+                    Ok(n) => n,
+                    Err(_) => {
+                        error!("Failed parsing connection_timeout from config: {}", val);
+                        DEFAULT_CONN_TIMEOUT
+                    },
+                }
+            },
+            None => DEFAULT_CONN_TIMEOUT,
         }
     }
 

@@ -23,6 +23,7 @@
 #                    ; %d - domain
 # shell = /bin/bash ; default shell for the user
 # idmap_range = 5000000-5999999
+# connection_timeout = 2
 
 # Values overridden for a specific domain
 # [domain.com]

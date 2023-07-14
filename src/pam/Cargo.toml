@@ -17,7 +17,7 @@ path =  "src/lib.rs"
 
 [dependencies]
 libc = { workspace = true }
-himmelblau_unix_common = { workspace = true }
+kanidm_unix_common = { workspace = true }
 
 [build-dependencies]
 pkg-config.workspace = true
