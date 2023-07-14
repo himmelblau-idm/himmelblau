@@ -1,5 +1,5 @@
-# This package is glue code for allowing us to build the kanidm pam module
-# as though it were part of himmelblau.
+# This package is glue code for allowing us to build the kanidm pam and nss
+# modules as though they were part of himmelblau.
 
 [package]
 name = "kanidm_unix_common"
