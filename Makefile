@@ -1,4 +1,5 @@
 all:
+	git submodule init; git submodule update
 	cargo build
 
 build-tests:
