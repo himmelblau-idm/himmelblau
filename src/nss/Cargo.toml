@@ -12,10 +12,10 @@ repository = { workspace = true }
 [lib]
 name = "nss_himmelblau"
 crate-type = [ "cdylib" ]
-path =  "../kanidm/unix_integration/nss_kanidm/src/lib.rs"
+path =  "src/lib.rs"
 
 [dependencies]
-kanidm_unix_common = { workspace = true }
+himmelblau_unix_common = { workspace = true }
 libnss = "^0.4.0"
 libc = { workspace = true }
 paste = { workspace = true }
