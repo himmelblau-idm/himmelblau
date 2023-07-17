@@ -2,3 +2,4 @@
 	path = src/kanidm
 	url = https://github.com/kanidm/kanidm.git
 	branch = master
+	shallow = true
