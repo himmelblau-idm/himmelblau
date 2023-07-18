@@ -19,6 +19,9 @@ popd
 
 # Run the tests
 /root/tests/runner.py $@
+RET=`echo $?`
 
 # Kill the daemon
 pkill himmelblaud
+
+exit $RET
