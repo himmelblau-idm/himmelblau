@@ -41,7 +41,6 @@ class TestNssHimmelblau(unittest.TestCase):
             else:
                 self.fail("himmelblaud responded to a nonsense pwent")
 
-    @unittest.skip("Bug in nss causing a crash in nss_himmelblau for getent group")
     def test_getent_group(self):
         # himmelblau generates a group for each user. Ensure these can be found via nss.
         for group, _ in self.users:
@@ -51,7 +50,6 @@ class TestNssHimmelblau(unittest.TestCase):
                 self.fail("getgrnam failed for group %s" % group)
             self.assertEqual(group, entry.gr_name, "getgrnam failed for group %s" % group)
 
-    @unittest.skip("Bug in nss causing a crash in nss_himmelblau for getent group")
     def test_getent_groups(self):
         entries = grp.getgrall()
         gr_names = [g.gr_name for g in entries]
