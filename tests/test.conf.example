@@ -7,6 +7,7 @@
 # odc_provider = odc.officeapps.live.com
 #
 # tenant_id = XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX
+# app_id = b743a22d-6705-4147-8670-d92fa515ee2b
 # authority_host = login.microsoftonline.com
 #
 # Specify an admin user and password (these are required for testing).
