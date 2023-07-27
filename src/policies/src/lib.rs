@@ -12,3 +12,13 @@
 
 #[cfg(target_family = "unix")]
 pub mod policies;
+
+#[cfg(target_family = "unix")]
+pub mod cse;
+
+/* The following are Client Side Extensions for applying policy to the host.
+ * Make sure these are added to policies::apply_group_policy().
+ */
+
+#[cfg(target_family = "unix")]
+pub mod chromium_ext;
