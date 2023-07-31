@@ -1,8 +1,8 @@
 #!/bin/bash
 
 # Build himmelblau
-mkdir /root/tests/build
-pushd /root/tests/build
+mkdir /root/build
+pushd /root/build
 tar -xf /root/tests/himmelblau.tar.gz && cargo build
 install -m 0755 ./target/debug/libnss_himmelblau.so /usr/lib64/libnss_himmelblau.so.2
 ln -s /usr/lib64/libnss_himmelblau.so.2 /usr/lib64/libnss_himmelblau.so
