@@ -1,8 +1,8 @@
-all: clean
-	tar --exclude-vcs --exclude="target" --exclude="himmelblau.tar.gz" -zcvf himmelblau.tar.gz ../
-	podman build -t himmelblau:testing .
+all:
+	if ! podman images | grep himmelblau | grep -q testing; then podman build -t himmelblau:testing .; fi
 
 test:
+	tar --exclude-vcs --exclude="target" --exclude="himmelblau.tar.gz" -zcvf himmelblau.tar.gz ../
 	podman run --volume=./:/root/tests --rm himmelblau:testing
 
 exec: clean-exec
