@@ -11,6 +11,13 @@
 #![deny(clippy::trivially_copy_pass_by_ref)]
 
 #[cfg(target_family = "unix")]
+#[macro_use]
+extern crate tracing;
+#[cfg(target_family = "unix")]
+#[macro_use]
+extern crate rusqlite;
+
+#[cfg(target_family = "unix")]
 pub mod client_sync;
 #[cfg(target_family = "unix")]
 pub mod constants;
@@ -19,4 +26,12 @@ pub mod unix_proto;
 #[cfg(target_family = "unix")]
 pub mod config;
 #[cfg(target_family = "unix")]
-pub mod cache;
+pub mod unix_config;
+
+// Kanidm modules
+#[cfg(target_family = "unix")]
+pub mod db;
+#[cfg(target_family = "unix")]
+pub mod idprovider;
+#[cfg(target_family = "unix")]
+pub mod resolver;

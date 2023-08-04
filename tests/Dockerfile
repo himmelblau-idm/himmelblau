@@ -2,7 +2,7 @@ FROM opensuse/tumbleweed
 MAINTAINER David Mulder <dmulder@suse.com>
 
 RUN mkdir /etc/himmelblau && touch /etc/himmelblau/himmelblau.conf
-RUN mkdir -p /var/run/himmelblaud; mkdir -p /var/lib/himmelblau/private
+RUN mkdir -p /var/run/himmelblaud; mkdir -p /var/cache/himmelblau
 
 # Install dependencies
 RUN zypper ar --no-gpgcheck https://mirrorcache-us.opensuse.org/repositories/network:/samba:/TESTING/openSUSE_Tumbleweed/network%3Asamba%3ATESTING.repo
@@ -19,6 +19,7 @@ RUN zypper --non-interactive install \
 	python3-devel \
 	python3-python-pam \
 	libpamtest-devel \
+	sqlite3-devel \
 	python3-msal && \
 	zypper clean;
 

@@ -20,22 +20,21 @@ use std::os::unix::fs::PermissionsExt;
 use bytes::{BufMut, BytesMut};
 use clap::{Arg, ArgAction, Command};
 
-use himmelblau_unix_common::constants::{DEFAULT_CONFIG_PATH, DEFAULT_SOCK_PATH, DEFAULT_APP_ID};
-use himmelblau_unix_common::unix_proto::{ClientRequest, ClientResponse, NssUser, NssGroup};
-use himmelblau_unix_common::config::{HimmelblauConfig, split_username};
-use himmelblau_unix_common::cache::{HimmelblauCache, UserCacheEntry};
-use msal::authentication::{PublicClientApplication, REQUIRES_MFA, NO_CONSENT, NO_SECRET, NO_GROUP_CONSENT};
-use msal::misc::{request_user_groups, DirectoryObject, enroll_device};
-use himmelblau_policies::policies::apply_group_policy;
+use himmelblau_unix_common::constants::{DEFAULT_CONFIG_PATH, DEFAULT_SOCK_PATH};
+use himmelblau_unix_common::unix_proto::{ClientRequest, ClientResponse};
+use himmelblau_unix_common::config::HimmelblauConfig;
+use himmelblau_unix_common::unix_config::UidAttr;
+use msal::misc::enroll_device;
 use futures::{SinkExt, StreamExt};
+use himmelblau_unix_common::resolver::Resolver;
+use himmelblau_unix_common::db::Db;
+use himmelblau_unix_common::idprovider::himmelblau::HimmelblauMultiProvider;
 
 use std::path::{Path};
 use tokio::net::{UnixListener, UnixStream};
-use tokio::sync::Mutex;
 use tokio_util::codec::{Decoder, Encoder, Framed};
 
 use tokio::signal::unix::{signal, SignalKind};
-use tokio::task::JoinHandle;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use tracing::{warn, error, debug, info};
@@ -93,262 +92,102 @@ impl ClientCodec {
     }
 }
 
-fn nss_account_from_cache(config: Arc<HimmelblauConfig>, user_entry: &UserCacheEntry) -> NssUser {
-    let account_id: &str = user_entry.get("user_principal_name")
-        .expect("Failed fetching user_principal_name");
-    let (sam, domain) = split_username(account_id)
-        .expect("Failed splitting the username");
-    let uid: u32 = user_entry.get_uid();
-    let name: String = user_entry.get("display_name")
-        .expect("Failed fetching gecos").to_string();
-    NssUser {
-        homedir: config.get_homedir(account_id, uid, sam, domain),
-        name: account_id.to_string(),
-        uid: uid,
-        gid: uid,
-        gecos: name.to_string(),
-        shell: config.get_shell(domain),
-    }
-}
-
-fn nss_group_from_cache(account_id: &str, gid: u32, members: Vec<String>) -> NssGroup {
-    NssGroup {
-        name: account_id.to_string(),
-        gid,
-        members: members,
-    }
-}
-
 async fn handle_client(
     sock: UnixStream,
-    ccache: Arc<Mutex<HimmelblauCache>>,
+    cachelayer: Arc<Resolver<HimmelblauMultiProvider>>,
 ) -> Result<(), Box<dyn Error>> {
     debug!("Accepted connection");
 
     let mut reqs = Framed::new(sock, ClientCodec::new());
 
-    // Read the configuration
-    let cconfig = Arc::new(HimmelblauConfig::new(DEFAULT_CONFIG_PATH)
-        .expect("Failed loading configuration"));
-
-    let mut gpupdate: Option<JoinHandle<()>> = None;
-
     while let Some(Ok(req)) = reqs.next().await {
         let resp = match req {
             ClientRequest::PamAuthenticate(account_id, cred) => {
                 debug!("pam authenticate");
-                let (_sam, domain) = split_username(&account_id)
-                    .expect("Failed splitting the username");
-                let config = Arc::clone(&cconfig);
-                let (_tenant_id, authority_url, graph) = config.get_authority_url(domain).await;
-                let app_id = config.get_app_id(domain);
-                let app = PublicClientApplication::new(&app_id, authority_url.as_str());
-                /* Authenticating with GroupMember.Read.All always fails when using
-                 * Intune portal, so skip this scope if we are */
-                let mut scopes = vec![];
-                if app_id != DEFAULT_APP_ID {
-                    scopes.push("GroupMember.Read.All");
-                }
-                let (mut token, mut err) = app.acquire_token_by_username_password(account_id.as_str(), cred.as_str(), scopes);
-                // We may have been denied GroupMember.Read.All, try again without it
-                if err.contains(&NO_GROUP_CONSENT) || err.contains(&NO_CONSENT) {
-                    debug!("Failed auth with GroupMember.Read.All permissions.");
-                    debug!("Group memberships will be missing display names.");
-                    debug!("{}: {}",
-                           token.get("error")
-                           .expect("Failed fetching error code"),
-                           token.get("error_description")
-                           .expect("Failed fetching error description"));
-                    (token, err) = app.acquire_token_by_username_password(account_id.as_str(), cred.as_str(), vec![]);
-                }
-                ClientResponse::PamStatus(
-                    if token.contains_key("access_token") {
-                        info!("Authentication successful for user '{}'", account_id);
-                        let mut cache = ccache.lock().await;
-                        let name_def = "".to_string();
-                        let name = match token.get("name") {
-                            Some(name) => name,
-                            None => &name_def,
-                        };
-                        match token.get("local_account_id") {
-                            Some(oid) => {
-                                let access_token = token.get("access_token")
-                                    .expect("Failed addressing access_token after confirmed presence");
-                                cache.insert_user(&config, &account_id, access_token, oid, name);
-                                let groups: Vec<DirectoryObject> = match request_user_groups(&graph, access_token).await
-                                {
-                                    Ok(groups) => groups,
-                                    Err(_e) => {
-                                        debug!("Failed fetching user groups for {}", account_id);
-                                        vec![]
-                                    },
-                                };
-                                cache.insert_user_groups(&config, domain, groups, &account_id);
-                                let caccess_token = access_token.clone();
-                                let coid = oid.clone();
-                                gpupdate = Some(tokio::spawn(async move {
-                                    match apply_group_policy(&graph, &caccess_token, &coid).await {
-                                        Ok(res) => {
-                                            if res {
-                                                info!("Successfully applied group policies");
-                                            } else {
-                                                error!("Failed to apply group policies");
-                                            }
-                                        },
-                                        Err(res) => {
-                                            error!("Failed to apply group policies: {}", res);
-                                        },
-                                    }
-                                }));
-                            },
-                            None => {
-                                warn!("Failed caching user {}", account_id);
-                            },
-                        };
-                        Some(true)
-                    } else {
-                        info!("Authentication failed for user '{}'", account_id);
-                        if err.contains(&REQUIRES_MFA) {
-                            info!("Azure AD application requires MFA");
-                            //TODO: Attempt an interactive auth via the browser
-                        }
-                        if err.contains(&NO_CONSENT) {
-                            let url = format!("{}/adminconsent?client_id={}", authority_url, app_id);
-                            error!("Azure AD application requires consent, either from tenant, or from user, go to: {}", url);
-                        }
-                        if err.contains(&NO_SECRET) {
-                            let url = "https://learn.microsoft.com/en-us/azure/active-directory/develop/scenario-desktop-app-registration#redirect-uris";
-                            error!("Azure AD application requires enabling 'Allow public client flows'. {}",
-                                   url);
-                        }
-                        error!("{}: {}",
-                               token.get("error")
-                               .expect("Failed fetching error code"),
-                               token.get("error_description")
-                               .expect("Failed fetching error description"));
-                        Some(false)
-                    }
-                )
+                cachelayer
+                    .pam_account_authenticate(account_id.as_str(), cred.as_str())
+                    .await
+                    .map(ClientResponse::PamStatus)
+                    .unwrap_or(ClientResponse::Error)
             }
-            ClientRequest::PamAccountAllowed(_account_id) => {
+            ClientRequest::PamAccountAllowed(account_id) => {
                 debug!("pam account allowed");
-                // TODO: How to determine if user is allowed logon?
-                ClientResponse::PamStatus(Some(true))
+                cachelayer
+                    .pam_account_allowed(account_id.as_str())
+                    .await
+                    .map(ClientResponse::PamStatus)
+                    .unwrap_or(ClientResponse::Error)
             }
             ClientRequest::PamAccountBeginSession(_account_id) => {
                 debug!("pam account begin session");
+                // TODO: Implement session
                 ClientResponse::PamStatus(Some(true))
             }
             ClientRequest::NssAccounts => {
                 debug!("nssaccounts req");
-                let cache = ccache.lock().await;
-                let resp = ClientResponse::NssAccounts(cache.user_iter()
-                    .map(|(_, user_entry)| {
-                        let config = Arc::clone(&cconfig);
-                        nss_account_from_cache(config, user_entry)
-                    }).collect()
-                );
-                resp
+                cachelayer
+                    .get_nssaccounts()
+                    .await
+                    .map(ClientResponse::NssAccounts)
+                    .unwrap_or_else(|_| {
+                        error!("unable to enum accounts");
+                        ClientResponse::NssAccounts(Vec::new())
+                    })
             }
             ClientRequest::NssAccountByName(account_id) => {
                 debug!("nssaccountbyname req");
-                let cache = ccache.lock().await;
-                match cache.get_user(&account_id) {
-                    Some(user_entry) => {
-                        let config = Arc::clone(&cconfig);
-                        ClientResponse::NssAccount(Some(nss_account_from_cache(config, user_entry)))
-                    },
-                    None => {
-                        debug!("Failed to find account '{}'", account_id);
+                cachelayer
+                    .get_nssaccount_name(account_id.as_str())
+                    .await
+                    .map(ClientResponse::NssAccount)
+                    .unwrap_or_else(|_| {
+                        error!("unable to load account, returning empty.");
                         ClientResponse::NssAccount(None)
-                    }
-                }
+                    })
             }
             ClientRequest::NssAccountByUid(uid) => {
-                let cache = ccache.lock().await;
-                let resp = match cache.user_iter().find(|(_, user_entry)| user_entry.get_uid() == uid) {
-                    Some((_, user_entry)) => {
-                        let config = Arc::clone(&cconfig);
-                        ClientResponse::NssAccount(Some(nss_account_from_cache(config, user_entry)))
-                    },
-                    None => {
-                        debug!("Failed to find account '{}'", uid);
+                debug!("nssaccountbyuid req");
+                cachelayer
+                    .get_nssaccount_gid(uid)
+                    .await
+                    .map(ClientResponse::NssAccount)
+                    .unwrap_or_else(|_| {
+                        error!("unable to load account, returning empty.");
                         ClientResponse::NssAccount(None)
-                    }
-                }; resp
+                    })
             }
             ClientRequest::NssGroups => {
                 debug!("nssgroups req");
-                // Generate a group for each user (with matching gid)
-                let cache = ccache.lock().await;
-                let mut resp: Vec<NssGroup> = cache.user_iter()
-                    .map(|(account_id, user_entry)| {
-                        nss_group_from_cache(account_id, user_entry.get_uid(), vec![account_id.to_string()])
-                    }).collect();
-                resp.extend(
-                    // Extend the list from the cache of group memberships
-                    cache.group_iter()
-                        .map(|(_, group_entry)| {
-                            let members: Vec<String> = group_entry.iter_members()
-                                .map(|member| member.to_owned()).collect();
-                            let display_name = group_entry.get("display_name")
-                                    .expect("Failed fetching display_name");
-                            nss_group_from_cache(display_name, group_entry.get_gid(), members)
-                        }).collect::<Vec<NssGroup>>()
-                );
-                ClientResponse::NssGroups(resp)
+                cachelayer
+                    .get_nssgroups()
+                    .await
+                    .map(ClientResponse::NssGroups)
+                    .unwrap_or_else(|_| {
+                        error!("unable to enum groups");
+                        ClientResponse::NssGroups(Vec::new())
+                    })
             }
             ClientRequest::NssGroupByName(grp_id) => {
                 debug!("nssgroupbyname req");
-                // Generate a group that maches the user
-                let cache = ccache.lock().await;
-                match cache.get_user(&grp_id) {
-                    Some(user_entry) => {
-                        ClientResponse::NssGroup(Some(nss_group_from_cache(&grp_id, user_entry.get_uid(), vec![grp_id.to_string()])))
-                    },
-                    None => {
-                        // Also check the cache of group memberships
-                        match cache.group_iter().find(|(_, group_entry)| *group_entry.get("display_name").unwrap() == grp_id) {
-                            Some((_, group_entry)) => {
-                                let members: Vec<String> = group_entry.iter_members()
-                                    .map(|member| member.to_owned()).collect();
-                                let gid: u32 = group_entry.get_gid();
-                                let display_name = group_entry.get("display_name")
-                                    .expect("Failed fetching display_name");
-                                ClientResponse::NssGroup(Some(nss_group_from_cache(display_name, gid, members)))
-                            },
-                            None => {
-                                debug!("Failed to find group '{}'", grp_id);
-                                ClientResponse::NssGroup(None)
-                            }
-                        }
-                    }
-                }
+                cachelayer
+                    .get_nssgroup_name(grp_id.as_str())
+                    .await
+                    .map(ClientResponse::NssGroup)
+                    .unwrap_or_else(|_| {
+                        error!("unable to load group, returning empty.");
+                        ClientResponse::NssGroup(None)
+                    })
             }
             ClientRequest::NssGroupByGid(gid) => {
-                // Generate a group that maches the user
-                let cache = ccache.lock().await;
-                let resp = match cache.user_iter().find(|(_, user_entry)| user_entry.get_uid() == gid) {
-                    Some((grp_id, _user_entry)) => {
-                        ClientResponse::NssGroup(Some(nss_group_from_cache(&grp_id, gid, vec![grp_id.to_string()])))
-                    },
-                    None => {
-                        // Also check the cache of group memberships
-                        match cache.group_iter().find(|(_, group_entry)| group_entry.get_gid() == gid) {
-                            Some((_, group_entry)) => {
-                                let members: Vec<String> = group_entry.iter_members()
-                                    .map(|member| member.to_owned()).collect();
-                                let display_name = group_entry.get("display_name")
-                                    .expect("Failed fetching display_name");
-                                ClientResponse::NssGroup(Some(nss_group_from_cache(display_name, gid, members)))
-                            },
-                            None => {
-                                debug!("Failed to find group '{}'", gid);
-                                ClientResponse::NssGroup(None)
-                            }
-                        }
-                    }
-                }; resp
+                debug!("nssgroupbygid req");
+                cachelayer
+                    .get_nssgroup_gid(gid)
+                    .await
+                    .map(ClientResponse::NssGroup)
+                    .unwrap_or_else(|_| {
+                        error!("unable to load group, returning empty.");
+                        ClientResponse::NssGroup(None)
+                    })
             }
             ClientRequest::EnrollDevice(graph, access_token) => {
                 debug!("EnrollDevice req");
@@ -373,20 +212,6 @@ async fn handle_client(
         reqs.send(resp).await?;
         reqs.flush().await?;
         debug!("flushed response!");
-    }
-
-    // Wait for group policy to finish processing
-    match gpupdate {
-        Some(gpupdate) => {
-            tokio::select! {
-                _ = gpupdate => {
-                    debug!("Group policy processing has completed");
-                },
-            }
-        },
-        None => {
-            debug!("No group policy processing was spawned");
-        }
     }
 
     // Disconnect them
@@ -438,8 +263,40 @@ async fn main() -> ExitCode {
         debug!("🧹 Cleaning up socket from previous invocations");
         rm_if_exist(&socket_path);
 
-        let cache = Arc::new(Mutex::new(HimmelblauCache::new()));
-        let fcache = cache.clone();
+        // Create the identify provider connection
+        let idprovider = HimmelblauMultiProvider::new();
+        // Create the database
+        let db = match Db::new(&config.get_db_path(), &config.get_tpm_policy()) {
+            Ok(db) => db,
+            Err(_e) => {
+                error!("Failed to create database");
+                return ExitCode::FAILURE
+            }
+        };
+
+        let cl_inner = match Resolver::new(
+            db,
+            idprovider,
+            config.get_cache_timeout(),
+            vec![], // TODO: Implement allowed logon groups
+            config.get_shell(None),
+            config.get_home_prefix(None),
+            config.get_home_attr(None),
+            config.get_home_alias(None),
+            UidAttr::Spn,
+            UidAttr::Name,
+            vec![], // TODO: Implement local account override
+        )
+        .await
+        {
+            Ok(c) => c,
+            Err(_e) => {
+                error!("Failed to build cache layer.");
+                return ExitCode::FAILURE
+            }
+        };
+
+        let cachelayer = Arc::new(cl_inner);
 
         // Open the socket for all to read and write
         let listener = match UnixListener::bind(&socket_path) {
@@ -454,11 +311,11 @@ async fn main() -> ExitCode {
 
         let server = tokio::spawn(async move {
             while !stop_now.load(Ordering::Relaxed) {
-                let ccache = cache.clone();
+                let cachelayer_ref = cachelayer.clone();
                 match listener.accept().await {
                     Ok((socket, _addr)) => {
                         tokio::spawn(async move {
-                            if let Err(e) = handle_client(socket, ccache).await
+                            if let Err(e) = handle_client(socket, cachelayer_ref.clone()).await
                             {
                                 error!("handle_client error occurred; error = {:?}", e);
                             }
@@ -508,11 +365,6 @@ async fn main() -> ExitCode {
                 debug!("Received signal to interrupt");
             }
         }
-
-        /* Store the cache to disk before exiting */
-        info!("Storing cache to disk ...");
-        let mut cache = fcache.lock().await;
-        cache.store();
 
         ExitCode::SUCCESS
     }
