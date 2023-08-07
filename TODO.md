@@ -7,4 +7,3 @@
 ## Major Requirements
 
 * Device enrollment.
-* Policy application.
