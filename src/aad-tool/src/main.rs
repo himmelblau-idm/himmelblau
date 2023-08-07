@@ -99,6 +99,22 @@ async fn main() -> ExitCode {
                         .multiple_values(false)
                         .takes_value(true)
                 )
+        )
+        .subcommand(
+            SubCommand::with_name("cache")
+                .about("Cache operations")
+            .subcommand(
+                SubCommand::with_name("clear")
+                    .about("Cache clear tool")
+            )
+            .subcommand(
+                SubCommand::with_name("invalidate")
+                    .about("Cache invalidatation tool")
+            )
+            .subcommand(
+                SubCommand::with_name("status")
+                    .about("Cache status tool")
+            )
         ).get_matches();
 
     if args.get_flag("debug") {
@@ -152,6 +168,53 @@ async fn main() -> ExitCode {
                 }
             };
         },
+        Some(("invalidate", _args)) => {
+            let req = ClientRequest::InvalidateCache;
+            let socket_path = config.get_socket_path();
+            match call_daemon_blocking(&socket_path, &req, 10) {
+                Ok(r) => match r {
+                    ClientResponse::Ok => info!("success"),
+                    _ => {
+                        error!("Error: unexpected response -> {:?}", r);
+                    }
+                },
+                Err(e) => {
+                    error!("Error -> {:?}", e);
+                }
+            };
+            println!("success");
+        },
+        Some(("clear", _args)) => {
+            let req = ClientRequest::ClearCache;
+            let socket_path = config.get_socket_path();
+            match call_daemon_blocking(&socket_path, &req, 10) {
+                Ok(r) => match r {
+                    ClientResponse::Ok => info!("success"),
+                    _ => {
+                        error!("Error: unexpected response -> {:?}", r);
+                    }
+                },
+                Err(e) => {
+                    error!("Error -> {:?}", e);
+                }
+            };
+            println!("success");
+        }
+        Some(("status", _args)) => {
+            let req = ClientRequest::Status;
+            let socket_path = config.get_socket_path();
+            match call_daemon_blocking(&socket_path, &req, 10) {
+                Ok(r) => match r {
+                    ClientResponse::Ok => println!("working!"),
+                    _ => {
+                        error!("Error: unexpected response -> {:?}", r);
+                    }
+                },
+                Err(e) => {
+                    error!("Error -> {:?}", e);
+                }
+            }
+        }
         _ => {
             error!("Invalid command. Use 'aad-tool --help' for more information");
             return ExitCode::FAILURE;

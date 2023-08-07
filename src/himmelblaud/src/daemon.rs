@@ -12,6 +12,7 @@
 
 use std::error::Error;
 use std::io;
+use std::io::{Error as IoError, ErrorKind};
 use std::process::ExitCode;
 use std::sync::Arc;
 use std::fs::{set_permissions, Permissions};
@@ -97,6 +98,10 @@ async fn handle_client(
     cachelayer: Arc<Resolver<HimmelblauMultiProvider>>,
 ) -> Result<(), Box<dyn Error>> {
     debug!("Accepted connection");
+
+    let Ok(ucred) = sock.peer_cred() else {
+        return Err(Box::new(IoError::new(ErrorKind::Other, "Unable to verify peer credentials.")));
+    };
 
     let mut reqs = Framed::new(sock, ClientCodec::new());
 
@@ -206,6 +211,35 @@ async fn handle_client(
                         error!("{}", e);
                         ClientResponse::Error
                     }
+                }
+            }
+            ClientRequest::InvalidateCache => {
+                debug!("invalidate cache");
+                cachelayer
+                    .invalidate()
+                    .await
+                    .map(|_| ClientResponse::Ok)
+                    .unwrap_or(ClientResponse::Error)
+            }
+            ClientRequest::ClearCache => {
+                debug!("clear cache");
+                if ucred.uid() == 0 {
+                    cachelayer
+                        .clear_cache()
+                        .await
+                        .map(|_| ClientResponse::Ok)
+                        .unwrap_or(ClientResponse::Error)
+                } else {
+                    error!("Only root may clear the cache");
+                    ClientResponse::Error
+                }
+            }
+            ClientRequest::Status => {
+                debug!("status check");
+                if cachelayer.test_connection().await {
+                    ClientResponse::Ok
+                } else {
+                    ClientResponse::Error
                 }
             }
         };

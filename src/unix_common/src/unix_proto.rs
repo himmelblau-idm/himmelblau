@@ -28,6 +28,9 @@ pub enum ClientRequest {
     PamAccountAllowed(String),
     PamAccountBeginSession(String),
     EnrollDevice(String, String),
+    InvalidateCache,
+    ClearCache,
+    Status,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
