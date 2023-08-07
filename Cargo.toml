@@ -9,7 +9,7 @@ members = [
 	"src/glue",
 	"src/policies",
 	"src/kanidm/libs/sketching",
-	"src/kanidm/proto",
+	"src/proto",
 	"src/kanidm/libs/crypto",
 ]
 
@@ -58,7 +58,7 @@ url = "^2.4.0"
 urlencoding = "2.1.3"
 uuid = "^1.4.1"
 webauthn-rs-proto = "0.4.8"
-kanidm_proto = { path = "./src/kanidm/proto", version = "^0.0.3" }
+kanidm_proto = { path = "./src/proto", version = "^0.0.3" }
 openssl-sys = "^0.9"
 openssl = "^0.10.55"
 rand = "^0.8.5"

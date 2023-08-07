@@ -1,0 +1,1 @@
+../../kanidm/proto/src/v1.rs
