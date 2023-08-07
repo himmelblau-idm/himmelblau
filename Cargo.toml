@@ -8,9 +8,9 @@ members = [
 	"src/nss",
 	"src/glue",
 	"src/policies",
-	"src/kanidm/libs/sketching",
+	"src/sketching",
 	"src/proto",
-	"src/kanidm/libs/crypto",
+	"src/crypto",
 ]
 
 [workspace.package]
@@ -63,9 +63,9 @@ openssl-sys = "^0.9"
 openssl = "^0.10.55"
 rand = "^0.8.5"
 tss-esapi = "^7.2.0"
-sketching = { path = "./src/kanidm/libs/sketching" }
+sketching = { path = "./src/sketching" }
 tracing-forest = "^0.1.6"
 rusqlite = "^0.28.0"
 hashbrown = { version = "0.14.0", features = ["serde", "inline-more", "ahash"] }
 lru = "^0.8.0"
-kanidm_lib_crypto = { path = "./src/kanidm/libs/crypto", version = "0.1.0" }
+kanidm_lib_crypto = { path = "./src/crypto", version = "0.1.0" }
