@@ -4,9 +4,11 @@ use tracing::{debug, error};
 use std::io::Error;
 
 use msal::misc::request_federation_provider;
-use crate::constants::{DEFAULT_HOMEDIR, DEFAULT_SHELL, DEFAULT_ODC_PROVIDER,
+use crate::constants::{DEFAULT_HOME_PREFIX, DEFAULT_HOME_ATTR, DEFAULT_HOME_ALIAS,
+    DEFAULT_SHELL, DEFAULT_ODC_PROVIDER, DEFAULT_CACHE_TIMEOUT, DEFAULT_DB_PATH,
     DEFAULT_APP_ID, DEFAULT_IDMAP_RANGE, DEFAULT_AUTHORITY_HOST, DEFAULT_GRAPH,
-    DEFAULT_SOCK_PATH, DEFAULT_CONN_TIMEOUT};
+    DEFAULT_SOCK_PATH, DEFAULT_CONN_TIMEOUT, DEFAULT_TPM_TCTI_NAME};
+use crate::unix_config::{HomeAttr, TpmPolicy};
 
 pub fn split_username(username: &str) -> Option<(&str, &str)> {
     let tup: Vec<&str> = username.split('@').collect();
@@ -18,6 +20,15 @@ pub fn split_username(username: &str) -> Option<(&str, &str)> {
 
 pub struct HimmelblauConfig {
     config: Ini
+}
+
+fn str_to_home_attr(attrib: &str) -> HomeAttr {
+    if attrib.to_lowercase() == "uuid" {
+        return HomeAttr::Uuid;
+    } else if attrib.to_lowercase() == "spn" {
+        return HomeAttr::Spn;
+    }
+    HomeAttr::Uuid // Default to Uuid if the attrib can't be parsed
 }
 
 impl HimmelblauConfig {
@@ -43,20 +54,71 @@ impl HimmelblauConfig {
         self.config.get(section, option)
     }
 
-    pub fn get_homedir(&self, username: &str, uid: u32, sam: &str, domain: &str) -> String {
-        let homedir = match self.config.get(domain, "homedir") {
-            Some(val) => val,
-            None => match self.config.get("global", "homedir") {
+    pub fn get_home_prefix(&self, domain: Option<&str>) -> String {
+        match domain {
+            Some(domain) => {
+                match self.config.get(domain, "home_prefix") {
+                    Some(val) => val,
+                    None => match self.config.get("global", "home_prefix") {
+                        Some(val) => val,
+                        None => String::from(DEFAULT_HOME_PREFIX),
+                    },
+                }
+            },
+            None => match self.config.get("global", "home_prefix") {
                 Some(val) => val,
-                None => String::from(DEFAULT_HOMEDIR),
-            }
-        };
-        homedir.replace("%f", username).replace("%U", &uid.to_string()).replace("%u", sam).replace("%d", domain)
+                None => String::from(DEFAULT_HOME_PREFIX),
+            },
+        }
     }
 
-    pub fn get_shell(&self, domain: &str) -> String {
-        match self.config.get(domain, "shell") {
-            Some(val) => val,
+    pub fn get_home_attr(&self, domain: Option<&str>) -> HomeAttr {
+        match domain {
+            Some(domain) => {
+                match self.config.get(domain, "home_attr") {
+                    Some(val) => str_to_home_attr(&val),
+                    None => match self.config.get("global", "home_attr") {
+                        Some(val) => str_to_home_attr(&val),
+                        None => DEFAULT_HOME_ATTR,
+                    },
+                }
+            },
+            None => match self.config.get("global", "home_attr") {
+                Some(val) => str_to_home_attr(&val),
+                None => DEFAULT_HOME_ATTR,
+            },
+        }
+    }
+
+    pub fn get_home_alias(&self, domain: Option<&str>) -> Option<HomeAttr> {
+        match domain {
+            Some(domain) => {
+                match self.config.get(domain, "home_alias") {
+                    Some(val) => Some(str_to_home_attr(&val)),
+                    None => match self.config.get("global", "home_alias") {
+                        Some(val) => Some(str_to_home_attr(&val)),
+                        None => DEFAULT_HOME_ALIAS,
+                    },
+                }
+            },
+            None => match self.config.get("global", "home_alias") {
+                Some(val) => Some(str_to_home_attr(&val)),
+                None => DEFAULT_HOME_ALIAS,
+            },
+        }
+    }
+
+    pub fn get_shell(&self, domain: Option<&str>) -> String {
+        match domain {
+            Some(domain) => {
+                match self.config.get(domain, "shell") {
+                    Some(val) => val,
+                    None => match self.config.get("global", "shell") {
+                        Some(val) => val,
+                        None => String::from(DEFAULT_SHELL),
+                    }
+                }
+            },
             None => match self.config.get("global", "shell") {
                 Some(val) => val,
                 None => String::from(DEFAULT_SHELL),
@@ -200,6 +262,44 @@ impl HimmelblauConfig {
                 }
             },
             None => DEFAULT_CONN_TIMEOUT,
+        }
+    }
+
+    pub fn get_cache_timeout(&self) -> u64 {
+        match self.config.get("global", "cache_timeout") {
+            Some(val) => {
+                match val.parse::<u64>() {
+                    Ok(n) => n,
+                    Err(_) => {
+                        error!("Failed parsing cache_timeout from config: {}", val);
+                        DEFAULT_CACHE_TIMEOUT
+                    },
+                }
+            },
+            None => DEFAULT_CACHE_TIMEOUT,
+        }
+    }
+
+    pub fn get_db_path(&self) -> String {
+        match self.config.get("global", "db_path") {
+            Some(val) => val,
+            None => DEFAULT_DB_PATH.to_string(),
+        }
+    }
+
+    pub fn get_tpm_policy(&self) -> TpmPolicy {
+        match self.config.get("global", "tpm_policy") {
+            Some(val) => {
+                match val.as_str() {
+                    "ignore" => TpmPolicy::Ignore,
+                    "if_possible" => TpmPolicy::IfPossible(DEFAULT_TPM_TCTI_NAME.to_string()),
+                    "required" => TpmPolicy::Required(DEFAULT_TPM_TCTI_NAME.to_string()),
+                    _ => TpmPolicy::Ignore,
+                }
+            },
+            None => {
+                TpmPolicy::Ignore
+            }
         }
     }
 

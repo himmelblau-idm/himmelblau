@@ -3,7 +3,7 @@ all:
 
 test:
 	tar --exclude-vcs --exclude="target" --exclude="himmelblau.tar.gz" -zcvf himmelblau.tar.gz ../
-	podman run --volume=./:/root/tests --rm himmelblau:testing
+	podman run --volume=../target/debug/deps:/root/build/target/debug/deps --volume=./:/root/tests --rm himmelblau:testing
 
 exec: clean-exec
 	podman run --volume=./:/root/tests --detach --name himmelblau_testing_exec himmelblau:testing --hang

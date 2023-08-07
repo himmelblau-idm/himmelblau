@@ -11,19 +11,31 @@
 #
 # The enrolled device id.
 # device_id = XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX
+#
+# The location of the cache database
+# db_path = /var/cache/himmelblau/himmelblau.cache.db
+#
+# The tpm policy
+# tpm_policy = ignore ; tpm_policy options:
+#                     ; ignore
+#                     ; if_possible
+#                     ; required
 
 ### Optional values
 # Default app_id is Intune Portal for Linux
 # app_id = b743a22d-6705-4147-8670-d92fa515ee2b
 # socket_path = /var/run/himmelblaud/socket
-# homedir = /home/%f ; home directory pattern for the user, the following mapping applies:
-#                    ; %f - full username
-#                    ; %U - UID
-#                    ; %u - username without domain
-#                    ; %d - domain
+# home_prefix = /home/
+# home_attr = UUID ; home directory attribute options:
+#                  ; UUID (default)
+#                  ; SPN
+# home_alias = SPN ; home directory alias options:
+#                  ; UUID (default)
+#                  ; SPN
 # shell = /bin/bash ; default shell for the user
 # idmap_range = 5000000-5999999
 # connection_timeout = 2
+# cache_timeout = 15
 
 # Values overridden for a specific domain
 # [domain.com]
@@ -31,6 +43,8 @@
 # tenant_id = XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX
 # authority_host = login.microsoftonline.com
 # app_id = XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX
-# homedir = /home/domain.com/%u
+# home_prefix = /home/
+# home_attr = UUID
+# home_alias = SPN
 # shell = /bin/zsh
 # idmap_range = 6000000-6999999

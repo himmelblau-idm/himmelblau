@@ -5,7 +5,8 @@ use pyo3::types::PyTuple;
 use pyo3::types::PyList;
 use pyo3::types::PyDict;
 use std::collections::HashMap;
-use tracing::debug;
+use anyhow::Result;
+use uuid::Uuid;
 
 pub const INVALID_CRED: u32 = 0xC3CE;
 pub const REQUIRES_MFA: u32 = 0xC39C;
@@ -18,51 +19,59 @@ pub struct PublicClientApplication {
     app: Py<PyAny>
 }
 
-fn extract_pydict_as_hashmap(obj: &PyDict) -> (HashMap<String, String>, Vec<u32>) {
-    let mut res = HashMap::new();
-    let mut err: Vec<u32> = vec![];
-    for (key, val) in obj.iter() {
-        let py_key: &PyString = key.extract().expect("Failed parsing dict key");
-        let k: String = py_key.to_string_lossy().into_owned();
-        if k == "error_codes" {
-            let error_codes: &PyList = val.extract().expect("Failed parsing error list");
-            let vec_error_codes: Vec<u32> = error_codes.extract().expect("Failed parsing error list");
-            err.extend(vec_error_codes);
-            continue;
-        } else if k == "id_token_claims" {
-            let py_val: &PyDict = val.extract().expect("Failed parsing id_token_claims dict");
-            let (id_token_claims, _e) = extract_pydict_as_hashmap(py_val);
-            // Populate some of the id_token_claims values into the main result
-            res.insert("name".to_string(), match id_token_claims.get("name") {
-                Some(name) => name,
-                None => "",
-            }.to_string());
-            res.insert("preferred_username".to_string(), match id_token_claims.get("preferred_username") {
-                Some(pname) => pname,
-                None => "",
-            }.to_string());
-            match id_token_claims.get("oid") {
-                Some(oid) => {
-                    res.insert("local_account_id".to_string(), oid.to_string())
-                },
-                None => {
-                    debug!("oid not found in id_token_claims");
-                    None
-                },
-            };
-            continue;
-        }
-        let py_val: &PyString = match val.extract() {
-            Ok(val) => val,
-            Err(error) => {
-                debug!("Unable to extract key '{}': {}", k, error);
-                continue;
+#[derive(Default)]
+pub struct UnixUserToken {
+    pub spn: String,
+    pub displayname: String,
+    pub uuid: Uuid,
+    pub access_token: Option<String>,
+
+    /* These are only present on failure */
+    pub errors: Vec<u32>,
+    pub error: String,
+    pub error_description: String,
+}
+
+impl<'a> FromPyObject<'a> for UnixUserToken {
+    fn extract(obj: &'a PyAny) -> PyResult<Self> {
+        let dict_obj: &PyDict = obj.extract()?;
+        let mut res: UnixUserToken = Default::default();
+        for (key, val) in dict_obj.iter() {
+            let py_key: &PyString = key.extract()?;
+            let k: String = py_key.to_string_lossy().into_owned();
+            if k == "error_codes" {
+                let error_codes: &PyList = val.extract()?;
+                res.errors = error_codes.extract()?;
+            } else if k == "id_token_claims" {
+                let py_val: &PyDict = val.extract()?;
+                for (skey, sval) in py_val.iter() {
+                    let py_skey: &PyString = skey.extract()?;
+                    let sk: String = py_skey.to_string_lossy().into_owned();
+                    match sk.as_str() {
+                        "name" => res.displayname = sval.extract()?,
+                        "preferred_username" => res.spn = sval.extract()?,
+                        "oid" => res.uuid = Uuid::parse_str(sval.extract()?)
+                            .expect("Failed parsing user uuid"),
+                        &_ => {}, // Ignore the others
+                    }
+                }
+            } else if k == "access_token" {
+                let py_val: &PyString = match val.extract() {
+                    Ok(val) => val,
+                    Err(_e) => panic!("Failed extracting access_token from auth response"),
+                };
+                let access_token: String = py_val.to_string_lossy().into_owned();
+                res.access_token = Some(access_token);
+            } else if k == "error" {
+                let msg: &PyString = val.extract()?;
+                res.error = msg.extract()?;
+            } else if k == "error_description" {
+                let msg: &PyString = val.extract()?;
+                res.error_description = msg.extract()?;
             }
-        };
-        let v: String = py_val.to_string_lossy().into_owned();
-        res.insert(k, v);
+        }
+        Ok(res)
     }
-    (res, err)
 }
 
 impl PublicClientApplication {
@@ -84,50 +93,38 @@ impl PublicClientApplication {
         })
     }
 
-    pub fn acquire_token_by_username_password(&self, username: &str, password: &str, scopes: Vec<&str>) -> (HashMap<String, String>, Vec<u32>) {
+    pub fn acquire_token_by_username_password(&self, username: &str, password: &str, scopes: Vec<&str>) -> Result<UnixUserToken> {
         Python::with_gil(|py| {
-            let func: Py<PyAny> = self.app.getattr(py, "acquire_token_by_username_password")
-                .expect("Failed loading function acquire_token_by_username_password")
+            let func: Py<PyAny> = self.app.getattr(py, "acquire_token_by_username_password")?
                 .into();
             let py_username: &PyString = PyString::new(py, username);
             let py_password: &PyString = PyString::new(py, password);
             let py_scopes: &PyList = PyList::new(py, scopes);
             let largs: &PyList = PyList::new(py, vec![py_username, py_password]);
-            largs.append(py_scopes)
-                .expect("Failed appending scopes to the args list");
+            largs.append(py_scopes)?;
             let args: &PyTuple = PyTuple::new(py, largs);
-            extract_pydict_as_hashmap(
-                func.call1(py, args)
-                .expect("Failed calling acquire_token_by_username_password")
-                .downcast(py)
-                .expect("Failed downcasting the PyAny to a PyDict")
-            )
+            let resp: Py<PyAny> = func.call1(py, args)?;
+            let token: UnixUserToken = resp.extract(py)?;
+            Ok(token)
         })
     }
 
-    pub fn acquire_token_interactive(&self, scopes: Vec<&str>, prompt: &str, login_hint: &str, domain_hint: &str) -> (HashMap<String, String>, Vec<u32>) {
+    pub fn acquire_token_interactive(&self, scopes: Vec<&str>, prompt: &str, login_hint: &str, domain_hint: &str) -> Result<UnixUserToken> {
         Python::with_gil(|py| {
-            let func: Py<PyAny> = self.app.getattr(py, "acquire_token_interactive")
-                .expect("Failed loading function acquire_token_interactive")
+            let func: Py<PyAny> = self.app.getattr(py, "acquire_token_interactive")?
                 .into();
             let py_scopes: &PyList = PyList::new(py, scopes);
             let py_prompt: &PyString = PyString::new(py, prompt);
             let py_login_hint: &PyString = PyString::new(py, login_hint);
             let py_domain_hint: &PyString = PyString::new(py, domain_hint);
             let largs: &PyList = PyList::new(py, vec![py_scopes]);
-            largs.append(py_prompt)
-                .expect("Failed appending prompt to the args list");
-            largs.append(py_login_hint)
-                .expect("Failed appending login_hint to the args list");
-            largs.append(py_domain_hint)
-                .expect("Failed appending domain_hint to the args list");
+            largs.append(py_prompt)?;
+            largs.append(py_login_hint)?;
+            largs.append(py_domain_hint)?;
             let args: &PyTuple = PyTuple::new(py, largs);
-            extract_pydict_as_hashmap(
-                func.call1(py, args)
-                .expect("Failed calling acquire_token_interactive")
-                .downcast(py)
-                .expect("Failed downcasting the PyAny to a PyDict")
-            )
+            let resp: Py<PyAny> = func.call1(py, args)?;
+            let token: UnixUserToken = resp.extract(py)?;
+            Ok(token)
         })
     }
 

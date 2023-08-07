@@ -24,34 +24,32 @@ async fn enroll(config: HimmelblauConfig, domain: &str, admin: &str) -> Result<(
     let app = PublicClientApplication::new(&app_id, authority_url.as_str());
     let scopes = vec!["Directory.AccessAsUser.All"];
     info!("If you get error AADSTS500113 during authentication, you need to configure the Redirect URI of your \"Mobile and Desktop application\" as ``http://localhost`` for your Application in Azure.");
-    let (token, _err) = app.acquire_token_interactive(scopes, "login", admin, domain);
-    if token.contains_key("access_token") {
-        debug!("Authentication successful");
-        let access_token: &str = match token.get("access_token") {
-            Some(val) => val,
-            None => {
-                return Err(anyhow!("Failed fetching access_token"));
-            }
-        };
-        let req = ClientRequest::EnrollDevice(graph.to_string(), access_token.to_string());
-        let socket_path = config.get_socket_path();
-        match call_daemon_blocking(&socket_path, &req, 10) {
-            Ok(r) => match r {
-                ClientResponse::Ok => {
-                    Ok(())
+    let token = match app.acquire_token_interactive(scopes, "login", admin, domain) {
+        Ok(token) => token,
+        Err(e) => return Err(anyhow!("Failed enrolling the machine: {}", e))
+    };
+    match token.access_token {
+        Some(access_token) => {
+            debug!("Authentication successful");
+            let req = ClientRequest::EnrollDevice(graph.to_string(), access_token.to_string());
+            let socket_path = config.get_socket_path();
+            match call_daemon_blocking(&socket_path, &req, 10) {
+                Ok(r) => match r {
+                    ClientResponse::Ok => {
+                        Ok(())
+                    },
+                    _ => {
+                        Err(anyhow!("Failed enrolling the machine. Invalid response!"))
+                    },
                 },
-                _ => {
-                    Err(anyhow!("Failed enrolling the machine. Invalid response!"))
-                },
-            },
-            Err(e) => {
-                Err(anyhow!("Failed enrolling the machine: {}", e))
+                Err(e) => {
+                    Err(anyhow!("Failed enrolling the machine: {}", e))
+                }
             }
+        },
+        None => {
+            Err(anyhow!("{}: {}", token.error, token.error_description))
         }
-    } else {
-        Err(anyhow!("{}: {}",
-            token.get("error").unwrap(),
-            token.get("error_description").unwrap()))
     }
 }
 
@@ -101,6 +99,22 @@ async fn main() -> ExitCode {
                         .multiple_values(false)
                         .takes_value(true)
                 )
+        )
+        .subcommand(
+            SubCommand::with_name("cache")
+                .about("Cache operations")
+            .subcommand(
+                SubCommand::with_name("clear")
+                    .about("Cache clear tool")
+            )
+            .subcommand(
+                SubCommand::with_name("invalidate")
+                    .about("Cache invalidatation tool")
+            )
+            .subcommand(
+                SubCommand::with_name("status")
+                    .about("Cache status tool")
+            )
         ).get_matches();
 
     if args.get_flag("debug") {
@@ -154,6 +168,53 @@ async fn main() -> ExitCode {
                 }
             };
         },
+        Some(("invalidate", _args)) => {
+            let req = ClientRequest::InvalidateCache;
+            let socket_path = config.get_socket_path();
+            match call_daemon_blocking(&socket_path, &req, 10) {
+                Ok(r) => match r {
+                    ClientResponse::Ok => info!("success"),
+                    _ => {
+                        error!("Error: unexpected response -> {:?}", r);
+                    }
+                },
+                Err(e) => {
+                    error!("Error -> {:?}", e);
+                }
+            };
+            println!("success");
+        },
+        Some(("clear", _args)) => {
+            let req = ClientRequest::ClearCache;
+            let socket_path = config.get_socket_path();
+            match call_daemon_blocking(&socket_path, &req, 10) {
+                Ok(r) => match r {
+                    ClientResponse::Ok => info!("success"),
+                    _ => {
+                        error!("Error: unexpected response -> {:?}", r);
+                    }
+                },
+                Err(e) => {
+                    error!("Error -> {:?}", e);
+                }
+            };
+            println!("success");
+        }
+        Some(("status", _args)) => {
+            let req = ClientRequest::Status;
+            let socket_path = config.get_socket_path();
+            match call_daemon_blocking(&socket_path, &req, 10) {
+                Ok(r) => match r {
+                    ClientResponse::Ok => println!("working!"),
+                    _ => {
+                        error!("Error: unexpected response -> {:?}", r);
+                    }
+                },
+                Err(e) => {
+                    error!("Error -> {:?}", e);
+                }
+            }
+        }
         _ => {
             error!("Invalid command. Use 'aad-tool --help' for more information");
             return ExitCode::FAILURE;

@@ -19,5 +19,5 @@ reqwest = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 anyhow = { workspace = true }
-async-trait = "^0.1.72"
+async-trait = { workspace = true }
 regex = "^1.9.1"
