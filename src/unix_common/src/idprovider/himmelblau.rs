@@ -168,25 +168,28 @@ impl IdProvider for HimmelblauProvider {
         match token.access_token {
             Some(_) => {
                 info!("Authentication successful for user '{}'", account_id);
-                // Process Group Policy (spawn non-blocking process to prevent auth timeout)
-                let graph_url = self.graph_url.clone();
-                // The access_token is safe to unwrap because we just validated it's existance
-                let access_token = token.access_token.as_ref().unwrap().clone();
-                let uuid = token.uuid.to_string();
-                Some(tokio::spawn(async move {
-                    match apply_group_policy(&graph_url, &access_token, &uuid).await {
-                        Ok(res) => {
-                            if res {
-                                info!("Successfully applied group policies");
-                            } else {
-                                error!("Failed to apply group policies");
-                            }
-                        },
-                        Err(res) => {
-                            error!("Failed to apply group policies: {}", res);
-                        },
-                    }
-                }));
+                /* Process Group Policy (spawn non-blocking process to prevent auth timeout),
+                 * if it is enabled via config */
+                if self.config.read().await.get_apply_policy() {
+                    let graph_url = self.graph_url.clone();
+                    // The access_token is safe to unwrap because we just validated it's existance
+                    let access_token = token.access_token.as_ref().unwrap().clone();
+                    let uuid = token.uuid.to_string();
+                    Some(tokio::spawn(async move {
+                        match apply_group_policy(&graph_url, &access_token, &uuid).await {
+                            Ok(res) => {
+                                if res {
+                                    info!("Successfully applied group policies");
+                                } else {
+                                    error!("Failed to apply group policies");
+                                }
+                            },
+                            Err(res) => {
+                                error!("Failed to apply group policies: {}", res);
+                            },
+                        }
+                    }));
+                }
                 Ok(Some(self.user_token_from_unix_user_token(token).await))
             },
             None => {

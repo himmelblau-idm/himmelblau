@@ -303,6 +303,22 @@ impl HimmelblauConfig {
         }
     }
 
+    pub fn get_apply_policy(&self) -> bool {
+        match self.config.get("global", "apply_policy") {
+            Some(val) => match val.to_lowercase().as_str() {
+                "true" => true,
+                "false" => false,
+                "1" => true,
+                "0" => false,
+                _ => {
+                    error!("Unrecognized response for apply_policy '{}'", val);
+                    false
+                }
+            },
+            None => false,
+        }
+    }
+
     pub fn write(&self, config_file: &str) -> Result<(), Error> {
         self.config.write(config_file)
     }

@@ -20,6 +20,10 @@
 #                     ; ignore
 #                     ; if_possible
 #                     ; required
+#
+# Whether to apply MDM policies (experimental). Requires additional permissions in Azure AD,
+# see https://github.com/openSUSE/himmelblau/wiki/Enabling-Group-Policy-Access-for-Users
+# apply_policy = false ; {true|false}
 
 ### Optional values
 # Default app_id is Intune Portal for Linux
