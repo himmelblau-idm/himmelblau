@@ -7,3 +7,4 @@
 ## Major Requirements
 
 * Device enrollment.
+* MFA at the login window and via terminal, etc.
