@@ -57,9 +57,22 @@ impl IdProvider for HimmelblauMultiProvider {
         Ok(())
     }
 
-    async fn unix_user_get(&self, _id: &Id) -> Result<UserToken, IdpError> {
+    async fn unix_user_get(&self, id: &Id) -> Result<UserToken, IdpError> {
         /* AAD doesn't permit user listing (must use cache entries from auth) */
-        Err(IdpError::NotFound)
+        let account_id = id.to_string().clone();
+        match split_username(&account_id) {
+            Some((_sam, domain)) => {
+                self.check_insert_provider(domain).await;
+                let providers = self.providers.read().await;
+                match providers.get(domain) {
+                    Some(provider) => provider.unix_user_get(id).await,
+                    None => Err(IdpError::NotFound),
+                }
+            },
+            None => {
+                Err(IdpError::NotFound)
+            }
+        }
     }
 
     async fn unix_user_authenticate(
@@ -150,9 +163,34 @@ impl IdProvider for HimmelblauProvider {
         }
     }
 
-    async fn unix_user_get(&self, _id: &Id) -> Result<UserToken, IdpError> {
-        /* AAD doesn't permit user listing (must use cache entries from auth) */
-        Err(IdpError::NotFound)
+    async fn unix_user_get(&self, id: &Id) -> Result<UserToken, IdpError> {
+        /* Use the msal user cache to refresh the user token */
+        let account_id = id.to_string().clone();
+        let mut scopes = vec![];
+        if self.app_id != DEFAULT_APP_ID {
+            scopes.push("GroupMember.Read.All");
+        }
+        let mut token = match self.client.write().await.acquire_token_silent(scopes, &account_id) {
+            Ok(token) => token,
+            Err(_e) => return Err(IdpError::NotFound),
+        };
+        // We may have been denied GroupMember.Read.All, try again without it
+        if token.errors.contains(&NO_GROUP_CONSENT) || token.errors.contains(&NO_CONSENT) {
+            debug!("Failed auth with GroupMember.Read.All permissions.");
+            debug!("Group memberships will be missing display names.");
+            debug!("{}: {}", token.error, token.error_description);
+            token = match self.client.write().await.acquire_token_silent(vec![], &account_id) {
+                Ok(token) => token,
+                Err(_e) => return Err(IdpError::NotFound),
+            };
+        }
+        match self.token_validate(&account_id, token).await {
+            Ok(token) => match token {
+                Some(token) => Ok(token),
+                None => Err(IdpError::BadRequest),
+            },
+            Err(e) => Err(e),
+        }
     }
 
     async fn unix_user_authenticate(
@@ -179,6 +217,17 @@ impl IdProvider for HimmelblauProvider {
                 Err(_e) => return Err(IdpError::NotFound),
             };
         }
+        self.token_validate(&account_id, token).await
+    }
+
+    async fn unix_group_get(&self, _id: &Id) -> Result<GroupToken, IdpError> {
+        /* AAD doesn't permit group listing (must use cache entries from auth) */
+        Err(IdpError::BadRequest)
+    }
+}
+
+impl HimmelblauProvider {
+    async fn token_validate(&self, account_id: &str, token: UnixUserToken) -> Result<Option<UserToken>, IdpError> {
         match token.access_token {
             Some(_) => {
                 info!("Authentication successful for user '{}'", account_id);
@@ -226,13 +275,6 @@ impl IdProvider for HimmelblauProvider {
         }
     }
 
-    async fn unix_group_get(&self, _id: &Id) -> Result<GroupToken, IdpError> {
-        /* AAD doesn't permit group listing (must use cache entries from auth) */
-        Err(IdpError::BadRequest)
-    }
-}
-
-impl HimmelblauProvider {
     async fn user_token_from_unix_user_token(&self, value: UnixUserToken) -> UserToken {
         let config = self.config.read();
         let mut groups: Vec<GroupToken>;
