@@ -10,6 +10,7 @@ use uuid::Uuid;
 use super::interface::{GroupToken, Id, IdProvider, IdpError, UserToken};
 use std::collections::HashMap;
 use crate::config::split_username;
+use reqwest;
 
 use rand::Rng;
 use rand_chacha::ChaCha8Rng;
@@ -47,7 +48,12 @@ impl HimmelblauMultiProvider {
 #[async_trait]
 impl IdProvider for HimmelblauMultiProvider {
     async fn provider_authenticate(&self) -> Result<(), IdpError> {
-        /* Irrelevant to AAD */
+        for (_domain, provider) in self.providers.read().await.iter() {
+            match provider.provider_authenticate().await {
+                Ok(()) => continue,
+                Err(e) => return Err(e),
+            }
+        }
         Ok(())
     }
 
@@ -132,8 +138,16 @@ impl IdProvider for HimmelblauProvider {
     // Needs .read on all types except re-auth.
 
     async fn provider_authenticate(&self) -> Result<(), IdpError> {
-        /* Irrelevant to AAD */
-        Ok(())
+        /* Determine if the authority is up by sending a simple get request */
+        let resp = match reqwest::get(self.authority_url.clone()).await {
+            Ok(resp) => resp,
+            Err(_e) => return Err(IdpError::BadRequest),
+        };
+        if resp.status().is_success() {
+            Ok(())
+        } else {
+            Err(IdpError::BadRequest)
+        }
     }
 
     async fn unix_user_get(&self, _id: &Id) -> Result<UserToken, IdpError> {
