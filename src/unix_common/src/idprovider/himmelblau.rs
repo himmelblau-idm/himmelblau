@@ -85,7 +85,7 @@ impl IdProvider for HimmelblauMultiProvider {
 
     async fn unix_group_get(&self, _id: &Id) -> Result<GroupToken, IdpError> {
         /* AAD doesn't permit group listing (must use cache entries from auth) */
-        Err(IdpError::NotFound)
+        Err(IdpError::BadRequest)
     }
 }
 
@@ -228,7 +228,7 @@ impl IdProvider for HimmelblauProvider {
 
     async fn unix_group_get(&self, _id: &Id) -> Result<GroupToken, IdpError> {
         /* AAD doesn't permit group listing (must use cache entries from auth) */
-        Err(IdpError::NotFound)
+        Err(IdpError::BadRequest)
     }
 }
 
