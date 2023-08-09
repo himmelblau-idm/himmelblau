@@ -91,6 +91,7 @@ impl IdProvider for HimmelblauMultiProvider {
                 }
             },
             None => {
+                debug!("Authentication ignored for local user '{}'", account_id);
                 Err(IdpError::NotFound)
             }
         }
