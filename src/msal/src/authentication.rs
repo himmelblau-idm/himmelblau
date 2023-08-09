@@ -5,7 +5,7 @@ use pyo3::types::PyTuple;
 use pyo3::types::PyList;
 use pyo3::types::PyDict;
 use std::collections::HashMap;
-use anyhow::Result;
+use anyhow::{Result, anyhow};
 use uuid::Uuid;
 
 pub const INVALID_CRED: u32 = 0xC3CE;
@@ -124,6 +124,39 @@ impl PublicClientApplication {
             let args: &PyTuple = PyTuple::new(py, largs);
             let resp: Py<PyAny> = func.call1(py, args)?;
             let token: UnixUserToken = resp.extract(py)?;
+            Ok(token)
+        })
+    }
+
+    pub fn acquire_token_silent(&self, scopes: Vec<&str>, username: &str) -> Result<UnixUserToken> {
+        Python::with_gil(|py| {
+            let func: Py<PyAny> = self.app.getattr(py, "acquire_token_silent")?
+                .into();
+            let py_scopes: &PyList = PyList::new(py, scopes);
+            let account = match self.get_accounts()
+                .iter()
+                .find(|tok| tok.get("username").expect("Failed to find username in account") == username)
+                .cloned() {
+                Some(account) => account,
+                None => return Err(anyhow!("Failed to locate user '{}' in auth cache", username)),
+            };
+            let largs: &PyList = PyList::new(py, vec![py_scopes]);
+            largs.append(account.clone())?;
+            let args: &PyTuple = PyTuple::new(py, largs);
+            let resp: Py<PyAny> = func.call1(py, args)?;
+            let mut token: UnixUserToken = resp.extract(py)?;
+            token.spn = match account.get("username") {
+                Some(spn) => spn.to_string(),
+                None => return Err(anyhow!("Failed getting account username")),
+            };
+            token.uuid = match account.get("local_account_id") {
+                Some(oid) => match Uuid::parse_str(oid) {
+                    Ok(uuid) => uuid,
+                    Err(_e) => return Err(anyhow!("Failed getting account uuid")),
+                },
+                None => return Err(anyhow!("Failed getting account uuid")),
+            };
+            /* TODO: Get the GECOS (displayname) from the old token? */
             Ok(token)
         })
     }
