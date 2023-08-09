@@ -170,12 +170,12 @@ impl IdProvider for HimmelblauProvider {
         if self.app_id != DEFAULT_APP_ID {
             scopes.push("GroupMember.Read.All");
         }
-        let mut token = match self.client.write().await.acquire_token_silent(scopes, &account_id) {
+        let mut token = match self.client.write().await.acquire_token_silent(scopes.clone(), &account_id) {
             Ok(token) => token,
             Err(_e) => return Err(IdpError::NotFound),
         };
         // We may have been denied GroupMember.Read.All, try again without it
-        if token.errors.contains(&NO_GROUP_CONSENT) || token.errors.contains(&NO_CONSENT) {
+        if (token.errors.contains(&NO_GROUP_CONSENT) || token.errors.contains(&NO_CONSENT)) && scopes.contains(&"GroupMember.Read.All") {
             debug!("Failed auth with GroupMember.Read.All permissions.");
             debug!("Group memberships will be missing display names.");
             debug!("{}: {}", token.error, token.error_description);
@@ -203,12 +203,12 @@ impl IdProvider for HimmelblauProvider {
         if self.app_id != DEFAULT_APP_ID {
             scopes.push("GroupMember.Read.All");
         }
-        let mut token = match self.client.write().await.acquire_token_by_username_password(&account_id, cred, scopes) {
+        let mut token = match self.client.write().await.acquire_token_by_username_password(&account_id, cred, scopes.clone()) {
             Ok(token) => token,
             Err(_e) => return Err(IdpError::NotFound),
         };
         // We may have been denied GroupMember.Read.All, try again without it
-        if token.errors.contains(&NO_GROUP_CONSENT) || token.errors.contains(&NO_CONSENT) {
+        if (token.errors.contains(&NO_GROUP_CONSENT) || token.errors.contains(&NO_CONSENT)) && scopes.contains(&"GroupMember.Read.All") {
             debug!("Failed auth with GroupMember.Read.All permissions.");
             debug!("Group memberships will be missing display names.");
             debug!("{}: {}", token.error, token.error_description);
