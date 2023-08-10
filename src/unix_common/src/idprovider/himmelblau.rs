@@ -57,7 +57,7 @@ impl IdProvider for HimmelblauMultiProvider {
         Ok(())
     }
 
-    async fn unix_user_get(&self, id: &Id) -> Result<UserToken, IdpError> {
+    async fn unix_user_get(&self, id: &Id, old_token: Option<UserToken>) -> Result<UserToken, IdpError> {
         /* AAD doesn't permit user listing (must use cache entries from auth) */
         let account_id = id.to_string().clone();
         match split_username(&account_id) {
@@ -65,7 +65,7 @@ impl IdProvider for HimmelblauMultiProvider {
                 self.check_insert_provider(domain).await;
                 let providers = self.providers.read().await;
                 match providers.get(domain) {
-                    Some(provider) => provider.unix_user_get(id).await,
+                    Some(provider) => provider.unix_user_get(id, old_token).await,
                     None => Err(IdpError::NotFound),
                 }
             },
@@ -164,7 +164,7 @@ impl IdProvider for HimmelblauProvider {
         }
     }
 
-    async fn unix_user_get(&self, id: &Id) -> Result<UserToken, IdpError> {
+    async fn unix_user_get(&self, id: &Id, old_token: Option<UserToken>) -> Result<UserToken, IdpError> {
         /* Use the msal user cache to refresh the user token */
         let account_id = id.to_string().clone();
         let mut scopes = vec![];
@@ -187,7 +187,16 @@ impl IdProvider for HimmelblauProvider {
         }
         match self.token_validate(&account_id, token).await {
             Ok(token) => match token {
-                Some(token) => Ok(token),
+                Some(mut token) => {
+                    /* Set the GECOS from the old_token, since MS doesn't
+                     * provide this during a silent acquire
+                     */
+                    match old_token {
+                        Some(old_token) => token.displayname = old_token.displayname,
+                        None => {},
+                    };
+                    Ok(token)
+                }
                 None => Err(IdpError::BadRequest),
             },
             Err(e) => Err(e),
