@@ -74,6 +74,43 @@ impl<'a> FromPyObject<'a> for UnixUserToken {
     }
 }
 
+#[derive(Default)]
+pub struct DeviceAuthorizationFlow {
+    pub device_code: String,
+    pub user_code: String,
+    pub verification_uri: String,
+    /* MS doesn't implement verification_uri_complete yet, but our
+     * authentication will be simpler once they do, so assume it works and fall
+     * back to verification_uri if it doesn't.
+     */
+    pub verification_uri_complete: Option<String>,
+    pub expires_in: u32,
+    pub interval: Option<u32>,
+    pub message: Option<String>,
+}
+
+impl<'a> FromPyObject<'a> for DeviceAuthorizationFlow {
+    fn extract(obj: &'a PyAny) -> PyResult<Self> {
+        let dict_obj: &PyDict = obj.extract()?;
+        let mut res: DeviceAuthorizationFlow = Default::default();
+        for (key, val) in dict_obj.iter() {
+            let py_key: &PyString = key.extract()?;
+            let k: String = py_key.to_string_lossy().into_owned();
+            match k.as_str() {
+                "device_code" => res.device_code = val.extract()?,
+                "user_code" => res.user_code = val.extract()?,
+                "verification_uri" => res.verification_uri = val.extract()?,
+                "verification_uri_complete" => res.verification_uri_complete = Some(val.extract()?),
+                "expires_in" => res.expires_in = val.extract()?,
+                "interval" => res.interval = Some(val.extract()?),
+                "message" => res.message = Some(val.extract()?),
+                &_ => {},
+            }
+        }
+        Ok(res)
+    }
+}
+
 impl PublicClientApplication {
     pub fn new(app_id: &str, authority_url: &str) -> PublicClientApplication {
         Python::with_gil(|py| {
@@ -157,6 +194,50 @@ impl PublicClientApplication {
                 None => return Err(anyhow!("Failed getting account uuid")),
             };
             /* TODO: Get the GECOS (displayname) from the old token? */
+            Ok(token)
+        })
+    }
+
+    pub fn initiate_device_flow(&self, scopes: Vec<&str>) -> Result<DeviceAuthorizationFlow> {
+        Python::with_gil(|py| {
+            let func: Py<PyAny> = self.app.getattr(py, "initiate_device_flow")?
+                .into();
+            let py_scopes: &PyList = PyList::new(py, scopes);
+            let largs: &PyList = PyList::new(py, vec![py_scopes]);
+            let args: &PyTuple = PyTuple::new(py, largs);
+            let resp: Py<PyAny> = func.call1(py, args)?;
+            let flow: DeviceAuthorizationFlow = resp.extract(py)?;
+            Ok(flow)
+        })
+    }
+
+    pub fn acquire_token_by_device_flow(&self, flow: DeviceAuthorizationFlow) -> Result<UnixUserToken> {
+        Python::with_gil(|py| {
+            let func: Py<PyAny> = self.app.getattr(py, "acquire_token_by_device_flow")?
+                .into();
+            let py_flow: &PyDict = PyDict::new(py);
+            py_flow.set_item("device_code", flow.device_code)?;
+            py_flow.set_item("user_code", flow.user_code)?;
+            py_flow.set_item("verification_uri", flow.verification_uri)?;
+            match flow.verification_uri_complete {
+                Some(verification_uri_complete) => {
+                    py_flow.set_item("verification_uri_complete", verification_uri_complete)?;
+                },
+                None => {}
+            };
+            py_flow.set_item("expires_in", flow.expires_in)?;
+            match flow.interval {
+                Some(interval) => py_flow.set_item("interval", interval)?,
+                None => {}
+            };
+            match flow.message {
+                Some(message) => py_flow.set_item("message", message)?,
+                None => {}
+            };
+            let largs: &PyList = PyList::new(py, vec![py_flow]);
+            let args: &PyTuple = PyTuple::new(py, largs);
+            let resp: Py<PyAny> = func.call1(py, args)?;
+            let token: UnixUserToken = resp.extract(py)?;
             Ok(token)
         })
     }
