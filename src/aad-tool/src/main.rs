@@ -60,7 +60,7 @@ async fn main() -> ExitCode {
     let cgid = get_current_gid();
     let cegid = get_effective_gid();
 
-    let args = App::new("aad-tool")
+    let mut parser = App::new("aad-tool")
         .arg(
             Arg::new("debug")
                 .help("Show extra debug information")
@@ -76,7 +76,46 @@ async fn main() -> ExitCode {
                 .action(ArgAction::SetTrue),
         )
         .subcommand(
-            SubCommand::with_name("enroll")
+            SubCommand::with_name("cache")
+                .about("Cache operations")
+            .subcommand(
+                SubCommand::with_name("clear")
+                    .about("Cache clear tool")
+            )
+            .subcommand(
+                SubCommand::with_name("invalidate")
+                    .about("Cache invalidatation tool")
+            )
+            .subcommand(
+                SubCommand::with_name("status")
+                    .about("Cache status tool")
+            )
+        );
+
+    // Read the configuration
+    let mut config = match HimmelblauConfig::new(DEFAULT_CONFIG_PATH) {
+        Ok(c) => c,
+        Err(e) => {
+            error!("{}", e);
+            return ExitCode::FAILURE
+        }
+    };
+
+    /* This is an intentionally undocumented option, since this doesn't work yet */
+    let experimental_device_enroll: bool = match config.get("global", "experimental_device_enroll") {
+        Some(val) => match val.to_lowercase().as_str() {
+            "true" => true,
+            "false" => false,
+            "1" => true,
+            "0" => false,
+            _ => false,
+        },
+        None => false,
+    };
+
+    if experimental_device_enroll {
+        parser = parser.subcommand(
+            App::new("enroll")
                 .about("Enroll this device in Azure Active Directory")
                 .arg(
                     Arg::with_name("domain")
@@ -99,23 +138,10 @@ async fn main() -> ExitCode {
                         .multiple_values(false)
                         .takes_value(true)
                 )
-        )
-        .subcommand(
-            SubCommand::with_name("cache")
-                .about("Cache operations")
-            .subcommand(
-                SubCommand::with_name("clear")
-                    .about("Cache clear tool")
-            )
-            .subcommand(
-                SubCommand::with_name("invalidate")
-                    .about("Cache invalidatation tool")
-            )
-            .subcommand(
-                SubCommand::with_name("status")
-                    .about("Cache status tool")
-            )
-        ).get_matches();
+        );
+    }
+
+    let args = parser.get_matches();
 
     if args.get_flag("debug") {
         std::env::set_var("RUST_LOG", "debug");
@@ -127,15 +153,6 @@ async fn main() -> ExitCode {
     } else if cuid == 0 || ceuid == 0 || cgid == 0 || cegid == 0 {
         error!("Refusing to run - this process need not run as root.");
         return ExitCode::FAILURE
-    };
-
-    // Read the configuration
-    let mut config = match HimmelblauConfig::new(DEFAULT_CONFIG_PATH) {
-        Ok(c) => c,
-        Err(e) => {
-            error!("{}", e);
-            return ExitCode::FAILURE
-        }
     };
 
     match args.subcommand() {

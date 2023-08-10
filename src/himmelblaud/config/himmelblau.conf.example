@@ -9,9 +9,6 @@
 # tenant_id = XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX
 # authority_host = login.microsoftonline.com
 #
-# The enrolled device id.
-# device_id = XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX
-#
 # The location of the cache database
 # db_path = /var/cache/himmelblau/himmelblau.cache.db
 #
