@@ -193,7 +193,6 @@ impl PublicClientApplication {
                 },
                 None => return Err(anyhow!("Failed getting account uuid")),
             };
-            /* TODO: Get the GECOS (displayname) from the old token? */
             Ok(token)
         })
     }
