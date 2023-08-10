@@ -1,8 +1,8 @@
 [workspace]
 members = [
-	"src/himmelblaud",
-	"src/aad-tool",
-	"src/unix_common",
+	"src/daemon",
+	"src/cli",
+	"src/common",
 	"src/msal",
 	"src/pam",
 	"src/nss",
@@ -33,7 +33,7 @@ serde = { version = "^1.0.180", features = ["derive"] }
 serde_json = "^1.0.96"
 tracing-subscriber = "^0.3.17"
 tracing = "^0.1.37"
-himmelblau_unix_common = { version = "^0.0.4", path = "src/unix_common" }
+himmelblau_unix_common = { version = "^0.0.4", path = "src/common" }
 kanidm_unix_common = { version = "^0.0.4", path = "src/glue" }
 msal = { version = "^0.0.4", path = "src/msal" }
 clap = { version = "^3.2", features = ["derive", "env"] }
