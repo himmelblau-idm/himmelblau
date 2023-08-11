@@ -312,7 +312,7 @@ async fn main() -> ExitCode {
             db,
             idprovider,
             config.get_cache_timeout(),
-            vec![], // TODO: Implement allowed logon groups
+            config.get_pam_allow_groups(),
             config.get_shell(None),
             config.get_home_prefix(None),
             config.get_home_attr(None),
