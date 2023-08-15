@@ -4,6 +4,12 @@
 # request is successful, the tenant_id and authority_host options do not need to
 # be specified.
 #
+# pam_allow_groups MUST be defined or all users will be rejected by pam account.
+# The option should be set to a comma seperated list of Groups which are allowed
+# access to the system.
+# The default is an empty list.
+# pam_allow_groups =
+#
 # odc_provider = odc.officeapps.live.com
 #
 # tenant_id = XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX

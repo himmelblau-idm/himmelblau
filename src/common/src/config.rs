@@ -319,6 +319,13 @@ impl HimmelblauConfig {
         }
     }
 
+    pub fn get_pam_allow_groups(&self) -> Vec<String> {
+        match self.config.get("global", "pam_allow_groups") {
+            Some(val) => val.split(',').map(|s| s.trim().to_string()).collect(),
+            None => vec![],
+        }
+    }
+
     pub fn write(&self, config_file: &str) -> Result<(), Error> {
         self.config.write(config_file)
     }
