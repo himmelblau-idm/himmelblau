@@ -25,7 +25,6 @@ use himmelblau_unix_common::constants::{DEFAULT_CONFIG_PATH, DEFAULT_SOCK_PATH};
 use himmelblau_unix_common::unix_proto::{ClientRequest, ClientResponse};
 use himmelblau_unix_common::config::HimmelblauConfig;
 use himmelblau_unix_common::unix_config::UidAttr;
-use msal::misc::enroll_device;
 use futures::{SinkExt, StreamExt};
 use himmelblau_unix_common::resolver::Resolver;
 use himmelblau_unix_common::db::Db;
@@ -193,25 +192,6 @@ async fn handle_client(
                         error!("unable to load group, returning empty.");
                         ClientResponse::NssGroup(None)
                     })
-            }
-            ClientRequest::EnrollDevice(graph, access_token) => {
-                debug!("EnrollDevice req");
-                match enroll_device(&graph, &access_token).await {
-                    Ok(device) => {
-                        let mut config = HimmelblauConfig::new(DEFAULT_CONFIG_PATH)
-                            .expect("Failed loading configuration");
-                        config.set("global", "device_id", &device.id);
-                        match config.write(DEFAULT_CONFIG_PATH) {
-                            Ok(()) => debug!("Successfully wrote configuration."),
-                            Err(e) => error!("Failed writing configuration: {}", e),
-                        };
-                        ClientResponse::Ok
-                    },
-                    Err(e) => {
-                        error!("{}", e);
-                        ClientResponse::Error
-                    }
-                }
             }
             ClientRequest::InvalidateCache => {
                 debug!("invalidate cache");
