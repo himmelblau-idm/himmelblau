@@ -1,0 +1,1 @@
+../../kanidm/unix_integration/src/client.rs

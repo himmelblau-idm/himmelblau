@@ -3,7 +3,7 @@ use tracing::{warn, error, info};
 use std::process::ExitCode;
 use himmelblau_unix_common::constants::DEFAULT_CONFIG_PATH;
 use himmelblau_unix_common::config::HimmelblauConfig;
-use himmelblau_unix_common::client_sync::call_daemon_blocking;
+use himmelblau_unix_common::client::call_daemon;
 use himmelblau_unix_common::unix_proto::{ClientRequest, ClientResponse};
 use users::{get_current_gid, get_current_uid, get_effective_gid, get_effective_uid};
 use tokio;
@@ -74,7 +74,7 @@ async fn main() -> ExitCode {
         Some(("invalidate", _args)) => {
             let req = ClientRequest::InvalidateCache;
             let socket_path = config.get_socket_path();
-            match call_daemon_blocking(&socket_path, &req, 10) {
+            match call_daemon(&socket_path, req, 10).await {
                 Ok(r) => match r {
                     ClientResponse::Ok => info!("success"),
                     _ => {
@@ -90,7 +90,7 @@ async fn main() -> ExitCode {
         Some(("clear", _args)) => {
             let req = ClientRequest::ClearCache;
             let socket_path = config.get_socket_path();
-            match call_daemon_blocking(&socket_path, &req, 10) {
+            match call_daemon(&socket_path, req, 10).await {
                 Ok(r) => match r {
                     ClientResponse::Ok => info!("success"),
                     _ => {
@@ -106,7 +106,7 @@ async fn main() -> ExitCode {
         Some(("status", _args)) => {
             let req = ClientRequest::Status;
             let socket_path = config.get_socket_path();
-            match call_daemon_blocking(&socket_path, &req, 10) {
+            match call_daemon(&socket_path, req, 10).await {
                 Ok(r) => match r {
                     ClientResponse::Ok => println!("working!"),
                     _ => {

@@ -103,16 +103,48 @@ async fn handle_client(
     };
 
     let mut reqs = Framed::new(sock, ClientCodec::new());
+    let mut pam_auth_session_state = None;
 
     while let Some(Ok(req)) = reqs.next().await {
         let resp = match req {
-            ClientRequest::PamAuthenticate(account_id, cred) => {
-                debug!("pam authenticate");
-                cachelayer
-                    .pam_account_authenticate(account_id.as_str(), cred.as_str())
-                    .await
-                    .map(ClientResponse::PamStatus)
-                    .unwrap_or(ClientResponse::Error)
+            ClientRequest::PamAuthenticateInit(account_id) => {
+                debug!("pam authenticate init");
+
+                match &pam_auth_session_state {
+                    Some(_auth_session) => {
+                        // Invalid to init a request twice.
+                        warn!("Attempt to init auth session while current session is active");
+                        // Clean the former session, something is wrong.
+                        pam_auth_session_state = None;
+                        ClientResponse::Error
+                    }
+                    None => {
+                        match cachelayer
+                            .pam_account_authenticate_init(account_id.as_str())
+                            .await
+                        {
+                            Ok((auth_session, pam_auth_response)) => {
+                                pam_auth_session_state = Some(auth_session);
+                                pam_auth_response.into()
+                            }
+                            Err(_) => ClientResponse::Error,
+                        }
+                    }
+                }
+            }
+            ClientRequest::PamAuthenticateStep(pam_next_req) => {
+                debug!("pam authenticate step");
+                match &mut pam_auth_session_state {
+                    Some(auth_session) => cachelayer
+                        .pam_account_authenticate_step(auth_session, pam_next_req)
+                        .await
+                        .map(|pam_auth_response| pam_auth_response.into())
+                        .unwrap_or(ClientResponse::Error),
+                    None => {
+                        warn!("Attempt to continue auth session while current session is inactive");
+                        ClientResponse::Error
+                    }
+                }
             }
             ClientRequest::PamAccountAllowed(account_id) => {
                 debug!("pam account allowed");
@@ -222,6 +254,7 @@ async fn handle_client(
                     ClientResponse::Error
                 }
             }
+            ClientRequest::SshKey(_) => ClientResponse::Error,
         };
         reqs.send(resp).await?;
         reqs.flush().await?;

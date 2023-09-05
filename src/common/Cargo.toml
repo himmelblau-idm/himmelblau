@@ -35,3 +35,5 @@ uuid = { workspace = true }
 async-trait = { workspace = true }
 kanidm_lib_crypto = { workspace = true }
 libc = { workspace = true }
+bytes = "^1.3.0"
+futures = "^0.3.28"

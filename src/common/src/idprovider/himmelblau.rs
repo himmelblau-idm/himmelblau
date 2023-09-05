@@ -7,7 +7,11 @@ use tokio::sync::RwLock;
 use crate::config::HimmelblauConfig;
 use msal::misc::{request_user_groups, DirectoryObject};
 use uuid::Uuid;
-use super::interface::{GroupToken, Id, IdProvider, IdpError, UserToken};
+use super::interface::{
+    AuthCacheAction, AuthCredHandler, AuthRequest, AuthResult, GroupToken, Id, IdProvider,
+    IdpError, UserToken,
+};
+use crate::unix_proto::PamAuthRequest;
 use std::collections::HashMap;
 use crate::config::split_username;
 use reqwest;
@@ -47,6 +51,10 @@ impl HimmelblauMultiProvider {
 
 #[async_trait]
 impl IdProvider for HimmelblauMultiProvider {
+    /* TODO: Kanidm should be modified to provide the account_id to
+     * provider_authenticate, so that we can test the correct provider here.
+     * Currently we go offline if ANY provider is down, which could be
+     * incorrect. */
     async fn provider_authenticate(&self) -> Result<(), IdpError> {
         for (_domain, provider) in self.providers.read().await.iter() {
             match provider.provider_authenticate().await {
@@ -57,7 +65,7 @@ impl IdProvider for HimmelblauMultiProvider {
         Ok(())
     }
 
-    async fn unix_user_get(&self, id: &Id, old_token: Option<UserToken>) -> Result<UserToken, IdpError> {
+    async fn unix_user_get(&self, id: &Id, old_token: Option<&UserToken>) -> Result<UserToken, IdpError> {
         /* AAD doesn't permit user listing (must use cache entries from auth) */
         let account_id = id.to_string().clone();
         match split_username(&account_id) {
@@ -75,18 +83,60 @@ impl IdProvider for HimmelblauMultiProvider {
         }
     }
 
-    async fn unix_user_authenticate(
+    async fn unix_user_online_auth_init(
         &self,
-        id: &Id,
-        cred: &str,
-    ) -> Result<Option<UserToken>, IdpError> {
-        let account_id = id.to_string().clone();
+        account_id: &str,
+        token: Option<&UserToken>,
+    ) -> Result<(AuthRequest, AuthCredHandler), IdpError> {
         match split_username(&account_id) {
             Some((_sam, domain)) => {
                 self.check_insert_provider(domain).await;
                 let providers = self.providers.read().await;
                 match providers.get(domain) {
-                    Some(provider) => provider.unix_user_authenticate(id, cred).await,
+                    Some(provider) => provider.unix_user_online_auth_init(account_id, token).await,
+                    None => Err(IdpError::NotFound),
+                }
+            },
+            None => {
+                debug!("Authentication ignored for local user '{}'", account_id);
+                Err(IdpError::NotFound)
+            }
+        }
+    }
+
+    async fn unix_user_online_auth_step(
+        &self,
+        account_id: &str,
+        cred_handler: &mut AuthCredHandler,
+        pam_next_req: PamAuthRequest,
+    ) -> Result<(AuthResult, AuthCacheAction), IdpError> {
+        match split_username(&account_id) {
+            Some((_sam, domain)) => {
+                self.check_insert_provider(domain).await;
+                let providers = self.providers.read().await;
+                match providers.get(domain) {
+                    Some(provider) => provider.unix_user_online_auth_step(account_id, cred_handler, pam_next_req).await,
+                    None => Err(IdpError::NotFound),
+                }
+            },
+            None => {
+                debug!("Authentication ignored for local user '{}'", account_id);
+                Err(IdpError::NotFound)
+            }
+        }
+    }
+
+    async fn unix_user_offline_auth_init(
+        &self,
+        account_id: &str,
+        token: Option<&UserToken>,
+    ) -> Result<(AuthRequest, AuthCredHandler), IdpError> {
+        match split_username(&account_id) {
+            Some((_sam, domain)) => {
+                self.check_insert_provider(domain).await;
+                let providers = self.providers.read().await;
+                match providers.get(domain) {
+                    Some(provider) => provider.unix_user_offline_auth_init(account_id, token).await,
                     None => Err(IdpError::NotFound),
                 }
             },
@@ -164,7 +214,7 @@ impl IdProvider for HimmelblauProvider {
         }
     }
 
-    async fn unix_user_get(&self, id: &Id, old_token: Option<UserToken>) -> Result<UserToken, IdpError> {
+    async fn unix_user_get(&self, id: &Id, old_token: Option<&UserToken>) -> Result<UserToken, IdpError> {
         /* Use the msal user cache to refresh the user token */
         let account_id = id.to_string().clone();
         let mut scopes = vec![];
@@ -192,7 +242,7 @@ impl IdProvider for HimmelblauProvider {
                      * provide this during a silent acquire
                      */
                     match old_token {
-                        Some(old_token) => token.displayname = old_token.displayname,
+                        Some(old_token) => token.displayname = old_token.displayname.clone(),
                         None => {},
                     };
                     Ok(token)
@@ -203,31 +253,61 @@ impl IdProvider for HimmelblauProvider {
         }
     }
 
-    async fn unix_user_authenticate(
+    async fn unix_user_online_auth_init(
         &self,
-        id: &Id,
-        cred: &str,
-    ) -> Result<Option<UserToken>, IdpError> {
-        let account_id = id.to_string().clone();
-        let mut scopes = vec![];
-        if self.app_id != DEFAULT_APP_ID {
-            scopes.push("GroupMember.Read.All");
+        _account_id: &str,
+        _token: Option<&UserToken>,
+    ) -> Result<(AuthRequest, AuthCredHandler), IdpError> {
+        Ok((AuthRequest::Password, AuthCredHandler::Password))
+    }
+
+    async fn unix_user_online_auth_step(
+        &self,
+        account_id: &str,
+        cred_handler: &mut AuthCredHandler,
+        pam_next_req: PamAuthRequest,
+    ) -> Result<(AuthResult, AuthCacheAction), IdpError> {
+        match (cred_handler, pam_next_req) {
+            (AuthCredHandler::Password, PamAuthRequest::Password { cred }) => {
+                let mut scopes = vec![];
+                if self.app_id != DEFAULT_APP_ID {
+                    scopes.push("GroupMember.Read.All");
+                }
+                let mut token = match self.client.write().await.acquire_token_by_username_password(&account_id, &cred, scopes.clone()) {
+                    Ok(token) => token,
+                    Err(_e) => return Err(IdpError::NotFound),
+                };
+                // We may have been denied GroupMember.Read.All, try again without it
+                if (token.errors.contains(&NO_GROUP_CONSENT) || token.errors.contains(&NO_CONSENT)) && scopes.contains(&"GroupMember.Read.All") {
+                    debug!("Failed auth with GroupMember.Read.All permissions.");
+                    debug!("Group memberships will be missing display names.");
+                    debug!("{}: {}", token.error, token.error_description);
+                    token = match self.client.write().await.acquire_token_by_username_password(&account_id, &cred, vec![]) {
+                        Ok(token) => token,
+                        Err(_e) => return Err(IdpError::NotFound),
+                    };
+                }
+                match self.token_validate(&account_id, token).await {
+                    Ok(Some(token)) => {
+                        Ok((
+                            AuthResult::Success { token },
+                            AuthCacheAction::PasswordHashUpdate { cred },
+                        ))
+                    },
+                    Ok(None) => Err(IdpError::NotFound),
+                    Err(e) => Err(e),
+                }
+            }
         }
-        let mut token = match self.client.write().await.acquire_token_by_username_password(&account_id, cred, scopes.clone()) {
-            Ok(token) => token,
-            Err(_e) => return Err(IdpError::NotFound),
-        };
-        // We may have been denied GroupMember.Read.All, try again without it
-        if (token.errors.contains(&NO_GROUP_CONSENT) || token.errors.contains(&NO_CONSENT)) && scopes.contains(&"GroupMember.Read.All") {
-            debug!("Failed auth with GroupMember.Read.All permissions.");
-            debug!("Group memberships will be missing display names.");
-            debug!("{}: {}", token.error, token.error_description);
-            token = match self.client.write().await.acquire_token_by_username_password(&account_id, cred, vec![]) {
-                Ok(token) => token,
-                Err(_e) => return Err(IdpError::NotFound),
-            };
-        }
-        self.token_validate(&account_id, token).await
+    }
+
+    async fn unix_user_offline_auth_init(
+        &self,
+        _account_id: &str,
+        _token: Option<&UserToken>,
+    ) -> Result<(AuthRequest, AuthCredHandler), IdpError> {
+        /* If we are offline, then just perform a password auth */
+        Ok((AuthRequest::Password, AuthCredHandler::Password))
     }
 
     async fn unix_group_get(&self, _id: &Id) -> Result<GroupToken, IdpError> {
