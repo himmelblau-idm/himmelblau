@@ -16,6 +16,7 @@ path =  "src/lib.rs"
 
 [dependencies]
 himmelblau_unix_common = { workspace = true }
+kanidm_unix_common = { workspace = true }
 libnss = { git = "https://github.com/ubuntu/libnss-rs.git", branch = "misc-fixes" }
 libc = { workspace = true }
 paste = { workspace = true }

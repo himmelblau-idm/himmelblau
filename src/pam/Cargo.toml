@@ -18,6 +18,8 @@ path =  "../kanidm/unix_integration/pam_kanidm/src/lib.rs"
 [dependencies]
 libc = { workspace = true }
 kanidm_unix_common = { workspace = true }
+tracing-subscriber = { workspace = true }
+tracing = { workspace = true }
 
 [build-dependencies]
 pkg-config.workspace = true
