@@ -1,20 +1,23 @@
 use async_trait::async_trait;
-use msal::authentication::{PublicClientApplication, REQUIRES_MFA, NO_CONSENT, NO_SECRET, NO_GROUP_CONSENT, UnixUserToken};
+use msal::authentication::{PublicClientApplication, REQUIRES_MFA, NO_CONSENT, NO_SECRET, NO_GROUP_CONSENT, UnixUserToken, AUTH_PENDING};
 use himmelblau_policies::policies::apply_group_policy;
 use crate::constants::{DEFAULT_APP_ID, DEFAULT_CONFIG_PATH};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use crate::config::HimmelblauConfig;
+use msal::authentication::DeviceAuthorizationResponse as msal_DeviceAuthorizationResponse;
 use msal::misc::{request_user_groups, DirectoryObject};
 use uuid::Uuid;
 use super::interface::{
     AuthCacheAction, AuthCredHandler, AuthRequest, AuthResult, GroupToken, Id, IdProvider,
     IdpError, UserToken,
 };
-use crate::unix_proto::PamAuthRequest;
+use crate::unix_proto::{PamAuthRequest, DeviceAuthorizationResponse};
 use std::collections::HashMap;
 use crate::config::split_username;
 use reqwest;
+use std::time::Duration;
+use std::thread::sleep;
 
 use rand::Rng;
 use rand_chacha::ChaCha8Rng;
@@ -197,6 +200,34 @@ impl HimmelblauProvider {
     }
 }
 
+impl From<msal_DeviceAuthorizationResponse> for DeviceAuthorizationResponse {
+    fn from(src: msal_DeviceAuthorizationResponse) -> Self {
+        Self {
+            device_code: src.device_code,
+            user_code: src.user_code,
+            verification_uri: src.verification_uri,
+            verification_uri_complete: src.verification_uri_complete,
+            expires_in: src.expires_in,
+            interval: src.interval,
+            message: src.message,
+        }
+    }
+}
+
+impl From<DeviceAuthorizationResponse> for msal_DeviceAuthorizationResponse {
+    fn from(src: DeviceAuthorizationResponse) -> Self {
+        Self {
+            device_code: src.device_code,
+            user_code: src.user_code,
+            verification_uri: src.verification_uri,
+            verification_uri_complete: src.verification_uri_complete,
+            expires_in: src.expires_in,
+            interval: src.interval,
+            message: src.message,
+        }
+    }
+}
+
 #[async_trait]
 impl IdProvider for HimmelblauProvider {
     // Needs .read on all types except re-auth.
@@ -236,19 +267,17 @@ impl IdProvider for HimmelblauProvider {
             };
         }
         match self.token_validate(&account_id, token).await {
-            Ok(token) => match token {
-                Some(mut token) => {
-                    /* Set the GECOS from the old_token, since MS doesn't
-                     * provide this during a silent acquire
-                     */
-                    match old_token {
-                        Some(old_token) => token.displayname = old_token.displayname.clone(),
-                        None => {},
-                    };
-                    Ok(token)
-                }
-                None => Err(IdpError::BadRequest),
+            Ok(AuthResult::Success { mut token }) => {
+                /* Set the GECOS from the old_token, since MS doesn't
+                 * provide this during a silent acquire
+                 */
+                match old_token {
+                    Some(old_token) => token.displayname = old_token.displayname.clone(),
+                    None => {},
+                };
+                Ok(token)
             },
+            Ok(AuthResult::Denied) | Ok(AuthResult::Next(_)) => Err(IdpError::NotFound),
             Err(e) => Err(e),
         }
     }
@@ -288,16 +317,59 @@ impl IdProvider for HimmelblauProvider {
                     };
                 }
                 match self.token_validate(&account_id, token).await {
-                    Ok(Some(token)) => {
+                    Ok(AuthResult::Success { token }) => {
                         Ok((
                             AuthResult::Success { token },
                             AuthCacheAction::PasswordHashUpdate { cred },
                         ))
                     },
-                    Ok(None) => Err(IdpError::NotFound),
+                    Ok(AuthResult::Next(req)) => {
+                        Ok((
+                            AuthResult::Next(req),
+                            /* An MFA auth cannot cache the password. This would
+                             * lead to a potential downgrade to SFA attack (where
+                             * the attacker auths with a stolen password, then
+                             * disconnects the network to complete the auth). */
+                            AuthCacheAction::None,
+                        ))
+                    },
+                    Ok(auth_result) => {
+                        Ok((
+                            auth_result,
+                            AuthCacheAction::None,
+                        ))
+                    },
                     Err(e) => Err(e),
                 }
-            }
+            },
+            (AuthCredHandler::DeviceAuthorizationGrant, PamAuthRequest::DeviceAuthorizationGrant { data }) => {
+                let sleep_interval: u64 = match data.interval.as_ref() {
+                    Some(val) => *val as u64,
+                    None => 5,
+                };
+                let mut token = match self.client.write().await.acquire_token_by_device_flow(data.clone().into()) {
+                    Ok(token) => token,
+                    Err(_e) => return Err(IdpError::NotFound),
+                };
+                while token.errors.contains(&AUTH_PENDING) {
+                    debug!("Polling for acquire_token_by_device_flow");
+                    sleep(Duration::from_secs(sleep_interval));
+                    token = match self.client.write().await.acquire_token_by_device_flow(data.clone().into()) {
+                        Ok(token) => token,
+                        Err(_e) => return Err(IdpError::NotFound),
+                    };
+                }
+                match self.token_validate(&account_id, token).await {
+                    Ok(auth_result) => {
+                        Ok((
+                            auth_result,
+                            AuthCacheAction::None,
+                        ))
+                    },
+                    Err(e) => Err(e),
+                }
+            },
+            _ => Err(IdpError::NotFound),
         }
     }
 
@@ -317,7 +389,7 @@ impl IdProvider for HimmelblauProvider {
 }
 
 impl HimmelblauProvider {
-    async fn token_validate(&self, account_id: &str, token: UnixUserToken) -> Result<Option<UserToken>, IdpError> {
+    async fn token_validate(&self, account_id: &str, token: UnixUserToken) -> Result<AuthResult, IdpError> {
         match token.access_token {
             Some(_) => {
                 info!("Authentication successful for user '{}'", account_id);
@@ -343,13 +415,17 @@ impl HimmelblauProvider {
                         }
                     }));
                 }
-                Ok(Some(self.user_token_from_unix_user_token(token).await))
+                Ok(AuthResult::Success { token: self.user_token_from_unix_user_token(token).await })
             },
             None => {
                 info!("Authentication failed for user '{}'", account_id);
                 if token.errors.contains(&REQUIRES_MFA) {
                     info!("Azure AD application requires MFA");
-                    //TODO: Attempt an interactive auth via the browser
+                    let resp = match self.client.write().await.initiate_device_flow(vec!["GroupMember.Read.All"]) {
+                        Ok(resp) => resp,
+                        Err(_e) => return Err(IdpError::BadRequest),
+                    };
+                    return Ok(AuthResult::Next(AuthRequest::DeviceAuthorizationGrant { data: resp.into() }));
                 }
                 if token.errors.contains(&NO_CONSENT) {
                     let url = format!("{}/adminconsent?client_id={}", self.authority_url, self.app_id);

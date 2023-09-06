@@ -21,7 +21,7 @@ impl PasswdHooks for HimmelblauPasswd {
         let req = ClientRequest::NssAccounts;
 
         let mut daemon_client =
-            match DaemonClientBlocking::new(cfg.sock_path.as_str(), cfg.unix_sock_timeout) {
+            match DaemonClientBlocking::new(cfg.sock_path.as_str()) {
                 Ok(dc) => dc,
                 Err(_) => {
                     return Response::Unavail;
@@ -29,7 +29,7 @@ impl PasswdHooks for HimmelblauPasswd {
             };
 
         daemon_client
-            .call_and_wait(&req)
+            .call_and_wait(&req, cfg.unix_sock_timeout)
             .map(|r| match r {
                 ClientResponse::NssAccounts(l) => l.into_iter().map(passwd_from_nssuser).collect(),
                 _ => Vec::new(),
@@ -49,7 +49,7 @@ impl PasswdHooks for HimmelblauPasswd {
         let req = ClientRequest::NssAccountByUid(uid);
 
         let mut daemon_client =
-            match DaemonClientBlocking::new(cfg.sock_path.as_str(), cfg.unix_sock_timeout) {
+            match DaemonClientBlocking::new(cfg.sock_path.as_str()) {
                 Ok(dc) => dc,
                 Err(_) => {
                     return Response::Unavail;
@@ -57,7 +57,7 @@ impl PasswdHooks for HimmelblauPasswd {
             };
 
         daemon_client
-            .call_and_wait(&req)
+            .call_and_wait(&req, cfg.unix_sock_timeout)
             .map(|r| match r {
                 ClientResponse::NssAccount(opt) => opt
                     .map(passwd_from_nssuser)
@@ -78,7 +78,7 @@ impl PasswdHooks for HimmelblauPasswd {
             };
         let req = ClientRequest::NssAccountByName(name);
         let mut daemon_client =
-            match DaemonClientBlocking::new(cfg.sock_path.as_str(), cfg.unix_sock_timeout) {
+            match DaemonClientBlocking::new(cfg.sock_path.as_str()) {
                 Ok(dc) => dc,
                 Err(_) => {
                     return Response::Unavail;
@@ -86,7 +86,7 @@ impl PasswdHooks for HimmelblauPasswd {
             };
 
         daemon_client
-            .call_and_wait(&req)
+            .call_and_wait(&req, cfg.unix_sock_timeout)
             .map(|r| match r {
                 ClientResponse::NssAccount(opt) => opt
                     .map(passwd_from_nssuser)
@@ -112,7 +112,7 @@ impl GroupHooks for HimmelblauGroup {
             };
         let req = ClientRequest::NssGroups;
         let mut daemon_client =
-            match DaemonClientBlocking::new(cfg.sock_path.as_str(), cfg.unix_sock_timeout) {
+            match DaemonClientBlocking::new(cfg.sock_path.as_str()) {
                 Ok(dc) => dc,
                 Err(_) => {
                     return Response::Unavail;
@@ -120,7 +120,7 @@ impl GroupHooks for HimmelblauGroup {
             };
 
         daemon_client
-            .call_and_wait(&req)
+            .call_and_wait(&req, cfg.unix_sock_timeout)
             .map(|r| match r {
                 ClientResponse::NssGroups(l) => l.into_iter().map(group_from_nssgroup).collect(),
                 _ => Vec::new(),
@@ -139,7 +139,7 @@ impl GroupHooks for HimmelblauGroup {
             };
         let req = ClientRequest::NssGroupByGid(gid);
         let mut daemon_client =
-            match DaemonClientBlocking::new(cfg.sock_path.as_str(), cfg.unix_sock_timeout) {
+            match DaemonClientBlocking::new(cfg.sock_path.as_str()) {
                 Ok(dc) => dc,
                 Err(_) => {
                     return Response::Unavail;
@@ -147,7 +147,7 @@ impl GroupHooks for HimmelblauGroup {
             };
 
         daemon_client
-            .call_and_wait(&req)
+            .call_and_wait(&req, cfg.unix_sock_timeout)
             .map(|r| match r {
                 ClientResponse::NssGroup(opt) => opt
                     .map(group_from_nssgroup)
@@ -168,7 +168,7 @@ impl GroupHooks for HimmelblauGroup {
             };
         let req = ClientRequest::NssGroupByName(name);
         let mut daemon_client =
-            match DaemonClientBlocking::new(cfg.sock_path.as_str(), cfg.unix_sock_timeout) {
+            match DaemonClientBlocking::new(cfg.sock_path.as_str()) {
                 Ok(dc) => dc,
                 Err(_) => {
                     return Response::Unavail;
@@ -176,7 +176,7 @@ impl GroupHooks for HimmelblauGroup {
             };
 
         daemon_client
-            .call_and_wait(&req)
+            .call_and_wait(&req, cfg.unix_sock_timeout)
             .map(|r| match r {
                 ClientResponse::NssGroup(opt) => opt
                     .map(group_from_nssgroup)

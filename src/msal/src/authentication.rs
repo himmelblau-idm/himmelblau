@@ -14,6 +14,7 @@ pub const INVALID_USER: u32 = 0xC372;
 pub const NO_CONSENT:   u32 = 0xFDE9;
 pub const NO_GROUP_CONSENT: u32 = 0xFDEA;
 pub const NO_SECRET:    u32 = 0x6AD09A;
+pub const AUTH_PENDING: u32 = 0x11180;
 
 pub struct PublicClientApplication {
     app: Py<PyAny>
@@ -74,8 +75,9 @@ impl<'a> FromPyObject<'a> for UnixUserToken {
     }
 }
 
+/* RFC8628: 3.2. Device Authorization Response */
 #[derive(Default)]
-pub struct DeviceAuthorizationFlow {
+pub struct DeviceAuthorizationResponse {
     pub device_code: String,
     pub user_code: String,
     pub verification_uri: String,
@@ -89,10 +91,10 @@ pub struct DeviceAuthorizationFlow {
     pub message: Option<String>,
 }
 
-impl<'a> FromPyObject<'a> for DeviceAuthorizationFlow {
+impl<'a> FromPyObject<'a> for DeviceAuthorizationResponse {
     fn extract(obj: &'a PyAny) -> PyResult<Self> {
         let dict_obj: &PyDict = obj.extract()?;
-        let mut res: DeviceAuthorizationFlow = Default::default();
+        let mut res: DeviceAuthorizationResponse = Default::default();
         for (key, val) in dict_obj.iter() {
             let py_key: &PyString = key.extract()?;
             let k: String = py_key.to_string_lossy().into_owned();
@@ -197,7 +199,7 @@ impl PublicClientApplication {
         })
     }
 
-    pub fn initiate_device_flow(&self, scopes: Vec<&str>) -> Result<DeviceAuthorizationFlow> {
+    pub fn initiate_device_flow(&self, scopes: Vec<&str>) -> Result<DeviceAuthorizationResponse> {
         Python::with_gil(|py| {
             let func: Py<PyAny> = self.app.getattr(py, "initiate_device_flow")?
                 .into();
@@ -205,12 +207,12 @@ impl PublicClientApplication {
             let largs: &PyList = PyList::new(py, vec![py_scopes]);
             let args: &PyTuple = PyTuple::new(py, largs);
             let resp: Py<PyAny> = func.call1(py, args)?;
-            let flow: DeviceAuthorizationFlow = resp.extract(py)?;
+            let flow: DeviceAuthorizationResponse = resp.extract(py)?;
             Ok(flow)
         })
     }
 
-    pub fn acquire_token_by_device_flow(&self, flow: DeviceAuthorizationFlow) -> Result<UnixUserToken> {
+    pub fn acquire_token_by_device_flow(&self, flow: DeviceAuthorizationResponse) -> Result<UnixUserToken> {
         Python::with_gil(|py| {
             let func: Py<PyAny> = self.app.getattr(py, "acquire_token_by_device_flow")?
                 .into();
