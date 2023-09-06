@@ -36,7 +36,7 @@ link the libraries to the correct locations
 Configure your instance
 
     mkdir /etc/himmelblau/
-    cp src/himmelblaud/config/himmelblau.conf.example /etc/himmelblau/himmelblau.conf
+    cp src/config/himmelblau.conf.example /etc/himmelblau/himmelblau.conf
     vim /etc/himmelblau/himmelblau.conf
 
 Run the daemon with:
