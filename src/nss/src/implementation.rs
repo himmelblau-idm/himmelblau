@@ -1,7 +1,7 @@
 use himmelblau_unix_common::client_sync::DaemonClientBlocking;
 use himmelblau_unix_common::constants::DEFAULT_CONFIG_PATH;
-use kanidm_unix_common::unix_config::KanidmUnixdConfig;
 use himmelblau_unix_common::unix_proto::{ClientRequest, ClientResponse, NssGroup, NssUser};
+use kanidm_unix_common::unix_config::KanidmUnixdConfig;
 use libnss::group::{Group, GroupHooks};
 use libnss::interop::Response;
 use libnss::passwd::{Passwd, PasswdHooks};
@@ -20,13 +20,12 @@ impl PasswdHooks for HimmelblauPasswd {
             };
         let req = ClientRequest::NssAccounts;
 
-        let mut daemon_client =
-            match DaemonClientBlocking::new(cfg.sock_path.as_str()) {
-                Ok(dc) => dc,
-                Err(_) => {
-                    return Response::Unavail;
-                }
-            };
+        let mut daemon_client = match DaemonClientBlocking::new(cfg.sock_path.as_str()) {
+            Ok(dc) => dc,
+            Err(_) => {
+                return Response::Unavail;
+            }
+        };
 
         daemon_client
             .call_and_wait(&req, cfg.unix_sock_timeout)
@@ -48,13 +47,12 @@ impl PasswdHooks for HimmelblauPasswd {
             };
         let req = ClientRequest::NssAccountByUid(uid);
 
-        let mut daemon_client =
-            match DaemonClientBlocking::new(cfg.sock_path.as_str()) {
-                Ok(dc) => dc,
-                Err(_) => {
-                    return Response::Unavail;
-                }
-            };
+        let mut daemon_client = match DaemonClientBlocking::new(cfg.sock_path.as_str()) {
+            Ok(dc) => dc,
+            Err(_) => {
+                return Response::Unavail;
+            }
+        };
 
         daemon_client
             .call_and_wait(&req, cfg.unix_sock_timeout)
@@ -77,13 +75,12 @@ impl PasswdHooks for HimmelblauPasswd {
                 }
             };
         let req = ClientRequest::NssAccountByName(name);
-        let mut daemon_client =
-            match DaemonClientBlocking::new(cfg.sock_path.as_str()) {
-                Ok(dc) => dc,
-                Err(_) => {
-                    return Response::Unavail;
-                }
-            };
+        let mut daemon_client = match DaemonClientBlocking::new(cfg.sock_path.as_str()) {
+            Ok(dc) => dc,
+            Err(_) => {
+                return Response::Unavail;
+            }
+        };
 
         daemon_client
             .call_and_wait(&req, cfg.unix_sock_timeout)
@@ -111,13 +108,12 @@ impl GroupHooks for HimmelblauGroup {
                 }
             };
         let req = ClientRequest::NssGroups;
-        let mut daemon_client =
-            match DaemonClientBlocking::new(cfg.sock_path.as_str()) {
-                Ok(dc) => dc,
-                Err(_) => {
-                    return Response::Unavail;
-                }
-            };
+        let mut daemon_client = match DaemonClientBlocking::new(cfg.sock_path.as_str()) {
+            Ok(dc) => dc,
+            Err(_) => {
+                return Response::Unavail;
+            }
+        };
 
         daemon_client
             .call_and_wait(&req, cfg.unix_sock_timeout)
@@ -138,13 +134,12 @@ impl GroupHooks for HimmelblauGroup {
                 }
             };
         let req = ClientRequest::NssGroupByGid(gid);
-        let mut daemon_client =
-            match DaemonClientBlocking::new(cfg.sock_path.as_str()) {
-                Ok(dc) => dc,
-                Err(_) => {
-                    return Response::Unavail;
-                }
-            };
+        let mut daemon_client = match DaemonClientBlocking::new(cfg.sock_path.as_str()) {
+            Ok(dc) => dc,
+            Err(_) => {
+                return Response::Unavail;
+            }
+        };
 
         daemon_client
             .call_and_wait(&req, cfg.unix_sock_timeout)
@@ -167,13 +162,12 @@ impl GroupHooks for HimmelblauGroup {
                 }
             };
         let req = ClientRequest::NssGroupByName(name);
-        let mut daemon_client =
-            match DaemonClientBlocking::new(cfg.sock_path.as_str()) {
-                Ok(dc) => dc,
-                Err(_) => {
-                    return Response::Unavail;
-                }
-            };
+        let mut daemon_client = match DaemonClientBlocking::new(cfg.sock_path.as_str()) {
+            Ok(dc) => dc,
+            Err(_) => {
+                return Response::Unavail;
+            }
+        };
 
         daemon_client
             .call_and_wait(&req, cfg.unix_sock_timeout)

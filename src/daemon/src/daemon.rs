@@ -11,33 +11,33 @@
 #![deny(clippy::trivially_copy_pass_by_ref)]
 
 use std::error::Error;
+use std::fs::{set_permissions, Permissions};
 use std::io;
 use std::io::{Error as IoError, ErrorKind};
+use std::os::unix::fs::PermissionsExt;
 use std::process::ExitCode;
 use std::sync::Arc;
-use std::fs::{set_permissions, Permissions};
-use std::os::unix::fs::PermissionsExt;
 
 use bytes::{BufMut, BytesMut};
 use clap::{Arg, ArgAction, Command};
 
-use himmelblau_unix_common::constants::{DEFAULT_CONFIG_PATH, DEFAULT_SOCK_PATH};
-use himmelblau_unix_common::unix_proto::{ClientRequest, ClientResponse};
-use himmelblau_unix_common::config::HimmelblauConfig;
-use himmelblau_unix_common::unix_config::UidAttr;
 use futures::{SinkExt, StreamExt};
-use himmelblau_unix_common::resolver::Resolver;
+use himmelblau_unix_common::config::HimmelblauConfig;
+use himmelblau_unix_common::constants::{DEFAULT_CONFIG_PATH, DEFAULT_SOCK_PATH};
 use himmelblau_unix_common::db::Db;
 use himmelblau_unix_common::idprovider::himmelblau::HimmelblauMultiProvider;
+use himmelblau_unix_common::resolver::Resolver;
+use himmelblau_unix_common::unix_config::UidAttr;
+use himmelblau_unix_common::unix_proto::{ClientRequest, ClientResponse};
 
-use std::path::{Path};
+use std::path::Path;
 use tokio::net::{UnixListener, UnixStream};
 use tokio_util::codec::{Decoder, Encoder, Framed};
 
-use tokio::signal::unix::{signal, SignalKind};
 use std::sync::atomic::{AtomicBool, Ordering};
+use tokio::signal::unix::{signal, SignalKind};
 
-use tracing::{warn, error, debug, info};
+use tracing::{debug, error, info, warn};
 
 /// Pass this a file path and it'll look for the file and remove it if it's there.
 fn rm_if_exist(p: &str) {
@@ -296,12 +296,12 @@ async fn main() -> ExitCode {
             Ok(c) => c,
             Err(e) => {
                 error!("{}", e);
-                return ExitCode::FAILURE
+                return ExitCode::FAILURE;
             }
         };
 
         let socket_path = match config.get("global", "socket_path") {
-            Some(val) => String::from(val),
+            Some(val) => val,
             None => {
                 debug!("Using default socket path {}", DEFAULT_SOCK_PATH);
                 String::from(DEFAULT_SOCK_PATH)
@@ -311,13 +311,19 @@ async fn main() -> ExitCode {
         rm_if_exist(&socket_path);
 
         // Create the identify provider connection
-        let idprovider = HimmelblauMultiProvider::new();
+        let idprovider = match HimmelblauMultiProvider::new() {
+            Ok(idprovider) => idprovider,
+            Err(e) => {
+                error!("{}", e);
+                return ExitCode::FAILURE;
+            }
+        };
         // Create the database
         let db = match Db::new(&config.get_db_path(), &config.get_tpm_policy()) {
             Ok(db) => db,
             Err(_e) => {
                 error!("Failed to create database");
-                return ExitCode::FAILURE
+                return ExitCode::FAILURE;
             }
         };
 
@@ -339,7 +345,7 @@ async fn main() -> ExitCode {
             Ok(c) => c,
             Err(_e) => {
                 error!("Failed to build cache layer.");
-                return ExitCode::FAILURE
+                return ExitCode::FAILURE;
             }
         };
 
@@ -350,11 +356,16 @@ async fn main() -> ExitCode {
             Ok(l) => l,
             Err(_e) => {
                 error!("Failed to bind UNIX socket at {}", &socket_path);
-                return ExitCode::FAILURE
+                return ExitCode::FAILURE;
             }
         };
-        set_permissions(&socket_path, Permissions::from_mode(0o777))
-            .expect(format!("Failed to set permissions for {}", &socket_path).as_str());
+        match set_permissions(&socket_path, Permissions::from_mode(0o777)) {
+            Ok(_) => {}
+            Err(e) => {
+                error!("Failed to set permissions for {}: {}", &socket_path, e);
+                return ExitCode::FAILURE;
+            }
+        }
 
         let server = tokio::spawn(async move {
             while !stop_now.load(Ordering::Relaxed) {
@@ -362,8 +373,7 @@ async fn main() -> ExitCode {
                 match listener.accept().await {
                     Ok((socket, _addr)) => {
                         tokio::spawn(async move {
-                            if let Err(e) = handle_client(socket, cachelayer_ref.clone()).await
-                            {
+                            if let Err(e) = handle_client(socket, cachelayer_ref.clone()).await {
                                 error!("handle_client error occurred; error = {:?}", e);
                             }
                         });
@@ -376,24 +386,39 @@ async fn main() -> ExitCode {
         });
 
         let terminate_task = tokio::spawn(async move {
-            let mut stream = signal(SignalKind::terminate())
-                .expect("Failed registering terminate signal");
-            stream.recv().await;
-            terminate_now.store(true, Ordering::Relaxed);
+            match signal(SignalKind::terminate()) {
+                Ok(mut stream) => {
+                    stream.recv().await;
+                    terminate_now.store(true, Ordering::Relaxed);
+                }
+                Err(e) => {
+                    error!("Failed registering terminate signal: {}", e);
+                }
+            };
         });
 
         let quit_task = tokio::spawn(async move {
-            let mut stream = signal(SignalKind::quit())
-                .expect("Failed registering quit signal");
-            stream.recv().await;
-            quit_now.store(true, Ordering::Relaxed);
+            match signal(SignalKind::quit()) {
+                Ok(mut stream) => {
+                    stream.recv().await;
+                    quit_now.store(true, Ordering::Relaxed);
+                }
+                Err(e) => {
+                    error!("Failed registering quit signal: {}", e);
+                }
+            };
         });
 
         let interrupt_task = tokio::spawn(async move {
-            let mut stream = signal(SignalKind::interrupt())
-                .expect("Failed registering interrupt signal");
-            stream.recv().await;
-            interrupt_now.store(true, Ordering::Relaxed);
+            match signal(SignalKind::interrupt()) {
+                Ok(mut stream) => {
+                    stream.recv().await;
+                    interrupt_now.store(true, Ordering::Relaxed);
+                }
+                Err(e) => {
+                    error!("Failed registering interrupt signal: {}", e);
+                }
+            };
         });
 
         info!("Server started ...");

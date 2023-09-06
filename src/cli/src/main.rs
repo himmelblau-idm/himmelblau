@@ -1,12 +1,11 @@
-use clap::{App, Arg, SubCommand, ArgAction};
-use tracing::{warn, error, info};
-use std::process::ExitCode;
-use himmelblau_unix_common::constants::DEFAULT_CONFIG_PATH;
-use himmelblau_unix_common::config::HimmelblauConfig;
+use clap::{App, Arg, ArgAction, SubCommand};
 use himmelblau_unix_common::client::call_daemon;
+use himmelblau_unix_common::config::HimmelblauConfig;
+use himmelblau_unix_common::constants::DEFAULT_CONFIG_PATH;
 use himmelblau_unix_common::unix_proto::{ClientRequest, ClientResponse};
+use std::process::ExitCode;
+use tracing::{error, info, warn};
 use users::{get_current_gid, get_current_uid, get_effective_gid, get_effective_uid};
-use tokio;
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> ExitCode {
@@ -33,18 +32,9 @@ async fn main() -> ExitCode {
         .subcommand(
             SubCommand::with_name("cache")
                 .about("Cache operations")
-            .subcommand(
-                SubCommand::with_name("clear")
-                    .about("Cache clear tool")
-            )
-            .subcommand(
-                SubCommand::with_name("invalidate")
-                    .about("Cache invalidatation tool")
-            )
-            .subcommand(
-                SubCommand::with_name("status")
-                    .about("Cache status tool")
-            )
+                .subcommand(SubCommand::with_name("clear").about("Cache clear tool"))
+                .subcommand(SubCommand::with_name("invalidate").about("Cache invalidatation tool"))
+                .subcommand(SubCommand::with_name("status").about("Cache status tool")),
         );
 
     // Read the configuration
@@ -52,7 +42,7 @@ async fn main() -> ExitCode {
         Ok(c) => c,
         Err(e) => {
             error!("{}", e);
-            return ExitCode::FAILURE
+            return ExitCode::FAILURE;
         }
     };
 
@@ -67,7 +57,7 @@ async fn main() -> ExitCode {
         warn!("Skipping root user check.")
     } else if cuid == 0 || ceuid == 0 || cgid == 0 || cegid == 0 {
         error!("Refusing to run - this process need not run as root.");
-        return ExitCode::FAILURE
+        return ExitCode::FAILURE;
     };
 
     match args.subcommand() {
@@ -86,7 +76,7 @@ async fn main() -> ExitCode {
                 }
             };
             println!("success");
-        },
+        }
         Some(("clear", _args)) => {
             let req = ClientRequest::ClearCache;
             let socket_path = config.get_socket_path();

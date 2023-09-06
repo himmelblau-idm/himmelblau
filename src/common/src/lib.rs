@@ -18,17 +18,17 @@ extern crate tracing;
 extern crate rusqlite;
 
 #[cfg(target_family = "unix")]
-pub mod constants;
-#[cfg(target_family = "unix")]
 pub mod config;
+#[cfg(target_family = "unix")]
+pub mod constants;
 #[cfg(target_family = "unix")]
 pub mod unix_config;
 
 // Kanidm modules
 #[cfg(target_family = "unix")]
-pub mod client_sync;
+pub mod client;
 #[cfg(target_family = "unix")]
-pub mod unix_proto;
+pub mod client_sync;
 #[cfg(target_family = "unix")]
 pub mod db;
 #[cfg(target_family = "unix")]
@@ -36,4 +36,4 @@ pub mod idprovider;
 #[cfg(target_family = "unix")]
 pub mod resolver;
 #[cfg(target_family = "unix")]
-pub mod client;
+pub mod unix_proto;

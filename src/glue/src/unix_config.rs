@@ -1,5 +1,5 @@
 use himmelblau_unix_common::config::HimmelblauConfig;
-use himmelblau_unix_common::constants::{DEFAULT_SOCK_PATH, DEFAULT_CONN_TIMEOUT};
+use himmelblau_unix_common::constants::{DEFAULT_CONN_TIMEOUT, DEFAULT_SOCK_PATH};
 
 pub struct KanidmUnixdConfig {
     pub unix_sock_timeout: u64,
@@ -20,5 +20,11 @@ impl KanidmUnixdConfig {
             sock_path: config.get_socket_path(),
             unix_sock_timeout: config.get_connection_timeout() * 2,
         })
+    }
+}
+
+impl Default for KanidmUnixdConfig {
+    fn default() -> Self {
+        Self::new()
     }
 }
