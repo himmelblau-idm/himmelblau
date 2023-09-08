@@ -136,7 +136,7 @@ impl<'a> FromPyObject<'a> for DeviceToken {
 }
 
 /* RFC8628: 3.2. Device Authorization Response */
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct DeviceAuthorizationResponse {
     pub device_code: String,
     pub user_code: String,
@@ -173,9 +173,17 @@ impl<'a> FromPyObject<'a> for DeviceAuthorizationResponse {
     }
 }
 
+pub struct ClientCredential {
+    pub client_assertion: String,
+}
+
 pub trait ClientApplication {
     fn app(&self) -> &Py<PyAny>;
-    fn new(app_id: &str, authority_url: &str, client_credential: Option<&str>) -> Result<Self>
+    fn new(
+        app_id: &str,
+        authority_url: &str,
+        client_credential: Option<ClientCredential>,
+    ) -> Result<Self>
     where
         Self: Sized;
 
@@ -330,7 +338,11 @@ impl ClientApplication for PublicClientApplication {
         &self.app
     }
 
-    fn new(app_id: &str, authority_url: &str, _client_credential: Option<&str>) -> Result<Self> {
+    fn new(
+        app_id: &str,
+        authority_url: &str,
+        _client_credential: Option<ClientCredential>,
+    ) -> Result<Self> {
         Python::with_gil(|py| {
             let msal = match PyModule::import(py, "msal") {
                 Ok(msal) => msal,
@@ -424,16 +436,26 @@ impl ClientApplication for ConfidentialClientApplication {
         &self.app
     }
 
-    fn new(app_id: &str, authority_url: &str, client_credential: Option<&str>) -> Result<Self> {
+    fn new(
+        app_id: &str,
+        authority_url: &str,
+        client_credential: Option<ClientCredential>,
+    ) -> Result<Self> {
         Python::with_gil(|py| {
             let msal = match PyModule::import(py, "msal") {
                 Ok(msal) => msal,
                 Err(_e) => return Err(anyhow!("Failed importing msal")),
             };
-            let mut kwargs = vec![("authority", authority_url)];
+            let kwargs = vec![("authority", authority_url)];
+            let py_kwargs = kwargs.into_py_dict(py);
             match client_credential {
-                Some(client_credential) => kwargs.push(("client_credential", client_credential)),
-                None => return Err(anyhow!("client_credential is required for ConfidentialClientApplication")),
+                Some(client_credential) => {
+                    let py_client_credential: &PyDict = PyDict::new(py);
+                    py_client_credential
+                        .set_item("client_assertion", client_credential.client_assertion)?;
+                    py_kwargs.set_item("client_credential", py_client_credential)?;
+                }
+                None => return Err(anyhow!("Failed loading ConfidentialClientApplication")),
             }
             let func: Py<PyAny> = match msal.getattr("ConfidentialClientApplication") {
                 Ok(func) => func,
@@ -442,7 +464,7 @@ impl ClientApplication for ConfidentialClientApplication {
             .into();
             let py_app_id: &PyString = PyString::new(py, app_id);
             let args: &PyTuple = PyTuple::new(py, vec![py_app_id]);
-            let py_app = match func.call(py, args, Some(kwargs.into_py_dict(py))) {
+            let py_app = match func.call(py, args, Some(py_kwargs)) {
                 Ok(py_app) => py_app,
                 Err(_e) => {
                     return Err(anyhow!(
@@ -458,11 +480,10 @@ impl ClientApplication for ConfidentialClientApplication {
 impl ConfidentialClientApplication {
     pub fn acquire_token_for_client(&self, scopes: Vec<&str>) -> Result<DeviceToken> {
         Python::with_gil(|py| {
-            let func: Py<PyAny> = self
-                .app()
-                .getattr(py, "acquire_token_for_client")?;
+            let func: Py<PyAny> = self.app().getattr(py, "acquire_token_for_client")?;
             let py_scopes: &PyList = PyList::new(py, scopes);
-            let args: &PyTuple = PyTuple::new(py, py_scopes);
+            let largs: &PyList = PyList::new(py, vec![py_scopes]);
+            let args: &PyTuple = PyTuple::new(py, largs);
             let resp: Py<PyAny> = func.call1(py, args)?;
             let token: DeviceToken = resp.extract(py)?;
             Ok(token)

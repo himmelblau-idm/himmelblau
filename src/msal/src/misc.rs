@@ -1,10 +1,10 @@
 use anyhow::{anyhow, Result};
-use hostname;
-use os_release::OsRelease;
+use base64::{engine::general_purpose, Engine as _};
+use chrono::Utc;
 use reqwest::{header, Url};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, to_string_pretty};
-use tracing::{debug, info};
+use tracing::debug;
 use uuid::Uuid;
 
 #[derive(Debug, Deserialize)]
@@ -100,38 +100,172 @@ pub async fn request_user_groups(
 }
 
 #[derive(Debug, Deserialize)]
-pub struct Device {
+pub struct UserObject {
+    #[serde(rename = "displayName")]
+    pub displayname: String,
+    #[serde(rename = "userPrincipalName")]
+    pub upn: String,
     pub id: String,
 }
 
-pub async fn enroll_device(graph_url: &str, access_token: &str) -> Result<Device> {
-    let url = &format!("{}/v1.0/devices", graph_url);
-    let host: String = match hostname::get()?.to_str() {
-        Some(host) => String::from(host),
-        None => return Err(anyhow!("Failed to get machine hostname for enrollment")),
-    };
-    let os_release = OsRelease::new()?;
-    let payload = json!({
-        "accountEnabled": true,
-        "alternativeSecurityIds":
-        [
-            {
-                "type": 2,
-                /* TODO: This needs to be a real Alt-Security-Identity
-                 * associated with an X.509 cert which will allow us to
-                 * authenticate later. Otherwise this machine account is
-                 * useless. */
-                "key": "Y3YxN2E1MWFlYw=="
-            }
+pub async fn request_user(graph_url: &str, access_token: &str, upn: &str) -> Result<UserObject> {
+    let url = &format!("{}/v1.0/users/{}", graph_url, upn);
+    let client = reqwest::Client::new();
+    let resp = client
+        .get(url)
+        .header(header::AUTHORIZATION, format!("Bearer {}", access_token))
+        .send()
+        .await?;
+    if resp.status().is_success() {
+        let json_resp: UserObject = resp.json().await?;
+        Ok(json_resp)
+    } else {
+        Err(anyhow!(resp.status()))
+    }
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct Application {
+    #[serde(rename = "appId")]
+    pub app_id: Option<String>,
+    #[serde(rename = "displayName")]
+    pub display_name: Option<String>,
+    pub id: Option<String>,
+    #[serde(rename = "keyCredentials")]
+    pub key_creds: Option<Vec<KeyCredential>>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ApplicationList {
+    value: Vec<Application>,
+}
+
+pub async fn list_applications(graph_url: &str, access_token: &str) -> Result<Vec<Application>> {
+    let url = &format!("{}/v1.0/applications", graph_url);
+    let client = reqwest::Client::new();
+    let resp = client
+        .get(url)
+        .header(header::AUTHORIZATION, format!("Bearer {}", access_token))
+        .send()
+        .await?;
+    if resp.status().is_success() {
+        let json_resp: ApplicationList = resp.json().await?;
+        Ok(json_resp.value)
+    } else {
+        Err(anyhow!(resp.status()))
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct KeyCredential {
+    #[serde(rename = "customKeyIdentifier")]
+    custom_key_identifier: Option<String>,
+    #[serde(rename = "displayName")]
+    display_name: Option<String>,
+    #[serde(rename = "endDateTime")]
+    end_date_time: Option<String>,
+    key: Option<String>,
+    #[serde(rename = "keyId")]
+    key_id: String,
+    #[serde(rename = "startDateTime")]
+    start_date_time: String,
+    r#type: String,
+    usage: String,
+}
+
+pub async fn get_application(
+    graph_url: &str,
+    access_token: &str,
+    app_id: &str,
+) -> Result<Application> {
+    let url = Url::parse_with_params(
+        &format!("{}/v1.0/applications", graph_url,),
+        &[
+            ("$select", "keyCredentials,id"),
+            ("$filter", format!("appId eq '{}'", app_id).as_str()),
         ],
-        "deviceId": Uuid::new_v4(),
-        "displayName": host,
-        "operatingSystem": "Linux",
-        "operatingSystemVersion": format!("{} {}", os_release.pretty_name, os_release.version_id),
-        /* TODO: Figure out how to set the trustType (probably to
-         * "AzureAd"). This appears to be necessary for fetching policy
-         * later, but Access Denied errors are being thrown when this is
-         * set. */
+    )?;
+    let client = reqwest::Client::new();
+    let resp = client
+        .get(url)
+        .header(header::AUTHORIZATION, format!("Bearer {}", access_token))
+        .send()
+        .await?;
+    if resp.status().is_success() {
+        let json_resp: ApplicationList = resp.json().await?;
+        match json_resp.value.first() {
+            Some(app) => Ok(app.clone()),
+            None => Err(anyhow!("Application {} not found", app_id)),
+        }
+    } else {
+        Err(anyhow!(resp.status()))
+    }
+}
+
+pub async fn add_application_certificate(
+    graph_url: &str,
+    access_token: &str,
+    app_id: &str,
+    cert: &str,
+    desc: &str,
+) -> Result<()> {
+    let app = get_application(graph_url, access_token, app_id).await?;
+    let app_id = match &app.id {
+        Some(id) => id.clone(),
+        None => return Err(anyhow!("Application {} missing id", app_id)),
+    };
+    let url = &format!("{}/v1.0/applications/{}", graph_url, app_id);
+    let mut key_creds = match app.key_creds {
+        Some(key_creds) => key_creds,
+        None => Vec::<KeyCredential>::new(),
+    };
+    key_creds.push(KeyCredential {
+        custom_key_identifier: None, /* Leaving this blank will default to the thumbprint */
+        display_name: Some(desc.to_string()),
+        end_date_time: None, /* Leaving this blank defaults to 1 year from now */
+        key: Some(general_purpose::STANDARD.encode(cert)),
+        key_id: Uuid::new_v4().to_string(),
+        start_date_time: Utc::now().to_rfc3339(),
+        r#type: "AsymmetricX509Cert".to_string(),
+        usage: "Verify".to_string(),
+    });
+    let payload = json!({
+        "keyCredentials": key_creds,
+    });
+    match to_string_pretty(&payload) {
+        Ok(pretty) => {
+            debug!("POST {}: {}", url, pretty);
+        }
+        Err(_e) => {}
+    };
+    let client = reqwest::Client::new();
+    let resp = client
+        .patch(url)
+        .header(header::AUTHORIZATION, format!("Bearer {}", access_token))
+        .header(header::CONTENT_TYPE, "application/json")
+        .json(&payload)
+        .send()
+        .await?;
+    if resp.status().is_success() {
+        Ok(())
+    } else {
+        Err(anyhow!(resp.status()))
+    }
+}
+
+pub async fn assign_device_to_user(
+    graph_url: &str,
+    access_token: &str,
+    device_id: &str,
+    upn: &str,
+) -> Result<()> {
+    let url = &format!(
+        "{}/v1.0/devices/{}/registeredOwners/$ref",
+        graph_url, device_id
+    );
+    let user_obj = request_user(graph_url, access_token, upn).await?;
+    let payload = json!({
+        "@odata.id": format!("{}/v1.0/directoryObjects/{}", graph_url, user_obj.id),
     });
     match to_string_pretty(&payload) {
         Ok(pretty) => {
@@ -148,9 +282,7 @@ pub async fn enroll_device(graph_url: &str, access_token: &str) -> Result<Device
         .send()
         .await?;
     if resp.status().is_success() {
-        let res: Device = resp.json().await?;
-        info!("Device enrolled with object id {}", res.id);
-        Ok(res)
+        Ok(())
     } else {
         Err(anyhow!(resp.status()))
     }

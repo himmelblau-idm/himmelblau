@@ -21,3 +21,9 @@ pub mod discovery;
 
 #[cfg(target_family = "unix")]
 pub mod nonce;
+
+#[cfg(target_family = "unix")]
+pub mod enroll;
+
+#[cfg(target_family = "unix")]
+pub mod constants;

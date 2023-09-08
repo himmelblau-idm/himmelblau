@@ -17,6 +17,7 @@ use std::io::{Error as IoError, ErrorKind};
 use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
+use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -25,11 +26,11 @@ use clap::{Arg, ArgAction, Command};
 use futures::{SinkExt, StreamExt};
 use himmelblau_unix_common::config::HimmelblauConfig;
 use himmelblau_unix_common::constants::DEFAULT_CONFIG_PATH;
-use himmelblau_unix_common::db::Db;
+use himmelblau_unix_common::db::{Cache, CacheTxn, Db};
 use himmelblau_unix_common::file_permissions::readonly;
 use himmelblau_unix_common::idprovider::himmelblau::HimmelblauMultiProvider;
 use himmelblau_unix_common::resolver::Resolver;
-use himmelblau_unix_common::unix_config::UidAttr;
+use himmelblau_unix_common::unix_config::{HsmType, UidAttr};
 use himmelblau_unix_common::unix_passwd::{parse_etc_group, parse_etc_passwd};
 use himmelblau_unix_common::unix_proto::{
     ClientRequest, ClientResponse, TaskRequest, TaskResponse,
@@ -48,6 +49,8 @@ use tokio::sync::mpsc::{channel, Receiver, Sender};
 use tokio::sync::oneshot;
 use tokio::time;
 use tokio_util::codec::{Decoder, Encoder, Framed};
+
+use kanidm_hsm_crypto::{soft::SoftTpm, AuthValue, BoxedDynTpm, Tpm};
 
 use notify_debouncer_full::{new_debouncer, notify::RecursiveMode, notify::Watcher};
 
@@ -435,6 +438,36 @@ async fn process_etc_passwd_group(
     Ok(())
 }
 
+async fn read_hsm_pin(hsm_pin_path: &str) -> Result<Vec<u8>, Box<dyn Error>> {
+    if !PathBuf::from_str(hsm_pin_path)?.exists() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            format!("HSM PIN file '{}' not found", hsm_pin_path),
+        )
+        .into());
+    }
+
+    let mut file = File::open(hsm_pin_path).await?;
+    let mut contents = vec![];
+    file.read_to_end(&mut contents).await?;
+    Ok(contents)
+}
+
+async fn write_hsm_pin(hsm_pin_path: &str) -> Result<(), Box<dyn Error>> {
+    if !PathBuf::from_str(hsm_pin_path)?.exists() {
+        let new_pin = AuthValue::generate().map_err(|hsm_err| {
+            error!(?hsm_err, "Unable to generate new pin");
+            std::io::Error::new(std::io::ErrorKind::Other, "Unable to generate new pin")
+        })?;
+
+        std::fs::write(hsm_pin_path, new_pin)?;
+
+        info!("Generated new HSM pin");
+    }
+
+    Ok(())
+}
+
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> ExitCode {
     let cuid = get_current_uid();
@@ -450,6 +483,7 @@ async fn main() -> ExitCode {
                 .help("Allow running as root. Don't use this in production as it is risky!")
                 .short('r')
                 .long("skip-root-check")
+                .env("HIMMELBLAU_SKIP_ROOT_CHECK")
                 .action(ArgAction::SetTrue),
         )
         .arg(
@@ -457,6 +491,7 @@ async fn main() -> ExitCode {
                 .help("Show extra debug information")
                 .short('d')
                 .long("debug")
+                .env("HIMMELBLAU_DEBUG")
                 .action(ArgAction::SetTrue),
         )
         .arg(
@@ -638,7 +673,7 @@ async fn main() -> ExitCode {
             };
 
             // Create the identify provider connection
-            let idprovider = match HimmelblauMultiProvider::new(cfg.get_config_file().as_str()) {
+            let idprovider = match HimmelblauMultiProvider::new(cfg.get_config_file().as_str()).await {
                 Ok(idprovider) => idprovider,
                 Err(e) => {
                     error!("{}", e);
@@ -647,17 +682,105 @@ async fn main() -> ExitCode {
             };
 
             // Create the database
-            let db = match Db::new(&cfg.get_db_path(), &cfg.get_tpm_policy()) {
+            let db = match Db::new(&cfg.get_db_path()) {
                 Ok(db) => db,
                 Err(_e) => {
                     error!("Failed to create database");
-                    return ExitCode::FAILURE;
+                    return ExitCode::FAILURE
                 }
             };
+
+            // perform any db migrations.
+            let mut dbtxn = db.write().await;
+            if dbtxn.migrate()
+                .and_then(|_| {
+                    dbtxn.commit()
+                }).is_err() {
+                    error!("Failed to migrate database");
+                    return ExitCode::FAILURE
+                }
+
+            // Check for and create the hsm pin if required.
+            if let Err(err) = write_hsm_pin(&cfg.get_hsm_pin_path()).await {
+                error!(?err, "Failed to create HSM PIN into {}", &cfg.get_hsm_pin_path());
+                return ExitCode::FAILURE
+            };
+            // read the hsm pin
+            let hsm_pin = match read_hsm_pin(&cfg.get_hsm_pin_path()).await {
+                Ok(hp) => hp,
+                Err(err) => {
+                    error!(?err, "Failed to read HSM PIN from {}", &cfg.get_hsm_pin_path());
+                    return ExitCode::FAILURE
+                }
+            };
+
+            let auth_value = match AuthValue::try_from(hsm_pin.as_slice()) {
+                Ok(av) => av,
+                Err(err) => {
+                    error!(?err, "invalid hsm pin");
+                    return ExitCode::FAILURE
+                }
+            };
+
+            let mut hsm: BoxedDynTpm = match cfg.get_hsm_type() {
+                HsmType::Soft => {
+                    BoxedDynTpm::new(SoftTpm::new())
+                }
+                HsmType::Tpm => {
+                    error!("TPM not supported ... yet");
+                    return ExitCode::FAILURE
+                }
+            };
+
+            // With the assistance of the DB, setup the HSM and its machine key.
+            let mut db_txn = db.write().await;
+
+            let loadable_machine_key = match db_txn.get_hsm_machine_key() {
+                Ok(Some(lmk)) => lmk,
+                Ok(None) => {
+                    // No machine key found - create one, and store it.
+                    let loadable_machine_key = match hsm.machine_key_create(&auth_value) {
+                        Ok(lmk) => lmk,
+                        Err(err) => {
+                            error!(?err, "Unable to create hsm loadable machine key");
+                            return ExitCode::FAILURE
+                        }
+                    };
+
+                    if let Err(err) = db_txn.insert_hsm_machine_key(&loadable_machine_key) {
+                        error!(?err, "Unable to persist hsm loadable machine key");
+                        return ExitCode::FAILURE
+                    }
+
+                    loadable_machine_key
+                }
+                Err(err) => {
+                    error!(?err, "Unable to access hsm loadable machine key");
+                    return ExitCode::FAILURE
+                }
+            };
+
+            let machine_key = match hsm.machine_key_load(&auth_value, &loadable_machine_key) {
+                Ok(mk) => mk,
+                Err(err) => {
+                    error!(?err, "Unable to load machine root key - This can occur if you have changed your HSM pin");
+                    error!("To proceed you must remove the content of the cache db ({}) to reset all keys", &cfg.get_db_path());
+                    return ExitCode::FAILURE
+                }
+            };
+
+            if let Err(err) = db_txn.commit() {
+                error!(?err, "Failed to commit database transaction, unable to proceed");
+                return ExitCode::FAILURE
+            }
+
+            // Okay, the hsm is now loaded and ready to go.
 
             let cl_inner = match Resolver::new(
                 db,
                 idprovider,
+                hsm,
+                machine_key,
                 cfg.get_cache_timeout(),
                 cfg.get_pam_allow_groups(),
                 cfg.get_shell(None),
