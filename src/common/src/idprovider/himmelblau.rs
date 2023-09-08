@@ -11,8 +11,8 @@ use async_trait::async_trait;
 use himmelblau_policies::policies::apply_group_policy;
 use msal::authentication::DeviceAuthorizationResponse as msal_DeviceAuthorizationResponse;
 use msal::authentication::{
-    PublicClientApplication, UnixUserToken, AUTH_PENDING, NO_CONSENT, NO_GROUP_CONSENT, NO_SECRET,
-    REQUIRES_MFA,
+    ClientApplication, PublicClientApplication, UnixUserToken, AUTH_PENDING, NO_CONSENT,
+    NO_GROUP_CONSENT, NO_SECRET, REQUIRES_MFA,
 };
 use msal::misc::{request_user_groups, DirectoryObject};
 use reqwest;
@@ -229,7 +229,7 @@ impl HimmelblauMultiProvider {
                 };
             let authority_url = format!("https://{}/{}", authority_host, tenant_id);
             let app_id = config.get_app_id(domain);
-            let app = match PublicClientApplication::new(&app_id, authority_url.as_str()) {
+            let app = match PublicClientApplication::new(&app_id, authority_url.as_str(), None) {
                 Ok(app) => app,
                 Err(e) => return Err(anyhow!("{}", e)),
             };
