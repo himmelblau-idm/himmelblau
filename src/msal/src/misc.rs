@@ -1,11 +1,11 @@
-use reqwest::{Url, header};
-use serde::Deserialize;
 use anyhow::{anyhow, Result};
-use tracing::{info, debug};
 use hostname;
 use os_release::OsRelease;
-use uuid::Uuid;
+use reqwest::{header, Url};
+use serde::Deserialize;
 use serde_json::{json, to_string_pretty};
+use tracing::{debug, info};
+use uuid::Uuid;
 
 #[derive(Debug, Deserialize)]
 struct FederationProvider {
@@ -15,7 +15,10 @@ struct FederationProvider {
     graph: String,
 }
 
-pub async fn request_federation_provider(odc_provider: &str, domain: &str) -> Result<(String, String, String)> {
+pub async fn request_federation_provider(
+    odc_provider: &str,
+    domain: &str,
+) -> Result<(String, String, String)> {
     let url = Url::parse_with_params(
         &format!("https://{}/odc/v2.1/federationProvider", odc_provider),
         &[("domain", domain)],
@@ -27,7 +30,11 @@ pub async fn request_federation_provider(odc_provider: &str, domain: &str) -> Re
         debug!("Discovered tenant_id: {}", json_resp.tenant_id);
         debug!("Discovered authority_host: {}", json_resp.authority_host);
         debug!("Discovered graph: {}", json_resp.graph);
-        Ok((json_resp.authority_host, json_resp.tenant_id, json_resp.graph))
+        Ok((
+            json_resp.authority_host,
+            json_resp.tenant_id,
+            json_resp.graph,
+        ))
     } else {
         Err(anyhow!(resp.status()))
     }
@@ -67,7 +74,10 @@ struct DirectoryObjects {
     value: Vec<DirectoryObject>,
 }
 
-pub async fn request_user_groups(graph_url: &str, access_token: &str) -> Result<Vec<DirectoryObject>> {
+pub async fn request_user_groups(
+    graph_url: &str,
+    access_token: &str,
+) -> Result<Vec<DirectoryObject>> {
     let url = &format!("{}/v1.0/me/memberOf", graph_url);
     let client = reqwest::Client::new();
     let resp = client
@@ -96,7 +106,10 @@ pub struct Device {
 
 pub async fn enroll_device(graph_url: &str, access_token: &str) -> Result<Device> {
     let url = &format!("{}/v1.0/devices", graph_url);
-    let host: String = String::from(hostname::get()?.to_str().unwrap());
+    let host: String = match hostname::get()?.to_str() {
+        Some(host) => String::from(host),
+        None => return Err(anyhow!("Failed to get machine hostname for enrollment")),
+    };
     let os_release = OsRelease::new()?;
     let payload = json!({
         "accountEnabled": true,
@@ -120,7 +133,12 @@ pub async fn enroll_device(graph_url: &str, access_token: &str) -> Result<Device
          * later, but Access Denied errors are being thrown when this is
          * set. */
     });
-    debug!("POST {}: {}", url, to_string_pretty(&payload).unwrap());
+    match to_string_pretty(&payload) {
+        Ok(pretty) => {
+            debug!("POST {}: {}", url, pretty);
+        }
+        Err(_e) => {}
+    };
     let client = reqwest::Client::new();
     let resp = client
         .post(url)

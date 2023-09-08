@@ -1,14 +1,14 @@
-use std::collections::HashMap;
 use crate::cse::CSE;
 use crate::policies::{Policy, PolicyType, ValueType};
+use anyhow::{anyhow, Result};
 use async_trait::async_trait;
-use anyhow::{Result, anyhow};
-use tracing::{error, debug};
-use std::sync::Arc;
 use regex::Regex;
 use serde_json;
+use std::collections::HashMap;
 use std::fs::File;
 use std::io::Write;
+use std::sync::Arc;
+use tracing::{debug, error};
 
 static MANAGED_POLICIES_PATH: &str = "/etc/chromium/policies/managed";
 static CHROME_MANAGED_POLICIES_PATH: &str = "/etc/opt/chrome/policies/managed";
@@ -18,7 +18,7 @@ static CHROME_RECOMMENDED_POLICIES_PATH: &str = "/etc/opt/chrome/policies/recomm
 pub struct ChromiumUserCSE {
     pub graph_url: String,
     pub access_token: String,
-    pub id: String
+    pub id: String,
 }
 
 fn write_policy_to_file(dirname: &str, key: &str, val: &ValueType) -> Result<()> {
@@ -35,16 +35,18 @@ impl CSE for ChromiumUserCSE {
         ChromiumUserCSE {
             graph_url: graph_url.to_string(),
             access_token: access_token.to_string(),
-            id: id.to_string()
+            id: id.to_string(),
         }
     }
 
-    async fn process_group_policy(&self, deleted_gpo_list: Vec<Arc<dyn Policy>>, changed_gpo_list: Vec<Arc<dyn Policy>>) -> Result<bool> {
+    async fn process_group_policy(
+        &self,
+        deleted_gpo_list: Vec<Arc<dyn Policy>>,
+        changed_gpo_list: Vec<Arc<dyn Policy>>,
+    ) -> Result<bool> {
         debug!("Applying Chromium policy to user with id {}", self.id);
 
-        for _gpo in deleted_gpo_list {
-            /* TODO: Unapply policies that have been removed */
-        }
+        for _gpo in deleted_gpo_list { /* TODO: Unapply policies that have been removed */ }
 
         for gpo in changed_gpo_list {
             let pattern = Regex::new(r"^\\Google\\Google Chrome")?;
@@ -62,7 +64,11 @@ impl CSE for ChromiumUserCSE {
                     Some(val) => val,
                     None => continue,
                 };
-                debug!("Applying Chromium Policy `{}: {}`", key, serde_json::to_string(&val)?);
+                debug!(
+                    "Applying Chromium Policy `{}: {}`",
+                    key,
+                    serde_json::to_string(&val)?
+                );
                 if recommended {
                     write_policy_to_file(RECOMMENDED_POLICIES_PATH, &key, &val)?;
                     write_policy_to_file(CHROME_RECOMMENDED_POLICIES_PATH, &key, &val)?;
@@ -81,7 +87,10 @@ impl CSE for ChromiumUserCSE {
         let mut res: HashMap<String, String> = HashMap::new();
         for def in defs {
             if def.enabled() && def.class_type() == PolicyType::User {
-                let key = match convert_display_name_to_name(&def.key(), key_is_recommended(&def.get_compare_pattern())) {
+                let key = match convert_display_name_to_name(
+                    &def.key(),
+                    key_is_recommended(&def.get_compare_pattern()),
+                ) {
                     Ok(key) => key,
                     Err(e) => {
                         error!("{}", e);
