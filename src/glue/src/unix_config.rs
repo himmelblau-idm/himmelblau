@@ -15,7 +15,7 @@ impl KanidmUnixdConfig {
     }
 
     pub fn read_options_from_optional_config(self, config_path: &str) -> Result<Self, String> {
-        let config: HimmelblauConfig = HimmelblauConfig::new(config_path)?;
+        let config: HimmelblauConfig = HimmelblauConfig::new(Some(config_path))?;
         Ok(KanidmUnixdConfig {
             sock_path: config.get_socket_path(),
             unix_sock_timeout: config.get_connection_timeout() * 2,

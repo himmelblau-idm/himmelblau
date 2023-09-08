@@ -52,24 +52,21 @@ fn match_bool(val: Option<String>, default: bool) -> bool {
 }
 
 impl HimmelblauConfig {
-    pub fn new(config_path: &str) -> Result<HimmelblauConfig, String> {
+    pub fn new(config_path: Option<&str>) -> Result<HimmelblauConfig, String> {
         let mut sconfig = Ini::new();
-        let cfg_path: PathBuf = PathBuf::from(config_path);
-        if cfg_path.exists() {
-            match sconfig.load(config_path) {
-                Ok(l) => l,
-                Err(e) => {
-                    return Err(format!(
-                        "failed to read config from {} - cannot start up: {} Quitting.",
-                        config_path, e
-                    ))
-                }
-            };
-        } else {
-            return Err(format!(
-                "config missing from {} - cannot start up. Quitting.",
-                config_path
-            ));
+        if let Some(config_path) = config_path {
+            let cfg_path: PathBuf = PathBuf::from(config_path);
+            if cfg_path.exists() {
+                match sconfig.load(config_path) {
+                    Ok(l) => l,
+                    Err(e) => {
+                        return Err(format!(
+                            "failed to read config from {} - cannot start up: {} Quitting.",
+                            config_path, e
+                        ))
+                    }
+                };
+            }
         }
         Ok(HimmelblauConfig { config: sconfig })
     }

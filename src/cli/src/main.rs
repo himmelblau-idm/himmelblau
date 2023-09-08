@@ -54,7 +54,7 @@ async fn main() -> ExitCode {
         } => {
             debug!("Starting PAM auth tester tool ...");
 
-            let cfg = match HimmelblauConfig::new(DEFAULT_CONFIG_PATH) {
+            let cfg = match HimmelblauConfig::new(Some(DEFAULT_CONFIG_PATH)) {
                 Ok(c) => c,
                 Err(_e) => {
                     error!("Failed to parse {}", DEFAULT_CONFIG_PATH);
@@ -137,7 +137,7 @@ async fn main() -> ExitCode {
         HimmelblauUnixOpt::CacheClear { debug: _, really } => {
             debug!("Starting cache clear tool ...");
 
-            let cfg = match HimmelblauConfig::new(DEFAULT_CONFIG_PATH) {
+            let cfg = match HimmelblauConfig::new(Some(DEFAULT_CONFIG_PATH)) {
                 Ok(c) => c,
                 Err(_e) => {
                     error!("Failed to parse {}", DEFAULT_CONFIG_PATH);
@@ -169,7 +169,7 @@ async fn main() -> ExitCode {
         HimmelblauUnixOpt::CacheInvalidate { debug: _ } => {
             debug!("Starting cache invalidate tool ...");
 
-            let cfg = match HimmelblauConfig::new(DEFAULT_CONFIG_PATH) {
+            let cfg = match HimmelblauConfig::new(Some(DEFAULT_CONFIG_PATH)) {
                 Ok(c) => c,
                 Err(_e) => {
                     error!("Failed to parse {}", DEFAULT_CONFIG_PATH);
@@ -196,7 +196,7 @@ async fn main() -> ExitCode {
         HimmelblauUnixOpt::Status { debug: _ } => {
             trace!("Starting cache status tool ...");
 
-            let cfg = match HimmelblauConfig::new(DEFAULT_CONFIG_PATH) {
+            let cfg = match HimmelblauConfig::new(Some(DEFAULT_CONFIG_PATH)) {
                 Ok(c) => c,
                 Err(_e) => {
                     error!("Failed to parse {}", DEFAULT_CONFIG_PATH);
