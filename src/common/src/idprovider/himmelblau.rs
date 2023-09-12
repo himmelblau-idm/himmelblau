@@ -414,10 +414,7 @@ impl IdProvider for HimmelblauProvider {
                     Err(e) => Err(e),
                 }
             }
-            (
-                AuthCredHandler::DeviceAuthorizationGrant,
-                PamAuthRequest::DeviceAuthorizationGrant { data },
-            ) => {
+            (_, PamAuthRequest::DeviceAuthorizationGrant { data }) => {
                 let sleep_interval: u64 = match data.interval.as_ref() {
                     Some(val) => *val as u64,
                     None => 5,
