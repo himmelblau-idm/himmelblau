@@ -1,5 +1,5 @@
 [submodule "src/kanidm"]
 	path = src/kanidm
-	url = https://github.com/dmulder/kanidm.git
-	branch = dmulder/device_code_flow_mfa2
+	url = https://github.com/kanidm/kanidm.git
+	branch = master
 	shallow = true
