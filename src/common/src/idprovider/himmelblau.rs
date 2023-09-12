@@ -476,6 +476,14 @@ impl HimmelblauProvider {
     ) -> Result<AuthResult, IdpError> {
         match token.access_token {
             Some(_) => {
+                /* Fixes bug#37: MFA can respond with different user than requested */
+                if account_id != token.spn {
+                    error!(
+                        "Authenticated user {} does not match requested user {}",
+                        token.spn, account_id
+                    );
+                    return Ok(AuthResult::Denied);
+                }
                 info!("Authentication successful for user '{}'", account_id);
                 /* Process Group Policy (spawn non-blocking process to prevent auth timeout),
                  * if it is enabled via config */
