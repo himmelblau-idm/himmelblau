@@ -11,6 +11,7 @@ members = [
 	"src/kanidm/libs/sketching",
 	"src/proto",
 	"src/kanidm/libs/crypto",
+	"src/kanidm/libs/users",
 ]
 
 [workspace.package]
@@ -69,3 +70,7 @@ rusqlite = "^0.28.0"
 hashbrown = { version = "0.14.0", features = ["serde", "inline-more", "ahash"] }
 lru = "^0.8.0"
 kanidm_lib_crypto = { path = "./src/kanidm/libs/crypto", version = "0.1.0" }
+kanidm_utils_users = { path = "./src/kanidm/libs/users" }
+walkdir = "2"
+csv = "1.2.2"
+notify-debouncer-full = { version = "0.1" }

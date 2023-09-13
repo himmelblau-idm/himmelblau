@@ -32,8 +32,12 @@ pub mod client_sync;
 #[cfg(target_family = "unix")]
 pub mod db;
 #[cfg(target_family = "unix")]
+pub mod file_permissions;
+#[cfg(target_family = "unix")]
 pub mod idprovider;
 #[cfg(target_family = "unix")]
 pub mod resolver;
+#[cfg(target_family = "unix")]
+pub mod unix_passwd;
 #[cfg(target_family = "unix")]
 pub mod unix_proto;

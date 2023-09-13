@@ -11,34 +11,116 @@
 #![deny(clippy::trivially_copy_pass_by_ref)]
 
 use std::error::Error;
-use std::fs::{set_permissions, Permissions};
+use std::fs::metadata;
 use std::io;
 use std::io::{Error as IoError, ErrorKind};
-use std::os::unix::fs::PermissionsExt;
+use std::os::unix::fs::MetadataExt;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::sync::Arc;
+use std::time::Duration;
 
 use bytes::{BufMut, BytesMut};
 use clap::{Arg, ArgAction, Command};
-
 use futures::{SinkExt, StreamExt};
 use himmelblau_unix_common::config::HimmelblauConfig;
-use himmelblau_unix_common::constants::{DEFAULT_CONFIG_PATH, DEFAULT_SOCK_PATH};
+use himmelblau_unix_common::constants::DEFAULT_CONFIG_PATH;
 use himmelblau_unix_common::db::Db;
+use himmelblau_unix_common::file_permissions::readonly;
 use himmelblau_unix_common::idprovider::himmelblau::HimmelblauMultiProvider;
 use himmelblau_unix_common::resolver::Resolver;
 use himmelblau_unix_common::unix_config::UidAttr;
-use himmelblau_unix_common::unix_proto::{ClientRequest, ClientResponse};
+use himmelblau_unix_common::unix_passwd::{parse_etc_group, parse_etc_passwd};
+use himmelblau_unix_common::unix_proto::{
+    ClientRequest, ClientResponse, TaskRequest, TaskResponse,
+};
 
-use std::path::Path;
+use kanidm_utils_users::{get_current_gid, get_current_uid, get_effective_gid, get_effective_uid};
+use libc::umask;
+use sketching::tracing_forest::traits::*;
+use sketching::tracing_forest::util::*;
+use sketching::tracing_forest::{self};
+use tokio::fs::File;
+use tokio::io::AsyncReadExt; // for read_to_end()
 use tokio::net::{UnixListener, UnixStream};
+use tokio::sync::broadcast;
+use tokio::sync::mpsc::{channel, Receiver, Sender};
+use tokio::sync::oneshot;
+use tokio::time;
 use tokio_util::codec::{Decoder, Encoder, Framed};
 
-use std::sync::atomic::{AtomicBool, Ordering};
-use tokio::signal::unix::{signal, SignalKind};
+use notify_debouncer_full::{new_debouncer, notify::RecursiveMode, notify::Watcher};
 
-use tracing::{debug, error, info, warn};
-use users::{get_current_gid, get_current_uid, get_effective_gid, get_effective_uid};
+//=== the codec
+
+type AsyncTaskRequest = (TaskRequest, oneshot::Sender<()>);
+
+#[derive(Default)]
+struct ClientCodec;
+
+impl Decoder for ClientCodec {
+    type Error = io::Error;
+    type Item = ClientRequest;
+
+    fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
+        trace!("Attempting to decode request ...");
+        match serde_json::from_slice::<ClientRequest>(src) {
+            Ok(msg) => {
+                // Clear the buffer for the next message.
+                src.clear();
+                Ok(Some(msg))
+            }
+            _ => Ok(None),
+        }
+    }
+}
+
+impl Encoder<ClientResponse> for ClientCodec {
+    type Error = io::Error;
+
+    fn encode(&mut self, msg: ClientResponse, dst: &mut BytesMut) -> Result<(), Self::Error> {
+        trace!("Attempting to send response -> {:?} ...", msg);
+        let data = serde_json::to_vec(&msg).map_err(|e| {
+            error!("socket encoding error -> {:?}", e);
+            io::Error::new(io::ErrorKind::Other, "JSON encode error")
+        })?;
+        dst.put(data.as_slice());
+        Ok(())
+    }
+}
+
+#[derive(Default)]
+struct TaskCodec;
+
+impl Decoder for TaskCodec {
+    type Error = io::Error;
+    type Item = TaskResponse;
+
+    fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
+        match serde_json::from_slice::<TaskResponse>(src) {
+            Ok(msg) => {
+                // Clear the buffer for the next message.
+                src.clear();
+                Ok(Some(msg))
+            }
+            _ => Ok(None),
+        }
+    }
+}
+
+impl Encoder<TaskRequest> for TaskCodec {
+    type Error = io::Error;
+
+    fn encode(&mut self, msg: TaskRequest, dst: &mut BytesMut) -> Result<(), Self::Error> {
+        debug!("Attempting to send request -> {:?} ...", msg);
+        let data = serde_json::to_vec(&msg).map_err(|e| {
+            error!("socket encoding error -> {:?}", e);
+            io::Error::new(io::ErrorKind::Other, "JSON encode error")
+        })?;
+        dst.put(data.as_slice());
+        Ok(())
+    }
+}
 
 /// Pass this a file path and it'll look for the file and remove it if it's there.
 fn rm_if_exist(p: &str) {
@@ -55,59 +137,149 @@ fn rm_if_exist(p: &str) {
     }
 }
 
-struct ClientCodec;
+async fn handle_task_client(
+    stream: UnixStream,
+    task_channel_tx: &Sender<AsyncTaskRequest>,
+    task_channel_rx: &mut Receiver<AsyncTaskRequest>,
+) -> Result<(), Box<dyn Error>> {
+    // setup the codec
+    let mut reqs = Framed::new(stream, TaskCodec);
 
-impl Decoder for ClientCodec {
-    type Error = io::Error;
-    type Item = ClientRequest;
+    loop {
+        // TODO wait on the channel OR the task handler, so we know
+        // when it closes.
+        let v = match task_channel_rx.recv().await {
+            Some(v) => v,
+            None => return Ok(()),
+        };
 
-    fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
-        match serde_json::from_slice::<ClientRequest>(src) {
-            Ok(msg) => {
-                // Clear the buffer for the next message.
-                src.clear();
-                Ok(Some(msg))
+        debug!("Sending Task -> {:?}", v.0);
+
+        // Write the req to the socket.
+        if let Err(_e) = reqs.send(v.0.clone()).await {
+            // re-queue the event if not timed out.
+            // This is indicated by the one shot being dropped.
+            if !v.1.is_closed() {
+                let _ = task_channel_tx
+                    .send_timeout(v, Duration::from_millis(100))
+                    .await;
             }
-            _ => Ok(None),
+            // now return the error.
+            return Err(Box::new(IoError::new(ErrorKind::Other, "oh no!")));
         }
-    }
-}
 
-impl Encoder<ClientResponse> for ClientCodec {
-    type Error = io::Error;
-
-    fn encode(&mut self, msg: ClientResponse, dst: &mut BytesMut) -> Result<(), Self::Error> {
-        debug!("Attempting to send response -> {:?} ...", msg);
-        let data = serde_json::to_vec(&msg).map_err(|e| {
-            error!("socket encoding error -> {:?}", e);
-            io::Error::new(io::ErrorKind::Other, "JSON encode error")
-        })?;
-        dst.put(data.as_slice());
-        Ok(())
-    }
-}
-
-impl ClientCodec {
-    fn new() -> Self {
-        ClientCodec
+        match reqs.next().await {
+            Some(Ok(TaskResponse::Success)) => {
+                debug!("Task was acknowledged and completed.");
+                // Send a result back via the one-shot
+                // Ignore if it fails.
+                let _ = v.1.send(());
+            }
+            other => {
+                error!("Error -> {:?}", other);
+                return Err(Box::new(IoError::new(ErrorKind::Other, "oh no!")));
+            }
+        }
     }
 }
 
 async fn handle_client(
     sock: UnixStream,
     cachelayer: Arc<Resolver<HimmelblauMultiProvider>>,
+    task_channel_tx: &Sender<AsyncTaskRequest>,
 ) -> Result<(), Box<dyn Error>> {
     debug!("Accepted connection");
 
     let Ok(ucred) = sock.peer_cred() else {
-        return Err(Box::new(IoError::new(ErrorKind::Other, "Unable to verify peer credentials.")));
+        return Err(Box::new(IoError::new(
+            ErrorKind::Other,
+            "Unable to verify peer credentials.",
+        )));
     };
 
-    let mut reqs = Framed::new(sock, ClientCodec::new());
+    let mut reqs = Framed::new(sock, ClientCodec);
     let mut pam_auth_session_state = None;
 
+    trace!("Waiting for requests ...");
     while let Some(Ok(req)) = reqs.next().await {
         let resp = match req {
+            ClientRequest::SshKey(account_id) => {
+                debug!("sshkey req");
+                cachelayer
+                    .get_sshkeys(account_id.as_str())
+                    .await
+                    .map(ClientResponse::SshKeys)
+                    .unwrap_or_else(|_| {
+                        error!("unable to load keys, returning empty set.");
+                        ClientResponse::SshKeys(vec![])
+                    })
+            }
+            ClientRequest::NssAccounts => {
+                debug!("nssaccounts req");
+                cachelayer
+                    .get_nssaccounts()
+                    .await
+                    .map(ClientResponse::NssAccounts)
+                    .unwrap_or_else(|_| {
+                        error!("unable to enum accounts");
+                        ClientResponse::NssAccounts(Vec::new())
+                    })
+            }
+            ClientRequest::NssAccountByUid(gid) => {
+                debug!("nssaccountbyuid req");
+                cachelayer
+                    .get_nssaccount_gid(gid)
+                    .await
+                    .map(ClientResponse::NssAccount)
+                    .unwrap_or_else(|_| {
+                        error!("unable to load account, returning empty.");
+                        ClientResponse::NssAccount(None)
+                    })
+            }
+            ClientRequest::NssAccountByName(account_id) => {
+                debug!("nssaccountbyname req");
+                cachelayer
+                    .get_nssaccount_name(account_id.as_str())
+                    .await
+                    .map(ClientResponse::NssAccount)
+                    .unwrap_or_else(|_| {
+                        error!("unable to load account, returning empty.");
+                        ClientResponse::NssAccount(None)
+                    })
+            }
+            ClientRequest::NssGroups => {
+                debug!("nssgroups req");
+                cachelayer
+                    .get_nssgroups()
+                    .await
+                    .map(ClientResponse::NssGroups)
+                    .unwrap_or_else(|_| {
+                        error!("unable to enum groups");
+                        ClientResponse::NssGroups(Vec::new())
+                    })
+            }
+            ClientRequest::NssGroupByGid(gid) => {
+                debug!("nssgroupbygid req");
+                cachelayer
+                    .get_nssgroup_gid(gid)
+                    .await
+                    .map(ClientResponse::NssGroup)
+                    .unwrap_or_else(|_| {
+                        error!("unable to load group, returning empty.");
+                        ClientResponse::NssGroup(None)
+                    })
+            }
+            ClientRequest::NssGroupByName(grp_id) => {
+                debug!("nssgroupbyname req");
+                cachelayer
+                    .get_nssgroup_name(grp_id.as_str())
+                    .await
+                    .map(ClientResponse::NssGroup)
+                    .unwrap_or_else(|_| {
+                        error!("unable to load group, returning empty.");
+                        ClientResponse::NssGroup(None)
+                    })
+            }
             ClientRequest::PamAuthenticateInit(account_id) => {
                 debug!("pam authenticate init");
 
@@ -155,76 +327,48 @@ async fn handle_client(
                     .map(ClientResponse::PamStatus)
                     .unwrap_or(ClientResponse::Error)
             }
-            ClientRequest::PamAccountBeginSession(_account_id) => {
+            ClientRequest::PamAccountBeginSession(account_id) => {
                 debug!("pam account begin session");
-                // TODO: Implement session
-                ClientResponse::PamStatus(Some(true))
-            }
-            ClientRequest::NssAccounts => {
-                debug!("nssaccounts req");
-                cachelayer
-                    .get_nssaccounts()
+                match cachelayer
+                    .pam_account_beginsession(account_id.as_str())
                     .await
-                    .map(ClientResponse::NssAccounts)
-                    .unwrap_or_else(|_| {
-                        error!("unable to enum accounts");
-                        ClientResponse::NssAccounts(Vec::new())
-                    })
-            }
-            ClientRequest::NssAccountByName(account_id) => {
-                debug!("nssaccountbyname req");
-                cachelayer
-                    .get_nssaccount_name(account_id.as_str())
-                    .await
-                    .map(ClientResponse::NssAccount)
-                    .unwrap_or_else(|_| {
-                        error!("unable to load account, returning empty.");
-                        ClientResponse::NssAccount(None)
-                    })
-            }
-            ClientRequest::NssAccountByUid(uid) => {
-                debug!("nssaccountbyuid req");
-                cachelayer
-                    .get_nssaccount_gid(uid)
-                    .await
-                    .map(ClientResponse::NssAccount)
-                    .unwrap_or_else(|_| {
-                        error!("unable to load account, returning empty.");
-                        ClientResponse::NssAccount(None)
-                    })
-            }
-            ClientRequest::NssGroups => {
-                debug!("nssgroups req");
-                cachelayer
-                    .get_nssgroups()
-                    .await
-                    .map(ClientResponse::NssGroups)
-                    .unwrap_or_else(|_| {
-                        error!("unable to enum groups");
-                        ClientResponse::NssGroups(Vec::new())
-                    })
-            }
-            ClientRequest::NssGroupByName(grp_id) => {
-                debug!("nssgroupbyname req");
-                cachelayer
-                    .get_nssgroup_name(grp_id.as_str())
-                    .await
-                    .map(ClientResponse::NssGroup)
-                    .unwrap_or_else(|_| {
-                        error!("unable to load group, returning empty.");
-                        ClientResponse::NssGroup(None)
-                    })
-            }
-            ClientRequest::NssGroupByGid(gid) => {
-                debug!("nssgroupbygid req");
-                cachelayer
-                    .get_nssgroup_gid(gid)
-                    .await
-                    .map(ClientResponse::NssGroup)
-                    .unwrap_or_else(|_| {
-                        error!("unable to load group, returning empty.");
-                        ClientResponse::NssGroup(None)
-                    })
+                {
+                    Ok(Some(info)) => {
+                        let (tx, rx) = oneshot::channel();
+
+                        match task_channel_tx
+                            .send_timeout(
+                                (TaskRequest::HomeDirectory(info), tx),
+                                Duration::from_millis(100),
+                            )
+                            .await
+                        {
+                            Ok(()) => {
+                                // Now wait for the other end OR timeout.
+                                match time::timeout_at(
+                                    time::Instant::now() + Duration::from_millis(1000),
+                                    rx,
+                                )
+                                .await
+                                {
+                                    Ok(Ok(_)) => {
+                                        debug!("Task completed, returning to pam ...");
+                                        ClientResponse::Ok
+                                    }
+                                    _ => {
+                                        // Timeout or other error.
+                                        ClientResponse::Error
+                                    }
+                                }
+                            }
+                            Err(_) => {
+                                // We could not submit the req. Move on!
+                                ClientResponse::Error
+                            }
+                        }
+                    }
+                    _ => ClientResponse::Error,
+                }
             }
             ClientRequest::InvalidateCache => {
                 debug!("invalidate cache");
@@ -255,7 +399,6 @@ async fn handle_client(
                     ClientResponse::Error
                 }
             }
-            ClientRequest::SshKey(_) => ClientResponse::Error,
         };
         reqs.send(resp).await?;
         reqs.flush().await?;
@@ -264,6 +407,31 @@ async fn handle_client(
 
     // Disconnect them
     debug!("Disconnecting client ...");
+    Ok(())
+}
+
+async fn process_etc_passwd_group(
+    cachelayer: &Resolver<HimmelblauMultiProvider>,
+) -> Result<(), Box<dyn Error>> {
+    let mut file = File::open("/etc/passwd").await?;
+    let mut contents = vec![];
+    file.read_to_end(&mut contents).await?;
+
+    let users = parse_etc_passwd(contents.as_slice()).map_err(|_| "Invalid passwd content")?;
+
+    let mut file = File::open("/etc/group").await?;
+    let mut contents = vec![];
+    file.read_to_end(&mut contents).await?;
+
+    let groups = parse_etc_group(contents.as_slice()).map_err(|_| "Invalid group content")?;
+
+    let id_iter = users
+        .iter()
+        .map(|user| (user.name.clone(), user.uid))
+        .chain(groups.iter().map(|group| (group.name.clone(), group.gid)));
+
+    cachelayer.reload_nxset(id_iter).await;
+
     Ok(())
 }
 
@@ -291,174 +459,447 @@ async fn main() -> ExitCode {
                 .long("debug")
                 .action(ArgAction::SetTrue),
         )
+        .arg(
+            Arg::new("configtest")
+                .help("Display the configuration and exit")
+                .short('t')
+                .long("configtest")
+                .action(ArgAction::SetTrue),
+        )
+        .arg(
+            Arg::new("config")
+                .help("Set the config file path")
+                .short('c')
+                .long("config")
+                .default_value(DEFAULT_CONFIG_PATH)
+                .env("HIMMELBLAU_CONFIG")
+                .action(ArgAction::Set),
+        )
         .get_matches();
 
     if clap_args.get_flag("debug") {
         std::env::set_var("RUST_LOG", "debug");
     }
-    tracing_subscriber::fmt::init();
 
-    let stop_now = Arc::new(AtomicBool::new(false));
-    let terminate_now = Arc::clone(&stop_now);
-    let quit_now = Arc::clone(&stop_now);
-    let interrupt_now = Arc::clone(&stop_now);
-
-    async {
-        if clap_args.get_flag("skip-root-check") {
-            warn!("Skipping root user check.")
-        } else if cuid == 0 || ceuid == 0 || cgid == 0 || cegid == 0 {
-            error!("Refusing to run - this process must not operate as root.");
-            return ExitCode::FAILURE;
-        };
-
-        // Read the configuration
-        let config = match HimmelblauConfig::new(DEFAULT_CONFIG_PATH) {
-            Ok(c) => c,
-            Err(e) => {
-                error!("{}", e);
-                return ExitCode::FAILURE;
-            }
-        };
-
-        let socket_path = match config.get("global", "socket_path") {
-            Some(val) => val,
-            None => {
-                debug!("Using default socket path {}", DEFAULT_SOCK_PATH);
-                String::from(DEFAULT_SOCK_PATH)
-            }
-        };
-        debug!("🧹 Cleaning up socket from previous invocations");
-        rm_if_exist(&socket_path);
-
-        // Create the identify provider connection
-        let idprovider = match HimmelblauMultiProvider::new() {
-            Ok(idprovider) => idprovider,
-            Err(e) => {
-                error!("{}", e);
-                return ExitCode::FAILURE;
-            }
-        };
-        // Create the database
-        let db = match Db::new(&config.get_db_path(), &config.get_tpm_policy()) {
-            Ok(db) => db,
-            Err(_e) => {
-                error!("Failed to create database");
-                return ExitCode::FAILURE;
-            }
-        };
-
-        let cl_inner = match Resolver::new(
-            db,
-            idprovider,
-            config.get_cache_timeout(),
-            config.get_pam_allow_groups(),
-            config.get_shell(None),
-            config.get_home_prefix(None),
-            config.get_home_attr(None),
-            config.get_home_alias(None),
-            UidAttr::Spn,
-            UidAttr::Name,
-            vec![], // TODO: Implement local account override
+    #[allow(clippy::expect_used)]
+    tracing_forest::worker_task()
+        .set_global(true)
+        // Fall back to stderr
+        .map_sender(|sender| sender.or_stderr())
+        .build_on(|subscriber| subscriber
+            .with(EnvFilter::try_from_default_env()
+                .or_else(|_| EnvFilter::try_new("info"))
+                .expect("Failed to init envfilter")
+            )
         )
-        .await
-        {
-            Ok(c) => c,
-            Err(_e) => {
-                error!("Failed to build cache layer.");
-                return ExitCode::FAILURE;
-            }
-        };
+        .on(async {
+            if clap_args.get_flag("skip-root-check") {
+                warn!("Skipping root user check, if you're running this for testing, ensure you clean up temporary files.")
+                // TODO: this wording is not great m'kay.
+            } else if cuid == 0 || ceuid == 0 || cgid == 0 || cegid == 0 {
+                error!("Refusing to run - this process must not operate as root.");
+                return ExitCode::FAILURE
+            };
 
-        let cachelayer = Arc::new(cl_inner);
+            let Some(cfg_path_str) = clap_args.get_one::<String>("config") else {
+                error!("Failed to pull the config path");
+                return ExitCode::FAILURE
+            };
+            let cfg_path: PathBuf = PathBuf::from(cfg_path_str);
 
-        // Open the socket for all to read and write
-        let listener = match UnixListener::bind(&socket_path) {
-            Ok(l) => l,
-            Err(_e) => {
-                error!("Failed to bind UNIX socket at {}", &socket_path);
-                return ExitCode::FAILURE;
-            }
-        };
-        match set_permissions(&socket_path, Permissions::from_mode(0o777)) {
-            Ok(_) => {}
-            Err(e) => {
-                error!("Failed to set permissions for {}: {}", &socket_path, e);
-                return ExitCode::FAILURE;
-            }
-        }
+            if !cfg_path.exists() {
+                // there's no point trying to start up if we can't read a usable config!
+                error!(
+                    "Client config missing from {} - cannot start up. Quitting.",
+                    cfg_path_str
+                );
+                return ExitCode::FAILURE
+            } else {
+                let cfg_meta = match metadata(&cfg_path) {
+                    Ok(v) => v,
+                    Err(e) => {
+                        error!("Unable to read metadata for {} - {:?}", cfg_path_str, e);
+                        return ExitCode::FAILURE
+                    }
+                };
+                if !readonly(&cfg_meta) {
+                    warn!("permissions on {} may not be secure. Should be readonly to running uid. This could be a security risk ...",
+                        cfg_path_str
+                        );
+                }
 
-        let server = tokio::spawn(async move {
-            while !stop_now.load(Ordering::Relaxed) {
-                let cachelayer_ref = cachelayer.clone();
-                match listener.accept().await {
-                    Ok((socket, _addr)) => {
-                        tokio::spawn(async move {
-                            if let Err(e) = handle_client(socket, cachelayer_ref.clone()).await {
-                                error!("handle_client error occurred; error = {:?}", e);
+                if cfg_meta.uid() == cuid || cfg_meta.uid() == ceuid {
+                    warn!("WARNING: {} owned by the current uid, which may allow file permission changes. This could be a security risk ...",
+                        cfg_path_str
+                    );
+                }
+            }
+
+            // Read the configuration
+            let cfg = match HimmelblauConfig::new(cfg_path_str) {
+                Ok(c) => c,
+                Err(e) => {
+                    error!("Failed to parse {}: {}", cfg_path_str, e);
+                    return ExitCode::FAILURE;
+                }
+            };
+
+            if clap_args.get_flag("configtest") {
+                eprintln!("###################################");
+                eprintln!("Dumping configs:\n###################################");
+                eprintln!("###################################");
+                eprintln!("Config (from {:#?})", &cfg_path);
+                eprintln!("{:?}", cfg);
+                return ExitCode::SUCCESS;
+            }
+
+            let socket_path = cfg.get_socket_path();
+            let task_socket_path = cfg.get_task_socket_path();
+
+            debug!("🧹 Cleaning up sockets from previous invocations");
+            rm_if_exist(&socket_path);
+            rm_if_exist(&task_socket_path);
+
+
+            // Check the db path will be okay.
+            let db_path = PathBuf::from(cfg.get_db_path());
+            // We only need to check the parent folder path permissions as the db itself may not exist yet.
+            if let Some(db_parent_path) = db_path.parent() {
+                if !db_parent_path.exists() {
+                    error!(
+                        "Refusing to run, DB folder {} does not exist",
+                        db_parent_path
+                            .to_str()
+                            .unwrap_or("<db_parent_path invalid>")
+                    );
+                    return ExitCode::FAILURE
+                }
+
+                let db_par_path_buf = db_parent_path.to_path_buf();
+
+                let i_meta = match metadata(&db_par_path_buf) {
+                    Ok(v) => v,
+                    Err(e) => {
+                        error!(
+                            "Unable to read metadata for {} - {:?}",
+                            db_par_path_buf
+                                .to_str()
+                                .unwrap_or("<db_par_path_buf invalid>"),
+                            e
+                        );
+                        return ExitCode::FAILURE
+                    }
+                };
+
+                if !i_meta.is_dir() {
+                    error!(
+                        "Refusing to run - DB folder {} may not be a directory",
+                        db_par_path_buf
+                            .to_str()
+                            .unwrap_or("<db_par_path_buf invalid>")
+                    );
+                    return ExitCode::FAILURE
+                }
+                if !readonly(&i_meta) {
+                    warn!("WARNING: DB folder permissions on {} indicate it may not be RW. This could cause the server start up to fail!", db_par_path_buf.to_str()
+                    .unwrap_or("<db_par_path_buf invalid>")
+                    );
+                }
+
+                if i_meta.mode() & 0o007 != 0 {
+                    warn!("WARNING: DB folder {} has 'everyone' permission bits in the mode. This could be a security risk ...", db_par_path_buf.to_str()
+                    .unwrap_or("<db_par_path_buf invalid>")
+                    );
+                }
+            }
+
+            // check to see if the db's already there
+            if db_path.exists() {
+                if !db_path.is_file() {
+                    error!(
+                        "Refusing to run - DB path {} already exists and is not a file.",
+                        db_path.to_str().unwrap_or("<db_path invalid>")
+                    );
+                    return ExitCode::FAILURE
+                };
+
+                match metadata(&db_path) {
+                    Ok(v) => v,
+                    Err(e) => {
+                        error!(
+                            "Unable to read metadata for {} - {:?}",
+                            db_path.to_str().unwrap_or("<db_path invalid>"),
+                            e
+                        );
+                        return ExitCode::FAILURE
+                    }
+                };
+                // TODO: permissions dance to enumerate the user's ability to write to the file? ref #456 - r2d2 will happily keep trying to do things without bailing.
+            };
+
+            // Create the identify provider connection
+            let idprovider = match HimmelblauMultiProvider::new() {
+                Ok(idprovider) => idprovider,
+                Err(e) => {
+                    error!("{}", e);
+                    return ExitCode::FAILURE;
+                }
+            };
+
+            // Create the database
+            let db = match Db::new(&cfg.get_db_path(), &cfg.get_tpm_policy()) {
+                Ok(db) => db,
+                Err(_e) => {
+                    error!("Failed to create database");
+                    return ExitCode::FAILURE;
+                }
+            };
+
+            let cl_inner = match Resolver::new(
+                db,
+                idprovider,
+                cfg.get_cache_timeout(),
+                cfg.get_pam_allow_groups(),
+                cfg.get_shell(None),
+                cfg.get_home_prefix(None),
+                cfg.get_home_attr(None),
+                cfg.get_home_alias(None),
+                UidAttr::Spn,
+                UidAttr::Name,
+                vec![], // TODO: Implement local account override
+            )
+            .await
+            {
+                Ok(c) => c,
+                Err(_e) => {
+                    error!("Failed to build cache layer.");
+                    return ExitCode::FAILURE
+                }
+            };
+
+            let cachelayer = Arc::new(cl_inner);
+
+            // Setup the root-only socket. Take away all other access bits.
+            let before = unsafe { umask(0o0077) };
+            let task_listener = match UnixListener::bind(task_socket_path.clone()) {
+                Ok(l) => l,
+                Err(_e) => {
+                    error!("Failed to bind UNIX socket {}", task_socket_path);
+                    return ExitCode::FAILURE
+                }
+            };
+            // Undo umask changes.
+            let _ = unsafe { umask(before) };
+
+            // Pre-process /etc/passwd and /etc/group for nxset
+            if process_etc_passwd_group(&cachelayer).await.is_err() {
+                error!("Failed to process system id providers");
+                return ExitCode::FAILURE
+            }
+
+            // Setup the tasks socket first.
+            let (task_channel_tx, mut task_channel_rx) = channel(16);
+            let task_channel_tx = Arc::new(task_channel_tx);
+
+            let task_channel_tx_cln = task_channel_tx.clone();
+
+            // Start to build the worker tasks
+            let (broadcast_tx, mut broadcast_rx) = broadcast::channel(4);
+            let mut c_broadcast_rx = broadcast_tx.subscribe();
+            let mut d_broadcast_rx = broadcast_tx.subscribe();
+
+            let task_b = tokio::spawn(async move {
+                loop {
+                    tokio::select! {
+                        _ = c_broadcast_rx.recv() => {
+                            break;
+                        }
+                        accept_res = task_listener.accept() => {
+                            match accept_res {
+                                Ok((socket, _addr)) => {
+                                    // Did it come from root?
+                                    if let Ok(ucred) = socket.peer_cred() {
+                                        if ucred.uid() != 0 {
+                                            // move along.
+                                            warn!("Task handler not running as root, ignoring ...");
+                                            continue;
+                                        }
+                                    } else {
+                                        // move along.
+                                        warn!("Unable to determine socked peer cred, ignoring ...");
+                                        continue;
+                                    };
+                                    debug!("A task handler has connected.");
+                                    // It did? Great, now we can wait and spin on that one
+                                    // client.
+
+                                    tokio::select! {
+                                        _ = d_broadcast_rx.recv() => {
+                                            break;
+                                        }
+                                        // We have to check for signals here else this tasks waits forever.
+                                        Err(e) = handle_task_client(socket, &task_channel_tx, &mut task_channel_rx) => {
+                                            error!("Task client error occurred; error = {:?}", e);
+                                        }
+                                    }
+                                    // If they DC we go back to accept.
+                                }
+                                Err(err) => {
+                                    error!("Task Accept error -> {:?}", err);
+                                }
                             }
-                        });
+                        }
                     }
-                    Err(err) => {
-                        error!("Error while handling connection -> {:?}", err);
+                    // done
+                }
+                info!("Stopped task connector");
+            });
+
+            // TODO: Setup a task that handles pre-fetching here.
+
+            let (inotify_tx, mut inotify_rx) = channel(4);
+
+            let watcher =
+            match new_debouncer(Duration::from_secs(2), None, move |_event| {
+                let _ = inotify_tx.try_send(true);
+            })
+                .and_then(|mut debouncer| {
+                    debouncer.watcher().watch(Path::new("/etc/passwd"), RecursiveMode::NonRecursive)
+                        .map(|()| debouncer)
+                })
+                .and_then(|mut debouncer| debouncer.watcher().watch(Path::new("/etc/group"), RecursiveMode::NonRecursive)
+                        .map(|()| debouncer)
+                )
+
+            {
+                Ok(watcher) => {
+                    watcher
+                }
+                Err(e) => {
+                    error!("Failed to setup inotify {:?}",  e);
+                    return ExitCode::FAILURE
+                }
+            };
+
+            let mut c_broadcast_rx = broadcast_tx.subscribe();
+
+            let inotify_cachelayer = cachelayer.clone();
+            let task_c = tokio::spawn(async move {
+                loop {
+                    tokio::select! {
+                        _ = c_broadcast_rx.recv() => {
+                            break;
+                        }
+                        _ = inotify_rx.recv() => {
+                            if process_etc_passwd_group(&inotify_cachelayer).await.is_err() {
+                                error!("Failed to process system id providers");
+                            }
+                        }
+                    }
+                }
+                info!("Stopped inotify watcher");
+            });
+
+            // Set the umask while we open the path for most clients.
+            let before = unsafe { umask(0) };
+            let listener = match UnixListener::bind(socket_path.clone()) {
+                Ok(l) => l,
+                Err(_e) => {
+                    error!("Failed to bind UNIX socket at {}", socket_path);
+                    return ExitCode::FAILURE
+                }
+            };
+            // Undo umask changes.
+            let _ = unsafe { umask(before) };
+
+            let task_a = tokio::spawn(async move {
+                loop {
+                    let tc_tx = task_channel_tx_cln.clone();
+
+                    tokio::select! {
+                        _ = broadcast_rx.recv() => {
+                            break;
+                        }
+                        accept_res = listener.accept() => {
+                            match accept_res {
+                                Ok((socket, _addr)) => {
+                                    let cachelayer_ref = cachelayer.clone();
+                                    tokio::spawn(async move {
+                                        if let Err(e) = handle_client(socket, cachelayer_ref.clone(), &tc_tx).await
+                                        {
+                                            error!("handle_client error occurred; error = {:?}", e);
+                                        }
+                                    });
+                                }
+                                Err(err) => {
+                                    error!("Error while handling connection -> {:?}", err);
+                                }
+                            }
+                        }
+                    }
+
+                }
+                info!("Stopped resolver");
+            });
+
+            info!("Server started ...");
+
+            loop {
+                tokio::select! {
+                    Ok(()) = tokio::signal::ctrl_c() => {
+                        break
+                    }
+                    Some(()) = async move {
+                        let sigterm = tokio::signal::unix::SignalKind::terminate();
+                        #[allow(clippy::unwrap_used)]
+                        tokio::signal::unix::signal(sigterm).unwrap().recv().await
+                    } => {
+                        break
+                    }
+                    Some(()) = async move {
+                        let sigterm = tokio::signal::unix::SignalKind::alarm();
+                        #[allow(clippy::unwrap_used)]
+                        tokio::signal::unix::signal(sigterm).unwrap().recv().await
+                    } => {
+                        // Ignore
+                    }
+                    Some(()) = async move {
+                        let sigterm = tokio::signal::unix::SignalKind::hangup();
+                        #[allow(clippy::unwrap_used)]
+                        tokio::signal::unix::signal(sigterm).unwrap().recv().await
+                    } => {
+                        // Ignore
+                    }
+                    Some(()) = async move {
+                        let sigterm = tokio::signal::unix::SignalKind::user_defined1();
+                        #[allow(clippy::unwrap_used)]
+                        tokio::signal::unix::signal(sigterm).unwrap().recv().await
+                    } => {
+                        // Ignore
+                    }
+                    Some(()) = async move {
+                        let sigterm = tokio::signal::unix::SignalKind::user_defined2();
+                        #[allow(clippy::unwrap_used)]
+                        tokio::signal::unix::signal(sigterm).unwrap().recv().await
+                    } => {
+                        // Ignore
                     }
                 }
             }
-        });
-
-        let terminate_task = tokio::spawn(async move {
-            match signal(SignalKind::terminate()) {
-                Ok(mut stream) => {
-                    stream.recv().await;
-                    terminate_now.store(true, Ordering::Relaxed);
-                }
-                Err(e) => {
-                    error!("Failed registering terminate signal: {}", e);
-                }
-            };
-        });
-
-        let quit_task = tokio::spawn(async move {
-            match signal(SignalKind::quit()) {
-                Ok(mut stream) => {
-                    stream.recv().await;
-                    quit_now.store(true, Ordering::Relaxed);
-                }
-                Err(e) => {
-                    error!("Failed registering quit signal: {}", e);
-                }
-            };
-        });
-
-        let interrupt_task = tokio::spawn(async move {
-            match signal(SignalKind::interrupt()) {
-                Ok(mut stream) => {
-                    stream.recv().await;
-                    interrupt_now.store(true, Ordering::Relaxed);
-                }
-                Err(e) => {
-                    error!("Failed registering interrupt signal: {}", e);
-                }
-            };
-        });
-
-        info!("Server started ...");
-
-        tokio::select! {
-            _ = server => {
-                debug!("Main listener task is terminating");
-            },
-            _ = terminate_task => {
-                debug!("Received signal to terminate");
-            },
-            _ = quit_task => {
-                debug!("Received signal to quit");
-            },
-            _ = interrupt_task => {
-                debug!("Received signal to interrupt");
+            info!("Signal received, sending down signal to tasks");
+            // Send a broadcast that we are done.
+            if let Err(e) = broadcast_tx.send(true) {
+                error!("Unable to shutdown workers {:?}", e);
             }
-        }
 
-        ExitCode::SUCCESS
-    }
+            drop(watcher);
+
+            let _ = task_a.await;
+            let _ = task_b.await;
+            let _ = task_c.await;
+
+            ExitCode::SUCCESS
+    })
     .await
+    // TODO: can we catch signals to clean up sockets etc, especially handy when running as root
 }

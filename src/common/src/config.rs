@@ -1,5 +1,6 @@
 use anyhow::{anyhow, Result};
 use configparser::ini::Ini;
+use std::fmt;
 use std::io::Error;
 use std::path::PathBuf;
 use tracing::{debug, error};
@@ -7,8 +8,8 @@ use tracing::{debug, error};
 use crate::constants::{
     DEFAULT_APP_ID, DEFAULT_AUTHORITY_HOST, DEFAULT_CACHE_TIMEOUT, DEFAULT_CONN_TIMEOUT,
     DEFAULT_DB_PATH, DEFAULT_GRAPH, DEFAULT_HOME_ALIAS, DEFAULT_HOME_ATTR, DEFAULT_HOME_PREFIX,
-    DEFAULT_IDMAP_RANGE, DEFAULT_ODC_PROVIDER, DEFAULT_SHELL, DEFAULT_SOCK_PATH,
-    DEFAULT_TPM_TCTI_NAME,
+    DEFAULT_IDMAP_RANGE, DEFAULT_ODC_PROVIDER, DEFAULT_SELINUX, DEFAULT_SHELL, DEFAULT_SOCK_PATH,
+    DEFAULT_TASK_SOCK_PATH, DEFAULT_TPM_TCTI_NAME, DEFAULT_USE_ETC_SKEL,
 };
 use crate::unix_config::{HomeAttr, TpmPolicy};
 use msal::misc::request_federation_provider;
@@ -32,6 +33,22 @@ fn str_to_home_attr(attrib: &str) -> HomeAttr {
         return HomeAttr::Spn;
     }
     HomeAttr::Uuid // Default to Uuid if the attrib can't be parsed
+}
+
+fn match_bool(val: Option<String>, default: bool) -> bool {
+    match val {
+        Some(val) => match val.to_lowercase().as_str() {
+            "true" => true,
+            "false" => false,
+            "1" => true,
+            "0" => false,
+            _ => {
+                error!("Unrecognized response for apply_policy '{}'", val);
+                default
+            }
+        },
+        None => default,
+    }
 }
 
 impl HimmelblauConfig {
@@ -258,6 +275,13 @@ impl HimmelblauConfig {
         }
     }
 
+    pub fn get_task_socket_path(&self) -> String {
+        match self.config.get("global", "task_socket_path") {
+            Some(val) => val,
+            None => DEFAULT_TASK_SOCK_PATH.to_string(),
+        }
+    }
+
     pub fn get_connection_timeout(&self) -> u64 {
         match self.config.get("global", "connection_timeout") {
             Some(val) => match val.parse::<u64>() {
@@ -304,19 +328,7 @@ impl HimmelblauConfig {
     }
 
     pub fn get_apply_policy(&self) -> bool {
-        match self.config.get("global", "apply_policy") {
-            Some(val) => match val.to_lowercase().as_str() {
-                "true" => true,
-                "false" => false,
-                "1" => true,
-                "0" => false,
-                _ => {
-                    error!("Unrecognized response for apply_policy '{}'", val);
-                    false
-                }
-            },
-            None => false,
-        }
+        match_bool(self.config.get("global", "apply_policy"), false)
     }
 
     pub fn get_pam_allow_groups(&self) -> Vec<String> {
@@ -332,5 +344,22 @@ impl HimmelblauConfig {
 
     pub fn set(&mut self, section: &str, key: &str, value: &str) {
         self.config.set(section, key, Some(value.to_string()));
+    }
+
+    pub fn get_use_etc_skel(&self) -> bool {
+        match_bool(
+            self.config.get("global", "use_etc_skel"),
+            DEFAULT_USE_ETC_SKEL,
+        )
+    }
+
+    pub fn get_selinux(&self) -> bool {
+        match_bool(self.config.get("global", "selinux"), DEFAULT_SELINUX)
+    }
+}
+
+impl fmt::Debug for HimmelblauConfig {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{:?}", self.config)
     }
 }
