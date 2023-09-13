@@ -87,6 +87,12 @@ impl IdProvider for HimmelblauMultiProvider {
         let account_id = id.to_string().clone();
         match split_username(&account_id) {
             Some((_sam, domain)) => {
+                /* Attempting to silent auth a user on a new provider is
+                 * nonsense. It's also causing MSAL to freeze in a sandbox.
+                 * Just drop out if we don't have the provider. */
+                if !self.check_provider(domain).await {
+                    return Err(IdpError::NotFound);
+                }
                 match self.check_insert_provider(domain).await {
                     Ok(_) => {}
                     Err(e) => {
@@ -170,6 +176,12 @@ impl IdProvider for HimmelblauMultiProvider {
     ) -> Result<(AuthRequest, AuthCredHandler), IdpError> {
         match split_username(account_id) {
             Some((_sam, domain)) => {
+                /* Attempting to offline auth a user on a new provider is
+                 * nonsense. Just drop out if we don't have the provider.
+                 */
+                if !self.check_provider(domain).await {
+                    return Err(IdpError::NotFound);
+                }
                 match self.check_insert_provider(domain).await {
                     Ok(_) => {}
                     Err(e) => {
@@ -201,6 +213,11 @@ impl IdProvider for HimmelblauMultiProvider {
 }
 
 impl HimmelblauMultiProvider {
+    async fn check_provider(&self, domain: &str) -> bool {
+        let providers = self.providers.write().await;
+        providers.contains_key(domain)
+    }
+
     async fn check_insert_provider(&self, domain: &str) -> Result<()> {
         let mut providers = self.providers.write().await;
         if !providers.contains_key(domain) {
