@@ -490,8 +490,10 @@ impl HimmelblauProvider {
     ) -> Result<AuthResult, IdpError> {
         match token.access_token {
             Some(_) => {
-                /* Fixes bug#37: MFA can respond with different user than requested */
-                if account_id != token.spn {
+                /* Fixes bug#37: MFA can respond with different user than requested.
+                 * Azure resource names are case insensitive.
+                 */
+                if account_id.to_string().to_lowercase() != token.spn.to_string().to_lowercase() {
                     error!(
                         "Authenticated user {} does not match requested user {}",
                         token.spn, account_id
