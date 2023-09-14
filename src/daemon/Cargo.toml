@@ -14,6 +14,10 @@ repository.workspace = true
 name = "himmelblaud"
 path = "src/daemon.rs"
 
+[[bin]]
+name = "himmelblaud_tasks"
+path = "src/tasks_daemon.rs"
+
 [dependencies]
 himmelblau_unix_common = { workspace = true }
 msal = { workspace = true }
@@ -28,3 +32,10 @@ serde_json = { workspace = true }
 futures = "^0.3.28"
 systemd-journal-logger = "^1.0.0"
 himmelblau_policies = { workspace = true }
+users = "^0.11.0"
+sketching = { workspace = true }
+walkdir = { workspace = true }
+libc = { workspace = true }
+kanidm_utils_users = { workspace = true }
+csv = { workspace = true }
+notify-debouncer-full = { workspace = true }

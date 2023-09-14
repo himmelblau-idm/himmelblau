@@ -32,6 +32,7 @@
 # Default app_id is Intune Portal for Linux
 # app_id = b743a22d-6705-4147-8670-d92fa515ee2b
 # socket_path = /var/run/himmelblaud/socket
+# task_socket_path = /var/run/himmelblaud/task_sock
 # home_prefix = /home/
 # home_attr = UUID ; home directory attribute options:
 #                  ; UUID (default)
@@ -43,6 +44,8 @@
 # idmap_range = 5000000-5999999
 # connection_timeout = 2
 # cache_timeout = 15
+# use_etc_skel = false
+# selinux = true
 
 # Values overridden for a specific domain
 # [domain.com]

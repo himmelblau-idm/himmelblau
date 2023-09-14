@@ -41,7 +41,8 @@ Configure your instance
 
 Run the daemon with:
 
-    cargo run -- -d
+    cargo run --bin=himmelblaud -- -d -c ./src/config/himmelblau.conf.example &
+    sudo cargo run --bin=himmelblaud_tasks -- &
 
 Check systemd journal for errors.
 
@@ -56,9 +57,13 @@ Setup NSS
     cp /usr/etc/nsswitch.conf /etc/nsswitch.conf
 
     # vim /etc/nsswitch.conf
-    passwd:     compat himmelblau
-    group:      compat himmelblau
-    shadow:     compat himmelblau
+    passwd:     compat systemd himmelblau
+    group:      compat systemd himmelblau
+    shadow:     compat systemd himmelblau
+
+> **WARNING** It's essential that the systemd nss module be added before the himmelblau nss
+> module, otherwise you will encounter deadlocks in himmelblau (nss recursion caused by systemd
+> skipping compat/files).
 
 Check that you can resolve a user with
 
@@ -66,7 +71,7 @@ Check that you can resolve a user with
 
 Setup PAM
 
-    rm /etc/pam.d/{common-account,common-auth,common-password,common-session}
+    old /etc/pam.d/{common-account,common-auth,common-password,common-session}
     cp /etc/pam.d/common-password-pc /etc/pam.d/common-password
     cp /etc/pam.d/common-auth-pc /etc/pam.d/common-auth
     cp /etc/pam.d/common-account-pc /etc/pam.d/common-account
@@ -86,7 +91,6 @@ Setup PAM
     account    required      pam_deny.so
 
     # vim /etc/pam.d/common-session
-    session required    pam_mkhomedir.so
     session optional    pam_systemd.so
     session required    pam_limits.so
     session optional    pam_unix.so try_first_pass
@@ -94,4 +98,3 @@ Setup PAM
     session optional    pam_himmelblau.so
     session optional    pam_env.so
 
-Be sure to include `pam_mkhomedir.so` in the pam session configuration, or your home directory will not be created.
