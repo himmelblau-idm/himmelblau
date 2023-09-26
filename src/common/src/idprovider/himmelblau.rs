@@ -1080,6 +1080,9 @@ impl HimmelblauProvider {
                                 None => vec![],
                             };
                             allow_groups.push(token.spn.clone());
+                            /* Remove duplicates from the allow_groups */
+                            allow_groups.sort();
+                            allow_groups.dedup();
                             config.set("global", "pam_allow_groups", &allow_groups.join(","));
                             if let Err(e) = config.write() {
                                 error!("Failed to write domain join configuration: {:?}", e);
