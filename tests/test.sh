@@ -8,7 +8,7 @@ install -m 0755 ./target/debug/libnss_himmelblau.so /usr/lib64/libnss_himmelblau
 ln -s /usr/lib64/libnss_himmelblau.so.2 /usr/lib64/libnss_himmelblau.so
 install -m 0755 ./target/debug/libpam_himmelblau.so /usr/lib64/security/pam_himmelblau.so
 install -m 0755 ./target/debug/himmelblaud /usr/sbin
-install -m 0755 ./target/debug/himmelblaud-tasks /usr/sbin
+install -m 0755 ./target/debug/himmelblaud_tasks /usr/sbin
 install -m 0755 ./target/debug/aad-tool /usr/bin
 mkdir -p /var/run/himmelblaud
 mkdir -p /var/cache/himmelblaud
@@ -19,7 +19,7 @@ popd
 
 # Start the daemon
 /usr/sbin/himmelblaud -d --skip-root-check &
-/usr/sbin/himmelblaud-tasks &
+/usr/sbin/himmelblaud_tasks &
 
 # Run the tests
 /root/tests/runner.py $@
@@ -27,6 +27,6 @@ RET=`echo $?`
 
 # Kill the daemon
 pkill himmelblaud
-pkill himmelblaud-tasks
+pkill himmelblaud_tasks
 
 exit $RET
