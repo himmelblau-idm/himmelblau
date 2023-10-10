@@ -18,3 +18,6 @@ pub mod misc;
 
 #[cfg(target_family = "unix")]
 pub mod discovery;
+
+#[cfg(target_family = "unix")]
+pub mod nonce;
