@@ -175,22 +175,37 @@ impl PublicClientApplication {
     pub fn acquire_token_interactive(
         &self,
         scopes: Vec<&str>,
-        prompt: &str,
-        login_hint: &str,
-        domain_hint: &str,
+        prompt: Option<&str>,
+        login_hint: Option<&str>,
+        domain_hint: Option<&str>,
     ) -> Result<UnixUserToken> {
         Python::with_gil(|py| {
             let func: Py<PyAny> = self.app.getattr(py, "acquire_token_interactive")?;
             let py_scopes: &PyList = PyList::new(py, scopes);
-            let py_prompt: &PyString = PyString::new(py, prompt);
-            let py_login_hint: &PyString = PyString::new(py, login_hint);
-            let py_domain_hint: &PyString = PyString::new(py, domain_hint);
-            let largs: &PyList = PyList::new(py, vec![py_scopes]);
-            largs.append(py_prompt)?;
-            largs.append(py_login_hint)?;
-            largs.append(py_domain_hint)?;
-            let args: &PyTuple = PyTuple::new(py, largs);
-            let resp: Py<PyAny> = func.call1(py, args)?;
+            let args = (py_scopes,);
+            let kwargs = PyDict::new(py);
+            if let Some(prompt) = prompt {
+                let py_prompt: &PyString = PyString::new(py, prompt);
+                match kwargs.set_item("prompt", py_prompt) {
+                    Ok(()) => (),
+                    Err(_e) => return Err(anyhow!("Failed setting prompt")),
+                }
+            }
+            if let Some(login_hint) = login_hint {
+                let py_login_hint: &PyString = PyString::new(py, login_hint);
+                match kwargs.set_item("login_hint", py_login_hint) {
+                    Ok(()) => (),
+                    Err(_e) => return Err(anyhow!("Failed setting login_hint")),
+                }
+            }
+            if let Some(domain_hint) = domain_hint {
+                let py_domain_hint: &PyString = PyString::new(py, domain_hint);
+                match kwargs.set_item("domain_hint", py_domain_hint) {
+                    Ok(()) => (),
+                    Err(_e) => return Err(anyhow!("Failed setting domain_hint")),
+                }
+            }
+            let resp: Py<PyAny> = func.call(py, args, Some(kwargs))?;
             let token: UnixUserToken = resp.extract(py)?;
             Ok(token)
         })
