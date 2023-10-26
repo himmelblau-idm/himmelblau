@@ -3,14 +3,13 @@
 # the hostname for sending a federationProvider request. If the federationProvider
 # request is successful, the tenant_id and authority_host options do not need to
 # be specified.
+# odc_provider = odc.officeapps.live.com
 #
 # pam_allow_groups MUST be defined or all users will be rejected by pam account.
 # The option should be set to a comma seperated list of Groups which are allowed
 # access to the system.
 # The default is an empty list.
 # pam_allow_groups =
-#
-# odc_provider = odc.officeapps.live.com
 #
 # tenant_id = XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX
 # authority_host = login.microsoftonline.com
@@ -23,10 +22,6 @@
 #                     ; ignore
 #                     ; if_possible
 #                     ; required
-#
-# Whether to apply MDM policies (experimental). Requires additional permissions in Azure AD,
-# see https://github.com/openSUSE/himmelblau/wiki/Enabling-Group-Policy-Access-for-Users
-# apply_policy = false ; {true|false}
 
 ### Optional values
 # Default app_id is Intune Portal for Linux
@@ -38,8 +33,8 @@
 #                  ; UUID (default)
 #                  ; SPN
 # home_alias = SPN ; home directory alias options:
-#                  ; UUID (default)
-#                  ; SPN
+#                  ; UUID
+#                  ; SPN (default)
 # shell = /bin/bash ; default shell for the user
 # idmap_range = 5000000-5999999
 # connection_timeout = 2
