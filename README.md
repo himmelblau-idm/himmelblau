@@ -20,8 +20,7 @@ The following packages are required on opensuse to build and test this package.
 
 You can build the components with
 
-    cd himmelblau
-    cargo build
+    cd himmelblau; make
 
 To test debug builds you can use these directly out of the build directory, but you must
 link the libraries to the correct locations
