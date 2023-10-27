@@ -295,7 +295,7 @@ async fn main() -> ExitCode {
                 }
             };
 
-            let cfg = match HimmelblauConfig::new(config_path_str) {
+            let cfg = match HimmelblauConfig::new(Some(config_path_str)) {
                 Ok(c) => c,
                 Err(e) => {
                     error!("Failed to parse {}: {}", config_path_str, e);

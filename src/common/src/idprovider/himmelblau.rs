@@ -51,7 +51,7 @@ pub struct HimmelblauMultiProvider {
 
 impl HimmelblauMultiProvider {
     pub fn new() -> Result<Self> {
-        let config = match HimmelblauConfig::new(DEFAULT_CONFIG_PATH) {
+        let config = match HimmelblauConfig::new(Some(DEFAULT_CONFIG_PATH)) {
             Ok(config) => config,
             Err(e) => return Err(anyhow!("{}", e)),
         };
