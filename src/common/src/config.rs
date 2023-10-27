@@ -308,6 +308,10 @@ impl HimmelblauConfig {
         }
     }
 
+    pub fn get_unix_sock_timeout(&self) -> u64 {
+        self.get_connection_timeout() * 2
+    }
+
     pub fn get_db_path(&self) -> String {
         match self.config.get("global", "db_path") {
             Some(val) => val,
