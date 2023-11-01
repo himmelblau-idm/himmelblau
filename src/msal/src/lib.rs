@@ -27,3 +27,6 @@ pub mod enroll;
 
 #[cfg(target_family = "unix")]
 pub mod constants;
+
+#[cfg(target_family = "unix")]
+pub mod user;

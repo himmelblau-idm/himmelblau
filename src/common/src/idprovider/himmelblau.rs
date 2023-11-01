@@ -22,7 +22,7 @@ use msal::authentication::{
 };
 use msal::constants::BROKER_APP_ID;
 use msal::enroll::register_device;
-use msal::misc::{request_user, request_user_groups, DirectoryObject, UserObject};
+use msal::user::{request_user, request_user_groups, DirectoryObject, UserObject};
 use os_release::OsRelease;
 use reqwest;
 use serde::Serialize;
