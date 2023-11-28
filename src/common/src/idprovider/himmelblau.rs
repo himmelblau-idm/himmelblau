@@ -222,10 +222,12 @@ impl HimmelblauMultiProvider {
         let mut providers = self.providers.write().await;
         if !providers.contains_key(domain) {
             let config = self.config.read().await;
-            let (_tenant_id, authority_url, graph) = match config.get_authority_url(domain).await {
-                Ok(res) => res,
-                Err(e) => return Err(anyhow!("{}", e)),
-            };
+            let (authority_host, tenant_id, graph) =
+                match config.get_tenant_id_authority_and_graph(domain).await {
+                    Ok(res) => res,
+                    Err(e) => return Err(anyhow!("{}", e)),
+                };
+            let authority_url = format!("https://{}/{}", authority_host, tenant_id);
             let app_id = config.get_app_id(domain);
             let app = match PublicClientApplication::new(&app_id, authority_url.as_str()) {
                 Ok(app) => app,
