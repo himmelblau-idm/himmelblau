@@ -33,3 +33,6 @@ pub mod user;
 
 #[cfg(target_family = "unix")]
 pub mod application;
+
+#[cfg(target_family = "unix")]
+pub mod group;

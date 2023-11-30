@@ -22,6 +22,7 @@ use msal::authentication::{
 };
 use msal::constants::BROKER_APP_ID;
 use msal::enroll::register_device;
+use msal::group::{request_group, GroupObject};
 use msal::user::{request_user, request_user_groups, DirectoryObject, UserObject};
 use os_release::OsRelease;
 use reqwest;
@@ -774,12 +775,32 @@ impl IdProvider for HimmelblauProvider {
 
     async fn unix_group_get(
         &self,
-        _id: &Id,
+        id: &Id,
         _tpm: &mut tpm::BoxedDynTpm,
     ) -> Result<GroupToken, IdpError> {
-        /* TODO: This is possible if we have a confidential client */
-        /* AAD doesn't permit group listing (must use cache entries from auth) */
-        Err(IdpError::BadRequest)
+        let account_id = id.to_string().clone();
+        match &*self.client.write().await {
+            /* AAD permits this if we have a confidential client */
+            Some(ClientApplicationBox::ConfidentialClientApplication(app)) => {
+                match app.acquire_token_for_client(vec!["GroupMember.Read.All"]) {
+                    Ok(token) => match token.access_token {
+                        Some(access_token) => {
+                            let group_obj: GroupObject =
+                                match request_group(&self.graph_url, &access_token, &account_id)
+                                    .await
+                                {
+                                    Ok(group_obj) => group_obj,
+                                    Err(_e) => return Err(IdpError::NotFound),
+                                };
+                            return self.group_token_from_group_object(group_obj).await;
+                        }
+                        None => return Err(IdpError::NotFound),
+                    },
+                    Err(_) => return Err(IdpError::NotFound),
+                }
+            }
+            &_ => Err(IdpError::NotFound),
+        }
     }
 }
 
@@ -1039,6 +1060,25 @@ impl HimmelblauProvider {
             uuid: match Uuid::parse_str(id) {
                 Ok(uuid) => uuid,
                 Err(e) => return Err(anyhow!("Failed parsing user uuid: {}", e)),
+            },
+            gidnumber,
+        })
+    }
+
+    async fn group_token_from_group_object(
+        &self,
+        group_obj: GroupObject,
+    ) -> Result<GroupToken, IdpError> {
+        let gidnumber = gen_unique_account_uid(&self.config, &self.domain, &group_obj.id).await;
+        Ok(GroupToken {
+            name: group_obj.displayname.clone(),
+            spn: group_obj.displayname.clone(),
+            uuid: match Uuid::parse_str(&group_obj.id) {
+                Ok(uuid) => uuid,
+                Err(e) => {
+                    error!("Failed parsing user uuid: {}", e);
+                    return Err(IdpError::NotFound);
+                }
             },
             gidnumber,
         })
