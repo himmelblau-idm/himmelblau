@@ -1096,6 +1096,10 @@ impl HimmelblauProvider {
             if let Some(access_token) = &token.access_token {
                 let tpm_keys = self.tpm_keys.lock().await;
                 if let Some(tpm_keys) = &*tpm_keys {
+                    debug!(
+                        "Domain {} is not currently joined, registering device with Entra ID",
+                        self.domain
+                    );
                     match register_device(
                         machine_key,
                         access_token,
@@ -1107,12 +1111,33 @@ impl HimmelblauProvider {
                     .await
                     {
                         Ok(device_id) => {
+                            info!("Joined domain {} with device id {}", self.domain, device_id);
                             let mut config = self.config.write().await;
                             config.set(&self.domain, "app_id", BROKER_APP_ID);
+                            debug!(
+                                "Setting domain {} config app_id to {}",
+                                self.domain, BROKER_APP_ID
+                            );
                             config.set(&self.domain, "device_id", &device_id);
+                            debug!(
+                                "Setting domain {} config device_id to {}",
+                                self.domain, &device_id
+                            );
                             config.set(&self.domain, "graph", &self.graph_url);
+                            debug!(
+                                "Setting domain {} config graph to {}",
+                                self.domain, &self.graph_url
+                            );
                             config.set(&self.domain, "tenant_id", &self.tenant_id);
+                            debug!(
+                                "Setting domain {} config tenant_id to {}",
+                                self.domain, &self.tenant_id
+                            );
                             config.set(&self.domain, "authority_host", &self.authority_host);
+                            debug!(
+                                "Setting domain {} config authority_host to {}",
+                                self.domain, &self.authority_host
+                            );
                             let mut allow_groups = match config.get("global", "pam_allow_groups") {
                                 Some(allowed) => {
                                     allowed.split(',').map(|g| g.to_string()).collect()
@@ -1124,6 +1149,10 @@ impl HimmelblauProvider {
                             allow_groups.sort();
                             allow_groups.dedup();
                             config.set("global", "pam_allow_groups", &allow_groups.join(","));
+                            debug!(
+                                "Setting global pam_allow_groups to {}",
+                                &allow_groups.join(",")
+                            );
                             if let Err(e) = config.write() {
                                 error!("Failed to write domain join configuration: {:?}", e);
                             }
