@@ -24,6 +24,7 @@ pub fn split_username(username: &str) -> Option<(&str, &str)> {
 
 pub struct HimmelblauConfig {
     config: Ini,
+    filename: String,
 }
 
 fn str_to_home_attr(attrib: &str) -> HomeAttr {
@@ -130,7 +131,10 @@ impl HimmelblauConfig {
                 config_path
             ));
         }
-        Ok(HimmelblauConfig { config: sconfig })
+        Ok(HimmelblauConfig {
+            config: sconfig,
+            filename: config_path.to_string(),
+        })
     }
 
     pub fn get(&self, section: &str, option: &str) -> Option<String> {
@@ -376,8 +380,8 @@ impl HimmelblauConfig {
         }
     }
 
-    pub fn write(&self, config_file: &str) -> Result<(), Error> {
-        self.config.write(config_file)
+    pub fn write(&self) -> Result<(), Error> {
+        self.config.write(self.filename.clone())
     }
 
     pub fn set(&mut self, section: &str, key: &str, value: &str) {
@@ -393,6 +397,10 @@ impl HimmelblauConfig {
 
     pub fn get_selinux(&self) -> bool {
         match_bool(self.config.get("global", "selinux"), DEFAULT_SELINUX)
+    }
+
+    pub fn get_config_file(&self) -> String {
+        self.filename.clone()
     }
 }
 

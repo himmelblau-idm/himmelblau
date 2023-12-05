@@ -638,7 +638,7 @@ async fn main() -> ExitCode {
             };
 
             // Create the identify provider connection
-            let idprovider = match HimmelblauMultiProvider::new() {
+            let idprovider = match HimmelblauMultiProvider::new(cfg.get_config_file().as_str()) {
                 Ok(idprovider) => idprovider,
                 Err(e) => {
                     error!("{}", e);

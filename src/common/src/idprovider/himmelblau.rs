@@ -4,7 +4,7 @@ use super::interface::{
 };
 use crate::config::split_username;
 use crate::config::HimmelblauConfig;
-use crate::constants::{DEFAULT_APP_ID, DEFAULT_CONFIG_PATH};
+use crate::constants::DEFAULT_APP_ID;
 use crate::unix_proto::{DeviceAuthorizationResponse, PamAuthRequest};
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
@@ -50,8 +50,8 @@ pub struct HimmelblauMultiProvider {
 }
 
 impl HimmelblauMultiProvider {
-    pub fn new() -> Result<Self> {
-        let config = match HimmelblauConfig::new(DEFAULT_CONFIG_PATH) {
+    pub fn new(config_filename: &str) -> Result<Self> {
+        let config = match HimmelblauConfig::new(config_filename) {
             Ok(config) => config,
             Err(e) => return Err(anyhow!("{}", e)),
         };
