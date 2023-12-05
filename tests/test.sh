@@ -12,6 +12,7 @@ install -m 0755 ./target/debug/himmelblaud_tasks /usr/sbin
 install -m 0755 ./target/debug/aad-tool /usr/bin
 mkdir -p /var/run/himmelblaud
 mkdir -p /var/cache/himmelblaud
+mkdir -p /var/lib/himmelblaud
 popd
 
 # Build the test configuration
