@@ -235,7 +235,15 @@ impl HimmelblauMultiProvider {
             };
             providers.insert(
                 domain.to_string(),
-                HimmelblauProvider::new(app, &self.config, domain, &authority_url, &graph, &app_id),
+                HimmelblauProvider::new(
+                    app,
+                    &self.config,
+                    domain,
+                    &authority_url,
+                    &authority_host,
+                    &graph,
+                    &app_id,
+                ),
             );
         }
         Ok(())
@@ -247,6 +255,7 @@ pub struct HimmelblauProvider {
     config: Arc<RwLock<HimmelblauConfig>>,
     domain: String,
     authority_url: String,
+    authority_host: String,
     graph_url: String,
     app_id: String,
 }
@@ -257,6 +266,7 @@ impl HimmelblauProvider {
         config: &Arc<RwLock<HimmelblauConfig>>,
         domain: &str,
         authority_url: &str,
+        authority_host: &str,
         graph_url: &str,
         app_id: &str,
     ) -> Self {
@@ -265,6 +275,7 @@ impl HimmelblauProvider {
             config: config.clone(),
             domain: domain.to_string(),
             authority_url: authority_url.to_string(),
+            authority_host: authority_host.to_string(),
             graph_url: graph_url.to_string(),
             app_id: app_id.to_string(),
         }
@@ -305,7 +316,7 @@ impl IdProvider for HimmelblauProvider {
 
     async fn provider_authenticate(&self) -> Result<(), IdpError> {
         /* Determine if the authority is up by sending a simple get request */
-        let resp = match reqwest::get(self.authority_url.clone()).await {
+        let resp = match reqwest::get(format!("https://{}", self.authority_host)).await {
             Ok(resp) => resp,
             Err(_e) => return Err(IdpError::BadRequest),
         };
