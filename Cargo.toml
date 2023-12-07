@@ -48,6 +48,7 @@ himmelblau_policies = { path = "src/policies" }
 pem = "^3.0.2"
 chrono = "^0.4.31"
 os-release = "^0.1.0"
+jsonwebtoken = "^9.2.0"
 
 # Kanidm deps
 argon2 = { version = "0.5.2", features = ["alloc"] }
@@ -97,5 +98,5 @@ opentelemetry-stdout = { version = "0.1.0", features = [
 ] }
 tonic = "0.10.2"
 tracing-opentelemetry = "0.21.0"
-compact_jwt = { version = "^0.3.3", features = ["hsm-crypto"] }
+compact_jwt = { git = "https://github.com/kanidm/compact-jwt.git", branch = "main", features = ["hsm-crypto"] }
 kanidm-hsm-crypto = "^0.1.5"

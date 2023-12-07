@@ -10,23 +10,18 @@ use crate::idprovider::interface::tpm;
 use crate::unix_proto::{DeviceAuthorizationResponse, PamAuthRequest};
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
-use compact_jwt::crypto::JwsTpmSigner;
-use compact_jwt::jwt::Jwt;
-use compact_jwt::traits::JwsMutSigner;
 use himmelblau_policies::policies::apply_group_policy;
-use kanidm_hsm_crypto::{KeyAlgorithm, LoadableIdentityKey, Tpm};
-use msal::authentication::DeviceAuthorizationResponse as msal_DeviceAuthorizationResponse;
-use msal::authentication::{
-    ClientApplication, ClientCredential, ConfidentialClientApplication, PublicClientApplication,
-    UnixUserToken, AUTH_PENDING, NO_CONSENT, NO_GROUP_CONSENT, NO_SECRET, REQUIRES_MFA,
-};
+use kanidm_hsm_crypto::{IdentityKey, KeyAlgorithm, LoadableIdentityKey, Tpm};
+use msal::auth::{ClientApplication as ConfidentialClientApplication, Credentials};
 use msal::constants::BROKER_APP_ID;
 use msal::enroll::register_device;
-use msal::group::{request_group, GroupObject};
-use msal::user::{request_user, request_user_groups, DirectoryObject, UserObject};
-use os_release::OsRelease;
+use msal::py_auth::DeviceAuthorizationResponse as msal_DeviceAuthorizationResponse;
+use msal::py_auth::{
+    ClientApplication, PublicClientApplication, UnixUserToken, AUTH_PENDING, NO_CONSENT,
+    NO_GROUP_CONSENT, NO_SECRET, REQUIRES_MFA,
+};
+use msal::user::{request_user_groups, DirectoryObject};
 use reqwest;
-use serde::Serialize;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::thread::sleep;
@@ -39,11 +34,6 @@ use rand::SeedableRng;
 use rand_chacha::ChaCha8Rng;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
-
-pub enum ClientApplicationBox {
-    PublicClientApplication(PublicClientApplication),
-    ConfidentialClientApplication(ConfidentialClientApplication),
-}
 
 async fn gen_unique_account_uid(
     rconfig: &Arc<RwLock<HimmelblauConfig>>,
@@ -82,14 +72,10 @@ impl HimmelblauMultiProvider {
                 };
             let authority_url = format!("https://{}/{}", authority_host, tenant_id);
             let app_id = cfg.get_app_id(&domain);
-            /* Always initialize a PublicClientApplication. If we're joined,
-             * we'll switch to a ConfidentialClientApplication after init of
-             * the hsm keys. */
-            let app: ClientApplicationBox =
-                match PublicClientApplication::new(&app_id, authority_url.as_str(), None) {
-                    Ok(app) => ClientApplicationBox::PublicClientApplication(app),
-                    Err(e) => return Err(anyhow!("{}", e)),
-                };
+            let app = match PublicClientApplication::new(&app_id, authority_url.as_str(), None) {
+                Ok(app) => app,
+                Err(e) => return Err(anyhow!("{}", e)),
+            };
             providers.insert(
                 domain.to_string(),
                 HimmelblauProvider::new(
@@ -151,7 +137,7 @@ impl IdProvider for HimmelblauMultiProvider {
         old_token: Option<&UserToken>,
         tpm: &mut tpm::BoxedDynTpm,
     ) -> Result<UserToken, IdpError> {
-        /* Entra ID only permits user listing if the device is enrolled */
+        /* AAD doesn't permit user listing (must use cache entries from auth) */
         let account_id = id.to_string().clone();
         match split_username(&account_id) {
             Some((_sam, domain)) => {
@@ -250,31 +236,21 @@ impl IdProvider for HimmelblauMultiProvider {
 
     async fn unix_group_get(
         &self,
-        id: &Id,
-        tpm: &mut tpm::BoxedDynTpm,
+        _id: &Id,
+        _tpm: &mut tpm::BoxedDynTpm,
     ) -> Result<GroupToken, IdpError> {
-        /* Entra ID only permits group listing if the device is enrolled */
-        let account_id = id.to_string().clone();
-        match split_username(&account_id) {
-            Some((_sam, domain)) => {
-                let providers = self.providers.read().await;
-                match providers.get(domain) {
-                    Some(provider) => provider.unix_group_get(id, tpm).await,
-                    None => Err(IdpError::NotFound),
-                }
-            }
-            None => Err(IdpError::NotFound),
-        }
+        /* AAD doesn't permit group listing (must use cache entries from auth) */
+        Err(IdpError::BadRequest)
     }
 }
 
 struct HimmelblauTpmKeys {
     loadable_cert_key: LoadableIdentityKey,
-    loadable_trans_key: LoadableIdentityKey,
+    cert_id_key: IdentityKey,
 }
 
 pub struct HimmelblauProvider {
-    client: RwLock<Option<ClientApplicationBox>>,
+    client: RwLock<PublicClientApplication>,
     config: Arc<RwLock<HimmelblauConfig>>,
     tenant_id: String,
     domain: String,
@@ -287,7 +263,7 @@ pub struct HimmelblauProvider {
 
 impl HimmelblauProvider {
     pub fn new(
-        client: ClientApplicationBox,
+        client: PublicClientApplication,
         config: &Arc<RwLock<HimmelblauConfig>>,
         tenant_id: &str,
         domain: &str,
@@ -297,7 +273,7 @@ impl HimmelblauProvider {
         app_id: &str,
     ) -> Self {
         HimmelblauProvider {
-            client: RwLock::new(Some(client)),
+            client: RwLock::new(client),
             config: config.clone(),
             tenant_id: tenant_id.to_string(),
             domain: domain.to_string(),
@@ -338,52 +314,6 @@ impl From<DeviceAuthorizationResponse> for msal_DeviceAuthorizationResponse {
     }
 }
 
-fn construct_confidential_client_assertion(
-    app_id: &str,
-    tenant_id: &str,
-    tpm: &mut tpm::BoxedDynTpm,
-    machine_key: &tpm::MachineKey,
-    loadable_cert_key: &LoadableIdentityKey,
-) -> Result<ClientCredential, IdpError> {
-    let client_assertion = Jwt {
-        iss: Some(app_id.to_string()),
-        aud: Some(format!(
-            "https://login.microsoftonline.com/{}/oauth2/token",
-            tenant_id
-        )),
-        extensions: ClientAssertionPayload::new(),
-        ..Default::default()
-    };
-
-    let id_key = match tpm.identity_key_load(machine_key, loadable_cert_key) {
-        Ok(id_key) => id_key,
-        Err(_) => {
-            error!("Failed loading certificate identity key from tpm.");
-            return Err(IdpError::BadRequest);
-        }
-    };
-
-    let mut jws_tpm_signer = match JwsTpmSigner::new(tpm, &id_key) {
-        Ok(jws_tpm_signer) => jws_tpm_signer,
-        Err(_) => {
-            error!("Failed loading tpm signer.");
-            return Err(IdpError::BadRequest);
-        }
-    };
-
-    let signed_client_assertion = match jws_tpm_signer.sign(&client_assertion) {
-        Ok(signed_client_assertion) => signed_client_assertion,
-        Err(_) => {
-            error!("Failed signing jwk.");
-            return Err(IdpError::BadRequest);
-        }
-    };
-
-    Ok(ClientCredential {
-        client_assertion: format!("{}", signed_client_assertion),
-    })
-}
-
 #[async_trait]
 impl IdProvider for HimmelblauProvider {
     async fn configure_hsm_keys<D: KeyStoreTxn + Send>(
@@ -393,58 +323,44 @@ impl IdProvider for HimmelblauProvider {
         machine_key: &tpm::MachineKey,
     ) -> Result<(), IdpError> {
         let csr_tag = format!("{}/certificate", self.domain);
-        let loadable_cert_key = match keystore.get_tagged_hsm_key::<LoadableIdentityKey>(&csr_tag) {
-            Ok(loadable_cert_key) => match loadable_cert_key {
-                Some(loadable_id_key) => loadable_id_key,
-                None => {
-                    let loadable_id_key =
-                        match tpm.identity_key_create(machine_key, KeyAlgorithm::Rsa2048) {
-                            Ok(loadable_id_key) => loadable_id_key,
-                            Err(_e) => return Err(IdpError::BadRequest),
-                        };
-                    if keystore
-                        .insert_tagged_hsm_key(&csr_tag, &loadable_id_key)
-                        .is_err()
-                    {
-                        return Err(IdpError::KeyStore);
+        let (loadable_cert_key, cert_id_key) =
+            match keystore.get_tagged_hsm_key::<LoadableIdentityKey>(&csr_tag) {
+                Ok(loadable_cert_key) => match loadable_cert_key {
+                    Some(loadable_id_key) => {
+                        match tpm.identity_key_load(machine_key, &loadable_id_key) {
+                            Ok(id_key) => (loadable_id_key, id_key),
+                            Err(_) => return Err(IdpError::BadRequest),
+                        }
                     }
-                    loadable_id_key
-                }
-            },
-            Err(_) => return Err(IdpError::KeyStore),
-        };
-        let stk_tag = format!("{}/transport", self.domain);
-        let loadable_trans_key = match keystore.get_tagged_hsm_key::<LoadableIdentityKey>(&stk_tag)
-        {
-            Ok(loadable_trans_key) => match loadable_trans_key {
-                Some(loadable_id_key) => loadable_id_key,
-                None => {
-                    let loadable_id_key =
-                        match tpm.identity_key_create(machine_key, KeyAlgorithm::Rsa2048) {
-                            Ok(loadable_id_key) => loadable_id_key,
-                            Err(_e) => return Err(IdpError::KeyStore),
-                        };
-                    if keystore
-                        .insert_tagged_hsm_key(&stk_tag, &loadable_id_key)
-                        .is_err()
-                    {
-                        return Err(IdpError::KeyStore);
+                    None => {
+                        let loadable_id_key =
+                            match tpm.identity_key_create(machine_key, KeyAlgorithm::Rsa2048) {
+                                Ok(loadable_id_key) => loadable_id_key,
+                                Err(_e) => return Err(IdpError::BadRequest),
+                            };
+                        if keystore
+                            .insert_tagged_hsm_key(&csr_tag, &loadable_id_key)
+                            .is_err()
+                        {
+                            return Err(IdpError::KeyStore);
+                        }
+                        match tpm.identity_key_load(machine_key, &loadable_id_key) {
+                            Ok(id_key) => (loadable_id_key, id_key),
+                            Err(_) => return Err(IdpError::BadRequest),
+                        }
                     }
-                    loadable_id_key
-                }
-            },
-            Err(_) => return Err(IdpError::KeyStore),
-        };
+                },
+                Err(_) => return Err(IdpError::KeyStore),
+            };
         {
             // Change scope so tpm_keys unlocks after setting
             let mut tpm_keys = self.tpm_keys.lock().await;
             *tpm_keys = Some(HimmelblauTpmKeys {
                 loadable_cert_key,
-                loadable_trans_key,
+                cert_id_key,
             });
         }
 
-        self.check_switch_to_confidential(tpm, machine_key).await;
         Ok(())
     }
 
@@ -467,61 +383,20 @@ impl IdProvider for HimmelblauProvider {
         old_token: Option<&UserToken>,
         _tpm: &mut tpm::BoxedDynTpm,
     ) -> Result<UserToken, IdpError> {
-        let account_id = id.to_string().clone();
-        /* Entra ID only permits user listing if the device is enrolled */
-        match &*self.client.write().await {
-            Some(ClientApplicationBox::PublicClientApplication(_app)) => {
-                debug!("Using the msal user cache to refresh the user token");
-            }
-            Some(ClientApplicationBox::ConfidentialClientApplication(app)) => {
-                match app.acquire_token_for_client(vec!["GroupMember.Read.All"]) {
-                    Ok(token) => match token.access_token {
-                        Some(access_token) => {
-                            let user_obj: UserObject =
-                                match request_user(&self.graph_url, &access_token, &account_id)
-                                    .await
-                                {
-                                    Ok(user_obj) => user_obj,
-                                    Err(_e) => return Err(IdpError::NotFound),
-                                };
-                            return self
-                                .user_token_from_user_object(user_obj, &access_token)
-                                .await;
-                        }
-                        None => return Err(IdpError::NotFound),
-                    },
-                    Err(_e) => {
-                        debug!("Client failed requesting user obj, falling back to msal cache")
-                    }
-                }
-            }
-            None => {
-                error!("idprovider not authenticated");
-                return Err(IdpError::NotFound);
-            }
-        }
         /* Use the msal user cache to refresh the user token */
+        let account_id = id.to_string().clone();
         let mut scopes = vec![];
         if self.app_id != BROKER_APP_ID {
             scopes = vec!["GroupMember.Read.All"];
         }
-        let mut token = match &*self.client.write().await {
-            Some(ClientApplicationBox::PublicClientApplication(app)) => {
-                match app.acquire_token_silent(scopes.clone(), &account_id) {
-                    Ok(token) => token,
-                    Err(_e) => return Err(IdpError::NotFound),
-                }
-            }
-            Some(ClientApplicationBox::ConfidentialClientApplication(app)) => {
-                match app.acquire_token_silent(scopes.clone(), &account_id) {
-                    Ok(token) => token,
-                    Err(_e) => return Err(IdpError::NotFound),
-                }
-            }
-            None => {
-                error!("idprovider not authenticated");
-                return Err(IdpError::NotFound);
-            }
+        let mut token = match self
+            .client
+            .write()
+            .await
+            .acquire_token_silent(scopes.clone(), &account_id)
+        {
+            Ok(token) => token,
+            Err(_e) => return Err(IdpError::NotFound),
         };
         // We may have been denied GroupMember.Read.All, try again without it
         if (token.errors.contains(&NO_GROUP_CONSENT) || token.errors.contains(&NO_CONSENT))
@@ -530,23 +405,14 @@ impl IdProvider for HimmelblauProvider {
             debug!("Failed auth with GroupMember.Read.All permissions.");
             debug!("Group memberships will be missing display names.");
             debug!("{}: {}", token.error, token.error_description);
-            token = match &*self.client.write().await {
-                Some(ClientApplicationBox::PublicClientApplication(app)) => {
-                    match app.acquire_token_silent(vec![], &account_id) {
-                        Ok(token) => token,
-                        Err(_e) => return Err(IdpError::NotFound),
-                    }
-                }
-                Some(ClientApplicationBox::ConfidentialClientApplication(app)) => {
-                    match app.acquire_token_silent(vec![], &account_id) {
-                        Ok(token) => token,
-                        Err(_e) => return Err(IdpError::NotFound),
-                    }
-                }
-                None => {
-                    error!("idprovider not authenticated");
-                    return Err(IdpError::NotFound);
-                }
+            token = match self
+                .client
+                .write()
+                .await
+                .acquire_token_silent(vec![], &account_id)
+            {
+                Ok(token) => token,
+                Err(_e) => return Err(IdpError::NotFound),
             };
         }
         match self.token_validate(&account_id, &token).await {
@@ -589,36 +455,23 @@ impl IdProvider for HimmelblauProvider {
                     scopes.push("GroupMember.Read.All");
                 }
                 let drs_scope = format!("{}/.default", DRS_APP_ID);
-                let mut uutoken = match &*self.client.write().await {
-                    Some(ClientApplicationBox::PublicClientApplication(app)) => {
-                        if !self.is_domain_joined().await {
-                            /* If we're authenticating as a Broker, and we're
-                             * using a PublicClientApplication, then we need to
-                             * perform a domain join. Request access to the DRS
-                             * resource (Domain Registration Service). */
-                            if self.app_id == BROKER_APP_ID {
-                                scopes.push(drs_scope.as_str());
-                            }
-                        }
-                        match app.acquire_token_by_username_password(
-                            account_id,
-                            &cred,
-                            scopes.clone(),
-                        ) {
-                            Ok(token) => token,
-                            Err(_e) => return Err(IdpError::NotFound),
-                        }
+                if !self.is_domain_joined().await {
+                    /* If we're authenticating as a Broker, and we're
+                     * using a PublicClientApplication, then we need to
+                     * perform a domain join. Request access to the DRS
+                     * resource (Domain Registration Service). */
+                    if self.app_id == BROKER_APP_ID {
+                        scopes.push(drs_scope.as_str());
                     }
-                    Some(ClientApplicationBox::ConfidentialClientApplication(app)) => match app
-                        .acquire_token_by_username_password(account_id, &cred, scopes.clone())
-                    {
-                        Ok(token) => token,
-                        Err(_e) => return Err(IdpError::NotFound),
-                    },
-                    None => {
-                        error!("idprovider not authenticated");
-                        return Err(IdpError::NotFound);
-                    }
+                }
+                let mut uutoken = match self
+                    .client
+                    .write()
+                    .await
+                    .acquire_token_by_username_password(account_id, &cred, scopes.clone())
+                {
+                    Ok(token) => token,
+                    Err(_e) => return Err(IdpError::NotFound),
                 };
                 // We may have been denied GroupMember.Read.All, try again without it
                 if (uutoken.errors.contains(&NO_GROUP_CONSENT)
@@ -630,62 +483,60 @@ impl IdProvider for HimmelblauProvider {
                     debug!("{}: {}", uutoken.error, uutoken.error_description);
 
                     scopes.retain(|&s| s != "GroupMember.Read.All");
-                    uutoken = match &*self.client.write().await {
-                        Some(ClientApplicationBox::PublicClientApplication(app)) => {
-                            match app.acquire_token_by_username_password(account_id, &cred, scopes)
-                            {
-                                Ok(token) => token,
-                                Err(_e) => return Err(IdpError::NotFound),
-                            }
-                        }
-                        Some(ClientApplicationBox::ConfidentialClientApplication(app)) => match app
-                            .acquire_token_by_username_password(account_id, &cred, scopes)
-                        {
-                            Ok(token) => token,
-                            Err(_e) => return Err(IdpError::NotFound),
-                        },
-                        None => {
-                            error!("idprovider not authenticated");
-                            return Err(IdpError::NotFound);
-                        }
+                    uutoken = match self
+                        .client
+                        .write()
+                        .await
+                        .acquire_token_by_username_password(account_id, &cred, scopes)
+                    {
+                        Ok(token) => token,
+                        Err(_e) => return Err(IdpError::NotFound),
                     };
                 }
                 match self.token_validate(account_id, &uutoken).await {
                     Ok(AuthResult::Success { token }) => {
-                        self.join_domain(tpm, &uutoken, machine_key).await;
-                        if self.check_switch_to_confidential(tpm, machine_key).await {
-                            /* We switched from Public to Confidential due to a
-                             * domain join and now need to re-authenticate. */
-                            uutoken = match &*self.client.write().await {
-                                Some(ClientApplicationBox::ConfidentialClientApplication(app)) => {
-                                    match app.acquire_token_by_username_password(
-                                        account_id,
-                                        &cred,
-                                        vec!["GroupMember.Read.All"],
-                                    ) {
-                                        Ok(token) => token,
-                                        Err(_e) => return Err(IdpError::NotFound),
-                                    }
-                                }
-                                &_ => return Err(IdpError::NotFound),
-                            };
-                            match self.token_validate(account_id, &uutoken).await {
-                                Ok(AuthResult::Success { token }) => Ok((
-                                    AuthResult::Success { token },
-                                    AuthCacheAction::PasswordHashUpdate { cred },
-                                )),
-                                Ok(AuthResult::Next(req)) => {
-                                    Ok((AuthResult::Next(req), AuthCacheAction::None))
-                                }
-                                Ok(auth_result) => Ok((auth_result, AuthCacheAction::None)),
-                                Err(e) => Err(e),
-                            }
+                        if let Err(e) = self.join_domain(tpm, &uutoken, machine_key).await {
+                            error!("{:?}", e);
                         } else {
-                            Ok((
-                                AuthResult::Success { token },
-                                AuthCacheAction::PasswordHashUpdate { cred },
-                            ))
+                            /* We switched from Public to Confidential due to a
+                             * domain join and now need to obtain a PRT */
+                            if let Some(tpm_keys) = &*self.tpm_keys.lock().await {
+                                let capp = match ConfidentialClientApplication::new(
+                                    &self.tenant_id,
+                                    &self.authority_host,
+                                ) {
+                                    Ok(capp) => capp,
+                                    Err(e) => {
+                                        error!("{:?}", e);
+                                        return Err(IdpError::BadRequest);
+                                    }
+                                };
+                                /* For now we do nothing with the PRT, except
+                                 * verify that we can obtain it. */
+                                debug!("Requesting PRT using username/password");
+                                if let Err(e) = capp
+                                    .request_user_prt(
+                                        Credentials::UsernamePassword(
+                                            account_id.to_string(),
+                                            cred.clone(),
+                                        ),
+                                        tpm,
+                                        &tpm_keys.cert_id_key,
+                                    )
+                                    .await
+                                {
+                                    error!(
+                                        "Failed to request PRT for user on joined device: {:?}",
+                                        e
+                                    );
+                                    return Err(IdpError::BadRequest);
+                                }
+                            }
                         }
+                        Ok((
+                            AuthResult::Success { token },
+                            AuthCacheAction::PasswordHashUpdate { cred },
+                        ))
                     }
                     Ok(AuthResult::Next(req)) => {
                         Ok((
@@ -706,55 +557,66 @@ impl IdProvider for HimmelblauProvider {
                     Some(val) => *val as u64,
                     None => 5,
                 };
-                let mut uutoken = match &*self.client.write().await {
-                    Some(ClientApplicationBox::PublicClientApplication(app)) => {
-                        match app.acquire_token_by_device_flow(data.clone().into()) {
-                            Ok(token) => token,
-                            Err(_e) => return Err(IdpError::NotFound),
-                        }
-                    }
-                    Some(ClientApplicationBox::ConfidentialClientApplication(_app)) => {
-                        error!("MFA not implemented for ConfidentialClientApplication");
-                        return Err(IdpError::BadRequest);
-                    }
-                    None => {
-                        error!("idprovider not authenticated");
-                        return Err(IdpError::NotFound);
-                    }
+                let mut uutoken = match self
+                    .client
+                    .write()
+                    .await
+                    .acquire_token_by_device_flow(data.clone().into())
+                {
+                    Ok(token) => token,
+                    Err(_e) => return Err(IdpError::NotFound),
                 };
                 while uutoken.errors.contains(&AUTH_PENDING) {
                     debug!("Polling for acquire_token_by_device_flow");
                     sleep(Duration::from_secs(sleep_interval));
-                    uutoken = match &*self.client.write().await {
-                        Some(ClientApplicationBox::PublicClientApplication(app)) => {
-                            match app.acquire_token_by_device_flow(data.clone().into()) {
-                                Ok(token) => token,
-                                Err(_e) => return Err(IdpError::NotFound),
-                            }
-                        }
-                        Some(ClientApplicationBox::ConfidentialClientApplication(_app)) => {
-                            error!("MFA not implemented for ConfidentialClientApplication");
-                            return Err(IdpError::BadRequest);
-                        }
-                        None => {
-                            error!("idprovider not authenticated");
-                            return Err(IdpError::NotFound);
-                        }
+                    uutoken = match self
+                        .client
+                        .write()
+                        .await
+                        .acquire_token_by_device_flow(data.clone().into())
+                    {
+                        Ok(token) => token,
+                        Err(_e) => return Err(IdpError::NotFound),
                     };
                 }
                 match self.token_validate(account_id, &uutoken).await {
                     Ok(AuthResult::Success { token }) => {
-                        self.join_domain(tpm, &uutoken, machine_key).await;
-                        if self.check_switch_to_confidential(tpm, machine_key).await {
+                        if let Err(e) = self.join_domain(tpm, &uutoken, machine_key).await {
+                            error!("{:?}", e);
+                        } else if let Some(refresh_token) = uutoken.refresh_token {
                             /* We switched from Public to Confidential due to a
-                             * domain join and now need to re-authenticate. */
-                            Ok((
-                                AuthResult::Next(AuthRequest::Password),
-                                AuthCacheAction::None,
-                            ))
-                        } else {
-                            Ok((AuthResult::Success { token }, AuthCacheAction::None))
+                             * domain join and now need to obtain a PRT */
+                            if let Some(tpm_keys) = &*self.tpm_keys.lock().await {
+                                let capp = match ConfidentialClientApplication::new(
+                                    &self.tenant_id,
+                                    &self.authority_host,
+                                ) {
+                                    Ok(capp) => capp,
+                                    Err(e) => {
+                                        error!("{:?}", e);
+                                        return Err(IdpError::BadRequest);
+                                    }
+                                };
+                                /* For now we do nothing with the PRT, except
+                                 * verify that we can obtain it. */
+                                debug!("Requesting PRT using refresh token");
+                                if let Err(e) = capp
+                                    .request_user_prt(
+                                        Credentials::RefreshToken(refresh_token),
+                                        tpm,
+                                        &tpm_keys.cert_id_key,
+                                    )
+                                    .await
+                                {
+                                    error!(
+                                        "Failed to request PRT for user on joined device: {:?}",
+                                        e
+                                    );
+                                    return Err(IdpError::BadRequest);
+                                }
+                            }
                         }
+                        Ok((AuthResult::Success { token }, AuthCacheAction::None))
                     }
                     Ok(auth_result) => Ok((auth_result, AuthCacheAction::None)),
                     Err(e) => Err(e),
@@ -775,55 +637,11 @@ impl IdProvider for HimmelblauProvider {
 
     async fn unix_group_get(
         &self,
-        id: &Id,
+        _id: &Id,
         _tpm: &mut tpm::BoxedDynTpm,
     ) -> Result<GroupToken, IdpError> {
-        let account_id = id.to_string().clone();
-        match &*self.client.write().await {
-            /* AAD permits this if we have a confidential client */
-            Some(ClientApplicationBox::ConfidentialClientApplication(app)) => {
-                match app.acquire_token_for_client(vec!["GroupMember.Read.All"]) {
-                    Ok(token) => match token.access_token {
-                        Some(access_token) => {
-                            let group_obj: GroupObject =
-                                match request_group(&self.graph_url, &access_token, &account_id)
-                                    .await
-                                {
-                                    Ok(group_obj) => group_obj,
-                                    Err(_e) => return Err(IdpError::NotFound),
-                                };
-                            return self.group_token_from_group_object(group_obj).await;
-                        }
-                        None => return Err(IdpError::NotFound),
-                    },
-                    Err(_) => return Err(IdpError::NotFound),
-                }
-            }
-            &_ => Err(IdpError::NotFound),
-        }
-    }
-}
-
-#[derive(Serialize, Clone, Default)]
-struct ClientAssertionPayload {
-    client_id: String,
-    //request_nonce: String,
-    scope: String,
-    win_ver: String,
-}
-
-impl ClientAssertionPayload {
-    fn new() -> Self {
-        let os_version = match OsRelease::new() {
-            Ok(os_release) => format!("{} {}", os_release.pretty_name, os_release.version_id),
-            Err(_) => format!("{} {}", env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION")),
-        };
-        ClientAssertionPayload {
-            client_id: "38aa3b87-a06d-4817-b275-7a316988d93b".to_string(),
-            //request_nonce: XXX, // TODO: fetch a nonce
-            scope: "openid aza ugs".to_string(),
-            win_ver: os_version,
-        }
+        /* AAD doesn't permit group listing (must use cache entries from auth) */
+        Err(IdpError::BadRequest)
     }
 }
 
@@ -878,33 +696,21 @@ impl HimmelblauProvider {
                 info!("Authentication failed for user '{}'", account_id);
                 if token.errors.contains(&REQUIRES_MFA) {
                     info!("Azure AD application requires MFA");
-                    let resp = match &*self.client.write().await {
-                        Some(ClientApplicationBox::PublicClientApplication(app)) => {
-                            let drs_scope = format!("{}/.default", DRS_APP_ID);
-                            let mut scopes = vec!["GroupMember.Read.All"];
-                            if !self.is_domain_joined().await {
-                                /* If we're authenticating as a Broker, and
-                                 * we're using a PublicClientApplication, then
-                                 * we need to perform a domain join. Request
-                                 * access to the DRS resource (Domain
-                                 * Registration Service). */
-                                if self.app_id == BROKER_APP_ID {
-                                    scopes.push(drs_scope.as_str());
-                                }
-                            }
-                            match app.initiate_device_flow(scopes) {
-                                Ok(resp) => resp,
-                                Err(_e) => return Err(IdpError::BadRequest),
-                            }
+                    let drs_scope = format!("{}/.default", DRS_APP_ID);
+                    let mut scopes = vec!["GroupMember.Read.All"];
+                    if !self.is_domain_joined().await {
+                        /* If we're authenticating as a Broker, and
+                         * we're using a PublicClientApplication, then
+                         * we need to perform a domain join. Request
+                         * access to the DRS resource (Domain
+                         * Registration Service). */
+                        if self.app_id == BROKER_APP_ID {
+                            scopes.push(drs_scope.as_str());
                         }
-                        Some(ClientApplicationBox::ConfidentialClientApplication(_app)) => {
-                            error!("MFA not implemented for ConfidentialClientApplication");
-                            return Err(IdpError::BadRequest);
-                        }
-                        None => {
-                            error!("idprovider not authenticated");
-                            return Err(IdpError::NotFound);
-                        }
+                    }
+                    let resp = match self.client.write().await.initiate_device_flow(scopes) {
+                        Ok(resp) => resp,
+                        Err(_e) => return Err(IdpError::BadRequest),
                     };
                     return Ok(AuthResult::Next(AuthRequest::DeviceAuthorizationGrant {
                         data: resp.into(),
@@ -984,63 +790,6 @@ impl HimmelblauProvider {
         }
     }
 
-    async fn user_token_from_user_object(
-        &self,
-        value: UserObject,
-        access_token: &str,
-    ) -> Result<UserToken, IdpError> {
-        let config = self.config.read();
-        let mut groups: Vec<GroupToken> =
-            match request_user_groups(&self.graph_url, access_token).await {
-                Ok(groups) => {
-                    let mut gt_groups = vec![];
-                    for g in groups {
-                        match self.group_token_from_directory_object(g).await {
-                            Ok(group) => gt_groups.push(group),
-                            Err(e) => {
-                                debug!("Failed fetching group for user {}: {}", &value.upn, e)
-                            }
-                        };
-                    }
-                    gt_groups
-                }
-                Err(_e) => {
-                    debug!("Failed fetching user groups for {}", &value.upn);
-                    vec![]
-                }
-            };
-        let sshkeys: Vec<String> = vec![];
-        let valid = true;
-        let gidnumber =
-            gen_unique_account_uid(&self.config, &self.domain, &value.id.to_string()).await;
-        let uuid = match Uuid::parse_str(&value.id) {
-            Ok(uuid) => uuid,
-            Err(e) => {
-                error!("Failed parsing uuid {}: {}", value.id, e);
-                return Err(IdpError::NotFound);
-            }
-        };
-        // Add the fake primary group
-        groups.push(GroupToken {
-            name: value.upn.clone(),
-            spn: value.upn.clone(),
-            uuid,
-            gidnumber,
-        });
-
-        Ok(UserToken {
-            name: value.upn.clone(),
-            spn: value.upn,
-            uuid,
-            gidnumber,
-            displayname: value.displayname,
-            shell: Some(config.await.get_shell(Some(&self.domain))),
-            groups,
-            sshkeys,
-            valid,
-        })
-    }
-
     async fn group_token_from_directory_object(
         &self,
         value: DirectoryObject,
@@ -1065,159 +814,99 @@ impl HimmelblauProvider {
         })
     }
 
-    async fn group_token_from_group_object(
-        &self,
-        group_obj: GroupObject,
-    ) -> Result<GroupToken, IdpError> {
-        let gidnumber = gen_unique_account_uid(&self.config, &self.domain, &group_obj.id).await;
-        Ok(GroupToken {
-            name: group_obj.displayname.clone(),
-            spn: group_obj.displayname.clone(),
-            uuid: match Uuid::parse_str(&group_obj.id) {
-                Ok(uuid) => uuid,
-                Err(e) => {
-                    error!("Failed parsing user uuid: {}", e);
-                    return Err(IdpError::NotFound);
-                }
-            },
-            gidnumber,
-        })
-    }
-
     async fn join_domain(
         &self,
         tpm: &mut tpm::BoxedDynTpm,
         token: &UnixUserToken,
         machine_key: &tpm::MachineKey,
-    ) {
+    ) -> Result<()> {
         /* If not already joined, and we requested the DRS resource, join the
          * domain now. */
         if !self.is_domain_joined().await && self.app_id == BROKER_APP_ID {
             if let Some(access_token) = &token.access_token {
-                let tpm_keys = self.tpm_keys.lock().await;
-                if let Some(tpm_keys) = &*tpm_keys {
-                    debug!(
-                        "Domain {} is not currently joined, registering device with Entra ID",
-                        self.domain
-                    );
-                    match register_device(
-                        machine_key,
-                        access_token,
-                        &self.domain,
-                        tpm,
-                        &tpm_keys.loadable_cert_key,
-                        &tpm_keys.loadable_trans_key,
-                    )
-                    .await
-                    {
-                        Ok(device_id) => {
-                            info!("Joined domain {} with device id {}", self.domain, device_id);
-                            let mut config = self.config.write().await;
-                            config.set(&self.domain, "app_id", BROKER_APP_ID);
-                            debug!(
-                                "Setting domain {} config app_id to {}",
-                                self.domain, BROKER_APP_ID
-                            );
-                            config.set(&self.domain, "device_id", &device_id);
-                            debug!(
-                                "Setting domain {} config device_id to {}",
-                                self.domain, &device_id
-                            );
-                            config.set(&self.domain, "graph", &self.graph_url);
-                            debug!(
-                                "Setting domain {} config graph to {}",
-                                self.domain, &self.graph_url
-                            );
-                            config.set(&self.domain, "tenant_id", &self.tenant_id);
-                            debug!(
-                                "Setting domain {} config tenant_id to {}",
-                                self.domain, &self.tenant_id
-                            );
-                            config.set(&self.domain, "authority_host", &self.authority_host);
-                            debug!(
-                                "Setting domain {} config authority_host to {}",
-                                self.domain, &self.authority_host
-                            );
-                            let mut allow_groups = match config.get("global", "pam_allow_groups") {
-                                Some(allowed) => {
-                                    allowed.split(',').map(|g| g.to_string()).collect()
-                                }
-                                None => vec![],
+                let mut tpm_keys = self.tpm_keys.lock().await;
+                let loadable_cert_key = match &*tpm_keys {
+                    Some(tpm_keys) => &tpm_keys.loadable_cert_key,
+                    None => return Err(anyhow!("Failed to find certificate key")),
+                };
+                debug!(
+                    "Domain {} is not currently joined, registering device with Entra ID",
+                    self.domain
+                );
+                match register_device(
+                    machine_key,
+                    access_token,
+                    &self.domain,
+                    tpm,
+                    loadable_cert_key,
+                    loadable_cert_key,
+                )
+                .await
+                {
+                    Ok((new_loadable_cert_key, device_id)) => {
+                        info!("Joined domain {} with device id {}", self.domain, device_id);
+                        let new_cert_id_key =
+                            match tpm.identity_key_load(machine_key, &new_loadable_cert_key) {
+                                Ok(certificate_id_key) => certificate_id_key,
+                                Err(e) => return Err(anyhow!("Failed loading id key: {:?}", e)),
                             };
-                            allow_groups.push(token.spn.clone());
-                            /* Remove duplicates from the allow_groups */
-                            allow_groups.sort();
-                            allow_groups.dedup();
-                            config.set("global", "pam_allow_groups", &allow_groups.join(","));
-                            debug!(
-                                "Setting global pam_allow_groups to {}",
-                                &allow_groups.join(",")
-                            );
-                            if let Err(e) = config.write() {
-                                error!("Failed to write domain join configuration: {:?}", e);
-                            }
+                        *tpm_keys = Some(HimmelblauTpmKeys {
+                            loadable_cert_key: new_loadable_cert_key,
+                            cert_id_key: new_cert_id_key,
+                        });
+                        let mut config = self.config.write().await;
+                        config.set(&self.domain, "app_id", BROKER_APP_ID);
+                        debug!(
+                            "Setting domain {} config app_id to {}",
+                            self.domain, BROKER_APP_ID
+                        );
+                        config.set(&self.domain, "device_id", &device_id);
+                        debug!(
+                            "Setting domain {} config device_id to {}",
+                            self.domain, &device_id
+                        );
+                        config.set(&self.domain, "graph", &self.graph_url);
+                        debug!(
+                            "Setting domain {} config graph to {}",
+                            self.domain, &self.graph_url
+                        );
+                        config.set(&self.domain, "tenant_id", &self.tenant_id);
+                        debug!(
+                            "Setting domain {} config tenant_id to {}",
+                            self.domain, &self.tenant_id
+                        );
+                        config.set(&self.domain, "authority_host", &self.authority_host);
+                        debug!(
+                            "Setting domain {} config authority_host to {}",
+                            self.domain, &self.authority_host
+                        );
+                        let mut allow_groups = match config.get("global", "pam_allow_groups") {
+                            Some(allowed) => allowed.split(',').map(|g| g.to_string()).collect(),
+                            None => vec![],
+                        };
+                        allow_groups.push(token.spn.clone());
+                        /* Remove duplicates from the allow_groups */
+                        allow_groups.sort();
+                        allow_groups.dedup();
+                        config.set("global", "pam_allow_groups", &allow_groups.join(","));
+                        debug!(
+                            "Setting global pam_allow_groups to {}",
+                            &allow_groups.join(",")
+                        );
+                        if let Err(e) = config.write() {
+                            return Err(anyhow!(
+                                "Failed to write domain join configuration: {:?}",
+                                e
+                            ));
                         }
-                        Err(e) => {
-                            error!("Failed to join the domain: {:?}", e);
-                        }
+                    }
+                    Err(e) => {
+                        return Err(anyhow!("Failed to join the domain: {:?}", e));
                     }
                 }
             }
         }
-    }
-
-    async fn check_switch_to_confidential(
-        &self,
-        tpm: &mut tpm::BoxedDynTpm,
-        machine_key: &tpm::MachineKey,
-    ) -> bool {
-        match &*self.client.write().await {
-            Some(ClientApplicationBox::ConfidentialClientApplication(_app)) => {
-                return false; /* We were already Confidential */
-            }
-            &_ => {} // Public, continue processing
-        }
-
-        if self.is_domain_joined().await {
-            let tpm_keys = self.tpm_keys.lock().await;
-            if let Some(tpm_keys) = &*tpm_keys {
-                let msal_client_assertion = match construct_confidential_client_assertion(
-                    &self.app_id,
-                    &self.tenant_id,
-                    tpm,
-                    machine_key,
-                    &tpm_keys.loadable_cert_key,
-                ) {
-                    Ok(client_assertion) => client_assertion,
-                    Err(_) => return false,
-                };
-
-                let confidential_client = match ConfidentialClientApplication::new(
-                    &self.app_id,
-                    &self.authority_url,
-                    Some(msal_client_assertion),
-                ) {
-                    Ok(app) => ClientApplicationBox::ConfidentialClientApplication(app),
-                    Err(e) => {
-                        error!("Failed authenticating the client: {:?}", e);
-                        return false;
-                    }
-                };
-                let mut client = self.client.write().await;
-                *client = Some(confidential_client);
-                debug!(
-                    "Configured domain {} as a Confidential Client Application",
-                    self.domain
-                );
-            } else {
-                debug!("TPM keys were not initialized");
-                return false;
-            }
-
-            return true; /* We did switch from Public to Confidential */
-        }
-
-        false
+        Ok(())
     }
 
     async fn is_domain_joined(&self) -> bool {

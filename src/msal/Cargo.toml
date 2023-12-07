@@ -28,3 +28,5 @@ kanidm-hsm-crypto = { workspace = true }
 openssl = { workspace = true }
 hostname = "^0.3.1"
 os-release = { workspace = true }
+compact_jwt = { workspace = true }
+jsonwebtoken = { workspace = true }

@@ -32,6 +32,7 @@ pub struct UnixUserToken {
     pub displayname: String,
     pub uuid: Uuid,
     pub access_token: Option<String>,
+    pub refresh_token: Option<String>,
 
     /* These are only present on failure */
     pub errors: Vec<u32>,
@@ -83,6 +84,17 @@ impl<'a> FromPyObject<'a> for UnixUserToken {
                 };
                 let access_token: String = py_val.to_string_lossy().into_owned();
                 res.access_token = Some(access_token);
+            } else if k == "refresh_token" {
+                let py_val: &PyString = match val.extract() {
+                    Ok(val) => val,
+                    Err(_e) => {
+                        return Err(PyValueError::new_err(
+                            "Failed extracting refresh_token from auth response",
+                        ));
+                    }
+                };
+                let refresh_token: String = py_val.to_string_lossy().into_owned();
+                res.refresh_token = Some(refresh_token);
             } else if k == "error" {
                 let msg: &PyString = val.extract()?;
                 res.error = msg.extract()?;
