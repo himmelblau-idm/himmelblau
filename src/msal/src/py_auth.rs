@@ -343,6 +343,24 @@ pub trait ClientApplication {
             Err(_e) => None,
         }
     }
+
+    fn acquire_token_by_refresh_token(
+        &self,
+        refresh_token: &str,
+        scopes: Vec<&str>,
+    ) -> Result<UnixUserToken> {
+        Python::with_gil(|py| {
+            let func: Py<PyAny> = self.app().getattr(py, "acquire_token_by_refresh_token")?;
+            let py_refresh_token: &PyString = PyString::new(py, refresh_token);
+            let py_scopes: &PyList = PyList::new(py, scopes);
+            let largs: &PyList = PyList::new(py, vec![py_refresh_token]);
+            largs.append(py_scopes)?;
+            let args: &PyTuple = PyTuple::new(py, largs);
+            let resp: Py<PyAny> = func.call1(py, args)?;
+            let token: UnixUserToken = resp.extract(py)?;
+            Ok(token)
+        })
+    }
 }
 
 impl ClientApplication for PublicClientApplication {
