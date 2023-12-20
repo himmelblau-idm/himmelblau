@@ -415,10 +415,14 @@ impl HimmelblauConfig {
     }
 
     pub fn get_configured_domains(&self) -> Vec<String> {
-        match self.config.get("global", "domains") {
+        let mut domains = match self.config.get("global", "domains") {
             Some(val) => val.split(',').map(|s| s.trim().to_string()).collect(),
             None => vec![],
-        }
+        };
+        let mut sections = self.config.sections();
+        sections.retain(|s| s != "global");
+        domains.extend(sections);
+        domains
     }
 
     pub fn get_config_file(&self) -> String {
