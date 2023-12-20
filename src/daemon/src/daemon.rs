@@ -27,7 +27,7 @@ use futures::{SinkExt, StreamExt};
 use himmelblau_unix_common::config::HimmelblauConfig;
 use himmelblau_unix_common::constants::DEFAULT_CONFIG_PATH;
 use himmelblau_unix_common::db::{Cache, CacheTxn, Db};
-use himmelblau_unix_common::file_permissions::readonly;
+use himmelblau_unix_common::file_permissions;
 use himmelblau_unix_common::idprovider::himmelblau::HimmelblauMultiProvider;
 use himmelblau_unix_common::resolver::Resolver;
 use himmelblau_unix_common::unix_config::{HsmType, UidAttr};
@@ -548,16 +548,20 @@ async fn main() -> ExitCode {
                     "Client config missing from {} - cannot start up. Quitting.",
                     cfg_path_str
                 );
+                let diag = file_permissions::diagnose_path(cfg_path.as_ref());
+                info!(%diag);
                 return ExitCode::FAILURE
             } else {
                 let cfg_meta = match metadata(&cfg_path) {
                     Ok(v) => v,
                     Err(e) => {
                         error!("Unable to read metadata for {} - {:?}", cfg_path_str, e);
+                        let diag = file_permissions::diagnose_path(cfg_path.as_ref());
+                        info!(%diag);
                         return ExitCode::FAILURE
                     }
                 };
-                if !readonly(&cfg_meta) {
+                if !file_permissions::readonly(&cfg_meta) {
                     warn!("permissions on {} may not be secure. Should be readonly to running uid. This could be a security risk ...",
                         cfg_path_str
                         );
@@ -597,80 +601,88 @@ async fn main() -> ExitCode {
 
 
             // Check the db path will be okay.
-            let db_path = PathBuf::from(cfg.get_db_path());
-            // We only need to check the parent folder path permissions as the db itself may not exist yet.
-            if let Some(db_parent_path) = db_path.parent() {
-                if !db_parent_path.exists() {
-                    error!(
-                        "Refusing to run, DB folder {} does not exist",
-                        db_parent_path
-                            .to_str()
-                            .unwrap_or("<db_parent_path invalid>")
-                    );
-                    return ExitCode::FAILURE
-                }
-
-                let db_par_path_buf = db_parent_path.to_path_buf();
-
-                let i_meta = match metadata(&db_par_path_buf) {
-                    Ok(v) => v,
-                    Err(e) => {
+            {
+                let db_path = PathBuf::from(cfg.get_db_path());
+                // We only need to check the parent folder path permissions as the db itself may not exist yet.
+                if let Some(db_parent_path) = db_path.parent() {
+                    if !db_parent_path.exists() {
                         error!(
-                            "Unable to read metadata for {} - {:?}",
+                            "Refusing to run, DB folder {} does not exist",
+                            db_parent_path
+                                .to_str()
+                                .unwrap_or("<db_parent_path invalid>")
+                        );
+                        let diag = file_permissions::diagnose_path(db_path.as_ref());
+                        info!(%diag);
+                        return ExitCode::FAILURE
+                    }
+
+                    let db_par_path_buf = db_parent_path.to_path_buf();
+
+                    let i_meta = match metadata(&db_par_path_buf) {
+                        Ok(v) => v,
+                        Err(e) => {
+                            error!(
+                                "Unable to read metadata for {} - {:?}",
+                                db_par_path_buf
+                                    .to_str()
+                                    .unwrap_or("<db_par_path_buf invalid>"),
+                                e
+                            );
+                            return ExitCode::FAILURE
+                        }
+                    };
+
+                    if !i_meta.is_dir() {
+                        error!(
+                            "Refusing to run - DB folder {} may not be a directory",
                             db_par_path_buf
                                 .to_str()
-                                .unwrap_or("<db_par_path_buf invalid>"),
-                            e
+                                .unwrap_or("<db_par_path_buf invalid>")
                         );
                         return ExitCode::FAILURE
                     }
-                };
+                    if file_permissions::readonly(&i_meta) {
+                        warn!("WARNING: DB folder permissions on {} indicate it may not be RW. This could cause the server start up to fail!", db_par_path_buf.to_str()
+                        .unwrap_or("<db_par_path_buf invalid>")
+                        );
+                    }
 
-                if !i_meta.is_dir() {
-                    error!(
-                        "Refusing to run - DB folder {} may not be a directory",
-                        db_par_path_buf
-                            .to_str()
-                            .unwrap_or("<db_par_path_buf invalid>")
-                    );
-                    return ExitCode::FAILURE
-                }
-                if readonly(&i_meta) {
-                    warn!("WARNING: DB folder permissions on {} indicate it may not be RW. This could cause the server start up to fail!", db_par_path_buf.to_str()
-                    .unwrap_or("<db_par_path_buf invalid>")
-                    );
+                    if i_meta.mode() & 0o007 != 0 {
+                        warn!("WARNING: DB folder {} has 'everyone' permission bits in the mode. This could be a security risk ...", db_par_path_buf.to_str()
+                        .unwrap_or("<db_par_path_buf invalid>")
+                        );
+                    }
                 }
 
-                if i_meta.mode() & 0o007 != 0 {
-                    warn!("WARNING: DB folder {} has 'everyone' permission bits in the mode. This could be a security risk ...", db_par_path_buf.to_str()
-                    .unwrap_or("<db_par_path_buf invalid>")
-                    );
-                }
-            }
-
-            // check to see if the db's already there
-            if db_path.exists() {
-                if !db_path.is_file() {
-                    error!(
-                        "Refusing to run - DB path {} already exists and is not a file.",
-                        db_path.to_str().unwrap_or("<db_path invalid>")
-                    );
-                    return ExitCode::FAILURE
-                };
-
-                match metadata(&db_path) {
-                    Ok(v) => v,
-                    Err(e) => {
+                // check to see if the db's already there
+                if db_path.exists() {
+                    if !db_path.is_file() {
                         error!(
-                            "Unable to read metadata for {} - {:?}",
-                            db_path.to_str().unwrap_or("<db_path invalid>"),
-                            e
+                            "Refusing to run - DB path {} already exists and is not a file.",
+                            db_path.to_str().unwrap_or("<db_path invalid>")
                         );
+                        let diag = file_permissions::diagnose_path(db_path.as_ref());
+                        info!(%diag);
                         return ExitCode::FAILURE
-                    }
+                    };
+
+                    match metadata(&db_path) {
+                        Ok(v) => v,
+                        Err(e) => {
+                            error!(
+                                "Unable to read metadata for {} - {:?}",
+                                db_path.to_str().unwrap_or("<db_path invalid>"),
+                                e
+                            );
+                            let diag = file_permissions::diagnose_path(db_path.as_ref());
+                            info!(%diag);
+                            return ExitCode::FAILURE
+                        }
+                    };
+                    // TODO: permissions dance to enumerate the user's ability to write to the file? ref #456 - r2d2 will happily keep trying to do things without bailing.
                 };
-                // TODO: permissions dance to enumerate the user's ability to write to the file? ref #456 - r2d2 will happily keep trying to do things without bailing.
-            };
+            }
 
             // Create the identify provider connection
             let idprovider = match HimmelblauMultiProvider::new(cfg.get_config_file().as_str()).await {
