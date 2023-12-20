@@ -20,6 +20,7 @@ popd
 
 # Start the daemon
 /usr/sbin/himmelblaud -d --skip-root-check &
+sleep 5
 /usr/sbin/himmelblaud_tasks &
 
 # Run the tests
