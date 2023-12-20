@@ -31,4 +31,17 @@ RET=`echo $?`
 pkill himmelblaud
 pkill himmelblaud_tasks
 
+# Restart the daemon, and test authentication when joined
+/usr/sbin/himmelblaud -d --skip-root-check &
+sleep 5
+/usr/sbin/himmelblaud_tasks &
+
+# Run the tests
+/root/tests/runner.py --pam-test
+RET=`echo $?`
+
+# Kill the daemon
+pkill himmelblaud
+pkill himmelblaud_tasks
+
 exit $RET

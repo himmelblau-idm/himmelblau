@@ -11,7 +11,7 @@ use crate::unix_proto::{DeviceAuthorizationResponse, PamAuthRequest};
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use himmelblau_policies::policies::apply_group_policy;
-use kanidm_hsm_crypto::{IdentityKey, KeyAlgorithm, LoadableIdentityKey, Tpm};
+use kanidm_hsm_crypto::{KeyAlgorithm, Tpm};
 use msal::auth::{ClientApplication as ConfidentialClientApplication, Credentials};
 use msal::constants::BROKER_APP_ID;
 use msal::enroll::register_device;
@@ -26,7 +26,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::thread::sleep;
 use std::time::Duration;
-use tokio::sync::{Mutex, RwLock};
+use tokio::sync::RwLock;
 use uuid::Uuid;
 
 use rand::Rng;
@@ -177,11 +177,12 @@ impl IdProvider for HimmelblauMultiProvider {
         }
     }
 
-    async fn unix_user_online_auth_step(
+    async fn unix_user_online_auth_step<D: KeyStoreTxn + Send>(
         &self,
         account_id: &str,
         cred_handler: &mut AuthCredHandler,
         pam_next_req: PamAuthRequest,
+        keystore: &mut D,
         tpm: &mut tpm::BoxedDynTpm,
         machine_key: &tpm::MachineKey,
     ) -> Result<(AuthResult, AuthCacheAction), IdpError> {
@@ -195,6 +196,7 @@ impl IdProvider for HimmelblauMultiProvider {
                                 account_id,
                                 cred_handler,
                                 pam_next_req,
+                                keystore,
                                 tpm,
                                 machine_key,
                             )
@@ -244,11 +246,6 @@ impl IdProvider for HimmelblauMultiProvider {
     }
 }
 
-struct HimmelblauTpmKeys {
-    loadable_cert_key: LoadableIdentityKey,
-    cert_id_key: IdentityKey,
-}
-
 pub struct HimmelblauProvider {
     client: RwLock<PublicClientApplication>,
     config: Arc<RwLock<HimmelblauConfig>>,
@@ -258,7 +255,6 @@ pub struct HimmelblauProvider {
     authority_host: String,
     graph_url: String,
     app_id: String,
-    tpm_keys: Mutex<Option<HimmelblauTpmKeys>>,
 }
 
 impl HimmelblauProvider {
@@ -281,7 +277,6 @@ impl HimmelblauProvider {
             authority_host: authority_host.to_string(),
             graph_url: graph_url.to_string(),
             app_id: app_id.to_string(),
-            tpm_keys: None.into(),
         }
     }
 }
@@ -323,42 +318,26 @@ impl IdProvider for HimmelblauProvider {
         machine_key: &tpm::MachineKey,
     ) -> Result<(), IdpError> {
         let csr_tag = format!("{}/certificate", self.domain);
-        let (loadable_cert_key, cert_id_key) =
-            match keystore.get_tagged_hsm_key::<LoadableIdentityKey>(&csr_tag) {
-                Ok(loadable_cert_key) => match loadable_cert_key {
-                    Some(loadable_id_key) => {
-                        match tpm.identity_key_load(machine_key, &loadable_id_key) {
-                            Ok(id_key) => (loadable_id_key, id_key),
-                            Err(_) => return Err(IdpError::BadRequest),
-                        }
-                    }
-                    None => {
-                        let loadable_id_key =
-                            match tpm.identity_key_create(machine_key, KeyAlgorithm::Rsa2048) {
-                                Ok(loadable_id_key) => loadable_id_key,
-                                Err(_e) => return Err(IdpError::BadRequest),
-                            };
-                        if keystore
-                            .insert_tagged_hsm_key(&csr_tag, &loadable_id_key)
-                            .is_err()
-                        {
-                            return Err(IdpError::KeyStore);
-                        }
-                        match tpm.identity_key_load(machine_key, &loadable_id_key) {
-                            Ok(id_key) => (loadable_id_key, id_key),
-                            Err(_) => return Err(IdpError::BadRequest),
-                        }
-                    }
-                },
-                Err(_) => return Err(IdpError::KeyStore),
-            };
-        {
-            // Change scope so tpm_keys unlocks after setting
-            let mut tpm_keys = self.tpm_keys.lock().await;
-            *tpm_keys = Some(HimmelblauTpmKeys {
-                loadable_cert_key,
-                cert_id_key,
-            });
+        let id_key: Option<tpm::LoadableIdentityKey> =
+            keystore.get_tagged_hsm_key(&csr_tag).map_err(|ks_err| {
+                error!(?ks_err);
+                IdpError::KeyStore
+            })?;
+
+        if id_key.is_none() {
+            let loadable_id_key = tpm
+                .identity_key_create(machine_key, KeyAlgorithm::Rsa2048)
+                .map_err(|tpm_err| {
+                    error!(?tpm_err);
+                    IdpError::Tpm
+                })?;
+
+            keystore
+                .insert_tagged_hsm_key(&csr_tag, &loadable_id_key)
+                .map_err(|ks_err| {
+                    error!(?ks_err);
+                    IdpError::KeyStore
+                })?;
         }
 
         Ok(())
@@ -440,11 +419,12 @@ impl IdProvider for HimmelblauProvider {
         Ok((AuthRequest::Password, AuthCredHandler::Password))
     }
 
-    async fn unix_user_online_auth_step(
+    async fn unix_user_online_auth_step<D: KeyStoreTxn + Send>(
         &self,
         account_id: &str,
         cred_handler: &mut AuthCredHandler,
         pam_next_req: PamAuthRequest,
+        keystore: &mut D,
         tpm: &mut tpm::BoxedDynTpm,
         machine_key: &tpm::MachineKey,
     ) -> Result<(AuthResult, AuthCacheAction), IdpError> {
@@ -495,42 +475,53 @@ impl IdProvider for HimmelblauProvider {
                 }
                 match self.token_validate(account_id, &uutoken).await {
                     Ok(AuthResult::Success { token }) => {
-                        if let Err(e) = self.join_domain(tpm, &uutoken, machine_key).await {
+                        if let Err(e) = self.join_domain(tpm, &uutoken, keystore, machine_key).await
+                        {
                             error!("{:?}", e);
                         } else {
                             /* We switched from Public to Confidential due to a
                              * domain join and now need to obtain a PRT */
-                            if let Some(tpm_keys) = &*self.tpm_keys.lock().await {
-                                let capp = match ConfidentialClientApplication::new(
-                                    &self.tenant_id,
-                                    &self.authority_host,
-                                ) {
-                                    Ok(capp) => capp,
-                                    Err(e) => {
-                                        error!("{:?}", e);
-                                        return Err(IdpError::BadRequest);
-                                    }
-                                };
-                                /* For now we do nothing with the PRT, except
-                                 * verify that we can obtain it. */
-                                debug!("Requesting PRT using username/password");
-                                if let Err(e) = capp
-                                    .request_user_prt(
-                                        Credentials::UsernamePassword(
-                                            account_id.to_string(),
-                                            cred.clone(),
-                                        ),
-                                        tpm,
-                                        &tpm_keys.cert_id_key,
-                                    )
-                                    .await
-                                {
-                                    error!(
-                                        "Failed to request PRT for user on joined device: {:?}",
-                                        e
-                                    );
+                            let capp = match ConfidentialClientApplication::new(
+                                &self.tenant_id,
+                                &self.authority_host,
+                            ) {
+                                Ok(capp) => capp,
+                                Err(e) => {
+                                    error!("{:?}", e);
                                     return Err(IdpError::BadRequest);
                                 }
+                            };
+                            let csr_tag = format!("{}/certificate", self.domain);
+                            let loadable_id_key: Option<tpm::LoadableIdentityKey> =
+                                keystore.get_tagged_hsm_key(&csr_tag).map_err(|ks_err| {
+                                    error!(?ks_err);
+                                    IdpError::KeyStore
+                                })?;
+                            let cert_id_key = match loadable_id_key {
+                                Some(loadable_id_key) => tpm
+                                    .identity_key_load(machine_key, &loadable_id_key)
+                                    .map_err(|tpm_err| {
+                                        error!(?tpm_err);
+                                        IdpError::KeyStore
+                                    })?,
+                                None => return Err(IdpError::KeyStore),
+                            };
+                            /* For now we do nothing with the PRT, except
+                             * verify that we can obtain it. */
+                            debug!("Requesting PRT using username/password");
+                            if let Err(e) = capp
+                                .request_user_prt(
+                                    Credentials::UsernamePassword(
+                                        account_id.to_string(),
+                                        cred.clone(),
+                                    ),
+                                    tpm,
+                                    &cert_id_key,
+                                )
+                                .await
+                            {
+                                error!("Failed to request PRT for user on joined device: {:?}", e);
+                                return Err(IdpError::BadRequest);
                             }
                         }
                         Ok((
@@ -581,39 +572,50 @@ impl IdProvider for HimmelblauProvider {
                 }
                 match self.token_validate(account_id, &uutoken).await {
                     Ok(AuthResult::Success { token }) => {
-                        if let Err(e) = self.join_domain(tpm, &uutoken, machine_key).await {
+                        if let Err(e) = self.join_domain(tpm, &uutoken, keystore, machine_key).await
+                        {
                             error!("{:?}", e);
                         } else if let Some(refresh_token) = uutoken.refresh_token {
                             /* We switched from Public to Confidential due to a
                              * domain join and now need to obtain a PRT */
-                            if let Some(tpm_keys) = &*self.tpm_keys.lock().await {
-                                let capp = match ConfidentialClientApplication::new(
-                                    &self.tenant_id,
-                                    &self.authority_host,
-                                ) {
-                                    Ok(capp) => capp,
-                                    Err(e) => {
-                                        error!("{:?}", e);
-                                        return Err(IdpError::BadRequest);
-                                    }
-                                };
-                                /* For now we do nothing with the PRT, except
-                                 * verify that we can obtain it. */
-                                debug!("Requesting PRT using refresh token");
-                                if let Err(e) = capp
-                                    .request_user_prt(
-                                        Credentials::RefreshToken(refresh_token),
-                                        tpm,
-                                        &tpm_keys.cert_id_key,
-                                    )
-                                    .await
-                                {
-                                    error!(
-                                        "Failed to request PRT for user on joined device: {:?}",
-                                        e
-                                    );
+                            let capp = match ConfidentialClientApplication::new(
+                                &self.tenant_id,
+                                &self.authority_host,
+                            ) {
+                                Ok(capp) => capp,
+                                Err(e) => {
+                                    error!("{:?}", e);
                                     return Err(IdpError::BadRequest);
                                 }
+                            };
+                            let csr_tag = format!("{}/certificate", self.domain);
+                            let loadable_id_key: Option<tpm::LoadableIdentityKey> =
+                                keystore.get_tagged_hsm_key(&csr_tag).map_err(|ks_err| {
+                                    error!(?ks_err);
+                                    IdpError::KeyStore
+                                })?;
+                            let cert_id_key = match loadable_id_key {
+                                Some(loadable_id_key) => tpm
+                                    .identity_key_load(machine_key, &loadable_id_key)
+                                    .map_err(|tpm_err| {
+                                        error!(?tpm_err);
+                                        IdpError::KeyStore
+                                    })?,
+                                None => return Err(IdpError::KeyStore),
+                            };
+                            /* For now we do nothing with the PRT, except
+                             * verify that we can obtain it. */
+                            debug!("Requesting PRT using refresh token");
+                            if let Err(e) = capp
+                                .request_user_prt(
+                                    Credentials::RefreshToken(refresh_token),
+                                    tpm,
+                                    &cert_id_key,
+                                )
+                                .await
+                            {
+                                error!("Failed to request PRT for user on joined device: {:?}", e);
+                                return Err(IdpError::BadRequest);
                             }
                         }
                         Ok((AuthResult::Success { token }, AuthCacheAction::None))
@@ -814,21 +816,26 @@ impl HimmelblauProvider {
         })
     }
 
-    async fn join_domain(
+    async fn join_domain<D: KeyStoreTxn + Send>(
         &self,
         tpm: &mut tpm::BoxedDynTpm,
         token: &UnixUserToken,
+        keystore: &mut D,
         machine_key: &tpm::MachineKey,
     ) -> Result<()> {
         /* If not already joined, and we requested the DRS resource, join the
          * domain now. */
         if !self.is_domain_joined().await && self.app_id == BROKER_APP_ID {
             if let Some(access_token) = &token.access_token {
-                let mut tpm_keys = self.tpm_keys.lock().await;
-                let loadable_cert_key = match &*tpm_keys {
-                    Some(tpm_keys) => &tpm_keys.loadable_cert_key,
-                    None => return Err(anyhow!("Failed to find certificate key")),
+                let csr_tag = format!("{}/certificate", self.domain);
+                let loadable_cert_key: tpm::LoadableIdentityKey = match keystore
+                    .get_tagged_hsm_key(&csr_tag)
+                {
+                    Ok(Some(loadable_cert_key)) => loadable_cert_key,
+                    Ok(None) => return Err(anyhow!("No tagged hsm key was found for the domain")),
+                    Err(e) => return Err(anyhow!("Failed to join the domain: {:?}", e)),
                 };
+
                 debug!(
                     "Domain {} is not currently joined, registering device with Entra ID",
                     self.domain
@@ -838,22 +845,24 @@ impl HimmelblauProvider {
                     access_token,
                     &self.domain,
                     tpm,
-                    loadable_cert_key,
-                    loadable_cert_key,
+                    &loadable_cert_key,
+                    &loadable_cert_key,
                 )
                 .await
                 {
                     Ok((new_loadable_cert_key, device_id)) => {
                         info!("Joined domain {} with device id {}", self.domain, device_id);
-                        let new_cert_id_key =
-                            match tpm.identity_key_load(machine_key, &new_loadable_cert_key) {
-                                Ok(certificate_id_key) => certificate_id_key,
-                                Err(e) => return Err(anyhow!("Failed loading id key: {:?}", e)),
-                            };
-                        *tpm_keys = Some(HimmelblauTpmKeys {
-                            loadable_cert_key: new_loadable_cert_key,
-                            cert_id_key: new_cert_id_key,
-                        });
+                        // Remove the old tagged hsm key from the keystore
+                        let csr_tag = format!("{}/certificate", self.domain);
+                        if let Err(e) = keystore.delete_tagged_hsm_key(&csr_tag) {
+                            return Err(anyhow!("Failed to join the domain: {:?}", e));
+                        }
+                        // Store the new_loadable_cert_key in the keystore
+                        if let Err(e) =
+                            keystore.insert_tagged_hsm_key(&csr_tag, &new_loadable_cert_key)
+                        {
+                            return Err(anyhow!("Failed to join the domain: {:?}", e));
+                        }
                         let mut config = self.config.write().await;
                         config.set(&self.domain, "app_id", BROKER_APP_ID);
                         debug!(
@@ -912,10 +921,6 @@ impl HimmelblauProvider {
     async fn is_domain_joined(&self) -> bool {
         /* If we have access to tpm keys, and the domain device_id is
          * configured, we'll assume we are domain joined. */
-        let tpm_keys = self.tpm_keys.lock().await;
-        if (*tpm_keys).is_none() {
-            return false;
-        }
         let config = self.config.read().await;
         if config.get(&self.domain, "device_id").is_none() {
             return false;
