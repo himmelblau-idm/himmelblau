@@ -331,7 +331,7 @@ pub trait ClientApplication {
         })
     }
 
-    fn get_account(&self, account_id: &String) -> Option<HashMap<String, String>> {
+    fn get_account(&self, account_id: &str) -> Option<HashMap<String, String>> {
         match self.get_accounts() {
             Ok(accounts) => accounts
                 .iter()
@@ -342,6 +342,17 @@ pub trait ClientApplication {
                 .cloned(),
             Err(_e) => None,
         }
+    }
+
+    fn remove_account(&self, username: &str) -> Result<()> {
+        Python::with_gil(|py| {
+            let func: Py<PyAny> = self.app().getattr(py, "remove_account")?;
+            if let Some(py_account) = self.get_account(username) {
+                let args: &PyTuple = PyTuple::new(py, vec![py_account]);
+                func.call1(py, args)?;
+            }
+            Ok(())
+        })
     }
 
     fn acquire_token_by_refresh_token(

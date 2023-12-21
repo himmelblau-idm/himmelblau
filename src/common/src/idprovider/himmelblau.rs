@@ -477,7 +477,12 @@ impl IdProvider for HimmelblauProvider {
                     Ok(AuthResult::Success { token }) => {
                         if let Err(e) = self.join_domain(tpm, &uutoken, keystore, machine_key).await
                         {
-                            error!("{:?}", e);
+                            // Invalidate cached creds if PRT req fails
+                            if let Err(e) = self.client.write().await.remove_account(account_id) {
+                                error!("Removing the account failed: {:?}", e);
+                            }
+                            error!("Failed to join domain: {:?}", e);
+                            return Err(IdpError::BadRequest);
                         } else {
                             /* We switched from Public to Confidential due to a
                              * domain join and now need to obtain a PRT */
@@ -487,24 +492,57 @@ impl IdProvider for HimmelblauProvider {
                             ) {
                                 Ok(capp) => capp,
                                 Err(e) => {
-                                    error!("{:?}", e);
+                                    // Invalidate cached creds if PRT req fails
+                                    if let Err(e) =
+                                        self.client.write().await.remove_account(account_id)
+                                    {
+                                        error!("Removing the account failed: {:?}", e);
+                                    }
+                                    error!("Failed to initialize ConfidentialClient: {:?}", e);
                                     return Err(IdpError::BadRequest);
                                 }
                             };
                             let csr_tag = format!("{}/certificate", self.domain);
                             let loadable_id_key: Option<tpm::LoadableIdentityKey> =
-                                keystore.get_tagged_hsm_key(&csr_tag).map_err(|ks_err| {
-                                    error!(?ks_err);
-                                    IdpError::KeyStore
-                                })?;
+                                match keystore.get_tagged_hsm_key(&csr_tag) {
+                                    Ok(loadable_id_key) => loadable_id_key,
+                                    Err(e) => {
+                                        // Invalidate cached creds if PRT req fails
+                                        if let Err(e) =
+                                            self.client.write().await.remove_account(account_id)
+                                        {
+                                            error!("Removing the account failed: {:?}", e);
+                                        }
+                                        error!("Failed to load LoadableIdentityKey: {:?}", e);
+                                        return Err(IdpError::KeyStore);
+                                    }
+                                };
                             let cert_id_key = match loadable_id_key {
-                                Some(loadable_id_key) => tpm
-                                    .identity_key_load(machine_key, &loadable_id_key)
-                                    .map_err(|tpm_err| {
-                                        error!(?tpm_err);
-                                        IdpError::KeyStore
-                                    })?,
-                                None => return Err(IdpError::KeyStore),
+                                Some(loadable_id_key) => {
+                                    match tpm.identity_key_load(machine_key, &loadable_id_key) {
+                                        Ok(cert_id_key) => cert_id_key,
+                                        Err(e) => {
+                                            // Invalidate cached creds if PRT req fails
+                                            if let Err(e) =
+                                                self.client.write().await.remove_account(account_id)
+                                            {
+                                                error!("Removing the account failed: {:?}", e);
+                                            }
+                                            error!("Failed to load IdentityKey: {:?}", e);
+                                            return Err(IdpError::KeyStore);
+                                        }
+                                    }
+                                }
+                                None => {
+                                    // Invalidate cached creds if PRT req fails
+                                    if let Err(e) =
+                                        self.client.write().await.remove_account(account_id)
+                                    {
+                                        error!("Removing the account failed: {:?}", e);
+                                    }
+                                    error!("IdentityKey not found");
+                                    return Err(IdpError::KeyStore);
+                                }
                             };
                             /* For now we do nothing with the PRT, except
                              * verify that we can obtain it. */
@@ -520,6 +558,11 @@ impl IdProvider for HimmelblauProvider {
                                 )
                                 .await
                             {
+                                // Invalidate cached creds if PRT req fails
+                                if let Err(e) = self.client.write().await.remove_account(account_id)
+                                {
+                                    error!("Removing the account failed: {:?}", e);
+                                }
                                 error!("Failed to request PRT for user on joined device: {:?}", e);
                                 return Err(IdpError::BadRequest);
                             }
@@ -574,7 +617,12 @@ impl IdProvider for HimmelblauProvider {
                     Ok(AuthResult::Success { token }) => {
                         if let Err(e) = self.join_domain(tpm, &uutoken, keystore, machine_key).await
                         {
-                            error!("{:?}", e);
+                            // Invalidate cached creds if PRT req fails
+                            if let Err(e) = self.client.write().await.remove_account(account_id) {
+                                error!("Removing the account failed: {:?}", e);
+                            }
+                            error!("Failed to join domain: {:?}", e);
+                            return Err(IdpError::BadRequest);
                         } else if let Some(refresh_token) = uutoken.refresh_token {
                             /* We switched from Public to Confidential due to a
                              * domain join and now need to obtain a PRT */
@@ -584,24 +632,57 @@ impl IdProvider for HimmelblauProvider {
                             ) {
                                 Ok(capp) => capp,
                                 Err(e) => {
-                                    error!("{:?}", e);
+                                    // Invalidate cached creds if PRT req fails
+                                    if let Err(e) =
+                                        self.client.write().await.remove_account(account_id)
+                                    {
+                                        error!("Removing the account failed: {:?}", e);
+                                    }
+                                    error!("Failed to initialize ConfidentialClient: {:?}", e);
                                     return Err(IdpError::BadRequest);
                                 }
                             };
                             let csr_tag = format!("{}/certificate", self.domain);
                             let loadable_id_key: Option<tpm::LoadableIdentityKey> =
-                                keystore.get_tagged_hsm_key(&csr_tag).map_err(|ks_err| {
-                                    error!(?ks_err);
-                                    IdpError::KeyStore
-                                })?;
+                                match keystore.get_tagged_hsm_key(&csr_tag) {
+                                    Ok(loadable_id_key) => loadable_id_key,
+                                    Err(e) => {
+                                        // Invalidate cached creds if PRT req fails
+                                        if let Err(e) =
+                                            self.client.write().await.remove_account(account_id)
+                                        {
+                                            error!("Removing the account failed: {:?}", e);
+                                        }
+                                        error!("Failed to load LoadableIdentityKey: {:?}", e);
+                                        return Err(IdpError::KeyStore);
+                                    }
+                                };
                             let cert_id_key = match loadable_id_key {
-                                Some(loadable_id_key) => tpm
-                                    .identity_key_load(machine_key, &loadable_id_key)
-                                    .map_err(|tpm_err| {
-                                        error!(?tpm_err);
-                                        IdpError::KeyStore
-                                    })?,
-                                None => return Err(IdpError::KeyStore),
+                                Some(loadable_id_key) => {
+                                    match tpm.identity_key_load(machine_key, &loadable_id_key) {
+                                        Ok(cert_id_key) => cert_id_key,
+                                        Err(e) => {
+                                            // Invalidate cached creds if PRT req fails
+                                            if let Err(e) =
+                                                self.client.write().await.remove_account(account_id)
+                                            {
+                                                error!("Removing the account failed: {:?}", e);
+                                            }
+                                            error!("Failed to load IdentityKey: {:?}", e);
+                                            return Err(IdpError::KeyStore);
+                                        }
+                                    }
+                                }
+                                None => {
+                                    // Invalidate cached creds if PRT req fails
+                                    if let Err(e) =
+                                        self.client.write().await.remove_account(account_id)
+                                    {
+                                        error!("Removing the account failed: {:?}", e);
+                                    }
+                                    error!("IdentityKey not found");
+                                    return Err(IdpError::KeyStore);
+                                }
                             };
                             /* For now we do nothing with the PRT, except
                              * verify that we can obtain it. */
@@ -614,6 +695,11 @@ impl IdProvider for HimmelblauProvider {
                                 )
                                 .await
                             {
+                                // Invalidate cached creds if PRT req fails
+                                if let Err(e) = self.client.write().await.remove_account(account_id)
+                                {
+                                    error!("Removing the account failed: {:?}", e);
+                                }
                                 error!("Failed to request PRT for user on joined device: {:?}", e);
                                 return Err(IdpError::BadRequest);
                             }
