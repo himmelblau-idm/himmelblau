@@ -22,8 +22,8 @@ authors = [
 rust-version = "1.66"
 edition = "2021"
 license = "MPL-2.0"
-homepage = "https://github.com/openSUSE/himmelblau"
-repository = "https://github.com/openSUSE/himmelblau"
+homepage = "https://github.com/himmelblau-idm/himmelblau"
+repository = "https://github.com/himmelblau-idm/himmelblau"
 
 [workspace.dependencies]
 libc = "^0.2.144"
