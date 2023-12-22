@@ -6,13 +6,16 @@ use std::path::PathBuf;
 use tracing::{debug, error};
 
 use crate::constants::{
-    DEFAULT_APP_ID, DEFAULT_AUTHORITY_HOST, DEFAULT_CACHE_TIMEOUT, DEFAULT_CONFIG_PATH,
-    DEFAULT_CONN_TIMEOUT, DEFAULT_DB_PATH, DEFAULT_GRAPH, DEFAULT_HOME_ALIAS, DEFAULT_HOME_ATTR,
-    DEFAULT_HOME_PREFIX, DEFAULT_IDMAP_RANGE, DEFAULT_ODC_PROVIDER, DEFAULT_SELINUX, DEFAULT_SHELL,
-    DEFAULT_SOCK_PATH, DEFAULT_TASK_SOCK_PATH, DEFAULT_TPM_TCTI_NAME, DEFAULT_USE_ETC_SKEL,
+    DEFAULT_AUTHORITY_HOST, DEFAULT_CACHE_TIMEOUT, DEFAULT_CONFIG_PATH, DEFAULT_CONN_TIMEOUT,
+    DEFAULT_DB_PATH, DEFAULT_GRAPH, DEFAULT_HOME_ALIAS, DEFAULT_HOME_ATTR, DEFAULT_HOME_PREFIX,
+    DEFAULT_HSM_PIN_PATH, DEFAULT_IDMAP_RANGE, DEFAULT_ODC_PROVIDER, DEFAULT_SELINUX,
+    DEFAULT_SHELL, DEFAULT_SOCK_PATH, DEFAULT_TASK_SOCK_PATH, DEFAULT_USE_ETC_SKEL,
+    SERVER_CONFIG_PATH,
 };
-use crate::unix_config::{HomeAttr, TpmPolicy};
+use crate::unix_config::{HomeAttr, HsmType};
+use msal::constants::BROKER_APP_ID;
 use msal::misc::request_federation_provider;
+use std::env;
 
 pub fn split_username(username: &str) -> Option<(&str, &str)> {
     let tup: Vec<&str> = username.split('@').collect();
@@ -131,6 +134,16 @@ impl HimmelblauConfig {
                 }
             };
         }
+        // Apply server generated config (generated during domain join)
+        let srv_cfg_path: PathBuf = PathBuf::from(SERVER_CONFIG_PATH.to_string());
+        if srv_cfg_path.exists() {
+            if let Err(e) = sconfig.load_and_append(SERVER_CONFIG_PATH) {
+                return Err(format!(
+                    "failed to read config from {} - cannot start up: {} Quitting.",
+                    SERVER_CONFIG_PATH, e
+                ));
+            }
+        }
         Ok(HimmelblauConfig {
             config: sconfig,
             filename,
@@ -223,12 +236,9 @@ impl HimmelblauConfig {
             FederationProvider::new(&self.get_odc_provider(domain), domain);
         let tenant_id = match self.config.get(domain, "tenant_id") {
             Some(val) => val,
-            None => match self.config.get("global", "tenant_id") {
-                Some(val) => val,
-                None => match federation_provider.get_tenant_id().await {
-                    Ok(val) => val,
-                    Err(e) => return Err(anyhow!("Failed fetching tenant_id: {}", e)),
-                },
+            None => match federation_provider.get_tenant_id().await {
+                Ok(val) => val,
+                Err(e) => return Err(anyhow!("Failed fetching tenant_id: {}", e)),
             },
         };
         let authority_host = match self.config.get(domain, "authority_host") {
@@ -257,13 +267,10 @@ impl HimmelblauConfig {
     pub fn get_app_id(&self, domain: &str) -> String {
         match self.config.get(domain, "app_id") {
             Some(val) => val,
-            None => match self.config.get("global", "app_id") {
-                Some(val) => val,
-                None => {
-                    debug!("app_id unset, defaulting to Intune Portal for Linux");
-                    String::from(DEFAULT_APP_ID)
-                }
-            },
+            None => {
+                debug!("app_id unset, defaulting to MS Broker");
+                String::from(BROKER_APP_ID)
+            }
         }
     }
 
@@ -361,15 +368,30 @@ impl HimmelblauConfig {
         }
     }
 
-    pub fn get_tpm_policy(&self) -> TpmPolicy {
-        match self.config.get("global", "tpm_policy") {
-            Some(val) => match val.as_str() {
-                "ignore" => TpmPolicy::Ignore,
-                "if_possible" => TpmPolicy::IfPossible(DEFAULT_TPM_TCTI_NAME.to_string()),
-                "required" => TpmPolicy::Required(DEFAULT_TPM_TCTI_NAME.to_string()),
-                _ => TpmPolicy::Ignore,
+    pub fn get_hsm_type(&self) -> HsmType {
+        match self.config.get("global", "hsm_type") {
+            Some(val) => match val.to_lowercase().as_str() {
+                "soft" => HsmType::Soft,
+                "tmp" => HsmType::Tpm,
+                _ => {
+                    warn!("Invalid hsm_type configured, using default ...");
+                    HsmType::default()
+                }
             },
-            None => TpmPolicy::Ignore,
+            None => {
+                warn!("hsm_type not configured, using default ...");
+                HsmType::default()
+            }
+        }
+    }
+
+    pub fn get_hsm_pin_path(&self) -> String {
+        match env::var("HIMMELBLAU_HSM_PIN_PATH") {
+            Ok(val) => val,
+            Err(_e) => match self.config.get("global", "hsm_pin_path") {
+                Some(val) => val,
+                None => DEFAULT_HSM_PIN_PATH.to_string(),
+            },
         }
     }
 
@@ -378,14 +400,24 @@ impl HimmelblauConfig {
     }
 
     pub fn get_pam_allow_groups(&self) -> Vec<String> {
-        match self.config.get("global", "pam_allow_groups") {
-            Some(val) => val.split(',').map(|s| s.trim().to_string()).collect(),
-            None => vec![],
+        let mut pam_allow_groups = vec![];
+        for section in self.config.sections() {
+            pam_allow_groups.extend(match self.config.get(&section, "pam_allow_groups") {
+                Some(val) => val.split(',').map(|s| s.trim().to_string()).collect(),
+                None => vec![],
+            });
         }
+        pam_allow_groups
     }
 
     pub fn write(&self) -> Result<(), Error> {
         self.config.write(self.filename.clone())
+    }
+
+    pub fn write_server_config(&self) -> Result<(), Error> {
+        let mut srv_conf = self.config.clone();
+        srv_conf.remove_section("global");
+        srv_conf.write(SERVER_CONFIG_PATH)
     }
 
     pub fn set(&mut self, section: &str, key: &str, value: &str) {
@@ -401,6 +433,17 @@ impl HimmelblauConfig {
 
     pub fn get_selinux(&self) -> bool {
         match_bool(self.config.get("global", "selinux"), DEFAULT_SELINUX)
+    }
+
+    pub fn get_configured_domains(&self) -> Vec<String> {
+        let mut domains = match self.config.get("global", "domains") {
+            Some(val) => val.split(',').map(|s| s.trim().to_string()).collect(),
+            None => vec![],
+        };
+        let mut sections = self.config.sections();
+        sections.retain(|s| s != "global");
+        domains.extend(sections);
+        domains
     }
 
     pub fn get_config_file(&self) -> String {

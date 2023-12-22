@@ -11,7 +11,31 @@
 #![deny(clippy::trivially_copy_pass_by_ref)]
 
 #[cfg(target_family = "unix")]
-pub mod authentication;
+pub mod py_auth;
 
 #[cfg(target_family = "unix")]
 pub mod misc;
+
+#[cfg(target_family = "unix")]
+pub mod discovery;
+
+#[cfg(target_family = "unix")]
+pub mod nonce;
+
+#[cfg(target_family = "unix")]
+pub mod enroll;
+
+#[cfg(target_family = "unix")]
+pub mod constants;
+
+#[cfg(target_family = "unix")]
+pub mod user;
+
+#[cfg(target_family = "unix")]
+pub mod application;
+
+#[cfg(target_family = "unix")]
+pub mod group;
+
+#[cfg(target_family = "unix")]
+pub mod auth;

@@ -1,35 +1,34 @@
 [global]
+# REQUIRED: The list of configured domains. This must be specified, or no users
+# will be permitted to authenticate. The first user to authenticate to each
+# domain will be the owner of the device object in the directory. Typically
+# this would be the primary user of the device.
+# domains =
+
+### Optional global values
+# pam_allow_groups MUST be defined or all users will be rejected by pam account.
+# The option should be set to a comma seperated list of Users and Groups which
+# are allowed access to the system. The first user to logon (the device owner)
+# to a configured domain will be added to this list automatically.
+# pam_allow_groups =
+#
 # If you have an ODC provider (the default being odc.officeapps.live.com), specify
 # the hostname for sending a federationProvider request. If the federationProvider
 # request is successful, the tenant_id and authority_host options do not need to
 # be specified.
 # odc_provider = odc.officeapps.live.com
 #
-# pam_allow_groups MUST be defined or all users will be rejected by pam account.
-# The option should be set to a comma seperated list of Groups which are allowed
-# access to the system.
-# The default is an empty list.
-# pam_allow_groups =
-#
-# tenant_id = XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX
 # authority_host = login.microsoftonline.com
 #
 # The location of the cache database
 # db_path = /var/cache/himmelblau/himmelblau.cache.db
 #
-# The tpm policy
-# tpm_policy = ignore ; tpm_policy options:
-#                     ; ignore
-#                     ; if_possible
-#                     ; required
+# The location where the hsm pin will be stored
+# hsm_pin_path = /var/lib/himmelblaud/hsm-pin
 #
-# Whether to apply MDM policies (experimental). Requires additional permissions in Azure AD,
-# see https://github.com/openSUSE/himmelblau/wiki/Enabling-Group-Policy-Access-for-Users
+# Whether to apply MDM policies (experimental).
 # apply_policy = false ; {true|false}
-
-### Optional values
-# Default app_id is Intune Portal for Linux
-# app_id = b743a22d-6705-4147-8670-d92fa515ee2b
+#
 # socket_path = /var/run/himmelblaud/socket
 # task_socket_path = /var/run/himmelblaud/task_sock
 # home_prefix = /home/
@@ -46,12 +45,13 @@
 # use_etc_skel = false
 # selinux = true
 
-# Values overridden for a specific domain
-# [domain.com]
+### Domain specific values
+# Individual domain values may be overridden by specifying these values under
+# a domain section. These options take precedent over global config options.
+# For example:
+#
+# [example.com]
 # odc_provider = odc.officeapps.live.com
-# tenant_id = XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX
-# authority_host = login.microsoftonline.com
-# app_id = XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX
 # home_prefix = /home/
 # home_attr = UUID
 # home_alias = SPN

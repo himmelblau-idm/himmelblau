@@ -15,6 +15,7 @@ pam_allow_groups = []
 if testconfig.has_section('users'):
     pam_allow_groups = [u for u, _ in testconfig.items('users')]
     himmelblau_config.set('global', 'pam_allow_groups', ','.join(pam_allow_groups))
+himmelblau_config.set('global', 'domains', testconfig.get('global', 'domains'))
 
 with open('/etc/himmelblau/himmelblau.conf', 'w') as w:
     himmelblau_config.write(w)

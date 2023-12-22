@@ -41,9 +41,9 @@ impl Display for UidAttr {
 }
 
 #[derive(Debug, Clone, Default)]
-pub enum TpmPolicy {
-    #[default]
-    Ignore,
-    IfPossible(String),
-    Required(String),
+pub enum HsmType {
+    #[cfg_attr(not(feature = "tpm"), default)]
+    Soft,
+    #[cfg_attr(feature = "tpm", default)]
+    Tpm,
 }

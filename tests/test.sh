@@ -12,6 +12,7 @@ install -m 0755 ./target/debug/himmelblaud_tasks /usr/sbin
 install -m 0755 ./target/debug/aad-tool /usr/bin
 mkdir -p /var/run/himmelblaud
 mkdir -p /var/cache/himmelblaud
+mkdir -p /var/lib/himmelblaud
 popd
 
 # Build the test configuration
@@ -19,10 +20,24 @@ popd
 
 # Start the daemon
 /usr/sbin/himmelblaud -d --skip-root-check &
+sleep 5
 /usr/sbin/himmelblaud_tasks &
 
 # Run the tests
 /root/tests/runner.py $@
+RET=`echo $?`
+
+# Kill the daemon
+pkill himmelblaud
+pkill himmelblaud_tasks
+
+# Restart the daemon, and test authentication when joined
+/usr/sbin/himmelblaud -d --skip-root-check &
+sleep 5
+/usr/sbin/himmelblaud_tasks &
+
+# Run the tests
+/root/tests/runner.py --pam-test
 RET=`echo $?`
 
 # Kill the daemon

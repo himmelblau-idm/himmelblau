@@ -1,0 +1,1 @@
+../../../kanidm/proto/src/constants/uri.rs
