@@ -10,6 +10,7 @@ use crate::constants::{
     DEFAULT_DB_PATH, DEFAULT_GRAPH, DEFAULT_HOME_ALIAS, DEFAULT_HOME_ATTR, DEFAULT_HOME_PREFIX,
     DEFAULT_HSM_PIN_PATH, DEFAULT_IDMAP_RANGE, DEFAULT_ODC_PROVIDER, DEFAULT_SELINUX,
     DEFAULT_SHELL, DEFAULT_SOCK_PATH, DEFAULT_TASK_SOCK_PATH, DEFAULT_USE_ETC_SKEL,
+    SERVER_CONFIG_PATH,
 };
 use crate::unix_config::{HomeAttr, HsmType};
 use msal::constants::BROKER_APP_ID;
@@ -132,6 +133,16 @@ impl HimmelblauConfig {
                     ))
                 }
             };
+        }
+        // Apply server generated config (generated during domain join)
+        let srv_cfg_path: PathBuf = PathBuf::from(SERVER_CONFIG_PATH.to_string());
+        if srv_cfg_path.exists() {
+            if let Err(e) = sconfig.load_and_append(SERVER_CONFIG_PATH) {
+                return Err(format!(
+                    "failed to read config from {} - cannot start up: {} Quitting.",
+                    SERVER_CONFIG_PATH, e
+                ));
+            }
         }
         Ok(HimmelblauConfig {
             config: sconfig,
@@ -389,14 +400,24 @@ impl HimmelblauConfig {
     }
 
     pub fn get_pam_allow_groups(&self) -> Vec<String> {
-        match self.config.get("global", "pam_allow_groups") {
-            Some(val) => val.split(',').map(|s| s.trim().to_string()).collect(),
-            None => vec![],
+        let mut pam_allow_groups = vec![];
+        for section in self.config.sections() {
+            pam_allow_groups.extend(match self.config.get(&section, "pam_allow_groups") {
+                Some(val) => val.split(',').map(|s| s.trim().to_string()).collect(),
+                None => vec![],
+            });
         }
+        pam_allow_groups
     }
 
     pub fn write(&self) -> Result<(), Error> {
         self.config.write(self.filename.clone())
+    }
+
+    pub fn write_server_config(&self) -> Result<(), Error> {
+        let mut srv_conf = self.config.clone();
+        srv_conf.remove_section("global");
+        srv_conf.write(SERVER_CONFIG_PATH)
     }
 
     pub fn set(&mut self, section: &str, key: &str, value: &str) {

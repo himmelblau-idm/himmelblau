@@ -48,14 +48,10 @@
 ### Domain specific values
 # Individual domain values may be overridden by specifying these values under
 # a domain section. These options take precedent over global config options.
-# Some of these options will be configured automatically during domain join.
 # For example:
 #
 # [example.com]
 # odc_provider = odc.officeapps.live.com
-# tenant_id = XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX
-# authority_host = login.microsoftonline.com
-# app_id = XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX
 # home_prefix = /home/
 # home_attr = UUID
 # home_alias = SPN

@@ -975,7 +975,7 @@ impl HimmelblauProvider {
                             "Setting domain {} config authority_host to {}",
                             self.domain, &self.authority_host
                         );
-                        let mut allow_groups = match config.get("global", "pam_allow_groups") {
+                        let mut allow_groups = match config.get(&self.domain, "pam_allow_groups") {
                             Some(allowed) => allowed.split(',').map(|g| g.to_string()).collect(),
                             None => vec![],
                         };
@@ -983,12 +983,12 @@ impl HimmelblauProvider {
                         /* Remove duplicates from the allow_groups */
                         allow_groups.sort();
                         allow_groups.dedup();
-                        config.set("global", "pam_allow_groups", &allow_groups.join(","));
+                        config.set(&self.domain, "pam_allow_groups", &allow_groups.join(","));
                         debug!(
                             "Setting global pam_allow_groups to {}",
                             &allow_groups.join(",")
                         );
-                        if let Err(e) = config.write() {
+                        if let Err(e) = config.write_server_config() {
                             return Err(anyhow!(
                                 "Failed to write domain join configuration: {:?}",
                                 e
