@@ -9,4 +9,5 @@
 #![deny(clippy::trivially_copy_pass_by_ref)]
 
 pub mod constants;
+#[path = "../../kanidm/proto/src/v1.rs"]
 pub mod v1;

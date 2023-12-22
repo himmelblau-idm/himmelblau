@@ -4,7 +4,7 @@ use super::interface::{
 };
 use crate::config::split_username;
 use crate::config::HimmelblauConfig;
-use crate::constants::{DEFAULT_APP_ID, DEFAULT_CONFIG_PATH};
+use crate::constants::DEFAULT_APP_ID;
 use crate::unix_proto::{DeviceAuthorizationResponse, PamAuthRequest};
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
@@ -50,8 +50,8 @@ pub struct HimmelblauMultiProvider {
 }
 
 impl HimmelblauMultiProvider {
-    pub fn new() -> Result<Self> {
-        let config = match HimmelblauConfig::new(DEFAULT_CONFIG_PATH) {
+    pub fn new(config_filename: &str) -> Result<Self> {
+        let config = match HimmelblauConfig::new(config_filename) {
             Ok(config) => config,
             Err(e) => return Err(anyhow!("{}", e)),
         };
@@ -222,10 +222,12 @@ impl HimmelblauMultiProvider {
         let mut providers = self.providers.write().await;
         if !providers.contains_key(domain) {
             let config = self.config.read().await;
-            let (_tenant_id, authority_url, graph) = match config.get_authority_url(domain).await {
-                Ok(res) => res,
-                Err(e) => return Err(anyhow!("{}", e)),
-            };
+            let (authority_host, tenant_id, graph) =
+                match config.get_tenant_id_authority_and_graph(domain).await {
+                    Ok(res) => res,
+                    Err(e) => return Err(anyhow!("{}", e)),
+                };
+            let authority_url = format!("https://{}/{}", authority_host, tenant_id);
             let app_id = config.get_app_id(domain);
             let app = match PublicClientApplication::new(&app_id, authority_url.as_str()) {
                 Ok(app) => app,
@@ -233,7 +235,15 @@ impl HimmelblauMultiProvider {
             };
             providers.insert(
                 domain.to_string(),
-                HimmelblauProvider::new(app, &self.config, domain, &authority_url, &graph, &app_id),
+                HimmelblauProvider::new(
+                    app,
+                    &self.config,
+                    domain,
+                    &authority_url,
+                    &authority_host,
+                    &graph,
+                    &app_id,
+                ),
             );
         }
         Ok(())
@@ -245,6 +255,7 @@ pub struct HimmelblauProvider {
     config: Arc<RwLock<HimmelblauConfig>>,
     domain: String,
     authority_url: String,
+    authority_host: String,
     graph_url: String,
     app_id: String,
 }
@@ -255,6 +266,7 @@ impl HimmelblauProvider {
         config: &Arc<RwLock<HimmelblauConfig>>,
         domain: &str,
         authority_url: &str,
+        authority_host: &str,
         graph_url: &str,
         app_id: &str,
     ) -> Self {
@@ -263,6 +275,7 @@ impl HimmelblauProvider {
             config: config.clone(),
             domain: domain.to_string(),
             authority_url: authority_url.to_string(),
+            authority_host: authority_host.to_string(),
             graph_url: graph_url.to_string(),
             app_id: app_id.to_string(),
         }
@@ -303,7 +316,7 @@ impl IdProvider for HimmelblauProvider {
 
     async fn provider_authenticate(&self) -> Result<(), IdpError> {
         /* Determine if the authority is up by sending a simple get request */
-        let resp = match reqwest::get(self.authority_url.clone()).await {
+        let resp = match reqwest::get(format!("https://{}", self.authority_host)).await {
             Ok(resp) => resp,
             Err(_e) => return Err(IdpError::BadRequest),
         };

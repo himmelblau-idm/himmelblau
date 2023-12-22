@@ -24,6 +24,7 @@ pub fn split_username(username: &str) -> Option<(&str, &str)> {
 
 pub struct HimmelblauConfig {
     config: Ini,
+    filename: String,
 }
 
 fn str_to_home_attr(attrib: &str) -> HomeAttr {
@@ -51,6 +52,65 @@ fn match_bool(val: Option<String>, default: bool) -> bool {
     }
 }
 
+struct FederationProvider {
+    odc_provider: String,
+    domain: String,
+    tenant_id: Option<String>,
+    authority_host: Option<String>,
+    graph: Option<String>,
+}
+
+impl FederationProvider {
+    fn new(odc_provider: &str, domain: &str) -> Self {
+        FederationProvider {
+            odc_provider: odc_provider.to_string(),
+            domain: domain.to_string(),
+            tenant_id: None,
+            authority_host: None,
+            graph: None,
+        }
+    }
+
+    async fn set(&mut self) -> Result<()> {
+        let (authority_host, tenant_id, graph) =
+            request_federation_provider(&self.odc_provider, &self.domain).await?;
+        self.tenant_id = Some(tenant_id);
+        self.authority_host = Some(authority_host);
+        self.graph = Some(graph);
+        Ok(())
+    }
+
+    async fn get_tenant_id(&mut self) -> Result<String> {
+        if self.tenant_id.is_none() {
+            self.set().await?;
+        }
+        match &self.tenant_id {
+            Some(tenant_id) => Ok(tenant_id.to_string()),
+            None => Err(anyhow!("Failed fetching tenant_id")),
+        }
+    }
+
+    async fn get_authority_host(&mut self) -> Result<String> {
+        if self.authority_host.is_none() {
+            self.set().await?;
+        }
+        match &self.authority_host {
+            Some(authority_host) => Ok(authority_host.to_string()),
+            None => Err(anyhow!("Failed fetching authority_host")),
+        }
+    }
+
+    async fn get_graph(&mut self) -> Result<String> {
+        if self.graph.is_none() {
+            self.set().await?;
+        }
+        match &self.graph {
+            Some(graph) => Ok(graph.to_string()),
+            None => Err(anyhow!("Failed fetching graph")),
+        }
+    }
+}
+
 impl HimmelblauConfig {
     pub fn new(config_path: &str) -> Result<HimmelblauConfig, String> {
         let mut sconfig = Ini::new();
@@ -71,7 +131,10 @@ impl HimmelblauConfig {
                 config_path
             ));
         }
-        Ok(HimmelblauConfig { config: sconfig })
+        Ok(HimmelblauConfig {
+            config: sconfig,
+            filename: config_path.to_string(),
+        })
     }
 
     pub fn get(&self, section: &str, option: &str) -> Option<String> {
@@ -152,64 +215,43 @@ impl HimmelblauConfig {
         }
     }
 
-    async fn get_tenant_id_authority_and_graph(
+    pub async fn get_tenant_id_authority_and_graph(
         &self,
         domain: &str,
     ) -> Result<(String, String, String)> {
-        let odc_provider = self.get_odc_provider(domain);
-        let req = request_federation_provider(&odc_provider, domain).await;
+        let mut federation_provider =
+            FederationProvider::new(&self.get_odc_provider(domain), domain);
         let tenant_id = match self.config.get(domain, "tenant_id") {
             Some(val) => val,
             None => match self.config.get("global", "tenant_id") {
                 Some(val) => val,
-                None => {
-                    let tenant_id_req = req.as_ref();
-                    match tenant_id_req {
-                        Ok(val) => val,
-                        Err(e) => return Err(anyhow!("Failed fetching tenant_id: {}", e)),
-                    }
-                    .1
-                    .clone()
-                }
+                None => match federation_provider.get_tenant_id().await {
+                    Ok(val) => val,
+                    Err(e) => return Err(anyhow!("Failed fetching tenant_id: {}", e)),
+                },
             },
         };
         let authority_host = match self.config.get(domain, "authority_host") {
             Some(val) => val,
             None => match self.config.get("global", "authority_host") {
                 Some(val) => val,
-                None => {
-                    let authority_host_req = req.as_ref();
-                    match authority_host_req {
-                        Ok(val) => val.0.clone(),
-                        Err(_e) => String::from(DEFAULT_AUTHORITY_HOST),
-                    }
-                }
+                None => match federation_provider.get_authority_host().await {
+                    Ok(val) => val,
+                    Err(_) => String::from(DEFAULT_AUTHORITY_HOST),
+                },
             },
         };
         let graph = match self.config.get(domain, "graph") {
             Some(val) => val,
             None => match self.config.get("global", "graph") {
                 Some(val) => val,
-                None => {
-                    let graph_req = req.as_ref();
-                    match graph_req {
-                        Ok(val) => val.2.clone(),
-                        Err(_e) => String::from(DEFAULT_GRAPH),
-                    }
-                }
+                None => match federation_provider.get_graph().await {
+                    Ok(val) => val,
+                    Err(_) => String::from(DEFAULT_GRAPH),
+                },
             },
         };
         Ok((authority_host, tenant_id, graph))
-    }
-
-    pub async fn get_authority_url(&self, domain: &str) -> Result<(String, String, String)> {
-        let (authority_host, tenant_id, graph) =
-            match self.get_tenant_id_authority_and_graph(domain).await {
-                Ok(res) => res,
-                Err(e) => return Err(anyhow!("{}", e)),
-            };
-        let authority_url = format!("https://{}/{}", authority_host, tenant_id);
-        Ok((tenant_id, authority_url, graph))
     }
 
     pub fn get_app_id(&self, domain: &str) -> String {
@@ -338,8 +380,8 @@ impl HimmelblauConfig {
         }
     }
 
-    pub fn write(&self, config_file: &str) -> Result<(), Error> {
-        self.config.write(config_file)
+    pub fn write(&self) -> Result<(), Error> {
+        self.config.write(self.filename.clone())
     }
 
     pub fn set(&mut self, section: &str, key: &str, value: &str) {
@@ -355,6 +397,10 @@ impl HimmelblauConfig {
 
     pub fn get_selinux(&self) -> bool {
         match_bool(self.config.get("global", "selinux"), DEFAULT_SELINUX)
+    }
+
+    pub fn get_config_file(&self) -> String {
+        self.filename.clone()
     }
 }
 
