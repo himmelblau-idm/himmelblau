@@ -600,7 +600,7 @@ async fn main() -> ExitCode {
                     );
                     return ExitCode::FAILURE
                 }
-                if !readonly(&i_meta) {
+                if readonly(&i_meta) {
                     warn!("WARNING: DB folder permissions on {} indicate it may not be RW. This could cause the server start up to fail!", db_par_path_buf.to_str()
                     .unwrap_or("<db_par_path_buf invalid>")
                     );
@@ -638,7 +638,7 @@ async fn main() -> ExitCode {
             };
 
             // Create the identify provider connection
-            let idprovider = match HimmelblauMultiProvider::new() {
+            let idprovider = match HimmelblauMultiProvider::new(cfg.get_config_file().as_str()) {
                 Ok(idprovider) => idprovider,
                 Err(e) => {
                     error!("{}", e);
