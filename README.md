@@ -38,6 +38,10 @@ Configure your instance
     cp src/config/himmelblau.conf.example /etc/himmelblau/himmelblau.conf
     vim /etc/himmelblau/himmelblau.conf
 
+It's essential that you configure the `domains` and `pam_allow_groups` options, otherwise
+no users will be able to authenticate. These options designate the list of domains and users
+or groups which are allowed access to the host.
+
 Run the daemon with:
 
     cargo run --bin=himmelblaud -- -d -c ./src/config/himmelblau.conf.example &
