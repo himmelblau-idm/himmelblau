@@ -6,6 +6,7 @@ use pyo3::types::PyDict;
 use pyo3::types::PyList;
 use pyo3::types::PyString;
 use pyo3::types::PyTuple;
+use serde::Deserialize;
 use std::collections::HashMap;
 use tracing::error;
 use uuid::Uuid;
@@ -148,7 +149,7 @@ impl<'a> FromPyObject<'a> for DeviceToken {
 }
 
 /* RFC8628: 3.2. Device Authorization Response */
-#[derive(Default, Clone)]
+#[derive(Default, Clone, Deserialize)]
 pub struct DeviceAuthorizationResponse {
     pub device_code: String,
     pub user_code: String,

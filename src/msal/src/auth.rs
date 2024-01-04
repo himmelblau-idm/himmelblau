@@ -1,5 +1,8 @@
 use crate::constants::{BROKER_APP_ID, BROKER_CLIENT_IDENT};
+use crate::py_auth::{DeviceAuthorizationResponse, UnixUserToken};
 use anyhow::{anyhow, Result};
+use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+use base64::Engine;
 use compact_jwt::crypto::JwsTpmSigner;
 use compact_jwt::jws::JwsBuilder;
 use compact_jwt::traits::JwsMutSigner;
@@ -7,7 +10,11 @@ use kanidm_hsm_crypto::{BoxedDynTpm, IdentityKey};
 use os_release::OsRelease;
 use reqwest::{header, Client};
 use serde::{Deserialize, Serialize};
+use serde_json::{from_str as json_from_str, Value};
+use std::collections::HashMap;
 use tracing::debug;
+use urlencoding::encode as url_encode;
+use uuid::Uuid;
 
 pub enum Credentials {
     UsernamePassword(String, String),
@@ -84,6 +91,69 @@ struct Nonce {
 }
 
 #[derive(Debug, Clone, Deserialize)]
+pub struct AcquireTokenResponse {
+    pub token_type: String,
+    pub scope: String,
+    pub expires_in: u32,
+    pub ext_expires_in: u32,
+    access_token: String,
+    refresh_token: String,
+    id_token: String,
+    client_info: String,
+}
+
+impl AcquireTokenResponse {
+    fn unix_user_token(self) -> Result<UnixUserToken> {
+        // Parse the id_token for name, spn
+        let mut siter = self.id_token.splitn(3, '.');
+        if siter.next().is_none() {
+            return Err(anyhow!("Failed parsing id_token header"));
+        }
+        let payload_str = match siter.next() {
+            Some(payload_str) => String::from_utf8(URL_SAFE_NO_PAD.decode(payload_str)?)?,
+            None => return Err(anyhow!("Failed parsing id_token payload")),
+        };
+        let payload: Value = json_from_str(&payload_str)?;
+
+        // Parse the client_info for uid
+        let client_info_str = String::from_utf8(URL_SAFE_NO_PAD.decode(self.client_info)?)?;
+        let client_info: Value = json_from_str(&client_info_str)?;
+        let uid_str = client_info["uid"].to_string();
+        let uid = Uuid::parse_str(uid_str.trim_matches('"'))?;
+
+        Ok(UnixUserToken {
+            spn: payload["preferred_username"]
+                .to_string()
+                .trim_matches('"')
+                .to_string(),
+            displayname: payload["name"].to_string().trim_matches('"').to_string(),
+            uuid: uid,
+            access_token: Some(self.access_token),
+            refresh_token: Some(self.refresh_token),
+            ..Default::default()
+        })
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct ErrorResponse {
+    error: String,
+    error_description: String,
+    error_codes: Vec<u32>,
+}
+
+impl ErrorResponse {
+    fn unix_user_token_error(self) -> Result<UnixUserToken> {
+        Ok(UnixUserToken {
+            errors: self.error_codes,
+            error: self.error,
+            error_description: self.error_description,
+            ..Default::default()
+        })
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
 pub struct PrimaryRefreshToken {
     pub refresh_token: String,
     pub refresh_token_expires_in: u64,
@@ -95,6 +165,7 @@ pub struct ClientApplication {
     client: Client,
     tenant_id: String,
     authority_host: String,
+    refresh_cache: HashMap<String, String>,
 }
 
 impl ClientApplication {
@@ -103,7 +174,217 @@ impl ClientApplication {
             client: reqwest::Client::new(),
             tenant_id: tenant_id.to_string(),
             authority_host: authority_host.to_string(),
+            refresh_cache: HashMap::new(),
         })
+    }
+
+    pub async fn acquire_token_by_username_password(
+        &mut self,
+        username: &str,
+        password: &str,
+        scopes: Vec<&str>,
+    ) -> Result<UnixUserToken> {
+        let mut all_scopes = vec!["openid", "profile", "offline_access"];
+        all_scopes.extend(scopes);
+        let scopes_str = all_scopes.join(" ");
+
+        let params = [
+            ("client_id", BROKER_APP_ID),
+            ("scope", &scopes_str),
+            ("username", username),
+            ("password", password),
+            ("grant_type", "password"),
+            ("client_info", "1"),
+        ];
+        let payload = params
+            .iter()
+            .map(|(k, v)| format!("{}={}", k, url_encode(v)))
+            .collect::<Vec<String>>()
+            .join("&");
+
+        let resp = self
+            .client
+            .post(format!(
+                "https://{}/{}/oauth2/v2.0/token",
+                self.authority_host, self.tenant_id
+            ))
+            .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+            .header(header::ACCEPT, "application/json")
+            .body(payload)
+            .send()
+            .await?;
+        if resp.status().is_success() {
+            let json_resp: AcquireTokenResponse = resp.json().await?;
+            let result = json_resp.unix_user_token();
+
+            // Cache the refresh token
+            if let Ok(ref token) = result {
+                if let Some(refresh_token) = &token.refresh_token {
+                    if self.refresh_cache.contains_key(username) {
+                        self.refresh_cache.remove(username);
+                    }
+                    self.refresh_cache
+                        .insert(username.to_string(), refresh_token.to_string());
+                }
+            }
+
+            result
+        } else {
+            let json_resp: ErrorResponse = resp.json().await?;
+            json_resp.unix_user_token_error()
+        }
+    }
+
+    pub async fn initiate_device_flow(
+        &self,
+        scopes: Vec<&str>,
+    ) -> Result<DeviceAuthorizationResponse> {
+        let mut all_scopes = vec!["openid", "profile", "offline_access"];
+        all_scopes.extend(scopes);
+        let scopes_str = all_scopes.join(" ");
+
+        let params = [("client_id", BROKER_APP_ID), ("scope", &scopes_str)];
+        let payload = params
+            .iter()
+            .map(|(k, v)| format!("{}={}", k, url_encode(v)))
+            .collect::<Vec<String>>()
+            .join("&");
+
+        let resp = self
+            .client
+            .post(format!(
+                "https://{}/{}/oauth2/v2.0/devicecode",
+                self.authority_host, self.tenant_id
+            ))
+            .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+            .header(header::ACCEPT, "application/json")
+            .body(payload)
+            .send()
+            .await?;
+        if resp.status().is_success() {
+            let json_resp: DeviceAuthorizationResponse = resp.json().await?;
+            Ok(json_resp)
+        } else {
+            Err(anyhow!(
+                "Failed initiating device flow: {}",
+                resp.text().await?
+            ))
+        }
+    }
+
+    pub async fn acquire_token_by_device_flow(
+        &mut self,
+        flow: DeviceAuthorizationResponse,
+    ) -> Result<UnixUserToken> {
+        let params = [
+            ("client_id", BROKER_APP_ID),
+            ("grant_type", "urn:ietf:params:oauth:grant-type:device_code"),
+            ("device_code", &flow.device_code),
+        ];
+        let payload = params
+            .iter()
+            .map(|(k, v)| format!("{}={}", k, url_encode(v)))
+            .collect::<Vec<String>>()
+            .join("&");
+
+        let resp = self
+            .client
+            .post(format!(
+                "https://{}/{}/oauth2/v2.0/token",
+                self.authority_host, self.tenant_id
+            ))
+            .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+            .header(header::ACCEPT, "application/json")
+            .body(payload)
+            .send()
+            .await?;
+        if resp.status().is_success() {
+            let json_resp: AcquireTokenResponse = resp.json().await?;
+            let result = json_resp.unix_user_token();
+
+            // Cache the refresh token
+            if let Ok(ref token) = result {
+                if let Some(refresh_token) = &token.refresh_token {
+                    let username = &token.spn;
+                    if self.refresh_cache.contains_key(username) {
+                        self.refresh_cache.remove(username);
+                    }
+                    self.refresh_cache
+                        .insert(username.to_string(), refresh_token.to_string());
+                }
+            }
+
+            result
+        } else {
+            let json_resp: ErrorResponse = resp.json().await?;
+            json_resp.unix_user_token_error()
+        }
+    }
+
+    pub async fn acquire_token_silent(
+        &mut self,
+        scopes: Vec<&str>,
+        username: &str,
+    ) -> Result<UnixUserToken> {
+        let refresh_token = match self.refresh_cache.get(username) {
+            Some(refresh_token) => refresh_token,
+            None => return Err(anyhow!("Acquire token silent failed")),
+        };
+        let mut all_scopes = vec!["openid", "profile", "offline_access"];
+        all_scopes.extend(scopes);
+        let scopes_str = all_scopes.join(" ");
+
+        let params = [
+            ("client_id", BROKER_APP_ID),
+            ("scope", &scopes_str),
+            ("grant_type", "refresh_token"),
+            ("refresh_token", refresh_token),
+            ("client_info", "1"),
+        ];
+        let payload = params
+            .iter()
+            .map(|(k, v)| format!("{}={}", k, url_encode(v)))
+            .collect::<Vec<String>>()
+            .join("&");
+
+        let resp = self
+            .client
+            .post(format!(
+                "https://{}/{}/oauth2/v2.0/token",
+                self.authority_host, self.tenant_id
+            ))
+            .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+            .header(header::ACCEPT, "application/json")
+            .body(payload)
+            .send()
+            .await?;
+        if resp.status().is_success() {
+            let json_resp: AcquireTokenResponse = resp.json().await?;
+            let result = json_resp.unix_user_token();
+
+            // Cache the refresh token
+            if let Ok(ref token) = result {
+                if let Some(refresh_token) = &token.refresh_token {
+                    if self.refresh_cache.contains_key(username) {
+                        self.refresh_cache.remove(username);
+                    }
+                    self.refresh_cache
+                        .insert(username.to_string(), refresh_token.to_string());
+                }
+            }
+
+            result
+        } else {
+            let json_resp: ErrorResponse = resp.json().await?;
+            json_resp.unix_user_token_error()
+        }
+    }
+
+    pub fn remove_account(&mut self, username: &str) -> Result<()> {
+        if self.refresh_cache.contains_key(username) {
+            self.refresh_cache.remove(username);
+        }
+        Ok(())
     }
 
     async fn request_nonce(&self) -> Result<String> {

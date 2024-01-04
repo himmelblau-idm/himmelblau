@@ -12,13 +12,12 @@ use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use himmelblau_policies::policies::apply_group_policy;
 use kanidm_hsm_crypto::{KeyAlgorithm, Tpm};
-use msal::auth::{ClientApplication as ConfidentialClientApplication, Credentials};
+use msal::auth::{ClientApplication, Credentials};
 use msal::constants::BROKER_APP_ID;
 use msal::enroll::register_device;
 use msal::py_auth::DeviceAuthorizationResponse as msal_DeviceAuthorizationResponse;
 use msal::py_auth::{
-    ClientApplication, PublicClientApplication, UnixUserToken, AUTH_PENDING, NO_CONSENT,
-    NO_GROUP_CONSENT, NO_SECRET, REQUIRES_MFA,
+    UnixUserToken, AUTH_PENDING, NO_CONSENT, NO_GROUP_CONSENT, NO_SECRET, REQUIRES_MFA,
 };
 use msal::user::{request_user_groups, DirectoryObject};
 use reqwest;
@@ -72,7 +71,7 @@ impl HimmelblauMultiProvider {
                 };
             let authority_url = format!("https://{}/{}", authority_host, tenant_id);
             let app_id = cfg.get_app_id(&domain);
-            let app = match PublicClientApplication::new(&app_id, authority_url.as_str(), None) {
+            let app = match ClientApplication::new(&tenant_id, authority_host.as_str()) {
                 Ok(app) => app,
                 Err(e) => return Err(anyhow!("{}", e)),
             };
@@ -247,7 +246,7 @@ impl IdProvider for HimmelblauMultiProvider {
 }
 
 pub struct HimmelblauProvider {
-    client: RwLock<PublicClientApplication>,
+    client: RwLock<ClientApplication>,
     config: Arc<RwLock<HimmelblauConfig>>,
     tenant_id: String,
     domain: String,
@@ -259,7 +258,7 @@ pub struct HimmelblauProvider {
 
 impl HimmelblauProvider {
     pub fn new(
-        client: PublicClientApplication,
+        client: ClientApplication,
         config: &Arc<RwLock<HimmelblauConfig>>,
         tenant_id: &str,
         domain: &str,
@@ -373,6 +372,7 @@ impl IdProvider for HimmelblauProvider {
             .write()
             .await
             .acquire_token_silent(scopes.clone(), &account_id)
+            .await
         {
             Ok(token) => token,
             Err(_e) => return Err(IdpError::NotFound),
@@ -389,6 +389,7 @@ impl IdProvider for HimmelblauProvider {
                 .write()
                 .await
                 .acquire_token_silent(vec![], &account_id)
+                .await
             {
                 Ok(token) => token,
                 Err(_e) => return Err(IdpError::NotFound),
@@ -436,8 +437,7 @@ impl IdProvider for HimmelblauProvider {
                 }
                 let drs_scope = format!("{}/.default", DRS_APP_ID);
                 if !self.is_domain_joined().await {
-                    /* If we're authenticating as a Broker, and we're
-                     * using a PublicClientApplication, then we need to
+                    /* If we're not joined then we need to
                      * perform a domain join. Request access to the DRS
                      * resource (Domain Registration Service). */
                     if self.app_id == BROKER_APP_ID {
@@ -449,6 +449,7 @@ impl IdProvider for HimmelblauProvider {
                     .write()
                     .await
                     .acquire_token_by_username_password(account_id, &cred, scopes.clone())
+                    .await
                 {
                     Ok(token) => token,
                     Err(_e) => return Err(IdpError::NotFound),
@@ -468,6 +469,7 @@ impl IdProvider for HimmelblauProvider {
                         .write()
                         .await
                         .acquire_token_by_username_password(account_id, &cred, scopes)
+                        .await
                     {
                         Ok(token) => token,
                         Err(_e) => return Err(IdpError::NotFound),
@@ -484,24 +486,6 @@ impl IdProvider for HimmelblauProvider {
                             error!("Failed to join domain: {:?}", e);
                             return Err(IdpError::BadRequest);
                         } else {
-                            /* We switched from Public to Confidential due to a
-                             * domain join and now need to obtain a PRT */
-                            let capp = match ConfidentialClientApplication::new(
-                                &self.tenant_id,
-                                &self.authority_host,
-                            ) {
-                                Ok(capp) => capp,
-                                Err(e) => {
-                                    // Invalidate cached creds if PRT req fails
-                                    if let Err(e) =
-                                        self.client.write().await.remove_account(account_id)
-                                    {
-                                        error!("Removing the account failed: {:?}", e);
-                                    }
-                                    error!("Failed to initialize ConfidentialClient: {:?}", e);
-                                    return Err(IdpError::BadRequest);
-                                }
-                            };
                             let csr_tag = format!("{}/certificate", self.domain);
                             let loadable_id_key: Option<tpm::LoadableIdentityKey> =
                                 match keystore.get_tagged_hsm_key(&csr_tag) {
@@ -547,7 +531,10 @@ impl IdProvider for HimmelblauProvider {
                             /* For now we do nothing with the PRT, except
                              * verify that we can obtain it. */
                             debug!("Requesting PRT using username/password");
-                            if let Err(e) = capp
+                            if let Err(e) = self
+                                .client
+                                .write()
+                                .await
                                 .request_user_prt(
                                     Credentials::UsernamePassword(
                                         account_id.to_string(),
@@ -596,6 +583,7 @@ impl IdProvider for HimmelblauProvider {
                     .write()
                     .await
                     .acquire_token_by_device_flow(data.clone().into())
+                    .await
                 {
                     Ok(token) => token,
                     Err(_e) => return Err(IdpError::NotFound),
@@ -608,6 +596,7 @@ impl IdProvider for HimmelblauProvider {
                         .write()
                         .await
                         .acquire_token_by_device_flow(data.clone().into())
+                        .await
                     {
                         Ok(token) => token,
                         Err(_e) => return Err(IdpError::NotFound),
@@ -624,24 +613,6 @@ impl IdProvider for HimmelblauProvider {
                             error!("Failed to join domain: {:?}", e);
                             return Err(IdpError::BadRequest);
                         } else if let Some(refresh_token) = uutoken.refresh_token {
-                            /* We switched from Public to Confidential due to a
-                             * domain join and now need to obtain a PRT */
-                            let capp = match ConfidentialClientApplication::new(
-                                &self.tenant_id,
-                                &self.authority_host,
-                            ) {
-                                Ok(capp) => capp,
-                                Err(e) => {
-                                    // Invalidate cached creds if PRT req fails
-                                    if let Err(e) =
-                                        self.client.write().await.remove_account(account_id)
-                                    {
-                                        error!("Removing the account failed: {:?}", e);
-                                    }
-                                    error!("Failed to initialize ConfidentialClient: {:?}", e);
-                                    return Err(IdpError::BadRequest);
-                                }
-                            };
                             let csr_tag = format!("{}/certificate", self.domain);
                             let loadable_id_key: Option<tpm::LoadableIdentityKey> =
                                 match keystore.get_tagged_hsm_key(&csr_tag) {
@@ -687,7 +658,10 @@ impl IdProvider for HimmelblauProvider {
                             /* For now we do nothing with the PRT, except
                              * verify that we can obtain it. */
                             debug!("Requesting PRT using refresh token");
-                            if let Err(e) = capp
+                            if let Err(e) = self
+                                .client
+                                .write()
+                                .await
                                 .request_user_prt(
                                     Credentials::RefreshToken(refresh_token),
                                     tpm,
@@ -788,7 +762,7 @@ impl HimmelblauProvider {
                     let mut scopes = vec!["GroupMember.Read.All"];
                     if !self.is_domain_joined().await {
                         /* If we're authenticating as a Broker, and
-                         * we're using a PublicClientApplication, then
+                         * we're using a ClientApplication, then
                          * we need to perform a domain join. Request
                          * access to the DRS resource (Domain
                          * Registration Service). */
@@ -796,7 +770,7 @@ impl HimmelblauProvider {
                             scopes.push(drs_scope.as_str());
                         }
                     }
-                    let resp = match self.client.write().await.initiate_device_flow(scopes) {
+                    let resp = match self.client.write().await.initiate_device_flow(scopes).await {
                         Ok(resp) => resp,
                         Err(_e) => return Err(IdpError::BadRequest),
                     };
