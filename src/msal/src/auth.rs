@@ -1,5 +1,4 @@
 use crate::constants::{BROKER_APP_ID, BROKER_CLIENT_IDENT};
-use crate::py_auth::{DeviceAuthorizationResponse, UnixUserToken};
 use anyhow::{anyhow, Result};
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine;
@@ -15,6 +14,44 @@ use std::collections::HashMap;
 use tracing::debug;
 use urlencoding::encode as url_encode;
 use uuid::Uuid;
+
+pub const INVALID_CRED: u32 = 0xC3CE;
+pub const REQUIRES_MFA: u32 = 0xC39C;
+pub const INVALID_USER: u32 = 0xC372;
+pub const NO_CONSENT: u32 = 0xFDE9;
+pub const NO_GROUP_CONSENT: u32 = 0xFDEA;
+pub const NO_SECRET: u32 = 0x6AD09A;
+pub const AUTH_PENDING: u32 = 0x11180;
+
+/* RFC8628: 3.2. Device Authorization Response */
+#[derive(Default, Clone, Deserialize)]
+pub struct DeviceAuthorizationResponse {
+    pub device_code: String,
+    pub user_code: String,
+    pub verification_uri: String,
+    /* MS doesn't implement verification_uri_complete yet, but our
+     * authentication will be simpler once they do, so assume it works and fall
+     * back to verification_uri if it doesn't.
+     */
+    pub verification_uri_complete: Option<String>,
+    pub expires_in: u32,
+    pub interval: Option<u32>,
+    pub message: Option<String>,
+}
+
+#[derive(Default)]
+pub struct UnixUserToken {
+    pub spn: String,
+    pub displayname: String,
+    pub uuid: Uuid,
+    pub access_token: Option<String>,
+    pub refresh_token: Option<String>,
+
+    /* These are only present on failure */
+    pub errors: Vec<u32>,
+    pub error: String,
+    pub error_description: String,
+}
 
 pub enum Credentials {
     UsernamePassword(String, String),

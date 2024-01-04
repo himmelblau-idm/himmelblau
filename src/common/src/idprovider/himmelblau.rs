@@ -12,13 +12,13 @@ use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use himmelblau_policies::policies::apply_group_policy;
 use kanidm_hsm_crypto::{KeyAlgorithm, Tpm};
-use msal::auth::{ClientApplication, Credentials};
+use msal::auth::{
+    ClientApplication, Credentials,
+    DeviceAuthorizationResponse as msal_DeviceAuthorizationResponse, UnixUserToken, AUTH_PENDING,
+    NO_CONSENT, NO_GROUP_CONSENT, NO_SECRET, REQUIRES_MFA,
+};
 use msal::constants::BROKER_APP_ID;
 use msal::enroll::register_device;
-use msal::py_auth::DeviceAuthorizationResponse as msal_DeviceAuthorizationResponse;
-use msal::py_auth::{
-    UnixUserToken, AUTH_PENDING, NO_CONSENT, NO_GROUP_CONSENT, NO_SECRET, REQUIRES_MFA,
-};
 use msal::user::{request_user_groups, DirectoryObject};
 use reqwest;
 use std::collections::HashMap;
