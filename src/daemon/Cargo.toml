@@ -20,7 +20,6 @@ path = "src/tasks_daemon.rs"
 
 [dependencies]
 himmelblau_unix_common = { workspace = true }
-msal = { workspace = true }
 tokio = { workspace = true }
 tokio-util = { workspace = true }
 tracing = { workspace = true }

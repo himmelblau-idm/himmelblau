@@ -13,8 +13,8 @@ use crate::constants::{
     SERVER_CONFIG_PATH,
 };
 use crate::unix_config::{HomeAttr, HsmType};
-use msal::constants::BROKER_APP_ID;
-use msal::misc::request_federation_provider;
+use graph::constants::BROKER_APP_ID;
+use graph::misc::request_federation_provider;
 use std::env;
 
 pub fn split_username(username: &str) -> Option<(&str, &str)> {
