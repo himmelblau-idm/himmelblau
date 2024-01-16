@@ -19,6 +19,7 @@ serde_derive = "^1.0.164"
 serde_json = { workspace = true }
 tracing = { workspace = true }
 configparser = "^3.0.2"
+msal = { workspace = true }
 graph = { workspace = true }
 rand = "^0.8"
 rand_chacha = "^0.3"
@@ -28,6 +29,7 @@ pem = { workspace = true }
 kanidm-hsm-crypto = { workspace = true }
 compact_jwt = { workspace = true }
 os-release = { workspace = true }
+zeroize = { workspace = true }
 
 # Kanidm deps
 rusqlite = { workspace = true }

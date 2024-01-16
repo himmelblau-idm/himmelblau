@@ -14,13 +14,7 @@
 pub mod misc;
 
 #[cfg(target_family = "unix")]
-pub mod discovery;
-
-#[cfg(target_family = "unix")]
 pub mod nonce;
-
-#[cfg(target_family = "unix")]
-pub mod enroll;
 
 #[cfg(target_family = "unix")]
 pub mod constants;
@@ -33,6 +27,3 @@ pub mod application;
 
 #[cfg(target_family = "unix")]
 pub mod group;
-
-#[cfg(target_family = "unix")]
-pub mod auth;

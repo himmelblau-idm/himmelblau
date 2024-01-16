@@ -30,3 +30,4 @@ os-release = { workspace = true }
 compact_jwt = { workspace = true }
 jsonwebtoken = { workspace = true }
 urlencoding = { workspace = true }
+msal = { workspace = true }
