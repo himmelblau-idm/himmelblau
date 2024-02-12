@@ -16,7 +16,7 @@ enforces Intune MDM policies.
 
 The following packages are required on opensuse to build and test this package.
 
-    zypper in cargo git make gcc sqlite3-devel libopenssl-3-devel pam-devel python3-devel
+    zypper in cargo git make gcc sqlite3-devel libopenssl-3-devel pam-devel
 
 You can build the components with
 
