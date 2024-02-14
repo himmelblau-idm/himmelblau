@@ -1,5 +1,5 @@
 [package]
-name = "msal"
+name = "graph"
 
 version.workspace = true
 authors.workspace = true
@@ -10,7 +10,7 @@ homepage.workspace = true
 repository.workspace = true
 
 [lib]
-name = "msal"
+name = "graph"
 path = "src/lib.rs"
 
 [dependencies]
@@ -30,3 +30,4 @@ os-release = { workspace = true }
 compact_jwt = { workspace = true }
 jsonwebtoken = { workspace = true }
 urlencoding = { workspace = true }
+msal = { workspace = true }

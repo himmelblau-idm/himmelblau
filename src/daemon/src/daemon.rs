@@ -684,15 +684,6 @@ async fn main() -> ExitCode {
                 };
             }
 
-            // Create the identify provider connection
-            let idprovider = match HimmelblauMultiProvider::new(cfg.get_config_file().as_str()).await {
-                Ok(idprovider) => idprovider,
-                Err(e) => {
-                    error!("{}", e);
-                    return ExitCode::FAILURE;
-                }
-            };
-
             // Create the database
             let db = match Db::new(&cfg.get_db_path()) {
                 Ok(db) => db,
@@ -787,6 +778,20 @@ async fn main() -> ExitCode {
             }
 
             // Okay, the hsm is now loaded and ready to go.
+
+            // Create the identify provider connection
+            let mut keystore = db.write().await;
+            let idprovider = match HimmelblauMultiProvider::new(cfg.get_config_file().as_str(), &mut keystore).await {
+                Ok(idprovider) => idprovider,
+                Err(e) => {
+                    error!("{}", e);
+                    return ExitCode::FAILURE;
+                }
+            };
+            if let Err(err) = keystore.commit() {
+                error!(?err, "Failed to commit database transaction, unable to proceed");
+                return ExitCode::FAILURE
+            }
 
             let cl_inner = match Resolver::new(
                 db,

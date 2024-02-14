@@ -1,5 +1,5 @@
-use crate::discovery::{NonceService, DISCOVERY_URL};
 use anyhow::{anyhow, Result};
+use msal::discovery::{NonceService, DISCOVERY_URL};
 use reqwest::{header, Url};
 use serde::Deserialize;
 

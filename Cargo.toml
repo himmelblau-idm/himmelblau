@@ -3,7 +3,7 @@ members = [
 	"src/daemon",
 	"src/cli",
 	"src/common",
-	"src/msal",
+	"src/graph",
 	"src/pam",
 	"src/nss",
 	"src/glue",
@@ -36,7 +36,8 @@ tracing-subscriber = "^0.3.17"
 tracing = "^0.1.37"
 himmelblau_unix_common = { path = "src/common" }
 kanidm_unix_common = { path = "src/glue" }
-msal = { path = "src/msal" }
+msal = { version = "0.1.7", features = ["tpm"] }
+graph = { path = "src/graph" }
 clap = { version = "^3.2", features = ["derive", "env"] }
 clap_complete = "^4.4.1"
 reqwest = { version = "^0.11.18", features = ["json"] }
@@ -49,6 +50,7 @@ pem = "^3.0.2"
 chrono = "^0.4.31"
 os-release = "^0.1.0"
 jsonwebtoken = "^9.2.0"
+zeroize = "^1.7.0"
 
 # Kanidm deps
 argon2 = { version = "0.5.2", features = ["alloc"] }
@@ -74,7 +76,7 @@ tracing-forest = "^0.1.6"
 rusqlite = "^0.28.0"
 hashbrown = { version = "0.14.0", features = ["serde", "inline-more", "ahash"] }
 lru = "^0.8.0"
-kanidm_lib_crypto = { path = "./src/kanidm/libs/crypto", version = "1.1.0-rc.15-dev" }
+kanidm_lib_crypto = { path = "./src/kanidm/libs/crypto", version = "0.1.2" }
 kanidm_utils_users = { path = "./src/kanidm/libs/users" }
 walkdir = "2"
 csv = "1.2.2"
@@ -98,5 +100,5 @@ opentelemetry-stdout = { version = "0.1.0", features = [
 ] }
 tonic = "0.10.2"
 tracing-opentelemetry = "0.21.0"
-compact_jwt = { git = "https://github.com/kanidm/compact-jwt.git", branch = "main", features = ["hsm-crypto"] }
-kanidm-hsm-crypto = "^0.1.5"
+compact_jwt = { version = "0.3.4", features = ["hsm-crypto", "msextensions"] }
+kanidm-hsm-crypto = { version = "^0.1.6", features = ["msextensions"] }
