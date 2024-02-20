@@ -358,7 +358,7 @@ impl IdProvider for HimmelblauProvider {
             .client
             .write()
             .await
-            .exchange_prt_for_access_token(&prt, scopes, tpm, machine_key)
+            .exchange_prt_for_access_token(&prt, scopes, tpm, machine_key, None)
             .await
         {
             Ok(token) => token,
@@ -374,7 +374,7 @@ impl IdProvider for HimmelblauProvider {
                         .client
                         .write()
                         .await
-                        .exchange_prt_for_access_token(&prt, vec![], tpm, machine_key)
+                        .exchange_prt_for_access_token(&prt, vec![], tpm, machine_key, None)
                         .await
                     {
                         Ok(token) => token,
