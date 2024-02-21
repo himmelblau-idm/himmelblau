@@ -12,6 +12,7 @@ members = [
 	"src/proto",
 	"src/kanidm/libs/crypto",
 	"src/kanidm/libs/users",
+	"src/idmap",
 ]
 resolver = "2"
 
@@ -52,6 +53,7 @@ chrono = "^0.4.31"
 os-release = "^0.1.0"
 jsonwebtoken = "^9.2.0"
 zeroize = "^1.7.0"
+idmap = { path = "src/idmap" }
 
 # Kanidm deps
 argon2 = { version = "0.5.2", features = ["alloc"] }

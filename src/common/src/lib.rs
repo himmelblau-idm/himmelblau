@@ -22,8 +22,6 @@ pub mod config;
 #[cfg(target_family = "unix")]
 pub mod constants;
 #[cfg(target_family = "unix")]
-pub mod idmap;
-#[cfg(target_family = "unix")]
 pub mod unix_config;
 
 // Kanidm modules

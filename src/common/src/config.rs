@@ -8,14 +8,21 @@ use tracing::{debug, error};
 use crate::constants::{
     DEFAULT_AUTHORITY_HOST, DEFAULT_CACHE_TIMEOUT, DEFAULT_CONFIG_PATH, DEFAULT_CONN_TIMEOUT,
     DEFAULT_DB_PATH, DEFAULT_GRAPH, DEFAULT_HELLO_ENABLED, DEFAULT_HOME_ALIAS, DEFAULT_HOME_ATTR,
-    DEFAULT_HOME_PREFIX, DEFAULT_HSM_PIN_PATH, DEFAULT_IDMAP_RANGE, DEFAULT_ODC_PROVIDER,
+    DEFAULT_HOME_PREFIX, DEFAULT_HSM_PIN_PATH, DEFAULT_ID_ATTR_MAP, DEFAULT_ODC_PROVIDER,
     DEFAULT_SELINUX, DEFAULT_SHELL, DEFAULT_SOCK_PATH, DEFAULT_TASK_SOCK_PATH,
     DEFAULT_USE_ETC_SKEL, SERVER_CONFIG_PATH,
 };
 use crate::unix_config::{HomeAttr, HsmType};
 use graph::constants::BROKER_APP_ID;
 use graph::misc::request_federation_provider;
+use idmap::DEFAULT_IDMAP_RANGE;
 use std::env;
+
+#[derive(Debug, Copy, Clone)]
+pub enum IdAttr {
+    Uuid,
+    Name,
+}
 
 pub fn split_username(username: &str) -> Option<(&str, &str)> {
     let tup: Vec<&str> = username.split('@').collect();
@@ -455,6 +462,20 @@ impl HimmelblauConfig {
             self.config.get("global", "enable_hello"),
             DEFAULT_HELLO_ENABLED,
         )
+    }
+
+    pub fn get_id_attr_map(&self) -> IdAttr {
+        match self.config.get("global", "id_attr_map") {
+            Some(id_attr_map) => match id_attr_map.to_lowercase().as_str() {
+                "uuid" => IdAttr::Uuid,
+                "name" => IdAttr::Name,
+                _ => {
+                    error!("Unrecognized id_attr_map choice: {}", id_attr_map);
+                    DEFAULT_ID_ATTR_MAP
+                }
+            },
+            None => DEFAULT_ID_ATTR_MAP,
+        }
     }
 }
 

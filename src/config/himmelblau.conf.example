@@ -12,6 +12,11 @@
 # pam_allow_groups =
 #
 ### Optional global values
+# Specify whether to map uid/gid based on the object name or the object uuid.
+# By object uuid mapping is the old default, but can cause authentication
+# issues over SSH. Mapping by name is recommeneded.
+# id_attr_map = name ; {name|uuid}
+#
 # If you have an ODC provider (the default being odc.officeapps.live.com), specify
 # the hostname for sending a federationProvider request. If the federationProvider
 # request is successful, the tenant_id and authority_host options do not need to

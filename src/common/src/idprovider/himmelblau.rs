@@ -4,14 +4,15 @@ use super::interface::{
 };
 use crate::config::split_username;
 use crate::config::HimmelblauConfig;
+use crate::config::IdAttr;
 use crate::db::KeyStoreTxn;
-use crate::idmap::object_id_to_unix_id;
 use crate::idprovider::interface::tpm;
 use crate::unix_proto::{DeviceAuthorizationResponse, PamAuthRequest};
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use graph::user::{request_user_groups, DirectoryObject};
 use himmelblau_policies::policies::apply_group_policy;
+use idmap::SssIdmap;
 use kanidm_hsm_crypto::{LoadableIdentityKey, LoadableMsOapxbcRsaKey, PinValue, SealedData, Tpm};
 use msal::auth::{
     BrokerClientApplication, ClientInfo,
@@ -82,21 +83,38 @@ impl HimmelblauMultiProvider {
             Ok(config) => Arc::new(RwLock::new(config)),
             Err(e) => return Err(anyhow!("{}", e)),
         };
+        let idmap = match SssIdmap::new() {
+            Ok(idmap) => Arc::new(RwLock::new(idmap)),
+            Err(e) => return Err(anyhow!("{:?}", e)),
+        };
 
         let mut providers = HashMap::new();
         let cfg = config.read().await;
         for domain in cfg.get_configured_domains() {
             debug!("Adding provider for domain {}", domain);
+            let range = cfg.get_idmap_range(&domain);
+            let mut idmap_lk = idmap.write().await;
             let (authority_host, tenant_id, graph) =
                 match cfg.get_tenant_id_authority_and_graph(&domain).await {
                     Ok(res) => res,
                     Err(e) => return Err(anyhow!("{}", e)),
                 };
+            idmap_lk
+                .add_gen_domain(&domain, &tenant_id, range)
+                .map_err(|e| anyhow!("{:?}", e))?;
             let authority_url = format!("https://{}/{}", authority_host, tenant_id);
             let app = BrokerClientApplication::new(Some(authority_url.as_str()), None, None)
                 .map_err(|e| anyhow!("{:?}", e))?;
-            let provider =
-                HimmelblauProvider::new(app, &config, &tenant_id, &domain, &authority_host, &graph);
+            let provider = HimmelblauProvider::new(
+                app,
+                &config,
+                &tenant_id,
+                &domain,
+                &authority_host,
+                &graph,
+                &idmap,
+            )
+            .map_err(|_| anyhow!("Failed to initialize the provider"))?;
             {
                 let mut client = provider.client.write().await;
                 if let Ok(transport_key) =
@@ -315,6 +333,7 @@ pub struct HimmelblauProvider {
     authority_host: String,
     graph_url: String,
     refresh_cache: RefreshCache,
+    idmap: Arc<RwLock<SssIdmap>>,
 }
 
 impl HimmelblauProvider {
@@ -325,8 +344,9 @@ impl HimmelblauProvider {
         domain: &str,
         authority_host: &str,
         graph_url: &str,
-    ) -> Self {
-        HimmelblauProvider {
+        idmap: &Arc<RwLock<SssIdmap>>,
+    ) -> Result<Self, IdpError> {
+        Ok(HimmelblauProvider {
             client: RwLock::new(client),
             config: config.clone(),
             tenant_id: tenant_id.to_string(),
@@ -334,7 +354,8 @@ impl HimmelblauProvider {
             authority_host: authority_host.to_string(),
             graph_url: graph_url.to_string(),
             refresh_cache: RefreshCache::new(),
-        }
+            idmap: idmap.clone(),
+        })
     }
 }
 
@@ -1345,11 +1366,19 @@ impl HimmelblauProvider {
         };
         let sshkeys: Vec<String> = vec![];
         let valid = true;
-        let idmap_range = config.get_idmap_range(&self.domain);
-        let gidnumber = object_id_to_unix_id(&uuid, idmap_range).map_err(|e| {
-            debug!("Failed mapping uuid to unix uid/gid: {:?}", e);
-            IdpError::BadRequest
-        })?;
+        let idmap = self.idmap.read().await;
+        let gidnumber = match config.get_id_attr_map() {
+            IdAttr::Uuid => idmap
+                .object_id_to_unix_id(&self.tenant_id, &uuid)
+                .map_err(|e| {
+                    error!("{:?}", e);
+                    IdpError::BadRequest
+                })?,
+            IdAttr::Name => idmap.gen_to_unix(&self.tenant_id, &spn).map_err(|e| {
+                error!("{:?}", e);
+                IdpError::BadRequest
+            })?,
+        };
 
         // Add the fake primary group
         groups.push(GroupToken {
@@ -1376,6 +1405,7 @@ impl HimmelblauProvider {
         &self,
         value: DirectoryObject,
     ) -> Result<GroupToken> {
+        let config = self.config.read().await;
         let name = match value.get("display_name") {
             Some(name) => name,
             None => return Err(anyhow!("Failed retrieving group display_name")),
@@ -1386,10 +1416,15 @@ impl HimmelblauProvider {
             }
             None => return Err(anyhow!("Failed retrieving group uuid")),
         };
-        let config = self.config.read();
-        let idmap_range = config.await.get_idmap_range(&self.domain);
-        let gidnumber = object_id_to_unix_id(&id, idmap_range)
-            .map_err(|e| anyhow!("Failed mapping uuid to unix gid: {:?}", e))?;
+        let idmap = self.idmap.read().await;
+        let gidnumber = match config.get_id_attr_map() {
+            IdAttr::Uuid => idmap
+                .object_id_to_unix_id(&self.tenant_id, &id)
+                .map_err(|e| anyhow!("Failed fetching gid for {}: {:?}", id, e))?,
+            IdAttr::Name => idmap
+                .gen_to_unix(&self.tenant_id, name)
+                .map_err(|e| anyhow!("Failed fetching gid for {}: {:?}", name, e))?,
+        };
 
         Ok(GroupToken {
             name: name.clone(),
