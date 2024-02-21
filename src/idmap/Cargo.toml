@@ -1,0 +1,22 @@
+[package]
+name = "idmap"
+
+version.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+edition.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[lib]
+name = "idmap"
+path = "src/lib.rs"
+
+[dependencies]
+libc = "0.2.153"
+tracing = { workspace = true }
+uuid = { workspace = true }
+
+[build-dependencies]
+bindgen = "0.69.4"
