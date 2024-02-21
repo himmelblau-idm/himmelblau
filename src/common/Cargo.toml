@@ -30,6 +30,7 @@ kanidm-hsm-crypto = { workspace = true }
 compact_jwt = { workspace = true }
 os-release = { workspace = true }
 zeroize = { workspace = true }
+idmap = { workspace = true }
 
 # Kanidm deps
 rusqlite = { workspace = true }

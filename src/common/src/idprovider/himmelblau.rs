@@ -11,6 +11,7 @@ use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use graph::user::{request_user_groups, DirectoryObject};
 use himmelblau_policies::policies::apply_group_policy;
+use idmap::SssIdmap;
 use kanidm_hsm_crypto::{LoadableIdentityKey, LoadableMsOapxbcRsaKey, SealedData};
 use msal::auth::{
     BrokerClientApplication, DeviceAuthorizationResponse as msal_DeviceAuthorizationResponse,
@@ -25,27 +26,6 @@ use std::time::Duration;
 use std::time::SystemTime;
 use tokio::sync::RwLock;
 use uuid::Uuid;
-
-use rand::Rng;
-use rand::SeedableRng;
-use rand_chacha::ChaCha8Rng;
-use std::collections::hash_map::DefaultHasher;
-use std::hash::{Hash, Hasher};
-
-async fn gen_unique_account_uid(
-    rconfig: &Arc<RwLock<HimmelblauConfig>>,
-    domain: &str,
-    oid: &str,
-) -> u32 {
-    let config = rconfig.read();
-    let mut hash = DefaultHasher::new();
-    oid.hash(&mut hash);
-    let seed = hash.finish();
-    let mut rng = ChaCha8Rng::seed_from_u64(seed);
-
-    let (min, max): (u32, u32) = config.await.get_idmap_range(domain);
-    rng.gen_range(min..=max)
-}
 
 pub struct HimmelblauMultiProvider {
     providers: RwLock<HashMap<String, HimmelblauProvider>>,
@@ -104,6 +84,7 @@ impl HimmelblauMultiProvider {
         let cfg = config.read().await;
         for domain in cfg.get_configured_domains() {
             debug!("Adding provider for domain {}", domain);
+            let (min, max): (u32, u32) = cfg.get_idmap_range(&domain);
             let (authority_host, tenant_id, graph) =
                 match cfg.get_tenant_id_authority_and_graph(&domain).await {
                     Ok(res) => res,
@@ -111,8 +92,17 @@ impl HimmelblauMultiProvider {
                 };
             let authority_url = format!("https://{}/{}", authority_host, tenant_id);
             let app = BrokerClientApplication::new(Some(authority_url.as_str()), None, None);
-            let provider =
-                HimmelblauProvider::new(app, &config, &tenant_id, &domain, &authority_host, &graph);
+            let provider = HimmelblauProvider::new(
+                app,
+                &config,
+                &tenant_id,
+                &domain,
+                &authority_host,
+                &graph,
+                min,
+                max,
+            )
+            .map_err(|_| anyhow!("Failed to initialize the provider"))?;
             {
                 let mut client = provider.client.write().await;
                 if let Ok(transport_key) =
@@ -277,6 +267,7 @@ pub struct HimmelblauProvider {
     authority_host: String,
     graph_url: String,
     refresh_cache: RefreshCache,
+    idmap: SssIdmap,
 }
 
 impl HimmelblauProvider {
@@ -287,8 +278,17 @@ impl HimmelblauProvider {
         domain: &str,
         authority_host: &str,
         graph_url: &str,
-    ) -> Self {
-        HimmelblauProvider {
+        lower_idmap_range: u32,
+        upper_idmap_range: u32,
+    ) -> Result<Self, IdpError> {
+        let idmap = SssIdmap::new().map_err(|_| IdpError::BadRequest)?;
+        idmap
+            .set_lower(lower_idmap_range)
+            .map_err(|_| IdpError::BadRequest)?;
+        idmap
+            .set_upper(upper_idmap_range)
+            .map_err(|_| IdpError::BadRequest)?;
+        Ok(HimmelblauProvider {
             client: RwLock::new(client),
             config: config.clone(),
             tenant_id: tenant_id.to_string(),
@@ -296,7 +296,8 @@ impl HimmelblauProvider {
             authority_host: authority_host.to_string(),
             graph_url: graph_url.to_string(),
             refresh_cache: RefreshCache::new(),
-        }
+            idmap,
+        })
     }
 }
 
@@ -774,7 +775,10 @@ impl HimmelblauProvider {
         };
         let sshkeys: Vec<String> = vec![];
         let valid = true;
-        let gidnumber = gen_unique_account_uid(&self.config, &self.domain, &uuid.to_string()).await;
+        let gidnumber = self
+            .idmap
+            .object_id_to_unix(&uuid)
+            .map_err(|_| IdpError::BadRequest)?;
         // Add the fake primary group
         groups.push(GroupToken {
             name: spn.clone(),
@@ -808,7 +812,13 @@ impl HimmelblauProvider {
             Some(id) => id,
             None => return Err(anyhow!("Failed retrieving group uuid")),
         };
-        let gidnumber = gen_unique_account_uid(&self.config, &self.domain, id).await;
+        let gidnumber = self
+            .idmap
+            .object_id_to_unix(
+                &Uuid::parse_str(id)
+                    .map_err(|e| anyhow!("Failed parsing object id {}: {:?}", id, e))?,
+            )
+            .map_err(|_| anyhow!("Failed fetching gid for {}", id))?;
         Ok(GroupToken {
             name: name.clone(),
             spn: name.to_string(),
