@@ -424,50 +424,29 @@ impl IdProvider for HimmelblauProvider {
             (AuthCredHandler::Password, PamAuthRequest::Password { cred }) => {
                 let mut scopes = vec!["GroupMember.Read.All"];
                 if !self.is_domain_joined(keystore).await {
-                    let token = match self
+                    debug!("Device is not enrolled for {}. Enrolling now.", account_id);
+                    // Always force MFA when enrolling the device, otherwise
+                    // the device object will not have the MFA claim.
+                    let resp = self
                         .client
                         .write()
                         .await
-                        .acquire_token_by_username_password_for_device_enrollment(account_id, &cred)
+                        .initiate_device_flow_for_device_enrollment()
                         .await
-                    {
-                        Ok(token) => token,
-                        Err(MsalError::AcquireTokenFailed(resp)) => {
-                            if resp.error_codes.contains(&REQUIRES_MFA) {
-                                let resp = self
-                                    .client
-                                    .write()
-                                    .await
-                                    .initiate_device_flow_for_device_enrollment()
-                                    .await
-                                    .map_err(|e| {
-                                        error!("{:?}", e);
-                                        IdpError::BadRequest
-                                    })?;
-                                return Ok((
-                                    AuthResult::Next(AuthRequest::DeviceAuthorizationGrant {
-                                        data: resp.into(),
-                                    }),
-                                    /* An MFA auth cannot cache the password. This would
-                                     * lead to a potential downgrade to SFA attack (where
-                                     * the attacker auths with a stolen password, then
-                                     * disconnects the network to complete the auth). */
-                                    AuthCacheAction::None,
-                                ));
-                            } else {
-                                error!("Failed to authenticate for domain join: {:?}", resp);
-                                return Err(IdpError::BadRequest);
-                            }
-                        }
-                        Err(e) => {
-                            error!("Failed to authenticate for domain join: {:?}", e);
-                            return Err(IdpError::BadRequest);
-                        }
-                    };
-                    if let Err(e) = self.join_domain(tpm, &token, keystore, machine_key).await {
-                        error!("Failed to join domain: {:?}", e);
-                        return Err(IdpError::BadRequest);
-                    }
+                        .map_err(|e| {
+                            error!("{:?}", e);
+                            IdpError::BadRequest
+                        })?;
+                    return Ok((
+                        AuthResult::Next(AuthRequest::DeviceAuthorizationGrant {
+                            data: resp.into(),
+                        }),
+                        /* An MFA auth cannot cache the password. This would
+                         * lead to a potential downgrade to SFA attack (where
+                         * the attacker auths with a stolen password, then
+                         * disconnects the network to complete the auth). */
+                        AuthCacheAction::None,
+                    ));
                 }
                 let uutoken = match self
                     .client
@@ -509,6 +488,29 @@ impl IdProvider for HimmelblauProvider {
                                     error!("{:?}", e);
                                     IdpError::NotFound
                                 })?
+                        } else if resp.error_codes.contains(&REQUIRES_MFA) {
+                            // Only an enrollment token can be upgraded to a
+                            // regular token later.
+                            let resp = self
+                                .client
+                                .write()
+                                .await
+                                .initiate_device_flow_for_device_enrollment()
+                                .await
+                                .map_err(|e| {
+                                    error!("{:?}", e);
+                                    IdpError::BadRequest
+                                })?;
+                            return Ok((
+                                AuthResult::Next(AuthRequest::DeviceAuthorizationGrant {
+                                    data: resp.into(),
+                                }),
+                                /* An MFA auth cannot cache the password. This would
+                                 * lead to a potential downgrade to SFA attack (where
+                                 * the attacker auths with a stolen password, then
+                                 * disconnects the network to complete the auth). */
+                                AuthCacheAction::None,
+                            ));
                         } else {
                             error!("{}: {}", resp.error, resp.error_description);
                             return Err(IdpError::NotFound);
