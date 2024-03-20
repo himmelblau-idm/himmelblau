@@ -14,7 +14,7 @@ use himmelblau_policies::policies::apply_group_policy;
 use kanidm_hsm_crypto::{LoadableIdentityKey, LoadableMsOapxbcRsaKey, SealedData};
 use msal::auth::{
     BrokerClientApplication, DeviceAuthorizationResponse as msal_DeviceAuthorizationResponse,
-    EnrollAttrs, UserToken as UnixUserToken,
+    EnrollAttrs, MFAAuthContinue, UserToken as UnixUserToken,
 };
 use msal::error::{MsalError, AUTH_PENDING, NO_CONSENT, NO_GROUP_CONSENT, REQUIRES_MFA};
 use reqwest;
@@ -110,7 +110,8 @@ impl HimmelblauMultiProvider {
                     Err(e) => return Err(anyhow!("{}", e)),
                 };
             let authority_url = format!("https://{}/{}", authority_host, tenant_id);
-            let app = BrokerClientApplication::new(Some(authority_url.as_str()), None, None);
+            let app = BrokerClientApplication::new(Some(authority_url.as_str()), None, None)
+                .map_err(|e| anyhow!("{:?}", e))?;
             let provider =
                 HimmelblauProvider::new(app, &config, &tenant_id, &domain, &authority_host, &graph);
             {
@@ -328,6 +329,43 @@ impl From<DeviceAuthorizationResponse> for msal_DeviceAuthorizationResponse {
     }
 }
 
+struct MFAAuthContinueI(MFAAuthContinue);
+
+#[allow(clippy::from_over_into)]
+impl Into<Vec<String>> for MFAAuthContinueI {
+    fn into(self) -> Vec<String> {
+        vec![
+            self.0.mfa_method,
+            self.0.msg,
+            self.0.session_id,
+            self.0.flow_token,
+            self.0.ctx,
+            self.0.canary,
+            self.0.url_end_auth,
+            self.0.url_begin_auth,
+            self.0.url_post,
+        ]
+    }
+}
+
+impl From<Vec<String>> for MFAAuthContinueI {
+    fn from(src: Vec<String>) -> Self {
+        MFAAuthContinueI(MFAAuthContinue {
+            mfa_method: src[0].clone(),
+            msg: src[1].clone(),
+            max_poll_attempts: None,
+            polling_interval: None,
+            session_id: src[2].clone(),
+            flow_token: src[3].clone(),
+            ctx: src[4].clone(),
+            canary: src[5].clone(),
+            url_end_auth: src[6].clone(),
+            url_begin_auth: src[7].clone(),
+            url_post: src[8].clone(),
+        })
+    }
+}
+
 #[async_trait]
 impl IdProvider for HimmelblauProvider {
     async fn provider_authenticate(&self, _tpm: &mut tpm::BoxedDynTpm) -> Result<(), IdpError> {
@@ -427,26 +465,74 @@ impl IdProvider for HimmelblauProvider {
                     debug!("Device is not enrolled for {}. Enrolling now.", account_id);
                     // Always force MFA when enrolling the device, otherwise
                     // the device object will not have the MFA claim.
-                    let resp = self
+                    let resp = match self
                         .client
                         .write()
                         .await
-                        .initiate_device_flow_for_device_enrollment()
+                        .initiate_acquire_token_by_mfa_flow_for_device_enrollment(account_id, &cred)
                         .await
-                        .map_err(|e| {
-                            error!("{:?}", e);
-                            IdpError::BadRequest
-                        })?;
-                    return Ok((
-                        AuthResult::Next(AuthRequest::DeviceAuthorizationGrant {
-                            data: resp.into(),
-                        }),
-                        /* An MFA auth cannot cache the password. This would
-                         * lead to a potential downgrade to SFA attack (where
-                         * the attacker auths with a stolen password, then
-                         * disconnects the network to complete the auth). */
-                        AuthCacheAction::None,
-                    ));
+                    {
+                        Ok(resp) => resp,
+                        Err(e) => {
+                            warn!("MFA auth failed, falling back to DAG: {:?}", e);
+                            let resp = self
+                                .client
+                                .write()
+                                .await
+                                .initiate_device_flow_for_device_enrollment()
+                                .await
+                                .map_err(|e| {
+                                    error!("{:?}", e);
+                                    IdpError::BadRequest
+                                })?;
+                            return Ok((
+                                AuthResult::Next(AuthRequest::DeviceAuthorizationGrant {
+                                    data: resp.into(),
+                                }),
+                                /* An MFA auth cannot cache the password. This would
+                                 * lead to a potential downgrade to SFA attack (where
+                                 * the attacker auths with a stolen password, then
+                                 * disconnects the network to complete the auth). */
+                                AuthCacheAction::None,
+                            ));
+                        }
+                    };
+                    match resp.mfa_method.as_str() {
+                        "PhoneAppNotification" | "PhoneAppOTP" => {
+                            return Ok((
+                                AuthResult::Next(AuthRequest::MFACode {
+                                    msg: resp.msg.clone(),
+                                    data: MFAAuthContinueI(resp).into(),
+                                }),
+                                /* An MFA auth cannot cache the password. This would
+                                 * lead to a potential downgrade to SFA attack (where
+                                 * the attacker auths with a stolen password, then
+                                 * disconnects the network to complete the auth). */
+                                AuthCacheAction::None,
+                            ));
+                        }
+                        _ => {
+                            return Ok((
+                                AuthResult::Next(AuthRequest::MFAPoll {
+                                    msg: resp.msg.clone(),
+                                    max_poll_attempts: resp.max_poll_attempts.ok_or({
+                                        error!("Invalid response from the server");
+                                        IdpError::BadRequest
+                                    })?,
+                                    polling_interval: resp.polling_interval.ok_or({
+                                        error!("Invalid response from the server");
+                                        IdpError::BadRequest
+                                    })?,
+                                    data: MFAAuthContinueI(resp).into(),
+                                }),
+                                /* An MFA auth cannot cache the password. This would
+                                 * lead to a potential downgrade to SFA attack (where
+                                 * the attacker auths with a stolen password, then
+                                 * disconnects the network to complete the auth). */
+                                AuthCacheAction::None,
+                            ));
+                        }
+                    }
                 }
                 let uutoken = match self
                     .client
@@ -491,26 +577,76 @@ impl IdProvider for HimmelblauProvider {
                         } else if resp.error_codes.contains(&REQUIRES_MFA) {
                             // Only an enrollment token can be upgraded to a
                             // regular token later.
-                            let resp = self
+                            let resp = match self
                                 .client
                                 .write()
                                 .await
-                                .initiate_device_flow_for_device_enrollment()
+                                .initiate_acquire_token_by_mfa_flow_for_device_enrollment(
+                                    account_id, &cred,
+                                )
                                 .await
-                                .map_err(|e| {
-                                    error!("{:?}", e);
-                                    IdpError::BadRequest
-                                })?;
-                            return Ok((
-                                AuthResult::Next(AuthRequest::DeviceAuthorizationGrant {
-                                    data: resp.into(),
-                                }),
-                                /* An MFA auth cannot cache the password. This would
-                                 * lead to a potential downgrade to SFA attack (where
-                                 * the attacker auths with a stolen password, then
-                                 * disconnects the network to complete the auth). */
-                                AuthCacheAction::None,
-                            ));
+                            {
+                                Ok(resp) => resp,
+                                Err(e) => {
+                                    warn!("MFA auth failed, falling back to DAG: {:?}", e);
+                                    let resp = self
+                                        .client
+                                        .write()
+                                        .await
+                                        .initiate_device_flow_for_device_enrollment()
+                                        .await
+                                        .map_err(|e| {
+                                            error!("{:?}", e);
+                                            IdpError::BadRequest
+                                        })?;
+                                    return Ok((
+                                        AuthResult::Next(AuthRequest::DeviceAuthorizationGrant {
+                                            data: resp.into(),
+                                        }),
+                                        /* An MFA auth cannot cache the password. This would
+                                         * lead to a potential downgrade to SFA attack (where
+                                         * the attacker auths with a stolen password, then
+                                         * disconnects the network to complete the auth). */
+                                        AuthCacheAction::None,
+                                    ));
+                                }
+                            };
+                            match resp.mfa_method.as_str() {
+                                "PhoneAppNotification" | "PhoneAppOTP" => {
+                                    return Ok((
+                                        AuthResult::Next(AuthRequest::MFACode {
+                                            msg: resp.msg.clone(),
+                                            data: MFAAuthContinueI(resp).into(),
+                                        }),
+                                        /* An MFA auth cannot cache the password. This would
+                                         * lead to a potential downgrade to SFA attack (where
+                                         * the attacker auths with a stolen password, then
+                                         * disconnects the network to complete the auth). */
+                                        AuthCacheAction::None,
+                                    ));
+                                }
+                                _ => {
+                                    return Ok((
+                                        AuthResult::Next(AuthRequest::MFAPoll {
+                                            msg: resp.msg.clone(),
+                                            max_poll_attempts: resp.max_poll_attempts.ok_or({
+                                                error!("Invalid response from the server");
+                                                IdpError::BadRequest
+                                            })?,
+                                            polling_interval: resp.polling_interval.ok_or({
+                                                error!("Invalid response from the server");
+                                                IdpError::BadRequest
+                                            })?,
+                                            data: MFAAuthContinueI(resp).into(),
+                                        }),
+                                        /* An MFA auth cannot cache the password. This would
+                                         * lead to a potential downgrade to SFA attack (where
+                                         * the attacker auths with a stolen password, then
+                                         * disconnects the network to complete the auth). */
+                                        AuthCacheAction::None,
+                                    ));
+                                }
+                            }
                         } else {
                             error!("{}: {}", resp.error, resp.error_description);
                             return Err(IdpError::NotFound);
@@ -584,6 +720,7 @@ impl IdProvider for HimmelblauProvider {
                     .acquire_token_by_refresh_token(
                         &uutoken.refresh_token,
                         vec![],
+                        None,
                         tpm,
                         machine_key,
                     )
@@ -593,6 +730,117 @@ impl IdProvider for HimmelblauProvider {
                         IdpError::NotFound
                     })?;
                 match self.token_validate(account_id, &uutoken).await {
+                    Ok(AuthResult::Success { token }) => {
+                        Ok((AuthResult::Success { token }, AuthCacheAction::None))
+                    }
+                    Ok(auth_result) => Ok((auth_result, AuthCacheAction::None)),
+                    Err(e) => Err(e),
+                }
+            }
+            (_, PamAuthRequest::MFACode { cred, data }) => {
+                let mut token = self
+                    .client
+                    .write()
+                    .await
+                    .acquire_token_by_mfa_flow(
+                        account_id,
+                        Some(&cred),
+                        None,
+                        MFAAuthContinueI::from(data).0,
+                    )
+                    .await
+                    .map_err(|e| {
+                        error!("{:?}", e);
+                        IdpError::NotFound
+                    })?;
+                if !self.is_domain_joined(keystore).await {
+                    self.join_domain(tpm, &token, keystore, machine_key)
+                        .await
+                        .map_err(|e| {
+                            error!("Failed to join domain: {:?}", e);
+                            IdpError::BadRequest
+                        })?;
+                }
+                token = self
+                    .client
+                    .write()
+                    .await
+                    .acquire_token_by_refresh_token(
+                        &token.refresh_token,
+                        vec![],
+                        None,
+                        tpm,
+                        machine_key,
+                    )
+                    .await
+                    .map_err(|e| {
+                        error!("{:?}", e);
+                        IdpError::NotFound
+                    })?;
+                match self.token_validate(account_id, &token).await {
+                    Ok(AuthResult::Success { token }) => {
+                        Ok((AuthResult::Success { token }, AuthCacheAction::None))
+                    }
+                    Ok(auth_result) => Ok((auth_result, AuthCacheAction::None)),
+                    Err(e) => Err(e),
+                }
+            }
+            (_, PamAuthRequest::MFAPoll { poll_attempt, data }) => {
+                let mut token = match self
+                    .client
+                    .write()
+                    .await
+                    .acquire_token_by_mfa_flow(
+                        account_id,
+                        None,
+                        Some(poll_attempt),
+                        MFAAuthContinueI::from(data).0,
+                    )
+                    .await
+                {
+                    Ok(token) => token,
+                    Err(e) => match e {
+                        MsalError::MFAPollContinue => {
+                            return Ok((
+                                AuthResult::Next(AuthRequest::MFAPollWait),
+                                /* An MFA auth cannot cache the password. This would
+                                 * lead to a potential downgrade to SFA attack (where
+                                 * the attacker auths with a stolen password, then
+                                 * disconnects the network to complete the auth). */
+                                AuthCacheAction::None,
+                            ));
+                        }
+                        e => {
+                            error!("{:?}", e);
+                            return Err(IdpError::NotFound);
+                        }
+                    },
+                };
+                if !self.is_domain_joined(keystore).await {
+                    self.join_domain(tpm, &token, keystore, machine_key)
+                        .await
+                        .map_err(|e| {
+                            error!("Failed to join domain: {:?}", e);
+                            IdpError::BadRequest
+                        })?;
+                }
+                token = self
+                    .client
+                    .write()
+                    .await
+                    .acquire_token_by_refresh_token(
+                        &token.refresh_token,
+                        vec![],
+                        None,
+                        tpm,
+                        machine_key,
+                    )
+                    .await
+                    .map_err(|e| {
+                        error!("{:?}", e);
+                        IdpError::NotFound
+                    })?;
+                match self.token_validate(account_id, &token).await {
                     Ok(AuthResult::Success { token }) => {
                         Ok((AuthResult::Success { token }, AuthCacheAction::None))
                     }
