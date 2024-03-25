@@ -1,5 +1,5 @@
 [submodule "src/kanidm"]
 	path = src/kanidm
-	url = https://github.com/dmulder/kanidm.git
-	branch = dmulder/mfa_capabilities
+	url = https://github.com/kanidm/kanidm.git
+	branch = master
 	shallow = true
