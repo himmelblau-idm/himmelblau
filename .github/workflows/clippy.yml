@@ -35,6 +35,9 @@ jobs:
             tpm-udev \
             libtss2-dev
 
+      - name: "Fetch submodules"
+        run: git submodule init && git submodule update
+
       - name: "Run clippy"
         run: cargo clippy --all-features
         continue-on-error: false
