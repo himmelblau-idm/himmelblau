@@ -35,6 +35,9 @@ jobs:
             tpm-udev \
             libtss2-dev
 
+      - name: "Fetch submodules"
+        run: git submodule init && git submodule update
+
       - name: "Run build"
         run: cargo build --all-features --all-targets
         continue-on-error: false
