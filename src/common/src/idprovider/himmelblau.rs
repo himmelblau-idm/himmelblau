@@ -11,12 +11,13 @@ use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use graph::user::{request_user_groups, DirectoryObject};
 use himmelblau_policies::policies::apply_group_policy;
-use kanidm_hsm_crypto::{LoadableIdentityKey, LoadableMsOapxbcRsaKey, SealedData};
+use kanidm_hsm_crypto::{LoadableIdentityKey, LoadableMsOapxbcRsaKey, PinValue, SealedData, Tpm};
 use msal::auth::{
-    BrokerClientApplication, DeviceAuthorizationResponse as msal_DeviceAuthorizationResponse,
-    EnrollAttrs, MFAAuthContinue, UserToken as UnixUserToken,
+    BrokerClientApplication, ClientInfo,
+    DeviceAuthorizationResponse as msal_DeviceAuthorizationResponse, EnrollAttrs, IdToken,
+    MFAAuthContinue, UserToken as UnixUserToken,
 };
-use msal::error::{MsalError, AUTH_PENDING, NO_CONSENT, NO_GROUP_CONSENT, REQUIRES_MFA};
+use msal::error::{MsalError, AUTH_PENDING, NO_CONSENT, NO_GROUP_CONSENT};
 use reqwest;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -175,10 +176,11 @@ impl IdProvider for HimmelblauMultiProvider {
         }
     }
 
-    async fn unix_user_online_auth_init(
+    async fn unix_user_online_auth_init<D: KeyStoreTxn + Send>(
         &self,
         account_id: &str,
         token: Option<&UserToken>,
+        keystore: &mut D,
         tpm: &mut tpm::BoxedDynTpm,
         machine_key: &tpm::MachineKey,
         shutdown_rx: &broadcast::Receiver<()>,
@@ -192,6 +194,7 @@ impl IdProvider for HimmelblauMultiProvider {
                             .unix_user_online_auth_init(
                                 account_id,
                                 token,
+                                keystore,
                                 tpm,
                                 machine_key,
                                 shutdown_rx,
@@ -245,10 +248,11 @@ impl IdProvider for HimmelblauMultiProvider {
         }
     }
 
-    async fn unix_user_offline_auth_init(
+    async fn unix_user_offline_auth_init<D: KeyStoreTxn + Send>(
         &self,
         account_id: &str,
         token: Option<&UserToken>,
+        keystore: &mut D,
     ) -> Result<(AuthRequest, AuthCredHandler), IdpError> {
         match split_username(account_id) {
             Some((_sam, domain)) => {
@@ -256,7 +260,46 @@ impl IdProvider for HimmelblauMultiProvider {
                 match providers.get(domain) {
                     Some(provider) => {
                         provider
-                            .unix_user_offline_auth_init(account_id, token)
+                            .unix_user_offline_auth_init(account_id, token, keystore)
+                            .await
+                    }
+                    None => Err(IdpError::NotFound),
+                }
+            }
+            None => {
+                debug!("Authentication ignored for local user '{}'", account_id);
+                Err(IdpError::NotFound)
+            }
+        }
+    }
+
+    async fn unix_user_offline_auth_step<D: KeyStoreTxn + Send>(
+        &self,
+        account_id: &str,
+        token: &UserToken,
+        cred_handler: &mut AuthCredHandler,
+        pam_next_req: PamAuthRequest,
+        keystore: &mut D,
+        tpm: &mut tpm::BoxedDynTpm,
+        machine_key: &tpm::MachineKey,
+        online_at_init: bool,
+    ) -> Result<AuthResult, IdpError> {
+        match split_username(account_id) {
+            Some((_sam, domain)) => {
+                let providers = self.providers.read().await;
+                match providers.get(domain) {
+                    Some(provider) => {
+                        provider
+                            .unix_user_offline_auth_step(
+                                account_id,
+                                token,
+                                cred_handler,
+                                pam_next_req,
+                                keystore,
+                                tpm,
+                                machine_key,
+                                online_at_init,
+                            )
                             .await
                     }
                     None => Err(IdpError::NotFound),
@@ -395,6 +438,42 @@ impl From<&Vec<String>> for MFAAuthContinueI {
     }
 }
 
+struct UnixUserTokenI(UnixUserToken);
+
+#[allow(clippy::from_over_into)]
+impl Into<Vec<String>> for UnixUserTokenI {
+    fn into(self) -> Vec<String> {
+        let access_token = match &self.0.access_token {
+            Some(n) => n.clone(),
+            None => String::new(),
+        };
+        vec![access_token, self.0.refresh_token.clone()]
+    }
+}
+
+impl From<&Vec<String>> for UnixUserTokenI {
+    /// We don't care about most of the UserToken values when passing it to an
+    /// AuthCredHandler, so most of these are intentionally left blank.
+    fn from(src: &Vec<String>) -> Self {
+        let access_token: Option<String> = if src[0].is_empty() {
+            None
+        } else {
+            Some(src[0].clone())
+        };
+        UnixUserTokenI(UnixUserToken {
+            token_type: "".to_string(),
+            scope: None,
+            expires_in: 0,
+            ext_expires_in: 0,
+            access_token,
+            refresh_token: src[1].clone(),
+            id_token: IdToken::default(),
+            client_info: ClientInfo::default(),
+            prt: None,
+        })
+    }
+}
+
 #[async_trait]
 impl IdProvider for HimmelblauProvider {
     async fn provider_authenticate(&self, _tpm: &mut tpm::BoxedDynTpm) -> Result<(), IdpError> {
@@ -468,15 +547,26 @@ impl IdProvider for HimmelblauProvider {
         }
     }
 
-    async fn unix_user_online_auth_init(
+    async fn unix_user_online_auth_init<D: KeyStoreTxn + Send>(
         &self,
-        _account_id: &str,
+        account_id: &str,
         _token: Option<&UserToken>,
+        keystore: &mut D,
         _tpm: &mut tpm::BoxedDynTpm,
         _machine_key: &tpm::MachineKey,
         _shutdown_rx: &broadcast::Receiver<()>,
     ) -> Result<(AuthRequest, AuthCredHandler), IdpError> {
-        Ok((AuthRequest::Password, AuthCredHandler::Password))
+        let hello_tag = self.fetch_hello_key_tag(account_id);
+        let hello_key: Option<LoadableIdentityKey> =
+            keystore.get_tagged_hsm_key(&hello_tag).map_err(|e| {
+                error!("Failed fetching hello key from keystore: {:?}", e);
+                IdpError::BadRequest
+            })?;
+        if !self.is_domain_joined(keystore).await || hello_key.is_none() {
+            Ok((AuthRequest::Password, AuthCredHandler::Password))
+        } else {
+            Ok((AuthRequest::Pin, AuthCredHandler::Pin))
+        }
     }
 
     async fn unix_user_online_auth_step<D: KeyStoreTxn + Send>(
@@ -491,223 +581,182 @@ impl IdProvider for HimmelblauProvider {
     ) -> Result<(AuthResult, AuthCacheAction), IdpError> {
         let mut shutdown_rx_cl = shutdown_rx.resubscribe();
         match (&cred_handler, pam_next_req) {
-            (AuthCredHandler::Password, PamAuthRequest::Password { cred }) => {
-                let mut scopes = vec!["GroupMember.Read.All"];
-                if !self.is_domain_joined(keystore).await {
-                    debug!("Device is not enrolled for {}. Enrolling now.", account_id);
-                    // Always force MFA when enrolling the device, otherwise
-                    // the device object will not have the MFA claim.
-                    let resp = match self
-                        .client
-                        .write()
-                        .await
-                        .initiate_acquire_token_by_mfa_flow_for_device_enrollment(account_id, &cred)
-                        .await
-                    {
-                        Ok(resp) => resp,
-                        Err(e) => {
-                            warn!("MFA auth failed, falling back to DAG: {:?}", e);
-                            let resp = self
-                                .client
-                                .write()
-                                .await
-                                .initiate_device_flow_for_device_enrollment()
-                                .await
-                                .map_err(|e| {
-                                    error!("{:?}", e);
-                                    IdpError::BadRequest
-                                })?;
-                            return Ok((
-                                AuthResult::Next(AuthRequest::DeviceAuthorizationGrant {
-                                    data: resp.into(),
-                                }),
-                                /* An MFA auth cannot cache the password. This would
-                                 * lead to a potential downgrade to SFA attack (where
-                                 * the attacker auths with a stolen password, then
-                                 * disconnects the network to complete the auth). */
-                                AuthCacheAction::None,
-                            ));
-                        }
-                    };
-                    match resp.mfa_method.as_str() {
-                        "PhoneAppNotification" | "PhoneAppOTP" => {
-                            let msg = resp.msg.clone();
-                            *cred_handler = AuthCredHandler::MFA {
-                                data: MFAAuthContinueI(resp).into(),
-                            };
-                            return Ok((
-                                AuthResult::Next(AuthRequest::MFACode { msg }),
-                                /* An MFA auth cannot cache the password. This would
-                                 * lead to a potential downgrade to SFA attack (where
-                                 * the attacker auths with a stolen password, then
-                                 * disconnects the network to complete the auth). */
-                                AuthCacheAction::None,
-                            ));
-                        }
-                        _ => {
-                            let msg = resp.msg.clone();
-                            let polling_interval = resp.polling_interval.ok_or({
-                                error!("Invalid response from the server");
-                                IdpError::BadRequest
-                            })?;
-                            *cred_handler = AuthCredHandler::MFA {
-                                data: MFAAuthContinueI(resp).into(),
-                            };
-                            return Ok((
-                                AuthResult::Next(AuthRequest::MFAPoll {
-                                    msg,
-                                    polling_interval,
-                                }),
-                                /* An MFA auth cannot cache the password. This would
-                                 * lead to a potential downgrade to SFA attack (where
-                                 * the attacker auths with a stolen password, then
-                                 * disconnects the network to complete the auth). */
-                                AuthCacheAction::None,
-                            ));
-                        }
-                    }
-                }
-                let uutoken = match self
+            (AuthCredHandler::MFA { data }, PamAuthRequest::SetupPin { pin }) => {
+                let hello_tag = self.fetch_hello_key_tag(account_id);
+                let mut token = UnixUserTokenI::from(data).0;
+
+                let hello_key = match self
                     .client
                     .write()
                     .await
-                    .acquire_token_by_username_password(
-                        account_id,
-                        &cred,
-                        scopes.clone(),
-                        tpm,
-                        machine_key,
-                    )
+                    .provision_hello_for_business_key(&token, tpm, machine_key, &pin)
                     .await
                 {
-                    Ok(token) => token,
-                    Err(MsalError::AcquireTokenFailed(resp)) => {
-                        if (resp.error_codes.contains(&NO_GROUP_CONSENT)
-                            || resp.error_codes.contains(&NO_CONSENT))
-                            && scopes.contains(&"GroupMember.Read.All")
-                        {
-                            // We may have been denied GroupMember.Read.All, try again without it
-                            debug!("Failed auth with GroupMember.Read.All permissions.");
-                            debug!("Group memberships will be missing display names.");
-                            debug!("{}: {}", resp.error, resp.error_description);
-
-                            scopes.retain(|&s| s != "GroupMember.Read.All");
-                            self.client
-                                .write()
-                                .await
-                                .acquire_token_by_username_password(
-                                    account_id,
-                                    &cred,
-                                    scopes,
-                                    tpm,
-                                    machine_key,
-                                )
-                                .await
-                                .map_err(|e| {
-                                    error!("{:?}", e);
-                                    IdpError::NotFound
-                                })?
-                        } else if resp.error_codes.contains(&REQUIRES_MFA) {
-                            // Only an enrollment token can be upgraded to a
-                            // regular token later.
-                            let resp = match self
-                                .client
-                                .write()
-                                .await
-                                .initiate_acquire_token_by_mfa_flow_for_device_enrollment(
-                                    account_id, &cred,
-                                )
-                                .await
-                            {
-                                Ok(resp) => resp,
-                                Err(e) => {
-                                    warn!("MFA auth failed, falling back to DAG: {:?}", e);
-                                    let resp = self
-                                        .client
-                                        .write()
-                                        .await
-                                        .initiate_device_flow_for_device_enrollment()
-                                        .await
-                                        .map_err(|e| {
-                                            error!("{:?}", e);
-                                            IdpError::BadRequest
-                                        })?;
-                                    return Ok((
-                                        AuthResult::Next(AuthRequest::DeviceAuthorizationGrant {
-                                            data: resp.into(),
-                                        }),
-                                        /* An MFA auth cannot cache the password. This would
-                                         * lead to a potential downgrade to SFA attack (where
-                                         * the attacker auths with a stolen password, then
-                                         * disconnects the network to complete the auth). */
-                                        AuthCacheAction::None,
-                                    ));
-                                }
-                            };
-                            match resp.mfa_method.as_str() {
-                                "PhoneAppNotification" | "PhoneAppOTP" => {
-                                    let msg = resp.msg.clone();
-                                    *cred_handler = AuthCredHandler::MFA {
-                                        data: MFAAuthContinueI(resp).into(),
-                                    };
-                                    return Ok((
-                                        AuthResult::Next(AuthRequest::MFACode { msg }),
-                                        /* An MFA auth cannot cache the password. This would
-                                         * lead to a potential downgrade to SFA attack (where
-                                         * the attacker auths with a stolen password, then
-                                         * disconnects the network to complete the auth). */
-                                        AuthCacheAction::None,
-                                    ));
-                                }
-                                _ => {
-                                    let msg = resp.msg.clone();
-                                    let polling_interval = resp.polling_interval.ok_or({
-                                        error!("Invalid response from the server");
-                                        IdpError::BadRequest
-                                    })?;
-                                    *cred_handler = AuthCredHandler::MFA {
-                                        data: MFAAuthContinueI(resp).into(),
-                                    };
-                                    return Ok((
-                                        AuthResult::Next(AuthRequest::MFAPoll {
-                                            msg,
-                                            polling_interval,
-                                        }),
-                                        /* An MFA auth cannot cache the password. This would
-                                         * lead to a potential downgrade to SFA attack (where
-                                         * the attacker auths with a stolen password, then
-                                         * disconnects the network to complete the auth). */
-                                        AuthCacheAction::None,
-                                    ));
-                                }
-                            }
-                        } else {
-                            error!("{}: {}", resp.error, resp.error_description);
-                            return Err(IdpError::NotFound);
-                        }
-                    }
+                    Ok(hello_key) => hello_key,
                     Err(e) => {
-                        error!("{:?}", e);
-                        return Err(IdpError::NotFound);
+                        return Ok((
+                            AuthResult::Next(AuthRequest::SetupPin {
+                                msg: format!(
+                                    "Failed to provision hello key: {:?}\n{}",
+                                    e, "Create a PIN to use in place of passwords."
+                                ),
+                            }),
+                            AuthCacheAction::None,
+                        ));
                     }
                 };
-                match self.token_validate(account_id, &uutoken).await {
-                    Ok(AuthResult::Success { token }) => Ok((
-                        AuthResult::Success { token },
-                        AuthCacheAction::PasswordHashUpdate { cred },
-                    )),
-                    Ok(AuthResult::Next(req)) => {
-                        Ok((
-                            AuthResult::Next(req),
+                keystore
+                    .insert_tagged_hsm_key(&hello_tag, &hello_key)
+                    .map_err(|e| {
+                        error!("Failed to provision hello key: {:?}", e);
+                        IdpError::Tpm
+                    })?;
+
+                token = self
+                    .client
+                    .write()
+                    .await
+                    .acquire_token_by_hello_for_business_key(
+                        account_id,
+                        &hello_key,
+                        vec![],
+                        tpm,
+                        machine_key,
+                        &pin,
+                    )
+                    .await
+                    .map_err(|e| {
+                        error!("Failed to authenticate with hello key: {:?}", e);
+                        IdpError::BadRequest
+                    })?;
+
+                match self.token_validate(account_id, &token).await {
+                    Ok(AuthResult::Success { token }) => {
+                        Ok((AuthResult::Success { token }, AuthCacheAction::None))
+                    }
+                    /* This should never happen. It doesn't make sense to
+                     * continue from a Pin auth. */
+                    Ok(AuthResult::Next(_)) => Err(IdpError::BadRequest),
+                    Ok(auth_result) => Ok((auth_result, AuthCacheAction::None)),
+                    Err(e) => Err(e),
+                }
+            }
+            (AuthCredHandler::Pin, PamAuthRequest::Pin { cred }) => {
+                let hello_tag = self.fetch_hello_key_tag(account_id);
+                let hello_key = keystore
+                    .get_tagged_hsm_key(&hello_tag)
+                    .map_err(|e| {
+                        error!("Failed fetching hello key from keystore: {:?}", e);
+                        IdpError::BadRequest
+                    })?
+                    .ok_or_else(|| {
+                        error!("Authentication failed. Hello key missing.");
+                        IdpError::BadRequest
+                    })?;
+
+                let token = self
+                    .client
+                    .write()
+                    .await
+                    .acquire_token_by_hello_for_business_key(
+                        account_id,
+                        &hello_key,
+                        vec![],
+                        tpm,
+                        machine_key,
+                        &cred,
+                    )
+                    .await
+                    .map_err(|e| {
+                        error!("Failed to authenticate with hello key: {:?}", e);
+                        IdpError::BadRequest
+                    })?;
+
+                match self.token_validate(account_id, &token).await {
+                    Ok(AuthResult::Success { token }) => {
+                        Ok((AuthResult::Success { token }, AuthCacheAction::None))
+                    }
+                    /* This should never happen. It doesn't make sense to
+                     * continue from a Pin auth. */
+                    Ok(AuthResult::Next(_)) => Err(IdpError::BadRequest),
+                    Ok(auth_result) => Ok((auth_result, AuthCacheAction::None)),
+                    Err(e) => Err(e),
+                }
+            }
+            (AuthCredHandler::Password, PamAuthRequest::Password { cred }) => {
+                // Always force MFA when enrolling the device, otherwise
+                // the device object will not have the MFA claim. If we are already
+                // enrolled but creating a new Hello Pin, we follow the same process,
+                // since only an enrollment token can be exchanged for a PRT (which
+                // will be needed to enroll the Hello Pin).
+                let resp = match self
+                    .client
+                    .write()
+                    .await
+                    .initiate_acquire_token_by_mfa_flow_for_device_enrollment(account_id, &cred)
+                    .await
+                {
+                    Ok(resp) => resp,
+                    Err(e) => {
+                        warn!("MFA auth failed, falling back to DAG: {:?}", e);
+                        let resp = self
+                            .client
+                            .write()
+                            .await
+                            .initiate_device_flow_for_device_enrollment()
+                            .await
+                            .map_err(|e| {
+                                error!("{:?}", e);
+                                IdpError::BadRequest
+                            })?;
+                        return Ok((
+                            AuthResult::Next(AuthRequest::DeviceAuthorizationGrant {
+                                data: resp.into(),
+                            }),
                             /* An MFA auth cannot cache the password. This would
                              * lead to a potential downgrade to SFA attack (where
                              * the attacker auths with a stolen password, then
                              * disconnects the network to complete the auth). */
                             AuthCacheAction::None,
-                        ))
+                        ));
                     }
-                    Ok(auth_result) => Ok((auth_result, AuthCacheAction::None)),
-                    Err(e) => Err(e),
+                };
+                match resp.mfa_method.as_str() {
+                    "PhoneAppNotification" | "PhoneAppOTP" => {
+                        let msg = resp.msg.clone();
+                        *cred_handler = AuthCredHandler::MFA {
+                            data: MFAAuthContinueI(resp).into(),
+                        };
+                        return Ok((
+                            AuthResult::Next(AuthRequest::MFACode { msg }),
+                            /* An MFA auth cannot cache the password. This would
+                             * lead to a potential downgrade to SFA attack (where
+                             * the attacker auths with a stolen password, then
+                             * disconnects the network to complete the auth). */
+                            AuthCacheAction::None,
+                        ));
+                    }
+                    _ => {
+                        let msg = resp.msg.clone();
+                        let polling_interval = resp.polling_interval.ok_or_else(|| {
+                            error!("Invalid response from the server");
+                            IdpError::BadRequest
+                        })?;
+                        *cred_handler = AuthCredHandler::MFA {
+                            data: MFAAuthContinueI(resp).into(),
+                        };
+                        return Ok((
+                            AuthResult::Next(AuthRequest::MFAPoll {
+                                msg,
+                                polling_interval,
+                            }),
+                            /* An MFA auth cannot cache the password. This would
+                             * lead to a potential downgrade to SFA attack (where
+                             * the attacker auths with a stolen password, then
+                             * disconnects the network to complete the auth). */
+                            AuthCacheAction::None,
+                        ));
+                    }
                 }
             }
             (_, PamAuthRequest::DeviceAuthorizationGrant { data }) => {
@@ -735,59 +784,12 @@ impl IdProvider for HimmelblauProvider {
                         break;
                     }
                 }
-                let mut uutoken = mtoken.map_err(|e| {
+                let token = mtoken.map_err(|e| {
                     error!("{:?}", e);
                     IdpError::NotFound
                 })?;
                 if !self.is_domain_joined(keystore).await {
-                    self.join_domain(tpm, &uutoken, keystore, machine_key)
-                        .await
-                        .map_err(|e| {
-                            error!("Failed to join domain: {:?}", e);
-                            IdpError::BadRequest
-                        })?;
-                }
-                uutoken = self
-                    .client
-                    .write()
-                    .await
-                    .acquire_token_by_refresh_token(
-                        &uutoken.refresh_token,
-                        vec![],
-                        None,
-                        tpm,
-                        machine_key,
-                    )
-                    .await
-                    .map_err(|e| {
-                        error!("{:?}", e);
-                        IdpError::NotFound
-                    })?;
-                match self.token_validate(account_id, &uutoken).await {
-                    Ok(AuthResult::Success { token }) => {
-                        Ok((AuthResult::Success { token }, AuthCacheAction::None))
-                    }
-                    Ok(auth_result) => Ok((auth_result, AuthCacheAction::None)),
-                    Err(e) => Err(e),
-                }
-            }
-            (AuthCredHandler::MFA { data }, PamAuthRequest::MFACode { cred }) => {
-                let mut token = self
-                    .client
-                    .write()
-                    .await
-                    .acquire_token_by_mfa_flow(
-                        account_id,
-                        Some(&cred),
-                        None,
-                        MFAAuthContinueI::from(data).0,
-                    )
-                    .await
-                    .map_err(|e| {
-                        error!("{:?}", e);
-                        IdpError::NotFound
-                    })?;
-                if !self.is_domain_joined(keystore).await {
+                    debug!("Device is not enrolled for {}. Enrolling now.", account_id);
                     self.join_domain(tpm, &token, keystore, machine_key)
                         .await
                         .map_err(|e| {
@@ -795,7 +797,7 @@ impl IdProvider for HimmelblauProvider {
                             IdpError::BadRequest
                         })?;
                 }
-                token = self
+                let token2 = self
                     .client
                     .write()
                     .await
@@ -811,9 +813,84 @@ impl IdProvider for HimmelblauProvider {
                         error!("{:?}", e);
                         IdpError::NotFound
                     })?;
-                match self.token_validate(account_id, &token).await {
-                    Ok(AuthResult::Success { token }) => {
-                        Ok((AuthResult::Success { token }, AuthCacheAction::None))
+                match self.token_validate(account_id, &token2).await {
+                    Ok(AuthResult::Success { .. }) => {
+                        // Setup Windows Hello
+                        *cred_handler = AuthCredHandler::MFA {
+                            data: UnixUserTokenI(token).into(),
+                        };
+                        return Ok((
+                            AuthResult::Next(AuthRequest::SetupPin {
+                                msg: format!(
+                                    "Set up a PIN\n {}{}",
+                                    "A Hello PIN is a fast, secure way to sign",
+                                    "in to your device, apps, and services."
+                                ),
+                            }),
+                            AuthCacheAction::None,
+                        ));
+                    }
+                    Ok(auth_result) => Ok((auth_result, AuthCacheAction::None)),
+                    Err(e) => Err(e),
+                }
+            }
+            (AuthCredHandler::MFA { data }, PamAuthRequest::MFACode { cred }) => {
+                let token = self
+                    .client
+                    .write()
+                    .await
+                    .acquire_token_by_mfa_flow(
+                        account_id,
+                        Some(&cred),
+                        None,
+                        MFAAuthContinueI::from(data).0,
+                    )
+                    .await
+                    .map_err(|e| {
+                        error!("{:?}", e);
+                        IdpError::NotFound
+                    })?;
+                if !self.is_domain_joined(keystore).await {
+                    debug!("Device is not enrolled for {}. Enrolling now.", account_id);
+                    self.join_domain(tpm, &token, keystore, machine_key)
+                        .await
+                        .map_err(|e| {
+                            error!("Failed to join domain: {:?}", e);
+                            IdpError::BadRequest
+                        })?;
+                }
+                let token2 = self
+                    .client
+                    .write()
+                    .await
+                    .acquire_token_by_refresh_token(
+                        &token.refresh_token,
+                        vec![],
+                        None,
+                        tpm,
+                        machine_key,
+                    )
+                    .await
+                    .map_err(|e| {
+                        error!("{:?}", e);
+                        IdpError::NotFound
+                    })?;
+                match self.token_validate(account_id, &token2).await {
+                    Ok(AuthResult::Success { .. }) => {
+                        // Setup Windows Hello
+                        *cred_handler = AuthCredHandler::MFA {
+                            data: UnixUserTokenI(token).into(),
+                        };
+                        return Ok((
+                            AuthResult::Next(AuthRequest::SetupPin {
+                                msg: format!(
+                                    "Set up a PIN\n {}{}",
+                                    "A Hello PIN is a fast, secure way to sign",
+                                    "in to your device, apps, and services."
+                                ),
+                            }),
+                            AuthCacheAction::None,
+                        ));
                     }
                     Ok(auth_result) => Ok((auth_result, AuthCacheAction::None)),
                     Err(e) => Err(e),
@@ -821,16 +898,16 @@ impl IdProvider for HimmelblauProvider {
             }
             (AuthCredHandler::MFA { data }, PamAuthRequest::MFAPoll) => {
                 let flow = MFAAuthContinueI::from(data).0;
-                let max_poll_attempts = flow.max_poll_attempts.ok_or({
+                let max_poll_attempts = flow.max_poll_attempts.ok_or_else(|| {
                     error!("Invalid response from the server");
                     IdpError::BadRequest
                 })?;
-                let polling_interval = flow.polling_interval.ok_or({
+                let polling_interval = flow.polling_interval.ok_or_else(|| {
                     error!("Invalid response from the server");
                     IdpError::BadRequest
                 })?;
                 let mut poll_attempt = 1;
-                let mut token = loop {
+                let token = loop {
                     if poll_attempt > max_poll_attempts {
                         error!("MFA polling timed out");
                         return Err(IdpError::BadRequest);
@@ -866,6 +943,7 @@ impl IdProvider for HimmelblauProvider {
                     }
                 };
                 if !self.is_domain_joined(keystore).await {
+                    debug!("Device is not enrolled for {}. Enrolling now.", account_id);
                     self.join_domain(tpm, &token, keystore, machine_key)
                         .await
                         .map_err(|e| {
@@ -873,7 +951,7 @@ impl IdProvider for HimmelblauProvider {
                             IdpError::BadRequest
                         })?;
                 }
-                token = self
+                let token2 = self
                     .client
                     .write()
                     .await
@@ -889,9 +967,22 @@ impl IdProvider for HimmelblauProvider {
                         error!("{:?}", e);
                         IdpError::NotFound
                     })?;
-                match self.token_validate(account_id, &token).await {
-                    Ok(AuthResult::Success { token }) => {
-                        Ok((AuthResult::Success { token }, AuthCacheAction::None))
+                match self.token_validate(account_id, &token2).await {
+                    Ok(AuthResult::Success { .. }) => {
+                        // Setup Windows Hello
+                        *cred_handler = AuthCredHandler::MFA {
+                            data: UnixUserTokenI(token).into(),
+                        };
+                        return Ok((
+                            AuthResult::Next(AuthRequest::SetupPin {
+                                msg: format!(
+                                    "Set up a PIN\n {}{}",
+                                    "A Hello PIN is a fast, secure way to sign",
+                                    "in to your device, apps, and services."
+                                ),
+                            }),
+                            AuthCacheAction::None,
+                        ));
                     }
                     Ok(auth_result) => Ok((auth_result, AuthCacheAction::None)),
                     Err(e) => Err(e),
@@ -901,13 +992,65 @@ impl IdProvider for HimmelblauProvider {
         }
     }
 
-    async fn unix_user_offline_auth_init(
+    async fn unix_user_offline_auth_init<D: KeyStoreTxn + Send>(
         &self,
-        _account_id: &str,
+        account_id: &str,
         _token: Option<&UserToken>,
+        keystore: &mut D,
     ) -> Result<(AuthRequest, AuthCredHandler), IdpError> {
-        /* If we are offline, then just perform a password auth */
-        Ok((AuthRequest::Password, AuthCredHandler::Password))
+        let hello_tag = self.fetch_hello_key_tag(account_id);
+        let hello_key: Option<LoadableIdentityKey> =
+            keystore.get_tagged_hsm_key(&hello_tag).map_err(|e| {
+                error!("Failed fetching hello key from keystore: {:?}", e);
+                IdpError::BadRequest
+            })?;
+        if !self.is_domain_joined(keystore).await || hello_key.is_none() {
+            Ok((AuthRequest::Password, AuthCredHandler::Password))
+        } else {
+            Ok((AuthRequest::Pin, AuthCredHandler::Pin))
+        }
+    }
+
+    async fn unix_user_offline_auth_step<D: KeyStoreTxn + Send>(
+        &self,
+        account_id: &str,
+        token: &UserToken,
+        cred_handler: &mut AuthCredHandler,
+        pam_next_req: PamAuthRequest,
+        keystore: &mut D,
+        tpm: &mut tpm::BoxedDynTpm,
+        machine_key: &tpm::MachineKey,
+        _online_at_init: bool,
+    ) -> Result<AuthResult, IdpError> {
+        match (&cred_handler, pam_next_req) {
+            (AuthCredHandler::Pin, PamAuthRequest::Pin { cred }) => {
+                let hello_tag = self.fetch_hello_key_tag(account_id);
+                let hello_key: LoadableIdentityKey = keystore
+                    .get_tagged_hsm_key(&hello_tag)
+                    .map_err(|e| {
+                        error!("Failed fetching hello key from keystore: {:?}", e);
+                        IdpError::BadRequest
+                    })?
+                    .ok_or_else(|| {
+                        error!("Authentication failed. Hello key missing.");
+                        IdpError::BadRequest
+                    })?;
+
+                let pin = PinValue::new(&cred).map_err(|e| {
+                    error!("Failed setting pin value: {:?}", e);
+                    IdpError::Tpm
+                })?;
+                tpm.identity_key_load(machine_key, Some(&pin), &hello_key)
+                    .map_err(|e| {
+                        error!("{:?}", e);
+                        IdpError::BadRequest
+                    })?;
+                Ok(AuthResult::Success {
+                    token: token.clone(),
+                })
+            }
+            _ => Err(IdpError::BadRequest),
+        }
     }
 
     async fn unix_group_get(
@@ -921,6 +1064,10 @@ impl IdProvider for HimmelblauProvider {
 }
 
 impl HimmelblauProvider {
+    fn fetch_hello_key_tag(&self, account_id: &str) -> String {
+        format!("{}/hello", account_id)
+    }
+
     fn fetch_cert_key_tag(&self) -> String {
         format!("{}/certificate", self.domain)
     }
