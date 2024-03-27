@@ -80,7 +80,7 @@ kanidm_lib_crypto = { path = "./src/kanidm/libs/crypto", version = "0.2.0" }
 kanidm_utils_users = { path = "./src/kanidm/libs/users" }
 walkdir = "2"
 csv = "1.2.2"
-notify-debouncer-full = { version = "0.1" }
+notify-debouncer-full = { version = "0.3" }
 utoipa = "4.0.0"
 utoipa-swagger-ui = "4.0.0"
 opentelemetry = { version = "0.20.0" }
