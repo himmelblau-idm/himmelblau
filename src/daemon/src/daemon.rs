@@ -899,6 +899,7 @@ async fn main() -> ExitCode {
 
             let (inotify_tx, mut inotify_rx) = channel(4);
 
+            #[allow(clippy::blocks_in_conditions)]
             let watcher =
             match new_debouncer(Duration::from_secs(2), None, move |_event| {
                 let _ = inotify_tx.try_send(true);
