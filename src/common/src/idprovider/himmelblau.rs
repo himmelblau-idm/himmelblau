@@ -23,7 +23,7 @@ use std::sync::Arc;
 use std::thread::sleep;
 use std::time::Duration;
 use std::time::SystemTime;
-use tokio::sync::RwLock;
+use tokio::sync::{broadcast, RwLock};
 use uuid::Uuid;
 
 use rand::Rng;
@@ -181,6 +181,7 @@ impl IdProvider for HimmelblauMultiProvider {
         token: Option<&UserToken>,
         tpm: &mut tpm::BoxedDynTpm,
         machine_key: &tpm::MachineKey,
+        shutdown_rx: &broadcast::Receiver<()>,
     ) -> Result<(AuthRequest, AuthCredHandler), IdpError> {
         match split_username(account_id) {
             Some((_sam, domain)) => {
@@ -188,7 +189,13 @@ impl IdProvider for HimmelblauMultiProvider {
                 match providers.get(domain) {
                     Some(provider) => {
                         provider
-                            .unix_user_online_auth_init(account_id, token, tpm, machine_key)
+                            .unix_user_online_auth_init(
+                                account_id,
+                                token,
+                                tpm,
+                                machine_key,
+                                shutdown_rx,
+                            )
                             .await
                     }
                     None => Err(IdpError::NotFound),
@@ -209,6 +216,7 @@ impl IdProvider for HimmelblauMultiProvider {
         keystore: &mut D,
         tpm: &mut tpm::BoxedDynTpm,
         machine_key: &tpm::MachineKey,
+        shutdown_rx: &broadcast::Receiver<()>,
     ) -> Result<(AuthResult, AuthCacheAction), IdpError> {
         match split_username(account_id) {
             Some((_sam, domain)) => {
@@ -223,6 +231,7 @@ impl IdProvider for HimmelblauMultiProvider {
                                 keystore,
                                 tpm,
                                 machine_key,
+                                shutdown_rx,
                             )
                             .await
                     }
@@ -334,6 +343,14 @@ struct MFAAuthContinueI(MFAAuthContinue);
 #[allow(clippy::from_over_into)]
 impl Into<Vec<String>> for MFAAuthContinueI {
     fn into(self) -> Vec<String> {
+        let max_poll_attempts = match self.0.max_poll_attempts {
+            Some(n) => n.to_string(),
+            None => String::new(),
+        };
+        let polling_interval = match self.0.polling_interval {
+            Some(n) => n.to_string(),
+            None => String::new(),
+        };
         vec![
             self.0.mfa_method,
             self.0.msg,
@@ -344,17 +361,29 @@ impl Into<Vec<String>> for MFAAuthContinueI {
             self.0.url_end_auth,
             self.0.url_begin_auth,
             self.0.url_post,
+            max_poll_attempts,
+            polling_interval,
         ]
     }
 }
 
-impl From<Vec<String>> for MFAAuthContinueI {
-    fn from(src: Vec<String>) -> Self {
+impl From<&Vec<String>> for MFAAuthContinueI {
+    fn from(src: &Vec<String>) -> Self {
+        let max_poll_attempts: Option<u32> = if src[9].is_empty() {
+            None
+        } else {
+            src[9].parse().ok()
+        };
+        let polling_interval: Option<u32> = if src[10].is_empty() {
+            None
+        } else {
+            src[10].parse().ok()
+        };
         MFAAuthContinueI(MFAAuthContinue {
             mfa_method: src[0].clone(),
             msg: src[1].clone(),
-            max_poll_attempts: None,
-            polling_interval: None,
+            max_poll_attempts,
+            polling_interval,
             session_id: src[2].clone(),
             flow_token: src[3].clone(),
             ctx: src[4].clone(),
@@ -445,6 +474,7 @@ impl IdProvider for HimmelblauProvider {
         _token: Option<&UserToken>,
         _tpm: &mut tpm::BoxedDynTpm,
         _machine_key: &tpm::MachineKey,
+        _shutdown_rx: &broadcast::Receiver<()>,
     ) -> Result<(AuthRequest, AuthCredHandler), IdpError> {
         Ok((AuthRequest::Password, AuthCredHandler::Password))
     }
@@ -457,8 +487,10 @@ impl IdProvider for HimmelblauProvider {
         keystore: &mut D,
         tpm: &mut tpm::BoxedDynTpm,
         machine_key: &tpm::MachineKey,
+        shutdown_rx: &broadcast::Receiver<()>,
     ) -> Result<(AuthResult, AuthCacheAction), IdpError> {
-        match (cred_handler, pam_next_req) {
+        let mut shutdown_rx_cl = shutdown_rx.resubscribe();
+        match (&cred_handler, pam_next_req) {
             (AuthCredHandler::Password, PamAuthRequest::Password { cred }) => {
                 let mut scopes = vec!["GroupMember.Read.All"];
                 if !self.is_domain_joined(keystore).await {
@@ -499,11 +531,12 @@ impl IdProvider for HimmelblauProvider {
                     };
                     match resp.mfa_method.as_str() {
                         "PhoneAppNotification" | "PhoneAppOTP" => {
+                            let msg = resp.msg.clone();
+                            *cred_handler = AuthCredHandler::MFA {
+                                data: MFAAuthContinueI(resp).into(),
+                            };
                             return Ok((
-                                AuthResult::Next(AuthRequest::MFACode {
-                                    msg: resp.msg.clone(),
-                                    data: MFAAuthContinueI(resp).into(),
-                                }),
+                                AuthResult::Next(AuthRequest::MFACode { msg }),
                                 /* An MFA auth cannot cache the password. This would
                                  * lead to a potential downgrade to SFA attack (where
                                  * the attacker auths with a stolen password, then
@@ -512,18 +545,18 @@ impl IdProvider for HimmelblauProvider {
                             ));
                         }
                         _ => {
+                            let msg = resp.msg.clone();
+                            let polling_interval = resp.polling_interval.ok_or({
+                                error!("Invalid response from the server");
+                                IdpError::BadRequest
+                            })?;
+                            *cred_handler = AuthCredHandler::MFA {
+                                data: MFAAuthContinueI(resp).into(),
+                            };
                             return Ok((
                                 AuthResult::Next(AuthRequest::MFAPoll {
-                                    msg: resp.msg.clone(),
-                                    max_poll_attempts: resp.max_poll_attempts.ok_or({
-                                        error!("Invalid response from the server");
-                                        IdpError::BadRequest
-                                    })?,
-                                    polling_interval: resp.polling_interval.ok_or({
-                                        error!("Invalid response from the server");
-                                        IdpError::BadRequest
-                                    })?,
-                                    data: MFAAuthContinueI(resp).into(),
+                                    msg,
+                                    polling_interval,
                                 }),
                                 /* An MFA auth cannot cache the password. This would
                                  * lead to a potential downgrade to SFA attack (where
@@ -613,11 +646,12 @@ impl IdProvider for HimmelblauProvider {
                             };
                             match resp.mfa_method.as_str() {
                                 "PhoneAppNotification" | "PhoneAppOTP" => {
+                                    let msg = resp.msg.clone();
+                                    *cred_handler = AuthCredHandler::MFA {
+                                        data: MFAAuthContinueI(resp).into(),
+                                    };
                                     return Ok((
-                                        AuthResult::Next(AuthRequest::MFACode {
-                                            msg: resp.msg.clone(),
-                                            data: MFAAuthContinueI(resp).into(),
-                                        }),
+                                        AuthResult::Next(AuthRequest::MFACode { msg }),
                                         /* An MFA auth cannot cache the password. This would
                                          * lead to a potential downgrade to SFA attack (where
                                          * the attacker auths with a stolen password, then
@@ -626,18 +660,18 @@ impl IdProvider for HimmelblauProvider {
                                     ));
                                 }
                                 _ => {
+                                    let msg = resp.msg.clone();
+                                    let polling_interval = resp.polling_interval.ok_or({
+                                        error!("Invalid response from the server");
+                                        IdpError::BadRequest
+                                    })?;
+                                    *cred_handler = AuthCredHandler::MFA {
+                                        data: MFAAuthContinueI(resp).into(),
+                                    };
                                     return Ok((
                                         AuthResult::Next(AuthRequest::MFAPoll {
-                                            msg: resp.msg.clone(),
-                                            max_poll_attempts: resp.max_poll_attempts.ok_or({
-                                                error!("Invalid response from the server");
-                                                IdpError::BadRequest
-                                            })?,
-                                            polling_interval: resp.polling_interval.ok_or({
-                                                error!("Invalid response from the server");
-                                                IdpError::BadRequest
-                                            })?,
-                                            data: MFAAuthContinueI(resp).into(),
+                                            msg,
+                                            polling_interval,
                                         }),
                                         /* An MFA auth cannot cache the password. This would
                                          * lead to a potential downgrade to SFA attack (where
@@ -737,7 +771,7 @@ impl IdProvider for HimmelblauProvider {
                     Err(e) => Err(e),
                 }
             }
-            (_, PamAuthRequest::MFACode { cred, data }) => {
+            (AuthCredHandler::MFA { data }, PamAuthRequest::MFACode { cred }) => {
                 let mut token = self
                     .client
                     .write()
@@ -785,36 +819,51 @@ impl IdProvider for HimmelblauProvider {
                     Err(e) => Err(e),
                 }
             }
-            (_, PamAuthRequest::MFAPoll { poll_attempt, data }) => {
-                let mut token = match self
-                    .client
-                    .write()
-                    .await
-                    .acquire_token_by_mfa_flow(
-                        account_id,
-                        None,
-                        Some(poll_attempt),
-                        MFAAuthContinueI::from(data).0,
-                    )
-                    .await
-                {
-                    Ok(token) => token,
-                    Err(e) => match e {
-                        MsalError::MFAPollContinue => {
-                            return Ok((
-                                AuthResult::Next(AuthRequest::MFAPollWait),
-                                /* An MFA auth cannot cache the password. This would
-                                 * lead to a potential downgrade to SFA attack (where
-                                 * the attacker auths with a stolen password, then
-                                 * disconnects the network to complete the auth). */
-                                AuthCacheAction::None,
-                            ));
-                        }
-                        e => {
-                            error!("{:?}", e);
-                            return Err(IdpError::NotFound);
-                        }
-                    },
+            (AuthCredHandler::MFA { data }, PamAuthRequest::MFAPoll) => {
+                let flow = MFAAuthContinueI::from(data).0;
+                let max_poll_attempts = flow.max_poll_attempts.ok_or({
+                    error!("Invalid response from the server");
+                    IdpError::BadRequest
+                })?;
+                let polling_interval = flow.polling_interval.ok_or({
+                    error!("Invalid response from the server");
+                    IdpError::BadRequest
+                })?;
+                let mut poll_attempt = 1;
+                let mut token = loop {
+                    if poll_attempt > max_poll_attempts {
+                        error!("MFA polling timed out");
+                        return Err(IdpError::BadRequest);
+                    }
+                    if shutdown_rx_cl.try_recv().ok().is_some() {
+                        debug!("Received a signal to shutdown, bailing MFA poll");
+                        return Err(IdpError::BadRequest);
+                    }
+                    sleep(Duration::from_secs(polling_interval.into()));
+                    match self
+                        .client
+                        .write()
+                        .await
+                        .acquire_token_by_mfa_flow(
+                            account_id,
+                            None,
+                            Some(poll_attempt),
+                            MFAAuthContinueI::from(data).0,
+                        )
+                        .await
+                    {
+                        Ok(token) => break token,
+                        Err(e) => match e {
+                            MsalError::MFAPollContinue => {
+                                poll_attempt += 1;
+                                continue;
+                            }
+                            e => {
+                                error!("{:?}", e);
+                                return Err(IdpError::NotFound);
+                            }
+                        },
+                    }
                 };
                 if !self.is_domain_joined(keystore).await {
                     self.join_domain(tpm, &token, keystore, machine_key)
