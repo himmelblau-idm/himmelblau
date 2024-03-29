@@ -11,3 +11,7 @@ updates:
       interval: "weekly"
     commit-message:
       prefix: "deps(rust)"
+    ignore:
+      # Kanidm currently depends on these outdated versions of opentelemetry
+      - dependency-name: "opentelemetry-otlp"
+      - dependency-name: "opentelemetry_sdk"
