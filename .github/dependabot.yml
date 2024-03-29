@@ -16,3 +16,5 @@ updates:
       - dependency-name: "opentelemetry-otlp"
       - dependency-name: "opentelemetry_sdk"
       - dependency-name: "tracing-opentelemetry"
+      # This requires an update to compact-jwt first, awaiting that update
+      - dependency-name: "kanidm-hsm-crypto"
