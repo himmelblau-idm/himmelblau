@@ -3,10 +3,11 @@ name: Build
 
 # Trigger the workflow on push or pull request
 "on":
-  push:
-    branches-ignore:
-      - main
   pull_request:
+    branches:
+      - main
+      - stable-0.1.x
+      - stable-0.2.x
 
 env:
   SCCACHE_GHA_ENABLED: "true"
