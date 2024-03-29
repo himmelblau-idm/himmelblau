@@ -13,6 +13,7 @@ members = [
 	"src/kanidm/libs/crypto",
 	"src/kanidm/libs/users",
 ]
+resolver = "2"
 
 [workspace.package]
 version = "0.2.0"
