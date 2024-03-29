@@ -84,7 +84,7 @@ csv = "1.2.2"
 notify-debouncer-full = { version = "0.3" }
 utoipa = "4.0.0"
 utoipa-swagger-ui = "4.0.0"
-opentelemetry = { version = "0.22.0" }
+opentelemetry = { version = "0.20.0" }
 opentelemetry_api = { version = "0.20.0", features = ["logs", "metrics"] }
 opentelemetry-otlp = { version = "0.13.0", default-features = false, features = [
     "serde",
