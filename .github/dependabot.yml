@@ -15,3 +15,6 @@ updates:
       # Kanidm currently depends on these outdated versions of opentelemetry
       - dependency-name: "opentelemetry-otlp"
       - dependency-name: "opentelemetry_sdk"
+      - dependency-name: "tracing-opentelemetry"
+      # This requires an update to compact-jwt first, awaiting that update
+      - dependency-name: "kanidm-hsm-crypto"
