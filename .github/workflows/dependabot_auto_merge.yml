@@ -1,7 +1,12 @@
 ---
 # yamllint disable rule:line-length
 name: Dependabot auto-approval and auto-merge
-"on": pull_request
+"on":
+  pull_request:
+    branches:
+      - main
+      - stable-0.1.x
+      - stable-0.2.x
 
 permissions:
   contents: write
