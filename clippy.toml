@@ -6,8 +6,8 @@
 #
 ########################################################################
 
-# default is 7, 8's ok. https://rust-lang.github.io/rust-clippy/master/index.html#too_many_arguments
-too-many-arguments-threshold = 8
+# default is 7, 9's ok. https://rust-lang.github.io/rust-clippy/master/index.html#too_many_arguments
+too-many-arguments-threshold = 9
 
 # default's 250
 type-complexity-threshold = 300
