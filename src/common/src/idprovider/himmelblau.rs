@@ -632,13 +632,23 @@ impl IdProvider for HimmelblauProvider {
 
                 match self.token_validate(account_id, &token).await {
                     Ok(AuthResult::Success { token }) => {
+                        debug!("Returning user token from successful Hello PIN setup and authentication.");
                         Ok((AuthResult::Success { token }, AuthCacheAction::None))
                     }
                     /* This should never happen. It doesn't make sense to
                      * continue from a Pin auth. */
-                    Ok(AuthResult::Next(_)) => Err(IdpError::BadRequest),
-                    Ok(auth_result) => Ok((auth_result, AuthCacheAction::None)),
-                    Err(e) => Err(e),
+                    Ok(AuthResult::Next(_)) => {
+                        debug!("Invalid additional authentication requested with Hello auth.");
+                        Err(IdpError::BadRequest)
+                    }
+                    Ok(auth_result) => {
+                        debug!("Hello auth failed.");
+                        Ok((auth_result, AuthCacheAction::None))
+                    }
+                    Err(e) => {
+                        error!("Error encountered during Hello auth: {:?}", e);
+                        Err(e)
+                    }
                 }
             }
             (AuthCredHandler::Pin, PamAuthRequest::Pin { cred }) => {
@@ -674,13 +684,23 @@ impl IdProvider for HimmelblauProvider {
 
                 match self.token_validate(account_id, &token).await {
                     Ok(AuthResult::Success { token }) => {
+                        debug!("Returning user token from successful Hello PIN authentication.");
                         Ok((AuthResult::Success { token }, AuthCacheAction::None))
                     }
                     /* This should never happen. It doesn't make sense to
                      * continue from a Pin auth. */
-                    Ok(AuthResult::Next(_)) => Err(IdpError::BadRequest),
-                    Ok(auth_result) => Ok((auth_result, AuthCacheAction::None)),
-                    Err(e) => Err(e),
+                    Ok(AuthResult::Next(_)) => {
+                        debug!("Invalid additional authentication requested with Hello auth.");
+                        Err(IdpError::BadRequest)
+                    }
+                    Ok(auth_result) => {
+                        debug!("Hello auth failed.");
+                        Ok((auth_result, AuthCacheAction::None))
+                    }
+                    Err(e) => {
+                        error!("Error encountered during Hello auth: {:?}", e);
+                        Err(e)
+                    }
                 }
             }
             (AuthCredHandler::Password, PamAuthRequest::Password { cred }) => {
@@ -988,7 +1008,10 @@ impl IdProvider for HimmelblauProvider {
                     Err(e) => Err(e),
                 }
             }
-            _ => Err(IdpError::NotFound),
+            _ => {
+                error!("Unexpected AuthCredHandler and PamAuthRequest pairing");
+                Err(IdpError::NotFound)
+            }
         }
     }
 
