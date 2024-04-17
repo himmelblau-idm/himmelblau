@@ -5,6 +5,7 @@ use super::interface::{
 use crate::config::split_username;
 use crate::config::HimmelblauConfig;
 use crate::db::KeyStoreTxn;
+use crate::idmap::object_id_to_unix_id;
 use crate::idprovider::interface::tpm;
 use crate::unix_proto::{DeviceAuthorizationResponse, PamAuthRequest};
 use anyhow::{anyhow, Result};
@@ -26,27 +27,6 @@ use std::time::Duration;
 use std::time::SystemTime;
 use tokio::sync::{broadcast, RwLock};
 use uuid::Uuid;
-
-use rand::Rng;
-use rand::SeedableRng;
-use rand_chacha::ChaCha8Rng;
-use std::collections::hash_map::DefaultHasher;
-use std::hash::{Hash, Hasher};
-
-async fn gen_unique_account_uid(
-    rconfig: &Arc<RwLock<HimmelblauConfig>>,
-    domain: &str,
-    oid: &str,
-) -> u32 {
-    let config = rconfig.read();
-    let mut hash = DefaultHasher::new();
-    oid.hash(&mut hash);
-    let seed = hash.finish();
-    let mut rng = ChaCha8Rng::seed_from_u64(seed);
-
-    let (min, max): (u32, u32) = config.await.get_idmap_range(domain);
-    rng.gen_range(min..=max)
-}
 
 pub struct HimmelblauMultiProvider {
     providers: RwLock<HashMap<String, HimmelblauProvider>>,
@@ -1199,7 +1179,7 @@ impl HimmelblauProvider {
         &self,
         value: &UnixUserToken,
     ) -> Result<UserToken, IdpError> {
-        let config = self.config.read();
+        let config = self.config.read().await;
         let mut groups: Vec<GroupToken>;
         let spn = match value.spn() {
             Ok(spn) => spn,
@@ -1243,7 +1223,12 @@ impl HimmelblauProvider {
         };
         let sshkeys: Vec<String> = vec![];
         let valid = true;
-        let gidnumber = gen_unique_account_uid(&self.config, &self.domain, &uuid.to_string()).await;
+        let idmap_range = config.get_idmap_range(&self.domain);
+        let gidnumber = object_id_to_unix_id(&uuid, idmap_range).map_err(|e| {
+            debug!("Failed mapping uuid to unix uid/gid: {:?}", e);
+            IdpError::BadRequest
+        })?;
+
         // Add the fake primary group
         groups.push(GroupToken {
             name: spn.clone(),
@@ -1258,7 +1243,7 @@ impl HimmelblauProvider {
             uuid,
             gidnumber,
             displayname: value.id_token.name.clone(),
-            shell: Some(config.await.get_shell(Some(&self.domain))),
+            shell: Some(config.get_shell(Some(&self.domain))),
             groups,
             sshkeys,
             valid,
@@ -1274,17 +1259,20 @@ impl HimmelblauProvider {
             None => return Err(anyhow!("Failed retrieving group display_name")),
         };
         let id = match value.get("id") {
-            Some(id) => id,
+            Some(id) => {
+                Uuid::parse_str(id).map_err(|e| anyhow!("Failed parsing user uuid: {}", e))?
+            }
             None => return Err(anyhow!("Failed retrieving group uuid")),
         };
-        let gidnumber = gen_unique_account_uid(&self.config, &self.domain, id).await;
+        let config = self.config.read();
+        let idmap_range = config.await.get_idmap_range(&self.domain);
+        let gidnumber = object_id_to_unix_id(&id, idmap_range)
+            .map_err(|e| anyhow!("Failed mapping uuid to unix gid: {:?}", e))?;
+
         Ok(GroupToken {
             name: name.clone(),
             spn: name.to_string(),
-            uuid: match Uuid::parse_str(id) {
-                Ok(uuid) => uuid,
-                Err(e) => return Err(anyhow!("Failed parsing user uuid: {}", e)),
-            },
+            uuid: id,
             gidnumber,
         })
     }
