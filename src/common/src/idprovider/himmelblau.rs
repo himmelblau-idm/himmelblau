@@ -689,13 +689,15 @@ impl IdProvider for HimmelblauProvider {
                 // enrolled but creating a new Hello Pin, we follow the same process,
                 // since only an enrollment token can be exchanged for a PRT (which
                 // will be needed to enroll the Hello Pin).
-                let resp = match self
+                let mresp = self
                     .client
                     .write()
                     .await
                     .initiate_acquire_token_by_mfa_flow_for_device_enrollment(account_id, &cred)
-                    .await
-                {
+                    .await;
+                // We need to wait to handle the response until after we've released
+                // the write lock on the client, otherwise we will deadlock.
+                let resp = match mresp {
                     Ok(resp) => resp,
                     Err(e) => {
                         warn!("MFA auth failed, falling back to DAG: {:?}", e);
