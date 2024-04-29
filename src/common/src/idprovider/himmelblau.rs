@@ -18,7 +18,7 @@ use msal::auth::{
     DeviceAuthorizationResponse as msal_DeviceAuthorizationResponse, EnrollAttrs, IdToken,
     MFAAuthContinue, UserToken as UnixUserToken,
 };
-use msal::error::{MsalError, AUTH_PENDING, NO_CONSENT, NO_GROUP_CONSENT};
+use msal::error::{MsalError, AUTH_PENDING, NO_CONSENT, NO_GROUP_CONSENT, REQUIRES_MFA};
 use reqwest;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -684,7 +684,7 @@ impl IdProvider for HimmelblauProvider {
                 }
             }
             (AuthCredHandler::Password, PamAuthRequest::Password { cred }) => {
-                // Always force MFA when enrolling the device, otherwise
+                // Always attempt to force MFA when enrolling the device, otherwise
                 // the device object will not have the MFA claim. If we are already
                 // enrolled but creating a new Hello Pin, we follow the same process,
                 // since only an enrollment token can be exchanged for a PRT (which
@@ -700,27 +700,97 @@ impl IdProvider for HimmelblauProvider {
                 let resp = match mresp {
                     Ok(resp) => resp,
                     Err(e) => {
-                        warn!("MFA auth failed, falling back to DAG: {:?}", e);
-                        let resp = self
+                        warn!("MFA auth failed, falling back to SFA: {:?}", e);
+                        // Again, we need to wait to handle the response until after
+                        // we've released the write lock on the client, otherwise we
+                        // will deadlock.
+                        let mtoken = self
                             .client
                             .write()
                             .await
-                            .initiate_device_flow_for_device_enrollment()
+                            .acquire_token_by_username_password_for_device_enrollment(
+                                account_id, &cred,
+                            )
+                            .await;
+                        let token = match mtoken {
+                            Ok(token) => token,
+                            Err(e) => {
+                                error!("{:?}", e);
+                                match e {
+                                    MsalError::AcquireTokenFailed(err_resp) => {
+                                        if err_resp.error_codes.contains(&REQUIRES_MFA) {
+                                            warn!(
+                                                "SFA auth failed, falling back to DAG: {}",
+                                                err_resp.error_description
+                                            );
+                                            // We've exhausted alternatives, and must perform a DAG
+                                            let resp = self
+                                                .client
+                                                .write()
+                                                .await
+                                                .initiate_device_flow_for_device_enrollment()
+                                                .await
+                                                .map_err(|e| {
+                                                    error!("{:?}", e);
+                                                    IdpError::BadRequest
+                                                })?;
+                                            return Ok((
+                                                AuthResult::Next(
+                                                    AuthRequest::DeviceAuthorizationGrant {
+                                                        data: resp.into(),
+                                                    },
+                                                ),
+                                                /* An MFA auth cannot cache the password. This would
+                                                 * lead to a potential downgrade to SFA attack (where
+                                                 * the attacker auths with a stolen password, then
+                                                 * disconnects the network to complete the auth). */
+                                                AuthCacheAction::None,
+                                            ));
+                                        }
+                                        return Err(IdpError::BadRequest);
+                                    }
+                                    _ => return Err(IdpError::BadRequest),
+                                }
+                            }
+                        };
+                        if !self.is_domain_joined(keystore).await {
+                            debug!("Device is not enrolled for {}. Enrolling now.", account_id);
+                            self.join_domain(tpm, &token, keystore, machine_key)
+                                .await
+                                .map_err(|e| {
+                                    error!("Failed to join domain: {:?}", e);
+                                    IdpError::BadRequest
+                                })?;
+                        }
+                        let token2 = self
+                            .client
+                            .write()
+                            .await
+                            .acquire_token_by_refresh_token(
+                                &token.refresh_token,
+                                vec![],
+                                None,
+                                tpm,
+                                machine_key,
+                            )
                             .await
                             .map_err(|e| {
                                 error!("{:?}", e);
-                                IdpError::BadRequest
+                                IdpError::NotFound
                             })?;
-                        return Ok((
-                            AuthResult::Next(AuthRequest::DeviceAuthorizationGrant {
-                                data: resp.into(),
-                            }),
-                            /* An MFA auth cannot cache the password. This would
-                             * lead to a potential downgrade to SFA attack (where
-                             * the attacker auths with a stolen password, then
-                             * disconnects the network to complete the auth). */
-                            AuthCacheAction::None,
-                        ));
+                        return match self.token_validate(account_id, &token2).await {
+                            Ok(AuthResult::Success { token }) => {
+                                // STOP! If we just enrolled with an SFA token, then we
+                                // need to bail out here and refuse Hello enrollment
+                                // (we can't enroll in Hello with an SFA token).
+                                return Ok((
+                                    AuthResult::Success { token },
+                                    AuthCacheAction::PasswordHashUpdate { cred },
+                                ));
+                            }
+                            Ok(auth_result) => Ok((auth_result, AuthCacheAction::None)),
+                            Err(e) => Err(e),
+                        };
                     }
                 };
                 match resp.mfa_method.as_str() {
@@ -816,7 +886,22 @@ impl IdProvider for HimmelblauProvider {
                         IdpError::NotFound
                     })?;
                 match self.token_validate(account_id, &token2).await {
-                    Ok(AuthResult::Success { .. }) => {
+                    Ok(AuthResult::Success { token: token3 }) => {
+                        // STOP! If the DAG doesn't hold an MFA amr, then we
+                        // need to bail out here and refuse Hello enrollment
+                        // (we can't enroll in Hello with an SFA token).
+                        let mfa = token2.amr_mfa().map_err(|e| {
+                            error!("{:?}", e);
+                            IdpError::NotFound
+                        })?;
+                        if !mfa {
+                            info!("Skipping MFA enrollment because the token doesn't contain an MFA amr");
+                            return Ok((
+                                AuthResult::Success { token: token3 },
+                                AuthCacheAction::None,
+                            ));
+                        }
+
                         // Setup Windows Hello
                         *cred_handler = AuthCredHandler::MFA {
                             data: UnixUserTokenI(token).into(),
