@@ -8,6 +8,7 @@ name: Clippy
       - main
       - stable-0.1.x
       - stable-0.2.x
+      - stable-0.3.x
 
 env:
   SCCACHE_GHA_ENABLED: "true"
