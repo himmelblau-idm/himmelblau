@@ -12,6 +12,10 @@ Himmelblau supports Linux authentication to Microsoft Azure AD (AAD) via PAM and
 The PAM and NSS modules communicate with AAD via the himmelblaud daemon. Himmelblau also
 enforces Intune MDM policies.
 
+## Contact
+
+You can reach out on the [Himmelblau community matrix channel](https://matrix.to/#/#himmelblau:matrix.org).
+
 ## Contributing
 
 The following packages are required on opensuse to build and test this package.
