@@ -622,11 +622,53 @@ impl IdProvider for HimmelblauProvider {
                 }
             }};
         }
+        macro_rules! auth_and_validate_hello_key {
+            ($hello_key:ident, $cred:ident) => {{
+                let token = self
+                    .client
+                    .write()
+                    .await
+                    .acquire_token_by_hello_for_business_key(
+                        account_id,
+                        &$hello_key,
+                        vec![],
+                        tpm,
+                        machine_key,
+                        &$cred,
+                    )
+                    .await
+                    .map_err(|e| {
+                        error!("Failed to authenticate with hello key: {:?}", e);
+                        IdpError::BadRequest
+                    })?;
+
+                match self.token_validate(account_id, &token).await {
+                    Ok(AuthResult::Success { token }) => {
+                        debug!("Returning user token from successful Hello PIN authentication.");
+                        Ok((AuthResult::Success { token }, AuthCacheAction::None))
+                    }
+                    /* This should never happen. It doesn't make sense to
+                     * continue from a Pin auth. */
+                    Ok(AuthResult::Next(_)) => {
+                        debug!("Invalid additional authentication requested with Hello auth.");
+                        Err(IdpError::BadRequest)
+                    }
+                    Ok(auth_result) => {
+                        debug!("Hello auth failed.");
+                        Ok((auth_result, AuthCacheAction::None))
+                    }
+                    Err(e) => {
+                        error!("Error encountered during Hello auth: {:?}", e);
+                        Err(e)
+                    }
+                }
+            }};
+        }
         let mut shutdown_rx_cl = shutdown_rx.resubscribe();
         match (&cred_handler, pam_next_req) {
             (AuthCredHandler::MFA { data }, PamAuthRequest::SetupPin { pin }) => {
                 let hello_tag = self.fetch_hello_key_tag(account_id);
-                let mut token = UnixUserTokenI::from(data).0;
+                let token = UnixUserTokenI::from(data).0;
 
                 let hello_key = match self
                     .client
@@ -655,44 +697,7 @@ impl IdProvider for HimmelblauProvider {
                         IdpError::Tpm
                     })?;
 
-                token = self
-                    .client
-                    .write()
-                    .await
-                    .acquire_token_by_hello_for_business_key(
-                        account_id,
-                        &hello_key,
-                        vec![],
-                        tpm,
-                        machine_key,
-                        &pin,
-                    )
-                    .await
-                    .map_err(|e| {
-                        error!("Failed to authenticate with hello key: {:?}", e);
-                        IdpError::BadRequest
-                    })?;
-
-                match self.token_validate(account_id, &token).await {
-                    Ok(AuthResult::Success { token }) => {
-                        debug!("Returning user token from successful Hello PIN setup and authentication.");
-                        Ok((AuthResult::Success { token }, AuthCacheAction::None))
-                    }
-                    /* This should never happen. It doesn't make sense to
-                     * continue from a Pin auth. */
-                    Ok(AuthResult::Next(_)) => {
-                        debug!("Invalid additional authentication requested with Hello auth.");
-                        Err(IdpError::BadRequest)
-                    }
-                    Ok(auth_result) => {
-                        debug!("Hello auth failed.");
-                        Ok((auth_result, AuthCacheAction::None))
-                    }
-                    Err(e) => {
-                        error!("Error encountered during Hello auth: {:?}", e);
-                        Err(e)
-                    }
-                }
+                auth_and_validate_hello_key!(hello_key, pin)
             }
             (AuthCredHandler::Pin, PamAuthRequest::Pin { cred }) => {
                 let hello_tag = self.fetch_hello_key_tag(account_id);
@@ -707,44 +712,7 @@ impl IdProvider for HimmelblauProvider {
                         IdpError::BadRequest
                     })?;
 
-                let token = self
-                    .client
-                    .write()
-                    .await
-                    .acquire_token_by_hello_for_business_key(
-                        account_id,
-                        &hello_key,
-                        vec![],
-                        tpm,
-                        machine_key,
-                        &cred,
-                    )
-                    .await
-                    .map_err(|e| {
-                        error!("Failed to authenticate with hello key: {:?}", e);
-                        IdpError::BadRequest
-                    })?;
-
-                match self.token_validate(account_id, &token).await {
-                    Ok(AuthResult::Success { token }) => {
-                        debug!("Returning user token from successful Hello PIN authentication.");
-                        Ok((AuthResult::Success { token }, AuthCacheAction::None))
-                    }
-                    /* This should never happen. It doesn't make sense to
-                     * continue from a Pin auth. */
-                    Ok(AuthResult::Next(_)) => {
-                        debug!("Invalid additional authentication requested with Hello auth.");
-                        Err(IdpError::BadRequest)
-                    }
-                    Ok(auth_result) => {
-                        debug!("Hello auth failed.");
-                        Ok((auth_result, AuthCacheAction::None))
-                    }
-                    Err(e) => {
-                        error!("Error encountered during Hello auth: {:?}", e);
-                        Err(e)
-                    }
-                }
+                auth_and_validate_hello_key!(hello_key, cred)
             }
             (AuthCredHandler::Password, PamAuthRequest::Password { cred }) => {
                 // Always attempt to force MFA when enrolling the device, otherwise
