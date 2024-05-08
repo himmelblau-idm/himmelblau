@@ -18,7 +18,9 @@ use msal::auth::{
     DeviceAuthorizationResponse as msal_DeviceAuthorizationResponse, EnrollAttrs, IdToken,
     MFAAuthContinue, UserToken as UnixUserToken,
 };
-use msal::error::{MsalError, AUTH_PENDING, NO_CONSENT, NO_GROUP_CONSENT, REQUIRES_MFA};
+use msal::error::{
+    MsalError, AUTH_PENDING, DEVICE_AUTH_FAIL, NO_CONSENT, NO_GROUP_CONSENT, REQUIRES_MFA,
+};
 use reqwest;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -559,11 +561,114 @@ impl IdProvider for HimmelblauProvider {
         machine_key: &tpm::MachineKey,
         shutdown_rx: &broadcast::Receiver<()>,
     ) -> Result<(AuthResult, AuthCacheAction), IdpError> {
+        macro_rules! enroll_and_obtain_enrolled_token {
+            ($token:ident) => {{
+                if !self.is_domain_joined(keystore).await {
+                    debug!("Device is not enrolled. Enrolling now.");
+                    self.join_domain(tpm, &$token, keystore, machine_key)
+                        .await
+                        .map_err(|e| {
+                            error!("Failed to join domain: {:?}", e);
+                            IdpError::BadRequest
+                        })?;
+                }
+                let mtoken2 = self
+                    .client
+                    .write()
+                    .await
+                    .acquire_token_by_refresh_token(
+                        &$token.refresh_token,
+                        vec![],
+                        None,
+                        tpm,
+                        machine_key,
+                    )
+                    .await;
+                match mtoken2 {
+                    Ok(token) => token,
+                    Err(e) => {
+                        error!("{:?}", e);
+                        match e {
+                            MsalError::AcquireTokenFailed(err_resp) => {
+                                if err_resp.error_codes.contains(&DEVICE_AUTH_FAIL) {
+                                    /* A device authentication failure may happen
+                                     * if Azure hasn't finished replicating the new
+                                     * device object. Wait 5 seconds and try again. */
+                                    info!("Azure hasn't finished replicating the device...");
+                                    info!("Retrying in 5 seconds");
+                                    sleep(Duration::from_secs(5));
+                                    self.client
+                                        .write()
+                                        .await
+                                        .acquire_token_by_refresh_token(
+                                            &$token.refresh_token,
+                                            vec![],
+                                            None,
+                                            tpm,
+                                            machine_key,
+                                        )
+                                        .await
+                                        .map_err(|e| {
+                                            error!("{:?}", e);
+                                            IdpError::NotFound
+                                        })?
+                                } else {
+                                    return Err(IdpError::NotFound);
+                                }
+                            }
+                            _ => return Err(IdpError::NotFound),
+                        }
+                    }
+                }
+            }};
+        }
+        macro_rules! auth_and_validate_hello_key {
+            ($hello_key:ident, $cred:ident) => {{
+                let token = self
+                    .client
+                    .write()
+                    .await
+                    .acquire_token_by_hello_for_business_key(
+                        account_id,
+                        &$hello_key,
+                        vec![],
+                        tpm,
+                        machine_key,
+                        &$cred,
+                    )
+                    .await
+                    .map_err(|e| {
+                        error!("Failed to authenticate with hello key: {:?}", e);
+                        IdpError::BadRequest
+                    })?;
+
+                match self.token_validate(account_id, &token).await {
+                    Ok(AuthResult::Success { token }) => {
+                        debug!("Returning user token from successful Hello PIN authentication.");
+                        Ok((AuthResult::Success { token }, AuthCacheAction::None))
+                    }
+                    /* This should never happen. It doesn't make sense to
+                     * continue from a Pin auth. */
+                    Ok(AuthResult::Next(_)) => {
+                        debug!("Invalid additional authentication requested with Hello auth.");
+                        Err(IdpError::BadRequest)
+                    }
+                    Ok(auth_result) => {
+                        debug!("Hello auth failed.");
+                        Ok((auth_result, AuthCacheAction::None))
+                    }
+                    Err(e) => {
+                        error!("Error encountered during Hello auth: {:?}", e);
+                        Err(e)
+                    }
+                }
+            }};
+        }
         let mut shutdown_rx_cl = shutdown_rx.resubscribe();
         match (&cred_handler, pam_next_req) {
             (AuthCredHandler::MFA { data }, PamAuthRequest::SetupPin { pin }) => {
                 let hello_tag = self.fetch_hello_key_tag(account_id);
-                let mut token = UnixUserTokenI::from(data).0;
+                let token = UnixUserTokenI::from(data).0;
 
                 let hello_key = match self
                     .client
@@ -592,44 +697,7 @@ impl IdProvider for HimmelblauProvider {
                         IdpError::Tpm
                     })?;
 
-                token = self
-                    .client
-                    .write()
-                    .await
-                    .acquire_token_by_hello_for_business_key(
-                        account_id,
-                        &hello_key,
-                        vec![],
-                        tpm,
-                        machine_key,
-                        &pin,
-                    )
-                    .await
-                    .map_err(|e| {
-                        error!("Failed to authenticate with hello key: {:?}", e);
-                        IdpError::BadRequest
-                    })?;
-
-                match self.token_validate(account_id, &token).await {
-                    Ok(AuthResult::Success { token }) => {
-                        debug!("Returning user token from successful Hello PIN setup and authentication.");
-                        Ok((AuthResult::Success { token }, AuthCacheAction::None))
-                    }
-                    /* This should never happen. It doesn't make sense to
-                     * continue from a Pin auth. */
-                    Ok(AuthResult::Next(_)) => {
-                        debug!("Invalid additional authentication requested with Hello auth.");
-                        Err(IdpError::BadRequest)
-                    }
-                    Ok(auth_result) => {
-                        debug!("Hello auth failed.");
-                        Ok((auth_result, AuthCacheAction::None))
-                    }
-                    Err(e) => {
-                        error!("Error encountered during Hello auth: {:?}", e);
-                        Err(e)
-                    }
-                }
+                auth_and_validate_hello_key!(hello_key, pin)
             }
             (AuthCredHandler::Pin, PamAuthRequest::Pin { cred }) => {
                 let hello_tag = self.fetch_hello_key_tag(account_id);
@@ -644,44 +712,7 @@ impl IdProvider for HimmelblauProvider {
                         IdpError::BadRequest
                     })?;
 
-                let token = self
-                    .client
-                    .write()
-                    .await
-                    .acquire_token_by_hello_for_business_key(
-                        account_id,
-                        &hello_key,
-                        vec![],
-                        tpm,
-                        machine_key,
-                        &cred,
-                    )
-                    .await
-                    .map_err(|e| {
-                        error!("Failed to authenticate with hello key: {:?}", e);
-                        IdpError::BadRequest
-                    })?;
-
-                match self.token_validate(account_id, &token).await {
-                    Ok(AuthResult::Success { token }) => {
-                        debug!("Returning user token from successful Hello PIN authentication.");
-                        Ok((AuthResult::Success { token }, AuthCacheAction::None))
-                    }
-                    /* This should never happen. It doesn't make sense to
-                     * continue from a Pin auth. */
-                    Ok(AuthResult::Next(_)) => {
-                        debug!("Invalid additional authentication requested with Hello auth.");
-                        Err(IdpError::BadRequest)
-                    }
-                    Ok(auth_result) => {
-                        debug!("Hello auth failed.");
-                        Ok((auth_result, AuthCacheAction::None))
-                    }
-                    Err(e) => {
-                        error!("Error encountered during Hello auth: {:?}", e);
-                        Err(e)
-                    }
-                }
+                auth_and_validate_hello_key!(hello_key, cred)
             }
             (AuthCredHandler::Password, PamAuthRequest::Password { cred }) => {
                 // Always attempt to force MFA when enrolling the device, otherwise
@@ -753,31 +784,7 @@ impl IdProvider for HimmelblauProvider {
                                 }
                             }
                         };
-                        if !self.is_domain_joined(keystore).await {
-                            debug!("Device is not enrolled for {}. Enrolling now.", account_id);
-                            self.join_domain(tpm, &token, keystore, machine_key)
-                                .await
-                                .map_err(|e| {
-                                    error!("Failed to join domain: {:?}", e);
-                                    IdpError::BadRequest
-                                })?;
-                        }
-                        let token2 = self
-                            .client
-                            .write()
-                            .await
-                            .acquire_token_by_refresh_token(
-                                &token.refresh_token,
-                                vec![],
-                                None,
-                                tpm,
-                                machine_key,
-                            )
-                            .await
-                            .map_err(|e| {
-                                error!("{:?}", e);
-                                IdpError::NotFound
-                            })?;
+                        let token2 = enroll_and_obtain_enrolled_token!(token);
                         return match self.token_validate(account_id, &token2).await {
                             Ok(AuthResult::Success { token }) => {
                                 // STOP! If we just enrolled with an SFA token, then we
@@ -860,31 +867,7 @@ impl IdProvider for HimmelblauProvider {
                     error!("{:?}", e);
                     IdpError::NotFound
                 })?;
-                if !self.is_domain_joined(keystore).await {
-                    debug!("Device is not enrolled for {}. Enrolling now.", account_id);
-                    self.join_domain(tpm, &token, keystore, machine_key)
-                        .await
-                        .map_err(|e| {
-                            error!("Failed to join domain: {:?}", e);
-                            IdpError::BadRequest
-                        })?;
-                }
-                let token2 = self
-                    .client
-                    .write()
-                    .await
-                    .acquire_token_by_refresh_token(
-                        &token.refresh_token,
-                        vec![],
-                        None,
-                        tpm,
-                        machine_key,
-                    )
-                    .await
-                    .map_err(|e| {
-                        error!("{:?}", e);
-                        IdpError::NotFound
-                    })?;
+                let token2 = enroll_and_obtain_enrolled_token!(token);
                 match self.token_validate(account_id, &token2).await {
                     Ok(AuthResult::Success { token: token3 }) => {
                         // STOP! If the DAG doesn't hold an MFA amr, then we
@@ -937,31 +920,7 @@ impl IdProvider for HimmelblauProvider {
                         error!("{:?}", e);
                         IdpError::NotFound
                     })?;
-                if !self.is_domain_joined(keystore).await {
-                    debug!("Device is not enrolled for {}. Enrolling now.", account_id);
-                    self.join_domain(tpm, &token, keystore, machine_key)
-                        .await
-                        .map_err(|e| {
-                            error!("Failed to join domain: {:?}", e);
-                            IdpError::BadRequest
-                        })?;
-                }
-                let token2 = self
-                    .client
-                    .write()
-                    .await
-                    .acquire_token_by_refresh_token(
-                        &token.refresh_token,
-                        vec![],
-                        None,
-                        tpm,
-                        machine_key,
-                    )
-                    .await
-                    .map_err(|e| {
-                        error!("{:?}", e);
-                        IdpError::NotFound
-                    })?;
+                let token2 = enroll_and_obtain_enrolled_token!(token);
                 match self.token_validate(account_id, &token2).await {
                     Ok(AuthResult::Success { .. }) => {
                         // Setup Windows Hello
@@ -1029,31 +988,7 @@ impl IdProvider for HimmelblauProvider {
                         },
                     }
                 };
-                if !self.is_domain_joined(keystore).await {
-                    debug!("Device is not enrolled for {}. Enrolling now.", account_id);
-                    self.join_domain(tpm, &token, keystore, machine_key)
-                        .await
-                        .map_err(|e| {
-                            error!("Failed to join domain: {:?}", e);
-                            IdpError::BadRequest
-                        })?;
-                }
-                let token2 = self
-                    .client
-                    .write()
-                    .await
-                    .acquire_token_by_refresh_token(
-                        &token.refresh_token,
-                        vec![],
-                        None,
-                        tpm,
-                        machine_key,
-                    )
-                    .await
-                    .map_err(|e| {
-                        error!("{:?}", e);
-                        IdpError::NotFound
-                    })?;
+                let token2 = enroll_and_obtain_enrolled_token!(token);
                 match self.token_validate(account_id, &token2).await {
                     Ok(AuthResult::Success { .. }) => {
                         // Setup Windows Hello
