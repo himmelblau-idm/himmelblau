@@ -894,8 +894,16 @@ impl IdProvider for HimmelblauProvider {
                             error!("{:?}", e);
                             IdpError::NotFound
                         })?;
-                        if !mfa {
-                            info!("Skipping MFA enrollment because the token doesn't contain an MFA amr");
+                        // Also skip Hello enrollment if it is disabled by config
+                        let hello_enabled = self.config.read().await.get_enable_hello();
+                        if !mfa || !hello_enabled {
+                            if !mfa {
+                                info!("Skipping MFA enrollment because the token doesn't contain an MFA amr");
+                            } else if !hello_enabled {
+                                info!(
+                                    "Skipping MFA enrollment because Hello enrollment is disabled"
+                                );
+                            }
                             return Ok((
                                 AuthResult::Success { token: token3 },
                                 AuthCacheAction::None,
@@ -963,7 +971,17 @@ impl IdProvider for HimmelblauProvider {
                         IdpError::NotFound
                     })?;
                 match self.token_validate(account_id, &token2).await {
-                    Ok(AuthResult::Success { .. }) => {
+                    Ok(AuthResult::Success { token: token3 }) => {
+                        // Skip Hello enrollment if it is disabled by config
+                        let hello_enabled = self.config.read().await.get_enable_hello();
+                        if !hello_enabled {
+                            info!("Skipping MFA enrollment because Hello enrollment is disabled");
+                            return Ok((
+                                AuthResult::Success { token: token3 },
+                                AuthCacheAction::None,
+                            ));
+                        }
+
                         // Setup Windows Hello
                         *cred_handler = AuthCredHandler::MFA {
                             data: UnixUserTokenI(token).into(),
@@ -1055,7 +1073,17 @@ impl IdProvider for HimmelblauProvider {
                         IdpError::NotFound
                     })?;
                 match self.token_validate(account_id, &token2).await {
-                    Ok(AuthResult::Success { .. }) => {
+                    Ok(AuthResult::Success { token: token3 }) => {
+                        // Skip Hello enrollment if it is disabled by config
+                        let hello_enabled = self.config.read().await.get_enable_hello();
+                        if !hello_enabled {
+                            info!("Skipping MFA enrollment because Hello enrollment is disabled");
+                            return Ok((
+                                AuthResult::Success { token: token3 },
+                                AuthCacheAction::None,
+                            ));
+                        }
+
                         // Setup Windows Hello
                         *cred_handler = AuthCredHandler::MFA {
                             data: UnixUserTokenI(token).into(),
