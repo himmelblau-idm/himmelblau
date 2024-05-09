@@ -16,7 +16,7 @@ members = [
 resolver = "2"
 
 [workspace.package]
-version = "0.3.2"
+version = "0.3.3"
 authors = [
     "David Mulder <dmulder@suse.com>"
 ]
