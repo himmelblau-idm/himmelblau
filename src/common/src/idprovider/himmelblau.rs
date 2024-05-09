@@ -542,7 +542,9 @@ impl IdProvider for HimmelblauProvider {
                 error!("Failed fetching hello key from keystore: {:?}", e);
                 IdpError::BadRequest
             })?;
-        if !self.is_domain_joined(keystore).await || hello_key.is_none() {
+        // Skip Hello authentication if it is disabled by config
+        let hello_enabled = self.config.read().await.get_enable_hello();
+        if !self.is_domain_joined(keystore).await || hello_key.is_none() || !hello_enabled {
             Ok((AuthRequest::Password, AuthCredHandler::Password))
         } else {
             Ok((AuthRequest::Pin, AuthCredHandler::Pin))
