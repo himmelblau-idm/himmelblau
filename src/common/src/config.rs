@@ -7,10 +7,10 @@ use tracing::{debug, error};
 
 use crate::constants::{
     DEFAULT_AUTHORITY_HOST, DEFAULT_CACHE_TIMEOUT, DEFAULT_CONFIG_PATH, DEFAULT_CONN_TIMEOUT,
-    DEFAULT_DB_PATH, DEFAULT_GRAPH, DEFAULT_HOME_ALIAS, DEFAULT_HOME_ATTR, DEFAULT_HOME_PREFIX,
-    DEFAULT_HSM_PIN_PATH, DEFAULT_IDMAP_RANGE, DEFAULT_ODC_PROVIDER, DEFAULT_SELINUX,
-    DEFAULT_SHELL, DEFAULT_SOCK_PATH, DEFAULT_TASK_SOCK_PATH, DEFAULT_USE_ETC_SKEL,
-    SERVER_CONFIG_PATH,
+    DEFAULT_DB_PATH, DEFAULT_GRAPH, DEFAULT_HELLO_ENABLED, DEFAULT_HOME_ALIAS, DEFAULT_HOME_ATTR,
+    DEFAULT_HOME_PREFIX, DEFAULT_HSM_PIN_PATH, DEFAULT_IDMAP_RANGE, DEFAULT_ODC_PROVIDER,
+    DEFAULT_SELINUX, DEFAULT_SHELL, DEFAULT_SOCK_PATH, DEFAULT_TASK_SOCK_PATH,
+    DEFAULT_USE_ETC_SKEL, SERVER_CONFIG_PATH,
 };
 use crate::unix_config::{HomeAttr, HsmType};
 use graph::constants::BROKER_APP_ID;
@@ -448,6 +448,13 @@ impl HimmelblauConfig {
 
     pub fn get_config_file(&self) -> String {
         self.filename.clone()
+    }
+
+    pub fn get_enable_hello(&self) -> bool {
+        match_bool(
+            self.config.get("global", "enable_hello"),
+            DEFAULT_HELLO_ENABLED,
+        )
     }
 }
 
