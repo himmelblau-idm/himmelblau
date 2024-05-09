@@ -20,3 +20,4 @@ pub const DEFAULT_CONN_TIMEOUT: u64 = 30;
 pub const DEFAULT_CACHE_TIMEOUT: u64 = 15;
 pub const DEFAULT_SELINUX: bool = true;
 pub const DEFAULT_HSM_PIN_PATH: &str = "/var/lib/himmelblaud/hsm-pin";
+pub const DEFAULT_HELLO_ENABLED: bool = true;
