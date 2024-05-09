@@ -883,11 +883,9 @@ impl IdProvider for HimmelblauProvider {
                         let hello_enabled = self.config.read().await.get_enable_hello();
                         if !mfa || !hello_enabled {
                             if !mfa {
-                                info!("Skipping MFA enrollment because the token doesn't contain an MFA amr");
+                                info!("Skipping Hello enrollment because the token doesn't contain an MFA amr");
                             } else if !hello_enabled {
-                                info!(
-                                    "Skipping MFA enrollment because Hello enrollment is disabled"
-                                );
+                                info!("Skipping Hello enrollment because it is disabled");
                             }
                             return Ok((
                                 AuthResult::Success { token: token3 },
@@ -936,7 +934,7 @@ impl IdProvider for HimmelblauProvider {
                         // Skip Hello enrollment if it is disabled by config
                         let hello_enabled = self.config.read().await.get_enable_hello();
                         if !hello_enabled {
-                            info!("Skipping MFA enrollment because Hello enrollment is disabled");
+                            info!("Skipping Hello enrollment because it is disabled");
                             return Ok((
                                 AuthResult::Success { token: token3 },
                                 AuthCacheAction::None,
@@ -1014,7 +1012,7 @@ impl IdProvider for HimmelblauProvider {
                         // Skip Hello enrollment if it is disabled by config
                         let hello_enabled = self.config.read().await.get_enable_hello();
                         if !hello_enabled {
-                            info!("Skipping MFA enrollment because Hello enrollment is disabled");
+                            info!("Skipping Hello enrollment because it is disabled");
                             return Ok((
                                 AuthResult::Success { token: token3 },
                                 AuthCacheAction::None,
