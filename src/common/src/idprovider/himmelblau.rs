@@ -478,7 +478,15 @@ impl IdProvider for HimmelblauProvider {
     ) -> Result<UserToken, IdpError> {
         /* Use the prt mem cache to refresh the user token */
         let account_id = id.to_string().clone();
-        let prt = self.refresh_cache.refresh_token(&account_id).await?;
+        let prt = match self.refresh_cache.refresh_token(&account_id).await {
+            Ok(prt) => prt,
+            Err(_) => {
+                debug!("Unable to refresh user via PRT cache");
+                // Never return IdpError::NotFound. This deletes the existing
+                // user from the cache.
+                return Err(IdpError::BadRequest);
+            }
+        };
         let scopes = vec!["GroupMember.Read.All"];
         let token = match self
             .client
@@ -504,13 +512,25 @@ impl IdProvider for HimmelblauProvider {
                         .await
                     {
                         Ok(token) => token,
-                        Err(_e) => return Err(IdpError::NotFound),
+                        Err(e) => {
+                            error!("{:?}", e);
+                            // Never return IdpError::NotFound. This deletes
+                            // the existing user from the cache.
+                            return Err(IdpError::BadRequest);
+                        }
                     }
                 } else {
-                    return Err(IdpError::NotFound);
+                    // Never return IdpError::NotFound. This deletes the
+                    // existing user from the cache.
+                    return Err(IdpError::BadRequest);
                 }
             }
-            Err(_e) => return Err(IdpError::NotFound),
+            Err(e) => {
+                error!("{:?}", e);
+                // Never return IdpError::NotFound. This deletes the existing
+                // user from the cache.
+                return Err(IdpError::BadRequest);
+            }
         };
         match self.token_validate(&account_id, &token).await {
             Ok(AuthResult::Success { mut token }) => {
@@ -522,8 +542,10 @@ impl IdProvider for HimmelblauProvider {
                 }
                 Ok(token)
             }
-            Ok(AuthResult::Denied) | Ok(AuthResult::Next(_)) => Err(IdpError::NotFound),
-            Err(e) => Err(e),
+            // Never return IdpError::NotFound. This deletes the existing
+            // user from the cache.
+            Ok(AuthResult::Denied) | Ok(AuthResult::Next(_)) => Err(IdpError::BadRequest),
+            Err(_) => Err(IdpError::BadRequest),
         }
     }
 
