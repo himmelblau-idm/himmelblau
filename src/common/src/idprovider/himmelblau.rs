@@ -141,7 +141,10 @@ impl IdProvider for HimmelblauMultiProvider {
         machine_key: &tpm::MachineKey,
     ) -> Result<UserToken, IdpError> {
         /* AAD doesn't permit user listing (must use cache entries from auth) */
-        let account_id = id.to_string().clone();
+        let account_id = match old_token {
+            Some(token) => token.spn.clone(),
+            None => id.to_string().clone(),
+        };
         match split_username(&account_id) {
             Some((_sam, domain)) => {
                 let providers = self.providers.read().await;
@@ -479,15 +482,57 @@ impl IdProvider for HimmelblauProvider {
         machine_key: &tpm::MachineKey,
     ) -> Result<UserToken, IdpError> {
         /* Use the prt mem cache to refresh the user token */
-        let account_id = id.to_string().clone();
+        let account_id = match old_token {
+            Some(token) => token.spn.clone(),
+            None => id.to_string().clone(),
+        };
         let prt = match self.refresh_cache.refresh_token(&account_id).await {
             Ok(prt) => prt,
-            Err(_) => {
-                debug!("Unable to refresh user via PRT cache");
-                // Never return IdpError::NotFound. This deletes the existing
-                // user from the cache.
-                return Err(IdpError::BadRequest);
-            }
+            Err(_) => match old_token {
+                // If we have an existing token, just keep it
+                Some(token) => return Ok(token.clone()),
+                // Otherwise, see if we should fake it
+                None => {
+                    // Check if the user exists
+                    let exists = self
+                        .client
+                        .write()
+                        .await
+                        .check_user_exists(&account_id)
+                        .await
+                        .map_err(|e| {
+                            error!("Failed checking if the user exists: {:?}", e);
+                            IdpError::BadRequest
+                        })?;
+                    if exists {
+                        // Generate a UserToken, with invalid uuid and gid. We can
+                        // only fetch these from an authenticated token. We have to
+                        // provide something, or SSH will fail.
+                        let groups = vec![GroupToken {
+                            name: account_id.clone(),
+                            spn: account_id.clone(),
+                            uuid: Uuid::max(),
+                            gidnumber: i32::MAX as u32,
+                        }];
+                        let config = self.config.read().await;
+                        return Ok(UserToken {
+                            name: account_id.clone(),
+                            spn: account_id.clone(),
+                            uuid: Uuid::max(),
+                            gidnumber: i32::MAX as u32,
+                            displayname: "".to_string(),
+                            shell: Some(config.get_shell(Some(&self.domain))),
+                            groups,
+                            sshkeys: vec![],
+                            valid: true,
+                        });
+                    } else {
+                        // This is the one time we really should return
+                        // IdpError::NotFound, because this user doesn't exist.
+                        return Err(IdpError::NotFound);
+                    }
+                }
+            },
         };
         let scopes = vec!["GroupMember.Read.All"];
         let token = match self
