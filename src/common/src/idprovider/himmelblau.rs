@@ -141,7 +141,10 @@ impl IdProvider for HimmelblauMultiProvider {
         machine_key: &tpm::MachineKey,
     ) -> Result<UserToken, IdpError> {
         /* AAD doesn't permit user listing (must use cache entries from auth) */
-        let account_id = id.to_string().clone();
+        let account_id = match old_token {
+            Some(token) => token.spn.clone(),
+            None => id.to_string().clone(),
+        };
         match split_username(&account_id) {
             Some((_sam, domain)) => {
                 let providers = self.providers.read().await;
@@ -479,7 +482,10 @@ impl IdProvider for HimmelblauProvider {
         machine_key: &tpm::MachineKey,
     ) -> Result<UserToken, IdpError> {
         /* Use the prt mem cache to refresh the user token */
-        let account_id = id.to_string().clone();
+        let account_id = match old_token {
+            Some(token) => token.spn.clone(),
+            None => id.to_string().clone(),
+        };
         let prt = match self.refresh_cache.refresh_token(&account_id).await {
             Ok(prt) => prt,
             Err(_) => {
