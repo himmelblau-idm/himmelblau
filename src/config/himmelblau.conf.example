@@ -4,14 +4,14 @@
 # domain will be the owner of the device object in the directory. Typically
 # this would be the primary user of the device.
 # domains =
-
-### Optional global values
+#
 # pam_allow_groups MUST be defined or all users will be rejected by pam account.
 # The option should be set to a comma seperated list of Users and Groups which
 # are allowed access to the system. The first user to logon (the device owner)
 # to a configured domain will be added to this list automatically.
 # pam_allow_groups =
 #
+### Optional global values
 # If you have an ODC provider (the default being odc.officeapps.live.com), specify
 # the hostname for sending a federationProvider request. If the federationProvider
 # request is successful, the tenant_id and authority_host options do not need to
