@@ -1,0 +1,45 @@
+---
+name: Test
+
+# Trigger the workflow on push or pull request
+"on":
+  pull_request:
+    branches:
+      - main
+      - stable-0.1.x
+      - stable-0.2.x
+      - stable-0.3.x
+
+env:
+  SCCACHE_GHA_ENABLED: "true"
+  RUSTC_WRAPPER: "sccache"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup sccache
+        uses: mozilla-actions/sccache-action@v0.0.4
+        with:
+          version: "v0.4.2"
+      - name: Install dependencies
+        run: |
+          sudo apt-get update && \
+          sudo apt-get install -y \
+            libpam0g-dev \
+            libudev-dev \
+            libssl-dev \
+            pkg-config \
+            tpm-udev \
+            libtss2-dev
+
+      - name: "Fetch submodules"
+        run: git submodule init && git submodule update
+
+      - name: "Run tests"
+        run: cargo test
+        continue-on-error: false
