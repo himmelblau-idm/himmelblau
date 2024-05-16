@@ -526,21 +526,36 @@ impl IdProvider for HimmelblauProvider {
                                 IdpError::BadRequest
                             })?;
                         if exists {
-                            // Generate a UserToken, with invalid uuid and gid. We can
-                            // only fetch these from an authenticated token. We have to
-                            // provide something, or SSH will fail.
+                            // Generate a UserToken, with invalid uuid. We can
+                            // only fetch this from an authenticated token.
+                            let config = self.config.read().await;
+                            let gidnumber = match config.get_id_attr_map() {
+                                // If Uuid mapping is enabled, bail out now.
+                                // We can only provide a valid idmapping with
+                                // name idmapping at this point.
+                                IdAttr::Uuid => return Err(IdpError::BadRequest),
+                                IdAttr::Name => {
+                                    let idmap = self.idmap.read().await;
+                                    idmap.gen_to_unix(&self.tenant_id, &account_id).map_err(
+                                        |e| {
+                                            error!("{:?}", e);
+                                            IdpError::BadRequest
+                                        },
+                                    )?
+                                }
+                            };
                             let groups = vec![GroupToken {
                                 name: account_id.clone(),
                                 spn: account_id.clone(),
                                 uuid: Uuid::max(),
-                                gidnumber: i32::MAX as u32,
+                                gidnumber,
                             }];
                             let config = self.config.read().await;
                             return Ok(UserToken {
                                 name: account_id.clone(),
                                 spn: account_id.clone(),
                                 uuid: Uuid::max(),
-                                gidnumber: i32::MAX as u32,
+                                gidnumber,
                                 displayname: "".to_string(),
                                 shell: Some(config.get_shell(Some(&self.domain))),
                                 groups,
