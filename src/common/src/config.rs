@@ -450,6 +450,8 @@ impl HimmelblauConfig {
         let mut sections = self.config.sections();
         sections.retain(|s| s != "global");
         domains.extend(sections);
+        domains.sort();
+        domains.dedup();
         domains
     }
 
