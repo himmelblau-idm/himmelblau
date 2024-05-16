@@ -626,7 +626,7 @@ impl IdProvider for HimmelblauProvider {
                  * provide this during a silent acquire
                  */
                 if let Some(old_token) = old_token {
-                    token.displayname = old_token.displayname.clone()
+                    token.displayname.clone_from(&old_token.displayname)
                 }
                 Ok(token)
             }
