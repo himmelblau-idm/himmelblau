@@ -239,3 +239,79 @@ impl Drop for SssIdmap {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::{SssIdmap, DEFAULT_IDMAP_RANGE};
+    use std::collections::HashMap;
+    use uuid::Uuid;
+
+    #[test]
+    fn sssd_idmapping() {
+        let domain = "contoso.onmicrosoft.com";
+        let tenant_id = "d7af6c1b-0497-40fe-9d17-07e6b0f8332e";
+        let mut idmap = SssIdmap::new().expect("SssIdmap initialization failed");
+
+        idmap
+            .add_gen_domain(domain, tenant_id, DEFAULT_IDMAP_RANGE)
+            .expect("Failed initializing test domain idmapping");
+
+        // Verify we always get the same mapping for various users
+        let mut usermap: HashMap<String, u32> = HashMap::new();
+        usermap.insert("tux@contoso.onmicrosoft.com".to_string(), 1912749799);
+        usermap.insert("admin@contoso.onmicrosoft.com".to_string(), 297515919);
+        usermap.insert("dave@contoso.onmicrosoft.com".to_string(), 132631922);
+        usermap.insert("joe@contoso.onmicrosoft.com".to_string(), 361591965);
+        usermap.insert("georg@contoso.onmicrosoft.com".to_string(), 866887005);
+
+        for (username, expected_uid) in &usermap {
+            let uid = idmap
+                .gen_to_unix(tenant_id, username)
+                .expect(&format!("Failed converting username {} to uid", username));
+            assert_eq!(uid, *expected_uid, "Uid for {} did not match", username);
+        }
+    }
+
+    #[test]
+    fn legacy_idmapping() {
+        let domain = "contoso.onmicrosoft.com";
+        let tenant_id = "d7af6c1b-0497-40fe-9d17-07e6b0f8332e";
+        let mut idmap = SssIdmap::new().expect("SssIdmap initialization failed");
+
+        // Test using the legacy default idmap range
+        idmap
+            .add_gen_domain(domain, tenant_id, (1000000, 6999999))
+            .expect("Failed initializing test domain idmapping");
+
+        // Verify we always get the same mapping for various users
+        let mut usermap: HashMap<String, (u32, String)> = HashMap::new();
+        usermap.insert(
+            "tux@contoso.onmicrosoft.com".to_string(),
+            (5627207, "cd4ebec9-434c-4bad-af7c-9c39a4127551".to_string()),
+        );
+        usermap.insert(
+            "admin@contoso.onmicrosoft.com".to_string(),
+            (5290834, "4210d86f-ce97-4aff-97f7-bd3789727903".to_string()),
+        );
+        usermap.insert(
+            "dave@contoso.onmicrosoft.com".to_string(),
+            (4845027, "97bfcfc4-fb12-445e-aaca-28c6b5375855".to_string()),
+        );
+        usermap.insert(
+            "joe@contoso.onmicrosoft.com".to_string(),
+            (3215932, "1e26150d-efe0-4551-b9d3-49ea287c80a7".to_string()),
+        );
+        usermap.insert(
+            "georg@contoso.onmicrosoft.com".to_string(),
+            (4966353, "8193af72-71e1-4689-a4ea-b9a05f2639c9".to_string()),
+        );
+
+        for (username, (expected_uid, object_id)) in &usermap {
+            let object_uuid = Uuid::parse_str(&object_id).expect("Failed parsing object_id");
+            let uid = idmap
+                .object_id_to_unix_id(tenant_id, &object_uuid)
+                .expect(&format!("Failed converting uuid {} to uid", object_id));
+            assert_eq!(uid, *expected_uid, "Uid for {} did not match", username);
+        }
+    }
+}
