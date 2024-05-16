@@ -1,3 +1,4 @@
+use crate::config::IdAttr;
 use crate::unix_config::HomeAttr;
 
 pub const DEFAULT_CONFIG_PATH: &str = "/etc/himmelblau/himmelblau.conf";
@@ -15,9 +16,9 @@ pub const DEFAULT_AUTHORITY_HOST: &str = "login.microsoftonline.com";
 pub const DEFAULT_GRAPH: &str = "https://graph.microsoft.com";
 pub const DEFAULT_APP_ID: &str = "b743a22d-6705-4147-8670-d92fa515ee2b";
 pub const DRS_APP_ID: &str = "01cb2876-7ebd-4aa4-9cc9-d28bd4d359a9";
-pub const DEFAULT_IDMAP_RANGE: (u32, u32) = (1000000, 6999999);
 pub const DEFAULT_CONN_TIMEOUT: u64 = 30;
 pub const DEFAULT_CACHE_TIMEOUT: u64 = 15;
 pub const DEFAULT_SELINUX: bool = true;
 pub const DEFAULT_HSM_PIN_PATH: &str = "/var/lib/himmelblaud/hsm-pin";
 pub const DEFAULT_HELLO_ENABLED: bool = true;
+pub const DEFAULT_ID_ATTR_MAP: IdAttr = IdAttr::Name;

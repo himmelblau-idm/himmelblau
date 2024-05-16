@@ -1,5 +1,5 @@
 ---
-name: Build
+name: Test
 
 # Trigger the workflow on push or pull request
 "on":
@@ -18,7 +18,7 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 jobs:
-  build:
+  test:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -50,6 +50,6 @@ jobs:
       - name: "Fetch submodules"
         run: git submodule init && git submodule update
 
-      - name: "Run build"
-        run: cargo build --all-features --all-targets
+      - name: "Run tests"
+        run: cargo test
         continue-on-error: false
