@@ -19,9 +19,7 @@ use msal::auth::{
     DeviceAuthorizationResponse as msal_DeviceAuthorizationResponse, EnrollAttrs, IdToken,
     MFAAuthContinue, UserToken as UnixUserToken,
 };
-use msal::error::{
-    MsalError, AUTH_PENDING, DEVICE_AUTH_FAIL, NO_CONSENT, NO_GROUP_CONSENT, REQUIRES_MFA,
-};
+use msal::error::{MsalError, AUTH_PENDING, DEVICE_AUTH_FAIL, REQUIRES_MFA};
 use reqwest;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -575,44 +573,20 @@ impl IdProvider for HimmelblauProvider {
             Ok(prt) => prt,
             Err(_) => fake_user!(),
         };
-        let scopes = vec!["GroupMember.Read.All"];
         let token = match self
             .client
             .write()
             .await
-            .exchange_prt_for_access_token(&prt, scopes, tpm, machine_key, None)
+            .exchange_prt_for_access_token(
+                &prt,
+                vec!["User.Read"],
+                Some("https://graph.microsoft.com".to_string()),
+                tpm,
+                machine_key,
+            )
             .await
         {
             Ok(token) => token,
-            Err(MsalError::AcquireTokenFailed(resp)) => {
-                // We may have been denied GroupMember.Read.All, try again without it
-                if resp.error_codes.contains(&NO_GROUP_CONSENT)
-                    || resp.error_codes.contains(&NO_CONSENT)
-                {
-                    debug!("Failed auth with GroupMember.Read.All permissions.");
-                    debug!("Group memberships will be missing display names.");
-                    debug!("{}: {}", resp.error, resp.error_description);
-                    match self
-                        .client
-                        .write()
-                        .await
-                        .exchange_prt_for_access_token(&prt, vec![], tpm, machine_key, None)
-                        .await
-                    {
-                        Ok(token) => token,
-                        Err(e) => {
-                            error!("{:?}", e);
-                            // Never return IdpError::NotFound. This deletes
-                            // the existing user from the cache.
-                            fake_user!()
-                        }
-                    }
-                } else {
-                    // Never return IdpError::NotFound. This deletes the
-                    // existing user from the cache.
-                    fake_user!()
-                }
-            }
             Err(e) => {
                 error!("{:?}", e);
                 // Never return IdpError::NotFound. This deletes the existing
@@ -688,8 +662,8 @@ impl IdProvider for HimmelblauProvider {
                     .await
                     .acquire_token_by_refresh_token(
                         &$token.refresh_token,
-                        vec![],
-                        None,
+                        vec!["User.Read"],
+                        Some("https://graph.microsoft.com".to_string()),
                         tpm,
                         machine_key,
                     )
@@ -712,8 +686,8 @@ impl IdProvider for HimmelblauProvider {
                                         .await
                                         .acquire_token_by_refresh_token(
                                             &$token.refresh_token,
-                                            vec![],
-                                            None,
+                                            vec!["User.Read"],
+                                            Some("https://graph.microsoft.com".to_string()),
                                             tpm,
                                             machine_key,
                                         )
@@ -741,7 +715,8 @@ impl IdProvider for HimmelblauProvider {
                     .acquire_token_by_hello_for_business_key(
                         account_id,
                         &$hello_key,
-                        vec![],
+                        vec!["User.Read"],
+                        Some("https://graph.microsoft.com".to_string()),
                         tpm,
                         machine_key,
                         &$cred,
