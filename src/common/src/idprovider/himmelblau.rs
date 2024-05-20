@@ -554,7 +554,7 @@ impl IdProvider for HimmelblauProvider {
                             return Ok(UserToken {
                                 name: account_id.clone(),
                                 spn: account_id.clone(),
-                                uuid: Uuid::max(),
+                                uuid: Uuid::new_v4(),
                                 gidnumber,
                                 displayname: "".to_string(),
                                 shell: Some(config.get_shell(Some(&self.domain))),
