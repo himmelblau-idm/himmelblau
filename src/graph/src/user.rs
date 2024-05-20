@@ -2,7 +2,7 @@ use anyhow::{anyhow, Result};
 use reqwest::header;
 use serde::Deserialize;
 use serde_json::{json, to_string_pretty};
-use tracing::debug;
+use tracing::{debug, error};
 
 #[derive(Debug, Deserialize)]
 pub struct DirectoryObject {
@@ -59,7 +59,12 @@ pub async fn request_user_groups(
         }
         Ok(res)
     } else {
-        Err(anyhow!(resp.status()))
+        let status = resp.status();
+        error!(
+            "Error encountered while fetching user groups: {}",
+            resp.text().await.map_err(|_| { anyhow!(status) })?
+        );
+        Err(anyhow!(status))
     }
 }
 
