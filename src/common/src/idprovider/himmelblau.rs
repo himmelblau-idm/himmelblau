@@ -1433,7 +1433,7 @@ impl HimmelblauProvider {
     ) -> Result<(), MsalError> {
         /* If not already joined, join the domain now. */
         let attrs = EnrollAttrs::new(self.domain.clone(), None, None, None, None)?;
-        return match self
+        match self
             .client
             .write()
             .await
@@ -1481,19 +1481,6 @@ impl HimmelblauProvider {
                     "Setting domain {} config authority_host to {}",
                     self.domain, &self.authority_host
                 );
-                let mut allow_groups = match config.get(&self.domain, "pam_allow_groups") {
-                    Some(allowed) => allowed.split(',').map(|g| g.to_string()).collect(),
-                    None => vec![],
-                };
-                allow_groups.push(token.spn()?.clone());
-                /* Remove duplicates from the allow_groups */
-                allow_groups.sort();
-                allow_groups.dedup();
-                config.set(&self.domain, "pam_allow_groups", &allow_groups.join(","));
-                debug!(
-                    "Setting global pam_allow_groups to {}",
-                    &allow_groups.join(",")
-                );
                 if let Err(e) = config.write_server_config() {
                     return Err(MsalError::GeneralFailure(format!(
                         "Failed to write domain join configuration: {:?}",
@@ -1503,7 +1490,7 @@ impl HimmelblauProvider {
                 Ok(())
             }
             Err(e) => Err(e),
-        };
+        }
     }
 
     async fn is_domain_joined<D: KeyStoreTxn + Send>(&self, keystore: &mut D) -> bool {
