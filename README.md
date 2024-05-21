@@ -25,6 +25,33 @@ utilizing the Winbind libraries written for Azure Entra ID. If you would like to
 [financial contributions](https://www.samba.org/samba/donations.html) to this project, please make your
 donations to the Samba Team.
 
+## Installing
+
+Himmelblau is currently only being built on openSUSE. Packaging contributions are welcome!
+
+On openSUSE Tumbleweed, refresh the repos and install himmelblau:
+
+```shell
+sudo zypper ref && sudo zypper in himmelblau nss-himmelblau pam-himmelblau
+```
+
+On openSUSE Leap and SUSE Linux Enterprise, first add the experimental repo:
+
+```shell
+# For Leap 15.6 or SUSE Linux Enterprise 15 SP6:
+sudo zypper ar https://download.opensuse.org/repositories/network:/idm/15.6/network:idm.repo
+# For Leap 15.5 or SUSE Linux Enterprise 15 SP5:
+sudo zypper ar https://download.opensuse.org/repositories/network:/idm/15.5/network:idm.repo
+# For Leap 15.4 or SUSE Linux Enterprise 15 SP4:
+sudo zypper ar https://download.opensuse.org/repositories/network:/idm/15.4/network:idm.repo
+```
+
+Then refresh the repos and install himmelblau:
+
+```shell
+sudo zypper ref && sudo zypper in himmelblau nss-himmelblau pam-himmelblau
+```
+
 ## Contributing
 
 The following packages are required on opensuse to build and test this package.
