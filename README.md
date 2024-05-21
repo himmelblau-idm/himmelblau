@@ -14,7 +14,8 @@ enforces Intune MDM policies.
 
 ## Contact
 
-You can reach out on the [Himmelblau community matrix channel](https://matrix.to/#/#himmelblau:matrix.org).
+You can reach out on the [Himmelblau community matrix channel](https://matrix.to/#/#himmelblau:matrix.org)
+or on the [Samba Technical community matrix channel](https://matrix.to/#/#samba-technical:matrix.org).
 
 ## Contributing
 
