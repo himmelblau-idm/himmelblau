@@ -29,7 +29,7 @@ donations to the Samba Team.
 
 The following packages are required on opensuse to build and test this package.
 
-    zypper in cargo git make gcc sqlite3-devel libopenssl-3-devel pam-devel
+    zypper in cargo git make gcc sqlite3-devel libopenssl-3-devel pam-devel libcap-devel libtalloc-devel libtevent-devel libldb-devel libdhash-devel krb5-devel pcre2-devel libclang13
 
 You can build the components with
 
