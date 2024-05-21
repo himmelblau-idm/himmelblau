@@ -12,6 +12,8 @@ Himmelblau supports Linux authentication to Microsoft Azure AD (AAD) via PAM and
 The PAM and NSS modules communicate with AAD via the himmelblaud daemon. Himmelblau also
 enforces Intune MDM policies.
 
+[![sambaXP 2024: Bridging Worlds – Linux and Azure AD](img/sambaxp.png)](https://www.youtube.com/watch?v=G07FTKoNTRA "sambaXP 2024: Bridging Worlds – Linux and Azure AD")
+
 ## Contact
 
 You can reach out on the [Himmelblau community matrix channel](https://matrix.to/#/#himmelblau:matrix.org)
@@ -51,6 +53,15 @@ Then refresh the repos and install himmelblau:
 ```shell
 sudo zypper ref && sudo zypper in himmelblau nss-himmelblau pam-himmelblau
 ```
+
+## Demos
+
+### Windows Hello on Linux via GDM
+[![Azure Entra ID Authentication for openSUSE: Windows Hello on Linux!](img/hello.png)](https://www.youtube.com/watch?v=rSeHxs0JX58 "Azure Entra ID Authentication for openSUSE: Windows Hello on Linux!")
+
+### MFA Authentication over SSH
+
+[![Azure Entra ID MFA Authentication over SSH: Himmelblau](img/ssh.png)](https://www.youtube.com/watch?v=IAqC8FoYLGc "Azure Entra ID MFA Authentication over SSH: Himmelblau")
 
 ## Contributing
 
