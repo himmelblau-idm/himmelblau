@@ -12,15 +12,66 @@ Himmelblau supports Linux authentication to Microsoft Azure AD (AAD) via PAM and
 The PAM and NSS modules communicate with AAD via the himmelblaud daemon. Himmelblau also
 enforces Intune MDM policies.
 
+[![sambaXP 2024: Bridging Worlds – Linux and Azure AD](img/sambaxp.png)](https://www.youtube.com/watch?v=G07FTKoNTRA "sambaXP 2024: Bridging Worlds – Linux and Azure AD")
+
 ## Contact
 
-You can reach out on the [Himmelblau community matrix channel](https://matrix.to/#/#himmelblau:matrix.org).
+You can reach out on the [Himmelblau community matrix channel](https://matrix.to/#/#himmelblau:matrix.org)
+or on the [Samba Technical community matrix channel](https://matrix.to/#/#samba-technical:matrix.org).
+
+## Donations
+
+Himmelblau is a Samba Team project. The core libraries used in Himmelblau are being developed for use
+in Winbind. In fact, Himmelblau is simply the [Kanidm unix client](https://github.com/kanidm/kanidm)
+utilizing the Winbind libraries written for Azure Entra ID. If you would like to make
+[financial contributions](https://www.samba.org/samba/donations.html) to this project, please make your
+donations to the Samba Team.
+
+## Installing
+
+Himmelblau is currently only being built on openSUSE. Packaging contributions are welcome!
+
+On openSUSE Tumbleweed, refresh the repos and install himmelblau:
+
+```shell
+sudo zypper ref && sudo zypper in himmelblau nss-himmelblau pam-himmelblau
+```
+
+On openSUSE Leap and SUSE Linux Enterprise, first add the experimental repo:
+
+```shell
+# For Leap 15.6 or SUSE Linux Enterprise 15 SP6:
+sudo zypper ar https://download.opensuse.org/repositories/network:/idm/15.6/network:idm.repo
+# For Leap 15.5 or SUSE Linux Enterprise 15 SP5:
+sudo zypper ar https://download.opensuse.org/repositories/network:/idm/15.5/network:idm.repo
+# For Leap 15.4 or SUSE Linux Enterprise 15 SP4:
+sudo zypper ar https://download.opensuse.org/repositories/network:/idm/15.4/network:idm.repo
+```
+
+Then refresh the repos and install himmelblau:
+
+```shell
+sudo zypper ref && sudo zypper in himmelblau nss-himmelblau pam-himmelblau
+```
+
+## Demos
+
+### Windows Hello on Linux via GDM
+[![Azure Entra ID Authentication for openSUSE: Windows Hello on Linux!](img/hello.png)](https://www.youtube.com/watch?v=rSeHxs0JX58 "Azure Entra ID Authentication for openSUSE: Windows Hello on Linux!")
+
+### MFA Authentication over SSH
+
+[![Azure Entra ID MFA Authentication over SSH: Himmelblau](img/ssh.png)](https://www.youtube.com/watch?v=IAqC8FoYLGc "Azure Entra ID MFA Authentication over SSH: Himmelblau")
 
 ## Contributing
 
-The following packages are required on opensuse to build and test this package.
+The following packages are required on openSUSE to build and test this package.
 
-    zypper in cargo git make gcc sqlite3-devel libopenssl-3-devel pam-devel
+    sudo zypper in cargo git gcc sqlite3-devel libopenssl-3-devel pam-devel libcap-devel libtalloc-devel libtevent-devel libldb-devel libdhash-devel krb5-devel pcre2-devel libclang13 autoconf
+
+Or on Ubuntu:
+
+    sudo apt-get install libpam0g-dev libudev-dev libssl-dev pkg-config tpm-udev libtss2-dev libcap-dev libtalloc-dev libtevent-dev libldb-dev libdhash-dev libkrb5-dev libpcre2-dev libclang-13-dev autoconf gettext
 
 You can build the components with
 
