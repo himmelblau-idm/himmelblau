@@ -17,6 +17,14 @@ enforces Intune MDM policies.
 You can reach out on the [Himmelblau community matrix channel](https://matrix.to/#/#himmelblau:matrix.org)
 or on the [Samba Technical community matrix channel](https://matrix.to/#/#samba-technical:matrix.org).
 
+## Donations
+
+Himmelblau is a Samba Team project. The core libraries used in Himmelblau are being developed for use
+in Winbind. In fact, Himmelblau is simply the [Kanidm unix client](https://github.com/kanidm/kanidm)
+utilizing the Winbind libraries written for Azure Entra ID. If you would like to make
+[financial contributions](https://www.samba.org/samba/donations.html) to this project, please make your
+donations to the Samba Team.
+
 ## Contributing
 
 The following packages are required on opensuse to build and test this package.
