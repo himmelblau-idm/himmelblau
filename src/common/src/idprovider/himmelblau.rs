@@ -16,9 +16,10 @@ use idmap::SssIdmap;
 use kanidm_hsm_crypto::{LoadableIdentityKey, LoadableMsOapxbcRsaKey, PinValue, SealedData, Tpm};
 use msal::auth::{
     BrokerClientApplication, ClientInfo,
-    DeviceAuthorizationResponse as msal_DeviceAuthorizationResponse, EnrollAttrs, IdToken,
-    MFAAuthContinue, UserToken as UnixUserToken,
+    DeviceAuthorizationResponse as msal_DeviceAuthorizationResponse, IdToken, MFAAuthContinue,
+    UserToken as UnixUserToken,
 };
+use msal::discovery::EnrollAttrs;
 use msal::error::{MsalError, AUTH_PENDING, DEVICE_AUTH_FAIL, REQUIRES_MFA};
 use reqwest;
 use std::collections::HashMap;
