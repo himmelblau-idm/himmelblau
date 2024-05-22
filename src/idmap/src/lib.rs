@@ -193,7 +193,8 @@ impl SssIdmap {
         })?;
         let tenant_id_cstr =
             CString::new(tenant_id).map_err(|_| IdmapError::IDMAP_OUT_OF_MEMORY)?;
-        let input_cstr = CString::new(input).map_err(|_| IdmapError::IDMAP_OUT_OF_MEMORY)?;
+        let input_cstr =
+            CString::new(input.to_lowercase()).map_err(|_| IdmapError::IDMAP_OUT_OF_MEMORY)?;
         unsafe {
             let mut id: u32 = 0;
             match map_err(ffi::sss_idmap_gen_to_unix(
