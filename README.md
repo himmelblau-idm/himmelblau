@@ -4,13 +4,13 @@
   <img src="img/penguin.png" width="15%" height="auto" />
 </p>
 
-Himmelblau is an interoperability suite for Microsoft Azure AD and Intune.
+Himmelblau is an interoperability suite for Microsoft Azure Entra ID and Intune.
 
 The name of the project comes from a German word for Azure (sky blue).
 
-Himmelblau supports Linux authentication to Microsoft Azure AD (AAD) via PAM and NSS modules.
-The PAM and NSS modules communicate with AAD via the himmelblaud daemon. Himmelblau also
-enforces Intune MDM policies.
+Himmelblau supports Linux authentication to Microsoft Azure Entra ID via PAM and NSS modules.
+The PAM and NSS modules communicate with Entra ID via the himmelblaud daemon. Himmelblau plans to
+enforce Intune MDM policies, but this work isn't completed yet.
 
 [![sambaXP 2024: Bridging Worlds – Linux and Azure AD](img/sambaxp.png)](https://www.youtube.com/watch?v=G07FTKoNTRA "sambaXP 2024: Bridging Worlds – Linux and Azure AD")
 
