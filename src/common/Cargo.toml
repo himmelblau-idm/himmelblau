@@ -21,7 +21,6 @@ tracing = { workspace = true }
 configparser = "^3.0.2"
 msal = { workspace = true }
 graph = { workspace = true }
-himmelblau_policies = { workspace = true }
 reqwest = { workspace = true }
 pem = { workspace = true }
 kanidm-hsm-crypto = { workspace = true }

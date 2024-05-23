@@ -11,7 +11,6 @@ use crate::unix_proto::{DeviceAuthorizationResponse, PamAuthRequest};
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use graph::user::{request_user_groups, DirectoryObject};
-use himmelblau_policies::policies::apply_group_policy;
 use idmap::SssIdmap;
 use kanidm_hsm_crypto::{LoadableIdentityKey, LoadableMsOapxbcRsaKey, PinValue, SealedData, Tpm};
 use msal::auth::{
@@ -1264,36 +1263,6 @@ impl HimmelblauProvider {
                     return Ok(AuthResult::Denied);
                 }
                 info!("Authentication successful for user '{}'", account_id);
-                /* Process Group Policy (spawn non-blocking process to prevent auth timeout),
-                 * if it is enabled via config */
-                if self.config.read().await.get_apply_policy() {
-                    let graph_url = self.graph_url.clone();
-                    let access_token = match token.access_token.as_ref() {
-                        Some(access_token) => access_token.clone(),
-                        None => return Err(IdpError::BadRequest),
-                    };
-                    let uuid = token
-                        .uuid()
-                        .map_err(|e| {
-                            error!("Failed fetching user uuid: {:?}", e);
-                            IdpError::BadRequest
-                        })?
-                        .to_string();
-                    tokio::spawn(async move {
-                        match apply_group_policy(&graph_url, &access_token, &uuid).await {
-                            Ok(res) => {
-                                if res {
-                                    info!("Successfully applied group policies");
-                                } else {
-                                    error!("Failed to apply group policies");
-                                }
-                            }
-                            Err(res) => {
-                                error!("Failed to apply group policies: {}", res);
-                            }
-                        }
-                    });
-                }
                 // If an encrypted PRT is present, store it in the mem cache
                 if let Some(prt) = &token.prt {
                     self.refresh_cache.add(account_id, prt).await;
