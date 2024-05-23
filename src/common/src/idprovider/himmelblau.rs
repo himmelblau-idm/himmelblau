@@ -482,7 +482,15 @@ impl From<&Vec<String>> for UnixUserTokenI {
 impl IdProvider for HimmelblauProvider {
     async fn provider_authenticate(&self, _tpm: &mut tpm::BoxedDynTpm) -> Result<(), IdpError> {
         /* Determine if the authority is up by sending a simple get request */
-        let resp = match reqwest::get(format!("https://{}", self.authority_host)).await {
+        let client = reqwest::Client::builder()
+            .danger_accept_invalid_certs(true)
+            .build()
+            .map_err(|_| IdpError::BadRequest)?;
+        let resp = match client
+            .get(format!("https://{}", self.authority_host))
+            .send()
+            .await
+        {
             Ok(resp) => resp,
             Err(_e) => return Err(IdpError::BadRequest),
         };

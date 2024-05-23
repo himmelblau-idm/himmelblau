@@ -20,7 +20,10 @@ pub async fn request_federation_provider(
         &[("domain", domain)],
     )?;
 
-    let resp = reqwest::get(url).await?;
+    let client = reqwest::Client::builder()
+        .danger_accept_invalid_certs(true)
+        .build()?;
+    let resp = client.get(url).send().await?;
     if resp.status().is_success() {
         let json_resp: FederationProvider = resp.json().await?;
         debug!("Discovered tenant_id: {}", json_resp.tenant_id);
