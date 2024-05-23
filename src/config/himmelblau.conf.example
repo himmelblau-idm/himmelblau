@@ -36,10 +36,6 @@
 #
 # The location where the hsm pin will be stored
 # hsm_pin_path = /var/lib/himmelblaud/hsm-pin
-#
-# Whether to apply MDM policies (experimental).
-# apply_policy = false ; {true|false}
-#
 # socket_path = /var/run/himmelblaud/socket
 # task_socket_path = /var/run/himmelblaud/task_sock
 # home_prefix = /home/

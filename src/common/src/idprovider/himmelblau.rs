@@ -10,8 +10,6 @@ use crate::idprovider::interface::tpm;
 use crate::unix_proto::{DeviceAuthorizationResponse, PamAuthRequest};
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
-use graph::user::{request_user_groups, DirectoryObject};
-use himmelblau_policies::policies::apply_group_policy;
 use idmap::SssIdmap;
 use kanidm_hsm_crypto::{LoadableIdentityKey, LoadableMsOapxbcRsaKey, PinValue, SealedData, Tpm};
 use msal::auth::{
@@ -21,6 +19,7 @@ use msal::auth::{
 };
 use msal::discovery::EnrollAttrs;
 use msal::error::{MsalError, AUTH_PENDING, DEVICE_AUTH_FAIL, REQUIRES_MFA};
+use msal::graph::{DirectoryObject, Graph};
 use reqwest;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -93,11 +92,11 @@ impl HimmelblauMultiProvider {
             debug!("Adding provider for domain {}", domain);
             let range = cfg.get_idmap_range(&domain);
             let mut idmap_lk = idmap.write().await;
-            let (authority_host, tenant_id, graph) =
-                match cfg.get_tenant_id_authority_and_graph(&domain).await {
-                    Ok(res) => res,
-                    Err(e) => return Err(anyhow!("{}", e)),
-                };
+            let graph = Graph::new(&cfg.get_odc_provider(&domain), &domain)
+                .await
+                .map_err(|e| anyhow!("{:?}", e))?;
+            let authority_host = graph.authority_host();
+            let tenant_id = graph.tenant_id();
             idmap_lk
                 .add_gen_domain(&domain, &tenant_id, range)
                 .map_err(|e| anyhow!("{:?}", e))?;
@@ -110,7 +109,7 @@ impl HimmelblauMultiProvider {
                 &tenant_id,
                 &domain,
                 &authority_host,
-                &graph,
+                graph,
                 &idmap,
             )
             .map_err(|_| anyhow!("Failed to initialize the provider"))?;
@@ -330,7 +329,7 @@ pub struct HimmelblauProvider {
     tenant_id: String,
     domain: String,
     authority_host: String,
-    graph_url: String,
+    graph: Graph,
     refresh_cache: RefreshCache,
     idmap: Arc<RwLock<SssIdmap>>,
 }
@@ -342,7 +341,7 @@ impl HimmelblauProvider {
         tenant_id: &str,
         domain: &str,
         authority_host: &str,
-        graph_url: &str,
+        graph: Graph,
         idmap: &Arc<RwLock<SssIdmap>>,
     ) -> Result<Self, IdpError> {
         Ok(HimmelblauProvider {
@@ -351,7 +350,7 @@ impl HimmelblauProvider {
             tenant_id: tenant_id.to_string(),
             domain: domain.to_string(),
             authority_host: authority_host.to_string(),
-            graph_url: graph_url.to_string(),
+            graph,
             refresh_cache: RefreshCache::new(),
             idmap: idmap.clone(),
         })
@@ -1264,36 +1263,6 @@ impl HimmelblauProvider {
                     return Ok(AuthResult::Denied);
                 }
                 info!("Authentication successful for user '{}'", account_id);
-                /* Process Group Policy (spawn non-blocking process to prevent auth timeout),
-                 * if it is enabled via config */
-                if self.config.read().await.get_apply_policy() {
-                    let graph_url = self.graph_url.clone();
-                    let access_token = match token.access_token.as_ref() {
-                        Some(access_token) => access_token.clone(),
-                        None => return Err(IdpError::BadRequest),
-                    };
-                    let uuid = token
-                        .uuid()
-                        .map_err(|e| {
-                            error!("Failed fetching user uuid: {:?}", e);
-                            IdpError::BadRequest
-                        })?
-                        .to_string();
-                    tokio::spawn(async move {
-                        match apply_group_policy(&graph_url, &access_token, &uuid).await {
-                            Ok(res) => {
-                                if res {
-                                    info!("Successfully applied group policies");
-                                } else {
-                                    error!("Failed to apply group policies");
-                                }
-                            }
-                            Err(res) => {
-                                error!("Failed to apply group policies: {}", res);
-                            }
-                        }
-                    });
-                }
                 // If an encrypted PRT is present, store it in the mem cache
                 if let Some(prt) = &token.prt {
                     self.refresh_cache.add(account_id, prt).await;
@@ -1331,7 +1300,7 @@ impl HimmelblauProvider {
         };
         match &value.access_token {
             Some(access_token) => {
-                groups = match request_user_groups(&self.graph_url, access_token).await {
+                groups = match self.graph.request_user_groups(access_token).await {
                     Ok(groups) => {
                         let mut gt_groups = vec![];
                         for g in groups {
@@ -1397,23 +1366,19 @@ impl HimmelblauProvider {
         value: DirectoryObject,
     ) -> Result<GroupToken> {
         let config = self.config.read().await;
-        let name = match value.get("display_name") {
+        let name = match value.display_name {
             Some(name) => name,
             None => return Err(anyhow!("Failed retrieving group display_name")),
         };
-        let id = match value.get("id") {
-            Some(id) => {
-                Uuid::parse_str(id).map_err(|e| anyhow!("Failed parsing user uuid: {}", e))?
-            }
-            None => return Err(anyhow!("Failed retrieving group uuid")),
-        };
+        let id =
+            Uuid::parse_str(&value.id).map_err(|e| anyhow!("Failed parsing user uuid: {}", e))?;
         let idmap = self.idmap.read().await;
         let gidnumber = match config.get_id_attr_map() {
             IdAttr::Uuid => idmap
                 .object_id_to_unix_id(&self.tenant_id, &id)
                 .map_err(|e| anyhow!("Failed fetching gid for {}: {:?}", id, e))?,
             IdAttr::Name => idmap
-                .gen_to_unix(&self.tenant_id, name)
+                .gen_to_unix(&self.tenant_id, &name)
                 .map_err(|e| anyhow!("Failed fetching gid for {}: {:?}", name, e))?,
         };
 
@@ -1466,11 +1431,6 @@ impl HimmelblauProvider {
                 debug!(
                     "Setting domain {} config device_id to {}",
                     self.domain, &device_id
-                );
-                config.set(&self.domain, "graph", &self.graph_url);
-                debug!(
-                    "Setting domain {} config graph to {}",
-                    self.domain, &self.graph_url
                 );
                 config.set(&self.domain, "tenant_id", &self.tenant_id);
                 debug!(
