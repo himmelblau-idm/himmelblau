@@ -1,4 +1,3 @@
-use anyhow::{anyhow, Result};
 use configparser::ini::Ini;
 use std::fmt;
 use std::io::Error;
@@ -6,15 +5,13 @@ use std::path::PathBuf;
 use tracing::{debug, error};
 
 use crate::constants::{
-    DEFAULT_AUTHORITY_HOST, DEFAULT_CACHE_TIMEOUT, DEFAULT_CONFIG_PATH, DEFAULT_CONN_TIMEOUT,
-    DEFAULT_DB_PATH, DEFAULT_GRAPH, DEFAULT_HELLO_ENABLED, DEFAULT_HOME_ALIAS, DEFAULT_HOME_ATTR,
+    BROKER_APP_ID, DEFAULT_CACHE_TIMEOUT, DEFAULT_CONFIG_PATH, DEFAULT_CONN_TIMEOUT,
+    DEFAULT_DB_PATH, DEFAULT_HELLO_ENABLED, DEFAULT_HOME_ALIAS, DEFAULT_HOME_ATTR,
     DEFAULT_HOME_PREFIX, DEFAULT_HSM_PIN_PATH, DEFAULT_ID_ATTR_MAP, DEFAULT_ODC_PROVIDER,
     DEFAULT_SELINUX, DEFAULT_SHELL, DEFAULT_SOCK_PATH, DEFAULT_TASK_SOCK_PATH,
     DEFAULT_USE_ETC_SKEL, SERVER_CONFIG_PATH,
 };
 use crate::unix_config::{HomeAttr, HsmType};
-use graph::constants::BROKER_APP_ID;
-use graph::misc::request_federation_provider;
 use idmap::DEFAULT_IDMAP_RANGE;
 use std::env;
 
@@ -59,65 +56,6 @@ fn match_bool(val: Option<String>, default: bool) -> bool {
             }
         },
         None => default,
-    }
-}
-
-struct FederationProvider {
-    odc_provider: String,
-    domain: String,
-    tenant_id: Option<String>,
-    authority_host: Option<String>,
-    graph: Option<String>,
-}
-
-impl FederationProvider {
-    fn new(odc_provider: &str, domain: &str) -> Self {
-        FederationProvider {
-            odc_provider: odc_provider.to_string(),
-            domain: domain.to_string(),
-            tenant_id: None,
-            authority_host: None,
-            graph: None,
-        }
-    }
-
-    async fn set(&mut self) -> Result<()> {
-        let (authority_host, tenant_id, graph) =
-            request_federation_provider(&self.odc_provider, &self.domain).await?;
-        self.tenant_id = Some(tenant_id);
-        self.authority_host = Some(authority_host);
-        self.graph = Some(graph);
-        Ok(())
-    }
-
-    async fn get_tenant_id(&mut self) -> Result<String> {
-        if self.tenant_id.is_none() {
-            self.set().await?;
-        }
-        match &self.tenant_id {
-            Some(tenant_id) => Ok(tenant_id.to_string()),
-            None => Err(anyhow!("Failed fetching tenant_id")),
-        }
-    }
-
-    async fn get_authority_host(&mut self) -> Result<String> {
-        if self.authority_host.is_none() {
-            self.set().await?;
-        }
-        match &self.authority_host {
-            Some(authority_host) => Ok(authority_host.to_string()),
-            None => Err(anyhow!("Failed fetching authority_host")),
-        }
-    }
-
-    async fn get_graph(&mut self) -> Result<String> {
-        if self.graph.is_none() {
-            self.set().await?;
-        }
-        match &self.graph {
-            Some(graph) => Ok(graph.to_string()),
-            None => Err(anyhow!("Failed fetching graph")),
-        }
     }
 }
 
@@ -225,7 +163,7 @@ impl HimmelblauConfig {
         }
     }
 
-    fn get_odc_provider(&self, domain: &str) -> String {
+    pub fn get_odc_provider(&self, domain: &str) -> String {
         match self.config.get(domain, "odc_provider") {
             Some(val) => val,
             None => match self.config.get("global", "odc_provider") {
@@ -233,42 +171,6 @@ impl HimmelblauConfig {
                 None => String::from(DEFAULT_ODC_PROVIDER),
             },
         }
-    }
-
-    pub async fn get_tenant_id_authority_and_graph(
-        &self,
-        domain: &str,
-    ) -> Result<(String, String, String)> {
-        let mut federation_provider =
-            FederationProvider::new(&self.get_odc_provider(domain), domain);
-        let tenant_id = match self.config.get(domain, "tenant_id") {
-            Some(val) => val,
-            None => match federation_provider.get_tenant_id().await {
-                Ok(val) => val,
-                Err(e) => return Err(anyhow!("Failed fetching tenant_id: {}", e)),
-            },
-        };
-        let authority_host = match self.config.get(domain, "authority_host") {
-            Some(val) => val,
-            None => match self.config.get("global", "authority_host") {
-                Some(val) => val,
-                None => match federation_provider.get_authority_host().await {
-                    Ok(val) => val,
-                    Err(_) => String::from(DEFAULT_AUTHORITY_HOST),
-                },
-            },
-        };
-        let graph = match self.config.get(domain, "graph") {
-            Some(val) => val,
-            None => match self.config.get("global", "graph") {
-                Some(val) => val,
-                None => match federation_provider.get_graph().await {
-                    Ok(val) => val,
-                    Err(_) => String::from(DEFAULT_GRAPH),
-                },
-            },
-        };
-        Ok((authority_host, tenant_id, graph))
     }
 
     pub fn get_app_id(&self, domain: &str) -> String {

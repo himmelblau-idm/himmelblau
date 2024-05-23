@@ -3,7 +3,6 @@ members = [
 	"src/daemon",
 	"src/cli",
 	"src/common",
-	"src/graph",
 	"src/pam",
 	"src/nss",
 	"src/glue",
@@ -38,7 +37,6 @@ tracing = "^0.1.37"
 himmelblau_unix_common = { path = "src/common" }
 kanidm_unix_common = { path = "src/glue" }
 msal = { version = "0.2.3" }
-graph = { path = "src/graph" }
 clap = { version = "^4.5", features = ["derive", "env"] }
 clap_complete = "^4.4.1"
 reqwest = { version = "^0.12.2", features = ["json"] }

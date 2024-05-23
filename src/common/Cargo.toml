@@ -20,7 +20,6 @@ serde_json = { workspace = true }
 tracing = { workspace = true }
 configparser = "^3.0.2"
 msal = { workspace = true }
-graph = { workspace = true }
 reqwest = { workspace = true }
 pem = { workspace = true }
 kanidm-hsm-crypto = { workspace = true }
