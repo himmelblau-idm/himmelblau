@@ -23,7 +23,7 @@ authors = [
 ]
 rust-version = "1.66"
 edition = "2021"
-license = "MPL-2.0"
+license = "GPL-3.0-or-later"
 homepage = "https://github.com/himmelblau-idm/himmelblau"
 repository = "https://github.com/himmelblau-idm/himmelblau"
 
