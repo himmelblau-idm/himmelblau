@@ -913,7 +913,9 @@ impl IdProvider for HimmelblauProvider {
                         return Ok((
                             AuthResult::Next(AuthRequest::MFAPoll {
                                 msg,
-                                polling_interval,
+                                // Kanidm pam expects a polling_interval in
+                                // seconds, not milliseconds.
+                                polling_interval: polling_interval / 1000,
                             }),
                             /* An MFA auth cannot cache the password. This would
                              * lead to a potential downgrade to SFA attack (where
@@ -1064,7 +1066,7 @@ impl IdProvider for HimmelblauProvider {
                         debug!("Received a signal to shutdown, bailing MFA poll");
                         return Err(IdpError::BadRequest);
                     }
-                    sleep(Duration::from_secs(polling_interval.into()));
+                    sleep(Duration::from_millis(polling_interval.into()));
                     match self
                         .client
                         .write()
