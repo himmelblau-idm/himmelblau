@@ -406,7 +406,6 @@ impl Into<Vec<String>> for MFAAuthContinueI {
             self.0.ctx,
             self.0.canary,
             self.0.url_end_auth,
-            self.0.url_begin_auth,
             self.0.url_post,
             max_poll_attempts,
             polling_interval,
@@ -416,15 +415,15 @@ impl Into<Vec<String>> for MFAAuthContinueI {
 
 impl From<&Vec<String>> for MFAAuthContinueI {
     fn from(src: &Vec<String>) -> Self {
-        let max_poll_attempts: Option<u32> = if src[9].is_empty() {
+        let max_poll_attempts: Option<u32> = if src[8].is_empty() {
+            None
+        } else {
+            src[8].parse().ok()
+        };
+        let polling_interval: Option<u32> = if src[9].is_empty() {
             None
         } else {
             src[9].parse().ok()
-        };
-        let polling_interval: Option<u32> = if src[10].is_empty() {
-            None
-        } else {
-            src[10].parse().ok()
         };
         MFAAuthContinueI(MFAAuthContinue {
             mfa_method: src[0].clone(),
@@ -436,8 +435,7 @@ impl From<&Vec<String>> for MFAAuthContinueI {
             ctx: src[4].clone(),
             canary: src[5].clone(),
             url_end_auth: src[6].clone(),
-            url_begin_auth: src[7].clone(),
-            url_post: src[8].clone(),
+            url_post: src[7].clone(),
         })
     }
 }
@@ -1006,7 +1004,7 @@ impl IdProvider for HimmelblauProvider {
                         account_id,
                         Some(&cred),
                         None,
-                        MFAAuthContinueI::from(data).0,
+                        &mut MFAAuthContinueI::from(data).0,
                     )
                     .await
                     .map_err(|e| {
@@ -1046,7 +1044,7 @@ impl IdProvider for HimmelblauProvider {
                 }
             }
             (AuthCredHandler::MFA { data }, PamAuthRequest::MFAPoll) => {
-                let flow = MFAAuthContinueI::from(data).0;
+                let mut flow = MFAAuthContinueI::from(data).0;
                 let max_poll_attempts = flow.max_poll_attempts.ok_or_else(|| {
                     error!("Invalid response from the server");
                     IdpError::BadRequest
@@ -1070,12 +1068,7 @@ impl IdProvider for HimmelblauProvider {
                         .client
                         .write()
                         .await
-                        .acquire_token_by_mfa_flow(
-                            account_id,
-                            None,
-                            Some(poll_attempt),
-                            MFAAuthContinueI::from(data).0,
-                        )
+                        .acquire_token_by_mfa_flow(account_id, None, Some(poll_attempt), &mut flow)
                         .await
                     {
                         Ok(token) => break token,
