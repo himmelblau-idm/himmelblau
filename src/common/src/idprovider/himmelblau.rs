@@ -887,7 +887,7 @@ impl IdProvider for HimmelblauProvider {
                     }
                 };
                 match resp.mfa_method.as_str() {
-                    "PhoneAppNotification" | "PhoneAppOTP" | "OneWaySMS" => {
+                    "PhoneAppOTP" | "OneWaySMS" => {
                         let msg = resp.msg.clone();
                         *cred_handler = AuthCredHandler::MFA {
                             data: MFAAuthContinueI(resp).into(),
