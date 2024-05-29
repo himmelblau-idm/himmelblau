@@ -1363,7 +1363,7 @@ impl HimmelblauProvider {
         let config = self.config.read().await;
         let name = match value.display_name {
             Some(name) => name,
-            None => return Err(anyhow!("Failed retrieving group display_name")),
+            None => value.id.clone(),
         };
         let id =
             Uuid::parse_str(&value.id).map_err(|e| anyhow!("Failed parsing user uuid: {}", e))?;
