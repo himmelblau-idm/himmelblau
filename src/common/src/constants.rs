@@ -21,6 +21,7 @@ pub const DEFAULT_CACHE_TIMEOUT: u64 = 15;
 pub const DEFAULT_SELINUX: bool = true;
 pub const DEFAULT_HSM_PIN_PATH: &str = "/var/lib/himmelblaud/hsm-pin";
 pub const DEFAULT_HELLO_ENABLED: bool = true;
+pub const DEFAULT_SFA_FALLBACK_ENABLED: bool = false;
 pub const DEFAULT_ID_ATTR_MAP: IdAttr = IdAttr::Name;
 pub const BROKER_APP_ID: &str = "29d9ed98-a469-4536-ade2-f981bc1d605e";
 pub const BROKER_CLIENT_IDENT: &str = "38aa3b87-a06d-4817-b275-7a316988d93b";
