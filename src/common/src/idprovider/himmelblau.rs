@@ -18,7 +18,7 @@ use msal::auth::{
     UserToken as UnixUserToken,
 };
 use msal::discovery::EnrollAttrs;
-use msal::error::{MsalError, AUTH_PENDING, DEVICE_AUTH_FAIL, REQUIRES_MFA};
+use msal::error::{ErrorResponse, MsalError, AUTH_PENDING, DEVICE_AUTH_FAIL, REQUIRES_MFA};
 use msal::graph::{DirectoryObject, Graph};
 use reqwest;
 use std::collections::HashMap;
@@ -814,18 +814,35 @@ impl IdProvider for HimmelblauProvider {
                 let resp = match mresp {
                     Ok(resp) => resp,
                     Err(e) => {
-                        warn!("MFA auth failed, falling back to SFA: {:?}", e);
-                        // Again, we need to wait to handle the response until after
-                        // we've released the write lock on the client, otherwise we
-                        // will deadlock.
-                        let mtoken = self
-                            .client
-                            .write()
-                            .await
-                            .acquire_token_by_username_password_for_device_enrollment(
-                                account_id, &cred,
-                            )
-                            .await;
+                        // If SFA is disabled, we need to skip the SFA fallback.
+                        let sfa_enabled = self.config.read().await.get_enable_sfa_fallback();
+                        let mtoken = match sfa_enabled {
+                            true => {
+                                warn!("MFA auth failed, falling back to SFA: {:?}", e);
+                                // Again, we need to wait to handle the response until after
+                                // we've released the write lock on the client, otherwise we
+                                // will deadlock.
+                                self.client
+                                    .write()
+                                    .await
+                                    .acquire_token_by_username_password_for_device_enrollment(
+                                        account_id, &cred,
+                                    )
+                                    .await
+                            }
+                            // If SFA fallback is disabled, set mtoken to an
+                            // MsalError in order to permit DAG fallback. If
+                            // the DAG produces SFA, it will be rejected also.
+                            false => {
+                                error!("{:?}", e);
+                                Err(MsalError::AcquireTokenFailed(ErrorResponse {
+                                    error: "SFA Disabled".to_string(),
+                                    error_description: "SFA fallback is disabled by configuration"
+                                        .to_string(),
+                                    error_codes: vec![REQUIRES_MFA],
+                                }))
+                            }
+                        };
                         let token = match mtoken {
                             Ok(token) => token,
                             Err(e) => {
@@ -955,13 +972,21 @@ impl IdProvider for HimmelblauProvider {
                 let token2 = enroll_and_obtain_enrolled_token!(token);
                 match self.token_validate(account_id, &token2).await {
                     Ok(AuthResult::Success { token: token3 }) => {
-                        // STOP! If the DAG doesn't hold an MFA amr, then we
-                        // need to bail out here and refuse Hello enrollment
-                        // (we can't enroll in Hello with an SFA token).
                         let mfa = token2.amr_mfa().map_err(|e| {
                             error!("{:?}", e);
                             IdpError::NotFound
                         })?;
+                        // If the DAG didn't obtain an MFA amr, and SFA fallback
+                        // is disabled, we need to reject the authentication
+                        // attempt here.
+                        let sfa_enabled = self.config.read().await.get_enable_sfa_fallback();
+                        if !mfa && !sfa_enabled {
+                            info!("A DAG produced an SFA token, yet SFA fallback is disabled by configuration");
+                            return Ok((AuthResult::Denied, AuthCacheAction::None));
+                        }
+                        // STOP! If the DAG doesn't hold an MFA amr, then we
+                        // need to bail out here and refuse Hello enrollment
+                        // (we can't enroll in Hello with an SFA token).
                         // Also skip Hello enrollment if it is disabled by config
                         let hello_enabled = self.config.read().await.get_enable_hello();
                         if !mfa || !hello_enabled {

@@ -29,6 +29,11 @@
 # when the host is public facing (such as via SSH).
 # enable_hello = true
 #
+# Whether to permit attempting a SFA (password only) authentication when MFA
+# methods are unavailable. Sometimes this is possible when MFA has yet to be
+# configured. This is disabled by default.
+# enable_sfa_fallback = false
+#
 # authority_host = login.microsoftonline.com
 #
 # The location of the cache database

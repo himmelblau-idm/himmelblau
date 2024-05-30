@@ -8,8 +8,8 @@ use crate::constants::{
     BROKER_APP_ID, DEFAULT_CACHE_TIMEOUT, DEFAULT_CONFIG_PATH, DEFAULT_CONN_TIMEOUT,
     DEFAULT_DB_PATH, DEFAULT_HELLO_ENABLED, DEFAULT_HOME_ALIAS, DEFAULT_HOME_ATTR,
     DEFAULT_HOME_PREFIX, DEFAULT_HSM_PIN_PATH, DEFAULT_ID_ATTR_MAP, DEFAULT_ODC_PROVIDER,
-    DEFAULT_SELINUX, DEFAULT_SHELL, DEFAULT_SOCK_PATH, DEFAULT_TASK_SOCK_PATH,
-    DEFAULT_USE_ETC_SKEL, SERVER_CONFIG_PATH,
+    DEFAULT_SELINUX, DEFAULT_SFA_FALLBACK_ENABLED, DEFAULT_SHELL, DEFAULT_SOCK_PATH,
+    DEFAULT_TASK_SOCK_PATH, DEFAULT_USE_ETC_SKEL, SERVER_CONFIG_PATH,
 };
 use crate::unix_config::{HomeAttr, HsmType};
 use idmap::DEFAULT_IDMAP_RANGE;
@@ -380,6 +380,13 @@ impl HimmelblauConfig {
             },
             None => DEFAULT_ID_ATTR_MAP,
         }
+    }
+
+    pub fn get_enable_sfa_fallback(&self) -> bool {
+        match_bool(
+            self.config.get("global", "enable_sfa_fallback"),
+            DEFAULT_SFA_FALLBACK_ENABLED,
+        )
     }
 }
 
