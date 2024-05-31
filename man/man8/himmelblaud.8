@@ -1,0 +1,54 @@
+.TH HIMMELBLAUD "1" "September 2024" "Himmelblau 0.5.0" "System Services"
+.SH NAME
+himmelblaud \- Himmelblau Authentication Daemon for Azure Entra ID
+.SH SYNOPSIS
+.B himmelblaud
+[\fIOPTIONS\fR]
+.SH DESCRIPTION
+The `himmelblaud` daemon is responsible for authenticating users against Azure Entra ID and managing group and user information. It operates as a background service, handling authentication requests and maintaining a cache of user and group data.
+
+.SH OPTIONS
+.TP
+\fB\-r\fR, \fB\-\-skip\-root\-check\fR
+Bypass the check that prevents running the daemon as the root user. This option is risky and should never be used in production environments due to potential security vulnerabilities. It can also be set through the environment variable \fBHIMMELBLAU_SKIP_ROOT_CHECK\fR.
+
+.TP
+\fB\-d\fR, \fB\-\-debug\fR
+Enable verbose debug output. This option will show detailed diagnostic information useful for troubleshooting and debugging. Can also be set via the environment variable \fBHIMMELBLAU_DEBUG\fR.
+
+.TP
+\fB\-t\fR, \fB\-\-configtest\fR
+Display the daemon’s current configuration and exit. This is useful for verifying that the configuration file is correctly formatted and contains valid options.
+
+.TP
+\fB\-c\fR, \fB\-\-config\fR <config>
+Specify the path to the configuration file for the daemon. The default configuration file is located at \fI/etc/himmelblau/himmelblaud.conf\fR. This option can also be set via the environment variable \fBHIMMELBLAU_CONFIG\fR.
+
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Show the help message with information about available options.
+
+.TP
+\fB\-V\fR, \fB\-\-version\fR
+Print the version of the `himmelblaud` daemon and exit.
+
+.SH USAGE EXAMPLES
+.TP
+.B Start the daemon:
+# systemctl start himmelblaud
+
+.TP
+.B Run with a specific config file:
+# himmelblaud --config /custom/path/himmelblaud.conf
+
+.TP
+.B Test the configuration:
+# himmelblaud --configtest
+
+.TP
+.B Enable debug mode:
+# himmelblaud --debug
+.SH "SEE ALSO"
+Documentation for the `himmelblaud` daemon is available in the Texinfo manual. Use the following command to access the full manual:
+
+.BR info himmelblaud
