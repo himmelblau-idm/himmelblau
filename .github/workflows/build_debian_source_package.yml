@@ -1,0 +1,556 @@
+name: Build Himmelblau Debian source package
+
+on:
+  push:
+    branches:
+      - stable-0.5.x
+
+env:
+  SCCACHE_GHA_ENABLED: "true"
+  RUSTC_WRAPPER: "sccache"
+
+jobs:
+  build-source-package:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: "[general] - Checkout repository"
+      uses: actions/checkout@v4
+      with:
+        repository: himmelblau-idm/himmelblau
+        fetch-depth: 0  # Fetch all history including tags
+
+    - name: Setup sccache
+      uses: mozilla/sccache-action@v0.0.4
+      with:
+        version: "v0.4.2"
+
+    - name: "[general] - Install build dependencies"
+      run: |
+        sudo apt update
+        sudo apt install -y \
+            libpam0g-dev \
+            libudev-dev \
+            libssl-dev \
+            tpm-udev \
+            libtss2-dev \
+            libcap-dev \
+            libtalloc-dev \
+            libtevent-dev \
+            libldb-dev \
+            libdhash-dev \
+            libkrb5-dev \
+            libpcre2-dev \
+            autoconf \
+            gettext \
+            build-essential \
+            cargo \
+            git \
+            quilt \
+            make \
+            gcc \
+            libsqlite3-dev \
+            lintian \
+            patchelf \
+            pkgconf \
+            debhelper-compat \
+            devscripts \
+            libclang-14-dev
+
+    - name: "[general] - Fetch submodules"
+      run: |
+        git submodule init && git submodule update
+
+    - name: "[general] - Set debian revision"
+      id: set_revision
+      run: |
+        REVISION=1
+        echo "REVISION=$REVISION" >> $GITHUB_ENV
+
+    - name: "[general] - Fetch version from Git tags"
+      id: get_version
+      run: |
+        VERSION=$(git describe --tags --abbrev=0)
+        FULL_VERSION="${VERSION}-${{ env.REVISION }}"
+        echo "VERSION=$VERSION" >> $GITHUB_ENV
+        echo "FULL_VERSION=$FULL_VERSION" >> $GITHUB_ENV
+
+    - name: "[general] - Fetch previous version from Git tags"
+      id: get_prev_version
+      run: |
+        PREVIOUS_VERSION=$(git describe --tags --abbrev=0 "${{ env.VERSION }}"^)
+        echo "PREVIOUS_VERSION=$PREVIOUS_VERSION" >> $GITHUB_ENV
+
+    - name: "[general] - Fetch timestamp from latest commit"
+      id: get_timestamp
+      run: |
+        LATEST_COMMIT_TIMESTAMP=$(git log -1 --format=%ct)
+        echo "LATEST_COMMIT_TIMESTAMP=$LATEST_COMMIT_TIMESTAMP" >> $GITHUB_ENV
+
+    - name: '[general] - Generate changelog'
+      run: |
+        mkdir -p ../tmp/debian
+        # Configuration
+        MAIN_PACKAGE_NAME="himmelblau"
+        DISTRIBUTION="noble"
+        URGENCY="low"
+        MAINTAINER_NAME="David Mulder"
+        MAINTAINER_EMAIL="dmulder@suse.com"
+
+        echo "Previous version: ${{ env.PREVIOUS_VERSION }}"
+        echo "Full version: ${{ env.FULL_VERSION }}"
+        echo "Version: ${{ env.VERSION }}"
+
+        # Output Debian changelog headers
+        echo "$MAIN_PACKAGE_NAME (${{ env.FULL_VERSION }}) $DISTRIBUTION; urgency=$URGENCY" > ../tmp/debian/changelog
+        git log --pretty=format:"  * %s" "${{ env.PREVIOUS_VERSION }}".."${{ env.VERSION }}" | fold -s -w 72 | awk 'BEGIN {ORS=""; first=1} /^  \*/ {if (!first) print "\n"; first=0; print; next} {print "\n    "$0} END {print "\n"}' >> ../tmp/debian/changelog
+        echo " -- $MAINTAINER_NAME <$MAINTAINER_EMAIL>  $(date -R)" >> ../tmp/debian/changelog
+        echo Generated file content:
+        cat ../tmp/debian/changelog
+
+    - name: "[general] - Rename source directory"
+      run: |
+        cd ..
+        mv himmelblau himmelblau-${{ env.VERSION }}
+        ln -s himmelblau-${{ env.VERSION }} himmelblau  # Create symlink to maintain CWD consistency
+        cd himmelblau-${{ env.VERSION }}
+
+    - name: '[general] - Remove .git directory'
+      run: |
+        rm -rf .git
+
+    - name: '[general] - Remove .github directory'
+      run: |
+        rm -rf .github
+
+    - name: '[general] - Save original source'
+      run: |
+        cd ..
+        tar --mtime=@${{ env.LATEST_COMMIT_TIMESTAMP }} -cJf himmelblau_${{ env.VERSION }}.orig.tar.xz himmelblau-${{ env.VERSION }}
+
+    - name: '[general] - Set up Quilt'
+      run: |
+        mkdir -p debian/patches
+        cat <<EOL > ~/.quiltrc
+        d=.pc
+        if [ -e debian/source/format ] && grep -q "3.0 (quilt)" debian/source/format; then
+            quilt_patchdir="debian/patches"
+            quilt_patches="debian/patches"
+        fi
+        EOL
+
+    - name: '[patch] - Delete js files from kanidm'
+      run: |
+        cd ../himmelblau-${{ env.VERSION }}
+
+        export QUILT_PATCHES=debian/patches
+        export QUILT_PATCHDIR=debian/patches
+
+        quilt new delete-js-files.patch
+        quilt add src/kanidm/book/mermaid.min.js
+        quilt add src/kanidm/server/web_ui/pkg/external/bootstrap.bundle.min.js
+        quilt add src/kanidm/server/web_ui/pkg/external/confetti.js
+        quilt add src/kanidm/server/web_ui/pkg/external/viz.js
+        quilt add src/kanidm/server/web_ui/shared/static/external/bootstrap.bundle.min.js
+        quilt add src/kanidm/server/web_ui/shared/static/external/confetti.js
+        quilt add src/kanidm/server/web_ui/shared/static/external/viz.js
+        rm -f src/kanidm/book/mermaid.min.js
+        rm -f src/kanidm/server/web_ui/pkg/external/bootstrap.bundle.min.js
+        rm -f src/kanidm/server/web_ui/pkg/external/confetti.js
+        rm -f src/kanidm/server/web_ui/pkg/external/viz.js
+        rm -f src/kanidm/server/web_ui/shared/static/external/bootstrap.bundle.min.js
+        rm -f src/kanidm/server/web_ui/shared/static/external/confetti.js
+        rm -f src/kanidm/server/web_ui/shared/static/external/viz.js
+        quilt refresh
+        # Avoid adding the patch to the series file multiple times
+        if ! grep -q "delete-js-files.patch" debian/patches/series; then
+            echo "delete-js-files.patch" >> debian/patches/series
+        fi
+
+    - name: '[patch] - vendor crates'
+      run: |
+        export QUILT_PATCHES=debian/patches
+        export QUILT_PATCHDIR=debian/patches
+        mkdir .cargo
+        quilt new vendor-crates.patch
+        quilt add Cargo.lock
+        quilt add .cargo/config.toml
+
+        cargo generate-lockfile
+        cargo install cargo-vendor
+        cargo vendor > .cargo/config.toml
+        cargo clean --offline
+        cat .cargo/config.toml
+        tar --mtime=@${{ env.LATEST_COMMIT_TIMESTAMP }} -cJf vendor.tar.xz vendor
+        rm -rf vendor
+
+        quilt refresh
+        # Avoid adding the patch to the series file multiple times
+        if ! grep -q "vendor-crates.patch" debian/patches/series; then
+            echo "vendor-crates.patch" >> debian/patches/series
+        fi
+
+    - name: '[general] - Move changelogs'
+      run: |
+        mv ../tmp/debian/changelog debian/
+        rm -R -f ../tmp
+
+    - name: '[general] - Create control file'
+      run: |
+        # Hardcoded values for the main package
+        MAIN_PACKAGE_NAME="himmelblau"
+        MAIN_PACKAGE_ARCHITECTURE="amd64"
+        MAIN_PACKAGE_MAINTAINER="David Mulder <dmulder@suse.com>"
+        MAIN_PACKAGE_DESCRIPTION="Interoperability suite for Microsoft Azure AD and Intune"
+        MAIN_PACKAGE_DESCRIPTION_LONG=$(cat <<-EOF
+         Himmelblau is an interoperability suite for Microsoft Azure Entra ID and
+         Intune, which allows users to sign into a Linux machine using Azure
+         Entra ID credentials.
+        EOF
+        )
+        MAIN_PACKAGE_DEPENDS="libsqlite3-dev, libssl-dev, libpam0g-dev"
+        MAIN_PACKAGE_RECOMMENDS="pam-himmelblau (>= ${{ env.FULL_VERSION }}), nss-himmelblau (>= ${{ env.FULL_VERSION }})"
+
+        # Hardcoded values for the PAM package
+        PAM_PACKAGE_NAME="pam-himmelblau"
+        PAM_PACKAGE_ARCHITECTURE="amd64"
+        PAM_PACKAGE_MAINTAINER="David Mulder <dmulder@suse.com>"
+        PAM_PACKAGE_DESCRIPTION="PAM module for Himmelblau"
+        PAM_PACKAGE_DEPENDS="libpam0g, himmelblau (>= ${{ env.FULL_VERSION }})"
+
+        # Hardcoded values for the NSS package
+        NSS_PACKAGE_NAME="nss-himmelblau"
+        NSS_PACKAGE_ARCHITECTURE="amd64"
+        NSS_PACKAGE_MAINTAINER="David Mulder <dmulder@suse.com>"
+        NSS_PACKAGE_DESCRIPTION="NSS module for Himmelblau"
+        NSS_PACKAGE_DEPENDS="himmelblau (>= ${{ env.FULL_VERSION }})"
+
+        # Output the control file contents
+        cat << EOF > debian/control
+        Source: $MAIN_PACKAGE_NAME
+        Section: misc
+        Priority: optional
+        Maintainer: $MAIN_PACKAGE_MAINTAINER
+        Build-Depends: debhelper-compat (= 13), quilt, rustc, cargo, patchelf, libssl-dev, pkg-config, devscripts, libpcre2-dev, libcap-dev, libtalloc-dev, libtevent-dev, libldb-dev, libkrb5-dev, libpcre2-dev, libpam0g-dev, libudev-dev, libtss2-dev, libdhash-dev, libclang-14-dev, autoconf, gettext, libsqlite3-dev, pkgconf
+        Standards-Version: 3.9.6
+        Homepage: https://github.com/himmelblau-idm/himmelblau
+        Vcs-Git: https://github.com/himmelblau-idm/himmelblau.git
+        Vcs-Browser: https://github.com/himmelblau-idm/himmelblau
+
+        Package: $MAIN_PACKAGE_NAME
+        Architecture: $MAIN_PACKAGE_ARCHITECTURE
+        Depends: \${shlibs:Depends}, \${misc:Depends}, $MAIN_PACKAGE_DEPENDS
+        Recommends: $MAIN_PACKAGE_RECOMMENDS
+        Description: $MAIN_PACKAGE_DESCRIPTION
+        $MAIN_PACKAGE_DESCRIPTION_LONG
+
+        Package: $PAM_PACKAGE_NAME
+        Architecture: $PAM_PACKAGE_ARCHITECTURE
+        Depends: \${shlibs:Depends}, \${misc:Depends}, $PAM_PACKAGE_DEPENDS
+        Description: $PAM_PACKAGE_DESCRIPTION
+        $MAIN_PACKAGE_DESCRIPTION_LONG
+
+        Package: $NSS_PACKAGE_NAME
+        Architecture: $NSS_PACKAGE_ARCHITECTURE
+        Depends: \${shlibs:Depends}, \${misc:Depends}, $NSS_PACKAGE_DEPENDS
+        Description: $NSS_PACKAGE_DESCRIPTION
+        $MAIN_PACKAGE_DESCRIPTION_LONG
+        EOF
+        echo Generated file content:
+        cat debian/control
+
+    - name: '[patch] - Prepare config file'
+      run: |
+        export QUILT_PATCHES=debian/patches
+        export QUILT_PATCHDIR=debian/patches
+
+        quilt new add-config.patch
+        quilt add src/config/himmelblau.conf
+        cp src/config/himmelblau.conf.example src/config/himmelblau.conf
+        quilt refresh
+        echo Generated file content:
+        cat src/config/himmelblau.conf
+        # Avoid adding the patch to the series file multiple times
+        if ! grep -q "add-config.patch" debian/patches/series; then
+            echo "add-config.patch" >> debian/patches/series
+        fi
+
+    - name: '[general] - Build debian source package'
+      run: |
+        cd ../himmelblau-${{ env.VERSION }}
+        rustup default stable
+        . $HOME/.cargo/env
+        export PATH="$HOME/.cargo/bin:$PATH"
+        export QUILT_PATCHES=debian/patches
+        export QUILT_PATCHDIR=debian/patches
+        rustc --version
+        cargo --version
+        ls -laR debian/patches
+        echo "Series content:"
+        cat debian/patches/series
+        echo "Undoing all patches"
+        quilt pop -a || true
+        echo "Series content:"
+        cat debian/patches/series
+        echo "Building"
+        dpkg-buildpackage -S -us -uc
+
+    - name: '[general] - Move source package into new directory'
+      run: |
+        mkdir package-source
+        mv ../himmelblau_${{ env.FULL_VERSION }}.dsc package-source/
+        mv ../himmelblau_${{ env.FULL_VERSION }}.debian.tar.xz package-source/
+        mv ../himmelblau_${{ env.VERSION }}.orig.tar.xz package-source/
+        mv ../himmelblau_${{ env.FULL_VERSION }}_source.buildinfo package-source/
+        mv ../himmelblau_${{ env.FULL_VERSION }}_source.changes package-source/
+
+    - name: '[debug] - List source package files'
+      run: |
+        ls -la package-source
+
+    - name: '[general] - Check source package'
+      run: |
+        set -e
+        echo "Lintian:"
+        lintian --fail-on error package-source/himmelblau_${{ env.FULL_VERSION }}.dsc
+      continue-on-error: false
+
+    - name: '[general] - Upload Debian source package artifacts'
+      uses: actions/upload-artifact@v4
+      with:
+        name: source-package-artifact
+        path: package-source/
+
+  build-binary-packages:
+    runs-on: ubuntu-latest
+    environment: debian_packaging_environment
+    needs: build-source-package
+    steps:
+
+    - name: Setup sccache
+      uses: mozilla/sccache-action@v0.0.4
+      with:
+        version: "v0.4.2"
+
+    - name: "[general] - Install build dependencies"
+      run: |
+        sudo apt update
+        sudo apt install -y \
+            libpam0g-dev \
+            libudev-dev \
+            libssl-dev \
+            tpm-udev \
+            libtss2-dev \
+            libcap-dev \
+            libtalloc-dev \
+            libtevent-dev \
+            libldb-dev \
+            libdhash-dev \
+            libkrb5-dev \
+            libpcre2-dev \
+            libclang-14-dev \
+            autoconf \
+            gettext \
+            build-essential \
+            cargo \
+            git \
+            quilt \
+            make \
+            gcc \
+            libsqlite3-dev \
+            lintian \
+            patchelf \
+            pkgconf \
+            debhelper-compat \
+            devscripts
+
+    - name: '[general] - Download Debian source package artifacts'
+      uses: actions/download-artifact@v4
+      with:
+        name: source-package-artifact
+        path: package-source/
+
+    - name: '[general] - Unpack source package'
+      run: |
+        cd package-source
+        DSC_FILE=$(ls *.dsc | head -n 1)
+        # Extract the source package
+        dpkg-source -x "$DSC_FILE"
+
+    - name: "[general] - Fetch version from unpacked source package"
+      id: get_version
+      run: |
+        cd package-source
+        # Find the unpacked source directory
+        SRC_DIR=$(ls -d */ | grep -v debian | head -n 1)
+        cd "$SRC_DIR"
+        # Extract the version
+        FULL_VERSION=$(dpkg-parsechangelog --show-field Version)
+        echo "FULL_VERSION=$FULL_VERSION" >> $GITHUB_ENV
+        VERSION=${FULL_VERSION%%-*}
+        echo "VERSION=$VERSION" >> $GITHUB_ENV
+
+    - name: '[general] - Build binary packages'
+      run: |
+        rustup default stable
+        . $HOME/.cargo/env
+        export PATH="$HOME/.cargo/bin:$PATH"
+        rustc --version
+        cargo --version
+        cd package-source
+        # Find the unpacked source directory
+        SRC_DIR=$(ls -d */ | grep -v debian | head -n 1)
+        cd "$SRC_DIR"
+        dpkg-buildpackage -us -uc
+
+    - name: '[debug] - List built binary packages'
+      run: |
+        ls -la package-source
+
+    - name: '[general] - Move packages into new directory'
+      run: |
+        mkdir debian-packages
+        mv package-source/himmelblau_${{ env.FULL_VERSION }}_amd64.deb debian-packages/
+        mv package-source/pam-himmelblau_${{ env.FULL_VERSION }}_amd64.deb debian-packages/
+        mv package-source/nss-himmelblau_${{ env.FULL_VERSION }}_amd64.deb debian-packages/
+
+    - name: '[himmelblau] - Check Debian package'
+      run: |
+        PACKAGE_NAME="debian-packages/himmelblau_${{ env.FULL_VERSION }}_amd64.deb"
+        echo "Listing package contents for: $PACKAGE_NAME"
+        dpkg -c $PACKAGE_NAME
+        echo "-----------------------------"
+        echo "Package Information:"
+        dpkg-deb --info $PACKAGE_NAME
+        echo "-----------------------------"
+        echo "Lintian:"
+        set -e
+        lintian --fail-on error $PACKAGE_NAME
+      continue-on-error: false
+
+    - name: '[pam-himmelblau] - Check Debian package'
+      run: |
+        PACKAGE_NAME="debian-packages/pam-himmelblau_${{ env.FULL_VERSION }}_amd64.deb"
+        echo "Listing package contents for: $PACKAGE_NAME"
+        dpkg -c $PACKAGE_NAME
+        echo "-----------------------------"
+        echo "Package Information:"
+        dpkg-deb --info $PACKAGE_NAME
+        echo "-----------------------------"
+        echo "Lintian:"
+        set -e
+        lintian --fail-on error $PACKAGE_NAME
+      continue-on-error: false
+
+    - name: '[nss-himmelblau] - Check Debian package'
+      run: |
+        PACKAGE_NAME="debian-packages/nss-himmelblau_${{ env.FULL_VERSION }}_amd64.deb"
+        echo "Listing package contents for: $PACKAGE_NAME"
+        dpkg -c $PACKAGE_NAME
+        echo "-----------------------------"
+        echo "Package Information:"
+        dpkg-deb --info $PACKAGE_NAME
+        echo "-----------------------------"
+        echo "Lintian:"
+        set -e
+        lintian --fail-on error $PACKAGE_NAME
+      continue-on-error: false
+
+    - name: '[general] - Upload Debian package artifacts'
+      uses: actions/upload-artifact@v4
+      with:
+        name: packages-artifact
+        path: debian-packages/
+
+  upload-source-package-to-ppa:
+    runs-on: ubuntu-latest
+    environment: debian_packaging_environment
+    needs: build-binary-packages
+    steps:
+    - name: '[general] - Install dependencies'
+      run: sudo apt-get update && sudo apt-get install -y dpkg-sig dput-ng debhelper devscripts build-essential
+
+    - name: '[general] - Download Debian source package artifacts'
+      uses: actions/download-artifact@v4
+      with:
+        name: source-package-artifact
+        path: package-source/
+
+    - name: '[general] - Set up GPG'
+      run: |
+        mkdir -p ~/.gnupg
+        chmod 700 ~/.gnupg
+        echo "use-agent" > ~/.gnupg/gpg.conf
+
+        # Import the GPG key
+        echo "$GPG_KEY" | gpg --batch --import
+
+        # Create a trust file
+        echo -e "5\ny\n" | gpg --batch --yes --pinentry-mode loopback --command-fd 0 --edit-key $GPG_EMAIL trust
+      env:
+        GPG_KEY: ${{ secrets.GPG_KEY }}
+        GPG_EMAIL: ${{ secrets.GPG_EMAIL }}
+
+    - name: '[general] - Sign the package'
+      run: |
+        set -e
+        export GPG_TTY=$(tty)
+
+        # Extract the GPG Key Fingerprint
+        GPG_KEY_FINGERPRINT=$(gpg --list-secret-keys --with-colons --fingerprint | awk -F: '/^fpr/{print $10; exit}')
+        echo "GPG Key Fingerprint: $GPG_KEY_FINGERPRINT"
+
+        # Change directory to package-source
+        cd package-source
+
+        # Manually clearsign the .dsc file using gpg
+        DSC_FILE=$(ls *.dsc | head -n 1)
+        if [ -f "$DSC_FILE" ]; then
+          echo "Signing .dsc file: $DSC_FILE"
+          gpg --batch --yes --pinentry-mode loopback --passphrase "$GPG_PASSPHRASE" --default-key ${GPG_KEY_FINGERPRINT} --clearsign --output "${DSC_FILE}.asc" "$DSC_FILE"
+          if [ $? -ne 0 ]; then
+            echo "Error: Failed to clearsign the .dsc file."
+            exit 1
+          fi
+          mv "${DSC_FILE}.asc" "$DSC_FILE"
+        else
+          echo "Error: No .dsc file found."
+          exit 1
+        fi
+        echo "signed dsc file content:"
+        cat "$DSC_FILE"
+        # Sign the .changes file using dpkg-sig
+        CHANGES_FILE=$(ls *_source.changes | head -n 1)
+
+        # Recalculate checksums
+        debsign -k${GPG_KEY_FINGERPRINT} "$CHANGES_FILE"
+
+        if [ -f "$CHANGES_FILE" ]; then
+          echo "Signing .changes file: $CHANGES_FILE"
+          dpkg-sig --sign builder -k ${GPG_KEY_FINGERPRINT} "$CHANGES_FILE"
+        else
+          echo "Error: No .changes file found."
+          exit 1
+        fi
+      env:
+        GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
+
+    - name: '[general] - Upload to PPA'
+      run: |
+        cd package-source
+        dput ppa:${LAUNCHPAD_USERNAME}/${LAUNCHPAD_PPA} ./*_source.changes
+        if [ $? -ne 0 ]; then
+          echo "Error: dput failed."
+          exit 1
+        else
+          echo "Upload completed successfully."
+        fi
+      env:
+        LAUNCHPAD_USERNAME: ${{ secrets.LAUNCHPAD_USERNAME }}
+        LAUNCHPAD_PPA: ${{ secrets.LAUNCHPAD_PPA }}
+
+    - name: '[general] - Upload Signed Debian source package artifacts'
+      uses: actions/upload-artifact@v4
+      with:
+        name: signed-source-package-artifact
+        path: package-source/

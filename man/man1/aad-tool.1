@@ -1,0 +1,54 @@
+.TH AAD-TOOL "1" "September 2024" "Himmelblau 0.5.0" "User Commands"
+.SH NAME
+aad-tool \- Azure Entra ID (AAD) management utility for Himmelblau
+.SH SYNOPSIS
+.B aad-tool
+\fI<COMMAND>\fR [OPTIONS]
+.SH DESCRIPTION
+The `aad-tool` utility is part of the Himmelblau project, designed to manage and interact with Azure Entra ID through various commands. It allows you to test authentication, manage caches, and check the status of services related to the `himmelblaud` resolver.
+
+.SS Commands:
+.TP
+.B auth-test
+Test user authentication via the `himmelblaud` resolver using the PAM channel. This does not validate your PAM configuration but ensures that `himmelblaud` is correctly processing and verifying user authentications.
+
+.TP
+.B cache-clear
+Clear all entries in the `himmelblaud` resolver cache. This operation removes cached user and group data. Use `cache-invalidate` for safer cache management without erasing data.
+
+.TP
+.B cache-invalidate
+Invalidate the `himmelblaud` resolver cache without erasing entries. This forces the `himmelblaud` daemon to refresh all cached user and group data. If offline, the cache remains available and will refresh automatically when back online.
+
+.TP
+.B status
+Check if the `himmelblaud` daemon is online and properly connected to the Himmelblau service.
+
+.TP
+.B version
+Display the version of the `aad-tool`.
+
+.TP
+.B help
+Show help information for the specified subcommand(s).
+.SH OPTIONS
+.TP
+\fB-h\fR, \fB--help\fR
+Display help information.
+.SH EXAMPLES
+.TP
+.B aad-tool auth-test
+Test user authentication through the `himmelblaud` PAM resolver.
+
+.TP
+.B aad-tool cache-clear
+Clear all user and group data from the resolver cache.
+
+.TP
+.B aad-tool status
+Check the connection status of the `himmelblaud` daemon.
+.SH "SEE ALSO"
+.B himmelblau
+Documentation is available through the Texinfo manual. Use the following command to access the full manual:
+
+.BR info himmelblau
