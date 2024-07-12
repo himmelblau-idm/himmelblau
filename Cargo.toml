@@ -10,7 +10,7 @@ members = [
 	"src/proto",
 	"src/kanidm/libs/crypto",
 	"src/kanidm/libs/users",
-	"src/idmap",
+	"src/idmap", "src/dbus",
 ]
 resolver = "2"
 
