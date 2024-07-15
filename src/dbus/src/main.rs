@@ -16,7 +16,7 @@
    along with this program. If not, see <https://www.gnu.org/licenses/>.
 */
 use std::future::pending;
-use zbus::{connection, Result, interface};
+use zbus::{connection, interface, Result};
 
 pub struct Broker;
 

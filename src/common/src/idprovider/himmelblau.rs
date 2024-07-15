@@ -10,6 +10,8 @@ use crate::idprovider::interface::tpm;
 use crate::unix_proto::{DeviceAuthorizationResponse, PamAuthRequest};
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
+use bytes::{BufMut, BytesMut};
+use futures::StreamExt;
 use idmap::SssIdmap;
 use kanidm_hsm_crypto::{LoadableIdentityKey, LoadableMsOapxbcRsaKey, PinValue, SealedData, Tpm};
 use msal::auth::{
@@ -22,11 +24,18 @@ use msal::error::{ErrorResponse, MsalError, AUTH_PENDING, DEVICE_AUTH_FAIL, REQU
 use msal::graph::{DirectoryObject, Graph};
 use reqwest;
 use std::collections::HashMap;
+use std::error::Error;
+use std::io;
+use std::io::{Error as IoError, ErrorKind};
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::thread::sleep;
 use std::time::Duration;
 use std::time::SystemTime;
+use tokio::net::{UnixListener, UnixStream};
+use tokio::sync::Mutex;
 use tokio::sync::{broadcast, RwLock};
+use tokio_util::codec::{Decoder, Encoder, Framed};
 use uuid::Uuid;
 
 pub struct HimmelblauMultiProvider {
@@ -34,7 +43,7 @@ pub struct HimmelblauMultiProvider {
 }
 
 struct RefreshCache {
-    refresh_cache: RwLock<HashMap<String, (SealedData, SystemTime)>>,
+    refresh_cache: RwLock<HashMap<String, (String, SystemTime)>>,
 }
 
 impl RefreshCache {
@@ -48,7 +57,10 @@ impl RefreshCache {
         self.purge().await;
         let refresh_cache = self.refresh_cache.read().await;
         match refresh_cache.get(account_id) {
-            Some((refresh_token, _)) => Ok(refresh_token.clone()),
+            Some((refresh_token, _)) => Ok(serde_json::from_str(refresh_token).map_err(|e| {
+                error!("{:?}", e);
+                IdpError::NotFound
+            })?),
             None => Err(IdpError::NotFound),
         }
     }
@@ -66,9 +78,19 @@ impl RefreshCache {
         }
     }
 
-    async fn add(&self, account_id: &str, prt: &SealedData) {
+    async fn add(&self, account_id: &str, prt: &SealedData) -> Result<(), IdpError> {
         let mut refresh_cache = self.refresh_cache.write().await;
-        refresh_cache.insert(account_id.to_string(), (prt.clone(), SystemTime::now()));
+        refresh_cache.insert(
+            account_id.to_string(),
+            (
+                serde_json::to_string(prt).map_err(|e| {
+                    error!("{:?}", e);
+                    IdpError::NotFound
+                })?,
+                SystemTime::now(),
+            ),
+        );
+        Ok(())
     }
 }
 
@@ -112,6 +134,7 @@ impl HimmelblauMultiProvider {
                 graph,
                 &idmap,
             )
+            .await
             .map_err(|_| anyhow!("Failed to initialize the provider"))?;
             {
                 let mut client = provider.client.write().await;
@@ -323,6 +346,63 @@ impl IdProvider for HimmelblauMultiProvider {
     }
 }
 
+#[derive(Default)]
+struct DBusCodec;
+
+impl Decoder for DBusCodec {
+    type Error = io::Error;
+    type Item = serde_json::Value;
+
+    fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
+        trace!("Attempting to decode request ...");
+        match serde_json::from_slice(src) {
+            Ok(msg) => {
+                // Clear the buffer for the next message.
+                src.clear();
+                Ok(Some(msg))
+            }
+            _ => Ok(None),
+        }
+    }
+}
+
+impl Encoder<serde_json::Value> for DBusCodec {
+    type Error = io::Error;
+
+    fn encode(&mut self, msg: serde_json::Value, dst: &mut BytesMut) -> Result<(), Self::Error> {
+        trace!("Attempting to send response -> {:?} ...", msg);
+        let data = serde_json::to_vec(&msg).map_err(|e| {
+            error!("socket encoding error -> {:?}", e);
+            io::Error::new(io::ErrorKind::Other, "JSON encode error")
+        })?;
+        dst.put(data.as_slice());
+        Ok(())
+    }
+}
+
+async fn handle_dbus_refresh_cache(
+    sock: UnixStream,
+    refresh_cache: Arc<Mutex<RefreshCache>>,
+) -> Result<(), Box<dyn Error>> {
+    debug!("Accepted connection");
+
+    let Ok(ucred) = sock.peer_cred() else {
+        return Err(Box::new(IoError::new(
+            ErrorKind::Other,
+            "Unable to verify peer credentials.",
+        )));
+    };
+
+    let mut reqs = Framed::new(sock, DBusCodec);
+
+    trace!("Waiting for requests ...");
+    while let Some(Ok(req)) = reqs.next().await {
+
+    }
+
+    Ok(())
+}
+
 pub struct HimmelblauProvider {
     client: RwLock<BrokerClientApplication>,
     config: Arc<RwLock<HimmelblauConfig>>,
@@ -330,12 +410,12 @@ pub struct HimmelblauProvider {
     domain: String,
     authority_host: String,
     graph: Graph,
-    refresh_cache: RefreshCache,
+    refresh_cache: Arc<Mutex<RefreshCache>>,
     idmap: Arc<RwLock<SssIdmap>>,
 }
 
 impl HimmelblauProvider {
-    pub fn new(
+    pub async fn new(
         client: BrokerClientApplication,
         config: &Arc<RwLock<HimmelblauConfig>>,
         tenant_id: &str,
@@ -344,6 +424,40 @@ impl HimmelblauProvider {
         graph: Graph,
         idmap: &Arc<RwLock<SssIdmap>>,
     ) -> Result<Self, IdpError> {
+        let refresh_cache = Arc::new(Mutex::new(RefreshCache::new()));
+        let refresh_cache_ref = refresh_cache.clone();
+        let cfg = config.read().await;
+        let dbus_sock_dir = cfg.get_dbus_socket_dir();
+        let mut dbus_sock_path = PathBuf::from(dbus_sock_dir);
+        dbus_sock_path.push(domain);
+
+        let listener = UnixListener::bind(dbus_sock_path).map_err(|e| {
+            error!("{:?}", e);
+            IdpError::BadRequest
+        })?;
+
+        let _task = tokio::spawn(async move {
+            loop {
+                tokio::select! {
+                    res = listener.accept() => {
+                        match res {
+                            Ok((socket, _addr)) => {
+                                let refresh_cache_ref = refresh_cache_ref.clone();
+                                tokio::spawn(async move {
+                                    if let Err(e) = handle_dbus_refresh_cache(socket, refresh_cache_ref).await {
+                                        error!("handle_dbus_refresh_cache error occurred; error = {:?}", e);
+                                    }
+                                });
+                            }
+                            Err(e) => {
+                                error!("{:?}", e);
+                            }
+                        }
+                    }
+                }
+            }
+        });
+
         Ok(HimmelblauProvider {
             client: RwLock::new(client),
             config: config.clone(),
@@ -351,7 +465,7 @@ impl HimmelblauProvider {
             domain: domain.to_string(),
             authority_host: authority_host.to_string(),
             graph,
-            refresh_cache: RefreshCache::new(),
+            refresh_cache,
             idmap: idmap.clone(),
         })
     }
@@ -567,9 +681,13 @@ impl IdProvider for HimmelblauProvider {
                 }
             };
         }
-        let prt = match self.refresh_cache.refresh_token(&account_id).await {
+        let refresh_cache = self.refresh_cache.lock().await;
+        let prt = match refresh_cache.refresh_token(&account_id).await {
             Ok(prt) => prt,
-            Err(_) => fake_user!(),
+            Err(e) => {
+                error!("{:?}", e);
+                fake_user!()
+            }
         };
         let token = match self
             .client
@@ -1285,7 +1403,10 @@ impl HimmelblauProvider {
                 info!("Authentication successful for user '{}'", account_id);
                 // If an encrypted PRT is present, store it in the mem cache
                 if let Some(prt) = &token.prt {
-                    self.refresh_cache.add(account_id, prt).await;
+                    let refresh_cache = self.refresh_cache.lock().await;
+                    if let Err(e) = refresh_cache.add(account_id, prt).await {
+                        error!("Failed to add PRT to refresh cache: {:?}", e);
+                    }
                 }
                 Ok(AuthResult::Success {
                     token: self.user_token_from_unix_user_token(token).await?,
