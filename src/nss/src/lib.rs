@@ -14,6 +14,5 @@
 #[macro_use]
 extern crate libnss;
 #[cfg(target_family = "unix")]
-
 #[cfg(target_family = "unix")]
 mod implementation;
