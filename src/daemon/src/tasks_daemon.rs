@@ -9,6 +9,7 @@
 #![deny(clippy::await_holding_lock)]
 #![deny(clippy::needless_pass_by_value)]
 #![deny(clippy::trivially_copy_pass_by_ref)]
+#![allow(unexpected_cfgs)]
 
 use std::ffi::CString;
 use std::os::unix::ffi::OsStrExt;

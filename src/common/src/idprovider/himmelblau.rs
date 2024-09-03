@@ -10,16 +10,16 @@ use crate::idprovider::interface::tpm;
 use crate::unix_proto::{DeviceAuthorizationResponse, PamAuthRequest};
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
-use idmap::SssIdmap;
-use kanidm_hsm_crypto::{LoadableIdentityKey, LoadableMsOapxbcRsaKey, PinValue, SealedData, Tpm};
-use msal::auth::{
+use himmelblau::auth::{
     BrokerClientApplication, ClientInfo,
     DeviceAuthorizationResponse as msal_DeviceAuthorizationResponse, IdToken, MFAAuthContinue,
     UserToken as UnixUserToken,
 };
-use msal::discovery::EnrollAttrs;
-use msal::error::{ErrorResponse, MsalError, AUTH_PENDING, DEVICE_AUTH_FAIL, REQUIRES_MFA};
-use msal::graph::{DirectoryObject, Graph};
+use himmelblau::discovery::EnrollAttrs;
+use himmelblau::error::{ErrorResponse, MsalError, AUTH_PENDING, DEVICE_AUTH_FAIL, REQUIRES_MFA};
+use himmelblau::graph::{DirectoryObject, Graph};
+use idmap::SssIdmap;
+use kanidm_hsm_crypto::{LoadableIdentityKey, LoadableMsOapxbcRsaKey, PinValue, SealedData, Tpm};
 use reqwest;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -1423,7 +1423,7 @@ impl HimmelblauProvider {
             .client
             .write()
             .await
-            .enroll_device(token, attrs, tpm, machine_key)
+            .enroll_device(&token.refresh_token, attrs, tpm, machine_key)
             .await
         {
             Ok((new_loadable_transport_key, new_loadable_cert_key, device_id)) => {

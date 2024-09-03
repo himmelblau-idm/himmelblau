@@ -9,6 +9,9 @@ license.workspace = true
 homepage.workspace = true
 repository.workspace = true
 
+[features]
+tpm = ["kanidm-hsm-crypto/tpm"]
+
 [lib]
 name = "himmelblau_unix_common"
 path = "src/lib.rs"
