@@ -28,6 +28,7 @@ fn main() {
         .file("sssd/src/lib/idmap/sss_idmap.c")
         .file("sssd/src/lib/idmap/sss_idmap_conv.c")
         .file("sssd/src/util/murmurhash3.c")
+        .include(Path::new("/usr/include/samba-4.0"))
         .include(Path::new("sssd/src"))
         .include(Path::new("./")) // for config.h
         .warnings(false)
@@ -41,6 +42,7 @@ fn main() {
         .blocklist_function("qecvt")
         .blocklist_function("qecvt_r")
         .blocklist_function("strtold")
+        .clang_arg("-I/usr/include/samba-4.0")
         .header("wrapper.h")
         .parse_callbacks(Box::new(bindgen::CargoCallbacks::new()))
         .generate()
