@@ -8,6 +8,8 @@ name: Dependabot auto-approval and auto-merge
       - stable-0.1.x
       - stable-0.2.x
       - stable-0.3.x
+      - stable-0.4.x
+      - stable-0.5.x
 
 permissions:
   contents: write
