@@ -70,9 +70,9 @@ The following packages are required on openSUSE to build and test this package.
     sudo zypper in cargo git gcc sqlite3-devel libopenssl-3-devel pam-devel libcap-devel libtalloc-devel libtevent-devel libldb-devel libdhash-devel krb5-devel pcre2-devel libclang13 autoconf make automake  gettext-tools clang
 
 
-Or on Ubuntu:
+Or on Debian based systems:
 
-    sudo apt-get install libpam0g-dev libudev-dev libssl-dev pkg-config tpm-udev libtss2-dev libcap-dev libtalloc-dev libtevent-dev libldb-dev libdhash-dev libkrb5-dev libpcre2-dev libclang-13-dev autoconf gettext
+    sudo apt-get install libpam0g-dev libudev-dev libssl-dev pkg-config tpm-udev libtss2-dev libcap-dev libtalloc-dev libtevent-dev libldb-dev libdhash-dev libkrb5-dev libpcre2-dev libclang-dev autoconf gettext cargo libsqlite3-dev
 
 You can build the components with
 
