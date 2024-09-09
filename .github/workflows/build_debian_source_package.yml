@@ -3,7 +3,8 @@ name: Build Himmelblau Debian source package
 on:
   push:
     branches:
-      - stable-0.4.x
+      - main
+      - stable-0.5.x
 
 env:
   SCCACHE_GHA_ENABLED: "true"
@@ -18,7 +19,6 @@ jobs:
       uses: actions/checkout@v4
       with:
         repository: himmelblau-idm/himmelblau
-        ref: debian_packaging
         fetch-depth: 0  # Fetch all history including tags
 
     - name: Setup sccache
