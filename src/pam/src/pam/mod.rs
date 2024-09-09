@@ -470,6 +470,12 @@ impl PamHooks for PamKanidm {
                         }
                     }
 
+                    // Necessary because of OpenSSH bug
+                    // https://bugzilla.mindrot.org/show_bug.cgi?id=2876 -
+                    // PAM_TEXT_INFO and PAM_ERROR_MSG conversation not
+                    // honoured during PAM authentication
+                    let _ = conv.send(PAM_PROMPT_ECHO_OFF, "Press enter to continue");
+
                     req = ClientRequest::PamAuthenticateStep(PamAuthRequest::MFAPoll);
                     loop {
                         thread::sleep(Duration::from_secs(polling_interval.into()));
