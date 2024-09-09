@@ -38,3 +38,4 @@ kanidm_utils_users = { workspace = true }
 csv = { workspace = true }
 notify-debouncer-full = { workspace = true }
 kanidm-hsm-crypto = { workspace = true }
+kanidm_lib_file_permissions.workspace = true
