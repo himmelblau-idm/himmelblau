@@ -6,11 +6,12 @@ members = [
 	"src/pam",
 	"src/nss",
 	"src/glue",
-	"src/kanidm/libs/sketching",
+	"src/sketching",
 	"src/proto",
-	"src/kanidm/libs/crypto",
-	"src/kanidm/libs/users",
+	"src/crypto",
+	"src/users",
 	"src/idmap",
+	"src/file_permissions",
 ]
 resolver = "2"
 
@@ -70,13 +71,13 @@ openssl-sys = "^0.9"
 openssl = "^0.10.55"
 rand = "^0.8.5"
 tss-esapi = "^7.2.0"
-sketching = { path = "./src/kanidm/libs/sketching" }
+sketching = { path = "./src/sketching" }
 tracing-forest = "^0.1.6"
 rusqlite = "^0.32.0"
 hashbrown = { version = "0.14.0", features = ["serde", "inline-more", "ahash"] }
 lru = "^0.12.3"
-kanidm_lib_crypto = { path = "./src/kanidm/libs/crypto", version = "0.6.0" }
-kanidm_utils_users = { path = "./src/kanidm/libs/users" }
+kanidm_lib_crypto = { path = "./src/crypto", version = "0.6.0" }
+kanidm_utils_users = { path = "./src/users" }
 walkdir = "2"
 csv = "1.2.2"
 notify-debouncer-full = { version = "0.3" }
@@ -101,3 +102,5 @@ tonic = "0.12.0"
 tracing-opentelemetry = "0.21.0"
 compact_jwt = { version = "0.4.0-dev", features = ["hsm-crypto", "msextensions"] }
 kanidm-hsm-crypto = { version = "^0.2.0", features = ["msextensions"] }
+whoami = "1.5.2"
+kanidm_lib_file_permissions = { path = "./src/file_permissions" }

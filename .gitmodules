@@ -1,8 +1,3 @@
-[submodule "src/kanidm"]
-	path = src/kanidm
-	url = https://github.com/himmelblau-idm/kanidm.git
-	branch = main
-	shallow = true
 [submodule "src/idmap/sssd"]
 	path = src/idmap/sssd
 	url = https://github.com/dmulder/sssd.git
