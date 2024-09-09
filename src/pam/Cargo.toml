@@ -13,7 +13,6 @@ repository.workspace = true
 [lib]
 name = "pam_himmelblau"
 crate-type = [ "cdylib" ]
-path =  "../kanidm/unix_integration/pam_kanidm/src/lib.rs"
 
 [dependencies]
 libc = { workspace = true }

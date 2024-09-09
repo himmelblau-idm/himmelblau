@@ -27,7 +27,6 @@ use futures::{SinkExt, StreamExt};
 use himmelblau_unix_common::config::HimmelblauConfig;
 use himmelblau_unix_common::constants::DEFAULT_CONFIG_PATH;
 use himmelblau_unix_common::db::{Cache, CacheTxn, Db};
-use himmelblau_unix_common::file_permissions;
 use himmelblau_unix_common::idprovider::himmelblau::HimmelblauMultiProvider;
 use himmelblau_unix_common::resolver::Resolver;
 use himmelblau_unix_common::unix_config::{HsmType, UidAttr};

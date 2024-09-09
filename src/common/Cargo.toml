@@ -47,3 +47,4 @@ anyhow = { workspace = true }
 kanidm_utils_users = { workspace = true }
 csv = { workspace = true }
 sketching = { workspace = true }
+kanidm_lib_file_permissions.workspace = true
