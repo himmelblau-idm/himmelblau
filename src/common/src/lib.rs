@@ -26,25 +26,16 @@ pub mod unix_config;
 
 // Kanidm modules
 #[cfg(target_family = "unix")]
-#[path = "../../kanidm/unix_integration/src/client.rs"]
 pub mod client;
 #[cfg(target_family = "unix")]
-#[path = "../../kanidm/unix_integration/src/client_sync.rs"]
 pub mod client_sync;
 #[cfg(target_family = "unix")]
-#[path = "../../kanidm/unix_integration/src/db.rs"]
 pub mod db;
-#[cfg(target_family = "unix")]
-#[path = "../../kanidm/libs/file_permissions/src/lib.rs"]
-pub mod file_permissions;
 #[cfg(target_family = "unix")]
 pub mod idprovider;
 #[cfg(target_family = "unix")]
-#[path = "../../kanidm/unix_integration/src/resolver.rs"]
 pub mod resolver;
 #[cfg(target_family = "unix")]
-#[path = "../../kanidm/unix_integration/src/unix_passwd.rs"]
 pub mod unix_passwd;
 #[cfg(target_family = "unix")]
-#[path = "../../kanidm/unix_integration/src/unix_proto.rs"]
 pub mod unix_proto;
