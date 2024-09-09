@@ -1,0 +1,37 @@
+# You should not need to edit this file. Instead, use a drop-in file:
+#   systemctl edit himmelblaud.service
+
+[Unit]
+Description=Himmelblau Authentication Daemon
+After=chronyd.service ntpd.service network-online.target
+
+[Service]
+DynamicUser=yes
+UMask=0027
+CacheDirectory=himmelblaud # /var/cache/himmelblaud
+RuntimeDirectory=himmelblaud # /run/himmelblaud
+StateDirectory=himmelblaud # /var/lib/himmelblaud
+
+Type=simple
+ExecStart=/usr/sbin/himmelblaud
+
+# Implied by dynamic user.
+# ProtectHome=
+# ProtectSystem=strict
+# ReadWritePaths=/var/run/kanidm-unixd /var/cache/kanidm-unixd
+
+# SystemCallFilter=@aio @basic-io @chown @file-system @io-event @network-io @sync
+NoNewPrivileges=true
+PrivateTmp=true
+# We have to disable this to allow tpmrm0 access for tpm binding.
+PrivateDevices=false
+ProtectHostname=true
+ProtectClock=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+MemoryDenyWriteExecute=true
+
+[Install]
+WantedBy=multi-user.target

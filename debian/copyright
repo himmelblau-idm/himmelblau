@@ -1,0 +1,21 @@
+Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
+Upstream-Name: himmelblau
+Source: https://github.com/openSUSE/himmelblau
+
+Files: *
+Copyright: 2024 David Mulder <dmulder@suse.com>
+License: GPL-3+
+Comment: 
+ Interoperability suite for Microsoft Azure AD and Intune.
+ Himmelblau is an interoperability suite for Microsoft Azure AD and
+ Intune, which allows users to sign into a Linux machine using Azure
+ Active Directory credentials. It relies on the Microsoft
+ Authentication Library to communicate with the Microsoft service.
+
+License: GPL-3+
+ This package is free software; you can redistribute it and/or modify
+ it under the terms of the GNU General Public License as published by
+ the Free Software Foundation; either version 3 of the License, or
+ (at your option) any later version.
+ On Debian systems, the complete text of the GNU General Public License
+ can be found in `/usr/share/common-licenses/GPL-3`.
