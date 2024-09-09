@@ -110,7 +110,7 @@ pub struct PamKanidm;
 pam_hooks!(PamKanidm);
 
 macro_rules! match_sm_auth_client_response {
-    ($expr:expr, $opts:ident, $($pat:pat => $result:expr),*) => {
+    ($expr:expr, $opts:ident, $conv:ident, $req:ident, $authtok:ident, $($pat:pat => $result:expr),*) => {
         match $expr {
             Ok(r) => match r {
                 $($pat => $result),*
@@ -126,6 +126,99 @@ macro_rules! match_sm_auth_client_response {
                     } else {
                         return PamResultCode::PAM_USER_UNKNOWN;
                     }
+                }
+                ClientResponse::PamAuthenticateStepResponse(PamAuthResponse::SetupPin {
+                    msg,
+                }) => {
+                    match $conv.send(PAM_TEXT_INFO, &msg) {
+                        Ok(_) => {}
+                        Err(err) => {
+                            if $opts.debug {
+                                println!("Message prompt failed");
+                            }
+                            return err;
+                        }
+                    }
+
+                    let mut pin;
+                    let mut confirm;
+                    loop {
+                        pin = match $conv.send(PAM_PROMPT_ECHO_OFF, "New PIN: ") {
+                            Ok(password) => match password {
+                                Some(cred) => cred,
+                                None => {
+                                    debug!("no pin");
+                                    return PamResultCode::PAM_CRED_INSUFFICIENT;
+                                }
+                            },
+                            Err(err) => {
+                                debug!("unable to get pin");
+                                return err;
+                            }
+                        };
+
+                        confirm = match $conv.send(PAM_PROMPT_ECHO_OFF, "Confirm PIN: ") {
+                            Ok(password) => match password {
+                                Some(cred) => cred,
+                                None => {
+                                    debug!("no confirmation pin");
+                                    return PamResultCode::PAM_CRED_INSUFFICIENT;
+                                }
+                            },
+                            Err(err) => {
+                                debug!("unable to get confirmation pin");
+                                return err;
+                            }
+                        };
+
+                        if pin == confirm {
+                            break;
+                        } else {
+                            match $conv.send(PAM_TEXT_INFO, "Inputs did not match. Try again.") {
+                                Ok(_) => {}
+                                Err(err) => {
+                                    if $opts.debug {
+                                        println!("Message prompt failed");
+                                    }
+                                    return err;
+                                }
+                            }
+                        }
+                    }
+
+                    // Now setup the request for the next loop.
+                    $req = ClientRequest::PamAuthenticateStep(PamAuthRequest::SetupPin {
+                        pin,
+                    });
+                    continue;
+                },
+                ClientResponse::PamAuthenticateStepResponse(PamAuthResponse::Pin) => {
+                    let mut consume_authtok = None;
+                    // Swap the authtok out with a None, so it can only be consumed once.
+                    // If it's already been swapped, we are just swapping two null pointers
+                    // here effectively.
+                    std::mem::swap(&mut $authtok, &mut consume_authtok);
+                    let cred = if let Some(cred) = consume_authtok {
+                        cred
+                    } else {
+                        match $conv.send(PAM_PROMPT_ECHO_OFF, "PIN: ") {
+                            Ok(password) => match password {
+                                Some(cred) => cred,
+                                None => {
+                                    debug!("no pin");
+                                    return PamResultCode::PAM_CRED_INSUFFICIENT;
+                                }
+                            },
+                            Err(err) => {
+                                debug!("unable to get pin");
+                                return err;
+                            }
+                        }
+                    };
+
+                    // Now setup the request for the next loop.
+                    $req = ClientRequest::PamAuthenticateStep(PamAuthRequest::Pin { cred });
+                    continue;
                 }
                 _ => {
                     // unexpected response.
@@ -276,7 +369,7 @@ impl PamHooks for PamKanidm {
         let mut req = ClientRequest::PamAuthenticateInit(account_id);
 
         loop {
-            match_sm_auth_client_response!(daemon_client.call_and_wait(&req, timeout), opts,
+            match_sm_auth_client_response!(daemon_client.call_and_wait(&req, timeout), opts, conv, req, authtok,
                 ClientResponse::PamAuthenticateStepResponse(PamAuthResponse::Password) => {
                     let mut consume_authtok = None;
                     // Swap the authtok out with a None, so it can only be consumed once.
@@ -377,121 +470,26 @@ impl PamHooks for PamKanidm {
                         }
                     }
 
+                    req = ClientRequest::PamAuthenticateStep(PamAuthRequest::MFAPoll);
                     loop {
                         thread::sleep(Duration::from_secs(polling_interval.into()));
-                        timeout = cfg.unix_sock_timeout;
-                        req = ClientRequest::PamAuthenticateStep(PamAuthRequest::MFAPoll);
 
                         // Counter intuitive, but we don't need a max poll attempts here because
                         // if the resolver goes away, then this will error on the sock and
                         // will shutdown. This allows the resolver to dynamically extend the
                         // timeout if needed, and removes logic from the front end.
                         match_sm_auth_client_response!(
-                            daemon_client.call_and_wait(&req, timeout), opts,
+                            daemon_client.call_and_wait(&req, timeout), opts, conv, req, authtok,
                             ClientResponse::PamAuthenticateStepResponse(
                                     PamAuthResponse::MFAPollWait,
                             ) => {
                                 // Continue polling if the daemon says to wait
+                                req = ClientRequest::PamAuthenticateStep(PamAuthRequest::MFAPoll);
                                 continue;
                             }
                         );
 
                     }
-                },
-                ClientResponse::PamAuthenticateStepResponse(PamAuthResponse::SetupPin {
-                    msg,
-                }) => {
-                    match conv.send(PAM_TEXT_INFO, &msg) {
-                        Ok(_) => {}
-                        Err(err) => {
-                            if opts.debug {
-                                println!("Message prompt failed");
-                            }
-                            return err;
-                        }
-                    }
-
-                    let mut pin;
-                    let mut confirm;
-                    loop {
-                        pin = match conv.send(PAM_PROMPT_ECHO_OFF, "New PIN: ") {
-                            Ok(password) => match password {
-                                Some(cred) => cred,
-                                None => {
-                                    debug!("no pin");
-                                    return PamResultCode::PAM_CRED_INSUFFICIENT;
-                                }
-                            },
-                            Err(err) => {
-                                debug!("unable to get pin");
-                                return err;
-                            }
-                        };
-
-                        confirm = match conv.send(PAM_PROMPT_ECHO_OFF, "Confirm PIN: ") {
-                            Ok(password) => match password {
-                                Some(cred) => cred,
-                                None => {
-                                    debug!("no confirmation pin");
-                                    return PamResultCode::PAM_CRED_INSUFFICIENT;
-                                }
-                            },
-                            Err(err) => {
-                                debug!("unable to get confirmation pin");
-                                return err;
-                            }
-                        };
-
-                        if pin == confirm {
-                            break;
-                        } else {
-                            match conv.send(PAM_TEXT_INFO, "Inputs did not match. Try again.") {
-                                Ok(_) => {}
-                                Err(err) => {
-                                    if opts.debug {
-                                        println!("Message prompt failed");
-                                    }
-                                    return err;
-                                }
-                            }
-                        }
-                    }
-
-                    // Now setup the request for the next loop.
-                    timeout = cfg.unix_sock_timeout;
-                    req = ClientRequest::PamAuthenticateStep(PamAuthRequest::SetupPin {
-                        pin,
-                    });
-                    continue;
-                },
-                ClientResponse::PamAuthenticateStepResponse(PamAuthResponse::Pin) => {
-                    let mut consume_authtok = None;
-                    // Swap the authtok out with a None, so it can only be consumed once.
-                    // If it's already been swapped, we are just swapping two null pointers
-                    // here effectively.
-                    std::mem::swap(&mut authtok, &mut consume_authtok);
-                    let cred = if let Some(cred) = consume_authtok {
-                        cred
-                    } else {
-                        match conv.send(PAM_PROMPT_ECHO_OFF, "PIN: ") {
-                            Ok(password) => match password {
-                                Some(cred) => cred,
-                                None => {
-                                    debug!("no pin");
-                                    return PamResultCode::PAM_CRED_INSUFFICIENT;
-                                }
-                            },
-                            Err(err) => {
-                                debug!("unable to get pin");
-                                return err;
-                            }
-                        }
-                    };
-
-                    // Now setup the request for the next loop.
-                    timeout = cfg.unix_sock_timeout;
-                    req = ClientRequest::PamAuthenticateStep(PamAuthRequest::Pin { cred });
-                    continue;
                 }
             );
         } // while true, continue calling PamAuthenticateStep until we get a decision.
