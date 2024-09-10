@@ -71,8 +71,7 @@ jobs:
     - name: "[general] - Fetch version from Git tags"
       id: get_version
       run: |
-        #VERSION=$(git describe --tags --abbrev=0)
-        VERSION=0.4.1
+        VERSION=$(git describe --tags --abbrev=0)
         FULL_VERSION="${VERSION}-${{ env.REVISION }}"
         echo "VERSION=$VERSION" >> $GITHUB_ENV
         echo "FULL_VERSION=$FULL_VERSION" >> $GITHUB_ENV
