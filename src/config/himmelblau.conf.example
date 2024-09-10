@@ -5,14 +5,14 @@
 # this would be the primary user of the device.
 # domains =
 #
-# REQUIRED: pam_allow_groups MUST be defined or all users will be rejected by
+### Optional global values
+# pam_allow_groups SHOULD be defined or else all users will be authorized by
 # pam account. The option should be set to a comma seperated list of Users and
 # Groups which are allowed access to the system. Groups MUST be specified by
 # Object ID, not by UPN. This is because Azure does not permit regular users
 # the right to read group names, only the Object IDs which they belong to.
 # pam_allow_groups =
 #
-### Optional global values
 # Specify whether to map uid/gid based on the object name or the object uuid.
 # By object uuid mapping is the old default, but can cause authentication
 # issues over SSH. Mapping by name is recommeneded.
