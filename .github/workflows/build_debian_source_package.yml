@@ -3,7 +3,6 @@ name: Build Himmelblau Debian source package
 on:
   push:
     branches:
-      - main
       - stable-0.5.x
 
 env:
