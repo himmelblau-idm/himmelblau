@@ -171,7 +171,7 @@ where
         dbtxn.commit().map_err(|_| ())?;
 
         if pam_allow_groups.is_empty() {
-            warn!("Will not be able to authorise user logins, pam_allow_groups config is not configured.");
+            warn!("pam_allow_groups config is not configured, all users will be authorized!");
         }
 
         // We assume we are offline at start up, and we mark the next "online check" as
@@ -852,9 +852,8 @@ where
         let token = self.get_usertoken(Id::Name(account_id.to_string())).await?;
 
         if self.pam_allow_groups.is_empty() {
-            // can't allow anything if the group list is zero...
-            eprintln!("Cannot authenticate users, no allowed groups in configuration!");
-            Ok(Some(false))
+            // An empty allow list permits all users
+            Ok(Some(true))
         } else {
             Ok(token.map(|tok| {
                 let user_set: BTreeSet<_> = tok
