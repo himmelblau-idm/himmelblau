@@ -47,7 +47,8 @@ jobs:
             libpcre2-dev \
             libclang-13-dev \
             autoconf \
-            gettext
+            gettext \
+            libdbus-1-dev
 
       - name: "Fetch submodules"
         run: git submodule init && git submodule update

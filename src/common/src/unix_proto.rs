@@ -77,7 +77,6 @@ pub enum PamAuthRequest {
 
 #[derive(Serialize, Deserialize, Debug)]
 pub enum ClientRequest {
-    SshKey(String),
     NssAccounts,
     NssAccountByUid(u32),
     NssAccountByName(String),
@@ -97,7 +96,6 @@ impl ClientRequest {
     /// Get a safe display version of the request, without credentials.
     pub fn as_safe_string(&self) -> String {
         match self {
-            ClientRequest::SshKey(id) => format!("SshKey({})", id),
             ClientRequest::NssAccounts => "NssAccounts".to_string(),
             ClientRequest::NssAccountByUid(id) => format!("NssAccountByUid({})", id),
             ClientRequest::NssAccountByName(id) => format!("NssAccountByName({})", id),
@@ -119,7 +117,6 @@ impl ClientRequest {
 
 #[derive(Serialize, Deserialize, Debug)]
 pub enum ClientResponse {
-    SshKeys(Vec<String>),
     NssAccounts(Vec<NssUser>),
     NssAccount(Option<NssUser>),
     NssGroups(Vec<NssGroup>),
@@ -161,9 +158,5 @@ fn test_clientrequest_as_safe_string() {
     assert_eq!(
         ClientRequest::NssAccounts.as_safe_string(),
         "NssAccounts".to_string()
-    );
-    assert_eq!(
-        ClientRequest::SshKey("cheese".to_string()).as_safe_string(),
-        format!("SshKey({})", "cheese")
     );
 }

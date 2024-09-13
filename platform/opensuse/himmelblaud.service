@@ -6,13 +6,14 @@ Description=Himmelblau Authentication Daemon
 After=chronyd.service ntpd.service network-online.target suspend.target
 
 [Service]
+BusName=org.samba.himmelblau
 DynamicUser=yes
 UMask=0027
 CacheDirectory=himmelblaud # /var/cache/himmelblaud
 RuntimeDirectory=himmelblaud # /run/himmelblaud
 StateDirectory=himmelblaud # /var/lib/himmelblaud
 
-Type=simple
+Type=dbus
 ExecStart=/usr/sbin/himmelblaud
 
 # Implied by dynamic user.

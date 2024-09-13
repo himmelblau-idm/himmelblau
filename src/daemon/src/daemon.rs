@@ -53,6 +53,10 @@ use kanidm_hsm_crypto::{soft::SoftTpm, AuthValue, BoxedDynTpm, Tpm};
 
 use notify_debouncer_full::{new_debouncer, notify::RecursiveMode, notify::Watcher};
 
+mod broker;
+use broker::Broker;
+use identity_dbus_broker::himmelblau_broker_serve;
+
 //=== the codec
 
 type AsyncTaskRequest = (TaskRequest, oneshot::Sender<()>);
@@ -209,17 +213,6 @@ async fn handle_client(
     trace!("Waiting for requests ...");
     while let Some(Ok(req)) = reqs.next().await {
         let resp = match req {
-            ClientRequest::SshKey(account_id) => {
-                debug!("sshkey req");
-                cachelayer
-                    .get_sshkeys(account_id.as_str())
-                    .await
-                    .map(ClientResponse::SshKeys)
-                    .unwrap_or_else(|_| {
-                        error!("unable to load keys, returning empty set.");
-                        ClientResponse::SshKeys(vec![])
-                    })
-            }
             ClientRequest::NssAccounts => {
                 debug!("nssaccounts req");
                 cachelayer
@@ -955,6 +948,16 @@ async fn main() -> ExitCode {
                 info!("Stopped inotify watcher");
             });
 
+            // Spawn the himmelblau dbus broker
+            let dbus_cachelayer = cachelayer.clone();
+            let task_d = tokio::spawn(async move {
+                if let Err(e) = himmelblau_broker_serve::<Broker>(Broker { cachelayer: dbus_cachelayer }).await
+                {
+                    error!("D-Bus error occurred; error = {:?}", e);
+                }
+                info!("Stopped D-Bus System Service");
+            });
+
             // Set the umask while we open the path for most clients.
             let before = unsafe { umask(0) };
             let listener = match UnixListener::bind(socket_path.clone()) {
@@ -1052,6 +1055,7 @@ async fn main() -> ExitCode {
             let _ = task_a.await;
             let _ = task_b.await;
             let _ = task_c.await;
+            let _ = task_d.await;
 
             ExitCode::SUCCESS
     })

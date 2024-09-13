@@ -7,6 +7,7 @@
 use crate::db::KeyStoreTxn;
 use crate::unix_proto::{DeviceAuthorizationResponse, PamAuthRequest, PamAuthResponse};
 use async_trait::async_trait;
+use himmelblau::auth::UserToken as UnixUserToken;
 use serde::{Deserialize, Serialize};
 use tokio::sync::broadcast;
 use uuid::Uuid;
@@ -60,8 +61,7 @@ pub struct UserToken {
     pub displayname: String,
     pub shell: Option<String>,
     pub groups: Vec<GroupToken>,
-    // Could there be a better type here?
-    pub sshkeys: Vec<String>,
+    pub tenant_id: Uuid,
     // Defaults to false.
     pub valid: bool,
 }
@@ -175,6 +175,23 @@ pub trait IdProvider {
         _tpm: &mut tpm::BoxedDynTpm,
         _machine_key: &tpm::MachineKey,
     ) -> Result<UserToken, IdpError>;
+
+    async fn unix_user_access(
+        &self,
+        _id: &Id,
+        _scopes: Vec<String>,
+        _token: Option<&UserToken>,
+        _tpm: &mut tpm::BoxedDynTpm,
+        _machine_key: &tpm::MachineKey,
+    ) -> Result<UnixUserToken, IdpError>;
+
+    async fn unix_user_prt_cookie(
+        &self,
+        _id: &Id,
+        _token: Option<&UserToken>,
+        _tpm: &mut tpm::BoxedDynTpm,
+        _machine_key: &tpm::MachineKey,
+    ) -> Result<String, IdpError>;
 
     async fn unix_user_online_auth_init<D: KeyStoreTxn + Send>(
         &self,
