@@ -149,6 +149,61 @@ impl IdProvider for HimmelblauMultiProvider {
         Ok(())
     }
 
+    async fn unix_user_access(
+        &self,
+        id: &Id,
+        scopes: Vec<String>,
+        old_token: Option<&UserToken>,
+        tpm: &mut tpm::BoxedDynTpm,
+        machine_key: &tpm::MachineKey,
+    ) -> Result<UnixUserToken, IdpError> {
+        let account_id = match old_token {
+            Some(token) => token.spn.clone(),
+            None => id.to_string().clone(),
+        };
+        match split_username(&account_id) {
+            Some((_sam, domain)) => {
+                let providers = self.providers.read().await;
+                match providers.get(domain) {
+                    Some(provider) => {
+                        provider
+                            .unix_user_access(id, scopes, old_token, tpm, machine_key)
+                            .await
+                    }
+                    None => Err(IdpError::NotFound),
+                }
+            }
+            None => Err(IdpError::NotFound),
+        }
+    }
+
+    async fn unix_user_prt_cookie(
+        &self,
+        id: &Id,
+        old_token: Option<&UserToken>,
+        tpm: &mut tpm::BoxedDynTpm,
+        machine_key: &tpm::MachineKey,
+    ) -> Result<String, IdpError> {
+        let account_id = match old_token {
+            Some(token) => token.spn.clone(),
+            None => id.to_string().clone(),
+        };
+        match split_username(&account_id) {
+            Some((_sam, domain)) => {
+                let providers = self.providers.read().await;
+                match providers.get(domain) {
+                    Some(provider) => {
+                        provider
+                            .unix_user_prt_cookie(id, old_token, tpm, machine_key)
+                            .await
+                    }
+                    None => Err(IdpError::NotFound),
+                }
+            }
+            None => Err(IdpError::NotFound),
+        }
+    }
+
     async fn unix_user_get(
         &self,
         id: &Id,
@@ -491,6 +546,61 @@ impl IdProvider for HimmelblauProvider {
         }
     }
 
+    async fn unix_user_access(
+        &self,
+        id: &Id,
+        scopes: Vec<String>,
+        old_token: Option<&UserToken>,
+        tpm: &mut tpm::BoxedDynTpm,
+        machine_key: &tpm::MachineKey,
+    ) -> Result<UnixUserToken, IdpError> {
+        /* Use the prt mem cache to refresh the user token */
+        let account_id = match old_token {
+            Some(token) => token.spn.clone(),
+            None => id.to_string().clone(),
+        };
+        let prt = self.refresh_cache.refresh_token(&account_id).await?;
+        self.client
+            .write()
+            .await
+            .exchange_prt_for_access_token(
+                &prt,
+                scopes.iter().map(|s| s.as_ref()).collect(),
+                None,
+                tpm,
+                machine_key,
+            )
+            .await
+            .map_err(|e| {
+                error!("{:?}", e);
+                IdpError::BadRequest
+            })
+    }
+
+    async fn unix_user_prt_cookie(
+        &self,
+        id: &Id,
+        old_token: Option<&UserToken>,
+        tpm: &mut tpm::BoxedDynTpm,
+        machine_key: &tpm::MachineKey,
+    ) -> Result<String, IdpError> {
+        /* Use the prt mem cache to refresh the user token */
+        let account_id = match old_token {
+            Some(token) => token.spn.clone(),
+            None => id.to_string().clone(),
+        };
+        let prt = self.refresh_cache.refresh_token(&account_id).await?;
+        self.client
+            .write()
+            .await
+            .acquire_prt_sso_cookie(&prt, tpm, machine_key)
+            .await
+            .map_err(|e| {
+                error!("Failed to request prt cookie: {:?}", e);
+                IdpError::BadRequest
+            })
+    }
+
     async fn unix_user_get(
         &self,
         id: &Id,
@@ -555,7 +665,10 @@ impl IdProvider for HimmelblauProvider {
                                 displayname: "".to_string(),
                                 shell: Some(config.get_shell(Some(&self.domain))),
                                 groups,
-                                sshkeys: vec![],
+                                tenant_id: Uuid::parse_str(&self.tenant_id).map_err(|e| {
+                                    error!("{:?}", e);
+                                    IdpError::BadRequest
+                                })?,
                                 valid: true,
                             });
                         } else {
@@ -1344,7 +1457,6 @@ impl HimmelblauProvider {
                 groups = vec![];
             }
         };
-        let sshkeys: Vec<String> = vec![];
         let valid = true;
         let idmap = self.idmap.read().await;
         let gidnumber = match config.get_id_attr_map() {
@@ -1376,7 +1488,10 @@ impl HimmelblauProvider {
             displayname: value.id_token.name.clone(),
             shell: Some(config.get_shell(Some(&self.domain))),
             groups,
-            sshkeys,
+            tenant_id: Uuid::parse_str(&self.tenant_id).map_err(|e| {
+                error!("{:?}", e);
+                IdpError::BadRequest
+            })?,
             valid,
         })
     }

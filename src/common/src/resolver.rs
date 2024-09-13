@@ -37,6 +37,8 @@ use kanidm_hsm_crypto::{BoxedDynTpm, HmacKey, MachineKey, Tpm};
 
 use tokio::sync::broadcast;
 
+use himmelblau::auth::UserToken as UnixUserToken;
+
 const NXCACHE_SIZE: NonZeroUsize = unsafe { NonZeroUsize::new_unchecked(128) };
 
 #[derive(Debug, Clone)]
@@ -604,7 +606,76 @@ where
         }
     }
 
-    async fn get_usertoken(&self, account_id: Id) -> Result<Option<UserToken>, ()> {
+    pub async fn get_user_accesstoken(
+        &self,
+        account_id: Id,
+        scopes: Vec<String>,
+    ) -> Option<UnixUserToken> {
+        let token = match self.get_usertoken(account_id.clone()).await {
+            Ok(Some(token)) => token,
+            _ => {
+                error!("Failed to fetch unix user token during access token request!");
+                return None;
+            }
+        };
+
+        let mut hsm_lock = self.hsm.lock().await;
+
+        let user_get_result = self
+            .client
+            .unix_user_access(
+                &account_id,
+                scopes,
+                Some(&token),
+                hsm_lock.deref_mut(),
+                &self.machine_key,
+            )
+            .await;
+
+        drop(hsm_lock);
+
+        match user_get_result {
+            Ok(token) => Some(token),
+            Err(e) => {
+                error!("Failed to fetch access token: {:?}", e);
+                None
+            }
+        }
+    }
+
+    pub async fn get_user_prt_cookie(&self, account_id: Id) -> Option<String> {
+        let token = match self.get_usertoken(account_id.clone()).await {
+            Ok(Some(token)) => token,
+            _ => {
+                error!("Failed to fetch unix user token during access token request!");
+                return None;
+            }
+        };
+
+        let mut hsm_lock = self.hsm.lock().await;
+
+        let cookie = self
+            .client
+            .unix_user_prt_cookie(
+                &account_id,
+                Some(&token),
+                hsm_lock.deref_mut(),
+                &self.machine_key,
+            )
+            .await;
+
+        drop(hsm_lock);
+
+        match cookie {
+            Ok(cookie) => Some(cookie),
+            Err(e) => {
+                error!("Failed to fetch prt sso cookie: {:?}", e);
+                None
+            }
+        }
+    }
+
+    pub async fn get_usertoken(&self, account_id: Id) -> Result<Option<UserToken>, ()> {
         debug!("get_usertoken");
         // get the item from the cache
         let (expired, item) = self.get_cached_usertoken(&account_id).await.map_err(|e| {
@@ -712,21 +783,6 @@ where
             .into_iter()
             .map(|ut| self.token_uidattr(&ut))
             .collect()
-    }
-
-    // Get ssh keys for an account id
-    pub async fn get_sshkeys(&self, account_id: &str) -> Result<Vec<String>, ()> {
-        let token = self.get_usertoken(Id::Name(account_id.to_string())).await?;
-        Ok(token
-            .map(|t| {
-                // Only return keys if the account is valid
-                if t.valid {
-                    t.sshkeys
-                } else {
-                    Vec::with_capacity(0)
-                }
-            })
-            .unwrap_or_else(|| Vec::with_capacity(0)))
     }
 
     #[inline(always)]

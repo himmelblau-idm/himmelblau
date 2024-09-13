@@ -1093,7 +1093,7 @@ mod tests {
             uuid: uuid::uuid!("0302b99c-f0f6-41ab-9492-852692b0fd16"),
             shell: None,
             groups: Vec::new(),
-            sshkeys: vec!["key-a".to_string()],
+            tenant_id: uuid::uuid!("58e8a301-2502-4814-81c5-a4d17c399a45"),
             valid: true,
         };
 
@@ -1266,7 +1266,7 @@ mod tests {
             uuid: uuid::uuid!("0302b99c-f0f6-41ab-9492-852692b0fd16"),
             shell: None,
             groups: vec![gt1.clone(), gt2],
-            sshkeys: vec!["key-a".to_string()],
+            tenant_id: uuid::uuid!("58e8a301-2502-4814-81c5-a4d17c399a45"),
             valid: true,
         };
 
@@ -1335,7 +1335,7 @@ mod tests {
             uuid: uuid1,
             shell: None,
             groups: Vec::new(),
-            sshkeys: vec!["key-a".to_string()],
+            tenant_id: uuid::uuid!("58e8a301-2502-4814-81c5-a4d17c399a45"),
             valid: true,
         };
 
@@ -1459,7 +1459,7 @@ mod tests {
             uuid: uuid::uuid!("0302b99c-f0f6-41ab-9492-852692b0fd16"),
             shell: None,
             groups: Vec::new(),
-            sshkeys: vec!["key-a".to_string()],
+            tenant_id: uuid::uuid!("58e8a301-2502-4814-81c5-a4d17c399a45"),
             valid: true,
         };
 
@@ -1471,7 +1471,7 @@ mod tests {
             uuid: uuid::uuid!("799123b2-3802-4b19-b0b8-1ffae2aa9a4b"),
             shell: None,
             groups: Vec::new(),
-            sshkeys: vec!["key-a".to_string()],
+            tenant_id: uuid::uuid!("58e8a301-2502-4814-81c5-a4d17c399a45"),
             valid: true,
         };
 
