@@ -80,7 +80,7 @@ pub enum AuthCredHandler {
     /// ⚠️  TODO: Optimally this should actually be a tokio oneshot receiver
     /// with the decision from a task that is spawned.
     MFA {
-        data: Vec<String>,
+        data: String,
     },
     SetupPin,
     Pin,

@@ -46,7 +46,6 @@ enum CacheState {
     OfflineNextCheck(SystemTime),
 }
 
-#[derive(Debug)]
 pub enum AuthSession {
     InProgress {
         account_id: String,
