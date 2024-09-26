@@ -21,6 +21,7 @@ use himmelblau::graph::{DirectoryObject, Graph};
 use idmap::SssIdmap;
 use kanidm_hsm_crypto::{LoadableIdentityKey, LoadableMsOapxbcRsaKey, PinValue, SealedData, Tpm};
 use reqwest;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::thread::sleep;
@@ -28,6 +29,9 @@ use std::time::Duration;
 use std::time::SystemTime;
 use tokio::sync::{broadcast, RwLock};
 use uuid::Uuid;
+
+#[derive(Deserialize, Serialize)]
+struct Token(Option<String>, String);
 
 pub struct HimmelblauMultiProvider {
     providers: RwLock<HashMap<String, HimmelblauProvider>>,
@@ -440,97 +444,6 @@ impl From<DeviceAuthorizationResponse> for msal_DeviceAuthorizationResponse {
     }
 }
 
-struct MFAAuthContinueI(MFAAuthContinue);
-
-#[allow(clippy::from_over_into)]
-impl Into<Vec<String>> for MFAAuthContinueI {
-    fn into(self) -> Vec<String> {
-        let max_poll_attempts = match self.0.max_poll_attempts {
-            Some(n) => n.to_string(),
-            None => String::new(),
-        };
-        let polling_interval = match self.0.polling_interval {
-            Some(n) => n.to_string(),
-            None => String::new(),
-        };
-        vec![
-            self.0.mfa_method,
-            self.0.msg,
-            self.0.session_id,
-            self.0.flow_token,
-            self.0.ctx,
-            self.0.canary,
-            self.0.url_end_auth,
-            self.0.url_post,
-            max_poll_attempts,
-            polling_interval,
-        ]
-    }
-}
-
-impl From<&Vec<String>> for MFAAuthContinueI {
-    fn from(src: &Vec<String>) -> Self {
-        let max_poll_attempts: Option<u32> = if src[8].is_empty() {
-            None
-        } else {
-            src[8].parse().ok()
-        };
-        let polling_interval: Option<u32> = if src[9].is_empty() {
-            None
-        } else {
-            src[9].parse().ok()
-        };
-        MFAAuthContinueI(MFAAuthContinue {
-            mfa_method: src[0].clone(),
-            msg: src[1].clone(),
-            max_poll_attempts,
-            polling_interval,
-            session_id: src[2].clone(),
-            flow_token: src[3].clone(),
-            ctx: src[4].clone(),
-            canary: src[5].clone(),
-            url_end_auth: src[6].clone(),
-            url_post: src[7].clone(),
-        })
-    }
-}
-
-struct UnixUserTokenI(UnixUserToken);
-
-#[allow(clippy::from_over_into)]
-impl Into<Vec<String>> for UnixUserTokenI {
-    fn into(self) -> Vec<String> {
-        let access_token = match &self.0.access_token {
-            Some(n) => n.clone(),
-            None => String::new(),
-        };
-        vec![access_token, self.0.refresh_token.clone()]
-    }
-}
-
-impl From<&Vec<String>> for UnixUserTokenI {
-    /// We don't care about most of the UserToken values when passing it to an
-    /// AuthCredHandler, so most of these are intentionally left blank.
-    fn from(src: &Vec<String>) -> Self {
-        let access_token: Option<String> = if src[0].is_empty() {
-            None
-        } else {
-            Some(src[0].clone())
-        };
-        UnixUserTokenI(UnixUserToken {
-            token_type: "".to_string(),
-            scope: None,
-            expires_in: 0,
-            ext_expires_in: 0,
-            access_token,
-            refresh_token: src[1].clone(),
-            id_token: IdToken::default(),
-            client_info: ClientInfo::default(),
-            prt: None,
-        })
-    }
-}
-
 #[async_trait]
 impl IdProvider for HimmelblauProvider {
     async fn provider_authenticate(&self, _tpm: &mut tpm::BoxedDynTpm) -> Result<(), IdpError> {
@@ -864,7 +777,21 @@ impl IdProvider for HimmelblauProvider {
         match (&cred_handler, pam_next_req) {
             (AuthCredHandler::MFA { data }, PamAuthRequest::SetupPin { pin }) => {
                 let hello_tag = self.fetch_hello_key_tag(account_id);
-                let token = UnixUserTokenI::from(data).0;
+                let token: Token = serde_json::from_str(data).map_err(|e| {
+                    error!("{:?}", e);
+                    IdpError::BadRequest
+                })?;
+                let token = UnixUserToken {
+                    token_type: "".to_string(),
+                    scope: None,
+                    expires_in: 0,
+                    ext_expires_in: 0,
+                    access_token: token.0,
+                    refresh_token: token.1,
+                    id_token: IdToken::default(),
+                    client_info: ClientInfo::default(),
+                    prt: None,
+                };
 
                 let hello_key = match self
                     .client
@@ -1017,7 +944,10 @@ impl IdProvider for HimmelblauProvider {
                     "PhoneAppOTP" | "OneWaySMS" | "ConsolidatedTelephony" => {
                         let msg = resp.msg.clone();
                         *cred_handler = AuthCredHandler::MFA {
-                            data: MFAAuthContinueI(resp).into(),
+                            data: serde_json::to_string(&resp).map_err(|e| {
+                                error!("{:?}", e);
+                                IdpError::BadRequest
+                            })?,
                         };
                         return Ok((
                             AuthResult::Next(AuthRequest::MFACode { msg }),
@@ -1035,7 +965,10 @@ impl IdProvider for HimmelblauProvider {
                             IdpError::BadRequest
                         })?;
                         *cred_handler = AuthCredHandler::MFA {
-                            data: MFAAuthContinueI(resp).into(),
+                            data: serde_json::to_string(&resp).map_err(|e| {
+                                error!("{:?}", e);
+                                IdpError::BadRequest
+                            })?,
                         };
                         return Ok((
                             AuthResult::Next(AuthRequest::MFAPoll {
@@ -1116,7 +1049,14 @@ impl IdProvider for HimmelblauProvider {
 
                         // Setup Windows Hello
                         *cred_handler = AuthCredHandler::MFA {
-                            data: UnixUserTokenI(token).into(),
+                            data: serde_json::to_string(&Token(
+                                token.access_token.clone(),
+                                token.refresh_token.to_string(),
+                            ))
+                            .map_err(|e| {
+                                error!("{:?}", e);
+                                IdpError::BadRequest
+                            })?,
                         };
                         return Ok((
                             AuthResult::Next(AuthRequest::SetupPin {
@@ -1134,16 +1074,15 @@ impl IdProvider for HimmelblauProvider {
                 }
             }
             (AuthCredHandler::MFA { data }, PamAuthRequest::MFACode { cred }) => {
+                let mut flow: MFAAuthContinue = serde_json::from_str(data).map_err(|e| {
+                    error!("{:?}", e);
+                    IdpError::BadRequest
+                })?;
                 let token = self
                     .client
                     .write()
                     .await
-                    .acquire_token_by_mfa_flow(
-                        account_id,
-                        Some(&cred),
-                        None,
-                        &mut MFAAuthContinueI::from(data).0,
-                    )
+                    .acquire_token_by_mfa_flow(account_id, Some(&cred), None, &mut flow)
                     .await
                     .map_err(|e| {
                         error!("{:?}", e);
@@ -1164,7 +1103,14 @@ impl IdProvider for HimmelblauProvider {
 
                         // Setup Windows Hello
                         *cred_handler = AuthCredHandler::MFA {
-                            data: UnixUserTokenI(token).into(),
+                            data: serde_json::to_string(&Token(
+                                token.access_token.clone(),
+                                token.refresh_token.to_string(),
+                            ))
+                            .map_err(|e| {
+                                error!("{:?}", e);
+                                IdpError::BadRequest
+                            })?,
                         };
                         return Ok((
                             AuthResult::Next(AuthRequest::SetupPin {
@@ -1182,7 +1128,10 @@ impl IdProvider for HimmelblauProvider {
                 }
             }
             (AuthCredHandler::MFA { data }, PamAuthRequest::MFAPoll) => {
-                let mut flow = MFAAuthContinueI::from(data).0;
+                let mut flow: MFAAuthContinue = serde_json::from_str(data).map_err(|e| {
+                    error!("{:?}", e);
+                    IdpError::BadRequest
+                })?;
                 let max_poll_attempts = flow.max_poll_attempts.ok_or_else(|| {
                     error!("Invalid response from the server");
                     IdpError::BadRequest
@@ -1237,7 +1186,14 @@ impl IdProvider for HimmelblauProvider {
 
                         // Setup Windows Hello
                         *cred_handler = AuthCredHandler::MFA {
-                            data: UnixUserTokenI(token).into(),
+                            data: serde_json::to_string(&Token(
+                                token.access_token.clone(),
+                                token.refresh_token.to_string(),
+                            ))
+                            .map_err(|e| {
+                                error!("{:?}", e);
+                                IdpError::BadRequest
+                            })?,
                         };
                         return Ok((
                             AuthResult::Next(AuthRequest::SetupPin {
