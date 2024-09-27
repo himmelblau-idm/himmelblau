@@ -597,6 +597,10 @@ async fn main() -> ExitCode {
                 }
             };
 
+            if cfg.get_debug() {
+                std::env::set_var("RUST_LOG", "debug");
+            }
+
             if clap_args.get_flag("configtest") {
                 eprintln!("###################################");
                 eprintln!("Dumping configs:\n###################################");

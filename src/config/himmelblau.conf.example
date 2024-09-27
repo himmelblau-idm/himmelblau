@@ -6,6 +6,9 @@
 # domains =
 #
 ### Optional global values
+# Configure whether the logger will output debug messages to the journal.
+# debug = false
+#
 # pam_allow_groups SHOULD be defined or else all users will be authorized by
 # pam account. The option should be set to a comma seperated list of Users and
 # Groups which are allowed access to the system. Groups MUST be specified by
