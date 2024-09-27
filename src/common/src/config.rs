@@ -388,6 +388,13 @@ impl HimmelblauConfig {
             DEFAULT_SFA_FALLBACK_ENABLED,
         )
     }
+
+    pub fn get_debug(&self) -> bool {
+        match_bool(
+            self.config.get("global", "debug"),
+            false,
+        )
+    }
 }
 
 impl fmt::Debug for HimmelblauConfig {
