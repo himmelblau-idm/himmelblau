@@ -82,6 +82,7 @@ struct Options {
     debug: bool,
     use_first_pass: bool,
     ignore_unknown_user: bool,
+    mfa_poll_prompt: bool,
 }
 
 impl TryFrom<&Vec<&CStr>> for Options {
@@ -101,6 +102,7 @@ impl TryFrom<&Vec<&CStr>> for Options {
             debug: gopts.contains("debug"),
             use_first_pass: gopts.contains("use_first_pass"),
             ignore_unknown_user: gopts.contains("ignore_unknown_user"),
+            mfa_poll_prompt: gopts.contains("mfa_poll_prompt"),
         })
     }
 }
@@ -474,7 +476,9 @@ impl PamHooks for PamKanidm {
                     // https://bugzilla.mindrot.org/show_bug.cgi?id=2876 -
                     // PAM_TEXT_INFO and PAM_ERROR_MSG conversation not
                     // honoured during PAM authentication
-                    let _ = conv.send(PAM_PROMPT_ECHO_OFF, "Press enter to continue");
+                    if opts.mfa_poll_prompt {
+                        let _ = conv.send(PAM_PROMPT_ECHO_OFF, "Press enter to continue");
+                    }
 
                     req = ClientRequest::PamAuthenticateStep(PamAuthRequest::MFAPoll);
                     loop {
