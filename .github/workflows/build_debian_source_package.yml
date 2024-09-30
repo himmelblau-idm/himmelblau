@@ -232,7 +232,7 @@ jobs:
         Section: misc
         Priority: optional
         Maintainer: $MAIN_PACKAGE_MAINTAINER
-        Build-Depends: debhelper-compat (= 13), quilt, rustc, cargo, patchelf, libssl-dev, pkg-config, devscripts, libpcre2-dev, libcap-dev, libtalloc-dev, libtevent-dev, libldb-dev, libkrb5-dev, libpcre2-dev, libpam0g-dev, libudev-dev, libtss2-dev, libdhash-dev, libclang-14-dev, autoconf, gettext, libsqlite3-dev, pkgconf
+        Build-Depends: debhelper-compat (= 13), quilt, cargo, patchelf, libssl-dev, pkg-config, devscripts, libpcre2-dev, libcap-dev, libtalloc-dev, libtevent-dev, libldb-dev, libkrb5-dev, libpcre2-dev, libpam0g-dev, libudev-dev, libtss2-dev, libdhash-dev, libclang-14-dev, autoconf, gettext, libsqlite3-dev, pkgconf
         Standards-Version: 3.9.6
         Homepage: https://github.com/himmelblau-idm/himmelblau
         Vcs-Git: https://github.com/himmelblau-idm/himmelblau.git
