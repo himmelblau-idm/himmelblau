@@ -15,7 +15,7 @@ members = [
 resolver = "2"
 
 [workspace.package]
-version = "0.5.0"
+version = "0.5.1"
 authors = [
     "David Mulder <dmulder@suse.com>"
 ]
@@ -75,7 +75,7 @@ tracing-forest = "^0.1.6"
 rusqlite = "^0.32.0"
 hashbrown = { version = "0.14.0", features = ["serde", "inline-more", "ahash"] }
 lru = "^0.12.3"
-kanidm_lib_crypto = { path = "./src/kanidm/libs/crypto", version = "0.5.0" }
+kanidm_lib_crypto = { path = "./src/kanidm/libs/crypto", version = "0.5.1" }
 kanidm_utils_users = { path = "./src/kanidm/libs/users" }
 walkdir = "2"
 csv = "1.2.2"
