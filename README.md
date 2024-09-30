@@ -84,20 +84,15 @@ You can build the components with
 
     cd himmelblau; make
 
-To test debug builds you can use these directly out of the build directory, but you must
-link the libraries to the correct locations
+Install the binaries
 
 > **WARNING** you should only do this on a disposable machine or a machine you are willing to
 > recover with single user mode.
 
-    # You must use the full paths!
-    ln -s /root/himmelblau/target/debug/libpam_himmelblau.so /usr/lib64/security/pam_himmelblau.so
-    ln -s /root/himmelblau/target/debug/libnss_himmelblau.so /usr/lib64/libnss_himmelblau.so.2
+    sudo make install
 
 Configure your instance
 
-    mkdir /etc/himmelblau/
-    cp src/config/himmelblau.conf.example /etc/himmelblau/himmelblau.conf
     vim /etc/himmelblau/himmelblau.conf
 
 It's essential that you configure the `domains` and `pam_allow_groups` options, otherwise
@@ -106,8 +101,7 @@ or groups which are allowed access to the host.
 
 Run the daemon with:
 
-    cargo run --bin=himmelblaud -- -d -c ./src/config/himmelblau.conf.example &
-    sudo cargo run --bin=himmelblaud_tasks -- &
+    sudo systemctl start himmelblaud himmelblaud-tasks
 
 Check systemd journal for errors.
 
@@ -126,15 +120,15 @@ Setup NSS
     group:      compat systemd himmelblau
     shadow:     compat systemd himmelblau
 
-> **WARNING** It's essential that the systemd nss module be added before the himmelblau nss
-> module, otherwise you will encounter deadlocks in himmelblau (nss recursion caused by systemd
-> skipping compat/files).
-
 Check that you can resolve a user with
 
     getent passwd <name>
 
 Setup PAM
+
+> **WARNING** only modify your PAM configuration if you are confident you understand
+> the syntax. The following setup is meant as an example. Removing PAM modules from
+> your stack may prevent you from authenticating to the host. Proceed with caution!
 
     old /etc/pam.d/{common-account,common-auth,common-password,common-session}
     cp /etc/pam.d/common-password-pc /etc/pam.d/common-password
