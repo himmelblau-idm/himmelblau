@@ -1,0 +1,37 @@
+#!/usr/bin/make -f
+
+# Check if local Rust environment is available
+ifneq (,$(wildcard $(HOME)/.cargo/env))
+RUST_ENV = . $(HOME)/.cargo/env && rustup default stable &&
+else
+RUST_ENV =
+endif
+
+export CARGO_HOME=$(CURDIR)
+export CARGO_TARGET_DIR=$(CURDIR)/target
+
+%:
+	dh $@
+
+override_dh_auto_clean:
+	$(RUST_ENV) export CARGO_HOME=$(CARGO_HOME) && export CARGO_TARGET_DIR=$(CARGO_TARGET_DIR) && cargo clean --offline
+
+override_dh_auto_build:
+	# Ensure the necessary development package is installed
+	# Extract the vendor dependencies
+	tar -xf vendor.tar.xz
+	# Build the project with the appropriate flags
+	$(RUST_ENV) export CARGO_HOME=$(CARGO_HOME) && export CARGO_TARGET_DIR=$(CARGO_TARGET_DIR) && \
+		cargo build --release --frozen
+	# Strip unnecessary symbols from the binaries
+	strip --strip-unneeded target/release/himmelblaud
+	strip --strip-unneeded target/release/himmelblaud_tasks
+	# Copy and set the soname for shared libraries
+	cp target/release/libnss_himmelblau.so target/release/libnss_himmelblau.so.2
+	cp target/release/libpam_himmelblau.so target/release/pam_himmelblau.so
+	patchelf --set-soname libnss_himmelblau.so.2 target/release/libnss_himmelblau.so.2
+	strip --strip-unneeded target/release/libnss_himmelblau.so.2
+	strip --strip-unneeded target/release/libpam_himmelblau.so
+
+override_dh_auto_test:
+	# Skip tests
