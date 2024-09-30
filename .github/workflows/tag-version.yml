@@ -5,6 +5,9 @@ on:
     branches:
       - stable-0.5.x
 
+permissions:
+  contents: write
+
 jobs:
   create-tag:
     runs-on: ubuntu-latest
