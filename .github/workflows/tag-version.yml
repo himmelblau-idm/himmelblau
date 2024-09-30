@@ -1,0 +1,30 @@
+name: Rust Version Tagging (Post-Merge)
+
+on:
+  push:
+    branches:
+      - stable-0.5.x
+
+jobs:
+  create-tag:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+
+    - name: Set up Git for tagging
+      run: |
+        git config --global user.name "GitHub Action"
+        git config --global user.email "action@github.com"
+
+    - name: Extract version from Cargo.toml
+      id: get-version
+      run: |
+        VERSION=$(grep '^version =' Cargo.toml | head -n 1 | sed 's/version = "\(.*\)"/\1/')
+        echo "VERSION=$VERSION" >> $GITHUB_ENV
+
+    - name: Create and push a new tag
+      run: |
+        git tag "$VERSION"
+        git push origin "$VERSION"

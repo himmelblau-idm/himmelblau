@@ -1,9 +1,10 @@
 name: Build Himmelblau Debian source package
 
 on:
-  push:
-    branches:
-      - stable-0.5.x
+  workflow_run:
+    workflows: ["Rust Version Tagging (Post-Merge)"]
+    types:
+      - completed
 
 env:
   SCCACHE_GHA_ENABLED: "true"
@@ -12,6 +13,7 @@ env:
 jobs:
   build-source-package:
     runs-on: ubuntu-latest
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
 
     steps:
     - name: "[general] - Checkout repository"

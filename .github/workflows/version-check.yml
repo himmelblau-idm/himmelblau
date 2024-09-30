@@ -1,0 +1,36 @@
+name: Rust Version Check (Pre-Merge)
+
+on:
+  pull_request:
+    types: [opened, synchronize]
+
+jobs:
+  check-version:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+
+    - name: Set up Rust
+      uses: actions-rs/toolchain@v1
+      with:
+        toolchain: stable
+        override: true
+
+    - name: Extract version from Cargo.toml
+      id: get-version
+      run: |
+        VERSION=$(grep '^version =' Cargo.toml | head -n 1 | sed 's/version = "\(.*\)"/\1/')
+        echo "VERSION=$VERSION" >> $GITHUB_ENV
+        echo "Package version: $VERSION"
+
+    - name: Check if tag exists for the version
+      run: |
+        git fetch --tags
+        if git rev-parse "$VERSION" >/dev/null 2>&1; then
+          echo "Git tag for version $VERSION already exists!"
+          exit 1
+        else
+          echo "No existing tag found for version $VERSION."
+        fi
