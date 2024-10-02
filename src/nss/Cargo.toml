@@ -22,3 +22,9 @@ libc = { workspace = true }
 paste = { workspace = true }
 lazy_static = { workspace = true }
 
+[package.metadata.deb]
+name = "nss-himmelblau"
+maintainer = "David Mulder <dmulder@suse.com>"
+assets = [
+  ["target/release/libnss_himmelblau.so", "usr/lib/x86_64-linux-gnu/libnss_himmelblau.so.2", "755"],
+]
