@@ -18,7 +18,7 @@ install-opensuse:
 	install -D -d -m 0755 /etc/himmelblau
 	install -m 0644 ./src/config/himmelblau.conf.example /etc/himmelblau/himmelblau.conf
 	install -m 0755 ./target/release/libnss_himmelblau.so /usr/lib64/libnss_himmelblau.so.2
-	install -m 0755 ./target/release/libpam_himmelblau.so /usr/lib64/security
+	install -m 0755 ./target/release/libpam_himmelblau.so /usr/lib64/security/pam_himmelblau.so
 	install -m 0755 ./target/release/himmelblaud /usr/sbin
 	install -m 0755 ./target/release/himmelblaud_tasks /usr/sbin
 	install -m 0755 ./target/release/aad-tool /usr/bin
@@ -29,7 +29,7 @@ install-debian:
 	install -D -d -m 0755 /etc/himmelblau
 	install -m 0644 ./src/config/himmelblau.conf.example /etc/himmelblau/himmelblau.conf
 	install -m 0755 ./target/release/libnss_himmelblau.so /usr/lib/x86_64-linux-gnu/libnss_himmelblau.so.2
-	install -m 0755 ./target/release/libpam_himmelblau.so /usr/lib/x86_64-linux-gnu
+	install -m 0755 ./target/release/libpam_himmelblau.so /usr/lib/x86_64-linux-gnu/pam_himmelblau.so
 	install -m 0755 ./target/release/himmelblaud /usr/sbin
 	install -m 0755 ./target/release/himmelblaud_tasks /usr/sbin
 	install -m 0755 ./target/release/aad-tool /usr/bin

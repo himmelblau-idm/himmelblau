@@ -27,5 +27,5 @@ pkg-config.workspace = true
 name = "pam-himmelblau"
 maintainer = "David Mulder <dmulder@suse.com>"
 assets = [
-  ["target/release/libpam_himmelblau.so", "usr/lib/x86_64-linux-gnu/", "755"],
+  ["target/release/libpam_himmelblau.so", "usr/lib/x86_64-linux-gnu/pam_himmelblau.so", "755"],
 ]
