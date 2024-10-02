@@ -33,8 +33,8 @@ install-debian:
 	install -m 0755 ./target/release/himmelblaud /usr/sbin
 	install -m 0755 ./target/release/himmelblaud_tasks /usr/sbin
 	install -m 0755 ./target/release/aad-tool /usr/bin
-	install -m 0644 ./platform/debian/himmelblaud.service /usr/lib/systemd/system
-	install -m 0644 ./platform/debian/himmelblaud-tasks.service /usr/lib/systemd/system
+	install -m 0644 ./platform/debian/himmelblaud.service /etc/systemd/system
+	install -m 0644 ./platform/debian/himmelblaud-tasks.service /etc/systemd/system
 
 install:
 ifeq ($(PLATFORM), debian)
@@ -46,3 +46,15 @@ else ifneq (,$(findstring opensuse,$(PLATFORM)))
 else
 	$(error "Unsupported platform: $(PLATFORM)")
 endif
+
+DOCKER := $(shell command -v podman || command -v docker)
+deb:
+	git submodule init; git submodule update
+	for v in 22.04 24.04; do \
+		echo "Building Ubuntu $$v packages"; \
+		$(DOCKER) build -t himmelblau-ubuntu$$v-build -f images/ubuntu/Dockerfile.$$v .; \
+		$(DOCKER) run --rm -it -v ./:/himmelblau himmelblau-ubuntu$$v-build; \
+		mv ./target/debian/*.deb ./target/release/; \
+	done
+	mv ./target/release/*.deb ./target/debian/
+	ls ./target/debian/*.deb
