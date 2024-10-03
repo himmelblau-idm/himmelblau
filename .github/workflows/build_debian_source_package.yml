@@ -57,7 +57,8 @@ jobs:
             pkgconf \
             debhelper-compat \
             devscripts \
-            libclang-14-dev
+            libclang-14-dev \
+            libdbus-1-dev
 
     - name: "[general] - Fetch submodules"
       run: |
