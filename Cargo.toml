@@ -52,7 +52,7 @@ os-release = "^0.1.0"
 jsonwebtoken = "^9.2.0"
 zeroize = "^1.7.0"
 idmap = { path = "src/idmap" }
-identity_dbus_broker = "0.1.0"
+identity_dbus_broker = "0.1.2"
 
 # Kanidm deps
 argon2 = { version = "0.5.2", features = ["alloc"] }

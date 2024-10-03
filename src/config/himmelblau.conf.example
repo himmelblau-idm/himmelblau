@@ -46,6 +46,7 @@
 # hsm_pin_path = /var/lib/himmelblaud/hsm-pin
 # socket_path = /var/run/himmelblaud/socket
 # task_socket_path = /var/run/himmelblaud/task_sock
+# broker_socket_path = /var/run/himmelblaud/broker_sock
 # home_prefix = /home/
 # home_attr = UUID ; home directory attribute options:
 #                  ; UUID (default)

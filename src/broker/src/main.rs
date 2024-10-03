@@ -15,9 +15,30 @@
    You should have received a copy of the GNU General Public License
    along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
+use himmelblau_unix_common::config::HimmelblauConfig;
 use identity_dbus_broker::himmelblau_session_broker_serve;
+use std::process::ExitCode;
+use tracing::error;
 
 #[tokio::main]
-async fn main() -> Result<(), dbus::MethodErr> {
-    himmelblau_session_broker_serve().await
+async fn main() -> ExitCode {
+    // Read the configuration
+    let cfg = match HimmelblauConfig::new(None) {
+        Ok(c) => c,
+        Err(e) => {
+            error!("Failed to parse: {}", e);
+            return ExitCode::FAILURE;
+        }
+    };
+
+    let sock_path = cfg.get_broker_socket_path();
+    let timeout = cfg.get_connection_timeout();
+
+    match himmelblau_session_broker_serve(&sock_path, timeout).await {
+        Ok(_) => return ExitCode::SUCCESS,
+        Err(e) => {
+            error!("Broker service failed: {}", e);
+            return ExitCode::FAILURE;
+        }
+    }
 }
