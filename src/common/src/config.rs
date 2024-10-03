@@ -5,11 +5,11 @@ use std::path::PathBuf;
 use tracing::{debug, error};
 
 use crate::constants::{
-    BROKER_APP_ID, DEFAULT_CACHE_TIMEOUT, DEFAULT_CONFIG_PATH, DEFAULT_CONN_TIMEOUT,
-    DEFAULT_DB_PATH, DEFAULT_HELLO_ENABLED, DEFAULT_HOME_ALIAS, DEFAULT_HOME_ATTR,
-    DEFAULT_HOME_PREFIX, DEFAULT_HSM_PIN_PATH, DEFAULT_ID_ATTR_MAP, DEFAULT_ODC_PROVIDER,
-    DEFAULT_SELINUX, DEFAULT_SFA_FALLBACK_ENABLED, DEFAULT_SHELL, DEFAULT_SOCK_PATH,
-    DEFAULT_TASK_SOCK_PATH, DEFAULT_USE_ETC_SKEL, SERVER_CONFIG_PATH,
+    BROKER_APP_ID, DEFAULT_BROKER_SOCK_PATH, DEFAULT_CACHE_TIMEOUT, DEFAULT_CONFIG_PATH,
+    DEFAULT_CONN_TIMEOUT, DEFAULT_DB_PATH, DEFAULT_HELLO_ENABLED, DEFAULT_HOME_ALIAS,
+    DEFAULT_HOME_ATTR, DEFAULT_HOME_PREFIX, DEFAULT_HSM_PIN_PATH, DEFAULT_ID_ATTR_MAP,
+    DEFAULT_ODC_PROVIDER, DEFAULT_SELINUX, DEFAULT_SFA_FALLBACK_ENABLED, DEFAULT_SHELL,
+    DEFAULT_SOCK_PATH, DEFAULT_TASK_SOCK_PATH, DEFAULT_USE_ETC_SKEL, SERVER_CONFIG_PATH,
 };
 use crate::unix_config::{HomeAttr, HsmType};
 use idmap::DEFAULT_IDMAP_RANGE;
@@ -240,6 +240,13 @@ impl HimmelblauConfig {
         }
     }
 
+    pub fn get_broker_socket_path(&self) -> String {
+        match self.config.get("global", "broker_socket_path") {
+            Some(val) => val,
+            None => DEFAULT_BROKER_SOCK_PATH.to_string(),
+        }
+    }
+
     pub fn get_connection_timeout(&self) -> u64 {
         match self.config.get("global", "connection_timeout") {
             Some(val) => match val.parse::<u64>() {
@@ -390,10 +397,7 @@ impl HimmelblauConfig {
     }
 
     pub fn get_debug(&self) -> bool {
-        match_bool(
-            self.config.get("global", "debug"),
-            false,
-        )
+        match_bool(self.config.get("global", "debug"), false)
     }
 }
 

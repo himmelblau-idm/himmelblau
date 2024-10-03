@@ -605,10 +605,12 @@ async fn main() -> ExitCode {
 
             let socket_path = cfg.get_socket_path();
             let task_socket_path = cfg.get_task_socket_path();
+            let broker_socket_path = cfg.get_broker_socket_path();
 
             debug!("🧹 Cleaning up sockets from previous invocations");
             rm_if_exist(&socket_path);
             rm_if_exist(&task_socket_path);
+            rm_if_exist(&broker_socket_path);
 
 
             // Check the db path will be okay.
@@ -955,7 +957,7 @@ async fn main() -> ExitCode {
             // Spawn the himmelblau dbus broker
             let dbus_cachelayer = cachelayer.clone();
             let task_d = tokio::spawn(async move {
-                if let Err(e) = himmelblau_broker_serve::<Broker>(Broker { cachelayer: dbus_cachelayer }).await
+                if let Err(e) = himmelblau_broker_serve::<Broker>(Broker { cachelayer: dbus_cachelayer }, &broker_socket_path).await
                 {
                     error!("D-Bus error occurred; error = {:?}", e);
                 }

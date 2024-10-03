@@ -40,5 +40,5 @@ notify-debouncer-full = { workspace = true }
 kanidm-hsm-crypto = { workspace = true }
 kanidm_lib_file_permissions.workspace = true
 identity_dbus_broker.workspace = true
-dbus = "0.9.7"
 base64.workspace = true
+async-trait = "0.1.83"

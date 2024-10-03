@@ -4,6 +4,7 @@ use crate::unix_config::HomeAttr;
 pub const DEFAULT_CONFIG_PATH: &str = "/etc/himmelblau/himmelblau.conf";
 pub const DEFAULT_SOCK_PATH: &str = "/var/run/himmelblaud/socket";
 pub const DEFAULT_TASK_SOCK_PATH: &str = "/var/run/himmelblaud/task_sock";
+pub const DEFAULT_BROKER_SOCK_PATH: &str = "/var/run/himmelblaud/broker_sock";
 pub const DEFAULT_DB_PATH: &str = "/var/cache/himmelblaud/himmelblau.cache.db";
 pub const SERVER_CONFIG_PATH: &str = "/var/cache/himmelblaud/himmelblau.conf";
 pub const DEFAULT_HOME_PREFIX: &str = "/home/";
