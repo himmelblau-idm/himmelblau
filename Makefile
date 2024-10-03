@@ -25,7 +25,7 @@ install-opensuse:
 	install -m 0644 ./platform/opensuse/himmelblaud.service /usr/lib/systemd/system
 	install -m 0644 ./platform/opensuse/himmelblaud-tasks.service /usr/lib/systemd/system
 
-install-debian:
+install-ubuntu:
 	install -D -d -m 0755 /etc/himmelblau
 	install -m 0644 ./src/config/himmelblau.conf.example /etc/himmelblau/himmelblau.conf
 	install -m 0755 ./target/release/libnss_himmelblau.so /usr/lib/x86_64-linux-gnu/libnss_himmelblau.so.2
@@ -38,7 +38,7 @@ install-debian:
 
 install:
 ifeq ($(PLATFORM), debian)
-	$(MAKE) install-debian
+	$(MAKE) install-ubuntu
 else ifeq ($(PLATFORM), ubuntu)
 	$(MAKE) install-ubuntu
 else ifneq (,$(findstring opensuse,$(PLATFORM)))
