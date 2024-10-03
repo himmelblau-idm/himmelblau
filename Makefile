@@ -28,7 +28,7 @@ install-opensuse:
 	install -m 0644 ./platform/opensuse/com.microsoft.identity.broker1.service /usr/share/dbus-1/services
 	install -m 0644 ./platform/opensuse/org.samba.himmelblau.conf /usr/share/dbus-1/system.d
 
-install-debian:
+install-ubuntu:
 	install -D -d -m 0755 /etc/himmelblau
 	install -m 0644 ./src/config/himmelblau.conf.example /etc/himmelblau/himmelblau.conf
 	install -m 0755 ./target/release/libnss_himmelblau.so /usr/lib/x86_64-linux-gnu/libnss_himmelblau.so.2
@@ -44,7 +44,7 @@ install-debian:
 
 install:
 ifeq ($(PLATFORM), debian)
-	$(MAKE) install-debian
+	$(MAKE) install-ubuntu
 else ifeq ($(PLATFORM), ubuntu)
 	$(MAKE) install-ubuntu
 else ifneq (,$(findstring opensuse,$(PLATFORM)))
