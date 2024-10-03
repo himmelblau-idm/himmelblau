@@ -20,6 +20,13 @@ override_dh_auto_build:
 	# Ensure the necessary development package is installed
 	# Extract the vendor dependencies
 	tar -xf vendor.tar.xz
+	# Ensure rustup is installed if not present
+	if ! command -v rustup > /dev/null; then \
+		echo "Installing rustup..."; \
+		curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y; \
+		source $(HOME)/.cargo/env; \
+		rustup default stable; \
+	fi
 	# Build the project with the appropriate flags
 	$(RUST_ENV) export CARGO_HOME=$(CARGO_HOME) && export CARGO_TARGET_DIR=$(CARGO_TARGET_DIR) && \
 		cargo build --release --frozen
