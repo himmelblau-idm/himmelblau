@@ -364,7 +364,8 @@ jobs:
             patchelf \
             pkgconf \
             debhelper-compat \
-            devscripts
+            devscripts \
+            libdbus-1-dev
 
     - name: '[general] - Download Debian source package artifacts'
       uses: actions/download-artifact@v4
