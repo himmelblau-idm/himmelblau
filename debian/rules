@@ -38,7 +38,7 @@ override_dh_auto_build:
 	cp target/release/libpam_himmelblau.so target/release/pam_himmelblau.so
 	patchelf --set-soname libnss_himmelblau.so.2 target/release/libnss_himmelblau.so.2
 	strip --strip-unneeded target/release/libnss_himmelblau.so.2
-	strip --strip-unneeded target/release/libpam_himmelblau.so
+	strip --strip-unneeded target/release/pam_himmelblau.so
 
 override_dh_auto_test:
 	# Skip tests

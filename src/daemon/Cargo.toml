@@ -42,3 +42,21 @@ kanidm_lib_file_permissions.workspace = true
 identity_dbus_broker.workspace = true
 base64.workspace = true
 async-trait = "0.1.83"
+
+[package.metadata.deb]
+name = "himmelblau"
+maintainer = "David Mulder <dmulder@suse.com>"
+depends = ["libssl3", "libsqlite3-0"]
+recommends = ["nss-himmelblau", "pam-himmelblau"]
+assets = [
+  ["../../src/config/himmelblau.conf.example", "etc/himmelblau/himmelblau.conf", "644"],
+  ["target/release/aad-tool", "usr/bin/", "755"],
+  ["../../platform/debian/himmelblaud-tasks.service", "etc/systemd/system/", "644"],
+  ["../../platform/debian/himmelblaud.service", "etc/systemd/system/", "644"],
+  ["../../platform/debian/org.samba.himmelblau.conf", "usr/share/dbus-1/system.d/", "644"],
+  ["../../platform/debian/com.microsoft.identity.broker1.service", "usr/share/dbus-1/services/", "644"],
+  ["target/release/himmelblaud", "usr/sbin/", "755"],
+  ["target/release/himmelblaud_tasks", "usr/sbin/", "755"],
+  ["target/release/broker", "usr/sbin/", "755"],
+  ["../../README.md", "usr/share/doc/himmelblau/README", "644"],
+]
