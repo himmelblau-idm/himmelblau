@@ -11,6 +11,7 @@ name: Test
       - stable-0.3.x
       - stable-0.4.x
       - stable-0.5.x
+      - stable-0.6.x
 
 env:
   SCCACHE_GHA_ENABLED: "true"

@@ -1,0 +1,51 @@
+# Use the official Ubuntu 24.04 image as the base
+FROM ubuntu:24.04
+
+# Set environment variables for non-interactive installs
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Install essential build dependencies
+RUN apt-get update && apt-get install -y \
+    curl \
+    git \
+    build-essential \
+    libssl-dev \
+    libsss-idmap-dev \
+    libdbus-1-dev \
+    libtool \
+    pkg-config \
+    autoconf \
+    libpam0g-dev \
+    libudev-dev \
+    libssl-dev \
+    tpm-udev \
+    libtss2-dev \
+    libcap-dev \
+    libtalloc-dev \
+    libtevent-dev \
+    libldb-dev \
+    libdhash-dev \
+    libkrb5-dev \
+    libpcre2-dev \
+    libclang-dev \
+    gettext \
+    cargo \
+    libsqlite3-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Rust (latest stable)
+RUN curl https://sh.rustup.rs -sSf | sh -s -- -y
+
+# Set environment for Rust
+ENV PATH="/root/.cargo/bin:${PATH}"
+
+VOLUME /himmelblau
+
+# Change directory to the repository
+WORKDIR /himmelblau
+
+# Install the cargo-deb tool
+RUN cargo install cargo-deb
+
+# Build the project and create the .deb package
+CMD cargo deb --deb-revision=ubuntu24.04 -p himmelblaud && cargo deb --deb-revision=ubuntu24.04 -p nss_himmelblau && cargo deb --deb-revision=ubuntu24.04 -p pam_himmelblau

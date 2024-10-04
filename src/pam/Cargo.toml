@@ -22,3 +22,10 @@ tracing = { workspace = true }
 
 [build-dependencies]
 pkg-config.workspace = true
+
+[package.metadata.deb]
+name = "pam-himmelblau"
+maintainer = "David Mulder <dmulder@suse.com>"
+assets = [
+  ["target/release/libpam_himmelblau.so", "usr/lib/x86_64-linux-gnu/security/pam_himmelblau.so", "755"],
+]
