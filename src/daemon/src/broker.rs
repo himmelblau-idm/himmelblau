@@ -9,7 +9,6 @@ use libc::uid_t;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::error::Error;
-use std::io;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -33,7 +32,7 @@ struct TokenReq {
 
 #[derive(Serialize, Deserialize, Debug)]
 struct SsoCookieReq {
-    username: String,
+    account: AccountReq,
 }
 
 #[derive(Clone)]
@@ -85,13 +84,13 @@ impl HimmelblauBroker for Broker {
         let res = json!({
             "brokerTokenResponse": {
                 "accessToken": token.access_token.clone()
-                    .ok_or(Box::new(io::Error::new(io::ErrorKind::Other, "Failed to fetch access token")))?,
+                    .ok_or("Failed to fetch access token")?,
                 "accessTokenType": token.token_type,
                 "clientInfo": URL_SAFE_NO_PAD.encode(json!(&token.client_info).to_string()),
                 "expiresOn": (token.expires_in as u128) + now.as_millis(),
                 "extendedExpiresOn": (token.ext_expires_in as u64) + now.as_secs(),
                 "grantedScopes": token.scope.clone()
-                    .ok_or(Box::new(io::Error::new(io::ErrorKind::Other, "Failed to fetch scopes")))?,
+                    .ok_or("Failed to fetch scopes")?,
                 "idToken": URL_SAFE_NO_PAD.encode(json!(&token.id_token).to_string()),
             }
         });
@@ -153,13 +152,19 @@ impl HimmelblauBroker for Broker {
             .ok_or("Unable to find account")?;
         let request: SsoCookieReq =
             serde_json::from_str(&request_json).map_err(|e| format!("{:?}", e))?;
-        if request.username.to_lowercase() != user.spn.to_lowercase() {
+        if request.account.username.to_lowercase() != user.spn.to_lowercase() {
             return Err("Invalid request for user!".into());
         }
-        self.cachelayer
+        let prt = self
+            .cachelayer
             .get_user_prt_cookie(Id::Name(user.spn))
             .await
-            .ok_or("Failed to fetch prt sso cookie".into())
+            .ok_or("Failed to fetch prt sso cookie")?;
+        let res = json!({
+            "cookieContent": prt,
+            "cookieName": "x-ms-RefreshTokenCredential",
+        });
+        Ok(res.to_string())
     }
 
     async fn generate_signed_http_request(
