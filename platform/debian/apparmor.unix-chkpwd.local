@@ -1,0 +1,5 @@
+/etc/himmelblau/himmelblau.conf r,
+capability dac_read_search,
+capability dac_override,
+/var/cache/private/himmelblaud/himmelblau.conf r,
+/run/himmelblaud/socket rw,
