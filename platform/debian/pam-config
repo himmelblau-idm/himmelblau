@@ -1,0 +1,12 @@
+Name: Azure authentication
+Default: yes
+Priority: 192
+Auth-Type: Primary
+Auth:
+	[success=end default=ignore]    pam_himmelblau.so ignore_unknown_user use_first_pass
+Account-Type: Primary
+Account:
+	[success=end default=ignore]    pam_himmelblau.so ignore_unknown_user
+Session-Type: Additional
+Session:
+	optional	pam_himmelblau.so
