@@ -2,10 +2,10 @@
 
 set -e
 
-# Unapply the patch from /etc/apparmor.d/unix-chkpwd
-patch -F 2 -R /etc/apparmor.d/unix-chkpwd << 'EOF'
---- /etc/apparmor.d/unix-chkpwd	2024-10-07 13:36:55.740827834 -0600
-+++ /etc/apparmor.d/unix-chkpwd	2024-10-07 13:41:33.143303700 -0600
+# Define the patch content using cat command
+UNIX_CHKPWD_PATCH=$(cat << 'EOF'
+--- /etc/apparmor.d/unix-chkpwd 2024-10-07 13:41:33.143303700 -0600
++++ /etc/apparmor.d/unix-chkpwd 2024-10-07 13:36:55.740827834 -0600
 @@ -11,7 +11,7 @@
  
  include <tunables/global>
@@ -16,6 +16,13 @@ patch -F 2 -R /etc/apparmor.d/unix-chkpwd << 'EOF'
    include <abstractions/nameservice>
  
 EOF
+)
 
-# Reload the AppArmor profile to apply the changes
-sudo apparmor_parser -r /etc/apparmor.d/unix-chkpwd
+# Check if the file /etc/apparmor.d/unix-chkpwd exists
+if [[ -f /etc/apparmor.d/unix-chkpwd ]]; then
+	# Reverse the patch using the patch command
+	echo "$UNIX_CHKPWD_PATCH" | patch --fuzz 2 --silent --reverse -p0 /etc/apparmor.d/unix-chkpwd
+
+	# Reload the AppArmor profile to apply the changes
+	sudo apparmor_parser -r /etc/apparmor.d/unix-chkpwd
+fi
