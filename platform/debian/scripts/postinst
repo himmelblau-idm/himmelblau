@@ -1,0 +1,28 @@
+#!/bin/bash
+
+set -e
+
+# Define the patch content using cat command
+UNIX_CHKPWD_PATCH=$(cat << 'EOF'
+--- /etc/apparmor.d/unix-chkpwd	2024-10-07 13:41:33.143303700 -0600
++++ /etc/apparmor.d/unix-chkpwd	2024-10-07 13:36:55.740827834 -0600
+@@ -11,7 +11,7 @@
+ 
+ include <tunables/global>
+ 
+-profile unix-chkpwd /{,usr/}{,s}bin/unix_chkpwd {
++profile unix-chkpwd /{,usr/}{,s}bin/unix_chkpwd flags=(attach_disconnected) {
+   include <abstractions/base>
+   include <abstractions/nameservice>
+ 
+EOF
+)
+
+# Check if the file /etc/apparmor.d/unix-chkpwd exists
+if [[ -f /etc/apparmor.d/unix-chkpwd ]]; then
+	# Apply the patch using the patch command
+	echo "$UNIX_CHKPWD_PATCH" | patch --fuzz 2 --silent --forward -p0 /etc/apparmor.d/unix-chkpwd
+
+	# Reload the AppArmor profile to apply the changes
+	sudo apparmor_parser -r /etc/apparmor.d/unix-chkpwd
+fi
