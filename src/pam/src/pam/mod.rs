@@ -254,7 +254,7 @@ impl PamHooks for PamKanidm {
             Ok(aid) => aid,
             Err(e) => {
                 error!(err = ?e, "get_user");
-                return e;
+                return PamResultCode::PAM_SERVICE_ERR;
             }
         };
 
@@ -323,7 +323,7 @@ impl PamHooks for PamKanidm {
             Ok(aid) => aid,
             Err(e) => {
                 error!(err = ?e, "get_user");
-                return e;
+                return PamResultCode::PAM_SERVICE_ERR;
             }
         };
 
@@ -545,7 +545,7 @@ impl PamHooks for PamKanidm {
             Ok(aid) => aid,
             Err(err) => {
                 error!(?err, "get_user");
-                return err;
+                return PamResultCode::PAM_SERVICE_ERR;
             }
         };
 
