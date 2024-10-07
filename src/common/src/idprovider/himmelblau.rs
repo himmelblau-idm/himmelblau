@@ -521,126 +521,117 @@ impl IdProvider for HimmelblauProvider {
         tpm: &mut tpm::BoxedDynTpm,
         machine_key: &tpm::MachineKey,
     ) -> Result<UserToken, IdpError> {
+        /* Use the prt mem cache to refresh the user token */
         let account_id = match old_token {
             Some(token) => token.spn.clone(),
             None => id.to_string().clone(),
         };
-        macro_rules! offline_user {
+        macro_rules! fake_user {
             () => {
                 match old_token {
                     // If we have an existing token, just keep it
                     Some(token) => return Ok(token.clone()),
+                    // Otherwise, see if we should fake it
                     None => {
-                        // We have no way of knowing if this user really exists
-                        return Err(IdpError::BadRequest);
-                    }
-                }
-            };
-        }
-        macro_rules! old_token_uuid {
-            () => {
-                match old_token {
-                    // If we have an existing token, try using the uuid
-                    Some(token) => token.uuid,
-                    None => Uuid::new_v4(),
-                }
-            };
-        }
-        macro_rules! old_token_gecos {
-            () => {
-                match old_token {
-                    // If we have an existing token, try using the gecos
-                    Some(token) => token.displayname.clone(),
-                    None => "".to_string(),
-                }
-            };
-        }
-        let exists = match self
-            .client
-            .write()
-            .await
-            .check_user_exists(&account_id)
-            .await
-        {
-            Ok(exists) => exists,
-            Err(e) => {
-                error!("Failed checking if the user exists: {:?}", e);
-                offline_user!()
-            }
-        };
-        if exists {
-            // Generate a UserToken, with invalid uuid. We can
-            // only fetch this from an authenticated token.
-            let config = self.config.read().await;
-            let gidnumber = match config.get_id_attr_map() {
-                // If Uuid mapping is enabled, bail out now.
-                // We can only provide a valid idmapping with
-                // name idmapping at this point.
-                IdAttr::Uuid => offline_user!(),
-                IdAttr::Name => {
-                    let idmap = self.idmap.read().await;
-                    match idmap.gen_to_unix(&self.tenant_id, &account_id) {
-                        Ok(name) => name,
-                        Err(e) => {
-                            error!("{:?}", e);
-                            offline_user!()
+                        // Check if the user exists
+                        let exists = self
+                            .client
+                            .write()
+                            .await
+                            .check_user_exists(&account_id)
+                            .await
+                            .map_err(|e| {
+                                error!("Failed checking if the user exists: {:?}", e);
+                                IdpError::BadRequest
+                            })?;
+                        if exists {
+                            // Generate a UserToken, with invalid uuid. We can
+                            // only fetch this from an authenticated token.
+                            let config = self.config.read().await;
+                            let gidnumber = match config.get_id_attr_map() {
+                                // If Uuid mapping is enabled, bail out now.
+                                // We can only provide a valid idmapping with
+                                // name idmapping at this point.
+                                IdAttr::Uuid => return Err(IdpError::BadRequest),
+                                IdAttr::Name => {
+                                    let idmap = self.idmap.read().await;
+                                    idmap.gen_to_unix(&self.tenant_id, &account_id).map_err(
+                                        |e| {
+                                            error!("{:?}", e);
+                                            IdpError::BadRequest
+                                        },
+                                    )?
+                                }
+                            };
+                            let groups = vec![GroupToken {
+                                name: account_id.clone(),
+                                spn: account_id.clone(),
+                                uuid: Uuid::max(),
+                                gidnumber,
+                            }];
+                            let config = self.config.read().await;
+                            return Ok(UserToken {
+                                name: account_id.clone(),
+                                spn: account_id.clone(),
+                                uuid: Uuid::new_v4(),
+                                gidnumber,
+                                displayname: "".to_string(),
+                                shell: Some(config.get_shell(Some(&self.domain))),
+                                groups,
+                                tenant_id: Uuid::parse_str(&self.tenant_id).map_err(|e| {
+                                    error!("{:?}", e);
+                                    IdpError::BadRequest
+                                })?,
+                                valid: true,
+                            });
+                        } else {
+                            // This is the one time we really should return
+                            // IdpError::NotFound, because this user doesn't exist.
+                            return Err(IdpError::NotFound);
                         }
                     }
                 }
             };
-            let groups = vec![GroupToken {
-                name: account_id.clone(),
-                spn: account_id.clone(),
-                uuid: Uuid::max(),
-                gidnumber,
-            }];
-            let (uuid, gecos) = match self.refresh_cache.refresh_token(&account_id).await {
-                Ok(prt) => {
-                    let gecos =
-                        match self
-                            .client
-                            .write()
-                            .await
-                            .name_from_prt(&prt, tpm, machine_key)
-                        {
-                            Ok(gecos) => gecos,
-                            Err(_) => old_token_gecos!(),
-                        };
-                    let uuid = match self
-                        .client
-                        .write()
-                        .await
-                        .uuid_from_prt(&prt, tpm, machine_key)
-                    {
-                        Ok(uuid) => uuid,
-                        Err(_) => old_token_uuid!(),
-                    };
-                    (uuid, gecos)
+        }
+        let prt = match self.refresh_cache.refresh_token(&account_id).await {
+            Ok(prt) => prt,
+            Err(_) => fake_user!(),
+        };
+        let token = match self
+            .client
+            .write()
+            .await
+            .exchange_prt_for_access_token(
+                &prt,
+                vec!["User.Read"],
+                Some("https://graph.microsoft.com".to_string()),
+                tpm,
+                machine_key,
+            )
+            .await
+        {
+            Ok(token) => token,
+            Err(e) => {
+                error!("{:?}", e);
+                // Never return IdpError::NotFound. This deletes the existing
+                // user from the cache.
+                fake_user!()
+            }
+        };
+        match self.token_validate(&account_id, &token).await {
+            Ok(AuthResult::Success { mut token }) => {
+                /* Set the GECOS from the old_token, since MS doesn't
+                 * provide this during a silent acquire
+                 */
+                if let Some(old_token) = old_token {
+                    token.displayname.clone_from(&old_token.displayname)
                 }
-                Err(_) => (old_token_uuid!(), old_token_gecos!()),
-            };
-            let config = self.config.read().await;
-            return Ok(UserToken {
-                name: account_id.clone(),
-                spn: account_id.clone(),
-                uuid,
-                gidnumber,
-                displayname: gecos,
-                shell: Some(config.get_shell(Some(&self.domain))),
-                groups,
-                tenant_id: match Uuid::parse_str(&self.tenant_id) {
-                    Ok(tenant_id) => tenant_id,
-                    Err(e) => {
-                        error!("{:?}", e);
-                        offline_user!()
-                    }
-                },
-                valid: true,
-            });
-        } else {
-            // This is the one time we really should return
-            // IdpError::NotFound, because this user doesn't exist.
-            return Err(IdpError::NotFound);
+                Ok(token)
+            }
+            // Never return IdpError::NotFound. This deletes the existing
+            // user from the cache.
+            Ok(AuthResult::Denied) | Ok(AuthResult::Next(_)) => fake_user!(),
+            Err(_) => fake_user!(),
         }
     }
 
