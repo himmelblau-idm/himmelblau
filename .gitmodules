@@ -1,4 +1,0 @@
-[submodule "src/idmap/sssd"]
-	path = src/idmap/sssd
-	url = https://github.com/dmulder/sssd.git
-	branch = sss_idmap_4_idp
