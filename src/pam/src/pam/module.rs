@@ -189,6 +189,8 @@ impl PamHandle {
             let const_ptr = ptr as *const c_char;
             let bytes = unsafe { CStr::from_ptr(const_ptr).to_bytes() };
             String::from_utf8(bytes.to_vec()).map_err(|_| PamResultCode::PAM_CONV_ERR)
+        } else if PamResultCode::PAM_SUCCESS == res {
+            Err(PamResultCode::PAM_CONV_ERR)
         } else {
             Err(res)
         }
