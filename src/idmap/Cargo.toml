@@ -14,9 +14,9 @@ name = "idmap"
 path = "src/lib.rs"
 
 [dependencies]
-libc = "0.2.153"
-tracing = { workspace = true }
-uuid = { workspace = true }
+libc.workspace = true
+tracing.workspace = true
+uuid.workspace = true
 
 [build-dependencies]
 cc = "1.0.97"

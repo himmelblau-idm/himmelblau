@@ -18,7 +18,7 @@ use himmelblau::auth::{
 use himmelblau::discovery::EnrollAttrs;
 use himmelblau::error::{ErrorResponse, MsalError, AUTH_PENDING, DEVICE_AUTH_FAIL, REQUIRES_MFA};
 use himmelblau::graph::{DirectoryObject, Graph};
-use idmap::SssIdmap;
+use idmap::Idmap;
 use kanidm_hsm_crypto::{LoadableIdentityKey, LoadableMsOapxbcRsaKey, PinValue, SealedData, Tpm};
 use reqwest;
 use serde::{Deserialize, Serialize};
@@ -85,7 +85,7 @@ impl HimmelblauMultiProvider {
             Ok(config) => Arc::new(RwLock::new(config)),
             Err(e) => return Err(anyhow!("{}", e)),
         };
-        let idmap = match SssIdmap::new() {
+        let idmap = match Idmap::new() {
             Ok(idmap) => Arc::new(RwLock::new(idmap)),
             Err(e) => return Err(anyhow!("{:?}", e)),
         };
@@ -390,7 +390,7 @@ pub struct HimmelblauProvider {
     authority_host: String,
     graph: Graph,
     refresh_cache: RefreshCache,
-    idmap: Arc<RwLock<SssIdmap>>,
+    idmap: Arc<RwLock<Idmap>>,
 }
 
 impl HimmelblauProvider {
@@ -401,7 +401,7 @@ impl HimmelblauProvider {
         domain: &str,
         authority_host: &str,
         graph: Graph,
-        idmap: &Arc<RwLock<SssIdmap>>,
+        idmap: &Arc<RwLock<Idmap>>,
     ) -> Result<Self, IdpError> {
         Ok(HimmelblauProvider {
             client: RwLock::new(client),

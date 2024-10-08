@@ -40,16 +40,14 @@ jobs:
             tpm-udev \
             libtss2-dev \
             libcap-dev \
-            libtalloc-dev \
-            libtevent-dev \
-            libldb-dev \
             libdhash-dev \
             libkrb5-dev \
             libpcre2-dev \
             libclang-13-dev \
             autoconf \
             gettext \
-            libdbus-1-dev
+            libdbus-1-dev \
+            libutf8proc-dev
 
       - name: "Fetch submodules"
         run: git submodule init && git submodule update
