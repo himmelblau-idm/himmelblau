@@ -74,7 +74,7 @@ impl PasswdHooks for HimmelblauPasswd {
                     return Response::Unavail;
                 }
             };
-        let name = cfg.map_cn_name(&name);
+        let name = cfg.map_logon_name(&name);
         let req = ClientRequest::NssAccountByName(name.clone());
         let mut daemon_client = match DaemonClientBlocking::new(cfg.sock_path.as_str()) {
             Ok(dc) => dc,

@@ -401,6 +401,10 @@ impl HimmelblauConfig {
             CN_NAME_MAPPING,
         )
     }
+
+    pub fn get_name_mapping_script(&self) -> Option<String> {
+        self.config.get("global", "name_mapping_script")
+    }
 }
 
 impl fmt::Debug for HimmelblauConfig {
