@@ -37,6 +37,13 @@
 # configured. This is disabled by default.
 # enable_sfa_fallback = false
 #
+# CN to UPN mapping allows users to simply enter the short form of their
+# username (`dave` instead of `dave@example.com`). Himmelblau will only map CNs
+# to the primary domain (the first domain listed in the `domains` option
+# above). WARNING: CN mapping could mask local users, depending on your PAM
+# configuration.
+# cn_name_mapping = true
+#
 # authority_host = login.microsoftonline.com
 #
 # The location of the cache database
@@ -51,9 +58,11 @@
 # home_attr = UUID ; home directory attribute options:
 #                  ; UUID (default)
 #                  ; SPN
+#                  ; CN
 # home_alias = SPN ; home directory alias options:
 #                  ; UUID
 #                  ; SPN (default)
+#                  ; CN
 # shell = /bin/bash ; default shell for the user
 # idmap_range = 5000000-5999999
 # connection_timeout = 2
