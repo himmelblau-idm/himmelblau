@@ -15,10 +15,14 @@
    You should have received a copy of the GNU General Public License
    along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
+use crate::unix_passwd::parse_etc_passwd;
 use configparser::ini::Ini;
 use std::fmt;
+use std::fs::File;
 use std::io::Error;
+use std::io::Read;
 use std::path::PathBuf;
+use std::process::Command;
 use tracing::{debug, error};
 
 use crate::constants::{
@@ -598,6 +602,59 @@ impl HimmelblauConfig {
             let _ = self.write_server_config();
         }
         None
+    }
+
+    pub fn get_name_mapping_script(&self) -> Option<String> {
+        self.config.get("global", "name_mapping_script")
+    }
+
+    /// This function attempts to convert a username to a valid UPN. On failure it
+    /// will leave the name as-is, and respond with the original input. Himmelblau
+    /// will reject the authentication attempt if the username isn't a valid UPN.
+    pub fn map_name_to_upn(&self, account_id: &str) -> String {
+        let name_mapping_script = self.get_name_mapping_script();
+        let cn_name_mapping = self.get_cn_name_mapping();
+        let domains = self.get_configured_domains();
+
+        // Make sure this account_id isn't a local user
+        let mut contents = vec![];
+        if let Ok(mut file) = File::open("/etc/passwd") {
+            let _ = file.read_to_end(&mut contents);
+        }
+        let local_users = parse_etc_passwd(contents.as_slice()).unwrap_or_default();
+        if local_users
+            .into_iter()
+            .map(|u| u.name.to_string())
+            .collect::<Vec<String>>()
+            .contains(&account_id.to_string())
+        {
+            return account_id.to_string();
+        }
+
+        // The name mapping script is expected to convert the input name to a UPN
+        // if a name is supplied, or to a name if the UPN is supplied.
+        if !account_id.contains('@') {
+            if let Some(name_mapping_script) = &name_mapping_script {
+                let output = Command::new(name_mapping_script).arg(account_id).output();
+
+                match output {
+                    Ok(output) => {
+                        if output.status.success() {
+                            return String::from_utf8_lossy(&output.stdout).trim().to_string();
+                        } else {
+                            eprintln!("Script execution failed with error: {:?}", output.status);
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("Failed to execute script: {}", e);
+                    }
+                }
+            }
+        }
+        if cn_name_mapping && !account_id.contains('@') && !domains.is_empty() {
+            return format!("{}@{}", account_id, domains[0]);
+        }
+        account_id.to_string()
     }
 }
 
@@ -1274,5 +1331,94 @@ mod tests {
             Some(("user", "example.com"))
         );
         assert_eq!(split_username("invalid_username"), None);
+    }
+
+    #[test]
+    fn test_get_name_mapping_script() {
+        let config_data = r#"
+        [global]
+        name_mapping_script = /path/to/name_mapping_script
+        "#;
+
+        let temp_file = create_temp_config(config_data);
+        let config = HimmelblauConfig::new(Some(&temp_file)).unwrap();
+
+        assert_eq!(
+            config.get_name_mapping_script(),
+            Some("/path/to/name_mapping_script".to_string())
+        );
+
+        let config_missing = HimmelblauConfig::new(None).unwrap();
+        assert_eq!(config_missing.get_name_mapping_script(), None);
+    }
+
+    #[test]
+    fn test_map_name_to_upn_script_execution_success() {
+        let config_data = r#"
+        [global]
+        name_mapping_script = /bin/echo
+        domains = example.com
+        "#;
+
+        let temp_file = create_temp_config(config_data);
+        let config = HimmelblauConfig::new(Some(&temp_file)).unwrap();
+
+        let account_id = "user";
+        let expected_output = "user";
+
+        assert_eq!(
+            config.map_name_to_upn(account_id),
+            expected_output.to_string()
+        );
+    }
+
+    #[test]
+    fn test_map_name_to_upn_local_user() {
+        // Simulate a local user in /etc/passwd
+        let account_id = "localuser";
+
+        let config_data = r#"
+        [global]
+        "#;
+
+        let temp_file = create_temp_config(config_data);
+        let config = HimmelblauConfig::new(Some(&temp_file)).unwrap();
+
+        // Simulating presence of local user
+        assert_eq!(config.map_name_to_upn(account_id), account_id.to_string());
+    }
+
+    #[test]
+    fn test_map_name_to_upn_add_domain() {
+        let config_data = r#"
+        [global]
+        cn_to_upn_mapping = true
+        domains = example.com
+        "#;
+
+        let temp_file = create_temp_config(config_data);
+        let config = HimmelblauConfig::new(Some(&temp_file)).unwrap();
+
+        let account_id = "user";
+        let expected_output = "user@example.com";
+
+        assert_eq!(
+            config.map_name_to_upn(account_id),
+            expected_output.to_string()
+        );
+    }
+
+    #[test]
+    fn test_map_name_to_upn_no_mapping() {
+        let config_data = r#"
+        [global]
+        "#;
+
+        let temp_file = create_temp_config(config_data);
+        let config = HimmelblauConfig::new(Some(&temp_file)).unwrap();
+
+        let account_id = "user";
+
+        assert_eq!(config.map_name_to_upn(account_id), account_id.to_string());
     }
 }

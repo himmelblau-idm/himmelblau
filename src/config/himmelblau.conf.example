@@ -78,6 +78,14 @@
 # Grant) flow for MFA, and Hello authentication will be disabled.
 # enable_experimental_mfa = true
 #
+# In some cases, mapping the UPN to the CN may be impractical. The following
+# option executes the specified filename (any executable), which MUST accept
+# a single argument representing a mapped name. The executable MUST print
+# the corresponding UPN (User Principal Name) to stdout. If the name is not
+# recognized, the script MUST return the input name unchanged. This option
+# provides flexibility for environments requiring custom name transformations.
+# name_mapping_script =
+#
 # authority_host = login.microsoftonline.com
 #
 # The location of the cache database

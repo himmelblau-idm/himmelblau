@@ -1026,7 +1026,7 @@ async fn main() -> ExitCode {
                 cfg.get_home_prefix(None),
                 cfg.get_home_attr(None),
                 cfg.get_home_alias(None),
-                UidAttr::Spn,
+                UidAttr::Name,
                 UidAttr::Name,
                 vec![], // TODO: Implement local account override
             )

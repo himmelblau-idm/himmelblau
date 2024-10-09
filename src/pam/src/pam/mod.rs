@@ -62,12 +62,11 @@ use std::ffi::CStr;
 
 use himmelblau::error::MsalError;
 use himmelblau::{AuthOption, PublicClientApplication};
+use himmelblau_unix_common::client_sync::DaemonClientBlocking;
 use himmelblau_unix_common::config::{split_username, HimmelblauConfig};
 use himmelblau_unix_common::constants::BROKER_APP_ID;
-use kanidm_unix_common::client_sync::DaemonClientBlocking;
-use kanidm_unix_common::constants::DEFAULT_CONFIG_PATH;
-use kanidm_unix_common::unix_config::KanidmUnixdConfig;
-use kanidm_unix_common::unix_proto::{
+use himmelblau_unix_common::constants::DEFAULT_CONFIG_PATH;
+use himmelblau_unix_common::unix_proto::{
     ClientRequest, ClientResponse, PamAuthRequest, PamAuthResponse,
 };
 #[cfg(feature = "interactive")]
@@ -761,7 +760,7 @@ impl PamHooks for PamKanidm {
             Ok(cfg) => cfg,
             Err(e) => return e,
         };
-        let account_id = cfg.map_cn_name(&account_id);
+        let account_id = cfg.map_name_to_upn(&account_id);
         let req = ClientRequest::PamAccountAllowed(account_id);
         // PamResultCode::PAM_IGNORE
 
@@ -836,7 +835,7 @@ impl PamHooks for PamKanidm {
             Ok(cfg) => cfg,
             Err(e) => return e,
         };
-        let account_id = cfg.map_cn_name(&account_id);
+        let account_id = cfg.map_name_to_upn(&account_id);
 
         let mut daemon_client = match DaemonClientBlocking::new(cfg.get_socket_path().as_str()) {
             Ok(dc) => dc,
@@ -912,7 +911,7 @@ impl PamHooks for PamKanidm {
             Ok(cfg) => cfg,
             Err(e) => return e,
         };
-        let account_id = cfg.map_cn_name(&account_id);
+        let account_id = cfg.map_name_to_upn(&account_id);
 
         let mut daemon_client = match DaemonClientBlocking::new(cfg.get_socket_path().as_str()) {
             Ok(dc) => dc,
@@ -1249,7 +1248,7 @@ impl PamHooks for PamKanidm {
             Ok(cfg) => cfg,
             Err(e) => return e,
         };
-        let account_id = cfg.map_cn_name(&account_id);
+        let account_id = cfg.map_name_to_upn(&account_id);
         let req = ClientRequest::PamAccountBeginSession(account_id);
 
         let mut daemon_client = match DaemonClientBlocking::new(cfg.get_socket_path().as_str()) {
