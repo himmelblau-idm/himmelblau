@@ -4,6 +4,7 @@ use std::fmt::{Display, Formatter};
 pub enum HomeAttr {
     Uuid,
     Spn,
+    Cn,
     Name,
 }
 
@@ -15,6 +16,7 @@ impl Display for HomeAttr {
             match self {
                 HomeAttr::Uuid => "UUID",
                 HomeAttr::Spn => "SPN",
+                HomeAttr::Cn => "CN",
                 HomeAttr::Name => "Name",
             }
         )

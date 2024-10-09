@@ -39,6 +39,8 @@ fn str_to_home_attr(attrib: &str) -> HomeAttr {
         return HomeAttr::Uuid;
     } else if attrib.to_lowercase() == "spn" {
         return HomeAttr::Spn;
+    } else if attrib.to_lowercase() == "cn" {
+        return HomeAttr::Cn;
     }
     HomeAttr::Uuid // Default to Uuid if the attrib can't be parsed
 }
