@@ -608,6 +608,8 @@ impl IdProvider for HimmelblauProvider {
                             // Generate a UserToken, with invalid uuid. We can
                             // only fetch this from an authenticated token.
                             let config = self.config.read().await;
+                            // Perform logon name mapping
+                            let mapped_name = config.map_upn_to_name(&account_id);
                             let gidnumber = match config.get_id_attr_map() {
                                 // If Uuid mapping is enabled, bail out now.
                                 // We can only provide a valid idmapping with
@@ -625,14 +627,14 @@ impl IdProvider for HimmelblauProvider {
                             };
                             let fake_uuid = Uuid::new_v4();
                             let groups = vec![GroupToken {
-                                name: account_id.clone(),
+                                name: mapped_name.clone(),
                                 spn: account_id.clone(),
                                 uuid: fake_uuid,
                                 gidnumber,
                             }];
                             let config = self.config.read().await;
                             return Ok(UserToken {
-                                name: account_id.clone(),
+                                name: mapped_name.clone(),
                                 spn: account_id.clone(),
                                 uuid: fake_uuid,
                                 gidnumber,
@@ -1254,6 +1256,8 @@ impl HimmelblauProvider {
                 return Err(IdpError::BadRequest);
             }
         };
+        // Perform logon name mapping
+        let mapped_name = config.map_upn_to_name(&spn);
         let uuid = match value.uuid() {
             Ok(uuid) => uuid,
             Err(e) => {
@@ -1304,14 +1308,14 @@ impl HimmelblauProvider {
 
         // Add the fake primary group
         groups.push(GroupToken {
-            name: spn.clone(),
+            name: mapped_name.clone(),
             spn: spn.clone(),
             uuid,
             gidnumber,
         });
 
         Ok(UserToken {
-            name: spn.clone(),
+            name: mapped_name.clone(),
             spn: spn.clone(),
             uuid,
             gidnumber,

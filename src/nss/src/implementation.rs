@@ -83,7 +83,7 @@ impl PasswdHooks for HimmelblauPasswd {
                     return Response::Unavail;
                 }
             };
-        let name = cfg.map_cn_name(&name);
+        let name = cfg.map_name_to_upn(&name);
         let req = ClientRequest::NssAccountByName(name.clone());
         let mut daemon_client = match DaemonClientBlocking::new(cfg.sock_path.as_str()) {
             Ok(dc) => dc,
@@ -96,11 +96,8 @@ impl PasswdHooks for HimmelblauPasswd {
             .call_and_wait(&req, cfg.unix_sock_timeout)
             .map(|r| match r {
                 ClientResponse::NssAccount(opt) => opt
-                    .map(|nu| {
-                        let mut passwd = passwd_from_nssuser(nu);
-                        passwd.name = name;
-                        Response::Success(passwd)
-                    })
+                    .map(passwd_from_nssuser)
+                    .map(Response::Success)
                     .unwrap_or_else(|| Response::NotFound),
                 _ => Response::NotFound,
             })

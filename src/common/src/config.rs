@@ -15,10 +15,14 @@
    You should have received a copy of the GNU General Public License
    along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
+use crate::unix_passwd::parse_etc_passwd;
 use configparser::ini::Ini;
 use std::fmt;
+use std::fs::File;
 use std::io::Error;
+use std::io::Read;
 use std::path::PathBuf;
+use std::process::Command;
 use tracing::{debug, error};
 
 use crate::constants::{
@@ -476,10 +480,121 @@ impl HimmelblauConfig {
             None => vec![],
         }
     }
+
+    pub fn get_name_mapping_script(&self) -> Option<String> {
+        self.config.get("global", "name_mapping_script")
+    }
+
+    pub fn map_upn_to_name(&self, account_id: &str) -> String {
+        map_upn_to_name(
+            account_id,
+            &self.get_name_mapping_script(),
+            self.get_cn_name_mapping(),
+            &self.get_configured_domains(),
+        )
+    }
+
+    pub fn map_name_to_upn(&self, account_id: &str) -> String {
+        map_name_to_upn(
+            account_id,
+            &self.get_name_mapping_script(),
+            self.get_cn_name_mapping(),
+            &self.get_configured_domains(),
+        )
+    }
 }
 
 impl fmt::Debug for HimmelblauConfig {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "{:?}", self.config)
     }
+}
+
+// This function maps a upn to a local username. If cn name mapping is enabled,
+// this will map to the CN. Otherwise it will attempt to map using the name
+// mapping script. If no name mapping is enabled, it will respond with the
+// supplied UPN (no name mapping).
+pub fn map_upn_to_name(
+    account_id: &str,
+    name_mapping_script: &Option<String>,
+    cn_name_mapping: bool,
+    domains: &[String],
+) -> String {
+    // The name mapping script is expected to convert the input name to a UPN
+    // if a name is supplied, or to a name if the UPN is supplied.
+    if let Some(name_mapping_script) = &name_mapping_script {
+        let output = Command::new(name_mapping_script).arg(account_id).output();
+
+        match output {
+            Ok(output) => {
+                if output.status.success() {
+                    return String::from_utf8_lossy(&output.stdout).trim().to_string();
+                } else {
+                    eprintln!("Script execution failed with error: {:?}", output.status);
+                }
+            }
+            Err(e) => {
+                eprintln!("Failed to execute script: {}", e);
+            }
+        }
+    }
+    if cn_name_mapping && account_id.contains('@') && !domains.is_empty() {
+        if let Some((cn, domain)) = split_username(account_id) {
+            // We can only name map the default domain
+            if domain == domains[0] {
+                return cn.to_string();
+            }
+        }
+    }
+    account_id.to_string()
+}
+
+// This function attempts to convert a username to a valid UPN. On failure it
+// will leave the name as-is, and respond with the original input. Himmelblau
+// will reject the authentication attempt if the username isn't a valid UPN.
+pub fn map_name_to_upn(
+    account_id: &str,
+    name_mapping_script: &Option<String>,
+    cn_name_mapping: bool,
+    domains: &[String],
+) -> String {
+    // Make sure this account_id isn't a local user
+    let mut contents = vec![];
+    if let Ok(mut file) = File::open("/etc/passwd") {
+        let _ = file.read_to_end(&mut contents);
+    }
+    let local_users = parse_etc_passwd(contents.as_slice()).unwrap_or_default();
+    if local_users
+        .into_iter()
+        .map(|u| u.name.to_string())
+        .collect::<Vec<String>>()
+        .contains(&account_id.to_string())
+    {
+        return account_id.to_string();
+    }
+
+    // The name mapping script is expected to convert the input name to a UPN
+    // if a name is supplied, or to a name if the UPN is supplied.
+    if !account_id.contains('@') {
+        if let Some(name_mapping_script) = &name_mapping_script {
+            let output = Command::new(name_mapping_script).arg(account_id).output();
+
+            match output {
+                Ok(output) => {
+                    if output.status.success() {
+                        return String::from_utf8_lossy(&output.stdout).trim().to_string();
+                    } else {
+                        eprintln!("Script execution failed with error: {:?}", output.status);
+                    }
+                }
+                Err(e) => {
+                    eprintln!("Failed to execute script: {}", e);
+                }
+            }
+        }
+    }
+    if cn_name_mapping && !account_id.contains('@') && !domains.is_empty() {
+        return format!("{}@{}", account_id, domains[0]);
+    }
+    account_id.to_string()
 }
