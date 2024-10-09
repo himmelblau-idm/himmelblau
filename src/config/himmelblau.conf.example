@@ -50,9 +50,11 @@
 # home_attr = UUID ; home directory attribute options:
 #                  ; UUID (default)
 #                  ; SPN
+#                  ; CN
 # home_alias = SPN ; home directory alias options:
 #                  ; UUID
 #                  ; SPN (default)
+#                  ; CN
 # shell = /bin/bash ; default shell for the user
 # idmap_range = 5000000-5999999
 # connection_timeout = 2

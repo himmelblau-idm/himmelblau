@@ -735,6 +735,7 @@ where
             HomeAttr::Uuid => token.uuid.hyphenated().to_string(),
             HomeAttr::Spn => token.spn.as_str().to_string(),
             HomeAttr::Name => token.name.as_str().to_string(),
+            HomeAttr::Cn => token.spn.split('@').collect::<Vec<&str>>()[0].to_string(),
         })
     }
 
@@ -744,6 +745,7 @@ where
             HomeAttr::Uuid => token.uuid.hyphenated().to_string(),
             HomeAttr::Spn => token.spn.as_str().to_string(),
             HomeAttr::Name => token.name.as_str().to_string(),
+            HomeAttr::Cn => token.spn.split('@').collect::<Vec<&str>>()[0].to_string(),
         }
     }
 
