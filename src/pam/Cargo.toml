@@ -19,6 +19,7 @@ libc = { workspace = true }
 kanidm_unix_common = { workspace = true }
 tracing-subscriber = { workspace = true }
 tracing = { workspace = true }
+himmelblau_unix_common.workspace = true
 
 [build-dependencies]
 pkg-config.workspace = true

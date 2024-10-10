@@ -129,8 +129,7 @@ fn object_id_to_sid(object_id: &Uuid) -> Result<AadSid, IdmapError> {
 }
 
 fn rid_from_sid(sid: &AadSid) -> Result<u32, IdmapError> {
-    Ok(sid.sub_auths
-        [usize::try_from(sid.num_auths).map_err(|_| IDMAP_SID_INVALID)? - 1])
+    Ok(sid.sub_auths[usize::try_from(sid.num_auths).map_err(|_| IDMAP_SID_INVALID)? - 1])
 }
 
 pub const DEFAULT_IDMAP_RANGE: (u32, u32) = (200000, 2000200000);
