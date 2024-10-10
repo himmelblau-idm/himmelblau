@@ -5,9 +5,11 @@
  */
 
 use crate::db::KeyStoreTxn;
-use crate::unix_proto::{DeviceAuthorizationResponse, PamAuthRequest, PamAuthResponse};
+use crate::unix_proto::{PamAuthRequest, PamAuthResponse};
 use async_trait::async_trait;
+use himmelblau::{DeviceAuthorizationResponse, MFAAuthContinue, UserToken as UnixUserToken};
 use serde::{Deserialize, Serialize};
+use std::fmt;
 use tokio::sync::broadcast;
 use uuid::Uuid;
 
@@ -66,31 +68,28 @@ pub struct UserToken {
     pub valid: bool,
 }
 
-#[derive(Debug)]
 pub enum AuthCredHandler {
-    Password,
-    DeviceAuthorizationGrant,
-    /// Additional data required by the provider to complete the
-    /// authentication, but not required by PAM
-    ///
-    /// Sadly due to how this is passed around we can't make this a
-    /// generic associated type, else it would have to leak up to the
-    /// daemon.
-    ///
-    /// ⚠️  TODO: Optimally this should actually be a tokio oneshot receiver
-    /// with the decision from a task that is spawned.
-    MFA {
-        data: String,
-    },
-    SetupPin,
-    Pin,
+    MFA { flow: MFAAuthContinue },
+    DeviceAuthorizationGrant { flow: DeviceAuthorizationResponse },
+    SetupPin { token: UnixUserToken },
+    None,
+}
+
+impl fmt::Debug for AuthCredHandler {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            AuthCredHandler::MFA { .. } => f.write_str("MFA { .. }"),
+            AuthCredHandler::DeviceAuthorizationGrant { .. } => {
+                f.write_str("DeviceAuthorizationGrant { .. }")
+            }
+            AuthCredHandler::SetupPin { .. } => f.write_str("SetupPin { .. }"),
+            AuthCredHandler::None => f.write_str("None"),
+        }
+    }
 }
 
 pub enum AuthRequest {
     Password,
-    DeviceAuthorizationGrant {
-        data: DeviceAuthorizationResponse,
-    },
     MFACode {
         msg: String,
     },
@@ -113,9 +112,6 @@ impl Into<PamAuthResponse> for AuthRequest {
     fn into(self) -> PamAuthResponse {
         match self {
             AuthRequest::Password => PamAuthResponse::Password,
-            AuthRequest::DeviceAuthorizationGrant { data } => {
-                PamAuthResponse::DeviceAuthorizationGrant { data }
-            }
             AuthRequest::MFACode { msg } => PamAuthResponse::MFACode { msg },
             AuthRequest::MFAPoll {
                 msg,

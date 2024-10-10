@@ -7,14 +7,10 @@ use crate::config::HimmelblauConfig;
 use crate::config::IdAttr;
 use crate::db::KeyStoreTxn;
 use crate::idprovider::interface::tpm;
-use crate::unix_proto::{DeviceAuthorizationResponse, PamAuthRequest};
+use crate::unix_proto::PamAuthRequest;
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
-use himmelblau::auth::{
-    BrokerClientApplication, ClientInfo,
-    DeviceAuthorizationResponse as msal_DeviceAuthorizationResponse, IdToken, MFAAuthContinue,
-    UserToken as UnixUserToken,
-};
+use himmelblau::auth::{BrokerClientApplication, UserToken as UnixUserToken};
 use himmelblau::discovery::EnrollAttrs;
 use himmelblau::error::{ErrorResponse, MsalError, AUTH_PENDING, DEVICE_AUTH_FAIL, REQUIRES_MFA};
 use himmelblau::graph::{DirectoryObject, Graph};
@@ -361,34 +357,6 @@ impl HimmelblauProvider {
     }
 }
 
-impl From<msal_DeviceAuthorizationResponse> for DeviceAuthorizationResponse {
-    fn from(src: msal_DeviceAuthorizationResponse) -> Self {
-        Self {
-            device_code: src.device_code.clone(),
-            user_code: src.user_code.clone(),
-            verification_uri: src.verification_uri.clone(),
-            verification_uri_complete: src.verification_uri_complete.clone(),
-            expires_in: src.expires_in,
-            interval: src.interval,
-            message: src.message.clone(),
-        }
-    }
-}
-
-impl From<DeviceAuthorizationResponse> for msal_DeviceAuthorizationResponse {
-    fn from(src: DeviceAuthorizationResponse) -> Self {
-        Self {
-            device_code: src.device_code,
-            user_code: src.user_code,
-            verification_uri: src.verification_uri,
-            verification_uri_complete: src.verification_uri_complete,
-            expires_in: src.expires_in,
-            interval: src.interval,
-            message: src.message,
-        }
-    }
-}
-
 #[async_trait]
 impl IdProvider for HimmelblauProvider {
     async fn provider_authenticate(&self, _tpm: &mut tpm::BoxedDynTpm) -> Result<(), IdpError> {
@@ -540,9 +508,9 @@ impl IdProvider for HimmelblauProvider {
         // Skip Hello authentication if it is disabled by config
         let hello_enabled = self.config.read().await.get_enable_hello();
         if !self.is_domain_joined(keystore).await || hello_key.is_none() || !hello_enabled {
-            Ok((AuthRequest::Password, AuthCredHandler::Password))
+            Ok((AuthRequest::Password, AuthCredHandler::None))
         } else {
-            Ok((AuthRequest::Pin, AuthCredHandler::Pin))
+            Ok((AuthRequest::Pin, AuthCredHandler::None))
         }
     }
 
@@ -554,7 +522,7 @@ impl IdProvider for HimmelblauProvider {
         keystore: &mut D,
         tpm: &mut tpm::BoxedDynTpm,
         machine_key: &tpm::MachineKey,
-        shutdown_rx: &broadcast::Receiver<()>,
+        _shutdown_rx: &broadcast::Receiver<()>,
     ) -> Result<(AuthResult, AuthCacheAction), IdpError> {
         macro_rules! enroll_and_obtain_enrolled_token {
             ($token:ident) => {{
@@ -660,31 +628,15 @@ impl IdProvider for HimmelblauProvider {
                 }
             }};
         }
-        let mut shutdown_rx_cl = shutdown_rx.resubscribe();
-        match (&cred_handler, pam_next_req) {
-            (AuthCredHandler::MFA { data }, PamAuthRequest::SetupPin { pin }) => {
+        match (&mut *cred_handler, pam_next_req) {
+            (AuthCredHandler::SetupPin { token }, PamAuthRequest::SetupPin { pin }) => {
                 let hello_tag = self.fetch_hello_key_tag(account_id);
-                let token: Token = serde_json::from_str(data).map_err(|e| {
-                    error!("{:?}", e);
-                    IdpError::BadRequest
-                })?;
-                let token = UnixUserToken {
-                    token_type: "".to_string(),
-                    scope: None,
-                    expires_in: 0,
-                    ext_expires_in: 0,
-                    access_token: token.0,
-                    refresh_token: token.1,
-                    id_token: IdToken::default(),
-                    client_info: ClientInfo::default(),
-                    prt: None,
-                };
 
                 let hello_key = match self
                     .client
                     .write()
                     .await
-                    .provision_hello_for_business_key(&token, tpm, machine_key, &pin)
+                    .provision_hello_for_business_key(token, tpm, machine_key, &pin)
                     .await
                 {
                     Ok(hello_key) => hello_key,
@@ -709,7 +661,7 @@ impl IdProvider for HimmelblauProvider {
 
                 auth_and_validate_hello_key!(hello_key, pin)
             }
-            (AuthCredHandler::Pin, PamAuthRequest::Pin { cred }) => {
+            (_, PamAuthRequest::Pin { cred }) => {
                 let hello_tag = self.fetch_hello_key_tag(account_id);
                 let hello_key = keystore
                     .get_tagged_hsm_key(&hello_tag)
@@ -724,7 +676,7 @@ impl IdProvider for HimmelblauProvider {
 
                 auth_and_validate_hello_key!(hello_key, cred)
             }
-            (AuthCredHandler::Password, PamAuthRequest::Password { cred }) => {
+            (_, PamAuthRequest::Password { cred }) => {
                 // Always attempt to force MFA when enrolling the device, otherwise
                 // the device object will not have the MFA claim. If we are already
                 // enrolled but creating a new Hello Pin, we follow the same process,
@@ -792,12 +744,24 @@ impl IdProvider for HimmelblauProvider {
                                                     error!("{:?}", e);
                                                     IdpError::BadRequest
                                                 })?;
-                                            return Ok((
-                                                AuthResult::Next(
-                                                    AuthRequest::DeviceAuthorizationGrant {
-                                                        data: resp.into(),
-                                                    },
+                                            let msg = match &resp.message {
+                                                Some(msg) => msg.to_string(),
+                                                None => format!(
+                                                    "Using a browser on another \
+                                        device, visit:\n{}\nAnd enter the code:\n{}",
+                                                    resp.verification_uri, resp.user_code
                                                 ),
+                                            };
+                                            let polling_interval = resp.interval.unwrap_or(5);
+                                            *cred_handler =
+                                                AuthCredHandler::DeviceAuthorizationGrant {
+                                                    flow: resp,
+                                                };
+                                            return Ok((
+                                                AuthResult::Next(AuthRequest::MFAPoll {
+                                                    msg,
+                                                    polling_interval,
+                                                }),
                                                 /* An MFA auth cannot cache the password. This would
                                                  * lead to a potential downgrade to SFA attack (where
                                                  * the attacker auths with a stolen password, then
@@ -830,12 +794,7 @@ impl IdProvider for HimmelblauProvider {
                 match resp.mfa_method.as_str() {
                     "PhoneAppOTP" | "OneWaySMS" | "ConsolidatedTelephony" => {
                         let msg = resp.msg.clone();
-                        *cred_handler = AuthCredHandler::MFA {
-                            data: serde_json::to_string(&resp).map_err(|e| {
-                                error!("{:?}", e);
-                                IdpError::BadRequest
-                            })?,
-                        };
+                        *cred_handler = AuthCredHandler::MFA { flow: resp };
                         return Ok((
                             AuthResult::Next(AuthRequest::MFACode { msg }),
                             /* An MFA auth cannot cache the password. This would
@@ -851,12 +810,7 @@ impl IdProvider for HimmelblauProvider {
                             error!("Invalid response from the server");
                             IdpError::BadRequest
                         })?;
-                        *cred_handler = AuthCredHandler::MFA {
-                            data: serde_json::to_string(&resp).map_err(|e| {
-                                error!("{:?}", e);
-                                IdpError::BadRequest
-                            })?,
-                        };
+                        *cred_handler = AuthCredHandler::MFA { flow: resp };
                         return Ok((
                             AuthResult::Next(AuthRequest::MFAPoll {
                                 msg,
@@ -873,35 +827,35 @@ impl IdProvider for HimmelblauProvider {
                     }
                 }
             }
-            (_, PamAuthRequest::DeviceAuthorizationGrant { data }) => {
-                let sleep_interval: u64 = match data.interval.as_ref() {
-                    Some(val) => *val as u64,
-                    None => 5,
-                };
-                let mut mtoken = self
+            (
+                AuthCredHandler::DeviceAuthorizationGrant { flow },
+                PamAuthRequest::MFAPoll { .. },
+            ) => {
+                let token = match self
                     .client
                     .write()
                     .await
-                    .acquire_token_by_device_flow(data.clone().into())
-                    .await;
-                while let Err(MsalError::AcquireTokenFailed(ref resp)) = mtoken {
-                    if resp.error_codes.contains(&AUTH_PENDING) {
-                        debug!("Polling for acquire_token_by_device_flow");
-                        sleep(Duration::from_secs(sleep_interval));
-                        mtoken = self
-                            .client
-                            .write()
-                            .await
-                            .acquire_token_by_device_flow(data.clone().into())
-                            .await;
-                    } else {
-                        break;
+                    .acquire_token_by_device_flow(flow.clone())
+                    .await
+                {
+                    Err(MsalError::AcquireTokenFailed(ref resp)) => {
+                        if resp.error_codes.contains(&AUTH_PENDING) {
+                            debug!("Polling for acquire_token_by_device_flow");
+                            return Ok((
+                                AuthResult::Next(AuthRequest::MFAPollWait),
+                                AuthCacheAction::None,
+                            ));
+                        } else {
+                            error!("{}", resp.error_description);
+                            return Err(IdpError::BadRequest);
+                        }
                     }
-                }
-                let token = mtoken.map_err(|e| {
-                    error!("{:?}", e);
-                    IdpError::NotFound
-                })?;
+                    Err(e) => {
+                        error!("{:?}", e);
+                        return Err(IdpError::BadRequest);
+                    }
+                    Ok(token) => token,
+                };
                 let token2 = enroll_and_obtain_enrolled_token!(token);
                 match self.token_validate(account_id, &token2).await {
                     Ok(AuthResult::Success { token: token3 }) => {
@@ -914,7 +868,10 @@ impl IdProvider for HimmelblauProvider {
                         // attempt here.
                         let sfa_enabled = self.config.read().await.get_enable_sfa_fallback();
                         if !mfa && !sfa_enabled {
-                            info!("A DAG produced an SFA token, yet SFA fallback is disabled by configuration");
+                            info!(
+                                "A DAG produced an SFA token, yet SFA \
+                                fallback is disabled by configuration"
+                            );
                             return Ok((AuthResult::Denied, AuthCacheAction::None));
                         }
                         // STOP! If the DAG doesn't hold an MFA amr, then we
@@ -924,9 +881,15 @@ impl IdProvider for HimmelblauProvider {
                         let hello_enabled = self.config.read().await.get_enable_hello();
                         if !mfa || !hello_enabled {
                             if !mfa {
-                                info!("Skipping Hello enrollment because the token doesn't contain an MFA amr");
+                                info!(
+                                    "Skipping Hello enrollment because \
+                                    the token doesn't contain an MFA amr"
+                                );
                             } else if !hello_enabled {
-                                info!("Skipping Hello enrollment because it is disabled");
+                                info!(
+                                    "Skipping Hello enrollment \
+                                    because it is disabled"
+                                );
                             }
                             return Ok((
                                 AuthResult::Success { token: token3 },
@@ -935,16 +898,7 @@ impl IdProvider for HimmelblauProvider {
                         }
 
                         // Setup Windows Hello
-                        *cred_handler = AuthCredHandler::MFA {
-                            data: serde_json::to_string(&Token(
-                                token.access_token.clone(),
-                                token.refresh_token.to_string(),
-                            ))
-                            .map_err(|e| {
-                                error!("{:?}", e);
-                                IdpError::BadRequest
-                            })?,
-                        };
+                        *cred_handler = AuthCredHandler::SetupPin { token };
                         return Ok((
                             AuthResult::Next(AuthRequest::SetupPin {
                                 msg: format!(
@@ -960,16 +914,12 @@ impl IdProvider for HimmelblauProvider {
                     Err(e) => Err(e),
                 }
             }
-            (AuthCredHandler::MFA { data }, PamAuthRequest::MFACode { cred }) => {
-                let mut flow: MFAAuthContinue = serde_json::from_str(data).map_err(|e| {
-                    error!("{:?}", e);
-                    IdpError::BadRequest
-                })?;
+            (AuthCredHandler::MFA { ref mut flow }, PamAuthRequest::MFACode { cred }) => {
                 let token = self
                     .client
                     .write()
                     .await
-                    .acquire_token_by_mfa_flow(account_id, Some(&cred), None, &mut flow)
+                    .acquire_token_by_mfa_flow(account_id, Some(&cred), None, flow)
                     .await
                     .map_err(|e| {
                         error!("{:?}", e);
@@ -989,16 +939,7 @@ impl IdProvider for HimmelblauProvider {
                         }
 
                         // Setup Windows Hello
-                        *cred_handler = AuthCredHandler::MFA {
-                            data: serde_json::to_string(&Token(
-                                token.access_token.clone(),
-                                token.refresh_token.to_string(),
-                            ))
-                            .map_err(|e| {
-                                error!("{:?}", e);
-                                IdpError::BadRequest
-                            })?,
-                        };
+                        *cred_handler = AuthCredHandler::SetupPin { token };
                         return Ok((
                             AuthResult::Next(AuthRequest::SetupPin {
                                 msg: format!(
@@ -1014,49 +955,35 @@ impl IdProvider for HimmelblauProvider {
                     Err(e) => Err(e),
                 }
             }
-            (AuthCredHandler::MFA { data }, PamAuthRequest::MFAPoll) => {
-                let mut flow: MFAAuthContinue = serde_json::from_str(data).map_err(|e| {
-                    error!("{:?}", e);
-                    IdpError::BadRequest
-                })?;
+            (AuthCredHandler::MFA { ref mut flow }, PamAuthRequest::MFAPoll { poll_attempt }) => {
                 let max_poll_attempts = flow.max_poll_attempts.ok_or_else(|| {
                     error!("Invalid response from the server");
                     IdpError::BadRequest
                 })?;
-                let polling_interval = flow.polling_interval.ok_or_else(|| {
-                    error!("Invalid response from the server");
-                    IdpError::BadRequest
-                })?;
-                let mut poll_attempt = 1;
-                let token = loop {
-                    if poll_attempt > max_poll_attempts {
-                        error!("MFA polling timed out");
-                        return Err(IdpError::BadRequest);
-                    }
-                    if shutdown_rx_cl.try_recv().ok().is_some() {
-                        debug!("Received a signal to shutdown, bailing MFA poll");
-                        return Err(IdpError::BadRequest);
-                    }
-                    sleep(Duration::from_millis(polling_interval.into()));
-                    match self
-                        .client
-                        .write()
-                        .await
-                        .acquire_token_by_mfa_flow(account_id, None, Some(poll_attempt), &mut flow)
-                        .await
-                    {
-                        Ok(token) => break token,
-                        Err(e) => match e {
-                            MsalError::MFAPollContinue => {
-                                poll_attempt += 1;
-                                continue;
-                            }
-                            e => {
-                                error!("{:?}", e);
-                                return Err(IdpError::NotFound);
-                            }
-                        },
-                    }
+                if poll_attempt > max_poll_attempts {
+                    error!("MFA polling timed out");
+                    return Err(IdpError::BadRequest);
+                }
+                let token = match self
+                    .client
+                    .write()
+                    .await
+                    .acquire_token_by_mfa_flow(account_id, None, Some(poll_attempt), flow)
+                    .await
+                {
+                    Ok(token) => token,
+                    Err(e) => match e {
+                        MsalError::MFAPollContinue => {
+                            return Ok((
+                                AuthResult::Next(AuthRequest::MFAPollWait),
+                                AuthCacheAction::None,
+                            ));
+                        }
+                        e => {
+                            error!("{:?}", e);
+                            return Err(IdpError::NotFound);
+                        }
+                    },
                 };
                 let token2 = enroll_and_obtain_enrolled_token!(token);
                 match self.token_validate(account_id, &token2).await {
@@ -1072,16 +999,7 @@ impl IdProvider for HimmelblauProvider {
                         }
 
                         // Setup Windows Hello
-                        *cred_handler = AuthCredHandler::MFA {
-                            data: serde_json::to_string(&Token(
-                                token.access_token.clone(),
-                                token.refresh_token.to_string(),
-                            ))
-                            .map_err(|e| {
-                                error!("{:?}", e);
-                                IdpError::BadRequest
-                            })?,
-                        };
+                        *cred_handler = AuthCredHandler::SetupPin { token };
                         return Ok((
                             AuthResult::Next(AuthRequest::SetupPin {
                                 msg: format!(
@@ -1117,9 +1035,9 @@ impl IdProvider for HimmelblauProvider {
                 IdpError::BadRequest
             })?;
         if !self.is_domain_joined(keystore).await || hello_key.is_none() {
-            Ok((AuthRequest::Password, AuthCredHandler::Password))
+            Ok((AuthRequest::Password, AuthCredHandler::None))
         } else {
-            Ok((AuthRequest::Pin, AuthCredHandler::Pin))
+            Ok((AuthRequest::Pin, AuthCredHandler::None))
         }
     }
 
@@ -1135,7 +1053,7 @@ impl IdProvider for HimmelblauProvider {
         _online_at_init: bool,
     ) -> Result<AuthResult, IdpError> {
         match (&cred_handler, pam_next_req) {
-            (AuthCredHandler::Pin, PamAuthRequest::Pin { cred }) => {
+            (_, PamAuthRequest::Pin { cred }) => {
                 let hello_tag = self.fetch_hello_key_tag(account_id);
                 let hello_key: LoadableIdentityKey = keystore
                     .get_tagged_hsm_key(&hello_tag)

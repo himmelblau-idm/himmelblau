@@ -22,29 +22,12 @@ pub struct NssGroup {
     pub members: Vec<String>,
 }
 
-/* RFC8628: 3.2. Device Authorization Response */
-#[derive(Serialize, Deserialize, Clone, Debug)]
-pub struct DeviceAuthorizationResponse {
-    pub device_code: String,
-    pub user_code: String,
-    pub verification_uri: String,
-    pub verification_uri_complete: Option<String>,
-    pub expires_in: u32,
-    pub interval: Option<u32>,
-    /* The message is not part of RFC8628, but an add-on from MS. Listed
-     * optional here to support all implementations. */
-    pub message: Option<String>,
-}
-
 #[derive(Serialize, Deserialize, Debug)]
 pub enum PamAuthResponse {
     Unknown,
     Success,
     Denied,
     Password,
-    DeviceAuthorizationGrant {
-        data: DeviceAuthorizationResponse,
-    },
     /// PAM must prompt for an authentication code
     MFACode {
         msg: String,
@@ -68,9 +51,8 @@ pub enum PamAuthResponse {
 #[derive(Serialize, Deserialize, Debug)]
 pub enum PamAuthRequest {
     Password { cred: String },
-    DeviceAuthorizationGrant { data: DeviceAuthorizationResponse },
     MFACode { cred: String },
-    MFAPoll,
+    MFAPoll { poll_attempt: u32 },
     SetupPin { pin: String },
     Pin { cred: String },
 }

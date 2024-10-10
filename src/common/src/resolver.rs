@@ -46,6 +46,7 @@ enum CacheState {
     OfflineNextCheck(SystemTime),
 }
 
+#[allow(clippy::large_enum_variant)]
 pub enum AuthSession {
     InProgress {
         account_id: String,
@@ -1042,7 +1043,7 @@ where
                 // contained to the resolver so that it has generic offline-paths
                 // that are possible?
                 match (&cred_handler, &pam_next_req) {
-                    (AuthCredHandler::Password, PamAuthRequest::Password { cred }) => {
+                    (_, PamAuthRequest::Password { cred }) => {
                         match self.check_cache_userpassword(token.uuid, cred).await {
                             Ok(true) => Ok(AuthResult::Success {
                                 token: *token.clone(),
@@ -1054,11 +1055,7 @@ where
                             }
                         }
                     }
-                    (AuthCredHandler::Password, _) => {
-                        // AuthCredHandler::Password is only valid with a cred provided
-                        return Err(());
-                    }
-                    (AuthCredHandler::DeviceAuthorizationGrant, _) => {
+                    (AuthCredHandler::DeviceAuthorizationGrant { .. }, _) => {
                         // AuthCredHandler::DeviceAuthorizationGrant is invalid for offline auth
                         return Err(());
                     }
@@ -1066,11 +1063,11 @@ where
                         // AuthCredHandler::MFA is invalid for offline auth
                         return Err(());
                     }
-                    (AuthCredHandler::SetupPin, _) => {
+                    (AuthCredHandler::SetupPin { .. }, _) => {
                         // AuthCredHandler::SetupPin is invalid for offline auth
                         return Err(());
                     }
-                    (AuthCredHandler::Pin, PamAuthRequest::Pin { .. }) => {
+                    (_, PamAuthRequest::Pin { .. }) => {
                         // The Pin acts as a single device password, and can be
                         // used to unlock the TPM to validate the authentication.
                         let mut hsm_lock = self.hsm.lock().await;
@@ -1095,8 +1092,16 @@ where
 
                         auth_result
                     }
-                    (AuthCredHandler::Pin, _) => {
-                        // AuthCredHandler::Pin is only valid with a cred provided
+                    (AuthCredHandler::None, PamAuthRequest::MFACode { .. }) => {
+                        // AuthCredHandler::None is invalid with MFACode
+                        return Err(());
+                    }
+                    (AuthCredHandler::None, PamAuthRequest::MFAPoll { .. }) => {
+                        // AuthCredHandler::None is invalid with MFAPoll
+                        return Err(());
+                    }
+                    (AuthCredHandler::None, PamAuthRequest::SetupPin { .. }) => {
+                        // AuthCredHandler::None is invalid with SetupPin
                         return Err(());
                     }
                 }
@@ -1159,10 +1164,6 @@ where
             .await?
         {
             (auth_session, PamAuthResponse::Password) => {
-                // Can continue!
-                auth_session
-            }
-            (auth_session, PamAuthResponse::DeviceAuthorizationGrant { .. }) => {
                 // Can continue!
                 auth_session
             }

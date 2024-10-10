@@ -403,30 +403,6 @@ impl PamHooks for PamKanidm {
                     req = ClientRequest::PamAuthenticateStep(PamAuthRequest::Password { cred });
                     continue;
                 },
-                ClientResponse::PamAuthenticateStepResponse(
-                    PamAuthResponse::DeviceAuthorizationGrant { data },
-                ) => {
-                    let msg = match &data.message {
-                        Some(msg) => msg.clone(),
-                        None => format!("Using a browser on another device, visit:\n{}\nAnd enter the code:\n{}",
-                                        data.verification_uri, data.user_code)
-                    };
-                    match conv.send(PAM_TEXT_INFO, &msg) {
-                        Ok(_) => {}
-                        Err(err) => {
-                            if opts.debug {
-                                println!("Message prompt failed");
-                            }
-                            return err;
-                        }
-                    }
-
-                    timeout = u64::from(data.expires_in);
-                    req = ClientRequest::PamAuthenticateStep(
-                        PamAuthRequest::DeviceAuthorizationGrant { data },
-                    );
-                    continue;
-                },
                 ClientResponse::PamAuthenticateStepResponse(PamAuthResponse::MFACode {
                     msg,
                 }) => {
@@ -482,7 +458,8 @@ impl PamHooks for PamKanidm {
                         let _ = conv.send(PAM_PROMPT_ECHO_OFF, "Press enter to continue");
                     }
 
-                    req = ClientRequest::PamAuthenticateStep(PamAuthRequest::MFAPoll);
+                    let mut poll_attempt = 0;
+                    req = ClientRequest::PamAuthenticateStep(PamAuthRequest::MFAPoll { poll_attempt });
                     loop {
                         thread::sleep(Duration::from_secs(polling_interval.into()));
 
@@ -496,11 +473,13 @@ impl PamHooks for PamKanidm {
                                     PamAuthResponse::MFAPollWait,
                             ) => {
                                 // Continue polling if the daemon says to wait
-                                req = ClientRequest::PamAuthenticateStep(PamAuthRequest::MFAPoll);
+                                poll_attempt += 1;
+                                req = ClientRequest::PamAuthenticateStep(
+                                    PamAuthRequest::MFAPoll { poll_attempt }
+                                );
                                 continue;
                             }
                         );
-
                     }
                 }
             );
