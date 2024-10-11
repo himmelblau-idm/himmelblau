@@ -72,13 +72,13 @@ The following packages are required on openSUSE to build and test this package.
 
 Or on Debian based systems:
 
-    sudo apt-get install libpam0g-dev libudev-dev libssl-dev pkg-config tpm-udev libtss2-dev libcap-dev libtalloc-dev libtevent-dev libldb-dev libdhash-dev libkrb5-dev libpcre2-dev libclang-18-dev autoconf gettext libsqlite3-dev build-essentials libdbus-1-dev
+    sudo apt-get install gcc libpam0g-dev libudev-dev libssl-dev pkg-config tpm-udev libtss2-dev libcap-dev libtalloc-dev libtevent-dev libldb-dev libdhash-dev libkrb5-dev libpcre2-dev libclang-18-dev autoconf gettext libsqlite3-dev build-essentials libdbus-1-dev
     
     curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
     source "$HOME/.cargo/env"
     rustup default stable
 
-On Debian systems, rust must be installed using [rustup](https://rustup.rs), because the version of Rust shipped with Debian is very old.
+On Debian systems, rust must be installed using [rustup](https://rustup.rs), because the version of Rust shipped with Debian is very old. The package `build-essentials` may not be available. Ignore this requirement if not found.
 
 You can build the components with
 
