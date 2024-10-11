@@ -1,5 +1,8 @@
 use himmelblau_unix_common::config::HimmelblauConfig;
 use himmelblau_unix_common::constants::{DEFAULT_CONN_TIMEOUT, DEFAULT_SOCK_PATH};
+use himmelblau_unix_common::unix_passwd::parse_etc_passwd;
+use std::fs::File;
+use std::io::Read;
 
 pub struct KanidmUnixdConfig {
     pub domains: Vec<String>,
@@ -29,6 +32,21 @@ impl KanidmUnixdConfig {
     }
 
     pub fn map_cn_name(&self, account_id: &str) -> String {
+        // Make sure this account_id isn't a local user
+        let mut contents = vec![];
+        if let Ok(mut file) = File::open("/etc/passwd") {
+            let _ = file.read_to_end(&mut contents);
+        }
+        let local_users = parse_etc_passwd(contents.as_slice()).unwrap_or_default();
+        if local_users
+            .into_iter()
+            .map(|u| u.name.to_string())
+            .collect::<Vec<String>>()
+            .contains(&account_id.to_string())
+        {
+            return account_id.to_string();
+        }
+
         if self.cn_name_mapping && !account_id.contains('@') && !self.domains.is_empty() {
             return format!("{}@{}", account_id, self.domains[0]);
         }
