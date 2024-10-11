@@ -7,7 +7,7 @@
 use crate::db::KeyStoreTxn;
 use crate::unix_proto::{PamAuthRequest, PamAuthResponse};
 use async_trait::async_trait;
-use himmelblau::{DeviceAuthorizationResponse, MFAAuthContinue, UserToken as UnixUserToken};
+use himmelblau::{MFAAuthContinue, UserToken as UnixUserToken};
 use serde::{Deserialize, Serialize};
 use std::fmt;
 use tokio::sync::broadcast;
@@ -70,7 +70,6 @@ pub struct UserToken {
 
 pub enum AuthCredHandler {
     MFA { flow: MFAAuthContinue },
-    DeviceAuthorizationGrant { flow: DeviceAuthorizationResponse },
     SetupPin { token: UnixUserToken },
     None,
 }
@@ -79,9 +78,6 @@ impl fmt::Debug for AuthCredHandler {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             AuthCredHandler::MFA { .. } => f.write_str("MFA { .. }"),
-            AuthCredHandler::DeviceAuthorizationGrant { .. } => {
-                f.write_str("DeviceAuthorizationGrant { .. }")
-            }
             AuthCredHandler::SetupPin { .. } => f.write_str("SetupPin { .. }"),
             AuthCredHandler::None => f.write_str("None"),
         }
