@@ -696,6 +696,13 @@ impl IdProvider for HimmelblauProvider {
                         // If SFA is disabled, we need to skip the SFA fallback.
                         let sfa_enabled = self.config.read().await.get_enable_sfa_fallback();
                         let mtoken = if sfa_enabled {
+                            // If we got an AADSTSError, then we don't want to
+                            // perform a fallback, since the authentication
+                            // legitimately failed.
+                            if let MsalError::AADSTSError(_) = e {
+                                error!("{:?}", e);
+                                return Err(IdpError::BadRequest);
+                            }
                             warn!("MFA auth failed, falling back to SFA: {:?}", e);
                             // Again, we need to wait to handle the response until after
                             // we've released the write lock on the client, otherwise we
