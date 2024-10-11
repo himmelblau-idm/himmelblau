@@ -942,8 +942,15 @@ impl IdProvider for HimmelblauProvider {
             }
             (
                 AuthCredHandler::DeviceAuthorizationGrant { flow },
-                PamAuthRequest::MFAPoll { .. },
+                PamAuthRequest::MFAPoll { poll_attempt },
             ) => {
+                let polling_interval = flow.interval.unwrap_or(5);
+                // Convert `expires_in` (a lifetime in seconds) to max_poll_attempts
+                let max_poll_attempts = flow.expires_in / polling_interval;
+                if poll_attempt > max_poll_attempts {
+                    error!("MFA DAG polling timed out");
+                    return Err(IdpError::BadRequest);
+                }
                 let token = match self
                     .client
                     .write()
