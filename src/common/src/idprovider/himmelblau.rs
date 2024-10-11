@@ -12,7 +12,7 @@ use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use himmelblau::auth::{BrokerClientApplication, UserToken as UnixUserToken};
 use himmelblau::discovery::EnrollAttrs;
-use himmelblau::error::{ErrorResponse, MsalError, AUTH_PENDING, DEVICE_AUTH_FAIL, REQUIRES_MFA};
+use himmelblau::error::{MsalError, DEVICE_AUTH_FAIL};
 use himmelblau::graph::{DirectoryObject, Graph};
 use idmap::Idmap;
 use kanidm_hsm_crypto::{LoadableIdentityKey, LoadableMsOapxbcRsaKey, PinValue, SealedData, Tpm};
@@ -808,84 +808,34 @@ impl IdProvider for HimmelblauProvider {
                     Err(e) => {
                         // If SFA is disabled, we need to skip the SFA fallback.
                         let sfa_enabled = self.config.read().await.get_enable_sfa_fallback();
-                        let mtoken = match sfa_enabled {
-                            true => {
-                                warn!("MFA auth failed, falling back to SFA: {:?}", e);
-                                // Again, we need to wait to handle the response until after
-                                // we've released the write lock on the client, otherwise we
-                                // will deadlock.
-                                self.client
-                                    .write()
-                                    .await
-                                    .acquire_token_by_username_password_for_device_enrollment(
-                                        account_id, &cred,
-                                    )
-                                    .await
-                            }
-                            // If SFA fallback is disabled, set mtoken to an
-                            // MsalError in order to permit DAG fallback. If
-                            // the DAG produces SFA, it will be rejected also.
-                            false => {
+                        let mtoken = if sfa_enabled {
+                            // If we got an AADSTSError, then we don't want to
+                            // perform a fallback, since the authentication
+                            // legitimately failed.
+                            if let MsalError::AADSTSError(_) = e {
                                 error!("{:?}", e);
-                                Err(MsalError::AcquireTokenFailed(ErrorResponse {
-                                    error: "SFA Disabled".to_string(),
-                                    error_description: "SFA fallback is disabled by configuration"
-                                        .to_string(),
-                                    error_codes: vec![REQUIRES_MFA],
-                                }))
+                                return Err(IdpError::BadRequest);
                             }
+                            warn!("MFA auth failed, falling back to SFA: {:?}", e);
+                            // Again, we need to wait to handle the response until after
+                            // we've released the write lock on the client, otherwise we
+                            // will deadlock.
+                            self.client
+                                .write()
+                                .await
+                                .acquire_token_by_username_password_for_device_enrollment(
+                                    account_id, &cred,
+                                )
+                                .await
+                        } else {
+                            error!("{:?}", e);
+                            return Err(IdpError::BadRequest);
                         };
                         let token = match mtoken {
                             Ok(token) => token,
                             Err(e) => {
                                 error!("{:?}", e);
-                                match e {
-                                    MsalError::AcquireTokenFailed(err_resp) => {
-                                        if err_resp.error_codes.contains(&REQUIRES_MFA) {
-                                            warn!(
-                                                "SFA auth failed, falling back to DAG: {}",
-                                                err_resp.error_description
-                                            );
-                                            // We've exhausted alternatives, and must perform a DAG
-                                            let resp = self
-                                                .client
-                                                .write()
-                                                .await
-                                                .initiate_device_flow_for_device_enrollment()
-                                                .await
-                                                .map_err(|e| {
-                                                    error!("{:?}", e);
-                                                    IdpError::BadRequest
-                                                })?;
-                                            let msg = match &resp.message {
-                                                Some(msg) => msg.to_string(),
-                                                None => format!(
-                                                    "Using a browser on another \
-                                        device, visit:\n{}\nAnd enter the code:\n{}",
-                                                    resp.verification_uri, resp.user_code
-                                                ),
-                                            };
-                                            let polling_interval = resp.interval.unwrap_or(5);
-                                            *cred_handler =
-                                                AuthCredHandler::DeviceAuthorizationGrant {
-                                                    flow: resp,
-                                                };
-                                            return Ok((
-                                                AuthResult::Next(AuthRequest::MFAPoll {
-                                                    msg,
-                                                    polling_interval,
-                                                }),
-                                                /* An MFA auth cannot cache the password. This would
-                                                 * lead to a potential downgrade to SFA attack (where
-                                                 * the attacker auths with a stolen password, then
-                                                 * disconnects the network to complete the auth). */
-                                                AuthCacheAction::None,
-                                            ));
-                                        }
-                                        return Err(IdpError::BadRequest);
-                                    }
-                                    _ => return Err(IdpError::BadRequest),
-                                }
+                                return Err(IdpError::BadRequest);
                             }
                         };
                         let token2 = enroll_and_obtain_enrolled_token!(token);
@@ -938,100 +888,6 @@ impl IdProvider for HimmelblauProvider {
                             AuthCacheAction::None,
                         ));
                     }
-                }
-            }
-            (
-                AuthCredHandler::DeviceAuthorizationGrant { flow },
-                PamAuthRequest::MFAPoll { poll_attempt },
-            ) => {
-                let polling_interval = flow.interval.unwrap_or(5);
-                // Convert `expires_in` (a lifetime in seconds) to max_poll_attempts
-                let max_poll_attempts = flow.expires_in / polling_interval;
-                if poll_attempt > max_poll_attempts {
-                    error!("MFA DAG polling timed out");
-                    return Err(IdpError::BadRequest);
-                }
-                let token = match self
-                    .client
-                    .write()
-                    .await
-                    .acquire_token_by_device_flow(flow.clone())
-                    .await
-                {
-                    Err(MsalError::AcquireTokenFailed(ref resp)) => {
-                        if resp.error_codes.contains(&AUTH_PENDING) {
-                            debug!("Polling for acquire_token_by_device_flow");
-                            return Ok((
-                                AuthResult::Next(AuthRequest::MFAPollWait),
-                                AuthCacheAction::None,
-                            ));
-                        } else {
-                            error!("{}", resp.error_description);
-                            return Err(IdpError::BadRequest);
-                        }
-                    }
-                    Err(e) => {
-                        error!("{:?}", e);
-                        return Err(IdpError::BadRequest);
-                    }
-                    Ok(token) => token,
-                };
-                let token2 = enroll_and_obtain_enrolled_token!(token);
-                match self.token_validate(account_id, &token2).await {
-                    Ok(AuthResult::Success { token: token3 }) => {
-                        let mfa = token2.amr_mfa().map_err(|e| {
-                            error!("{:?}", e);
-                            IdpError::NotFound
-                        })?;
-                        // If the DAG didn't obtain an MFA amr, and SFA fallback
-                        // is disabled, we need to reject the authentication
-                        // attempt here.
-                        let sfa_enabled = self.config.read().await.get_enable_sfa_fallback();
-                        if !mfa && !sfa_enabled {
-                            info!(
-                                "A DAG produced an SFA token, yet SFA \
-                                fallback is disabled by configuration"
-                            );
-                            return Ok((AuthResult::Denied, AuthCacheAction::None));
-                        }
-                        // STOP! If the DAG doesn't hold an MFA amr, then we
-                        // need to bail out here and refuse Hello enrollment
-                        // (we can't enroll in Hello with an SFA token).
-                        // Also skip Hello enrollment if it is disabled by config
-                        let hello_enabled = self.config.read().await.get_enable_hello();
-                        if !mfa || !hello_enabled {
-                            if !mfa {
-                                info!(
-                                    "Skipping Hello enrollment because \
-                                    the token doesn't contain an MFA amr"
-                                );
-                            } else if !hello_enabled {
-                                info!(
-                                    "Skipping Hello enrollment \
-                                    because it is disabled"
-                                );
-                            }
-                            return Ok((
-                                AuthResult::Success { token: token3 },
-                                AuthCacheAction::None,
-                            ));
-                        }
-
-                        // Setup Windows Hello
-                        *cred_handler = AuthCredHandler::SetupPin { token };
-                        return Ok((
-                            AuthResult::Next(AuthRequest::SetupPin {
-                                msg: format!(
-                                    "Set up a PIN\n {}{}",
-                                    "A Hello PIN is a fast, secure way to sign",
-                                    "in to your device, apps, and services."
-                                ),
-                            }),
-                            AuthCacheAction::None,
-                        ));
-                    }
-                    Ok(auth_result) => Ok((auth_result, AuthCacheAction::None)),
-                    Err(e) => Err(e),
                 }
             }
             (AuthCredHandler::MFA { ref mut flow }, PamAuthRequest::MFACode { cred }) => {

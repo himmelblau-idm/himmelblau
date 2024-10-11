@@ -1111,10 +1111,6 @@ where
                             }
                         }
                     }
-                    (AuthCredHandler::DeviceAuthorizationGrant { .. }, _) => {
-                        // AuthCredHandler::DeviceAuthorizationGrant is invalid for offline auth
-                        return Err(());
-                    }
                     (AuthCredHandler::MFA { .. }, _) => {
                         // AuthCredHandler::MFA is invalid for offline auth
                         return Err(());
