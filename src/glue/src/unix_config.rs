@@ -1,5 +1,7 @@
 use himmelblau_unix_common::config::HimmelblauConfig;
-use himmelblau_unix_common::constants::{DEFAULT_CONN_TIMEOUT, DEFAULT_SOCK_PATH};
+use himmelblau_unix_common::constants::{
+    DEFAULT_CONN_TIMEOUT, DEFAULT_HELLO_PIN_MIN_LEN, DEFAULT_SOCK_PATH,
+};
 use himmelblau_unix_common::unix_passwd::parse_etc_passwd;
 use std::fs::File;
 use std::io::Read;
@@ -9,6 +11,7 @@ pub struct KanidmUnixdConfig {
     pub unix_sock_timeout: u64,
     pub sock_path: String,
     pub cn_name_mapping: bool,
+    pub hello_pin_min_length: usize,
 }
 
 impl KanidmUnixdConfig {
@@ -18,6 +21,7 @@ impl KanidmUnixdConfig {
             sock_path: DEFAULT_SOCK_PATH.to_string(),
             unix_sock_timeout: DEFAULT_CONN_TIMEOUT * 2,
             cn_name_mapping: false,
+            hello_pin_min_length: DEFAULT_HELLO_PIN_MIN_LEN,
         }
     }
 
@@ -28,6 +32,7 @@ impl KanidmUnixdConfig {
             sock_path: config.get_socket_path(),
             unix_sock_timeout: config.get_connection_timeout() * 2,
             cn_name_mapping: config.get_cn_name_mapping(),
+            hello_pin_min_length: config.get_hello_pin_min_length(),
         })
     }
 

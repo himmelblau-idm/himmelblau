@@ -5,12 +5,12 @@ use std::path::PathBuf;
 use tracing::{debug, error};
 
 use crate::constants::{
-    BROKER_APP_ID, CN_NAME_MAPPING, DEFAULT_BROKER_SOCK_PATH, DEFAULT_CACHE_TIMEOUT,
-    DEFAULT_CONFIG_PATH, DEFAULT_CONN_TIMEOUT, DEFAULT_DB_PATH, DEFAULT_HELLO_ENABLED,
-    DEFAULT_HOME_ALIAS, DEFAULT_HOME_ATTR, DEFAULT_HOME_PREFIX, DEFAULT_HSM_PIN_PATH,
-    DEFAULT_ID_ATTR_MAP, DEFAULT_ODC_PROVIDER, DEFAULT_SELINUX, DEFAULT_SFA_FALLBACK_ENABLED,
-    DEFAULT_SHELL, DEFAULT_SOCK_PATH, DEFAULT_TASK_SOCK_PATH, DEFAULT_USE_ETC_SKEL,
-    SERVER_CONFIG_PATH,
+    BROKER_APP_ID, CN_NAME_MAPPING, DEFAULT_AUTHORITY_HOST, DEFAULT_BROKER_SOCK_PATH,
+    DEFAULT_CACHE_TIMEOUT, DEFAULT_CONFIG_PATH, DEFAULT_CONN_TIMEOUT, DEFAULT_DB_PATH,
+    DEFAULT_HELLO_ENABLED, DEFAULT_HELLO_PIN_MIN_LEN, DEFAULT_HOME_ALIAS, DEFAULT_HOME_ATTR,
+    DEFAULT_HOME_PREFIX, DEFAULT_HSM_PIN_PATH, DEFAULT_ID_ATTR_MAP, DEFAULT_ODC_PROVIDER,
+    DEFAULT_SELINUX, DEFAULT_SFA_FALLBACK_ENABLED, DEFAULT_SHELL, DEFAULT_SOCK_PATH,
+    DEFAULT_TASK_SOCK_PATH, DEFAULT_USE_ETC_SKEL, SERVER_CONFIG_PATH,
 };
 use crate::unix_config::{HomeAttr, HsmType};
 use idmap::DEFAULT_IDMAP_RANGE;
@@ -408,6 +408,33 @@ impl HimmelblauConfig {
             self.config.get("global", "cn_name_mapping"),
             CN_NAME_MAPPING,
         )
+    }
+
+    pub fn get_hello_pin_min_length(&self) -> usize {
+        match self.config.get("global", "hello_pin_min_length") {
+            Some(val) => match val.parse::<usize>() {
+                Ok(n) => n,
+                Err(_) => {
+                    error!("Failed parsing hello_pin_min_length from config: {}", val);
+                    DEFAULT_HELLO_PIN_MIN_LEN
+                }
+            },
+            None => DEFAULT_HELLO_PIN_MIN_LEN,
+        }
+    }
+
+    pub fn get_authority_host(&self, domain: &str) -> String {
+        match self.config.get(domain, "authority_host") {
+            Some(val) => val,
+            None => {
+                debug!("authority_host unset, using defaults");
+                String::from(DEFAULT_AUTHORITY_HOST)
+            }
+        }
+    }
+
+    pub fn get_tenant_id(&self, domain: &str) -> Option<String> {
+        self.config.get(domain, "tenant_id")
     }
 }
 
