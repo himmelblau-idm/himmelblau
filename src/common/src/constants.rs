@@ -26,3 +26,4 @@ pub const DEFAULT_ID_ATTR_MAP: IdAttr = IdAttr::Name;
 pub const BROKER_APP_ID: &str = "29d9ed98-a469-4536-ade2-f981bc1d605e";
 pub const BROKER_CLIENT_IDENT: &str = "38aa3b87-a06d-4817-b275-7a316988d93b";
 pub const CN_NAME_MAPPING: bool = true;
+pub const DEFAULT_HELLO_PIN_MIN_LEN: usize = 6;

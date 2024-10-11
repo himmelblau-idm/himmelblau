@@ -31,7 +31,7 @@ use std::time::Duration;
 include!("./opt/tool.rs");
 
 macro_rules! match_sm_auth_client_response {
-    ($expr:expr, $req:ident, $($pat:pat => $result:expr),*) => {
+    ($expr:expr, $req:ident, $hello_pin_min_length:ident, $($pat:pat => $result:expr),*) => {
         match $expr {
             Ok(r) => match r {
                 $($pat => $result),*
@@ -56,7 +56,13 @@ macro_rules! match_sm_auth_client_response {
                     let mut confirm;
                     loop {
                         pin = match prompt_password("New PIN: ") {
-                            Ok(password) => password,
+                            Ok(password) => {
+                                if password.len() < $hello_pin_min_length {
+                                    println!("Chosen pin is too short! {} chars required.", $hello_pin_min_length);
+                                    continue;
+                                }
+                                password
+                            },
                             Err(err) => {
                                 println!("unable to get pin: {:?}", err);
                                 return ExitCode::FAILURE;
@@ -154,10 +160,11 @@ async fn main() -> ExitCode {
                     return ExitCode::FAILURE;
                 }
             };
+            let pin_min_len = cfg.get_hello_pin_min_length();
 
             let mut req = ClientRequest::PamAuthenticateInit(account_id.clone());
             loop {
-                match_sm_auth_client_response!(daemon_client.call_and_wait(&req, timeout), req,
+                match_sm_auth_client_response!(daemon_client.call_and_wait(&req, timeout), req, pin_min_len,
                     ClientResponse::PamAuthenticateStepResponse(PamAuthResponse::Password) => {
                         // Prompt for and get the password
                         let cred = match prompt_password("Password: ") {
@@ -210,7 +217,7 @@ async fn main() -> ExitCode {
                             // will shutdown. This allows the resolver to dynamically extend the
                             // timeout if needed, and removes logic from the front end.
                             match_sm_auth_client_response!(
-                                daemon_client.call_and_wait(&req, timeout), req,
+                                daemon_client.call_and_wait(&req, timeout), req, pin_min_len,
                                 ClientResponse::PamAuthenticateStepResponse(
                                         PamAuthResponse::MFAPollWait,
                                 ) => {

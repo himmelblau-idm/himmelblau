@@ -32,6 +32,11 @@
 # when the host is public facing (such as via SSH).
 # enable_hello = true
 #
+# The minimum length of the Hello authentication PIN. This PIN length cannot
+# be less than 6, and cannot exceed 32 characters. These are hard requirements
+# for the encryption algorithm.
+# hello_pin_min_length = 6
+#
 # Whether to permit attempting a SFA (password only) authentication when MFA
 # methods are unavailable. Sometimes this is possible when MFA has yet to be
 # configured. This is disabled by default.

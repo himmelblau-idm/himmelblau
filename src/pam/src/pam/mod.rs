@@ -112,7 +112,7 @@ pub struct PamKanidm;
 pam_hooks!(PamKanidm);
 
 macro_rules! match_sm_auth_client_response {
-    ($expr:expr, $opts:ident, $conv:ident, $req:ident, $authtok:ident, $($pat:pat => $result:expr),*) => {
+    ($expr:expr, $opts:ident, $conv:ident, $req:ident, $authtok:ident, $cfg:ident, $($pat:pat => $result:expr),*) => {
         match $expr {
             Ok(r) => match r {
                 $($pat => $result),*
@@ -147,7 +147,21 @@ macro_rules! match_sm_auth_client_response {
                     loop {
                         pin = match $conv.send(PAM_PROMPT_ECHO_OFF, "New PIN: ") {
                             Ok(password) => match password {
-                                Some(cred) => cred,
+                                Some(cred) => {
+                                    if cred.len() < $cfg.hello_pin_min_length {
+                                        match $conv.send(PAM_TEXT_INFO, &format!("Chosen pin is too short! {} chars required.", $cfg.hello_pin_min_length)) {
+                                            Ok(_) => {}
+                                            Err(err) => {
+                                                if $opts.debug {
+                                                    println!("Message prompt failed");
+                                                }
+                                                return err;
+                                            }
+                                        }
+                                        continue;
+                                    }
+                                    cred
+                                },
                                 None => {
                                     debug!("no pin");
                                     return PamResultCode::PAM_CRED_INSUFFICIENT;
@@ -373,7 +387,7 @@ impl PamHooks for PamKanidm {
         let mut req = ClientRequest::PamAuthenticateInit(account_id);
 
         loop {
-            match_sm_auth_client_response!(daemon_client.call_and_wait(&req, timeout), opts, conv, req, authtok,
+            match_sm_auth_client_response!(daemon_client.call_and_wait(&req, timeout), opts, conv, req, authtok, cfg,
                 ClientResponse::PamAuthenticateStepResponse(PamAuthResponse::Password) => {
                     let mut consume_authtok = None;
                     // Swap the authtok out with a None, so it can only be consumed once.
@@ -468,7 +482,7 @@ impl PamHooks for PamKanidm {
                         // will shutdown. This allows the resolver to dynamically extend the
                         // timeout if needed, and removes logic from the front end.
                         match_sm_auth_client_response!(
-                            daemon_client.call_and_wait(&req, timeout), opts, conv, req, authtok,
+                            daemon_client.call_and_wait(&req, timeout), opts, conv, req, authtok, cfg,
                             ClientResponse::PamAuthenticateStepResponse(
                                     PamAuthResponse::MFAPollWait,
                             ) => {
