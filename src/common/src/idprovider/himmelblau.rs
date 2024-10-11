@@ -5,6 +5,7 @@ use super::interface::{
 use crate::config::split_username;
 use crate::config::HimmelblauConfig;
 use crate::config::IdAttr;
+use crate::constants::DEFAULT_GRAPH;
 use crate::db::KeyStoreTxn;
 use crate::idprovider::interface::tpm;
 use crate::unix_proto::PamAuthRequest;
@@ -92,9 +93,23 @@ impl HimmelblauMultiProvider {
             debug!("Adding provider for domain {}", domain);
             let range = cfg.get_idmap_range(&domain);
             let mut idmap_lk = idmap.write().await;
-            let graph = Graph::new(&cfg.get_odc_provider(&domain), &domain)
-                .await
-                .map_err(|e| anyhow!("{:?}", e))?;
+            let authority_host = cfg.get_authority_host(&domain);
+            let tenant_id = cfg.get_tenant_id(&domain);
+            let graph = match Graph::new(
+                &cfg.get_odc_provider(&domain),
+                &domain,
+                Some(&authority_host),
+                tenant_id.as_deref(),
+                Some(DEFAULT_GRAPH),
+            )
+            .await
+            {
+                Ok(graph) => graph,
+                Err(e) => {
+                    error!("Failed initializing provider: {:?}", e);
+                    continue;
+                }
+            };
             let authority_host = graph.authority_host();
             let tenant_id = graph.tenant_id();
             idmap_lk
