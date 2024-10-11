@@ -32,4 +32,5 @@ SSHD_CONFIG_DIR="/etc/ssh/sshd_config.d"
 SSHD_CONFIG_FILE="${SSHD_CONFIG_DIR}/himmelblau.conf"
 if [ -d "$SSHD_CONFIG_DIR" ]; then
     echo "KbdInteractiveAuthentication yes" > "$SSHD_CONFIG_FILE"
+    echo "Please restart the ssh daemon to ensure MFA works properly!"
 fi
