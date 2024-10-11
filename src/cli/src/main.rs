@@ -31,7 +31,7 @@ use std::time::Duration;
 include!("./opt/tool.rs");
 
 macro_rules! match_sm_auth_client_response {
-    ($expr:expr, $opts:ident, $($pat:pat => $result:expr),*) => {
+    ($expr:expr, $req:ident, $($pat:pat => $result:expr),*) => {
         match $expr {
             Ok(r) => match r {
                 $($pat => $result),*
@@ -46,6 +46,56 @@ macro_rules! match_sm_auth_client_response {
                 ClientResponse::PamAuthenticateStepResponse(PamAuthResponse::Unknown) => {
                     println!("auth user unknown");
                     break;
+                }
+                ClientResponse::PamAuthenticateStepResponse(PamAuthResponse::SetupPin {
+                    msg,
+                }) => {
+                    println!("{}", msg);
+
+                    let mut pin;
+                    let mut confirm;
+                    loop {
+                        pin = match prompt_password("New PIN: ") {
+                            Ok(password) => password,
+                            Err(err) => {
+                                println!("unable to get pin: {:?}", err);
+                                return ExitCode::FAILURE;
+                            }
+                        };
+
+                        confirm = match prompt_password("Confirm PIN: ") {
+                            Ok(password) => password,
+                            Err(err) => {
+                                println!("unable to get confirmation pin: {:?}", err);
+                                return ExitCode::FAILURE;
+                            }
+                        };
+
+                        if pin == confirm {
+                            break;
+                        } else {
+                            println!("Inputs did not match. Try again.");
+                        }
+                    }
+
+                    // Now setup the request for the next loop.
+                    $req = ClientRequest::PamAuthenticateStep(PamAuthRequest::SetupPin {
+                        pin,
+                    });
+                    continue;
+                },
+                ClientResponse::PamAuthenticateStepResponse(PamAuthResponse::Pin) => {
+                    let cred = match prompt_password("PIN: ") {
+                        Ok(password) => password,
+                        Err(err) => {
+                            debug!("unable to get pin: {:?}", err);
+                            return ExitCode::FAILURE;
+                        }
+                    };
+
+                    // Now setup the request for the next loop.
+                    $req = ClientRequest::PamAuthenticateStep(PamAuthRequest::Pin { cred });
+                    continue;
                 }
                 _ => {
                     // unexpected response.
@@ -107,7 +157,7 @@ async fn main() -> ExitCode {
 
             let mut req = ClientRequest::PamAuthenticateInit(account_id.clone());
             loop {
-                match_sm_auth_client_response!(daemon_client.call_and_wait(&req, timeout), opts,
+                match_sm_auth_client_response!(daemon_client.call_and_wait(&req, timeout), req,
                     ClientResponse::PamAuthenticateStepResponse(PamAuthResponse::Password) => {
                         // Prompt for and get the password
                         let cred = match prompt_password("Password: ") {
@@ -121,22 +171,6 @@ async fn main() -> ExitCode {
                         // Now setup the request for the next loop.
                         timeout = cfg.get_unix_sock_timeout();
                         req = ClientRequest::PamAuthenticateStep(PamAuthRequest::Password { cred });
-                        continue;
-                    },
-                    ClientResponse::PamAuthenticateStepResponse(
-                        PamAuthResponse::DeviceAuthorizationGrant { data },
-                    ) => {
-                        let msg = match &data.message {
-                            Some(msg) => msg.clone(),
-                            None => format!("Using a browser on another device, visit:\n{}\nAnd enter the code:\n{}",
-                                            data.verification_uri, data.user_code)
-                        };
-                        println!("{}", msg);
-
-                        timeout = u64::from(data.expires_in);
-                        req = ClientRequest::PamAuthenticateStep(
-                            PamAuthRequest::DeviceAuthorizationGrant { data },
-                        );
                         continue;
                     },
                     ClientResponse::PamAuthenticateStepResponse(PamAuthResponse::MFACode {
@@ -166,80 +200,29 @@ async fn main() -> ExitCode {
                         // Prompt the MFA message
                         println!("{}", msg);
 
+                        let mut poll_attempt = 0;
+                        req = ClientRequest::PamAuthenticateStep(PamAuthRequest::MFAPoll { poll_attempt });
                         loop {
                             thread::sleep(Duration::from_secs(polling_interval.into()));
-                            timeout = cfg.get_unix_sock_timeout();
-                            req = ClientRequest::PamAuthenticateStep(PamAuthRequest::MFAPoll);
 
                             // Counter intuitive, but we don't need a max poll attempts here because
                             // if the resolver goes away, then this will error on the sock and
                             // will shutdown. This allows the resolver to dynamically extend the
                             // timeout if needed, and removes logic from the front end.
                             match_sm_auth_client_response!(
-                                daemon_client.call_and_wait(&req, timeout), opts,
+                                daemon_client.call_and_wait(&req, timeout), req,
                                 ClientResponse::PamAuthenticateStepResponse(
                                         PamAuthResponse::MFAPollWait,
                                 ) => {
                                     // Continue polling if the daemon says to wait
+                                    poll_attempt += 1;
+                                    req = ClientRequest::PamAuthenticateStep(
+                                        PamAuthRequest::MFAPoll { poll_attempt }
+                                    );
                                     continue;
                                 }
                             );
-
                         }
-                    },
-                    ClientResponse::PamAuthenticateStepResponse(PamAuthResponse::SetupPin {
-                        msg,
-                    }) => {
-                        // Prompt for a new Hello PIN
-                        println!("{}", msg);
-
-                        let mut pin;
-                        let mut confirm;
-                        loop {
-                            pin = match prompt_password("New PIN: ") {
-                                Ok(p) => p,
-                                Err(e) => {
-                                    error!("Problem getting input: {}", e);
-                                    return ExitCode::FAILURE;
-                                }
-                            };
-
-                            confirm = match prompt_password("Confirm PIN: ") {
-                                Ok(p) => p,
-                                Err(e) => {
-                                    error!("Problem getting input: {}", e);
-                                    return ExitCode::FAILURE;
-                                }
-                            };
-
-                            if pin == confirm {
-                                break;
-                            } else {
-                                println!("Inputs did not match. Try again.");
-                            }
-                        }
-
-                        // Now setup the request for the next loop.
-                        timeout = cfg.get_unix_sock_timeout();
-                        req = ClientRequest::PamAuthenticateStep(PamAuthRequest::SetupPin {
-                            pin,
-                        });
-                        continue;
-                    },
-                    ClientResponse::PamAuthenticateStepResponse(PamAuthResponse::Pin) => {
-                        // Prompt for and get the Hello PIN
-                        let cred = match prompt_password("PIN: ") {
-                            Ok(p) => p,
-                            Err(e) => {
-                                error!("Problem getting input: {}", e);
-                                return ExitCode::FAILURE;
-                            }
-                        };
-
-                        // Now setup the request for the next loop.
-                        timeout = cfg.get_unix_sock_timeout();
-                        req = ClientRequest::PamAuthenticateStep(PamAuthRequest::Pin { cred });
-                        continue;
                     }
                 );
             }
