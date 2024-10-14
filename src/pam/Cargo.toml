@@ -33,4 +33,3 @@ assets = [
   ["../../platform/debian/apparmor.unix-chkpwd.local", "etc/apparmor.d/local/unix-chkpwd", "644"],
 ]
 maintainer-scripts = "../../platform/debian/scripts"
-recommends = ["openssh-server"]

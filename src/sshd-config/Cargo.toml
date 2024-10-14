@@ -1,0 +1,19 @@
+[package]
+name = "sshd-config"
+version.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+edition.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[lib]
+path = "src/lib.rs"
+
+[package.metadata.deb]
+name = "himmelblau-sshd-config"
+depends = ["openssh-server"]
+assets = [
+  ["../../platform/debian/sshd_config", "etc/ssh/sshd_config.d/himmelblau.conf", "644"],
+]
