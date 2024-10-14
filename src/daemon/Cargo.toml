@@ -46,7 +46,7 @@ async-trait = "0.1.83"
 [package.metadata.deb]
 name = "himmelblau"
 maintainer = "David Mulder <dmulder@suse.com>"
-depends = ["libssl3", "libsqlite3-0"]
+depends = ["libssl3", "libsqlite3-0", "libutf8proc3"]
 recommends = ["nss-himmelblau", "pam-himmelblau"]
 assets = [
   ["../../src/config/himmelblau.conf.example", "etc/himmelblau/himmelblau.conf", "644"],
