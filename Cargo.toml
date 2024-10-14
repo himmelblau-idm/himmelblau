@@ -13,6 +13,7 @@ members = [
 	"src/idmap",
 	"src/file_permissions",
 	"src/broker",
+	"src/sshd-config",
 ]
 resolver = "2"
 
