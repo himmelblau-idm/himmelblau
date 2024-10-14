@@ -26,9 +26,3 @@ if [[ -f /etc/apparmor.d/unix-chkpwd ]]; then
 	# Reload the AppArmor profile to apply the changes
 	sudo apparmor_parser -r /etc/apparmor.d/unix-chkpwd
 fi
-
-# Remove the sshd config file if it was created during install
-SSHD_CONFIG_FILE="/etc/ssh/sshd_config.d/himmelblau.conf"
-if [ -f "$SSHD_CONFIG_FILE" ]; then
-    rm "$SSHD_CONFIG_FILE"
-fi
