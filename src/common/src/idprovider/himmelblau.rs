@@ -436,17 +436,18 @@ impl IdProvider for HimmelblauProvider {
                                     )?
                                 }
                             };
+                            let fake_uuid = Uuid::new_v4();
                             let groups = vec![GroupToken {
                                 name: account_id.clone(),
                                 spn: account_id.clone(),
-                                uuid: Uuid::max(),
+                                uuid: fake_uuid,
                                 gidnumber,
                             }];
                             let config = self.config.read().await;
                             return Ok(UserToken {
                                 name: account_id.clone(),
                                 spn: account_id.clone(),
-                                uuid: Uuid::new_v4(),
+                                uuid: fake_uuid,
                                 gidnumber,
                                 displayname: "".to_string(),
                                 shell: Some(config.get_shell(Some(&self.domain))),
