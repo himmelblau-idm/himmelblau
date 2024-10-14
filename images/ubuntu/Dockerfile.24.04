@@ -48,4 +48,4 @@ WORKDIR /himmelblau
 RUN cargo install cargo-deb
 
 # Build the project and create the .deb package
-CMD cargo deb --deb-revision=ubuntu24.04 -p himmelblaud && cargo deb --deb-revision=ubuntu24.04 -p nss_himmelblau && cargo deb --deb-revision=ubuntu24.04 -p pam_himmelblau
+CMD cargo deb --deb-revision=ubuntu24.04 -p himmelblaud && cargo deb --deb-revision=ubuntu24.04 -p nss_himmelblau && cargo deb --deb-revision=ubuntu24.04 -p pam_himmelblau && cargo deb --deb-revision=ubuntu24.04 -p sshd-config
