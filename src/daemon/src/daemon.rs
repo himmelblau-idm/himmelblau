@@ -956,13 +956,18 @@ async fn main() -> ExitCode {
 
             // Spawn the himmelblau dbus broker
             let dbus_cachelayer = cachelayer.clone();
-            let task_d = tokio::spawn(async move {
-                if let Err(e) = himmelblau_broker_serve::<Broker>(Broker { cachelayer: dbus_cachelayer }, &broker_socket_path).await
-                {
+            let e_broadcast_rx = broadcast_tx.subscribe();
+            let task_d = match himmelblau_broker_serve::<Broker>(
+                Broker { cachelayer: dbus_cachelayer },
+                &broker_socket_path,
+                e_broadcast_rx
+            ).await {
+                Ok(task_d) => task_d,
+                Err(e) => {
                     error!("D-Bus error occurred; error = {:?}", e);
-                }
-                info!("Stopped D-Bus System Service");
-            });
+                    return ExitCode::FAILURE
+                },
+            };
 
             // Set the umask while we open the path for most clients.
             let before = unsafe { umask(0) };
