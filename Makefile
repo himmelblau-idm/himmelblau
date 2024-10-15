@@ -36,6 +36,9 @@ install-ubuntu:
 	install -m 0755 ./target/release/aad-tool /usr/bin
 	install -m 0644 ./platform/debian/himmelblaud.service /etc/systemd/system
 	install -m 0644 ./platform/debian/himmelblaud-tasks.service /etc/systemd/system
+	if [ -d "/etc/ssh/sshd_config.d" ]; then \
+		install -m 0644 ./platform/debian/sshd_config /etc/ssh/sshd_config.d/himmelblau.conf; \
+	fi
 
 install:
 ifeq ($(PLATFORM), debian)
