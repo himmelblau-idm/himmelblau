@@ -30,12 +30,18 @@ install-ubuntu:
 	install -m 0644 ./src/config/himmelblau.conf.example /etc/himmelblau/himmelblau.conf
 	install -m 0755 ./target/release/libnss_himmelblau.so /usr/lib/x86_64-linux-gnu/libnss_himmelblau.so.2
 	install -m 0755 ./target/release/libpam_himmelblau.so /usr/lib/x86_64-linux-gnu/security/pam_himmelblau.so
+	if [ -d "/usr/lib/security" ]; then \
+		ln -s /usr/lib/x86_64-linux-gnu/security/pam_himmelblau.so /usr/lib/security/pam_himmelblau.so; \
+	fi
 	install -m 0644 ./platform/debian/pam-config /usr/share/pam-configs/himmelblau
 	install -m 0755 ./target/release/himmelblaud /usr/sbin
 	install -m 0755 ./target/release/himmelblaud_tasks /usr/sbin
 	install -m 0755 ./target/release/aad-tool /usr/bin
 	install -m 0644 ./platform/debian/himmelblaud.service /etc/systemd/system
 	install -m 0644 ./platform/debian/himmelblaud-tasks.service /etc/systemd/system
+	if [ -d "/etc/ssh/sshd_config.d" ]; then \
+		install -m 0644 ./platform/debian/sshd_config /etc/ssh/sshd_config.d/himmelblau.conf; \
+	fi
 
 install:
 ifeq ($(PLATFORM), debian)
