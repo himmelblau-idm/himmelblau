@@ -21,8 +21,8 @@ EOF
 # Check if the file /etc/apparmor.d/unix-chkpwd exists
 if [[ -f /etc/apparmor.d/unix-chkpwd ]]; then
 	# Apply the patch using the patch command
-	echo "$UNIX_CHKPWD_PATCH" | patch --fuzz 2 --silent --forward -p0 /etc/apparmor.d/unix-chkpwd
+	echo "$UNIX_CHKPWD_PATCH" | patch --fuzz 2 --silent --forward -p0 /etc/apparmor.d/unix-chkpwd || echo "apparmor unix-chkpwd patch failed"
 
 	# Reload the AppArmor profile to apply the changes
-	apparmor_parser -r /etc/apparmor.d/unix-chkpwd
+	apparmor_parser -r /etc/apparmor.d/unix-chkpwd || echo "apparmor reload failed"
 fi
