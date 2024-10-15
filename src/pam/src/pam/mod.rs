@@ -1,5 +1,5 @@
 /*
-   MIT License 
+   MIT License
 
    Copyright (c) 2015 TOZNY
    Copyright (c) 2020 William Brown <william@blackhats.net.au>
