@@ -33,7 +33,7 @@ use std::collections::HashMap;
 use std::ffi::CString;
 use std::fmt;
 use std::ptr;
-use std::sync::{Arc, Mutex};
+use std::sync::RwLock;
 use uuid::Uuid;
 
 #[macro_use]
@@ -134,8 +134,10 @@ fn rid_from_sid(sid: &AadSid) -> Result<u32, IdmapError> {
 
 pub const DEFAULT_IDMAP_RANGE: (u32, u32) = (200000, 2000200000);
 
+// The ctx is behind a read/write lock to make it 'safer' to Send/Sync.
+// Granted, dereferencing a raw pointer is still inherently unsafe.
 pub struct Idmap {
-    ctx: Arc<Mutex<*mut ffi::sss_idmap_ctx>>,
+    ctx: RwLock<*mut ffi::sss_idmap_ctx>,
     ranges: HashMap<String, (u32, u32)>,
 }
 
@@ -145,7 +147,7 @@ impl Idmap {
         unsafe {
             match IdmapError(ffi::sss_idmap_init(None, ptr::null_mut(), None, &mut ctx)) {
                 IDMAP_SUCCESS => Ok(Idmap {
-                    ctx: Arc::new(Mutex::new(ctx)),
+                    ctx: RwLock::new(ctx),
                     ranges: HashMap::new(),
                 }),
                 e => Err(e),
@@ -159,7 +161,7 @@ impl Idmap {
         tenant_id: &str,
         range: (u32, u32),
     ) -> Result<(), IdmapError> {
-        let ctx = self.ctx.lock().map_err(|e| {
+        let ctx = self.ctx.write().map_err(|e| {
             error!("Failed obtaining write lock on sss_idmap_ctx: {}", e);
             IDMAP_ERROR
         })?;
@@ -190,7 +192,7 @@ impl Idmap {
     }
 
     pub fn gen_to_unix(&self, tenant_id: &str, input: &str) -> Result<u32, IdmapError> {
-        let ctx = self.ctx.lock().map_err(|e| {
+        let ctx = self.ctx.write().map_err(|e| {
             error!("Failed obtaining write lock on sss_idmap_ctx: {}", e);
             IDMAP_ERROR
         })?;
@@ -228,7 +230,7 @@ impl Idmap {
 
 impl Drop for Idmap {
     fn drop(&mut self) {
-        match self.ctx.lock() {
+        match self.ctx.write() {
             Ok(ctx) => unsafe {
                 let _ = ffi::sss_idmap_free(*ctx);
             },
