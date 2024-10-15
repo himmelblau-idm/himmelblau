@@ -1,3 +1,12 @@
+/*
+ * Unix Azure Entra ID implementation
+ * Copyright (C) William Brown <william@blackhats.net.au> and the Kanidm team 2018-2024
+ * Copyright (C) David Mulder <dmulder@samba.org> 2024
+ *
+ * This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at https://mozilla.org/MPL/2.0/.
+ */
 use himmelblau_unix_common::client_sync::DaemonClientBlocking;
 use himmelblau_unix_common::constants::DEFAULT_CONFIG_PATH;
 use himmelblau_unix_common::unix_proto::{ClientRequest, ClientResponse, NssGroup, NssUser};
