@@ -16,3 +16,4 @@ Cargo.lock
 
 vendor/
 tags
+packaging/

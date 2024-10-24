@@ -22,7 +22,7 @@ assets = [
 [package.metadata.generate-rpm]
 name = "himmelblau-sshd-config"
 assets = [
-  { source = "../../platform/debian/sshd_config", dest = "/etc/ssh/sshd_config.d/himmelblau.conf", mode = "644" },
+  { source = "../../platform/el/sshd_config", dest = "/etc/ssh/sshd_config.d/himmelblau.conf", mode = "644" },
 ]
 
 [package.metadata.generate-rpm.requires]
