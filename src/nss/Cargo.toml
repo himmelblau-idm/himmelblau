@@ -1,5 +1,6 @@
 [package]
 name = "nss_himmelblau"
+description = "Himmelblau NSS Module"
 
 version = { workspace = true }
 authors = { workspace = true }
@@ -27,4 +28,11 @@ name = "nss-himmelblau"
 maintainer = "David Mulder <dmulder@suse.com>"
 assets = [
   ["target/release/libnss_himmelblau.so", "usr/lib/x86_64-linux-gnu/libnss_himmelblau.so.2", "755"],
+]
+
+[package.metadata.generate-rpm]
+name = "nss-himmelblau"
+maintainer = "David Mulder <dmulder@suse.com>"
+assets = [
+  { source = "target/release/libnss_himmelblau.so", dest = "/usr/lib64/libnss_himmelblau.so.2", mode = "755" },
 ]

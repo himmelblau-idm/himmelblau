@@ -60,3 +60,31 @@ assets = [
   ["target/release/broker", "usr/sbin/", "755"],
   ["../../README.md", "usr/share/doc/himmelblau/README", "644"],
 ]
+
+[package.metadata.generate-rpm]
+name = "himmelblau"
+maintainer = "David Mulder <dmulder@suse.com>"
+assets = [
+  { source = "../../src/config/himmelblau.conf.example", dest = "/etc/himmelblau/himmelblau.conf", mode = "644" },
+  { source = "target/release/aad-tool", dest = "/usr/bin/", mode = "755" },
+  { source = "../../platform/opensuse/himmelblaud-tasks.service", dest = "/usr/lib/systemd/system", mode = "644" },
+  { source = "../../platform/opensuse/himmelblaud.service", dest = "/usr/lib/systemd/system", mode = "644" },
+  { source = "../../platform/opensuse/org.samba.himmelblau.conf", dest = "/usr/share/dbus-1/system.d/", mode = "644" },
+  { source = "../../platform/opensuse/com.microsoft.identity.broker1.service", dest = "/usr/share/dbus-1/services/", mode = "644" },
+  { source = "target/release/himmelblaud", dest = "/usr/sbin/", mode = "755" },
+  { source = "target/release/himmelblaud_tasks", dest = "/usr/sbin/", mode = "755" },
+  { source = "target/release/broker", dest = "/usr/sbin/", mode = "755" },
+  { source = "../../README.md", dest = "/usr/share/doc/himmelblau/README", mode = "644" },
+]
+
+[package.metadata.generate-rpm.requires]
+openssl-3 = "*"
+sqlite3 = "*"
+
+[package.metadata.generate-rpm.recommends]
+nss-himmelblau = "*"
+pam-himmelblau = "*"
+# These are labeled as recommends so there isn't a hard failure. SUSE uses
+# 'libutf8proc3', while EL uses 'utf8proc3'. One of these two is required.
+utf8proc3 = "*"
+libutf8proc3 = "*"

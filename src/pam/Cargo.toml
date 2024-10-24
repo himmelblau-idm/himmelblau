@@ -1,5 +1,6 @@
 [package]
 name = "pam_himmelblau"
+description = "Himmelblau PAM Module"
 links = "pam"
 
 version.workspace = true
@@ -33,3 +34,10 @@ assets = [
   ["../../platform/debian/apparmor.unix-chkpwd.local", "etc/apparmor.d/local/unix-chkpwd", "644"],
 ]
 maintainer-scripts = "../../platform/debian/scripts"
+
+[package.metadata.generate-rpm]
+name = "pam-himmelblau"
+maintainer = "David Mulder <dmulder@suse.com>"
+assets = [
+  { source = "target/release/libpam_himmelblau.so", dest = "/usr/lib64/security/pam_himmelblau.so", mode = "755" },
+]

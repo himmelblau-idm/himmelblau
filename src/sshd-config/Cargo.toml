@@ -1,5 +1,6 @@
 [package]
 name = "sshd-config"
+description = "Himmelblau Required SSHD Configuration"
 version.workspace = true
 authors.workspace = true
 rust-version.workspace = true
@@ -17,3 +18,12 @@ depends = ["openssh-server"]
 assets = [
   ["../../platform/debian/sshd_config", "etc/ssh/sshd_config.d/himmelblau.conf", "644"],
 ]
+
+[package.metadata.generate-rpm]
+name = "himmelblau-sshd-config"
+assets = [
+  { source = "../../platform/debian/sshd_config", dest = "/etc/ssh/sshd_config.d/himmelblau.conf", mode = "644" },
+]
+
+[package.metadata.generate-rpm.requires]
+sshd = "*"

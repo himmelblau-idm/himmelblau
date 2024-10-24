@@ -55,6 +55,7 @@ else
 endif
 
 DOCKER := $(shell command -v podman || command -v docker)
+
 deb:
 	git submodule init; git submodule update
 	for v in 22.04 24.04; do \
@@ -64,4 +65,17 @@ deb:
 		mv ./target/debian/*.deb ./target/release/; \
 	done
 	mv ./target/release/*.deb ./target/debian/
+
+rpm:
+	git submodule init; git submodule update
+	for v in rocky9; do \
+		echo "Building RPM $$v packages"; \
+		$(DOCKER) build -t himmelblau-$$v-build -f images/rpm/Dockerfile.$$v .; \
+		$(DOCKER) run --rm -it -v ./:/himmelblau himmelblau-$$v-build; \
+		mv ./target/generate-rpm/*.rpm ./target/release/; \
+	done
+	mv ./target/release/*.rpm ./target/generate-rpm/
+
+package: deb rpm
 	ls ./target/debian/*.deb
+	ls ./target/generate-rpm/*.rpm
