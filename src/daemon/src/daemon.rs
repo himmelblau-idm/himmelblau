@@ -347,7 +347,7 @@ async fn handle_client(
                     Ok(Some(info)) => {
                         let (tx, rx) = oneshot::channel();
 
-                        match task_channel_tx
+                        let resp1 = match task_channel_tx
                             .send_timeout(
                                 (TaskRequest::HomeDirectory(info), tx),
                                 Duration::from_millis(100),
@@ -376,6 +376,44 @@ async fn handle_client(
                                 // We could not submit the req. Move on!
                                 ClientResponse::Error
                             }
+                        };
+
+                        let (tx, rx) = oneshot::channel();
+
+                        let resp2 = match task_channel_tx
+                            .send_timeout(
+                                (TaskRequest::LocalGroups(account_id.to_string()), tx),
+                                Duration::from_millis(100),
+                            )
+                            .await
+                        {
+                            Ok(()) => {
+                                // Now wait for the other end OR timeout.
+                                match time::timeout_at(
+                                    time::Instant::now() + Duration::from_millis(1000),
+                                    rx,
+                                )
+                                .await
+                                {
+                                    Ok(Ok(_)) => {
+                                        debug!("Task completed, returning to pam ...");
+                                        ClientResponse::Ok
+                                    }
+                                    _ => {
+                                        // Timeout or other error.
+                                        ClientResponse::Error
+                                    }
+                                }
+                            }
+                            Err(_) => {
+                                // We could not submit the req. Move on!
+                                ClientResponse::Error
+                            }
+                        };
+
+                        match resp1 {
+                            ClientResponse::Error => ClientResponse::Error,
+                            _ => resp2,
                         }
                     }
                     _ => ClientResponse::Error,

@@ -131,6 +131,7 @@ pub struct HomeDirectoryInfo {
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub enum TaskRequest {
     HomeDirectory(HomeDirectoryInfo),
+    LocalGroups(String),
 }
 
 #[derive(Serialize, Deserialize, Debug)]

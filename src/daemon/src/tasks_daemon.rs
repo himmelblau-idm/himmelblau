@@ -38,6 +38,7 @@ use libc::{lchown, umask};
 use sketching::tracing_forest::traits::*;
 use sketching::tracing_forest::util::*;
 use sketching::tracing_forest::{self};
+use std::process::Command;
 use tokio::net::UnixStream;
 use tokio::sync::broadcast;
 use tokio::time;
@@ -236,6 +237,30 @@ fn create_home_directory(
     Ok(())
 }
 
+fn add_user_to_group(account_id: &str, local_group: &str) {
+    match Command::new("usermod")
+        .arg("-aG")
+        .arg(local_group)
+        .arg(account_id)
+        .output()
+    {
+        Ok(res) => {
+            if !res.status.success() {
+                error!(
+                    "Failed adding user {} to local group {}",
+                    account_id, local_group
+                );
+            }
+        }
+        Err(e) => {
+            error!(
+                "Failed adding user {} to local group {}: {:?}",
+                account_id, local_group, e
+            );
+        }
+    }
+}
+
 async fn handle_tasks(stream: UnixStream, cfg: &HimmelblauConfig) {
     let mut reqs = Framed::new(stream, TaskCodec::new());
 
@@ -261,6 +286,18 @@ async fn handle_tasks(stream: UnixStream, cfg: &HimmelblauConfig) {
                     return;
                 }
                 // All good, loop.
+            }
+            Some(Ok(TaskRequest::LocalGroups(account_id))) => {
+                let local_groups = cfg.get_local_groups();
+                for local_group in local_groups {
+                    add_user_to_group(&account_id, &local_group);
+                }
+
+                // Always indicate success here
+                if let Err(e) = reqs.send(TaskResponse::Success).await {
+                    error!("Error -> {:?}", e);
+                    return;
+                }
             }
             other => {
                 error!("Error -> {:?}", other);

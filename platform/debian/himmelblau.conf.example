@@ -49,6 +49,12 @@
 # configuration.
 # cn_name_mapping = true
 #
+# A comma seperated list of local groups that every Entra Id user should be a
+# member of. For example, you may wish for all Entra Id users to be a member
+# of the sudo group. WARNING: This setting will not REMOVE group member entries
+# when groups are removed from this list. You must remove them manually.
+local_groups = users
+#
 # authority_host = login.microsoftonline.com
 #
 # The location of the cache database
