@@ -46,7 +46,7 @@ maintainer = "David Mulder <dmulder@suse.com>"
 depends = ["libssl3", "libsqlite3-0"]
 recommends = ["nss-himmelblau", "pam-himmelblau"]
 assets = [
-  ["../../src/config/himmelblau.conf.example", "etc/himmelblau/himmelblau.conf", "644"],
+  ["../../platform/debian/himmelblau.conf.example", "etc/himmelblau/himmelblau.conf", "644"],
   ["target/release/aad-tool", "usr/bin/", "755"],
   ["../../platform/debian/himmelblaud-tasks.service", "etc/systemd/system/", "644"],
   ["../../platform/debian/himmelblaud.service", "etc/systemd/system/", "644"],
