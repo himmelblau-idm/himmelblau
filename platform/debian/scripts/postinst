@@ -17,6 +17,20 @@ UNIX_CHKPWD_PATCH=$(cat << 'EOF'
  
 EOF
 )
+LIBREOFFICE_PATCH=$(cat << 'EOF'
+--- /etc/apparmor.d/usr.lib.libreoffice.program.soffice.bin	2024-09-02 07:51:12.000000000 -0600
++++ /etc/apparmor.d/usr.lib.libreoffice.program.soffice.bin	2024-10-24 09:52:51.062702354 -0600
+@@ -76,7 +76,7 @@
+
+ #include <tunables/global>
+
+-profile libreoffice-soffice /usr/lib/libreoffice/program/soffice.bin flags=(complain) {
++profile libreoffice-soffice /usr/lib/libreoffice/program/soffice.bin flags=(complain,attach_disconnected) {
+   #include <abstractions/private-files>
+
+   #include <abstractions/audio>
+EOF
+)
 
 # Check if the file /etc/apparmor.d/unix-chkpwd exists
 if [[ -f /etc/apparmor.d/unix-chkpwd ]]; then
@@ -25,4 +39,13 @@ if [[ -f /etc/apparmor.d/unix-chkpwd ]]; then
 
 	# Reload the AppArmor profile to apply the changes
 	apparmor_parser -r /etc/apparmor.d/unix-chkpwd || echo "apparmor reload failed"
+fi
+
+# Check if the file /etc/apparmor.d/usr.lib.libreoffice.program.soffice.bin exists
+if [[ -f /etc/apparmor.d/usr.lib.libreoffice.program.soffice.bin ]]; then
+	# Apply the patch using the patch command
+	echo "$LIBREOFFICE_PATCH" | patch --fuzz 2 --silent --forward -p0 /etc/apparmor.d/usr.lib.libreoffice.program.soffice.bin || echo "apparmor libreoffice patch failed"
+
+	# Reload the AppArmor profile to apply the changes
+	apparmor_parser -r /etc/apparmor.d/usr.lib.libreoffice.program.soffice.bin || echo "apparmor reload failed"
 fi
