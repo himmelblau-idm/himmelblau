@@ -1,0 +1,91 @@
+[global]
+# REQUIRED: The list of configured domains. This must be specified, or no users
+# will be permitted to authenticate. The first user to authenticate to each
+# domain will be the owner of the device object in the directory. Typically
+# this would be the primary user of the device.
+# domains =
+#
+### Optional global values
+# Configure whether the logger will output debug messages to the journal.
+# debug = false
+#
+# pam_allow_groups SHOULD be defined or else all users will be authorized by
+# pam account. The option should be set to a comma seperated list of Users and
+# Groups which are allowed access to the system. Groups MUST be specified by
+# Object ID, not by UPN. This is because Azure does not permit regular users
+# the right to read group names, only the Object IDs which they belong to.
+# pam_allow_groups =
+#
+# Specify whether to map uid/gid based on the object name or the object uuid.
+# By object uuid mapping is the old default, but can cause authentication
+# issues over SSH. Mapping by name is recommeneded.
+# id_attr_map = name ; {name|uuid}
+#
+# If you have an ODC provider (the default being odc.officeapps.live.com), specify
+# the hostname for sending a federationProvider request. If the federationProvider
+# request is successful, the tenant_id and authority_host options do not need to
+# be specified.
+# odc_provider = odc.officeapps.live.com
+#
+# Whether to enroll users in Hello authentication. If disabled, MFA may be
+# required during each login. Disabling Hello authentication is recommeneded
+# when the host is public facing (such as via SSH).
+# enable_hello = true
+#
+# The minimum length of the Hello authentication PIN. This PIN length cannot
+# be less than 6, and cannot exceed 32 characters. These are hard requirements
+# for the encryption algorithm.
+# hello_pin_min_length = 6
+#
+# Whether to permit attempting a SFA (password only) authentication when MFA
+# methods are unavailable. Sometimes this is possible when MFA has yet to be
+# configured. This is disabled by default.
+# enable_sfa_fallback = false
+#
+# CN to UPN mapping allows users to simply enter the short form of their
+# username (`dave` instead of `dave@example.com`). Himmelblau will only map CNs
+# to the primary domain (the first domain listed in the `domains` option
+# above). WARNING: CN mapping could mask local users, depending on your PAM
+# configuration.
+# cn_name_mapping = true
+#
+# authority_host = login.microsoftonline.com
+#
+# The location of the cache database
+# db_path = /var/cache/himmelblau/himmelblau.cache.db
+#
+# The location where the hsm pin will be stored
+# hsm_pin_path = /var/lib/himmelblaud/hsm-pin
+# socket_path = /var/run/himmelblaud/socket
+# task_socket_path = /var/run/himmelblaud/task_sock
+# broker_socket_path = /var/run/himmelblaud/broker_sock
+# home_prefix = /home/
+# home_attr = UUID ; home directory attribute options:
+#                  ; UUID (default)
+#                  ; SPN
+#                  ; CN
+home_attr = CN
+# home_alias = SPN ; home directory alias options:
+#                  ; UUID
+#                  ; SPN (default)
+#                  ; CN
+home_alias = CN
+# shell = /bin/bash ; default shell for the user
+# idmap_range = 5000000-5999999
+# connection_timeout = 2
+# cache_timeout = 15
+use_etc_skel = true
+# selinux = true
+
+### Domain specific values
+# Individual domain values may be overridden by specifying these values under
+# a domain section. These options take precedent over global config options.
+# For example:
+#
+# [example.com]
+# odc_provider = odc.officeapps.live.com
+# home_prefix = /home/
+# home_attr = UUID
+# home_alias = SPN
+# shell = /bin/zsh
+# idmap_range = 6000000-6999999
