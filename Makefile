@@ -57,25 +57,27 @@ endif
 DOCKER := $(shell command -v podman || command -v docker)
 
 deb:
+	mkdir -p ./packaging/
 	git submodule init; git submodule update
 	for v in 22.04 24.04; do \
 		echo "Building Ubuntu $$v packages"; \
 		$(DOCKER) build -t himmelblau-ubuntu$$v-build -f images/ubuntu/Dockerfile.$$v .; \
 		$(DOCKER) run --rm -it -v ./:/himmelblau himmelblau-ubuntu$$v-build; \
-		mv ./target/debian/*.deb ./target/release/; \
+		mv ./target/debian/*.deb ./packaging/; \
 	done
-	mv ./target/release/*.deb ./target/debian/
 
 rpm:
+	mkdir -p ./packaging/
 	git submodule init; git submodule update
-	for v in rocky9; do \
+	for v in rocky8 rocky9; do \
 		echo "Building RPM $$v packages"; \
 		$(DOCKER) build -t himmelblau-$$v-build -f images/rpm/Dockerfile.$$v .; \
 		$(DOCKER) run --rm -it -v ./:/himmelblau himmelblau-$$v-build; \
-		mv ./target/generate-rpm/*.rpm ./target/release/; \
+		for file in ./target/generate-rpm/*.rpm; do \
+			mv "$$file" "$${file%.rpm}-$$v.rpm"; \
+		done; \
+		mv ./target/generate-rpm/*.rpm ./packaging/; \
 	done
-	mv ./target/release/*.rpm ./target/generate-rpm/
 
 package: deb rpm
-	ls ./target/debian/*.deb
-	ls ./target/generate-rpm/*.rpm
+	ls ./packaging/

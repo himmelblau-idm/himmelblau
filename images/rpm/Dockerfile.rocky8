@@ -1,0 +1,57 @@
+# Use the official Rocky Linux 8 image as the base
+FROM rockylinux:8
+
+# Set environment variables for non-interactive installs
+ENV YUM_VERSION=8
+
+# Install epel-release (Extra Packages for Enterprise Linux) for utf8proc-devel
+#RUN yum update -y && yum install -y epel-release
+
+# Install essential build dependencies
+RUN yum update -y && yum install -y \
+    wget \
+    git \
+    gcc \
+    gcc-c++ \
+    make \
+    openssl-devel \
+    dbus-devel \
+    libtool \
+    pkgconfig \
+    autoconf \
+    pam-devel \
+    systemd-devel \
+    libcap-devel \
+    krb5-devel \
+    pcre2-devel \
+    clang \
+    gettext \
+    sqlite-devel \
+    && yum clean all
+
+# Fetch the utf8proc sources, since EL8 doesn't package this
+RUN VERSION=2.6.1; \
+    echo "Installing utf8proc version: $VERSION"; \
+    wget https://github.com/JuliaStrings/utf8proc/archive/refs/tags/v$VERSION.tar.gz -O utf8proc-$VERSION.tar.gz; \
+    mkdir -p utf8proc-rocky8 && \
+    tar -xvf utf8proc-$VERSION.tar.gz -C utf8proc-rocky8 --strip-components=1 && \
+    cd utf8proc-rocky8 && \
+    make && \
+    make install
+
+# Install Rust (latest stable)
+RUN curl https://sh.rustup.rs -sSf | sh -s -- -y
+
+# Set environment for Rust
+ENV PATH="/root/.cargo/bin:${PATH}"
+
+VOLUME /himmelblau
+
+# Change directory to the repository
+WORKDIR /himmelblau
+
+# Install the cargo-deb tool
+RUN cargo install cargo-generate-rpm
+
+# Build the project and create the .deb package
+CMD cargo clean && cargo build --release && strip -s target/release/*.so && strip -s target/release/aad-tool && strip -s target/release/himmelblaud && strip -s target/release/himmelblaud_tasks && strip -s target/release/broker && cargo generate-rpm -p src/daemon && cargo generate-rpm -p src/nss && cargo generate-rpm -p src/pam && cargo generate-rpm -p src/sshd-config
