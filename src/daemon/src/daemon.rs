@@ -37,11 +37,12 @@ use himmelblau_unix_common::config::HimmelblauConfig;
 use himmelblau_unix_common::constants::DEFAULT_CONFIG_PATH;
 use himmelblau_unix_common::db::{Cache, CacheTxn, Db};
 use himmelblau_unix_common::idprovider::himmelblau::HimmelblauMultiProvider;
-use himmelblau_unix_common::resolver::Resolver;
+use himmelblau_unix_common::idprovider::interface::Id;
+use himmelblau_unix_common::resolver::{AuthSession, Resolver};
 use himmelblau_unix_common::unix_config::{HsmType, UidAttr};
 use himmelblau_unix_common::unix_passwd::{parse_etc_group, parse_etc_passwd};
 use himmelblau_unix_common::unix_proto::{
-    ClientRequest, ClientResponse, TaskRequest, TaskResponse,
+    ClientRequest, ClientResponse, PamAuthResponse, TaskRequest, TaskResponse,
 };
 
 use kanidm_utils_users::{get_current_gid, get_current_uid, get_effective_gid, get_effective_uid};
@@ -68,7 +69,7 @@ use identity_dbus_broker::himmelblau_broker_serve;
 
 //=== the codec
 
-type AsyncTaskRequest = (TaskRequest, oneshot::Sender<()>);
+type AsyncTaskRequest = (TaskRequest, oneshot::Sender<i32>);
 
 #[derive(Default)]
 struct ClientCodec;
@@ -184,11 +185,11 @@ async fn handle_task_client(
         }
 
         match reqs.next().await {
-            Some(Ok(TaskResponse::Success)) => {
+            Some(Ok(TaskResponse::Success(status))) => {
                 debug!("Task was acknowledged and completed.");
                 // Send a result back via the one-shot
                 // Ignore if it fails.
-                let _ = v.1.send(());
+                let _ = v.1.send(status);
             }
             other => {
                 error!("Error -> {:?}", other);
@@ -202,6 +203,7 @@ async fn handle_client(
     sock: UnixStream,
     cachelayer: Arc<Resolver<HimmelblauMultiProvider>>,
     task_channel_tx: &Sender<AsyncTaskRequest>,
+    cfg: HimmelblauConfig,
 ) -> Result<(), Box<dyn Error>> {
     debug!("Accepted connection");
 
@@ -319,11 +321,95 @@ async fn handle_client(
             ClientRequest::PamAuthenticateStep(pam_next_req) => {
                 debug!("pam authenticate step");
                 match &mut pam_auth_session_state {
-                    Some(auth_session) => cachelayer
-                        .pam_account_authenticate_step(auth_session, pam_next_req)
-                        .await
-                        .map(|pam_auth_response| pam_auth_response.into())
-                        .unwrap_or(ClientResponse::Error),
+                    Some(auth_session) => {
+                        match cachelayer
+                            .pam_account_authenticate_step(auth_session, pam_next_req)
+                            .await
+                            .map(|pam_auth_response| pam_auth_response.into())
+                            .unwrap_or(ClientResponse::Error)
+                        {
+                            ClientResponse::PamAuthenticateStepResponse(resp) => {
+                                macro_rules! ret {
+                                    () => {
+                                        ClientResponse::PamAuthenticateStepResponse(resp)
+                                    };
+                                }
+                                match auth_session {
+                                    AuthSession::Success(account_id) => {
+                                        match resp {
+                                            PamAuthResponse::Success => {
+                                                if cfg.get_logon_script().is_some() {
+                                                    let scopes = cfg.get_logon_token_scopes();
+                                                    let access_token = match cachelayer
+                                                        .get_user_accesstoken(
+                                                            Id::Name(account_id.to_string()),
+                                                            scopes,
+                                                        )
+                                                        .await
+                                                    {
+                                                        Some(token) => token
+                                                            .access_token
+                                                            .clone()
+                                                            .unwrap_or("".to_string()),
+                                                        None => "".to_string(),
+                                                    };
+
+                                                    let (tx, rx) = oneshot::channel();
+
+                                                    match task_channel_tx
+                                                        .send_timeout(
+                                                            (
+                                                                TaskRequest::LogonScript(
+                                                                    account_id.to_string(),
+                                                                    access_token.to_string(),
+                                                                ),
+                                                                tx,
+                                                            ),
+                                                            Duration::from_millis(100),
+                                                        )
+                                                        .await
+                                                    {
+                                                        Ok(()) => {
+                                                            // Now wait for the other end OR timeout.
+                                                            match time::timeout_at(
+                                                                time::Instant::now()
+                                                                    + Duration::from_secs(60),
+                                                                rx,
+                                                            )
+                                                            .await
+                                                            {
+                                                                Ok(Ok(status)) => {
+                                                                    if status == 2 {
+                                                                        debug!("Authentication was explicitly denied by the logon script");
+                                                                        ClientResponse::PamAuthenticateStepResponse(PamAuthResponse::Denied)
+                                                                    } else {
+                                                                        ret!()
+                                                                    }
+                                                                }
+                                                                _ => {
+                                                                    error!("Execution of logon script failed");
+                                                                    ret!()
+                                                                }
+                                                            }
+                                                        }
+                                                        Err(e) => {
+                                                            error!("Execution of logon script failed: {:?}", e);
+                                                            ret!()
+                                                        }
+                                                    }
+                                                } else {
+                                                    ret!()
+                                                }
+                                            }
+                                            _ => ret!(),
+                                        }
+                                    }
+                                    _ => ret!(),
+                                }
+                            }
+                            other => other,
+                        }
+                    }
                     None => {
                         warn!("Attempt to continue auth session while current session is inactive");
                         ClientResponse::Error
@@ -853,6 +939,12 @@ async fn main() -> ExitCode {
                 return ExitCode::FAILURE
             }
 
+            // Setup the tasks socket first.
+            let (task_channel_tx, mut task_channel_rx) = channel(16);
+            let task_channel_tx = Arc::new(task_channel_tx);
+
+            let task_channel_tx_cln = task_channel_tx.clone();
+
             let cl_inner = match Resolver::new(
                 db,
                 idprovider,
@@ -896,12 +988,6 @@ async fn main() -> ExitCode {
                 error!("Failed to process system id providers");
                 return ExitCode::FAILURE
             }
-
-            // Setup the tasks socket first.
-            let (task_channel_tx, mut task_channel_rx) = channel(16);
-            let task_channel_tx = Arc::new(task_channel_tx);
-
-            let task_channel_tx_cln = task_channel_tx.clone();
 
             // Start to build the worker tasks
             let (broadcast_tx, mut broadcast_rx) = broadcast::channel(4);
@@ -1031,6 +1117,7 @@ async fn main() -> ExitCode {
             let task_a = tokio::spawn(async move {
                 loop {
                     let tc_tx = task_channel_tx_cln.clone();
+                    let cfg_h = cfg.clone();
 
                     tokio::select! {
                         _ = broadcast_rx.recv() => {
@@ -1041,7 +1128,7 @@ async fn main() -> ExitCode {
                                 Ok((socket, _addr)) => {
                                     let cachelayer_ref = cachelayer.clone();
                                     tokio::spawn(async move {
-                                        if let Err(e) = handle_client(socket, cachelayer_ref.clone(), &tc_tx).await
+                                        if let Err(e) = handle_client(socket, cachelayer_ref.clone(), &tc_tx, cfg_h).await
                                         {
                                             error!("handle_client error occurred; error = {:?}", e);
                                         }

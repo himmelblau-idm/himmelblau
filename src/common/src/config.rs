@@ -47,6 +47,7 @@ pub fn split_username(username: &str) -> Option<(&str, &str)> {
     None
 }
 
+#[derive(Clone)]
 pub struct HimmelblauConfig {
     config: Ini,
     filename: String,
@@ -457,6 +458,17 @@ impl HimmelblauConfig {
     pub fn get_local_groups(&self) -> Vec<String> {
         match self.config.get("global", "local_groups") {
             Some(val) => val.split(',').map(|s| s.to_string()).collect(),
+            None => vec![],
+        }
+    }
+
+    pub fn get_logon_script(&self) -> Option<String> {
+        self.config.get("global", "logon_script")
+    }
+
+    pub fn get_logon_token_scopes(&self) -> Vec<String> {
+        match self.config.get("global", "logon_token_scopes") {
+            Some(scopes) => scopes.split(",").map(|s| s.to_string()).collect(),
             None => vec![],
         }
     }
