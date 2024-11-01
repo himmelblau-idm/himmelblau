@@ -49,6 +49,23 @@
 # configuration.
 # cn_name_mapping = true
 #
+# A comma seperated list of local groups that every Entra Id user should be a
+# member of. For example, you may wish for all Entra Id users to be a member
+# of the sudo group. WARNING: This setting will not REMOVE group member entries
+# when groups are removed from this list. You must remove them manually.
+# local_groups =
+#
+# Logon user script. This script will execute every time a user logs on. Two
+# environment variables are set: USERNAME, and ACCESS_TOKEN. The ACCESS_TOKEN
+# environment variable is an access token for the MS graph. The token scope
+# config option sets the comma separated scopes that should be requested for
+# the ACCESS_TOKEN. ACCESS_TOKEN will be empty during offline logon. The return
+# code of the script determines how the authentication proceeds. 0 is success,
+# 1 is a soft failure and authentication will proceed, while 2 is a hard
+# failure causing authentication to fail.
+# logon_script =
+# logon_token_scopes =
+#
 # authority_host = login.microsoftonline.com
 #
 # The location of the cache database

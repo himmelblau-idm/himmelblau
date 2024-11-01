@@ -131,11 +131,13 @@ pub struct HomeDirectoryInfo {
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub enum TaskRequest {
     HomeDirectory(HomeDirectoryInfo),
+    LocalGroups(String),
+    LogonScript(String, String),
 }
 
 #[derive(Serialize, Deserialize, Debug)]
 pub enum TaskResponse {
-    Success,
+    Success(i32),
     Error(String),
 }
 

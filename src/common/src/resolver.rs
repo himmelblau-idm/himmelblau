@@ -66,7 +66,7 @@ pub enum AuthSession {
         /// when they need to stop.
         shutdown_rx: broadcast::Receiver<()>,
     },
-    Success,
+    Success(String),
     Denied,
 }
 
@@ -1167,7 +1167,7 @@ where
                 warn!("Unable to proceed with offline auth, no token available");
                 Err(IdpError::NotFound)
             }
-            (&mut AuthSession::Success, _) | (&mut AuthSession::Denied, _) => {
+            (&mut AuthSession::Success(_), _) | (&mut AuthSession::Denied, _) => {
                 Err(IdpError::BadRequest)
             }
         };
@@ -1184,7 +1184,7 @@ where
                 } else {
                     debug!("provider authentication success.");
                     self.set_cache_usertoken(&mut token).await?;
-                    *auth_session = AuthSession::Success;
+                    *auth_session = AuthSession::Success(token.spn);
 
                     Ok(PamAuthResponse::Success)
                 }

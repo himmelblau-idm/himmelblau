@@ -25,6 +25,7 @@ use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::symlink;
 use std::path::Path;
 use std::process::ExitCode;
+use std::str;
 use std::time::Duration;
 use std::{fs, io};
 
@@ -38,6 +39,7 @@ use libc::{lchown, umask};
 use sketching::tracing_forest::traits::*;
 use sketching::tracing_forest::util::*;
 use sketching::tracing_forest::{self};
+use std::process::Command;
 use tokio::net::UnixStream;
 use tokio::sync::broadcast;
 use tokio::time;
@@ -236,6 +238,64 @@ fn create_home_directory(
     Ok(())
 }
 
+fn add_user_to_group(account_id: &str, local_group: &str) {
+    match Command::new("usermod")
+        .arg("-aG")
+        .arg(local_group)
+        .arg(account_id)
+        .output()
+    {
+        Ok(res) => {
+            if !res.status.success() {
+                error!(
+                    "Failed adding user {} to local group {}",
+                    account_id, local_group
+                );
+            }
+        }
+        Err(e) => {
+            error!(
+                "Failed adding user {} to local group {}: {:?}",
+                account_id, local_group, e
+            );
+        }
+    }
+}
+
+fn execute_user_script(account_id: &str, script: &str, access_token: &str) -> i32 {
+    match Command::new("sh")
+        .arg("-c")
+        .arg(script)
+        .env("USERNAME", account_id)
+        .env("ACCESS_TOKEN", access_token)
+        .output()
+    {
+        Ok(res) => {
+            if !res.status.success() {
+                let stdout = str::from_utf8(&res.stdout).unwrap_or("Invalid UTF-8 in stdout");
+                let stderr = str::from_utf8(&res.stderr).unwrap_or("Invalid UTF-8 in stderr");
+                error!(
+                    "Failed to execute script '{}':\nstdout: {}\nstderr: {}",
+                    script, stdout, stderr
+                );
+            }
+
+            // If we don't get a status code, make assumptions
+            if res.status.success() {
+                res.status.code().unwrap_or(0)
+            } else {
+                res.status.code().unwrap_or(2)
+            }
+        }
+        Err(e) => {
+            error!("Failed to execute script '{}': {:?}", script, e);
+            // If the script fails to execute at all, we assume this is a hard
+            // failure and terminate the authentication attempt.
+            2
+        }
+    }
+}
+
 async fn handle_tasks(stream: UnixStream, cfg: &HimmelblauConfig) {
     let mut reqs = Framed::new(stream, TaskCodec::new());
 
@@ -251,7 +311,7 @@ async fn handle_tasks(stream: UnixStream, cfg: &HimmelblauConfig) {
                     cfg.get_use_etc_skel(),
                     cfg.get_selinux(),
                 ) {
-                    Ok(()) => TaskResponse::Success,
+                    Ok(()) => TaskResponse::Success(0),
                     Err(msg) => TaskResponse::Error(msg),
                 };
 
@@ -261,6 +321,30 @@ async fn handle_tasks(stream: UnixStream, cfg: &HimmelblauConfig) {
                     return;
                 }
                 // All good, loop.
+            }
+            Some(Ok(TaskRequest::LocalGroups(account_id))) => {
+                let local_groups = cfg.get_local_groups();
+                for local_group in local_groups {
+                    add_user_to_group(&account_id, &local_group);
+                }
+
+                // Always indicate success here
+                if let Err(e) = reqs.send(TaskResponse::Success(0)).await {
+                    error!("Error -> {:?}", e);
+                    return;
+                }
+            }
+            Some(Ok(TaskRequest::LogonScript(account_id, access_token))) => {
+                let mut status = 0;
+                if let Some(script) = cfg.get_logon_script() {
+                    status = execute_user_script(&account_id, &script, &access_token);
+                }
+
+                // Indicate the status response
+                if let Err(e) = reqs.send(TaskResponse::Success(status)).await {
+                    error!("Error -> {:?}", e);
+                    return;
+                }
             }
             other => {
                 error!("Error -> {:?}", other);
