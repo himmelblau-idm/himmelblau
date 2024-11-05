@@ -89,10 +89,9 @@ impl HimmelblauBroker for Broker {
         if request.account.username.to_lowercase() != user.spn.to_lowercase() {
             return Err("Invalid request for user!".into());
         }
-        let scopes = vec![];
         let token = self
             .cachelayer
-            .get_user_accesstoken(Id::Name(user.spn), scopes)
+            .get_user_accesstoken(Id::Name(user.spn), request.auth_parameters.requested_scopes)
             .await
             .ok_or("Failed to authenticate user")?;
         let now = SystemTime::now()

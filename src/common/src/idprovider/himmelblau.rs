@@ -604,7 +604,7 @@ impl IdProvider for HimmelblauProvider {
             .await
             .exchange_prt_for_access_token(
                 &prt,
-                vec!["User.Read"],
+                vec![],
                 Some("https://graph.microsoft.com".to_string()),
                 tpm,
                 machine_key,
@@ -687,7 +687,7 @@ impl IdProvider for HimmelblauProvider {
                     .await
                     .acquire_token_by_refresh_token(
                         &$token.refresh_token,
-                        vec!["User.Read"],
+                        vec![],
                         Some("https://graph.microsoft.com".to_string()),
                         tpm,
                         machine_key,
@@ -711,7 +711,7 @@ impl IdProvider for HimmelblauProvider {
                                         .await
                                         .acquire_token_by_refresh_token(
                                             &$token.refresh_token,
-                                            vec!["User.Read"],
+                                            vec![],
                                             Some("https://graph.microsoft.com".to_string()),
                                             tpm,
                                             machine_key,
@@ -740,7 +740,7 @@ impl IdProvider for HimmelblauProvider {
                     .acquire_token_by_hello_for_business_key(
                         account_id,
                         &$hello_key,
-                        vec!["User.Read"],
+                        vec![],
                         Some("https://graph.microsoft.com".to_string()),
                         tpm,
                         machine_key,
