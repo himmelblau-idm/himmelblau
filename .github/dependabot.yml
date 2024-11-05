@@ -19,5 +19,6 @@ updates:
       - dependency-name: "opentelemetry_sdk"
       - dependency-name: "opentelemetry-stdout"
       - dependency-name: "tracing-opentelemetry"
+      - dependency-name: "utoipa"
       # This requires an update to compact-jwt first, awaiting that update
       - dependency-name: "kanidm-hsm-crypto"
