@@ -84,7 +84,7 @@ kanidm_utils_users = { path = "./src/users" }
 walkdir = "2"
 csv = "1.2.2"
 notify-debouncer-full = { version = "0.4" }
-utoipa = "4.0.0"
+utoipa = "4.2.0"
 utoipa-swagger-ui = "4.0.0"
 opentelemetry = { version = "0.20.0" }
 opentelemetry_api = { version = "0.20.0", features = ["logs", "metrics"] }
