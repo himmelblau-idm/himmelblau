@@ -61,7 +61,7 @@ use tokio_util::codec::{Decoder, Encoder, Framed};
 
 use kanidm_hsm_crypto::{soft::SoftTpm, AuthValue, BoxedDynTpm, Tpm};
 
-use notify_debouncer_full::{new_debouncer, notify::RecursiveMode};
+use notify_debouncer_full::{new_debouncer, notify::RecursiveMode, notify::Watcher};
 
 mod broker;
 use broker::Broker;
@@ -1051,10 +1051,10 @@ async fn main() -> ExitCode {
                 let _ = inotify_tx.try_send(true);
             })
                 .and_then(|mut debouncer| {
-                    debouncer.watch(Path::new("/etc/passwd"), RecursiveMode::NonRecursive)
+                    debouncer.watcher().watch(Path::new("/etc/passwd"), RecursiveMode::NonRecursive)
                         .map(|()| debouncer)
                 })
-                .and_then(|mut debouncer| debouncer.watch(Path::new("/etc/group"), RecursiveMode::NonRecursive)
+                .and_then(|mut debouncer| debouncer.watcher().watch(Path::new("/etc/group"), RecursiveMode::NonRecursive)
                         .map(|()| debouncer)
                 )
 
