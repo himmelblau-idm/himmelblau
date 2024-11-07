@@ -69,8 +69,8 @@ deb:
 rpm:
 	mkdir -p ./packaging/
 	git submodule init; git submodule update
-	for v in rocky8 rocky9; do \
-		echo "Building RPM $$v packages"; \
+	for v in rocky8 rocky9 tumbleweed; do \
+		echo "Building $$v RPM packages"; \
 		$(DOCKER) build -t himmelblau-$$v-build -f images/rpm/Dockerfile.$$v .; \
 		$(DOCKER) run --rm -it -v ./:/himmelblau himmelblau-$$v-build; \
 		for file in ./target/generate-rpm/*.rpm; do \
