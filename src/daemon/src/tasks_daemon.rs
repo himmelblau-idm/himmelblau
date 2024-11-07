@@ -32,13 +32,16 @@ use std::{fs, io};
 use bytes::{BufMut, BytesMut};
 use futures::{SinkExt, StreamExt};
 use himmelblau_unix_common::config::{split_username, HimmelblauConfig};
-use himmelblau_unix_common::constants::DEFAULT_CONFIG_PATH;
+use himmelblau_unix_common::constants::{DEFAULT_CCACHE_DIR, DEFAULT_CONFIG_PATH};
 use himmelblau_unix_common::unix_proto::{HomeDirectoryInfo, TaskRequest, TaskResponse};
 use kanidm_utils_users::{get_effective_gid, get_effective_uid};
+use libc::uid_t;
 use libc::{lchown, umask};
 use sketching::tracing_forest::traits::*;
 use sketching::tracing_forest::util::*;
 use sketching::tracing_forest::{self};
+use std::fs::OpenOptions;
+use std::io::Write;
 use std::process::Command;
 use tokio::net::UnixStream;
 use tokio::sync::broadcast;
@@ -296,6 +299,28 @@ fn execute_user_script(account_id: &str, script: &str, access_token: &str) -> i3
     }
 }
 
+fn write_bytes_to_file(bytes: &[u8], filename: &Path, owner: uid_t) -> i32 {
+    let mut file = match OpenOptions::new()
+        .create(true)
+        .truncate(true)
+        .write(true)
+        .open(filename)
+    {
+        Ok(file) => file,
+        Err(_) => return 1,
+    };
+
+    if file.write_all(bytes).is_err() {
+        return 2;
+    }
+
+    if chown(filename, owner).is_err() {
+        return 3;
+    }
+
+    0
+}
+
 async fn handle_tasks(stream: UnixStream, cfg: &HimmelblauConfig) {
     let mut reqs = Framed::new(stream, TaskCodec::new());
 
@@ -342,6 +367,55 @@ async fn handle_tasks(stream: UnixStream, cfg: &HimmelblauConfig) {
 
                 // Indicate the status response
                 if let Err(e) = reqs.send(TaskResponse::Success(status)).await {
+                    error!("Error -> {:?}", e);
+                    return;
+                }
+            }
+            Some(Ok(TaskRequest::KerberosCCache(uid, cloud_ccache, ad_ccache))) => {
+                let ccache_dir_str = format!("{}{}", DEFAULT_CCACHE_DIR, uid);
+                let ccache_dir = Path::new(&ccache_dir_str);
+                let create_dir_ret = match fs::create_dir_all(ccache_dir) {
+                    Ok(_) => 0,
+                    Err(e) => {
+                        error!(
+                            "Failed to create the krb5 ccache directory '{}': {:?}",
+                            ccache_dir.display(),
+                            e
+                        );
+                        1
+                    }
+                };
+                let primary_name = ccache_dir.join("primary");
+                let _ = write_bytes_to_file(b"tkt\n", &primary_name, uid);
+
+                let cloud_ret = if !cloud_ccache.is_empty() {
+                    // The cloud_tkt is the primary only if the on-prem isn't
+                    // present.
+                    let name = if !ad_ccache.is_empty() {
+                        "cloud_tkt"
+                    } else {
+                        "tkt"
+                    };
+                    let cloud_ccache_name = ccache_dir.join(name);
+                    write_bytes_to_file(&cloud_ccache, &cloud_ccache_name, uid) * 10
+                } else {
+                    0
+                };
+
+                let ad_ret = if !ad_ccache.is_empty() {
+                    // If the on-prem ad_tkt exists, it overrides the primary
+                    let name = "tkt";
+                    let ad_ccache_name = ccache_dir.join(name);
+                    write_bytes_to_file(&ad_ccache, &ad_ccache_name, uid) * 100
+                } else {
+                    0
+                };
+
+                // Indicate the status response
+                if let Err(e) = reqs
+                    .send(TaskResponse::Success(create_dir_ret + cloud_ret + ad_ret))
+                    .await
+                {
                     error!("Error -> {:?}", e);
                     return;
                 }

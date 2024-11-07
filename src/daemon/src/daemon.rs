@@ -328,12 +328,7 @@ async fn handle_client(
                             .map(|pam_auth_response| pam_auth_response.into())
                             .unwrap_or(ClientResponse::Error)
                         {
-                            ClientResponse::PamAuthenticateStepResponse(resp) => {
-                                macro_rules! ret {
-                                    () => {
-                                        ClientResponse::PamAuthenticateStepResponse(resp)
-                                    };
-                                }
+                            ClientResponse::PamAuthenticateStepResponse(mut resp) => {
                                 match auth_session {
                                     AuthSession::Success(account_id) => {
                                         match resp {
@@ -381,30 +376,79 @@ async fn handle_client(
                                                                 Ok(Ok(status)) => {
                                                                     if status == 2 {
                                                                         debug!("Authentication was explicitly denied by the logon script");
-                                                                        ClientResponse::PamAuthenticateStepResponse(PamAuthResponse::Denied)
-                                                                    } else {
-                                                                        ret!()
+                                                                        resp =
+                                                                            PamAuthResponse::Denied;
                                                                     }
                                                                 }
                                                                 _ => {
                                                                     error!("Execution of logon script failed");
-                                                                    ret!()
                                                                 }
                                                             }
                                                         }
                                                         Err(e) => {
                                                             error!("Execution of logon script failed: {:?}", e);
-                                                            ret!()
                                                         }
                                                     }
-                                                } else {
-                                                    ret!()
                                                 }
+
+                                                // Initialize the user Kerberos ccache
+                                                if let Some((uid, cloud_ccache, ad_ccache)) =
+                                                    cachelayer
+                                                        .get_user_ccaches(Id::Name(
+                                                            account_id.to_string(),
+                                                        ))
+                                                        .await
+                                                {
+                                                    let (tx, rx) = oneshot::channel();
+
+                                                    match task_channel_tx
+                                                        .send_timeout(
+                                                            (
+                                                                TaskRequest::KerberosCCache(
+                                                                    uid,
+                                                                    cloud_ccache,
+                                                                    ad_ccache,
+                                                                ),
+                                                                tx,
+                                                            ),
+                                                            Duration::from_millis(100),
+                                                        )
+                                                        .await
+                                                    {
+                                                        Ok(()) => {
+                                                            // Now wait for the other end OR timeout.
+                                                            match time::timeout_at(
+                                                                time::Instant::now()
+                                                                    + Duration::from_secs(60),
+                                                                rx,
+                                                            )
+                                                            .await
+                                                            {
+                                                                Ok(Ok(status)) => {
+                                                                    if status != 0 {
+                                                                        error!("Kerberos credential cache load failed for {}: Status code: {}", account_id, status);
+                                                                    }
+                                                                }
+                                                                Ok(Err(e)) => {
+                                                                    error!("Kerberos credential cache load failed for {}: {:?}", account_id, e);
+                                                                }
+                                                                Err(e) => {
+                                                                    error!("Kerberos credential cache load failed for {}: {:?}", account_id, e);
+                                                                }
+                                                            }
+                                                        }
+                                                        Err(e) => {
+                                                            error!("Kerberos credential cache load failed for {}: {:?}", account_id, e);
+                                                        }
+                                                    }
+                                                }
+
+                                                ClientResponse::PamAuthenticateStepResponse(resp)
                                             }
-                                            _ => ret!(),
+                                            _ => ClientResponse::PamAuthenticateStepResponse(resp),
                                         }
                                     }
-                                    _ => ret!(),
+                                    _ => ClientResponse::PamAuthenticateStepResponse(resp),
                                 }
                             }
                             other => other,
