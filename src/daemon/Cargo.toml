@@ -77,14 +77,6 @@ assets = [
   { source = "../../README.md", dest = "/usr/share/doc/himmelblau/README", mode = "644" },
 ]
 
-[package.metadata.generate-rpm.requires]
-openssl-3 = "*"
-sqlite3 = "*"
-
 [package.metadata.generate-rpm.recommends]
 nss-himmelblau = "*"
 pam-himmelblau = "*"
-# These are labeled as recommends so there isn't a hard failure. SUSE uses
-# 'libutf8proc3', while EL uses 'utf8proc3'. One of these two is required.
-utf8proc3 = "*"
-libutf8proc3 = "*"
