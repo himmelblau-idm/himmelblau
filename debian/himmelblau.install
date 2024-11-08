@@ -1,6 +1,0 @@
-src/config/himmelblau.conf etc/himmelblau
-target/release/aad-tool usr/bin
-platform/debian/himmelblaud.service usr/lib/systemd/system
-platform/debian/himmelblaud-tasks.service usr/lib/systemd/system
-target/release/himmelblaud usr/sbin
-target/release/himmelblaud_tasks usr/sbin
