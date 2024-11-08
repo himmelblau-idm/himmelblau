@@ -1,0 +1,40 @@
+# Use the official Fedora Rawhide image as the base
+FROM fedora:rawhide
+
+# Update the package list and install essential build dependencies
+RUN dnf -y update && \
+    dnf -y install \
+    wget \
+    git \
+    gcc \
+    gcc-c++ \
+    make \
+    openssl-devel \
+    dbus-devel \
+    libtool \
+    pkg-config \
+    autoconf \
+    pam-devel \
+    systemd-devel \
+    krb5-devel \
+    pcre2-devel \
+    clang \
+    gettext \
+    sqlite-devel \
+    utf8proc-devel \
+    cargo && \
+    dnf clean all
+
+# Set environment for Rust
+ENV PATH="/root/.cargo/bin:${PATH}"
+
+VOLUME /himmelblau
+
+# Change directory to the repository
+WORKDIR /himmelblau
+
+# Install the cargo-deb tool
+RUN cargo install cargo-generate-rpm
+
+# Build the project and create the RPM package
+CMD cargo clean && cargo build --release && strip -s target/release/*.so && strip -s target/release/aad-tool && strip -s target/release/himmelblaud && strip -s target/release/himmelblaud_tasks && strip -s target/release/broker && cargo generate-rpm -p src/daemon && cargo generate-rpm -p src/nss && cargo generate-rpm -p src/pam && cargo generate-rpm -p src/sshd-config
