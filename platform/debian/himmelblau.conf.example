@@ -30,6 +30,9 @@
 # Whether to enroll users in Hello authentication. If disabled, MFA may be
 # required during each login. Disabling Hello authentication is recommeneded
 # when the host is public facing (such as via SSH).
+# WARNING: Hello authentication depends on openssl3. If your system does not
+# provide openssl3, Hello MUST be disabled or authentication will fail.
+# EL8 distros (such as Rocky Linux 8) DO NOT provide openssl3.
 # enable_hello = true
 #
 # The minimum length of the Hello authentication PIN. This PIN length cannot
