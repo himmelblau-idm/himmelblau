@@ -12,6 +12,7 @@ name: Clippy
       - stable-0.4.x
       - stable-0.5.x
       - stable-0.6.x
+      - stable-0.7.x
 
 env:
   SCCACHE_GHA_ENABLED: "true"

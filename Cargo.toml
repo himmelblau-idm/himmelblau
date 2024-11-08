@@ -18,7 +18,7 @@ members = [
 resolver = "2"
 
 [workspace.package]
-version = "0.7.0"
+version = "0.8.0"
 authors = [
     "David Mulder <dmulder@suse.com>"
 ]
@@ -79,11 +79,11 @@ tracing-forest = "^0.1.6"
 rusqlite = "^0.32.0"
 hashbrown = { version = "0.15.1", features = ["serde", "inline-more"] }
 lru = "^0.12.3"
-kanidm_lib_crypto = { path = "./src/crypto", version = "0.7.0" }
+kanidm_lib_crypto = { path = "./src/crypto" }
 kanidm_utils_users = { path = "./src/users" }
 walkdir = "2"
 csv = "1.2.2"
-notify-debouncer-full = { version = "0.4" }
+notify-debouncer-full = { version = ">=0.3, <0.4" }
 utoipa = "4.2.0"
 utoipa-swagger-ui = "4.0.0"
 opentelemetry = { version = "0.20.0" }
