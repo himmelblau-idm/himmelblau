@@ -26,4 +26,4 @@ assets = [
 ]
 
 [package.metadata.generate-rpm.requires]
-sshd = "*"
+openssh-server = "*"
