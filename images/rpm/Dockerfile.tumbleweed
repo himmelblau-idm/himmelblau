@@ -9,7 +9,7 @@ RUN zypper --non-interactive refresh && zypper --non-interactive update && \
     gcc \
     gcc-c++ \
     make \
-    libopenssl-devel \
+    libopenssl-3-devel \
     dbus-1-devel \
     libtool \
     pkg-config \
