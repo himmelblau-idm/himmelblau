@@ -10,6 +10,7 @@
 
 // use async_trait::async_trait;
 use hashbrown::HashSet;
+use libc::uid_t;
 use std::collections::BTreeSet;
 use std::fmt::Display;
 use std::num::NonZeroUsize;
@@ -645,6 +646,32 @@ where
                 None
             }
         }
+    }
+
+    pub async fn get_user_ccaches(&self, account_id: Id) -> Option<(uid_t, Vec<u8>, Vec<u8>)> {
+        let token = match self.get_usertoken(account_id.clone()).await {
+            Ok(Some(token)) => token,
+            _ => {
+                error!("Failed to fetch unix user token during access token request!");
+                return None;
+            }
+        };
+
+        let mut hsm_lock = self.hsm.lock().await;
+
+        let (cloud_ccache, ad_ccache) = self
+            .client
+            .unix_user_ccaches(
+                &account_id,
+                Some(&token),
+                hsm_lock.deref_mut(),
+                &self.machine_key,
+            )
+            .await;
+
+        drop(hsm_lock);
+
+        Some((token.gidnumber, cloud_ccache, ad_ccache))
     }
 
     pub async fn get_user_prt_cookie(&self, account_id: Id) -> Option<String> {

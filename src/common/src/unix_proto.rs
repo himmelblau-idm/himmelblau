@@ -8,6 +8,7 @@
  * file, You can obtain one at https://mozilla.org/MPL/2.0/.
  */
 
+use libc::uid_t;
 use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -133,6 +134,7 @@ pub enum TaskRequest {
     HomeDirectory(HomeDirectoryInfo),
     LocalGroups(String),
     LogonScript(String, String),
+    KerberosCCache(uid_t, Vec<u8>, Vec<u8>),
 }
 
 #[derive(Serialize, Deserialize, Debug)]

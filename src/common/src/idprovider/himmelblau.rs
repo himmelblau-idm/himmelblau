@@ -209,6 +209,33 @@ impl IdProvider for HimmelblauMultiProvider {
         }
     }
 
+    async fn unix_user_ccaches(
+        &self,
+        id: &Id,
+        old_token: Option<&UserToken>,
+        tpm: &mut tpm::BoxedDynTpm,
+        machine_key: &tpm::MachineKey,
+    ) -> (Vec<u8>, Vec<u8>) {
+        let account_id = match old_token {
+            Some(token) => token.spn.clone(),
+            None => id.to_string().clone(),
+        };
+        match split_username(&account_id) {
+            Some((_sam, domain)) => {
+                let providers = self.providers.read().await;
+                match providers.get(domain) {
+                    Some(provider) => {
+                        provider
+                            .unix_user_ccaches(id, old_token, tpm, machine_key)
+                            .await
+                    }
+                    None => (vec![], vec![]),
+                }
+            }
+            None => (vec![], vec![]),
+        }
+    }
+
     async fn unix_user_prt_cookie(
         &self,
         id: &Id,
@@ -488,6 +515,39 @@ impl IdProvider for HimmelblauProvider {
                 error!("{:?}", e);
                 IdpError::BadRequest
             })
+    }
+
+    async fn unix_user_ccaches(
+        &self,
+        id: &Id,
+        old_token: Option<&UserToken>,
+        tpm: &mut tpm::BoxedDynTpm,
+        machine_key: &tpm::MachineKey,
+    ) -> (Vec<u8>, Vec<u8>) {
+        let account_id = match old_token {
+            Some(token) => token.spn.clone(),
+            None => id.to_string().clone(),
+        };
+        let prt = match self.refresh_cache.refresh_token(&account_id).await {
+            Ok(prt) => prt,
+            Err(e) => {
+                error!("Failed fetching PRT for Kerberos CCache: {:?}", e);
+                return (vec![], vec![]);
+            }
+        };
+        let cloud_ccache = self
+            .client
+            .write()
+            .await
+            .fetch_cloud_ccache(&prt, tpm, machine_key)
+            .unwrap_or(vec![]);
+        let ad_ccache = self
+            .client
+            .write()
+            .await
+            .fetch_ad_ccache(&prt, tpm, machine_key)
+            .unwrap_or(vec![]);
+        (cloud_ccache, ad_ccache)
     }
 
     async fn unix_user_prt_cookie(

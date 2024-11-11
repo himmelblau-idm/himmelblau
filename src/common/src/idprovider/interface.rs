@@ -180,6 +180,14 @@ pub trait IdProvider {
         _machine_key: &tpm::MachineKey,
     ) -> Result<UnixUserToken, IdpError>;
 
+    async fn unix_user_ccaches(
+        &self,
+        _id: &Id,
+        _old_token: Option<&UserToken>,
+        _tpm: &mut tpm::BoxedDynTpm,
+        _machine_key: &tpm::MachineKey,
+    ) -> (Vec<u8>, Vec<u8>);
+
     async fn unix_user_prt_cookie(
         &self,
         _id: &Id,
