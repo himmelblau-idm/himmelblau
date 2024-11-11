@@ -1,0 +1,9 @@
+{
+    "name": "linux_entra_sso",
+    "description": "Entra ID SSO via Microsoft Identity Broker",
+    "path": "/usr/bin/linux-entra-sso",
+    "type": "stdio",
+    "allowed_origins": [
+        "chrome-extension://jlnfnnolkbjieggibinobhkjdfbpcohn/"
+    ]
+}
