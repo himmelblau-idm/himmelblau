@@ -1,0 +1,9 @@
+{
+  "policies": {
+    "Extensions": {
+      "Install": [
+        "https://github.com/siemens/linux-entra-sso/releases/download/v1.1.0/linux_entra_sso-1.1.0.xpi"
+      ]
+    }
+  }
+}
