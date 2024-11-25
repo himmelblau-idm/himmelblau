@@ -4,12 +4,18 @@ FROM rockylinux:8
 # Set environment variables for non-interactive installs
 ENV YUM_VERSION=8
 
-# Install epel-release (Extra Packages for Enterprise Linux) for utf8proc-devel
-#RUN yum update -y && yum install -y epel-release
+# Install utf8proc-devel, which has invalid characters in the filename,
+# breaking yum search.
+RUN yum update -y && dnf install -y 'dnf-command(config-manager)' wget \
+    && dnf config-manager --set-enabled powertools \
+    && yum update -y \
+    && VERSION_ID=$(grep "^VERSION_ID=" /etc/os-release | cut -d '"' -f 2) \
+    && URL="http://downloads.rockylinux.org/pub/rocky/${VERSION_ID}/PowerTools/x86_64/os/Packages/u/" \
+    && wget -r -l1 -nd -np -A "utf8proc-devel-*.x86_64.rpm" "$URL" \
+    && yum install -y ./utf8proc-devel-*.x86_64.rpm
 
 # Install essential build dependencies
 RUN yum update -y && yum install -y \
-    wget \
     git \
     gcc \
     gcc-c++ \
@@ -28,16 +34,6 @@ RUN yum update -y && yum install -y \
     gettext \
     sqlite-devel \
     && yum clean all
-
-# Fetch the utf8proc sources, since EL8 doesn't package this
-RUN VERSION=2.6.1; \
-    echo "Installing utf8proc version: $VERSION"; \
-    wget https://github.com/JuliaStrings/utf8proc/archive/refs/tags/v$VERSION.tar.gz -O utf8proc-$VERSION.tar.gz; \
-    mkdir -p utf8proc-rocky8 && \
-    tar -xvf utf8proc-$VERSION.tar.gz -C utf8proc-rocky8 --strip-components=1 && \
-    cd utf8proc-rocky8 && \
-    make && \
-    make install
 
 # Install Rust (latest stable)
 RUN curl https://sh.rustup.rs -sSf | sh -s -- -y
