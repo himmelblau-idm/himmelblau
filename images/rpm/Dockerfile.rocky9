@@ -4,12 +4,12 @@ FROM rockylinux:9
 # Set environment variables for non-interactive installs
 ENV YUM_VERSION=8
 
-# Install epel-release (Extra Packages for Enterprise Linux) for utf8proc-devel
-#RUN yum update -y && yum install -y epel-release
+# Enable CRB, for utf8proc-devel
+RUN yum update -y && dnf install -y 'dnf-command(config-manager)' \
+    && dnf config-manager --set-enabled crb
 
 # Install essential build dependencies
 RUN yum update -y && yum install -y \
-    wget \
     git \
     gcc \
     gcc-c++ \
@@ -27,23 +27,8 @@ RUN yum update -y && yum install -y \
     clang \
     gettext \
     sqlite-devel \
-    utf8proc \
+    utf8proc-devel \
     && yum clean all
-
-# Fetch the utf8proc sources, since EL9 doesn't package the headers
-RUN if ! rpm -q utf8proc; then \
-        echo "utf8proc is not installed."; \
-        exit 1; \
-    else \
-        VERSION=$(rpm -q --queryformat '%{VERSION}' utf8proc); \
-        echo "Installed utf8proc version: $VERSION"; \
-        wget https://github.com/JuliaStrings/utf8proc/archive/refs/tags/v$VERSION.tar.gz -O utf8proc-$VERSION.tar.gz; \
-    fi && \
-    mkdir -p utf8proc-rocky9 && \
-    tar -xvf utf8proc-$VERSION.tar.gz -C utf8proc-rocky9 --strip-components=1 && \
-    cd utf8proc-rocky9 && \
-    make && \
-    make install
 
 # Install Rust (latest stable)
 RUN curl https://sh.rustup.rs -sSf | sh -s -- -y
@@ -60,4 +45,4 @@ WORKDIR /himmelblau
 RUN cargo install cargo-generate-rpm
 
 # Build the project and create the .deb package
-CMD cargo clean && cargo build --release && strip -s target/release/*.so && strip -s target/release/aad-tool && strip -s target/release/himmelblaud && strip -s target/release/himmelblaud_tasks && strip -s target/release/broker && cargo generate-rpm -p src/daemon && cargo generate-rpm -p src/nss && cargo generate-rpm -p src/pam && cargo generate-rpm -p src/sshd-config
+CMD cargo clean && cargo build --release && strip -s target/release/*.so && strip -s target/release/aad-tool && strip -s target/release/himmelblaud && strip -s target/release/himmelblaud_tasks && strip -s target/release/broker && cargo generate-rpm -p src/daemon && cargo generate-rpm -p src/nss && cargo generate-rpm -p src/pam && cargo generate-rpm -p src/sshd-config && cargo generate-rpm -p src/sso

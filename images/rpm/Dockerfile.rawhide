@@ -1,30 +1,29 @@
-# Use the official openSUSE Tumbleweed image as the base
-FROM opensuse/tumbleweed
+# Use the official Fedora Rawhide image as the base
+FROM fedora:rawhide
 
 # Update the package list and install essential build dependencies
-RUN zypper --non-interactive refresh && zypper --non-interactive update && \
-    zypper --non-interactive install --no-recommends \
+RUN dnf -y update && \
+    dnf -y install \
     wget \
     git \
     gcc \
     gcc-c++ \
     make \
-    libopenssl-3-devel \
-    dbus-1-devel \
+    openssl-devel \
+    dbus-devel \
     libtool \
     pkg-config \
     autoconf \
     pam-devel \
     systemd-devel \
-    libcap-progs \
     krb5-devel \
     pcre2-devel \
     clang \
-    gettext-tools \
-    sqlite3-devel \
+    gettext \
+    sqlite-devel \
     utf8proc-devel \
-    cargo \
-    && zypper clean --all
+    cargo && \
+    dnf clean all
 
 # Set environment for Rust
 ENV PATH="/root/.cargo/bin:${PATH}"

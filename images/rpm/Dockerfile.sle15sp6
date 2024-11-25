@@ -1,5 +1,5 @@
-# Use the official openSUSE Tumbleweed image as the base
-FROM opensuse/tumbleweed
+# Use the official openSUSE Leap 15.6 image as the base
+FROM opensuse/leap:15.6
 
 # Update the package list and install essential build dependencies
 RUN zypper --non-interactive refresh && zypper --non-interactive update && \
