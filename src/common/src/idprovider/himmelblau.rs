@@ -22,7 +22,6 @@ use super::interface::{
 use crate::config::split_username;
 use crate::config::HimmelblauConfig;
 use crate::config::IdAttr;
-use crate::constants::DEFAULT_GRAPH;
 use crate::db::KeyStoreTxn;
 use crate::idprovider::interface::tpm;
 use crate::unix_proto::PamAuthRequest;
@@ -112,12 +111,13 @@ impl HimmelblauMultiProvider {
             let mut idmap_lk = idmap.write().await;
             let authority_host = cfg.get_authority_host(&domain);
             let tenant_id = cfg.get_tenant_id(&domain);
+            let graph_url = cfg.get_graph_url(&domain);
             let graph = match Graph::new(
                 &cfg.get_odc_provider(&domain),
                 &domain,
                 Some(&authority_host),
                 tenant_id.as_deref(),
-                Some(DEFAULT_GRAPH),
+                graph_url.as_deref(),
             )
             .await
             {
@@ -1406,6 +1406,12 @@ impl HimmelblauProvider {
                 debug!(
                     "Setting domain {} config authority_host to {}",
                     self.domain, &self.authority_host
+                );
+                let graph_url = self.graph.graph_url();
+                config.set(&self.domain, "graph_url", &graph_url);
+                debug!(
+                    "Setting domain {} config graph_url to {}",
+                    self.domain, &graph_url
                 );
                 if let Err(e) = config.write_server_config() {
                     return Err(MsalError::GeneralFailure(format!(

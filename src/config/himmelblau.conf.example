@@ -91,7 +91,7 @@
 # shell = /bin/bash ; default shell for the user
 # idmap_range = 5000000-5999999
 # connection_timeout = 2
-# cache_timeout = 15
+# cache_timeout = 300
 # use_etc_skel = false
 # selinux = true
 
