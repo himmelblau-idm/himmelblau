@@ -4,15 +4,10 @@ FROM rockylinux:8
 # Set environment variables for non-interactive installs
 ENV YUM_VERSION=8
 
-# Install utf8proc-devel, which has invalid characters in the filename,
-# breaking yum search.
-RUN yum update -y && dnf install -y 'dnf-command(config-manager)' wget \
+# Enable powertools and subversion-devel (module which owns utf8proc-devel)
+RUN yum update -y && dnf install -y 'dnf-command(config-manager)' \
     && dnf config-manager --set-enabled powertools \
-    && yum update -y \
-    && VERSION_ID=$(grep "^VERSION_ID=" /etc/os-release | cut -d '"' -f 2) \
-    && URL="http://downloads.rockylinux.org/pub/rocky/${VERSION_ID}/PowerTools/x86_64/os/Packages/u/" \
-    && wget -r -l1 -nd -np -A "utf8proc-devel-*.x86_64.rpm" "$URL" \
-    && yum install -y ./utf8proc-devel-*.x86_64.rpm
+    && dnf module enable -y subversion-devel
 
 # Install essential build dependencies
 RUN yum update -y && yum install -y \
@@ -33,6 +28,7 @@ RUN yum update -y && yum install -y \
     clang \
     gettext \
     sqlite-devel \
+    utf8proc-devel \
     && yum clean all
 
 # Install Rust (latest stable)
