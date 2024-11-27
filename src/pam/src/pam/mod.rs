@@ -81,6 +81,23 @@ use tracing_subscriber::prelude::*;
 use std::thread;
 use std::time::Duration;
 
+use authenticator::{
+    authenticatorservice::{AuthenticatorService, SignArgs},
+    ctap2::server::{
+        AuthenticationExtensionsClientInputs, PublicKeyCredentialDescriptor,
+        UserVerificationRequirement,
+    },
+    statecallback::StateCallback,
+    Pin, StatusPinUv, StatusUpdate,
+};
+use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+use base64::Engine;
+use serde_json::{json, to_string as json_to_string};
+use sha2::{Digest, Sha256};
+use std::sync::mpsc::{channel, RecvError};
+use std::sync::{Arc, Mutex};
+use tokio::runtime::Runtime;
+
 pub fn get_cfg() -> Result<KanidmUnixdConfig, PamResultCode> {
     KanidmUnixdConfig::new()
         .read_options_from_optional_config(DEFAULT_CONFIG_PATH)
@@ -130,6 +147,270 @@ impl TryFrom<&Vec<&CStr>> for Options {
             mfa_poll_prompt: gopts.contains("mfa_poll_prompt"),
         })
     }
+}
+
+#[derive(Clone)]
+enum FailReason {
+    None,
+    PinRequired,
+    ErrorMsg(String),
+}
+
+async fn fido_auth(
+    conv: &PamConv,
+    fido_challenge: String,
+    fido_allow_list: Vec<String>,
+) -> Result<String, PamResultCode> {
+    // Initialize AuthenticatorService
+    let mut manager = AuthenticatorService::new().map_err(|e| {
+        error!("{:?}", e);
+        PamResultCode::PAM_CRED_INSUFFICIENT
+    })?;
+    manager.add_u2f_usb_hid_platform_transports();
+
+    let challenge_str = json_to_string(&json!({
+        "type": "webauthn.get",
+        "challenge": URL_SAFE_NO_PAD.encode(fido_challenge.clone()),
+        "origin": "https://login.microsoft.com"
+    }))
+    .map_err(|e| {
+        error!("{:?}", e);
+        PamResultCode::PAM_CRED_INSUFFICIENT
+    })?;
+
+    let shared_flag = Arc::new(Mutex::new(FailReason::None));
+    let shared_pin: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
+
+    // Create a channel for status updates
+    macro_rules! fido_attempt {
+        () => {{
+            let (status_tx, status_rx) = channel::<StatusUpdate>();
+            let shared_flag = shared_flag.clone();
+            let shared_pin = shared_pin.clone();
+            thread::spawn(move || {
+                // Reset the flag
+                if let Ok(mut flag) = shared_flag.lock() {
+                    *flag = FailReason::None;
+                }
+                loop {
+                    match status_rx.recv() {
+                        Ok(StatusUpdate::InteractiveManagement(..)) => {
+                            if let Ok(mut flag) = shared_flag.lock() {
+                                *flag = FailReason::ErrorMsg(
+                                    "InteractiveManagement request impossible".to_string(),
+                                );
+                            }
+                            break;
+                        }
+                        Ok(StatusUpdate::SelectDeviceNotice) => {
+                            if let Ok(mut flag) = shared_flag.lock() {
+                                *flag = FailReason::ErrorMsg(
+                                    "Please only connect a single Fido device.".to_string(),
+                                );
+                            }
+                            break;
+                        }
+                        Ok(StatusUpdate::PresenceRequired) => {
+                            continue;
+                        }
+                        Ok(StatusUpdate::PinUvError(StatusPinUv::PinRequired(sender))) => {
+                            if let Ok(guard) = shared_pin.lock() {
+                                if let Some(raw_pin) = &*guard {
+                                    if let Err(e) = sender.send(Pin::new(&raw_pin)) {
+                                        error!("{:?}", e);
+                                        break;
+                                    }
+                                } else {
+                                    if let Ok(mut flag) = shared_flag.lock() {
+                                        *flag = FailReason::PinRequired;
+                                    }
+                                    break;
+                                }
+                            } else {
+                                if let Ok(mut flag) = shared_flag.lock() {
+                                    *flag = FailReason::PinRequired;
+                                }
+                                break;
+                            }
+                        }
+                        Ok(StatusUpdate::PinUvError(StatusPinUv::InvalidPin(
+                            _sender,
+                            _attempts,
+                        ))) => {
+                            if let Ok(mut flag) = shared_flag.lock() {
+                                *flag = FailReason::PinRequired;
+                            }
+                            break;
+                        }
+                        Ok(StatusUpdate::PinUvError(StatusPinUv::PinAuthBlocked)) => {
+                            if let Ok(mut flag) = shared_flag.lock() {
+                                *flag = FailReason::ErrorMsg("Too many failed attempts in one row. Your device has been temporarily blocked. Please unplug it and plug in again.".to_string());
+                            }
+                            break;
+                        }
+                        Ok(StatusUpdate::PinUvError(StatusPinUv::PinBlocked)) => {
+                            if let Ok(mut flag) = shared_flag.lock() {
+                                *flag = FailReason::ErrorMsg("Too many failed attempts. Your device has been blocked. Reset it.".to_string());
+                            }
+                            break;
+                        }
+                        Ok(StatusUpdate::PinUvError(StatusPinUv::InvalidUv(_attempts))) => {
+                            if let Ok(mut flag) = shared_flag.lock() {
+                                *flag = FailReason::ErrorMsg("Wrong UV! Try again.".to_string());
+                            }
+                            break;
+                        }
+                        Ok(StatusUpdate::PinUvError(StatusPinUv::UvBlocked)) => {
+                            if let Ok(mut flag) = shared_flag.lock() {
+                                *flag = FailReason::ErrorMsg(
+                                    "Too many failed UV-attempts.".to_string(),
+                                );
+                            }
+                            break;
+                        }
+                        Ok(StatusUpdate::PinUvError(e)) => {
+                            if let Ok(mut flag) = shared_flag.lock() {
+                                *flag = FailReason::ErrorMsg(format!("Unexpected error: {:?}", e));
+                            }
+                            break;
+                        }
+                        Ok(StatusUpdate::SelectResultNotice(_, _)) => {
+                            if let Ok(mut flag) = shared_flag.lock() {
+                                *flag = FailReason::ErrorMsg(
+                                    "Unexpected select device notice".to_string(),
+                                );
+                            }
+                            break;
+                        }
+                        Err(RecvError) => {
+                            break;
+                        }
+                    }
+                }
+            });
+            status_tx
+        }}
+    }
+    let mut status_tx = fido_attempt!();
+
+    let allow_list: Vec<PublicKeyCredentialDescriptor> = fido_allow_list
+        .into_iter()
+        .filter_map(|id| match URL_SAFE_NO_PAD.decode(id) {
+            Ok(decoded_id) => Some(PublicKeyCredentialDescriptor {
+                id: decoded_id,
+                transports: vec![],
+            }),
+            Err(e) => {
+                error!("Failed decoding allow list id: {:?}", e);
+                None
+            }
+        })
+        .collect();
+
+    // Prepare SignArgs
+    let chall_bytes = Sha256::digest(challenge_str.clone()).into();
+    let ctap_args = SignArgs {
+        client_data_hash: chall_bytes,
+        origin: "https://login.microsoft.com".to_string(),
+        relying_party_id: "login.microsoft.com".to_string(),
+        allow_list,
+        user_verification_req: UserVerificationRequirement::Preferred,
+        user_presence_req: true,
+        extensions: AuthenticationExtensionsClientInputs::default(),
+        pin: None,
+        use_ctap1_fallback: false,
+    };
+
+    let mut sign_rx;
+    loop {
+        // Perform authentication
+        let (sign_tx, inner_sign_rx) = channel();
+        sign_rx = inner_sign_rx;
+        let callback = StateCallback::new(Box::new(move |rv| {
+            let _ = sign_tx.send(rv);
+        }));
+        if let Err(e) = manager.sign(25000, ctap_args.clone(), status_tx.clone(), callback) {
+            let shared_flag_value = match shared_flag.lock() {
+                Ok(shared_flag) => {
+                    let cloned_value = (*shared_flag).clone();
+                    drop(shared_flag);
+                    cloned_value
+                }
+                Err(_) => return Err(PamResultCode::PAM_CRED_INSUFFICIENT),
+            };
+            match shared_flag_value {
+                FailReason::ErrorMsg(msg) => {
+                    error!("Couldn't sign: {:?}", e);
+                    if let Err(e) = conv.send(PAM_TEXT_INFO, &msg) {
+                        error!("{:?}", e);
+                    }
+                    return Err(PamResultCode::PAM_CRED_INSUFFICIENT);
+                }
+                FailReason::PinRequired => {
+                    let raw_pin = match conv.send(PAM_PROMPT_ECHO_OFF, "Enter Fido PIN: ") {
+                        Ok(Some(raw_pin)) => raw_pin,
+                        Err(e) => {
+                            error!("{:?}", e);
+                            return Err(PamResultCode::PAM_CRED_INSUFFICIENT);
+                        }
+                        _ => return Err(PamResultCode::PAM_CRED_INSUFFICIENT),
+                    };
+                    if let Ok(mut pin) = shared_pin.lock() {
+                        *pin = Some(raw_pin);
+                    } else {
+                        error!("Couldn't set the Fido pin");
+                        return Err(PamResultCode::PAM_CRED_INSUFFICIENT);
+                    }
+                    status_tx = fido_attempt!();
+                }
+                FailReason::None => {
+                    error!("Couldn't sign: {:?}", e);
+                    return Err(PamResultCode::PAM_CRED_INSUFFICIENT);
+                }
+            }
+        } else {
+            break;
+        }
+    }
+
+    let assertion_result = sign_rx
+        .recv()
+        .map_err(|e| {
+            error!("{:?}", e);
+            PamResultCode::PAM_CRED_INSUFFICIENT
+        })?
+        .map_err(|e| {
+            error!("{:?}", e);
+            PamResultCode::PAM_CRED_INSUFFICIENT
+        })?;
+
+    let credential_id = assertion_result
+        .assertion
+        .credentials
+        .as_ref()
+        .map(|cred| cred.id.clone())
+        .unwrap_or_default();
+    let auth_data = assertion_result.assertion.auth_data;
+    let signature = assertion_result.assertion.signature;
+    let user_handle = assertion_result
+        .assertion
+        .user
+        .as_ref()
+        .map(|user| user.id.clone())
+        .unwrap_or_default();
+    let json_response = json!({
+        "id": URL_SAFE_NO_PAD.encode(credential_id),
+        "clientDataJSON": URL_SAFE_NO_PAD.encode(challenge_str),
+        "authenticatorData": URL_SAFE_NO_PAD.encode(auth_data.to_vec()),
+        "signature": URL_SAFE_NO_PAD.encode(signature),
+        "userHandle": URL_SAFE_NO_PAD.encode(user_handle),
+    });
+
+    // Convert the JSON response to a string
+    json_to_string(&json_response).map_err(|e| {
+        error!("{:?}", e);
+        PamResultCode::PAM_CRED_INSUFFICIENT
+    })
 }
 
 pub struct PamKanidm;
@@ -259,6 +540,24 @@ macro_rules! match_sm_auth_client_response {
 
                     // Now setup the request for the next loop.
                     $req = ClientRequest::PamAuthenticateStep(PamAuthRequest::Pin { cred });
+                    continue;
+                }
+                ClientResponse::PamAuthenticateStepResponse(PamAuthResponse::Fido {
+                    fido_challenge,
+                    fido_allow_list,
+                }) => {
+                    let rt = Runtime::new().unwrap();
+
+                    // Block on the async function
+                    let result = match rt.block_on(async {
+                        fido_auth($conv, fido_challenge, fido_allow_list).await
+                    }) {
+                        Ok(assertion) => assertion,
+                        Err(e) => return e,
+                    };
+
+                    // Now setup the request for the next loop.
+                    $req = ClientRequest::PamAuthenticateStep(PamAuthRequest::Fido { assertion: result });
                     continue;
                 }
                 _ => {

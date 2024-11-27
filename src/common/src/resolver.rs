@@ -1187,6 +1187,10 @@ where
                         // AuthCredHandler::None is invalid with SetupPin
                         return Err(());
                     }
+                    (AuthCredHandler::None, PamAuthRequest::Fido { .. }) => {
+                        // AuthCredHandler::None is invalid with Fido
+                        return Err(());
+                    }
                 }
             }
             (&mut AuthSession::InProgress { token: None, .. }, _) => {
@@ -1267,6 +1271,10 @@ where
                 auth_session
             }
             (auth_session, PamAuthResponse::Pin) => {
+                // Can continue!
+                auth_session
+            }
+            (auth_session, PamAuthResponse::Fido { .. }) => {
                 // Can continue!
                 auth_session
             }
