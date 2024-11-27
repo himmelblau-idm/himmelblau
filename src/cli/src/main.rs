@@ -179,7 +179,8 @@ async fn main() -> ExitCode {
             };
             let pin_min_len = cfg.get_hello_pin_min_length();
 
-            let mut req = ClientRequest::PamAuthenticateInit(account_id.clone());
+            let mut req =
+                ClientRequest::PamAuthenticateInit(account_id.clone(), "aad-tool".to_string());
             loop {
                 match_sm_auth_client_response!(daemon_client.call_and_wait(&req, timeout), req, pin_min_len,
                     ClientResponse::PamAuthenticateStepResponse(PamAuthResponse::Password) => {

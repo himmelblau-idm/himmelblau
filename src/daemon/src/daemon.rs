@@ -291,7 +291,7 @@ async fn handle_client(
                         ClientResponse::NssGroup(None)
                     })
             }
-            ClientRequest::PamAuthenticateInit(account_id) => {
+            ClientRequest::PamAuthenticateInit(account_id, service) => {
                 debug!("pam authenticate init");
 
                 match &pam_auth_session_state {
@@ -306,6 +306,7 @@ async fn handle_client(
                         match cachelayer
                             .pam_account_authenticate_init(
                                 account_id.as_str(),
+                                service.as_str(),
                                 shutdown_tx.subscribe(),
                             )
                             .await

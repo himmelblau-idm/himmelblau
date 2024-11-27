@@ -88,6 +88,21 @@ use tracing_subscriber::prelude::*;
 use std::thread;
 use std::time::Duration;
 
+use authenticator::{
+    authenticatorservice::{AuthenticatorService, SignArgs},
+    ctap2::server::{
+        AuthenticationExtensionsClientInputs, PublicKeyCredentialDescriptor,
+        UserVerificationRequirement,
+    },
+    statecallback::StateCallback,
+    Pin, StatusPinUv, StatusUpdate,
+};
+use base64::engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD};
+use base64::Engine;
+use serde_json::{json, to_string as json_to_string};
+use sha2::{Digest, Sha256};
+use std::sync::mpsc::{channel, RecvError, Sender};
+use std::sync::{Arc, Mutex};
 use tokio::runtime::Runtime;
 
 pub fn get_cfg() -> Result<HimmelblauConfig, PamResultCode> {
@@ -139,6 +154,218 @@ impl TryFrom<&Vec<&CStr>> for Options {
     }
 }
 
+async fn fido_status_check(conv: Arc<Mutex<PamConv>>) -> Sender<StatusUpdate> {
+    let (status_tx, status_rx) = channel::<StatusUpdate>();
+    thread::spawn(move || loop {
+        match status_rx.recv() {
+            Ok(StatusUpdate::InteractiveManagement(..)) => {
+                error!("Fido STATUS: InteractiveManagement: This can't happen when doing non-interactive usage");
+                break;
+            }
+            Ok(StatusUpdate::SelectDeviceNotice) => {
+                let conv = conv.lock().unwrap();
+                conv.send(
+                    PAM_TEXT_INFO,
+                    "Please select a device by touching one of them.",
+                )
+                .unwrap();
+            }
+            Ok(StatusUpdate::PresenceRequired) => {
+                let conv = conv.lock().unwrap();
+                conv.send(PAM_TEXT_INFO, "Waiting for user presence")
+                    .unwrap();
+            }
+            Ok(StatusUpdate::PinUvError(StatusPinUv::PinRequired(sender))) => {
+                let conv = conv.lock().unwrap();
+                match conv.send(PAM_PROMPT_ECHO_OFF, "Fido PIN: ") {
+                    Ok(Some(pin)) => {
+                        sender.send(Pin::new(&pin)).expect("Failed to send PIN");
+                        continue;
+                    }
+                    _ => {
+                        break;
+                    }
+                }
+            }
+            Ok(StatusUpdate::PinUvError(StatusPinUv::InvalidPin(sender, attempts))) => {
+                let conv = conv.lock().unwrap();
+                let msg = format!(
+                    "Wrong PIN! {}",
+                    attempts.map_or("Try again.".to_string(), |a| format!(
+                        "You have {a} attempts left."
+                    ))
+                );
+                conv.send(PAM_ERROR_MSG, &msg).unwrap();
+                match conv.send(PAM_PROMPT_ECHO_OFF, "Fido PIN: ") {
+                    Ok(Some(pin)) => {
+                        sender.send(Pin::new(&pin)).expect("Failed to send PIN");
+                        continue;
+                    }
+                    _ => {
+                        break;
+                    }
+                }
+            }
+            Ok(StatusUpdate::PinUvError(StatusPinUv::PinAuthBlocked)) => {
+                let conv = conv.lock().unwrap();
+                let msg = "Too many failed attempts in one row. Your device has been temporarily blocked. Please unplug it and plug in again.";
+                conv.send(PAM_ERROR_MSG, msg).unwrap();
+                break;
+            }
+            Ok(StatusUpdate::PinUvError(StatusPinUv::PinBlocked)) => {
+                let conv = conv.lock().unwrap();
+                let msg = "Too many failed attempts. Your device has been blocked. Reset it.";
+                conv.send(PAM_ERROR_MSG, msg).unwrap();
+                break;
+            }
+            Ok(StatusUpdate::PinUvError(StatusPinUv::InvalidUv(attempts))) => {
+                let msg = format!(
+                    "Wrong UV! {}",
+                    attempts.map_or("Try again.".to_string(), |a| format!(
+                        "You have {a} attempts left."
+                    ))
+                );
+                let conv = conv.lock().unwrap();
+                conv.send(PAM_ERROR_MSG, &msg).unwrap();
+                continue;
+            }
+            Ok(StatusUpdate::PinUvError(StatusPinUv::UvBlocked)) => {
+                let conv = conv.lock().unwrap();
+                conv.send(PAM_ERROR_MSG, "Too many failed UV-attempts.")
+                    .unwrap();
+                break;
+            }
+            Ok(StatusUpdate::PinUvError(e)) => {
+                let conv = conv.lock().unwrap();
+                let msg = format!("Unexpected error: {:?}", e);
+                conv.send(PAM_ERROR_MSG, &msg).unwrap();
+                break;
+            }
+            Ok(StatusUpdate::SelectResultNotice(_, _)) => {
+                let conv = conv.lock().unwrap();
+                conv.send(PAM_ERROR_MSG, "Unexpected select device notice")
+                    .unwrap();
+                break;
+            }
+            Err(RecvError) => {
+                debug!("Fido STATUS: end");
+                return;
+            }
+        }
+    });
+    status_tx
+}
+
+fn fido_auth(
+    conv: Arc<Mutex<PamConv>>,
+    fido_challenge: String,
+    fido_allow_list: Vec<String>,
+) -> Result<String, PamResultCode> {
+    // Initialize AuthenticatorService
+    let mut manager = AuthenticatorService::new().map_err(|e| {
+        error!("{:?}", e);
+        PamResultCode::PAM_CRED_INSUFFICIENT
+    })?;
+    manager.add_u2f_usb_hid_platform_transports();
+
+    let challenge_str = json_to_string(&json!({
+        "type": "webauthn.get",
+        "challenge": URL_SAFE_NO_PAD.encode(fido_challenge),
+        "origin": "https://login.microsoft.com"
+    }))
+    .map_err(|e| {
+        error!("{:?}", e);
+        PamResultCode::PAM_CRED_INSUFFICIENT
+    })?;
+
+    // Create a channel for status updates
+    let rt = Runtime::new().map_err(|e| {
+        error!("{:?}", e);
+        PamResultCode::PAM_AUTH_ERR
+    })?;
+    let status_tx = rt.block_on(async { fido_status_check(conv).await });
+
+    let allow_list: Vec<PublicKeyCredentialDescriptor> = fido_allow_list
+        .into_iter()
+        .filter_map(|id| match STANDARD.decode(id) {
+            Ok(decoded_id) => Some(PublicKeyCredentialDescriptor {
+                id: decoded_id,
+                transports: vec![],
+            }),
+            Err(e) => {
+                error!("Failed decoding allow list id: {:?}", e);
+                None
+            }
+        })
+        .collect();
+
+    // Prepare SignArgs
+    let chall_bytes = Sha256::digest(challenge_str.clone()).into();
+    let ctap_args = SignArgs {
+        client_data_hash: chall_bytes,
+        origin: "https://login.microsoft.com".to_string(),
+        relying_party_id: "login.microsoft.com".to_string(),
+        allow_list,
+        user_verification_req: UserVerificationRequirement::Preferred,
+        user_presence_req: true,
+        extensions: AuthenticationExtensionsClientInputs::default(),
+        pin: None,
+        use_ctap1_fallback: false,
+    };
+
+    // Perform authentication
+    let (sign_tx, sign_rx) = channel();
+    let callback = StateCallback::new(Box::new(move |rv| {
+        sign_tx.send(rv).unwrap();
+    }));
+
+    manager
+        .sign(25000, ctap_args, status_tx.clone(), callback)
+        .map_err(|e| {
+            error!("{:?}", e);
+            PamResultCode::PAM_CRED_INSUFFICIENT
+        })?;
+
+    let assertion_result = sign_rx
+        .recv()
+        .map_err(|e| {
+            error!("{:?}", e);
+            PamResultCode::PAM_CRED_INSUFFICIENT
+        })?
+        .map_err(|e| {
+            error!("{:?}", e);
+            PamResultCode::PAM_CRED_INSUFFICIENT
+        })?;
+
+    let credential_id = assertion_result
+        .assertion
+        .credentials
+        .as_ref()
+        .map(|cred| cred.id.clone())
+        .unwrap_or_default();
+    let auth_data = assertion_result.assertion.auth_data;
+    let signature = assertion_result.assertion.signature;
+    let user_handle = assertion_result
+        .assertion
+        .user
+        .as_ref()
+        .map(|user| user.id.clone())
+        .unwrap_or_default();
+    let json_response = json!({
+        "id": URL_SAFE_NO_PAD.encode(credential_id),
+        "clientDataJSON": URL_SAFE_NO_PAD.encode(challenge_str),
+        "authenticatorData": URL_SAFE_NO_PAD.encode(auth_data.to_vec()),
+        "signature": URL_SAFE_NO_PAD.encode(signature),
+        "userHandle": URL_SAFE_NO_PAD.encode(user_handle),
+    });
+
+    // Convert the JSON response to a string
+    json_to_string(&json_response).map_err(|e| {
+        error!("{:?}", e);
+        PamResultCode::PAM_CRED_INSUFFICIENT
+    })
+}
+
 pub struct PamKanidm;
 
 pam_hooks!(PamKanidm);
@@ -164,7 +391,8 @@ macro_rules! match_sm_auth_client_response {
                 ClientResponse::PamAuthenticateStepResponse(PamAuthResponse::SetupPin {
                     msg,
                 }) => {
-                    match $conv.send(PAM_TEXT_INFO, &msg) {
+                    let conv = $conv.lock().unwrap();
+                    match conv.send(PAM_TEXT_INFO, &msg) {
                         Ok(_) => {}
                         Err(err) => {
                             if $opts.debug {
@@ -177,11 +405,11 @@ macro_rules! match_sm_auth_client_response {
                     let mut pin;
                     let mut confirm;
                     loop {
-                        pin = match $conv.send(PAM_PROMPT_ECHO_OFF, "New PIN: ") {
+                        pin = match conv.send(PAM_PROMPT_ECHO_OFF, "New PIN: ") {
                             Ok(password) => match password {
                                 Some(cred) => {
                                     if cred.len() < $cfg.get_hello_pin_min_length() {
-                                        match $conv.send(PAM_TEXT_INFO, &format!("Chosen pin is too short! {} chars required.", $cfg.get_hello_pin_min_length())) {
+                                        match conv.send(PAM_TEXT_INFO, &format!("Chosen pin is too short! {} chars required.", $cfg.get_hello_pin_min_length())) {
                                             Ok(_) => {}
                                             Err(err) => {
                                                 if $opts.debug {
@@ -205,7 +433,7 @@ macro_rules! match_sm_auth_client_response {
                             }
                         };
 
-                        confirm = match $conv.send(PAM_PROMPT_ECHO_OFF, "Confirm PIN: ") {
+                        confirm = match conv.send(PAM_PROMPT_ECHO_OFF, "Confirm PIN: ") {
                             Ok(password) => match password {
                                 Some(cred) => cred,
                                 None => {
@@ -222,7 +450,7 @@ macro_rules! match_sm_auth_client_response {
                         if pin == confirm {
                             break;
                         } else {
-                            match $conv.send(PAM_TEXT_INFO, "Inputs did not match. Try again.") {
+                            match conv.send(PAM_TEXT_INFO, "Inputs did not match. Try again.") {
                                 Ok(_) => {}
                                 Err(err) => {
                                     if $opts.debug {
@@ -249,7 +477,8 @@ macro_rules! match_sm_auth_client_response {
                     let cred = if let Some(cred) = consume_authtok {
                         cred
                     } else {
-                        match $conv.send(PAM_PROMPT_ECHO_OFF, "PIN: ") {
+                        let conv = $conv.lock().unwrap();
+                        match conv.send(PAM_PROMPT_ECHO_OFF, "PIN: ") {
                             Ok(password) => match password {
                                 Some(cred) => cred,
                                 None => {
@@ -266,6 +495,19 @@ macro_rules! match_sm_auth_client_response {
 
                     // Now setup the request for the next loop.
                     $req = ClientRequest::PamAuthenticateStep(PamAuthRequest::Pin { cred });
+                    continue;
+                }
+                ClientResponse::PamAuthenticateStepResponse(PamAuthResponse::Fido {
+                    fido_challenge,
+                    fido_allow_list,
+                }) => {
+                    let result = match fido_auth($conv.clone(), fido_challenge, fido_allow_list) {
+                        Ok(assertion) => assertion,
+                        Err(e) => return e,
+                    };
+
+                    // Now setup the request for the next loop.
+                    $req = ClientRequest::PamAuthenticateStep(PamAuthRequest::Fido { assertion: result });
                     continue;
                 }
                 _ => {
@@ -366,6 +608,11 @@ impl PamHooks for PamKanidm {
 
         debug!(?args, ?opts, ?tty, ?rhost, "sm_authenticate");
 
+        let service = match tty {
+            Ok(Some(service)) => service,
+            _ => "unknown".to_string(),
+        };
+
         let account_id = match pamh.get_user(None) {
             Ok(aid) => aid,
             Err(e) => {
@@ -409,14 +656,14 @@ impl PamHooks for PamKanidm {
         };
 
         let conv = match pamh.get_item::<PamConv>() {
-            Ok(conv) => conv,
+            Ok(conv) => Arc::new(Mutex::new(conv.clone())),
             Err(err) => {
                 error!(?err, "pam_conv");
                 return err;
             }
         };
 
-        let mut req = ClientRequest::PamAuthenticateInit(account_id);
+        let mut req = ClientRequest::PamAuthenticateInit(account_id, service);
 
         loop {
             match_sm_auth_client_response!(daemon_client.call_and_wait(&req, timeout), opts, conv, req, authtok, cfg,
@@ -429,7 +676,8 @@ impl PamHooks for PamKanidm {
                     let cred = if let Some(cred) = consume_authtok {
                         cred
                     } else {
-                        match conv.send(PAM_PROMPT_ECHO_OFF, "Password: ") {
+                        let lconv = conv.lock().unwrap();
+                        match lconv.send(PAM_PROMPT_ECHO_OFF, "Password: ") {
                             Ok(password) => match password {
                                 Some(cred) => cred,
                                 None => {
@@ -452,7 +700,8 @@ impl PamHooks for PamKanidm {
                 ClientResponse::PamAuthenticateStepResponse(PamAuthResponse::MFACode {
                     msg,
                 }) => {
-                    match conv.send(PAM_TEXT_INFO, &msg) {
+                    let lconv = conv.lock().unwrap();
+                    match lconv.send(PAM_TEXT_INFO, &msg) {
                         Ok(_) => {}
                         Err(err) => {
                             if opts.debug {
@@ -461,7 +710,7 @@ impl PamHooks for PamKanidm {
                             return err;
                         }
                     }
-                    let cred = match conv.send(PAM_PROMPT_ECHO_OFF, "Code: ") {
+                    let cred = match lconv.send(PAM_PROMPT_ECHO_OFF, "Code: ") {
                         Ok(password) => match password {
                             Some(cred) => cred,
                             None => {
@@ -486,7 +735,8 @@ impl PamHooks for PamKanidm {
                     msg,
                     polling_interval,
                 }) => {
-                    match conv.send(PAM_TEXT_INFO, &msg) {
+                    let lconv = conv.lock().unwrap();
+                    match lconv.send(PAM_TEXT_INFO, &msg) {
                         Ok(_) => {}
                         Err(err) => {
                             if opts.debug {
@@ -501,7 +751,7 @@ impl PamHooks for PamKanidm {
                     // PAM_TEXT_INFO and PAM_ERROR_MSG conversation not
                     // honoured during PAM authentication
                     if opts.mfa_poll_prompt {
-                        let _ = conv.send(PAM_PROMPT_ECHO_OFF, "Press enter to continue");
+                        let _ = lconv.send(PAM_PROMPT_ECHO_OFF, "Press enter to continue");
                     }
 
                     let mut poll_attempt = 0;

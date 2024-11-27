@@ -51,6 +51,7 @@ struct PamResponse {
 /// Communication is mediated by the pam client (the application that invoked
 /// pam).  Messages sent will be relayed to the user by the client, and response
 /// will be relayed back.
+#[derive(Clone)]
 #[repr(C)]
 pub struct PamConv {
     conv: extern "C" fn(
@@ -108,3 +109,8 @@ impl PamItem for PamConv {
         PAM_CONV
     }
 }
+
+// PamConv isn't really thread safe, but we mark it as such so that we can
+// wrap it in a Arc<Mutex> later for passing between threads.
+unsafe impl Send for PamConv {}
+unsafe impl Sync for PamConv {}

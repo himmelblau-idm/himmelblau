@@ -50,7 +50,11 @@ pub enum PamAuthResponse {
         msg: String,
     },
     Pin,
-    // CTAP2
+    /// PAM must generate a Fido assertion
+    Fido {
+        fido_challenge: String,
+        fido_allow_list: Vec<String>,
+    },
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -60,6 +64,7 @@ pub enum PamAuthRequest {
     MFAPoll { poll_attempt: u32 },
     SetupPin { pin: String },
     Pin { cred: String },
+    Fido { assertion: String },
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -70,7 +75,7 @@ pub enum ClientRequest {
     NssGroups,
     NssGroupByGid(u32),
     NssGroupByName(String),
-    PamAuthenticateInit(String),
+    PamAuthenticateInit(String, String),
     PamAuthenticateStep(PamAuthRequest),
     PamAccountAllowed(String),
     PamAccountBeginSession(String),
@@ -90,7 +95,9 @@ impl ClientRequest {
             ClientRequest::NssGroups => "NssGroups".to_string(),
             ClientRequest::NssGroupByGid(id) => format!("NssGroupByGid({})", id),
             ClientRequest::NssGroupByName(id) => format!("NssGroupByName({})", id),
-            ClientRequest::PamAuthenticateInit(id) => format!("PamAuthenticateInit({})", id),
+            ClientRequest::PamAuthenticateInit(id, service) => {
+                format!("PamAuthenticateInit({}, {})", id, service)
+            }
             ClientRequest::PamAuthenticateStep(_) => "PamAuthenticateStep".to_string(),
             ClientRequest::PamAccountAllowed(id) => {
                 format!("PamAccountAllowed({})", id)

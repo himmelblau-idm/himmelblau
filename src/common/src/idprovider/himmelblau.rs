@@ -31,7 +31,7 @@ use himmelblau::auth::{BrokerClientApplication, UserToken as UnixUserToken};
 use himmelblau::discovery::EnrollAttrs;
 use himmelblau::error::{MsalError, DEVICE_AUTH_FAIL};
 use himmelblau::graph::{DirectoryObject, Graph};
-use himmelblau::MFAAuthContinue;
+use himmelblau::{AuthOption, MFAAuthContinue};
 use idmap::Idmap;
 use kanidm_hsm_crypto::{LoadableIdentityKey, LoadableMsOapxbcRsaKey, PinValue, SealedData, Tpm};
 use reqwest;
@@ -362,6 +362,7 @@ impl IdProvider for HimmelblauMultiProvider {
     async fn unix_user_online_auth_step<D: KeyStoreTxn + Send>(
         &self,
         account_id: &str,
+        service: &str,
         cred_handler: &mut AuthCredHandler,
         pam_next_req: PamAuthRequest,
         keystore: &mut D,
@@ -377,6 +378,7 @@ impl IdProvider for HimmelblauMultiProvider {
                         provider
                             .unix_user_online_auth_step(
                                 account_id,
+                                service,
                                 cred_handler,
                                 pam_next_req,
                                 keystore,
@@ -835,6 +837,7 @@ impl IdProvider for HimmelblauProvider {
     async fn unix_user_online_auth_step<D: KeyStoreTxn + Send>(
         &self,
         account_id: &str,
+        service: &str,
         cred_handler: &mut AuthCredHandler,
         pam_next_req: PamAuthRequest,
         keystore: &mut D,
@@ -1000,14 +1003,17 @@ impl IdProvider for HimmelblauProvider {
                 // enrolled but creating a new Hello Pin, we follow the same process,
                 // since only an enrollment token can be exchanged for a PRT (which
                 // will be needed to enroll the Hello Pin).
+                let mut opts = vec![];
+                // Prohibit Fido over ssh (since it can't work)
+                if service != "ssh" {
+                    opts.push(AuthOption::Fido);
+                }
                 let mresp = self
                     .client
                     .write()
                     .await
                     .initiate_acquire_token_by_mfa_flow_for_device_enrollment(
-                        account_id,
-                        &cred,
-                        vec![],
+                        account_id, &cred, opts,
                     )
                     .await;
                 // We need to wait to handle the response until after we've released
@@ -1064,6 +1070,25 @@ impl IdProvider for HimmelblauProvider {
                     }
                 };
                 match resp.mfa_method.as_str() {
+                    "FidoKey" => {
+                        let fido_challenge =
+                            resp.fido_challenge.clone().ok_or(IdpError::BadRequest)?;
+
+                        let fido_allow_list =
+                            resp.fido_allow_list.clone().ok_or(IdpError::BadRequest)?;
+                        *cred_handler = AuthCredHandler::MFA { flow: resp };
+                        return Ok((
+                            AuthResult::Next(AuthRequest::Fido {
+                                fido_allow_list,
+                                fido_challenge,
+                            }),
+                            /* An MFA auth cannot cache the password. This would
+                             * lead to a potential downgrade to SFA attack (where
+                             * the attacker auths with a stolen password, then
+                             * disconnects the network to complete the auth). */
+                            AuthCacheAction::None,
+                        ));
+                    }
                     "PhoneAppOTP" | "OneWaySMS" | "ConsolidatedTelephony" => {
                         let msg = resp.msg.clone();
                         *cred_handler = AuthCredHandler::MFA { flow: resp };
@@ -1186,6 +1211,47 @@ impl IdProvider for HimmelblauProvider {
                             IdpError::NotFound
                         })?;
                         if !hello_enabled || !amr_ngcmfa {
+                            info!("Skipping Hello enrollment because it is disabled");
+                            return Ok((
+                                AuthResult::Success { token: token3 },
+                                AuthCacheAction::None,
+                            ));
+                        }
+
+                        // Setup Windows Hello
+                        *cred_handler = AuthCredHandler::SetupPin { token };
+                        return Ok((
+                            AuthResult::Next(AuthRequest::SetupPin {
+                                msg: format!(
+                                    "Set up a PIN\n {}{}",
+                                    "A Hello PIN is a fast, secure way to sign",
+                                    "in to your device, apps, and services."
+                                ),
+                            }),
+                            AuthCacheAction::None,
+                        ));
+                    }
+                    Ok(auth_result) => Ok((auth_result, AuthCacheAction::None)),
+                    Err(e) => Err(e),
+                }
+            }
+            (AuthCredHandler::MFA { ref mut flow }, PamAuthRequest::Fido { assertion }) => {
+                let token = self
+                    .client
+                    .write()
+                    .await
+                    .acquire_token_by_mfa_flow(account_id, Some(&assertion), None, flow)
+                    .await
+                    .map_err(|e| {
+                        error!("{:?}", e);
+                        IdpError::NotFound
+                    })?;
+                let token2 = enroll_and_obtain_enrolled_token!(token);
+                match self.token_validate(account_id, &token2).await {
+                    Ok(AuthResult::Success { token: token3 }) => {
+                        // Skip Hello enrollment if it is disabled by config
+                        let hello_enabled = self.config.read().await.get_enable_hello();
+                        if !hello_enabled {
                             info!("Skipping Hello enrollment because it is disabled");
                             return Ok((
                                 AuthResult::Success { token: token3 },
