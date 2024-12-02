@@ -52,6 +52,7 @@ os-release = "^0.1.0"
 jsonwebtoken = "^9.2.0"
 zeroize = "^1.7.0"
 idmap = { path = "src/idmap" }
+rustls = ">=0.23.19" # CVE-2024-11738
 
 # Kanidm deps
 argon2 = { version = "0.5.2", features = ["alloc"] }
