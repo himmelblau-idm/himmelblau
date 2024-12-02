@@ -19,7 +19,7 @@ members = [
 resolver = "2"
 
 [workspace.package]
-version = "0.7.6"
+version = "0.7.7"
 authors = [
     "David Mulder <dmulder@suse.com>"
 ]
@@ -55,6 +55,7 @@ jsonwebtoken = "^9.2.0"
 zeroize = "^1.7.0"
 idmap = { path = "src/idmap" }
 identity_dbus_broker = "0.1.3"
+rustls = ">=0.23.19" # CVE-2024-11738
 
 # Kanidm deps
 argon2 = { version = "0.5.2", features = ["alloc"] }
