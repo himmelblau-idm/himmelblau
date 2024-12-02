@@ -104,6 +104,10 @@ pub enum AuthRequest {
         msg: String,
     },
     Pin,
+    Fido {
+        fido_challenge: String,
+        fido_allow_list: Vec<String>,
+    },
 }
 
 #[allow(clippy::from_over_into)]
@@ -122,6 +126,13 @@ impl Into<PamAuthResponse> for AuthRequest {
             AuthRequest::MFAPollWait => PamAuthResponse::MFAPollWait,
             AuthRequest::SetupPin { msg } => PamAuthResponse::SetupPin { msg },
             AuthRequest::Pin => PamAuthResponse::Pin,
+            AuthRequest::Fido {
+                fido_challenge,
+                fido_allow_list,
+            } => PamAuthResponse::Fido {
+                fido_challenge,
+                fido_allow_list,
+            },
         }
     }
 }

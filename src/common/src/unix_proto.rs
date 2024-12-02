@@ -50,7 +50,11 @@ pub enum PamAuthResponse {
         msg: String,
     },
     Pin,
-    // CTAP2
+    /// PAM must generate a Fido assertion
+    Fido {
+        fido_challenge: String,
+        fido_allow_list: Vec<String>,
+    },
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -60,6 +64,7 @@ pub enum PamAuthRequest {
     MFAPoll { poll_attempt: u32 },
     SetupPin { pin: String },
     Pin { cred: String },
+    Fido { assertion: String },
 }
 
 #[derive(Serialize, Deserialize, Debug)]
