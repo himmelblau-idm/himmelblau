@@ -31,6 +31,7 @@ use himmelblau::auth::{BrokerClientApplication, UserToken as UnixUserToken};
 use himmelblau::discovery::EnrollAttrs;
 use himmelblau::error::{MsalError, DEVICE_AUTH_FAIL};
 use himmelblau::graph::{DirectoryObject, Graph};
+use himmelblau::MFAAuthContinue;
 use idmap::Idmap;
 use kanidm_hsm_crypto::{LoadableIdentityKey, LoadableMsOapxbcRsaKey, PinValue, SealedData, Tpm};
 use reqwest;
@@ -714,7 +715,38 @@ impl IdProvider for HimmelblauProvider {
         // Skip Hello authentication if it is disabled by config
         let hello_enabled = self.config.read().await.get_enable_hello();
         if !self.is_domain_joined(keystore).await || hello_key.is_none() || !hello_enabled {
-            Ok((AuthRequest::Password, AuthCredHandler::None))
+            if self.config.read().await.get_enable_experimental_mfa() {
+                Ok((AuthRequest::Password, AuthCredHandler::None))
+            } else {
+                let resp = self
+                    .client
+                    .write()
+                    .await
+                    .initiate_device_flow_for_device_enrollment()
+                    .await
+                    .map_err(|e| {
+                        error!("{:?}", e);
+                        IdpError::BadRequest
+                    })?;
+                let mut flow: MFAAuthContinue = resp.into();
+                if !self.is_domain_joined(keystore).await {
+                    flow.resource = Some("https://enrollment.manage.microsoft.com".to_string());
+                }
+                let msg = flow.msg.clone();
+                let polling_interval = flow.polling_interval.ok_or_else(|| {
+                    error!("Invalid response from the server");
+                    IdpError::BadRequest
+                })?;
+                Ok((
+                    AuthRequest::MFAPoll {
+                        msg,
+                        // Kanidm pam expects a polling_interval in
+                        // seconds, not milliseconds.
+                        polling_interval: polling_interval / 1000,
+                    },
+                    AuthCredHandler::MFA { flow },
+                ))
+            }
         } else {
             Ok((AuthRequest::Pin, AuthCredHandler::None))
         }
@@ -892,7 +924,11 @@ impl IdProvider for HimmelblauProvider {
                     .client
                     .write()
                     .await
-                    .initiate_acquire_token_by_mfa_flow_for_device_enrollment(account_id, &cred)
+                    .initiate_acquire_token_by_mfa_flow_for_device_enrollment(
+                        account_id,
+                        &cred,
+                        vec![],
+                    )
                     .await;
                 // We need to wait to handle the response until after we've released
                 // the write lock on the client, otherwise we will deadlock.
@@ -999,7 +1035,12 @@ impl IdProvider for HimmelblauProvider {
                     Ok(AuthResult::Success { token: token3 }) => {
                         // Skip Hello enrollment if it is disabled by config
                         let hello_enabled = self.config.read().await.get_enable_hello();
-                        if !hello_enabled {
+                        // Skip Hello enrollment if the token doesn't have the ngcmfa amr
+                        let amr_ngcmfa = token2.amr_ngcmfa().map_err(|e| {
+                            error!("{:?}", e);
+                            IdpError::NotFound
+                        })?;
+                        if !hello_enabled || !amr_ngcmfa {
                             info!("Skipping Hello enrollment because it is disabled");
                             return Ok((
                                 AuthResult::Success { token: token3 },
@@ -1059,7 +1100,12 @@ impl IdProvider for HimmelblauProvider {
                     Ok(AuthResult::Success { token: token3 }) => {
                         // Skip Hello enrollment if it is disabled by config
                         let hello_enabled = self.config.read().await.get_enable_hello();
-                        if !hello_enabled {
+                        // Skip Hello enrollment if the token doesn't have the ngcmfa amr
+                        let amr_ngcmfa = token2.amr_ngcmfa().map_err(|e| {
+                            error!("{:?}", e);
+                            IdpError::NotFound
+                        })?;
+                        if !hello_enabled || !amr_ngcmfa {
                             info!("Skipping Hello enrollment because it is disabled");
                             return Ok((
                                 AuthResult::Success { token: token3 },
