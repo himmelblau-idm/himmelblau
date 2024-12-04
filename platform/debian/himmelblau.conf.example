@@ -69,6 +69,12 @@ local_groups = users
 # logon_script =
 # logon_token_scopes =
 #
+# This option enables the experimental MFA (multi-factor authentication) flow,
+# which permits Hello authentication. Note that this flow may fail in certain
+# edge cases. When disabled, the system will enforce the DAG (Device Authorization
+# Grant) flow for MFA, and Hello authentication will be disabled.
+# enable_experimental_mfa = true
+#
 # authority_host = login.microsoftonline.com
 #
 # The location of the cache database

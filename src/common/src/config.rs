@@ -476,6 +476,10 @@ impl HimmelblauConfig {
             None => vec![],
         }
     }
+
+    pub fn get_enable_experimental_mfa(&self) -> bool {
+        match_bool(self.config.get("global", "enable_experimental_mfa"), true)
+    }
 }
 
 impl fmt::Debug for HimmelblauConfig {
