@@ -1,0 +1,360 @@
+.TH HIMMELBLAU.CONF "5" "November 2024" "Himmelblau Configuration" "File Formats"
+.SH NAME
+himmelblau.conf \- Configuration file for Himmelblau, enabling Azure Entra ID authentication on Linux.
+
+.SH SYNOPSIS
+.B /etc/himmelblau/himmelblau.conf
+
+.SH HOW CONFIGURATION CHANGES ARE APPLIED
+Changes to the configuration file
+.B /etc/himmelblau/himmelblau.conf
+only take effect after restarting the Himmelblau daemons. This includes the
+.B himmelblaud
+daemon, which handles authentication, and the
+.B himmelblaud-tasks
+daemon, which processes related tasks.
+
+.TP
+.B Restarting the Daemons
+To apply changes, restart the Himmelblau services using the following systemd commands:
+
+.EXAMPLES
+.RS
+.IP
+sudo systemctl restart himmelblaud
+.IP
+sudo systemctl restart himmelblaud-tasks
+.RE
+
+.SH DESCRIPTION
+The
+.B himmelblau.conf
+file is the primary configuration file for the Himmelblau authentication module. It defines global and optional settings required for Azure Entra ID-based authentication and device management.
+
+.SH FILE FORMAT
+The file consists of sections headed by a name enclosed in square brackets. Each section contains parameters and their values in the format:
+.RS 4
+parameter = value
+.RE
+
+Lines beginning with a '#' are comments and are ignored by the parser.
+
+.SH PARAMETERS
+
+.SS [global]
+This section contains settings that apply globally to all operations of Himmelblau.
+
+.TP
+.B domains
+.RE
+A comma-separated list of configured domains. This parameter is
+.B REQUIRED
+for successful authentication. If this option is not specified, no users will be permitted to authenticate. The first user to authenticate to each domain will become the owner of the device object in the directory.
+
+.EXAMPLES
+domains = example.com,example2.com
+
+.TP
+.B debug
+.RE
+A boolean option that enables debug-level logging. When set to
+.B true,
+debug messages are output to the system journal.
+
+.EXAMPLES
+debug = true
+
+.TP
+.B pam_allow_groups
+.RE
+A comma-separated list of Users and Groups permitted to access the system. Groups must be specified using their Object ID (not UPN) due to Azure's restrictions on reading group names.
+
+.EXAMPLES
+pam_allow_groups = f3c9a7e4-7d5a-47e8-832f-3d2d92abcd12,d98c8e1d-7f8a-4597-babc-9d3b781ef456
+
+.TP
+.B id_attr_map
+.RE
+Specifies whether to map user and group IDs based on the object name or object UUID. Mapping by name is recommended for more consistent SSH authentication.
+
+.EXAMPLES
+id_attr_map = <name|uuid>
+
+.TP
+.B odc_provider
+.RE
+Specifies the hostname for sending federationProvider requests.
+
+.EXAMPLES
+odc_provider = odc.officeapps.live.com
+
+.TP
+.B enable_hello
+.RE
+Enables or disables user enrollment in Windows Hello authentication. If disabled, users will need to provide MFA for each login.
+
+.EXAMPLES
+enable_hello = false
+
+.TP
+.B hello_pin_min_length
+.RE
+The minimum length of the PIN for Windows Hello authentication. The value must be between 6 and 32 characters.
+
+.EXAMPLES
+hello_pin_min_length = 8
+
+.TP
+.B enable_sfa_fallback
+.RE
+Determines whether password-only (single-factor) authentication is permitted when MFA is unavailable. Disabled by default.
+
+.EXAMPLES
+enable_sfa_fallback = true
+
+.TP
+.B cn_to_upn_mapping
+.RE
+Allows users to enter the short form of their username (e.g., 'dave') instead of the full UPN.
+
+.EXAMPLES
+cn_to_upn_mapping = true
+
+.TP
+.B local_groups
+.RE
+A comma-separated list of local groups that every Entra ID user should be a member of. For example, you may wish for all Entra ID users to be a member of the sudo group. WARNING: This setting will not REMOVE group member entries when groups are removed from this list. You must remove them manually.
+
+.EXAMPLES
+local_groups = sudo,admin
+
+.TP
+.B logon_script
+.RE
+A script that will execute every time a user logs on. Two environment variables are set: USERNAME, and ACCESS_TOKEN. The ACCESS_TOKEN environment variable is an access token for the MS Graph. The token scope config option sets the comma-separated scopes that should be requested for the ACCESS_TOKEN. ACCESS_TOKEN will be empty during offline logon. The return code of the script determines how authentication proceeds. 0 is success, 1 is a soft failure and authentication will proceed, while 2 is a hard failure causing authentication to fail.
+
+.EXAMPLES
+logon_script = /etc/himmelblau/logon.sh
+
+.TP
+.B logon_token_scopes
+.RE
+A comma-separated list of the scopes to be requested for the ACCESS_TOKEN during logon.
+
+.EXAMPLES
+logon_token_scopes = user.read,mail.read
+
+.TP
+.B enable_experimental_mfa
+.RE
+A boolean option that enables the experimental multi-factor authentication (MFA) flow, which permits Hello authentication. This experimental flow may encounter failures in certain edge cases. If disabled, the system enforces the Device Authorization Grant (DAG) flow for MFA, which is more robust but does not support Hello authentication. By default, this option is enabled.
+
+.EXAMPLES
+enable_experimental_mfa = true
+
+.TP
+.B authority_host
+.RE
+Specifies the hostname for Microsoft authentication. The default value is
+.B login.microsoftonline.com.
+
+.EXAMPLES
+authority_host = login.microsoftonline.com
+
+.TP
+.B db_path
+.RE
+The location of the cache database. This file is used to store cached authentication data and device state.
+
+.EXAMPLES
+db_path = /var/cache/himmelblau/himmelblau.cache.db
+
+.TP
+.B hsm_pin_path
+.RE
+The location where the HSM (Hardware Security Module) PIN will be stored. This PIN is used to protect sensitive cryptographic operations.
+
+.EXAMPLES
+hsm_pin_path = /var/lib/himmelblaud/hsm-pin
+
+.TP
+.B socket_path
+.RE
+The path to the socket file for communication between the pam and nss modules and the Himmelblau daemon.
+
+.EXAMPLES
+socket_path = /var/run/himmelblaud/socket
+
+.TP
+.B task_socket_path
+.RE
+The path to the socket file for communication with the task daemon.
+
+.EXAMPLES
+task_socket_path = /var/run/himmelblaud/task_sock
+
+.TP
+.B broker_socket_path
+.RE
+The path to the socket file for communication with the broker DBus service.
+
+.EXAMPLES
+broker_socket_path = /var/run/himmelblaud/broker_sock
+
+.TP
+.B home_prefix
+.RE
+The prefix to use for user home directories.
+
+.EXAMPLES
+home_prefix = /home/
+
+.TP
+.B home_attr
+.RE
+The attribute used to create a home directory for a user. Available options include:
+.RS
+.IP
+\- UUID (default)
+.IP
+\- SPN
+.IP
+\- CN
+.RE
+
+.EXAMPLES
+home_attr = UUID
+
+.TP
+.B home_alias
+.RE
+The symlinked alias for the user's home directory. Available options include:
+.RS
+.IP
+\- UUID
+.IP
+\- SPN (default)
+.IP
+\- CN
+.RE
+
+.EXAMPLES
+home_alias = SPN
+
+.TP
+.B shell
+.RE
+The default shell for users. This will be assigned when the user logs in.
+
+.EXAMPLES
+shell = /bin/bash
+
+.TP
+.B idmap_range
+.RE
+Specifies the range of IDs to be used for the user and group mappings.
+
+.EXAMPLES
+idmap_range = 5000000-5999999
+
+.TP
+.B connection_timeout
+.RE
+The timeout for connections to the authentication server. Default is 2 seconds.
+
+.EXAMPLES
+connection_timeout = 5
+
+.TP
+.B cache_timeout
+.RE
+The timeout for caching authentication data. Default is 300 seconds (5 minutes).
+
+.EXAMPLES
+cache_timeout = 10
+
+.TP
+.B use_etc_skel
+.RE
+If set to
+.B true,
+Himmelblau will use the contents of /etc/skel when creating new user directories.
+
+.EXAMPLES
+use_etc_skel = false
+
+.TP
+.B selinux
+.RE
+Whether SELinux security labels should be applied to users' home directories. Set to
+.B true
+to enable.
+
+.EXAMPLES
+selinux = true
+
+.SH DOMAIN-SPECIFIC SECTIONS
+Overrides can be defined for individual domains by using a section named after the domain in square brackets.
+
+.SS [example.com]
+This section allows customization of specific parameters for the domain
+.B example.com.
+Domain-specific sections override global values for the specified domain.
+
+.TP
+.B odc_provider
+.RE
+Overrides the `odc_provider` value for this domain.
+
+.EXAMPLES
+[example.com]
+odc_provider = custom.odcprovider.example.com
+
+.TP
+.B home_prefix
+.RE
+Overrides the `home_prefix` value for this domain.
+
+.EXAMPLES
+[example.com]
+home_prefix = /home/
+
+.TP
+.B home_attr
+.RE
+Overrides the `home_attr` value for this domain.
+
+.EXAMPLES
+[example.com]
+home_attr = UUID
+
+.TP
+.B home_alias
+.RE
+Overrides the `home_alias` value for this domain.
+
+.EXAMPLES
+[example.com]
+home_alias = SPN
+
+.TP
+.B shell
+.RE
+Overrides the `shell` value for this domain.
+
+.EXAMPLES
+[example.com]
+shell = /bin/bash
+
+.TP
+.B idmap_range
+.RE
+Overrides the `idmap_range` value for this domain.
+
+.EXAMPLES
+[example.com]
+idmap_range = 5000000-5999999
+
+.SH SEE ALSO
+.BR himmelblaud(8),
+.BR himmelblaud-tasks(8)
