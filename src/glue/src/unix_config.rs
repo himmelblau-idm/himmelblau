@@ -15,13 +15,10 @@
    You should have received a copy of the GNU General Public License
    along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
-use himmelblau_unix_common::config::HimmelblauConfig;
+use himmelblau_unix_common::config::{map_name_to_upn, HimmelblauConfig};
 use himmelblau_unix_common::constants::{
     DEFAULT_CONN_TIMEOUT, DEFAULT_HELLO_PIN_MIN_LEN, DEFAULT_SOCK_PATH,
 };
-use himmelblau_unix_common::unix_passwd::parse_etc_passwd;
-use std::fs::File;
-use std::io::Read;
 
 pub struct KanidmUnixdConfig {
     pub domains: Vec<String>,
@@ -29,6 +26,7 @@ pub struct KanidmUnixdConfig {
     pub sock_path: String,
     pub cn_name_mapping: bool,
     pub hello_pin_min_length: usize,
+    name_mapping_script: Option<String>,
 }
 
 impl KanidmUnixdConfig {
@@ -39,6 +37,7 @@ impl KanidmUnixdConfig {
             unix_sock_timeout: DEFAULT_CONN_TIMEOUT * 2,
             cn_name_mapping: false,
             hello_pin_min_length: DEFAULT_HELLO_PIN_MIN_LEN,
+            name_mapping_script: None,
         }
     }
 
@@ -50,29 +49,17 @@ impl KanidmUnixdConfig {
             unix_sock_timeout: config.get_connection_timeout() * 2,
             cn_name_mapping: config.get_cn_name_mapping(),
             hello_pin_min_length: config.get_hello_pin_min_length(),
+            name_mapping_script: config.get_name_mapping_script(),
         })
     }
 
-    pub fn map_cn_name(&self, account_id: &str) -> String {
-        // Make sure this account_id isn't a local user
-        let mut contents = vec![];
-        if let Ok(mut file) = File::open("/etc/passwd") {
-            let _ = file.read_to_end(&mut contents);
-        }
-        let local_users = parse_etc_passwd(contents.as_slice()).unwrap_or_default();
-        if local_users
-            .into_iter()
-            .map(|u| u.name.to_string())
-            .collect::<Vec<String>>()
-            .contains(&account_id.to_string())
-        {
-            return account_id.to_string();
-        }
-
-        if self.cn_name_mapping && !account_id.contains('@') && !self.domains.is_empty() {
-            return format!("{}@{}", account_id, self.domains[0]);
-        }
-        account_id.to_string()
+    pub fn map_name_to_upn(&self, account_id: &str) -> String {
+        map_name_to_upn(
+            account_id,
+            &self.name_mapping_script,
+            self.cn_name_mapping,
+            &self.domains,
+        )
     }
 }
 

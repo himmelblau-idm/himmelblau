@@ -301,7 +301,7 @@ impl PamHooks for PamKanidm {
             Ok(cfg) => cfg,
             Err(e) => return e,
         };
-        let account_id = cfg.map_cn_name(&account_id);
+        let account_id = cfg.map_name_to_upn(&account_id);
         let req = ClientRequest::PamAccountAllowed(account_id);
         // PamResultCode::PAM_IGNORE
 
@@ -371,7 +371,7 @@ impl PamHooks for PamKanidm {
             Ok(cfg) => cfg,
             Err(e) => return e,
         };
-        let account_id = cfg.map_cn_name(&account_id);
+        let account_id = cfg.map_name_to_upn(&account_id);
 
         let mut timeout = cfg.unix_sock_timeout;
         let mut daemon_client = match DaemonClientBlocking::new(cfg.sock_path.as_str()) {
@@ -573,7 +573,7 @@ impl PamHooks for PamKanidm {
             Ok(cfg) => cfg,
             Err(e) => return e,
         };
-        let account_id = cfg.map_cn_name(&account_id);
+        let account_id = cfg.map_name_to_upn(&account_id);
         let req = ClientRequest::PamAccountBeginSession(account_id);
 
         let mut daemon_client = match DaemonClientBlocking::new(cfg.sock_path.as_str()) {
