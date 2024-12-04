@@ -145,6 +145,14 @@ A comma-separated list of the scopes to be requested for the ACCESS_TOKEN during
 logon_token_scopes = user.read,mail.read
 
 .TP
+.B enable_experimental_mfa
+.RE
+A boolean option that enables the experimental multi-factor authentication (MFA) flow, which permits Hello authentication. This experimental flow may encounter failures in certain edge cases. If disabled, the system enforces the Device Authorization Grant (DAG) flow for MFA, which is more robust but does not support Hello authentication. By default, this option is enabled.
+
+.EXAMPLES
+enable_experimental_mfa = true
+
+.TP
 .B authority_host
 .RE
 Specifies the hostname for Microsoft authentication. The default value is
