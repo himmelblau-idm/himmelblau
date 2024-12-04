@@ -4,26 +4,24 @@ himmelblaud_tasks \- Home directory creation daemon for Himmelblau
 .SH SYNOPSIS
 .B himmelblaud_tasks
 .SH DESCRIPTION
-The `himmelblaud_tasks` daemon is responsible for automatically creating home directories for users upon successful authentication via Azure Entra ID. This service is required to run as the root user, as it needs elevated permissions to create directories in system locations.
+The `himmelblaud-tasks` daemon is responsible for managing user accounts and authentication tasks in a Linux environment. Upon successful authentication via Azure Entra ID, it automatically creates home directories for users, adds them to configured local groups, and executes the configured logon script. This service requires root privileges to perform actions such as creating directories in system locations and managing group memberships.
 
 The daemon operates as a background service and does not accept any command-line arguments. It is automatically invoked by the system when required.
 
 .SH USAGE
-The `himmelblaud_tasks` daemon must be run as the root user. If the daemon is started without root privileges, it will fail with an error. No user interaction is needed beyond ensuring the daemon is active and running correctly.
+The `himmelblaud-tasks` daemon must be run as the root user. If the daemon is started without root privileges, it will fail with an error. No user interaction is needed beyond ensuring the daemon is active and running correctly.
 
 .SH EXAMPLES
 .TP
 .B Start the daemon:
-# systemctl start himmelblaud_tasks
+# systemctl start himmelblaud-tasks
 
 .TP
 .B Verify the status of the daemon:
-# systemctl status himmelblaud_tasks
+# systemctl status himmelblaud-tasks
 
 .SH NOTES
-This daemon is integral to Himmelblau for handling user home directory creation. It ensures that users can properly log in with a valid directory structure in place after authentication.
+This daemon is a key component of Himmelblau, handling several critical tasks for user authentication. In addition to creating user home directories, it adds users to the configured local groups, and executes the configured logon script. These functions ensure that users have the necessary environment and access rights in place for a seamless login experience after authentication.
 
-.SH "SEE ALSO"
-Further documentation for `himmelblaud_tasks` is available in the Texinfo manual. Use the following command to access the complete manual:
-
-.BR info himmelblaud_tasks
+.SH SEE ALSO
+.BR himmelblaud(8),
