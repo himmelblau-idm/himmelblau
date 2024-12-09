@@ -67,7 +67,7 @@ sudo zypper ref && sudo zypper in himmelblau nss-himmelblau pam-himmelblau
 
 The following packages are required on openSUSE to build and test this package.
 
-    sudo zypper in make cargo git gcc sqlite3-devel libopenssl-3-devel pam-devel libcap-devel libtalloc-devel libtevent-devel libldb-devel libdhash-devel krb5-devel pcre2-devel libclang13 autoconf make automake  gettext-tools clang dbus-1-devel utf8proc-devel
+    sudo zypper in make cargo git gcc sqlite3-devel libopenssl-3-devel pam-devel libcap-devel libtalloc-devel libtevent-devel libldb-devel libdhash-devel krb5-devel pcre2-devel libclang13 autoconf make automake  gettext-tools clang dbus-1-devel utf8proc-devel gobject-introspection-devel cairo-devel gdk-pixbuf-devel libsoup-devel pango-devel atk-devel gtk3-devel webkit2gtk3-devel
 
 
 Or on Debian based systems:

@@ -22,7 +22,14 @@ RUN dnf -y update && \
     gettext \
     sqlite-devel \
     utf8proc-devel \
-    cargo && \
+    cargo \
+    gobject-introspection-devel \
+    cairo-devel \
+    libsoup-devel \
+    pango-devel \
+    atk-devel \
+    gtk3-devel \
+    webkit2gtk3-devel && \
     dnf clean all
 
 # Set environment for Rust
@@ -37,4 +44,4 @@ WORKDIR /himmelblau
 RUN cargo install cargo-generate-rpm
 
 # Build the project and create the RPM package
-CMD cargo clean && cargo build --release && strip -s target/release/*.so && strip -s target/release/aad-tool && strip -s target/release/himmelblaud && strip -s target/release/himmelblaud_tasks && strip -s target/release/broker && cargo generate-rpm -p src/daemon && cargo generate-rpm -p src/nss && cargo generate-rpm -p src/pam && cargo generate-rpm -p src/sshd-config && cargo generate-rpm -p src/sso
+CMD cargo clean && cargo build --release --features interactive && strip -s target/release/*.so && strip -s target/release/aad-tool && strip -s target/release/himmelblaud && strip -s target/release/himmelblaud_tasks && strip -s target/release/broker && cargo generate-rpm -p src/daemon && cargo generate-rpm -p src/nss && cargo generate-rpm -p src/pam && cargo generate-rpm -p src/sshd-config && cargo generate-rpm -p src/sso
