@@ -309,7 +309,7 @@ impl HimmelblauConfig {
         match self.config.get("global", "hsm_type") {
             Some(val) => match val.to_lowercase().as_str() {
                 "soft" => HsmType::Soft,
-                "tmp" => HsmType::Tpm,
+                "tpm" => HsmType::Tpm,
                 _ => {
                     warn!("Invalid hsm_type configured, using default ...");
                     HsmType::default()
