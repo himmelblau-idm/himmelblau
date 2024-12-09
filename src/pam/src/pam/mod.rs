@@ -60,13 +60,17 @@ use std::collections::BTreeSet;
 use std::convert::TryFrom;
 use std::ffi::CStr;
 
-use himmelblau_unix_common::config::HimmelblauConfig;
+use himmelblau::error::MsalError;
+use himmelblau::PublicClientApplication;
+use himmelblau_unix_common::config::{split_username, HimmelblauConfig};
+use himmelblau_unix_common::constants::BROKER_APP_ID;
 use kanidm_unix_common::client_sync::DaemonClientBlocking;
 use kanidm_unix_common::constants::DEFAULT_CONFIG_PATH;
 use kanidm_unix_common::unix_config::KanidmUnixdConfig;
 use kanidm_unix_common::unix_proto::{
     ClientRequest, ClientResponse, PamAuthRequest, PamAuthResponse,
 };
+use std::thread::sleep;
 
 use crate::pam::constants::*;
 use crate::pam::conv::PamConv;
@@ -81,6 +85,8 @@ use tracing_subscriber::prelude::*;
 
 use std::thread;
 use std::time::Duration;
+
+use tokio::runtime::Runtime;
 
 pub fn get_cfg() -> Result<HimmelblauConfig, PamResultCode> {
     HimmelblauConfig::new(Some(DEFAULT_CONFIG_PATH)).map_err(|_| PamResultCode::PAM_SERVICE_ERR)
@@ -524,7 +530,7 @@ impl PamHooks for PamKanidm {
         } // while true, continue calling PamAuthenticateStep until we get a decision.
     }
 
-    fn sm_chauthtok(_pamh: &PamHandle, args: Vec<&CStr>, _flags: PamFlag) -> PamResultCode {
+    fn sm_chauthtok(pamh: &PamHandle, args: Vec<&CStr>, _flags: PamFlag) -> PamResultCode {
         let opts = match Options::try_from(&args) {
             Ok(o) => o,
             Err(_) => return PamResultCode::PAM_SERVICE_ERR,
@@ -534,7 +540,225 @@ impl PamHooks for PamKanidm {
 
         debug!(?args, ?opts, "sm_chauthtok");
 
-        PamResultCode::PAM_IGNORE
+        let account_id = match pamh.get_user(None) {
+            Ok(aid) => aid,
+            Err(e) => {
+                error!(err = ?e, "get_user");
+                return PamResultCode::PAM_SERVICE_ERR;
+            }
+        };
+
+        let cfg = match get_cfg() {
+            Ok(cfg) => cfg,
+            Err(e) => return e,
+        };
+        let account_id = cfg.map_cn_name(&account_id);
+
+        let mut daemon_client = match DaemonClientBlocking::new(cfg.get_socket_path().as_str()) {
+            Ok(dc) => dc,
+            Err(e) => {
+                error!(err = ?e, "Error DaemonClientBlocking::new()");
+                return PamResultCode::PAM_SERVICE_ERR;
+            }
+        };
+
+        let (_, domain) = match split_username(&account_id) {
+            Some(resp) => resp,
+            None => {
+                error!("split_username");
+                return PamResultCode::PAM_AUTH_ERR;
+            }
+        };
+        let tenant_id = match cfg.get_tenant_id(domain) {
+            Some(tenant_id) => tenant_id,
+            None => "common".to_string(),
+        };
+        let authority = format!("https://{}/{}", cfg.get_authority_host(domain), tenant_id);
+        let app = match PublicClientApplication::new(BROKER_APP_ID, Some(&authority)) {
+            Ok(app) => app,
+            Err(e) => {
+                error!(err = ?e, "PublicClientApplication");
+                return PamResultCode::PAM_AUTH_ERR;
+            }
+        };
+
+        let conv = match pamh.get_item::<PamConv>() {
+            Ok(conv) => conv,
+            Err(err) => {
+                error!(?err, "pam_conv");
+                return err;
+            }
+        };
+
+        let password = match conv.send(PAM_PROMPT_ECHO_OFF, "Password: ") {
+            Ok(password) => match password {
+                Some(cred) => cred,
+                None => {
+                    debug!("no password");
+                    return PamResultCode::PAM_CRED_INSUFFICIENT;
+                }
+            },
+            Err(err) => {
+                debug!("unable to get password");
+                return err;
+            }
+        };
+
+        let rt = match Runtime::new() {
+            Ok(rt) => rt,
+            Err(e) => {
+                error!("{:?}", e);
+                return PamResultCode::PAM_AUTH_ERR;
+            }
+        };
+        let token = if cfg.get_enable_experimental_mfa() {
+            let mut mfa_req = match rt.block_on(async {
+                app.initiate_acquire_token_by_mfa_flow(&account_id, &password, vec![], None, vec![])
+                    .await
+            }) {
+                Ok(mfa) => mfa,
+                Err(e) => {
+                    error!("{:?}", e);
+                    return PamResultCode::PAM_AUTH_ERR;
+                }
+            };
+
+            match mfa_req.mfa_method.as_str() {
+                "PhoneAppOTP" | "OneWaySMS" | "ConsolidatedTelephony" => {
+                    let input = match conv.send(PAM_PROMPT_ECHO_OFF, &mfa_req.msg) {
+                        Ok(password) => match password {
+                            Some(cred) => cred,
+                            None => {
+                                debug!("no password");
+                                return PamResultCode::PAM_CRED_INSUFFICIENT;
+                            }
+                        },
+                        Err(err) => {
+                            debug!("unable to get password");
+                            return err;
+                        }
+                    };
+                    match rt.block_on(async {
+                        app.acquire_token_by_mfa_flow(&account_id, Some(&input), None, &mut mfa_req)
+                            .await
+                    }) {
+                        Ok(token) => token,
+                        Err(e) => {
+                            error!("MFA FAIL: {:?}", e);
+                            return PamResultCode::PAM_AUTH_ERR;
+                        }
+                    }
+                }
+                _ => {
+                    match conv.send(PAM_TEXT_INFO, &mfa_req.msg) {
+                        Ok(_) => {}
+                        Err(err) => {
+                            if opts.debug {
+                                println!("Message prompt failed");
+                            }
+                            return err;
+                        }
+                    }
+                    let mut poll_attempt = 1;
+                    let polling_interval = mfa_req.polling_interval.unwrap_or(5000);
+                    loop {
+                        match rt.block_on(async {
+                            app.acquire_token_by_mfa_flow(
+                                &account_id,
+                                None,
+                                Some(poll_attempt),
+                                &mut mfa_req,
+                            )
+                            .await
+                        }) {
+                            Ok(token) => break token,
+                            Err(e) => match e {
+                                MsalError::MFAPollContinue => {
+                                    poll_attempt += 1;
+                                    sleep(Duration::from_millis(polling_interval.into()));
+                                    continue;
+                                }
+                                e => {
+                                    error!("MFA FAIL: {:?}", e);
+                                    return PamResultCode::PAM_AUTH_ERR;
+                                }
+                            },
+                        }
+                    }
+                }
+            }
+        } else {
+            match rt.block_on(async { app.acquire_token_interactive(&account_id, None).await }) {
+                Ok(token) => token,
+                Err(e) => {
+                    error!(err = ?e, "acquire_token");
+                    return PamResultCode::PAM_AUTH_ERR;
+                }
+            }
+        };
+
+        // Don't request an old pin if it hasn't been set yet.
+        let req = ClientRequest::PamAuthTokenIsSet(account_id.clone());
+        let req_old_pin = match daemon_client.call_and_wait(&req, cfg.get_unix_sock_timeout()) {
+            Ok(ClientResponse::PamStatus(Some(val))) => val,
+            other => {
+                debug!(err = ?other, "PamResultCode::PAM_AUTH_ERR");
+                return PamResultCode::PAM_AUTH_ERR;
+            }
+        };
+
+        let old_pin = if req_old_pin {
+            match pamh.get_old_authtok() {
+                Ok(Some(v)) => Some(v),
+                Ok(None) => {
+                    error!("get_old_authtok");
+                    return PamResultCode::PAM_AUTHTOK_ERR;
+                }
+                Err(e) => {
+                    error!(err = ?e, "get_old_authtok");
+                    return e;
+                }
+            }
+        } else {
+            None
+        };
+
+        let new_pin = match pamh.get_authtok() {
+            Ok(Some(v)) => v,
+            Ok(None) => {
+                error!("get_authtok");
+                return PamResultCode::PAM_AUTHTOK_ERR;
+            }
+            Err(e) => {
+                error!(err = ?e, "get_authtok");
+                return e;
+            }
+        };
+
+        let req = ClientRequest::PamChangeAuthToken(
+            account_id,
+            match token.access_token.clone() {
+                Some(access_token) => access_token,
+                None => {
+                    error!("Failed fetching access token for pin change");
+                    return PamResultCode::PAM_AUTH_ERR;
+                }
+            },
+            token.refresh_token.clone(),
+            old_pin,
+            new_pin,
+        );
+
+        match daemon_client.call_and_wait(&req, cfg.get_unix_sock_timeout()) {
+            Ok(ClientResponse::Ok) => {
+                debug!("PamResultCode::PAM_SUCCESS");
+                PamResultCode::PAM_SUCCESS
+            }
+            other => {
+                debug!(err = ?other, "PamResultCode::PAM_AUTH_ERR");
+                PamResultCode::PAM_AUTH_ERR
+            }
+        }
     }
 
     fn sm_close_session(_pamh: &PamHandle, args: Vec<&CStr>, _flags: PamFlag) -> PamResultCode {

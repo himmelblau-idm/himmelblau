@@ -31,7 +31,7 @@ use std::{mem, ptr};
 use libc::c_char;
 
 use crate::pam::constants::{PamFlag, PamItemType, PamResultCode};
-use crate::pam::items::{PamAuthTok, PamRHost, PamService, PamTty};
+use crate::pam::items::{PamAuthTok, PamOldAuthTok, PamRHost, PamService, PamTty};
 
 /// Opaque type, used as a pointer when making pam API calls.
 ///
@@ -244,6 +244,10 @@ impl PamHandle {
 
     pub fn get_authtok(&self) -> PamResult<Option<String>> {
         self.get_item_string::<PamAuthTok>()
+    }
+
+    pub fn get_old_authtok(&self) -> PamResult<Option<String>> {
+        self.get_item_string::<PamOldAuthTok>()
     }
 
     pub fn get_tty(&self) -> PamResult<Option<String>> {

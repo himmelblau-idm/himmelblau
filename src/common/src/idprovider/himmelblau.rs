@@ -264,6 +264,57 @@ impl IdProvider for HimmelblauMultiProvider {
         }
     }
 
+    async fn check_auth_token_set<D: KeyStoreTxn + Send>(
+        &self,
+        account_id: &str,
+        keystore: &mut D,
+    ) -> Result<bool, IdpError> {
+        match split_username(account_id) {
+            Some((_sam, domain)) => {
+                let providers = self.providers.read().await;
+                match providers.get(domain) {
+                    Some(provider) => provider.check_auth_token_set(account_id, keystore).await,
+                    None => Err(IdpError::NotFound),
+                }
+            }
+            None => Err(IdpError::NotFound),
+        }
+    }
+
+    async fn change_auth_token<D: KeyStoreTxn + Send>(
+        &self,
+        account_id: &str,
+        token: &UnixUserToken,
+        old_tok: Option<&str>,
+        new_tok: &str,
+        keystore: &mut D,
+        tpm: &mut tpm::BoxedDynTpm,
+        machine_key: &tpm::MachineKey,
+    ) -> Result<bool, IdpError> {
+        match split_username(account_id) {
+            Some((_sam, domain)) => {
+                let providers = self.providers.read().await;
+                match providers.get(domain) {
+                    Some(provider) => {
+                        provider
+                            .change_auth_token(
+                                account_id,
+                                token,
+                                old_tok,
+                                new_tok,
+                                keystore,
+                                tpm,
+                                machine_key,
+                            )
+                            .await
+                    }
+                    None => Err(IdpError::NotFound),
+                }
+            }
+            None => Err(IdpError::NotFound),
+        }
+    }
+
     async fn unix_user_get(
         &self,
         id: &Id,
@@ -573,6 +624,98 @@ impl IdProvider for HimmelblauProvider {
                 error!("Failed to request prt cookie: {:?}", e);
                 IdpError::BadRequest
             })
+    }
+
+    async fn check_auth_token_set<D: KeyStoreTxn + Send>(
+        &self,
+        account_id: &str,
+        keystore: &mut D,
+    ) -> Result<bool, IdpError> {
+        let hello_tag = self.fetch_hello_key_tag(account_id);
+        let hello_key: Option<LoadableIdentityKey> =
+            keystore.get_tagged_hsm_key(&hello_tag).unwrap_or(None);
+        Ok(hello_key.is_some())
+    }
+
+    async fn change_auth_token<D: KeyStoreTxn + Send>(
+        &self,
+        account_id: &str,
+        token: &UnixUserToken,
+        old_tok: Option<&str>,
+        new_tok: &str,
+        keystore: &mut D,
+        tpm: &mut tpm::BoxedDynTpm,
+        machine_key: &tpm::MachineKey,
+    ) -> Result<bool, IdpError> {
+        let hello_tag = self.fetch_hello_key_tag(account_id);
+
+        // Ensure the user is setting the token for the account it has authenticated to
+        if account_id.to_string().to_lowercase()
+            != token
+                .spn()
+                .map_err(|e| {
+                    error!("Failed checking the spn on the user token: {:?}", e);
+                    IdpError::BadRequest
+                })?
+                .to_lowercase()
+        {
+            error!("A hello key may only be set by the authenticated user!");
+            return Err(IdpError::BadRequest);
+        }
+
+        // Ensure the old pin is valid
+        if let Some(old_tok) = old_tok {
+            let hello_key: LoadableIdentityKey = keystore
+                .get_tagged_hsm_key(&hello_tag)
+                .map_err(|e| {
+                    error!("Failed fetching hello key from keystore: {:?}", e);
+                    IdpError::BadRequest
+                })?
+                .ok_or_else(|| {
+                    error!("Authentication failed. Hello key missing.");
+                    IdpError::BadRequest
+                })?;
+
+            let pin = PinValue::new(old_tok).map_err(|e| {
+                error!("Failed setting pin value: {:?}", e);
+                IdpError::Tpm
+            })?;
+            tpm.identity_key_load(machine_key, Some(&pin), &hello_key)
+                .map_err(|e| {
+                    error!("{:?}", e);
+                    IdpError::BadRequest
+                })?;
+        } else {
+            // If no old pin was provided, make sure one isn't already set
+            let hello_key: Option<LoadableIdentityKey> =
+                keystore.get_tagged_hsm_key(&hello_tag).unwrap_or(None);
+            if hello_key.is_some() {
+                error!("Failed to set Hello pin. An existing key is already set!");
+                return Ok(false);
+            }
+        }
+
+        // Set the hello pin
+        let hello_key = match self
+            .client
+            .write()
+            .await
+            .provision_hello_for_business_key(token, tpm, machine_key, new_tok)
+            .await
+        {
+            Ok(hello_key) => hello_key,
+            Err(e) => {
+                error!("Failed to provision hello key: {:?}", e);
+                return Ok(false);
+            }
+        };
+        keystore
+            .insert_tagged_hsm_key(&hello_tag, &hello_key)
+            .map_err(|e| {
+                error!("Failed to provision hello key: {:?}", e);
+                IdpError::Tpm
+            })?;
+        Ok(true)
     }
 
     async fn unix_user_get(

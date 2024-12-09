@@ -33,6 +33,7 @@ use std::time::Duration;
 use bytes::{BufMut, BytesMut};
 use clap::{Arg, ArgAction, Command};
 use futures::{SinkExt, StreamExt};
+use himmelblau::{ClientInfo, IdToken, UserToken as UnixUserToken};
 use himmelblau_unix_common::config::HimmelblauConfig;
 use himmelblau_unix_common::constants::DEFAULT_CONFIG_PATH;
 use himmelblau_unix_common::db::{Cache, CacheTxn, Db};
@@ -548,6 +549,39 @@ async fn handle_client(
                     }
                     _ => ClientResponse::Error,
                 }
+            }
+            ClientRequest::PamAuthTokenIsSet(account_id) => {
+                debug!("sm_chauthtok check set");
+                cachelayer
+                    .check_auth_token_set(&account_id)
+                    .await
+                    .map(|is_set| ClientResponse::PamStatus(Some(is_set)))
+                    .unwrap_or(ClientResponse::Error)
+            }
+            ClientRequest::PamChangeAuthToken(
+                account_id,
+                access_token,
+                refresh_token,
+                old_pin,
+                new_pin,
+            ) => {
+                debug!("sm_chauthtok req");
+                let token = UnixUserToken {
+                    token_type: "Bearer".to_string(),
+                    scope: None,
+                    expires_in: 0,
+                    ext_expires_in: 0,
+                    access_token: Some(access_token),
+                    refresh_token,
+                    id_token: IdToken::default(),
+                    client_info: ClientInfo::default(),
+                    prt: None,
+                };
+                cachelayer
+                    .change_auth_token(&account_id, &token, old_pin.as_deref(), &new_pin)
+                    .await
+                    .map(|_| ClientResponse::Ok)
+                    .unwrap_or(ClientResponse::Error)
             }
             ClientRequest::InvalidateCache => {
                 debug!("invalidate cache");
