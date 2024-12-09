@@ -60,6 +60,7 @@ use std::collections::BTreeSet;
 use std::convert::TryFrom;
 use std::ffi::CStr;
 
+use himmelblau_unix_common::config::HimmelblauConfig;
 use kanidm_unix_common::client_sync::DaemonClientBlocking;
 use kanidm_unix_common::constants::DEFAULT_CONFIG_PATH;
 use kanidm_unix_common::unix_config::KanidmUnixdConfig;
@@ -81,10 +82,8 @@ use tracing_subscriber::prelude::*;
 use std::thread;
 use std::time::Duration;
 
-pub fn get_cfg() -> Result<KanidmUnixdConfig, PamResultCode> {
-    KanidmUnixdConfig::new()
-        .read_options_from_optional_config(DEFAULT_CONFIG_PATH)
-        .map_err(|_| PamResultCode::PAM_SERVICE_ERR)
+pub fn get_cfg() -> Result<HimmelblauConfig, PamResultCode> {
+    HimmelblauConfig::new(Some(DEFAULT_CONFIG_PATH)).map_err(|_| PamResultCode::PAM_SERVICE_ERR)
 }
 
 fn install_subscriber(debug: bool) {
@@ -173,8 +172,8 @@ macro_rules! match_sm_auth_client_response {
                         pin = match $conv.send(PAM_PROMPT_ECHO_OFF, "New PIN: ") {
                             Ok(password) => match password {
                                 Some(cred) => {
-                                    if cred.len() < $cfg.hello_pin_min_length {
-                                        match $conv.send(PAM_TEXT_INFO, &format!("Chosen pin is too short! {} chars required.", $cfg.hello_pin_min_length)) {
+                                    if cred.len() < $cfg.get_hello_pin_min_length() {
+                                        match $conv.send(PAM_TEXT_INFO, &format!("Chosen pin is too short! {} chars required.", $cfg.get_hello_pin_min_length())) {
                                             Ok(_) => {}
                                             Err(err) => {
                                                 if $opts.debug {
@@ -305,7 +304,7 @@ impl PamHooks for PamKanidm {
         let req = ClientRequest::PamAccountAllowed(account_id);
         // PamResultCode::PAM_IGNORE
 
-        let mut daemon_client = match DaemonClientBlocking::new(cfg.sock_path.as_str()) {
+        let mut daemon_client = match DaemonClientBlocking::new(cfg.get_socket_path().as_str()) {
             Ok(dc) => dc,
             Err(e) => {
                 error!(err = ?e, "Error DaemonClientBlocking::new()");
@@ -313,7 +312,7 @@ impl PamHooks for PamKanidm {
             }
         };
 
-        match daemon_client.call_and_wait(&req, cfg.unix_sock_timeout) {
+        match daemon_client.call_and_wait(&req, cfg.get_unix_sock_timeout()) {
             Ok(r) => match r {
                 ClientResponse::PamStatus(Some(true)) => {
                     debug!("PamResultCode::PAM_SUCCESS");
@@ -373,8 +372,8 @@ impl PamHooks for PamKanidm {
         };
         let account_id = cfg.map_cn_name(&account_id);
 
-        let mut timeout = cfg.unix_sock_timeout;
-        let mut daemon_client = match DaemonClientBlocking::new(cfg.sock_path.as_str()) {
+        let mut timeout = cfg.get_unix_sock_timeout();
+        let mut daemon_client = match DaemonClientBlocking::new(cfg.get_socket_path().as_str()) {
             Ok(dc) => dc,
             Err(e) => {
                 error!(err = ?e, "Error DaemonClientBlocking::new()");
@@ -438,7 +437,7 @@ impl PamHooks for PamKanidm {
                     };
 
                     // Now setup the request for the next loop.
-                    timeout = cfg.unix_sock_timeout;
+                    timeout = cfg.get_unix_sock_timeout();
                     req = ClientRequest::PamAuthenticateStep(PamAuthRequest::Password { cred });
                     continue;
                 },
@@ -469,7 +468,7 @@ impl PamHooks for PamKanidm {
                     };
 
                     // Now setup the request for the next loop.
-                    timeout = cfg.unix_sock_timeout;
+                    timeout = cfg.get_unix_sock_timeout();
                     req = ClientRequest::PamAuthenticateStep(PamAuthRequest::MFACode {
                         cred,
                     });
@@ -576,7 +575,7 @@ impl PamHooks for PamKanidm {
         let account_id = cfg.map_cn_name(&account_id);
         let req = ClientRequest::PamAccountBeginSession(account_id);
 
-        let mut daemon_client = match DaemonClientBlocking::new(cfg.sock_path.as_str()) {
+        let mut daemon_client = match DaemonClientBlocking::new(cfg.get_socket_path().as_str()) {
             Ok(dc) => dc,
             Err(e) => {
                 error!(err = ?e, "Error DaemonClientBlocking::new()");
@@ -584,7 +583,7 @@ impl PamHooks for PamKanidm {
             }
         };
 
-        match daemon_client.call_and_wait(&req, cfg.unix_sock_timeout) {
+        match daemon_client.call_and_wait(&req, cfg.get_unix_sock_timeout()) {
             Ok(ClientResponse::Ok) => {
                 // println!("PAM_SUCCESS");
                 PamResultCode::PAM_SUCCESS
