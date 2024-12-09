@@ -1054,9 +1054,15 @@ mod tests {
         "#;
         let temp_file_invalid = create_temp_config(config_invalid);
         let config_invalid = HimmelblauConfig::new(Some(&temp_file_invalid)).unwrap();
-        assert_eq!(config_invalid.get_hello_pin_min_length(), DEFAULT_HELLO_PIN_MIN_LEN);
+        assert_eq!(
+            config_invalid.get_hello_pin_min_length(),
+            DEFAULT_HELLO_PIN_MIN_LEN
+        );
         let config_missing = HimmelblauConfig::new(None).unwrap();
-        assert_eq!(config_missing.get_hello_pin_min_length(), DEFAULT_HELLO_PIN_MIN_LEN);
+        assert_eq!(
+            config_missing.get_hello_pin_min_length(),
+            DEFAULT_HELLO_PIN_MIN_LEN
+        );
     }
 
     #[test]
@@ -1069,7 +1075,10 @@ mod tests {
         let temp_file = create_temp_config(config_data);
         let config = HimmelblauConfig::new(Some(&temp_file)).unwrap();
 
-        assert_eq!(config.get_tenant_id("example.com"), Some("example-tenant-id".to_string()));
+        assert_eq!(
+            config.get_tenant_id("example.com"),
+            Some("example-tenant-id".to_string())
+        );
         assert_eq!(config.get_tenant_id("nonexistent.com"), None);
         let config_missing = HimmelblauConfig::new(None).unwrap();
         assert_eq!(config_missing.get_tenant_id("example.com"), None);
@@ -1085,7 +1094,11 @@ mod tests {
         let temp_file = create_temp_config(config_data);
         let config = HimmelblauConfig::new(Some(&temp_file)).unwrap();
 
-        let expected_groups = vec!["group1".to_string(), "group2".to_string(), "group3".to_string()];
+        let expected_groups = vec![
+            "group1".to_string(),
+            "group2".to_string(),
+            "group3".to_string(),
+        ];
         assert_eq!(config.get_local_groups(), expected_groups);
         let config_empty = HimmelblauConfig::new(None).unwrap();
         assert_eq!(config_empty.get_local_groups(), Vec::<String>::new());
@@ -1101,7 +1114,10 @@ mod tests {
         let temp_file = create_temp_config(config_data);
         let config = HimmelblauConfig::new(Some(&temp_file)).unwrap();
 
-        assert_eq!(config.get_logon_script(), Some("/path/to/logon/script".to_string()));
+        assert_eq!(
+            config.get_logon_script(),
+            Some("/path/to/logon/script".to_string())
+        );
         let config_missing = HimmelblauConfig::new(None).unwrap();
         assert_eq!(config_missing.get_logon_script(), None);
     }
@@ -1116,7 +1132,11 @@ mod tests {
         let temp_file = create_temp_config(config_data);
         let config = HimmelblauConfig::new(Some(&temp_file)).unwrap();
 
-        let expected_scopes = vec!["scope1".to_string(), "scope2".to_string(), "scope3".to_string()];
+        let expected_scopes = vec![
+            "scope1".to_string(),
+            "scope2".to_string(),
+            "scope3".to_string(),
+        ];
         assert_eq!(config.get_logon_token_scopes(), expected_scopes);
         let config_empty = HimmelblauConfig::new(None).unwrap();
         assert_eq!(config_empty.get_logon_token_scopes(), Vec::<String>::new());
