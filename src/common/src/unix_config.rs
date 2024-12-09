@@ -9,7 +9,7 @@
  */
 use std::fmt::{Display, Formatter};
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, PartialEq)]
 pub enum HomeAttr {
     Uuid,
     Spn,
@@ -51,7 +51,7 @@ impl Display for UidAttr {
     }
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub enum HsmType {
     #[cfg_attr(not(feature = "tpm"), default)]
     Soft,
