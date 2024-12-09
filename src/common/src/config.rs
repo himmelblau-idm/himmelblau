@@ -33,7 +33,7 @@ use crate::unix_config::{HomeAttr, HsmType};
 use idmap::DEFAULT_IDMAP_RANGE;
 use std::env;
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, PartialEq)]
 pub enum IdAttr {
     Uuid,
     Name,
@@ -309,7 +309,7 @@ impl HimmelblauConfig {
         match self.config.get("global", "hsm_type") {
             Some(val) => match val.to_lowercase().as_str() {
                 "soft" => HsmType::Soft,
-                "tmp" => HsmType::Tpm,
+                "tpm" => HsmType::Tpm,
                 _ => {
                     warn!("Invalid hsm_type configured, using default ...");
                     HsmType::default()
@@ -379,9 +379,11 @@ impl HimmelblauConfig {
         };
         let mut sections = self.config.sections();
         sections.retain(|s| s != "global");
-        domains.extend(sections);
-        domains.sort();
-        domains.dedup();
+        for section in sections {
+            if !domains.contains(&section) {
+                domains.push(section);
+            }
+        }
         domains
     }
 
@@ -485,5 +487,655 @@ impl HimmelblauConfig {
 impl fmt::Debug for HimmelblauConfig {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "{:?}", self.config)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::env;
+    use std::fs;
+
+    // Helper function to create temporary configuration files
+    fn create_temp_config(contents: &str) -> String {
+        let file_path = format!("/tmp/himmelblau_test_config_{}.ini", uuid::Uuid::new_v4());
+        fs::write(&file_path, contents).expect("Failed to write temporary config file");
+        file_path
+    }
+
+    #[test]
+    fn test_get_home_prefix() {
+        let config_data = r#"
+        [global]
+        home_prefix = /home/global
+
+        [example.com]
+        home_prefix = /home/example
+        "#;
+
+        let temp_file = create_temp_config(config_data);
+        let config = HimmelblauConfig::new(Some(&temp_file)).unwrap();
+
+        assert_eq!(config.get_home_prefix(Some("example.com")), "/home/example");
+        assert_eq!(config.get_home_prefix(None), "/home/global");
+        let config_empty = HimmelblauConfig::new(None).unwrap();
+        assert_eq!(
+            config_empty.get_home_prefix(Some("unknown.com")),
+            DEFAULT_HOME_PREFIX
+        );
+    }
+
+    #[test]
+    fn test_get_shell() {
+        let config_data = r#"
+        [global]
+        shell = /bin/bash
+
+        [example.com]
+        shell = /bin/zsh
+        "#;
+
+        let temp_file = create_temp_config(config_data);
+        let config = HimmelblauConfig::new(Some(&temp_file)).unwrap();
+
+        assert_eq!(config.get_shell(Some("example.com")), "/bin/zsh");
+        assert_eq!(config.get_shell(None), "/bin/bash");
+        let config_empty = HimmelblauConfig::new(None).unwrap();
+        assert_eq!(config_empty.get_shell(Some("unknown.com")), DEFAULT_SHELL);
+    }
+
+    #[test]
+    fn test_get_connection_timeout() {
+        let config_data = r#"
+        [global]
+        connection_timeout = 45
+        "#;
+
+        let temp_file = create_temp_config(config_data);
+        let config = HimmelblauConfig::new(Some(&temp_file)).unwrap();
+
+        assert_eq!(config.get_connection_timeout(), 45);
+        let config_empty = HimmelblauConfig::new(None).unwrap();
+        assert_eq!(config_empty.get_connection_timeout(), 30);
+    }
+
+    #[test]
+    fn test_get_idmap_range() {
+        let config_data = r#"
+        [global]
+        idmap_range = 1000-2000
+
+        [example.com]
+        idmap_range = 5000-6000
+        "#;
+
+        let temp_file = create_temp_config(config_data);
+        let config = HimmelblauConfig::new(Some(&temp_file)).unwrap();
+
+        assert_eq!(config.get_idmap_range("example.com"), (5000, 6000));
+        assert_eq!(config.get_idmap_range("unknown.com"), (1000, 2000));
+        let config_empty = HimmelblauConfig::new(None).unwrap();
+        assert_eq!(config_empty.get_idmap_range("any.com"), DEFAULT_IDMAP_RANGE);
+    }
+
+    #[test]
+    fn test_get_broker_socket_path() {
+        let config_data = r#"
+        [global]
+        broker_socket_path = /var/run/broker.sock
+        "#;
+
+        let temp_file = create_temp_config(config_data);
+        let config = HimmelblauConfig::new(Some(&temp_file)).unwrap();
+
+        assert_eq!(config.get_broker_socket_path(), "/var/run/broker.sock");
+        let config_empty = HimmelblauConfig::new(None).unwrap();
+        assert_eq!(
+            config_empty.get_broker_socket_path(),
+            DEFAULT_BROKER_SOCK_PATH
+        );
+    }
+
+    #[test]
+    fn test_get_pam_allow_groups() {
+        let config_data = r#"
+        [example.com]
+        pam_allow_groups = 2eb4e6a2-f55d-4cf4-8e62-978f9f4a828d,f791d7c2-66cd-4f67-a195-72c6faf3c3b5
+
+        [global]
+        pam_allow_groups = 825d1f7e-c4cd-4fc2-aeeb-1f92357f8da6,0149b437-fbaa-4419-bf46-f9a9f9a3438c
+        "#;
+
+        let temp_file = create_temp_config(config_data);
+        let config = HimmelblauConfig::new(Some(&temp_file)).unwrap();
+
+        let mut groups = config.get_pam_allow_groups();
+        groups.sort();
+        let mut expected_groups: Vec<String> = vec![
+            "2eb4e6a2-f55d-4cf4-8e62-978f9f4a828d".to_string(),
+            "f791d7c2-66cd-4f67-a195-72c6faf3c3b5".to_string(),
+            "825d1f7e-c4cd-4fc2-aeeb-1f92357f8da6".to_string(),
+            "0149b437-fbaa-4419-bf46-f9a9f9a3438c".to_string(),
+        ];
+        expected_groups.sort();
+
+        assert_eq!(groups, expected_groups);
+    }
+
+    #[test]
+    fn test_get_hsm_pin_path_env_override() {
+        env::set_var("HIMMELBLAU_HSM_PIN_PATH", "/custom/pin/path");
+
+        let config_data = r#"
+        [global]
+        hsm_pin_path = /etc/hsm/default_pin
+        "#;
+
+        let temp_file = create_temp_config(config_data);
+        let config = HimmelblauConfig::new(Some(&temp_file)).unwrap();
+
+        assert_eq!(config.get_hsm_pin_path(), "/custom/pin/path");
+
+        env::remove_var("HIMMELBLAU_HSM_PIN_PATH");
+    }
+
+    #[test]
+    fn test_get_apply_policy() {
+        let config_data = r#"
+        [global]
+        apply_policy = true
+        "#;
+
+        let temp_file = create_temp_config(config_data);
+        let config = HimmelblauConfig::new(Some(&temp_file)).unwrap();
+
+        assert_eq!(config.get_apply_policy(), true);
+        let config_empty = HimmelblauConfig::new(None).unwrap();
+        assert_eq!(config_empty.get_apply_policy(), false);
+    }
+
+    #[test]
+    fn test_get_home_attr() {
+        let config_data = r#"
+        [global]
+        home_attr = cn
+
+        [example.com]
+        home_attr = spn
+        "#;
+
+        let temp_file = create_temp_config(config_data);
+        let config = HimmelblauConfig::new(Some(&temp_file)).unwrap();
+
+        assert_eq!(config.get_home_attr(None), HomeAttr::Cn);
+        assert_eq!(config.get_home_attr(Some("example.com")), HomeAttr::Spn);
+        let config_empty = HimmelblauConfig::new(None).unwrap();
+        assert_eq!(config_empty.get_home_attr(None), HomeAttr::Uuid);
+    }
+
+    #[test]
+    fn test_get_home_alias() {
+        let config_data = r#"
+        [global]
+        home_alias = cn
+
+        [example.com]
+        home_alias = uuid
+        "#;
+
+        let temp_file = create_temp_config(config_data);
+        let config = HimmelblauConfig::new(Some(&temp_file)).unwrap();
+
+        assert_eq!(config.get_home_alias(None), Some(HomeAttr::Cn));
+        assert_eq!(
+            config.get_home_alias(Some("example.com")),
+            Some(HomeAttr::Uuid)
+        );
+        let config_empty = HimmelblauConfig::new(None).unwrap();
+        assert_eq!(
+            config_empty.get_home_alias(Some("unknown.com")),
+            Some(HomeAttr::Spn)
+        );
+    }
+
+    #[test]
+    fn test_get_odc_provider() {
+        let config_data = r#"
+        [global]
+        odc_provider = suse.com
+
+        [example.com]
+        odc_provider = odc.officeapps.live.com
+        "#;
+
+        let temp_file = create_temp_config(config_data);
+        let config = HimmelblauConfig::new(Some(&temp_file)).unwrap();
+
+        assert_eq!(config.get_odc_provider("unknown.com"), "suse.com");
+        assert_eq!(
+            config.get_odc_provider("example.com"),
+            "odc.officeapps.live.com"
+        );
+        let config_empty = HimmelblauConfig::new(None).unwrap();
+        assert_eq!(
+            config_empty.get_odc_provider("unknown.com"),
+            DEFAULT_ODC_PROVIDER
+        );
+    }
+
+    #[test]
+    fn test_get_app_id() {
+        let config_data = r#"
+        [example.com]
+        app_id = 70fee399-7cd8-42f9-a0ea-1e12ea308908
+        "#;
+
+        let temp_file = create_temp_config(config_data);
+        let config = HimmelblauConfig::new(Some(&temp_file)).unwrap();
+
+        assert_eq!(config.get_app_id("unknown.com"), BROKER_APP_ID,);
+        assert_eq!(
+            config.get_app_id("example.com"),
+            "70fee399-7cd8-42f9-a0ea-1e12ea308908"
+        );
+        let config_empty = HimmelblauConfig::new(None).unwrap();
+        assert_eq!(config_empty.get_app_id("example.com"), BROKER_APP_ID);
+    }
+
+    #[test]
+    fn test_get_socket_path() {
+        let config_data = r#"
+        [global]
+        socket_path = /var/run/socket_path.sock
+        "#;
+
+        let temp_file = create_temp_config(config_data);
+        let config = HimmelblauConfig::new(Some(&temp_file)).unwrap();
+
+        assert_eq!(config.get_socket_path(), "/var/run/socket_path.sock");
+        let config_empty = HimmelblauConfig::new(None).unwrap();
+        assert_eq!(config_empty.get_socket_path(), DEFAULT_SOCK_PATH);
+    }
+
+    #[test]
+    fn test_get_task_socket_path() {
+        let config_data = r#"
+        [global]
+        task_socket_path = /var/run/task_socket.sock
+        "#;
+
+        let temp_file = create_temp_config(config_data);
+        let config = HimmelblauConfig::new(Some(&temp_file)).unwrap();
+
+        assert_eq!(config.get_task_socket_path(), "/var/run/task_socket.sock");
+        let config_empty = HimmelblauConfig::new(None).unwrap();
+        assert_eq!(config_empty.get_task_socket_path(), DEFAULT_TASK_SOCK_PATH);
+    }
+
+    #[test]
+    fn test_get_cache_timeout() {
+        let config_data = r#"
+        [global]
+        cache_timeout = 120
+        "#;
+
+        let temp_file = create_temp_config(config_data);
+        let config = HimmelblauConfig::new(Some(&temp_file)).unwrap();
+
+        assert_eq!(config.get_cache_timeout(), 120);
+        let config_empty = HimmelblauConfig::new(None).unwrap();
+        assert_eq!(config_empty.get_cache_timeout(), DEFAULT_CACHE_TIMEOUT);
+    }
+
+    #[test]
+    fn test_get_unix_sock_timeout() {
+        let config_data = r#"
+        [global]
+        connection_timeout = 15
+        "#;
+
+        let temp_file = create_temp_config(config_data);
+        let config = HimmelblauConfig::new(Some(&temp_file)).unwrap();
+
+        assert_eq!(config.get_unix_sock_timeout(), 30);
+        let config_empty = HimmelblauConfig::new(None).unwrap();
+        assert_eq!(
+            config_empty.get_unix_sock_timeout(),
+            DEFAULT_CONN_TIMEOUT * 2
+        );
+    }
+
+    #[test]
+    fn test_get_db_path() {
+        let config_data = r#"
+        [global]
+        db_path = /var/db/himmelblau.db
+        "#;
+
+        let temp_file = create_temp_config(config_data);
+        let config = HimmelblauConfig::new(Some(&temp_file)).unwrap();
+
+        assert_eq!(config.get_db_path(), "/var/db/himmelblau.db");
+    }
+
+    #[test]
+    fn test_get_hsm_type() {
+        let (config_data, default, alt) = if HsmType::default() == HsmType::Soft {
+            (
+                r#"
+                    [global]
+                    hsm_type = tpm
+                "#,
+                HsmType::Soft,
+                HsmType::Tpm,
+            )
+        } else {
+            (
+                r#"
+                    [global]
+                    hsm_type = soft
+                "#,
+                HsmType::Tpm,
+                HsmType::Soft,
+            )
+        };
+
+        let temp_file = create_temp_config(config_data);
+        let config = HimmelblauConfig::new(Some(&temp_file)).unwrap();
+        assert_eq!(config.get_hsm_type(), alt);
+        let config_empty = HimmelblauConfig::new(None).unwrap();
+        assert_eq!(config_empty.get_hsm_type(), default);
+    }
+
+    #[test]
+    fn test_get_use_etc_skel() {
+        let config_data = r#"
+        [global]
+        use_etc_skel = true
+        "#;
+
+        let temp_file = create_temp_config(config_data);
+        let config = HimmelblauConfig::new(Some(&temp_file)).unwrap();
+
+        assert_eq!(config.get_use_etc_skel(), true);
+
+        let config_empty = HimmelblauConfig::new(None).unwrap();
+        assert_eq!(config_empty.get_use_etc_skel(), false);
+    }
+
+    #[test]
+    fn test_get_configured_domains() {
+        let config_data = r#"
+        [global]
+        domains = example.com,test.com
+
+        [alpha.com]
+        [test.com]
+        [example2.com]
+        [example.com]
+        [test2.com]
+        "#;
+
+        let temp_file = create_temp_config(config_data);
+        let config = HimmelblauConfig::new(Some(&temp_file)).unwrap();
+
+        let mut domains = config.get_configured_domains();
+        // The order from `domains` must always be preserved (specifically, we
+        // care about the placement of the first domain only).
+        assert_eq!(domains[..2], vec!["example.com", "test.com"]);
+
+        // The order of the remaining domains is irrelevant.
+        domains.sort();
+        assert_eq!(
+            domains,
+            vec![
+                "alpha.com",
+                "example.com",
+                "example2.com",
+                "test.com",
+                "test2.com"
+            ]
+        );
+    }
+
+    #[test]
+    fn test_get_enable_hello() {
+        let config_data = r#"
+        [global]
+        enable_hello = false
+        "#;
+
+        let temp_file = create_temp_config(config_data);
+        let config = HimmelblauConfig::new(Some(&temp_file)).unwrap();
+
+        assert_eq!(config.get_enable_hello(), false);
+        let config_empty = HimmelblauConfig::new(None).unwrap();
+        assert_eq!(config_empty.get_enable_hello(), DEFAULT_HELLO_ENABLED);
+    }
+
+    #[test]
+    fn test_get_enable_experimental_mfa() {
+        let config_data = r#"
+        [global]
+        enable_experimental_mfa = false
+        "#;
+
+        let temp_file = create_temp_config(config_data);
+        let config = HimmelblauConfig::new(Some(&temp_file)).unwrap();
+
+        assert_eq!(config.get_enable_experimental_mfa(), false);
+        let config_empty = HimmelblauConfig::new(None).unwrap();
+        assert_eq!(config_empty.get_enable_experimental_mfa(), true);
+    }
+
+    #[test]
+    fn test_get_debug() {
+        let config_data = r#"
+        [global]
+        debug = true
+        "#;
+
+        let temp_file = create_temp_config(config_data);
+        let config = HimmelblauConfig::new(Some(&temp_file)).unwrap();
+
+        assert_eq!(config.get_debug(), true);
+        let config_empty = HimmelblauConfig::new(None).unwrap();
+        assert_eq!(config_empty.get_debug(), false);
+    }
+
+    #[test]
+    fn test_get_cn_name_mapping() {
+        let config_data = r#"
+        [global]
+        cn_name_mapping = false
+        "#;
+
+        let temp_file = create_temp_config(config_data);
+        let config = HimmelblauConfig::new(Some(&temp_file)).unwrap();
+
+        assert_eq!(config.get_cn_name_mapping(), false);
+        let config_empty = HimmelblauConfig::new(None).unwrap();
+        assert_eq!(config_empty.get_cn_name_mapping(), CN_NAME_MAPPING);
+    }
+
+    #[test]
+    fn test_get_authority_host() {
+        let config_data = r#"
+        [example.com]
+        authority_host = https://login.suse.com
+        "#;
+
+        let temp_file = create_temp_config(config_data);
+        let config = HimmelblauConfig::new(Some(&temp_file)).unwrap();
+
+        assert_eq!(
+            config.get_authority_host("example.com"),
+            "https://login.suse.com"
+        );
+        let config_empty = HimmelblauConfig::new(None).unwrap();
+        assert_eq!(
+            config_empty.get_authority_host("example.com"),
+            DEFAULT_AUTHORITY_HOST
+        );
+    }
+
+    #[test]
+    fn test_get_graph_url() {
+        let config_data = r#"
+        [example.com]
+        graph_url = https://graph.suse.com
+        "#;
+
+        let temp_file = create_temp_config(config_data);
+        let config = HimmelblauConfig::new(Some(&temp_file)).unwrap();
+
+        assert_eq!(
+            config.get_graph_url("example.com"),
+            Some("https://graph.suse.com".to_string())
+        );
+        let config_empty = HimmelblauConfig::new(None).unwrap();
+        assert_eq!(config_empty.get_graph_url("example.com"), None);
+    }
+
+    #[test]
+    fn test_get_selinux() {
+        let config_data = r#"
+        [global]
+        selinux = true
+        "#;
+
+        let temp_file = create_temp_config(config_data);
+        let config = HimmelblauConfig::new(Some(&temp_file)).unwrap();
+
+        assert_eq!(config.get_selinux(), true);
+        let config_empty = HimmelblauConfig::new(None).unwrap();
+        assert_eq!(config_empty.get_selinux(), DEFAULT_SELINUX);
+    }
+
+    #[test]
+    fn test_get_id_attr_map() {
+        let config_data = r#"
+        [global]
+        id_attr_map = uuid
+        "#;
+
+        let temp_file = create_temp_config(config_data);
+        let config = HimmelblauConfig::new(Some(&temp_file)).unwrap();
+
+        assert_eq!(config.get_id_attr_map(), IdAttr::Uuid);
+
+        // Default fallback for unknown value
+        let config_invalid = r#"
+        [global]
+        id_attr_map = invalid_value
+        "#;
+        let temp_file_invalid = create_temp_config(config_invalid);
+        let config_invalid = HimmelblauConfig::new(Some(&temp_file_invalid)).unwrap();
+        assert_eq!(config_invalid.get_id_attr_map(), DEFAULT_ID_ATTR_MAP);
+
+        let config_missing = HimmelblauConfig::new(None).unwrap();
+        assert_eq!(config_missing.get_id_attr_map(), DEFAULT_ID_ATTR_MAP);
+    }
+
+    #[test]
+    fn test_get_hello_pin_min_length() {
+        let config_data = r#"
+        [global]
+        hello_pin_min_length = 8
+        "#;
+
+        let temp_file = create_temp_config(config_data);
+        let config = HimmelblauConfig::new(Some(&temp_file)).unwrap();
+
+        assert_eq!(config.get_hello_pin_min_length(), 8);
+        let config_invalid = r#"
+        [global]
+        hello_pin_min_length = invalid_value
+        "#;
+        let temp_file_invalid = create_temp_config(config_invalid);
+        let config_invalid = HimmelblauConfig::new(Some(&temp_file_invalid)).unwrap();
+        assert_eq!(config_invalid.get_hello_pin_min_length(), DEFAULT_HELLO_PIN_MIN_LEN);
+        let config_missing = HimmelblauConfig::new(None).unwrap();
+        assert_eq!(config_missing.get_hello_pin_min_length(), DEFAULT_HELLO_PIN_MIN_LEN);
+    }
+
+    #[test]
+    fn test_get_tenant_id() {
+        let config_data = r#"
+        [example.com]
+        tenant_id = example-tenant-id
+        "#;
+
+        let temp_file = create_temp_config(config_data);
+        let config = HimmelblauConfig::new(Some(&temp_file)).unwrap();
+
+        assert_eq!(config.get_tenant_id("example.com"), Some("example-tenant-id".to_string()));
+        assert_eq!(config.get_tenant_id("nonexistent.com"), None);
+        let config_missing = HimmelblauConfig::new(None).unwrap();
+        assert_eq!(config_missing.get_tenant_id("example.com"), None);
+    }
+
+    #[test]
+    fn test_get_local_groups() {
+        let config_data = r#"
+        [global]
+        local_groups = group1,group2,group3
+        "#;
+
+        let temp_file = create_temp_config(config_data);
+        let config = HimmelblauConfig::new(Some(&temp_file)).unwrap();
+
+        let expected_groups = vec!["group1".to_string(), "group2".to_string(), "group3".to_string()];
+        assert_eq!(config.get_local_groups(), expected_groups);
+        let config_empty = HimmelblauConfig::new(None).unwrap();
+        assert_eq!(config_empty.get_local_groups(), Vec::<String>::new());
+    }
+
+    #[test]
+    fn test_get_logon_script() {
+        let config_data = r#"
+        [global]
+        logon_script = /path/to/logon/script
+        "#;
+
+        let temp_file = create_temp_config(config_data);
+        let config = HimmelblauConfig::new(Some(&temp_file)).unwrap();
+
+        assert_eq!(config.get_logon_script(), Some("/path/to/logon/script".to_string()));
+        let config_missing = HimmelblauConfig::new(None).unwrap();
+        assert_eq!(config_missing.get_logon_script(), None);
+    }
+
+    #[test]
+    fn test_get_logon_token_scopes() {
+        let config_data = r#"
+        [global]
+        logon_token_scopes = scope1,scope2,scope3
+        "#;
+
+        let temp_file = create_temp_config(config_data);
+        let config = HimmelblauConfig::new(Some(&temp_file)).unwrap();
+
+        let expected_scopes = vec!["scope1".to_string(), "scope2".to_string(), "scope3".to_string()];
+        assert_eq!(config.get_logon_token_scopes(), expected_scopes);
+        let config_empty = HimmelblauConfig::new(None).unwrap();
+        assert_eq!(config_empty.get_logon_token_scopes(), Vec::<String>::new());
+    }
+
+    #[test]
+    fn test_str_to_home_attr() {
+        assert_eq!(str_to_home_attr("uuid"), HomeAttr::Uuid);
+        assert_eq!(str_to_home_attr("spn"), HomeAttr::Spn);
+        assert_eq!(str_to_home_attr("cn"), HomeAttr::Cn);
+        assert_eq!(str_to_home_attr("invalid"), HomeAttr::Uuid); // Default fallback
+    }
+
+    #[test]
+    fn test_split_username() {
+        assert_eq!(
+            split_username("user@example.com"),
+            Some(("user", "example.com"))
+        );
+        assert_eq!(split_username("invalid_username"), None);
     }
 }
