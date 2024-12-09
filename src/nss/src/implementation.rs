@@ -8,6 +8,7 @@
  * file, You can obtain one at https://mozilla.org/MPL/2.0/.
  */
 use himmelblau_unix_common::client_sync::DaemonClientBlocking;
+use himmelblau_unix_common::config::HimmelblauConfig;
 use himmelblau_unix_common::constants::DEFAULT_CONFIG_PATH;
 use himmelblau_unix_common::unix_proto::{ClientRequest, ClientResponse, NssGroup, NssUser};
 use kanidm_unix_common::unix_config::KanidmUnixdConfig;
@@ -20,16 +21,15 @@ libnss_passwd_hooks!(himmelblau, HimmelblauPasswd);
 
 impl PasswdHooks for HimmelblauPasswd {
     fn get_all_entries() -> Response<Vec<Passwd>> {
-        let cfg =
-            match KanidmUnixdConfig::new().read_options_from_optional_config(DEFAULT_CONFIG_PATH) {
-                Ok(c) => c,
-                Err(_) => {
-                    return Response::Unavail;
-                }
-            };
+        let cfg = match HimmelblauConfig::new(Some(DEFAULT_CONFIG_PATH)) {
+            Ok(c) => c,
+            Err(_) => {
+                return Response::Unavail;
+            }
+        };
         let req = ClientRequest::NssAccounts;
 
-        let mut daemon_client = match DaemonClientBlocking::new(cfg.sock_path.as_str()) {
+        let mut daemon_client = match DaemonClientBlocking::new(cfg.get_socket_path().as_str()) {
             Ok(dc) => dc,
             Err(_) => {
                 return Response::Unavail;
@@ -37,7 +37,7 @@ impl PasswdHooks for HimmelblauPasswd {
         };
 
         daemon_client
-            .call_and_wait(&req, cfg.unix_sock_timeout)
+            .call_and_wait(&req, cfg.get_unix_sock_timeout())
             .map(|r| match r {
                 ClientResponse::NssAccounts(l) => l.into_iter().map(passwd_from_nssuser).collect(),
                 _ => Vec::new(),
@@ -47,16 +47,15 @@ impl PasswdHooks for HimmelblauPasswd {
     }
 
     fn get_entry_by_uid(uid: libc::uid_t) -> Response<Passwd> {
-        let cfg =
-            match KanidmUnixdConfig::new().read_options_from_optional_config(DEFAULT_CONFIG_PATH) {
-                Ok(c) => c,
-                Err(_) => {
-                    return Response::Unavail;
-                }
-            };
+        let cfg = match HimmelblauConfig::new(Some(DEFAULT_CONFIG_PATH)) {
+            Ok(c) => c,
+            Err(_) => {
+                return Response::Unavail;
+            }
+        };
         let req = ClientRequest::NssAccountByUid(uid);
 
-        let mut daemon_client = match DaemonClientBlocking::new(cfg.sock_path.as_str()) {
+        let mut daemon_client = match DaemonClientBlocking::new(cfg.get_socket_path().as_str()) {
             Ok(dc) => dc,
             Err(_) => {
                 return Response::Unavail;
@@ -64,7 +63,7 @@ impl PasswdHooks for HimmelblauPasswd {
         };
 
         daemon_client
-            .call_and_wait(&req, cfg.unix_sock_timeout)
+            .call_and_wait(&req, cfg.get_unix_sock_timeout())
             .map(|r| match r {
                 ClientResponse::NssAccount(opt) => opt
                     .map(passwd_from_nssuser)
@@ -76,16 +75,15 @@ impl PasswdHooks for HimmelblauPasswd {
     }
 
     fn get_entry_by_name(name: String) -> Response<Passwd> {
-        let cfg =
-            match KanidmUnixdConfig::new().read_options_from_optional_config(DEFAULT_CONFIG_PATH) {
-                Ok(c) => c,
-                Err(_) => {
-                    return Response::Unavail;
-                }
-            };
+        let cfg = match HimmelblauConfig::new(Some(DEFAULT_CONFIG_PATH)) {
+            Ok(c) => c,
+            Err(_) => {
+                return Response::Unavail;
+            }
+        };
         let name = cfg.map_cn_name(&name);
         let req = ClientRequest::NssAccountByName(name.clone());
-        let mut daemon_client = match DaemonClientBlocking::new(cfg.sock_path.as_str()) {
+        let mut daemon_client = match DaemonClientBlocking::new(cfg.get_socket_path().as_str()) {
             Ok(dc) => dc,
             Err(_) => {
                 return Response::Unavail;
@@ -93,7 +91,7 @@ impl PasswdHooks for HimmelblauPasswd {
         };
 
         daemon_client
-            .call_and_wait(&req, cfg.unix_sock_timeout)
+            .call_and_wait(&req, cfg.get_unix_sock_timeout())
             .map(|r| match r {
                 ClientResponse::NssAccount(opt) => opt
                     .map(|nu| {
@@ -113,15 +111,14 @@ libnss_group_hooks!(himmelblau, HimmelblauGroup);
 
 impl GroupHooks for HimmelblauGroup {
     fn get_all_entries() -> Response<Vec<Group>> {
-        let cfg =
-            match KanidmUnixdConfig::new().read_options_from_optional_config(DEFAULT_CONFIG_PATH) {
-                Ok(c) => c,
-                Err(_) => {
-                    return Response::Unavail;
-                }
-            };
+        let cfg = match HimmelblauConfig::new(Some(DEFAULT_CONFIG_PATH)) {
+            Ok(c) => c,
+            Err(_) => {
+                return Response::Unavail;
+            }
+        };
         let req = ClientRequest::NssGroups;
-        let mut daemon_client = match DaemonClientBlocking::new(cfg.sock_path.as_str()) {
+        let mut daemon_client = match DaemonClientBlocking::new(cfg.get_socket_path().as_str()) {
             Ok(dc) => dc,
             Err(_) => {
                 return Response::Unavail;
@@ -129,7 +126,7 @@ impl GroupHooks for HimmelblauGroup {
         };
 
         daemon_client
-            .call_and_wait(&req, cfg.unix_sock_timeout)
+            .call_and_wait(&req, cfg.get_unix_sock_timeout())
             .map(|r| match r {
                 ClientResponse::NssGroups(l) => l.into_iter().map(group_from_nssgroup).collect(),
                 _ => Vec::new(),
@@ -139,15 +136,14 @@ impl GroupHooks for HimmelblauGroup {
     }
 
     fn get_entry_by_gid(gid: libc::gid_t) -> Response<Group> {
-        let cfg =
-            match KanidmUnixdConfig::new().read_options_from_optional_config(DEFAULT_CONFIG_PATH) {
-                Ok(c) => c,
-                Err(_) => {
-                    return Response::Unavail;
-                }
-            };
+        let cfg = match HimmelblauConfig::new(Some(DEFAULT_CONFIG_PATH)) {
+            Ok(c) => c,
+            Err(_) => {
+                return Response::Unavail;
+            }
+        };
         let req = ClientRequest::NssGroupByGid(gid);
-        let mut daemon_client = match DaemonClientBlocking::new(cfg.sock_path.as_str()) {
+        let mut daemon_client = match DaemonClientBlocking::new(cfg.get_socket_path().as_str()) {
             Ok(dc) => dc,
             Err(_) => {
                 return Response::Unavail;
@@ -155,7 +151,7 @@ impl GroupHooks for HimmelblauGroup {
         };
 
         daemon_client
-            .call_and_wait(&req, cfg.unix_sock_timeout)
+            .call_and_wait(&req, cfg.get_unix_sock_timeout())
             .map(|r| match r {
                 ClientResponse::NssGroup(opt) => opt
                     .map(group_from_nssgroup)
@@ -167,15 +163,14 @@ impl GroupHooks for HimmelblauGroup {
     }
 
     fn get_entry_by_name(name: String) -> Response<Group> {
-        let cfg =
-            match KanidmUnixdConfig::new().read_options_from_optional_config(DEFAULT_CONFIG_PATH) {
-                Ok(c) => c,
-                Err(_) => {
-                    return Response::Unavail;
-                }
-            };
+        let cfg = match HimmelblauConfig::new(Some(DEFAULT_CONFIG_PATH)) {
+            Ok(c) => c,
+            Err(_) => {
+                return Response::Unavail;
+            }
+        };
         let req = ClientRequest::NssGroupByName(name);
-        let mut daemon_client = match DaemonClientBlocking::new(cfg.sock_path.as_str()) {
+        let mut daemon_client = match DaemonClientBlocking::new(cfg.get_socket_path().as_str()) {
             Ok(dc) => dc,
             Err(_) => {
                 return Response::Unavail;
@@ -183,7 +178,7 @@ impl GroupHooks for HimmelblauGroup {
         };
 
         daemon_client
-            .call_and_wait(&req, cfg.unix_sock_timeout)
+            .call_and_wait(&req, cfg.get_unix_sock_timeout())
             .map(|r| match r {
                 ClientResponse::NssGroup(opt) => opt
                     .map(group_from_nssgroup)
