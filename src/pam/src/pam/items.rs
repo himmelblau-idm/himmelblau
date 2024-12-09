@@ -24,8 +24,7 @@
    SOFTWARE.
 */
 use crate::pam::constants::{
-    PamItemType, PAM_AUTHTOK, PAM_OLDAUTHTOK, PAM_RHOST, PAM_RUSER, PAM_SERVICE, PAM_TTY, PAM_USER,
-    PAM_USER_PROMPT,
+    PamItemType, PAM_AUTHTOK, PAM_RHOST, PAM_RUSER, PAM_SERVICE, PAM_TTY, PAM_USER, PAM_USER_PROMPT,
 };
 pub use crate::pam::conv::PamConv;
 use crate::pam::module::PamItem;
@@ -90,14 +89,5 @@ pub struct PamAuthTok {}
 impl PamItem for PamAuthTok {
     fn item_type() -> PamItemType {
         PAM_AUTHTOK
-    }
-}
-
-#[allow(dead_code)]
-pub struct PamOldAuthTok {}
-
-impl PamItem for PamOldAuthTok {
-    fn item_type() -> PamItemType {
-        PAM_OLDAUTHTOK
     }
 }

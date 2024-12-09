@@ -39,6 +39,9 @@ pub const _PAM_DELETE_CRED: PamFlag = 0x0004;
 pub const _PAM_REINITIALIZE_CRED: PamFlag = 0x0008;
 pub const _PAM_REFRESH_CRED: PamFlag = 0x0010;
 pub const _PAM_CHANGE_EXPIRED_AUTHTOK: PamFlag = 0x0020;
+// see /usr/include/security/pam_modules.h
+pub const PAM_PRELIM_CHECK: PamFlag = 0x4000;
+pub const PAM_UPDATE_AUTHTOK: PamFlag = 0x2000;
 
 // The Linux-PAM item types
 // see /usr/include/security/_pam_types.h
