@@ -379,9 +379,11 @@ impl HimmelblauConfig {
         };
         let mut sections = self.config.sections();
         sections.retain(|s| s != "global");
-        domains.extend(sections);
-        domains.sort();
-        domains.dedup();
+        for section in sections {
+            if !domains.contains(&section) {
+                domains.push(section);
+            }
+        }
         domains
     }
 
