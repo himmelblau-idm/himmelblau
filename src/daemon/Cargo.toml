@@ -42,6 +42,7 @@ kanidm_lib_file_permissions.workspace = true
 identity_dbus_broker.workspace = true
 base64.workspace = true
 async-trait = "0.1.83"
+libhimmelblau.workspace = true
 
 [package.metadata.deb]
 name = "himmelblau"
