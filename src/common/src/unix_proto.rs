@@ -73,6 +73,7 @@ pub enum ClientRequest {
     PamAuthenticateStep(PamAuthRequest),
     PamAccountAllowed(String),
     PamAccountBeginSession(String),
+    PamChangeAuthToken(String, String, String, String),
     InvalidateCache,
     ClearCache,
     Status,
@@ -94,6 +95,9 @@ impl ClientRequest {
                 format!("PamAccountAllowed({})", id)
             }
             ClientRequest::PamAccountBeginSession(_) => "PamAccountBeginSession".to_string(),
+            ClientRequest::PamChangeAuthToken(id, _, _, _) => {
+                format!("PamChangeAuthToken({}, ...)", id)
+            }
             ClientRequest::InvalidateCache => "InvalidateCache".to_string(),
             ClientRequest::ClearCache => "ClearCache".to_string(),
             ClientRequest::Status => "Status".to_string(),

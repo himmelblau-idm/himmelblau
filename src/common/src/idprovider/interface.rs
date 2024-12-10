@@ -188,6 +188,16 @@ pub trait IdProvider {
         _machine_key: &tpm::MachineKey,
     ) -> Result<String, IdpError>;
 
+    async fn change_auth_token<D: KeyStoreTxn + Send>(
+        &self,
+        _account_id: &str,
+        _token: &UnixUserToken,
+        _new_tok: &str,
+        _keystore: &mut D,
+        _tpm: &mut tpm::BoxedDynTpm,
+        _machine_key: &tpm::MachineKey,
+    ) -> Result<bool, IdpError>;
+
     async fn unix_user_online_auth_init<D: KeyStoreTxn + Send>(
         &self,
         _account_id: &str,

@@ -237,6 +237,38 @@ impl IdProvider for HimmelblauMultiProvider {
         }
     }
 
+    async fn change_auth_token<D: KeyStoreTxn + Send>(
+        &self,
+        account_id: &str,
+        token: &UnixUserToken,
+        new_tok: &str,
+        keystore: &mut D,
+        tpm: &mut tpm::BoxedDynTpm,
+        machine_key: &tpm::MachineKey,
+    ) -> Result<bool, IdpError> {
+        match split_username(account_id) {
+            Some((_sam, domain)) => {
+                let providers = self.providers.read().await;
+                match providers.get(domain) {
+                    Some(provider) => {
+                        provider
+                            .change_auth_token(
+                                account_id,
+                                token,
+                                new_tok,
+                                keystore,
+                                tpm,
+                                machine_key,
+                            )
+                            .await
+                    }
+                    None => Err(IdpError::NotFound),
+                }
+            }
+            None => Err(IdpError::NotFound),
+        }
+    }
+
     async fn unix_user_get(
         &self,
         id: &Id,
@@ -513,6 +545,54 @@ impl IdProvider for HimmelblauProvider {
                 error!("Failed to request prt cookie: {:?}", e);
                 IdpError::BadRequest
             })
+    }
+
+    async fn change_auth_token<D: KeyStoreTxn + Send>(
+        &self,
+        account_id: &str,
+        token: &UnixUserToken,
+        new_tok: &str,
+        keystore: &mut D,
+        tpm: &mut tpm::BoxedDynTpm,
+        machine_key: &tpm::MachineKey,
+    ) -> Result<bool, IdpError> {
+        let hello_tag = self.fetch_hello_key_tag(account_id);
+
+        // Ensure the user is setting the token for the account it has authenticated to
+        if account_id.to_string().to_lowercase()
+            != token
+                .spn()
+                .map_err(|e| {
+                    error!("Failed checking the spn on the user token: {:?}", e);
+                    IdpError::BadRequest
+                })?
+                .to_lowercase()
+        {
+            error!("A hello key may only be set by the authenticated user!");
+            return Err(IdpError::BadRequest);
+        }
+
+        // Set the hello pin
+        let hello_key = match self
+            .client
+            .write()
+            .await
+            .provision_hello_for_business_key(token, tpm, machine_key, new_tok)
+            .await
+        {
+            Ok(hello_key) => hello_key,
+            Err(e) => {
+                error!("Failed to provision hello key: {:?}", e);
+                return Ok(false);
+            }
+        };
+        keystore
+            .insert_tagged_hsm_key(&hello_tag, &hello_key)
+            .map_err(|e| {
+                error!("Failed to provision hello key: {:?}", e);
+                IdpError::Tpm
+            })?;
+        Ok(true)
     }
 
     async fn unix_user_get(
