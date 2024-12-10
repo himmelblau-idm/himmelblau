@@ -48,7 +48,15 @@ jobs:
             autoconf \
             gettext \
             libdbus-1-dev \
-            libutf8proc-dev
+            libutf8proc-dev \
+            libgirepository1.0-dev \
+            libcairo2-dev \
+            libgdk-pixbuf2.0-dev \
+            libsoup-3.0-dev \
+            libpango1.0-dev \
+            libatk1.0-dev \
+            libgtk-3-dev \
+            libwebkit2gtk-4.1-dev
 
       - name: "Fetch submodules"
         run: git submodule init && git submodule update
