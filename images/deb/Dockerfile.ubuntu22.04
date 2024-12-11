@@ -29,7 +29,6 @@ RUN apt-get update && apt-get install -y \
     libpcre2-dev \
     libclang-dev \
     gettext \
-    cargo \
     libsqlite3-dev \
     libutf8proc-dev \
     libgirepository1.0-dev \
