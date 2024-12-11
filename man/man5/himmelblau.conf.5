@@ -51,8 +51,21 @@ A comma-separated list of configured domains. This parameter is
 .B REQUIRED
 for successful authentication. If this option is not specified, no users will be permitted to authenticate. The first user to authenticate to each domain will become the owner of the device object in the directory.
 
+
+If multiple domains are specified, you
+.B MUST
+define an
+.B idmap_range
+for each domain to avoid conflicts in user and group ID mappings. Overlapping ID ranges will cause the idmapper to throw a critical error and stop the daemon. This safeguard ensures that two users are not mistakenly mapped to the same UID.
+
 .EXAMPLES
 domains = example.com,example2.com
+
+[example.com]
+idmap_range = 5000000-5999999
+
+[example2.com]
+idmap_range = 6000000-6999999
 
 .TP
 .B debug
@@ -254,6 +267,16 @@ shell = /bin/bash
 .RE
 Specifies the range of IDs to be used for the user and group mappings.
 
+When this option is modified, you
+.B SHOULD
+run:
+.RS
+.IP
+sudo aad-tool cache-clear --really
+.RE
+
+To ensure that old cached ID mappings are cleared, preventing potential UID overlaps caused by stale cache data.
+
 .EXAMPLES
 idmap_range = 5000000-5999999
 
@@ -350,6 +373,16 @@ shell = /bin/bash
 .B idmap_range
 .RE
 Overrides the `idmap_range` value for this domain.
+
+When this option is modified, you
+.B SHOULD
+run:
+.RS
+.IP
+sudo aad-tool cache-clear --really
+.RE
+
+To ensure that old cached ID mappings are cleared, preventing potential UID overlaps caused by stale cache data.
 
 .EXAMPLES
 [example.com]

@@ -15,12 +15,17 @@ repository.workspace = true
 name = "pam_himmelblau"
 crate-type = [ "cdylib" ]
 
+[features]
+interactive = ["libhimmelblau/interactive"]
+
 [dependencies]
 libc = { workspace = true }
 kanidm_unix_common = { workspace = true }
 tracing-subscriber = { workspace = true }
 tracing = { workspace = true }
 himmelblau_unix_common.workspace = true
+tokio.workspace = true
+libhimmelblau.workspace = true
 
 [build-dependencies]
 pkg-config.workspace = true
@@ -34,6 +39,7 @@ assets = [
   ["../../platform/debian/apparmor.unix-chkpwd.local", "etc/apparmor.d/local/unix-chkpwd", "644"],
 ]
 maintainer-scripts = "../../platform/debian/scripts"
+features = ["interactive"]
 
 [package.metadata.generate-rpm]
 name = "pam-himmelblau"
