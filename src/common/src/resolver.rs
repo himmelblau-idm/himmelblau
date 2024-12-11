@@ -57,6 +57,7 @@ enum CacheState {
 pub enum AuthSession {
     InProgress {
         account_id: String,
+        service: String,
         id: Id,
         token: Option<Box<UserToken>>,
         online_at_init: bool,
@@ -996,6 +997,7 @@ where
     pub async fn pam_account_authenticate_init(
         &self,
         account_id: &str,
+        service: &str,
         shutdown_rx: broadcast::Receiver<()>,
     ) -> Result<(AuthSession, PamAuthResponse), ()> {
         // Setup an auth session. If possible bring the resolver online.
@@ -1042,6 +1044,7 @@ where
             Ok((next_req, cred_handler)) => {
                 let auth_session = AuthSession::InProgress {
                     account_id: account_id.to_string(),
+                    service: service.to_string(),
                     id,
                     token: token.map(Box::new),
                     online_at_init,
@@ -1078,6 +1081,7 @@ where
             (
                 &mut AuthSession::InProgress {
                     ref account_id,
+                    ref service,
                     id: _,
                     token: _,
                     online_at_init: true,
@@ -1093,6 +1097,7 @@ where
                     .client
                     .unix_user_online_auth_step(
                         account_id,
+                        service,
                         cred_handler,
                         pam_next_req,
                         &mut dbtxn,
@@ -1143,6 +1148,7 @@ where
             (
                 &mut AuthSession::InProgress {
                     ref account_id,
+                    service: _,
                     id: _,
                     token: Some(ref token),
                     online_at_init,
@@ -1216,6 +1222,10 @@ where
                         // AuthCredHandler::None is invalid with SetupPin
                         return Err(());
                     }
+                    (AuthCredHandler::None, PamAuthRequest::Fido { .. }) => {
+                        // AuthCredHandler::None is invalid with Fido
+                        return Err(());
+                    }
                 }
             }
             (&mut AuthSession::InProgress { token: None, .. }, _) => {
@@ -1267,12 +1277,13 @@ where
     pub async fn pam_account_authenticate(
         &self,
         account_id: &str,
+        service: &str,
         password: &str,
     ) -> Result<Option<bool>, ()> {
         let (_shutdown_tx, shutdown_rx) = broadcast::channel(1);
 
         let mut auth_session = match self
-            .pam_account_authenticate_init(account_id, shutdown_rx)
+            .pam_account_authenticate_init(account_id, service, shutdown_rx)
             .await?
         {
             (auth_session, PamAuthResponse::Password) => {
@@ -1296,6 +1307,10 @@ where
                 auth_session
             }
             (auth_session, PamAuthResponse::Pin) => {
+                // Can continue!
+                auth_session
+            }
+            (auth_session, PamAuthResponse::Fido { .. }) => {
                 // Can continue!
                 auth_session
             }
