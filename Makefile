@@ -62,7 +62,7 @@ deb:
 	for v in ubuntu22.04 ubuntu24.04 debian12; do \
 		echo "Building Ubuntu $$v packages"; \
 		$(DOCKER) build -t himmelblau-$$v-build -f images/deb/Dockerfile.$$v .; \
-		$(DOCKER) run --rm -it -v ./:/himmelblau himmelblau-$$v-build; \
+		$(DOCKER) run --rm --security-opt label=disable -it -v ./:/himmelblau himmelblau-$$v-build; \
 		mv ./target/debian/*.deb ./packaging/; \
 	done
 
@@ -72,7 +72,7 @@ rpm:
 	for v in rocky8 rocky9 sle15sp6 tumbleweed rawhide fedora41; do \
 		echo "Building $$v RPM packages"; \
 		$(DOCKER) build -t himmelblau-$$v-build -f images/rpm/Dockerfile.$$v .; \
-		$(DOCKER) run --rm -it -v ./:/himmelblau himmelblau-$$v-build; \
+		$(DOCKER) run --rm --security-opt label=disable -it -v ./:/himmelblau himmelblau-$$v-build; \
 		for file in ./target/generate-rpm/*.rpm; do \
 			mv "$$file" "$${file%.rpm}-$$v.rpm"; \
 		done; \
