@@ -25,7 +25,9 @@ RUN dnf -y update && \
     cargo \
     gobject-introspection-devel \
     cairo-devel \
-    libsoup-devel \
+    libsoup3-devel \
+    javascriptcoregtk4.1-devel \
+    webkit2gtk4.1-devel \
     pango-devel \
     atk-devel \
     gtk3-devel \
