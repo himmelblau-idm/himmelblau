@@ -59,10 +59,10 @@ DOCKER := $(shell command -v podman || command -v docker)
 deb:
 	mkdir -p ./packaging/
 	git submodule init; git submodule update
-	for v in 22.04 24.04; do \
+	for v in ubuntu22.04 ubuntu24.04 debian12; do \
 		echo "Building Ubuntu $$v packages"; \
-		$(DOCKER) build -t himmelblau-ubuntu$$v-build -f images/ubuntu/Dockerfile.$$v .; \
-		$(DOCKER) run --rm -it -v ./:/himmelblau himmelblau-ubuntu$$v-build; \
+		$(DOCKER) build -t himmelblau-$$v-build -f images/deb/Dockerfile.$$v .; \
+		$(DOCKER) run --rm -it -v ./:/himmelblau himmelblau-$$v-build; \
 		mv ./target/debian/*.deb ./packaging/; \
 	done
 
