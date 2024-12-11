@@ -1,5 +1,5 @@
-# Use the official Ubuntu 24.04 image as the base
-FROM ubuntu:24.04
+# Use the official Debian 12 image as the base
+FROM debian:12
 
 # Set environment variables for non-interactive installs
 ENV DEBIAN_FRONTEND=noninteractive
@@ -17,7 +17,6 @@ RUN apt-get update && apt-get install -y \
     autoconf \
     libpam0g-dev \
     libudev-dev \
-    libssl-dev \
     tpm-udev \
     libtss2-dev \
     libcap-dev \
@@ -29,7 +28,6 @@ RUN apt-get update && apt-get install -y \
     libpcre2-dev \
     libclang-dev \
     gettext \
-    cargo \
     libsqlite3-dev \
     libutf8proc-dev \
     libgirepository1.0-dev \
@@ -57,4 +55,4 @@ WORKDIR /himmelblau
 RUN cargo install cargo-deb
 
 # Build the project and create the .deb package
-CMD cargo clean && cargo deb --deb-revision=ubuntu24.04 -p himmelblaud && cargo deb --deb-revision=ubuntu24.04 -p nss_himmelblau && cargo deb --deb-revision=ubuntu24.04 -p pam_himmelblau && cargo deb --deb-revision=ubuntu24.04 -p sshd-config && cargo deb --deb-revision=ubuntu24.04 -p sso
+CMD cargo clean && cargo deb --deb-revision=debian12 -p himmelblaud && cargo deb --deb-revision=debian12 -p nss_himmelblau && cargo deb --deb-revision=debian12 -p pam_himmelblau && cargo deb --deb-revision=debian12 -p sshd-config && cargo deb --deb-revision=debian12 -p sso
