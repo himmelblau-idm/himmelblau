@@ -71,13 +71,32 @@ pub const IDMAP_ERR_LAST: IdmapError = IdmapError(ffi::idmap_error_code_IDMAP_ER
 
 impl fmt::Display for IdmapError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "IdmapError({:#x})", self.0)
+        let error_name = match *self {
+            IDMAP_SUCCESS => "IDMAP_SUCCESS",
+            IDMAP_NOT_IMPLEMENTED => "IDMAP_NOT_IMPLEMENTED",
+            IDMAP_ERROR => "IDMAP_ERROR",
+            IDMAP_OUT_OF_MEMORY => "IDMAP_OUT_OF_MEMORY",
+            IDMAP_NO_DOMAIN => "IDMAP_NO_DOMAIN",
+            IDMAP_CONTEXT_INVALID => "IDMAP_CONTEXT_INVALID",
+            IDMAP_SID_INVALID => "IDMAP_SID_INVALID",
+            IDMAP_SID_UNKNOWN => "IDMAP_SID_UNKNOWN",
+            IDMAP_NO_RANGE => "IDMAP_NO_RANGE",
+            IDMAP_BUILTIN_SID => "IDMAP_BUILTIN_SID",
+            IDMAP_OUT_OF_SLICES => "IDMAP_OUT_OF_SLICES",
+            IDMAP_COLLISION => "IDMAP_COLLISION",
+            IDMAP_EXTERNAL => "IDMAP_EXTERNAL",
+            IDMAP_NAME_UNKNOWN => "IDMAP_NAME_UNKNOWN",
+            IDMAP_NO_REVERSE => "IDMAP_NO_REVERSE",
+            IDMAP_ERR_LAST => "IDMAP_ERR_LAST",
+            _ => "UNKNOWN_ERROR",
+        };
+        write!(f, "IdmapError({})", error_name)
     }
 }
 
 impl fmt::Debug for IdmapError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "IdmapError({:#x})", self.0)
+        write!(f, "{}", self)
     }
 }
 
