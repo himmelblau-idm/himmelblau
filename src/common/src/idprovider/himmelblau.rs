@@ -129,8 +129,11 @@ impl HimmelblauMultiProvider {
                     continue;
                 }
             };
-            let authority_host = graph.authority_host();
-            let tenant_id = graph.tenant_id();
+            let authority_host = graph
+                .authority_host()
+                .await
+                .map_err(|e| anyhow!("{:?}", e))?;
+            let tenant_id = graph.tenant_id().await.map_err(|e| anyhow!("{:?}", e))?;
             idmap_lk
                 .add_gen_domain(&domain, &tenant_id, range)
                 .map_err(|e| anyhow!("{:?}", e))?;
@@ -1491,7 +1494,7 @@ impl HimmelblauProvider {
                     "Setting domain {} config authority_host to {}",
                     self.domain, &self.authority_host
                 );
-                let graph_url = self.graph.graph_url();
+                let graph_url = self.graph.graph_url().await?;
                 config.set(&self.domain, "graph_url", &graph_url);
                 debug!(
                     "Setting domain {} config graph_url to {}",
