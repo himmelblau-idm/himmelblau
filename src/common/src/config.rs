@@ -30,7 +30,10 @@ use crate::constants::{
     DEFAULT_TASK_SOCK_PATH, DEFAULT_USE_ETC_SKEL, SERVER_CONFIG_PATH,
 };
 use crate::unix_config::{HomeAttr, HsmType};
+use himmelblau::error::MsalError;
 use idmap::DEFAULT_IDMAP_RANGE;
+use reqwest::Url;
+use serde::Deserialize;
 use std::env;
 
 #[derive(Debug, Copy, Clone, PartialEq)]
@@ -45,6 +48,54 @@ pub fn split_username(username: &str) -> Option<(&str, &str)> {
         return Some((tup[0], tup[1]));
     }
     None
+}
+
+#[derive(Debug, Deserialize)]
+struct FederationProvider {
+    #[serde(rename = "tenantId")]
+    tenant_id: String,
+    authority_host: String,
+    graph: String,
+}
+
+async fn request_federation_provider(
+    odc_provider: &str,
+    domain: &str,
+) -> Result<(String, String, String), MsalError> {
+    let client = reqwest::Client::builder()
+        .build()
+        .map_err(|e| MsalError::RequestFailed(format!("{:?}", e)))?;
+
+    let url = Url::parse_with_params(
+        &format!("https://{}/odc/v2.1/federationProvider", odc_provider),
+        &[("domain", domain)],
+    )
+    .map_err(|e| MsalError::RequestFailed(format!("{:?}", e)))?;
+
+    let resp = client
+        .get(url)
+        .send()
+        .await
+        .map_err(|e| MsalError::RequestFailed(format!("{:?}", e)))?;
+    if resp.status().is_success() {
+        let json_resp: FederationProvider = resp
+            .json()
+            .await
+            .map_err(|e| MsalError::InvalidJson(format!("{:?}", e)))?;
+        debug!("Discovered tenant_id: {}", json_resp.tenant_id);
+        debug!("Discovered authority_host: {}", json_resp.authority_host);
+        debug!("Discovered graph: {}", json_resp.graph);
+        Ok((
+            json_resp.authority_host,
+            json_resp.tenant_id,
+            json_resp.graph,
+        ))
+    } else {
+        Err(MsalError::RequestFailed(format!(
+            "Federation Provider request failed: {}",
+            resp.status(),
+        )))
+    }
 }
 
 #[derive(Clone)]
@@ -481,6 +532,76 @@ impl HimmelblauConfig {
 
     pub fn get_enable_experimental_mfa(&self) -> bool {
         match_bool(self.config.get("global", "enable_experimental_mfa"), true)
+    }
+
+    pub async fn get_primary_domain_from_alias(&mut self, alias: &str) -> Option<String> {
+        let domains = self.get_configured_domains();
+
+        // Attempt to short-circut the request by checking if the alias is
+        // already configured.
+        for domain in &domains {
+            let domain_aliases = match self.config.get(domain, "domain_aliases") {
+                Some(aliases) => aliases.split(",").map(|s| s.to_string()).collect(),
+                None => vec![],
+            };
+            if domain_aliases.contains(&alias.to_string()) {
+                return Some(domain.to_string());
+            }
+        }
+
+        let mut modified_config = false;
+
+        // We don't recognize this alias, so now we need to search for it the
+        // hard way by checking for matching tenant id's.
+        let (_, alias_tenant_id, _) =
+            match request_federation_provider(DEFAULT_ODC_PROVIDER, alias).await {
+                Ok(resp) => resp,
+                Err(e) => {
+                    error!(
+                        "Failed matching alias '{}' to a configured tenant: {:?}",
+                        alias, e
+                    );
+                    return None;
+                }
+            };
+        for domain in domains {
+            let tenant_id = match self.get_tenant_id(&domain) {
+                Some(tenant_id) => tenant_id,
+                None => {
+                    let (authority_host, tenant_id, graph_url) =
+                        match request_federation_provider(&self.get_odc_provider(&domain), &domain)
+                            .await
+                        {
+                            Ok(resp) => resp,
+                            Err(e) => {
+                                error!("Failed sending federation provider request: {:?}", e);
+                                continue;
+                            }
+                        };
+                    self.set(&domain, "authority_host", &authority_host);
+                    self.set(&domain, "tenant_id", &tenant_id);
+                    self.set(&domain, "graph_url", &graph_url);
+                    modified_config = true;
+                    tenant_id
+                }
+            };
+            if tenant_id == alias_tenant_id {
+                let mut domain_aliases = match self.config.get(&domain, "domain_aliases") {
+                    Some(aliases) => aliases.split(",").map(|s| s.to_string()).collect(),
+                    None => vec![],
+                };
+                domain_aliases.push(alias.to_string());
+                self.set(&domain, "domain_aliases", &domain_aliases.join(","));
+                let _ = self.write_server_config();
+                return Some(domain);
+            }
+        }
+
+        error!("Failed matching alias '{}' to a configured tenant", alias);
+        if modified_config {
+            let _ = self.write_server_config();
+        }
+        None
     }
 }
 
