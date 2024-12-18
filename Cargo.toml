@@ -19,7 +19,7 @@ members = [
 resolver = "2"
 
 [workspace.package]
-version = "0.7.13"
+version = "0.7.14"
 authors = [
     "David Mulder <dmulder@suse.com>"
 ]
@@ -40,7 +40,7 @@ tracing-subscriber = "^0.3.17"
 tracing = "^0.1.37"
 himmelblau_unix_common = { path = "src/common" }
 kanidm_unix_common = { path = "src/glue" }
-libhimmelblau = { version = "0.4.4" }
+libhimmelblau = { version = "0.4.6" }
 clap = { version = "^4.5", features = ["derive", "env"] }
 clap_complete = "^4.4.1"
 reqwest = { version = "^0.12.2", features = ["json"] }

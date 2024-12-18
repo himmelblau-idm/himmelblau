@@ -2,7 +2,8 @@
 # REQUIRED: The list of configured domains. This must be specified, or no users
 # will be permitted to authenticate. The first user to authenticate to each
 # domain will be the owner of the device object in the directory. Typically
-# this would be the primary user of the device.
+# this would be the primary user of the device. Specify ONLY the primary domain
+# for your tenant.
 # domains =
 #
 ### Optional global values

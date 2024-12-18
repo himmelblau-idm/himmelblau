@@ -47,10 +47,11 @@ This section contains settings that apply globally to all operations of Himmelbl
 .TP
 .B domains
 .RE
-A comma-separated list of configured domains. This parameter is
+A comma-separated list of primary domains for your Azure Entra ID tenants. This parameter is
 .B REQUIRED
 for successful authentication. If this option is not specified, no users will be permitted to authenticate. The first user to authenticate to each domain will become the owner of the device object in the directory.
 
+Specify ONLY the primary domain for each tenant. Specifying multiple custom domains which belong to a single tenant will cause an idmap range overlap and the himmelblaud daemon will NOT start.
 
 If multiple domains are specified, you
 .B MUST

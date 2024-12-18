@@ -48,6 +48,7 @@ use uuid::Uuid;
 struct Token(Option<String>, String);
 
 pub struct HimmelblauMultiProvider {
+    config: Arc<RwLock<HimmelblauConfig>>,
     providers: RwLock<HashMap<String, HimmelblauProvider>>,
 }
 
@@ -128,8 +129,11 @@ impl HimmelblauMultiProvider {
                     continue;
                 }
             };
-            let authority_host = graph.authority_host();
-            let tenant_id = graph.tenant_id();
+            let authority_host = graph
+                .authority_host()
+                .await
+                .map_err(|e| anyhow!("{:?}", e))?;
+            let tenant_id = graph.tenant_id().await.map_err(|e| anyhow!("{:?}", e))?;
             idmap_lk
                 .add_gen_domain(&domain, &tenant_id, range)
                 .map_err(|e| anyhow!("{:?}", e))?;
@@ -161,9 +165,26 @@ impl HimmelblauMultiProvider {
         }
 
         Ok(HimmelblauMultiProvider {
+            config: config.clone(),
             providers: RwLock::new(providers),
         })
     }
+}
+
+macro_rules! find_provider {
+    ($hmp:ident, $providers:ident, $domain:ident) => {{
+        match $providers.get($domain) {
+            Some(provider) => Some(provider),
+            None => {
+                // Attempt to match a provider alias
+                let mut cfg = $hmp.config.write().await;
+                match cfg.get_primary_domain_from_alias($domain).await {
+                    Some(domain) => $providers.get(&domain),
+                    None => None,
+                }
+            }
+        }
+    }};
 }
 
 #[async_trait]
@@ -197,7 +218,7 @@ impl IdProvider for HimmelblauMultiProvider {
         match split_username(&account_id) {
             Some((_sam, domain)) => {
                 let providers = self.providers.read().await;
-                match providers.get(domain) {
+                match find_provider!(self, providers, domain) {
                     Some(provider) => {
                         provider
                             .unix_user_access(id, scopes, old_token, tpm, machine_key)
@@ -224,7 +245,7 @@ impl IdProvider for HimmelblauMultiProvider {
         match split_username(&account_id) {
             Some((_sam, domain)) => {
                 let providers = self.providers.read().await;
-                match providers.get(domain) {
+                match find_provider!(self, providers, domain) {
                     Some(provider) => {
                         provider
                             .unix_user_prt_cookie(id, old_token, tpm, machine_key)
@@ -249,7 +270,7 @@ impl IdProvider for HimmelblauMultiProvider {
         match split_username(account_id) {
             Some((_sam, domain)) => {
                 let providers = self.providers.read().await;
-                match providers.get(domain) {
+                match find_provider!(self, providers, domain) {
                     Some(provider) => {
                         provider
                             .change_auth_token(
@@ -284,7 +305,7 @@ impl IdProvider for HimmelblauMultiProvider {
         match split_username(&account_id) {
             Some((_sam, domain)) => {
                 let providers = self.providers.read().await;
-                match providers.get(domain) {
+                match find_provider!(self, providers, domain) {
                     Some(provider) => {
                         provider
                             .unix_user_get(id, old_token, tpm, machine_key)
@@ -309,7 +330,7 @@ impl IdProvider for HimmelblauMultiProvider {
         match split_username(account_id) {
             Some((_sam, domain)) => {
                 let providers = self.providers.read().await;
-                match providers.get(domain) {
+                match find_provider!(self, providers, domain) {
                     Some(provider) => {
                         provider
                             .unix_user_online_auth_init(
@@ -345,7 +366,7 @@ impl IdProvider for HimmelblauMultiProvider {
         match split_username(account_id) {
             Some((_sam, domain)) => {
                 let providers = self.providers.read().await;
-                match providers.get(domain) {
+                match find_provider!(self, providers, domain) {
                     Some(provider) => {
                         provider
                             .unix_user_online_auth_step(
@@ -1473,7 +1494,7 @@ impl HimmelblauProvider {
                     "Setting domain {} config authority_host to {}",
                     self.domain, &self.authority_host
                 );
-                let graph_url = self.graph.graph_url();
+                let graph_url = self.graph.graph_url().await?;
                 config.set(&self.domain, "graph_url", &graph_url);
                 debug!(
                     "Setting domain {} config graph_url to {}",
