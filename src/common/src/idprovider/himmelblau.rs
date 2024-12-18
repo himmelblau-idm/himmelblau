@@ -698,17 +698,17 @@ impl IdProvider for HimmelblauProvider {
                     // Otherwise, see if we should fake it
                     None => {
                         // Check if the user exists
-                        let exists = self
+                        let auth_init = self
                             .client
                             .write()
                             .await
-                            .check_user_exists(&account_id)
+                            .check_user_exists(&account_id, &[])
                             .await
                             .map_err(|e| {
                                 error!("Failed checking if the user exists: {:?}", e);
                                 IdpError::BadRequest
                             })?;
-                        if exists {
+                        if auth_init.exists() {
                             // Generate a UserToken, with invalid uuid. We can
                             // only fetch this from an authenticated token.
                             let config = self.config.read().await;
@@ -819,7 +819,50 @@ impl IdProvider for HimmelblauProvider {
         let hello_enabled = self.config.read().await.get_enable_hello();
         if !self.is_domain_joined(keystore).await || hello_key.is_none() || !hello_enabled {
             if self.config.read().await.get_enable_experimental_mfa() {
-                Ok((AuthRequest::Password, AuthCredHandler::None))
+                let auth_options = vec![AuthOption::Fido, AuthOption::Passwordless];
+                let auth_init = self
+                    .client
+                    .write()
+                    .await
+                    .check_user_exists(account_id, &auth_options)
+                    .await
+                    .map_err(|e| {
+                        error!("{:?}", e);
+                        IdpError::BadRequest
+                    })?;
+                if !auth_init.passwordless() {
+                    Ok((AuthRequest::Password, AuthCredHandler::None))
+                } else {
+                    let flow = self
+                        .client
+                        .write()
+                        .await
+                        .initiate_acquire_token_by_mfa_flow_for_device_enrollment(
+                            account_id,
+                            None,
+                            &auth_options,
+                            Some(auth_init),
+                        )
+                        .await
+                        .map_err(|e| {
+                            error!("{:?}", e);
+                            IdpError::BadRequest
+                        })?;
+                    let msg = flow.msg.clone();
+                    let polling_interval = flow.polling_interval.ok_or_else(|| {
+                        error!("Invalid response from the server");
+                        IdpError::BadRequest
+                    })?;
+                    Ok((
+                        AuthRequest::MFAPoll {
+                            msg,
+                            // Kanidm pam expects a polling_interval in
+                            // seconds, not milliseconds.
+                            polling_interval: polling_interval / 1000,
+                        },
+                        AuthCredHandler::MFA { flow },
+                    ))
+                }
             } else {
                 let resp = self
                     .client
@@ -1034,7 +1077,10 @@ impl IdProvider for HimmelblauProvider {
                     .write()
                     .await
                     .initiate_acquire_token_by_mfa_flow_for_device_enrollment(
-                        account_id, &cred, opts,
+                        account_id,
+                        Some(&cred),
+                        &opts,
+                        None,
                     )
                     .await;
                 // We need to wait to handle the response until after we've released
