@@ -61,7 +61,7 @@ use std::convert::TryFrom;
 use std::ffi::CStr;
 
 use himmelblau::error::MsalError;
-use himmelblau::PublicClientApplication;
+use himmelblau::{AuthOption, PublicClientApplication};
 use himmelblau_unix_common::config::{split_username, HimmelblauConfig};
 use himmelblau_unix_common::constants::BROKER_APP_ID;
 use kanidm_unix_common::client_sync::DaemonClientBlocking;
@@ -963,23 +963,46 @@ impl PamHooks for PamKanidm {
                 }
             }
 
-            let password = match conv.send(PAM_PROMPT_ECHO_OFF, "Entra Id Password: ") {
-                Ok(password) => match password {
-                    Some(cred) => cred,
-                    None => {
-                        debug!("no password");
-                        return PamResultCode::PAM_CRED_INSUFFICIENT;
-                    }
-                },
-                Err(err) => {
-                    debug!("unable to get password");
-                    return err;
+            let auth_options = vec![AuthOption::Fido, AuthOption::Passwordless];
+            let auth_init = match rt.block_on(async {
+                app.check_user_exists(&account_id, None, &auth_options)
+                    .await
+            }) {
+                Ok(auth_init) => auth_init,
+                Err(e) => {
+                    error!("{:?}", e);
+                    return PamResultCode::PAM_AUTH_ERR;
                 }
             };
 
+            let password = if !auth_init.passwordless() {
+                match conv.send(PAM_PROMPT_ECHO_OFF, "Entra Id Password: ") {
+                    Ok(password) => match password {
+                        Some(cred) => Some(cred),
+                        None => {
+                            debug!("no password");
+                            return PamResultCode::PAM_CRED_INSUFFICIENT;
+                        }
+                    },
+                    Err(err) => {
+                        debug!("unable to get password");
+                        return err;
+                    }
+                }
+            } else {
+                None
+            };
+
             let mut mfa_req = match rt.block_on(async {
-                app.initiate_acquire_token_by_mfa_flow(&account_id, &password, vec![], None, vec![])
-                    .await
+                app.initiate_acquire_token_by_mfa_flow(
+                    &account_id,
+                    password.as_deref(),
+                    vec![],
+                    None,
+                    &auth_options,
+                    Some(auth_init),
+                )
+                .await
             }) {
                 Ok(mfa) => mfa,
                 Err(e) => {
