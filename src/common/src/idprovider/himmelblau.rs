@@ -849,10 +849,7 @@ impl IdProvider for HimmelblauProvider {
                             IdpError::BadRequest
                         })?;
                     let msg = flow.msg.clone();
-                    let polling_interval = flow.polling_interval.ok_or_else(|| {
-                        error!("Invalid response from the server");
-                        IdpError::BadRequest
-                    })?;
+                    let polling_interval = flow.polling_interval.unwrap_or(5000);
                     Ok((
                         AuthRequest::MFAPoll {
                             msg,
@@ -879,10 +876,7 @@ impl IdProvider for HimmelblauProvider {
                     flow.resource = Some("https://enrollment.manage.microsoft.com".to_string());
                 }
                 let msg = flow.msg.clone();
-                let polling_interval = flow.polling_interval.ok_or_else(|| {
-                    error!("Invalid response from the server");
-                    IdpError::BadRequest
-                })?;
+                let polling_interval = flow.polling_interval.unwrap_or(5000);
                 Ok((
                     AuthRequest::MFAPoll {
                         msg,
@@ -1170,10 +1164,7 @@ impl IdProvider for HimmelblauProvider {
                     }
                     _ => {
                         let msg = resp.msg.clone();
-                        let polling_interval = resp.polling_interval.ok_or_else(|| {
-                            error!("Invalid response from the server");
-                            IdpError::BadRequest
-                        })?;
+                        let polling_interval = resp.polling_interval.unwrap_or(5000);
                         *cred_handler = AuthCredHandler::MFA { flow: resp };
                         return Ok((
                             AuthResult::Next(AuthRequest::MFAPoll {
@@ -1238,10 +1229,7 @@ impl IdProvider for HimmelblauProvider {
                 }
             }
             (AuthCredHandler::MFA { ref mut flow }, PamAuthRequest::MFAPoll { poll_attempt }) => {
-                let max_poll_attempts = flow.max_poll_attempts.ok_or_else(|| {
-                    error!("Invalid response from the server");
-                    IdpError::BadRequest
-                })?;
+                let max_poll_attempts = flow.max_poll_attempts.unwrap_or(180);
                 if poll_attempt > max_poll_attempts {
                     error!("MFA polling timed out");
                     return Err(IdpError::BadRequest);
