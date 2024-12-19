@@ -735,23 +735,29 @@ impl PamHooks for PamKanidm {
                     msg,
                     polling_interval,
                 }) => {
-                    let lconv = conv.lock().unwrap();
-                    match lconv.send(PAM_TEXT_INFO, &msg) {
-                        Ok(_) => {}
-                        Err(err) => {
-                            if opts.debug {
-                                println!("Message prompt failed");
+                    // This conversation is intentionally nested within a block
+                    // to ensure the lconv lock is dropped before calling the
+                    // nested `match_sm_auth_client_response`, otherwise we
+                    // deadlock here.
+                    {
+                        let lconv = conv.lock().unwrap();
+                        match lconv.send(PAM_TEXT_INFO, &msg) {
+                            Ok(_) => {}
+                            Err(err) => {
+                                if opts.debug {
+                                    println!("Message prompt failed");
+                                }
+                                return err;
                             }
-                            return err;
                         }
-                    }
 
-                    // Necessary because of OpenSSH bug
-                    // https://bugzilla.mindrot.org/show_bug.cgi?id=2876 -
-                    // PAM_TEXT_INFO and PAM_ERROR_MSG conversation not
-                    // honoured during PAM authentication
-                    if opts.mfa_poll_prompt {
-                        let _ = lconv.send(PAM_PROMPT_ECHO_OFF, "Press enter to continue");
+                        // Necessary because of OpenSSH bug
+                        // https://bugzilla.mindrot.org/show_bug.cgi?id=2876 -
+                        // PAM_TEXT_INFO and PAM_ERROR_MSG conversation not
+                        // honoured during PAM authentication
+                        if opts.mfa_poll_prompt {
+                            let _ = lconv.send(PAM_PROMPT_ECHO_OFF, "Press enter to continue");
+                        }
                     }
 
                     let mut poll_attempt = 0;
