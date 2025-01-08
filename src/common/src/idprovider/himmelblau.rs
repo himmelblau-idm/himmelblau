@@ -1067,6 +1067,12 @@ impl IdProvider for HimmelblauProvider {
                 if service != "ssh" {
                     opts.push(AuthOption::Fido);
                 }
+                // If SFA is enabled, disable the DAG fallback, otherwise SFA users
+                // will always be prompted for DAG.
+                let sfa_enabled = self.config.read().await.get_enable_sfa_fallback();
+                if sfa_enabled {
+                    opts.push(AuthOption::NoDAGFallback);
+                }
                 let mresp = self
                     .client
                     .write()
@@ -1084,26 +1090,43 @@ impl IdProvider for HimmelblauProvider {
                     Ok(resp) => resp,
                     Err(e) => {
                         // If SFA is disabled, we need to skip the SFA fallback.
-                        let sfa_enabled = self.config.read().await.get_enable_sfa_fallback();
                         let mtoken = if sfa_enabled {
                             // If we got an AADSTSError, then we don't want to
                             // perform a fallback, since the authentication
                             // legitimately failed.
-                            if let MsalError::AADSTSError(_) = e {
-                                error!("{:?}", e);
+                            if let MsalError::AADSTSError(ref e) = e {
+                                // If the error is just requesting MFA (since we demanded it
+                                // in the previous call), then continue with the SFA fallback.
+                                // AADSTS50072: UserStrongAuthEnrollmentRequiredInterrupt
+                                // AADSTS50074: UserStrongAuthClientAuthNRequiredInterrupt
+                                // AADSTS50076: UserStrongAuthClientAuthNRequired
+                                if ![50072, 50074, 50076].contains(&e.code) {
+                                    error!("Skipping SFA fallback because authentication failed: {:?}", e);
+                                    return Err(IdpError::BadRequest);
+                                }
+                            }
+                            // We can only do a password auth for an enrolled device
+                            if self.is_domain_joined(keystore).await {
+                                warn!("MFA auth failed, falling back to SFA: {:?}", e);
+                                // Again, we need to wait to handle the response until after
+                                // we've released the write lock on the client, otherwise we
+                                // will deadlock.
+                                self.client
+                                    .write()
+                                    .await
+                                    .acquire_token_by_username_password(
+                                        account_id,
+                                        &cred,
+                                        vec![],
+                                        Some("https://graph.microsoft.com".to_string()),
+                                        tpm,
+                                        machine_key,
+                                    )
+                                    .await
+                            } else {
+                                error!("Single factor authentication is only permitted on an enrolled host: {:?}", e);
                                 return Err(IdpError::BadRequest);
                             }
-                            warn!("MFA auth failed, falling back to SFA: {:?}", e);
-                            // Again, we need to wait to handle the response until after
-                            // we've released the write lock on the client, otherwise we
-                            // will deadlock.
-                            self.client
-                                .write()
-                                .await
-                                .acquire_token_by_username_password_for_device_enrollment(
-                                    account_id, &cred,
-                                )
-                                .await
                         } else {
                             error!("{:?}", e);
                             return Err(IdpError::BadRequest);
