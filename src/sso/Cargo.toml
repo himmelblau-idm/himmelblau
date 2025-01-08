@@ -23,7 +23,6 @@ zbus = "5.2.0"
 
 [package.metadata.deb]
 name = "himmelblau-sso"
-depends = ["python3-pydbus"]
 assets = [
   ["target/release/linux-entra-sso", "usr/bin/linux-entra-sso", "755"],
   ["src/firefox/linux_entra_sso.json", "usr/lib/mozilla/native-messaging-hosts/", "644"],
@@ -47,6 +46,3 @@ assets = [
   { source = "src/chrome/policies.json", dest = "/etc/opt/chrome/policies/managed/himmelblau.json", mode = "644" },
   { source = "src/chrome/policies.json", dest = "/etc/chromium/policies/managed/himmelblau.json", mode = "644" },
 ]
-
-[package.metadata.generate-rpm.requires]
-python3-pydbus = "*"
