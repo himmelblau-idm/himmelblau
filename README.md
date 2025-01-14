@@ -25,7 +25,9 @@ donations to the Samba Team.
 
 ## Installing
 
-Himmelblau is currently only being built on openSUSE. Packaging contributions are welcome!
+Himmelblau is currently only being built on openSUSE and NixOS. Packaging contributions are welcome!
+
+### OpenSUSE
 
 On openSUSE Tumbleweed, refresh the repos and install himmelblau:
 
@@ -50,6 +52,67 @@ Then refresh the repos and install himmelblau:
 sudo zypper ref && sudo zypper in himmelblau nss-himmelblau pam-himmelblau
 ```
 
+### NixOS
+
+Himmelblau provides 2 packages and a module:
+
+* `himmelblau.packages.<arch>.himmelblau`: The core authentication daemon intended for server deployments. (default package)
+* `himmelblau.packages.<arch>.himmelblau-desktop`: The daemon and GUI tools for 2FA signin within a (GTK) desktop environment.
+* `himmelblau.modules.himmelblau`: A NixOS Module that provides the most common options and service definitions.
+
+#### Classic Nixos configurations
+
+Classic NixOS configurations can use the `builtins.getFlake` function if they have enabled `flakes` compatability.
+
+```nix
+{lib, ...}:
+let himmelblau = builtins.getFlake "github:himmelblau-idm/himmelblau/0.9.0";
+in {
+    imports = [ himmelblau.nixosModules.himmelblau ];
+
+    services.himmelblau.enable = true;
+    services.himmelblau.settings = {
+        domains = ["my.domain.net"];
+        pam_allow_groups = [ "ENTRA-GROUP-GUID-HERE" ];
+        local_groups = [ "wheel" "docker" ];
+    };
+}
+```
+
+#### Flake based configurations
+
+Flake based configurations add this repository to their inputs, enable the service, provide the minimal set of options.
+
+```nix
+{
+    inputs = {
+        nixpkgs.url = "github:nixos/nixpkgs/nixos-24.11";
+        himmelblau.url = "github:himmelblau-idm/himmelblau/main";
+        himmelblau.inputs.nixpkgs.follows = "nixpkgs";
+    };
+    outputs = { self, nixpkgs, himmelblau }: {
+        nixosModules.azureEntraId = {
+            imports = [ himmelblau.nixosModules.himmelblau ];
+            services.himmelblau = {
+                enable = true;
+                settings = {
+                    domains = ["my.domain.net"];
+                    pam_allow_groups = [ "ENTRA-GROUP-GUID-HERE" ];
+                    local_groups = [ "wheel" "docker" ];
+                };
+            };
+        };
+        nixosConfigurations."your-machine" = nixpkgs.lib.nixosSystem {
+            system = "x86_64-linux";
+            modules = [
+                self.nixosModules.azureEntraId
+                ./machines/your-machine/configuration.nix
+            ];
+        };
+    };
+}
+```
+
 ## Demos
 
 ### Windows Hello on Linux via GDM
@@ -69,7 +132,7 @@ The following packages are required on openSUSE to build and test this package.
 Or on Debian based systems:
 
     sudo apt-get install make gcc libpam0g-dev libudev-dev libssl-dev pkg-config tpm-udev libtss2-dev libcap-dev libtalloc-dev libtevent-dev libldb-dev libdhash-dev libkrb5-dev libpcre2-dev libclang-18-dev autoconf gettext libsqlite3-dev build-essentials libdbus-1-dev libutf8proc-dev
-    
+
     curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
     source "$HOME/.cargo/env"
     rustup default stable
@@ -116,7 +179,7 @@ Setup NSS
     group:      compat systemd himmelblau
     shadow:     compat systemd himmelblau
 
-Check that you can resolve a user with
+Check that you can resolve a user (after their first login) with
 
     getent passwd <name>
 
@@ -135,21 +198,20 @@ Setup PAM
     # vim /etc/pam.d/common-auth
     auth        required      pam_env.so
     auth        [default=1 ignore=ignore success=ok] pam_localuser.so
+    auth        sufficient    pam_himmelblau.so
     auth        sufficient    pam_unix.so nullok try_first_pass
-    auth        sufficient    pam_himmelblau.so ignore_unknown_user
     auth        required      pam_deny.so
 
     # vim /etc/pam.d/common-account
     account    [default=1 ignore=ignore success=ok] pam_localuser.so
-    account    sufficient    pam_unix.so
     account    sufficient    pam_himmelblau.so ignore_unknown_user
+    account    sufficient    pam_unix.so
     account    required      pam_deny.so
 
     # vim /etc/pam.d/common-session
     session optional    pam_systemd.so
     session required    pam_limits.so
+    session optional    pam_himmelblau.so
     session optional    pam_unix.so try_first_pass
     session optional    pam_umask.so
-    session optional    pam_himmelblau.so
     session optional    pam_env.so
-
