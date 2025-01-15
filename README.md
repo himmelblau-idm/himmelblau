@@ -1,9 +1,5 @@
 # Himmelblau
 
-<p align="center">
-  <img src="img/penguin.png" width="15%" height="auto" />
-</p>
-
 Himmelblau is an interoperability suite for Microsoft Azure Entra ID and Intune.
 
 The name of the project comes from a German word for Azure (sky blue).
