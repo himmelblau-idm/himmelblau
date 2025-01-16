@@ -1185,6 +1185,10 @@ where
                         // AuthCredHandler::SetupPin is invalid for offline auth
                         return Err(());
                     }
+                    (AuthCredHandler::ChangePassword { .. }, _) => {
+                        // AuthCredHandler::ChangePassword is invalid for offline auth
+                        return Err(());
+                    }
                     (_, PamAuthRequest::Pin { .. }) => {
                         // The Pin acts as a single device password, and can be
                         // used to unlock the TPM to validate the authentication.
@@ -1320,6 +1324,10 @@ where
                 // Should never get here "off the rip".
                 debug_assert!(false);
                 return Ok(Some(true));
+            }
+            (auth_session, PamAuthResponse::ChangePassword { .. }) => {
+                // Can continue!
+                auth_session
             }
         };
 

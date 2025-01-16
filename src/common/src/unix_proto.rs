@@ -55,6 +55,10 @@ pub enum PamAuthResponse {
         fido_challenge: String,
         fido_allow_list: Vec<String>,
     },
+    /// PAM must prompt for a new password and confirm that password input
+    ChangePassword {
+        msg: String,
+    },
 }
 
 #[derive(Serialize, Deserialize, Debug)]
