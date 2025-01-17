@@ -44,7 +44,7 @@ jobs:
             libdhash-dev \
             libkrb5-dev \
             libpcre2-dev \
-            libclang-13-dev \
+            libclang-dev \
             autoconf \
             gettext \
             libdbus-1-dev \
