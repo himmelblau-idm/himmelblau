@@ -129,7 +129,10 @@ impl Encoder<TaskRequest> for TaskCodec {
     type Error = io::Error;
 
     fn encode(&mut self, msg: TaskRequest, dst: &mut BytesMut) -> Result<(), Self::Error> {
-        debug!("Attempting to send request -> {:?} ...", msg);
+        debug!(
+            "Attempting to send request -> {:?} ...",
+            msg.as_safe_string()
+        );
         let data = serde_json::to_vec(&msg).map_err(|e| {
             error!("socket encoding error -> {:?}", e);
             io::Error::new(io::ErrorKind::Other, "JSON encode error")
@@ -170,7 +173,7 @@ async fn handle_task_client(
             None => return Ok(()),
         };
 
-        debug!("Sending Task -> {:?}", v.0);
+        debug!("Sending Task -> {:?}", v.0.as_safe_string());
 
         // Write the req to the socket.
         if let Err(_e) = reqs.send(v.0.clone()).await {

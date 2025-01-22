@@ -346,8 +346,12 @@ async fn handle_tasks(stream: UnixStream, cfg: &HimmelblauConfig) {
                     return;
                 }
             }
-            other => {
-                error!("Error -> {:?}", other);
+            Some(Err(e)) => {
+                error!("Error -> {:?}", e);
+                return;
+            }
+            _ => {
+                error!("Error -> Unexpected response");
                 return;
             }
         }
