@@ -371,8 +371,9 @@ pub struct PamKanidm;
 pam_hooks!(PamKanidm);
 
 macro_rules! match_sm_auth_client_response {
-    ($expr:expr, $opts:ident, $conv:ident, $req:ident, $authtok:ident, $cfg:ident, $($pat:pat => $result:expr),*) => {
-        match $expr {
+    ($daemon_client:expr, $opts:ident, $conv:ident, $req:ident, $authtok:ident, $cfg:ident, $($pat:pat => $result:expr),*) => {{
+        let timeout = $cfg.get_unix_sock_timeout();
+        match $daemon_client.call_and_wait(&$req, timeout) {
             Ok(r) => match r {
                 $($pat => $result),*
                 ClientResponse::PamAuthenticateStepResponse(PamAuthResponse::Success) => {
@@ -510,6 +511,155 @@ macro_rules! match_sm_auth_client_response {
                     $req = ClientRequest::PamAuthenticateStep(PamAuthRequest::Fido { assertion: result });
                     continue;
                 }
+                ClientResponse::PamAuthenticateStepResponse(PamAuthResponse::ChangePassword {
+                    msg,
+                }) => {
+                    let conv = $conv.lock().unwrap();
+                    match conv.send(PAM_TEXT_INFO, &msg) {
+                        Ok(_) => {}
+                        Err(err) => {
+                            if $opts.debug {
+                                println!("Message prompt failed");
+                            }
+                            return err;
+                        }
+                    }
+
+                    let mut password;
+                    let mut confirm;
+                    loop {
+                        password = match conv.send(PAM_PROMPT_ECHO_OFF, "New password: ") {
+                            Ok(password) => match password {
+                                Some(cred) => {
+                                    // Entra Id requires a minimum password length of 8 characters
+                                    if cred.len() < 8 {
+                                        match conv.send(PAM_TEXT_INFO, "Chosen password is too short! 8 chars required.") {
+                                            Ok(_) => {}
+                                            Err(err) => {
+                                                if $opts.debug {
+                                                    println!("Message prompt failed");
+                                                }
+                                                return err;
+                                            }
+                                        }
+                                        continue;
+                                    }
+                                    cred
+                                },
+                                None => {
+                                    debug!("no password");
+                                    return PamResultCode::PAM_CRED_INSUFFICIENT;
+                                }
+                            },
+                            Err(err) => {
+                                debug!("unable to get password");
+                                return err;
+                            }
+                        };
+
+                        confirm = match conv.send(PAM_PROMPT_ECHO_OFF, "Confirm password: ") {
+                            Ok(password) => match password {
+                                Some(cred) => cred,
+                                None => {
+                                    debug!("no confirmation password");
+                                    return PamResultCode::PAM_CRED_INSUFFICIENT;
+                                }
+                            },
+                            Err(err) => {
+                                debug!("unable to get confirmation password");
+                                return err;
+                            }
+                        };
+
+                        if password == confirm {
+                            break;
+                        } else {
+                            match conv.send(PAM_TEXT_INFO, "Inputs did not match. Try again.") {
+                                Ok(_) => {}
+                                Err(err) => {
+                                    if $opts.debug {
+                                        println!("Message prompt failed");
+                                    }
+                                    return err;
+                                }
+                            }
+                        }
+                    }
+
+                    // Now setup the request for the next loop.
+                    $req = ClientRequest::PamAuthenticateStep(PamAuthRequest::Password {
+                        cred: password,
+                    });
+                    continue;
+                },
+                ClientResponse::PamAuthenticateStepResponse(PamAuthResponse::Password) => {
+                    let mut consume_authtok = None;
+                    // Swap the authtok out with a None, so it can only be consumed once.
+                    // If it's already been swapped, we are just swapping two null pointers
+                    // here effectively.
+                    std::mem::swap(&mut $authtok, &mut consume_authtok);
+                    let cred = if let Some(cred) = consume_authtok {
+                        cred
+                    } else {
+                        let lconv = $conv.lock().unwrap();
+                        match lconv.send(PAM_PROMPT_ECHO_OFF, "Password: ") {
+                            Ok(password) => match password {
+                                Some(cred) => cred,
+                                None => {
+                                    debug!("no password");
+                                    return PamResultCode::PAM_CRED_INSUFFICIENT;
+                                }
+                            },
+                            Err(err) => {
+                                debug!("unable to get password");
+                                return err;
+                            }
+                        }
+                    };
+
+                    // Now setup the request for the next loop.
+                    $req = ClientRequest::PamAuthenticateStep(PamAuthRequest::Password { cred });
+                    continue;
+                },
+                ClientResponse::PamAuthenticateStepResponse(PamAuthResponse::MFACode {
+                    msg,
+                }) => {
+                    let lconv = $conv.lock().unwrap();
+                    match lconv.send(PAM_TEXT_INFO, &msg) {
+                        Ok(_) => {}
+                        Err(err) => {
+                            if $opts.debug {
+                                println!("Message prompt failed");
+                            }
+                            return err;
+                        }
+                    }
+                    let cred = match lconv.send(PAM_PROMPT_ECHO_OFF, "Code: ") {
+                        Ok(password) => match password {
+                            Some(cred) => cred,
+                            None => {
+                                debug!("no mfa code");
+                                return PamResultCode::PAM_CRED_INSUFFICIENT;
+                            }
+                        },
+                        Err(err) => {
+                            debug!("unable to get mfa code");
+                            return err;
+                        }
+                    };
+
+                    // Now setup the request for the next loop.
+                    $req = ClientRequest::PamAuthenticateStep(PamAuthRequest::MFACode {
+                        cred,
+                    });
+                    continue;
+                },
+                ClientResponse::PamAuthenticateStepResponse(PamAuthResponse::MFAPoll {
+                    msg,
+                    polling_interval,
+                }) => {
+                    return mfa_poll($daemon_client, $authtok, $conv, $opts, $cfg, &msg, polling_interval);
+                }
                 _ => {
                     // unexpected response.
                     error!(err = ?r, "PAM_IGNORE, unexpected resolver response");
@@ -521,6 +671,67 @@ macro_rules! match_sm_auth_client_response {
                 return PamResultCode::PAM_IGNORE;
             }
         }
+    }}
+}
+
+/// This function exists to prevent infinite build-time recursion to the
+/// match_sm_auth_client_response macro. Instead we have run-time recursion.
+fn mfa_poll(
+    mut daemon_client: DaemonClientBlocking,
+    mut authtok: Option<String>,
+    conv: Arc<Mutex<PamConv>>,
+    opts: Options,
+    cfg: HimmelblauConfig,
+    msg: &str,
+    polling_interval: u32,
+) -> PamResultCode {
+    // This conversation is intentionally nested within a block
+    // to ensure the lconv lock is dropped before calling the
+    // nested `match_sm_auth_client_response`, otherwise we
+    // deadlock here.
+    {
+        let lconv = conv.lock().unwrap();
+        match lconv.send(PAM_TEXT_INFO, msg) {
+            Ok(_) => {}
+            Err(err) => {
+                if opts.debug {
+                    println!("Message prompt failed");
+                }
+                return err;
+            }
+        }
+
+        // Necessary because of OpenSSH bug
+        // https://bugzilla.mindrot.org/show_bug.cgi?id=2876 -
+        // PAM_TEXT_INFO and PAM_ERROR_MSG conversation not
+        // honoured during PAM authentication
+        if opts.mfa_poll_prompt {
+            let _ = lconv.send(PAM_PROMPT_ECHO_OFF, "Press enter to continue");
+        }
+    }
+
+    let mut poll_attempt = 0;
+    let mut req = ClientRequest::PamAuthenticateStep(PamAuthRequest::MFAPoll { poll_attempt });
+    loop {
+        thread::sleep(Duration::from_secs(polling_interval.into()));
+
+        // Counter intuitive, but we don't need a max poll attempts here because
+        // if the resolver goes away, then this will error on the sock and
+        // will shutdown. This allows the resolver to dynamically extend the
+        // timeout if needed, and removes logic from the front end.
+        match_sm_auth_client_response!(
+            daemon_client, opts, conv, req, authtok, cfg,
+            ClientResponse::PamAuthenticateStepResponse(
+                    PamAuthResponse::MFAPollWait,
+            ) => {
+                // Continue polling if the daemon says to wait
+                poll_attempt += 1;
+                req = ClientRequest::PamAuthenticateStep(
+                    PamAuthRequest::MFAPoll { poll_attempt }
+                );
+                continue;
+            }
+        );
     }
 }
 
@@ -627,7 +838,6 @@ impl PamHooks for PamKanidm {
         };
         let account_id = cfg.map_cn_name(&account_id);
 
-        let mut timeout = cfg.get_unix_sock_timeout();
         let mut daemon_client = match DaemonClientBlocking::new(cfg.get_socket_path().as_str()) {
             Ok(dc) => dc,
             Err(e) => {
@@ -666,125 +876,7 @@ impl PamHooks for PamKanidm {
         let mut req = ClientRequest::PamAuthenticateInit(account_id, service);
 
         loop {
-            match_sm_auth_client_response!(daemon_client.call_and_wait(&req, timeout), opts, conv, req, authtok, cfg,
-                ClientResponse::PamAuthenticateStepResponse(PamAuthResponse::Password) => {
-                    let mut consume_authtok = None;
-                    // Swap the authtok out with a None, so it can only be consumed once.
-                    // If it's already been swapped, we are just swapping two null pointers
-                    // here effectively.
-                    std::mem::swap(&mut authtok, &mut consume_authtok);
-                    let cred = if let Some(cred) = consume_authtok {
-                        cred
-                    } else {
-                        let lconv = conv.lock().unwrap();
-                        match lconv.send(PAM_PROMPT_ECHO_OFF, "Password: ") {
-                            Ok(password) => match password {
-                                Some(cred) => cred,
-                                None => {
-                                    debug!("no password");
-                                    return PamResultCode::PAM_CRED_INSUFFICIENT;
-                                }
-                            },
-                            Err(err) => {
-                                debug!("unable to get password");
-                                return err;
-                            }
-                        }
-                    };
-
-                    // Now setup the request for the next loop.
-                    timeout = cfg.get_unix_sock_timeout();
-                    req = ClientRequest::PamAuthenticateStep(PamAuthRequest::Password { cred });
-                    continue;
-                },
-                ClientResponse::PamAuthenticateStepResponse(PamAuthResponse::MFACode {
-                    msg,
-                }) => {
-                    let lconv = conv.lock().unwrap();
-                    match lconv.send(PAM_TEXT_INFO, &msg) {
-                        Ok(_) => {}
-                        Err(err) => {
-                            if opts.debug {
-                                println!("Message prompt failed");
-                            }
-                            return err;
-                        }
-                    }
-                    let cred = match lconv.send(PAM_PROMPT_ECHO_OFF, "Code: ") {
-                        Ok(password) => match password {
-                            Some(cred) => cred,
-                            None => {
-                                debug!("no mfa code");
-                                return PamResultCode::PAM_CRED_INSUFFICIENT;
-                            }
-                        },
-                        Err(err) => {
-                            debug!("unable to get mfa code");
-                            return err;
-                        }
-                    };
-
-                    // Now setup the request for the next loop.
-                    timeout = cfg.get_unix_sock_timeout();
-                    req = ClientRequest::PamAuthenticateStep(PamAuthRequest::MFACode {
-                        cred,
-                    });
-                    continue;
-                },
-                ClientResponse::PamAuthenticateStepResponse(PamAuthResponse::MFAPoll {
-                    msg,
-                    polling_interval,
-                }) => {
-                    // This conversation is intentionally nested within a block
-                    // to ensure the lconv lock is dropped before calling the
-                    // nested `match_sm_auth_client_response`, otherwise we
-                    // deadlock here.
-                    {
-                        let lconv = conv.lock().unwrap();
-                        match lconv.send(PAM_TEXT_INFO, &msg) {
-                            Ok(_) => {}
-                            Err(err) => {
-                                if opts.debug {
-                                    println!("Message prompt failed");
-                                }
-                                return err;
-                            }
-                        }
-
-                        // Necessary because of OpenSSH bug
-                        // https://bugzilla.mindrot.org/show_bug.cgi?id=2876 -
-                        // PAM_TEXT_INFO and PAM_ERROR_MSG conversation not
-                        // honoured during PAM authentication
-                        if opts.mfa_poll_prompt {
-                            let _ = lconv.send(PAM_PROMPT_ECHO_OFF, "Press enter to continue");
-                        }
-                    }
-
-                    let mut poll_attempt = 0;
-                    req = ClientRequest::PamAuthenticateStep(PamAuthRequest::MFAPoll { poll_attempt });
-                    loop {
-                        thread::sleep(Duration::from_secs(polling_interval.into()));
-
-                        // Counter intuitive, but we don't need a max poll attempts here because
-                        // if the resolver goes away, then this will error on the sock and
-                        // will shutdown. This allows the resolver to dynamically extend the
-                        // timeout if needed, and removes logic from the front end.
-                        match_sm_auth_client_response!(
-                            daemon_client.call_and_wait(&req, timeout), opts, conv, req, authtok, cfg,
-                            ClientResponse::PamAuthenticateStepResponse(
-                                    PamAuthResponse::MFAPollWait,
-                            ) => {
-                                // Continue polling if the daemon says to wait
-                                poll_attempt += 1;
-                                req = ClientRequest::PamAuthenticateStep(
-                                    PamAuthRequest::MFAPoll { poll_attempt }
-                                );
-                                continue;
-                            }
-                        );
-                    }
-                }
-            );
+            match_sm_auth_client_response!(daemon_client, opts, conv, req, authtok, cfg,);
         } // while true, continue calling PamAuthenticateStep until we get a decision.
     }
 

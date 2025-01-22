@@ -858,7 +858,10 @@ impl IdProvider for HimmelblauProvider {
                             // seconds, not milliseconds.
                             polling_interval: polling_interval / 1000,
                         },
-                        AuthCredHandler::MFA { flow },
+                        AuthCredHandler::MFA {
+                            flow,
+                            password: None,
+                        },
                     ))
                 }
             } else {
@@ -885,7 +888,10 @@ impl IdProvider for HimmelblauProvider {
                         // seconds, not milliseconds.
                         polling_interval: polling_interval / 1000,
                     },
-                    AuthCredHandler::MFA { flow },
+                    AuthCredHandler::MFA {
+                        flow,
+                        password: None,
+                    },
                 ))
             }
         } else {
@@ -1056,7 +1062,21 @@ impl IdProvider for HimmelblauProvider {
 
                 auth_and_validate_hello_key!(hello_key, cred)
             }
-            (_, PamAuthRequest::Password { cred }) => {
+            (change_password, PamAuthRequest::Password { mut cred }) => {
+                if let AuthCredHandler::ChangePassword { old_cred } = change_password {
+                    // Report errors, but don't bail out. If the password change fails,
+                    // we'll make another run at it in a moment.
+                    if let Err(e) = self
+                        .client
+                        .write()
+                        .await
+                        .handle_password_change(account_id, old_cred, &cred)
+                        .await
+                    {
+                        error!("Failed to change user password: {:?}", e);
+                        cred = old_cred.to_string();
+                    }
+                }
                 // Always attempt to force MFA when enrolling the device, otherwise
                 // the device object will not have the MFA claim. If we are already
                 // enrolled but creating a new Hello Pin, we follow the same process,
@@ -1101,7 +1121,10 @@ impl IdProvider for HimmelblauProvider {
                                 // AADSTS50074: UserStrongAuthClientAuthNRequiredInterrupt
                                 // AADSTS50076: UserStrongAuthClientAuthNRequired
                                 if ![50072, 50074, 50076].contains(&e.code) {
-                                    error!("Skipping SFA fallback because authentication failed: {:?}", e);
+                                    error!(
+                                        "Skipping SFA fallback because authentication failed: {:?}",
+                                        e
+                                    );
                                     return Err(IdpError::BadRequest);
                                 }
                             }
@@ -1111,7 +1134,8 @@ impl IdProvider for HimmelblauProvider {
                                 // Again, we need to wait to handle the response until after
                                 // we've released the write lock on the client, otherwise we
                                 // will deadlock.
-                                self.client
+                                let res = self
+                                    .client
                                     .write()
                                     .await
                                     .acquire_token_by_username_password(
@@ -1122,7 +1146,28 @@ impl IdProvider for HimmelblauProvider {
                                         tpm,
                                         machine_key,
                                     )
-                                    .await
+                                    .await;
+                                match res {
+                                    Ok(token) => Ok(token),
+                                    Err(e) => {
+                                        if let MsalError::ChangePassword = e {
+                                            // The user needs to set a new password.
+                                            *cred_handler =
+                                                AuthCredHandler::ChangePassword { old_cred: cred };
+                                            return Ok((
+                                                AuthResult::Next(AuthRequest::ChangePassword {
+                                                    msg: "Update your password\n\
+                                                         You need to update your password because this is\n\
+                                                         the first time you are signing in, or because your\n\
+                                                         password has expired.".to_string(),
+                                                }),
+                                                AuthCacheAction::None,
+                                            ));
+                                        } else {
+                                            Err(e)
+                                        }
+                                    }
+                                }
                             } else {
                                 error!("Single factor authentication is only permitted on an enrolled host: {:?}", e);
                                 return Err(IdpError::BadRequest);
@@ -1161,7 +1206,10 @@ impl IdProvider for HimmelblauProvider {
 
                         let fido_allow_list =
                             resp.fido_allow_list.clone().ok_or(IdpError::BadRequest)?;
-                        *cred_handler = AuthCredHandler::MFA { flow: resp };
+                        *cred_handler = AuthCredHandler::MFA {
+                            flow: resp,
+                            password: Some(cred),
+                        };
                         return Ok((
                             AuthResult::Next(AuthRequest::Fido {
                                 fido_allow_list,
@@ -1176,7 +1224,10 @@ impl IdProvider for HimmelblauProvider {
                     }
                     "PhoneAppOTP" | "OneWaySMS" | "ConsolidatedTelephony" => {
                         let msg = resp.msg.clone();
-                        *cred_handler = AuthCredHandler::MFA { flow: resp };
+                        *cred_handler = AuthCredHandler::MFA {
+                            flow: resp,
+                            password: Some(cred),
+                        };
                         return Ok((
                             AuthResult::Next(AuthRequest::MFACode { msg }),
                             /* An MFA auth cannot cache the password. This would
@@ -1189,7 +1240,10 @@ impl IdProvider for HimmelblauProvider {
                     _ => {
                         let msg = resp.msg.clone();
                         let polling_interval = resp.polling_interval.unwrap_or(5000);
-                        *cred_handler = AuthCredHandler::MFA { flow: resp };
+                        *cred_handler = AuthCredHandler::MFA {
+                            flow: resp,
+                            password: Some(cred),
+                        };
                         return Ok((
                             AuthResult::Next(AuthRequest::MFAPoll {
                                 msg,
@@ -1206,17 +1260,48 @@ impl IdProvider for HimmelblauProvider {
                     }
                 }
             }
-            (AuthCredHandler::MFA { ref mut flow }, PamAuthRequest::MFACode { cred }) => {
-                let token = self
+            (
+                AuthCredHandler::MFA {
+                    ref mut flow,
+                    password,
+                },
+                PamAuthRequest::MFACode { cred },
+            ) => {
+                let token = match self
                     .client
                     .write()
                     .await
                     .acquire_token_by_mfa_flow(account_id, Some(&cred), None, flow)
                     .await
-                    .map_err(|e| {
-                        error!("{:?}", e);
-                        IdpError::NotFound
-                    })?;
+                {
+                    Ok(token) => token,
+                    Err(e) => {
+                        if let MsalError::ChangePassword = e {
+                            if let Some(old_cred) = password {
+                                // The user needs to set a new password.
+                                *cred_handler = AuthCredHandler::ChangePassword {
+                                    old_cred: old_cred.to_string(),
+                                };
+                                return Ok((
+                                    AuthResult::Next(AuthRequest::ChangePassword {
+                                        msg: "Update your password\n\
+                                             You need to update your password because this is\n\
+                                             the first time you are signing in, or because your\n\
+                                             password has expired."
+                                            .to_string(),
+                                    }),
+                                    AuthCacheAction::None,
+                                ));
+                            } else {
+                                error!("{:?}", e);
+                                return Err(IdpError::NotFound);
+                            }
+                        } else {
+                            error!("{:?}", e);
+                            return Err(IdpError::NotFound);
+                        }
+                    }
+                };
                 let token2 = enroll_and_obtain_enrolled_token!(token);
                 match self.token_validate(account_id, &token2).await {
                     Ok(AuthResult::Success { token: token3 }) => {
@@ -1252,7 +1337,13 @@ impl IdProvider for HimmelblauProvider {
                     Err(e) => Err(e),
                 }
             }
-            (AuthCredHandler::MFA { ref mut flow }, PamAuthRequest::MFAPoll { poll_attempt }) => {
+            (
+                AuthCredHandler::MFA {
+                    ref mut flow,
+                    password,
+                },
+                PamAuthRequest::MFAPoll { poll_attempt },
+            ) => {
                 let max_poll_attempts = flow.max_poll_attempts.unwrap_or(180);
                 if poll_attempt > max_poll_attempts {
                     error!("MFA polling timed out");
@@ -1267,6 +1358,27 @@ impl IdProvider for HimmelblauProvider {
                 {
                     Ok(token) => token,
                     Err(e) => match e {
+                        MsalError::ChangePassword => {
+                            if let Some(old_cred) = password {
+                                // The user needs to set a new password.
+                                *cred_handler = AuthCredHandler::ChangePassword {
+                                    old_cred: old_cred.to_string(),
+                                };
+                                return Ok((
+                                    AuthResult::Next(AuthRequest::ChangePassword {
+                                        msg: "Update your password\n\
+                                             You need to update your password because this is\n\
+                                             the first time you are signing in, or because your\n\
+                                             password has expired."
+                                            .to_string(),
+                                    }),
+                                    AuthCacheAction::None,
+                                ));
+                            } else {
+                                error!("{:?}", e);
+                                return Err(IdpError::NotFound);
+                            }
+                        }
                         MsalError::MFAPollContinue => {
                             return Ok((
                                 AuthResult::Next(AuthRequest::MFAPollWait),
@@ -1314,17 +1426,48 @@ impl IdProvider for HimmelblauProvider {
                     Err(e) => Err(e),
                 }
             }
-            (AuthCredHandler::MFA { ref mut flow }, PamAuthRequest::Fido { assertion }) => {
-                let token = self
+            (
+                AuthCredHandler::MFA {
+                    ref mut flow,
+                    password,
+                },
+                PamAuthRequest::Fido { assertion },
+            ) => {
+                let token = match self
                     .client
                     .write()
                     .await
                     .acquire_token_by_mfa_flow(account_id, Some(&assertion), None, flow)
                     .await
-                    .map_err(|e| {
-                        error!("{:?}", e);
-                        IdpError::NotFound
-                    })?;
+                {
+                    Ok(token) => token,
+                    Err(e) => {
+                        if let MsalError::ChangePassword = e {
+                            if let Some(old_cred) = password {
+                                // The user needs to set a new password.
+                                *cred_handler = AuthCredHandler::ChangePassword {
+                                    old_cred: old_cred.to_string(),
+                                };
+                                return Ok((
+                                    AuthResult::Next(AuthRequest::ChangePassword {
+                                        msg: "Update your password\n\
+                                             You need to update your password because this is\n\
+                                             the first time you are signing in, or because your\n\
+                                             password has expired."
+                                            .to_string(),
+                                    }),
+                                    AuthCacheAction::None,
+                                ));
+                            } else {
+                                error!("{:?}", e);
+                                return Err(IdpError::NotFound);
+                            }
+                        } else {
+                            error!("{:?}", e);
+                            return Err(IdpError::NotFound);
+                        }
+                    }
+                };
                 let token2 = enroll_and_obtain_enrolled_token!(token);
                 match self.token_validate(account_id, &token2).await {
                     Ok(AuthResult::Success { token: token3 }) => {

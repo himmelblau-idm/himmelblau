@@ -72,8 +72,16 @@ pub struct UserToken {
 }
 
 pub enum AuthCredHandler {
-    MFA { flow: MFAAuthContinue },
-    SetupPin { token: UnixUserToken },
+    MFA {
+        flow: MFAAuthContinue,
+        password: Option<String>,
+    },
+    SetupPin {
+        token: UnixUserToken,
+    },
+    ChangePassword {
+        old_cred: String,
+    },
     None,
 }
 
@@ -82,6 +90,7 @@ impl fmt::Debug for AuthCredHandler {
         match self {
             AuthCredHandler::MFA { .. } => f.write_str("MFA { .. }"),
             AuthCredHandler::SetupPin { .. } => f.write_str("SetupPin { .. }"),
+            AuthCredHandler::ChangePassword { .. } => f.write_str("ChangePassword { .. }"),
             AuthCredHandler::None => f.write_str("None"),
         }
     }
@@ -108,6 +117,10 @@ pub enum AuthRequest {
         fido_challenge: String,
         fido_allow_list: Vec<String>,
     },
+    ChangePassword {
+        /// Message to display to the user.
+        msg: String,
+    },
 }
 
 #[allow(clippy::from_over_into)]
@@ -133,6 +146,7 @@ impl Into<PamAuthResponse> for AuthRequest {
                 fido_challenge,
                 fido_allow_list,
             },
+            AuthRequest::ChangePassword { msg } => PamAuthResponse::ChangePassword { msg },
         }
     }
 }
