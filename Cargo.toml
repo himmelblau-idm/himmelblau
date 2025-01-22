@@ -78,7 +78,7 @@ rand = "^0.8.5"
 tss-esapi = "^7.2.0"
 sketching = { path = "./src/sketching" }
 tracing-forest = "^0.1.6"
-rusqlite = "^0.32.0"
+rusqlite = "^0.33.0"
 hashbrown = { version = "0.15.1", features = ["serde", "inline-more"] }
 lru = "^0.12.3"
 kanidm_lib_crypto = { path = "./src/crypto" }
