@@ -140,12 +140,24 @@ pub struct HomeDirectoryInfo {
     pub aliases: Vec<String>,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
+#[derive(Serialize, Deserialize, Clone)]
 pub enum TaskRequest {
     HomeDirectory(HomeDirectoryInfo),
     LocalGroups(String),
     LogonScript(String, String),
     KerberosCCache(uid_t, Vec<u8>, Vec<u8>),
+}
+
+impl TaskRequest {
+    /// Get a safe display version of the request, without credentials.
+    pub fn as_safe_string(&self) -> String {
+        match self {
+            TaskRequest::HomeDirectory(info) => format!("HomeDirectory({:?})", info),
+            TaskRequest::LocalGroups(groups) => format!("LocalGroups({})", groups),
+            TaskRequest::LogonScript(account_id, _) => format!("LogonScript({}, ...)", account_id),
+            TaskRequest::KerberosCCache(uid, _, _) => format!("KerberosCCache({}, ...)", uid),
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize, Debug)]
