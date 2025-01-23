@@ -47,7 +47,7 @@ libhimmelblau.workspace = true
 [package.metadata.deb]
 name = "himmelblau"
 maintainer = "David Mulder <dmulder@suse.com>"
-depends = ["libssl3", "libsqlite3-0", "libutf8proc3"]
+depends = ["$auto"]
 recommends = ["nss-himmelblau", "pam-himmelblau", "krb5-user"]
 assets = [
   ["../../platform/debian/himmelblau.conf.example", "etc/himmelblau/himmelblau.conf", "644"],
