@@ -76,6 +76,14 @@ local_groups = users
 # Grant) flow for MFA, and Hello authentication will be disabled.
 # enable_experimental_mfa = true
 #
+# This option enables the use of Unix schema extension attributes
+# (such as uidNumber, gidNumber, loginShell, and unixHomeDirectory) from
+# Azure Entra ID. When enabled, Himmelblau will fetch these attributes for
+# users, ensuring alignment with values synchronized from an on-premises
+# Active Directory environment. If disabled, Himmelblau will instead use
+# its internal ID mapping strategy.
+# sync_unix_schema_extension_attributes = true
+#
 # authority_host = login.microsoftonline.com
 #
 # The location of the cache database
