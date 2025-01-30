@@ -49,3 +49,14 @@ if [[ -f /etc/apparmor.d/usr.lib.libreoffice.program.soffice.bin ]]; then
 	# Reload the AppArmor profile to apply the changes
 	apparmor_parser -r /etc/apparmor.d/usr.lib.libreoffice.program.soffice.bin || echo "apparmor reload failed"
 fi
+
+# Ensure `includedir /etc/krb5.conf.d` is present in /etc/krb5.conf
+KRB5_CONF="/etc/krb5.conf"
+KRB5_INCLUDE_LINE="includedir /etc/krb5.conf.d"
+
+if [[ -f "$KRB5_CONF" ]]; then
+    if ! grep -qF "$KRB5_INCLUDE_LINE" "$KRB5_CONF"; then
+        printf "\n%s\n" "$KRB5_INCLUDE_LINE" >> "$KRB5_CONF"
+        echo "Added '$KRB5_INCLUDE_LINE' to $KRB5_CONF"
+    fi
+fi
