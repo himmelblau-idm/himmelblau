@@ -59,6 +59,7 @@ use tokio::sync::mpsc::{channel, Receiver, Sender};
 use tokio::sync::oneshot;
 use tokio::time;
 use tokio_util::codec::{Decoder, Encoder, Framed};
+use tracing::span;
 
 use kanidm_hsm_crypto::{soft::SoftTpm, AuthValue, BoxedDynTpm, Tpm};
 
@@ -736,6 +737,9 @@ async fn main() -> ExitCode {
             )
         )
         .on(async {
+            let span = span!(Level::INFO, "initialisation");
+            let _enter = span.enter();
+
             if clap_args.get_flag("skip-root-check") {
                 warn!("Skipping root user check, if you're running this for testing, ensure you clean up temporary files.")
                 // TODO: this wording is not great m'kay.
@@ -1214,6 +1218,8 @@ async fn main() -> ExitCode {
             });
 
             info!("Server started ...");
+
+            drop(_enter);
 
             loop {
                 tokio::select! {
