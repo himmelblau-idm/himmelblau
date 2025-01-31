@@ -167,6 +167,14 @@ A boolean option that enables the experimental multi-factor authentication (MFA)
 enable_experimental_mfa = true
 
 .TP
+.B sync_unix_schema_extension_attributes
+.RE
+A boolean option that enables the use of Unix schema extension attributes (such as `uidNumber`, `gidNumber`, `loginShell`, `gecos`, and `unixHomeDirectory`) from Azure Entra ID. When enabled, Himmelblau will retrieve these attributes for users, ensuring consistency with values synchronized from an on-premises Active Directory environment. If disabled, Himmelblau will rely on its internal ID mapping strategy instead of the synchronized Unix attributes. By default, this option is enabled.
+
+.EXAMPLES
+sync_unix_schema_extension_attributes = true
+
+.TP
 .B authority_host
 .RE
 Specifies the hostname for Microsoft authentication. The default value is

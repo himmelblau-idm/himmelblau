@@ -534,6 +534,14 @@ impl HimmelblauConfig {
         match_bool(self.config.get("global", "enable_experimental_mfa"), true)
     }
 
+    pub fn get_sync_unix_schema_extension_attributes(&self) -> bool {
+        match_bool(
+            self.config
+                .get("global", "sync_unix_schema_extension_attributes"),
+            true,
+        )
+    }
+
     pub async fn get_primary_domain_from_alias(&mut self, alias: &str) -> Option<String> {
         let domains = self.get_configured_domains();
 

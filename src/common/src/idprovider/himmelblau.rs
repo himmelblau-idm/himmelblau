@@ -1661,6 +1661,7 @@ impl HimmelblauProvider {
     ) -> Result<UserToken, IdpError> {
         let config = self.config.read().await;
         let mut groups: Vec<GroupToken>;
+        let posix_attrs: HashMap<String, String>;
         let spn = match value.spn() {
             Ok(spn) => spn,
             Err(e) => {
@@ -1681,7 +1682,10 @@ impl HimmelblauProvider {
                     Ok(groups) => {
                         let mut gt_groups = vec![];
                         for g in groups {
-                            match self.group_token_from_directory_object(g).await {
+                            match self
+                                .group_token_from_directory_object(access_token, g)
+                                .await
+                            {
                                 Ok(group) => gt_groups.push(group),
                                 Err(e) => {
                                     debug!("Failed fetching group for user {}: {}", &spn, e)
@@ -1695,6 +1699,24 @@ impl HimmelblauProvider {
                         vec![]
                     }
                 };
+                posix_attrs = if config.get_sync_unix_schema_extension_attributes() {
+                    match self
+                        .graph
+                        .fetch_user_extension_attributes(
+                            access_token,
+                            vec!["uidNumber", "loginShell", "gecos", "unixHomeDirectory"],
+                        )
+                        .await
+                    {
+                        Ok(posix_attrs) => posix_attrs,
+                        Err(e) => {
+                            debug!("Failed fetching user posix attributes: {:?}", e);
+                            HashMap::new()
+                        }
+                    }
+                } else {
+                    HashMap::new()
+                };
                 // Set the profile picture
                 if let Ok(file) = File::create(format!("/var/lib/AccountsService/icons/{}", spn)) {
                     // Ignore failures, since this isn't critical
@@ -1707,21 +1729,33 @@ impl HimmelblauProvider {
             None => {
                 debug!("Failed fetching user groups for {}", &spn);
                 groups = vec![];
+                posix_attrs = HashMap::new();
             }
         };
         let valid = true;
         let idmap = self.idmap.read().await;
-        let gidnumber = match config.get_id_attr_map() {
-            IdAttr::Uuid => idmap
-                .object_id_to_unix_id(&self.tenant_id, &uuid)
-                .map_err(|e| {
+        let gidnumber = match posix_attrs.get("uidNumber") {
+            Some(uid_number) => uid_number.parse::<u32>().map_err(|e| {
+                error!(
+                    "Invalid uidNumber ('{}') synced from on-prem AD: {:?}",
+                    uid_number, e
+                );
+                IdpError::BadRequest
+            })?,
+            None => match config.get_id_attr_map() {
+                IdAttr::Uuid => {
+                    idmap
+                        .object_id_to_unix_id(&self.tenant_id, &uuid)
+                        .map_err(|e| {
+                            error!("{:?}", e);
+                            IdpError::BadRequest
+                        })?
+                }
+                IdAttr::Name => idmap.gen_to_unix(&self.tenant_id, &spn).map_err(|e| {
                     error!("{:?}", e);
                     IdpError::BadRequest
                 })?,
-            IdAttr::Name => idmap.gen_to_unix(&self.tenant_id, &spn).map_err(|e| {
-                error!("{:?}", e);
-                IdpError::BadRequest
-            })?,
+            },
         };
 
         // Add the fake primary group
@@ -1732,13 +1766,28 @@ impl HimmelblauProvider {
             gidnumber,
         });
 
+        let displayname = match posix_attrs.get("gecos") {
+            Some(gecos) => gecos.clone(),
+            None => value.id_token.name.clone(),
+        };
+
+        let shell = match posix_attrs.get("loginShell") {
+            Some(login_shell) => login_shell.clone(),
+            None => config.get_shell(Some(&self.domain)),
+        };
+
+        if posix_attrs.contains_key("unixHomeDirectory") {
+            // TODO: Implement homedir mapping
+            warn!("Himmelblau did not map unixHomeDirectory from Azure Entra Connector sync for user {}", spn);
+        }
+
         Ok(UserToken {
             name: spn.clone(),
             spn: spn.clone(),
             uuid,
             gidnumber,
-            displayname: value.id_token.name.clone(),
-            shell: Some(config.get_shell(Some(&self.domain))),
+            displayname,
+            shell: Some(shell),
             groups,
             tenant_id: Uuid::parse_str(&self.tenant_id).map_err(|e| {
                 error!("{:?}", e);
@@ -1750,6 +1799,7 @@ impl HimmelblauProvider {
 
     async fn group_token_from_directory_object(
         &self,
+        access_token: &str,
         value: DirectoryObject,
     ) -> Result<GroupToken> {
         let config = self.config.read().await;
@@ -1759,14 +1809,38 @@ impl HimmelblauProvider {
         };
         let id =
             Uuid::parse_str(&value.id).map_err(|e| anyhow!("Failed parsing user uuid: {}", e))?;
+        let posix_attrs = if config.get_sync_unix_schema_extension_attributes() {
+            match self
+                .graph
+                .fetch_group_extension_attributes(&value.id, access_token, vec!["gidNumber"])
+                .await
+            {
+                Ok(posix_attrs) => posix_attrs,
+                Err(e) => {
+                    debug!("Failed fetching group posix attributes: {:?}", e);
+                    HashMap::new()
+                }
+            }
+        } else {
+            HashMap::new()
+        };
         let idmap = self.idmap.read().await;
-        let gidnumber = match config.get_id_attr_map() {
-            IdAttr::Uuid => idmap
-                .object_id_to_unix_id(&self.tenant_id, &id)
-                .map_err(|e| anyhow!("Failed fetching gid for {}: {:?}", id, e))?,
-            IdAttr::Name => idmap
-                .gen_to_unix(&self.tenant_id, &name)
-                .map_err(|e| anyhow!("Failed fetching gid for {}: {:?}", name, e))?,
+        let gidnumber = match posix_attrs.get("gidNumber") {
+            Some(gid_number) => gid_number.parse::<u32>().map_err(|e| {
+                anyhow!(
+                    "Invalid gidNumber ('{}') synced from on-prem AD: {:?}",
+                    gid_number,
+                    e
+                )
+            })?,
+            None => match config.get_id_attr_map() {
+                IdAttr::Uuid => idmap
+                    .object_id_to_unix_id(&self.tenant_id, &id)
+                    .map_err(|e| anyhow!("Failed fetching gid for {}: {:?}", id, e))?,
+                IdAttr::Name => idmap
+                    .gen_to_unix(&self.tenant_id, &name)
+                    .map_err(|e| anyhow!("Failed fetching gid for {}: {:?}", name, e))?,
+            },
         };
 
         Ok(GroupToken {
