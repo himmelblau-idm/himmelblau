@@ -59,6 +59,7 @@ use tokio::sync::mpsc::{channel, Receiver, Sender};
 use tokio::sync::oneshot;
 use tokio::time;
 use tokio_util::codec::{Decoder, Encoder, Framed};
+use tracing::span;
 
 use kanidm_hsm_crypto::{soft::SoftTpm, AuthValue, BoxedDynTpm, Tpm};
 
@@ -723,6 +724,21 @@ async fn main() -> ExitCode {
     if clap_args.get_flag("debug") {
         std::env::set_var("RUST_LOG", "debug");
     }
+    let Some(cfg_path_str) = clap_args.get_one::<String>("config") else {
+        error!("Failed to pull the config path");
+        return ExitCode::FAILURE;
+    };
+    // Read the configuration
+    let cfg = match HimmelblauConfig::new(Some(cfg_path_str)) {
+        Ok(c) => c,
+        Err(e) => {
+            error!("Failed to parse {}: {}", cfg_path_str, e);
+            return ExitCode::FAILURE;
+        }
+    };
+    if cfg.get_debug() {
+        std::env::set_var("RUST_LOG", "debug");
+    }
 
     #[allow(clippy::expect_used)]
     tracing_forest::worker_task()
@@ -736,6 +752,9 @@ async fn main() -> ExitCode {
             )
         )
         .on(async {
+            let span = span!(Level::INFO, "initialisation");
+            let _enter = span.enter();
+
             if clap_args.get_flag("skip-root-check") {
                 warn!("Skipping root user check, if you're running this for testing, ensure you clean up temporary files.")
                 // TODO: this wording is not great m'kay.
@@ -744,10 +763,6 @@ async fn main() -> ExitCode {
                 return ExitCode::FAILURE
             };
 
-            let Some(cfg_path_str) = clap_args.get_one::<String>("config") else {
-                error!("Failed to pull the config path");
-                return ExitCode::FAILURE
-            };
             let cfg_path: PathBuf = PathBuf::from(cfg_path_str);
 
             if !cfg_path.exists() {
@@ -780,19 +795,6 @@ async fn main() -> ExitCode {
                         cfg_path_str
                     );
                 }
-            }
-
-            // Read the configuration
-            let cfg = match HimmelblauConfig::new(Some(cfg_path_str)) {
-                Ok(c) => c,
-                Err(e) => {
-                    error!("Failed to parse {}: {}", cfg_path_str, e);
-                    return ExitCode::FAILURE;
-                }
-            };
-
-            if cfg.get_debug() {
-                std::env::set_var("RUST_LOG", "debug");
             }
 
             if clap_args.get_flag("configtest") {
@@ -1214,6 +1216,8 @@ async fn main() -> ExitCode {
             });
 
             info!("Server started ...");
+
+            drop(_enter);
 
             loop {
                 tokio::select! {
