@@ -724,6 +724,21 @@ async fn main() -> ExitCode {
     if clap_args.get_flag("debug") {
         std::env::set_var("RUST_LOG", "debug");
     }
+    let Some(cfg_path_str) = clap_args.get_one::<String>("config") else {
+        error!("Failed to pull the config path");
+        return ExitCode::FAILURE;
+    };
+    // Read the configuration
+    let cfg = match HimmelblauConfig::new(Some(cfg_path_str)) {
+        Ok(c) => c,
+        Err(e) => {
+            error!("Failed to parse {}: {}", cfg_path_str, e);
+            return ExitCode::FAILURE;
+        }
+    };
+    if cfg.get_debug() {
+        std::env::set_var("RUST_LOG", "debug");
+    }
 
     #[allow(clippy::expect_used)]
     tracing_forest::worker_task()
@@ -748,10 +763,6 @@ async fn main() -> ExitCode {
                 return ExitCode::FAILURE
             };
 
-            let Some(cfg_path_str) = clap_args.get_one::<String>("config") else {
-                error!("Failed to pull the config path");
-                return ExitCode::FAILURE
-            };
             let cfg_path: PathBuf = PathBuf::from(cfg_path_str);
 
             if !cfg_path.exists() {
@@ -784,19 +795,6 @@ async fn main() -> ExitCode {
                         cfg_path_str
                     );
                 }
-            }
-
-            // Read the configuration
-            let cfg = match HimmelblauConfig::new(Some(cfg_path_str)) {
-                Ok(c) => c,
-                Err(e) => {
-                    error!("Failed to parse {}: {}", cfg_path_str, e);
-                    return ExitCode::FAILURE;
-                }
-            };
-
-            if cfg.get_debug() {
-                std::env::set_var("RUST_LOG", "debug");
             }
 
             if clap_args.get_flag("configtest") {
