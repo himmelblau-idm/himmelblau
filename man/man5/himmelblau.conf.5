@@ -397,6 +397,23 @@ To ensure that old cached ID mappings are cleared, preventing potential UID over
 [example.com]
 idmap_range = 5000000-5999999
 
+.TP
+.B app_id
+.RE
+Specifies the Entra ID application ID that has the necessary permissions to obtain access tokens for the
+.B logon_script.
+This application
+.B SHOULD
+include the
+.B GroupMember.Read.All
+permission, enabling Himmelblau to retrieve group names and the
+.B gidNumber
+extended attribute.
+
+.EXAMPLES
+[example.com]
+app_id = d023f7aa-d214-4b59-911d-6074de623765
+
 .SH SEE ALSO
 .BR himmelblaud(8),
 .BR himmelblaud-tasks(8)

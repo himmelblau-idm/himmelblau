@@ -139,8 +139,14 @@ impl HimmelblauMultiProvider {
                 .add_gen_domain(&domain, &tenant_id, range)
                 .map_err(|e| anyhow!("{:?}", e))?;
             let authority_url = format!("https://{}/{}", authority_host, tenant_id);
-            let app = BrokerClientApplication::new(Some(authority_url.as_str()), None, None)
-                .map_err(|e| anyhow!("{:?}", e))?;
+            let app_id = cfg.get_app_id(&domain);
+            let app = BrokerClientApplication::new(
+                Some(authority_url.as_str()),
+                app_id.as_deref(),
+                None,
+                None,
+            )
+            .map_err(|e| anyhow!("{:?}", e))?;
             let provider = HimmelblauProvider::new(
                 app,
                 &config,

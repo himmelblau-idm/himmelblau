@@ -122,3 +122,12 @@
 # home_alias = SPN
 # shell = /bin/zsh
 # idmap_range = 6000000-6999999
+#
+# The `app_id` option specifies the Entra ID application ID that has the
+# necessary permissions to obtain access tokens for the `logon_script`. This
+# application SHOULD also include the `GroupMember.Read.All` permission,
+# enabling Himmelblau to retrieve group names and the `gidNumber` extended
+# attribute.
+#
+# [example.com]
+# app_id = d023f7aa-d214-4b59-911d-6074de623765
