@@ -893,7 +893,8 @@ where
                 .map(|tok| NssUser {
                     homedir: self.token_abs_homedirectory(&tok),
                     name: self.token_uidattr(&tok),
-                    gid: tok.gidnumber,
+                    uid: tok.gidnumber,
+                    gid: tok.real_gidnumber,
                     gecos: tok.displayname,
                     shell: tok.shell.unwrap_or_else(|| self.default_shell.clone()),
                 })
@@ -906,7 +907,8 @@ where
         Ok(token.map(|tok| NssUser {
             homedir: self.token_abs_homedirectory(&tok),
             name: self.token_uidattr(&tok),
-            gid: tok.gidnumber,
+            uid: tok.gidnumber,
+            gid: tok.real_gidnumber,
             gecos: tok.displayname,
             shell: tok.shell.unwrap_or_else(|| self.default_shell.clone()),
         }))

@@ -746,6 +746,7 @@ impl IdProvider for HimmelblauProvider {
                                 name: account_id.clone(),
                                 spn: account_id.clone(),
                                 uuid: fake_uuid,
+                                real_gidnumber: gidnumber,
                                 gidnumber,
                                 displayname: "".to_string(),
                                 shell: Some(config.get_shell(Some(&self.domain))),
@@ -1705,12 +1706,18 @@ impl HimmelblauProvider {
                         vec![]
                     }
                 };
-                posix_attrs = if config.get_sync_unix_schema_extension_attributes() {
+                posix_attrs = if config.get_use_directory_schema_extension_attributes() {
                     match self
                         .graph
                         .fetch_user_extension_attributes(
                             access_token,
-                            vec!["uidNumber", "loginShell", "gecos", "unixHomeDirectory"],
+                            vec![
+                                "uidNumber",
+                                "gidNumber",
+                                "loginShell",
+                                "gecos",
+                                "unixHomeDirectory",
+                            ],
                         )
                         .await
                     {
@@ -1740,7 +1747,7 @@ impl HimmelblauProvider {
         };
         let valid = true;
         let idmap = self.idmap.read().await;
-        let gidnumber = match posix_attrs.get("uidNumber") {
+        let uidnumber = match posix_attrs.get("uidNumber") {
             Some(uid_number) => uid_number.parse::<u32>().map_err(|e| {
                 error!(
                     "Invalid uidNumber ('{}') synced from on-prem AD: {:?}",
@@ -1764,13 +1771,25 @@ impl HimmelblauProvider {
             },
         };
 
-        // Add the fake primary group
-        groups.push(GroupToken {
-            name: spn.clone(),
-            spn: spn.clone(),
-            uuid,
-            gidnumber,
-        });
+        // Utilize the existing primary group if set
+        let gidnumber = if let Some(gid_number) = posix_attrs.get("gidNumber") {
+            gid_number.parse::<u32>().map_err(|e| {
+                error!(
+                    "Invalid gidNumber ('{}') synced from on-prem AD: {:?}",
+                    gid_number, e
+                );
+                IdpError::BadRequest
+            })?
+        } else {
+            // Otherwise add a fake primary group
+            groups.push(GroupToken {
+                name: spn.clone(),
+                spn: spn.clone(),
+                uuid,
+                gidnumber: uidnumber,
+            });
+            uidnumber
+        };
 
         let displayname = match posix_attrs.get("gecos") {
             Some(gecos) => gecos.clone(),
@@ -1791,7 +1810,8 @@ impl HimmelblauProvider {
             name: spn.clone(),
             spn: spn.clone(),
             uuid,
-            gidnumber,
+            real_gidnumber: gidnumber,
+            gidnumber: uidnumber,
             displayname,
             shell: Some(shell),
             groups,
@@ -1815,7 +1835,7 @@ impl HimmelblauProvider {
         };
         let id =
             Uuid::parse_str(&value.id).map_err(|e| anyhow!("Failed parsing user uuid: {}", e))?;
-        let posix_attrs = if config.get_sync_unix_schema_extension_attributes() {
+        let posix_attrs = if config.get_use_directory_schema_extension_attributes() {
             match self
                 .graph
                 .fetch_group_extension_attributes(&value.id, access_token, vec!["gidNumber"])

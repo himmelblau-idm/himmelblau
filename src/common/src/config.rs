@@ -528,10 +528,10 @@ impl HimmelblauConfig {
         match_bool(self.config.get("global", "enable_experimental_mfa"), true)
     }
 
-    pub fn get_sync_unix_schema_extension_attributes(&self) -> bool {
+    pub fn get_use_directory_schema_extension_attributes(&self) -> bool {
         match_bool(
             self.config
-                .get("global", "sync_unix_schema_extension_attributes"),
+                .get("global", "use_directory_schema_extension_attributes"),
             true,
         )
     }
