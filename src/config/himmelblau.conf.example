@@ -17,10 +17,12 @@
 # the right to read group names, only the Object IDs which they belong to.
 # pam_allow_groups =
 #
-# Specify whether to map uid/gid based on the object name or the object uuid.
-# By object uuid mapping is the old default, but can cause authentication
-# issues over SSH. Mapping by name is recommeneded.
-# id_attr_map = name ; {name|uuid}
+# Specify whether to map uid/gid based on the object name, the object uuid, or
+# based on the rfc2307 schema extension attributes synchronized from an on-prem
+# Active Directory instance. By object uuid mapping is the old default, but can
+# cause authentication issues over SSH. Mapping by name or by rfc2307 is
+# recommeneded.
+# id_attr_map = name ; {name|uuid|rfc2307}
 #
 # If you have an ODC provider (the default being odc.officeapps.live.com), specify
 # the hostname for sending a federationProvider request. If the federationProvider
@@ -75,14 +77,6 @@
 # edge cases. When disabled, the system will enforce the DAG (Device Authorization
 # Grant) flow for MFA, and Hello authentication will be disabled.
 # enable_experimental_mfa = true
-#
-# This option enables the use of Unix schema extension attributes
-# (such as uidNumber, gidNumber, loginShell, and unixHomeDirectory) from
-# Azure Entra ID. When enabled, Himmelblau will fetch these attributes for
-# users, ensuring alignment with values synchronized from an on-premises
-# Active Directory environment. If disabled, Himmelblau will instead use
-# its internal ID mapping strategy.
-# sync_unix_schema_extension_attributes = true
 #
 # authority_host = login.microsoftonline.com
 #

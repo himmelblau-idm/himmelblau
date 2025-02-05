@@ -724,7 +724,7 @@ impl IdProvider for HimmelblauProvider {
                                 // We can only provide a valid idmapping with
                                 // name idmapping at this point.
                                 IdAttr::Uuid => return Err(IdpError::BadRequest),
-                                IdAttr::Name => {
+                                IdAttr::Name | IdAttr::Rfc2307 => {
                                     let idmap = self.idmap.read().await;
                                     idmap.gen_to_unix(&self.tenant_id, &account_id).map_err(
                                         |e| {
@@ -1706,7 +1706,7 @@ impl HimmelblauProvider {
                         vec![]
                     }
                 };
-                posix_attrs = if config.get_use_directory_schema_extension_attributes() {
+                posix_attrs = if config.get_id_attr_map() == IdAttr::Rfc2307 {
                     match self
                         .graph
                         .fetch_user_extension_attributes(
@@ -1747,27 +1747,29 @@ impl HimmelblauProvider {
         };
         let valid = true;
         let idmap = self.idmap.read().await;
-        let uidnumber = match posix_attrs.get("uidNumber") {
-            Some(uid_number) => uid_number.parse::<u32>().map_err(|e| {
-                error!(
-                    "Invalid uidNumber ('{}') synced from on-prem AD: {:?}",
-                    uid_number, e
-                );
-                IdpError::BadRequest
-            })?,
-            None => match config.get_id_attr_map() {
-                IdAttr::Uuid => {
-                    idmap
-                        .object_id_to_unix_id(&self.tenant_id, &uuid)
-                        .map_err(|e| {
-                            error!("{:?}", e);
-                            IdpError::BadRequest
-                        })?
-                }
-                IdAttr::Name => idmap.gen_to_unix(&self.tenant_id, &spn).map_err(|e| {
+        let uidnumber = match config.get_id_attr_map() {
+            IdAttr::Uuid => idmap
+                .object_id_to_unix_id(&self.tenant_id, &uuid)
+                .map_err(|e| {
                     error!("{:?}", e);
                     IdpError::BadRequest
                 })?,
+            IdAttr::Name => idmap.gen_to_unix(&self.tenant_id, &spn).map_err(|e| {
+                error!("{:?}", e);
+                IdpError::BadRequest
+            })?,
+            IdAttr::Rfc2307 => match posix_attrs.get("uidNumber") {
+                Some(uid_number) => uid_number.parse::<u32>().map_err(|e| {
+                    error!(
+                        "Invalid uidNumber ('{}') synced from on-prem AD: {:?}",
+                        uid_number, e
+                    );
+                    IdpError::BadRequest
+                })?,
+                None => {
+                    error!("User {} has no uidNumber defined in the directory!", spn);
+                    return Err(IdpError::BadRequest);
+                }
             },
         };
 
@@ -1835,7 +1837,7 @@ impl HimmelblauProvider {
         };
         let id =
             Uuid::parse_str(&value.id).map_err(|e| anyhow!("Failed parsing user uuid: {}", e))?;
-        let posix_attrs = if config.get_use_directory_schema_extension_attributes() {
+        let posix_attrs = if config.get_id_attr_map() == IdAttr::Rfc2307 {
             match self
                 .graph
                 .fetch_group_extension_attributes(&value.id, access_token, vec!["gidNumber"])
@@ -1851,21 +1853,27 @@ impl HimmelblauProvider {
             HashMap::new()
         };
         let idmap = self.idmap.read().await;
-        let gidnumber = match posix_attrs.get("gidNumber") {
-            Some(gid_number) => gid_number.parse::<u32>().map_err(|e| {
-                anyhow!(
-                    "Invalid gidNumber ('{}') synced from on-prem AD: {:?}",
-                    gid_number,
-                    e
-                )
-            })?,
-            None => match config.get_id_attr_map() {
-                IdAttr::Uuid => idmap
-                    .object_id_to_unix_id(&self.tenant_id, &id)
-                    .map_err(|e| anyhow!("Failed fetching gid for {}: {:?}", id, e))?,
-                IdAttr::Name => idmap
-                    .gen_to_unix(&self.tenant_id, &name)
-                    .map_err(|e| anyhow!("Failed fetching gid for {}: {:?}", name, e))?,
+        let gidnumber = match config.get_id_attr_map() {
+            IdAttr::Uuid => idmap
+                .object_id_to_unix_id(&self.tenant_id, &id)
+                .map_err(|e| anyhow!("Failed fetching gid for {}: {:?}", id, e))?,
+            IdAttr::Name => idmap
+                .gen_to_unix(&self.tenant_id, &name)
+                .map_err(|e| anyhow!("Failed fetching gid for {}: {:?}", name, e))?,
+            IdAttr::Rfc2307 => match posix_attrs.get("gidNumber") {
+                Some(gid_number) => gid_number.parse::<u32>().map_err(|e| {
+                    anyhow!(
+                        "Invalid gidNumber ('{}') synced from on-prem AD: {:?}",
+                        gid_number,
+                        e
+                    )
+                })?,
+                None => {
+                    return Err(anyhow!(
+                        "Group {} has no gidNumber defined in the directory!",
+                        name
+                    ));
+                }
             },
         };
 

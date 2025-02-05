@@ -40,6 +40,7 @@ use std::env;
 pub enum IdAttr {
     Uuid,
     Name,
+    Rfc2307,
 }
 
 pub fn split_username(username: &str) -> Option<(&str, &str)> {
@@ -448,6 +449,7 @@ impl HimmelblauConfig {
             Some(id_attr_map) => match id_attr_map.to_lowercase().as_str() {
                 "uuid" => IdAttr::Uuid,
                 "name" => IdAttr::Name,
+                "rfc2307" => IdAttr::Rfc2307,
                 _ => {
                     error!("Unrecognized id_attr_map choice: {}", id_attr_map);
                     DEFAULT_ID_ATTR_MAP
@@ -526,14 +528,6 @@ impl HimmelblauConfig {
 
     pub fn get_enable_experimental_mfa(&self) -> bool {
         match_bool(self.config.get("global", "enable_experimental_mfa"), true)
-    }
-
-    pub fn get_use_directory_schema_extension_attributes(&self) -> bool {
-        match_bool(
-            self.config
-                .get("global", "use_directory_schema_extension_attributes"),
-            true,
-        )
     }
 
     pub async fn get_primary_domain_from_alias(&mut self, alias: &str) -> Option<String> {

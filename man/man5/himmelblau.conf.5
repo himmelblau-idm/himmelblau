@@ -89,10 +89,10 @@ pam_allow_groups = f3c9a7e4-7d5a-47e8-832f-3d2d92abcd12,d98c8e1d-7f8a-4597-babc-
 .TP
 .B id_attr_map
 .RE
-Specifies whether to map user and group IDs based on the object name or object UUID. Mapping by name is recommended for more consistent SSH authentication.
+Specify whether to map uid/gid based on the object name, the object uuid, or based on the rfc2307 schema extension attributes synchronized from an on-prem Active Directory instance. Mapping by name or by rfc2307 is recommeneded.
 
 .EXAMPLES
-id_attr_map = <name|uuid>
+id_attr_map = <name|uuid|rfc2307>
 
 .TP
 .B odc_provider
@@ -145,7 +145,15 @@ local_groups = sudo,admin
 .TP
 .B logon_script
 .RE
-A script that will execute every time a user logs on. Two environment variables are set: USERNAME, and ACCESS_TOKEN. The ACCESS_TOKEN environment variable is an access token for the MS Graph. The token scope config option sets the comma-separated scopes that should be requested for the ACCESS_TOKEN. ACCESS_TOKEN will be empty during offline logon. The return code of the script determines how authentication proceeds. 0 is success, 1 is a soft failure and authentication will proceed, while 2 is a hard failure causing authentication to fail.
+A script that will execute every time a user logs on. Two environment variables are set: USERNAME, and ACCESS_TOKEN. The ACCESS_TOKEN environment variable is an access token for the MS Graph. The token scope config option sets the comma-separated scopes that should be requested for the ACCESS_TOKEN. ACCESS_TOKEN will be empty during offline logon. The return code of the script determines how authentication proceeds. 0 is success, 1 is a soft failure and authentication will proceed, while 2 is a hard failure causing authentication to fail. The
+.B app_id
+option
+.B MUST
+be set for each domain to ensure the
+.B logon_token_scopes
+option has the correct API permissions. Failing to do so will prevent the
+.B logon_script
+from executing.
 
 .EXAMPLES
 logon_script = /etc/himmelblau/logon.sh
@@ -153,7 +161,11 @@ logon_script = /etc/himmelblau/logon.sh
 .TP
 .B logon_token_scopes
 .RE
-A comma-separated list of the scopes to be requested for the ACCESS_TOKEN during logon.
+A comma-separated list of the scopes to be requested for the ACCESS_TOKEN during logon. These scopes
+.B MUST
+correspond to the API permissions assigned to the Entra Id Application specified by the
+.B app_id
+domain option.
 
 .EXAMPLES
 logon_token_scopes = user.read,mail.read
@@ -165,14 +177,6 @@ A boolean option that enables the experimental multi-factor authentication (MFA)
 
 .EXAMPLES
 enable_experimental_mfa = true
-
-.TP
-.B sync_unix_schema_extension_attributes
-.RE
-A boolean option that enables the use of Unix schema extension attributes (such as `uidNumber`, `gidNumber`, `loginShell`, `gecos`, and `unixHomeDirectory`) from Azure Entra ID. When enabled, Himmelblau will retrieve these attributes for users, ensuring consistency with values synchronized from an on-premises Active Directory environment. If disabled, Himmelblau will rely on its internal ID mapping strategy instead of the synchronized Unix attributes. By default, this option is enabled.
-
-.EXAMPLES
-sync_unix_schema_extension_attributes = true
 
 .TP
 .B authority_host
