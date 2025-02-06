@@ -770,17 +770,19 @@ impl IdProvider for HimmelblauProvider {
             Ok(prt) => prt,
             Err(_) => fake_user!(),
         };
+        // If an app_id is defined in the config, the app should have the
+        // GroupMember.Read.All API permission.
+        let cfg = self.config.read().await;
+        let (scopes, resource) = if cfg.get_app_id(&self.domain).is_some() {
+            (vec!["GroupMember.Read.All"], None)
+        } else {
+            (vec![], Some("https://graph.microsoft.com".to_string()))
+        };
         let token = match self
             .client
             .write()
             .await
-            .exchange_prt_for_access_token(
-                &prt,
-                vec![],
-                Some("https://graph.microsoft.com".to_string()),
-                tpm,
-                machine_key,
-            )
+            .exchange_prt_for_access_token(&prt, scopes, resource, tpm, machine_key)
             .await
         {
             Ok(token) => token,
@@ -928,14 +930,22 @@ impl IdProvider for HimmelblauProvider {
                             IdpError::BadRequest
                         })?;
                 }
+                // If an app_id is defined in the config, the app should have the
+                // GroupMember.Read.All API permission.
+                let cfg = self.config.read().await;
+                let (scopes, resource) = if cfg.get_app_id(&self.domain).is_some() {
+                    (vec!["GroupMember.Read.All"], None)
+                } else {
+                    (vec![], Some("https://graph.microsoft.com".to_string()))
+                };
                 let mtoken2 = self
                     .client
                     .write()
                     .await
                     .acquire_token_by_refresh_token(
                         &$token.refresh_token,
-                        vec![],
-                        Some("https://graph.microsoft.com".to_string()),
+                        scopes.clone(),
+                        resource.clone(),
                         tpm,
                         machine_key,
                     )
@@ -958,8 +968,8 @@ impl IdProvider for HimmelblauProvider {
                                         .await
                                         .acquire_token_by_refresh_token(
                                             &$token.refresh_token,
-                                            vec![],
-                                            Some("https://graph.microsoft.com".to_string()),
+                                            scopes,
+                                            resource,
                                             tpm,
                                             machine_key,
                                         )
@@ -980,6 +990,14 @@ impl IdProvider for HimmelblauProvider {
         }
         macro_rules! auth_and_validate_hello_key {
             ($hello_key:ident, $cred:ident) => {{
+                // If an app_id is defined in the config, the app should have the
+                // GroupMember.Read.All API permission.
+                let cfg = self.config.read().await;
+                let (scopes, resource) = if cfg.get_app_id(&self.domain).is_some() {
+                    (vec!["GroupMember.Read.All"], None)
+                } else {
+                    (vec![], Some("https://graph.microsoft.com".to_string()))
+                };
                 let token = self
                     .client
                     .write()
@@ -987,8 +1005,8 @@ impl IdProvider for HimmelblauProvider {
                     .acquire_token_by_hello_for_business_key(
                         account_id,
                         &$hello_key,
-                        vec![],
-                        Some("https://graph.microsoft.com".to_string()),
+                        scopes,
+                        resource,
                         tpm,
                         machine_key,
                         &$cred,
