@@ -80,7 +80,7 @@ sketching = { path = "./src/sketching" }
 tracing-forest = "^0.1.6"
 rusqlite = "^0.33.0"
 hashbrown = { version = "0.15.1", features = ["serde", "inline-more"] }
-lru = "^0.12.3"
+lru = "^0.13.0"
 kanidm_lib_crypto = { path = "./src/crypto" }
 kanidm_utils_users = { path = "./src/users" }
 walkdir = "2"
