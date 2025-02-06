@@ -1707,10 +1707,7 @@ impl HimmelblauProvider {
                     Ok(groups) => {
                         let mut gt_groups = vec![];
                         for g in groups {
-                            match self
-                                .group_token_from_directory_object(access_token, g)
-                                .await
-                            {
+                            match self.group_token_from_directory_object(g).await {
                                 Ok(group) => gt_groups.push(group),
                                 Err(e) => {
                                     debug!("Failed fetching group for user {}: {}", &spn, e)
@@ -1845,7 +1842,6 @@ impl HimmelblauProvider {
 
     async fn group_token_from_directory_object(
         &self,
-        access_token: &str,
         value: DirectoryObject,
     ) -> Result<GroupToken> {
         let config = self.config.read().await;
@@ -1855,21 +1851,6 @@ impl HimmelblauProvider {
         };
         let id =
             Uuid::parse_str(&value.id).map_err(|e| anyhow!("Failed parsing user uuid: {}", e))?;
-        let posix_attrs = if config.get_id_attr_map() == IdAttr::Rfc2307 {
-            match self
-                .graph
-                .fetch_group_extension_attributes(&value.id, access_token, vec!["gidNumber"])
-                .await
-            {
-                Ok(posix_attrs) => posix_attrs,
-                Err(e) => {
-                    debug!("Failed fetching group posix attributes: {:?}", e);
-                    HashMap::new()
-                }
-            }
-        } else {
-            HashMap::new()
-        };
         let idmap = self.idmap.read().await;
         let gidnumber = match config.get_id_attr_map() {
             IdAttr::Uuid => idmap
@@ -1878,7 +1859,7 @@ impl HimmelblauProvider {
             IdAttr::Name => idmap
                 .gen_to_unix(&self.tenant_id, &name)
                 .map_err(|e| anyhow!("Failed fetching gid for {}: {:?}", name, e))?,
-            IdAttr::Rfc2307 => match posix_attrs.get("gidNumber") {
+            IdAttr::Rfc2307 => match value.extension_attrs.get("gidNumber") {
                 Some(gid_number) => gid_number.parse::<u32>().map_err(|e| {
                     anyhow!(
                         "Invalid gidNumber ('{}') synced from on-prem AD: {:?}",
