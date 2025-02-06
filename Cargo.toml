@@ -74,7 +74,7 @@ webauthn-rs-proto = "0.5.0"
 kanidm_proto = { path = "./src/proto" }
 openssl-sys = "^0.9"
 openssl = "^0.10.55"
-rand = "^0.8.5"
+rand = "^0.9.0"
 tss-esapi = "^7.2.0"
 sketching = { path = "./src/sketching" }
 tracing-forest = "^0.1.6"
