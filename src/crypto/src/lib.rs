@@ -867,9 +867,9 @@ impl TryFrom<&str> for Password {
 
 impl Password {
     fn bench_pbkdf2(pbkdf2_cost: usize) -> Option<Duration> {
-        let mut rng = rand::thread_rng();
-        let salt: Vec<u8> = (0..PBKDF2_SALT_LEN).map(|_| rng.gen()).collect();
-        let input: Vec<u8> = (0..PBKDF2_SALT_LEN).map(|_| rng.gen()).collect();
+        let mut rng = rand::rng();
+        let salt: Vec<u8> = (0..PBKDF2_SALT_LEN).map(|_| rng.random()).collect();
+        let input: Vec<u8> = (0..PBKDF2_SALT_LEN).map(|_| rng.random()).collect();
         // This is 512 bits of output
         let mut key: Vec<u8> = (0..PBKDF2_KEY_LEN).map(|_| 0).collect();
 
@@ -888,9 +888,9 @@ impl Password {
     }
 
     fn bench_argon2id(params: Params) -> Option<Duration> {
-        let mut rng = rand::thread_rng();
-        let salt: Vec<u8> = (0..PBKDF2_SALT_LEN).map(|_| rng.gen()).collect();
-        let input: Vec<u8> = (0..PBKDF2_SALT_LEN).map(|_| rng.gen()).collect();
+        let mut rng = rand::rng();
+        let salt: Vec<u8> = (0..PBKDF2_SALT_LEN).map(|_| rng.random()).collect();
+        let input: Vec<u8> = (0..PBKDF2_SALT_LEN).map(|_| rng.random()).collect();
         // This is 512 bits of output
         let mut key: Vec<u8> = (0..PBKDF2_KEY_LEN).map(|_| 0).collect();
 
@@ -907,8 +907,8 @@ impl Password {
 
     pub fn new_pbkdf2(policy: &CryptoPolicy, cleartext: &str) -> Result<Self, CryptoError> {
         let pbkdf2_cost = policy.pbkdf2_cost;
-        let mut rng = rand::thread_rng();
-        let salt: Vec<u8> = (0..PBKDF2_SALT_LEN).map(|_| rng.gen()).collect();
+        let mut rng = rand::rng();
+        let salt: Vec<u8> = (0..PBKDF2_SALT_LEN).map(|_| rng.random()).collect();
         // This is 512 bits of output
         let mut key: Vec<u8> = (0..PBKDF2_KEY_LEN).map(|_| 0).collect();
 
@@ -932,8 +932,8 @@ impl Password {
 
         let argon = Argon2::new(Algorithm::Argon2id, version, policy.argon2id_params.clone());
 
-        let mut rng = rand::thread_rng();
-        let salt: Vec<u8> = (0..ARGON2_SALT_LEN).map(|_| rng.gen()).collect();
+        let mut rng = rand::rng();
+        let salt: Vec<u8> = (0..ARGON2_SALT_LEN).map(|_| rng.random()).collect();
         let mut key: Vec<u8> = (0..ARGON2_KEY_LEN).map(|_| 0).collect();
 
         argon
@@ -960,8 +960,8 @@ impl Password {
 
         let argon = Argon2::new(Algorithm::Argon2id, version, policy.argon2id_params.clone());
 
-        let mut rng = rand::thread_rng();
-        let salt: Vec<u8> = (0..ARGON2_SALT_LEN).map(|_| rng.gen()).collect();
+        let mut rng = rand::rng();
+        let salt: Vec<u8> = (0..ARGON2_SALT_LEN).map(|_| rng.random()).collect();
         let mut check_key: Vec<u8> = (0..ARGON2_KEY_LEN).map(|_| 0).collect();
 
         argon
