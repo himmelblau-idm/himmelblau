@@ -22,12 +22,12 @@ use std::path::PathBuf;
 use tracing::{debug, error};
 
 use crate::constants::{
-    BROKER_APP_ID, CN_NAME_MAPPING, DEFAULT_AUTHORITY_HOST, DEFAULT_BROKER_SOCK_PATH,
-    DEFAULT_CACHE_TIMEOUT, DEFAULT_CONFIG_PATH, DEFAULT_CONN_TIMEOUT, DEFAULT_DB_PATH,
-    DEFAULT_HELLO_ENABLED, DEFAULT_HELLO_PIN_MIN_LEN, DEFAULT_HOME_ALIAS, DEFAULT_HOME_ATTR,
-    DEFAULT_HOME_PREFIX, DEFAULT_HSM_PIN_PATH, DEFAULT_ID_ATTR_MAP, DEFAULT_ODC_PROVIDER,
-    DEFAULT_SELINUX, DEFAULT_SFA_FALLBACK_ENABLED, DEFAULT_SHELL, DEFAULT_SOCK_PATH,
-    DEFAULT_TASK_SOCK_PATH, DEFAULT_USE_ETC_SKEL, SERVER_CONFIG_PATH,
+    CN_NAME_MAPPING, DEFAULT_AUTHORITY_HOST, DEFAULT_BROKER_SOCK_PATH, DEFAULT_CACHE_TIMEOUT,
+    DEFAULT_CONFIG_PATH, DEFAULT_CONN_TIMEOUT, DEFAULT_DB_PATH, DEFAULT_HELLO_ENABLED,
+    DEFAULT_HELLO_PIN_MIN_LEN, DEFAULT_HOME_ALIAS, DEFAULT_HOME_ATTR, DEFAULT_HOME_PREFIX,
+    DEFAULT_HSM_PIN_PATH, DEFAULT_ID_ATTR_MAP, DEFAULT_ODC_PROVIDER, DEFAULT_SELINUX,
+    DEFAULT_SFA_FALLBACK_ENABLED, DEFAULT_SHELL, DEFAULT_SOCK_PATH, DEFAULT_TASK_SOCK_PATH,
+    DEFAULT_USE_ETC_SKEL, SERVER_CONFIG_PATH,
 };
 use crate::unix_config::{HomeAttr, HsmType};
 use himmelblau::error::MsalError;
@@ -40,6 +40,7 @@ use std::env;
 pub enum IdAttr {
     Uuid,
     Name,
+    Rfc2307,
 }
 
 pub fn split_username(username: &str) -> Option<(&str, &str)> {
@@ -245,14 +246,8 @@ impl HimmelblauConfig {
         }
     }
 
-    pub fn get_app_id(&self, domain: &str) -> String {
-        match self.config.get(domain, "app_id") {
-            Some(val) => val,
-            None => {
-                debug!("app_id unset, defaulting to MS Broker");
-                String::from(BROKER_APP_ID)
-            }
-        }
+    pub fn get_app_id(&self, domain: &str) -> Option<String> {
+        self.config.get(domain, "app_id")
     }
 
     pub fn get_idmap_range(&self, domain: &str) -> (u32, u32) {
@@ -454,6 +449,7 @@ impl HimmelblauConfig {
             Some(id_attr_map) => match id_attr_map.to_lowercase().as_str() {
                 "uuid" => IdAttr::Uuid,
                 "name" => IdAttr::Name,
+                "rfc2307" => IdAttr::Rfc2307,
                 _ => {
                     error!("Unrecognized id_attr_map choice: {}", id_attr_map);
                     DEFAULT_ID_ATTR_MAP
@@ -532,14 +528,6 @@ impl HimmelblauConfig {
 
     pub fn get_enable_experimental_mfa(&self) -> bool {
         match_bool(self.config.get("global", "enable_experimental_mfa"), true)
-    }
-
-    pub fn get_sync_unix_schema_extension_attributes(&self) -> bool {
-        match_bool(
-            self.config
-                .get("global", "sync_unix_schema_extension_attributes"),
-            true,
-        )
     }
 
     pub async fn get_primary_domain_from_alias(&mut self, alias: &str) -> Option<String> {
@@ -862,13 +850,13 @@ mod tests {
         let temp_file = create_temp_config(config_data);
         let config = HimmelblauConfig::new(Some(&temp_file)).unwrap();
 
-        assert_eq!(config.get_app_id("unknown.com"), BROKER_APP_ID,);
+        assert_eq!(config.get_app_id("unknown.com"), None);
         assert_eq!(
             config.get_app_id("example.com"),
-            "70fee399-7cd8-42f9-a0ea-1e12ea308908"
+            Some("70fee399-7cd8-42f9-a0ea-1e12ea308908".to_string())
         );
         let config_empty = HimmelblauConfig::new(None).unwrap();
-        assert_eq!(config_empty.get_app_id("example.com"), BROKER_APP_ID);
+        assert_eq!(config_empty.get_app_id("example.com"), None);
     }
 
     #[test]

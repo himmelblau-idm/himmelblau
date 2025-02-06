@@ -195,7 +195,7 @@ fn passwd_from_nssuser(nu: NssUser) -> Passwd {
         name: nu.name,
         gecos: nu.gecos,
         passwd: "x".to_string(),
-        uid: nu.gid,
+        uid: nu.uid,
         gid: nu.gid,
         dir: nu.homedir,
         shell: nu.shell,

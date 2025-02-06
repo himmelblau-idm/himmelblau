@@ -139,8 +139,14 @@ impl HimmelblauMultiProvider {
                 .add_gen_domain(&domain, &tenant_id, range)
                 .map_err(|e| anyhow!("{:?}", e))?;
             let authority_url = format!("https://{}/{}", authority_host, tenant_id);
-            let app = BrokerClientApplication::new(Some(authority_url.as_str()), None, None)
-                .map_err(|e| anyhow!("{:?}", e))?;
+            let app_id = cfg.get_app_id(&domain);
+            let app = BrokerClientApplication::new(
+                Some(authority_url.as_str()),
+                app_id.as_deref(),
+                None,
+                None,
+            )
+            .map_err(|e| anyhow!("{:?}", e))?;
             let provider = HimmelblauProvider::new(
                 app,
                 &config,
@@ -718,7 +724,7 @@ impl IdProvider for HimmelblauProvider {
                                 // We can only provide a valid idmapping with
                                 // name idmapping at this point.
                                 IdAttr::Uuid => return Err(IdpError::BadRequest),
-                                IdAttr::Name => {
+                                IdAttr::Name | IdAttr::Rfc2307 => {
                                     let idmap = self.idmap.read().await;
                                     idmap.gen_to_unix(&self.tenant_id, &account_id).map_err(
                                         |e| {
@@ -740,6 +746,7 @@ impl IdProvider for HimmelblauProvider {
                                 name: account_id.clone(),
                                 spn: account_id.clone(),
                                 uuid: fake_uuid,
+                                real_gidnumber: gidnumber,
                                 gidnumber,
                                 displayname: "".to_string(),
                                 shell: Some(config.get_shell(Some(&self.domain))),
@@ -763,17 +770,19 @@ impl IdProvider for HimmelblauProvider {
             Ok(prt) => prt,
             Err(_) => fake_user!(),
         };
+        // If an app_id is defined in the config, the app should have the
+        // GroupMember.Read.All API permission.
+        let cfg = self.config.read().await;
+        let (scopes, resource) = if cfg.get_app_id(&self.domain).is_some() {
+            (vec!["GroupMember.Read.All"], None)
+        } else {
+            (vec![], Some("https://graph.microsoft.com".to_string()))
+        };
         let token = match self
             .client
             .write()
             .await
-            .exchange_prt_for_access_token(
-                &prt,
-                vec![],
-                Some("https://graph.microsoft.com".to_string()),
-                tpm,
-                machine_key,
-            )
+            .exchange_prt_for_access_token(&prt, scopes, resource, tpm, machine_key)
             .await
         {
             Ok(token) => token,
@@ -921,14 +930,22 @@ impl IdProvider for HimmelblauProvider {
                             IdpError::BadRequest
                         })?;
                 }
+                // If an app_id is defined in the config, the app should have the
+                // GroupMember.Read.All API permission.
+                let cfg = self.config.read().await;
+                let (scopes, resource) = if cfg.get_app_id(&self.domain).is_some() {
+                    (vec!["GroupMember.Read.All"], None)
+                } else {
+                    (vec![], Some("https://graph.microsoft.com".to_string()))
+                };
                 let mtoken2 = self
                     .client
                     .write()
                     .await
                     .acquire_token_by_refresh_token(
                         &$token.refresh_token,
-                        vec![],
-                        Some("https://graph.microsoft.com".to_string()),
+                        scopes.clone(),
+                        resource.clone(),
                         tpm,
                         machine_key,
                     )
@@ -951,8 +968,8 @@ impl IdProvider for HimmelblauProvider {
                                         .await
                                         .acquire_token_by_refresh_token(
                                             &$token.refresh_token,
-                                            vec![],
-                                            Some("https://graph.microsoft.com".to_string()),
+                                            scopes,
+                                            resource,
                                             tpm,
                                             machine_key,
                                         )
@@ -973,6 +990,14 @@ impl IdProvider for HimmelblauProvider {
         }
         macro_rules! auth_and_validate_hello_key {
             ($hello_key:ident, $cred:ident) => {{
+                // If an app_id is defined in the config, the app should have the
+                // GroupMember.Read.All API permission.
+                let cfg = self.config.read().await;
+                let (scopes, resource) = if cfg.get_app_id(&self.domain).is_some() {
+                    (vec!["GroupMember.Read.All"], None)
+                } else {
+                    (vec![], Some("https://graph.microsoft.com".to_string()))
+                };
                 let token = self
                     .client
                     .write()
@@ -980,8 +1005,8 @@ impl IdProvider for HimmelblauProvider {
                     .acquire_token_by_hello_for_business_key(
                         account_id,
                         &$hello_key,
-                        vec![],
-                        Some("https://graph.microsoft.com".to_string()),
+                        scopes,
+                        resource,
                         tpm,
                         machine_key,
                         &$cred,
@@ -1682,10 +1707,7 @@ impl HimmelblauProvider {
                     Ok(groups) => {
                         let mut gt_groups = vec![];
                         for g in groups {
-                            match self
-                                .group_token_from_directory_object(access_token, g)
-                                .await
-                            {
+                            match self.group_token_from_directory_object(g).await {
                                 Ok(group) => gt_groups.push(group),
                                 Err(e) => {
                                     debug!("Failed fetching group for user {}: {}", &spn, e)
@@ -1699,12 +1721,18 @@ impl HimmelblauProvider {
                         vec![]
                     }
                 };
-                posix_attrs = if config.get_sync_unix_schema_extension_attributes() {
+                posix_attrs = if config.get_id_attr_map() == IdAttr::Rfc2307 {
                     match self
                         .graph
                         .fetch_user_extension_attributes(
                             access_token,
-                            vec!["uidNumber", "loginShell", "gecos", "unixHomeDirectory"],
+                            vec![
+                                "uidNumber",
+                                "gidNumber",
+                                "loginShell",
+                                "gecos",
+                                "unixHomeDirectory",
+                            ],
                         )
                         .await
                     {
@@ -1734,37 +1762,51 @@ impl HimmelblauProvider {
         };
         let valid = true;
         let idmap = self.idmap.read().await;
-        let gidnumber = match posix_attrs.get("uidNumber") {
-            Some(uid_number) => uid_number.parse::<u32>().map_err(|e| {
-                error!(
-                    "Invalid uidNumber ('{}') synced from on-prem AD: {:?}",
-                    uid_number, e
-                );
-                IdpError::BadRequest
-            })?,
-            None => match config.get_id_attr_map() {
-                IdAttr::Uuid => {
-                    idmap
-                        .object_id_to_unix_id(&self.tenant_id, &uuid)
-                        .map_err(|e| {
-                            error!("{:?}", e);
-                            IdpError::BadRequest
-                        })?
-                }
-                IdAttr::Name => idmap.gen_to_unix(&self.tenant_id, &spn).map_err(|e| {
+        let uidnumber = match config.get_id_attr_map() {
+            IdAttr::Uuid => idmap
+                .object_id_to_unix_id(&self.tenant_id, &uuid)
+                .map_err(|e| {
                     error!("{:?}", e);
                     IdpError::BadRequest
                 })?,
+            IdAttr::Name => idmap.gen_to_unix(&self.tenant_id, &spn).map_err(|e| {
+                error!("{:?}", e);
+                IdpError::BadRequest
+            })?,
+            IdAttr::Rfc2307 => match posix_attrs.get("uidNumber") {
+                Some(uid_number) => uid_number.parse::<u32>().map_err(|e| {
+                    error!(
+                        "Invalid uidNumber ('{}') synced from on-prem AD: {:?}",
+                        uid_number, e
+                    );
+                    IdpError::BadRequest
+                })?,
+                None => {
+                    error!("User {} has no uidNumber defined in the directory!", spn);
+                    return Err(IdpError::BadRequest);
+                }
             },
         };
 
-        // Add the fake primary group
-        groups.push(GroupToken {
-            name: spn.clone(),
-            spn: spn.clone(),
-            uuid,
-            gidnumber,
-        });
+        // Utilize the existing primary group if set
+        let gidnumber = if let Some(gid_number) = posix_attrs.get("gidNumber") {
+            gid_number.parse::<u32>().map_err(|e| {
+                error!(
+                    "Invalid gidNumber ('{}') synced from on-prem AD: {:?}",
+                    gid_number, e
+                );
+                IdpError::BadRequest
+            })?
+        } else {
+            // Otherwise add a fake primary group
+            groups.push(GroupToken {
+                name: spn.clone(),
+                spn: spn.clone(),
+                uuid,
+                gidnumber: uidnumber,
+            });
+            uidnumber
+        };
 
         let displayname = match posix_attrs.get("gecos") {
             Some(gecos) => gecos.clone(),
@@ -1785,7 +1827,8 @@ impl HimmelblauProvider {
             name: spn.clone(),
             spn: spn.clone(),
             uuid,
-            gidnumber,
+            real_gidnumber: gidnumber,
+            gidnumber: uidnumber,
             displayname,
             shell: Some(shell),
             groups,
@@ -1799,7 +1842,6 @@ impl HimmelblauProvider {
 
     async fn group_token_from_directory_object(
         &self,
-        access_token: &str,
         value: DirectoryObject,
     ) -> Result<GroupToken> {
         let config = self.config.read().await;
@@ -1809,37 +1851,28 @@ impl HimmelblauProvider {
         };
         let id =
             Uuid::parse_str(&value.id).map_err(|e| anyhow!("Failed parsing user uuid: {}", e))?;
-        let posix_attrs = if config.get_sync_unix_schema_extension_attributes() {
-            match self
-                .graph
-                .fetch_group_extension_attributes(&value.id, access_token, vec!["gidNumber"])
-                .await
-            {
-                Ok(posix_attrs) => posix_attrs,
-                Err(e) => {
-                    debug!("Failed fetching group posix attributes: {:?}", e);
-                    HashMap::new()
-                }
-            }
-        } else {
-            HashMap::new()
-        };
         let idmap = self.idmap.read().await;
-        let gidnumber = match posix_attrs.get("gidNumber") {
-            Some(gid_number) => gid_number.parse::<u32>().map_err(|e| {
-                anyhow!(
-                    "Invalid gidNumber ('{}') synced from on-prem AD: {:?}",
-                    gid_number,
-                    e
-                )
-            })?,
-            None => match config.get_id_attr_map() {
-                IdAttr::Uuid => idmap
-                    .object_id_to_unix_id(&self.tenant_id, &id)
-                    .map_err(|e| anyhow!("Failed fetching gid for {}: {:?}", id, e))?,
-                IdAttr::Name => idmap
-                    .gen_to_unix(&self.tenant_id, &name)
-                    .map_err(|e| anyhow!("Failed fetching gid for {}: {:?}", name, e))?,
+        let gidnumber = match config.get_id_attr_map() {
+            IdAttr::Uuid => idmap
+                .object_id_to_unix_id(&self.tenant_id, &id)
+                .map_err(|e| anyhow!("Failed fetching gid for {}: {:?}", id, e))?,
+            IdAttr::Name => idmap
+                .gen_to_unix(&self.tenant_id, &name)
+                .map_err(|e| anyhow!("Failed fetching gid for {}: {:?}", name, e))?,
+            IdAttr::Rfc2307 => match value.extension_attrs.get("gidNumber") {
+                Some(gid_number) => gid_number.parse::<u32>().map_err(|e| {
+                    anyhow!(
+                        "Invalid gidNumber ('{}') synced from on-prem AD: {:?}",
+                        gid_number,
+                        e
+                    )
+                })?,
+                None => {
+                    return Err(anyhow!(
+                        "Group {} has no gidNumber defined in the directory!",
+                        name
+                    ));
+                }
             },
         };
 
