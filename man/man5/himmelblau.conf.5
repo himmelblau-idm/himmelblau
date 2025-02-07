@@ -222,6 +222,18 @@ fi
 .RE
 
 .TP
+.B apply_policy
+.RE
+A boolean option that enables the experimental application of Intune policies to the authenticated user. This setting does not mark the device as compliant in Entra ID, nor does it register the device as managed in Intune. Instead, it attempts to apply any assigned Intune policies to the user session.
+
+For this feature to function correctly, an `app_id` must be defined for the corresponding domain, and the "DeviceManagementConfiguration.Read.All" API permission must be granted to it.
+
+By default, this option is disabled.
+
+.EXAMPLES
+apply_policy = false
+
+.TP
 .B authority_host
 .RE
 Specifies the hostname for Microsoft authentication. The default value is
