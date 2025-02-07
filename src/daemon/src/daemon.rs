@@ -34,7 +34,7 @@ use bytes::{BufMut, BytesMut};
 use clap::{Arg, ArgAction, Command};
 use futures::{SinkExt, StreamExt};
 use himmelblau::{ClientInfo, IdToken, UserToken as UnixUserToken};
-use himmelblau_unix_common::config::HimmelblauConfig;
+use himmelblau_unix_common::config::{split_username, HimmelblauConfig};
 use himmelblau_unix_common::constants::DEFAULT_CONFIG_PATH;
 use himmelblau_unix_common::db::{Cache, CacheTxn, Db};
 use himmelblau_unix_common::idprovider::himmelblau::HimmelblauMultiProvider;
@@ -446,6 +446,79 @@ async fn handle_client(
                                                         }
                                                         Err(e) => {
                                                             error!("Kerberos credential cache load failed for {}: {:?}", account_id, e);
+                                                        }
+                                                    }
+                                                }
+
+                                                // Apply Intune policies
+                                                let domain = split_username(account_id)
+                                                    .map(|(_, domain)| domain)
+                                                    .unwrap_or("");
+                                                if cfg.get_apply_policy()
+                                                    && cfg.get_app_id(domain).is_some()
+                                                {
+                                                    if let Some(token) = cachelayer
+                                                        .get_user_accesstoken(
+                                                            Id::Name(account_id.to_string()),
+                                                            vec!["DeviceManagementConfiguration.Read.All".to_string()],
+                                                        )
+                                                        .await {
+                                                        if let Ok(uuid) = token.uuid() {
+                                                            if let Some(access_token) =
+                                                                token.access_token.clone()
+                                                            {
+                                                                let (tx, rx) = oneshot::channel();
+
+                                                                match task_channel_tx
+                                                                    .send_timeout(
+                                                                        (
+                                                                            TaskRequest::ApplyPolicy(
+                                                                                account_id.to_string(),
+                                                                                uuid.to_string(),
+                                                                                access_token
+                                                                                    .to_string(),
+                                                                            ),
+                                                                            tx,
+                                                                        ),
+                                                                        Duration::from_millis(100),
+                                                                    )
+                                                                    .await
+                                                                {
+                                                                    Ok(()) => {
+                                                                        // Now wait for the other end OR timeout.
+                                                                        match time::timeout_at(
+                                                                            time::Instant::now()
+                                                                                + Duration::from_millis(
+                                                                                    1000,
+                                                                                ),
+                                                                            rx,
+                                                                        )
+                                                                        .await
+                                                                        {
+                                                                            Ok(Ok(status)) => {
+                                                                                if status == 0 {
+                                                                                    debug!("Successfully applied Intune policies");
+                                                                                } else {
+                                                                                    debug!("Authentication was explicitly denied due to Intune failure");
+                                                                                    resp = PamAuthResponse::Denied;
+                                                                                }
+                                                                            }
+                                                                            Ok(Err(e)) => {
+                                                                                debug!("Authentication was explicitly denied due to Intune failure: {}", e);
+                                                                                resp = PamAuthResponse::Denied;
+                                                                            }
+                                                                            Err(e) => {
+                                                                                debug!("Authentication was explicitly denied due to Intune failure: {}", e);
+                                                                                resp = PamAuthResponse::Denied;
+                                                                            }
+                                                                        }
+                                                                    }
+                                                                    Err(e) => {
+                                                                        debug!("Authentication was explicitly denied due to Intune failure: {}", e);
+                                                                        resp = PamAuthResponse::Denied;
+                                                                    }
+                                                                }
+                                                            }
                                                         }
                                                     }
                                                 }

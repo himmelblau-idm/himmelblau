@@ -31,6 +31,7 @@ use std::{fs, io};
 
 use bytes::{BufMut, BytesMut};
 use futures::{SinkExt, StreamExt};
+use himmelblau_policies::policies::apply_group_policy;
 use himmelblau_unix_common::config::{split_username, HimmelblauConfig};
 use himmelblau_unix_common::constants::{DEFAULT_CCACHE_DIR, DEFAULT_CONFIG_PATH};
 use himmelblau_unix_common::unix_proto::{HomeDirectoryInfo, TaskRequest, TaskResponse};
@@ -415,6 +416,23 @@ async fn handle_tasks(stream: UnixStream, cfg: &HimmelblauConfig) {
                 // Indicate the status response
                 if let Err(e) = reqs
                     .send(TaskResponse::Success(create_dir_ret + cloud_ret + ad_ret))
+                    .await
+                {
+                    error!("Error -> {:?}", e);
+                    return;
+                }
+            }
+            Some(Ok(TaskRequest::ApplyPolicy(account_id, object_id, access_token))) => {
+                let res = apply_group_policy(cfg, &access_token, &account_id, &object_id)
+                    .await
+                    .unwrap_or_else(|e| {
+                        error!("Failed to apply Intune policies: {:?}", e);
+                        false
+                    });
+
+                // Indicate the status response
+                if let Err(e) = reqs
+                    .send(TaskResponse::Success(if res { 0 } else { 1 }))
                     .await
                 {
                     error!("Error -> {:?}", e);
