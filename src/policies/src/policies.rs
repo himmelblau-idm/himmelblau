@@ -16,11 +16,14 @@
    along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
 use crate::chromium_ext::ChromiumUserCSE;
+use crate::compliance_ext::ComplianceCSE;
 use crate::cse::CSE;
+use crate::scripts_ext::ScriptsCSE;
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
+use himmelblau_unix_common::config::{split_username, HimmelblauConfig};
 use regex::Regex;
-use reqwest::header;
+use reqwest::{header, Url};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tracing::error;
@@ -104,10 +107,17 @@ async fn list_configuration_policies(
     graph_url: &str,
     access_token: &str,
 ) -> Result<Vec<ConfigurationPolicy>> {
-    let url = &format!(
-        "{}/beta/deviceManagement/configurationPolicies?$select=name,id",
-        graph_url
-    );
+    let url = Url::parse_with_params(
+        &format!("{}/beta/deviceManagement/configurationPolicies", graph_url),
+        &[
+            ("$select", "name,id"),
+            (
+                "$filter",
+                "(platforms eq 'linux') and (technologies has 'linuxMdm')",
+            ),
+        ],
+    )
+    .map_err(|e| anyhow!("{:?}", e))?;
     let client = reqwest::Client::new();
     let resp = client
         .get(url)
@@ -116,6 +126,138 @@ async fn list_configuration_policies(
         .await?;
     if resp.status().is_success() {
         Ok(resp.json::<ConfigurationPolicies>().await?.value)
+    } else {
+        Err(anyhow!(resp.status()))
+    }
+}
+
+async fn get_compliance_policy_assigned(
+    graph_url: &str,
+    access_token: &str,
+    id: &str,
+    policy_id: &str,
+) -> Result<bool> {
+    let url = &format!(
+        "{}/beta/deviceManagement/compliancePolicies/{}/assignments",
+        graph_url, policy_id
+    );
+    let client = reqwest::Client::new();
+    let resp = client
+        .get(url)
+        .header(header::AUTHORIZATION, format!("Bearer {}", access_token))
+        .send()
+        .await?;
+    if resp.status().is_success() {
+        let assignments = resp.json::<GroupPolicyAssignments>().await?.value;
+        parse_assignments(graph_url, access_token, id, policy_id, assignments).await
+    } else {
+        Err(anyhow!(resp.status()))
+    }
+}
+
+async fn list_compliance_policy_settings(
+    graph_url: &str,
+    access_token: &str,
+    policy_id: &str,
+) -> Result<Vec<ConfigurationPolicySetting>> {
+    let url = &format!(
+        "{}/beta/deviceManagement/compliancePolicies/{}/settings",
+        graph_url, policy_id
+    );
+    let client = reqwest::Client::new();
+    let resp = client
+        .get(url)
+        .header(header::AUTHORIZATION, format!("Bearer {}", access_token))
+        .send()
+        .await?;
+    if resp.status().is_success() {
+        Ok(resp.json::<ConfigurationPoliciesSettings>().await?.value)
+    } else {
+        Err(anyhow!(resp.status()))
+    }
+}
+
+#[derive(Deserialize)]
+struct CompliancePolicy {
+    id: String,
+    name: String,
+    #[serde(skip)]
+    policy_definitions: Option<Vec<Arc<dyn PolicySetting>>>,
+}
+
+#[async_trait]
+impl Policy for CompliancePolicy {
+    fn get_id(&self) -> String {
+        self.id.clone()
+    }
+
+    fn get_name(&self) -> String {
+        self.name.clone()
+    }
+
+    async fn load_policy_settings(&mut self, graph_url: &str, access_token: &str) -> Result<bool> {
+        let settings: Vec<ConfigurationPolicySetting> =
+            list_compliance_policy_settings(graph_url, access_token, &self.id).await?;
+        let mut res: Vec<Arc<dyn PolicySetting>> = vec![];
+        for setting in settings {
+            res.push(Arc::new(setting));
+        }
+        self.policy_definitions = Some(res);
+        Ok(true)
+    }
+
+    fn list_policy_settings(&self, pattern: Regex) -> Result<Vec<Arc<dyn PolicySetting>>> {
+        match &self.policy_definitions {
+            Some(policy_definitions) => {
+                let mut res: Vec<Arc<dyn PolicySetting>> = vec![];
+                for policy_definition in policy_definitions {
+                    if pattern.is_match(&policy_definition.get_compare_pattern()) {
+                        res.push(policy_definition.clone());
+                    }
+                }
+                Ok(res)
+            }
+            None => Err(anyhow!("Policy Definitions were not loaded")),
+        }
+    }
+
+    fn clone(&self) -> Arc<dyn Policy> {
+        Arc::new(CompliancePolicy {
+            id: self.id.clone(),
+            name: self.name.clone(),
+            policy_definitions: self.policy_definitions.clone(),
+        })
+    }
+}
+
+#[derive(Deserialize)]
+struct CompliancePolicies {
+    value: Vec<CompliancePolicy>,
+}
+
+async fn list_compliance_policies(
+    graph_url: &str,
+    access_token: &str,
+) -> Result<Vec<CompliancePolicy>> {
+    let url = Url::parse_with_params(
+        &format!("{}/beta/deviceManagement/compliancePolicies", graph_url),
+        &[
+            ("$select", "name,id"),
+            (
+                "$filter",
+                "(platforms eq 'linux') and (technologies has 'linuxMdm')",
+            ),
+        ],
+    )
+    .map_err(|e| anyhow!("{:?}", e))?;
+    let client = reqwest::Client::new();
+    let resp = client
+        .get(url)
+        .header(header::AUTHORIZATION, format!("Bearer {}", access_token))
+        .send()
+        .await?;
+    if resp.status().is_success() {
+        Ok(resp.json::<CompliancePolicies>().await?.value)
     } else {
         Err(anyhow!(resp.status()))
     }
@@ -154,7 +296,7 @@ async fn list_group_policy_configurations(
     }
 }
 
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Deserialize, Clone)]
 struct GroupPolicyDefinition {
     #[serde(skip)]
     enabled: bool,
@@ -222,7 +364,7 @@ async fn get_group_policy_definition(
     }
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone)]
+#[derive(Deserialize, Serialize, Clone)]
 #[serde(untagged)]
 pub enum ValueType {
     Text(String),
@@ -230,6 +372,8 @@ pub enum ValueType {
     Boolean(bool),
     MultiText(Vec<String>),
     List(Vec<PresentationValueList>),
+    #[serde(skip)]
+    Collection(Vec<Arc<dyn PolicySetting>>),
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
@@ -238,13 +382,13 @@ pub struct PresentationValueList {
     value: Option<String>,
 }
 
-#[derive(Default, Debug, Deserialize, Clone)]
+#[derive(Default, Deserialize, Clone)]
 struct PresentationValue {
     value: Option<ValueType>,
     values: Option<ValueType>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 struct PresentationValues {
     value: Option<Vec<PresentationValue>>,
 }
@@ -360,10 +504,14 @@ struct GroupPolicies {
 }
 
 async fn list_group_policies(graph_url: &str, access_token: &str) -> Result<Vec<GroupPolicy>> {
-    let url = &format!(
-        "{}/beta/deviceManagement/groupPolicyConfigurations?$select=displayName,id",
-        graph_url
-    );
+    let url = Url::parse_with_params(
+        &format!(
+            "{}/beta/deviceManagement/groupPolicyConfigurations",
+            graph_url
+        ),
+        &[("$select", "displayName,id")],
+    )
+    .map_err(|e| anyhow!("{:?}", e))?;
     let client = reqwest::Client::new();
     let resp = client
         .get(url)
@@ -378,78 +526,16 @@ async fn list_group_policies(graph_url: &str, access_token: &str) -> Result<Vec<
 }
 
 #[derive(PartialEq)]
-enum ObjectType {
-    User,
-    Group,
-    Device,
-}
-
-#[derive(PartialEq)]
 pub enum PolicyType {
     User,
     Device,
     Unknown,
 }
 
-#[derive(Debug, Deserialize)]
-struct DirectoryObject {
-    #[serde(rename = "@odata.type")]
-    odata_type: String,
-}
-
-#[derive(Debug, Deserialize)]
-struct DirectoryObjectsResponse {
-    value: Vec<DirectoryObject>,
-}
-
 #[derive(Serialize, Deserialize)]
 struct DirectoryObjectsRequest {
     ids: Vec<String>,
     types: Vec<String>,
-}
-
-async fn get_object_type_by_id(
-    graph_url: &str,
-    access_token: &str,
-    id: &str,
-) -> Result<ObjectType> {
-    let url = &format!("{}/v1.0/directoryObjects/getByIds", graph_url);
-    let client = reqwest::Client::new();
-
-    let json_payload = serde_json::to_string(&DirectoryObjectsRequest {
-        ids: vec![id.to_string()],
-        types: vec![
-            "user".to_string(),
-            "group".to_string(),
-            "device".to_string(),
-        ],
-    })?;
-
-    let resp = client
-        .post(url)
-        .header(header::AUTHORIZATION, format!("Bearer {}", access_token))
-        .header(header::CONTENT_TYPE, "application/json")
-        .body(json_payload)
-        .send()
-        .await?;
-    if resp.status().is_success() {
-        let objs = resp.json::<DirectoryObjectsResponse>().await?.value;
-        if objs.len() == 1 {
-            if objs[0].odata_type == "#microsoft.graph.user" {
-                Ok(ObjectType::User)
-            } else if objs[0].odata_type == "#microsoft.graph.group" {
-                Ok(ObjectType::Group)
-            } else if objs[0].odata_type == "#microsoft.graph.device" {
-                Ok(ObjectType::Device)
-            } else {
-                Err(anyhow!("Unrecognized object type {}", objs[0].odata_type))
-            }
-        } else {
-            Err(anyhow!("Failed finding exactly one object with id {}", id))
-        }
-    } else {
-        Err(anyhow!(resp.status()))
-    }
 }
 
 #[derive(Serialize, Deserialize)]
@@ -528,7 +614,6 @@ async fn parse_assignments(
 ) -> Result<bool> {
     let mut assigned = false;
     let mut excluded = false;
-    let id_typ = get_object_type_by_id(graph_url, access_token, id).await?;
     for rule in assignments {
         if rule.target.filter_id.is_some() {
             error!(
@@ -539,43 +624,31 @@ async fn parse_assignments(
         }
         match rule.target.odata_type.as_str() {
             "#microsoft.graph.allLicensedUsersAssignmentTarget" => {
-                if id_typ == ObjectType::User {
-                    assigned = true;
-                }
+                assigned = true;
             }
             "#microsoft.graph.allDevicesAssignmentTarget" => {
-                if id_typ == ObjectType::Device {
-                    assigned = true;
-                }
+                assigned = true;
             }
-            "#microsoft.graph.groupAssignmentTarget" => {
-                if id_typ != ObjectType::Device {
-                    match rule.target.group_id {
-                        Some(group_id) => {
-                            let member_of =
-                                id_memberof_group(graph_url, access_token, id, &group_id).await?;
-                            if member_of {
-                                assigned = true;
-                            }
-                        }
-                        None => error!("GPO {}: groupAssignmentTarget missing group id", policy_id),
+            "#microsoft.graph.groupAssignmentTarget" => match rule.target.group_id {
+                Some(group_id) => {
+                    let member_of =
+                        id_memberof_group(graph_url, access_token, id, &group_id).await?;
+                    if member_of {
+                        assigned = true;
                     }
                 }
-            }
-            "#microsoft.graph.exclusionGroupAssignmentTarget" => {
-                if id_typ != ObjectType::Device {
-                    match rule.target.group_id {
-                        Some(group_id) => {
-                            let member_of =
-                                id_memberof_group(graph_url, access_token, id, &group_id).await?;
-                            if member_of {
-                                excluded = true;
-                            }
-                        }
-                        None => error!("GPO {}: groupAssignmentTarget missing group id", policy_id),
+                None => error!("GPO {}: groupAssignmentTarget missing group id", policy_id),
+            },
+            "#microsoft.graph.exclusionGroupAssignmentTarget" => match rule.target.group_id {
+                Some(group_id) => {
+                    let member_of =
+                        id_memberof_group(graph_url, access_token, id, &group_id).await?;
+                    if member_of {
+                        excluded = true;
                     }
                 }
-            }
+                None => error!("GPO {}: groupAssignmentTarget missing group id", policy_id),
+            },
             target => {
                 error!("GPO {}: unrecognized rule target \"{}\"", policy_id, target);
             }
@@ -636,30 +709,56 @@ async fn get_config_policy_assigned(
     }
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Clone)]
 struct SimpleSettingValue {
     value: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Clone)]
 struct ChoiceSettingValue {
     value: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Clone)]
+struct GroupSettingCollectionValue {
+    children: Vec<SettingInstance>,
+}
+
+#[derive(Debug, Deserialize, Clone)]
 struct SettingInstance {
+    #[serde(rename = "@odata.type")]
+    odata_type: String,
     #[serde(rename = "settingDefinitionId")]
     setting_definition_id: String,
     #[serde(rename = "simpleSettingValue", default)]
     simple_value: Option<SimpleSettingValue>,
     #[serde(rename = "choiceSettingValue", default)]
     choice_value: Option<ChoiceSettingValue>,
+    #[serde(rename = "groupSettingCollectionValue", default)]
+    group_value: Option<Vec<GroupSettingCollectionValue>>,
 }
 
 #[derive(Debug, Deserialize)]
 struct ConfigurationPolicySetting {
     #[serde(rename = "settingInstance")]
     setting_instance: SettingInstance,
+}
+
+pub fn parse_input_value(input: &str) -> ValueType {
+    // Attempt to parse the input as a decimal (i64)
+    if let Ok(decimal) = input.parse::<i64>() {
+        return ValueType::Decimal(decimal);
+    }
+
+    // Attempt to parse the input as a boolean
+    if input.eq_ignore_ascii_case("true") {
+        return ValueType::Boolean(true);
+    } else if input.eq_ignore_ascii_case("false") {
+        return ValueType::Boolean(false);
+    }
+
+    // If neither, treat it as plain text
+    ValueType::Text(input.to_string())
 }
 
 impl PolicySetting for ConfigurationPolicySetting {
@@ -691,13 +790,44 @@ impl PolicySetting for ConfigurationPolicySetting {
     }
 
     fn value(&self) -> Option<ValueType> {
-        match &self.setting_instance.simple_value {
-            Some(val) => Some(ValueType::Text(val.value.to_string())),
-            None => self
+        match self.setting_instance.odata_type.as_str() {
+            "#microsoft.graph.deviceManagementConfigurationSimpleSettingInstance" => self
                 .setting_instance
-                .choice_value
-                .as_ref()
-                .map(|val| ValueType::Text(val.value.to_string())),
+                .simple_value
+                .clone()
+                .map(|val| parse_input_value(&val.value)),
+            "#microsoft.graph.deviceManagementConfigurationChoiceSettingInstance" => {
+                let def_id = format!("{}_", self.setting_instance.setting_definition_id);
+                self.setting_instance
+                    .choice_value
+                    .as_ref()
+                    .and_then(|val| val.value.strip_prefix(&def_id).map(|s| s.to_string()))
+                    .as_deref()
+                    .map(parse_input_value)
+            }
+            "#microsoft.graph.deviceManagementConfigurationGroupSettingCollectionInstance" => {
+                self.setting_instance.group_value.clone().map(|collection| {
+                    ValueType::Collection(
+                        collection
+                            .into_iter()
+                            .flat_map(|sub_collection| {
+                                sub_collection.children.into_iter().map(|child| {
+                                    Arc::new(ConfigurationPolicySetting {
+                                        setting_instance: child.clone(),
+                                    }) as Arc<dyn PolicySetting>
+                                })
+                            })
+                            .collect(),
+                    )
+                })
+            }
+            unknown => {
+                error!(
+                    "Unrecognized device management configuration setting instance: {}",
+                    unknown
+                );
+                None
+            }
         }
     }
 
@@ -766,27 +896,46 @@ async fn get_gpo_list(
             res.push(Arc::new(gpo));
         }
     }
+    let compliance_policy_list = list_compliance_policies(graph_url, access_token).await?;
+    for mut policy in compliance_policy_list {
+        // Check assignments and whether this policy applies
+        let assigned =
+            get_compliance_policy_assigned(graph_url, access_token, id, &policy.id).await?;
+        if assigned {
+            // Only load policy defs if we know we'll be using them
+            policy.load_policy_settings(graph_url, access_token).await?;
+            res.push(Arc::new(policy));
+        }
+    }
     Ok(res)
 }
 
-pub async fn apply_group_policy(graph_url: &str, access_token: &str, id: &str) -> Result<bool> {
-    let changed_gpos = get_gpo_list(graph_url, access_token, id).await?;
+pub async fn apply_group_policy(
+    config: &HimmelblauConfig,
+    access_token: &str,
+    account_id: &str,
+    id: &str,
+) -> Result<bool> {
+    let domain = split_username(account_id)
+        .map(|(_, domain)| domain)
+        .ok_or(anyhow!(
+            "Failed to parse domain name from account id '{}'",
+            account_id
+        ))?;
+    let graph_url = config
+        .get_graph_url(domain)
+        .ok_or(anyhow!("Failed to find graph url for domain {}", domain))?;
+    let changed_gpos = get_gpo_list(&graph_url, access_token, id).await?;
 
-    /* TODO: Keep track of applied gpos, then unapply them when they disappear */
-    let del_gpos: Vec<Arc<dyn Policy>> = vec![];
-
-    let obj_type = get_object_type_by_id(graph_url, access_token, id).await?;
-    let mut gp_extensions: Vec<Arc<dyn CSE>> = vec![];
-    if obj_type == ObjectType::User {
-        gp_extensions.push(Arc::new(ChromiumUserCSE::new(graph_url, access_token, id)));
-    } else if obj_type == ObjectType::Device {
-        /* TODO: Machine policy extensions go here */
-    }
+    let gp_extensions: Vec<Arc<dyn CSE>> = vec![
+        Arc::new(ChromiumUserCSE::new(config, account_id)),
+        Arc::new(ScriptsCSE::new(config, account_id)),
+        Arc::new(ComplianceCSE::new(config, account_id)),
+    ];
 
     for ext in gp_extensions {
-        let cdel_gpos: Vec<Arc<dyn Policy>> = del_gpos.to_vec();
         let cchanged_gpos: Vec<Arc<dyn Policy>> = changed_gpos.to_vec();
-        ext.process_group_policy(cdel_gpos, cchanged_gpos).await?;
+        ext.process_group_policy(cchanged_gpos).await?;
     }
 
     Ok(true)

@@ -1915,6 +1915,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "himmelblau_policies"
+version = "1.0.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "base64 0.22.1",
+ "himmelblau_unix_common",
+ "os-release",
+ "regex",
+ "reqwest",
+ "semver",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "himmelblau_red_asn1"
 version = "0.3.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1982,6 +2000,7 @@ dependencies = [
  "clap 4.5.38",
  "csv",
  "futures",
+ "himmelblau_policies",
  "himmelblau_unix_common",
  "identity_dbus_broker",
  "kanidm-hsm-crypto",
