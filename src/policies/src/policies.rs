@@ -15,7 +15,6 @@
    You should have received a copy of the GNU General Public License
    along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
-use crate::chromium_ext::ChromiumUserCSE;
 use crate::compliance_ext::ComplianceCSE;
 use crate::cse::CSE;
 use crate::scripts_ext::ScriptsCSE;
@@ -928,7 +927,6 @@ pub async fn apply_group_policy(
     let changed_gpos = get_gpo_list(&graph_url, access_token, id).await?;
 
     let gp_extensions: Vec<Arc<dyn CSE>> = vec![
-        Arc::new(ChromiumUserCSE::new(config, account_id)),
         Arc::new(ScriptsCSE::new(config, account_id)),
         Arc::new(ComplianceCSE::new(config, account_id)),
     ];
