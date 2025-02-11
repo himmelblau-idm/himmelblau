@@ -38,9 +38,6 @@ pub mod cse;
  */
 
 #[cfg(target_family = "unix")]
-pub mod chromium_ext;
-
-#[cfg(target_family = "unix")]
 pub mod scripts_ext;
 
 #[cfg(target_family = "unix")]
