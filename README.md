@@ -24,31 +24,44 @@ please make donations via our Open Collective page.
 
 ## Installing
 
-Himmelblau is currently only being built on openSUSE and NixOS. Packaging contributions are welcome!
+Himmelblau is available for multiple Linux distributions, including openSUSE, SUSE Linux Enterprise (SLE), Fedora, Ubuntu, Debian, Red Hat Enterprise Linux (Rocky), and NixOS. Visit the [Himmelblau Downloads Page](https://himmelblau-idm.org/downloads.html) to fetch the appropriate packages for your distribution.
 
-### OpenSUSE
-
-On openSUSE Tumbleweed, refresh the repos and install himmelblau:
+### openSUSE Tumbleweed
+For openSUSE Tumbleweed, refresh the repositories and install Himmelblau:
 
 ```shell
-sudo zypper ref && sudo zypper in himmelblau nss-himmelblau pam-himmelblau
+sudo zypper ref && sudo zypper in himmelblau nss-himmelblau pam-himmelblau himmelblau-sso
 ```
 
-On openSUSE Leap and SUSE Linux Enterprise, first add the experimental repo:
+### openSUSE Leap and SUSE Linux Enterprise
+Add the appropriate repository for your version:
 
 ```shell
 # For Leap 15.6 or SUSE Linux Enterprise 15 SP6:
 sudo zypper ar https://download.opensuse.org/repositories/network:/idm/15.6/network:idm.repo
+
 # For Leap 15.5 or SUSE Linux Enterprise 15 SP5:
 sudo zypper ar https://download.opensuse.org/repositories/network:/idm/15.5/network:idm.repo
-# For Leap 15.4 or SUSE Linux Enterprise 15 SP4:
-sudo zypper ar https://download.opensuse.org/repositories/network:/idm/15.4/network:idm.repo
 ```
 
-Then refresh the repos and install himmelblau:
+Then refresh and install:
 
 ```shell
-sudo zypper ref && sudo zypper in himmelblau nss-himmelblau pam-himmelblau
+sudo zypper ref && sudo zypper in himmelblau nss-himmelblau pam-himmelblau himmelblau-sso
+```
+
+### Fedora and RHEL (including Rocky Linux)
+Download the RPMs from the [Downloads Page](https://himmelblau-idm.org/downloads.html) and install:
+
+```shell
+sudo dnf install ./himmelblau-<version>.rpm ./himmelblau-sshd-config-<version>.rpm ./himmelblau-sso-<version>.rpm ./nss-himmelblau-<version>.rpm ./pam-himmelblau-<version>.rpm
+```
+
+### Debian and Ubuntu
+Download the DEB packages and install:
+
+```shell
+sudo apt install ./himmelblau_<version>.deb ./himmelblau-sshd-config_<version>.deb ./himmelblau-sso_<version>.deb ./nss-himmelblau_<version>.deb ./pam-himmelblau_<version>.deb
 ```
 
 ### NixOS
