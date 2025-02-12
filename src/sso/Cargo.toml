@@ -33,6 +33,8 @@ assets = [
   ["src/chrome/extension.json", "usr/share/google-chrome/extensions/jlnfnnolkbjieggibinobhkjdfbpcohn.json", "644"],
   ["src/chrome/policies.json", "etc/opt/chrome/policies/managed/himmelblau.json", "644"],
   ["src/chrome/policies.json", "etc/chromium/policies/managed/himmelblau.json", "644"],
+  ["../../platform/debian/com.microsoft.identity.broker1.service", "usr/share/dbus-1/services/", "644"],
+  ["target/release/broker", "usr/sbin/", "755"],
 ]
 
 [package.metadata.generate-rpm]
@@ -46,6 +48,8 @@ assets = [
   { source = "src/chrome/extension.json", dest = "/usr/share/google-chrome/extensions/jlnfnnolkbjieggibinobhkjdfbpcohn.json", mode = "644" },
   { source = "src/chrome/policies.json", dest = "/etc/opt/chrome/policies/managed/himmelblau.json", mode = "644" },
   { source = "src/chrome/policies.json", dest = "/etc/chromium/policies/managed/himmelblau.json", mode = "644" },
+  { source = "../../platform/opensuse/com.microsoft.identity.broker1.service", dest = "/usr/share/dbus-1/services/", mode = "644" },
+  { source = "target/release/broker", dest = "/usr/sbin/", mode = "755" },
 ]
 
 [package.metadata.generate-rpm.requires]
