@@ -1996,6 +1996,7 @@ dependencies = [
  "libc",
  "libhimmelblau",
  "notify-debouncer-full",
+ "sd-notify",
  "serde",
  "serde_json",
  "sketching",
@@ -4374,6 +4375,15 @@ dependencies = [
  "once_cell",
  "selectors",
  "tendril",
+]
+
+[[package]]
+name = "sd-notify"
+version = "0.4.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b943eadf71d8b69e661330cb0e2656e31040acf21ee7708e2c238a0ec6af2bf4"
+dependencies = [
+ "libc",
 ]
 
 [[package]]

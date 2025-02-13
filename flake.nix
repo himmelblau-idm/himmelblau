@@ -381,6 +381,7 @@
 
               systemd.services = let
                 commonServiceConfig = {
+                  Type="notify";
                   UMask = "0027";
                   # SystemCallFilter = "@aio @basic-io @chown @file-system @io-event @network-io @sync";
                   NoNewPrivileges = true;
