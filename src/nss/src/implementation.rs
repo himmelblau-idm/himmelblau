@@ -11,7 +11,6 @@ use himmelblau_unix_common::client_sync::DaemonClientBlocking;
 use himmelblau_unix_common::config::HimmelblauConfig;
 use himmelblau_unix_common::constants::DEFAULT_CONFIG_PATH;
 use himmelblau_unix_common::unix_proto::{ClientRequest, ClientResponse, NssGroup, NssUser};
-use kanidm_unix_common::unix_config::KanidmUnixdConfig;
 use libnss::group::{Group, GroupHooks};
 use libnss::interop::Response;
 use libnss::passwd::{Passwd, PasswdHooks};
@@ -81,8 +80,8 @@ impl PasswdHooks for HimmelblauPasswd {
                 return Response::Unavail;
             }
         };
-        let name = cfg.map_cn_name(&name);
-        let req = ClientRequest::NssAccountByName(name.clone());
+        let upn = cfg.map_name_to_upn(&name);
+        let req = ClientRequest::NssAccountByName(upn.clone());
         let mut daemon_client = match DaemonClientBlocking::new(cfg.get_socket_path().as_str()) {
             Ok(dc) => dc,
             Err(_) => {

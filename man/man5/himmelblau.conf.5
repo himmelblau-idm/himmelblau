@@ -179,6 +179,29 @@ A boolean option that enables the experimental multi-factor authentication (MFA)
 enable_experimental_mfa = true
 
 .TP
+.B name_mapping_script
+.RE
+Specifies the path to an executable script used for mapping custom names to UPN names. The script MUST accept a single argument, which will always be a mapped name. The script MUST print the corresponding UPN (User Principal Name) to stdout. If the script does not recognize the input name, it MUST simply return the input name unchanged. This option is particularly useful in environments where direct UPN-to-CN mappings are impractical or where custom transformations are required.
+
+The script must handle the input gracefully and return the correct UPN or the input name if unrecognized. Errors must be handled to avoid authentication failures.
+
+.EXAMPLES
+name_mapping_script = /path/to/mapping_script.sh
+
+Example Script:
+.RS 4
+.nf
+#!/bin/bash
+# Convert CN to UPN, or return the input name if unrecognized
+if [[ "$1" =~ ^[a-zA-Z0-9._-]+$ ]]; then
+    echo "$1@example.com"
+else
+    echo "$1"
+fi
+.fi
+.RE
+
+.TP
 .B authority_host
 .RE
 Specifies the hostname for Microsoft authentication. The default value is

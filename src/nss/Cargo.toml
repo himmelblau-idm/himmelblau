@@ -17,7 +17,6 @@ path =  "src/lib.rs"
 
 [dependencies]
 himmelblau_unix_common = { workspace = true }
-kanidm_unix_common = { workspace = true }
 libnss = "0.9.0"
 libc = { workspace = true }
 paste = { workspace = true }
