@@ -79,5 +79,10 @@ rpm:
 		mv ./target/generate-rpm/*.rpm ./packaging/; \
 	done
 
-package: deb rpm
+nix:
+	mkdir -p ./packaging/
+	git submodule init; git submodule update
+	nix --extra-experimental-features 'nix-command flakes' build --out-link ./packaging/nix-result
+
+package: deb rpm nix
 	ls ./packaging/

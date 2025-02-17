@@ -646,7 +646,8 @@ impl HimmelblauConfig {
                         }
                     }
                     Err(e) => {
-                        eprintln!("Failed to execute script: {}", e);
+                        eprintln!("Failed to execute script `{}` from `{}`: {}",
+                            name_mapping_script, env::current_dir().expect("no working dir").display(), e);
                     }
                 }
             }
@@ -1356,7 +1357,7 @@ mod tests {
     fn test_map_name_to_upn_script_execution_success() {
         let config_data = r#"
         [global]
-        name_mapping_script = /bin/echo
+        name_mapping_script = ../../scripts/test_script_echo.sh
         domains = example.com
         "#;
 

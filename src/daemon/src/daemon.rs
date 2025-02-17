@@ -60,6 +60,7 @@ use tokio::sync::oneshot;
 use tokio::time;
 use tokio_util::codec::{Decoder, Encoder, Framed};
 use tracing::span;
+use sd_notify::{NotifyState};
 
 use kanidm_hsm_crypto::{soft::SoftTpm, AuthValue, BoxedDynTpm, Tpm};
 
@@ -683,6 +684,7 @@ async fn main() -> ExitCode {
     let ceuid = get_effective_uid();
     let cgid = get_current_gid();
     let cegid = get_effective_gid();
+    let systemd_booted = sd_notify::booted().unwrap_or(false);
 
     let clap_args = Command::new("himmelblaud")
         .version(env!("CARGO_PKG_VERSION"))
@@ -1217,6 +1219,10 @@ async fn main() -> ExitCode {
 
             info!("Server started ...");
 
+            if systemd_booted {
+                let _ = sd_notify::notify(true, &[NotifyState::Ready]);
+            }
+
             drop(_enter);
 
             loop {
@@ -1261,7 +1267,12 @@ async fn main() -> ExitCode {
                     }
                 }
             }
+
             info!("Signal received, sending down signal to tasks");
+            if systemd_booted {
+                let _ = sd_notify::notify(true, &[NotifyState::Stopping]);
+            }
+
             // Send a broadcast that we are done.
             if let Err(e) = broadcast_tx.send(true) {
                 error!("Unable to shutdown workers {:?}", e);

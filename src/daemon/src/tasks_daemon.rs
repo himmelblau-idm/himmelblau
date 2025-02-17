@@ -48,6 +48,7 @@ use tokio::sync::broadcast;
 use tokio::time;
 use tokio_util::codec::{Decoder, Encoder, Framed};
 use walkdir::WalkDir;
+use sd_notify::{NotifyState};
 
 #[cfg(all(target_family = "unix", feature = "selinux"))]
 use himmelblau_unix_common::selinux_util;
@@ -439,6 +440,7 @@ async fn main() -> ExitCode {
     // We only need to check effective id
     let ceuid = get_effective_uid();
     let cegid = get_effective_gid();
+    let systemd_booted = sd_notify::booted().unwrap_or(false);
 
     #[allow(clippy::expect_used)]
     tracing_forest::worker_task()
@@ -518,6 +520,10 @@ async fn main() -> ExitCode {
 
             info!("Server started ...");
 
+            if systemd_booted {
+                let _ = sd_notify::notify(true, &[NotifyState::Ready]);
+            }
+
             loop {
                 tokio::select! {
                     Ok(()) = tokio::signal::ctrl_c() => {
@@ -561,7 +567,12 @@ async fn main() -> ExitCode {
                     }
                 }
             }
+
             info!("Signal received, shutting down");
+            if systemd_booted {
+                let _ = sd_notify::notify(true, &[NotifyState::Stopping]);
+            }
+
             // Send a broadcast that we are done.
             if let Err(e) = broadcast_tx.send(true) {
                 error!("Unable to shutdown workers {:?}", e);
