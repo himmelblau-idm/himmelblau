@@ -179,7 +179,7 @@ Setup NSS
     group:      compat systemd himmelblau
     shadow:     compat systemd himmelblau
 
-Check that you can resolve a user (after their first login) with
+Check that you can resolve a user with
 
     getent passwd <name>
 
