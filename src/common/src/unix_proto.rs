@@ -151,6 +151,7 @@ pub enum TaskRequest {
     LocalGroups(String),
     LogonScript(String, String),
     KerberosCCache(uid_t, Vec<u8>, Vec<u8>),
+    ApplyPolicy(String, String, String),
 }
 
 impl TaskRequest {
@@ -161,6 +162,9 @@ impl TaskRequest {
             TaskRequest::LocalGroups(groups) => format!("LocalGroups({})", groups),
             TaskRequest::LogonScript(account_id, _) => format!("LogonScript({}, ...)", account_id),
             TaskRequest::KerberosCCache(uid, _, _) => format!("KerberosCCache({}, ...)", uid),
+            TaskRequest::ApplyPolicy(account_id, object_id, _) => {
+                format!("ApplyPolicy({}, {}, ...)", account_id, object_id)
+            }
         }
     }
 }
