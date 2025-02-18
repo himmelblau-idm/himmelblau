@@ -27,4 +27,13 @@ Provide any other context or information that may be relevant to the enhancement
 
 ---
 
+### 💡 Help Make It Happen!
+Want to see this feature developed faster? Fund its implementation through our **Backer's Bounty** program, where you choose which features get priority!
+
+[![Donate to Our Collective](https://opencollective.com/himmelblau/donate/button.png?color=blue)](https://himmelblau-idm.org/backers.html#backers-bounty)
+
+Your support helps drive Himmelblau’s evolution!
+
+---
+
 *Thank you for suggesting an enhancement to the Himmelblau project! Your input helps make the project better for everyone.*

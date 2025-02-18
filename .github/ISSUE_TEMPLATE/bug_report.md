@@ -38,3 +38,12 @@ Please ensure any sensitive data is redacted before submission, including passwo
 
 **Additional Information**
 Include any additional context that might help diagnose the issue, such as recent configuration changes or related issues.
+
+---
+
+### 💡 Help Make It Happen!
+Want to see this bug fixed faster? Fund its implementation through our **Backer's Bounty** program, where you choose which bug fixes get priority!
+
+[![Donate to Our Collective](https://opencollective.com/himmelblau/donate/button.png?color=blue)](https://himmelblau-idm.org/backers.html#backers-bounty)
+
+Your support helps drive Himmelblau’s evolution!
