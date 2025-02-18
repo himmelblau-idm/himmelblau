@@ -1,3 +1,5 @@
+[![Donate to Our Collective](https://opencollective.com/yourproject/donate/button.png?color=blue)](https://opencollective.com/himmelblau)
+
 # Himmelblau
 
 Himmelblau is an interoperability suite for Microsoft Azure Entra ID and Intune.
