@@ -215,6 +215,7 @@ impl IdProvider for HimmelblauMultiProvider {
         id: &Id,
         scopes: Vec<String>,
         old_token: Option<&UserToken>,
+        client_id: Option<String>,
         tpm: &mut tpm::BoxedDynTpm,
         machine_key: &tpm::MachineKey,
     ) -> Result<UnixUserToken, IdpError> {
@@ -228,7 +229,7 @@ impl IdProvider for HimmelblauMultiProvider {
                 match find_provider!(self, providers, domain) {
                     Some(provider) => {
                         provider
-                            .unix_user_access(id, scopes, old_token, tpm, machine_key)
+                            .unix_user_access(id, scopes, old_token, client_id, tpm, machine_key)
                             .await
                     }
                     None => Err(IdpError::NotFound),
@@ -554,6 +555,7 @@ impl IdProvider for HimmelblauProvider {
         id: &Id,
         scopes: Vec<String>,
         old_token: Option<&UserToken>,
+        client_id: Option<String>,
         tpm: &mut tpm::BoxedDynTpm,
         machine_key: &tpm::MachineKey,
     ) -> Result<UnixUserToken, IdpError> {
@@ -570,6 +572,7 @@ impl IdProvider for HimmelblauProvider {
                 &prt,
                 scopes.iter().map(|s| s.as_ref()).collect(),
                 None,
+                client_id.as_deref(),
                 tpm,
                 machine_key,
             )
@@ -782,7 +785,7 @@ impl IdProvider for HimmelblauProvider {
             .client
             .write()
             .await
-            .exchange_prt_for_access_token(&prt, scopes, resource, tpm, machine_key)
+            .exchange_prt_for_access_token(&prt, scopes, resource, None, tpm, machine_key)
             .await
         {
             Ok(token) => token,
@@ -946,6 +949,7 @@ impl IdProvider for HimmelblauProvider {
                         &$token.refresh_token,
                         scopes.clone(),
                         resource.clone(),
+                        None,
                         tpm,
                         machine_key,
                     )
@@ -970,6 +974,7 @@ impl IdProvider for HimmelblauProvider {
                                             &$token.refresh_token,
                                             scopes,
                                             resource,
+                                            None,
                                             tpm,
                                             machine_key,
                                         )
@@ -1007,6 +1012,7 @@ impl IdProvider for HimmelblauProvider {
                         &$hello_key,
                         scopes,
                         resource,
+                        None,
                         tpm,
                         machine_key,
                         &$cred,
@@ -1168,6 +1174,7 @@ impl IdProvider for HimmelblauProvider {
                                         &cred,
                                         vec![],
                                         Some("https://graph.microsoft.com".to_string()),
+                                        None,
                                         tpm,
                                         machine_key,
                                     )

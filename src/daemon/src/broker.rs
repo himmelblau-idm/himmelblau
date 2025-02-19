@@ -38,6 +38,8 @@ struct AccountReq {
 struct AuthParametersReq {
     #[serde(rename = "requestedScopes")]
     requested_scopes: Vec<String>,
+    #[serde(rename = "clientId")]
+    client_id: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -91,7 +93,11 @@ impl HimmelblauBroker for Broker {
         }
         let token = self
             .cachelayer
-            .get_user_accesstoken(Id::Name(user.spn), request.auth_parameters.requested_scopes)
+            .get_user_accesstoken(
+                Id::Name(user.spn),
+                request.auth_parameters.requested_scopes,
+                request.auth_parameters.client_id,
+            )
             .await
             .ok_or("Failed to authenticate user")?;
         let now = SystemTime::now()

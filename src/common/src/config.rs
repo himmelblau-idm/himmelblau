@@ -530,6 +530,10 @@ impl HimmelblauConfig {
         }
     }
 
+    pub fn get_logon_token_app_id(&self, domain: &str) -> Option<String> {
+        self.config.get(domain, "logon_token_app_id")
+    }
+
     pub fn get_enable_experimental_mfa(&self) -> bool {
         match_bool(self.config.get("global", "enable_experimental_mfa"), true)
     }
@@ -646,8 +650,12 @@ impl HimmelblauConfig {
                         }
                     }
                     Err(e) => {
-                        eprintln!("Failed to execute script `{}` from `{}`: {}",
-                            name_mapping_script, env::current_dir().expect("no working dir").display(), e);
+                        eprintln!(
+                            "Failed to execute script `{}` from `{}`: {}",
+                            name_mapping_script,
+                            env::current_dir().expect("no working dir").display(),
+                            e
+                        );
                     }
                 }
             }
@@ -1315,6 +1323,29 @@ mod tests {
         assert_eq!(config.get_logon_token_scopes(), expected_scopes);
         let config_empty = HimmelblauConfig::new(None).unwrap();
         assert_eq!(config_empty.get_logon_token_scopes(), Vec::<String>::new());
+    }
+
+    #[test]
+    fn test_get_logon_token_app_id() {
+        let config_data = r#"
+        [example.com]
+        logon_token_app_id = 544e695f-5d78-442e-b14e-e114e95e640c
+        "#;
+
+        let temp_file = create_temp_config(config_data);
+        let config = HimmelblauConfig::new(Some(&temp_file)).unwrap();
+
+        assert_eq!(
+            config.get_logon_token_app_id("example.com"),
+            Some("544e695f-5d78-442e-b14e-e114e95e640c".to_string())
+        );
+
+        // Test missing domain
+        assert_eq!(config.get_logon_token_app_id("missing.com"), None);
+
+        // Test empty configuration
+        let config_empty = HimmelblauConfig::new(None).unwrap();
+        assert_eq!(config_empty.get_logon_token_app_id("example.com"), None);
     }
 
     #[test]

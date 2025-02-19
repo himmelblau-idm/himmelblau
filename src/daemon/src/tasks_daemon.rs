@@ -37,6 +37,7 @@ use himmelblau_unix_common::unix_proto::{HomeDirectoryInfo, TaskRequest, TaskRes
 use kanidm_utils_users::{get_effective_gid, get_effective_uid};
 use libc::uid_t;
 use libc::{lchown, umask};
+use sd_notify::NotifyState;
 use sketching::tracing_forest::traits::*;
 use sketching::tracing_forest::util::*;
 use sketching::tracing_forest::{self};
@@ -48,7 +49,6 @@ use tokio::sync::broadcast;
 use tokio::time;
 use tokio_util::codec::{Decoder, Encoder, Framed};
 use walkdir::WalkDir;
-use sd_notify::{NotifyState};
 
 #[cfg(all(target_family = "unix", feature = "selinux"))]
 use himmelblau_unix_common::selinux_util;
