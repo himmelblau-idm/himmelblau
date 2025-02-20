@@ -9,7 +9,8 @@
  */
 use himmelblau_unix_common::client_sync::DaemonClientBlocking;
 use himmelblau_unix_common::config::HimmelblauConfig;
-use himmelblau_unix_common::constants::DEFAULT_CONFIG_PATH;
+use himmelblau_unix_common::constants::{DEFAULT_CONFIG_PATH, MAPPED_NAME_CACHE};
+use himmelblau_unix_common::mapping::MappedNameCache;
 use himmelblau_unix_common::unix_proto::{ClientRequest, ClientResponse, NssGroup, NssUser};
 use libnss::group::{Group, GroupHooks};
 use libnss::interop::Response;
@@ -35,10 +36,23 @@ impl PasswdHooks for HimmelblauPasswd {
             }
         };
 
+        let name_cache = match MappedNameCache::new(MAPPED_NAME_CACHE) {
+            Ok(name_cache) => name_cache,
+            Err(_) => {
+                return Response::Unavail;
+            }
+        };
         daemon_client
             .call_and_wait(&req, cfg.get_unix_sock_timeout())
             .map(|r| match r {
-                ClientResponse::NssAccounts(l) => l.into_iter().map(passwd_from_nssuser).collect(),
+                ClientResponse::NssAccounts(l) => l
+                    .into_iter()
+                    .map(|nu| {
+                        let mut passwd = passwd_from_nssuser(nu);
+                        passwd.name = name_cache.get_mapped_name(&passwd.name);
+                        passwd
+                    })
+                    .collect(),
                 _ => Vec::new(),
             })
             .map(Response::Success)
@@ -61,12 +75,21 @@ impl PasswdHooks for HimmelblauPasswd {
             }
         };
 
+        let name_cache = match MappedNameCache::new(MAPPED_NAME_CACHE) {
+            Ok(name_cache) => name_cache,
+            Err(_) => {
+                return Response::Unavail;
+            }
+        };
         daemon_client
             .call_and_wait(&req, cfg.get_unix_sock_timeout())
             .map(|r| match r {
                 ClientResponse::NssAccount(opt) => opt
-                    .map(passwd_from_nssuser)
-                    .map(Response::Success)
+                    .map(|nu| {
+                        let mut passwd = passwd_from_nssuser(nu);
+                        passwd.name = name_cache.get_mapped_name(&passwd.name);
+                        Response::Success(passwd)
+                    })
                     .unwrap_or_else(|| Response::NotFound),
                 _ => Response::NotFound,
             })
@@ -81,6 +104,14 @@ impl PasswdHooks for HimmelblauPasswd {
             }
         };
         let upn = cfg.map_name_to_upn(&name);
+        let name_cache = match MappedNameCache::new(MAPPED_NAME_CACHE) {
+            Ok(name_cache) => name_cache,
+            Err(_) => {
+                return Response::Unavail;
+            }
+        };
+        // Failing to insert a name map is not a critical failure.
+        let _ = name_cache.insert_mapping(&upn, &name);
         let req = ClientRequest::NssAccountByName(upn.clone());
         let mut daemon_client = match DaemonClientBlocking::new(cfg.get_socket_path().as_str()) {
             Ok(dc) => dc,
@@ -95,7 +126,7 @@ impl PasswdHooks for HimmelblauPasswd {
                 ClientResponse::NssAccount(opt) => opt
                     .map(|nu| {
                         let mut passwd = passwd_from_nssuser(nu);
-                        passwd.name = name;
+                        passwd.name = name_cache.get_mapped_name(&passwd.name);
                         Response::Success(passwd)
                     })
                     .unwrap_or_else(|| Response::NotFound),
@@ -124,10 +155,28 @@ impl GroupHooks for HimmelblauGroup {
             }
         };
 
+        let name_cache = match MappedNameCache::new(MAPPED_NAME_CACHE) {
+            Ok(name_cache) => name_cache,
+            Err(_) => {
+                return Response::Unavail;
+            }
+        };
         daemon_client
             .call_and_wait(&req, cfg.get_unix_sock_timeout())
             .map(|r| match r {
-                ClientResponse::NssGroups(l) => l.into_iter().map(group_from_nssgroup).collect(),
+                ClientResponse::NssGroups(l) => l
+                    .into_iter()
+                    .map(|ng| {
+                        let mut group = group_from_nssgroup(ng);
+                        group.name = name_cache.get_mapped_name(&group.name);
+                        group.members = group
+                            .members
+                            .into_iter()
+                            .map(|member| name_cache.get_mapped_name(&member))
+                            .collect();
+                        group
+                    })
+                    .collect(),
                 _ => Vec::new(),
             })
             .map(Response::Success)
@@ -149,12 +198,26 @@ impl GroupHooks for HimmelblauGroup {
             }
         };
 
+        let name_cache = match MappedNameCache::new(MAPPED_NAME_CACHE) {
+            Ok(name_cache) => name_cache,
+            Err(_) => {
+                return Response::Unavail;
+            }
+        };
         daemon_client
             .call_and_wait(&req, cfg.get_unix_sock_timeout())
             .map(|r| match r {
                 ClientResponse::NssGroup(opt) => opt
-                    .map(group_from_nssgroup)
-                    .map(Response::Success)
+                    .map(|ng| {
+                        let mut group = group_from_nssgroup(ng);
+                        group.name = name_cache.get_mapped_name(&group.name);
+                        group.members = group
+                            .members
+                            .into_iter()
+                            .map(|member| name_cache.get_mapped_name(&member))
+                            .collect();
+                        Response::Success(group)
+                    })
                     .unwrap_or_else(|| Response::NotFound),
                 _ => Response::NotFound,
             })
@@ -168,7 +231,16 @@ impl GroupHooks for HimmelblauGroup {
                 return Response::Unavail;
             }
         };
-        let req = ClientRequest::NssGroupByName(name);
+        let upn = cfg.map_name_to_upn(&name);
+        let name_cache = match MappedNameCache::new(MAPPED_NAME_CACHE) {
+            Ok(name_cache) => name_cache,
+            Err(_) => {
+                return Response::Unavail;
+            }
+        };
+        // Failing to insert a name map is not a critical failure.
+        let _ = name_cache.insert_mapping(&upn, &name);
+        let req = ClientRequest::NssGroupByName(upn.clone());
         let mut daemon_client = match DaemonClientBlocking::new(cfg.get_socket_path().as_str()) {
             Ok(dc) => dc,
             Err(_) => {
@@ -180,8 +252,16 @@ impl GroupHooks for HimmelblauGroup {
             .call_and_wait(&req, cfg.get_unix_sock_timeout())
             .map(|r| match r {
                 ClientResponse::NssGroup(opt) => opt
-                    .map(group_from_nssgroup)
-                    .map(Response::Success)
+                    .map(|ng| {
+                        let mut group = group_from_nssgroup(ng);
+                        group.name = name_cache.get_mapped_name(&group.name);
+                        group.members = group
+                            .members
+                            .into_iter()
+                            .map(|member| name_cache.get_mapped_name(&member))
+                            .collect();
+                        Response::Success(group)
+                    })
                     .unwrap_or_else(|| Response::NotFound),
                 _ => Response::NotFound,
             })

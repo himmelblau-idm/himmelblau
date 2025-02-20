@@ -32,7 +32,10 @@ use std::{fs, io};
 use bytes::{BufMut, BytesMut};
 use futures::{SinkExt, StreamExt};
 use himmelblau_unix_common::config::{split_username, HimmelblauConfig};
-use himmelblau_unix_common::constants::{DEFAULT_CCACHE_DIR, DEFAULT_CONFIG_PATH};
+use himmelblau_unix_common::constants::{
+    DEFAULT_CCACHE_DIR, DEFAULT_CONFIG_PATH, MAPPED_NAME_CACHE,
+};
+use himmelblau_unix_common::mapping::MappedNameCache;
 use himmelblau_unix_common::unix_proto::{HomeDirectoryInfo, TaskRequest, TaskResponse};
 use kanidm_utils_users::{get_effective_gid, get_effective_uid};
 use libc::uid_t;
@@ -348,7 +351,10 @@ async fn handle_tasks(stream: UnixStream, cfg: &HimmelblauConfig) {
                 }
                 // All good, loop.
             }
-            Some(Ok(TaskRequest::LocalGroups(account_id))) => {
+            Some(Ok(TaskRequest::LocalGroups(mut account_id))) => {
+                if let Ok(name_mapping_cache) = MappedNameCache::new(MAPPED_NAME_CACHE) {
+                    account_id = name_mapping_cache.get_mapped_name(&account_id);
+                }
                 let local_groups = cfg.get_local_groups();
                 for local_group in local_groups {
                     add_user_to_group(&account_id, &local_group);
