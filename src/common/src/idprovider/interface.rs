@@ -202,6 +202,7 @@ pub trait IdProvider {
         _id: &Id,
         _scopes: Vec<String>,
         _token: Option<&UserToken>,
+        _client_id: Option<String>,
         _tpm: &mut tpm::BoxedDynTpm,
         _machine_key: &tpm::MachineKey,
     ) -> Result<UnixUserToken, IdpError>;

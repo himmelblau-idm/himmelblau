@@ -616,6 +616,7 @@ where
         &self,
         account_id: Id,
         scopes: Vec<String>,
+        client_id: Option<String>,
     ) -> Option<UnixUserToken> {
         let token = match self.get_usertoken(account_id.clone()).await {
             Ok(Some(token)) => token,
@@ -633,6 +634,7 @@ where
                 &account_id,
                 scopes,
                 Some(&token),
+                client_id,
                 hsm_lock.deref_mut(),
                 &self.machine_key,
             )

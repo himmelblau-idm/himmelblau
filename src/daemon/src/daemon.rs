@@ -34,7 +34,7 @@ use bytes::{BufMut, BytesMut};
 use clap::{Arg, ArgAction, Command};
 use futures::{SinkExt, StreamExt};
 use himmelblau::{ClientInfo, IdToken, UserToken as UnixUserToken};
-use himmelblau_unix_common::config::HimmelblauConfig;
+use himmelblau_unix_common::config::{split_username, HimmelblauConfig};
 use himmelblau_unix_common::constants::DEFAULT_CONFIG_PATH;
 use himmelblau_unix_common::db::{Cache, CacheTxn, Db};
 use himmelblau_unix_common::idprovider::himmelblau::HimmelblauMultiProvider;
@@ -48,6 +48,7 @@ use himmelblau_unix_common::unix_proto::{
 
 use kanidm_utils_users::{get_current_gid, get_current_uid, get_effective_gid, get_effective_uid};
 use libc::umask;
+use sd_notify::NotifyState;
 use sketching::tracing_forest::traits::*;
 use sketching::tracing_forest::util::*;
 use sketching::tracing_forest::{self};
@@ -60,7 +61,6 @@ use tokio::sync::oneshot;
 use tokio::time;
 use tokio_util::codec::{Decoder, Encoder, Framed};
 use tracing::span;
-use sd_notify::{NotifyState};
 
 use kanidm_hsm_crypto::{soft::SoftTpm, AuthValue, BoxedDynTpm, Tpm};
 
@@ -342,10 +342,16 @@ async fn handle_client(
                                             PamAuthResponse::Success => {
                                                 if cfg.get_logon_script().is_some() {
                                                     let scopes = cfg.get_logon_token_scopes();
+                                                    let domain = split_username(&account_id)
+                                                        .map(|(_, domain)| domain);
+                                                    let client_id = domain.and_then(|d| {
+                                                        cfg.get_logon_token_app_id(&d)
+                                                    });
                                                     let access_token = match cachelayer
                                                         .get_user_accesstoken(
                                                             Id::Name(account_id.to_string()),
                                                             scopes,
+                                                            client_id,
                                                         )
                                                         .await
                                                     {

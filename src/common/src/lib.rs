@@ -43,6 +43,8 @@ pub mod db;
 #[cfg(target_family = "unix")]
 pub mod idprovider;
 #[cfg(target_family = "unix")]
+pub mod mapping;
+#[cfg(target_family = "unix")]
 pub mod resolver;
 #[cfg(target_family = "unix")]
 pub mod unix_passwd;
