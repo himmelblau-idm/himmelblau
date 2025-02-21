@@ -20,13 +20,19 @@ use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 
+#[derive(PartialEq)]
+pub enum Mode {
+    ReadOnly,
+    ReadWrite,
+}
+
 pub struct MappedNameCache {
     conn: Option<Connection>,
     writable: bool,
 }
 
 impl MappedNameCache {
-    pub fn new(db_path: &str) -> Result<Self> {
+    pub fn new(db_path: &str, mode: Mode) -> Result<Self> {
         let is_root = unsafe { libc::getuid() } == 0;
         let path = Path::new(db_path);
         let mut writable = false;
@@ -41,7 +47,7 @@ impl MappedNameCache {
         }
 
         let conn = if path.exists() {
-            if is_root {
+            if is_root && mode == Mode::ReadWrite {
                 writable = true;
                 Some(Connection::open(db_path)?)
             } else {
@@ -50,7 +56,7 @@ impl MappedNameCache {
                     OpenFlags::SQLITE_OPEN_READ_ONLY,
                 )?)
             }
-        } else if is_root {
+        } else if is_root && mode == Mode::ReadWrite {
             writable = true;
             let conn = Connection::open(db_path)?;
             conn.execute(
@@ -71,6 +77,10 @@ impl MappedNameCache {
     }
 
     pub fn insert_mapping(&self, upn: &str, mapped_name: &str) -> Result<()> {
+        if !upn.contains('@') || upn == mapped_name {
+            return Ok(());
+        }
+
         if let Some(conn) = &self.conn {
             if self.writable {
                 let _ = conn.execute(

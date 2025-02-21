@@ -10,7 +10,7 @@
 use himmelblau_unix_common::client_sync::DaemonClientBlocking;
 use himmelblau_unix_common::config::HimmelblauConfig;
 use himmelblau_unix_common::constants::{DEFAULT_CONFIG_PATH, MAPPED_NAME_CACHE};
-use himmelblau_unix_common::mapping::MappedNameCache;
+use himmelblau_unix_common::mapping::{MappedNameCache, Mode};
 use himmelblau_unix_common::unix_proto::{ClientRequest, ClientResponse, NssGroup, NssUser};
 use libnss::group::{Group, GroupHooks};
 use libnss::interop::Response;
@@ -36,7 +36,7 @@ impl PasswdHooks for HimmelblauPasswd {
             }
         };
 
-        let name_cache = match MappedNameCache::new(MAPPED_NAME_CACHE) {
+        let name_cache = match MappedNameCache::new(MAPPED_NAME_CACHE, Mode::ReadWrite) {
             Ok(name_cache) => name_cache,
             Err(_) => {
                 return Response::Unavail;
@@ -75,7 +75,7 @@ impl PasswdHooks for HimmelblauPasswd {
             }
         };
 
-        let name_cache = match MappedNameCache::new(MAPPED_NAME_CACHE) {
+        let name_cache = match MappedNameCache::new(MAPPED_NAME_CACHE, Mode::ReadWrite) {
             Ok(name_cache) => name_cache,
             Err(_) => {
                 return Response::Unavail;
@@ -104,7 +104,7 @@ impl PasswdHooks for HimmelblauPasswd {
             }
         };
         let upn = cfg.map_name_to_upn(&name);
-        let name_cache = match MappedNameCache::new(MAPPED_NAME_CACHE) {
+        let name_cache = match MappedNameCache::new(MAPPED_NAME_CACHE, Mode::ReadWrite) {
             Ok(name_cache) => name_cache,
             Err(_) => {
                 return Response::Unavail;
@@ -155,7 +155,7 @@ impl GroupHooks for HimmelblauGroup {
             }
         };
 
-        let name_cache = match MappedNameCache::new(MAPPED_NAME_CACHE) {
+        let name_cache = match MappedNameCache::new(MAPPED_NAME_CACHE, Mode::ReadWrite) {
             Ok(name_cache) => name_cache,
             Err(_) => {
                 return Response::Unavail;
@@ -198,7 +198,7 @@ impl GroupHooks for HimmelblauGroup {
             }
         };
 
-        let name_cache = match MappedNameCache::new(MAPPED_NAME_CACHE) {
+        let name_cache = match MappedNameCache::new(MAPPED_NAME_CACHE, Mode::ReadWrite) {
             Ok(name_cache) => name_cache,
             Err(_) => {
                 return Response::Unavail;
@@ -232,7 +232,7 @@ impl GroupHooks for HimmelblauGroup {
             }
         };
         let upn = cfg.map_name_to_upn(&name);
-        let name_cache = match MappedNameCache::new(MAPPED_NAME_CACHE) {
+        let name_cache = match MappedNameCache::new(MAPPED_NAME_CACHE, Mode::ReadWrite) {
             Ok(name_cache) => name_cache,
             Err(_) => {
                 return Response::Unavail;

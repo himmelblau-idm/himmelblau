@@ -151,6 +151,7 @@ pub enum TaskRequest {
     LocalGroups(String),
     LogonScript(String, String),
     KerberosCCache(uid_t, Vec<u8>, Vec<u8>),
+    LoadProfilePhoto(String, String),
 }
 
 impl TaskRequest {
@@ -161,6 +162,9 @@ impl TaskRequest {
             TaskRequest::LocalGroups(groups) => format!("LocalGroups({})", groups),
             TaskRequest::LogonScript(account_id, _) => format!("LogonScript({}, ...)", account_id),
             TaskRequest::KerberosCCache(uid, _, _) => format!("KerberosCCache({}, ...)", uid),
+            TaskRequest::LoadProfilePhoto(account_id, _) => {
+                format!("LoadProfilePhoto({}, ...)", account_id)
+            }
         }
     }
 }
