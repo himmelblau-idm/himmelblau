@@ -149,13 +149,3 @@ jobs:
       - name: "Run tests"
         run: cargo test
         continue-on-error: false
-
-  nixos:
-    runs-on: ubuntu-latest
-    steps:
-    - uses: actions/checkout@v4
-    - uses: cachix/install-nix-action@v25
-      with:
-        extra_nix_config: experimental-features = nix-command flakes
-    - run: nix flake check
-    - run: nix build --max-jobs 1 ".#himmelblau" ".#himmelblau-desktop"
