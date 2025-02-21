@@ -273,7 +273,7 @@ where
             // Skip anything that the admin opted in to
             if !(self.allow_id_overrides.contains(&gid) || self.allow_id_overrides.contains(&name))
             {
-                debug!("Adding {:?}:{:?} to resolver exclusion set", name, gid);
+                trace!("Adding {:?}:{:?} to resolver exclusion set", name, gid);
                 nxset_txn.insert(name);
                 nxset_txn.insert(gid);
             }
@@ -294,7 +294,7 @@ where
         //  Attempt to search these in the db.
         let mut dbtxn = self.db.write().await;
         let r = dbtxn.get_account(account_id).map_err(|err| {
-            debug!("get_cached_usertoken {:?}", err);
+            trace!("get_cached_usertoken {:?}", err);
         })?;
 
         match r {
@@ -511,7 +511,7 @@ where
             Ok(mut n_tok) => {
                 if self.check_nxset(&n_tok.name, n_tok.gidnumber).await {
                     // Refuse to release the token, it's in the denied set.
-                    debug!(
+                    trace!(
                         "Account {:?} is in denied set, refusing to release token. It may need to be in the allow_local_account_override configuration list.",
                         account_id
                     );
@@ -734,26 +734,26 @@ where
         dbtxn.commit().map_err(|_| ())?;
 
         res.map_err(|e| {
-            debug!("change_auth_token error -> {:?}", e);
+            trace!("change_auth_token error -> {:?}", e);
         })
     }
 
     pub async fn get_usertoken(&self, account_id: Id) -> Result<Option<UserToken>, ()> {
-        debug!("get_usertoken");
+        trace!("get_usertoken");
         // get the item from the cache
         let (expired, item) = self.get_cached_usertoken(&account_id).await.map_err(|e| {
-            debug!("get_usertoken error -> {:?}", e);
+            trace!("get_usertoken error -> {:?}", e);
         })?;
 
         let state = self.get_cachestate().await;
 
         match (expired, state) {
             (_, CacheState::Offline) => {
-                debug!("offline, returning cached item");
+                trace!("offline, returning cached item");
                 Ok(item)
             }
             (false, CacheState::OfflineNextCheck(time)) => {
-                debug!(
+                trace!(
                     "offline valid, next check {:?}, returning cached item",
                     time
                 );
@@ -761,12 +761,12 @@ where
                 Ok(item)
             }
             (false, CacheState::Online) => {
-                debug!("online valid, returning cached item");
+                trace!("online valid, returning cached item");
                 // Still valid within lifetime, return.
                 Ok(item)
             }
             (true, CacheState::OfflineNextCheck(time)) => {
-                debug!("offline expired, next check {:?}, refresh cache", time);
+                trace!("offline expired, next check {:?}, refresh cache", time);
                 // Attempt to refresh the item
                 // Return it.
                 if SystemTime::now() >= time && self.test_connection().await {
@@ -778,33 +778,33 @@ where
                 }
             }
             (true, CacheState::Online) => {
-                debug!("online expired, refresh cache");
+                trace!("online expired, refresh cache");
                 // Attempt to refresh the item
                 // Return it.
                 self.refresh_usertoken(&account_id, item).await
             }
         }
         .map(|t| {
-            debug!("token -> {:?}", t);
+            trace!("token -> {:?}", t);
             t
         })
     }
 
     async fn get_grouptoken(&self, grp_id: Id) -> Result<Option<GroupToken>, ()> {
-        debug!("get_grouptoken");
+        trace!("get_grouptoken");
         let (expired, item) = self.get_cached_grouptoken(&grp_id).await.map_err(|e| {
-            debug!("get_grouptoken error -> {:?}", e);
+            trace!("get_grouptoken error -> {:?}", e);
         })?;
 
         let state = self.get_cachestate().await;
 
         match (expired, state) {
             (_, CacheState::Offline) => {
-                debug!("offline, returning cached item");
+                trace!("offline, returning cached item");
                 Ok(item)
             }
             (false, CacheState::OfflineNextCheck(time)) => {
-                debug!(
+                trace!(
                     "offline valid, next check {:?}, returning cached item",
                     time
                 );
@@ -812,12 +812,12 @@ where
                 Ok(item)
             }
             (false, CacheState::Online) => {
-                debug!("online valid, returning cached item");
+                trace!("online valid, returning cached item");
                 // Still valid within lifetime, return.
                 Ok(item)
             }
             (true, CacheState::OfflineNextCheck(time)) => {
-                debug!("offline expired, next check {:?}, refresh cache", time);
+                trace!("offline expired, next check {:?}, refresh cache", time);
                 // Attempt to refresh the item
                 // Return it.
                 if SystemTime::now() >= time && self.test_connection().await {
@@ -829,7 +829,7 @@ where
                 }
             }
             (true, CacheState::Online) => {
-                debug!("online expired, refresh cache");
+                trace!("online expired, refresh cache");
                 // Attempt to refresh the item
                 // Return it.
                 self.refresh_grouptoken(&grp_id, item).await
@@ -985,13 +985,14 @@ where
                     .flat_map(|g| [g.name.clone(), g.uuid.hyphenated().to_string()])
                     .collect();
 
-                debug!(
+                trace!(
                     "Checking if user is in allowed groups ({:?}) -> {:?}",
-                    self.pam_allow_groups, user_set,
+                    self.pam_allow_groups,
+                    user_set,
                 );
                 let intersection_count = user_set.intersection(&self.pam_allow_groups).count();
-                debug!("Number of intersecting groups: {}", intersection_count);
-                debug!("User has valid token: {}", tok.valid);
+                trace!("Number of intersecting groups: {}", intersection_count);
+                trace!("User has valid token: {}", tok.valid);
 
                 intersection_count > 0 && tok.valid
             }))
@@ -1256,7 +1257,7 @@ where
 
                     Ok(PamAuthResponse::Unknown)
                 } else {
-                    debug!("provider authentication success.");
+                    trace!("provider authentication success.");
                     self.set_cache_usertoken(&mut token).await?;
                     *auth_session = AuthSession::Success(token.spn);
 
@@ -1373,7 +1374,7 @@ where
         let state = self.get_cachestate().await;
         match state {
             CacheState::Offline => {
-                debug!("Offline -> no change");
+                trace!("Offline -> no change");
                 false
             }
             CacheState::OfflineNextCheck(_time) => {
@@ -1388,12 +1389,12 @@ where
 
                 match prov_auth_result {
                     Ok(()) => {
-                        debug!("OfflineNextCheck -> authenticated");
+                        trace!("OfflineNextCheck -> authenticated");
                         self.set_cachestate(CacheState::Online).await;
                         true
                     }
                     Err(e) => {
-                        debug!("OfflineNextCheck -> disconnected, staying offline. {:?}", e);
+                        trace!("OfflineNextCheck -> disconnected, staying offline. {:?}", e);
                         let time = SystemTime::now().add(Duration::from_secs(15));
                         self.set_cachestate(CacheState::OfflineNextCheck(time))
                             .await;
@@ -1402,7 +1403,7 @@ where
                 }
             }
             CacheState::Online => {
-                debug!("Online, no change");
+                trace!("Online, no change");
                 true
             }
         }

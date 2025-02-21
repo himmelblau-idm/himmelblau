@@ -79,6 +79,7 @@ use crate::pam::module::{PamHandle, PamHooks};
 use crate::pam_hooks;
 use constants::PamResultCode;
 
+use tracing::instrument;
 use tracing::{debug, error};
 use tracing_subscriber::filter::LevelFilter;
 use tracing_subscriber::fmt;
@@ -735,6 +736,7 @@ fn mfa_poll(
 }
 
 impl PamHooks for PamKanidm {
+    #[instrument(skip(pamh, args, _flags))]
     fn acct_mgmt(pamh: &PamHandle, args: Vec<&CStr>, _flags: PamFlag) -> PamResultCode {
         let opts = match Options::try_from(&args) {
             Ok(o) => o,
@@ -804,6 +806,7 @@ impl PamHooks for PamKanidm {
         }
     }
 
+    #[instrument(skip(pamh, args, _flags))]
     fn sm_authenticate(pamh: &PamHandle, args: Vec<&CStr>, _flags: PamFlag) -> PamResultCode {
         let opts = match Options::try_from(&args) {
             Ok(o) => o,
@@ -879,6 +882,7 @@ impl PamHooks for PamKanidm {
         } // while true, continue calling PamAuthenticateStep until we get a decision.
     }
 
+    #[instrument(skip(pamh, args, flags))]
     fn sm_chauthtok(pamh: &PamHandle, args: Vec<&CStr>, flags: PamFlag) -> PamResultCode {
         if flags & PAM_PRELIM_CHECK != 0 {
             return PamResultCode::PAM_SUCCESS;
@@ -1213,6 +1217,7 @@ impl PamHooks for PamKanidm {
         }
     }
 
+    #[instrument(skip(_pamh, args, _flags))]
     fn sm_close_session(_pamh: &PamHandle, args: Vec<&CStr>, _flags: PamFlag) -> PamResultCode {
         let opts = match Options::try_from(&args) {
             Ok(o) => o,
@@ -1226,6 +1231,7 @@ impl PamHooks for PamKanidm {
         PamResultCode::PAM_SUCCESS
     }
 
+    #[instrument(skip(pamh, args, _flags))]
     fn sm_open_session(pamh: &PamHandle, args: Vec<&CStr>, _flags: PamFlag) -> PamResultCode {
         let opts = match Options::try_from(&args) {
             Ok(o) => o,
@@ -1271,6 +1277,7 @@ impl PamHooks for PamKanidm {
         }
     }
 
+    #[instrument(skip(_pamh, args, _flags))]
     fn sm_setcred(_pamh: &PamHandle, args: Vec<&CStr>, _flags: PamFlag) -> PamResultCode {
         let opts = match Options::try_from(&args) {
             Ok(o) => o,

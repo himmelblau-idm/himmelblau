@@ -550,6 +550,7 @@ impl IdProvider for HimmelblauProvider {
         }
     }
 
+    #[instrument(skip(self, old_token, tpm, machine_key))]
     async fn unix_user_access(
         &self,
         id: &Id,
@@ -583,6 +584,7 @@ impl IdProvider for HimmelblauProvider {
             })
     }
 
+    #[instrument(skip(self, old_token, tpm, machine_key))]
     async fn unix_user_ccaches(
         &self,
         id: &Id,
@@ -616,6 +618,7 @@ impl IdProvider for HimmelblauProvider {
         (cloud_ccache, ad_ccache)
     }
 
+    #[instrument(skip(self, old_token, tpm, machine_key))]
     async fn unix_user_prt_cookie(
         &self,
         id: &Id,
@@ -640,6 +643,7 @@ impl IdProvider for HimmelblauProvider {
             })
     }
 
+    #[instrument(skip(self, token, new_tok, keystore, tpm, machine_key))]
     async fn change_auth_token<D: KeyStoreTxn + Send>(
         &self,
         account_id: &str,
@@ -688,6 +692,7 @@ impl IdProvider for HimmelblauProvider {
         Ok(true)
     }
 
+    #[instrument(skip(self, old_token, tpm, machine_key))]
     async fn unix_user_get(
         &self,
         id: &Id,
@@ -813,6 +818,7 @@ impl IdProvider for HimmelblauProvider {
         }
     }
 
+    #[instrument(skip(self, _token, keystore, _tpm, _machine_key, _shutdown_rx))]
     async fn unix_user_online_auth_init<D: KeyStoreTxn + Send>(
         &self,
         account_id: &str,
@@ -911,6 +917,15 @@ impl IdProvider for HimmelblauProvider {
         }
     }
 
+    #[instrument(skip(
+        self,
+        cred_handler,
+        pam_next_req,
+        keystore,
+        tpm,
+        machine_key,
+        _shutdown_rx
+    ))]
     async fn unix_user_online_auth_step<D: KeyStoreTxn + Send>(
         &self,
         account_id: &str,
@@ -1537,6 +1552,7 @@ impl IdProvider for HimmelblauProvider {
         }
     }
 
+    #[instrument(skip(self, _token, keystore))]
     async fn unix_user_offline_auth_init<D: KeyStoreTxn + Send>(
         &self,
         account_id: &str,
@@ -1556,6 +1572,16 @@ impl IdProvider for HimmelblauProvider {
         }
     }
 
+    #[instrument(skip(
+        self,
+        token,
+        cred_handler,
+        pam_next_req,
+        keystore,
+        tpm,
+        machine_key,
+        _online_at_init
+    ))]
     async fn unix_user_offline_auth_step<D: KeyStoreTxn + Send>(
         &self,
         account_id: &str,
