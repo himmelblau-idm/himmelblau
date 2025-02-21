@@ -211,7 +211,7 @@ async fn handle_client(
     task_channel_tx: &Sender<AsyncTaskRequest>,
     cfg: HimmelblauConfig,
 ) -> Result<(), Box<dyn Error>> {
-    debug!("Accepted connection");
+    trace!("Accepted connection");
 
     let Ok(ucred) = sock.peer_cred() else {
         return Err(Box::new(IoError::new(
@@ -231,7 +231,7 @@ async fn handle_client(
     while let Some(Ok(req)) = reqs.next().await {
         let resp = match req {
             ClientRequest::NssAccounts => {
-                debug!("nssaccounts req");
+                trace!("nssaccounts req");
                 cachelayer
                     .get_nssaccounts()
                     .await
@@ -242,7 +242,7 @@ async fn handle_client(
                     })
             }
             ClientRequest::NssAccountByUid(gid) => {
-                debug!("nssaccountbyuid req");
+                trace!("nssaccountbyuid req");
                 cachelayer
                     .get_nssaccount_gid(gid)
                     .await
@@ -253,7 +253,7 @@ async fn handle_client(
                     })
             }
             ClientRequest::NssAccountByName(account_id) => {
-                debug!("nssaccountbyname req");
+                trace!("nssaccountbyname req");
                 cachelayer
                     .get_nssaccount_name(account_id.as_str())
                     .await
@@ -264,7 +264,7 @@ async fn handle_client(
                     })
             }
             ClientRequest::NssGroups => {
-                debug!("nssgroups req");
+                trace!("nssgroups req");
                 cachelayer
                     .get_nssgroups()
                     .await
@@ -275,7 +275,7 @@ async fn handle_client(
                     })
             }
             ClientRequest::NssGroupByGid(gid) => {
-                debug!("nssgroupbygid req");
+                trace!("nssgroupbygid req");
                 cachelayer
                     .get_nssgroup_gid(gid)
                     .await
@@ -286,7 +286,7 @@ async fn handle_client(
                     })
             }
             ClientRequest::NssGroupByName(grp_id) => {
-                debug!("nssgroupbyname req");
+                trace!("nssgroupbyname req");
                 cachelayer
                     .get_nssgroup_name(grp_id.as_str())
                     .await
@@ -297,184 +297,194 @@ async fn handle_client(
                     })
             }
             ClientRequest::PamAuthenticateInit(account_id, service) => {
-                debug!("pam authenticate init");
+                let span = span!(Level::INFO, "pam authenticate init");
+                trace!("pam authenticate init");
 
-                match &pam_auth_session_state {
-                    Some(_auth_session) => {
-                        // Invalid to init a request twice.
-                        warn!("Attempt to init auth session while current session is active");
-                        // Clean the former session, something is wrong.
-                        pam_auth_session_state = None;
-                        ClientResponse::Error
-                    }
-                    None => {
-                        match cachelayer
-                            .pam_account_authenticate_init(
-                                account_id.as_str(),
-                                service.as_str(),
-                                shutdown_tx.subscribe(),
-                            )
-                            .await
-                        {
-                            Ok((auth_session, pam_auth_response)) => {
-                                pam_auth_session_state = Some(auth_session);
-                                pam_auth_response.into()
+                async {
+                    match &pam_auth_session_state {
+                        Some(_auth_session) => {
+                            // Invalid to init a request twice.
+                            warn!("Attempt to init auth session while current session is active");
+                            // Clean the former session, something is wrong.
+                            pam_auth_session_state = None;
+                            ClientResponse::Error
+                        }
+                        None => {
+                            match cachelayer
+                                .pam_account_authenticate_init(
+                                    account_id.as_str(),
+                                    service.as_str(),
+                                    shutdown_tx.subscribe(),
+                                )
+                                .await
+                            {
+                                Ok((auth_session, pam_auth_response)) => {
+                                    pam_auth_session_state = Some(auth_session);
+                                    pam_auth_response.into()
+                                }
+                                Err(_) => ClientResponse::Error,
                             }
-                            Err(_) => ClientResponse::Error,
                         }
                     }
                 }
+                .instrument(span)
+                .await
             }
             ClientRequest::PamAuthenticateStep(pam_next_req) => {
-                debug!("pam authenticate step");
-                match &mut pam_auth_session_state {
-                    Some(auth_session) => {
-                        match cachelayer
-                            .pam_account_authenticate_step(auth_session, pam_next_req)
-                            .await
-                            .map(|pam_auth_response| pam_auth_response.into())
-                            .unwrap_or(ClientResponse::Error)
-                        {
-                            ClientResponse::PamAuthenticateStepResponse(mut resp) => {
-                                match auth_session {
-                                    AuthSession::Success(account_id) => {
-                                        match resp {
-                                            PamAuthResponse::Success => {
-                                                if cfg.get_logon_script().is_some() {
-                                                    let scopes = cfg.get_logon_token_scopes();
-                                                    let domain = split_username(&account_id)
-                                                        .map(|(_, domain)| domain);
-                                                    let client_id = domain.and_then(|d| {
-                                                        cfg.get_logon_token_app_id(&d)
-                                                    });
-                                                    let access_token = match cachelayer
-                                                        .get_user_accesstoken(
-                                                            Id::Name(account_id.to_string()),
-                                                            scopes,
-                                                            client_id,
-                                                        )
-                                                        .await
-                                                    {
-                                                        Some(token) => token
-                                                            .access_token
-                                                            .clone()
-                                                            .unwrap_or("".to_string()),
-                                                        None => "".to_string(),
-                                                    };
-
-                                                    let (tx, rx) = oneshot::channel();
-
-                                                    match task_channel_tx
-                                                        .send_timeout(
-                                                            (
-                                                                TaskRequest::LogonScript(
-                                                                    account_id.to_string(),
-                                                                    access_token.to_string(),
-                                                                ),
-                                                                tx,
-                                                            ),
-                                                            Duration::from_millis(100),
-                                                        )
-                                                        .await
-                                                    {
-                                                        Ok(()) => {
-                                                            // Now wait for the other end OR timeout.
-                                                            match time::timeout_at(
-                                                                time::Instant::now()
-                                                                    + Duration::from_secs(60),
-                                                                rx,
+                let span = span!(Level::INFO, "pam authenticate step");
+                async {
+                    trace!("pam authenticate step");
+                    match &mut pam_auth_session_state {
+                        Some(auth_session) => {
+                            match cachelayer
+                                .pam_account_authenticate_step(auth_session, pam_next_req)
+                                .await
+                                .map(|pam_auth_response| pam_auth_response.into())
+                                .unwrap_or(ClientResponse::Error)
+                            {
+                                ClientResponse::PamAuthenticateStepResponse(mut resp) => {
+                                    match auth_session {
+                                        AuthSession::Success(account_id) => {
+                                            match resp {
+                                                PamAuthResponse::Success => {
+                                                    if cfg.get_logon_script().is_some() {
+                                                        let scopes = cfg.get_logon_token_scopes();
+                                                        let domain = split_username(&account_id)
+                                                            .map(|(_, domain)| domain);
+                                                        let client_id = domain.and_then(|d| {
+                                                            cfg.get_logon_token_app_id(&d)
+                                                        });
+                                                        let access_token = match cachelayer
+                                                            .get_user_accesstoken(
+                                                                Id::Name(account_id.to_string()),
+                                                                scopes,
+                                                                client_id,
                                                             )
                                                             .await
-                                                            {
-                                                                Ok(Ok(status)) => {
-                                                                    if status == 2 {
-                                                                        debug!("Authentication was explicitly denied by the logon script");
-                                                                        resp =
-                                                                            PamAuthResponse::Denied;
-                                                                    }
-                                                                }
-                                                                _ => {
-                                                                    error!("Execution of logon script failed");
-                                                                }
-                                                            }
-                                                        }
-                                                        Err(e) => {
-                                                            error!("Execution of logon script failed: {:?}", e);
-                                                        }
-                                                    }
-                                                }
+                                                        {
+                                                            Some(token) => token
+                                                                .access_token
+                                                                .clone()
+                                                                .unwrap_or("".to_string()),
+                                                            None => "".to_string(),
+                                                        };
 
-                                                // Initialize the user Kerberos ccache
-                                                if let Some((uid, cloud_ccache, ad_ccache)) =
-                                                    cachelayer
-                                                        .get_user_ccaches(Id::Name(
-                                                            account_id.to_string(),
-                                                        ))
-                                                        .await
-                                                {
-                                                    let (tx, rx) = oneshot::channel();
+                                                        let (tx, rx) = oneshot::channel();
 
-                                                    match task_channel_tx
-                                                        .send_timeout(
-                                                            (
-                                                                TaskRequest::KerberosCCache(
-                                                                    uid,
-                                                                    cloud_ccache,
-                                                                    ad_ccache,
+                                                        match task_channel_tx
+                                                            .send_timeout(
+                                                                (
+                                                                    TaskRequest::LogonScript(
+                                                                        account_id.to_string(),
+                                                                        access_token.to_string(),
+                                                                    ),
+                                                                    tx,
                                                                 ),
-                                                                tx,
-                                                            ),
-                                                            Duration::from_millis(100),
-                                                        )
-                                                        .await
-                                                    {
-                                                        Ok(()) => {
-                                                            // Now wait for the other end OR timeout.
-                                                            match time::timeout_at(
-                                                                time::Instant::now()
-                                                                    + Duration::from_secs(60),
-                                                                rx,
+                                                                Duration::from_millis(100),
                                                             )
                                                             .await
-                                                            {
-                                                                Ok(Ok(status)) => {
-                                                                    if status != 0 {
-                                                                        error!("Kerberos credential cache load failed for {}: Status code: {}", account_id, status);
+                                                        {
+                                                            Ok(()) => {
+                                                                // Now wait for the other end OR timeout.
+                                                                match time::timeout_at(
+                                                                    time::Instant::now()
+                                                                        + Duration::from_secs(60),
+                                                                    rx,
+                                                                )
+                                                                .await
+                                                                {
+                                                                    Ok(Ok(status)) => {
+                                                                        if status == 2 {
+                                                                            debug!("Authentication was explicitly denied by the logon script");
+                                                                            resp =
+                                                                                PamAuthResponse::Denied;
+                                                                        }
+                                                                    }
+                                                                    _ => {
+                                                                        error!("Execution of logon script failed");
                                                                     }
                                                                 }
-                                                                Ok(Err(e)) => {
-                                                                    error!("Kerberos credential cache load failed for {}: {:?}", account_id, e);
-                                                                }
-                                                                Err(e) => {
-                                                                    error!("Kerberos credential cache load failed for {}: {:?}", account_id, e);
-                                                                }
+                                                            }
+                                                            Err(e) => {
+                                                                error!("Execution of logon script failed: {:?}", e);
                                                             }
                                                         }
-                                                        Err(e) => {
-                                                            error!("Kerberos credential cache load failed for {}: {:?}", account_id, e);
+                                                    }
+
+                                                    // Initialize the user Kerberos ccache
+                                                    if let Some((uid, cloud_ccache, ad_ccache)) =
+                                                        cachelayer
+                                                            .get_user_ccaches(Id::Name(
+                                                                account_id.to_string(),
+                                                            ))
+                                                            .await
+                                                    {
+                                                        let (tx, rx) = oneshot::channel();
+
+                                                        match task_channel_tx
+                                                            .send_timeout(
+                                                                (
+                                                                    TaskRequest::KerberosCCache(
+                                                                        uid,
+                                                                        cloud_ccache,
+                                                                        ad_ccache,
+                                                                    ),
+                                                                    tx,
+                                                                ),
+                                                                Duration::from_millis(100),
+                                                            )
+                                                            .await
+                                                        {
+                                                            Ok(()) => {
+                                                                // Now wait for the other end OR timeout.
+                                                                match time::timeout_at(
+                                                                    time::Instant::now()
+                                                                        + Duration::from_secs(60),
+                                                                    rx,
+                                                                )
+                                                                .await
+                                                                {
+                                                                    Ok(Ok(status)) => {
+                                                                        if status != 0 {
+                                                                            error!("Kerberos credential cache load failed for {}: Status code: {}", account_id, status);
+                                                                        }
+                                                                    }
+                                                                    Ok(Err(e)) => {
+                                                                        error!("Kerberos credential cache load failed for {}: {:?}", account_id, e);
+                                                                    }
+                                                                    Err(e) => {
+                                                                        error!("Kerberos credential cache load failed for {}: {:?}", account_id, e);
+                                                                    }
+                                                                }
+                                                            }
+                                                            Err(e) => {
+                                                                error!("Kerberos credential cache load failed for {}: {:?}", account_id, e);
+                                                            }
                                                         }
                                                     }
-                                                }
 
-                                                ClientResponse::PamAuthenticateStepResponse(resp)
+                                                    ClientResponse::PamAuthenticateStepResponse(resp)
+                                                }
+                                                _ => ClientResponse::PamAuthenticateStepResponse(resp),
                                             }
-                                            _ => ClientResponse::PamAuthenticateStepResponse(resp),
                                         }
+                                        _ => ClientResponse::PamAuthenticateStepResponse(resp),
                                     }
-                                    _ => ClientResponse::PamAuthenticateStepResponse(resp),
                                 }
+                                other => other,
                             }
-                            other => other,
+                        }
+                        None => {
+                            warn!("Attempt to continue auth session while current session is inactive");
+                            ClientResponse::Error
                         }
                     }
-                    None => {
-                        warn!("Attempt to continue auth session while current session is inactive");
-                        ClientResponse::Error
-                    }
                 }
+                .instrument(span)
+                .await
             }
             ClientRequest::PamAccountAllowed(account_id) => {
-                debug!("pam account allowed");
+                trace!("pam account allowed");
                 cachelayer
                     .pam_account_allowed(account_id.as_str())
                     .await
@@ -482,107 +492,117 @@ async fn handle_client(
                     .unwrap_or(ClientResponse::Error)
             }
             ClientRequest::PamAccountBeginSession(account_id) => {
-                debug!("pam account begin session");
-                match cachelayer
-                    .pam_account_beginsession(account_id.as_str())
-                    .await
-                {
-                    Ok(Some(info)) => {
-                        let (tx, rx) = oneshot::channel();
+                let span = span!(Level::INFO, "pam account begin session");
+                async {
+                    trace!("pam account begin session");
+                    match cachelayer
+                        .pam_account_beginsession(account_id.as_str())
+                        .await
+                    {
+                        Ok(Some(info)) => {
+                            let (tx, rx) = oneshot::channel();
 
-                        let resp1 = match task_channel_tx
-                            .send_timeout(
-                                (TaskRequest::HomeDirectory(info), tx),
-                                Duration::from_millis(100),
-                            )
-                            .await
-                        {
-                            Ok(()) => {
-                                // Now wait for the other end OR timeout.
-                                match time::timeout_at(
-                                    time::Instant::now() + Duration::from_millis(1000),
-                                    rx,
+                            let resp1 = match task_channel_tx
+                                .send_timeout(
+                                    (TaskRequest::HomeDirectory(info), tx),
+                                    Duration::from_millis(100),
                                 )
                                 .await
-                                {
-                                    Ok(Ok(_)) => {
-                                        debug!("Task completed, returning to pam ...");
-                                        ClientResponse::Ok
-                                    }
-                                    _ => {
-                                        // Timeout or other error.
-                                        ClientResponse::Error
+                            {
+                                Ok(()) => {
+                                    // Now wait for the other end OR timeout.
+                                    match time::timeout_at(
+                                        time::Instant::now() + Duration::from_millis(1000),
+                                        rx,
+                                    )
+                                    .await
+                                    {
+                                        Ok(Ok(_)) => {
+                                            trace!("Task completed, returning to pam ...");
+                                            ClientResponse::Ok
+                                        }
+                                        _ => {
+                                            // Timeout or other error.
+                                            ClientResponse::Error
+                                        }
                                     }
                                 }
-                            }
-                            Err(_) => {
-                                // We could not submit the req. Move on!
-                                ClientResponse::Error
-                            }
-                        };
+                                Err(_) => {
+                                    // We could not submit the req. Move on!
+                                    ClientResponse::Error
+                                }
+                            };
 
-                        let (tx, rx) = oneshot::channel();
+                            let (tx, rx) = oneshot::channel();
 
-                        let resp2 = match task_channel_tx
-                            .send_timeout(
-                                (TaskRequest::LocalGroups(account_id.to_string()), tx),
-                                Duration::from_millis(100),
-                            )
-                            .await
-                        {
-                            Ok(()) => {
-                                // Now wait for the other end OR timeout.
-                                match time::timeout_at(
-                                    time::Instant::now() + Duration::from_millis(1000),
-                                    rx,
+                            let resp2 = match task_channel_tx
+                                .send_timeout(
+                                    (TaskRequest::LocalGroups(account_id.to_string()), tx),
+                                    Duration::from_millis(100),
                                 )
                                 .await
-                                {
-                                    Ok(Ok(_)) => {
-                                        debug!("Task completed, returning to pam ...");
-                                        ClientResponse::Ok
-                                    }
-                                    _ => {
-                                        // Timeout or other error.
-                                        ClientResponse::Error
+                            {
+                                Ok(()) => {
+                                    // Now wait for the other end OR timeout.
+                                    match time::timeout_at(
+                                        time::Instant::now() + Duration::from_millis(1000),
+                                        rx,
+                                    )
+                                    .await
+                                    {
+                                        Ok(Ok(_)) => {
+                                            trace!("Task completed, returning to pam ...");
+                                            ClientResponse::Ok
+                                        }
+                                        _ => {
+                                            // Timeout or other error.
+                                            ClientResponse::Error
+                                        }
                                     }
                                 }
-                            }
-                            Err(_) => {
-                                // We could not submit the req. Move on!
-                                ClientResponse::Error
-                            }
-                        };
+                                Err(_) => {
+                                    // We could not submit the req. Move on!
+                                    ClientResponse::Error
+                                }
+                            };
 
-                        match resp1 {
-                            ClientResponse::Error => ClientResponse::Error,
-                            _ => resp2,
+                            match resp1 {
+                                ClientResponse::Error => ClientResponse::Error,
+                                _ => resp2,
+                            }
                         }
+                        _ => ClientResponse::Error,
                     }
-                    _ => ClientResponse::Error,
                 }
+                .instrument(span)
+                .await
             }
             ClientRequest::PamChangeAuthToken(account_id, access_token, refresh_token, new_pin) => {
-                debug!("sm_chauthtok req");
-                let token = UnixUserToken {
-                    token_type: "Bearer".to_string(),
-                    scope: None,
-                    expires_in: 0,
-                    ext_expires_in: 0,
-                    access_token: Some(access_token),
-                    refresh_token,
-                    id_token: IdToken::default(),
-                    client_info: ClientInfo::default(),
-                    prt: None,
-                };
-                cachelayer
-                    .change_auth_token(&account_id, &token, &new_pin)
-                    .await
-                    .map(|_| ClientResponse::Ok)
-                    .unwrap_or(ClientResponse::Error)
+                let span = span!(Level::INFO, "sm_chauthtok req");
+                async {
+                    trace!("sm_chauthtok req");
+                    let token = UnixUserToken {
+                        token_type: "Bearer".to_string(),
+                        scope: None,
+                        expires_in: 0,
+                        ext_expires_in: 0,
+                        access_token: Some(access_token),
+                        refresh_token,
+                        id_token: IdToken::default(),
+                        client_info: ClientInfo::default(),
+                        prt: None,
+                    };
+                    cachelayer
+                        .change_auth_token(&account_id, &token, &new_pin)
+                        .await
+                        .map(|_| ClientResponse::Ok)
+                        .unwrap_or(ClientResponse::Error)
+                }
+                .instrument(span)
+                .await
             }
             ClientRequest::InvalidateCache => {
-                debug!("invalidate cache");
+                trace!("invalidate cache");
                 cachelayer
                     .invalidate()
                     .await
@@ -590,7 +610,7 @@ async fn handle_client(
                     .unwrap_or(ClientResponse::Error)
             }
             ClientRequest::ClearCache => {
-                debug!("clear cache");
+                trace!("clear cache");
                 if ucred.uid() == 0 {
                     cachelayer
                         .clear_cache()
@@ -603,7 +623,7 @@ async fn handle_client(
                 }
             }
             ClientRequest::Status => {
-                debug!("status check");
+                trace!("status check");
                 if cachelayer.test_connection().await {
                     ClientResponse::Ok
                 } else {
@@ -613,7 +633,7 @@ async fn handle_client(
         };
         reqs.send(resp).await?;
         reqs.flush().await?;
-        debug!("flushed response!");
+        trace!("flushed response!");
     }
 
     // Signal any tasks that they need to stop.
@@ -625,7 +645,7 @@ async fn handle_client(
     }
 
     // Disconnect them
-    debug!("Disconnecting client ...");
+    trace!("Disconnecting client ...");
     Ok(())
 }
 

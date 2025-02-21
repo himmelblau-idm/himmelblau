@@ -156,7 +156,7 @@ impl Db {
         // need to re-do this to account for path = "" for debug.
         let crypto_policy = CryptoPolicy::time_target(Duration::from_millis(250));
 
-        debug!("Configured {:?}", crypto_policy);
+        trace!("Configured {:?}", crypto_policy);
 
         Ok(Db {
             conn: Mutex::new(conn),
@@ -185,7 +185,7 @@ impl fmt::Debug for Db {
 impl<'a> DbTxn<'a> {
     fn new(conn: MutexGuard<'a, Connection>, crypto_policy: &'a CryptoPolicy) -> Self {
         // Start the transaction
-        // debug!("Starting db WR txn ...");
+        // trace!("Starting db WR txn ...");
         #[allow(clippy::expect_used)]
         conn.execute("BEGIN TRANSACTION", [])
             .expect("Unable to begin transaction!");
@@ -372,7 +372,7 @@ impl<'a> KeyStoreTxn for DbTxn<'a> {
             ":value": &data,
         })
         .map(|r| {
-            debug!("insert -> {:?}", r);
+            trace!("insert -> {:?}", r);
         })
         .map_err(|e| self.sqlite_error("execute", &e))
     }
@@ -499,7 +499,7 @@ impl<'a> CacheTxn for DbTxn<'a> {
     }
 
     fn commit(mut self) -> Result<(), CacheError> {
-        // debug!("Committing BE txn");
+        // trace!("Committing BE txn");
         if self.committed {
             error!("Invalid state, SQL transaction was already committed!");
             return Err(CacheError::TransactionInvalidState);
@@ -594,7 +594,7 @@ impl<'a> CacheTxn for DbTxn<'a> {
             ":value": &data,
         })
         .map(|r| {
-            debug!("insert -> {:?}", r);
+            trace!("insert -> {:?}", r);
         })
         .map_err(|e| self.sqlite_error("execute", &e))
     }
@@ -636,7 +636,7 @@ impl<'a> CacheTxn for DbTxn<'a> {
             ":value": &data,
         })
         .map(|r| {
-            debug!("insert -> {:?}", r);
+            trace!("insert -> {:?}", r);
         })
         .map_err(|e| self.sqlite_error("execute", &e))
     }
@@ -764,7 +764,7 @@ impl<'a> CacheTxn for DbTxn<'a> {
                 ":expiry": &expire,
             })
             .map(|r| {
-                debug!("insert -> {:?}", r);
+                trace!("insert -> {:?}", r);
             })
             .map_err(|error| self.sqlite_transaction_error(&error, &stmt))?;
         }
@@ -779,7 +779,7 @@ impl<'a> CacheTxn for DbTxn<'a> {
 
         stmt.execute([&account_uuid])
             .map(|r| {
-                debug!("delete memberships -> {:?}", r);
+                trace!("delete memberships -> {:?}", r);
             })
             .map_err(|error| self.sqlite_transaction_error(&error, &stmt))?;
 
@@ -794,7 +794,7 @@ impl<'a> CacheTxn for DbTxn<'a> {
                 ":g_uuid": &g.uuid.as_hyphenated().to_string(),
             })
             .map(|r| {
-                debug!("insert membership -> {:?}", r);
+                trace!("insert membership -> {:?}", r);
             })
             .map_err(|error| self.sqlite_transaction_error(&error, &stmt))
         })
@@ -956,7 +956,7 @@ impl<'a> CacheTxn for DbTxn<'a> {
         data.iter()
             .map(|token| {
                 // token convert with json.
-                // debug!("{:?}", token);
+                // trace!("{:?}", token);
                 serde_json::from_slice(token.as_slice()).map_err(|e| {
                     error!("json error -> {:?}", e);
                     CacheError::SerdeJson
@@ -984,7 +984,7 @@ impl<'a> CacheTxn for DbTxn<'a> {
             .iter()
             .filter_map(|token| {
                 // token convert with json.
-                // debug!("{:?}", token);
+                // trace!("{:?}", token);
                 serde_json::from_slice(token.as_slice())
                     .map_err(|e| {
                         error!("json error -> {:?}", e);
@@ -1020,7 +1020,7 @@ impl<'a> CacheTxn for DbTxn<'a> {
             ":expiry": &expire,
         })
         .map(|r| {
-            debug!("insert -> {:?}", r);
+            trace!("insert -> {:?}", r);
         })
         .map_err(|e| self.sqlite_error("execute", &e))
     }
@@ -1051,7 +1051,7 @@ impl<'a> Drop for DbTxn<'a> {
     // Abort
     fn drop(&mut self) {
         if !self.committed {
-            // debug!("Aborting BE WR txn");
+            // trace!("Aborting BE WR txn");
             #[allow(clippy::expect_used)]
             self.conn
                 .execute("ROLLBACK TRANSACTION", [])

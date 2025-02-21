@@ -51,6 +51,7 @@ use tokio::net::UnixStream;
 use tokio::sync::broadcast;
 use tokio::time;
 use tokio_util::codec::{Decoder, Encoder, Framed};
+use tracing::{instrument, span};
 use walkdir::WalkDir;
 
 #[cfg(all(target_family = "unix", feature = "selinux"))]
@@ -325,6 +326,7 @@ fn write_bytes_to_file(bytes: &[u8], filename: &Path, owner: uid_t) -> i32 {
     0
 }
 
+#[instrument(skip(stream, cfg))]
 async fn handle_tasks(stream: UnixStream, cfg: &HimmelblauConfig) {
     let mut reqs = Framed::new(stream, TaskCodec::new());
 
@@ -461,6 +463,9 @@ async fn main() -> ExitCode {
             )
         })
         .on(async {
+            let span = span!(Level::INFO, "Task daemon initialization");
+            let _enter = span.enter();
+
             if ceuid != 0 || cegid != 0 {
                 error!("Refusing to run - this process *MUST* operate as root.");
                 return ExitCode::FAILURE;
@@ -525,6 +530,8 @@ async fn main() -> ExitCode {
             });
 
             info!("Server started ...");
+
+            drop(_enter);
 
             if systemd_booted {
                 let _ = sd_notify::notify(true, &[NotifyState::Ready]);
