@@ -753,15 +753,15 @@ impl IdProvider for HimmelblauProvider {
                                 name: account_id.clone(),
                                 spn: account_id.clone(),
                                 uuid: fake_uuid,
-                                real_gidnumber: gidnumber,
+                                real_gidnumber: Some(gidnumber),
                                 gidnumber,
                                 displayname: "".to_string(),
                                 shell: Some(config.get_shell(Some(&self.domain))),
                                 groups,
-                                tenant_id: Uuid::parse_str(&self.tenant_id).map_err(|e| {
+                                tenant_id: Some(Uuid::parse_str(&self.tenant_id).map_err(|e| {
                                     error!("{:?}", e);
                                     IdpError::BadRequest
-                                })?,
+                                })?),
                                 valid: true,
                             });
                         } else {
@@ -1851,15 +1851,15 @@ impl HimmelblauProvider {
             name: spn.clone(),
             spn: spn.clone(),
             uuid,
-            real_gidnumber: gidnumber,
+            real_gidnumber: Some(gidnumber),
             gidnumber: uidnumber,
             displayname,
             shell: Some(shell),
             groups,
-            tenant_id: Uuid::parse_str(&self.tenant_id).map_err(|e| {
+            tenant_id: Some(Uuid::parse_str(&self.tenant_id).map_err(|e| {
                 error!("{:?}", e);
                 IdpError::BadRequest
-            })?,
+            })?),
             valid,
         })
     }

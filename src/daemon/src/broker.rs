@@ -137,10 +137,10 @@ impl HimmelblauBroker for Broker {
             "accounts": [
                 {
                     "givenName": user.displayname,
-                    "homeAccountId": format!("{}.{}", user.uuid.to_string(), user.tenant_id.to_string()),
+                    "homeAccountId": format!("{}.{}", user.uuid.to_string(), user.tenant_id.map(|uuid| uuid.to_string()).unwrap_or("".to_string())),
                     "localAccountId": user.uuid.to_string(),
                     "name": user.displayname,
-                    "realm": user.tenant_id.to_string(),
+                    "realm": user.tenant_id.map(|uuid| uuid.to_string()).unwrap_or("".to_string()),
                     "username": user.spn
                 }
             ]

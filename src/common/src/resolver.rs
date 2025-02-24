@@ -896,7 +896,7 @@ where
                     homedir: self.token_abs_homedirectory(&tok),
                     name: self.token_uidattr(&tok),
                     uid: tok.gidnumber,
-                    gid: tok.real_gidnumber,
+                    gid: tok.real_gidnumber.unwrap_or(tok.gidnumber),
                     gecos: tok.displayname,
                     shell: tok.shell.unwrap_or_else(|| self.default_shell.clone()),
                 })
@@ -910,7 +910,7 @@ where
             homedir: self.token_abs_homedirectory(&tok),
             name: self.token_uidattr(&tok),
             uid: tok.gidnumber,
-            gid: tok.real_gidnumber,
+            gid: tok.real_gidnumber.unwrap_or(tok.gidnumber),
             gecos: tok.displayname,
             shell: tok.shell.unwrap_or_else(|| self.default_shell.clone()),
         }))
