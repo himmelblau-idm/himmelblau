@@ -37,7 +37,6 @@ use kanidm_hsm_crypto::{LoadableIdentityKey, LoadableMsOapxbcRsaKey, PinValue, S
 use reqwest;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::fs::File;
 use std::sync::Arc;
 use std::thread::sleep;
 use std::time::Duration;
@@ -1778,14 +1777,6 @@ impl HimmelblauProvider {
                 } else {
                     HashMap::new()
                 };
-                // Set the profile picture
-                if let Ok(file) = File::create(format!("/var/lib/AccountsService/icons/{}", spn)) {
-                    // Ignore failures, since this isn't critical
-                    let _ = self
-                        .graph
-                        .fetch_user_profile_photo(access_token, file)
-                        .await;
-                }
             }
             None => {
                 debug!("Failed fetching user groups for {}", &spn);
