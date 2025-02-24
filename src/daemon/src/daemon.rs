@@ -463,6 +463,55 @@ async fn handle_client(
                                                         }
                                                     }
 
+                                                    // Fetch the user Profile picture
+                                                    if let Some(token) = cachelayer
+                                                        .get_user_accesstoken(
+                                                            Id::Name(account_id.to_string()),
+                                                            vec![],
+                                                            None,
+                                                        )
+                                                        .await
+                                                    {
+                                                        if let Some(access_token) = &token.access_token {
+                                                            let (tx, rx) = oneshot::channel();
+
+                                                            match task_channel_tx
+                                                                .send_timeout(
+                                                                    (
+                                                                        TaskRequest::LoadProfilePhoto(
+                                                                            account_id.to_string(),
+                                                                            access_token.to_string(),
+                                                                        ),
+                                                                        tx,
+                                                                    ),
+                                                                    Duration::from_millis(100),
+                                                                )
+                                                                .await
+                                                            {
+                                                                Ok(()) => {
+                                                                    // Now wait for the other end OR timeout.
+                                                                    match time::timeout_at(
+                                                                        time::Instant::now()
+                                                                            + Duration::from_secs(60),
+                                                                        rx,
+                                                                    )
+                                                                    .await
+                                                                    {
+                                                                        Ok(_) => {
+                                                                            info!("Fetching user profile picture succeeded");
+                                                                        }
+                                                                        _ => {
+                                                                            error!("Fetching user profile picture failed");
+                                                                        }
+                                                                    }
+                                                                }
+                                                                Err(_) => {
+                                                                    error!("Fetching user profile picture failed");
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+
                                                     ClientResponse::PamAuthenticateStepResponse(resp)
                                                 }
                                                 _ => ClientResponse::PamAuthenticateStepResponse(resp),
