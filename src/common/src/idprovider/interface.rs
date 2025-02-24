@@ -62,12 +62,14 @@ pub struct UserToken {
     pub name: String,
     pub spn: String,
     pub uuid: Uuid,
-    pub real_gidnumber: u32, // This is the actual gidnumber.
-    pub gidnumber: u32,      // This is actually the uid, and is a legacy carryover from Kanidm
+    #[serde(default)]
+    pub real_gidnumber: Option<u32>, // This is the actual gidnumber.
+    pub gidnumber: u32, // This is actually the uid, and is a legacy carryover from Kanidm
     pub displayname: String,
     pub shell: Option<String>,
     pub groups: Vec<GroupToken>,
-    pub tenant_id: Uuid,
+    #[serde(default)]
+    pub tenant_id: Option<Uuid>,
     // Defaults to false.
     pub valid: bool,
 }
