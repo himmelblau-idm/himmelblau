@@ -499,6 +499,27 @@ async fn main() -> ExitCode {
     let cegid = get_effective_gid();
     let systemd_booted = sd_notify::booted().unwrap_or(false);
 
+    let config_path = Path::new(DEFAULT_CONFIG_PATH);
+    let config_path_str = match config_path.to_str() {
+        Some(cps) => cps,
+        None => {
+            error!("Unable to turn config_path to str");
+            return ExitCode::FAILURE;
+        }
+    };
+
+    let cfg = match HimmelblauConfig::new(Some(config_path_str)) {
+        Ok(c) => c,
+        Err(e) => {
+            error!("Failed to parse {}: {}", config_path_str, e);
+            return ExitCode::FAILURE;
+        }
+    };
+
+    if cfg.get_debug() {
+        std::env::set_var("RUST_LOG", "debug");
+    }
+
     #[allow(clippy::expect_used)]
     tracing_forest::worker_task()
         .set_global(true)
@@ -519,23 +540,6 @@ async fn main() -> ExitCode {
                 error!("Refusing to run - this process *MUST* operate as root.");
                 return ExitCode::FAILURE;
             }
-
-            let config_path = Path::new(DEFAULT_CONFIG_PATH);
-            let config_path_str = match config_path.to_str() {
-                Some(cps) => cps,
-                None => {
-                    error!("Unable to turn config_path to str");
-                    return ExitCode::FAILURE;
-                }
-            };
-
-            let cfg = match HimmelblauConfig::new(Some(config_path_str)) {
-                Ok(c) => c,
-                Err(e) => {
-                    error!("Failed to parse {}: {}", config_path_str, e);
-                    return ExitCode::FAILURE;
-                }
-            };
 
             let task_sock_path = cfg.get_task_socket_path();
             debug!("Attempting to use {} ...", task_sock_path);
