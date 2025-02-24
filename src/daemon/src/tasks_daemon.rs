@@ -31,11 +31,12 @@ use std::{fs, io};
 
 use bytes::{BufMut, BytesMut};
 use futures::{SinkExt, StreamExt};
+use himmelblau::graph::Graph;
 use himmelblau_unix_common::config::{split_username, HimmelblauConfig};
 use himmelblau_unix_common::constants::{
     DEFAULT_CCACHE_DIR, DEFAULT_CONFIG_PATH, MAPPED_NAME_CACHE,
 };
-use himmelblau_unix_common::mapping::MappedNameCache;
+use himmelblau_unix_common::mapping::{MappedNameCache, Mode};
 use himmelblau_unix_common::unix_proto::{HomeDirectoryInfo, TaskRequest, TaskResponse};
 use kanidm_utils_users::{get_effective_gid, get_effective_uid};
 use libc::uid_t;
@@ -44,6 +45,7 @@ use sd_notify::NotifyState;
 use sketching::tracing_forest::traits::*;
 use sketching::tracing_forest::util::*;
 use sketching::tracing_forest::{self};
+use std::fs::File;
 use std::fs::OpenOptions;
 use std::io::Write;
 use std::process::Command;
@@ -354,9 +356,13 @@ async fn handle_tasks(stream: UnixStream, cfg: &HimmelblauConfig) {
                 // All good, loop.
             }
             Some(Ok(TaskRequest::LocalGroups(mut account_id))) => {
-                if let Ok(name_mapping_cache) = MappedNameCache::new(MAPPED_NAME_CACHE) {
+                debug!("Received task -> LocalGroups({})", account_id);
+                if let Ok(name_mapping_cache) =
+                    MappedNameCache::new(MAPPED_NAME_CACHE, &Mode::ReadOnly)
+                {
                     account_id = name_mapping_cache.get_mapped_name(&account_id);
                 }
+                debug!("Mapped account_id to {}", account_id);
                 let local_groups = cfg.get_local_groups();
                 for local_group in local_groups {
                     add_user_to_group(&account_id, &local_group);
@@ -369,6 +375,7 @@ async fn handle_tasks(stream: UnixStream, cfg: &HimmelblauConfig) {
                 }
             }
             Some(Ok(TaskRequest::LogonScript(account_id, access_token))) => {
+                debug!("Received task -> LogonScript({}, ...)", account_id);
                 let mut status = 0;
                 if let Some(script) = cfg.get_logon_script() {
                     status = execute_user_script(&account_id, &script, &access_token);
@@ -381,6 +388,7 @@ async fn handle_tasks(stream: UnixStream, cfg: &HimmelblauConfig) {
                 }
             }
             Some(Ok(TaskRequest::KerberosCCache(uid, cloud_ccache, ad_ccache))) => {
+                debug!("Received task -> KerberosCCache({}, ...)", uid);
                 let ccache_dir_str = format!("{}{}", DEFAULT_CCACHE_DIR, uid);
                 let ccache_dir = Path::new(&ccache_dir_str);
                 let create_dir_ret = match fs::create_dir_all(ccache_dir) {
@@ -429,6 +437,47 @@ async fn handle_tasks(stream: UnixStream, cfg: &HimmelblauConfig) {
                     return;
                 }
             }
+            Some(Ok(TaskRequest::LoadProfilePhoto(mut account_id, access_token))) => {
+                debug!("Received task -> LoadProfilePhoto({}, ...)", account_id);
+                let domain = split_username(&access_token).map(|(_, domain)| domain);
+                if let Ok(name_mapping_cache) =
+                    MappedNameCache::new(MAPPED_NAME_CACHE, &Mode::ReadOnly)
+                {
+                    account_id = name_mapping_cache.get_mapped_name(&account_id);
+                }
+                // Set the profile picture
+                if let Some(domain) = domain {
+                    match File::create(format!("/var/lib/AccountsService/icons/{}", account_id)) {
+                        Ok(file) => {
+                            let authority_host = cfg.get_authority_host(&domain);
+                            let tenant_id = cfg.get_tenant_id(&domain);
+                            let graph_url = cfg.get_graph_url(&domain);
+                            if let Ok(graph) = Graph::new(
+                                &cfg.get_odc_provider(&domain),
+                                &domain,
+                                Some(&authority_host),
+                                tenant_id.as_deref(),
+                                graph_url.as_deref(),
+                            )
+                            .await
+                            {
+                                if let Err(e) =
+                                    graph.fetch_user_profile_photo(&access_token, file).await
+                                {
+                                    error!("Failed fetching user profile photo: {:?}", e);
+                                }
+                            }
+                        }
+                        Err(e) => error!("Failed creating file for user profile photo: {:?}", e),
+                    }
+                }
+
+                // Always indicate success here
+                if let Err(e) = reqs.send(TaskResponse::Success(0)).await {
+                    error!("Error -> {:?}", e);
+                    return;
+                }
+            }
             Some(Err(e)) => {
                 error!("Error -> {:?}", e);
                 return;
@@ -450,6 +499,27 @@ async fn main() -> ExitCode {
     let cegid = get_effective_gid();
     let systemd_booted = sd_notify::booted().unwrap_or(false);
 
+    let config_path = Path::new(DEFAULT_CONFIG_PATH);
+    let config_path_str = match config_path.to_str() {
+        Some(cps) => cps,
+        None => {
+            error!("Unable to turn config_path to str");
+            return ExitCode::FAILURE;
+        }
+    };
+
+    let cfg = match HimmelblauConfig::new(Some(config_path_str)) {
+        Ok(c) => c,
+        Err(e) => {
+            error!("Failed to parse {}: {}", config_path_str, e);
+            return ExitCode::FAILURE;
+        }
+    };
+
+    if cfg.get_debug() {
+        std::env::set_var("RUST_LOG", "debug");
+    }
+
     #[allow(clippy::expect_used)]
     tracing_forest::worker_task()
         .set_global(true)
@@ -470,23 +540,6 @@ async fn main() -> ExitCode {
                 error!("Refusing to run - this process *MUST* operate as root.");
                 return ExitCode::FAILURE;
             }
-
-            let config_path = Path::new(DEFAULT_CONFIG_PATH);
-            let config_path_str = match config_path.to_str() {
-                Some(cps) => cps,
-                None => {
-                    error!("Unable to turn config_path to str");
-                    return ExitCode::FAILURE;
-                }
-            };
-
-            let cfg = match HimmelblauConfig::new(Some(config_path_str)) {
-                Ok(c) => c,
-                Err(e) => {
-                    error!("Failed to parse {}: {}", config_path_str, e);
-                    return ExitCode::FAILURE;
-                }
-            };
 
             let task_sock_path = cfg.get_task_socket_path();
             debug!("Attempting to use {} ...", task_sock_path);

@@ -646,14 +646,19 @@ impl HimmelblauConfig {
                         if output.status.success() {
                             return String::from_utf8_lossy(&output.stdout).trim().to_string();
                         } else {
-                            eprintln!("Script execution failed with error: {:?}", output.status);
+                            error!("Script execution failed with error: {:?}", output.status);
                         }
                     }
                     Err(e) => {
-                        eprintln!(
+                        error!(
                             "Failed to execute script `{}` from `{}`: {}",
                             name_mapping_script,
-                            env::current_dir().expect("no working dir").display(),
+                            env::current_dir()
+                                .unwrap_or_else(|e| {
+                                    error!("No working dir: {:?}", e);
+                                    String::new().into()
+                                })
+                                .display(),
                             e
                         );
                     }
