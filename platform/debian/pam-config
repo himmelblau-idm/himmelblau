@@ -7,6 +7,9 @@ Auth:
 Account-Type: Primary
 Account:
 	[success=end default=ignore]    pam_himmelblau.so ignore_unknown_user
+Password-Type: Primary
+Password:
+	[success=end default=ignore]    pam_himmelblau.so ignore_unknown_user
 Session-Type: Additional
 Session:
 	optional	pam_himmelblau.so
