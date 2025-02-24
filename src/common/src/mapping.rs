@@ -32,7 +32,7 @@ pub struct MappedNameCache {
 }
 
 impl MappedNameCache {
-    pub fn new(db_path: &str, mode: Mode) -> Result<Self> {
+    pub fn new(db_path: &str, mode: &Mode) -> Result<Self> {
         let is_root = unsafe { libc::getuid() } == 0;
         let path = Path::new(db_path);
         let mut writable = false;
@@ -47,7 +47,7 @@ impl MappedNameCache {
         }
 
         let conn = if path.exists() {
-            if is_root && mode == Mode::ReadWrite {
+            if is_root && *mode == Mode::ReadWrite {
                 writable = true;
                 Some(Connection::open(db_path)?)
             } else {
@@ -56,7 +56,7 @@ impl MappedNameCache {
                     OpenFlags::SQLITE_OPEN_READ_ONLY,
                 )?)
             }
-        } else if is_root && mode == Mode::ReadWrite {
+        } else if is_root && *mode == Mode::ReadWrite {
             writable = true;
             let conn = Connection::open(db_path)?;
             conn.execute(

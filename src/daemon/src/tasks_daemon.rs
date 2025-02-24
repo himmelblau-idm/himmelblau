@@ -358,7 +358,7 @@ async fn handle_tasks(stream: UnixStream, cfg: &HimmelblauConfig) {
             Some(Ok(TaskRequest::LocalGroups(mut account_id))) => {
                 debug!("Received task -> LocalGroups({})", account_id);
                 if let Ok(name_mapping_cache) =
-                    MappedNameCache::new(MAPPED_NAME_CACHE, Mode::ReadOnly)
+                    MappedNameCache::new(MAPPED_NAME_CACHE, &Mode::ReadOnly)
                 {
                     account_id = name_mapping_cache.get_mapped_name(&account_id);
                 }
@@ -441,7 +441,7 @@ async fn handle_tasks(stream: UnixStream, cfg: &HimmelblauConfig) {
                 debug!("Received task -> LoadProfilePhoto({}, ...)", account_id);
                 let domain = split_username(&access_token).map(|(_, domain)| domain);
                 if let Ok(name_mapping_cache) =
-                    MappedNameCache::new(MAPPED_NAME_CACHE, Mode::ReadOnly)
+                    MappedNameCache::new(MAPPED_NAME_CACHE, &Mode::ReadOnly)
                 {
                     account_id = name_mapping_cache.get_mapped_name(&account_id);
                 }
