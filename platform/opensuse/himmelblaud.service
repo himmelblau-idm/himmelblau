@@ -12,7 +12,7 @@ CacheDirectory=himmelblaud # /var/cache/himmelblaud
 RuntimeDirectory=himmelblaud # /run/himmelblaud
 StateDirectory=himmelblaud # /var/lib/himmelblaud
 
-Type=simple
+Type=notify-reload
 ExecStart=/usr/sbin/himmelblaud
 
 # Implied by dynamic user.
