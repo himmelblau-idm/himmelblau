@@ -421,7 +421,6 @@ impl<'a> CacheTxn for DbTxn<'a> {
                     uuid TEXT PRIMARY KEY,
                     name TEXT NOT NULL UNIQUE,
                     spn TEXT NOT NULL UNIQUE,
-                    real_gidnumber INTEGER NOT NULL UNIQUE,
                     gidnumber INTEGER NOT NULL UNIQUE,
                     password BLOB,
                     token BLOB NOT NULL,
@@ -735,12 +734,11 @@ impl<'a> CacheTxn for DbTxn<'a> {
             .map(|_| ())?;
 
         let updated = self.conn.execute(
-                "UPDATE account_t SET name=:name, spn=:spn, real_gidnumber=:real_gidnumber, gidnumber=:gidnumber, token=:token, expiry=:expiry WHERE uuid = :uuid",
+                "UPDATE account_t SET name=:name, spn=:spn, gidnumber=:gidnumber, token=:token, expiry=:expiry WHERE uuid = :uuid",
             named_params!{
                 ":uuid": &account_uuid,
                 ":name": &account.name,
                 ":spn": &account.spn,
-                ":real_gidnumber": &account.real_gidnumber,
                 ":gidnumber": &account.gidnumber,
                 ":token": &data,
                 ":expiry": &expire,
@@ -752,7 +750,7 @@ impl<'a> CacheTxn for DbTxn<'a> {
 
         if updated == 0 {
             let mut stmt = self.conn
-                .prepare("INSERT INTO account_t (uuid, name, spn, real_gidnumber, gidnumber, token, expiry) VALUES (:uuid, :name, :spn, :real_gidnumber, :gidnumber, :token, :expiry) ON CONFLICT(uuid) DO UPDATE SET name=excluded.name, spn=excluded.name, real_gidnumber=excluded.real_gidnumber, gidnumber=excluded.gidnumber, token=excluded.token, expiry=excluded.expiry")
+                .prepare("INSERT INTO account_t (uuid, name, spn, gidnumber, token, expiry) VALUES (:uuid, :name, :spn, :gidnumber, :token, :expiry) ON CONFLICT(uuid) DO UPDATE SET name=excluded.name, spn=excluded.name, gidnumber=excluded.gidnumber, token=excluded.token, expiry=excluded.expiry")
                 .map_err(|e| {
                     self.sqlite_error("prepare", &e)
                 })?;
@@ -761,7 +759,6 @@ impl<'a> CacheTxn for DbTxn<'a> {
                 ":uuid": &account_uuid,
                 ":name": &account.name,
                 ":spn": &account.spn,
-                ":real_gidnumber": &account.real_gidnumber,
                 ":gidnumber": &account.gidnumber,
                 ":token": &data,
                 ":expiry": &expire,
