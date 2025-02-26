@@ -33,10 +33,7 @@ use bytes::{BufMut, BytesMut};
 use futures::{SinkExt, StreamExt};
 use himmelblau::graph::Graph;
 use himmelblau_unix_common::config::{split_username, HimmelblauConfig};
-use himmelblau_unix_common::constants::{
-    DEFAULT_CCACHE_DIR, DEFAULT_CONFIG_PATH, MAPPED_NAME_CACHE,
-};
-use himmelblau_unix_common::mapping::{MappedNameCache, Mode};
+use himmelblau_unix_common::constants::{DEFAULT_CCACHE_DIR, DEFAULT_CONFIG_PATH};
 use himmelblau_unix_common::unix_proto::{HomeDirectoryInfo, TaskRequest, TaskResponse};
 use kanidm_utils_users::{get_effective_gid, get_effective_uid};
 use libc::uid_t;
@@ -357,12 +354,7 @@ async fn handle_tasks(stream: UnixStream, cfg: &HimmelblauConfig) {
             }
             Some(Ok(TaskRequest::LocalGroups(mut account_id))) => {
                 debug!("Received task -> LocalGroups({})", account_id);
-                if let Ok(name_mapping_cache) =
-                    MappedNameCache::new(MAPPED_NAME_CACHE, &Mode::ReadOnly)
-                {
-                    account_id = name_mapping_cache.get_mapped_name(&account_id);
-                }
-                debug!("Mapped account_id to {}", account_id);
+                account_id = cfg.map_upn_to_name(&account_id);
                 let local_groups = cfg.get_local_groups();
                 for local_group in local_groups {
                     add_user_to_group(&account_id, &local_group);
@@ -440,11 +432,7 @@ async fn handle_tasks(stream: UnixStream, cfg: &HimmelblauConfig) {
             Some(Ok(TaskRequest::LoadProfilePhoto(mut account_id, access_token))) => {
                 debug!("Received task -> LoadProfilePhoto({}, ...)", account_id);
                 let domain = split_username(&access_token).map(|(_, domain)| domain);
-                if let Ok(name_mapping_cache) =
-                    MappedNameCache::new(MAPPED_NAME_CACHE, &Mode::ReadOnly)
-                {
-                    account_id = name_mapping_cache.get_mapped_name(&account_id);
-                }
+                account_id = cfg.map_upn_to_name(&account_id);
                 // Set the profile picture
                 if let Some(domain) = domain {
                     match File::create(format!("/var/lib/AccountsService/icons/{}", account_id)) {
