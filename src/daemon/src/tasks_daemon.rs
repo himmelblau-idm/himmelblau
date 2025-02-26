@@ -94,12 +94,12 @@ impl TaskCodec {
     }
 }
 
-fn chown(path: &Path, gid: u32) -> Result<(), String> {
+fn chown(path: &Path, uid: u32, gid: u32) -> Result<(), String> {
     let path_os = CString::new(path.as_os_str().as_bytes())
         .map_err(|_| "Unable to create c-string".to_string())?;
 
     // Change the owner to the gid - remember, himmelblau ONLY has gid's, the uid is implied.
-    if unsafe { lchown(path_os.as_ptr(), gid, gid) } != 0 {
+    if unsafe { lchown(path_os.as_ptr(), uid, gid) } != 0 {
         return Err("Unable to set ownership".to_string());
     }
     Ok(())
@@ -138,7 +138,7 @@ fn create_home_directory(
     debug!(?use_selinux, "selinux for home dir labeling");
     #[cfg(all(target_family = "unix", feature = "selinux"))]
     let labeler = if use_selinux {
-        selinux_util::SelinuxLabeler::new(info.gid, home_prefix)?
+        selinux_util::SelinuxLabeler::new(info.uid, home_prefix)?
     } else {
         selinux_util::SelinuxLabeler::new_noop()
     };
@@ -159,7 +159,7 @@ fn create_home_directory(
         }
         let _ = unsafe { umask(before) };
 
-        chown(hd_path, info.gid)?;
+        chown(hd_path, info.uid, info.gid)?;
 
         // Copy in structure from /etc/skel/ if present
         let skel_dir = Path::new("/etc/skel/");
@@ -187,7 +187,7 @@ fn create_home_directory(
                 } else {
                     fs::copy(entry.path(), dest).map_err(|e| e.to_string())?;
                 }
-                chown(dest, info.gid)?;
+                chown(dest, info.uid, info.gid)?;
 
                 // Create equivalence rule in the SELinux policy
                 #[cfg(all(target_family = "unix", feature = "selinux"))]
@@ -303,7 +303,7 @@ fn execute_user_script(account_id: &str, script: &str, access_token: &str) -> i3
     }
 }
 
-fn write_bytes_to_file(bytes: &[u8], filename: &Path, owner: uid_t) -> i32 {
+fn write_bytes_to_file(bytes: &[u8], filename: &Path, uid: uid_t, gid: uid_t) -> i32 {
     let mut file = match OpenOptions::new()
         .create(true)
         .truncate(true)
@@ -318,7 +318,7 @@ fn write_bytes_to_file(bytes: &[u8], filename: &Path, owner: uid_t) -> i32 {
         return 2;
     }
 
-    if chown(filename, owner).is_err() {
+    if chown(filename, uid, gid).is_err() {
         return 3;
     }
 
@@ -379,7 +379,7 @@ async fn handle_tasks(stream: UnixStream, cfg: &HimmelblauConfig) {
                     return;
                 }
             }
-            Some(Ok(TaskRequest::KerberosCCache(uid, cloud_ccache, ad_ccache))) => {
+            Some(Ok(TaskRequest::KerberosCCache(uid, gid, cloud_ccache, ad_ccache))) => {
                 debug!("Received task -> KerberosCCache({}, ...)", uid);
                 let ccache_dir_str = format!("{}{}", DEFAULT_CCACHE_DIR, uid);
                 let ccache_dir = Path::new(&ccache_dir_str);
@@ -395,7 +395,7 @@ async fn handle_tasks(stream: UnixStream, cfg: &HimmelblauConfig) {
                     }
                 };
                 let primary_name = ccache_dir.join("primary");
-                let _ = write_bytes_to_file(b"tkt\n", &primary_name, uid);
+                let _ = write_bytes_to_file(b"tkt\n", &primary_name, uid, gid);
 
                 let cloud_ret = if !cloud_ccache.is_empty() {
                     // The cloud_tkt is the primary only if the on-prem isn't
@@ -406,7 +406,7 @@ async fn handle_tasks(stream: UnixStream, cfg: &HimmelblauConfig) {
                         "tkt"
                     };
                     let cloud_ccache_name = ccache_dir.join(name);
-                    write_bytes_to_file(&cloud_ccache, &cloud_ccache_name, uid) * 10
+                    write_bytes_to_file(&cloud_ccache, &cloud_ccache_name, uid, gid) * 10
                 } else {
                     0
                 };
@@ -415,7 +415,7 @@ async fn handle_tasks(stream: UnixStream, cfg: &HimmelblauConfig) {
                     // If the on-prem ad_tkt exists, it overrides the primary
                     let name = "tkt";
                     let ad_ccache_name = ccache_dir.join(name);
-                    write_bytes_to_file(&ad_ccache, &ad_ccache_name, uid) * 100
+                    write_bytes_to_file(&ad_ccache, &ad_ccache_name, uid, gid) * 100
                 } else {
                     0
                 };

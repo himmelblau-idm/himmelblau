@@ -651,7 +651,10 @@ where
         }
     }
 
-    pub async fn get_user_ccaches(&self, account_id: Id) -> Option<(uid_t, Vec<u8>, Vec<u8>)> {
+    pub async fn get_user_ccaches(
+        &self,
+        account_id: Id,
+    ) -> Option<(uid_t, uid_t, Vec<u8>, Vec<u8>)> {
         let token = match self.get_usertoken(account_id.clone()).await {
             Ok(Some(token)) => token,
             _ => {
@@ -674,7 +677,12 @@ where
 
         drop(hsm_lock);
 
-        Some((token.gidnumber, cloud_ccache, ad_ccache))
+        Some((
+            token.gidnumber,
+            token.real_gidnumber.unwrap_or(token.gidnumber),
+            cloud_ccache,
+            ad_ccache,
+        ))
     }
 
     pub async fn get_user_prt_cookie(&self, account_id: Id) -> Option<String> {
@@ -1361,7 +1369,8 @@ where
     ) -> Result<Option<HomeDirectoryInfo>, ()> {
         let token = self.get_usertoken(Id::Name(account_id.to_string())).await?;
         Ok(token.as_ref().map(|tok| HomeDirectoryInfo {
-            gid: tok.gidnumber,
+            uid: tok.gidnumber,
+            gid: tok.real_gidnumber.unwrap_or(tok.gidnumber),
             name: self.token_homedirectory_attr(tok),
             aliases: self
                 .token_homedirectory_alias(tok)
