@@ -412,7 +412,7 @@ async fn handle_client(
                                                     }
 
                                                     // Initialize the user Kerberos ccache
-                                                    if let Some((uid, cloud_ccache, ad_ccache)) =
+                                                    if let Some((uid, gid, cloud_ccache, ad_ccache)) =
                                                         cachelayer
                                                             .get_user_ccaches(Id::Name(
                                                                 account_id.to_string(),
@@ -426,6 +426,7 @@ async fn handle_client(
                                                                 (
                                                                     TaskRequest::KerberosCCache(
                                                                         uid,
+                                                                        gid,
                                                                         cloud_ccache,
                                                                         ad_ccache,
                                                                     ),

@@ -140,6 +140,7 @@ impl From<PamAuthResponse> for ClientResponse {
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct HomeDirectoryInfo {
+    pub uid: u32,
     pub gid: u32,
     pub name: String,
     pub aliases: Vec<String>,
@@ -150,7 +151,7 @@ pub enum TaskRequest {
     HomeDirectory(HomeDirectoryInfo),
     LocalGroups(String),
     LogonScript(String, String),
-    KerberosCCache(uid_t, Vec<u8>, Vec<u8>),
+    KerberosCCache(uid_t, uid_t, Vec<u8>, Vec<u8>),
     LoadProfilePhoto(String, String),
 }
 
@@ -161,7 +162,9 @@ impl TaskRequest {
             TaskRequest::HomeDirectory(info) => format!("HomeDirectory({:?})", info),
             TaskRequest::LocalGroups(groups) => format!("LocalGroups({})", groups),
             TaskRequest::LogonScript(account_id, _) => format!("LogonScript({}, ...)", account_id),
-            TaskRequest::KerberosCCache(uid, _, _) => format!("KerberosCCache({}, ...)", uid),
+            TaskRequest::KerberosCCache(uid, gid, _, _) => {
+                format!("KerberosCCache({}, {}, ...)", uid, gid)
+            }
             TaskRequest::LoadProfilePhoto(account_id, _) => {
                 format!("LoadProfilePhoto({}, ...)", account_id)
             }
