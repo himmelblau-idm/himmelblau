@@ -25,6 +25,7 @@ use std::path::PathBuf;
 use std::process::Command;
 use tracing::{debug, error};
 
+use crate::constants::MAPPED_NAME_CACHE;
 use crate::constants::{
     CN_NAME_MAPPING, DEFAULT_AUTHORITY_HOST, DEFAULT_BROKER_SOCK_PATH, DEFAULT_CACHE_TIMEOUT,
     DEFAULT_CONFIG_PATH, DEFAULT_CONN_TIMEOUT, DEFAULT_DB_PATH, DEFAULT_HELLO_ENABLED,
@@ -33,6 +34,7 @@ use crate::constants::{
     DEFAULT_SFA_FALLBACK_ENABLED, DEFAULT_SHELL, DEFAULT_SOCK_PATH, DEFAULT_TASK_SOCK_PATH,
     DEFAULT_USE_ETC_SKEL, SERVER_CONFIG_PATH,
 };
+use crate::mapping::{MappedNameCache, Mode};
 use crate::unix_config::{HomeAttr, HsmType};
 use himmelblau::error::MsalError;
 use idmap::DEFAULT_IDMAP_RANGE;
@@ -639,12 +641,22 @@ impl HimmelblauConfig {
         // if a name is supplied, or to a name if the UPN is supplied.
         if !account_id.contains('@') {
             if let Some(name_mapping_script) = &name_mapping_script {
+                let name_cache = match MappedNameCache::new(MAPPED_NAME_CACHE, &Mode::ReadWrite) {
+                    Ok(name_cache) => Some(name_cache),
+                    Err(_) => None,
+                };
+
                 let output = Command::new(name_mapping_script).arg(account_id).output();
 
                 match output {
                     Ok(output) => {
                         if output.status.success() {
-                            return String::from_utf8_lossy(&output.stdout).trim().to_string();
+                            let upn = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                            if let Some(name_cache) = &name_cache {
+                                // Failing to insert a name map is not a critical failure.
+                                let _ = name_cache.insert_mapping(&upn, account_id);
+                            }
+                            return upn;
                         } else {
                             error!("Script execution failed with error: {:?}", output.status);
                         }
@@ -669,6 +681,33 @@ impl HimmelblauConfig {
             return format!("{}@{}", account_id, domains[0]);
         }
         account_id.to_string()
+    }
+
+    /// This function maps a UPN to a mapped name. If a mapping script is
+    /// configured, it will use the mapping cache to obtain the mapped name.
+    /// If a mapping script is not configured, but upn to cn mapping is
+    /// enabled, it will map the upn to the cn. Otherwise it will return the
+    /// name unchanged.
+    pub fn map_upn_to_name(&self, upn: &str) -> String {
+        if !upn.contains('@') {
+            // This isn't a upn, just return the input unchanged
+            return upn.to_string();
+        }
+
+        let res;
+        if self.get_name_mapping_script().is_some() {
+            if let Ok(name_mapping_cache) = MappedNameCache::new(MAPPED_NAME_CACHE, &Mode::ReadOnly)
+            {
+                res = name_mapping_cache.get_mapped_name(upn);
+            } else {
+                res = upn.to_string();
+            }
+        } else if self.get_cn_name_mapping() {
+            res = upn.split('@').next().unwrap_or(upn).to_string();
+        } else {
+            res = upn.to_string();
+        }
+        res
     }
 }
 
