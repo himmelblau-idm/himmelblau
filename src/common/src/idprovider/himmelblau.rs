@@ -22,6 +22,7 @@ use super::interface::{
 use crate::config::split_username;
 use crate::config::HimmelblauConfig;
 use crate::config::IdAttr;
+use crate::constants::EDGE_BROWSER_CLIENT_ID;
 use crate::db::KeyStoreTxn;
 use crate::idprovider::interface::tpm;
 use crate::unix_proto::PamAuthRequest;
@@ -780,16 +781,19 @@ impl IdProvider for HimmelblauProvider {
         // If an app_id is defined in the config, the app should have the
         // GroupMember.Read.All API permission.
         let cfg = self.config.read().await;
-        let (scopes, resource) = if cfg.get_app_id(&self.domain).is_some() {
-            (vec!["GroupMember.Read.All"], None)
+        let (client_id, scopes) = if cfg.get_app_id(&self.domain).is_some() {
+            (None, vec!["GroupMember.Read.All"])
         } else {
-            (vec![], Some("https://graph.microsoft.com".to_string()))
+            (
+                Some(EDGE_BROWSER_CLIENT_ID),
+                vec!["https://graph.microsoft.com/.default"],
+            )
         };
         let token = match self
             .client
             .write()
             .await
-            .exchange_prt_for_access_token(&prt, scopes, resource, None, tpm, machine_key)
+            .exchange_prt_for_access_token(&prt, scopes, None, client_id, tpm, machine_key)
             .await
         {
             Ok(token) => token,
@@ -950,10 +954,13 @@ impl IdProvider for HimmelblauProvider {
                 // If an app_id is defined in the config, the app should have the
                 // GroupMember.Read.All API permission.
                 let cfg = self.config.read().await;
-                let (scopes, resource) = if cfg.get_app_id(&self.domain).is_some() {
-                    (vec!["GroupMember.Read.All"], None)
+                let (client_id, scopes) = if cfg.get_app_id(&self.domain).is_some() {
+                    (None, vec!["GroupMember.Read.All"])
                 } else {
-                    (vec![], Some("https://graph.microsoft.com".to_string()))
+                    (
+                        Some(EDGE_BROWSER_CLIENT_ID),
+                        vec!["https://graph.microsoft.com/.default"],
+                    )
                 };
                 let mtoken2 = self
                     .client
@@ -962,8 +969,8 @@ impl IdProvider for HimmelblauProvider {
                     .acquire_token_by_refresh_token(
                         &$token.refresh_token,
                         scopes.clone(),
-                        resource.clone(),
                         None,
+                        client_id,
                         tpm,
                         machine_key,
                     )
@@ -987,8 +994,8 @@ impl IdProvider for HimmelblauProvider {
                                         .acquire_token_by_refresh_token(
                                             &$token.refresh_token,
                                             scopes,
-                                            resource,
                                             None,
+                                            client_id,
                                             tpm,
                                             machine_key,
                                         )
@@ -1012,10 +1019,13 @@ impl IdProvider for HimmelblauProvider {
                 // If an app_id is defined in the config, the app should have the
                 // GroupMember.Read.All API permission.
                 let cfg = self.config.read().await;
-                let (scopes, resource) = if cfg.get_app_id(&self.domain).is_some() {
-                    (vec!["GroupMember.Read.All"], None)
+                let (client_id, scopes) = if cfg.get_app_id(&self.domain).is_some() {
+                    (None, vec!["GroupMember.Read.All"])
                 } else {
-                    (vec![], Some("https://graph.microsoft.com".to_string()))
+                    (
+                        Some(EDGE_BROWSER_CLIENT_ID),
+                        vec!["https://graph.microsoft.com/.default"],
+                    )
                 };
                 let token = self
                     .client
@@ -1025,8 +1035,8 @@ impl IdProvider for HimmelblauProvider {
                         account_id,
                         &$hello_key,
                         scopes,
-                        resource,
                         None,
+                        client_id,
                         tpm,
                         machine_key,
                         &$cred,
