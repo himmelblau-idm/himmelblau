@@ -47,3 +47,4 @@ pub const BROKER_CLIENT_IDENT: &str = "38aa3b87-a06d-4817-b275-7a316988d93b";
 pub const CN_NAME_MAPPING: bool = true;
 pub const DEFAULT_HELLO_PIN_MIN_LEN: usize = 6;
 pub const DEFAULT_CCACHE_DIR: &str = "/tmp/krb5cc_";
+pub const EDGE_BROWSER_CLIENT_ID: &str = "d7b530a4-7680-4c23-a8bf-c52c121d2e87";
