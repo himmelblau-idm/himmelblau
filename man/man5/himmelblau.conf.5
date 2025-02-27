@@ -453,6 +453,9 @@ will be used instead.
 
 This option allows configuring a separate application ID specifically for logon token requests, ensuring the correct API permissions are applied.
 
+.PP
+\fBNote:\fR In the Azure Portal for the application corresponding to \fBlogon_token_app_id\fR, ensure that the redirect URI \fIhttps://login.microsoftonline.com/common/oauth2/nativeclient\fR is enabled in the application's Authentication section under “Mobile and desktop applications.” This is required so that Himmelblau can obtain the necessary tokens.
+
 .EXAMPLES
 [example.com]
 logon_token_app_id = 544e695f-5d78-442e-b14e-e114e95e640c
@@ -469,6 +472,9 @@ API permission for rfc2307 idmapping.
 If
 .B logon_token_app_id
 is not set, this app_id will also be used for requesting access tokens for the logon script.
+
+.PP
+\fBNote:\fR For the application corresponding to \fBapp_id\fR, ensure that the redirect URI \fIhimmelblau://Himmelblau.EntraId.BrokerPlugin\fR is added in the application's Authentication section under “Mobile and desktop applications” in the Azure Portal. This allows Himmelblau to properly handle token redirection for the extended attribute lookups.
 
 .EXAMPLES
 [example.com]
