@@ -1901,12 +1901,20 @@ impl HimmelblauProvider {
                         e
                     )
                 })?,
-                None => {
-                    return Err(anyhow!(
-                        "Group {} has no gidNumber defined in the directory!",
-                        name
-                    ));
-                }
+                None => match config.get_rfc2307_group_fallback_map() {
+                    Some(IdAttr::Uuid) => idmap
+                        .object_id_to_unix_id(&self.tenant_id, &id)
+                        .map_err(|e| anyhow!("Failed fetching gid for {}: {:?}", id, e))?,
+                    Some(IdAttr::Name) => idmap
+                        .gen_to_unix(&self.tenant_id, &name)
+                        .map_err(|e| anyhow!("Failed fetching gid for {}: {:?}", name, e))?,
+                    Some(_) | None => {
+                        return Err(anyhow!(
+                            "Group {} has no gidNumber defined in the directory and no fallback was set!",
+                            name
+                        ));
+                    }
+                },
             },
         };
 

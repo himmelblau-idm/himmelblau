@@ -465,6 +465,16 @@ impl HimmelblauConfig {
         }
     }
 
+    pub fn get_rfc2307_group_fallback_map(&self) -> Option<IdAttr> {
+        self.config
+            .get("global", "rfc2307_group_fallback_map")
+            .and_then(|id_attr_map| match id_attr_map.to_lowercase().as_str() {
+                "uuid" => Some(IdAttr::Uuid),
+                "name" => Some(IdAttr::Name),
+                _ => None,
+            })
+    }
+
     pub fn get_enable_sfa_fallback(&self) -> bool {
         match_bool(
             self.config.get("global", "enable_sfa_fallback"),
