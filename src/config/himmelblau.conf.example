@@ -24,6 +24,12 @@
 # recommeneded.
 # id_attr_map = name ; {name|uuid|rfc2307}
 #
+# Specify whether to map group IDs (GIDs) based on the object name or object UUID
+# when no gidNumber attribute is found in an on-prem Active Directory instance
+# synchronized to Azure Entra ID. This option is only used if id_attr_map is set
+# to rfc2307. If not set, groups without a gidNumber will not be available to NSS.
+# rfc2307_group_fallback_map = name ; {name|uuid}
+#
 # If you have an ODC provider (the default being odc.officeapps.live.com), specify
 # the hostname for sending a federationProvider request. If the federationProvider
 # request is successful, the tenant_id and authority_host options do not need to
