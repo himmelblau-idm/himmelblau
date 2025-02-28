@@ -65,28 +65,8 @@
         nixosModules.himmelblau = { pkgs, lib, config, ...}:
           let cfg = config.services.himmelblau; in {
             options = with lib; {
-              services.himmelblau = {
-                enable = mkEnableOption "Himmelblau";
-
-                package = mkOption {
-                  type = types.path;
-                  default = self.packages.${system}.default;
-                  description = "Package to use for Himmelblau service.";
-                };
-
-                debugFlag = mkOption {
-                  type = types.bool;
-                  default = false;
-                  description = "Whether to pass the debug (-d) flag to the himmelblaud binary.";
-                };
-
-                pamServices = mkOption {
-                  type = types.listOf types.str;
-                  default = ["passwd" "login" "su"];
-                  description = "Which PAM services to add the himmelblau module to.";
-                };
-
-                settings = {  # settings submodule https://github.com/NixOS/rfcs/pull/42
+              services.himmelblau = let
+                globalOptions = {
                   domains = mkOption {
                     type = types.listOf types.str;
                     example = [ "my.domain.com" ];
@@ -101,18 +81,7 @@
                     type = types.bool;
                     default = false;
                     description = ''
-                      Configure whether the logger will output debug messages to the journal.
-                    '';
-                  };
-                  pam_allow_groups = mkOption {
-                    type = types.listOf types.str;
-                    example = [ "XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX" ];
-                    description = ''
-                      pam_allow_groups SHOULD be defined or else all users will be authorized by
-                      pam account. The option should be set to a comma seperated list of Users and
-                      Groups which are allowed access to the system. Groups MUST be specified by
-                      Object ID, not by UPN. This is because Azure does not permit regular users
-                      the right to read group names, only the Object IDs which they belong to.
+                      Configure whether the daemon will output debug messages to the journal.
                     '';
                   };
                   id_attr_map = mkOption {
@@ -122,17 +91,6 @@
                       Specify whether to map uid/gid based on the object name or the object uuid.
                       By object uuid mapping is the old default, but can cause authentication
                       issues over SSH. Mapping by name is recommeneded.
-                    '';
-                  };
-                  odc_provider = mkOption {
-                    type = types.nullOr types.str;
-                    default = null;
-                    example = "odc.officeapps.live.com";
-                    description = ''
-                      If you have an ODC provider (the default being odc.officeapps.live.com), specify
-                      the hostname for sending a federationProvider request. If the federationProvider
-                      request is successful, the tenant_id and authority_host options do not need to
-                      be specified.
                     '';
                   };
                   enable_hello = mkOption {
@@ -186,9 +144,90 @@
                       configuration.
                     '';
                   };
+
+                  db_path = mkOption {
+                    type = types.str;
+                    default = "/var/cache/himmelblaud/himmelblau.cache.db";
+                    description = "The location of the cache database";
+                  };
+                  hsm_pin_path = mkOption {
+                    type = types.str;
+                    default = "/var/lib/himmelblaud/hsm-pin";
+                    description = "The location where the hsm pin will be stored";
+                  };
+                  socket_path = mkOption {
+                    type = types.str;
+                    default = "/var/run/himmelblaud/socket";
+                  };
+                  task_socket_path = mkOption {
+                    type = types.str;
+                    default = "/var/run/himmelblaud/task_sock";
+                  };
+                  broker_socket_path = mkOption {
+                    type = types.str;
+                    default = "/var/run/himmelblaud/broker_sock";
+                  };
+
+                  connection_timeout = mkOption {
+                    type = types.ints.unsigned;
+                    default = 2;
+                  };
+                  cache_timeout = mkOption {
+                    type = types.ints.unsigned;
+                    default = 300;
+                  };
+                  use_etc_skel = mkOption {
+                    type = types.bool;
+                    default = false;
+                  };
+                  selinux = mkOption {
+                    type = types.bool;
+                    default = false;
+                  };
+                };
+                domainOptions = {
+                  pam_allow_groups = mkOption {
+                    default = null;
+                    type = types.nullOr (types.listOf types.str);
+                    example = [ "XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX" ];
+                    description = ''
+                      pam_allow_groups SHOULD be defined or else all users will be authorized by
+                      pam account. The option should be set to a comma seperated list of Users and
+                      Groups which are allowed access to the system. Groups MUST be specified by
+                      Object ID, not by UPN. This is because Azure does not permit regular users
+                      the right to read group names, only the Object IDs which they belong to.
+                    '';
+                  };
+                  odc_provider = mkOption {
+                    type = types.nullOr types.str;
+                    default = null;
+                    example = "odc.officeapps.live.com";
+                    description = ''
+                      If you have an ODC provider (the default being odc.officeapps.live.com), specify
+                      the hostname for sending a federationProvider request. If the federationProvider
+                      request is successful, the tenant_id and authority_host options do not need to
+                      be specified.
+                    '';
+                  };
+
+                  tenant_id = mkOption {
+                    type = types.nullOr types.str;
+                    default = null;
+                    example = "XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX";
+                  };
+                  app_id = mkOption {
+                    type = types.nullOr types.str;
+                    default = null;
+                    example = "XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX";
+                  };
+                  authority_host = mkOption {
+                    type = types.str;
+                    default = "login.microsoftonline.com";
+                  };
+
                   local_groups = mkOption {
-                    type = types.listOf types.str;
-                    default = [];
+                    type = types.nullOr (types.listOf types.str);
+                    default = null;
                     example = [ "docker" ];
                     description = ''
                       A comma seperated list of local groups that every Entra Id user should be a
@@ -218,43 +257,6 @@
                       failure causing authentication to fail.
                     '';
                   };
-                  tenant_id = mkOption {
-                    type = types.nullOr types.str;
-                    default = null;
-                    example = "XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX";
-                  };
-                  app_id = mkOption {
-                    type = types.nullOr types.str;
-                    default = null;
-                    example = "XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX";
-                  };
-                  authority_host = mkOption {
-                    type = types.str;
-                    default = "login.microsoftonline.com";
-                  };
-
-                  db_path = mkOption {
-                    type = types.str;
-                    default = "/var/cache/himmelblaud/himmelblau.cache.db";
-                    description = "The location of the cache database";
-                  };
-                  hsm_pin_path = mkOption {
-                    type = types.str;
-                    default = "/var/lib/himmelblaud/hsm-pin";
-                    description = "The location where the hsm pin will be stored";
-                  };
-                  socket_path = mkOption {
-                    type = types.str;
-                    default = "/var/run/himmelblaud/socket";
-                  };
-                  task_socket_path = mkOption {
-                    type = types.str;
-                    default = "/var/run/himmelblaud/task_sock";
-                  };
-                  broker_socket_path = mkOption {
-                    type = types.str;
-                    default = "/var/run/himmelblaud/broker_sock";
-                  };
 
                   home_prefix = mkOption {
                     type = types.str;
@@ -272,75 +274,69 @@
                     type = types.path;
                     default = "/run/current-system/sw/bin/bash";
                   };
-
                   idmap_range = mkOption {
                     type = types.str;
                     default = "5000000-5999999";
                   };
-                  connection_timeout = mkOption {
-                    type = types.ints.unsigned;
-                    default = 2;
-                  };
-                  cache_timeout = mkOption {
-                    type = types.ints.unsigned;
-                    default = 300;
-                  };
-                  use_etc_skel = mkOption {
-                    type = types.bool;
-                    default = false;
-                  };
-                  selinux = mkOption {
-                    type = types.bool;
-                    default = false;
-                  };
+                };
+              in {
+                enable = mkEnableOption "Himmelblau";
+
+                package = mkOption {
+                  type = types.path;
+                  default = self.packages.${system}.default;
+                  description = "Package to use for Himmelblau service.";
+                };
+
+                debugFlag = mkOption {
+                  type = types.bool;
+                  default = false;
+                  description = "Whether to pass the debug (-d) flag to the himmelblaud binary.";
+                };
+
+                pamServices = mkOption {
+                  type = types.listOf types.str;
+                  default = ["passwd" "login"];
+                  description = "Which PAM services to add the himmelblau module to.";
+                };
+
+                settings = globalOptions // domainOptions;  # settings submodule https://github.com/NixOS/rfcs/pull/42
+                domains = mkOption {
+                  default = {};
+                  type = types.attrsOf (types.submodule ({ name, config, ... }: { options = domainOptions; }));
+                  description = ''
+                    Setting to override the behaviour of himmelblau on a per-domain basis.
+                  '';
                 };
               };
             };
 
             config = lib.mkIf cfg.enable {
-              # TODO: replace with lib.generators.toINI
-              environment.etc."himmelblau/himmelblau.conf".text = ''
-                [global]
-                domains = ${builtins.concatStringsSep "," cfg.settings.domains}
-                debug = ${if cfg.settings.debug then "true" else "false"}
-                pam_allow_groups = ${builtins.concatStringsSep "," cfg.settings.pam_allow_groups}
-                id_attr_map = ${cfg.settings.id_attr_map}
-              '' + lib.optionalString (!builtins.isNull cfg.settings.odc_provider) ''
-                odc_provider = ${cfg.settings.odc_provider}
-              '' + ''
-                enable_hello = ${if cfg.settings.enable_hello then "true" else "false"}
-                hello_pin_min_length = ${builtins.toString cfg.settings.hello_pin_min_length}
-                enable_sfa_fallback = ${if cfg.settings.enable_sfa_fallback then "true" else "false"}
-                enable_experimental_mfa = ${if cfg.settings.enable_experimental_mfa then "true" else "false"}
-                cn_name_mapping = ${if cfg.settings.cn_name_mapping then "true" else "false"}
-              '' + lib.optionalString (cfg.settings.local_groups != []) ''
-                local_groups = ${builtins.concatStringsSep "," cfg.settings.local_groups}
-              '' + lib.optionalString (!builtins.isNull cfg.settings.logon_script) ''
-                logon_script = ${cfg.settings.logon_script}
-              '' + lib.optionalString (!builtins.isNull cfg.settings.logon_token_scopes) ''
-                logon_token_scopes = ${builtins.concatStringsSep "," cfg.settings.logon_token_scopes}
-              '' + lib.optionalString (!builtins.isNull cfg.settings.tenant_id) ''
-                tenant_id = ${cfg.settings.tenant_id}
-              '' + lib.optionalString (!builtins.isNull cfg.settings.app_id) ''
-                app_id = ${cfg.settings.app_id}
-              '' + ''
-                authority_host = ${cfg.settings.authority_host}
-                db_path = ${cfg.settings.db_path}
-                hsm_pin_path = ${cfg.settings.hsm_pin_path}
-                socket_path = ${cfg.settings.socket_path}
-                task_socket_path = ${cfg.settings.task_socket_path}
-                broker_socket_path = ${cfg.settings.broker_socket_path}
-                home_prefix = ${cfg.settings.home_prefix}
-                home_attr = ${cfg.settings.home_attr}
-                home_alias = ${cfg.settings.home_alias}
-                shell = ${cfg.settings.shell}
-                idmap_range = ${cfg.settings.idmap_range}
-                connection_timeout = ${builtins.toString cfg.settings.connection_timeout}
-                cache_timeout = ${builtins.toString cfg.settings.cache_timeout}
-                use_etc_skel = ${if cfg.settings.use_etc_skel then "true" else "false"}
-                selinux = ${if cfg.settings.selinux then "true" else "false"}
-              ''; # TODO: Support Per-Domain Customisation
               environment.etc."krb5.conf.d/krb5_himmelblau.conf".source = ./src/config/krb5_himmelblau.conf;
+              environment.etc."himmelblau/himmelblau.conf".text = with lib;  let
+                mkValueString = v:
+                  let err = t: v: abort ("mkValueString: ${t} not supported: ${toPretty {} v}");
+                  in   if isInt      v then toString v
+                  else if isFloat    v then floatToString v
+                  # convert derivations to store paths
+                  else if isDerivation v then toString v
+                  # we default to not quoting strings
+                  else if isString   v then v
+                  else if true  ==   v then "true"
+                  else if false ==   v then "false"
+                  # we space separate list elements, and recursively format them
+                  else if isList     v then concatMapStringsSep " " mkValueString v
+                  # we don't support nulls, attrsets, or functions
+                  else if null  ==   v then err "null" v
+                  else if isAttrs    v then err "attrsets" v
+                  else if isFunction v then err "functions" v
+                  else err "this value is" (toString v);
+                # don't add null fields to config files
+                trimAttrs = filterAttrs (n: v: v != null);
+                # merge global section with named sections from domains
+                configFile = {global = trimAttrs cfg.settings; } // mapAttrs (k: v: trimAttrs v) cfg.domains;
+              # toINI generator generates configuration file from an attribute set
+              in generators.toINI { mkKeyValue = k: v: "${k} = ${mkValueString v}"; } configFile;
 
               # Add himmelblau to the list of name services to lookup users/groups
               system.nssModules = [ cfg.package ];
@@ -448,6 +444,10 @@
               settings = {
                 domains = ["example.com"];
                 pam_allow_groups = [ "XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX" ];
+              };
+              domains."extra.com" = {
+                pam_allow_groups = [ "XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX" ];
+                shell = "/run/current-system/sw/bin/fish";
               };
             };
             environment.systemPackages = with pkgs; [ pamtester ];
