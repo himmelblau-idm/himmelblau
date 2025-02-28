@@ -95,6 +95,26 @@ Specify whether to map uid/gid based on the object name, the object uuid, or bas
 id_attr_map = <name|uuid|rfc2307>
 
 .TP
+.B rfc2307_group_fallback_map
+.RE
+Specify whether to map group IDs (GIDs) based on the object name or object UUID when no
+.B gidNumber
+attribute is found in an on-prem Active Directory instance synchronized to Azure Entra ID. This option is only applicable if
+.B id_attr_map
+is set to
+.B rfc2307.
+If
+.B id_attr_map = rfc2307
+and a group does not have a
+.B gidNumber
+defined in the directory, this setting determines the fallback method for mapping the group ID. If this option is not set, groups without a
+.B gidNumber
+will not be available to NSS.
+
+.EXAMPLES
+rfc2307_group_fallback_map = <name|uuid>
+
+.TP
 .B odc_provider
 .RE
 Specifies the hostname for sending federationProvider requests.
