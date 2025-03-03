@@ -265,7 +265,7 @@ async fn main() -> ExitCode {
             };
 
             if !really {
-                error!("Are you sure you want to proceed? If so use --really");
+                error!("Are you sure you want to proceed? This will revert the host to an unjoined state while NOT removing the host object from Entra Id. If so use --really");
                 return ExitCode::SUCCESS;
             }
 
