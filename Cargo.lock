@@ -4,7 +4,7 @@ version = 3
 
 [[package]]
 name = "aad-tool"
-version = "0.9.0"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "clap 4.5.31",
@@ -599,7 +599,7 @@ dependencies = [
 
 [[package]]
 name = "broker"
-version = "0.9.0"
+version = "1.0.0"
 dependencies = [
  "dbus",
  "himmelblau_unix_common",
@@ -1951,7 +1951,7 @@ dependencies = [
 
 [[package]]
 name = "himmelblau_unix_common"
-version = "0.9.0"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1986,7 +1986,7 @@ dependencies = [
 
 [[package]]
 name = "himmelblaud"
-version = "0.9.0"
+version = "1.0.0"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -2409,7 +2409,7 @@ dependencies = [
 
 [[package]]
 name = "idmap"
-version = "0.9.0"
+version = "1.0.0"
 dependencies = [
  "bindgen 0.71.1",
  "cc",
@@ -2593,7 +2593,7 @@ dependencies = [
 
 [[package]]
 name = "kanidm_lib_crypto"
-version = "0.9.0"
+version = "1.0.0"
 dependencies = [
  "argon2",
  "base64 0.22.1",
@@ -2612,7 +2612,7 @@ dependencies = [
 
 [[package]]
 name = "kanidm_lib_file_permissions"
-version = "0.9.0"
+version = "1.0.0"
 dependencies = [
  "kanidm_utils_users",
  "whoami",
@@ -2620,7 +2620,7 @@ dependencies = [
 
 [[package]]
 name = "kanidm_proto"
-version = "0.9.0"
+version = "1.0.0"
 dependencies = [
  "base32",
  "base64urlsafedata",
@@ -2640,7 +2640,7 @@ dependencies = [
 
 [[package]]
 name = "kanidm_utils_users"
-version = "0.9.0"
+version = "1.0.0"
 dependencies = [
  "libc",
 ]
@@ -3059,7 +3059,7 @@ dependencies = [
 
 [[package]]
 name = "nss_himmelblau"
-version = "0.9.0"
+version = "1.0.0"
 dependencies = [
  "himmelblau_unix_common",
  "lazy_static",
@@ -3453,7 +3453,7 @@ checksum = "b15813163c1d831bf4a13c3610c05c0d03b39feb07f7e09fa234dac9b15aaf39"
 
 [[package]]
 name = "pam_himmelblau"
-version = "0.9.0"
+version = "1.0.0"
 dependencies = [
  "authenticator",
  "base64 0.22.1",
@@ -4402,9 +4402,9 @@ checksum = "f79dfe2d285b0488816f30e700a7438c5a73d816b5b7d3ac72fbc48b0d185e03"
 
 [[package]]
 name = "serde"
-version = "1.0.217"
+version = "1.0.218"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "02fc4265df13d6fa1d00ecff087228cc0a2b5f3c0e87e258d8b94a156e984c70"
+checksum = "e8dfc9d19bdbf6d17e22319da49161d5d0108e4188e8b680aef6299eed22df60"
 dependencies = [
  "serde_derive",
 ]
@@ -4441,9 +4441,9 @@ dependencies = [
 
 [[package]]
 name = "serde_derive"
-version = "1.0.217"
+version = "1.0.218"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5a9bf7cf98d04a2b28aead066b7496853d4779c9cc183c440dbac457641e19a0"
+checksum = "f09503e191f4e797cb8aac08e9a4a4695c5edf6a2e70e376d961ddd5c969f82b"
 dependencies = [
  "proc-macro2 1.0.93",
  "quote 1.0.38",
@@ -4604,7 +4604,7 @@ checksum = "56199f7ddabf13fe5074ce809e7d3f42b42ae711800501b5b16ea82ad029c39d"
 
 [[package]]
 name = "sketching"
-version = "0.9.0"
+version = "1.0.0"
 dependencies = [
  "gethostname",
  "num_enum",
@@ -4679,11 +4679,11 @@ checksum = "6980e8d7511241f8acf4aebddbb1ff938df5eebe98691418c4468d0b72a96a67"
 
 [[package]]
 name = "sshd-config"
-version = "0.9.0"
+version = "1.0.0"
 
 [[package]]
 name = "sso"
-version = "0.9.0"
+version = "1.0.0"
 dependencies = [
  "clap 4.5.31",
  "serde",
