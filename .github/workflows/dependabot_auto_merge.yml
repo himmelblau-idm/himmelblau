@@ -12,6 +12,8 @@ name: Dependabot auto-approval and auto-merge
       - stable-0.5.x
       - stable-0.6.x
       - stable-0.7.x
+      - stable-0.8.x
+      - stable-0.9.x
 
 permissions:
   contents: write
