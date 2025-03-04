@@ -33,7 +33,7 @@ libc = "^0.2.170"
 pkg-config = "^0.3.27"
 lazy_static = "^1.4.0"
 paste = "^1.0.12"
-serde = { version = "^1.0.180", features = ["derive"] }
+serde = { version = "^1.0.218", features = ["derive"] }
 serde_json = "^1.0.96"
 tracing-subscriber = "^0.3.17"
 tracing = "^0.1.37"
@@ -45,9 +45,9 @@ reqwest = { version = "^0.12.2", features = ["json"] }
 anyhow = "^1.0.96"
 tokio = { version = "^1.28.1", features = ["rt", "macros", "sync", "time", "net", "io-util", "signal", "rt-multi-thread"] }
 tokio-util = { version = "^0.7.8", features = ["codec"] }
-async-trait = "^0.1.72"
-pem = "^3.0.2"
-chrono = "^0.4.31"
+async-trait = "^0.1.87"
+pem = "^3.0.5"
+chrono = "^0.4.40"
 os-release = "^0.1.0"
 jsonwebtoken = "^9.2.0"
 zeroize = "^1.7.0"
