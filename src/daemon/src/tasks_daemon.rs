@@ -431,32 +431,40 @@ async fn handle_tasks(stream: UnixStream, cfg: &HimmelblauConfig) {
             }
             Some(Ok(TaskRequest::LoadProfilePhoto(mut account_id, access_token))) => {
                 debug!("Received task -> LoadProfilePhoto({}, ...)", account_id);
-                let domain = split_username(&access_token).map(|(_, domain)| domain);
-                account_id = cfg.map_upn_to_name(&account_id);
-                // Set the profile picture
-                if let Some(domain) = domain {
-                    match File::create(format!("/var/lib/AccountsService/icons/{}", account_id)) {
-                        Ok(file) => {
-                            let authority_host = cfg.get_authority_host(&domain);
-                            let tenant_id = cfg.get_tenant_id(&domain);
-                            let graph_url = cfg.get_graph_url(&domain);
-                            if let Ok(graph) = Graph::new(
-                                &cfg.get_odc_provider(&domain),
-                                &domain,
-                                Some(&authority_host),
-                                tenant_id.as_deref(),
-                                graph_url.as_deref(),
-                            )
-                            .await
-                            {
-                                if let Err(e) =
-                                    graph.fetch_user_profile_photo(&access_token, file).await
+                let icons_dir = "/var/lib/AccountsService/icons/";
+                if !Path::new(icons_dir).exists() {
+                    info!("Profile photo directory '{}' doesn't exist.", icons_dir);
+                } else {
+                    let domain = split_username(&access_token).map(|(_, domain)| domain);
+                    account_id = cfg.map_upn_to_name(&account_id);
+                    // Set the profile picture
+                    if let Some(domain) = domain {
+                        match File::create(format!("/var/lib/AccountsService/icons/{}", account_id))
+                        {
+                            Ok(file) => {
+                                let authority_host = cfg.get_authority_host(&domain);
+                                let tenant_id = cfg.get_tenant_id(&domain);
+                                let graph_url = cfg.get_graph_url(&domain);
+                                if let Ok(graph) = Graph::new(
+                                    &cfg.get_odc_provider(&domain),
+                                    &domain,
+                                    Some(&authority_host),
+                                    tenant_id.as_deref(),
+                                    graph_url.as_deref(),
+                                )
+                                .await
                                 {
-                                    error!("Failed fetching user profile photo: {:?}", e);
+                                    if let Err(e) =
+                                        graph.fetch_user_profile_photo(&access_token, file).await
+                                    {
+                                        error!("Failed fetching user profile photo: {:?}", e);
+                                    }
                                 }
                             }
+                            Err(e) => {
+                                error!("Failed creating file for user profile photo: {:?}", e)
+                            }
                         }
-                        Err(e) => error!("Failed creating file for user profile photo: {:?}", e),
                     }
                 }
 
