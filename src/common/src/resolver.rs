@@ -13,6 +13,7 @@ use hashbrown::HashSet;
 use libc::uid_t;
 use std::collections::BTreeSet;
 use std::fmt::Display;
+use std::fs;
 use std::num::NonZeroUsize;
 use std::ops::{Add, DerefMut, Sub};
 use std::path::Path;
@@ -23,6 +24,7 @@ use lru::LruCache;
 use tokio::sync::Mutex;
 use uuid::Uuid;
 
+use crate::constants::SERVER_CONFIG_PATH;
 use crate::db::{Cache, CacheTxn, Db};
 use crate::idprovider::interface::{
     AuthCacheAction,
@@ -229,7 +231,14 @@ where
         let mut nxcache_txn = self.nxcache.lock().await;
         nxcache_txn.clear();
         let mut dbtxn = self.db.write().await;
-        dbtxn.clear().and_then(|_| dbtxn.commit()).map_err(|_| ())
+        dbtxn.clear().and_then(|_| dbtxn.commit()).map_err(|_| ())?;
+
+        // Also delete the generated himmelblau.conf. This unjoins the host!
+        let path = Path::new(SERVER_CONFIG_PATH);
+        if path.exists() {
+            fs::remove_file(path).map_err(|_| ())?;
+        }
+        Ok(())
     }
 
     pub async fn invalidate(&self) -> Result<(), ()> {
