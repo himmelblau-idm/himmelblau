@@ -1,0 +1,27 @@
+.qr-vbox {
+    spacing: 10px;
+}
+
+.qr-code-container {
+    width: 128px;
+    height: 128px;
+    max-width: 128px;
+    max-height: 128px;
+    margin-left: auto;
+    margin-right: auto;
+
+    background-color: #ffffff;
+    background-repeat: no-repeat;
+    background-size: contain;
+    background-position: center;
+
+    border-radius: 6px;
+    box-shadow: 0 0 8px rgba(0,0,0,0.3);
+    overflow: hidden;
+}
+
+.qr-instruction-label {
+    color: #bbb;
+    font-size: 10pt;
+    text-align: center;
+}
