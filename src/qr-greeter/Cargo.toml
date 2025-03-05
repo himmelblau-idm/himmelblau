@@ -1,0 +1,35 @@
+[package]
+name = "qr-greeter"
+version.workspace = true
+authors.workspace = true
+description = "GNOME Shell extension that adds a QR code to authentication prompts when a MS DAG URL is detected."
+rust-version.workspace = true
+edition.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[lib]
+path = "src/lib.rs"
+
+[package.metadata.deb]
+name = "himmelblau-qr-greeter"
+depends = ["gnome-shell"]
+assets = [
+  ["src/qr-greeter@himmelblau-idm.org/extension.js", "usr/share/gnome-shell/extensions/qr-greeter@himmelblau-idm.org/extension.js", "644"],
+  ["src/qr-greeter@himmelblau-idm.org/metadata.json", "usr/share/gnome-shell/extensions/qr-greeter@himmelblau-idm.org/metadata.json", "644"],
+  ["src/qr-greeter@himmelblau-idm.org/stylesheet.css", "usr/share/gnome-shell/extensions/qr-greeter@himmelblau-idm.org/stylesheet.css", "644"],
+  ["src/msdag.png", "usr/share/gnome-shell/extensions/qr-greeter@himmelblau-idm.org/msdag.png", "644"],
+]
+
+[package.metadata.generate-rpm]
+name = "himmelblau-qr-greeter"
+assets = [
+  { source = "src/qr-greeter@himmelblau-idm.org/extension.js", dest = "/usr/share/gnome-shell/extensions/qr-greeter@himmelblau-idm.org/extension.js", mode = "644" },
+  { source = "src/qr-greeter@himmelblau-idm.org/metadata.json", dest = "/usr/share/gnome-shell/extensions/qr-greeter@himmelblau-idm.org/metadata.json", mode = "644" },
+  { source = "src/qr-greeter@himmelblau-idm.org/stylesheet.css", dest = "/usr/share/gnome-shell/extensions/qr-greeter@himmelblau-idm.org/stylesheet.css", mode = "644" },
+  { source = "src/msdag.png", dest = "/usr/share/gnome-shell/extensions/qr-greeter@himmelblau-idm.org/msdag.png", mode = "644" },
+]
+
+[package.metadata.generate-rpm.requires]
+gnome-shell = "*"
