@@ -23,7 +23,6 @@ zbus = "5.2.0"
 
 [package.metadata.deb]
 name = "himmelblau-sso"
-depends = ["python3-pydbus"]
 assets = [
   ["target/release/linux-entra-sso", "usr/bin/linux-entra-sso", "755"],
   ["src/firefox/linux_entra_sso.json", "usr/lib/mozilla/native-messaging-hosts/", "644"],
@@ -51,6 +50,3 @@ assets = [
   { source = "../../platform/opensuse/com.microsoft.identity.broker1.service", dest = "/usr/share/dbus-1/services/", mode = "644" },
   { source = "target/release/broker", dest = "/usr/sbin/", mode = "755" },
 ]
-
-[package.metadata.generate-rpm.requires]
-python3-pydbus = "*"
