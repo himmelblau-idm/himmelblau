@@ -56,4 +56,4 @@ WORKDIR /himmelblau
 RUN cargo install cargo-deb
 
 # Build the project and create the .deb package
-CMD cargo clean && cargo deb --deb-revision=ubuntu24.04 -p himmelblaud && cargo deb --deb-revision=ubuntu24.04 -p nss_himmelblau && cargo deb --deb-revision=ubuntu24.04 -p pam_himmelblau && cargo deb --deb-revision=ubuntu24.04 -p sshd-config && cargo deb --deb-revision=ubuntu24.04 -p sso
+CMD cargo clean && cargo deb --deb-revision=ubuntu24.04 -p himmelblaud && cargo deb --deb-revision=ubuntu24.04 -p nss_himmelblau && cargo deb --deb-revision=ubuntu24.04 -p pam_himmelblau && cargo deb --deb-revision=ubuntu24.04 -p sshd-config && cargo deb --deb-revision=ubuntu24.04 -p sso && cargo deb --deb-revision=ubuntu24.04 -p qr-greeter
