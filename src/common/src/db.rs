@@ -254,7 +254,7 @@ impl<'a> DbTxn<'a> {
     ) -> Result<Vec<(Vec<u8>, i64)>, CacheError> {
         let mut stmt = self.conn
             .prepare(
-        "SELECT token, expiry FROM account_t WHERE uuid = :account_id OR name = :account_id OR spn = :account_id"
+        "SELECT token, expiry FROM account_t WHERE uuid = :account_id OR name = :account_id COLLATE NOCASE OR spn = :account_id COLLATE NOCASE"
             )
             .map_err(|e| {
                 self.sqlite_error("select prepare", &e)

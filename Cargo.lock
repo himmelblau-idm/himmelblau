@@ -4,7 +4,7 @@ version = 3
 
 [[package]]
 name = "aad-tool"
-version = "0.9.1"
+version = "0.9.4"
 dependencies = [
  "anyhow",
  "clap 4.5.31",
@@ -599,7 +599,7 @@ dependencies = [
 
 [[package]]
 name = "broker"
-version = "0.9.1"
+version = "0.9.4"
 dependencies = [
  "dbus",
  "himmelblau_unix_common",
@@ -1951,7 +1951,7 @@ dependencies = [
 
 [[package]]
 name = "himmelblau_unix_common"
-version = "0.9.1"
+version = "0.9.4"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1986,7 +1986,7 @@ dependencies = [
 
 [[package]]
 name = "himmelblaud"
-version = "0.9.1"
+version = "0.9.4"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -2409,7 +2409,7 @@ dependencies = [
 
 [[package]]
 name = "idmap"
-version = "0.9.1"
+version = "0.9.4"
 dependencies = [
  "bindgen 0.71.1",
  "cc",
@@ -2593,7 +2593,7 @@ dependencies = [
 
 [[package]]
 name = "kanidm_lib_crypto"
-version = "0.9.1"
+version = "0.9.4"
 dependencies = [
  "argon2",
  "base64 0.22.1",
@@ -2612,7 +2612,7 @@ dependencies = [
 
 [[package]]
 name = "kanidm_lib_file_permissions"
-version = "0.9.1"
+version = "0.9.4"
 dependencies = [
  "kanidm_utils_users",
  "whoami",
@@ -2620,7 +2620,7 @@ dependencies = [
 
 [[package]]
 name = "kanidm_proto"
-version = "0.9.1"
+version = "0.9.4"
 dependencies = [
  "base32",
  "base64urlsafedata",
@@ -2640,7 +2640,7 @@ dependencies = [
 
 [[package]]
 name = "kanidm_utils_users"
-version = "0.9.1"
+version = "0.9.4"
 dependencies = [
  "libc",
 ]
@@ -2697,9 +2697,9 @@ dependencies = [
 
 [[package]]
 name = "libhimmelblau"
-version = "0.6.4"
+version = "0.6.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "71ad2d45671e236050e9288cc963b2b463eca083ee33e505f7cb0be8b9b12599"
+checksum = "ace7abce6e062ed7127c366bd444eede1129cab137b3990680497434af96af32"
 dependencies = [
  "base64 0.22.1",
  "browser-window",
@@ -2737,7 +2737,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fc2f4eb4bc735547cfed7c0a4922cbd04a4655978c09b54f1f7b228750664c34"
 dependencies = [
  "cfg-if",
- "windows-targets 0.52.6",
+ "windows-targets 0.48.5",
 ]
 
 [[package]]
@@ -3059,7 +3059,7 @@ dependencies = [
 
 [[package]]
 name = "nss_himmelblau"
-version = "0.9.1"
+version = "0.9.4"
 dependencies = [
  "himmelblau_unix_common",
  "lazy_static",
@@ -3453,7 +3453,7 @@ checksum = "b15813163c1d831bf4a13c3610c05c0d03b39feb07f7e09fa234dac9b15aaf39"
 
 [[package]]
 name = "pam_himmelblau"
-version = "0.9.1"
+version = "0.9.4"
 dependencies = [
  "authenticator",
  "base64 0.22.1",
@@ -3955,7 +3955,7 @@ dependencies = [
 
 [[package]]
 name = "qr-greeter"
-version = "1.0.0"
+version = "0.9.4"
 
 [[package]]
 name = "quote"
@@ -4146,9 +4146,9 @@ dependencies = [
 
 [[package]]
 name = "ring"
-version = "0.17.9"
+version = "0.17.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e75ec5e92c4d8aede845126adc388046234541629e76029599ed35a003c7ed24"
+checksum = "70ac5d832aa16abd7d1def883a8545280c20a60f523a370aa3a9617c2b8550ee"
 dependencies = [
  "cc",
  "cfg-if",
@@ -4608,7 +4608,7 @@ checksum = "56199f7ddabf13fe5074ce809e7d3f42b42ae711800501b5b16ea82ad029c39d"
 
 [[package]]
 name = "sketching"
-version = "0.9.1"
+version = "0.9.4"
 dependencies = [
  "gethostname",
  "num_enum",
@@ -4683,11 +4683,11 @@ checksum = "6980e8d7511241f8acf4aebddbb1ff938df5eebe98691418c4468d0b72a96a67"
 
 [[package]]
 name = "sshd-config"
-version = "0.9.1"
+version = "0.9.4"
 
 [[package]]
 name = "sso"
-version = "0.9.1"
+version = "0.9.4"
 dependencies = [
  "clap 4.5.31",
  "serde",
