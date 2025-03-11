@@ -15,5 +15,9 @@ jobs:
     - uses: cachix/install-nix-action@v25
       with:
         extra_nix_config: experimental-features = nix-command flakes
+    - uses: cachix/cachix-action@v14
+      with:
+        name: himmelblau
+        signingKey: '${{ secrets.CACHIX_SIGNING_KEY }}'
     - run: nix flake check
-    - run: nix build --max-jobs 1 ".#himmelblau" ".#himmelblau-desktop"
+    - run: nix build --no-link --print-out-paths --max-jobs 1 ".#himmelblau" ".#himmelblau-desktop" | cachix push himmelblau
