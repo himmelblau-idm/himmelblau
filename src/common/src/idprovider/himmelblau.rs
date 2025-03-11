@@ -855,7 +855,7 @@ impl IdProvider for HimmelblauProvider {
                 if !auth_init.passwordless() {
                     Ok((AuthRequest::Password, AuthCredHandler::None))
                 } else {
-                    let flow = self
+                    let flow = match self
                         .client
                         .write()
                         .await
@@ -866,10 +866,16 @@ impl IdProvider for HimmelblauProvider {
                             Some(auth_init),
                         )
                         .await
-                        .map_err(|e| {
+                    {
+                        Ok(flow) => flow,
+                        Err(MsalError::PasswordRequired) => {
+                            return Ok((AuthRequest::Password, AuthCredHandler::None));
+                        }
+                        Err(e) => {
                             error!("{:?}", e);
-                            IdpError::BadRequest
-                        })?;
+                            return Err(IdpError::BadRequest);
+                        }
+                    };
                     let msg = flow.msg.clone();
                     let polling_interval = flow.polling_interval.unwrap_or(5000);
                     Ok((
