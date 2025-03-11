@@ -55,10 +55,15 @@ else
 endif
 
 DOCKER := $(shell command -v podman || command -v docker)
+NIX := $(shell command -v nix)
 
-deb:
-	mkdir -p ./packaging/
+.submodules:
 	git submodule init; git submodule update
+
+.packaging:
+	mkdir -p ./packaging/
+
+deb: .packaging .submodules
 	for v in ubuntu22.04 ubuntu24.04 debian12; do \
 		echo "Building Ubuntu $$v packages"; \
 		$(DOCKER) build -t himmelblau-$$v-build -f images/deb/Dockerfile.$$v .; \
@@ -66,9 +71,7 @@ deb:
 		mv ./target/debian/*.deb ./packaging/; \
 	done
 
-rpm:
-	mkdir -p ./packaging/
-	git submodule init; git submodule update
+rpm: .packaging .submodules
 	for v in rocky8 rocky9 sle15sp6 tumbleweed rawhide fedora41; do \
 		echo "Building $$v RPM packages"; \
 		$(DOCKER) build -t himmelblau-$$v-build -f images/rpm/Dockerfile.$$v .; \
@@ -79,10 +82,11 @@ rpm:
 		mv ./target/generate-rpm/*.rpm ./packaging/; \
 	done
 
-nix:
-	mkdir -p ./packaging/
-	git submodule init; git submodule update
-	nix --extra-experimental-features 'nix-command flakes' build --out-link ./packaging/nix-result
+nix: .packaging .submodules
+	echo "Building nix packages"
+	for v in himmelblau himmelblau-desktop; do \
+		$(NIX) --extra-experimental-features 'nix-command flakes' build ".#$$v" --out-link ./packaging/nix-$$v-result; \
+	done
 
 package: deb rpm nix
 	ls ./packaging/
