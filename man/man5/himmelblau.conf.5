@@ -81,10 +81,10 @@ debug = true
 .TP
 .B pam_allow_groups
 .RE
-A comma-separated list of Users and Groups permitted to access the system. Groups must be specified using their Object ID (not UPN) due to Azure's restrictions on reading group names.
+A comma-separated list of Entra Id Users and Groups permitted to access the system. Users should be specified by UPN. Groups may be specified using either their Object ID or their Name.
 
 .EXAMPLES
-pam_allow_groups = f3c9a7e4-7d5a-47e8-832f-3d2d92abcd12,d98c8e1d-7f8a-4597-babc-9d3b781ef456
+pam_allow_groups = f3c9a7e4-7d5a-47e8-832f-3d2d92abcd12,EntraSudoersGroup,admin@himmelblau-idm.org
 
 .TP
 .B id_attr_map
