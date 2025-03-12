@@ -81,10 +81,10 @@ debug = true
 .TP
 .B pam_allow_groups
 .RE
-A comma-separated list of Users and Groups permitted to access the system. Groups must be specified using their Object ID (not UPN) due to Azure's restrictions on reading group names.
+A comma-separated list of Entra Id Users and Groups permitted to access the system. Users should be specified by UPN. Groups may be specified using either their Object ID or their Name.
 
 .EXAMPLES
-pam_allow_groups = f3c9a7e4-7d5a-47e8-832f-3d2d92abcd12,d98c8e1d-7f8a-4597-babc-9d3b781ef456
+pam_allow_groups = f3c9a7e4-7d5a-47e8-832f-3d2d92abcd12,EntraSudoersGroup,admin@himmelblau-idm.org
 
 .TP
 .B id_attr_map
@@ -220,6 +220,18 @@ else
 fi
 .fi
 .RE
+
+.TP
+.B apply_policy
+.RE
+A boolean option that enables the experimental application of Intune policies to the authenticated user. This setting does not mark the device as compliant in Entra ID, nor does it register the device as managed in Intune. Instead, it attempts to apply any assigned Intune policies to the user session.
+
+For this feature to function correctly, an `app_id` must be defined for the corresponding domain, and the "DeviceManagementConfiguration.Read.All" API permission must be granted to it.
+
+By default, this option is disabled.
+
+.EXAMPLES
+apply_policy = false
 
 .TP
 .B authority_host

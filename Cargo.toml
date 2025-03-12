@@ -5,6 +5,7 @@ members = [
 	"src/common",
 	"src/pam",
 	"src/nss",
+	"src/policies",
 	"src/sketching",
 	"src/proto",
 	"src/crypto",
@@ -47,6 +48,7 @@ anyhow = "^1.0.96"
 tokio = { version = "^1.28.1", features = ["rt", "macros", "sync", "time", "net", "io-util", "signal", "rt-multi-thread"] }
 tokio-util = { version = "^0.7.8", features = ["codec"] }
 async-trait = "^0.1.87"
+himmelblau_policies = { path = "src/policies" }
 pem = "^3.0.5"
 chrono = "^0.4.40"
 os-release = "^0.1.0"

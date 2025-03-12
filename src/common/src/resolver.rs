@@ -1002,14 +1002,14 @@ where
                     .flat_map(|g| [g.name.clone(), g.uuid.hyphenated().to_string()])
                     .collect();
 
-                trace!(
+                debug!(
                     "Checking if user is in allowed groups ({:?}) -> {:?}",
                     self.pam_allow_groups,
                     user_set,
                 );
                 let intersection_count = user_set.intersection(&self.pam_allow_groups).count();
-                trace!("Number of intersecting groups: {}", intersection_count);
-                trace!("User has valid token: {}", tok.valid);
+                debug!("Number of intersecting groups: {}", intersection_count);
+                debug!("User has valid token: {}", tok.valid);
 
                 intersection_count > 0 && tok.valid
             }))
