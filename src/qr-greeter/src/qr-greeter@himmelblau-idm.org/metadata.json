@@ -3,7 +3,7 @@
   "name": "Himmelblau QR Greeter",
   "description": "Adds a QR code to authentication prompts when a URL is detected.",
   "version": 1,
-  "shell-version": ["45", "46"],
+  "shell-version": ["45", "46", "47"],
   "session-modes": ["gdm"],
   "donations": { "opencollective" : "himmelblau" }
 }
