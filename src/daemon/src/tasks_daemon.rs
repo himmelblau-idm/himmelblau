@@ -435,12 +435,13 @@ async fn handle_tasks(stream: UnixStream, cfg: &HimmelblauConfig) {
                 if !Path::new(icons_dir).exists() {
                     info!("Profile photo directory '{}' doesn't exist.", icons_dir);
                 } else {
-                    let domain = split_username(&access_token).map(|(_, domain)| domain);
+                    let upn = account_id.clone();
+                    let domain = split_username(&upn).map(|(_, domain)| domain);
                     account_id = cfg.map_upn_to_name(&account_id);
                     // Set the profile picture
                     if let Some(domain) = domain {
-                        match File::create(format!("/var/lib/AccountsService/icons/{}", account_id))
-                        {
+                        let filename = format!("/var/lib/AccountsService/icons/{}", account_id);
+                        match File::create(&filename) {
                             Ok(file) => {
                                 let authority_host = cfg.get_authority_host(&domain);
                                 let tenant_id = cfg.get_tenant_id(&domain);
@@ -465,6 +466,25 @@ async fn handle_tasks(stream: UnixStream, cfg: &HimmelblauConfig) {
                                 error!("Failed creating file for user profile photo: {:?}", e)
                             }
                         }
+                        let user_file = format!("/var/lib/AccountsService/users/{}", account_id);
+                        match File::create(&user_file) {
+                            Ok(mut file) => {
+                                let contents =
+                                    format!("[User]\nIcon={}\nSystemAccount=false\n", filename);
+
+                                if let Err(e) = file.write_all(contents.as_bytes()) {
+                                    error!("Failed writing to user profile settings: {:?}", e);
+                                }
+                            }
+                            Err(e) => {
+                                error!(
+                                    "Failed creating file for user profile settings: {:?}",
+                                    e
+                                )
+                            }
+                        }
+                    } else {
+                        error!("Couldn't parse domain from name {}", account_id);
                     }
                 }
 
