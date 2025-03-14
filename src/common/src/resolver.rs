@@ -30,12 +30,14 @@ use crate::idprovider::interface::{
     AuthCacheAction,
     AuthCredHandler,
     AuthResult,
+    CacheState,
     GroupToken,
     Id,
     IdProvider,
     IdpError,
     // KeyStore,
     UserToken,
+    UserTokenState,
 };
 use crate::unix_config::{HomeAttr, UidAttr};
 use crate::unix_proto::{HomeDirectoryInfo, NssGroup, NssUser, PamAuthRequest, PamAuthResponse};
@@ -47,13 +49,6 @@ use tokio::sync::broadcast;
 use himmelblau::auth::UserToken as UnixUserToken;
 
 const NXCACHE_SIZE: NonZeroUsize = unsafe { NonZeroUsize::new_unchecked(128) };
-
-#[derive(Debug, Clone)]
-enum CacheState {
-    Online,
-    Offline,
-    OfflineNextCheck(SystemTime),
-}
 
 #[allow(clippy::large_enum_variant)]
 pub enum AuthSession {
@@ -84,8 +79,6 @@ where
     machine_key: MachineKey,
     hmac_key: HmacKey,
     client: I,
-    // Types to update still.
-    state: Mutex<CacheState>,
     pam_allow_groups: BTreeSet<String>,
     timeout_seconds: u64,
     default_shell: String,
@@ -192,7 +185,6 @@ where
             machine_key,
             hmac_key,
             client,
-            state: Mutex::new(CacheState::OfflineNextCheck(SystemTime::now())),
             timeout_seconds,
             pam_allow_groups: pam_allow_groups.into_iter().collect(),
             default_shell,
@@ -207,12 +199,13 @@ where
         })
     }
 
-    async fn get_cachestate(&self) -> CacheState {
-        let g = self.state.lock().await;
-        (*g).clone()
+    async fn get_cachestate(&self, account_id: Option<&str>) -> CacheState {
+        self.client.get_cachestate(account_id).await
+        /*let g = self.state.lock().await;
+        (*g).clone()*/
     }
 
-    async fn set_cachestate(&self, state: CacheState) {
+    /*async fn set_cachestate(&self, state: CacheState) {
         let mut g = self.state.lock().await;
         *g = state;
     }
@@ -225,7 +218,7 @@ where
 
     pub async fn mark_offline(&self) {
         self.set_cachestate(CacheState::Offline).await;
-    }
+    }*/
 
     pub async fn clear_cache(&self) -> Result<(), ()> {
         let mut nxcache_txn = self.nxcache.lock().await;
@@ -517,49 +510,25 @@ where
         drop(hsm_lock);
 
         match user_get_result {
-            Ok(mut n_tok) => {
-                if self.check_nxset(&n_tok.name, n_tok.gidnumber).await {
-                    // Refuse to release the token, it's in the denied set.
-                    trace!(
-                        "Account {:?} is in denied set, refusing to release token. It may need to be in the allow_local_account_override configuration list.",
-                        account_id
-                    );
-                    self.delete_cache_usertoken(n_tok.uuid).await?;
-                    Ok(None)
-                } else {
-                    // We have the token!
-                    self.set_cache_usertoken(&mut n_tok).await?;
-                    Ok(Some(n_tok))
-                }
+            Ok(UserTokenState::Update(mut n_tok)) => {
+                // We have the token!
+                self.set_cache_usertoken(&mut n_tok).await?;
+                Ok(Some(n_tok))
             }
-            Err(IdpError::Transport) => {
-                error!("transport error, moving to offline");
-                // Something went wrong, mark offline.
-                let time = SystemTime::now().add(Duration::from_secs(15));
-                self.set_cachestate(CacheState::OfflineNextCheck(time))
-                    .await;
-                Ok(token)
-            }
-            Err(IdpError::ProviderUnauthorised) => {
-                // Something went wrong, mark offline to force a re-auth ASAP.
-                let time = SystemTime::now().sub(Duration::from_secs(1));
-                self.set_cachestate(CacheState::OfflineNextCheck(time))
-                    .await;
-                Ok(token)
-            }
-            Err(IdpError::NotFound) => {
-                // We were able to contact the server but the entry has been removed, or
-                // is not longer a valid posix account.
+            Ok(UserTokenState::NotFound) => {
+                // It previously existed, so now purge it.
                 if let Some(tok) = token {
                     self.delete_cache_usertoken(tok.uuid).await?;
                 };
                 // Cache the NX here.
                 self.set_nxcache(account_id).await;
-
                 Ok(None)
             }
-            Err(IdpError::KeyStore) | Err(IdpError::BadRequest) | Err(IdpError::Tpm) => {
-                // Some other transient error, continue with the token.
+            Ok(UserTokenState::UseCached) => Ok(token),
+            Err(err) => {
+                // Something went wrong, we don't know what, but lets return the token
+                // anyway.
+                error!(?err);
                 Ok(token)
             }
         }
@@ -591,31 +560,9 @@ where
                     Ok(Some(n_tok))
                 }
             }
-            Err(IdpError::Transport) => {
-                error!("transport error, moving to offline");
-                // Something went wrong, mark offline.
-                let time = SystemTime::now().add(Duration::from_secs(15));
-                self.set_cachestate(CacheState::OfflineNextCheck(time))
-                    .await;
-                Ok(token)
-            }
-            Err(IdpError::ProviderUnauthorised) => {
-                // Something went wrong, mark offline.
-                let time = SystemTime::now().add(Duration::from_secs(15));
-                self.set_cachestate(CacheState::OfflineNextCheck(time))
-                    .await;
-                Ok(token)
-            }
-            Err(IdpError::NotFound) => {
-                if let Some(tok) = token {
-                    self.delete_cache_grouptoken(tok.uuid).await?;
-                };
-                // Cache the NX here.
-                self.set_nxcache(grp_id).await;
-                Ok(None)
-            }
-            Err(IdpError::KeyStore) | Err(IdpError::BadRequest) | Err(IdpError::Tpm) => {
+            Err(e) => {
                 // Some other transient error, continue with the token.
+                error!(?e);
                 Ok(token)
             }
         }
@@ -762,7 +709,13 @@ where
             trace!("get_usertoken error -> {:?}", e);
         })?;
 
-        let state = self.get_cachestate().await;
+        let state = match account_id {
+            Id::Name(name) => self.get_cachestate(Some(&name)).await,
+            Id::Gid(_) => match item {
+                Some(token) => self.get_cachestate(Some(&token.spn)).await,
+                None => self.get_cachestate(None).await,
+            },
+        };
 
         match (expired, state) {
             (_, CacheState::Offline) => {
@@ -813,7 +766,8 @@ where
             trace!("get_grouptoken error -> {:?}", e);
         })?;
 
-        let state = self.get_cachestate().await;
+        // In Himmelblau, we only ever utilize cached group tokens
+        let state = CacheState::Offline;
 
         match (expired, state) {
             (_, CacheState::Offline) => {
@@ -1029,7 +983,7 @@ where
 
         let id = Id::Name(account_id.to_string());
         let (_expired, token) = self.get_cached_usertoken(&id).await?;
-        let state = self.get_cachestate().await;
+        let state = self.get_cachestate(Some(account_id)).await;
 
         let online_at_init = if !matches!(state, CacheState::Online) {
             // Attempt a cache online.
@@ -1079,15 +1033,10 @@ where
                 Ok((auth_session, next_req.into()))
             }
             Err(IdpError::NotFound) => Ok((AuthSession::Denied, PamAuthResponse::Unknown)),
-            Err(IdpError::ProviderUnauthorised) | Err(IdpError::Transport) => {
-                error!("transport error, moving to offline");
-                // Something went wrong, mark offline.
-                let time = SystemTime::now().add(Duration::from_secs(15));
-                self.set_cachestate(CacheState::OfflineNextCheck(time))
-                    .await;
+            Err(e) => {
+                error!("{:?}", e);
                 Err(())
             }
-            Err(IdpError::BadRequest) | Err(IdpError::KeyStore) | Err(IdpError::Tpm) => Err(()),
         }
     }
 
@@ -1096,7 +1045,12 @@ where
         auth_session: &mut AuthSession,
         pam_next_req: PamAuthRequest,
     ) -> Result<PamAuthResponse, ()> {
-        let state = self.get_cachestate().await;
+        let state = match auth_session {
+            AuthSession::InProgress(account_id, _, _, _, _, _, _) => {
+                self.get_cachestate(Some(&account_id)).await
+            }
+            _ => CacheState::Offline,
+        };
 
         let maybe_err = match (&mut *auth_session, state) {
             (
@@ -1286,15 +1240,10 @@ where
             }
             Ok(AuthResult::Next(req)) => Ok(req.into()),
             Err(IdpError::NotFound) => Ok(PamAuthResponse::Unknown),
-            Err(IdpError::ProviderUnauthorised) | Err(IdpError::Transport) => {
-                error!("transport error, moving to offline");
-                // Something went wrong, mark offline.
-                let time = SystemTime::now().add(Duration::from_secs(15));
-                self.set_cachestate(CacheState::OfflineNextCheck(time))
-                    .await;
+            Err(e) => {
+                error!("{:?}", e);
                 Err(())
             }
-            Err(IdpError::KeyStore) | Err(IdpError::BadRequest) | Err(IdpError::Tpm) => Err(()),
         }
     }
 
@@ -1388,7 +1337,7 @@ where
     }
 
     pub async fn test_connection(&self) -> bool {
-        let state = self.get_cachestate().await;
+        let state = self.get_cachestate(None).await;
         match state {
             CacheState::Offline => {
                 trace!("Offline -> no change");
@@ -1397,27 +1346,14 @@ where
             CacheState::OfflineNextCheck(_time) => {
                 let mut hsm_lock = self.hsm.lock().await;
 
-                let prov_auth_result = self
+                let res = self
                     .client
-                    .provider_authenticate(hsm_lock.deref_mut())
+                    .check_online(hsm_lock.deref_mut(), SystemTime::now())
                     .await;
 
                 drop(hsm_lock);
 
-                match prov_auth_result {
-                    Ok(()) => {
-                        trace!("OfflineNextCheck -> authenticated");
-                        self.set_cachestate(CacheState::Online).await;
-                        true
-                    }
-                    Err(e) => {
-                        trace!("OfflineNextCheck -> disconnected, staying offline. {:?}", e);
-                        let time = SystemTime::now().add(Duration::from_secs(15));
-                        self.set_cachestate(CacheState::OfflineNextCheck(time))
-                            .await;
-                        false
-                    }
-                }
+                res
             }
             CacheState::Online => {
                 trace!("Online, no change");

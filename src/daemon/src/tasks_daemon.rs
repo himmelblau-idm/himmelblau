@@ -477,10 +477,7 @@ async fn handle_tasks(stream: UnixStream, cfg: &HimmelblauConfig) {
                                 }
                             }
                             Err(e) => {
-                                error!(
-                                    "Failed creating file for user profile settings: {:?}",
-                                    e
-                                )
+                                error!("Failed creating file for user profile settings: {:?}", e)
                             }
                         }
                     } else {
