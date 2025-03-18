@@ -88,5 +88,6 @@ nix: .packaging .submodules
 		$(NIX) --extra-experimental-features 'nix-command flakes' build ".#$$v" --out-link ./packaging/nix-$$v-result; \
 	done
 
-package: deb rpm nix
+# No need to build nix here, since it's being pushed to cachix
+package: deb rpm
 	ls ./packaging/
