@@ -14,6 +14,7 @@ use async_trait::async_trait;
 use himmelblau::{MFAAuthContinue, UserToken as UnixUserToken};
 use serde::{Deserialize, Serialize};
 use std::fmt;
+use std::time::SystemTime;
 use tokio::sync::broadcast;
 use uuid::Uuid;
 
@@ -41,6 +42,23 @@ pub enum IdpError {
     KeyStore,
     /// The idp failed to interact with the configured TPM
     Tpm,
+}
+
+#[derive(Debug, Clone)]
+pub enum CacheState {
+    Online,
+    Offline,
+    OfflineNextCheck(SystemTime),
+}
+
+pub enum UserTokenState {
+    /// Indicate to the resolver that the cached UserToken should be used, if present.
+    UseCached,
+    /// The requested entity is not found, or has been removed.
+    NotFound,
+
+    /// Update the cache state with the data found in this UserToken.
+    Update(UserToken),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -189,7 +207,7 @@ pub trait IdProvider {
     }
     */
 
-    async fn provider_authenticate(&self, _tpm: &mut tpm::BoxedDynTpm) -> Result<(), IdpError>;
+    async fn check_online(&self, _tpm: &mut tpm::BoxedDynTpm, _now: SystemTime) -> bool;
 
     async fn unix_user_get(
         &self,
@@ -197,7 +215,7 @@ pub trait IdProvider {
         _token: Option<&UserToken>,
         _tpm: &mut tpm::BoxedDynTpm,
         _machine_key: &tpm::MachineKey,
-    ) -> Result<UserToken, IdpError>;
+    ) -> Result<UserTokenState, IdpError>;
 
     async fn unix_user_access(
         &self,
@@ -300,4 +318,6 @@ pub trait IdProvider {
         id: &Id,
         _tpm: &mut tpm::BoxedDynTpm,
     ) -> Result<GroupToken, IdpError>;
+
+    async fn get_cachestate(&self, _account_id: Option<&str>) -> CacheState;
 }

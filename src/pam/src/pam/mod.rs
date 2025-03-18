@@ -602,7 +602,7 @@ macro_rules! match_sm_auth_client_response {
                         cred
                     } else {
                         let lconv = $conv.lock().unwrap();
-                        match lconv.send(PAM_PROMPT_ECHO_OFF, "Password: ") {
+                        match lconv.send(PAM_PROMPT_ECHO_OFF, "Entra Id Password: ") {
                             Ok(password) => match password {
                                 Some(cred) => cred,
                                 None => {

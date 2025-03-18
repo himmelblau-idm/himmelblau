@@ -60,3 +60,5 @@ if [[ -f "$KRB5_CONF" ]]; then
         echo "Added '$KRB5_INCLUDE_LINE' to $KRB5_CONF"
     fi
 fi
+
+DEBIAN_FRONTEND=noninteractive pam-auth-update
