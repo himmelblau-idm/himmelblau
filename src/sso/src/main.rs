@@ -30,28 +30,12 @@ const SSO_URL_DEFAULT: &str = "https://login.microsoftonline.com/";
 const EDGE_BROWSER_CLIENT_ID: &str = "d7b530a4-7680-4c23-a8bf-c52c121d2e87";
 const GRAPH_SCOPES: [&str; 1] = ["https://graph.microsoft.com/.default"];
 
-macro_rules! block_read {
-    ($buf:expr) => {{
-        loop {
-            match io::stdin().read_exact(&mut $buf) {
-                Ok(_) => break,
-                Err(ref e) if e.kind() == io::ErrorKind::UnexpectedEof => {
-                    continue;
-                }
-                Err(e) => {
-                    return Err(Box::new(e));
-                }
-            }
-        }
-    }};
-}
-
 struct NativeMessaging;
 
 impl NativeMessaging {
     fn get_message() -> Result<serde_json::Value, Box<dyn Error>> {
         let mut raw_length = [0u8; 4];
-        block_read!(raw_length);
+        io::stdin().read_exact(&mut raw_length)?;
         let message_length = u32::from_le_bytes(raw_length) as usize;
 
         let mut buffer = vec![0u8; message_length];

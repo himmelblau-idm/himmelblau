@@ -1,6 +1,6 @@
-Name: Azure authentication
+Name: Azure Entra Id authentication
 Default: yes
-Priority: 512
+Priority: 2048
 Auth-Type: Primary
 Auth:
 	[success=end default=ignore]    pam_himmelblau.so ignore_unknown_user
