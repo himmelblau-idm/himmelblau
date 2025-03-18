@@ -72,6 +72,16 @@ Himmelblau provides 2 packages and a module:
 * `himmelblau.packages.<arch>.himmelblau-desktop`: The daemon and GUI tools for 2FA signin within a (GTK) desktop environment.
 * `himmelblau.modules.himmelblau`: A NixOS Module that provides the most common options and service definitions.
 
+#### Enabling the himmelblau cachix cache
+
+Himmelblau builds our packages in CI and uploads them to [Cachix](https://www.cachix.org/) so you don't have to compile the software on every update.
+We sign these binaries before upload, and the cachix client will configure nix to trust our public signing key.
+
+```sh
+$ nix profile install 'nixpkgs#cachix'
+$ cachix use himmelblau
+```
+
 #### Classic Nixos configurations
 
 Classic NixOS configurations can use the `builtins.getFlake` function if they have enabled `flakes` compatability.
