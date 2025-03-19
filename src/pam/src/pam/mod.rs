@@ -370,6 +370,18 @@ pub struct PamKanidm;
 
 pam_hooks!(PamKanidm);
 
+macro_rules! pam_fail {
+    ($conv:expr, $msg:expr, $ret:expr) => {{
+        let _ = $conv.send(PAM_TEXT_INFO,
+            &format!(
+                "{} If you are now prompted for a password from pam_unix, please disregard the prompt, exit and try again.",
+                 $msg
+            )
+        );
+        return $ret;
+    }}
+}
+
 macro_rules! match_sm_auth_client_response {
     ($daemon_client:expr, $opts:ident, $conv:ident, $req:ident, $authtok:ident, $cfg:ident, $($pat:pat => $result:expr),*) => {{
         let timeout = $cfg.get_unix_sock_timeout();
@@ -380,7 +392,11 @@ macro_rules! match_sm_auth_client_response {
                     return PamResultCode::PAM_SUCCESS;
                 }
                 ClientResponse::PamAuthenticateStepResponse(PamAuthResponse::Denied) => {
-                    return PamResultCode::PAM_AUTH_ERR;
+                    pam_fail!(
+                        $conv.lock().unwrap(),
+                        "Entra Id authentication denied.",
+                        PamResultCode::PAM_AUTH_ERR
+                    );
                 }
                 ClientResponse::PamAuthenticateStepResponse(PamAuthResponse::Unknown) => {
                     if $opts.ignore_unknown_user {
@@ -425,12 +441,20 @@ macro_rules! match_sm_auth_client_response {
                                 },
                                 None => {
                                     debug!("no pin");
-                                    return PamResultCode::PAM_CRED_INSUFFICIENT;
+                                    pam_fail!(
+                                        conv,
+                                        "No Entra Id Hello PIN was supplied.",
+                                        PamResultCode::PAM_CRED_INSUFFICIENT
+                                    );
                                 }
                             },
                             Err(err) => {
                                 debug!("unable to get pin");
-                                return err;
+                                pam_fail!(
+                                    conv,
+                                    "No Entra Id Hello PIN was found.",
+                                    err
+                                );
                             }
                         };
 
@@ -439,12 +463,20 @@ macro_rules! match_sm_auth_client_response {
                                 Some(cred) => cred,
                                 None => {
                                     debug!("no confirmation pin");
-                                    return PamResultCode::PAM_CRED_INSUFFICIENT;
+                                    pam_fail!(
+                                        conv,
+                                        "No Entra Id Hello confirmation PIN was supplied.",
+                                        PamResultCode::PAM_CRED_INSUFFICIENT
+                                    );
                                 }
                             },
                             Err(err) => {
                                 debug!("unable to get confirmation pin");
-                                return err;
+                                pam_fail!(
+                                    conv,
+                                    "No Entra Id Hello confirmation PIN was found.",
+                                    err
+                                );
                             }
                         };
 
@@ -484,12 +516,20 @@ macro_rules! match_sm_auth_client_response {
                                 Some(cred) => cred,
                                 None => {
                                     debug!("no pin");
-                                    return PamResultCode::PAM_CRED_INSUFFICIENT;
+                                    pam_fail!(
+                                        conv,
+                                        "No Entra Id Hello PIN was supplied.",
+                                        PamResultCode::PAM_CRED_INSUFFICIENT
+                                    );
                                 }
                             },
                             Err(err) => {
                                 debug!("unable to get pin");
-                                return err;
+                                pam_fail!(
+                                    conv,
+                                    "No Entra Id Hello PIN was found.",
+                                    err
+                                );
                             }
                         }
                     };
@@ -504,7 +544,13 @@ macro_rules! match_sm_auth_client_response {
                 }) => {
                     let result = match fido_auth($conv.clone(), fido_challenge, fido_allow_list) {
                         Ok(assertion) => assertion,
-                        Err(e) => return e,
+                        Err(e) => {
+                            pam_fail!(
+                                $conv.lock().unwrap(),
+                                "Entra Id Fido authentication failed.",
+                                e
+                            );
+                        },
                     };
 
                     // Now setup the request for the next loop.
@@ -548,12 +594,20 @@ macro_rules! match_sm_auth_client_response {
                                 },
                                 None => {
                                     debug!("no password");
-                                    return PamResultCode::PAM_CRED_INSUFFICIENT;
+                                    pam_fail!(
+                                        conv,
+                                        "No Entra Id password was supplied.",
+                                        PamResultCode::PAM_CRED_INSUFFICIENT
+                                    );
                                 }
                             },
                             Err(err) => {
                                 debug!("unable to get password");
-                                return err;
+                                pam_fail!(
+                                    conv,
+                                    "No Entra Id password was found.",
+                                    err
+                                );
                             }
                         };
 
@@ -562,12 +616,20 @@ macro_rules! match_sm_auth_client_response {
                                 Some(cred) => cred,
                                 None => {
                                     debug!("no confirmation password");
-                                    return PamResultCode::PAM_CRED_INSUFFICIENT;
+                                    pam_fail!(
+                                        conv,
+                                        "No Entra Id confirmation password was supplied.",
+                                        PamResultCode::PAM_CRED_INSUFFICIENT
+                                    );
                                 }
                             },
                             Err(err) => {
                                 debug!("unable to get confirmation password");
-                                return err;
+                                pam_fail!(
+                                    conv,
+                                    "No Entra Id confirmation password was found.",
+                                    err
+                                );
                             }
                         };
 
@@ -607,12 +669,20 @@ macro_rules! match_sm_auth_client_response {
                                 Some(cred) => cred,
                                 None => {
                                     debug!("no password");
-                                    return PamResultCode::PAM_CRED_INSUFFICIENT;
+                                    pam_fail!(
+                                        lconv,
+                                        "No Entra Id password was supplied.",
+                                        PamResultCode::PAM_CRED_INSUFFICIENT
+                                    );
                                 }
                             },
                             Err(err) => {
                                 debug!("unable to get password");
-                                return err;
+                                pam_fail!(
+                                    lconv,
+                                    "No Entra Id password was found.",
+                                    err
+                                );
                             }
                         }
                     };
@@ -639,12 +709,20 @@ macro_rules! match_sm_auth_client_response {
                             Some(cred) => cred,
                             None => {
                                 debug!("no mfa code");
-                                return PamResultCode::PAM_CRED_INSUFFICIENT;
+                                pam_fail!(
+                                    lconv,
+                                    "No Entra Id auth code was supplied.",
+                                    PamResultCode::PAM_CRED_INSUFFICIENT
+                                );
                             }
                         },
                         Err(err) => {
                             debug!("unable to get mfa code");
-                            return err;
+                            pam_fail!(
+                                lconv,
+                                "No Entra Id auth code was found.",
+                                err
+                            );
                         }
                     };
 
@@ -663,12 +741,20 @@ macro_rules! match_sm_auth_client_response {
                 _ => {
                     // unexpected response.
                     error!(err = ?r, "PAM_IGNORE, unexpected resolver response");
-                    return PamResultCode::PAM_IGNORE;
+                    pam_fail!(
+                        $conv.lock().unwrap(),
+                        "An unexpected error occurred.",
+                        PamResultCode::PAM_IGNORE
+                    );
                 }
             },
             Err(err) => {
                 error!(?err, "PAM_IGNORE");
-                return PamResultCode::PAM_IGNORE;
+                pam_fail!(
+                    $conv.lock().unwrap(),
+                    "An unexpected error occured.",
+                    PamResultCode::PAM_IGNORE
+                );
             }
         }
     }}
