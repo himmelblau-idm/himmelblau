@@ -1160,7 +1160,7 @@ impl IdProvider for HimmelblauProvider {
                     Ok(token) => token,
                     Err(e) => {
                         error!("Failed to authenticate with hello key: {:?}", e);
-                        return Err(IdpError::BadRequest);
+                        return Ok((AuthResult::Denied, AuthCacheAction::None));
                     }
                 );
 
@@ -1298,7 +1298,7 @@ impl IdProvider for HimmelblauProvider {
                                         "Skipping SFA fallback because authentication failed: {:?}",
                                         e
                                     );
-                                    return Err(IdpError::BadRequest);
+                                    return Ok((AuthResult::Denied, AuthCacheAction::None));
                                 }
                             }
                             // We can only do a password auth for an enrolled device
@@ -1344,17 +1344,17 @@ impl IdProvider for HimmelblauProvider {
                                 )
                             } else {
                                 error!("Single factor authentication is only permitted on an enrolled host: {:?}", e);
-                                return Err(IdpError::BadRequest);
+                                return Ok((AuthResult::Denied, AuthCacheAction::None));
                             }
                         } else {
                             error!("{:?}", e);
-                            return Err(IdpError::BadRequest);
+                            return Ok((AuthResult::Denied, AuthCacheAction::None));
                         };
                         let token = match mtoken {
                             Ok(token) => token,
                             Err(e) => {
                                 error!("{:?}", e);
-                                return Err(IdpError::BadRequest);
+                                return Ok((AuthResult::Denied, AuthCacheAction::None));
                             }
                         };
                         let token2 = enroll_and_obtain_enrolled_token!(token);
@@ -1467,11 +1467,11 @@ impl IdProvider for HimmelblauProvider {
                                 ));
                             } else {
                                 error!("{:?}", e);
-                                return Err(IdpError::NotFound);
+                                return Ok((AuthResult::Denied, AuthCacheAction::None));
                             }
                         } else {
                             error!("{:?}", e);
-                            return Err(IdpError::NotFound);
+                            return Ok((AuthResult::Denied, AuthCacheAction::None));
                         }
                     }
                 );
@@ -1548,7 +1548,7 @@ impl IdProvider for HimmelblauProvider {
                                 ));
                             } else {
                                 error!("{:?}", e);
-                                return Err(IdpError::NotFound);
+                                return Ok((AuthResult::Denied, AuthCacheAction::None));
                             }
                         }
                         MsalError::MFAPollContinue => {
@@ -1559,7 +1559,7 @@ impl IdProvider for HimmelblauProvider {
                         }
                         e => {
                             error!("{:?}", e);
-                            return Err(IdpError::NotFound);
+                            return Ok((AuthResult::Denied, AuthCacheAction::None));
                         }
                     }
                 );
@@ -1631,11 +1631,11 @@ impl IdProvider for HimmelblauProvider {
                                 ));
                             } else {
                                 error!("{:?}", e);
-                                return Err(IdpError::NotFound);
+                                return Ok((AuthResult::Denied, AuthCacheAction::None));
                             }
                         } else {
                             error!("{:?}", e);
-                            return Err(IdpError::NotFound);
+                            return Ok((AuthResult::Denied, AuthCacheAction::None));
                         }
                     }
                 );
@@ -1735,14 +1735,15 @@ impl IdProvider for HimmelblauProvider {
                     error!("Failed setting pin value: {:?}", e);
                     IdpError::Tpm
                 })?;
-                tpm.identity_key_load(machine_key, Some(&pin), &hello_key)
-                    .map_err(|e| {
+                match tpm.identity_key_load(machine_key, Some(&pin), &hello_key) {
+                    Ok(_) => Ok(AuthResult::Success {
+                        token: token.clone(),
+                    }),
+                    Err(e) => {
                         error!("{:?}", e);
-                        IdpError::BadRequest
-                    })?;
-                Ok(AuthResult::Success {
-                    token: token.clone(),
-                })
+                        Ok(AuthResult::Denied)
+                    }
+                }
             }
             _ => Err(IdpError::BadRequest),
         }
