@@ -50,3 +50,16 @@ maintainer = "David Mulder <dmulder@suse.com>"
 assets = [
   { source = "target/release/libpam_himmelblau.so", dest = "/usr/lib64/security/pam_himmelblau.so", mode = "755" },
 ]
+post_install_script = '''
+# Only create a symlink if it doesn't already exist
+if [ ! -e /lib64/security/pam_himmelblau.so ]; then
+    mkdir -p /lib64/security
+    ln -s /usr/lib64/security/pam_himmelblau.so /lib64/security/pam_himmelblau.so
+fi
+'''
+post_uninstall_script = '''
+# Only remove a symlink if it exists and is a symlink
+if [ -L /lib64/security/pam_himmelblau.so ]; then
+    rm -f /lib64/security/pam_himmelblau.so
+fi
+'''
