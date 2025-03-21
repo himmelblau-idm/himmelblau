@@ -81,6 +81,7 @@ rpm: .packaging .submodules
 		done; \
 		mv ./target/generate-rpm/*.rpm ./packaging/; \
 	done
+	rpmsign --addsign ./packaging/*.rpm
 
 nix: .packaging .submodules
 	echo "Building nix packages"
