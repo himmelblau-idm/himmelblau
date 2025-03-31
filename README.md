@@ -10,7 +10,7 @@ Himmelblau supports Linux authentication to Microsoft Azure Entra ID via PAM and
 The PAM and NSS modules communicate with Entra ID via the himmelblaud daemon. Himmelblau plans to
 enforce Intune MDM policies, but this work isn't completed yet.
 
-[![sambaXP 2024: Bridging Worlds – Linux and Azure AD](img/sambaxp.png)](https://www.youtube.com/watch?v=G07FTKoNTRA "sambaXP 2024: Bridging Worlds – Linux and Azure AD")
+[![Azure Entra Id Authentication for Linux](img/sambaxp.png)](https://youtu.be/wCibnqVQ_bs "Azure Entra Id Authentication for Linux")
 
 ## Contact
 
