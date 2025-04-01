@@ -169,6 +169,9 @@ async fn main() -> ExitCode {
                 }
             };
 
+            // Map the name
+            let account_id = cfg.map_name_to_upn(&account_id);
+
             let mut timeout = cfg.get_unix_sock_timeout();
             let mut daemon_client = match DaemonClientBlocking::new(&cfg.get_socket_path()) {
                 Ok(dc) => dc,
