@@ -237,3 +237,9 @@ Setup PAM
     session optional    pam_unix.so try_first_pass
     session optional    pam_umask.so
     session optional    pam_env.so
+
+    # vim /etc/pam.d/common-password
+    password	sufficient	pam_himmelblau.so ignore_unknown_user
+    password        optional        pam_gnome_keyring.so    use_authtok
+    password	sufficient	pam_unix.so	use_authtok nullok shadow try_first_pass 
+    password	required	pam_deny.so
