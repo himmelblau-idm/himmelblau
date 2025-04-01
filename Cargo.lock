@@ -10,6 +10,7 @@ dependencies = [
  "clap 4.5.31",
  "clap_complete",
  "himmelblau_unix_common",
+ "libc",
  "rpassword",
  "sketching",
  "tokio",

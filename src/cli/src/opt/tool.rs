@@ -45,6 +45,21 @@ pub enum HimmelblauUnixOpt {
         #[clap(short, long)]
         debug: bool,
     },
+    /// Configure PAM to use pam_himmelblau
+    ConfigurePam {
+        #[clap(short, long)]
+        debug: bool,
+        #[clap(long)]
+        really: bool,
+        #[clap(long = "auth-file")]
+        auth_file: Option<String>,
+        #[clap(long = "account-file")]
+        account_file: Option<String>,
+        #[clap(long = "session-file")]
+        session_file: Option<String>,
+        #[clap(long = "password-file")]
+        password_file: Option<String>,
+    },
     /// Check that the unixd daemon is online and able to connect correctly to the himmelblaud server.
     Status {
         #[clap(short, long)]
