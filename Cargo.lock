@@ -711,9 +711,9 @@ dependencies = [
 
 [[package]]
 name = "cc"
-version = "1.2.16"
+version = "1.2.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "be714c154be609ec7f5dad223a33bf1482fff90472de28f7362806e6d4832b8c"
+checksum = "1fcb57c740ae1daf453ae85f16e37396f672b039e00d9d866e07ddb24e328e3a"
 dependencies = [
  "shlex",
 ]
@@ -2698,9 +2698,9 @@ dependencies = [
 
 [[package]]
 name = "libhimmelblau"
-version = "0.6.9"
+version = "0.6.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e0d003f5b9b279b77c93a9c5af796adbbfa9ca59a82a0bcb85dcc768b611b063"
+checksum = "2b5213a1ea642062eb7f20b9fb6bb72a000447808e0cf394849bc229840f630b"
 dependencies = [
  "base64 0.22.1",
  "browser-window",
