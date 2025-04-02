@@ -153,6 +153,7 @@ pub enum TaskRequest {
     LogonScript(String, String),
     KerberosCCache(uid_t, uid_t, Vec<u8>, Vec<u8>),
     LoadProfilePhoto(String, String),
+    ApplyPolicy(String, String, String),
 }
 
 impl TaskRequest {
@@ -167,6 +168,9 @@ impl TaskRequest {
             }
             TaskRequest::LoadProfilePhoto(account_id, _) => {
                 format!("LoadProfilePhoto({}, ...)", account_id)
+            }
+            TaskRequest::ApplyPolicy(account_id, object_id, _) => {
+                format!("ApplyPolicy({}, {}, ...)", account_id, object_id)
             }
         }
     }
