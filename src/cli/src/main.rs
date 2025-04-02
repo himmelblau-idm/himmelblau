@@ -47,6 +47,112 @@ use std::time::Duration;
 
 include!("./opt/tool.rs");
 
+fn insert_module_line(
+    pam_file: &str,
+    module_line: &str,
+    after_pred: Option<&dyn Fn(&str) -> bool>,
+    before_pred: Option<&dyn Fn(&str) -> bool>,
+    dry_run: bool,
+) -> anyhow::Result<()> {
+    let original = std::fs::read_to_string(pam_file)?;
+    let mut lines: Vec<String> = original.lines().map(|l| l.to_string()).collect();
+
+    if lines.iter().any(|l| l.contains("pam_himmelblau.so")) {
+        debug!("{} already contains pam_himmelblau; skipping", pam_file);
+        return Ok(());
+    }
+
+    let mut insert_index = None;
+
+    if let Some(before) = before_pred {
+        for (i, line) in lines.iter().enumerate() {
+            if before(line) {
+                insert_index = Some(i);
+                break;
+            }
+        }
+    }
+
+    // Only search for after if we didn't find a before
+    if insert_index.is_none() {
+        if let Some(after) = after_pred {
+            for (i, line) in lines.iter().enumerate().rev() {
+                if after(line) {
+                    insert_index = Some(i + 1);
+                    break;
+                }
+            }
+        }
+    }
+
+    // Default to end
+    let insert_index = insert_index.unwrap_or_else(|| lines.len());
+    lines.insert(insert_index, module_line.to_string());
+
+    if dry_run {
+        println!("[{}] (dry run):", pam_file);
+        for line in &lines {
+            println!("{}", line);
+        }
+    } else {
+        std::fs::write(pam_file, lines.join("\n") + "\n")?;
+        info!("Modified {}", pam_file);
+    }
+
+    Ok(())
+}
+
+fn configure_pam(
+    dry_run: bool,
+    auth_file: Option<&str>,
+    account_file: Option<&str>,
+    session_file: Option<&str>,
+    password_file: Option<&str>,
+) -> anyhow::Result<()> {
+    let auth_file = auth_file.unwrap_or("/etc/pam.d/common-auth");
+    let account_file = account_file.unwrap_or("/etc/pam.d/common-account");
+    let session_file = session_file.unwrap_or("/etc/pam.d/common-session");
+    let password_file = password_file.unwrap_or("/etc/pam.d/common-password");
+
+    insert_module_line(
+        auth_file,
+        "auth\tsufficient\tpam_himmelblau.so ignore_unknown_user",
+        Some(&|l: &str| l.contains("pam_localuser.so")),
+        Some(&|l: &str| l.contains("pam_unix.so") && l.contains("auth")),
+        dry_run,
+    )?;
+
+    insert_module_line(
+        account_file,
+        "account\tsufficient\tpam_himmelblau.so ignore_unknown_user",
+        None,
+        Some(&|l: &str| l.contains("pam_unix.so") && l.contains("account")),
+        dry_run,
+    )?;
+
+    insert_module_line(
+        session_file,
+        "session\toptional\tpam_himmelblau.so",
+        None,
+        None,
+        dry_run,
+    )?;
+
+    insert_module_line(
+        password_file,
+        "password\tsufficient\tpam_himmelblau.so ignore_unknown_user",
+        None,
+        Some(&|l: &str| {
+            l.contains("pam_unix.so") && l.contains("password")
+                || l.contains("pam_cracklib.so") && l.contains("password")
+                || l.contains("pam_pwquality.so") && l.contains("password")
+        }),
+        dry_run,
+    )?;
+
+    Ok(())
+}
+
 macro_rules! match_sm_auth_client_response {
     ($expr:expr, $req:ident, $hello_pin_min_length:ident, $($pat:pat => $result:expr),*) => {
         match $expr {
@@ -145,6 +251,14 @@ async fn main() -> ExitCode {
         } => debug,
         HimmelblauUnixOpt::CacheClear { debug, really: _ } => debug,
         HimmelblauUnixOpt::CacheInvalidate { debug } => debug,
+        HimmelblauUnixOpt::ConfigurePam {
+            debug,
+            really: _,
+            auth_file: _,
+            account_file: _,
+            session_file: _,
+            password_file: _,
+        } => debug,
         HimmelblauUnixOpt::Status { debug } => debug,
         HimmelblauUnixOpt::Version { debug } => debug,
     };
@@ -168,6 +282,9 @@ async fn main() -> ExitCode {
                     return ExitCode::FAILURE;
                 }
             };
+
+            // Map the name
+            let account_id = cfg.map_name_to_upn(&account_id);
 
             let mut timeout = cfg.get_unix_sock_timeout();
             let mut daemon_client = match DaemonClientBlocking::new(&cfg.get_socket_path()) {
@@ -311,6 +428,35 @@ async fn main() -> ExitCode {
             };
             println!("success");
             ExitCode::SUCCESS
+        }
+        HimmelblauUnixOpt::ConfigurePam {
+            debug: _,
+            really,
+            auth_file,
+            account_file,
+            session_file,
+            password_file,
+        } => {
+            trace!("Configuring pam_himmelblau ...");
+            if really && unsafe { libc::geteuid() } != 0 {
+                error!("This command must be run as root.");
+                return ExitCode::FAILURE;
+            }
+
+            if !really {
+                info!("Performing a dry run. If you want to enforce this change, use --really");
+            }
+
+            match configure_pam(
+                !really,
+                auth_file.as_deref(),
+                account_file.as_deref(),
+                session_file.as_deref(),
+                password_file.as_deref(),
+            ) {
+                Ok(_) => ExitCode::SUCCESS,
+                _ => ExitCode::FAILURE,
+            }
         }
         HimmelblauUnixOpt::Status { debug: _ } => {
             trace!("Starting cache status tool ...");
