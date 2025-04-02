@@ -2683,9 +2683,9 @@ checksum = "830d08ce1d1d941e6b30645f1a0eb5643013d835ce3779a5fc208261dbe10f55"
 
 [[package]]
 name = "libc"
-version = "0.2.170"
+version = "0.2.171"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "875b3680cb2f8f71bdcf9a30f38d48282f5d3c95cbf9b3fa57269bb5d5c06828"
+checksum = "c19937216e9d3aa9956d9bb8dfc0b0c8beb6058fc4f7a4dc4d850edf86a237d6"
 
 [[package]]
 name = "libdbus-sys"
@@ -2698,9 +2698,9 @@ dependencies = [
 
 [[package]]
 name = "libhimmelblau"
-version = "0.6.9"
+version = "0.6.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e0d003f5b9b279b77c93a9c5af796adbbfa9ca59a82a0bcb85dcc768b611b063"
+checksum = "2b5213a1ea642062eb7f20b9fb6bb72a000447808e0cf394849bc229840f630b"
 dependencies = [
  "base64 0.22.1",
  "browser-window",
