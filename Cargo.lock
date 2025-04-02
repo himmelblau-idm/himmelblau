@@ -2698,9 +2698,9 @@ dependencies = [
 
 [[package]]
 name = "libhimmelblau"
-version = "0.6.9"
+version = "0.6.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e0d003f5b9b279b77c93a9c5af796adbbfa9ca59a82a0bcb85dcc768b611b063"
+checksum = "2b5213a1ea642062eb7f20b9fb6bb72a000447808e0cf394849bc229840f630b"
 dependencies = [
  "base64 0.22.1",
  "browser-window",
@@ -4989,9 +4989,9 @@ dependencies = [
 
 [[package]]
 name = "tokio"
-version = "1.43.0"
+version = "1.44.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3d61fa4ffa3de412bfea335c6ecff681de2b609ba3c77ef3e00e521813a9ed9e"
+checksum = "f382da615b842244d4b8738c82ed1275e6c5dd90c459a30941cd07080b06c91a"
 dependencies = [
  "backtrace",
  "bytes",
