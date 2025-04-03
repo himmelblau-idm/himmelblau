@@ -72,7 +72,7 @@ deb: .packaging .submodules
 	done
 
 rpm: .packaging .submodules
-	for v in rocky8 rocky9 sle15sp6 tumbleweed rawhide fedora41; do \
+	for v in oracle7 rocky8 rocky9 sle15sp6 tumbleweed rawhide fedora41; do \
 		echo "Building $$v RPM packages"; \
 		$(DOCKER) build -t himmelblau-$$v-build -f images/rpm/Dockerfile.$$v .; \
 		$(DOCKER) run --rm --security-opt label=disable -it -v ./:/himmelblau himmelblau-$$v-build; \

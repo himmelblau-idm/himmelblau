@@ -1,0 +1,56 @@
+FROM oraclelinux:7.9
+
+RUN printf "[epel]\n\
+name=Extra Packages for Enterprise Linux 7 - \$basearch\n\
+metalink=https://mirrors.fedoraproject.org/metalink?repo=epel-7&arch=\$basearch&infra=\$infra&content=\$contentdir\n\
+failovermethod=priority\n\
+enabled=1\n\
+gpgcheck=0\n" > /etc/yum.repos.d/epel.repo
+
+RUN yum install -y yum-utils && \
+    yum-config-manager --enable ol7_software_collections
+
+# Install build dependencies
+RUN yum install -y devtoolset-11 \
+    git \
+    make \
+    openssl11-devel \
+    dbus-devel \
+    libtool \
+    pkgconfig \
+    autoconf \
+    pam-devel \
+    systemd-devel \
+    libcap-devel \
+    krb5-devel \
+    pcre-devel \
+    clang \
+    gettext \
+    sqlite-devel \
+    utf8proc-devel \
+    curl && \
+    yum clean all
+
+# Enable devtoolset-11 (GCC 11)
+ENV PATH="/opt/rh/devtoolset-11/root/usr/bin:$PATH"
+
+# Install Rust
+RUN curl https://sh.rustup.rs -sSf | sh -s -- -y
+
+ENV PATH="/root/.cargo/bin:$PATH"
+
+VOLUME /himmelblau
+WORKDIR /himmelblau
+
+RUN ln -s /usr/lib64/pkgconfig/openssl11.pc /usr/lib64/pkgconfig/openssl.pc && \
+    ln -s /usr/lib64/pkgconfig/libssl11.pc /usr/lib64/pkgconfig/libssl.pc && \
+    ln -s /usr/lib64/pkgconfig/libcrypto11.pc /usr/lib64/pkgconfig/libcrypto.pc
+
+ENV PKG_CONFIG_PATH=/usr/lib64/pkgconfig \
+    OPENSSL_NO_VENDOR=1
+
+RUN cargo install cargo-generate-rpm
+
+ENV CFLAGS="-std=gnu99"
+
+CMD cargo clean && cargo build --release --features no_sssd_idmap && strip -s target/release/*.so && strip -s target/release/aad-tool && strip -s target/release/himmelblaud && strip -s target/release/himmelblaud_tasks && strip -s target/release/broker && cargo generate-rpm -p src/daemon && cargo generate-rpm -p src/nss && cargo generate-rpm -p src/pam && cargo generate-rpm -p src/sshd-config && cargo generate-rpm -p src/sso
