@@ -45,6 +45,7 @@ use std::env;
 #[derive(Debug, Copy, Clone, PartialEq)]
 pub enum IdAttr {
     Uuid,
+#[cfg(not(feature = "no_sssd_idmap"))]
     Name,
     Rfc2307,
 }
@@ -454,6 +455,7 @@ impl HimmelblauConfig {
         match self.config.get("global", "id_attr_map") {
             Some(id_attr_map) => match id_attr_map.to_lowercase().as_str() {
                 "uuid" => IdAttr::Uuid,
+                #[cfg(not(feature = "no_sssd_idmap"))]
                 "name" => IdAttr::Name,
                 "rfc2307" => IdAttr::Rfc2307,
                 _ => {
@@ -470,6 +472,7 @@ impl HimmelblauConfig {
             .get("global", "rfc2307_group_fallback_map")
             .and_then(|id_attr_map| match id_attr_map.to_lowercase().as_str() {
                 "uuid" => Some(IdAttr::Uuid),
+                #[cfg(not(feature = "no_sssd_idmap"))]
                 "name" => Some(IdAttr::Name),
                 _ => None,
             })

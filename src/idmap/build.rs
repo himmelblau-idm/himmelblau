@@ -15,9 +15,15 @@
    You should have received a copy of the GNU General Public License
    along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
+#[cfg(not(feature = "no_sssd_idmap"))]
 use std::env;
+#[cfg(not(feature = "no_sssd_idmap"))]
 use std::path::PathBuf;
 
+#[cfg(feature = "no_sssd_idmap")]
+fn main() { }
+
+#[cfg(not(feature = "no_sssd_idmap"))]
 fn main() {
     cc::Build::new()
         .file("src/sss_idmap.c")
