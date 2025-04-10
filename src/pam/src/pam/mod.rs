@@ -458,6 +458,16 @@ macro_rules! match_sm_auth_client_response {
                             }
                         };
 
+                        match conv.send(PAM_TEXT_INFO, &msg) {
+                            Ok(_) => {}
+                            Err(err) => {
+                                if $opts.debug {
+                                    println!("Message prompt failed");
+                                }
+                                return err;
+                            }
+                        }
+
                         confirm = match conv.send(PAM_PROMPT_ECHO_OFF, "Confirm PIN: ") {
                             Ok(password) => match password {
                                 Some(cred) => cred,
@@ -610,6 +620,16 @@ macro_rules! match_sm_auth_client_response {
                                 );
                             }
                         };
+
+                        match conv.send(PAM_TEXT_INFO, &msg) {
+                            Ok(_) => {}
+                            Err(err) => {
+                                if $opts.debug {
+                                    println!("Message prompt failed");
+                                }
+                                return err;
+                            }
+                        }
 
                         confirm = match conv.send(PAM_PROMPT_ECHO_OFF, "Confirm password: ") {
                             Ok(password) => match password {
