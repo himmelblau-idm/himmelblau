@@ -408,6 +408,7 @@ macro_rules! match_sm_auth_client_response {
                 ClientResponse::PamAuthenticateStepResponse(PamAuthResponse::SetupPin {
                     msg,
                 }) => {
+                    let msg = format!("{}\nThe minimum PIN length is {} characters.", msg, $cfg.get_hello_pin_min_length());
                     let conv = $conv.lock().unwrap();
                     match conv.send(PAM_TEXT_INFO, &msg) {
                         Ok(_) => {}
