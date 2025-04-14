@@ -374,7 +374,7 @@ macro_rules! pam_fail {
     ($conv:expr, $msg:expr, $ret:expr) => {{
         let _ = $conv.send(PAM_TEXT_INFO,
             &format!(
-                "{} If you are now prompted for a password from pam_unix, please disregard the prompt, exit and try again.",
+                "{} If you are now prompted for a password from pam_unix, please disregard the prompt, go back and try again.",
                  $msg
             )
         );
@@ -410,19 +410,19 @@ macro_rules! match_sm_auth_client_response {
                 }) => {
                     let msg = format!("{}\nThe minimum PIN length is {} characters.", msg, $cfg.get_hello_pin_min_length());
                     let conv = $conv.lock().unwrap();
-                    match conv.send(PAM_TEXT_INFO, &msg) {
-                        Ok(_) => {}
-                        Err(err) => {
-                            if $opts.debug {
-                                println!("Message prompt failed");
-                            }
-                            return err;
-                        }
-                    }
 
                     let mut pin;
                     let mut confirm;
                     loop {
+                        match conv.send(PAM_TEXT_INFO, &msg) {
+                            Ok(_) => {}
+                            Err(err) => {
+                                if $opts.debug {
+                                    println!("Message prompt failed");
+                                }
+                                return err;
+                            }
+                        }
                         pin = match conv.send(PAM_PROMPT_ECHO_OFF, "New PIN: ") {
                             Ok(password) => match password {
                                 Some(cred) => {
@@ -436,6 +436,7 @@ macro_rules! match_sm_auth_client_response {
                                                 return err;
                                             }
                                         }
+                                        thread::sleep(Duration::from_secs(2));
                                         continue;
                                     }
                                     cred
@@ -503,6 +504,7 @@ macro_rules! match_sm_auth_client_response {
                                     return err;
                                 }
                             }
+                            thread::sleep(Duration::from_secs(2));
                         }
                     }
 
@@ -572,19 +574,19 @@ macro_rules! match_sm_auth_client_response {
                     msg,
                 }) => {
                     let conv = $conv.lock().unwrap();
-                    match conv.send(PAM_TEXT_INFO, &msg) {
-                        Ok(_) => {}
-                        Err(err) => {
-                            if $opts.debug {
-                                println!("Message prompt failed");
-                            }
-                            return err;
-                        }
-                    }
 
                     let mut password;
                     let mut confirm;
                     loop {
+                        match conv.send(PAM_TEXT_INFO, &msg) {
+                            Ok(_) => {}
+                            Err(err) => {
+                                if $opts.debug {
+                                    println!("Message prompt failed");
+                                }
+                                return err;
+                            }
+                        }
                         password = match conv.send(PAM_PROMPT_ECHO_OFF, "New password: ") {
                             Ok(password) => match password {
                                 Some(cred) => {
@@ -666,6 +668,7 @@ macro_rules! match_sm_auth_client_response {
                                     return err;
                                 }
                             }
+                            thread::sleep(Duration::from_secs(2));
                         }
                     }
 
