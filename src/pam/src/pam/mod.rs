@@ -524,6 +524,15 @@ macro_rules! match_sm_auth_client_response {
                         cred
                     } else {
                         let conv = $conv.lock().unwrap();
+                        match conv.send(PAM_TEXT_INFO, "Use the Linux Hello PIN for this device.") {
+                            Ok(_) => {}
+                            Err(err) => {
+                                if $opts.debug {
+                                    println!("Message prompt failed");
+                                }
+                                return err;
+                            }
+                        }
                         match conv.send(PAM_PROMPT_ECHO_OFF, "PIN: ") {
                             Ok(password) => match password {
                                 Some(cred) => cred,
@@ -688,6 +697,15 @@ macro_rules! match_sm_auth_client_response {
                         cred
                     } else {
                         let lconv = $conv.lock().unwrap();
+                        match lconv.send(PAM_TEXT_INFO, "Use the password for your Office 365 or Microsoft online login.") {
+                            Ok(_) => {}
+                            Err(err) => {
+                                if $opts.debug {
+                                    println!("Message prompt failed");
+                                }
+                                return err;
+                            }
+                        }
                         match lconv.send(PAM_PROMPT_ECHO_OFF, "Entra Id Password: ") {
                             Ok(password) => match password {
                                 Some(cred) => cred,
