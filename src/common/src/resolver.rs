@@ -1063,7 +1063,7 @@ where
                     ref account_id,
                     ref service,
                     id: _,
-                    token: _,
+                    token: Some(ref token),
                     online_at_init: true,
                     ref mut cred_handler,
                     ref shutdown_rx,
@@ -1077,6 +1077,7 @@ where
                     .client
                     .unix_user_online_auth_step(
                         account_id,
+                        token,
                         service,
                         cred_handler,
                         pam_next_req,

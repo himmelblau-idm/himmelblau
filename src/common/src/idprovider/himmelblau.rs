@@ -390,6 +390,7 @@ impl IdProvider for HimmelblauMultiProvider {
     async fn unix_user_online_auth_step<D: KeyStoreTxn + Send>(
         &self,
         account_id: &str,
+        old_token: &UserToken,
         service: &str,
         cred_handler: &mut AuthCredHandler,
         pam_next_req: PamAuthRequest,
@@ -406,6 +407,7 @@ impl IdProvider for HimmelblauMultiProvider {
                         provider
                             .unix_user_online_auth_step(
                                 account_id,
+                                old_token,
                                 service,
                                 cred_handler,
                                 pam_next_req,
@@ -1021,6 +1023,7 @@ impl IdProvider for HimmelblauProvider {
 
     #[instrument(skip(
         self,
+        old_token,
         cred_handler,
         pam_next_req,
         keystore,
@@ -1031,6 +1034,7 @@ impl IdProvider for HimmelblauProvider {
     async fn unix_user_online_auth_step<D: KeyStoreTxn + Send>(
         &self,
         account_id: &str,
+        old_token: &UserToken,
         service: &str,
         cred_handler: &mut AuthCredHandler,
         pam_next_req: PamAuthRequest,
@@ -1046,7 +1050,8 @@ impl IdProvider for HimmelblauProvider {
                         info!(?msg, "Network down detected");
                         let mut state = self.state.lock().await;
                         *state = CacheState::OfflineNextCheck(SystemTime::now() + OFFLINE_NEXT_CHECK);
-                        return Err(IdpError::BadRequest);
+                        // Report the network outage to the user via PAM INFO.
+                        return Ok((AuthResult::Denied("Network outage detected.".to_string()), AuthCacheAction::None));
                     },
                     $($pat => $result),*
                 }
@@ -1142,27 +1147,42 @@ impl IdProvider for HimmelblauProvider {
                         vec!["https://graph.microsoft.com/.default"],
                     )
                 };
-                let token = net_down_check!(
-                    self.client
-                        .write()
-                        .await
-                        .acquire_token_by_hello_for_business_key(
-                            account_id,
-                            &$hello_key,
-                            scopes,
-                            None,
-                            client_id,
-                            tpm,
-                            machine_key,
-                            &$cred,
-                        )
-                        .await,
+                let token = match self
+                    .client
+                    .write()
+                    .await
+                    .acquire_token_by_hello_for_business_key(
+                        account_id,
+                        &$hello_key,
+                        scopes,
+                        None,
+                        client_id,
+                        tpm,
+                        machine_key,
+                        &$cred,
+                    )
+                    .await
+                {
                     Ok(token) => token,
+                    // If the network goes down during an online PIN auth, we can downgrade to an
+                    // offline auth and permit the authentication to proceed.
+                    Err(MsalError::RequestFailed(msg)) => {
+                        info!(?msg, "Network down detected");
+                        let mut state = self.state.lock().await;
+                        *state =
+                            CacheState::OfflineNextCheck(SystemTime::now() + OFFLINE_NEXT_CHECK);
+                        return Ok((
+                            AuthResult::Success {
+                                token: old_token.clone(),
+                            },
+                            AuthCacheAction::None,
+                        ));
+                    }
                     Err(e) => {
                         error!("Failed to authenticate with hello key: {:?}", e);
                         return Ok((AuthResult::Denied(e.to_string()), AuthCacheAction::None));
                     }
-                );
+                };
 
                 match self.token_validate(account_id, &token).await {
                     Ok(AuthResult::Success { token }) => {
