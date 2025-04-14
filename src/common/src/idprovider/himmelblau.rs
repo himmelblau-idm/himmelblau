@@ -887,7 +887,7 @@ impl IdProvider for HimmelblauProvider {
             }
             // Never return IdpError::NotFound. This deletes the existing
             // user from the cache.
-            Ok(AuthResult::Denied) | Ok(AuthResult::Next(_)) => fake_user!(),
+            Ok(AuthResult::Denied(_)) | Ok(AuthResult::Next(_)) => fake_user!(),
             Err(_) => fake_user!(),
         }
     }
@@ -1160,7 +1160,7 @@ impl IdProvider for HimmelblauProvider {
                     Ok(token) => token,
                     Err(e) => {
                         error!("Failed to authenticate with hello key: {:?}", e);
-                        return Ok((AuthResult::Denied, AuthCacheAction::None));
+                        return Ok((AuthResult::Denied(e.to_string()), AuthCacheAction::None));
                     }
                 );
 
@@ -1298,7 +1298,7 @@ impl IdProvider for HimmelblauProvider {
                                         "Skipping SFA fallback because authentication failed: {:?}",
                                         e
                                     );
-                                    return Ok((AuthResult::Denied, AuthCacheAction::None));
+                                    return Ok((AuthResult::Denied(e.to_string()), AuthCacheAction::None));
                                 }
                             }
                             // We can only do a password auth for an enrolled device
@@ -1344,17 +1344,17 @@ impl IdProvider for HimmelblauProvider {
                                 )
                             } else {
                                 error!("Single factor authentication is only permitted on an enrolled host: {:?}", e);
-                                return Ok((AuthResult::Denied, AuthCacheAction::None));
+                                return Ok((AuthResult::Denied(e.to_string()), AuthCacheAction::None));
                             }
                         } else {
                             error!("{:?}", e);
-                            return Ok((AuthResult::Denied, AuthCacheAction::None));
+                            return Ok((AuthResult::Denied(e.to_string()), AuthCacheAction::None));
                         };
                         let token = match mtoken {
                             Ok(token) => token,
                             Err(e) => {
                                 error!("{:?}", e);
-                                return Ok((AuthResult::Denied, AuthCacheAction::None));
+                                return Ok((AuthResult::Denied(e.to_string()), AuthCacheAction::None));
                             }
                         };
                         let token2 = enroll_and_obtain_enrolled_token!(token);
@@ -1467,11 +1467,11 @@ impl IdProvider for HimmelblauProvider {
                                 ));
                             } else {
                                 error!("{:?}", e);
-                                return Ok((AuthResult::Denied, AuthCacheAction::None));
+                                return Ok((AuthResult::Denied(e.to_string()), AuthCacheAction::None));
                             }
                         } else {
                             error!("{:?}", e);
-                            return Ok((AuthResult::Denied, AuthCacheAction::None));
+                            return Ok((AuthResult::Denied(e.to_string()), AuthCacheAction::None));
                         }
                     }
                 );
@@ -1548,7 +1548,7 @@ impl IdProvider for HimmelblauProvider {
                                 ));
                             } else {
                                 error!("{:?}", e);
-                                return Ok((AuthResult::Denied, AuthCacheAction::None));
+                                return Ok((AuthResult::Denied(e.to_string()), AuthCacheAction::None));
                             }
                         }
                         MsalError::MFAPollContinue => {
@@ -1559,7 +1559,7 @@ impl IdProvider for HimmelblauProvider {
                         }
                         e => {
                             error!("{:?}", e);
-                            return Ok((AuthResult::Denied, AuthCacheAction::None));
+                            return Ok((AuthResult::Denied(e.to_string()), AuthCacheAction::None));
                         }
                     }
                 );
@@ -1631,11 +1631,11 @@ impl IdProvider for HimmelblauProvider {
                                 ));
                             } else {
                                 error!("{:?}", e);
-                                return Ok((AuthResult::Denied, AuthCacheAction::None));
+                                return Ok((AuthResult::Denied(e.to_string()), AuthCacheAction::None));
                             }
                         } else {
                             error!("{:?}", e);
-                            return Ok((AuthResult::Denied, AuthCacheAction::None));
+                            return Ok((AuthResult::Denied(e.to_string()), AuthCacheAction::None));
                         }
                     }
                 );
@@ -1741,7 +1741,7 @@ impl IdProvider for HimmelblauProvider {
                     }),
                     Err(e) => {
                         error!("{:?}", e);
-                        Ok(AuthResult::Denied)
+                        Ok(AuthResult::Denied(format!("TPM error: {:?}", e)))
                     }
                 }
             }
@@ -1845,11 +1845,12 @@ impl HimmelblauProvider {
                     IdpError::BadRequest
                 })?;
                 if account_id.to_string().to_lowercase() != spn.to_string().to_lowercase() {
-                    error!(
+                    let msg = format!(
                         "Authenticated user {} does not match requested user {}",
                         spn, account_id
                     );
-                    return Ok(AuthResult::Denied);
+                    error!(msg);
+                    return Ok(AuthResult::Denied(msg));
                 }
                 info!("Authentication successful for user '{}'", account_id);
                 // If an encrypted PRT is present, store it in the mem cache

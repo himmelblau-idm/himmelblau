@@ -174,7 +174,7 @@ impl Into<PamAuthResponse> for AuthRequest {
 
 pub enum AuthResult {
     Success { token: UserToken },
-    Denied,
+    Denied(String),
     Next(AuthRequest),
 }
 
