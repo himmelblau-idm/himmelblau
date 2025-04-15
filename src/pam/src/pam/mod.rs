@@ -508,6 +508,8 @@ macro_rules! match_sm_auth_client_response {
                         }
                     }
 
+                    let _ = conv.send(PAM_TEXT_INFO, "Enrolling the Hello PIN. Please wait...");
+
                     // Now setup the request for the next loop.
                     $req = ClientRequest::PamAuthenticateStep(PamAuthRequest::SetupPin {
                         pin,
@@ -681,6 +683,8 @@ macro_rules! match_sm_auth_client_response {
                         }
                     }
 
+                    let _ = conv.send(PAM_TEXT_INFO, "Changing the password. Please wait...");
+
                     // Now setup the request for the next loop.
                     $req = ClientRequest::PamAuthenticateStep(PamAuthRequest::Password {
                         cred: password,
@@ -821,7 +825,17 @@ fn mfa_poll(
     // deadlock here.
     {
         let lconv = conv.lock().unwrap();
-        match lconv.send(PAM_TEXT_INFO, msg) {
+        // Suggest users connect mobile devices to the internet, except when
+        // polling a DAG.
+        let msg = if !msg.contains("https://microsoft.com/devicelogin") {
+            format!(
+                "{}\nNo push? Check your mobile device's internet connection.",
+                msg
+            )
+        } else {
+            msg.to_string()
+        };
+        match lconv.send(PAM_TEXT_INFO, &msg) {
             Ok(_) => {}
             Err(err) => {
                 if opts.debug {
