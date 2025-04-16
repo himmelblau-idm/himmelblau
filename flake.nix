@@ -12,7 +12,7 @@
           recipe = {lib, enableInteractive ? false}: rustPlatform.buildRustPackage {
             pname = "himmelblau";
             version = cargoToml.workspace.package.version;
-            src = ./.
+            src = ./.;
             outputs = [ "out" "man" ];
             cargoLock = {
               lockFile = ./Cargo.lock;
