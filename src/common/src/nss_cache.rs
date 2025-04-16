@@ -112,9 +112,7 @@ impl NssCache {
     }
 
     pub fn get_user(&self, id: &Id) -> Option<NssUser> {
-        if self.conn.is_none() {
-            return None;
-        }
+        self.conn.as_ref()?;
 
         let max_age_secs: i64 = 48 * 3600; // 48 hours
         let now = SystemTime::now()
@@ -197,10 +195,8 @@ impl NssCache {
             });
 
             if let Ok(mapped_rows) = rows {
-                for maybe_user in mapped_rows.flatten() {
-                    if let Some(user) = maybe_user {
-                        users.push(user);
-                    }
+                for user in mapped_rows.flatten().flatten() {
+                    users.push(user);
                 }
             }
         }
