@@ -35,7 +35,9 @@ use himmelblau::graph::{DirectoryObject, Graph};
 use himmelblau::{AuthOption, MFAAuthContinue};
 use idmap::Idmap;
 use kanidm_hsm_crypto::{LoadableIdentityKey, LoadableMsOapxbcRsaKey, PinValue, SealedData, Tpm};
+use regex::Regex;
 use reqwest;
+use reqwest::Url;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -44,6 +46,26 @@ use std::time::Duration;
 use std::time::SystemTime;
 use tokio::sync::{broadcast, Mutex, RwLock};
 use uuid::Uuid;
+
+macro_rules! extract_base_url {
+    ($msg:expr) => {{
+        if let Some(regex) = Regex::new(r#"https?://[^\s"'<>]+"#).ok() {
+            if let Some(mat) = regex.find(&$msg) {
+                if let Ok(mut parsed) = Url::parse(mat.as_str()) {
+                    parsed.set_query(None);
+                    parsed.set_fragment(None);
+                    Some(parsed.to_string())
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+    }};
+}
 
 #[derive(Deserialize, Serialize)]
 struct Token(Option<String>, String);
@@ -1072,7 +1094,8 @@ impl IdProvider for HimmelblauProvider {
             ($res:expr, $($pat:pat => $result:expr),*) => {
                 match $res {
                     Err(MsalError::RequestFailed(msg)) => {
-                        info!(?msg, "Network down detected");
+                        let url = extract_base_url!(msg);
+                        info!(?url, "Network down detected");
                         let mut state = self.state.lock().await;
                         *state = CacheState::OfflineNextCheck(SystemTime::now() + OFFLINE_NEXT_CHECK);
                         // Report the network outage to the user via PAM INFO.

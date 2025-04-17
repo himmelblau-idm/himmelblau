@@ -1971,6 +1971,7 @@ dependencies = [
  "lru",
  "os-release",
  "pem",
+ "regex",
  "reqwest",
  "rusqlite",
  "serde",
