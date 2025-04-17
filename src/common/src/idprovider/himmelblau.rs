@@ -949,9 +949,13 @@ impl IdProvider for HimmelblauProvider {
                         info!(?msg, "Network down detected");
                         let mut state = self.state.lock().await;
                         *state = CacheState::OfflineNextCheck(SystemTime::now() + OFFLINE_NEXT_CHECK);
-                        // Attempt an offline password auth. This will only succeed if the network
-                        // comes online after the user enters their password.
-                        return Ok((AuthRequest::Password, AuthCredHandler::None));
+                        return Ok((
+                            AuthRequest::InitDenied {
+                                msg: "Online authentication is impossible while the device is offline."
+                                    .to_string(),
+                            },
+                            AuthCredHandler::None,
+                        ));
                     },
                     $($pat => $result),*
                 }
@@ -1771,10 +1775,22 @@ impl IdProvider for HimmelblauProvider {
                 error!("Failed fetching hello key from keystore: {:?}", e);
                 IdpError::BadRequest
             })?;
-        if !self.is_domain_joined(keystore).await || hello_key.is_none() {
+        let sfa_enabled = self.config.read().await.get_enable_sfa_fallback();
+        // We only have 2 options when performing an offline auth; Hello PIN,
+        // or cached password for SFA users. If neither option is available,
+        // we should respond with a resonable error indicating how to proceed.
+        if hello_key.is_some() {
+            Ok((AuthRequest::Pin, AuthCredHandler::None))
+        } else if sfa_enabled {
             Ok((AuthRequest::Password, AuthCredHandler::None))
         } else {
-            Ok((AuthRequest::Pin, AuthCredHandler::None))
+            Ok((
+                AuthRequest::InitDenied {
+                    msg: "Online authentication is impossible while the device is offline."
+                        .to_string(),
+                },
+                AuthCredHandler::None,
+            ))
         }
     }
 

@@ -374,12 +374,15 @@ macro_rules! pam_fail {
     ($conv:expr, $msg:expr, $ret:expr) => {{
         let _ = $conv.send(PAM_TEXT_INFO,
             &format!(
-                "{} If you are now prompted for a password from pam_unix, please disregard the prompt, go back and try again.",
-                 $msg
+                "{:?}: {} \nIf you are now prompted for a password from pam_unix, please disregard the prompt, go back and try again.",
+                $ret,
+                $msg
             )
         );
-        return $ret;
-    }}
+        thread::sleep(Duration::from_secs(2));
+        // Abort the auth attempt, and don't continue executing the stack
+        return PamResultCode::PAM_ABORT;
+    }};
 }
 
 macro_rules! match_sm_auth_client_response {
@@ -397,6 +400,11 @@ macro_rules! match_sm_auth_client_response {
                     thread::sleep(Duration::from_secs(2));
                     $req = ClientRequest::PamAuthenticateInit($account_id.to_string(), $service.to_string());
                     continue;
+                }
+                ClientResponse::PamAuthenticateStepResponse(PamAuthResponse::InitDenied {
+                    msg,
+                }) => {
+                    pam_fail!($conv.lock().unwrap(), msg, PamResultCode::PAM_ABORT)
                 }
                 ClientResponse::PamAuthenticateStepResponse(PamAuthResponse::Unknown) => {
                     if $opts.ignore_unknown_user {
