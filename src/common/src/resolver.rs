@@ -1294,6 +1294,10 @@ where
                 // Can continue!
                 auth_session
             }
+            (auth_session, PamAuthResponse::InitDenied { .. }) => {
+                // Can continue!
+                auth_session
+            }
             (_, PamAuthResponse::Unknown) => return Ok(None),
             (_, PamAuthResponse::Denied(_)) => return Ok(Some(false)),
             (_, PamAuthResponse::Success) => {

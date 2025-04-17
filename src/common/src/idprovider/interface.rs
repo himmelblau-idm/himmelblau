@@ -142,6 +142,10 @@ pub enum AuthRequest {
         /// Message to display to the user.
         msg: String,
     },
+    InitDenied {
+        /// Message to display to the user.
+        msg: String,
+    },
 }
 
 #[allow(clippy::from_over_into)]
@@ -168,6 +172,7 @@ impl Into<PamAuthResponse> for AuthRequest {
                 fido_allow_list,
             },
             AuthRequest::ChangePassword { msg } => PamAuthResponse::ChangePassword { msg },
+            AuthRequest::InitDenied { msg } => PamAuthResponse::InitDenied { msg },
         }
     }
 }

@@ -60,6 +60,10 @@ pub enum PamAuthResponse {
     ChangePassword {
         msg: String,
     },
+    /// PAM message indicating why auth init was denied
+    InitDenied {
+        msg: String,
+    },
 }
 
 #[derive(Serialize, Deserialize, Debug)]
