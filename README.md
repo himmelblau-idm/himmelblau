@@ -17,10 +17,13 @@ enforce Intune MDM policies, but this work isn't completed yet.
 You can reach out on the [Himmelblau community matrix channel](https://matrix.to/#/#himmelblau:matrix.org)
 or on the [Samba Technical community matrix channel](https://matrix.to/#/#samba-technical:matrix.org).
 
-## Donations
+## 💙 Support Himmelblau
 
-If you would like to make [financial contributions](https://opencollective.com/himmelblau) to this project,
-please make donations via our Open Collective page.
+Himmelblau is developed and maintained by [SUSE Linux](https://www.suse.com), but the **project’s operating expenses**—including hosting, domain registration, and tooling—are funded by the **community**.
+
+These costs currently run about **$30–$50 per month**, and while we have a few months of runway, **your support helps keep the project sustainable**. Even small contributions go a long way toward ensuring Himmelblau continues to grow and support Entra ID on Linux.
+
+👉 [Become a backer or sponsor](https://himmelblau-idm.org/backers.html)
 
 ## Installing
 
