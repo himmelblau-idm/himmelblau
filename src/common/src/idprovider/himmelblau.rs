@@ -35,7 +35,9 @@ use himmelblau::graph::{DirectoryObject, Graph};
 use himmelblau::{AuthOption, MFAAuthContinue};
 use idmap::Idmap;
 use kanidm_hsm_crypto::{LoadableIdentityKey, LoadableMsOapxbcRsaKey, PinValue, SealedData, Tpm};
+use regex::Regex;
 use reqwest;
+use reqwest::Url;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -44,6 +46,26 @@ use std::time::Duration;
 use std::time::SystemTime;
 use tokio::sync::{broadcast, Mutex, RwLock};
 use uuid::Uuid;
+
+macro_rules! extract_base_url {
+    ($msg:expr) => {{
+        if let Some(regex) = Regex::new(r#"https?://[^\s"'<>]+"#).ok() {
+            if let Some(mat) = regex.find(&$msg) {
+                if let Ok(mut parsed) = Url::parse(mat.as_str()) {
+                    parsed.set_query(None);
+                    parsed.set_fragment(None);
+                    Some(parsed.to_string())
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        } else {
+            None
+        }
+    }};
+}
 
 #[derive(Deserialize, Serialize)]
 struct Token(Option<String>, String);
@@ -110,8 +132,6 @@ impl HimmelblauMultiProvider {
         let cfg = config.read().await;
         for domain in cfg.get_configured_domains() {
             debug!("Adding provider for domain {}", domain);
-            let range = cfg.get_idmap_range(&domain);
-            let mut idmap_lk = idmap.write().await;
             let authority_host = cfg.get_authority_host(&domain);
             let tenant_id = cfg.get_tenant_id(&domain);
             let graph_url = cfg.get_graph_url(&domain);
@@ -130,33 +150,11 @@ impl HimmelblauMultiProvider {
                     continue;
                 }
             };
-            let authority_host = graph
-                .authority_host()
-                .await
-                .map_err(|e| anyhow!("{:?}", e))?;
-            let tenant_id = graph.tenant_id().await.map_err(|e| anyhow!("{:?}", e))?;
-            idmap_lk
-                .add_gen_domain(&domain, &tenant_id, range)
-                .map_err(|e| anyhow!("{:?}", e))?;
-            let authority_url = format!("https://{}/{}", authority_host, tenant_id);
             let app_id = cfg.get_app_id(&domain);
-            let app = BrokerClientApplication::new(
-                Some(authority_url.as_str()),
-                app_id.as_deref(),
-                None,
-                None,
-            )
-            .map_err(|e| anyhow!("{:?}", e))?;
-            let provider = HimmelblauProvider::new(
-                app,
-                &config,
-                &tenant_id,
-                &domain,
-                &authority_host,
-                graph,
-                &idmap,
-            )
-            .map_err(|_| anyhow!("Failed to initialize the provider"))?;
+            let app = BrokerClientApplication::new(None, app_id.as_deref(), None, None)
+                .map_err(|e| anyhow!("{:?}", e))?;
+            let provider = HimmelblauProvider::new(app, &config, &domain, graph, &idmap)
+                .map_err(|_| anyhow!("Failed to initialize the provider"))?;
             {
                 let mut client = provider.client.write().await;
                 if let Ok(transport_key) =
@@ -390,6 +388,7 @@ impl IdProvider for HimmelblauMultiProvider {
     async fn unix_user_online_auth_step<D: KeyStoreTxn + Send>(
         &self,
         account_id: &str,
+        old_token: &UserToken,
         service: &str,
         cred_handler: &mut AuthCredHandler,
         pam_next_req: PamAuthRequest,
@@ -406,6 +405,7 @@ impl IdProvider for HimmelblauMultiProvider {
                         provider
                             .unix_user_online_auth_step(
                                 account_id,
+                                old_token,
                                 service,
                                 cred_handler,
                                 pam_next_req,
@@ -435,7 +435,7 @@ impl IdProvider for HimmelblauMultiProvider {
         match split_username(account_id) {
             Some((_sam, domain)) => {
                 let providers = self.providers.read().await;
-                match providers.get(domain) {
+                match find_provider!(self, providers, domain) {
                     Some(provider) => {
                         provider
                             .unix_user_offline_auth_init(account_id, token, keystore)
@@ -465,7 +465,7 @@ impl IdProvider for HimmelblauMultiProvider {
         match split_username(account_id) {
             Some((_sam, domain)) => {
                 let providers = self.providers.read().await;
-                match providers.get(domain) {
+                match find_provider!(self, providers, domain) {
                     Some(provider) => {
                         provider
                             .unix_user_offline_auth_step(
@@ -504,7 +504,7 @@ impl IdProvider for HimmelblauMultiProvider {
             Some(account_id) => match split_username(account_id) {
                 Some((_sam, domain)) => {
                     let providers = self.providers.read().await;
-                    match providers.get(domain) {
+                    match find_provider!(self, providers, domain) {
                         Some(provider) => return provider.get_cachestate(Some(account_id)).await,
                         None => return CacheState::Offline,
                     }
@@ -534,21 +534,18 @@ pub struct HimmelblauProvider {
     state: Mutex<CacheState>,
     client: RwLock<BrokerClientApplication>,
     config: Arc<RwLock<HimmelblauConfig>>,
-    tenant_id: String,
     domain: String,
-    authority_host: String,
     graph: Graph,
     refresh_cache: RefreshCache,
     idmap: Arc<RwLock<Idmap>>,
+    init: RwLock<bool>,
 }
 
 impl HimmelblauProvider {
     pub fn new(
         client: BrokerClientApplication,
         config: &Arc<RwLock<HimmelblauConfig>>,
-        tenant_id: &str,
         domain: &str,
-        authority_host: &str,
         graph: Graph,
         idmap: &Arc<RwLock<Idmap>>,
     ) -> Result<Self, IdpError> {
@@ -556,12 +553,11 @@ impl HimmelblauProvider {
             state: Mutex::new(CacheState::OfflineNextCheck(SystemTime::now())),
             client: RwLock::new(client),
             config: config.clone(),
-            tenant_id: tenant_id.to_string(),
             domain: domain.to_string(),
-            authority_host: authority_host.to_string(),
             graph,
             refresh_cache: RefreshCache::new(),
             idmap: idmap.clone(),
+            init: RwLock::new(false),
         })
     }
 }
@@ -592,6 +588,13 @@ impl IdProvider for HimmelblauProvider {
         tpm: &mut tpm::BoxedDynTpm,
         machine_key: &tpm::MachineKey,
     ) -> Result<UnixUserToken, IdpError> {
+        if let Err(_) = self.delayed_init().await {
+            // We can't fetch an access_token when initialization hasn't
+            // completed. This only happens when we're offline during first
+            // startup. This should never happen!
+            return Err(IdpError::BadRequest);
+        }
+
         if !self.check_online(tpm, SystemTime::now()).await {
             // We can't fetch an access_token when offline
             return Err(IdpError::BadRequest);
@@ -629,6 +632,13 @@ impl IdProvider for HimmelblauProvider {
         tpm: &mut tpm::BoxedDynTpm,
         machine_key: &tpm::MachineKey,
     ) -> (Vec<u8>, Vec<u8>) {
+        if let Err(_) = self.delayed_init().await {
+            // We can't fetch krb5 tgts when initialization hasn't
+            // completed. This only happens when we're offline during first
+            // startup. This should never happen!
+            return (vec![], vec![]);
+        }
+
         if !self.check_online(tpm, SystemTime::now()).await {
             // We can't fetch krb5 tgts when offline
             return (vec![], vec![]);
@@ -668,6 +678,13 @@ impl IdProvider for HimmelblauProvider {
         tpm: &mut tpm::BoxedDynTpm,
         machine_key: &tpm::MachineKey,
     ) -> Result<String, IdpError> {
+        if let Err(_) = self.delayed_init().await {
+            // We can't fetch a PRT cookie when initialization hasn't
+            // completed. This only happens when we're offline during first
+            // startup. This should never happen!
+            return Err(IdpError::BadRequest);
+        }
+
         if !self.check_online(tpm, SystemTime::now()).await {
             // We can't fetch a PRT cookie when offline
             return Err(IdpError::BadRequest);
@@ -700,6 +717,13 @@ impl IdProvider for HimmelblauProvider {
         tpm: &mut tpm::BoxedDynTpm,
         machine_key: &tpm::MachineKey,
     ) -> Result<bool, IdpError> {
+        if let Err(_) = self.delayed_init().await {
+            // We can't change the Hello PIN when initialization hasn't
+            // completed. This only happens when we're offline during first
+            // startup.
+            return Err(IdpError::BadRequest);
+        }
+
         if !self.check_online(tpm, SystemTime::now()).await {
             // We can't change the Hello PIN when offline
             return Err(IdpError::BadRequest);
@@ -767,6 +791,15 @@ impl IdProvider for HimmelblauProvider {
             }
         }
 
+        if let Err(_) = self.delayed_init().await {
+            // Initialization failed. Report that the system is offline. We
+            // can't proceed with initialization until the system is online.
+            info!("Network down detected");
+            let mut state = self.state.lock().await;
+            *state = CacheState::OfflineNextCheck(SystemTime::now() + OFFLINE_NEXT_CHECK);
+            return Ok(UserTokenState::UseCached);
+        }
+
         if !self.check_online(tpm, SystemTime::now()).await {
             // We are offline, return that we should use a cached token.
             return Ok(UserTokenState::UseCached);
@@ -807,7 +840,10 @@ impl IdProvider for HimmelblauProvider {
                                 IdAttr::Uuid => return Err(IdpError::BadRequest),
                                 IdAttr::Name | IdAttr::Rfc2307 => {
                                     let idmap = self.idmap.read().await;
-                                    idmap.gen_to_unix(&self.tenant_id, &account_id).map_err(
+                                    idmap.gen_to_unix(&self.graph.tenant_id().await.map_err(|e| {
+                                        error!("{:?}", e);
+                                        IdpError::BadRequest
+                                    })?, &account_id).map_err(
                                         |e| {
                                             error!("{:?}", e);
                                             IdpError::BadRequest
@@ -832,7 +868,10 @@ impl IdProvider for HimmelblauProvider {
                                 displayname: "".to_string(),
                                 shell: Some(config.get_shell(Some(&self.domain))),
                                 groups,
-                                tenant_id: Some(Uuid::parse_str(&self.tenant_id).map_err(|e| {
+                                tenant_id: Some(Uuid::parse_str(&self.graph.tenant_id().await.map_err(|e| {
+                                        error!("{:?}", e);
+                                        IdpError::BadRequest
+                                    })?).map_err(|e| {
                                     error!("{:?}", e);
                                     IdpError::BadRequest
                                 })?),
@@ -887,7 +926,7 @@ impl IdProvider for HimmelblauProvider {
             }
             // Never return IdpError::NotFound. This deletes the existing
             // user from the cache.
-            Ok(AuthResult::Denied) | Ok(AuthResult::Next(_)) => fake_user!(),
+            Ok(AuthResult::Denied(_)) | Ok(AuthResult::Next(_)) => fake_user!(),
             Err(_) => fake_user!(),
         }
     }
@@ -910,7 +949,13 @@ impl IdProvider for HimmelblauProvider {
                         info!(?msg, "Network down detected");
                         let mut state = self.state.lock().await;
                         *state = CacheState::OfflineNextCheck(SystemTime::now() + OFFLINE_NEXT_CHECK);
-                        return Err(IdpError::BadRequest);
+                        return Ok((
+                            AuthRequest::InitDenied {
+                                msg: "Online authentication is impossible while the device is offline."
+                                    .to_string(),
+                            },
+                            AuthCredHandler::None,
+                        ));
                     },
                     $($pat => $result),*
                 }
@@ -926,6 +971,14 @@ impl IdProvider for HimmelblauProvider {
         // Skip Hello authentication if it is disabled by config
         let hello_enabled = self.config.read().await.get_enable_hello();
         if !self.is_domain_joined(keystore).await || hello_key.is_none() || !hello_enabled {
+            if let Err(_) = self.delayed_init().await {
+                // Initialization failed. Report that the system is offline. We
+                // can't proceed with initialization until the system is online.
+                info!("Network down detected");
+                let mut state = self.state.lock().await;
+                *state = CacheState::OfflineNextCheck(SystemTime::now() + OFFLINE_NEXT_CHECK);
+                return Ok((AuthRequest::Password, AuthCredHandler::None));
+            }
             if self.config.read().await.get_enable_experimental_mfa() {
                 let auth_options = vec![AuthOption::Fido, AuthOption::Passwordless];
                 let auth_init = net_down_check!(
@@ -1021,6 +1074,7 @@ impl IdProvider for HimmelblauProvider {
 
     #[instrument(skip(
         self,
+        old_token,
         cred_handler,
         pam_next_req,
         keystore,
@@ -1031,6 +1085,7 @@ impl IdProvider for HimmelblauProvider {
     async fn unix_user_online_auth_step<D: KeyStoreTxn + Send>(
         &self,
         account_id: &str,
+        old_token: &UserToken,
         service: &str,
         cred_handler: &mut AuthCredHandler,
         pam_next_req: PamAuthRequest,
@@ -1043,15 +1098,31 @@ impl IdProvider for HimmelblauProvider {
             ($res:expr, $($pat:pat => $result:expr),*) => {
                 match $res {
                     Err(MsalError::RequestFailed(msg)) => {
-                        info!(?msg, "Network down detected");
+                        let url = extract_base_url!(msg);
+                        info!(?url, "Network down detected");
                         let mut state = self.state.lock().await;
                         *state = CacheState::OfflineNextCheck(SystemTime::now() + OFFLINE_NEXT_CHECK);
-                        return Err(IdpError::BadRequest);
+                        // Report the network outage to the user via PAM INFO.
+                        return Ok((AuthResult::Denied("Network outage detected.".to_string()), AuthCacheAction::None));
                     },
                     $($pat => $result),*
                 }
             }
         }
+
+        if let Err(_) = self.delayed_init().await {
+            // Initialization failed. Report that the system is offline. We
+            // can't proceed with initialization until the system is online.
+            info!("Network down detected");
+            let mut state = self.state.lock().await;
+            *state = CacheState::OfflineNextCheck(SystemTime::now() + OFFLINE_NEXT_CHECK);
+            // Report the network outage to the user via PAM INFO.
+            return Ok((
+                AuthResult::Denied("Network outage detected.".to_string()),
+                AuthCacheAction::None,
+            ));
+        }
+
         macro_rules! enroll_and_obtain_enrolled_token {
             ($token:ident) => {{
                 if !self.is_domain_joined(keystore).await {
@@ -1142,27 +1213,42 @@ impl IdProvider for HimmelblauProvider {
                         vec!["https://graph.microsoft.com/.default"],
                     )
                 };
-                let token = net_down_check!(
-                    self.client
-                        .write()
-                        .await
-                        .acquire_token_by_hello_for_business_key(
-                            account_id,
-                            &$hello_key,
-                            scopes,
-                            None,
-                            client_id,
-                            tpm,
-                            machine_key,
-                            &$cred,
-                        )
-                        .await,
+                let token = match self
+                    .client
+                    .write()
+                    .await
+                    .acquire_token_by_hello_for_business_key(
+                        account_id,
+                        &$hello_key,
+                        scopes,
+                        None,
+                        client_id,
+                        tpm,
+                        machine_key,
+                        &$cred,
+                    )
+                    .await
+                {
                     Ok(token) => token,
+                    // If the network goes down during an online PIN auth, we can downgrade to an
+                    // offline auth and permit the authentication to proceed.
+                    Err(MsalError::RequestFailed(msg)) => {
+                        info!(?msg, "Network down detected");
+                        let mut state = self.state.lock().await;
+                        *state =
+                            CacheState::OfflineNextCheck(SystemTime::now() + OFFLINE_NEXT_CHECK);
+                        return Ok((
+                            AuthResult::Success {
+                                token: old_token.clone(),
+                            },
+                            AuthCacheAction::None,
+                        ));
+                    }
                     Err(e) => {
                         error!("Failed to authenticate with hello key: {:?}", e);
-                        return Ok((AuthResult::Denied, AuthCacheAction::None));
+                        return Ok((AuthResult::Denied(e.to_string()), AuthCacheAction::None));
                     }
-                );
+                };
 
                 match self.token_validate(account_id, &token).await {
                     Ok(AuthResult::Success { token }) => {
@@ -1298,7 +1384,7 @@ impl IdProvider for HimmelblauProvider {
                                         "Skipping SFA fallback because authentication failed: {:?}",
                                         e
                                     );
-                                    return Ok((AuthResult::Denied, AuthCacheAction::None));
+                                    return Ok((AuthResult::Denied(e.to_string()), AuthCacheAction::None));
                                 }
                             }
                             // We can only do a password auth for an enrolled device
@@ -1344,17 +1430,17 @@ impl IdProvider for HimmelblauProvider {
                                 )
                             } else {
                                 error!("Single factor authentication is only permitted on an enrolled host: {:?}", e);
-                                return Ok((AuthResult::Denied, AuthCacheAction::None));
+                                return Ok((AuthResult::Denied(e.to_string()), AuthCacheAction::None));
                             }
                         } else {
                             error!("{:?}", e);
-                            return Ok((AuthResult::Denied, AuthCacheAction::None));
+                            return Ok((AuthResult::Denied(e.to_string()), AuthCacheAction::None));
                         };
                         let token = match mtoken {
                             Ok(token) => token,
                             Err(e) => {
                                 error!("{:?}", e);
-                                return Ok((AuthResult::Denied, AuthCacheAction::None));
+                                return Ok((AuthResult::Denied(e.to_string()), AuthCacheAction::None));
                             }
                         };
                         let token2 = enroll_and_obtain_enrolled_token!(token);
@@ -1467,11 +1553,11 @@ impl IdProvider for HimmelblauProvider {
                                 ));
                             } else {
                                 error!("{:?}", e);
-                                return Ok((AuthResult::Denied, AuthCacheAction::None));
+                                return Ok((AuthResult::Denied(e.to_string()), AuthCacheAction::None));
                             }
                         } else {
                             error!("{:?}", e);
-                            return Ok((AuthResult::Denied, AuthCacheAction::None));
+                            return Ok((AuthResult::Denied(e.to_string()), AuthCacheAction::None));
                         }
                     }
                 );
@@ -1548,7 +1634,7 @@ impl IdProvider for HimmelblauProvider {
                                 ));
                             } else {
                                 error!("{:?}", e);
-                                return Ok((AuthResult::Denied, AuthCacheAction::None));
+                                return Ok((AuthResult::Denied(e.to_string()), AuthCacheAction::None));
                             }
                         }
                         MsalError::MFAPollContinue => {
@@ -1559,7 +1645,7 @@ impl IdProvider for HimmelblauProvider {
                         }
                         e => {
                             error!("{:?}", e);
-                            return Ok((AuthResult::Denied, AuthCacheAction::None));
+                            return Ok((AuthResult::Denied(e.to_string()), AuthCacheAction::None));
                         }
                     }
                 );
@@ -1631,11 +1717,11 @@ impl IdProvider for HimmelblauProvider {
                                 ));
                             } else {
                                 error!("{:?}", e);
-                                return Ok((AuthResult::Denied, AuthCacheAction::None));
+                                return Ok((AuthResult::Denied(e.to_string()), AuthCacheAction::None));
                             }
                         } else {
                             error!("{:?}", e);
-                            return Ok((AuthResult::Denied, AuthCacheAction::None));
+                            return Ok((AuthResult::Denied(e.to_string()), AuthCacheAction::None));
                         }
                     }
                 );
@@ -1689,10 +1775,22 @@ impl IdProvider for HimmelblauProvider {
                 error!("Failed fetching hello key from keystore: {:?}", e);
                 IdpError::BadRequest
             })?;
-        if !self.is_domain_joined(keystore).await || hello_key.is_none() {
+        let sfa_enabled = self.config.read().await.get_enable_sfa_fallback();
+        // We only have 2 options when performing an offline auth; Hello PIN,
+        // or cached password for SFA users. If neither option is available,
+        // we should respond with a resonable error indicating how to proceed.
+        if hello_key.is_some() {
+            Ok((AuthRequest::Pin, AuthCredHandler::None))
+        } else if sfa_enabled {
             Ok((AuthRequest::Password, AuthCredHandler::None))
         } else {
-            Ok((AuthRequest::Pin, AuthCredHandler::None))
+            Ok((
+                AuthRequest::InitDenied {
+                    msg: "Online authentication is impossible while the device is offline."
+                        .to_string(),
+                },
+                AuthCredHandler::None,
+            ))
         }
     }
 
@@ -1741,7 +1839,7 @@ impl IdProvider for HimmelblauProvider {
                     }),
                     Err(e) => {
                         error!("{:?}", e);
-                        Ok(AuthResult::Denied)
+                        Ok(AuthResult::Denied(format!("TPM error: {:?}", e)))
                     }
                 }
             }
@@ -1765,8 +1863,89 @@ impl IdProvider for HimmelblauProvider {
 
 impl HimmelblauProvider {
     #[instrument(level = "debug", skip_all)]
+    async fn delayed_init(&self) -> Result<(), IdpError> {
+        // The purpose of this function is to delay initialization as long as
+        // possible. This permits the daemon to start, without requiring we be
+        // connected to the internet. This way we can send messages to the user
+        // via PAM indicating that the network is down.
+        let init = *self.init.read().await;
+        if !init {
+            // Send the federation provider request, if necessary. If these were
+            // cached previously, then a network connection is not necessary at
+            // this moment. If they were not cached, and supplied to the graph
+            // object, then we require a network connection now.
+            let tenant_id = self.graph.tenant_id().await.map_err(|e| {
+                error!("Failed discovering the tenant_id: {}", e);
+                IdpError::BadRequest
+            })?;
+            let authority_host = self.graph.authority_host().await.map_err(|e| {
+                error!("Failed discovering the authority_host: {}", e);
+                IdpError::BadRequest
+            })?;
+            let graph_url = self.graph.graph_url().await.map_err(|e| {
+                error!("Failed discovering the graph_url: {}", e);
+                IdpError::BadRequest
+            })?;
+
+            // Initialize the idmap range
+            let cfg = self.config.read().await;
+            let range = cfg.get_idmap_range(&self.domain);
+            let mut idmap = self.idmap.write().await;
+            idmap
+                .add_gen_domain(&self.domain, &tenant_id, range)
+                .map_err(|e| {
+                    error!("Failed adding the idmap domain: {}", e);
+                    IdpError::BadRequest
+                })?;
+            drop(cfg);
+
+            // Set the authority on the app
+            let authority_url = format!("https://{}/{}", authority_host, tenant_id);
+            self.client
+                .write()
+                .await
+                .set_authority(&authority_url)
+                .map_err(|e| {
+                    error!("Failed setting the authority_url: {}", e);
+                    IdpError::BadRequest
+                })?;
+
+            // Mark the provider as initialized
+            *self.init.write().await = true;
+
+            // Cache the federation provider responses
+            let mut cfg = self.config.write().await;
+            cfg.set(&self.domain, "tenant_id", &tenant_id);
+            debug!(
+                "Setting domain {} config tenant_id to {}",
+                self.domain, tenant_id
+            );
+            cfg.set(&self.domain, "authority_host", &authority_host);
+            debug!(
+                "Setting domain {} config authority_host to {}",
+                self.domain, authority_host
+            );
+            cfg.set(&self.domain, "graph_url", &graph_url);
+            debug!(
+                "Setting domain {} config graph_url to {}",
+                self.domain, graph_url
+            );
+            if let Err(e) = cfg.write_server_config() {
+                error!("Failed to write federation provider configuration: {:?}", e);
+            }
+        }
+        Ok(())
+    }
+
+    #[instrument(level = "debug", skip_all)]
     async fn attempt_online(&self, _tpm: &mut tpm::BoxedDynTpm, now: SystemTime) -> bool {
-        match reqwest::get(format!("https://{}", self.authority_host)).await {
+        let cfg = self.config.read().await;
+        let authority_host = self
+            .graph
+            .authority_host()
+            .await
+            .unwrap_or(cfg.get_authority_host(&self.domain));
+        match reqwest::get(format!("https://{}", authority_host)).await {
             Ok(resp) => {
                 if resp.status().is_success() {
                     debug!("provider is now online");
@@ -1845,11 +2024,12 @@ impl HimmelblauProvider {
                     IdpError::BadRequest
                 })?;
                 if account_id.to_string().to_lowercase() != spn.to_string().to_lowercase() {
-                    error!(
+                    let msg = format!(
                         "Authenticated user {} does not match requested user {}",
                         spn, account_id
                     );
-                    return Ok(AuthResult::Denied);
+                    error!(msg);
+                    return Ok(AuthResult::Denied(msg));
                 }
                 info!("Authentication successful for user '{}'", account_id);
                 // If an encrypted PRT is present, store it in the mem cache
@@ -1943,15 +2123,29 @@ impl HimmelblauProvider {
         let idmap = self.idmap.read().await;
         let uidnumber = match config.get_id_attr_map() {
             IdAttr::Uuid => idmap
-                .object_id_to_unix_id(&self.tenant_id, &uuid)
+                .object_id_to_unix_id(
+                    &self.graph.tenant_id().await.map_err(|e| {
+                        error!("{:?}", e);
+                        IdpError::BadRequest
+                    })?,
+                    &uuid,
+                )
                 .map_err(|e| {
                     error!("{:?}", e);
                     IdpError::BadRequest
                 })?,
-            IdAttr::Name => idmap.gen_to_unix(&self.tenant_id, &spn).map_err(|e| {
-                error!("{:?}", e);
-                IdpError::BadRequest
-            })?,
+            IdAttr::Name => idmap
+                .gen_to_unix(
+                    &self.graph.tenant_id().await.map_err(|e| {
+                        error!("{:?}", e);
+                        IdpError::BadRequest
+                    })?,
+                    &spn,
+                )
+                .map_err(|e| {
+                    error!("{:?}", e);
+                    IdpError::BadRequest
+                })?,
             IdAttr::Rfc2307 => match posix_attrs.get("uidNumber") {
                 Some(uid_number) => uid_number.parse::<u32>().map_err(|e| {
                     error!(
@@ -2011,10 +2205,16 @@ impl HimmelblauProvider {
             displayname,
             shell: Some(shell),
             groups,
-            tenant_id: Some(Uuid::parse_str(&self.tenant_id).map_err(|e| {
-                error!("{:?}", e);
-                IdpError::BadRequest
-            })?),
+            tenant_id: Some(
+                Uuid::parse_str(&self.graph.tenant_id().await.map_err(|e| {
+                    error!("{:?}", e);
+                    IdpError::BadRequest
+                })?)
+                .map_err(|e| {
+                    error!("{:?}", e);
+                    IdpError::BadRequest
+                })?,
+            ),
             valid,
         })
     }
@@ -2033,10 +2233,24 @@ impl HimmelblauProvider {
         let idmap = self.idmap.read().await;
         let gidnumber = match config.get_id_attr_map() {
             IdAttr::Uuid => idmap
-                .object_id_to_unix_id(&self.tenant_id, &id)
+                .object_id_to_unix_id(
+                    &self
+                        .graph
+                        .tenant_id()
+                        .await
+                        .map_err(|e| anyhow!("{:?}", e))?,
+                    &id,
+                )
                 .map_err(|e| anyhow!("Failed fetching gid for {}: {:?}", id, e))?,
             IdAttr::Name => idmap
-                .gen_to_unix(&self.tenant_id, &name)
+                .gen_to_unix(
+                    &self
+                        .graph
+                        .tenant_id()
+                        .await
+                        .map_err(|e| anyhow!("{:?}", e))?,
+                    &name,
+                )
                 .map_err(|e| anyhow!("Failed fetching gid for {}: {:?}", name, e))?,
             IdAttr::Rfc2307 => match value.extension_attrs.get("gidNumber") {
                 Some(gid_number) => gid_number.parse::<u32>().map_err(|e| {
@@ -2048,10 +2262,24 @@ impl HimmelblauProvider {
                 })?,
                 None => match config.get_rfc2307_group_fallback_map() {
                     Some(IdAttr::Uuid) => idmap
-                        .object_id_to_unix_id(&self.tenant_id, &id)
+                        .object_id_to_unix_id(
+                            &self
+                                .graph
+                                .tenant_id()
+                                .await
+                                .map_err(|e| anyhow!("{:?}", e))?,
+                            &id,
+                        )
                         .map_err(|e| anyhow!("Failed fetching gid for {}: {:?}", id, e))?,
                     Some(IdAttr::Name) => idmap
-                        .gen_to_unix(&self.tenant_id, &name)
+                        .gen_to_unix(
+                            &self
+                                .graph
+                                .tenant_id()
+                                .await
+                                .map_err(|e| anyhow!("{:?}", e))?,
+                            &name,
+                        )
                         .map_err(|e| anyhow!("Failed fetching gid for {}: {:?}", name, e))?,
                     Some(_) | None => {
                         return Err(anyhow!(
@@ -2112,22 +2340,6 @@ impl HimmelblauProvider {
                 debug!(
                     "Setting domain {} config device_id to {}",
                     self.domain, &device_id
-                );
-                config.set(&self.domain, "tenant_id", &self.tenant_id);
-                debug!(
-                    "Setting domain {} config tenant_id to {}",
-                    self.domain, &self.tenant_id
-                );
-                config.set(&self.domain, "authority_host", &self.authority_host);
-                debug!(
-                    "Setting domain {} config authority_host to {}",
-                    self.domain, &self.authority_host
-                );
-                let graph_url = self.graph.graph_url().await?;
-                config.set(&self.domain, "graph_url", &graph_url);
-                debug!(
-                    "Setting domain {} config graph_url to {}",
-                    self.domain, &graph_url
                 );
                 if let Err(e) = config.write_server_config() {
                     return Err(MsalError::GeneralFailure(format!(

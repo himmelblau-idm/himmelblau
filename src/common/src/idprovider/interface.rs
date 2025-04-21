@@ -142,6 +142,10 @@ pub enum AuthRequest {
         /// Message to display to the user.
         msg: String,
     },
+    InitDenied {
+        /// Message to display to the user.
+        msg: String,
+    },
 }
 
 #[allow(clippy::from_over_into)]
@@ -168,13 +172,14 @@ impl Into<PamAuthResponse> for AuthRequest {
                 fido_allow_list,
             },
             AuthRequest::ChangePassword { msg } => PamAuthResponse::ChangePassword { msg },
+            AuthRequest::InitDenied { msg } => PamAuthResponse::InitDenied { msg },
         }
     }
 }
 
 pub enum AuthResult {
     Success { token: UserToken },
-    Denied,
+    Denied(String),
     Next(AuthRequest),
 }
 
@@ -266,6 +271,7 @@ pub trait IdProvider {
     async fn unix_user_online_auth_step<D: KeyStoreTxn + Send>(
         &self,
         _account_id: &str,
+        _old_token: &UserToken,
         _service: &str,
         _cred_handler: &mut AuthCredHandler,
         _pam_next_req: PamAuthRequest,
