@@ -27,7 +27,7 @@ journalctl -u himmelblaud -u himmelblaud-tasks
 **Packet Trace (For Authentication Errors)**
 If you are encountering an authentication error (check the systemd journal for errors related to the `himmelblaud` daemon), please capture a packet trace of the OAuth2 authentication traffic to Azure Entra ID.
 
-Instructions for capturing the packet trace can be found on the [Himmelblau Wiki](https://github.com/himmelblau-idm/himmelblau/wiki/Capturing-authentication-traffic-using-msal_example).
+Instructions for capturing the packet trace can be found on the [Himmelblau Wiki](https://github.com/himmelblau-idm/himmelblau/wiki/Capturing-authentication-traffic-using-cirrus%E2%80%90scope).
 
 Please ensure any sensitive data is redacted before submission, including passwords, access tokens, refresh tokens, etc. If you prefer, you can message the developer privately on the [Himmelblau Matrix Channel](https://matrix.to/#/#himmelblau:matrix.org) to provide the packet capture.
 
