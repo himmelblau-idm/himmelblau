@@ -435,7 +435,7 @@ impl IdProvider for HimmelblauMultiProvider {
         match split_username(account_id) {
             Some((_sam, domain)) => {
                 let providers = self.providers.read().await;
-                match providers.get(domain) {
+                match find_provider!(self, providers, domain) {
                     Some(provider) => {
                         provider
                             .unix_user_offline_auth_init(account_id, token, keystore)
@@ -465,7 +465,7 @@ impl IdProvider for HimmelblauMultiProvider {
         match split_username(account_id) {
             Some((_sam, domain)) => {
                 let providers = self.providers.read().await;
-                match providers.get(domain) {
+                match find_provider!(self, providers, domain) {
                     Some(provider) => {
                         provider
                             .unix_user_offline_auth_step(
@@ -504,7 +504,7 @@ impl IdProvider for HimmelblauMultiProvider {
             Some(account_id) => match split_username(account_id) {
                 Some((_sam, domain)) => {
                     let providers = self.providers.read().await;
-                    match providers.get(domain) {
+                    match find_provider!(self, providers, domain) {
                         Some(provider) => return provider.get_cachestate(Some(account_id)).await,
                         None => return CacheState::Offline,
                     }
