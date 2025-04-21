@@ -374,16 +374,19 @@ macro_rules! pam_fail {
     ($conv:expr, $msg:expr, $ret:expr) => {{
         let _ = $conv.send(PAM_TEXT_INFO,
             &format!(
-                "{} If you are now prompted for a password from pam_unix, please disregard the prompt, exit and try again.",
-                 $msg
+                "{:?}: {} \nIf you are now prompted for a password from pam_unix, please disregard the prompt, go back and try again.",
+                $ret,
+                $msg
             )
         );
-        return $ret;
-    }}
+        thread::sleep(Duration::from_secs(2));
+        // Abort the auth attempt, and don't continue executing the stack
+        return PamResultCode::PAM_ABORT;
+    }};
 }
 
 macro_rules! match_sm_auth_client_response {
-    ($daemon_client:expr, $opts:ident, $conv:ident, $req:ident, $authtok:ident, $cfg:ident, $($pat:pat => $result:expr),*) => {{
+    ($daemon_client:expr, $opts:ident, $conv:ident, $req:ident, $authtok:ident, $cfg:ident, $account_id:ident, $service:ident, $($pat:pat => $result:expr),*) => {{
         let timeout = $cfg.get_unix_sock_timeout();
         match $daemon_client.call_and_wait(&$req, timeout) {
             Ok(r) => match r {
@@ -391,12 +394,17 @@ macro_rules! match_sm_auth_client_response {
                 ClientResponse::PamAuthenticateStepResponse(PamAuthResponse::Success) => {
                     return PamResultCode::PAM_SUCCESS;
                 }
-                ClientResponse::PamAuthenticateStepResponse(PamAuthResponse::Denied) => {
-                    pam_fail!(
-                        $conv.lock().unwrap(),
-                        "Entra Id authentication denied.",
-                        PamResultCode::PAM_AUTH_ERR
-                    );
+                ClientResponse::PamAuthenticateStepResponse(PamAuthResponse::Denied(msg)) => {
+                    let conv = $conv.lock().unwrap();
+                    let _ = conv.send(PAM_TEXT_INFO, &msg);
+                    thread::sleep(Duration::from_secs(2));
+                    $req = ClientRequest::PamAuthenticateInit($account_id.to_string(), $service.to_string());
+                    continue;
+                }
+                ClientResponse::PamAuthenticateStepResponse(PamAuthResponse::InitDenied {
+                    msg,
+                }) => {
+                    pam_fail!($conv.lock().unwrap(), msg, PamResultCode::PAM_ABORT)
                 }
                 ClientResponse::PamAuthenticateStepResponse(PamAuthResponse::Unknown) => {
                     if $opts.ignore_unknown_user {
@@ -408,20 +416,21 @@ macro_rules! match_sm_auth_client_response {
                 ClientResponse::PamAuthenticateStepResponse(PamAuthResponse::SetupPin {
                     msg,
                 }) => {
+                    let msg = format!("{}\nThe minimum PIN length is {} characters.", msg, $cfg.get_hello_pin_min_length());
                     let conv = $conv.lock().unwrap();
-                    match conv.send(PAM_TEXT_INFO, &msg) {
-                        Ok(_) => {}
-                        Err(err) => {
-                            if $opts.debug {
-                                println!("Message prompt failed");
-                            }
-                            return err;
-                        }
-                    }
 
                     let mut pin;
                     let mut confirm;
                     loop {
+                        match conv.send(PAM_TEXT_INFO, &msg) {
+                            Ok(_) => {}
+                            Err(err) => {
+                                if $opts.debug {
+                                    println!("Message prompt failed");
+                                }
+                                return err;
+                            }
+                        }
                         pin = match conv.send(PAM_PROMPT_ECHO_OFF, "New PIN: ") {
                             Ok(password) => match password {
                                 Some(cred) => {
@@ -435,6 +444,7 @@ macro_rules! match_sm_auth_client_response {
                                                 return err;
                                             }
                                         }
+                                        thread::sleep(Duration::from_secs(2));
                                         continue;
                                     }
                                     cred
@@ -457,6 +467,16 @@ macro_rules! match_sm_auth_client_response {
                                 );
                             }
                         };
+
+                        match conv.send(PAM_TEXT_INFO, &msg) {
+                            Ok(_) => {}
+                            Err(err) => {
+                                if $opts.debug {
+                                    println!("Message prompt failed");
+                                }
+                                return err;
+                            }
+                        }
 
                         confirm = match conv.send(PAM_PROMPT_ECHO_OFF, "Confirm PIN: ") {
                             Ok(password) => match password {
@@ -492,8 +512,11 @@ macro_rules! match_sm_auth_client_response {
                                     return err;
                                 }
                             }
+                            thread::sleep(Duration::from_secs(2));
                         }
                     }
+
+                    let _ = conv.send(PAM_TEXT_INFO, "Enrolling the Hello PIN. Please wait...");
 
                     // Now setup the request for the next loop.
                     $req = ClientRequest::PamAuthenticateStep(PamAuthRequest::SetupPin {
@@ -511,6 +534,15 @@ macro_rules! match_sm_auth_client_response {
                         cred
                     } else {
                         let conv = $conv.lock().unwrap();
+                        match conv.send(PAM_TEXT_INFO, "Use the Linux Hello PIN for this device.") {
+                            Ok(_) => {}
+                            Err(err) => {
+                                if $opts.debug {
+                                    println!("Message prompt failed");
+                                }
+                                return err;
+                            }
+                        }
                         match conv.send(PAM_PROMPT_ECHO_OFF, "PIN: ") {
                             Ok(password) => match password {
                                 Some(cred) => cred,
@@ -561,19 +593,19 @@ macro_rules! match_sm_auth_client_response {
                     msg,
                 }) => {
                     let conv = $conv.lock().unwrap();
-                    match conv.send(PAM_TEXT_INFO, &msg) {
-                        Ok(_) => {}
-                        Err(err) => {
-                            if $opts.debug {
-                                println!("Message prompt failed");
-                            }
-                            return err;
-                        }
-                    }
 
                     let mut password;
                     let mut confirm;
                     loop {
+                        match conv.send(PAM_TEXT_INFO, &msg) {
+                            Ok(_) => {}
+                            Err(err) => {
+                                if $opts.debug {
+                                    println!("Message prompt failed");
+                                }
+                                return err;
+                            }
+                        }
                         password = match conv.send(PAM_PROMPT_ECHO_OFF, "New password: ") {
                             Ok(password) => match password {
                                 Some(cred) => {
@@ -611,6 +643,16 @@ macro_rules! match_sm_auth_client_response {
                             }
                         };
 
+                        match conv.send(PAM_TEXT_INFO, &msg) {
+                            Ok(_) => {}
+                            Err(err) => {
+                                if $opts.debug {
+                                    println!("Message prompt failed");
+                                }
+                                return err;
+                            }
+                        }
+
                         confirm = match conv.send(PAM_PROMPT_ECHO_OFF, "Confirm password: ") {
                             Ok(password) => match password {
                                 Some(cred) => cred,
@@ -645,8 +687,11 @@ macro_rules! match_sm_auth_client_response {
                                     return err;
                                 }
                             }
+                            thread::sleep(Duration::from_secs(2));
                         }
                     }
+
+                    let _ = conv.send(PAM_TEXT_INFO, "Changing the password. Please wait...");
 
                     // Now setup the request for the next loop.
                     $req = ClientRequest::PamAuthenticateStep(PamAuthRequest::Password {
@@ -664,6 +709,15 @@ macro_rules! match_sm_auth_client_response {
                         cred
                     } else {
                         let lconv = $conv.lock().unwrap();
+                        match lconv.send(PAM_TEXT_INFO, "Use the password for your Office 365 or Microsoft online login.") {
+                            Ok(_) => {}
+                            Err(err) => {
+                                if $opts.debug {
+                                    println!("Message prompt failed");
+                                }
+                                return err;
+                            }
+                        }
                         match lconv.send(PAM_PROMPT_ECHO_OFF, "Entra Id Password: ") {
                             Ok(password) => match password {
                                 Some(cred) => cred,
@@ -736,7 +790,7 @@ macro_rules! match_sm_auth_client_response {
                     msg,
                     polling_interval,
                 }) => {
-                    return mfa_poll($daemon_client, $authtok, $conv, $opts, $cfg, &msg, polling_interval);
+                    return mfa_poll($daemon_client, $authtok, $conv, $opts, $cfg, &$account_id, &$service, &msg, polling_interval);
                 }
                 _ => {
                     // unexpected response.
@@ -768,6 +822,8 @@ fn mfa_poll(
     conv: Arc<Mutex<PamConv>>,
     opts: Options,
     cfg: HimmelblauConfig,
+    account_id: &str,
+    service: &str,
     msg: &str,
     polling_interval: u32,
 ) -> PamResultCode {
@@ -777,7 +833,17 @@ fn mfa_poll(
     // deadlock here.
     {
         let lconv = conv.lock().unwrap();
-        match lconv.send(PAM_TEXT_INFO, msg) {
+        // Suggest users connect mobile devices to the internet, except when
+        // polling a DAG.
+        let msg = if !msg.contains("https://microsoft.com/devicelogin") {
+            format!(
+                "{}\nNo push? Check your mobile device's internet connection.",
+                msg
+            )
+        } else {
+            msg.to_string()
+        };
+        match lconv.send(PAM_TEXT_INFO, &msg) {
             Ok(_) => {}
             Err(err) => {
                 if opts.debug {
@@ -806,7 +872,7 @@ fn mfa_poll(
         // will shutdown. This allows the resolver to dynamically extend the
         // timeout if needed, and removes logic from the front end.
         match_sm_auth_client_response!(
-            daemon_client, opts, conv, req, authtok, cfg,
+            daemon_client, opts, conv, req, authtok, cfg, account_id, service,
             ClientResponse::PamAuthenticateStepResponse(
                     PamAuthResponse::MFAPollWait,
             ) => {
@@ -961,10 +1027,19 @@ impl PamHooks for PamKanidm {
             }
         };
 
-        let mut req = ClientRequest::PamAuthenticateInit(account_id, service);
+        let mut req = ClientRequest::PamAuthenticateInit(account_id.clone(), service.clone());
 
         loop {
-            match_sm_auth_client_response!(daemon_client, opts, conv, req, authtok, cfg,);
+            match_sm_auth_client_response!(
+                daemon_client,
+                opts,
+                conv,
+                req,
+                authtok,
+                cfg,
+                account_id,
+                service,
+            );
         } // while true, continue calling PamAuthenticateStep until we get a decision.
     }
 

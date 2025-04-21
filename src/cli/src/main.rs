@@ -162,8 +162,8 @@ macro_rules! match_sm_auth_client_response {
                     println!("auth success!");
                     break;
                 }
-                ClientResponse::PamAuthenticateStepResponse(PamAuthResponse::Denied) => {
-                    println!("auth failed!");
+                ClientResponse::PamAuthenticateStepResponse(PamAuthResponse::Denied(msg)) => {
+                    println!("auth failed: {}", msg);
                     break;
                 }
                 ClientResponse::PamAuthenticateStepResponse(PamAuthResponse::Unknown) => {

@@ -32,7 +32,7 @@ pub struct NssGroup {
 pub enum PamAuthResponse {
     Unknown,
     Success,
-    Denied,
+    Denied(String),
     Password,
     /// PAM must prompt for an authentication code
     MFACode {
@@ -58,6 +58,10 @@ pub enum PamAuthResponse {
     },
     /// PAM must prompt for a new password and confirm that password input
     ChangePassword {
+        msg: String,
+    },
+    /// PAM message indicating why auth init was denied
+    InitDenied {
         msg: String,
     },
 }

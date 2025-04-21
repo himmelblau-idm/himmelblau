@@ -9,7 +9,9 @@
  */
 use himmelblau_unix_common::client_sync::DaemonClientBlocking;
 use himmelblau_unix_common::config::HimmelblauConfig;
-use himmelblau_unix_common::constants::DEFAULT_CONFIG_PATH;
+use himmelblau_unix_common::constants::{DEFAULT_CONFIG_PATH, NSS_CACHE};
+use himmelblau_unix_common::idprovider::interface::Id;
+use himmelblau_unix_common::nss_cache::{Mode, NssCache};
 use himmelblau_unix_common::unix_proto::{ClientRequest, ClientResponse, NssGroup, NssUser};
 use libnss::group::{Group, GroupHooks};
 use libnss::interop::Response;
@@ -17,6 +19,56 @@ use libnss::passwd::{Passwd, PasswdHooks};
 
 struct HimmelblauPasswd;
 libnss_passwd_hooks!(himmelblau, HimmelblauPasswd);
+
+macro_rules! try_nss_cache {
+    () => {
+        match NssCache::new(NSS_CACHE, &Mode::ReadWrite) {
+            Ok(cache) => Some(cache),
+            Err(_) => None,
+        }
+    };
+}
+
+macro_rules! fetch_cached_user {
+    ($cache:expr, $cfg:ident, $id:expr, $ret:expr) => {{
+        match $cache {
+            Some(ref c) => match c.get_user(&$id) {
+                Some(nu) => {
+                    let mut passwd = passwd_from_nssuser(nu);
+                    passwd.name = $cfg.map_upn_to_name(&passwd.name);
+                    return Response::Success(passwd);
+                }
+                None => return $ret,
+            },
+            None => return $ret,
+        }
+    }};
+}
+
+macro_rules! insert_cached_user {
+    ($cache:expr, $nu:ident) => {{
+        if let Some(ref cache) = $cache {
+            let _ = cache.insert_user(&$nu);
+        }
+    }};
+}
+
+macro_rules! fetch_all_cached_users {
+    ($cache:expr, $cfg:ident) => {{
+        match $cache {
+            Some(ref c) => c
+                .get_users()
+                .into_iter()
+                .map(|nu| {
+                    let mut passwd = passwd_from_nssuser(nu);
+                    passwd.name = $cfg.map_upn_to_name(&passwd.name);
+                    passwd
+                })
+                .collect(),
+            None => Vec::new(),
+        }
+    }};
+}
 
 impl PasswdHooks for HimmelblauPasswd {
     fn get_all_entries() -> Response<Vec<Passwd>> {
@@ -28,10 +80,12 @@ impl PasswdHooks for HimmelblauPasswd {
         };
         let req = ClientRequest::NssAccounts;
 
+        let nss_cache = try_nss_cache!();
+
         let mut daemon_client = match DaemonClientBlocking::new(cfg.get_socket_path().as_str()) {
             Ok(dc) => dc,
             Err(_) => {
-                return Response::Unavail;
+                return Response::Success(fetch_all_cached_users!(nss_cache, cfg));
             }
         };
 
@@ -41,15 +95,16 @@ impl PasswdHooks for HimmelblauPasswd {
                 ClientResponse::NssAccounts(l) => l
                     .into_iter()
                     .map(|nu| {
+                        insert_cached_user!(nss_cache, nu);
                         let mut passwd = passwd_from_nssuser(nu);
                         passwd.name = cfg.map_upn_to_name(&passwd.name);
                         passwd
                     })
                     .collect(),
-                _ => Vec::new(),
+                _ => fetch_all_cached_users!(nss_cache, cfg),
             })
             .map(Response::Success)
-            .unwrap_or_else(|_| Response::Success(vec![]))
+            .unwrap_or_else(|_| Response::Success(fetch_all_cached_users!(nss_cache, cfg)))
     }
 
     fn get_entry_by_uid(uid: libc::uid_t) -> Response<Passwd> {
@@ -61,10 +116,12 @@ impl PasswdHooks for HimmelblauPasswd {
         };
         let req = ClientRequest::NssAccountByUid(uid);
 
+        let nss_cache = try_nss_cache!();
+
         let mut daemon_client = match DaemonClientBlocking::new(cfg.get_socket_path().as_str()) {
             Ok(dc) => dc,
             Err(_) => {
-                return Response::Unavail;
+                fetch_cached_user!(nss_cache, cfg, Id::Gid(uid), Response::Unavail);
             }
         };
 
@@ -73,14 +130,19 @@ impl PasswdHooks for HimmelblauPasswd {
             .map(|r| match r {
                 ClientResponse::NssAccount(opt) => opt
                     .map(|nu| {
+                        insert_cached_user!(nss_cache, nu);
                         let mut passwd = passwd_from_nssuser(nu);
                         passwd.name = cfg.map_upn_to_name(&passwd.name);
                         Response::Success(passwd)
                     })
-                    .unwrap_or_else(|| Response::NotFound),
-                _ => Response::NotFound,
+                    .unwrap_or_else(|| {
+                        fetch_cached_user!(nss_cache, cfg, Id::Gid(uid), Response::NotFound)
+                    }),
+                _ => fetch_cached_user!(nss_cache, cfg, Id::Gid(uid), Response::NotFound),
             })
-            .unwrap_or_else(|_| Response::NotFound)
+            .unwrap_or_else(|_| {
+                fetch_cached_user!(nss_cache, cfg, Id::Gid(uid), Response::NotFound)
+            })
     }
 
     fn get_entry_by_name(name: String) -> Response<Passwd> {
@@ -92,10 +154,13 @@ impl PasswdHooks for HimmelblauPasswd {
         };
         let upn = cfg.map_name_to_upn(&name);
         let req = ClientRequest::NssAccountByName(upn.clone());
+
+        let nss_cache = try_nss_cache!();
+
         let mut daemon_client = match DaemonClientBlocking::new(cfg.get_socket_path().as_str()) {
             Ok(dc) => dc,
             Err(_) => {
-                return Response::Unavail;
+                fetch_cached_user!(nss_cache, cfg, Id::Name(upn), Response::Unavail);
             }
         };
 
@@ -104,14 +169,24 @@ impl PasswdHooks for HimmelblauPasswd {
             .map(|r| match r {
                 ClientResponse::NssAccount(opt) => opt
                     .map(|nu| {
+                        insert_cached_user!(nss_cache, nu);
                         let mut passwd = passwd_from_nssuser(nu);
                         passwd.name = cfg.map_upn_to_name(&passwd.name);
                         Response::Success(passwd)
                     })
-                    .unwrap_or_else(|| Response::NotFound),
-                _ => Response::NotFound,
+                    .unwrap_or_else(|| {
+                        fetch_cached_user!(
+                            nss_cache,
+                            cfg,
+                            Id::Name(upn.clone()),
+                            Response::NotFound
+                        )
+                    }),
+                _ => fetch_cached_user!(nss_cache, cfg, Id::Name(upn.clone()), Response::NotFound),
             })
-            .unwrap_or_else(|_| Response::NotFound)
+            .unwrap_or_else(|_| {
+                fetch_cached_user!(nss_cache, cfg, Id::Name(upn), Response::NotFound)
+            })
     }
 }
 
