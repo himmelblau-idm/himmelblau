@@ -30,7 +30,7 @@ homepage = "https://github.com/himmelblau-idm/himmelblau"
 repository = "https://github.com/himmelblau-idm/himmelblau"
 
 [workspace.dependencies]
-libc = "^0.2.170"
+libc = "^0.2.172"
 pkg-config = "^0.3.32"
 lazy_static = "^1.4.0"
 paste = "^1.0.12"
