@@ -114,6 +114,34 @@ impl RefreshCache {
     }
 }
 
+pub struct BadPinCounter {
+    counter: RwLock<HashMap<String, u32>>,
+}
+
+impl BadPinCounter {
+    pub fn new() -> Self {
+        BadPinCounter {
+            counter: RwLock::new(HashMap::new()),
+        }
+    }
+
+    pub async fn bad_pin_count(&self, account_id: &str) -> u32 {
+        let map = self.counter.read().await;
+        *map.get(account_id).unwrap_or(&0)
+    }
+
+    pub async fn increment_bad_pin_count(&self, account_id: &str) {
+        let mut map = self.counter.write().await;
+        let counter = map.entry(account_id.to_string()).or_insert(0);
+        *counter += 1;
+    }
+
+    pub async fn reset_bad_pin_count(&self, account_id: &str) {
+        let mut map = self.counter.write().await;
+        map.insert(account_id.to_string(), 0);
+    }
+}
+
 impl HimmelblauMultiProvider {
     pub async fn new<D: KeyStoreTxn + Send>(
         config_filename: &str,
@@ -539,6 +567,7 @@ pub struct HimmelblauProvider {
     refresh_cache: RefreshCache,
     idmap: Arc<RwLock<Idmap>>,
     init: RwLock<bool>,
+    bad_pin_counter: BadPinCounter,
 }
 
 impl HimmelblauProvider {
@@ -558,6 +587,7 @@ impl HimmelblauProvider {
             refresh_cache: RefreshCache::new(),
             idmap: idmap.clone(),
             init: RwLock::new(false),
+            bad_pin_counter: BadPinCounter::new(),
         })
     }
 }
@@ -970,7 +1000,11 @@ impl IdProvider for HimmelblauProvider {
             })?;
         // Skip Hello authentication if it is disabled by config
         let hello_enabled = self.config.read().await.get_enable_hello();
-        if !self.is_domain_joined(keystore).await || hello_key.is_none() || !hello_enabled {
+        if !self.is_domain_joined(keystore).await
+            || hello_key.is_none()
+            || !hello_enabled
+            || self.bad_pin_counter.bad_pin_count(account_id).await > 3
+        {
             if let Err(_) = self.delayed_init().await {
                 // Initialization failed. Report that the system is offline. We
                 // can't proceed with initialization until the system is online.
@@ -1229,7 +1263,10 @@ impl IdProvider for HimmelblauProvider {
                     )
                     .await
                 {
-                    Ok(token) => token,
+                    Ok(token) => {
+                        self.bad_pin_counter.reset_bad_pin_count(account_id).await;
+                        token
+                    }
                     // If the network goes down during an online PIN auth, we can downgrade to an
                     // offline auth and permit the authentication to proceed.
                     Err(MsalError::RequestFailed(msg)) => {
@@ -1245,8 +1282,16 @@ impl IdProvider for HimmelblauProvider {
                         ));
                     }
                     Err(e) => {
+                        self.bad_pin_counter
+                            .increment_bad_pin_count(account_id)
+                            .await;
                         error!("Failed to authenticate with hello key: {:?}", e);
-                        return Ok((AuthResult::Denied(e.to_string()), AuthCacheAction::None));
+                        return Ok((
+                            AuthResult::Denied(
+                                "Failed to authenticate with Hello PIN.".to_string(),
+                            ),
+                            AuthCacheAction::None,
+                        ));
                     }
                 };
 
@@ -1779,7 +1824,7 @@ impl IdProvider for HimmelblauProvider {
         // We only have 2 options when performing an offline auth; Hello PIN,
         // or cached password for SFA users. If neither option is available,
         // we should respond with a resonable error indicating how to proceed.
-        if hello_key.is_some() {
+        if hello_key.is_some() && self.bad_pin_counter.bad_pin_count(account_id).await <= 3 {
             Ok((AuthRequest::Pin, AuthCredHandler::None))
         } else if sfa_enabled {
             Ok((AuthRequest::Password, AuthCredHandler::None))
@@ -1834,12 +1879,20 @@ impl IdProvider for HimmelblauProvider {
                     IdpError::Tpm
                 })?;
                 match tpm.identity_key_load(machine_key, Some(&pin), &hello_key) {
-                    Ok(_) => Ok(AuthResult::Success {
-                        token: token.clone(),
-                    }),
+                    Ok(_) => {
+                        self.bad_pin_counter.reset_bad_pin_count(account_id).await;
+                        Ok(AuthResult::Success {
+                            token: token.clone(),
+                        })
+                    }
                     Err(e) => {
+                        self.bad_pin_counter
+                            .increment_bad_pin_count(account_id)
+                            .await;
                         error!("{:?}", e);
-                        Ok(AuthResult::Denied(format!("TPM error: {:?}", e)))
+                        Ok(AuthResult::Denied(
+                            "Failed to authenticate with Hello PIN.".to_string(),
+                        ))
                     }
                 }
             }
