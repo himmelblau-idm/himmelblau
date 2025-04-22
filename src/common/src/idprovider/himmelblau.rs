@@ -1246,7 +1246,12 @@ impl IdProvider for HimmelblauProvider {
                     }
                     Err(e) => {
                         error!("Failed to authenticate with hello key: {:?}", e);
-                        return Ok((AuthResult::Denied(e.to_string()), AuthCacheAction::None));
+                        return Ok((
+                            AuthResult::Denied(
+                                "Failed to authenticate with Hello PIN.".to_string(),
+                            ),
+                            AuthCacheAction::None,
+                        ));
                     }
                 };
 
@@ -1839,7 +1844,9 @@ impl IdProvider for HimmelblauProvider {
                     }),
                     Err(e) => {
                         error!("{:?}", e);
-                        Ok(AuthResult::Denied(format!("TPM error: {:?}", e)))
+                        Ok(AuthResult::Denied(
+                            "Failed to authenticate with Hello PIN.".to_string(),
+                        ))
                     }
                 }
             }
