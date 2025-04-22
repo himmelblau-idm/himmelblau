@@ -981,7 +981,7 @@ impl IdProvider for HimmelblauProvider {
                         *state = CacheState::OfflineNextCheck(SystemTime::now() + OFFLINE_NEXT_CHECK);
                         return Ok((
                             AuthRequest::InitDenied {
-                                msg: "Online authentication is impossible while the device is offline."
+                                msg: "Network outage detected."
                                     .to_string(),
                             },
                             AuthCredHandler::None,
@@ -1011,7 +1011,13 @@ impl IdProvider for HimmelblauProvider {
                 info!("Network down detected");
                 let mut state = self.state.lock().await;
                 *state = CacheState::OfflineNextCheck(SystemTime::now() + OFFLINE_NEXT_CHECK);
-                return Ok((AuthRequest::Password, AuthCredHandler::None));
+                return Ok((
+                    AuthRequest::InitDenied {
+                        msg: "Network outage detected."
+                            .to_string(),
+                    },
+                    AuthCredHandler::None,
+                ));
             }
             if self.config.read().await.get_enable_experimental_mfa() {
                 let auth_options = vec![AuthOption::Fido, AuthOption::Passwordless];
@@ -1027,6 +1033,17 @@ impl IdProvider for HimmelblauProvider {
                     }
                 );
                 if !auth_init.passwordless() {
+                    // Check if the network is even up prior to sending a
+                    // password prompt.
+                    if !self.attempt_online(tpm, SystemTime::now()).await {
+                        return Ok((
+                            AuthRequest::InitDenied {
+                                msg: "Network outage detected."
+                                    .to_string(),
+                            },
+                            AuthCredHandler::None,
+                        ));
+                    }
                     Ok((AuthRequest::Password, AuthCredHandler::None))
                 } else {
                     let flow = net_down_check!(
@@ -1831,7 +1848,7 @@ impl IdProvider for HimmelblauProvider {
         } else {
             Ok((
                 AuthRequest::InitDenied {
-                    msg: "Online authentication is impossible while the device is offline."
+                    msg: "Network outage detected."
                         .to_string(),
                 },
                 AuthCredHandler::None,
