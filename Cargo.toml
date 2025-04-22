@@ -30,7 +30,7 @@ homepage = "https://github.com/himmelblau-idm/himmelblau"
 repository = "https://github.com/himmelblau-idm/himmelblau"
 
 [workspace.dependencies]
-libc = "^0.2.170"
+libc = "^0.2.172"
 pkg-config = "^0.3.32"
 lazy_static = "^1.4.0"
 paste = "^1.0.12"
@@ -39,12 +39,12 @@ serde_json = "^1.0.140"
 tracing-subscriber = "^0.3.17"
 tracing = "^0.1.37"
 himmelblau_unix_common = { path = "src/common" }
-libhimmelblau = { version = "0.6.11", features = ["broker", "changepassword", "on_behalf_of"] }
+libhimmelblau = { version = "0.6.17", features = ["broker", "changepassword", "on_behalf_of"] }
 clap = { version = "^4.5", features = ["derive", "env"] }
 clap_complete = "^4.5.46"
-reqwest = { version = "^0.12.2", features = ["json"] }
-anyhow = "^1.0.96"
-tokio = { version = "^1.28.1", features = ["rt", "macros", "sync", "time", "net", "io-util", "signal", "rt-multi-thread"] }
+reqwest = { version = "^0.12.15", features = ["json"] }
+anyhow = "^1.0.98"
+tokio = { version = "^1.44.2", features = ["rt", "macros", "sync", "time", "net", "io-util", "signal", "rt-multi-thread"] }
 tokio-util = { version = "^0.7.8", features = ["codec"] }
 async-trait = "^0.1.87"
 pem = "^3.0.5"
@@ -72,7 +72,7 @@ uuid = { version = "^1.4.1", features = ["v4"] }
 webauthn-rs-proto = "0.5.0"
 kanidm_proto = { path = "./src/proto" }
 openssl-sys = "^0.9"
-openssl = "^0.10.55"
+openssl = "^0.10.72"
 rand = "^0.9.0"
 tss-esapi = "^7.2.0"
 sketching = { path = "./src/sketching" }

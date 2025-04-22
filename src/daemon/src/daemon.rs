@@ -301,30 +301,21 @@ async fn handle_client(
                 trace!("pam authenticate init");
 
                 async {
-                    match &pam_auth_session_state {
-                        Some(_auth_session) => {
-                            // Invalid to init a request twice.
-                            warn!("Attempt to init auth session while current session is active");
-                            // Clean the former session, something is wrong.
-                            pam_auth_session_state = None;
-                            ClientResponse::Error
+                    // We may re-init upon auth failure, at which point we will
+                    // disregard the previous state and start over.
+                    match cachelayer
+                        .pam_account_authenticate_init(
+                            account_id.as_str(),
+                            service.as_str(),
+                            shutdown_tx.subscribe(),
+                        )
+                        .await
+                    {
+                        Ok((auth_session, pam_auth_response)) => {
+                            pam_auth_session_state = Some(auth_session);
+                            pam_auth_response.into()
                         }
-                        None => {
-                            match cachelayer
-                                .pam_account_authenticate_init(
-                                    account_id.as_str(),
-                                    service.as_str(),
-                                    shutdown_tx.subscribe(),
-                                )
-                                .await
-                            {
-                                Ok((auth_session, pam_auth_response)) => {
-                                    pam_auth_session_state = Some(auth_session);
-                                    pam_auth_response.into()
-                                }
-                                Err(_) => ClientResponse::Error,
-                            }
-                        }
+                        Err(_) => ClientResponse::Error,
                     }
                 }
                 .instrument(span)
@@ -395,9 +386,10 @@ async fn handle_client(
                                                                 {
                                                                     Ok(Ok(status)) => {
                                                                         if status == 2 {
-                                                                            debug!("Authentication was explicitly denied by the logon script");
+                                                                            let msg = "Authentication was explicitly denied by the logon script";
+                                                                            debug!(msg);
                                                                             resp =
-                                                                                PamAuthResponse::Denied;
+                                                                                PamAuthResponse::Denied(msg.to_string());
                                                                         }
                                                                     }
                                                                     _ => {

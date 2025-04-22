@@ -1063,7 +1063,7 @@ where
                     ref account_id,
                     ref service,
                     id: _,
-                    token: _,
+                    token: Some(ref token),
                     online_at_init: true,
                     ref mut cred_handler,
                     ref shutdown_rx,
@@ -1077,6 +1077,7 @@ where
                     .client
                     .unix_user_online_auth_step(
                         account_id,
+                        token,
                         service,
                         cred_handler,
                         pam_next_req,
@@ -1150,7 +1151,7 @@ where
                             Ok(true) => Ok(AuthResult::Success {
                                 token: *token.clone(),
                             }),
-                            Ok(false) => Ok(AuthResult::Denied),
+                            Ok(false) => Ok(AuthResult::Denied("Offline auth failed".to_string())),
                             Err(()) => {
                                 // We had a genuine backend error of some description.
                                 return Err(());
@@ -1239,9 +1240,9 @@ where
                     Ok(PamAuthResponse::Success)
                 }
             }
-            Ok(AuthResult::Denied) => {
+            Ok(AuthResult::Denied(msg)) => {
                 *auth_session = AuthSession::Denied;
-                Ok(PamAuthResponse::Denied)
+                Ok(PamAuthResponse::Denied(msg))
             }
             Ok(AuthResult::Next(req)) => Ok(req.into()),
             Err(IdpError::NotFound) => Ok(PamAuthResponse::Unknown),
@@ -1293,8 +1294,12 @@ where
                 // Can continue!
                 auth_session
             }
+            (auth_session, PamAuthResponse::InitDenied { .. }) => {
+                // Can continue!
+                auth_session
+            }
             (_, PamAuthResponse::Unknown) => return Ok(None),
-            (_, PamAuthResponse::Denied) => return Ok(Some(false)),
+            (_, PamAuthResponse::Denied(_)) => return Ok(Some(false)),
             (_, PamAuthResponse::Success) => {
                 // Should never get here "off the rip".
                 debug_assert!(false);
@@ -1315,7 +1320,7 @@ where
             .await?
         {
             PamAuthResponse::Success => Ok(Some(true)),
-            PamAuthResponse::Denied => Ok(Some(false)),
+            PamAuthResponse::Denied(_) => Ok(Some(false)),
             _ => {
                 // Should not be able to get here, if the user was unknown they should
                 // be out. If it wants more mechanisms, we can't proceed here.
