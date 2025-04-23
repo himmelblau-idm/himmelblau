@@ -49,7 +49,7 @@ use uuid::Uuid;
 
 macro_rules! extract_base_url {
     ($msg:expr) => {{
-        if let Some(regex) = Regex::new(r#"https?://[^\s"'<>]+"#).ok() {
+        if let Ok(regex) = Regex::new(r#"https?://[^\s"'<>]+"#) {
             if let Some(mat) = regex.find(&$msg) {
                 if let Ok(mut parsed) = Url::parse(mat.as_str()) {
                     parsed.set_query(None);
@@ -776,7 +776,8 @@ impl IdProvider for HimmelblauProvider {
                 match $res {
                     Ok(val) => val,
                     Err(MsalError::RequestFailed(msg)) => {
-                        info!(?msg, "Network down detected");
+                        let url = extract_base_url!(msg);
+                        info!(?url, "Network down detected");
                         let mut state = self.state.lock().await;
                         *state = CacheState::OfflineNextCheck(SystemTime::now() + OFFLINE_NEXT_CHECK);
                         return Ok(UserTokenState::UseCached)
@@ -941,7 +942,8 @@ impl IdProvider for HimmelblauProvider {
                 match $res {
                     Ok(val) => val,
                     Err(MsalError::RequestFailed(msg)) => {
-                        info!(?msg, "Network down detected");
+                        let url = extract_base_url!(msg);
+                        info!(?url, "Network down detected");
                         let mut state = self.state.lock().await;
                         *state = CacheState::OfflineNextCheck(SystemTime::now() + OFFLINE_NEXT_CHECK);
                         return Ok((
@@ -1228,7 +1230,8 @@ impl IdProvider for HimmelblauProvider {
                     // If the network goes down during an online PIN auth, we can downgrade to an
                     // offline auth and permit the authentication to proceed.
                     Err(MsalError::RequestFailed(msg)) => {
-                        info!(?msg, "Network down detected");
+                        let url = extract_base_url!(msg);
+                        info!(?url, "Network down detected");
                         let mut state = self.state.lock().await;
                         *state =
                             CacheState::OfflineNextCheck(SystemTime::now() + OFFLINE_NEXT_CHECK);
