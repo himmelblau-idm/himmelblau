@@ -715,12 +715,7 @@ impl IdProvider for HimmelblauProvider {
             return Err(IdpError::BadRequest);
         }
 
-        if !self.check_online(tpm, SystemTime::now()).await {
-            // We can't fetch a PRT cookie when offline
-            return Err(IdpError::BadRequest);
-        }
-
-        /* Use the prt mem cache to refresh the user token */
+        /* Use the prt mem cache to generate the sso cookie */
         let account_id = match old_token {
             Some(token) => token.spn.clone(),
             None => id.to_string().clone(),
