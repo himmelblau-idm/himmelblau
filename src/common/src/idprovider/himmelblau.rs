@@ -927,19 +927,38 @@ impl IdProvider for HimmelblauProvider {
                 vec!["https://graph.microsoft.com/.default"],
             )
         };
-        let token = net_down_check!(
-            self.client
-                .write()
-                .await
-                .exchange_prt_for_access_token(&prt, scopes, None, client_id, tpm, machine_key)
-                .await,
+        let token = match self
+            .client
+            .write()
+            .await
+            .exchange_prt_for_access_token(&prt, scopes.clone(), None, client_id, tpm, machine_key)
+            .await
+        {
+            Ok(val) => val,
+            Err(MsalError::RequestFailed(_)) => {
+                // Retry on network failure, as these can be rather common
+                sleep(Duration::from_millis(500));
+                net_down_check!(
+                    self.client
+                        .write()
+                        .await
+                        .exchange_prt_for_access_token(&prt, scopes, None, client_id, tpm, machine_key)
+                        .await,
+                    Err(e) => {
+                        error!("{:?}", e);
+                        // Never return IdpError::NotFound. This deletes the existing
+                        // user from the cache.
+                        fake_user!()
+                    }
+                )
+            }
             Err(e) => {
                 error!("{:?}", e);
                 // Never return IdpError::NotFound. This deletes the existing
                 // user from the cache.
                 fake_user!()
             }
-        );
+        };
         match self.token_validate(&account_id, &token).await {
             Ok(AuthResult::Success { mut token }) => {
                 /* Set the GECOS from the old_token, since MS doesn't
