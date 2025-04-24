@@ -1,3 +1,5 @@
+[![Primary Sponsor: SUSE](https://img.shields.io/badge/Primary%20Sponsor-SUSE-brightgreen)](https://www.suse.com)
+
 [![Donate to Our Collective](https://opencollective.com/yourproject/donate/button.png?color=blue)](https://opencollective.com/himmelblau)
 
 # Himmelblau
@@ -11,6 +13,12 @@ The PAM and NSS modules communicate with Entra ID via the himmelblaud daemon. Hi
 enforce Intune MDM policies, but this work isn't completed yet.
 
 [![Azure Entra Id Authentication for Linux](img/sambaxp.png)](https://youtu.be/wCibnqVQ_bs "Azure Entra Id Authentication for Linux")
+
+## Sponsorship
+
+[![SUSE](https://www.suse.com/siteassets/layout/suse-white-logo-green.svg)](https://www.suse.com)
+
+We gratefully acknowledge [SUSE](https://www.suse.com) as the primary sponsor of the Himmelblau project. Their support enables us to develop and maintain this open-source identity management solution.
 
 ## Contact
 
