@@ -106,5 +106,5 @@ tonic = "0.12.0"
 tracing-opentelemetry = "0.21.0"
 compact_jwt = { version = "0.4.0-dev", features = ["hsm-crypto", "msextensions"] }
 kanidm-hsm-crypto = { version = "^0.2.0", features = ["msextensions"] }
-whoami = "1.5.2"
+whoami = "1.6.0"
 kanidm_lib_file_permissions = { path = "./src/file_permissions" }
