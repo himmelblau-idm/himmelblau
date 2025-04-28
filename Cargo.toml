@@ -65,7 +65,7 @@ hex = "^0.4.3"
 num_enum = "^0.7.2"
 scim_proto = "^1.3.2"
 serde_with = "3.1.0"
-time = { version = "^0.3.39", features = ["formatting", "local-offset"] }
+time = { version = "^0.3.41", features = ["formatting", "local-offset"] }
 url = "^2.4.0"
 urlencoding = "2.1.3"
 uuid = { version = "^1.4.1", features = ["v4"] }
