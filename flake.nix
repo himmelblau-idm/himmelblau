@@ -14,8 +14,7 @@
             version = cargoToml.workspace.package.version;
             src = with lib.fileset; toSource {
               root = ./.;
-              fileset = difference (gitTracked ./.) (fileFilter
-                (file: file.hasExt "nix" || file.hasExt "md" || file == "Makefile") ./.);
+              fileset = unions [ ./src ./man ./Cargo.toml ./Cargo.lock ./scripts/test_script_echo.sh ];
             };
             outputs = [ "out" "man" ];
             cargoLock = {
