@@ -87,23 +87,20 @@ csv = "1.2.2"
 notify-debouncer-full = { version = ">=0.3, <0.4" }
 utoipa = "4.2.0"
 utoipa-swagger-ui = "4.0.0"
-opentelemetry = { version = "0.20.0" }
-opentelemetry_api = { version = "0.20.0", features = ["logs", "metrics"] }
-opentelemetry-otlp = { version = "0.13.0", default-features = false, features = [
+opentelemetry = { version = "0.27.0" }
+opentelemetry_api = { version = "0.27.0", features = ["logs", "metrics"] }
+opentelemetry-otlp = { version = "0.27.0", default-features = false, features = [
     "serde",
     "logs",
     "metrics",
     "http-proto",
     "grpc-tonic",
 ] }
-opentelemetry_sdk = "0.20.0"
-opentelemetry-stdout = { version = "0.1.0", features = [
-    "logs",
-    "metrics",
-    "trace",
-] }
+opentelemetry_sdk = { version = "0.27.0", features = ["rt-tokio"] }
+opentelemetry-semantic-conventions = "0.27.0"
+tracing-opentelemetry = "0.28.0"
+tracing-core = "0.1.33"
 tonic = "0.12.0"
-tracing-opentelemetry = "0.21.0"
 compact_jwt = { version = "0.4.0-dev", features = ["hsm-crypto", "msextensions"] }
 kanidm-hsm-crypto = { version = "^0.2.0", features = ["msextensions"] }
 whoami = "1.6.0"

@@ -12,13 +12,6 @@ updates:
     commit-message:
       prefix: "deps(rust)"
     ignore:
-      # Kanidm currently depends on these outdated versions of opentelemetry
-      - dependency-name: "opentelemetry"
-      - dependency-name: "opentelemetry_api"
-      - dependency-name: "opentelemetry-otlp"
-      - dependency-name: "opentelemetry_sdk"
-      - dependency-name: "opentelemetry-stdout"
-      - dependency-name: "tracing-opentelemetry"
       - dependency-name: "utoipa"
       - dependency-name: "notify-debouncer-full"
       # This requires an update to compact-jwt first, awaiting that update
