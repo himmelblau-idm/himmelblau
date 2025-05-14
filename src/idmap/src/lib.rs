@@ -30,15 +30,21 @@
 #![deny(clippy::needless_pass_by_value)]
 #![deny(clippy::trivially_copy_pass_by_ref)]
 use std::collections::HashMap;
+#[cfg(not(feature = "no_sssd_idmap"))]
 use std::ffi::CString;
+#[cfg(not(feature = "no_sssd_idmap"))]
 use std::fmt;
+#[cfg(not(feature = "no_sssd_idmap"))]
 use std::ptr;
+#[cfg(not(feature = "no_sssd_idmap"))]
 use std::sync::RwLock;
 use uuid::Uuid;
 
+#[cfg(not(feature = "no_sssd_idmap"))]
 #[macro_use]
 extern crate tracing;
 
+#[cfg(not(feature = "no_sssd_idmap"))]
 mod ffi {
     #![allow(non_upper_case_globals)]
     #![allow(non_camel_case_types)]
@@ -47,28 +53,55 @@ mod ffi {
     include!(concat!(env!("OUT_DIR"), "/bindings.rs"));
 }
 
+#[cfg(not(feature = "no_sssd_idmap"))]
 #[derive(PartialEq, Eq)]
 pub struct IdmapError(u32);
+#[cfg(feature = "no_sssd_idmap")]
+#[derive(Debug, PartialEq, Eq)]
+pub struct IdmapError(u32);
 
+#[cfg(not(feature = "no_sssd_idmap"))]
 pub const IDMAP_SUCCESS: IdmapError = IdmapError(ffi::idmap_error_code_IDMAP_SUCCESS);
+#[cfg(not(feature = "no_sssd_idmap"))]
 pub const IDMAP_NOT_IMPLEMENTED: IdmapError =
     IdmapError(ffi::idmap_error_code_IDMAP_NOT_IMPLEMENTED);
+#[cfg(not(feature = "no_sssd_idmap"))]
 pub const IDMAP_ERROR: IdmapError = IdmapError(ffi::idmap_error_code_IDMAP_ERROR);
+#[cfg(not(feature = "no_sssd_idmap"))]
 pub const IDMAP_OUT_OF_MEMORY: IdmapError = IdmapError(ffi::idmap_error_code_IDMAP_OUT_OF_MEMORY);
+#[cfg(not(feature = "no_sssd_idmap"))]
 pub const IDMAP_NO_DOMAIN: IdmapError = IdmapError(ffi::idmap_error_code_IDMAP_NO_DOMAIN);
+#[cfg(not(feature = "no_sssd_idmap"))]
 pub const IDMAP_CONTEXT_INVALID: IdmapError =
     IdmapError(ffi::idmap_error_code_IDMAP_CONTEXT_INVALID);
+#[cfg(not(feature = "no_sssd_idmap"))]
 pub const IDMAP_SID_INVALID: IdmapError = IdmapError(ffi::idmap_error_code_IDMAP_SID_INVALID);
+#[cfg(not(feature = "no_sssd_idmap"))]
 pub const IDMAP_SID_UNKNOWN: IdmapError = IdmapError(ffi::idmap_error_code_IDMAP_SID_UNKNOWN);
+#[cfg(not(feature = "no_sssd_idmap"))]
 pub const IDMAP_NO_RANGE: IdmapError = IdmapError(ffi::idmap_error_code_IDMAP_NO_RANGE);
+#[cfg(not(feature = "no_sssd_idmap"))]
 pub const IDMAP_BUILTIN_SID: IdmapError = IdmapError(ffi::idmap_error_code_IDMAP_BUILTIN_SID);
+#[cfg(not(feature = "no_sssd_idmap"))]
 pub const IDMAP_OUT_OF_SLICES: IdmapError = IdmapError(ffi::idmap_error_code_IDMAP_OUT_OF_SLICES);
+#[cfg(not(feature = "no_sssd_idmap"))]
 pub const IDMAP_COLLISION: IdmapError = IdmapError(ffi::idmap_error_code_IDMAP_COLLISION);
+#[cfg(not(feature = "no_sssd_idmap"))]
 pub const IDMAP_EXTERNAL: IdmapError = IdmapError(ffi::idmap_error_code_IDMAP_EXTERNAL);
+#[cfg(not(feature = "no_sssd_idmap"))]
 pub const IDMAP_NAME_UNKNOWN: IdmapError = IdmapError(ffi::idmap_error_code_IDMAP_NAME_UNKNOWN);
+#[cfg(not(feature = "no_sssd_idmap"))]
 pub const IDMAP_NO_REVERSE: IdmapError = IdmapError(ffi::idmap_error_code_IDMAP_NO_REVERSE);
+#[cfg(not(feature = "no_sssd_idmap"))]
 pub const IDMAP_ERR_LAST: IdmapError = IdmapError(ffi::idmap_error_code_IDMAP_ERR_LAST);
 
+#[cfg(feature = "no_sssd_idmap")]
+pub const IDMAP_SID_INVALID: IdmapError = IdmapError(6);
+#[cfg(feature = "no_sssd_idmap")]
+pub const IDMAP_NO_RANGE: IdmapError = IdmapError(8);
+
+
+#[cfg(not(feature = "no_sssd_idmap"))]
 impl fmt::Display for IdmapError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let error_name = match *self {
@@ -94,12 +127,14 @@ impl fmt::Display for IdmapError {
     }
 }
 
+#[cfg(not(feature = "no_sssd_idmap"))]
 impl fmt::Debug for IdmapError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self)
     }
 }
 
+#[cfg(not(feature = "no_sssd_idmap"))]
 impl std::error::Error for IdmapError {}
 
 #[allow(dead_code)]
@@ -156,11 +191,13 @@ pub const DEFAULT_IDMAP_RANGE: (u32, u32) = (200000, 2000200000);
 // The ctx is behind a read/write lock to make it 'safer' to Send/Sync.
 // Granted, dereferencing a raw pointer is still inherently unsafe.
 pub struct Idmap {
+    #[cfg(not(feature = "no_sssd_idmap"))]
     ctx: RwLock<*mut ffi::sss_idmap_ctx>,
     ranges: HashMap<String, (u32, u32)>,
 }
 
 impl Idmap {
+    #[cfg(not(feature = "no_sssd_idmap"))]
     pub fn new() -> Result<Idmap, IdmapError> {
         let mut ctx = ptr::null_mut();
         unsafe {
@@ -173,24 +210,38 @@ impl Idmap {
             }
         }
     }
+    #[cfg(feature = "no_sssd_idmap")]
+    pub fn new() -> Result<Idmap, IdmapError> {
+        Ok(Idmap {
+            ranges: HashMap::new(),
+        })
+    }
 
     pub fn add_gen_domain(
         &mut self,
+        #[cfg(not(feature = "no_sssd_idmap"))]
         domain_name: &str,
+        #[cfg(feature = "no_sssd_idmap")]
+        _domain_name: &str,
         tenant_id: &str,
         range: (u32, u32),
     ) -> Result<(), IdmapError> {
+        #[cfg(not(feature = "no_sssd_idmap"))]
         let ctx = self.ctx.write().map_err(|e| {
             error!("Failed obtaining write lock on sss_idmap_ctx: {}", e);
             IDMAP_ERROR
         })?;
+        #[cfg(not(feature = "no_sssd_idmap"))]
         let domain_name_cstr = CString::new(domain_name).map_err(|_| IDMAP_OUT_OF_MEMORY)?;
+        #[cfg(not(feature = "no_sssd_idmap"))]
         let tenant_id_cstr = CString::new(tenant_id).map_err(|_| IDMAP_OUT_OF_MEMORY)?;
+        #[cfg(not(feature = "no_sssd_idmap"))]
         let mut idmap_range = ffi::sss_idmap_range {
             min: range.0,
             max: range.1,
         };
         self.ranges.insert(tenant_id.to_string(), range);
+        #[cfg(not(feature = "no_sssd_idmap"))]
         unsafe {
             match IdmapError(ffi::sss_idmap_add_gen_domain_ex(
                 *ctx,
@@ -208,8 +259,11 @@ impl Idmap {
                 e => Err(e),
             }
         }
+        #[cfg(feature = "no_sssd_idmap")]
+        Ok(())
     }
 
+    #[cfg(not(feature = "no_sssd_idmap"))]
     pub fn gen_to_unix(&self, tenant_id: &str, input: &str) -> Result<u32, IdmapError> {
         let ctx = self.ctx.write().map_err(|e| {
             error!("Failed obtaining write lock on sss_idmap_ctx: {}", e);
@@ -247,6 +301,7 @@ impl Idmap {
     }
 }
 
+#[cfg(not(feature = "no_sssd_idmap"))]
 impl Drop for Idmap {
     fn drop(&mut self) {
         match self.ctx.write() {
@@ -268,10 +323,13 @@ unsafe impl Sync for Idmap {}
 
 #[cfg(test)]
 mod tests {
-    use crate::{Idmap, DEFAULT_IDMAP_RANGE};
+    use crate::Idmap;
+    #[cfg(not(feature = "no_sssd_idmap"))]
+    use crate::DEFAULT_IDMAP_RANGE;
     use std::collections::HashMap;
     use uuid::Uuid;
 
+    #[cfg(not(feature = "no_sssd_idmap"))]
     #[test]
     fn sssd_idmapping() {
         let domain = "contoso.onmicrosoft.com";

@@ -11,6 +11,7 @@ repository.workspace = true
 
 [features]
 tpm = ["kanidm-hsm-crypto/tpm"]
+no_sssd_idmap = ["idmap/no_sssd_idmap"]
 
 [lib]
 name = "himmelblau_unix_common"

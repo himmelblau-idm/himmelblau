@@ -863,7 +863,9 @@ impl IdProvider for HimmelblauProvider {
                                 // If Uuid mapping is enabled, bail out now.
                                 // We can only provide a valid idmapping with
                                 // name idmapping at this point.
+                                #[cfg(not(feature = "no_sssd_idmap"))]
                                 IdAttr::Uuid => return Err(IdpError::BadRequest),
+                                #[cfg(not(feature = "no_sssd_idmap"))]
                                 IdAttr::Name | IdAttr::Rfc2307 => {
                                     let idmap = self.idmap.read().await;
                                     idmap.gen_to_unix(&self.graph.tenant_id().await.map_err(|e| {
@@ -876,6 +878,13 @@ impl IdProvider for HimmelblauProvider {
                                         },
                                     )?
                                 }
+                                // Generate a UserToken, with invalid uuid and gid. We can
+                                // only fetch these from an authenticated token. We have to
+                                // provide something, or SSH will fail.
+                                #[cfg(feature = "no_sssd_idmap")]
+                                IdAttr::Rfc2307 => i32::MAX as u32,
+                                #[cfg(feature = "no_sssd_idmap")]
+                                IdAttr::Uuid => i32::MAX as u32,
                             };
                             let fake_uuid = Uuid::new_v4();
                             let groups = vec![GroupToken {
@@ -2218,6 +2227,7 @@ impl HimmelblauProvider {
                     error!("{:?}", e);
                     IdpError::BadRequest
                 })?,
+            #[cfg(not(feature = "no_sssd_idmap"))]
             IdAttr::Name => idmap
                 .gen_to_unix(
                     &self.graph.tenant_id().await.map_err(|e| {
@@ -2326,6 +2336,7 @@ impl HimmelblauProvider {
                     &id,
                 )
                 .map_err(|e| anyhow!("Failed fetching gid for {}: {:?}", id, e))?,
+            #[cfg(not(feature = "no_sssd_idmap"))]
             IdAttr::Name => idmap
                 .gen_to_unix(
                     &self
@@ -2355,6 +2366,7 @@ impl HimmelblauProvider {
                             &id,
                         )
                         .map_err(|e| anyhow!("Failed fetching gid for {}: {:?}", id, e))?,
+                    #[cfg(not(feature = "no_sssd_idmap"))]
                     Some(IdAttr::Name) => idmap
                         .gen_to_unix(
                             &self
