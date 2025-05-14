@@ -13,6 +13,3 @@ updates:
       prefix: "deps(rust)"
     ignore:
       - dependency-name: "utoipa"
-      - dependency-name: "notify-debouncer-full"
-      # This requires an update to compact-jwt first, awaiting that update
-      - dependency-name: "kanidm-hsm-crypto"

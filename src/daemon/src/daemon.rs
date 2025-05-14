@@ -64,7 +64,7 @@ use tracing::span;
 
 use kanidm_hsm_crypto::{soft::SoftTpm, AuthValue, BoxedDynTpm, Tpm};
 
-use notify_debouncer_full::{new_debouncer, notify::RecursiveMode, notify::Watcher};
+use notify_debouncer_full::{new_debouncer, notify::RecursiveMode};
 
 mod broker;
 use broker::Broker;
@@ -1187,14 +1187,14 @@ async fn main() -> ExitCode {
 
             #[allow(clippy::blocks_in_conditions)]
             let watcher =
-            match new_debouncer(Duration::from_secs(2), None, move |_event| {
+            match new_debouncer(Duration::from_secs(5), None, move |_event| {
                 let _ = inotify_tx.try_send(true);
             })
                 .and_then(|mut debouncer| {
-                    debouncer.watcher().watch(Path::new("/etc/passwd"), RecursiveMode::NonRecursive)
+                    debouncer.watch(Path::new("/etc/passwd"), RecursiveMode::NonRecursive)
                         .map(|()| debouncer)
                 })
-                .and_then(|mut debouncer| debouncer.watcher().watch(Path::new("/etc/group"), RecursiveMode::NonRecursive)
+                .and_then(|mut debouncer| debouncer.watch(Path::new("/etc/group"), RecursiveMode::NonRecursive)
                         .map(|()| debouncer)
                 )
 
