@@ -17,9 +17,8 @@ test = false
 doctest = false
 
 [dependencies]
-gethostname = "1.0.0"
 num_enum = { workspace = true }
-opentelemetry = { workspace = true, features = ["metrics", "rt-tokio"] }
+opentelemetry = { workspace = true, features = ["metrics"] }
 opentelemetry-otlp = { workspace = true, default-features = false, features = [
     "serde",
     "logs",
@@ -27,10 +26,12 @@ opentelemetry-otlp = { workspace = true, default-features = false, features = [
     "http-proto",
     "grpc-tonic",
 ] }
-opentelemetry_sdk = { workspace = true }
-rand = { workspace = true }
+opentelemetry_sdk = { workspace = true, features = ["rt-tokio"] }
+opentelemetry-semantic-conventions = { workspace = true }
+
 serde = { workspace = true, features = ["derive"] }
 tracing = { workspace = true, features = ["attributes"] }
+tracing-core = { workspace = true }
 tracing-forest = { workspace = true, features = [
     "uuid",
     "smallvec",
@@ -39,4 +40,3 @@ tracing-forest = { workspace = true, features = [
 ] }
 tracing-opentelemetry = { workspace = true }
 tracing-subscriber = { workspace = true, features = ["env-filter"] }
-uuid = { workspace = true, features = ["v4"] }
