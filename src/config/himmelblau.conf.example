@@ -92,11 +92,7 @@
 # provides flexibility for environments requiring custom name transformations.
 # name_mapping_script =
 #
-# Whether to apply Intune policies (experimental). This will not mark the device
-# compliant in Entra Id, nor create an Intune managed device in the portal. It
-# will only attempt to apply the policies assigned in Intune to the user. An
-# app_id MUST be defined for this domain for policy application to succeed, and
-# the "DeviceManagementConfiguration.Read.All" API permission MUST be granted.
+# Whether to apply Intune policies.
 # apply_policy = false ; {true|false}
 #
 # authority_host = login.microsoftonline.com

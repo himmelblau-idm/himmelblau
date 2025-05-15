@@ -16,15 +16,15 @@
    along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
 use crate::cse::CSE;
-use crate::policies::{Policy, ValueType};
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
+use himmelblau::intune::{IntuneStatus, PolicyStatus};
 use himmelblau_unix_common::config::HimmelblauConfig;
 use os_release::OsRelease;
-use regex::Regex;
-use std::sync::Arc;
+use semver::Version;
 use tokio::fs;
 use tokio::process::Command;
+use tracing::debug;
 
 pub async fn is_disk_encrypted() -> bool {
     // Check for LUKS encryption using `lsblk`
@@ -79,12 +79,23 @@ pub async fn is_disk_encrypted() -> bool {
 }
 
 fn normalize_version(version: &str) -> String {
-    let parts: Vec<&str> = version.split('.').collect();
+    let parts: Vec<String> = version
+        .split('.')
+        .map(|p| {
+            let stripped = p.trim_start_matches('0');
+            if stripped.is_empty() {
+                "0".to_string()
+            } else {
+                stripped.to_string()
+            }
+        })
+        .collect();
+
     match parts.len() {
-        0 => version.to_string(), // Shouldn't happen.
-        1 => format!("{}.0.0", version),
-        2 => format!("{}.0", version),
-        _ => version.to_string(),
+        0 => "0.0.0".to_string(), // fallback
+        1 => format!("{}.0.0", parts[0]),
+        2 => format!("{}.{}.0", parts[0], parts[1]),
+        _ => format!("{}.{}.{}", parts[0], parts[1], parts[2]),
     }
 }
 
@@ -102,9 +113,17 @@ impl CSE for ComplianceCSE {
 
     /// Process a group of policies. For deleted policies, no action is taken.
     /// For changed policies, run compliance checks and return an error if any check fails.
-    async fn process_group_policy(&self, changed_gpo_list: Vec<Arc<dyn Policy>>) -> Result<bool> {
-        for policy in changed_gpo_list.iter() {
-            self.apply_compliance(policy.clone()).await?;
+    async fn process_group_policy(&self, policies: &mut IntuneStatus) -> Result<bool> {
+        for policy in policies.policy_statuses.iter_mut() {
+            // Validate this is a compliance policy
+            if policy.details.iter().any(|detail| {
+                let id = &detail.setting_definition_item_id;
+                id.starts_with("linux_distribution_")
+                    || id.starts_with("linux_deviceencryption_")
+                    || id.starts_with("linux_passwordpolicy_")
+            }) {
+                self.apply_compliance(policy).await?;
+            }
         }
         Ok(true)
     }
@@ -114,144 +133,116 @@ impl ComplianceCSE {
     /// Applies the compliance checks for a given policy.
     ///
     /// If any check fails, an error is returned with details on the failure.
-    async fn apply_compliance(&self, policy: Arc<dyn Policy>) -> Result<()> {
+    async fn apply_compliance(&self, policy: &mut PolicyStatus) -> Result<()> {
         let mut errors: Vec<String> = Vec::new();
 
-        let pattern = Regex::new("linux_*")?;
-        let settings = policy.list_policy_settings(pattern)?;
+        let os_release =
+            OsRelease::new().map_err(|e| anyhow!("Failed to read /etc/os-release: {}", e))?;
+        let system_distro = os_release.id;
+        let system_version_str = normalize_version(&os_release.version_id);
+        let system_version = Version::parse(&system_version_str).map_err(|e| {
+            anyhow!(
+                "Failed to parse system version '{}' as semver: {}",
+                system_version_str,
+                e
+            )
+        })?;
 
-        for setting in settings.iter() {
-            match setting.key().as_str() {
-                "linux_distribution_alloweddistros" => {
-                    if let Some(ValueType::Collection(children)) = setting.value() {
-                        let mut allowed_distro = String::new();
-                        let mut min_version: Option<String> = None;
-                        let mut max_version: Option<String> = None;
-
-                        for child in children.iter() {
-                            let child_key = child.key();
-                            match child_key.as_str() {
-                                "linux_distribution_alloweddistros_item_$type" => {
-                                    if let Some(ValueType::Text(val)) = child.value() {
-                                        allowed_distro = val;
-                                    } else {
-                                        errors.push(
-                                            "Failed to read allowed distribution policy"
-                                                .to_string(),
-                                        );
-                                    }
-                                }
-                                "linux_distribution_alloweddistros_item_minimumversion" => {
-                                    if let Some(ValueType::Decimal(val)) = child.value() {
-                                        min_version = Some(normalize_version(&val.to_string()));
-                                    } else if let Some(ValueType::Text(val)) = child.value() {
-                                        if !val.is_empty() {
-                                            min_version = Some(normalize_version(&val));
-                                        }
-                                    } else {
-                                        errors.push(
-                                            "Failed to read allowed distribution minimum version policy"
-                                                .to_string(),
-                                        );
-                                    }
-                                }
-                                "linux_distribution_alloweddistros_item_maximumversion" => {
-                                    if let Some(ValueType::Decimal(val)) = child.value() {
-                                        max_version = Some(normalize_version(&val.to_string()));
-                                    } else if let Some(ValueType::Text(val)) = child.value() {
-                                        if !val.is_empty() {
-                                            max_version = Some(normalize_version(&val));
-                                        }
-                                    } else {
-                                        errors.push(
-                                            "Failed to read allowed distribution maximum version policy"
-                                                .to_string(),
-                                        );
-                                    }
-                                }
-                                unknown => {
-                                    errors.push(format!(
-                                        "Unrecognized compliance option '{}'",
-                                        unknown,
-                                    ));
-                                }
-                            }
-                        }
-
-                        let os_release = OsRelease::new()?;
-
-                        let system_distro = os_release.id;
-                        let system_version_str = normalize_version(&os_release.version_id);
-
-                        if !allowed_distro.is_empty() && system_distro != allowed_distro {
-                            errors.push(format!(
-                                "Distribution compliance failed: system distro '{}' is not '{}'",
-                                system_distro, allowed_distro
-                            ));
-                        }
-
-                        use semver::Version;
-                        let system_version = Version::parse(&system_version_str).map_err(|e| {
+        for details in policy.details.iter_mut() {
+            match details.setting_definition_item_id.as_str() {
+                "linux_distribution_alloweddistros_item_$type" => {
+                    if details.expected_value != system_distro {
+                        errors.push(format!(
+                            "Distribution compliance failed: system distro '{}' is not '{}'",
+                            system_distro, details.expected_value
+                        ));
+                    } else {
+                        details.new_compliance_state = "Compliant".to_string();
+                        debug!("Distribution compliance passed: {}", system_distro);
+                    }
+                    details.actual_value = system_distro.clone();
+                }
+                "linux_distribution_alloweddistros_item_minimumversion" => {
+                    let min_semver = Version::parse(&normalize_version(&details.expected_value))
+                        .map_err(|e| {
                             anyhow!(
-                                "Failed to parse system version '{}' as semver: {}",
-                                system_version_str,
+                                "Failed to parse minimum version '{}' as semver: {}",
+                                details.expected_value,
                                 e
                             )
                         })?;
-
-                        if let Some(ref min) = min_version {
-                            let min_semver = Version::parse(min).map_err(|e| {
-                                anyhow!(
-                                    "Failed to parse minimum version '{}' as semver: {}",
-                                    min,
-                                    e
-                                )
-                            })?;
-                            if system_version < min_semver {
-                                errors.push(format!(
-                                    "Version compliance failed: system version '{}' is less than minimum '{}'",
-                                    system_version, min_semver
-                                ));
-                            }
-                        }
-                        if let Some(ref max) = max_version {
-                            let max_semver = Version::parse(max).map_err(|e| {
-                                anyhow!(
-                                    "Failed to parse maximum version '{}' as semver: {}",
-                                    max,
-                                    e
-                                )
-                            })?;
-                            if system_version > max_semver {
-                                errors.push(format!(
-                                    "Version compliance failed: system version '{}' is greater than maximum '{}'",
-                                    system_version, max_semver
-                                ));
-                            }
-                        }
+                    if system_version < min_semver {
+                        errors.push(format!(
+                                "Version compliance failed: system version '{}' is less than minimum '{}'",
+                                system_version, min_semver
+                            ));
+                    } else {
+                        details.new_compliance_state = "Compliant".to_string();
+                        debug!(
+                            "Minimum version compliance passed: {}",
+                            os_release.version_id
+                        );
                     }
+                    details.actual_value = os_release.version_id.clone();
+                }
+                "linux_distribution_alloweddistros_item_maximumversion" => {
+                    let max_semver = Version::parse(&normalize_version(&details.expected_value))
+                        .map_err(|e| {
+                            anyhow!(
+                                "Failed to parse maximum version '{}' as semver: {}",
+                                details.expected_value,
+                                e
+                            )
+                        })?;
+                    if system_version > max_semver {
+                        errors.push(format!(
+                                "Version compliance failed: system version '{}' is greater than maximum '{}'",
+                                system_version, max_semver
+                            ));
+                    } else {
+                        details.new_compliance_state = "Compliant".to_string();
+                        debug!(
+                            "Maximum version compliance passed: {}",
+                            os_release.version_id
+                        );
+                    }
+                    details.actual_value = os_release.version_id.clone();
                 }
                 "linux_deviceencryption_required" => {
-                    if let Some(ValueType::Boolean(required)) = setting.value() {
-                        if required && !is_disk_encrypted().await {
-                            errors.push("Device encryption compliance failed: encryption likely not enabled".to_string());
-                        }
+                    let is_disk_encrypted = is_disk_encrypted().await;
+                    if details.expected_value.to_lowercase() == "true" && !is_disk_encrypted {
+                        errors.push(
+                            "Device encryption compliance failed: encryption likely not enabled"
+                                .to_string(),
+                        );
                     } else {
-                        errors.push("Failed to read device encryption policy".to_string());
+                        details.new_compliance_state = "Compliant".to_string();
+                        debug!(
+                            "Device encryption compliance passed, encrypted?: {}",
+                            is_disk_encrypted
+                        );
                     }
+                    details.actual_value = is_disk_encrypted.to_string();
                 }
                 "linux_passwordpolicy_minimumlength" => {
-                    if let Some(ValueType::Decimal(min_length)) = setting.value() {
-                        let system_min_length = self.config.get_hello_pin_min_length();
+                    let system_min_length = self.config.get_hello_pin_min_length();
+                    if let Ok(min_length) = details.expected_value.parse::<u32>() {
                         if system_min_length < min_length as usize {
                             errors.push(format!(
-                                "Password policy compliance failed: system minimum length {} is less than required {}",
-                                system_min_length, min_length
-                            ));
+                                    "Password policy compliance failed: system minimum length {} is less than required {}",
+                                    system_min_length, min_length
+                                ));
+                        } else {
+                            details.new_compliance_state = "Compliant".to_string();
+                            debug!(
+                                "Password policy compliance passed, PIN length: {}",
+                                system_min_length
+                            );
                         }
                     } else {
                         errors.push("Failed to read minimum password length policy".to_string());
                     }
+                    details.actual_value = system_min_length.to_string();
                 }
                 unknown => {
                     errors.push(format!("Unrecognized compliance option '{}'", unknown));

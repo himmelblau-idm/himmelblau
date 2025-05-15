@@ -554,6 +554,10 @@ impl HimmelblauConfig {
         self.config.get(domain, "logon_token_app_id")
     }
 
+    pub fn get_intune_device_id(&self, domain: &str) -> Option<String> {
+        self.config.get(domain, "intune_device_id")
+    }
+
     pub fn get_enable_experimental_mfa(&self) -> bool {
         match_bool(self.config.get("global", "enable_experimental_mfa"), true)
     }
@@ -1365,6 +1369,27 @@ mod tests {
         );
         let config_missing = HimmelblauConfig::new(None).unwrap();
         assert_eq!(config_missing.get_logon_script(), None);
+    }
+
+    #[test]
+    fn test_get_intune_device_id() {
+        let config_data = r#"
+        [example.com]
+        intune_device_id = 123e4567-e89b-12d3-a456-426614174000
+        "#;
+
+        let temp_file = create_temp_config(config_data);
+        let config = HimmelblauConfig::new(Some(&temp_file)).unwrap();
+
+        assert_eq!(
+            config.get_intune_device_id("example.com"),
+            Some("123e4567-e89b-12d3-a456-426614174000".to_string())
+        );
+
+        // Test missing domain
+        assert_eq!(config.get_intune_device_id("missing.com"), None);
+        let config_missing = HimmelblauConfig::new(None).unwrap();
+        assert_eq!(config_missing.get_intune_device_id("example.com"), None);
     }
 
     #[test]

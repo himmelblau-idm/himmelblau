@@ -19,16 +19,15 @@
 /* Provides a trait which specifies a Client Side Extension for applying
  * Intune policy.
  */
-use crate::policies::Policy;
 use anyhow::Result;
 use async_trait::async_trait;
+use himmelblau::intune::IntuneStatus;
 use himmelblau_unix_common::config::HimmelblauConfig;
-use std::sync::Arc;
 
 #[async_trait]
 pub trait CSE: Send + Sync {
     fn new(config: &HimmelblauConfig, username: &str) -> Self
     where
         Self: Sized;
-    async fn process_group_policy(&self, changed_gpo_list: Vec<Arc<dyn Policy>>) -> Result<bool>;
+    async fn process_group_policy(&self, policies: &mut IntuneStatus) -> Result<bool>;
 }

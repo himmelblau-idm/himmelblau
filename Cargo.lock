@@ -624,6 +624,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "broker-client"
+version = "1.0.0"
+dependencies = [
+ "serde_json",
+ "zbus",
+]
+
+[[package]]
 name = "browser-window"
 version = "0.12.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1992,6 +2000,8 @@ dependencies = [
  "async-trait",
  "base64 0.22.1",
  "himmelblau_unix_common",
+ "libc",
+ "libhimmelblau",
  "os-release",
  "regex",
  "reqwest",
@@ -2000,6 +2010,7 @@ dependencies = [
  "serde_json",
  "tokio",
  "tracing",
+ "uuid",
 ]
 
 [[package]]
@@ -4716,12 +4727,12 @@ version = "1.0.0"
 name = "sso"
 version = "1.0.0"
 dependencies = [
+ "broker-client",
  "clap 4.5.38",
  "serde",
  "serde_json",
  "tokio",
  "uuid",
- "zbus",
 ]
 
 [[package]]

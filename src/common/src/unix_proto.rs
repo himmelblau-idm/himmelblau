@@ -173,8 +173,8 @@ impl TaskRequest {
             TaskRequest::LoadProfilePhoto(account_id, _) => {
                 format!("LoadProfilePhoto({}, ...)", account_id)
             }
-            TaskRequest::ApplyPolicy(account_id, object_id, _) => {
-                format!("ApplyPolicy({}, {}, ...)", account_id, object_id)
+            TaskRequest::ApplyPolicy(account_id, _, _) => {
+                format!("ApplyPolicy({}, ...)", account_id)
             }
         }
     }

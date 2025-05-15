@@ -1300,11 +1300,16 @@ impl PamHooks for PamKanidm {
                                 "Entra Id Fido authentication failed.",
                                 e
                             );
-                        },
+                        }
                     };
                     match rt.block_on(async {
-                        app.acquire_token_by_mfa_flow(&account_id, Some(&assertion), None, &mut mfa_req)
-                            .await
+                        app.acquire_token_by_mfa_flow(
+                            &account_id,
+                            Some(&assertion),
+                            None,
+                            &mut mfa_req,
+                        )
+                        .await
                     }) {
                         Ok(token) => token,
                         Err(e) => {
