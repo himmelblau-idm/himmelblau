@@ -22,6 +22,7 @@ use super::interface::{
 use crate::config::split_username;
 use crate::config::HimmelblauConfig;
 use crate::config::IdAttr;
+use crate::constants::DEFAULT_APP_ID;
 use crate::constants::EDGE_BROWSER_CLIENT_ID;
 use crate::db::KeyStoreTxn;
 use crate::idprovider::interface::{tpm, UserTokenState};
@@ -32,6 +33,7 @@ use himmelblau::auth::{BrokerClientApplication, UserToken as UnixUserToken};
 use himmelblau::discovery::EnrollAttrs;
 use himmelblau::error::{MsalError, DEVICE_AUTH_FAIL};
 use himmelblau::graph::{DirectoryObject, Graph};
+use himmelblau::intune::IntuneForLinux;
 use himmelblau::{AuthOption, MFAAuthContinue};
 use idmap::Idmap;
 use kanidm_hsm_crypto::{LoadableIdentityKey, LoadableMsOapxbcRsaKey, PinValue, SealedData, Tpm};
@@ -2060,6 +2062,10 @@ impl HimmelblauProvider {
         format!("{}/certificate", self.domain)
     }
 
+    fn fetch_intune_key_tag(&self) -> String {
+        format!("{}/intune", self.domain)
+    }
+
     fn fetch_tranport_key_tag(&self) -> String {
         format!("{}/transport", self.domain)
     }
@@ -2396,7 +2402,7 @@ impl HimmelblauProvider {
             .client
             .write()
             .await
-            .enroll_device(&token.refresh_token, attrs, tpm, machine_key)
+            .enroll_device(&token.refresh_token, attrs.clone(), tpm, machine_key)
             .await
         {
             Ok((new_loadable_transport_key, new_loadable_cert_key, device_id)) => {
@@ -2419,7 +2425,60 @@ impl HimmelblauProvider {
                         e
                     )));
                 }
+
                 let mut config = self.config.write().await;
+
+                // Enrolling the device in Intune
+                let token = self
+                    .client
+                    .write()
+                    .await
+                    .acquire_token_by_refresh_token(
+                        &token.refresh_token,
+                        vec!["00000003-0000-0000-c000-000000000000/.default"],
+                        None,
+                        Some(DEFAULT_APP_ID),
+                        tpm,
+                        machine_key,
+                    )
+                    .await?;
+                let access_token = token.access_token.clone().ok_or(MsalError::Missing(
+                    "access_token missing from token".to_string(),
+                ))?;
+                let endpoints = self.graph.intune_service_endpoints(&access_token).await?;
+                if let Ok(token) = self
+                    .client
+                    .write()
+                    .await
+                    .acquire_token_by_refresh_token(
+                        &token.refresh_token,
+                        vec!["d4ebce55-015a-49b5-a083-c84d1797ae8c/.default"],
+                        None,
+                        Some(DEFAULT_APP_ID),
+                        tpm,
+                        machine_key,
+                    )
+                    .await
+                {
+                    let intune = IntuneForLinux::new(endpoints)?;
+                    match intune
+                        .enroll(&token, &attrs, &device_id, tpm, machine_key)
+                        .await
+                    {
+                        Ok((intune_key, intune_device_id)) => {
+                            config.set(&self.domain, "intune_device_id", &intune_device_id);
+                            let intune_tag = self.fetch_intune_key_tag();
+                            if let Err(e) = keystore.insert_tagged_hsm_key(&intune_tag, &intune_key)
+                            {
+                                error!(?e, "Failed inserting the intune key into the keystore.");
+                            }
+                        }
+                        Err(e) => info!(?e, "Intune device enrollment failed."),
+                    }
+                } else {
+                    info!("Intune device enrollment failed.");
+                }
+
                 config.set(&self.domain, "device_id", &device_id);
                 debug!(
                     "Setting domain {} config device_id to {}",

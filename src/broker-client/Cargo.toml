@@ -1,0 +1,13 @@
+[package]
+name = "broker-client"
+version.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+edition.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[dependencies]
+serde_json.workspace = true
+zbus = "^5.7"

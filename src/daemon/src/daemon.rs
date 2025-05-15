@@ -505,6 +505,79 @@ async fn handle_client(
                                                         }
                                                     }
 
+                                                    // Apply Intune policies
+                                                    if cfg.get_apply_policy()
+                                                    {
+                                                        if let Ok(Some(token)) = cachelayer
+                                                            .get_usertoken(
+                                                                Id::Name(account_id.clone())
+                                                            )
+                                                            .await
+                                                        {
+                                                            let (tx, rx) = oneshot::channel();
+
+                                                            match task_channel_tx
+                                                                .send_timeout(
+                                                                    (
+                                                                        TaskRequest::ApplyPolicy(
+                                                                            token.gidnumber
+                                                                        ),
+                                                                        tx,
+                                                                    ),
+                                                                    Duration::from_millis(100),
+                                                                )
+                                                                .await
+                                                            {
+                                                                Ok(()) => {
+                                                                    // Now wait for the other end OR timeout.
+                                                                    match time::timeout_at(
+                                                                        time::Instant::now()
+                                                                            + Duration::from_millis(
+                                                                                1000,
+                                                                            ),
+                                                                        rx,
+                                                                    )
+                                                                    .await
+                                                                    {
+                                                                        Ok(Ok(status)) => {
+                                                                            if status == 0 {
+                                                                                debug!("Successfully applied Intune policies");
+                                                                            } else {
+                                                                                resp = PamAuthResponse::Denied(
+                                                                                    "Authentication was explicitly denied due to Intune failure".to_string()
+                                                                                );
+                                                                            }
+                                                                        }
+                                                                        Ok(Err(e)) => {
+                                                                            resp = PamAuthResponse::Denied(
+                                                                                format!(
+                                                                                    "Authentication was explicitly denied due to Intune failure: {}",
+                                                                                    e
+                                                                                )
+                                                                            );
+                                                                        }
+                                                                        Err(e) => {
+                                                                            resp = PamAuthResponse::Denied(
+                                                                                format!(
+                                                                                    "Authentication was explicitly denied due to Intune failure: {}",
+                                                                                    e
+                                                                                )
+                                                                            );
+                                                                        }
+                                                                    }
+                                                                }
+                                                                Err(e) => {
+                                                                    resp = PamAuthResponse::Denied(
+                                                                        format!(
+                                                                            "Authentication was explicitly denied due to Intune failure: {}",
+                                                                            e
+                                                                        )
+                                                                    );
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+
                                                     ClientResponse::PamAuthenticateStepResponse(resp)
                                                 }
                                                 _ => ClientResponse::PamAuthenticateStepResponse(resp),
