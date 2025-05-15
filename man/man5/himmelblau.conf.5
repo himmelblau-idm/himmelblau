@@ -234,6 +234,14 @@ By default, this option is disabled.
 apply_policy = false
 
 .TP
+.B policy_timeout
+.RE
+Specifies the timeout in seconds for applying Intune policy to a user session. This option is relevant only if `apply_policy` is enabled. The default timeout is 5 seconds, which should be sufficient for most environments.
+
+.EXAMPLES
+policy_timeout = 10
+
+.TP
 .B authority_host
 .RE
 Specifies the hostname for Microsoft authentication. The default value is

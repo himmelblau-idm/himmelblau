@@ -1,3 +1,4 @@
+use crate::constants::DEFAULT_POLICY_TIMEOUT;
 /*
    Unix Azure Entra ID implementation
    Copyright (C) David Mulder <dmulder@samba.org> 2024
@@ -388,6 +389,19 @@ impl HimmelblauConfig {
         match_bool(self.config.get("global", "apply_policy"), false)
     }
 
+    pub fn get_policy_timeout(&self) -> u64 {
+        match self.config.get("global", "policy_timeout") {
+            Some(val) => match val.parse::<u64>() {
+                Ok(n) => n,
+                Err(_) => {
+                    error!("Failed parsing policy_timeout from config: {}", val);
+                    DEFAULT_POLICY_TIMEOUT
+                }
+            },
+            None => DEFAULT_POLICY_TIMEOUT,
+        }
+    }
+
     pub fn get_pam_allow_groups(&self) -> Vec<String> {
         let mut pam_allow_groups = vec![];
         for section in self.config.sections() {
@@ -552,6 +566,10 @@ impl HimmelblauConfig {
 
     pub fn get_logon_token_app_id(&self, domain: &str) -> Option<String> {
         self.config.get(domain, "logon_token_app_id")
+    }
+
+    pub fn get_intune_device_id(&self, domain: &str) -> Option<String> {
+        self.config.get(domain, "intune_device_id")
     }
 
     pub fn get_enable_experimental_mfa(&self) -> bool {
@@ -1368,6 +1386,27 @@ mod tests {
     }
 
     #[test]
+    fn test_get_intune_device_id() {
+        let config_data = r#"
+        [example.com]
+        intune_device_id = 123e4567-e89b-12d3-a456-426614174000
+        "#;
+
+        let temp_file = create_temp_config(config_data);
+        let config = HimmelblauConfig::new(Some(&temp_file)).unwrap();
+
+        assert_eq!(
+            config.get_intune_device_id("example.com"),
+            Some("123e4567-e89b-12d3-a456-426614174000".to_string())
+        );
+
+        // Test missing domain
+        assert_eq!(config.get_intune_device_id("missing.com"), None);
+        let config_missing = HimmelblauConfig::new(None).unwrap();
+        assert_eq!(config_missing.get_intune_device_id("example.com"), None);
+    }
+
+    #[test]
     fn test_get_logon_token_scopes() {
         let config_data = r#"
         [global]
@@ -1514,5 +1553,38 @@ mod tests {
         let account_id = "user";
 
         assert_eq!(config.map_name_to_upn(account_id), account_id.to_string());
+    }
+
+    #[test]
+    fn test_get_policy_timeout() {
+        let config_data = r#"
+        [global]
+        "#;
+
+        let temp_file = create_temp_config(config_data);
+        let config_empty = HimmelblauConfig::new(Some(&temp_file)).unwrap();
+        assert_eq!(
+            config_empty.get_policy_timeout(),
+            DEFAULT_POLICY_TIMEOUT
+        );
+
+        let config_data_valid = r#"
+        [global]
+        policy_timeout = 60
+        "#;
+        let temp_file_valid = create_temp_config(config_data_valid);
+        let config_valid = HimmelblauConfig::new(Some(&temp_file_valid)).unwrap();
+        assert_eq!(config_valid.get_policy_timeout(), 60);
+
+        let config_data_invalid = r#"
+        [global]
+        policy_timeout = not_a_number
+        "#;
+        let temp_file_invalid = create_temp_config(config_data_invalid);
+        let config_invalid = HimmelblauConfig::new(Some(&temp_file_invalid)).unwrap();
+        assert_eq!(
+            config_invalid.get_policy_timeout(),
+            DEFAULT_POLICY_TIMEOUT
+        );
     }
 }

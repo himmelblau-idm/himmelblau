@@ -15,11 +15,10 @@
    You should have received a copy of the GNU General Public License
    along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
-use serde_json::json;
-mod broker;
-use broker::BrokerClient;
+use broker_client::BrokerClient;
 use clap::{CommandFactory, Parser, Subcommand};
 use serde::Serialize;
+use serde_json::json;
 use serde_json::Value;
 use std::env;
 use std::error::Error;
