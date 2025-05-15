@@ -16,17 +16,15 @@
    along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
 use crate::cse::CSE;
-use crate::policies::{Policy, ValueType};
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use base64::engine::general_purpose::STANDARD;
 use base64::Engine;
+use himmelblau::intune::{IntuneStatus, PolicyStatus};
 use himmelblau_unix_common::config::HimmelblauConfig;
-use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
-use std::sync::Arc;
 use tokio::fs;
 use tokio::io::AsyncWriteExt;
 use tokio::process::Command;
@@ -84,7 +82,7 @@ impl CSE for ScriptsCSE {
         }
     }
 
-    async fn process_group_policy(&self, changed_gpo_list: Vec<Arc<dyn Policy>>) -> Result<bool> {
+    async fn process_group_policy(&self, policies: &mut IntuneStatus) -> Result<bool> {
         // Generate the persistent cache path.
         let cache_path_str = self.cache_path().await?;
         let cache_path = PathBuf::from(cache_path_str);
@@ -92,7 +90,11 @@ impl CSE for ScriptsCSE {
         let mut cache = PolicyCache::load(&cache_path).await?;
         let cached_policy_ids = cache.get_for_user(&self.username);
         // Collect new policy IDs from the changed policies.
-        let new_policy_ids: HashSet<String> = changed_gpo_list.iter().map(|p| p.get_id()).collect();
+        let new_policy_ids: HashSet<String> = policies
+            .policy_statuses
+            .iter()
+            .map(|p| p.policy_id.clone())
+            .collect();
 
         // Remove policies that were applied before but are not in the new set.
         for old_policy in cached_policy_ids.difference(&new_policy_ids) {
@@ -106,8 +108,8 @@ impl CSE for ScriptsCSE {
         }
 
         // Process and apply the changed policies.
-        for policy in changed_gpo_list.iter() {
-            self.apply_policy(policy.clone()).await?;
+        for policy in policies.policy_statuses.iter_mut() {
+            self.apply_policy(policy).await?;
         }
 
         // Update and save the cache.
@@ -143,49 +145,51 @@ impl ScriptsCSE {
             .ok_or(anyhow!("Failed to convert cache path to string"))
     }
 
-    async fn apply_policy(&self, policy: Arc<dyn Policy>) -> Result<()> {
-        let pattern = Regex::new(r"linux_customconfig_.*")?;
-        let settings = policy.list_policy_settings(pattern)?;
-
+    async fn apply_policy(&self, policy: &mut PolicyStatus) -> Result<()> {
         let mut execution_context = "root".to_string();
         let mut frequency = "1hour".to_string();
         let mut retries = 0;
         let mut script_b64: Option<String> = None;
 
         // Process each setting.
-        for setting in settings.iter() {
-            match setting.key().as_str() {
-                "linux_customconfig_executioncontext" => {
-                    if let Some(ValueType::Text(val)) = setting.value() {
-                        match val.as_str() {
-                            "root" => execution_context = val.to_string(),
-                            "user" => execution_context = self.username.to_string(),
-                            _ => return Err(anyhow!("Unrecognized execution context '{}'", val)),
-                        }
-                    } else {
-                        return Err(anyhow!("Failed to parse script execution context"));
+        for detail in policy.details.iter_mut() {
+            match detail.setting_definition_item_id.as_str() {
+                "linux_customconfig_executioncontext" => match detail.expected_value.as_str() {
+                    "root" => {
+                        execution_context = detail.expected_value.clone();
+                        detail.actual_value = detail.expected_value.clone();
+                        detail.new_compliance_state = "Compliant".to_string();
                     }
-                }
+                    "user" => {
+                        execution_context = self.username.to_string();
+                        detail.actual_value = detail.expected_value.clone();
+                        detail.new_compliance_state = "Compliant".to_string();
+                    }
+                    _ => {
+                        return Err(anyhow!(
+                            "Unrecognized execution context '{}'",
+                            detail.expected_value
+                        ))
+                    }
+                },
                 "linux_customconfig_executionfrequency" => {
-                    if let Some(ValueType::Text(val)) = setting.value() {
-                        frequency = val.to_string();
-                    } else {
-                        return Err(anyhow!("Failed to parse script execution frequency"));
-                    }
+                    frequency = detail.expected_value.clone();
+                    detail.actual_value = detail.expected_value.clone();
+                    detail.new_compliance_state = "Compliant".to_string();
                 }
                 "linux_customconfig_executionretries" => {
-                    if let Some(ValueType::Decimal(val)) = setting.value() {
+                    if let Ok(val) = detail.expected_value.parse::<u32>() {
                         retries = val;
+                        detail.actual_value = detail.expected_value.clone();
+                        detail.new_compliance_state = "Compliant".to_string();
                     } else {
                         return Err(anyhow!("Failed to parse script execution retries"));
                     }
                 }
                 "linux_customconfig_script" => {
-                    if let Some(ValueType::Text(val)) = setting.value() {
-                        script_b64 = Some(val.to_string());
-                    } else {
-                        return Err(anyhow!("Failed to parse script"));
-                    }
+                    script_b64 = Some(detail.expected_value.clone());
+                    detail.actual_value = detail.expected_value.clone();
+                    detail.new_compliance_state = "Compliant".to_string();
                 }
                 _ => {}
             }
@@ -193,12 +197,15 @@ impl ScriptsCSE {
 
         let script_path = self.script_path().await?;
 
-        let script_b64 =
-            script_b64.ok_or(anyhow!("Policy setting missing: script not provided"))?;
+        let script_b64 = match script_b64 {
+            Some(val) => val,
+            // This isn't a script policy, nothing to do
+            None => return Ok(()),
+        };
         let script_bytes = STANDARD.decode(script_b64)?;
         let script_content = String::from_utf8(script_bytes)?;
 
-        let script_path = format!("{}/policy_{}_script.sh", script_path, policy.get_id());
+        let script_path = format!("{}/policy_{}_script.sh", script_path, policy.policy_id);
         let mut script_file = fs::File::create(&script_path).await?;
         script_file.write_all(script_content.as_bytes()).await?;
         Command::new("chmod")
@@ -207,7 +214,7 @@ impl ScriptsCSE {
             .output()
             .await?;
 
-        let wrapper_path = format!("{}/policy_{}_wrapper.sh", script_path, policy.get_id());
+        let wrapper_path = format!("{}/policy_{}_wrapper.sh", script_path, policy.policy_id);
         let wrapper_script = format!(
             r#"#!/bin/bash
 # Wrapper script for policy execution with retry logic.
@@ -247,14 +254,14 @@ exit $exit_code
                 return Err(anyhow!(
                     "Unknown script application frequency '{}' for policy {}.",
                     frequency,
-                    policy.get_id()
+                    policy.policy_id
                 ))
             }
         };
 
         let cron_job_line = format!("{} {} {}\n", cron_schedule, execution_context, wrapper_path);
 
-        let cron_file_path = format!("/etc/cron.d/policy_{}", policy.get_id());
+        let cron_file_path = format!("/etc/cron.d/policy_{}", policy.policy_id);
         let mut cron_file = fs::File::create(&cron_file_path).await?;
         cron_file.write_all(cron_job_line.as_bytes()).await?;
 

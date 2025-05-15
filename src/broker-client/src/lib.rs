@@ -18,6 +18,56 @@
 use serde_json::Value;
 use zbus::{proxy, Connection};
 
+#[macro_export]
+macro_rules! user_token_from_broker_token_resp {
+    ($token:expr) => {{
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_err(|e| anyhow!(e))?;
+        UserToken {
+            token_type: $token
+                .get("accessTokenType")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| anyhow!("Missing accessTokenType"))?
+                .to_string(),
+            scope: $token
+                .get("grantedScopes")
+                .and_then(|v| v.as_str())
+                .map(String::from),
+            expires_in: ($token
+                .get("expiresOn")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0)
+                - now.as_secs()) as u32,
+            ext_expires_in: ($token
+                .get("extendedExpiresOn")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0)
+                - now.as_secs()) as u32,
+            access_token: $token
+                .get("accessToken")
+                .and_then(|v| v.as_str())
+                .map(String::from),
+            refresh_token: String::new(),
+            id_token: $token
+                .get("idToken")
+                .and_then(|v| v.as_str())
+                .map(|s| IdToken::from_str(s))
+                .transpose()
+                .map_err(|e| anyhow!(e))?
+                .ok_or_else(|| anyhow!("Missing or invalid idToken"))?,
+            client_info: $token
+                .get("clientInfo")
+                .and_then(|v| v.as_str())
+                .map(|s| ClientInfo::from_str(s))
+                .transpose()
+                .map_err(|e| anyhow!(e))?
+                .ok_or_else(|| anyhow!("Missing or invalid clientInfo"))?,
+            prt: None,
+        }
+    }};
+}
+
 #[proxy(
     interface = "com.microsoft.identity.Broker1",
     default_service = "com.microsoft.identity.broker1",
