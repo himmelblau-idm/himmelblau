@@ -16,6 +16,7 @@ members = [
 	"src/sshd-config",
 	"src/sso",
 	"src/qr-greeter",
+	"src/broker-client",
 ]
 resolver = "2"
 
@@ -58,6 +59,7 @@ idmap = { path = "src/idmap" }
 identity_dbus_broker = "0.1.3"
 rustls = ">=0.23.19" # CVE-2024-11738
 console-subscriber = "0.4.1"
+broker-client = { path = "src/broker-client" }
 
 # Kanidm deps
 argon2 = { version = "0.5.2", features = ["alloc"] }

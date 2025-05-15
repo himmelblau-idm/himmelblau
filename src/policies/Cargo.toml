@@ -26,3 +26,7 @@ tokio.workspace = true
 himmelblau_unix_common = { workspace = true }
 os-release = "0.1.0"
 semver = "1.0.25"
+libhimmelblau.workspace = true
+broker-client.workspace = true
+uuid.workspace = true
+libc.workspace = true
