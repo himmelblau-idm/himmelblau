@@ -28,7 +28,7 @@ libhimmelblau.workspace = true
 authenticator = { version = "0.4.1", default-features = false, features = ["crypto_openssl"] }
 base64.workspace = true
 serde_json.workspace = true
-sha2 = "0.10.8"
+sha2 = "0.10.9"
 
 [build-dependencies]
 pkg-config.workspace = true
