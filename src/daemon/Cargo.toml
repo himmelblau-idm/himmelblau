@@ -18,9 +18,12 @@ path = "src/daemon.rs"
 name = "himmelblaud_tasks"
 path = "src/tasks_daemon.rs"
 
+[features]
+console = ["dep:console-subscriber"]
+
 [dependencies]
 himmelblau_unix_common = { workspace = true }
-tokio = { workspace = true }
+tokio = { workspace = true, features = ["tracing"] }
 tokio-util = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
@@ -44,6 +47,7 @@ base64.workspace = true
 async-trait = "0.1.87"
 sd-notify = "0.4.5"
 libhimmelblau.workspace = true
+console-subscriber = { workspace = true, optional = true }
 
 [package.metadata.deb]
 name = "himmelblau"
