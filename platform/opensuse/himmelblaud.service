@@ -27,7 +27,7 @@ ExecStart=/usr/sbin/himmelblaud
 # Implied by dynamic user.
 # ProtectHome=
 # ProtectSystem=strict
-# ReadWritePaths=/var/run/himmelblaud-unixd /var/cache/himmelblaud-unixd
+# ReadWritePaths=/var/run/himmelblaud /var/cache/himmelblaud
 
 # SystemCallFilter=@aio @basic-io @chown @file-system @io-event @network-io @sync
 NoNewPrivileges=true

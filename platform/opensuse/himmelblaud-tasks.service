@@ -9,7 +9,7 @@ After=chronyd.service ntpd.service network-online.target suspend.target himmelbl
 # has created the socket necessary for communication.
 # We need the check so that fs namespacing used by`ReadWritePaths` has a
 # strict enough target to namespace. Without the check it fails in a more confusing way.
-ConditionPathExists=/run/himmelblaud-unixd/task_sock
+ConditionPathExists=/run/himmelblaud/task_sock
 
 [Service]
 User=root
