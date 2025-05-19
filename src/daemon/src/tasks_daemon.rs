@@ -600,7 +600,9 @@ async fn main() -> ExitCode {
             drop(_enter);
 
             if systemd_booted {
-                let _ = sd_notify::notify(true, &[NotifyState::Ready]);
+                if let Ok(monotonic_usec) = sd_notify::NotifyState::monotonic_usec_now() {
+                    let _ = sd_notify::notify(true, &[NotifyState::Ready, monotonic_usec]);
+                }
             }
 
             loop {
@@ -649,7 +651,9 @@ async fn main() -> ExitCode {
 
             info!("Signal received, shutting down");
             if systemd_booted {
-                let _ = sd_notify::notify(true, &[NotifyState::Stopping]);
+                if let Ok(monotonic_usec) = sd_notify::NotifyState::monotonic_usec_now() {
+                    let _ = sd_notify::notify(true, &[NotifyState::Stopping, monotonic_usec]);
+                }
             }
 
             // Send a broadcast that we are done.
