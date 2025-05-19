@@ -810,17 +810,28 @@ async fn main() -> ExitCode {
         std::env::set_var("RUST_LOG", "debug");
     }
 
+    // https://docs.rs/console-subscriber/latest/console_subscriber/struct.Builder.html#method.with_default_env
+    #[cfg(feature = "console")]
+    let console_layer = console_subscriber::ConsoleLayer::builder()
+        .with_default_env()
+        .spawn();
+
     #[allow(clippy::expect_used)]
     tracing_forest::worker_task()
         .set_global(true)
         // Fall back to stderr
         .map_sender(|sender| sender.or_stderr())
-        .build_on(|subscriber| subscriber
+        .build_on(|subscriber| {
+           #[cfg(feature = "console")]
+           let subscriber = subscriber
+               .with(console_layer);
+
+            subscriber
             .with(EnvFilter::try_from_default_env()
                 .or_else(|_| EnvFilter::try_new("info"))
                 .expect("Failed to init envfilter")
             )
-        )
+        })
         .on(async {
             let span = span!(Level::INFO, "initialisation");
             let _enter = span.enter();
