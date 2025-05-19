@@ -3,7 +3,16 @@
 
 [Unit]
 Description=Himmelblau Authentication Daemon
-After=chronyd.service ntpd.service network-online.target suspend.target
+After=chronyd.service nscd.service ntpd.service network-online.target suspend.target
+Before=systemd-user-sessions.service sshd.service nss-user-lookup.target
+Wants=nss-user-lookup.target
+# While it seems confusing, we need to be after nscd.service so that the
+# Conflicts will trigger and then automatically stop it.
+Conflicts=nscd.service
+# `Upholds` like a `Wants` directive ensures that unixd-tasks is started but also 
+# ensures it's kept running. This allows for a repeatable & fast way of starting 
+# unixd-tasks at the right time.
+Upholds=himmelblaud-tasks.service
 
 [Service]
 DynamicUser=yes
@@ -18,7 +27,7 @@ ExecStart=/usr/sbin/himmelblaud
 # Implied by dynamic user.
 # ProtectHome=
 # ProtectSystem=strict
-# ReadWritePaths=/var/run/kanidm-unixd /var/cache/kanidm-unixd
+# ReadWritePaths=/var/run/himmelblaud /var/cache/himmelblaud
 
 # SystemCallFilter=@aio @basic-io @chown @file-system @io-event @network-io @sync
 NoNewPrivileges=true
