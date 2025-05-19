@@ -927,13 +927,13 @@ impl IdProvider for HimmelblauProvider {
                 vec!["https://graph.microsoft.com/.default"],
             )
         };
-        let token = match self
+        let mtoken = self
             .client
             .write()
             .await
             .exchange_prt_for_access_token(&prt, scopes.clone(), None, client_id, tpm, machine_key)
-            .await
-        {
+            .await;
+        let token = match mtoken {
             Ok(val) => val,
             Err(MsalError::RequestFailed(_)) => {
                 // Retry on network failure, as these can be rather common
