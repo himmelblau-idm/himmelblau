@@ -5,6 +5,12 @@
 Description=Himmelblau Local Tasks
 After=chronyd.service ntpd.service network-online.target suspend.target himmelblaud.service
 
+# This prevents starting unixd-tasks before unixd is running and
+# has created the socket necessary for communication.
+# We need the check so that fs namespacing used by`ReadWritePaths` has a
+# strict enough target to namespace. Without the check it fails in a more confusing way.
+ConditionPathExists=/run/himmelblaud/task_sock
+
 [Service]
 User=root
 Type=notify
@@ -13,7 +19,7 @@ ExecStart=/usr/sbin/himmelblaud_tasks
 CapabilityBoundingSet=CAP_CHOWN CAP_FOWNER CAP_DAC_OVERRIDE CAP_DAC_READ_SEARCH
 # SystemCallFilter=@aio @basic-io @chown @file-system @io-event @network-io @sync
 ProtectSystem=strict
-ReadWritePaths=/home /var/run/himmelblaud /tmp /etc/krb5.conf.d /etc /var/lib
+ReadWritePaths=/home /run/himmelblaud /tmp /etc/krb5.conf.d /etc /var/lib
 NoNewPrivileges=true
 PrivateDevices=true
 ProtectHostname=true
