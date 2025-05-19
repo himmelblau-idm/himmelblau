@@ -1288,7 +1288,9 @@ async fn main() -> ExitCode {
             info!("Server started ...");
 
             if systemd_booted {
-                let _ = sd_notify::notify(true, &[NotifyState::Ready]);
+                if let Ok(monotonic_usec) = sd_notify::NotifyState::monotonic_usec_now() {
+                    let _ = sd_notify::notify(true, &[NotifyState::Ready, monotonic_usec]);
+                }
             }
 
             drop(_enter);
@@ -1338,7 +1340,9 @@ async fn main() -> ExitCode {
 
             info!("Signal received, sending down signal to tasks");
             if systemd_booted {
-                let _ = sd_notify::notify(true, &[NotifyState::Stopping]);
+                if let Ok(monotonic_usec) = sd_notify::NotifyState::monotonic_usec_now() {
+                    let _ = sd_notify::notify(true, &[NotifyState::Stopping, monotonic_usec]);
+                }
             }
 
             // Send a broadcast that we are done.
