@@ -897,12 +897,14 @@ impl IdProvider for HimmelblauProvider {
                 vec!["https://graph.microsoft.com/.default"],
             )
         };
+        let mtoken = self
+            .client
+            .write()
+            .await
+            .exchange_prt_for_access_token(&prt, scopes, None, client_id, tpm, machine_key)
+            .await;
         let token = net_down_check!(
-            self.client
-                .write()
-                .await
-                .exchange_prt_for_access_token(&prt, scopes, None, client_id, tpm, machine_key)
-                .await,
+            mtoken,
             Err(e) => {
                 error!("{:?}", e);
                 // Never return IdpError::NotFound. This deletes the existing
