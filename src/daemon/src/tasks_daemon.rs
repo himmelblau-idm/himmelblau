@@ -50,7 +50,7 @@ use tokio::net::UnixStream;
 use tokio::sync::broadcast;
 use tokio::time;
 use tokio_util::codec::{Decoder, Encoder, Framed};
-use tracing::{instrument, span};
+use tracing::span;
 use walkdir::WalkDir;
 
 #[cfg(all(target_family = "unix", feature = "selinux"))]
@@ -325,12 +325,14 @@ fn write_bytes_to_file(bytes: &[u8], filename: &Path, uid: uid_t, gid: uid_t) ->
     0
 }
 
-#[instrument(skip(stream, cfg))]
 async fn handle_tasks(stream: UnixStream, cfg: &HimmelblauConfig) {
     let mut reqs = Framed::new(stream, TaskCodec::new());
 
     loop {
-        match reqs.next().await {
+        let next_req = reqs.next().await;
+        let span = span!(Level::INFO, "TaskRequest");
+        let _ = span.enter();
+        match next_req {
             Some(Ok(TaskRequest::HomeDirectory(info))) => {
                 debug!("Received task -> HomeDirectory({:?})", info);
                 let domain = split_username(&info.name).map(|(_, domain)| domain);
