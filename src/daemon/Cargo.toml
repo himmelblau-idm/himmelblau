@@ -44,7 +44,7 @@ kanidm-hsm-crypto = { workspace = true }
 kanidm_lib_file_permissions.workspace = true
 identity_dbus_broker.workspace = true
 base64.workspace = true
-async-trait = "0.1.87"
+async-trait.workspace = true
 sd-notify = "0.4.5"
 libhimmelblau.workspace = true
 console-subscriber = { workspace = true, optional = true }
