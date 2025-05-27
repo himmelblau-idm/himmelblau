@@ -282,7 +282,7 @@ impl GroupHooks for HimmelblauGroup {
             }
         };
 
-        daemon_client
+        match daemon_client
             .call_and_wait(&req, cfg.get_unix_sock_timeout())
             .map(|r| match r {
                 ClientResponse::NssGroup(opt) => opt
@@ -300,6 +300,31 @@ impl GroupHooks for HimmelblauGroup {
                 _ => Response::NotFound,
             })
             .unwrap_or_else(|_| Response::NotFound)
+        {
+            Response::NotFound => {
+                // If the mapped UPN name isn't found, then this is probably a
+                // real Entra Id group, instead of a fake primary group.
+                let req = ClientRequest::NssGroupByName(name.clone());
+                daemon_client
+                    .call_and_wait(&req, cfg.get_unix_sock_timeout())
+                    .map(|r| match r {
+                        ClientResponse::NssGroup(opt) => opt
+                            .map(|ng| {
+                                let mut group = group_from_nssgroup(ng);
+                                group.members = group
+                                    .members
+                                    .into_iter()
+                                    .map(|member| cfg.map_upn_to_name(&member))
+                                    .collect();
+                                Response::Success(group)
+                            })
+                            .unwrap_or_else(|| Response::NotFound),
+                        _ => Response::NotFound,
+                    })
+                    .unwrap_or_else(|_| Response::NotFound)
+            }
+            other => other,
+        }
     }
 }
 

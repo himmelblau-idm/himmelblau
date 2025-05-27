@@ -89,7 +89,7 @@ impl RefreshCache {
     async fn refresh_token(&self, account_id: &str) -> Result<SealedData, IdpError> {
         self.purge().await;
         let refresh_cache = self.refresh_cache.read().await;
-        match refresh_cache.get(account_id) {
+        match refresh_cache.get(account_id.to_lowercase().as_str()) {
             Some((refresh_token, _)) => Ok(refresh_token.clone()),
             None => Err(IdpError::NotFound),
         }
@@ -110,7 +110,10 @@ impl RefreshCache {
 
     async fn add(&self, account_id: &str, prt: &SealedData) {
         let mut refresh_cache = self.refresh_cache.write().await;
-        refresh_cache.insert(account_id.to_string(), (prt.clone(), SystemTime::now()));
+        refresh_cache.insert(
+            account_id.to_string().to_lowercase(),
+            (prt.clone(), SystemTime::now()),
+        );
     }
 }
 
@@ -156,6 +159,7 @@ impl HimmelblauMultiProvider {
             let provider = HimmelblauProvider::new(app, &config, &domain, graph, &idmap)
                 .map_err(|_| anyhow!("Failed to initialize the provider"))?;
             {
+                // A client write lock is required here.
                 let mut client = provider.client.write().await;
                 if let Ok(transport_key) =
                     provider.fetch_loadable_transport_key_from_keystore(keystore)
@@ -607,7 +611,7 @@ impl IdProvider for HimmelblauProvider {
         };
         let prt = self.refresh_cache.refresh_token(&account_id).await?;
         self.client
-            .write()
+            .read()
             .await
             .exchange_prt_for_access_token(
                 &prt,
@@ -657,13 +661,13 @@ impl IdProvider for HimmelblauProvider {
         };
         let cloud_ccache = self
             .client
-            .write()
+            .read()
             .await
             .fetch_cloud_ccache(&prt, tpm, machine_key)
             .unwrap_or(vec![]);
         let ad_ccache = self
             .client
-            .write()
+            .read()
             .await
             .fetch_ad_ccache(&prt, tpm, machine_key)
             .unwrap_or(vec![]);
@@ -692,7 +696,7 @@ impl IdProvider for HimmelblauProvider {
         };
         let prt = self.refresh_cache.refresh_token(&account_id).await?;
         self.client
-            .write()
+            .read()
             .await
             .acquire_prt_sso_cookie(&prt, tpm, machine_key)
             .await
@@ -743,7 +747,7 @@ impl IdProvider for HimmelblauProvider {
         // Set the hello pin
         let hello_key = match self
             .client
-            .write()
+            .read()
             .await
             .provision_hello_for_business_key(token, tpm, machine_key, new_tok)
             .await
@@ -816,7 +820,7 @@ impl IdProvider for HimmelblauProvider {
                         // Check if the user exists
                         let auth_init = net_down_check!(
                             self.client
-                                .write()
+                                .read()
                                 .await
                                 .check_user_exists(&account_id, &[])
                                 .await,
@@ -899,7 +903,7 @@ impl IdProvider for HimmelblauProvider {
         };
         let mtoken = self
             .client
-            .write()
+            .read()
             .await
             .exchange_prt_for_access_token(&prt, scopes, None, client_id, tpm, machine_key)
             .await;
@@ -982,7 +986,7 @@ impl IdProvider for HimmelblauProvider {
                 let auth_options = vec![AuthOption::Fido, AuthOption::Passwordless];
                 let auth_init = net_down_check!(
                     self.client
-                        .write()
+                        .read()
                         .await
                         .check_user_exists(account_id, &auth_options)
                         .await,
@@ -996,7 +1000,7 @@ impl IdProvider for HimmelblauProvider {
                 } else {
                     let flow = net_down_check!(
                         self.client
-                            .write()
+                            .read()
                             .await
                             .initiate_acquire_token_by_mfa_flow_for_device_enrollment(
                                 account_id,
@@ -1031,7 +1035,7 @@ impl IdProvider for HimmelblauProvider {
             } else {
                 let resp = net_down_check!(
                     self.client
-                        .write()
+                        .read()
                         .await
                         .initiate_device_flow_for_device_enrollment()
                         .await,
@@ -1146,7 +1150,7 @@ impl IdProvider for HimmelblauProvider {
                 };
                 let mtoken2 = self
                     .client
-                    .write()
+                    .read()
                     .await
                     .acquire_token_by_refresh_token(
                         &$token.refresh_token,
@@ -1172,7 +1176,7 @@ impl IdProvider for HimmelblauProvider {
                                     sleep(Duration::from_secs(5));
                                     net_down_check!(
                                         self.client
-                                            .write()
+                                            .read()
                                             .await
                                             .acquire_token_by_refresh_token(
                                                 &$token.refresh_token,
@@ -1214,7 +1218,7 @@ impl IdProvider for HimmelblauProvider {
                 };
                 let token = match self
                     .client
-                    .write()
+                    .read()
                     .await
                     .acquire_token_by_hello_for_business_key(
                         account_id,
@@ -1283,7 +1287,7 @@ impl IdProvider for HimmelblauProvider {
 
                 let hello_key = net_down_check!(
                     self.client
-                        .write()
+                        .read()
                         .await
                         .provision_hello_for_business_key(token, tpm, machine_key, &pin)
                         .await,
@@ -1330,7 +1334,7 @@ impl IdProvider for HimmelblauProvider {
                     // we'll make another run at it in a moment.
                     let _ = net_down_check!(
                         self.client
-                            .write()
+                            .read()
                             .await
                             .handle_password_change(account_id, old_cred, &cred)
                             .await,
@@ -1359,7 +1363,7 @@ impl IdProvider for HimmelblauProvider {
                 }
                 let mresp = self
                     .client
-                    .write()
+                    .read()
                     .await
                     .initiate_acquire_token_by_mfa_flow_for_device_enrollment(
                         account_id,
@@ -1400,7 +1404,7 @@ impl IdProvider for HimmelblauProvider {
                                 // will deadlock.
                                 let res = self
                                     .client
-                                    .write()
+                                    .read()
                                     .await
                                     .acquire_token_by_username_password(
                                         account_id,
@@ -1534,7 +1538,7 @@ impl IdProvider for HimmelblauProvider {
             ) => {
                 let token = net_down_check!(
                     self.client
-                        .write()
+                        .read()
                         .await
                         .acquire_token_by_mfa_flow(account_id, Some(&cred), None, flow)
                         .await,
@@ -1615,7 +1619,7 @@ impl IdProvider for HimmelblauProvider {
                 }
                 let token = net_down_check!(
                     self.client
-                        .write()
+                        .read()
                         .await
                         .acquire_token_by_mfa_flow(account_id, None, Some(poll_attempt), flow)
                         .await,
@@ -1698,7 +1702,7 @@ impl IdProvider for HimmelblauProvider {
             ) => {
                 let token = net_down_check!(
                     self.client
-                        .write()
+                        .read()
                         .await
                         .acquire_token_by_mfa_flow(account_id, Some(&assertion), None, flow)
                         .await,
@@ -1908,6 +1912,7 @@ impl HimmelblauProvider {
 
             // Set the authority on the app
             let authority_url = format!("https://{}/{}", authority_host, tenant_id);
+            // A client write lock is required here.
             self.client
                 .write()
                 .await
@@ -1976,7 +1981,7 @@ impl HimmelblauProvider {
     }
 
     fn fetch_hello_key_tag(&self, account_id: &str) -> String {
-        format!("{}/hello", account_id)
+        format!("{}/hello", account_id.to_lowercase())
     }
 
     fn fetch_cert_key_tag(&self) -> String {
@@ -2315,6 +2320,7 @@ impl HimmelblauProvider {
     ) -> Result<(), MsalError> {
         /* If not already joined, join the domain now. */
         let attrs = EnrollAttrs::new(self.domain.clone(), None, None, None, None)?;
+        // A client write lock is required here.
         match self
             .client
             .write()
