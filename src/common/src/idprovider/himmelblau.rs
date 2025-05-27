@@ -89,7 +89,7 @@ impl RefreshCache {
     async fn refresh_token(&self, account_id: &str) -> Result<SealedData, IdpError> {
         self.purge().await;
         let refresh_cache = self.refresh_cache.read().await;
-        match refresh_cache.get(account_id) {
+        match refresh_cache.get(account_id.to_lowercase().as_str()) {
             Some((refresh_token, _)) => Ok(refresh_token.clone()),
             None => Err(IdpError::NotFound),
         }
@@ -110,7 +110,10 @@ impl RefreshCache {
 
     async fn add(&self, account_id: &str, prt: &SealedData) {
         let mut refresh_cache = self.refresh_cache.write().await;
-        refresh_cache.insert(account_id.to_string(), (prt.clone(), SystemTime::now()));
+        refresh_cache.insert(
+            account_id.to_string().to_lowercase(),
+            (prt.clone(), SystemTime::now()),
+        );
     }
 }
 
@@ -2055,7 +2058,7 @@ impl HimmelblauProvider {
     }
 
     fn fetch_hello_key_tag(&self, account_id: &str) -> String {
-        format!("{}/hello", account_id)
+        format!("{}/hello", account_id.to_lowercase())
     }
 
     fn fetch_cert_key_tag(&self) -> String {
