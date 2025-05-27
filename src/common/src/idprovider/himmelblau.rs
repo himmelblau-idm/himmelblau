@@ -2058,7 +2058,7 @@ impl HimmelblauProvider {
     }
 
     fn fetch_hello_key_tag(&self, account_id: &str) -> String {
-        format!("{}/hello", account_id)
+        format!("{}/hello", account_id.to_lowercase())
     }
 
     fn fetch_cert_key_tag(&self) -> String {
