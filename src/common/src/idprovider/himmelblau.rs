@@ -1563,7 +1563,7 @@ impl IdProvider for HimmelblauProvider {
                             AuthCacheAction::None,
                         ));
                     }
-                    "PhoneAppOTP" | "OneWaySMS" | "ConsolidatedTelephony" => {
+                    "AccessPass" | "PhoneAppOTP" | "OneWaySMS" | "ConsolidatedTelephony" => {
                         let msg = resp.msg.clone();
                         *cred_handler = AuthCredHandler::MFA {
                             flow: resp,
