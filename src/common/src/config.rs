@@ -429,6 +429,14 @@ impl HimmelblauConfig {
             Some(val) => val.split(',').map(|s| s.trim().to_string()).collect(),
             None => vec![],
         };
+        let domain = match self.config.get("global", "domain") {
+            Some(val) => {
+                info!("Mistyped `domain` parameter detected in himmelblau.conf. Did you mean `domains`?");
+                val.split(',').map(|s| s.trim().to_string()).collect()
+            }
+            None => vec![],
+        };
+        domains.extend(domain);
         let mut sections = self.config.sections();
         sections.retain(|s| s != "global");
         for section in sections {

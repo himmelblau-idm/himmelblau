@@ -161,7 +161,11 @@ impl HimmelblauMultiProvider {
 
         let mut providers = HashMap::new();
         let cfg = config.read().await;
-        for domain in cfg.get_configured_domains() {
+        let domains = cfg.get_configured_domains();
+        if domains.len() == 0 {
+            return Err(anyhow!("No domains configured in himmelblau.conf"));
+        }
+        for domain in domains {
             debug!("Adding provider for domain {}", domain);
             let authority_host = cfg.get_authority_host(&domain);
             let tenant_id = cfg.get_tenant_id(&domain);
