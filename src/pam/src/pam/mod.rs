@@ -1274,7 +1274,7 @@ impl PamHooks for PamKanidm {
             };
 
             match mfa_req.mfa_method.as_str() {
-                "PhoneAppOTP" | "OneWaySMS" | "ConsolidatedTelephony" => {
+                "AccessPass" | "PhoneAppOTP" | "OneWaySMS" | "ConsolidatedTelephony" => {
                     let input = match conv.send(PAM_PROMPT_ECHO_OFF, &mfa_req.msg) {
                         Ok(password) => match password {
                             Some(cred) => cred,
