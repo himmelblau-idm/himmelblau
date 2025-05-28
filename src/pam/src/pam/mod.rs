@@ -1274,6 +1274,45 @@ impl PamHooks for PamKanidm {
             };
 
             match mfa_req.mfa_method.as_str() {
+                "FidoKey" => {
+                    let conv = Arc::new(Mutex::new(conv.clone()));
+                    let fido_challenge = match mfa_req.fido_challenge {
+                        Some(ref fido_challenge) => fido_challenge.clone(),
+                        None => {
+                            debug!("no Fido challenge");
+                            return PamResultCode::PAM_CRED_INSUFFICIENT;
+                        }
+                    };
+
+                    let fido_allow_list = match mfa_req.fido_allow_list {
+                        Some(ref fido_allow_list) => fido_allow_list.clone(),
+                        None => {
+                            debug!("no Fido allow list");
+                            return PamResultCode::PAM_CRED_INSUFFICIENT;
+                        }
+                    };
+
+                    let assertion = match fido_auth(conv.clone(), fido_challenge, fido_allow_list) {
+                        Ok(assertion) => assertion,
+                        Err(e) => {
+                            pam_fail!(
+                                conv.lock().unwrap(),
+                                "Entra Id Fido authentication failed.",
+                                e
+                            );
+                        },
+                    };
+                    match rt.block_on(async {
+                        app.acquire_token_by_mfa_flow(&account_id, Some(&assertion), None, &mut mfa_req)
+                            .await
+                    }) {
+                        Ok(token) => token,
+                        Err(e) => {
+                            error!("MFA FAIL: {:?}", e);
+                            return PamResultCode::PAM_AUTH_ERR;
+                        }
+                    }
+                }
                 "AccessPass" | "PhoneAppOTP" | "OneWaySMS" | "ConsolidatedTelephony" => {
                     let input = match conv.send(PAM_PROMPT_ECHO_OFF, &mfa_req.msg) {
                         Ok(password) => match password {
