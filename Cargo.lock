@@ -2698,9 +2698,9 @@ dependencies = [
 
 [[package]]
 name = "libhimmelblau"
-version = "0.6.17"
+version = "0.6.20"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3d138aee16400ce129e6cbe10ad59969e3d8053e817febb2ee4a7793857b7545"
+checksum = "c1b725d3016d108c1e237dda65af4ddbbf3d83135ea245d202153db01b7e4f26"
 dependencies = [
  "base64 0.22.1",
  "browser-window",
@@ -2722,6 +2722,7 @@ dependencies = [
  "reqwest",
  "scraper",
  "serde",
+ "serde_bytes",
  "serde_json",
  "tokio",
  "tracing",
@@ -4427,9 +4428,9 @@ dependencies = [
 
 [[package]]
 name = "serde_bytes"
-version = "0.11.15"
+version = "0.11.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "387cc504cb06bb40a96c8e04e951fe01854cf6bc921053c954e4a606d9675c6a"
+checksum = "8437fd221bde2d4ca316d61b90e337e9e702b3820b87d63caa9ba6c02bd06d96"
 dependencies = [
  "serde",
 ]
