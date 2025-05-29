@@ -9,8 +9,9 @@ Himmelblau is an interoperability suite for Microsoft Azure Entra ID and Intune.
 The name of the project comes from a German word for Azure (sky blue).
 
 Himmelblau supports Linux authentication to Microsoft Azure Entra ID via PAM and NSS modules.
-The PAM and NSS modules communicate with Entra ID via the himmelblaud daemon. Himmelblau plans to
-enforce Intune MDM policies, but this work isn't completed yet.
+The PAM and NSS modules communicate with Entra ID via the himmelblaud daemon. Himmelblau also
+supports Intune device enrollment, policy enforcement, and marking devices as compliant with
+Intune MDM policies.
 
 [![Azure Entra Id Authentication for Linux](img/sambaxp.png)](https://youtu.be/wCibnqVQ_bs "Azure Entra Id Authentication for Linux")
 

@@ -5,6 +5,7 @@ members = [
 	"src/common",
 	"src/pam",
 	"src/nss",
+	"src/policies",
 	"src/sketching",
 	"src/proto",
 	"src/crypto",
@@ -15,6 +16,7 @@ members = [
 	"src/sshd-config",
 	"src/sso",
 	"src/qr-greeter",
+	"src/broker-client",
 ]
 resolver = "2"
 
@@ -47,6 +49,7 @@ anyhow = "^1.0.98"
 tokio = { version = "^1.45.0", features = ["rt", "macros", "sync", "time", "net", "io-util", "signal", "rt-multi-thread"] }
 tokio-util = { version = "^0.7.15", features = ["codec"] }
 async-trait = "^0.1.88"
+himmelblau_policies = { path = "src/policies" }
 pem = "^3.0.5"
 chrono = "^0.4.40"
 os-release = "^0.1.0"
@@ -56,6 +59,7 @@ idmap = { path = "src/idmap" }
 identity_dbus_broker = "0.1.3"
 rustls = ">=0.23.19" # CVE-2024-11738
 console-subscriber = "0.4.1"
+broker-client = { path = "src/broker-client" }
 
 # Kanidm deps
 argon2 = { version = "0.5.2", features = ["alloc"] }
