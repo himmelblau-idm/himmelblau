@@ -19,6 +19,7 @@ use crate::cse::CSE;
 use crate::policies::{Policy, PolicyType, ValueType};
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
+use himmelblau_unix_common::config::HimmelblauConfig;
 use regex::Regex;
 use serde_json;
 use std::collections::HashMap;
@@ -32,11 +33,7 @@ static CHROME_MANAGED_POLICIES_PATH: &str = "/etc/opt/chrome/policies/managed";
 static RECOMMENDED_POLICIES_PATH: &str = "/etc/chromium/policies/recommended";
 static CHROME_RECOMMENDED_POLICIES_PATH: &str = "/etc/opt/chrome/policies/recommended";
 
-pub struct ChromiumUserCSE {
-    pub graph_url: String,
-    pub access_token: String,
-    pub id: String,
-}
+pub struct ChromiumUserCSE {}
 
 fn write_policy_to_file(dirname: &str, key: &str, val: &ValueType) -> Result<()> {
     let mut file = File::create(format!("{}/{}.json", dirname, key))?;
@@ -48,23 +45,11 @@ fn write_policy_to_file(dirname: &str, key: &str, val: &ValueType) -> Result<()>
 
 #[async_trait]
 impl CSE for ChromiumUserCSE {
-    fn new(graph_url: &str, access_token: &str, id: &str) -> Self {
-        ChromiumUserCSE {
-            graph_url: graph_url.to_string(),
-            access_token: access_token.to_string(),
-            id: id.to_string(),
-        }
+    fn new(_config: &HimmelblauConfig, _username: &str) -> Self {
+        ChromiumUserCSE {}
     }
 
-    async fn process_group_policy(
-        &self,
-        deleted_gpo_list: Vec<Arc<dyn Policy>>,
-        changed_gpo_list: Vec<Arc<dyn Policy>>,
-    ) -> Result<bool> {
-        debug!("Applying Chromium policy to user with id {}", self.id);
-
-        for _gpo in deleted_gpo_list { /* TODO: Unapply policies that have been removed */ }
-
+    async fn process_group_policy(&self, changed_gpo_list: Vec<Arc<dyn Policy>>) -> Result<bool> {
         for gpo in changed_gpo_list {
             let pattern = Regex::new(r"^\\Google\\Google Chrome")?;
             let defs = gpo.list_policy_settings(pattern)?;
@@ -96,28 +81,6 @@ impl CSE for ChromiumUserCSE {
             }
         }
         Ok(true)
-    }
-
-    async fn rsop(&self, gpo: Arc<dyn Policy>) -> Result<HashMap<String, String>> {
-        let pattern = Regex::new(r"^\\Google\\Google Chrome")?;
-        let defs = gpo.list_policy_settings(pattern)?;
-        let mut res: HashMap<String, String> = HashMap::new();
-        for def in defs {
-            if def.enabled() && def.class_type() == PolicyType::User {
-                let key = match convert_display_name_to_name(
-                    &def.key(),
-                    key_is_recommended(&def.get_compare_pattern()),
-                ) {
-                    Ok(key) => key,
-                    Err(e) => {
-                        error!("{}", e);
-                        continue;
-                    }
-                };
-                res.insert(key, serde_json::to_string(&def.value())?);
-            }
-        }
-        Ok(res)
     }
 }
 

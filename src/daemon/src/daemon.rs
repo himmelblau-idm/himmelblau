@@ -35,7 +35,7 @@ use clap::{Arg, ArgAction, Command};
 use futures::{SinkExt, StreamExt};
 use himmelblau::{ClientInfo, IdToken, UserToken as UnixUserToken};
 use himmelblau_unix_common::config::{split_username, HimmelblauConfig};
-use himmelblau_unix_common::constants::DEFAULT_CONFIG_PATH;
+use himmelblau_unix_common::constants::{DEFAULT_APP_ID, DEFAULT_CONFIG_PATH};
 use himmelblau_unix_common::db::{Cache, CacheTxn, Db};
 use himmelblau_unix_common::idprovider::himmelblau::HimmelblauMultiProvider;
 use himmelblau_unix_common::idprovider::interface::Id;
@@ -500,6 +500,97 @@ async fn handle_client(
                                                                 }
                                                                 Err(_) => {
                                                                     error!("Fetching user profile picture failed");
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+
+                                                    // Apply Intune policies
+                                                    if cfg.get_apply_policy()
+                                                    {
+                                                        let graph_token = cachelayer
+                                                            .get_user_accesstoken(
+                                                                Id::Name(account_id.clone()),
+                                                                vec!["00000003-0000-0000-c000-000000000000/.default".to_string()],
+                                                                Some(DEFAULT_APP_ID.to_string())
+                                                            ).await;
+                                                        let intune_token = cachelayer
+                                                            .get_user_accesstoken(
+                                                                Id::Name(account_id.clone()),
+                                                                vec!["0000000a-0000-0000-c000-000000000000/.default".to_string()],
+                                                                Some(DEFAULT_APP_ID.to_string())
+                                                            ).await;
+
+                                                        if let Some(graph_token) = graph_token {
+                                                            if let Some(intune_token) = intune_token {
+                                                                let (tx, rx) = oneshot::channel();
+
+                                                                match task_channel_tx
+                                                                    .send_timeout(
+                                                                        (
+                                                                            TaskRequest::ApplyPolicy(
+                                                                                account_id.clone(),
+                                                                                graph_token
+                                                                                    .access_token
+                                                                                    .clone()
+                                                                                    .unwrap_or("".to_string()),
+                                                                                intune_token
+                                                                                    .access_token
+                                                                                    .clone()
+                                                                                    .unwrap_or("".to_string()),
+                                                                            ),
+                                                                            tx,
+                                                                        ),
+                                                                        Duration::from_millis(500),
+                                                                    )
+                                                                    .await
+                                                                {
+                                                                    Ok(()) => {
+                                                                        // Now wait for the other end OR timeout.
+                                                                        match time::timeout_at(
+                                                                            time::Instant::now()
+                                                                                + Duration::from_secs(
+                                                                                    5,
+                                                                                ),
+                                                                            rx,
+                                                                        )
+                                                                        .await
+                                                                        {
+                                                                            Ok(Ok(status)) => {
+                                                                                if status == 0 {
+                                                                                    debug!("Successfully applied Intune policies");
+                                                                                } else {
+                                                                                    resp = PamAuthResponse::Denied(
+                                                                                        "Authentication was explicitly denied due to Intune failure".to_string()
+                                                                                    );
+                                                                                }
+                                                                            }
+                                                                            Ok(Err(e)) => {
+                                                                                resp = PamAuthResponse::Denied(
+                                                                                    format!(
+                                                                                        "Authentication was explicitly denied due to Intune failure: {}",
+                                                                                        e
+                                                                                    )
+                                                                                );
+                                                                            }
+                                                                            Err(e) => {
+                                                                                resp = PamAuthResponse::Denied(
+                                                                                    format!(
+                                                                                        "Authentication was explicitly denied due to Intune failure: {}",
+                                                                                        e
+                                                                                    )
+                                                                                );
+                                                                            }
+                                                                        }
+                                                                    }
+                                                                    Err(e) => {
+                                                                        resp = PamAuthResponse::Denied(
+                                                                            format!(
+                                                                                "Authentication was explicitly denied due to Intune failure: {}",
+                                                                                e
+                                                                            )
+                                                                        );
+                                                                    }
                                                                 }
                                                             }
                                                         }

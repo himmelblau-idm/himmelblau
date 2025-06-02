@@ -92,6 +92,9 @@
 # provides flexibility for environments requiring custom name transformations.
 # name_mapping_script =
 #
+# Whether to apply Intune policies.
+# apply_policy = false ; {true|false}
+#
 # authority_host = login.microsoftonline.com
 #
 # The location of the cache database

@@ -33,6 +33,7 @@ serde = { workspace = true }
 serde_json.workspace = true
 futures = "^0.3.28"
 systemd-journal-logger = "^2.2.2"
+himmelblau_policies = { workspace = true }
 users = "^0.11.0"
 sketching = { workspace = true }
 walkdir = { workspace = true }

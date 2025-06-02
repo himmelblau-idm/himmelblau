@@ -32,6 +32,7 @@ use std::{fs, io};
 use bytes::{BufMut, BytesMut};
 use futures::{SinkExt, StreamExt};
 use himmelblau::graph::Graph;
+use himmelblau_policies::policies::apply_intune_policy;
 use himmelblau_unix_common::config::{split_username, HimmelblauConfig};
 use himmelblau_unix_common::constants::{DEFAULT_CCACHE_DIR, DEFAULT_CONFIG_PATH};
 use himmelblau_unix_common::unix_proto::{HomeDirectoryInfo, TaskRequest, TaskResponse};
@@ -489,6 +490,37 @@ async fn handle_tasks(stream: UnixStream, cfg: &HimmelblauConfig) {
 
                 // Always indicate success here
                 if let Err(e) = reqs.send(TaskResponse::Success(0)).await {
+                    error!("Error -> {:?}", e);
+                    return;
+                }
+            }
+            Some(Ok(TaskRequest::ApplyPolicy(account_id, graph_token, intune_token))) => {
+                debug!("Received task -> ApplyPolicy({})", account_id);
+                let res = match apply_intune_policy(cfg, &account_id, &graph_token, &intune_token)
+                    .await
+                {
+                    Ok(r) => r,
+                    Err(e) => {
+                        error!("Failed to apply Intune policies: {:?}", e);
+                        if let Err(e) = reqs
+                            .send(TaskResponse::Error(format!(
+                                "Failed to apply Intune policies: {:?}",
+                                e
+                            )))
+                            .await
+                        {
+                            error!("Error -> {:?}", e);
+                        }
+                        break;
+                    }
+                };
+                debug!("tasks: Got response code `{}` while applying policy", res);
+
+                // Indicate the status response
+                if let Err(e) = reqs
+                    .send(TaskResponse::Success(if res { 0 } else { 1 }))
+                    .await
+                {
                     error!("Error -> {:?}", e);
                     return;
                 }
