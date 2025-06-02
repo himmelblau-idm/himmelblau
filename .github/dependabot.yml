@@ -13,3 +13,7 @@ updates:
       prefix: "deps(rust)"
     ignore:
       - dependency-name: "utoipa"
+    groups:
+      all-cargo-updates:
+        patterns:
+          - "*"
