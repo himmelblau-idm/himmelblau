@@ -24,6 +24,9 @@ Please attach relevant logs. Make sure to include outputs from the systemd journ
 journalctl -u himmelblaud -u himmelblaud-tasks
 ```
 
+**Configuration**
+Please attach a copy of your `/etc/himmelblau/himmelblau.conf` file.
+
 **Packet Trace (For Authentication Errors)**
 If you are encountering an authentication error (check the systemd journal for errors related to the `himmelblaud` daemon), please capture a packet trace of the OAuth2 authentication traffic to Azure Entra ID.
 
