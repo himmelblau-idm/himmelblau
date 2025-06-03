@@ -21,6 +21,24 @@ Clear all entries in the `himmelblaud` resolver cache. This operation removes ca
 Invalidate the `himmelblaud` resolver cache without erasing entries. This forces the `himmelblaud` daemon to refresh all cached user and group data. If offline, the cache remains available and will refresh automatically when back online.
 
 .TP
+.B idmap
+Manage the static idmapping cache used to map Entra ID accounts to static UID/GID values. This is useful for migrations from on-prem AD to Entra ID, where existing UID/GID mappings need to be preserved.
+
+.B idmap user-add
+Add a static user mapping to the idmap cache. This maps an Entra ID user (by UPN) to a fixed UID and GID. This ensures consistent UNIX identity across logins.
+
+.nf
+Usage: aad-tool idmap user-add --name <ACCOUNT_ID> --uid <UID> --gid <GID> [--debug]
+.fi
+
+.B idmap group-add
+Add a static group mapping to the idmap cache. This maps an Entra ID group (by name) to a fixed GID. This can be used to maintain group identity and membership compatibility after moving to Entra ID.
+
+.nf
+Usage: aad-tool idmap group-add --name <ACCOUNT_ID> --gid <GID> [--debug]
+.fi
+
+.TP
 .B status
 Check if the `himmelblaud` daemon is online and properly connected to the Himmelblau service.
 
