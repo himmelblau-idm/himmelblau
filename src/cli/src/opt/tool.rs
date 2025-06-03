@@ -16,6 +16,36 @@
    along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
 use clap::Subcommand;
+use libc::uid_t;
+use libc::gid_t;
+
+#[derive(Debug, Subcommand)]
+#[clap(about = "Idmapping Utility")]
+pub enum IdmapOpt {
+    /// Add a static user mapping to the idmap cache. This maps an Entra ID user (by UPN or
+    /// SAM-compatible name) to a fixed UID and primary group GID.
+    UserAdd {
+        #[clap(short, long)]
+        debug: bool,
+        #[clap(short = 'D', long = "name")]
+        account_id: String,
+        #[clap(short = 'u', long = "uid")]
+        uid: uid_t,
+        #[clap(short = 'g', long = "gid")]
+        gid: gid_t,
+    },
+    /// Add a static group mapping to the idmap cache. This maps an Entra ID group (by name)
+    /// to a fixed GID. This can be used to maintain group identity and membership compatibility
+    /// after moving to Entra ID.
+    GroupAdd {
+        #[clap(short, long)]
+        debug: bool,
+        #[clap(short = 'D', long = "name")]
+        account_id: String,
+        #[clap(short = 'g', long = "gid")]
+        gid: gid_t,
+    },
+}
 
 #[derive(Debug, Subcommand)]
 #[clap(about = "Himmelblau Management Utility")]
@@ -60,6 +90,11 @@ pub enum HimmelblauUnixOpt {
         #[clap(long = "password-file")]
         password_file: Option<String>,
     },
+    /// Manage the static idmapping cache used to map Entra ID accounts to static UID/GID values.
+    /// This is useful for migrations from on-prem AD to Entra ID, where existing UID/GID mappings
+    /// need to be preserved.
+    #[clap(subcommand)]
+    Idmap(IdmapOpt),
     /// Check that the unixd daemon is online and able to connect correctly to the himmelblaud server.
     Status {
         #[clap(short, long)]

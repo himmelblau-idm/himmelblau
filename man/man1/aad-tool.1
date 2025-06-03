@@ -20,6 +20,41 @@ Clear all entries in the `himmelblaud` resolver cache. This operation removes ca
 .B cache-invalidate
 Invalidate the `himmelblaud` resolver cache without erasing entries. This forces the `himmelblaud` daemon to refresh all cached user and group data. If offline, the cache remains available and will refresh automatically when back online.
 
+
+.TP
+.B configure-pam
+Configure PAM to use \fBpam_himmelblau\fR. This command inserts configuration lines into your system’s PAM stack for supported services. You may optionally specify replacement files for individual PAM types (auth, account, session, password). Requires \fB--really\fR to actually apply changes.
+
+.nf
+Usage: aad-tool configure-pam [--really] [--auth-file <FILE>] [--account-file <FILE>] [--session-file <FILE>] [--password-file <FILE>]
+.fi
+
+Options:
+  -d, --debug                Enable debug output
+      --really               Actually write to PAM config files
+      --auth-file <FILE>     Specify a replacement auth file
+      --account-file <FILE>  Specify a replacement account file
+      --session-file <FILE>  Specify a replacement session file
+      --password-file <FILE> Specify a replacement password file
+
+.TP
+.B idmap
+Manage the static idmapping cache used to map Entra ID accounts to static UID/GID values. This is useful for migrations from on-prem AD to Entra ID, where existing UID/GID mappings need to be preserved.
+
+.B idmap user-add
+Add a static user mapping to the idmap cache. This maps an Entra ID user (by UPN) to a fixed UID and GID. This ensures consistent UNIX identity across logins.
+
+.nf
+Usage: aad-tool idmap user-add --name <ACCOUNT_ID> --uid <UID> --gid <GID> [--debug]
+.fi
+
+.B idmap group-add
+Add a static group mapping to the idmap cache. This maps an Entra ID group (by name) to a fixed GID. This can be used to maintain group identity and membership compatibility after moving to Entra ID.
+
+.nf
+Usage: aad-tool idmap group-add --name <ACCOUNT_ID> --gid <GID> [--debug]
+.fi
+
 .TP
 .B status
 Check if the `himmelblaud` daemon is online and properly connected to the Himmelblau service.

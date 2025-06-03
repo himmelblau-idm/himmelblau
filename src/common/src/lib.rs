@@ -41,6 +41,8 @@ pub mod client_sync;
 #[cfg(target_family = "unix")]
 pub mod db;
 #[cfg(target_family = "unix")]
+pub mod idmap_cache;
+#[cfg(target_family = "unix")]
 pub mod idprovider;
 #[cfg(target_family = "unix")]
 pub mod mapping;

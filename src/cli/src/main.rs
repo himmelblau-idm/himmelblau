@@ -36,7 +36,8 @@ use clap::Parser;
 use himmelblau_unix_common::client::call_daemon;
 use himmelblau_unix_common::client_sync::DaemonClientBlocking;
 use himmelblau_unix_common::config::HimmelblauConfig;
-use himmelblau_unix_common::constants::DEFAULT_CONFIG_PATH;
+use himmelblau_unix_common::constants::{DEFAULT_CONFIG_PATH, ID_MAP_CACHE};
+use himmelblau_unix_common::idmap_cache::{StaticGroup, StaticIdCache, StaticUser};
 use himmelblau_unix_common::unix_proto::{
     ClientRequest, ClientResponse, PamAuthRequest, PamAuthResponse,
 };
@@ -259,6 +260,17 @@ async fn main() -> ExitCode {
             session_file: _,
             password_file: _,
         } => debug,
+        HimmelblauUnixOpt::Idmap(IdmapOpt::UserAdd {
+            debug,
+            account_id: _,
+            uid: _,
+            gid: _,
+        }) => debug,
+        HimmelblauUnixOpt::Idmap(IdmapOpt::GroupAdd {
+            debug,
+            account_id: _,
+            gid: _,
+        }) => debug,
         HimmelblauUnixOpt::Status { debug } => debug,
         HimmelblauUnixOpt::Version { debug } => debug,
     };
@@ -457,6 +469,74 @@ async fn main() -> ExitCode {
                 Ok(_) => ExitCode::SUCCESS,
                 _ => ExitCode::FAILURE,
             }
+        }
+        HimmelblauUnixOpt::Idmap(subcommand) => {
+            if unsafe { libc::geteuid() } != 0 {
+                error!("This command must be run as root.");
+                return ExitCode::FAILURE;
+            }
+
+            match subcommand {
+                IdmapOpt::UserAdd {
+                    debug: _,
+                    account_id,
+                    uid,
+                    gid,
+                } => {
+                    trace!("Configuring id user mapping ...");
+
+                    let cache = match StaticIdCache::new(ID_MAP_CACHE, true) {
+                        Ok(cache) => cache,
+                        Err(e) => {
+                            error!("Failed to open idmap cache: {}", e);
+                            return ExitCode::FAILURE;
+                        }
+                    };
+
+                    let user = StaticUser {
+                        name: account_id,
+                        uid,
+                        gid,
+                    };
+
+                    if let Err(e) = cache.insert_user(&user) {
+                        error!("Failed to insert user mapping: {}", e);
+                        return ExitCode::FAILURE;
+                    }
+
+                    info!("User mapping inserted successfully.");
+                }
+
+                IdmapOpt::GroupAdd {
+                    debug: _,
+                    account_id,
+                    gid,
+                } => {
+                    trace!("Configuring id group mapping ...");
+
+                    let cache = match StaticIdCache::new(ID_MAP_CACHE, true) {
+                        Ok(cache) => cache,
+                        Err(e) => {
+                            error!("Failed to open idmap cache: {}", e);
+                            return ExitCode::FAILURE;
+                        }
+                    };
+
+                    let group = StaticGroup {
+                        name: account_id,
+                        gid,
+                    };
+
+                    if let Err(e) = cache.insert_group(&group) {
+                        error!("Failed to insert group mapping: {}", e);
+                        return ExitCode::FAILURE;
+                    }
+
+                    info!("Group mapping inserted successfully.");
+                }
+            }
+
+            ExitCode::SUCCESS
         }
         HimmelblauUnixOpt::Status { debug: _ } => {
             trace!("Starting cache status tool ...");
