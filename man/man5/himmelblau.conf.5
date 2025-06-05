@@ -81,10 +81,10 @@ debug = true
 .TP
 .B pam_allow_groups
 .RE
-A comma-separated list of Entra Id Users and Groups permitted to access the system. Users should be specified by UPN. Groups may be specified using either their Object ID or their Name.
+A comma-separated list of Entra Id Users and Groups permitted to access the system. Users should be specified by UPN. Groups MUST be specified using their Object ID GUID. Group names may not be used because these names are not guaranteed to be unique in Entra Id.
 
 .EXAMPLES
-pam_allow_groups = f3c9a7e4-7d5a-47e8-832f-3d2d92abcd12,EntraSudoersGroup,admin@himmelblau-idm.org
+pam_allow_groups = f3c9a7e4-7d5a-47e8-832f-3d2d92abcd12,5ba4ef1d-e454-4f43-ba7c-6fe6f1601915,admin@himmelblau-idm.org
 
 .TP
 .B id_attr_map

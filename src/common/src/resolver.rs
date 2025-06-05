@@ -933,10 +933,15 @@ where
             Ok(Some(true))
         } else {
             Ok(token.map(|tok| {
+                // Never ever EVER list group names in the allowed groups set.
+                // This is a SECURITY RISK! See CVE-2025-49012. Group names ARE
+                // NOT unique in Entra Id. Only group Object Ids may be listed
+                // here.
                 let user_set: BTreeSet<_> = tok
                     .groups
                     .iter()
-                    .flat_map(|g| [g.name.clone(), g.uuid.hyphenated().to_string()])
+                    .flat_map(|g| [g.uuid.hyphenated().to_string()])
+                    .chain(std::iter::once(account_id.to_string()))
                     .collect();
 
                 debug!(
