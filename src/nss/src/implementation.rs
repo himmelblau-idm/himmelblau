@@ -282,7 +282,7 @@ impl GroupHooks for HimmelblauGroup {
             }
         };
 
-        match daemon_client
+        let resp = match daemon_client
             .call_and_wait(&req, cfg.get_unix_sock_timeout())
             .map(|r| match r {
                 ClientResponse::NssGroup(opt) => opt
@@ -324,6 +324,27 @@ impl GroupHooks for HimmelblauGroup {
                     .unwrap_or_else(|_| Response::NotFound)
             }
             other => other,
+        };
+        match resp {
+            Response::Success(group) => {
+                // Never ever EVER respond to a group request by Entra Id group
+                // name. This is a SECURITY RISK! See CVE-2025-49012. Group
+                // names ARE NOT unique in Entra Id. Responding to this name
+                // request could expose SUDO and other privileged commands to
+                // an attacker. Admins should only ever specify group names in
+                // configuration via the Object Id GUID or the GID. Ignoring
+                // this request will still permit commands such as `ls`, etc
+                // to display the group name, while prohibiting dangerous
+                // behavior.
+                if group.name.to_lowercase() == name.to_lowercase() {
+                    return Response::NotFound;
+                } else {
+                    return Response::Success(group);
+                }
+            }
+            _ => {
+                return resp;
+            }
         }
     }
 }
