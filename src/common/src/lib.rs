@@ -35,6 +35,8 @@ pub mod unix_config;
 
 // Kanidm modules
 #[cfg(target_family = "unix")]
+pub mod auth;
+#[cfg(target_family = "unix")]
 pub mod client;
 #[cfg(target_family = "unix")]
 pub mod client_sync;
@@ -50,6 +52,8 @@ pub mod mapping;
 pub mod nss_cache;
 #[cfg(target_family = "unix")]
 pub mod resolver;
+#[cfg(target_family = "unix")]
+pub mod tpm;
 #[cfg(target_family = "unix")]
 pub mod unix_passwd;
 #[cfg(target_family = "unix")]

@@ -27,3 +27,5 @@ users = "^0.11.0"
 sketching = { workspace = true }
 rpassword = "^7.4.0"
 libc.workspace = true
+libhimmelblau.workspace = true
+kanidm-hsm-crypto.workspace = true

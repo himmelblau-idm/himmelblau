@@ -33,17 +33,28 @@ extern crate tracing;
 use std::process::ExitCode;
 
 use clap::Parser;
+use himmelblau::{error::MsalError, graph::Graph, AuthOption, BrokerClientApplication};
+use himmelblau_unix_common::auth_handle_mfa_resp;
 use himmelblau_unix_common::client::call_daemon;
 use himmelblau_unix_common::client_sync::DaemonClientBlocking;
-use himmelblau_unix_common::config::HimmelblauConfig;
-use himmelblau_unix_common::constants::{DEFAULT_CONFIG_PATH, ID_MAP_CACHE};
+use himmelblau_unix_common::config::{split_username, HimmelblauConfig};
+use himmelblau_unix_common::constants::{DEFAULT_CONFIG_PATH, DEFAULT_ODC_PROVIDER, ID_MAP_CACHE};
+use himmelblau_unix_common::db::{Cache, CacheTxn, Db, KeyStoreTxn};
 use himmelblau_unix_common::idmap_cache::{StaticGroup, StaticIdCache, StaticUser};
+use himmelblau_unix_common::tpm_init;
 use himmelblau_unix_common::unix_proto::{
     ClientRequest, ClientResponse, PamAuthRequest, PamAuthResponse,
 };
-use rpassword::prompt_password;
+use himmelblau_unix_common::{tpm_loadable_machine_key, tpm_machine_key};
+use kanidm_hsm_crypto::{
+    soft::SoftTpm, BoxedDynTpm, LoadableIdentityKey, LoadableMsOapxbcRsaKey, Tpm,
+};
+use rpassword::{prompt_password, read_password};
+use std::io;
+use std::io::Write;
 use std::path::PathBuf;
 use std::thread;
+use std::thread::sleep;
 use std::time::Duration;
 
 include!("./opt/tool.rs");
@@ -260,6 +271,11 @@ async fn main() -> ExitCode {
             session_file: _,
             password_file: _,
         } => debug,
+        HimmelblauUnixOpt::Enumerate {
+            debug,
+            account_id: _,
+            client_id: _,
+        } => debug,
         HimmelblauUnixOpt::Idmap(IdmapOpt::UserAdd {
             debug,
             account_id: _,
@@ -279,6 +295,276 @@ async fn main() -> ExitCode {
         std::env::set_var("RUST_LOG", "debug");
     }
     sketching::tracing_subscriber::fmt::init();
+
+    macro_rules! init {
+        ($cfg:expr, $account_id:expr) => {{
+            let (_, domain) = match split_username(&$account_id) {
+                Some(out) => out,
+                None => {
+                    error!("Could not split domain from input username");
+                    return ExitCode::FAILURE;
+                }
+            };
+
+            let graph = match Graph::new(DEFAULT_ODC_PROVIDER, &domain, None, None, None).await {
+                Ok(graph) => graph,
+                Err(e) => {
+                    error!("Failed discovering tenant: {:?}", e);
+                    return ExitCode::FAILURE;
+                }
+            };
+
+            let tenant_id = match $cfg.get_tenant_id(domain) {
+                Some(tenant_id) => tenant_id,
+                None => "common".to_string(),
+            };
+            let authority = format!("https://{}/{}", $cfg.get_authority_host(domain), tenant_id);
+
+            (graph, domain, authority)
+        }};
+    }
+
+    macro_rules! obtain_host_data {
+        ($domain:expr, $cfg:ident) => {{
+            let (auth_value, mut tpm) = tpm_init!($cfg);
+
+            let db = match Db::new(&$cfg.get_db_path()) {
+                Ok(db) => db,
+                Err(e) => {
+                    error!("Failed loading Himmelblau cache: {:?}", e);
+                    return ExitCode::FAILURE;
+                }
+            };
+
+            // Fetch the machine key
+            let loadable_machine_key = tpm_loadable_machine_key!(
+                db,
+                tpm,
+                auth_value,
+                false,
+                // on_error
+                return ExitCode::FAILURE
+            );
+            let machine_key = tpm_machine_key!(
+                tpm,
+                auth_value,
+                loadable_machine_key,
+                $cfg,
+                // on_error
+                return ExitCode::FAILURE
+            );
+
+            let mut db_txn = db.write().await;
+
+            // Fetch the transport key
+            let tranport_key_tag = format!("{}/transport", $domain);
+            let loadable_transport_key: LoadableMsOapxbcRsaKey =
+                match db_txn.get_tagged_hsm_key(&tranport_key_tag) {
+                    Ok(Some(ltk)) => ltk,
+                    Err(e) => {
+                        error!("Unable to access hsm loadable transport key: {:?}", e);
+                        return ExitCode::FAILURE;
+                    }
+                    _ => {
+                        error!("Unable to access hsm loadable transport key.");
+                        return ExitCode::FAILURE;
+                    }
+                };
+
+            // Fetch the certificate key
+            let cert_key_tag = format!("{}/certificate", $domain);
+            let loadable_cert_key: LoadableIdentityKey =
+                match db_txn.get_tagged_hsm_key(&cert_key_tag) {
+                    Ok(Some(ltk)) => ltk,
+                    Err(e) => {
+                        error!("Unable to access hsm certificate key: {:?}", e);
+                        return ExitCode::FAILURE;
+                    }
+                    _ => {
+                        error!("Unable to access hsm certificate key.");
+                        return ExitCode::FAILURE;
+                    }
+                };
+
+            (tpm, loadable_transport_key, loadable_cert_key, machine_key)
+        }};
+    }
+
+    macro_rules! client {
+        ($authority:expr, $transport_key:expr, $cert_key:expr) => {{
+            match BrokerClientApplication::new(Some(&$authority), None, $transport_key, $cert_key) {
+                Ok(app) => app,
+                Err(e) => {
+                    error!("Failed creating app: {:?}", e);
+                    return ExitCode::FAILURE;
+                }
+            }
+        }};
+    }
+
+    macro_rules! auth {
+        ($app:expr, $account_id:expr) => {{
+            let auth_options = vec![AuthOption::Passwordless];
+            let auth_init = match $app.check_user_exists(&$account_id, &auth_options).await {
+                Ok(auth_init) => auth_init,
+                Err(e) => {
+                    error!("Failed checking if user exists: {:?}", e);
+                    return ExitCode::FAILURE;
+                }
+            };
+            debug!("User {} exists? {}", &$account_id, auth_init.exists());
+
+            let password = if !auth_init.passwordless() {
+                print!("{} password: ", &$account_id);
+                io::stdout().flush().unwrap();
+                match read_password() {
+                    Ok(password) => Some(password),
+                    Err(e) => {
+                        error!("{:?}", e);
+                        return ExitCode::FAILURE;
+                    }
+                }
+            } else {
+                None
+            };
+
+            let mut mfa_req = match $app
+                .initiate_acquire_token_by_mfa_flow_for_device_enrollment(
+                    &$account_id,
+                    password.as_deref(),
+                    &auth_options,
+                    Some(auth_init),
+                )
+                .await
+            {
+                Ok(mfa) => mfa,
+                Err(e) => match e {
+                    MsalError::PasswordRequired => {
+                        print!("{} password: ", &$account_id);
+                        io::stdout().flush().unwrap();
+                        let password = match read_password() {
+                            Ok(password) => Some(password),
+                            Err(e) => {
+                                error!("{:?}", e);
+                                return ExitCode::FAILURE;
+                            }
+                        };
+                        let auth_init =
+                            match $app.check_user_exists(&$account_id, &auth_options).await {
+                                Ok(auth_init) => auth_init,
+                                Err(e) => {
+                                    error!("Failed checking if user exists: {:?}", e);
+                                    return ExitCode::FAILURE;
+                                }
+                            };
+                        match $app
+                            .initiate_acquire_token_by_mfa_flow_for_device_enrollment(
+                                &$account_id,
+                                password.as_deref(),
+                                &auth_options,
+                                Some(auth_init),
+                            )
+                            .await
+                        {
+                            Ok(mfa) => mfa,
+                            Err(e) => {
+                                error!("{:?}", e);
+                                return ExitCode::FAILURE;
+                            }
+                        }
+                    }
+                    _ => {
+                        error!("{:?}", e);
+                        return ExitCode::FAILURE;
+                    }
+                },
+            };
+            print!("{}", mfa_req.msg);
+            io::stdout().flush().unwrap();
+
+            let token = auth_handle_mfa_resp!(
+                mfa_req,
+                // FIDO
+                {
+                    error!("Fido not enabled");
+                    return ExitCode::FAILURE;
+                },
+                // PROMPT
+                {
+                    let input = match read_password() {
+                        Ok(password) => password,
+                        Err(e) => {
+                            error!("{:?} ", e);
+                            return ExitCode::FAILURE;
+                        }
+                    };
+                    match $app
+                        .acquire_token_by_mfa_flow(&$account_id, Some(&input), None, &mut mfa_req)
+                        .await
+                    {
+                        Ok(token) => token,
+                        Err(e) => {
+                            error!("MFA FAIL: {:?}", e);
+                            return ExitCode::FAILURE;
+                        }
+                    }
+                },
+                // POLL
+                {
+                    let mut poll_attempt = 1;
+                    let polling_interval = mfa_req.polling_interval.unwrap_or(5000);
+                    loop {
+                        match $app
+                            .acquire_token_by_mfa_flow(
+                                &$account_id,
+                                None,
+                                Some(poll_attempt),
+                                &mut mfa_req,
+                            )
+                            .await
+                        {
+                            Ok(token) => break token,
+                            Err(e) => match e {
+                                MsalError::MFAPollContinue => {
+                                    poll_attempt += 1;
+                                    sleep(Duration::from_millis(polling_interval.into()));
+                                    continue;
+                                }
+                                e => {
+                                    error!("MFA FAIL: {:?}", e);
+                                    return ExitCode::FAILURE;
+                                }
+                            },
+                        }
+                    }
+                }
+            );
+            println!();
+            token
+        }};
+    }
+
+    macro_rules! on_behalf_of_token {
+        ($app:expr, $token:expr, $tpm:expr, $machine_key:expr, $scope:expr, $resource:expr, $client_id:expr) => {{
+            match $app
+                .acquire_token_by_refresh_token(
+                    &$token.refresh_token,
+                    $scope,
+                    $resource,
+                    $client_id,
+                    &mut $tpm,
+                    &$machine_key,
+                )
+                .await
+            {
+                Ok(token) => token,
+                Err(e) => {
+                    error!("{:?}", e);
+                    return ExitCode::FAILURE;
+                }
+            }
+        }};
+    }
 
     match opt.commands {
         HimmelblauUnixOpt::AuthTest {
@@ -469,6 +755,124 @@ async fn main() -> ExitCode {
                 Ok(_) => ExitCode::SUCCESS,
                 _ => ExitCode::FAILURE,
             }
+        }
+        HimmelblauUnixOpt::Enumerate {
+            debug: _,
+            account_id,
+            client_id,
+        } => {
+            debug!("Starting enumerate tool ...");
+
+            if unsafe { libc::geteuid() } != 0 {
+                error!("This command must be run as root.");
+                return ExitCode::FAILURE;
+            }
+
+            let cfg = match HimmelblauConfig::new(Some(DEFAULT_CONFIG_PATH)) {
+                Ok(c) => c,
+                Err(_e) => {
+                    error!("Failed to parse {}", DEFAULT_CONFIG_PATH);
+                    return ExitCode::FAILURE;
+                }
+            };
+
+            let (graph, domain, authority) = init!(cfg, account_id);
+            let (mut tpm, loadable_transport_key, loadable_cert_key, machine_key) =
+                obtain_host_data!(domain, cfg);
+            let app = client!(
+                authority,
+                Some(loadable_transport_key),
+                Some(loadable_cert_key)
+            );
+            let token = auth!(app, account_id);
+
+            let token = on_behalf_of_token!(
+                app,
+                token,
+                tpm,
+                machine_key,
+                vec!["https://graph.microsoft.com/User.Read.All"],
+                None,
+                Some(&client_id)
+            );
+
+            let access_token = match &token.access_token {
+                Some(access_token) => access_token.clone(),
+                None => {
+                    error!("Failed to get access token");
+                    return ExitCode::FAILURE;
+                }
+            };
+
+            let users = match graph
+                .request_all_users_with_extension_attributes(&access_token)
+                .await
+            {
+                Ok(users) => users,
+                Err(e) => {
+                    error!("Failed to enumerate users: {:?}", e);
+                    return ExitCode::FAILURE;
+                }
+            };
+
+            let groups = match graph
+                .request_all_groups_with_extension_attributes(&access_token)
+                .await
+            {
+                Ok(groups) => groups,
+                Err(e) => {
+                    error!("Failed to enumerate groups: {:?}", e);
+                    return ExitCode::FAILURE;
+                }
+            };
+
+            let cache = match StaticIdCache::new(ID_MAP_CACHE, true) {
+                Ok(cache) => cache,
+                Err(e) => {
+                    error!("Failed to open idmap cache: {}", e);
+                    return ExitCode::FAILURE;
+                }
+            };
+
+            for user in users {
+                if let Some(uid) = user.uid {
+                    let gid = user.gid.unwrap_or(uid);
+                    let cache_user = StaticUser {
+                        name: user.upn.clone(),
+                        uid,
+                        gid,
+                    };
+
+                    if let Err(e) = cache.insert_user(&cache_user) {
+                        error!(
+                            "Failed to inserting enumerated user {} in cache: {}",
+                            user.upn, e
+                        );
+                        return ExitCode::FAILURE;
+                    }
+                }
+            }
+
+            for group in groups {
+                if let Some(gid) = group.gid {
+                    let cache_group = StaticGroup {
+                        name: group.displayname.clone(),
+                        gid,
+                    };
+
+                    if let Err(e) = cache.insert_group(&cache_group) {
+                        error!(
+                            "Failed to inserting enumerated group {} in cache: {}",
+                            group.displayname, e
+                        );
+                        return ExitCode::FAILURE;
+                    }
+                }
+            }
+
+            info!("Users and groups enumerated successfully.");
+
+            ExitCode::SUCCESS
         }
         HimmelblauUnixOpt::Idmap(subcommand) => {
             if unsafe { libc::geteuid() } != 0 {

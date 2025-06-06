@@ -90,6 +90,26 @@ pub enum HimmelblauUnixOpt {
         #[clap(long = "password-file")]
         password_file: Option<String>,
     },
+    /// Enumerate all users and groups in Entra ID that have `rfc2307` attributes,
+    /// and cache their values locally. This addresses the issue where UID/GID
+    /// mappings are needed before authentication can succeed, but are normally
+    /// only retrievable after login.
+    ///
+    /// The `--client-id` parameter is required and must refer to a registered
+    /// Entra ID application with `User.Read.All` permissions.
+    ///
+    /// The `--name` specifies the Entra ID user on whose behalf the token
+    /// is requested, enabling delegated access through the specified client application.
+    ///
+    /// This command can only be executed from an Entra Id enrolled host.
+    Enumerate {
+        #[clap(short, long)]
+        debug: bool,
+        #[clap(short = 'D', long = "name")]
+        account_id: String,
+        #[clap(long = "client-id")]
+        client_id: String,
+    },
     /// Manage the static idmapping cache used to map Entra ID accounts to static UID/GID values.
     /// This is useful for migrations from on-prem AD to Entra ID, where existing UID/GID mappings
     /// need to be preserved.
