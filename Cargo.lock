@@ -10,7 +10,9 @@ dependencies = [
  "clap 4.5.39",
  "clap_complete",
  "himmelblau_unix_common",
+ "kanidm-hsm-crypto",
  "libc",
+ "libhimmelblau",
  "rpassword",
  "sketching",
  "tokio",
@@ -2733,9 +2735,9 @@ dependencies = [
 
 [[package]]
 name = "libhimmelblau"
-version = "0.6.20"
+version = "0.6.21"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c1b725d3016d108c1e237dda65af4ddbbf3d83135ea245d202153db01b7e4f26"
+checksum = "a230276d4826b60ca728c87a920acb406a11e5ad06da7929483bd98641e69b8a"
 dependencies = [
  "base64 0.22.1",
  "browser-window",

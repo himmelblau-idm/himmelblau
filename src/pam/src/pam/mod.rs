@@ -62,6 +62,7 @@ use std::ffi::CStr;
 
 use himmelblau::error::MsalError;
 use himmelblau::{AuthOption, PublicClientApplication};
+use himmelblau_unix_common::auth_handle_mfa_resp;
 use himmelblau_unix_common::client_sync::DaemonClientBlocking;
 use himmelblau_unix_common::config::{split_username, HimmelblauConfig};
 use himmelblau_unix_common::constants::BROKER_APP_ID;
@@ -1273,8 +1274,10 @@ impl PamHooks for PamKanidm {
                 }
             };
 
-            match mfa_req.mfa_method.as_str() {
-                "FidoKey" => {
+            auth_handle_mfa_resp!(
+                mfa_req,
+                // FIDO
+                {
                     let conv = Arc::new(Mutex::new(conv.clone()));
                     let fido_challenge = match mfa_req.fido_challenge {
                         Some(ref fido_challenge) => fido_challenge.clone(),
@@ -1317,8 +1320,9 @@ impl PamHooks for PamKanidm {
                             return PamResultCode::PAM_AUTH_ERR;
                         }
                     }
-                }
-                "AccessPass" | "PhoneAppOTP" | "OneWaySMS" | "ConsolidatedTelephony" => {
+                },
+                // PROMPT
+                {
                     let input = match conv.send(PAM_PROMPT_ECHO_OFF, &mfa_req.msg) {
                         Ok(password) => match password {
                             Some(cred) => cred,
@@ -1342,8 +1346,9 @@ impl PamHooks for PamKanidm {
                             return PamResultCode::PAM_AUTH_ERR;
                         }
                     }
-                }
-                _ => {
+                },
+                // POLL
+                {
                     match conv.send(PAM_TEXT_INFO, &mfa_req.msg) {
                         Ok(_) => {}
                         Err(err) => {
@@ -1380,7 +1385,7 @@ impl PamHooks for PamKanidm {
                         }
                     }
                 }
-            }
+            )
         } else {
             #[cfg(feature = "interactive")]
             match rt.block_on(async { app.acquire_token_interactive(&account_id, None).await }) {

@@ -19,6 +19,7 @@ use super::interface::{
     AuthCacheAction, AuthCredHandler, AuthRequest, AuthResult, CacheState, GroupToken, Id,
     IdProvider, IdpError, UserToken,
 };
+use crate::auth_handle_mfa_resp;
 use crate::config::split_username;
 use crate::config::HimmelblauConfig;
 use crate::config::IdAttr;
@@ -1560,8 +1561,10 @@ impl IdProvider for HimmelblauProvider {
                         };
                     }
                 );
-                match resp.mfa_method.as_str() {
-                    "FidoKey" => {
+                auth_handle_mfa_resp!(
+                    resp,
+                    // FIDO
+                    {
                         let fido_challenge =
                             resp.fido_challenge.clone().ok_or(IdpError::BadRequest)?;
 
@@ -1582,8 +1585,9 @@ impl IdProvider for HimmelblauProvider {
                              * disconnects the network to complete the auth). */
                             AuthCacheAction::None,
                         ));
-                    }
-                    "AccessPass" | "PhoneAppOTP" | "OneWaySMS" | "ConsolidatedTelephony" => {
+                    },
+                    // PROMPT
+                    {
                         let msg = resp.msg.clone();
                         *cred_handler = AuthCredHandler::MFA {
                             flow: resp,
@@ -1597,8 +1601,9 @@ impl IdProvider for HimmelblauProvider {
                              * disconnects the network to complete the auth). */
                             AuthCacheAction::None,
                         ));
-                    }
-                    _ => {
+                    },
+                    // POLL
+                    {
                         let msg = resp.msg.clone();
                         let polling_interval = resp.polling_interval.unwrap_or(5000);
                         *cred_handler = AuthCredHandler::MFA {
@@ -1619,7 +1624,7 @@ impl IdProvider for HimmelblauProvider {
                             AuthCacheAction::None,
                         ));
                     }
-                }
+                )
             }
             (
                 AuthCredHandler::MFA {
