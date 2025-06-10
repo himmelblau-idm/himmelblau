@@ -1050,7 +1050,9 @@ where
 
                 Ok((auth_session, next_req.into()))
             }
-            Err(IdpError::NotFound) => Ok((AuthSession::Denied, PamAuthResponse::Unknown)),
+            Err(IdpError::NotFound {what, where_}) => Ok((AuthSession::Denied, PamAuthResponse::Denied(
+                format!("NotFound: {} in {}", what, where_)
+            ))),
             Err(e) => {
                 error!("{:?}", e);
                 Err(())
@@ -1239,7 +1241,7 @@ where
             (&mut AuthSession::InProgress { token: None, .. }, _) => {
                 // Can't do much with offline auth when there is no token ...
                 warn!("Unable to proceed with offline auth, no token available");
-                Err(IdpError::NotFound)
+                Err(IdpError::NotFound { what: "token".to_string(), where_: "AuthSession".to_string() })
             }
             (&mut AuthSession::Success(_), _) | (&mut AuthSession::Denied, _) => {
                 Err(IdpError::BadRequest)
@@ -1268,7 +1270,9 @@ where
                 Ok(PamAuthResponse::Denied(msg))
             }
             Ok(AuthResult::Next(req)) => Ok(req.into()),
-            Err(IdpError::NotFound) => Ok(PamAuthResponse::Unknown),
+            Err(IdpError::NotFound {what, where_}) => Ok(PamAuthResponse::Denied(
+                format!("NotFound: {} in {}", what, where_)
+            )),
             Err(e) => {
                 error!("{:?}", e);
                 Err(())
