@@ -255,8 +255,20 @@ macro_rules! find_provider {
                     None => None,
                 }
             }
-        }
+        }.ok_or(
+            IdpError::NotFound { what: format!("domain: {}", $domain), where_: "providers".to_string() }
+        )
     }};
+}
+
+fn idp_get_domain_for_account(account_id: &str) -> Result<&str, IdpError> {
+    match split_username(&account_id) {
+        Some((_sam, domain)) => Ok(domain),
+        None => {
+            debug!("Authentication ignored for local user");
+            Err(IdpError::NotFound { what: "domain".to_string(), where_: format!("account_id: {}", account_id) })
+        },
+    }
 }
 
 #[async_trait]
@@ -287,20 +299,11 @@ impl IdProvider for HimmelblauMultiProvider {
             Some(token) => token.spn.clone(),
             None => id.to_string().clone(),
         };
-        match split_username(&account_id) {
-            Some((_sam, domain)) => {
-                let providers = self.providers.read().await;
-                match find_provider!(self, providers, domain) {
-                    Some(provider) => {
-                        provider
-                            .unix_user_access(id, scopes, old_token, client_id, tpm, machine_key)
-                            .await
-                    }
-                    None => Err(IdpError::NotFound { what: "domain".to_string(), where_: "providers".to_string() }),
-                }
-            }
-            None => Err(IdpError::NotFound { what: "domain".to_string(), where_: "account_id".to_string() }),
-        }
+        let domain = idp_get_domain_for_account(&account_id)?;
+        let providers = self.providers.read().await;
+        let provider = find_provider!(self, providers, domain)?;
+
+        provider.unix_user_access(id, scopes, old_token, client_id, tpm, machine_key).await
     }
 
     async fn unix_user_ccaches(
@@ -314,20 +317,13 @@ impl IdProvider for HimmelblauMultiProvider {
             Some(token) => token.spn.clone(),
             None => id.to_string().clone(),
         };
-        match split_username(&account_id) {
-            Some((_sam, domain)) => {
-                let providers = self.providers.read().await;
-                match find_provider!(self, providers, domain) {
-                    Some(provider) => {
-                        provider
-                            .unix_user_ccaches(id, old_token, tpm, machine_key)
-                            .await
-                    }
-                    None => (vec![], vec![]),
-                }
-            }
-            None => (vec![], vec![]),
-        }
+        let empty = (vec![], vec![]);
+        let Ok(domain) = idp_get_domain_for_account(&account_id) else { return empty };
+
+        let providers = self.providers.read().await;
+        let Ok(provider) = find_provider!(self, providers, domain) else { return empty };
+
+        provider.unix_user_ccaches(id, old_token, tpm, machine_key).await
     }
 
     async fn unix_user_prt_cookie(
@@ -341,20 +337,12 @@ impl IdProvider for HimmelblauMultiProvider {
             Some(token) => token.spn.clone(),
             None => id.to_string().clone(),
         };
-        match split_username(&account_id) {
-            Some((_sam, domain)) => {
-                let providers = self.providers.read().await;
-                match find_provider!(self, providers, domain) {
-                    Some(provider) => {
-                        provider
-                            .unix_user_prt_cookie(id, old_token, tpm, machine_key)
-                            .await
-                    }
-                    None => Err(IdpError::NotFound { what: "domain".to_string(), where_: "providers".to_string() }),
-                }
-            }
-            None => Err(IdpError::NotFound { what: "domain".to_string(), where_: "account_id".to_string() }),
-        }
+        let domain = idp_get_domain_for_account(&account_id)?;
+        let providers = self.providers.read().await;
+        let provider = find_provider!(self, providers, domain)?;
+
+        provider.unix_user_prt_cookie(id, old_token, tpm, machine_key).await
+
     }
 
     async fn change_auth_token<D: KeyStoreTxn + Send>(
@@ -366,27 +354,11 @@ impl IdProvider for HimmelblauMultiProvider {
         tpm: &mut tpm::provider::BoxedDynTpm,
         machine_key: &tpm::structures::StorageKey,
     ) -> Result<bool, IdpError> {
-        match split_username(account_id) {
-            Some((_sam, domain)) => {
-                let providers = self.providers.read().await;
-                match find_provider!(self, providers, domain) {
-                    Some(provider) => {
-                        provider
-                            .change_auth_token(
-                                account_id,
-                                token,
-                                new_tok,
-                                keystore,
-                                tpm,
-                                machine_key,
-                            )
-                            .await
-                    }
-                    None => Err(IdpError::NotFound { what: "domain".to_string(), where_: "providers".to_string() }),
-                }
-            }
-            None => Err(IdpError::NotFound { what: "domain".to_string(), where_: "account_id".to_string() }),
-        }
+        let domain = idp_get_domain_for_account(&account_id)?;
+        let providers = self.providers.read().await;
+        let provider = find_provider!(self, providers, domain)?;
+
+        provider.change_auth_token(account_id, token, new_tok, keystore, tpm, machine_key).await
     }
 
     async fn unix_user_get<D: KeyStoreTxn + Send>(
@@ -402,20 +374,11 @@ impl IdProvider for HimmelblauMultiProvider {
             Some(token) => token.spn.clone(),
             None => id.to_string().clone(),
         };
-        match split_username(&account_id) {
-            Some((_sam, domain)) => {
-                let providers = self.providers.read().await;
-                match find_provider!(self, providers, domain) {
-                    Some(provider) => {
-                        provider
-                            .unix_user_get(id, old_token, keystore, tpm, machine_key)
-                            .await
-                    }
-                    None => Err(IdpError::NotFound { what: "domain".to_string(), where_: "providers".to_string() }),
-                }
-            }
-            None => Err(IdpError::NotFound { what: "domain".to_string(), where_: "account_id".to_string() }),
-        }
+        let domain = idp_get_domain_for_account(&account_id)?;
+        let providers = self.providers.read().await;
+        let provider = find_provider!(self, providers, domain)?;
+
+        provider.unix_user_get(id, old_token, keystore, tpm, machine_key).await
     }
 
     async fn unix_user_online_auth_init<D: KeyStoreTxn + Send>(
@@ -428,31 +391,13 @@ impl IdProvider for HimmelblauMultiProvider {
         machine_key: &tpm::structures::StorageKey,
         shutdown_rx: &broadcast::Receiver<()>,
     ) -> Result<(AuthRequest, AuthCredHandler), IdpError> {
-        match split_username(account_id) {
-            Some((_sam, domain)) => {
-                let providers = self.providers.read().await;
-                match find_provider!(self, providers, domain) {
-                    Some(provider) => {
-                        provider
-                            .unix_user_online_auth_init(
-                                account_id,
-                                token,
-                                no_hello_pin,
-                                keystore,
-                                tpm,
-                                machine_key,
-                                shutdown_rx,
-                            )
-                            .await
-                    }
-                    None => Err(IdpError::NotFound { what: "domain".to_string(), where_: "providers".to_string() }),
-                }
-            }
-            None => {
-                debug!("Authentication ignored for local user");
-                Err(IdpError::NotFound { what: "domain".to_string(), where_: "account_id".to_string() })
-            }
-        }
+        let domain = idp_get_domain_for_account(&account_id)?;
+        let providers = self.providers.read().await;
+        let provider = find_provider!(self, providers, domain)?;
+
+        provider
+            .unix_user_online_auth_init(account_id, token, no_hello_pin, keystore, tpm, machine_key, shutdown_rx)
+            .await
     }
 
     async fn unix_user_online_auth_step<D: KeyStoreTxn + Send>(
@@ -468,34 +413,25 @@ impl IdProvider for HimmelblauMultiProvider {
         machine_key: &tpm::structures::StorageKey,
         shutdown_rx: &broadcast::Receiver<()>,
     ) -> Result<(AuthResult, AuthCacheAction), IdpError> {
-        match split_username(account_id) {
-            Some((_sam, domain)) => {
-                let providers = self.providers.read().await;
-                match find_provider!(self, providers, domain) {
-                    Some(provider) => {
-                        provider
-                            .unix_user_online_auth_step(
-                                account_id,
-                                old_token,
-                                service,
-                                no_hello_pin,
-                                cred_handler,
-                                pam_next_req,
-                                keystore,
-                                tpm,
-                                machine_key,
-                                shutdown_rx,
-                            )
-                            .await
-                    }
-                    None => Err(IdpError::NotFound { what: "domain".to_string(), where_: "provider".to_string() }),
-                }
-            }
-            None => {
-                debug!("Authentication ignored for local user");
-                Err(IdpError::NotFound { what: "domain".to_string(), where_: "account_id".to_string() })
-            }
-        }
+        let domain = idp_get_domain_for_account(&account_id)?;
+        let providers = self.providers.read().await;
+        let provider = find_provider!(self, providers, domain)?;
+
+        provider
+            .unix_user_online_auth_step(
+                account_id,
+                old_token,
+                service,
+                no_hello_pin,
+                cred_handler,
+                pam_next_req,
+                keystore,
+                tpm,
+                machine_key,
+                shutdown_rx,
+            )
+            .await
+
     }
 
     async fn unix_user_offline_auth_init<D: KeyStoreTxn + Send>(
@@ -505,23 +441,11 @@ impl IdProvider for HimmelblauMultiProvider {
         no_hello_pin: bool,
         keystore: &mut D,
     ) -> Result<(AuthRequest, AuthCredHandler), IdpError> {
-        match split_username(account_id) {
-            Some((_sam, domain)) => {
-                let providers = self.providers.read().await;
-                match find_provider!(self, providers, domain) {
-                    Some(provider) => {
-                        provider
-                            .unix_user_offline_auth_init(account_id, token, no_hello_pin, keystore)
-                            .await
-                    }
-                    None => Err(IdpError::NotFound { what: "domain".to_string(), where_: "provider".to_string() }),
-                }
-            }
-            None => {
-                debug!("Authentication ignored for local user");
-                Err(IdpError::NotFound { what: "domain".to_string(), where_: "account_id".to_string() })
-            }
-        }
+        let domain = idp_get_domain_for_account(&account_id)?;
+        let providers = self.providers.read().await;
+        let provider = find_provider!(self, providers, domain)?;
+
+        provider.unix_user_offline_auth_init(account_id, token, no_hello_pin, keystore).await
     }
 
     async fn unix_user_offline_auth_step<D: KeyStoreTxn + Send>(
@@ -535,32 +459,22 @@ impl IdProvider for HimmelblauMultiProvider {
         machine_key: &tpm::structures::StorageKey,
         online_at_init: bool,
     ) -> Result<AuthResult, IdpError> {
-        match split_username(account_id) {
-            Some((_sam, domain)) => {
-                let providers = self.providers.read().await;
-                match find_provider!(self, providers, domain) {
-                    Some(provider) => {
-                        provider
-                            .unix_user_offline_auth_step(
-                                account_id,
-                                token,
-                                cred_handler,
-                                pam_next_req,
-                                keystore,
-                                tpm,
-                                machine_key,
-                                online_at_init,
-                            )
-                            .await
-                    }
-                    None => Err(IdpError::NotFound { what: "domain".to_string(), where_: "provider".to_string() }),
-                }
-            }
-            None => {
-                debug!("Authentication ignored for local user");
-                Err(IdpError::NotFound { what: "domain".to_string(), where_: "account_id".to_string() })
-            }
-        }
+        let domain = idp_get_domain_for_account(&account_id)?;
+        let providers = self.providers.read().await;
+        let provider = find_provider!(self, providers, domain)?;
+
+        provider
+            .unix_user_offline_auth_step(
+                account_id,
+                token,
+                cred_handler,
+                pam_next_req,
+                keystore,
+                tpm,
+                machine_key,
+                online_at_init,
+            )
+            .await
     }
 
     async fn unix_group_get(
@@ -578,8 +492,8 @@ impl IdProvider for HimmelblauMultiProvider {
                 Some((_sam, domain)) => {
                     let providers = self.providers.read().await;
                     match find_provider!(self, providers, domain) {
-                        Some(provider) => return provider.get_cachestate(Some(account_id)).await,
-                        None => return CacheState::Offline,
+                        Ok(provider) => return provider.get_cachestate(Some(account_id)).await,
+                        Err(..) => return CacheState::Offline,
                     }
                 }
                 None => return CacheState::Offline,
@@ -872,7 +786,7 @@ impl IdProvider for HimmelblauProvider {
         let amr_ngcmfa = token.amr_ngcmfa().map_err(|e| {
             error!("{:?}", e);
             IdpError::NotFound {
-                what: "NGC MFA authorization".to_string(), where_: format!("access token ({})", token.token_type) }
+                what: "NGC MFA authorization in UnixUserToken".to_string(), where_: format!("access token ({})", token.token_type) }
         })?;
 
         let hello_tag = self.fetch_hello_key_tag(account_id, amr_ngcmfa);
@@ -1804,16 +1718,34 @@ impl IdProvider for HimmelblauProvider {
                 }
             }};
         }
+
+        macro_rules! check_amr_mfa {
+            ($token:expr, $which: expr) => {{
+                $token.amr_mfa().map_err(|e| {
+                    error!("{:?}", e);
+                    IdpError::NotFound  {
+                        what: format!("MFA authorization in {} token ({})", $which, $token.token_type),
+                        where_: "unix_user_online_auth_step".to_string(),
+                    }
+                })
+            }}
+        }
+        macro_rules! check_amr_ngcmfa {
+            ($token:expr, $which: expr) => {{
+                $token.amr_ngcmfa().map_err(|e| {
+                    error!("{:?}", e);
+                    IdpError::NotFound  {
+                        what: format!("NGC MFA authorization in {} token ({})", $which, $token.token_type),
+                        where_: "unix_user_online_auth_step".to_string(),
+                    }
+                })
+            }}
+        }
+
         match (&mut *cred_handler, pam_next_req) {
             (AuthCredHandler::SetupPin { token }, PamAuthRequest::SetupPin { pin }) => {
                 // Skip Hello enrollment if the token doesn't have the ngcmfa amr
-                let amr_ngcmfa = token.amr_ngcmfa().map_err(|e| {
-                    error!("{:?}", e);
-                    IdpError::NotFound  {
-                        what: "NGC MFA authorization".to_string(),
-                        where_: format!("SetupPin token ({})", token.token_type)
-                    }
-                })?;
+                let amr_ngcmfa = check_amr_ngcmfa!(token, "SetupPin")?;
                 let hello_tag = self.fetch_hello_key_tag(account_id, amr_ngcmfa);
 
                 let (hello_key, keytype) = if amr_ngcmfa {
@@ -2127,17 +2059,9 @@ impl IdProvider for HimmelblauProvider {
                         // Skip Hello enrollment if it is disabled by config
                         let hello_enabled = self.config.read().await.get_enable_hello();
                         // Skip Hello enrollment if the token doesn't have the ngcmfa amr
-                        let amr_ngcmfa = token2.amr_ngcmfa().map_err(|e| {
-                            error!("{:?}", e);
-                            IdpError::NotFound {
-                                what: "NGC MFA authorization".to_string(), where_: "enrolled_token".to_string() }
-                        })?;
+                        let amr_ngcmfa = check_amr_ngcmfa!(token2, "enrolled")?;
                         // If the token at least has an mfa amr, then we can fake a hello key
-                        let amr_mfa = token2.amr_mfa().map_err(|e| {
-                            error!("{:?}", e);
-                            IdpError::NotFound {
-                                what: "MFA authorization".to_string(), where_: "enrolled_token".to_string() }
-                        })?;
+                        let amr_mfa = check_amr_mfa!(token2, "enrolled")?;
                         if !hello_enabled || (!amr_ngcmfa && !amr_mfa) || no_hello_pin {
                             info!("Skipping Hello enrollment because it is disabled");
                             return Ok((
@@ -2222,17 +2146,9 @@ impl IdProvider for HimmelblauProvider {
                         // Skip Hello enrollment if it is disabled by config
                         let hello_enabled = self.config.read().await.get_enable_hello();
                         // Skip Hello enrollment if the token doesn't have the ngcmfa amr
-                        let amr_ngcmfa = token2.amr_ngcmfa().map_err(|e| {
-                            error!("{:?}", e);
-                            IdpError::NotFound {
-                                what: "NGC MFA authorization".to_string(), where_: "enrolled_token".to_string() }
-                        })?;
+                        let amr_ngcmfa = check_amr_ngcmfa!(token2, "enrolled")?;
                         // If the token at least has an mfa amr, then we can fake a hello key
-                        let amr_mfa = token2.amr_mfa().map_err(|e| {
-                            error!("{:?}", e);
-                            IdpError::NotFound {
-                                what: "MFA authorization".to_string(), where_: "enrolled_token".to_string() }
-                        })?;
+                        let amr_mfa = check_amr_mfa!(token2, "enrolled")?;
                         if !hello_enabled || (!amr_ngcmfa && !amr_mfa) || no_hello_pin {
                             info!("Skipping Hello enrollment because it is disabled");
                             return Ok((
