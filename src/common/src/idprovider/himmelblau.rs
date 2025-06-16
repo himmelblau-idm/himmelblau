@@ -984,7 +984,7 @@ impl IdProvider for HimmelblauProvider {
                 fake_user!()
             }
         };
-        match self.token_validate(&account_id, &token).await {
+        match self.token_validate(&account_id, &token, old_token).await {
             Ok(AuthResult::Success { mut token }) => {
                 /* Set the GECOS from the old_token, since MS doesn't
                  * provide this during a silent acquire
@@ -1352,7 +1352,7 @@ impl IdProvider for HimmelblauProvider {
                     }
                 };
 
-                match self.token_validate(account_id, &token).await {
+                match self.token_validate(account_id, &token, None).await {
                     Ok(AuthResult::Success { token }) => {
                         debug!("Returning user token from successful Hello PIN authentication.");
                         Ok((AuthResult::Success { token }, AuthCacheAction::None))
@@ -1546,7 +1546,7 @@ impl IdProvider for HimmelblauProvider {
                             }
                         };
                         let token2 = enroll_and_obtain_enrolled_token!(token);
-                        return match self.token_validate(account_id, &token2).await {
+                        return match self.token_validate(account_id, &token2, None).await {
                             Ok(AuthResult::Success { token }) => {
                                 // STOP! If we just enrolled with an SFA token, then we
                                 // need to bail out here and refuse Hello enrollment
@@ -1668,7 +1668,7 @@ impl IdProvider for HimmelblauProvider {
                     }
                 );
                 let token2 = enroll_and_obtain_enrolled_token!(token);
-                match self.token_validate(account_id, &token2).await {
+                match self.token_validate(account_id, &token2, None).await {
                     Ok(AuthResult::Success { token: token3 }) => {
                         // Skip Hello enrollment if it is disabled by config
                         let hello_enabled = self.config.read().await.get_enable_hello();
@@ -1756,7 +1756,7 @@ impl IdProvider for HimmelblauProvider {
                     }
                 );
                 let token2 = enroll_and_obtain_enrolled_token!(token);
-                match self.token_validate(account_id, &token2).await {
+                match self.token_validate(account_id, &token2, None).await {
                     Ok(AuthResult::Success { token: token3 }) => {
                         // Skip Hello enrollment if it is disabled by config
                         let hello_enabled = self.config.read().await.get_enable_hello();
@@ -1832,7 +1832,7 @@ impl IdProvider for HimmelblauProvider {
                     }
                 );
                 let token2 = enroll_and_obtain_enrolled_token!(token);
-                match self.token_validate(account_id, &token2).await {
+                match self.token_validate(account_id, &token2, None).await {
                     Ok(AuthResult::Success { token: token3 }) => {
                         // Skip Hello enrollment if it is disabled by config
                         let hello_enabled = self.config.read().await.get_enable_hello();
@@ -2131,6 +2131,7 @@ impl HimmelblauProvider {
         &self,
         account_id: &str,
         token: &UnixUserToken,
+        old_token: Option<&UserToken>,
     ) -> Result<AuthResult, IdpError> {
         match &token.access_token {
             Some(_) => {
@@ -2155,7 +2156,9 @@ impl HimmelblauProvider {
                     self.refresh_cache.add(account_id, prt).await;
                 }
                 Ok(AuthResult::Success {
-                    token: self.user_token_from_unix_user_token(token).await?,
+                    token: self
+                        .user_token_from_unix_user_token(token, old_token)
+                        .await?,
                 })
             }
             None => {
@@ -2168,6 +2171,7 @@ impl HimmelblauProvider {
     async fn user_token_from_unix_user_token(
         &self,
         value: &UnixUserToken,
+        old_token: Option<&UserToken>,
     ) -> Result<UserToken, IdpError> {
         let config = self.config.read().await;
         let mut groups: Vec<GroupToken>;
@@ -2203,7 +2207,13 @@ impl HimmelblauProvider {
                     }
                     Err(_e) => {
                         debug!("Failed fetching user groups for {}", &spn);
-                        vec![]
+                        /* If we failed to fetch the groups, and we have an old
+                         * token, preserve the existing cached group memberships.
+                         */
+                        match old_token {
+                            Some(old_token) => old_token.groups.clone(),
+                            None => vec![],
+                        }
                     }
                 };
                 posix_attrs = if config.get_id_attr_map() == IdAttr::Rfc2307 {
@@ -2233,7 +2243,13 @@ impl HimmelblauProvider {
             }
             None => {
                 debug!("Failed fetching user groups for {}", &spn);
-                groups = vec![];
+                /* If we failed to fetch the groups, and we have an old
+                 * token, preserve the existing cached group memberships.
+                 */
+                groups = match old_token {
+                    Some(old_token) => old_token.groups.clone(),
+                    None => vec![],
+                };
                 posix_attrs = HashMap::new();
             }
         };
