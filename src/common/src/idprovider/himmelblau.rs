@@ -1060,7 +1060,10 @@ impl IdProvider for HimmelblauProvider {
                 ));
             }
             if self.config.read().await.get_enable_experimental_mfa() {
-                let auth_options = vec![AuthOption::Fido, AuthOption::Passwordless];
+                let mut auth_options = vec![AuthOption::Fido, AuthOption::Passwordless];
+                if self.config.read().await.get_enable_experimental_passwordless_fido() {
+                    auth_options.push(AuthOption::PasswordlessFido);
+                }
                 let auth_init = net_down_check!(
                     self.client
                         .read()
@@ -1447,6 +1450,9 @@ impl IdProvider for HimmelblauProvider {
                 // Prohibit Fido over ssh (since it can't work)
                 if service != "ssh" {
                     opts.push(AuthOption::Fido);
+                    if self.config.read().await.get_enable_experimental_passwordless_fido() {
+                        opts.push(AuthOption::PasswordlessFido);
+                    }
                 }
                 // If SFA is enabled, disable the DAG fallback, otherwise SFA users
                 // will always be prompted for DAG.
