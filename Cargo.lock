@@ -4,7 +4,7 @@ version = 3
 
 [[package]]
 name = "aad-tool"
-version = "0.7.15"
+version = "0.7.17"
 dependencies = [
  "anyhow",
  "clap 4.5.37",
@@ -16,7 +16,7 @@ dependencies = [
  "tokio-util",
  "tracing",
  "tracing-subscriber",
- "users",
+ "uzers",
 ]
 
 [[package]]
@@ -427,7 +427,7 @@ dependencies = [
 
 [[package]]
 name = "broker"
-version = "0.7.15"
+version = "0.7.17"
 dependencies = [
  "dbus",
  "himmelblau_unix_common",
@@ -1710,7 +1710,7 @@ dependencies = [
 
 [[package]]
 name = "himmelblau_unix_common"
-version = "0.7.15"
+version = "0.7.17"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1745,7 +1745,7 @@ dependencies = [
 
 [[package]]
 name = "himmelblaud"
-version = "0.7.15"
+version = "0.7.17"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -1769,7 +1769,7 @@ dependencies = [
  "tokio-util",
  "tracing",
  "tracing-subscriber",
- "users",
+ "uzers",
  "walkdir",
 ]
 
@@ -2169,7 +2169,7 @@ dependencies = [
 
 [[package]]
 name = "idmap"
-version = "0.7.15"
+version = "0.7.17"
 dependencies = [
  "bindgen 0.70.1",
  "cc",
@@ -2353,7 +2353,7 @@ dependencies = [
 
 [[package]]
 name = "kanidm_lib_crypto"
-version = "0.7.15"
+version = "0.7.17"
 dependencies = [
  "argon2",
  "base64 0.22.1",
@@ -2372,7 +2372,7 @@ dependencies = [
 
 [[package]]
 name = "kanidm_lib_file_permissions"
-version = "0.7.15"
+version = "0.7.17"
 dependencies = [
  "kanidm_utils_users",
  "whoami",
@@ -2380,7 +2380,7 @@ dependencies = [
 
 [[package]]
 name = "kanidm_proto"
-version = "0.7.15"
+version = "0.7.17"
 dependencies = [
  "base32",
  "base64urlsafedata",
@@ -2400,14 +2400,14 @@ dependencies = [
 
 [[package]]
 name = "kanidm_unix_common"
-version = "0.7.15"
+version = "0.7.17"
 dependencies = [
  "himmelblau_unix_common",
 ]
 
 [[package]]
 name = "kanidm_utils_users"
-version = "0.7.15"
+version = "0.7.17"
 dependencies = [
  "libc",
 ]
@@ -2790,7 +2790,7 @@ dependencies = [
 
 [[package]]
 name = "nss_himmelblau"
-version = "0.7.15"
+version = "0.7.17"
 dependencies = [
  "himmelblau_unix_common",
  "kanidm_unix_common",
@@ -3175,7 +3175,7 @@ checksum = "b15813163c1d831bf4a13c3610c05c0d03b39feb07f7e09fa234dac9b15aaf39"
 
 [[package]]
 name = "pam_himmelblau"
-version = "0.7.15"
+version = "0.7.17"
 dependencies = [
  "himmelblau_unix_common",
  "kanidm_unix_common",
@@ -4218,7 +4218,7 @@ checksum = "56199f7ddabf13fe5074ce809e7d3f42b42ae711800501b5b16ea82ad029c39d"
 
 [[package]]
 name = "sketching"
-version = "0.7.15"
+version = "0.7.17"
 dependencies = [
  "gethostname",
  "num_enum",
@@ -4293,11 +4293,11 @@ checksum = "6980e8d7511241f8acf4aebddbb1ff938df5eebe98691418c4468d0b72a96a67"
 
 [[package]]
 name = "sshd-config"
-version = "0.7.15"
+version = "0.7.17"
 
 [[package]]
 name = "sso"
-version = "0.7.15"
+version = "0.7.17"
 
 [[package]]
 name = "stable_deref_trait"
@@ -4998,16 +4998,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "daf8dba3b7eb870caf1ddeed7bc9d2a049f3cfdfae7cb521b087cc33ae4c49da"
 
 [[package]]
-name = "users"
-version = "0.11.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "24cc0f6d6f267b73e5a2cadf007ba8f9bc39c6a6f9666f8cf25ea809a153b032"
-dependencies = [
- "libc",
- "log",
-]
-
-[[package]]
 name = "utf-8"
 version = "0.7.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5065,6 +5055,16 @@ checksum = "458f7a779bf54acc9f347480ac654f68407d3aab21269a6e3c9f922acd9e2da9"
 dependencies = [
  "getrandom 0.3.2",
  "serde",
+]
+
+[[package]]
+name = "uzers"
+version = "0.11.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "76d283dc7e8c901e79e32d077866eaf599156cbf427fffa8289aecc52c5c3f63"
+dependencies = [
+ "libc",
+ "log",
 ]
 
 [[package]]
