@@ -199,6 +199,14 @@ A boolean option that enables the experimental multi-factor authentication (MFA)
 enable_experimental_mfa = true
 
 .TP
+.B enable_experimental_passwordless_fido
+.RE
+A boolean option that enables the experimental passwordless FIDO flow for Azure Entra ID authentication. When enabled, Himmelblau will attempt to authenticate with Entra ID using a FIDO2 security key without requiring a password. By default, this option is disabled.
+
+.EXAMPLES
+enable_experimental_passwordless_fido = true
+
+.TP
 .B name_mapping_script
 .RE
 Specifies the path to an executable script used for mapping custom names to UPN names. The script MUST accept a single argument, which will always be a mapped name. The script MUST print the corresponding UPN (User Principal Name) to stdout. If the script does not recognize the input name, it MUST simply return the input name unchanged. This option is particularly useful in environments where direct UPN-to-CN mappings are impractical or where custom transformations are required.
