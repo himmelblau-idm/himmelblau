@@ -550,6 +550,14 @@ impl HimmelblauConfig {
         match_bool(self.config.get("global", "enable_experimental_mfa"), true)
     }
 
+    pub fn get_enable_experimental_passwordless_fido(&self) -> bool {
+        match_bool(
+            self.config
+                .get("global", "enable_experimental_passwordless_fido"),
+            false,
+        )
+    }
+
     pub async fn get_primary_domain_from_alias(&mut self, alias: &str) -> Option<String> {
         let domains = self.get_configured_domains();
 
@@ -1163,6 +1171,27 @@ mod tests {
         assert_eq!(config.get_enable_experimental_mfa(), false);
         let config_empty = HimmelblauConfig::new(None).unwrap();
         assert_eq!(config_empty.get_enable_experimental_mfa(), true);
+    }
+
+    #[test]
+    fn test_get_enable_experimental_passwordless_fido() {
+        let config_data = r#"
+        [global]
+        enable_experimental_passwordless_fido = true
+        "#;
+
+        let temp_file = create_temp_config(config_data);
+        let config = HimmelblauConfig::new(Some(&temp_file)).unwrap();
+
+        // Test when explicitly set to true
+        assert_eq!(config.get_enable_experimental_passwordless_fido(), true);
+
+        // Test fallback default (false) when config is missing
+        let config_empty = HimmelblauConfig::new(None).unwrap();
+        assert_eq!(
+            config_empty.get_enable_experimental_passwordless_fido(),
+            false
+        );
     }
 
     #[test]
