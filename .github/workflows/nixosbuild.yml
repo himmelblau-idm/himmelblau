@@ -1,5 +1,7 @@
 ---
 name: NixOS
+permissions:
+  contents: read
 
 # Trigger the workflow on push or pull request
 on:
