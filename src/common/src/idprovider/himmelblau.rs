@@ -38,7 +38,7 @@ use himmelblau::error::{MsalError, DEVICE_AUTH_FAIL};
 use himmelblau::graph::{DirectoryObject, Graph};
 use himmelblau::intune::IntuneForLinux;
 use himmelblau::{AuthOption, MFAAuthContinue};
-use idmap::Idmap;
+use idmap::{AadSid, Idmap};
 use kanidm_hsm_crypto::{LoadableIdentityKey, LoadableMsOapxbcRsaKey, PinValue, SealedData, Tpm};
 use regex::Regex;
 use reqwest;
@@ -883,10 +883,35 @@ impl IdProvider for HimmelblauProvider {
                                     (user.uid, user.gid)
                                 },
                                 None => match config.get_id_attr_map() {
-                                    // If Uuid mapping is enabled, bail out now.
-                                    // We can only provide a valid idmapping with
-                                    // name idmapping at this point.
-                                    IdAttr::Uuid => return Err(IdpError::BadRequest),
+                                    IdAttr::Uuid => {
+                                        // Attempt to map the UPN to an Object Id.
+                                        let sidtoname = self.client
+                                            .read()
+                                            .await
+                                            .resolve_nametosid(
+                                                &account_id,
+                                                tpm,
+                                                machine_key
+                                            )
+                                            .await
+                                            .map_err(|e| {
+                                                error!("Failed mapping UPN to Object Id: {:?}", e);
+                                                IdpError::BadRequest
+                                            })?;
+                                        let idmap = self.idmap.read().await;
+                                        let sid = AadSid::from_sid_str(&sidtoname.sid).map_err(|e| {
+                                            error!("Failed parsing SID: {:?}", e);
+                                            IdpError::BadRequest
+                                        })?;
+                                        let uid = idmap.object_id_to_unix_id(&self.graph.tenant_id().await.map_err(|e| {
+                                            error!("Failed fetching tenant id: {:?}", e);
+                                            IdpError::BadRequest
+                                        })?, &sid).map_err(|e| {
+                                            error!("Failed mapping object id to uid: {:?}", e);
+                                            IdpError::BadRequest
+                                        })?;
+                                        (uid, uid)
+                                    },
                                     IdAttr::Name | IdAttr::Rfc2307 => {
                                         let idmap = self.idmap.read().await;
                                         let gid = idmap.gen_to_unix(&self.graph.tenant_id().await.map_err(|e| {
@@ -2285,7 +2310,10 @@ impl HimmelblauProvider {
                                 error!("{:?}", e);
                                 IdpError::BadRequest
                             })?,
-                            &uuid,
+                            &AadSid::from_object_id(&uuid).map_err(|e| {
+                                error!("Failed parsing object id: {:?}", e);
+                                IdpError::BadRequest
+                            })?,
                         )
                         .map_err(|e| {
                             error!("{:?}", e);
@@ -2399,7 +2427,8 @@ impl HimmelblauProvider {
                         .tenant_id()
                         .await
                         .map_err(|e| anyhow!("{:?}", e))?,
-                    &id,
+                    &AadSid::from_object_id(&id)
+                        .map_err(|e| anyhow!("Failed parsing object id: {:?}", e))?,
                 )
                 .map_err(|e| anyhow!("Failed fetching gid for {}: {:?}", id, e))?,
             IdAttr::Name => idmap
@@ -2428,7 +2457,8 @@ impl HimmelblauProvider {
                                 .tenant_id()
                                 .await
                                 .map_err(|e| anyhow!("{:?}", e))?,
-                            &id,
+                            &AadSid::from_object_id(&id)
+                                .map_err(|e| anyhow!("Failed parsing object id: {:?}", e))?,
                         )
                         .map_err(|e| anyhow!("Failed fetching gid for {}: {:?}", id, e))?,
                     Some(IdAttr::Name) => idmap
