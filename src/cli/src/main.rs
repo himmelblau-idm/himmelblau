@@ -50,14 +50,43 @@ use kanidm_hsm_crypto::{
     soft::SoftTpm, BoxedDynTpm, LoadableIdentityKey, LoadableMsOapxbcRsaKey, Tpm,
 };
 use rpassword::{prompt_password, read_password};
+use serde_json::{json, to_string_pretty, Value};
 use std::io;
 use std::io::Write;
 use std::path::PathBuf;
 use std::thread;
 use std::thread::sleep;
 use std::time::Duration;
+use broker_client::BrokerClient;
+use uuid::Uuid;
+use serde::Deserialize;
 
 include!("./opt/tool.rs");
+
+mod graph;
+use crate::graph::CliGraph;
+
+#[derive(Debug, Deserialize)]
+struct Accounts {
+    accounts: Vec<Value>,
+}
+
+#[derive(Debug, Deserialize)]
+struct Account {
+    username: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct BrokerTokenResponse {
+    #[serde(rename = "accessToken")]
+    access_token: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct Token {
+    #[serde(rename = "brokerTokenResponse")]
+    response: BrokerTokenResponse,
+}
 
 fn insert_module_line(
     pam_file: &str,
@@ -257,6 +286,17 @@ async fn main() -> ExitCode {
     let opt = HimmelblauUnixParser::parse();
 
     let debug = match opt.commands {
+        HimmelblauUnixOpt::Application(ApplicationOpt::List {
+            debug,
+            account_id: _,
+            client_id: _,
+        }) => debug,
+        HimmelblauUnixOpt::Application(ApplicationOpt::Create {
+            debug,
+            account_id: _,
+            client_id: _,
+            display_name: _,
+        }) => debug,
         HimmelblauUnixOpt::AuthTest {
             debug,
             account_id: _,
@@ -566,7 +606,208 @@ async fn main() -> ExitCode {
         }};
     }
 
+    macro_rules! obtain_access_token {
+        ($account_id:ident, $scopes:expr, $resource:expr, $client_id:ident) => {{
+            match $account_id {
+                Some(account_id) => {
+                    if unsafe { libc::geteuid() } != 0 {
+                        error!("Authenticating as another user can only be performed by root.");
+                        return ExitCode::FAILURE;
+                    }
+
+                    let cfg = match HimmelblauConfig::new(Some(DEFAULT_CONFIG_PATH)) {
+                        Ok(c) => c,
+                        Err(_e) => {
+                            error!("Failed to parse {}", DEFAULT_CONFIG_PATH);
+                            return ExitCode::FAILURE;
+                        }
+                    };
+
+                    let (graph, domain, authority) = init!(cfg, account_id);
+                    let (mut tpm, loadable_transport_key, loadable_cert_key, machine_key) =
+                        obtain_host_data!(domain, cfg);
+                    let app = client!(
+                        authority,
+                        Some(loadable_transport_key),
+                        Some(loadable_cert_key)
+                    );
+                    let token = auth!(app, account_id);
+
+                    match on_behalf_of_token!(
+                        app,
+                        token,
+                        tpm,
+                        machine_key,
+                        $scopes,
+                        $resource,
+                        Some(&$client_id)
+                    ).access_token.clone() {
+                        Some(access_token) => (graph, access_token),
+                        None => {
+                            error!("Failed obtaining access token!");
+                            return ExitCode::FAILURE;
+                        }
+                    }
+                },
+                None => {
+                    let broker = match BrokerClient::new().await {
+                        Ok(broker) => broker,
+                        Err(e) => {
+                            error!("Failed initiating broker: {:?}", e);
+                            return ExitCode::FAILURE;
+                        }
+                    };
+                    let session_id = Uuid::new_v4().to_string();
+
+                    let account = match broker.get_accounts(
+                        "0.0",
+                        &session_id,
+                        &json!({
+                            "clientId": $client_id.clone(),
+                            "redirectUri": session_id.clone(),
+                        }),
+                    )
+                    .await {
+                        Ok(accounts) => match serde_json::from_value::<Accounts>(accounts) {
+                            Ok(accounts) => accounts.accounts[0].clone(),
+                            Err(e) => {
+                                error!("Failed deserializing authenticated account: {:?}", e);
+                                return ExitCode::FAILURE;
+                            }
+                        }
+                        Err(e) => {
+                            error!("Failed discovering authenticated account: {:?}", e);
+                            return ExitCode::FAILURE;
+                        }
+                    };
+                    let account_id = match serde_json::from_value::<Account>(account.clone()) {
+                        Ok(account) => account.username,
+                        Err(e) => {
+                            error!("Failed deserializing authenticated account: {:?}", e);
+                            return ExitCode::FAILURE;
+                        }
+                    };
+
+                    let cfg = match HimmelblauConfig::new(Some(DEFAULT_CONFIG_PATH)) {
+                        Ok(c) => c,
+                        Err(_e) => {
+                            error!("Failed to parse {}", DEFAULT_CONFIG_PATH);
+                            return ExitCode::FAILURE;
+                        }
+                    };
+
+                    let (graph, _, authority) = init!(cfg, account_id);
+
+                    match broker.acquire_token_silently(
+                        "0.0",
+                        &session_id,
+                        &json!({
+                            "account": account,
+                            "authParameters": {
+                                "account": account,
+                                "additionalQueryParametersForAuthorization": {},
+                                "authority": authority,
+                                "authorizationType": 8,
+                                "clientId": $client_id,
+                                "redirectUri": "https://login.microsoftonline.com/common/oauth2/nativeclient",
+                                "requestedScopes": $scopes,
+                                "ssoUrl": "https://login.microsoftonline.com/",
+                            }
+                        }),
+                    )
+                    .await {
+                        Ok(token) => match serde_json::from_value::<Token>(token) {
+                            Ok(token) => (graph, token.response.access_token),
+                            Err(_) => {
+                                error!("Failed to parse token response!");
+                                return ExitCode::FAILURE;
+                            }
+                        }
+                        Err(e) => {
+                            error!("Failed requesting authenticated account token: {:?}", e);
+                            return ExitCode::FAILURE;
+                        }
+                    }
+                }
+            }
+        }};
+    }
+
     match opt.commands {
+        HimmelblauUnixOpt::Application(ApplicationOpt::List {
+            debug: _,
+            account_id,
+            client_id,
+        }) => {
+            debug!("Starting application list tool ...");
+
+            let (graph, access_token) = obtain_access_token!(
+                account_id,
+                vec!["https://graph.microsoft.com/Application.Read.All"],
+                None,
+                client_id
+            );
+
+            let cli_graph = match CliGraph::new(&graph).await {
+                Ok(cli_graph) => cli_graph,
+                Err(e) => {
+                    error!("Failed to create cli graph: {:?}", e);
+                    return ExitCode::FAILURE;
+                }
+            };
+
+            let apps = match cli_graph.list_applications(&access_token).await {
+                Ok(apps) => apps,
+                Err(e) => {
+                    error!("Failed to get apps: {:?}", e);
+                    return ExitCode::FAILURE;
+                }
+            };
+
+            let apps_str = match to_string_pretty(&apps) {
+                Ok(apps_str) => apps_str,
+                Err(e) => {
+                    error!("Failed to serialize apps: {:?}", e);
+                    return ExitCode::FAILURE;
+                }
+            };
+            println!("{}", apps_str);
+
+            ExitCode::SUCCESS
+        }
+        HimmelblauUnixOpt::Application(ApplicationOpt::Create {
+            debug: _,
+            account_id,
+            client_id,
+            display_name,
+        }) => {
+            debug!("Starting application list tool ...");
+
+            let (graph, access_token) = obtain_access_token!(
+                account_id,
+                vec!["https://graph.microsoft.com/Application.ReadWrite.All"],
+                None,
+                client_id
+            );
+
+            let cli_graph = match CliGraph::new(&graph).await {
+                Ok(cli_graph) => cli_graph,
+                Err(e) => {
+                    error!("Failed to create cli graph: {:?}", e);
+                    return ExitCode::FAILURE;
+                }
+            };
+
+            match cli_graph.create_application(&access_token, &display_name, None).await {
+                Ok(_) => {},
+                Err(e) => {
+                    error!("Failed to create app: {:?}", e);
+                    return ExitCode::FAILURE;
+                }
+            }
+
+            ExitCode::SUCCESS
+        },
         HimmelblauUnixOpt::AuthTest {
             debug: _,
             account_id,
