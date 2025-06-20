@@ -48,8 +48,59 @@ pub enum IdmapOpt {
 }
 
 #[derive(Debug, Subcommand)]
+#[clap(about = "Application Utility")]
+pub enum ApplicationOpt {
+    /// Lists Entra ID application registrations in the current tenant.
+    ///
+    /// This command performs a delegated Microsoft Graph API request using an access
+    /// token acquired via the specified client application (`--client-id`), which must
+    /// have `Application.Read.All` permissions in the tenant.
+    ///
+    /// If the `--name` parameter is omitted, the command authenticates as the currently
+    /// logged-in user via the Himmelblau SSO broker. If the `--name` parameter is
+    /// provided, the command attempts to authenticate as the specified Entra ID user.
+    /// In this case, the command must be run as `root` to impersonate another user.
+    ///
+    /// This command must be run from a device that has already been joined to Entra ID.
+    List {
+        #[clap(short, long)]
+        debug: bool,
+        #[clap(short = 'D', long = "name")]
+        account_id: Option<String>,
+        #[clap(long = "client-id")]
+        client_id: String,
+    },
+    /// Creates a new Entra ID application registration in the current tenant.
+    ///
+    /// This command performs a delegated Microsoft Graph API request using an access
+    /// token acquired via the specified client application (`--client-id`), which must
+    /// have `Application.ReadWrite.All` permissions in the tenant.
+    ///
+    /// The new application will be created with the provided `--display-name`.
+    ///
+    /// If the `--name` parameter is omitted, the command authenticates as the currently
+    /// logged-in user via the Himmelblau SSO broker. If the `--name` parameter is
+    /// provided, the command attempts to authenticate as the specified Entra ID user.
+    /// In this case, the command must be run as `root` to impersonate another user.
+    ///
+    /// This command must be run from a device that has already been joined to Entra ID.
+    Create {
+        #[clap(short, long)]
+        debug: bool,
+        #[clap(short = 'D', long = "name")]
+        account_id: Option<String>,
+        #[clap(long = "client-id")]
+        client_id: String,
+        #[clap(long = "display-name")]
+        display_name: String,
+    }
+}
+
+#[derive(Debug, Subcommand)]
 #[clap(about = "Himmelblau Management Utility")]
 pub enum HimmelblauUnixOpt {
+    #[clap(subcommand)]
+    Application(ApplicationOpt),
     /// Test authentication of a user via the unixd resolver "pam" channel. This does not
     /// test that your pam configuration is correct - only that unixd is correctly processing
     /// and validating authentications.
@@ -98,7 +149,7 @@ pub enum HimmelblauUnixOpt {
     /// The `--client-id` parameter is required and must refer to a registered
     /// Entra ID application with `User.Read.All` permissions.
     ///
-    /// The `--name` specifies the Entra ID user on whose behalf the token
+    /// The `--name` parameter specifies the Entra ID user on whose behalf the token
     /// is requested, enabling delegated access through the specified client application.
     ///
     /// This command can only be executed from an Entra Id enrolled host.
