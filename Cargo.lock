@@ -2687,9 +2687,9 @@ dependencies = [
 
 [[package]]
 name = "libhimmelblau"
-version = "0.6.25"
+version = "0.6.26"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "061c081bb99643a4354955795ce9e20cdcad05a682e2cc191e28bee0db273161"
+checksum = "9d2c492f96d197db3502c3bb31536a6652c1737e31724edbbfd049314bdca7c9"
 dependencies = [
  "base64 0.22.1",
  "browser-window",
@@ -2713,6 +2713,7 @@ dependencies = [
  "serde",
  "serde_bytes",
  "serde_json",
+ "serde_urlencoded",
  "tokio",
  "tracing",
  "tracing-subscriber",
