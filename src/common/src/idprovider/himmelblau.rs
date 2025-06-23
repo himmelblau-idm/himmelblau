@@ -126,6 +126,12 @@ pub struct BadPinCounter {
     counter: RwLock<HashMap<String, u32>>,
 }
 
+impl Default for BadPinCounter {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl BadPinCounter {
     pub fn new() -> Self {
         BadPinCounter {
@@ -167,7 +173,7 @@ impl HimmelblauMultiProvider {
         let mut providers = HashMap::new();
         let cfg = config.read().await;
         let domains = cfg.get_configured_domains();
-        if domains.len() == 0 {
+        if domains.is_empty() {
             return Err(anyhow!("No domains configured in himmelblau.conf"));
         }
         for domain in domains {
@@ -631,7 +637,7 @@ impl IdProvider for HimmelblauProvider {
         tpm: &mut tpm::BoxedDynTpm,
         machine_key: &tpm::MachineKey,
     ) -> Result<UnixUserToken, IdpError> {
-        if let Err(_) = self.delayed_init().await {
+        if (self.delayed_init().await).is_err() {
             // We can't fetch an access_token when initialization hasn't
             // completed. This only happens when we're offline during first
             // startup. This should never happen!
@@ -675,7 +681,7 @@ impl IdProvider for HimmelblauProvider {
         tpm: &mut tpm::BoxedDynTpm,
         machine_key: &tpm::MachineKey,
     ) -> (Vec<u8>, Vec<u8>) {
-        if let Err(_) = self.delayed_init().await {
+        if (self.delayed_init().await).is_err() {
             // We can't fetch krb5 tgts when initialization hasn't
             // completed. This only happens when we're offline during first
             // startup. This should never happen!
@@ -721,7 +727,7 @@ impl IdProvider for HimmelblauProvider {
         tpm: &mut tpm::BoxedDynTpm,
         machine_key: &tpm::MachineKey,
     ) -> Result<String, IdpError> {
-        if let Err(_) = self.delayed_init().await {
+        if (self.delayed_init().await).is_err() {
             // We can't fetch a PRT cookie when initialization hasn't
             // completed. This only happens when we're offline during first
             // startup. This should never happen!
@@ -755,7 +761,7 @@ impl IdProvider for HimmelblauProvider {
         tpm: &mut tpm::BoxedDynTpm,
         machine_key: &tpm::MachineKey,
     ) -> Result<bool, IdpError> {
-        if let Err(_) = self.delayed_init().await {
+        if (self.delayed_init().await).is_err() {
             // We can't change the Hello PIN when initialization hasn't
             // completed. This only happens when we're offline during first
             // startup.
@@ -830,7 +836,7 @@ impl IdProvider for HimmelblauProvider {
             }
         }
 
-        if let Err(_) = self.delayed_init().await {
+        if (self.delayed_init().await).is_err() {
             // Initialization failed. Report that the system is offline. We
             // can't proceed with initialization until the system is online.
             info!("Network down detected");
@@ -1071,7 +1077,7 @@ impl IdProvider for HimmelblauProvider {
             || !hello_enabled
             || self.bad_pin_counter.bad_pin_count(account_id).await > 3
         {
-            if let Err(_) = self.delayed_init().await {
+            if (self.delayed_init().await).is_err() {
                 // Initialization failed. Report that the system is offline. We
                 // can't proceed with initialization until the system is online.
                 info!("Network down detected");
@@ -1233,7 +1239,7 @@ impl IdProvider for HimmelblauProvider {
             }
         }
 
-        if let Err(_) = self.delayed_init().await {
+        if (self.delayed_init().await).is_err() {
             // Initialization failed. Report that the system is offline. We
             // can't proceed with initialization until the system is online.
             info!("Network down detected");

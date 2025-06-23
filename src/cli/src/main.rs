@@ -127,7 +127,7 @@ fn insert_module_line(
     }
 
     // Default to end
-    let insert_index = insert_index.unwrap_or_else(|| lines.len());
+    let insert_index = insert_index.unwrap_or(lines.len());
     lines.insert(insert_index, module_line.to_string());
 
     if dry_run {

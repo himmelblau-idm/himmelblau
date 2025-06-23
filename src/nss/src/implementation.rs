@@ -337,14 +337,12 @@ impl GroupHooks for HimmelblauGroup {
                 // to display the group name, while prohibiting dangerous
                 // behavior.
                 if group.name.to_lowercase() == name.to_lowercase() {
-                    return Response::NotFound;
+                    Response::NotFound
                 } else {
-                    return Response::Success(group);
+                    Response::Success(group)
                 }
             }
-            _ => {
-                return resp;
-            }
+            _ => resp,
         }
     }
 }
