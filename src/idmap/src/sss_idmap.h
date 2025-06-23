@@ -373,7 +373,7 @@ sss_idmap_add_auto_domain_ex(struct sss_idmap_ctx *ctx,
  * @param[in] n_name      Zero-terminated string with the domain name the new
  *                        range should belong to
  * @param[in] n_sid       Zero-terminated string representation of the domain
- *                        SID (S-1-15-.....) the new range should belong to
+ *                        SID (S-1-15-.....) the new range sould belong to
  * @param[in] n_range     The new id range
  * @param[in] n_range_id  unique identifier of the new range, it is needed
  *                        to allow updates at runtime, may be NULL
@@ -397,7 +397,7 @@ enum idmap_error_code sss_idmap_check_collision(struct sss_idmap_ctx *ctx,
  * @param[in] o_name      Zero-terminated string with the domain name the
  *                        first range should belong to
  * @param[in] o_sid       Zero-terminated string representation of the domain
- *                        SID (S-1-15-.....) the first range should belong to
+ *                        SID (S-1-15-.....) the first range sould belong to
  * @param[in] o_range     The first id range
  * @param[in] o_range_id  unique identifier of the first range, it is needed
  *                        to allow updates at runtime, may be NULL
@@ -407,7 +407,7 @@ enum idmap_error_code sss_idmap_check_collision(struct sss_idmap_ctx *ctx,
  * @param[in] n_name      Zero-terminated string with the domain name the
  *                        second range should belong to
  * @param[in] n_sid       Zero-terminated string representation of the domain
- *                        SID (S-1-15-.....) the second range should belong to
+ *                        SID (S-1-15-.....) the second range sould belong to
  * @param[in] n_range     The second id range
  * @param[in] n_range_id  unique identifier of the second range, it is needed
  *                        to allow updates at runtime, may be NULL
@@ -450,7 +450,7 @@ enum idmap_error_code sss_idmap_sid_to_unix(struct sss_idmap_ctx *ctx,
                                             uint32_t *id);
 
 /**
- * @brief Translate a SID structure to a unix UID or GID
+ * @brief Translate a SID stucture to a unix UID or GID
  *
  * @param[in] ctx     Idmap context
  * @param[in] dom_sid SID structure
@@ -488,7 +488,7 @@ enum idmap_error_code sss_idmap_bin_sid_to_unix(struct sss_idmap_ctx *ctx,
                                                 uint32_t *id);
 
 /**
- * @brief Translate a Samba dom_sid structure to a unix UID or GID
+ * @brief Translate a Samba dom_sid stucture to a unix UID or GID
  *
  * @param[in] ctx     Idmap context
  * @param[in] smb_sid Samba dom_sid structure
@@ -898,7 +898,7 @@ enum idmap_error_code sss_idmap_smb_sid_to_sid(struct sss_idmap_ctx *ctx,
                                                char **sid);
 
 /**
- * @brief Convert SID structure to Samba dom_sid structure
+ * @brief Convert SID stucture to Samba dom_sid structure
  *
  * @param[in] ctx       Idmap context
  * @param[in] dom_sid   SID structure
@@ -987,14 +987,15 @@ typedef enum idmap_error_code (idmap_rev_offset_func)(struct sss_idmap_ctx *ctx,
  * @param[in] domain_id   Zero-terminated string representation of a unique
  *                        identifier of the domain, e.g. if available a domain
  *                        UUID or the URI of domain specific service
- * @param[in] range       Id ranges struct with smallest and largest id of the
- *                        range
+ * @param[in] range       Id range struct with smallest and largest POSIX id of
+ *                        the range
  * @param[in] range_id    A name for the id range, currently not used, might
  *                        become important when we allow multiple ranges for a
  *                        single domain
  * @param[in] offset_func Function to calculate an offset in a given range
  *                        from some input given as string, if NULL
- *                        offset_murmurhash3 will be used.
+ *                        sss_idmap_offset_murmurhash3() will be used if mapping
+ *                        is not done externally.
  * @param[in] rev_offset_func Function to calculate the original input from a
  *                        given offset, i.e. the reverse of offset_func, may
  *                        be NULL
@@ -1012,8 +1013,7 @@ typedef enum idmap_error_code (idmap_rev_offset_func)(struct sss_idmap_ctx *ctx,
  * @return
  *  - #IDMAP_OUT_OF_MEMORY: Insufficient memory to store the data in the idmap
  *                          context
- *  - #IDMAP_SID_INVALID:   Invalid SID provided
- *  - #IDMAP_NO_DOMAIN:     No domain domain name given
+ *  - #IDMAP_NO_DOMAIN:     No domain domain name or domain id given
  *  - #IDMAP_COLLISION:     New domain collides with existing one
  */
 enum idmap_error_code sss_idmap_add_gen_domain_ex(struct sss_idmap_ctx *ctx,
@@ -1029,29 +1029,50 @@ enum idmap_error_code sss_idmap_add_gen_domain_ex(struct sss_idmap_ctx *ctx,
 
 /**
  * @brief Calculate offset from string containing only numbers
+ *
+ * This is an offset function of type idmap_rev_offset_func for
+ * sss_idmap_add_gen_domain_ex() which can be used to convert an input string
+ * which only contains a decimal integer number into a offset value of type
+ * long long. The matching reverse offset function is
+ * sss_idmap_rev_offset_identity().
  */
-enum idmap_error_code offset_identity(void *pvt, uint32_t range_size,
-                                      const char *input, long long *offset);
+enum idmap_error_code sss_idmap_offset_identity(void *pvt, uint32_t range_size,
+                                                const char *input,
+                                                long long *offset);
 
 /**
- * @brief Reverse of offset_identity, return a string containing only numbers
- * representing the given offset
+ * @brief Reverse of sss_idmap_offset_identity, return a string containig only
+ * numbers representing the given offset
+ *
+ * This is the matching reverse offset function to sss_idmap_offset_identity()
+ * of type idmap_rev_offset_func. The given integer id is translated back into
+ * a string which represents the decimal version of the integer.
  */
-enum idmap_error_code rev_offset_identity(struct sss_idmap_ctx *ctx, void *pvt,
-                                          uint32_t id, char **_out);
+enum idmap_error_code sss_idmap_rev_offset_identity(struct sss_idmap_ctx *ctx,
+                                                    void *pvt, uint32_t id,
+                                                    char **_out);
 
 /**
  * @brief Calculate offset from string with the help of murmurhash3
+ *
+ * This is an offset function of type idmap_offset_func for
+ * sss_idmap_add_gen_domain_ex() which can be used to convert an input string
+ * into an offset value of type long long with the help of murmurhash3. This
+ * operation is not revertible and hence there is no matching reverse offset
+ * function of type idmap_rev_offset_func.
  */
-enum idmap_error_code offset_murmurhash3(void *pvt, uint32_t range_size,
-                                         const char *input, long long *offset);
+enum idmap_error_code sss_idmap_offset_murmurhash3(void *pvt,
+                                                   uint32_t range_size,
+                                                   const char *input,
+                                                   long long *offset);
 
 /**
  * Structure for private data for offset_murmurhash3. If not given 0xdeadbeef
  * will be used as seed. UTF8 strings will be normalized by default but not
- * casefolded.
+ * casefolded. Please note that if casefolding is enabled the string will be
+ * normalized as well independent of the setting of the normalize flag.
  */
-struct offset_murmurhash3_data {
+struct sss_idmap_offset_murmurhash3_data {
     uint32_t seed;
     bool normalize;
     bool casefold;
@@ -1065,7 +1086,7 @@ struct offset_murmurhash3_data {
  *                      domain
  * @param[in] input     Zero-terminated string which should be translated into
  *                      an offset to calculate the unix UID or GID
- * @param[out] id       Returned unix UID or GID
+ * @param[out] _id      Returned unix UID or GID
  *
  * @return
  *  - #IDMAP_NO_DOMAIN:     No domain with domain_id found in ctx
@@ -1077,15 +1098,15 @@ enum idmap_error_code sss_idmap_gen_to_unix(struct sss_idmap_ctx *ctx,
                                             uint32_t *_id);
 
 /**
- * @brief Translate some input to a unix UID or GID
+ * @brief Translate a unix UID or GID to some original value, if possible
  *
  * @param[in] ctx       Idmap context
- * @param[in] id        UNIX UID or GID
- *                      an offset to calculate the unix UID or GID
+ * @param[in] id        Unix UID or GID
  * @param[out] out      Original value the UID or GID was derived from
  *
  * @return
- *  - #IDMAP_NO_DOMAIN:     No domain with domain_id found in ctx
+ *  - #IDMAP_NO_DOMAIN:     No domain with a range for the given id was found
+ *                          in ctx
  *  - #IDMAP_EXTERNAL:      external source is authoritative for mapping
  *  - #IDMAP_NO_REVERSE:    the id cannot be reverted back to the original
  *                          source

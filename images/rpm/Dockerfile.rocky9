@@ -4,7 +4,7 @@ FROM rockylinux:9
 # Set environment variables for non-interactive installs
 ENV YUM_VERSION=8
 
-# Enable CRB, for utf8proc-devel
+# Enable CRB, for libunistring-devel
 RUN yum update -y && dnf install -y 'dnf-command(config-manager)' \
     && dnf config-manager --set-enabled crb
 
@@ -27,7 +27,7 @@ RUN yum update -y && yum install -y \
     clang \
     gettext \
     sqlite-devel \
-    utf8proc-devel \
+    libunistring-devel \
     gobject-introspection-devel \
     cairo-devel \
     libsoup-devel \

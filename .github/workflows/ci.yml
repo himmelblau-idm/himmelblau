@@ -64,7 +64,7 @@ jobs:
             autoconf \
             gettext \
             libdbus-1-dev \
-            libutf8proc-dev \
+            libunistring-dev \
             libgirepository1.0-dev \
             libcairo2-dev \
             libgdk-pixbuf2.0-dev \
@@ -140,7 +140,7 @@ jobs:
             autoconf \
             gettext \
             libdbus-1-dev \
-            libutf8proc-dev \
+            libunistring-dev \
             libgirepository1.0-dev \
             libcairo2-dev \
             libgdk-pixbuf2.0-dev \

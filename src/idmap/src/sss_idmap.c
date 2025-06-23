@@ -26,7 +26,8 @@
 #include <stdio.h>
 #include <errno.h>
 #include <inttypes.h>
-#include <utf8proc.h>
+#include <unicase.h>
+#include <uninorm.h>
 
 #include "sss_idmap.h"
 #include "sss_idmap_private.h"
@@ -1014,8 +1015,8 @@ static bool is_sid_from_dom(const char *dom_sid, const char *sid,
     return strncmp(sid, dom_sid, dom_sid_len) == 0;
 }
 
-static bool comp_id(struct idmap_range_params *range_params, long long rid,
-                    uint32_t *_id)
+static bool compute_id(struct idmap_range_params *range_params, long long rid,
+                       uint32_t *_id)
 {
     uint32_t id;
 
@@ -1159,7 +1160,7 @@ add_dom_for_sid(struct sss_idmap_ctx *ctx,
         goto done;
     }
 
-    if (!comp_id(range, rid, _id)) {
+    if (!compute_id(range, rid, _id)) {
         err = IDMAP_ERROR;
         goto done;
     }
@@ -1174,8 +1175,9 @@ done:
     return err;
 }
 
-enum idmap_error_code offset_identity(void *pvt, uint32_t range_size,
-                                      const char *input, long long *offset)
+enum idmap_error_code sss_idmap_offset_identity(void *pvt, uint32_t range_size,
+                                                const char *input,
+                                                long long *offset)
 {
     long long out;
     char *endptr;
@@ -1196,8 +1198,9 @@ enum idmap_error_code offset_identity(void *pvt, uint32_t range_size,
     return IDMAP_SUCCESS;
 }
 
-enum idmap_error_code rev_offset_identity(struct sss_idmap_ctx *ctx, void *pvt,
-                                          uint32_t id, char **_out)
+enum idmap_error_code sss_idmap_rev_offset_identity(struct sss_idmap_ctx *ctx,
+                                                    void *pvt, uint32_t id,
+                                                    char **_out)
 {
     char *out;
     int len;
@@ -1226,26 +1229,33 @@ enum idmap_error_code rev_offset_identity(struct sss_idmap_ctx *ctx, void *pvt,
 static char *normalize_casefold(const char *input, bool normalize,
                                 bool casefold)
 {
+    size_t lengthp;
+
     if (casefold) {
-        return (char *) utf8proc_NFKC_Casefold((const utf8proc_uint8_t *) input);
+        return (char *) u8_casefold((const uint8_t *)input, strlen(input) + 1, NULL,
+                                    UNINORM_NFKC, NULL, &lengthp);
     }
 
     if (normalize) {
-        return (char *) utf8proc_NFKC((const utf8proc_uint8_t *) input);
+        return (char *) u8_normalize(UNINORM_NFKC,
+                                     (const uint8_t *)input, strlen(input) + 1,
+                                     NULL, &lengthp);
     }
 
     return NULL;
 }
 
-struct offset_murmurhash3_data offset_murmurhash3_data_default =
+struct sss_idmap_offset_murmurhash3_data offset_murmurhash3_data_default =
                                                           { .seed = 0xdeadbeef,
                                                             .normalize = true,
                                                             .casefold = false };
 
-enum idmap_error_code offset_murmurhash3(void *pvt, uint32_t range_size,
-                                         const char *input, long long *offset)
+enum idmap_error_code sss_idmap_offset_murmurhash3(void *pvt,
+                                                   uint32_t range_size,
+                                                   const char *input,
+                                                   long long *offset)
 {
-    struct offset_murmurhash3_data *offset_murmurhash3_data;
+    struct sss_idmap_offset_murmurhash3_data *offset_murmurhash3_data;
     long long out;
     char *tmp = NULL;
     const char *val;
@@ -1255,7 +1265,7 @@ enum idmap_error_code offset_murmurhash3(void *pvt, uint32_t range_size,
     }
 
     if (pvt != NULL) {
-        offset_murmurhash3_data = (struct offset_murmurhash3_data *) pvt;
+        offset_murmurhash3_data = (struct sss_idmap_offset_murmurhash3_data *) pvt;
     } else {
         offset_murmurhash3_data = &offset_murmurhash3_data_default;
     }
@@ -1290,7 +1300,7 @@ enum idmap_error_code sss_idmap_gen_to_unix(struct sss_idmap_ctx *ctx,
     long long offset;
     uint32_t range_size;
     enum idmap_error_code err;
-    idmap_offset_func *offset_func = offset_murmurhash3;
+    idmap_offset_func *offset_func = sss_idmap_offset_murmurhash3;
     void *offset_func_pvt = NULL;
 
     if (domain_id == NULL || input == NULL || _id == NULL) {
@@ -1310,9 +1320,7 @@ enum idmap_error_code sss_idmap_gen_to_unix(struct sss_idmap_ctx *ctx,
 
     /* Try primary slices */
     while (idmap_domain_info != NULL) {
-
         if (is_from_dom(idmap_domain_info->sid, domain_id)) {
-
             if (idmap_domain_info->external_mapping == true) {
                 return IDMAP_EXTERNAL;
             }
@@ -1327,7 +1335,7 @@ enum idmap_error_code sss_idmap_gen_to_unix(struct sss_idmap_ctx *ctx,
                 return IDMAP_ERROR;
             }
 
-            if (comp_id(&idmap_domain_info->range_params, offset, _id)) {
+            if (compute_id(&idmap_domain_info->range_params, offset, _id)) {
                 return IDMAP_SUCCESS;
             }
 
@@ -1408,7 +1416,7 @@ enum idmap_error_code sss_idmap_sid_to_unix(struct sss_idmap_ctx *ctx,
                 return IDMAP_SID_INVALID;
             }
 
-            if (comp_id(&idmap_domain_info->range_params, rid, _id)) {
+            if (compute_id(&idmap_domain_info->range_params, rid, _id)) {
                 return IDMAP_SUCCESS;
             }
 
