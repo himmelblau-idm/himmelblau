@@ -297,6 +297,18 @@ async fn main() -> ExitCode {
             client_id: _,
             display_name: _,
         }) => debug,
+        HimmelblauUnixOpt::Application(ApplicationOpt::ListSchemaExtensions {
+            debug,
+            account_id: _,
+            client_id: _,
+            schema_app_object_id: _,
+        }) => debug,
+        HimmelblauUnixOpt::Application(ApplicationOpt::AddSchemaExtensions {
+            debug,
+            account_id: _,
+            client_id: _,
+            schema_app_object_id: _,
+        }) => debug,
         HimmelblauUnixOpt::AuthTest {
             debug,
             account_id: _,
@@ -805,6 +817,86 @@ async fn main() -> ExitCode {
                 Ok(_) => {}
                 Err(e) => {
                     error!("Failed to create app: {:?}", e);
+                    return ExitCode::FAILURE;
+                }
+            }
+
+            ExitCode::SUCCESS
+        }
+        HimmelblauUnixOpt::Application(ApplicationOpt::ListSchemaExtensions {
+            debug: _,
+            account_id,
+            client_id,
+            schema_app_object_id,
+        }) => {
+            debug!("Starting list schema extensions tool ...");
+
+            let (graph, access_token) = obtain_access_token!(
+                account_id,
+                vec!["https://graph.microsoft.com/Application.Read.All"],
+                None,
+                client_id
+            );
+
+            let cli_graph = match CliGraph::new(&graph).await {
+                Ok(cli_graph) => cli_graph,
+                Err(e) => {
+                    error!("Failed to create cli graph: {:?}", e);
+                    return ExitCode::FAILURE;
+                }
+            };
+
+            let schema_extensions = match cli_graph
+                .list_schema_extensions(&access_token, &schema_app_object_id)
+                .await
+            {
+                Ok(schema_extensions) => schema_extensions,
+                Err(e) => {
+                    error!("Failed listing schema extensions: {:?}", e);
+                    return ExitCode::FAILURE;
+                }
+            };
+            let json = match serde_json::to_string_pretty(&schema_extensions) {
+                Ok(json) => json,
+                Err(e) => {
+                    error!("Failed parsing schema extensions response: {:?}", e);
+                    return ExitCode::FAILURE;
+                }
+            };
+            println!("{}", json);
+
+            ExitCode::SUCCESS
+        }
+        HimmelblauUnixOpt::Application(ApplicationOpt::AddSchemaExtensions {
+            debug: _,
+            account_id,
+            client_id,
+            schema_app_object_id,
+        }) => {
+            debug!("Starting add schema extensions tool ...");
+
+            let (graph, access_token) = obtain_access_token!(
+                account_id,
+                vec!["https://graph.microsoft.com/Application.ReadWrite.All"],
+                None,
+                client_id
+            );
+
+            let cli_graph = match CliGraph::new(&graph).await {
+                Ok(cli_graph) => cli_graph,
+                Err(e) => {
+                    error!("Failed to create cli graph: {:?}", e);
+                    return ExitCode::FAILURE;
+                }
+            };
+
+            match cli_graph
+                .add_schema_extensions(&access_token, &schema_app_object_id)
+                .await
+            {
+                Ok(_) => {}
+                Err(e) => {
+                    error!("Failed adding schema extensions: {:?}", e);
                     return ExitCode::FAILURE;
                 }
             }

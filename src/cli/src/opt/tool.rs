@@ -93,6 +93,63 @@ pub enum ApplicationOpt {
         client_id: String,
         #[clap(long = "display-name")]
         display_name: String,
+    },
+    /// Lists the POSIX-related schema extension attributes registered on an Entra ID application.
+    ///
+    /// This command retrieves the directory extension attributes (e.g., `uidNumber`, `gidNumber`,
+    /// etc.) that have been added to the application identified by `--schema-app-object-id`.
+    ///
+    /// The `--schema-app-object-id` parameter must be the **Object ID** of the application
+    /// (not the Client ID), as shown in the Entra Admin Center. This value corresponds to the
+    /// `id` field in Microsoft Graph and is required to query extension properties.
+    ///
+    /// You must also supply a separate `--client-id` that grants `Application.Read.All`
+    /// or `Application.ReadWrite.All` permissions in the tenant to perform this query.
+    ///
+    /// If the `--name` parameter is omitted, the command authenticates as the currently
+    /// logged-in user via the Himmelblau SSO broker. If the `--name` parameter is provided,
+    /// the command attempts to authenticate as the specified Entra ID user.
+    /// In this case, the command must be run as `root` to impersonate another user.
+    ///
+    /// This command must be run from a device that has already been joined to Entra ID.
+    ListSchemaExtensions {
+        #[clap(short, long)]
+        debug: bool,
+        #[clap(short = 'D', long = "name")]
+        account_id: Option<String>,
+        #[clap(long = "client-id")]
+        client_id: String,
+        #[clap(long = "schema-app-object-id")]
+        schema_app_object_id: String,
+    },
+    /// Adds a standard set of POSIX-related schema extensions to an existing Entra ID application.
+    ///
+    /// This command registers directory extension attributes (e.g., `uidNumber`, `gidNumber`,
+    /// `unixHomeDirectory`, `loginShell`, `gecos`) on the application specified by `--schema-app-object-id`.
+    /// These extensions will be usable on user and/or group objects, as appropriate.
+    ///
+    /// The application specified by `--schema-app-object-id` must already exist in the tenant,
+    /// and must be identified by its Object ID (not the Client ID). This value is labeled
+    /// as "Object ID" in the Entra Admin Center and corresponds to the `id` field in Graph API responses.
+    ///
+    /// You must also supply a separate `--client-id` that grants `Application.ReadWrite.All`
+    /// permissions to perform the extension registration.
+    ///
+    /// If the `--name` parameter is omitted, the command authenticates as the currently
+    /// logged-in user via the Himmelblau SSO broker. If the `--name` parameter is provided,
+    /// the command attempts to authenticate as the specified Entra ID user.
+    /// In this case, the command must be run as `root` to impersonate another user.
+    ///
+    /// This command must be run from a device that has already been joined to Entra ID.
+    AddSchemaExtensions {
+        #[clap(short, long)]
+        debug: bool,
+        #[clap(short = 'D', long = "name")]
+        account_id: Option<String>,
+        #[clap(long = "client-id")]
+        client_id: String,
+        #[clap(long = "schema-app-object-id")]
+        schema_app_object_id: String,
     }
 }
 

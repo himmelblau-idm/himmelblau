@@ -21,6 +21,15 @@ use reqwest::{header, Client};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ExtensionProperty {
+    pub name: String,
+    #[serde(rename = "dataType")]
+    pub data_type: String,
+    #[serde(rename = "targetObjects")]
+    pub target_objects: Vec<String>,
+}
+
 #[derive(Debug, Deserialize, Serialize)]
 pub(crate) struct Applications {
     pub(crate) value: Vec<Application>,
@@ -28,6 +37,8 @@ pub(crate) struct Applications {
 
 #[derive(Debug, Deserialize, Serialize)]
 pub(crate) struct Application {
+    #[serde(rename = "id")]
+    pub(crate) object_id: String,
     #[serde(rename = "appId")]
     pub(crate) app_id: String,
     #[serde(rename = "displayName")]
@@ -90,5 +101,94 @@ impl CliGraph {
         } else {
             Err(anyhow!(resp.status()))
         }
+    }
+
+    pub(crate) async fn add_schema_extensions(
+        &self,
+        access_token: &str,
+        object_id: &str,
+    ) -> Result<(), anyhow::Error> {
+        let url = format!(
+            "{}/v1.0/applications/{}/extensionProperties",
+            self.graph_url, object_id
+        );
+
+        let attrs = vec![
+            ExtensionProperty {
+                name: "uidNumber".into(),
+                data_type: "Integer".into(),
+                target_objects: vec!["User".into()],
+            },
+            ExtensionProperty {
+                name: "gidNumber".into(),
+                data_type: "Integer".into(),
+                target_objects: vec!["User".into(), "Group".into()],
+            },
+            ExtensionProperty {
+                name: "unixHomeDirectory".into(),
+                data_type: "String".into(),
+                target_objects: vec!["User".into()],
+            },
+            ExtensionProperty {
+                name: "loginShell".into(),
+                data_type: "String".into(),
+                target_objects: vec!["User".into()],
+            },
+            ExtensionProperty {
+                name: "gecos".into(),
+                data_type: "String".into(),
+                target_objects: vec!["User".into()],
+            },
+        ];
+
+        for prop in attrs {
+            let resp = self
+                .client
+                .post(&url)
+                .bearer_auth(access_token)
+                .json(&prop)
+                .send()
+                .await?;
+
+            if !resp.status().is_success() {
+                let text = resp.text().await?;
+                error!("Failed to add extension property '{}': {}", prop.name, text);
+            }
+        }
+
+        Ok(())
+    }
+
+    pub(crate) async fn list_schema_extensions(
+        &self,
+        access_token: &str,
+        schema_app_object_id: &str,
+    ) -> Result<Vec<ExtensionProperty>, anyhow::Error> {
+        let url = format!(
+            "https://graph.microsoft.com/v1.0/applications/{}/extensionProperties",
+            schema_app_object_id
+        );
+
+        let resp = self
+            .client
+            .get(&url)
+            .bearer_auth(access_token)
+            .send()
+            .await?;
+
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            return Err(anyhow::anyhow!("Graph API error {}: {}", status, body));
+        }
+
+        let json: serde_json::Value = resp.json().await?;
+        let props: Vec<ExtensionProperty> = serde_json::from_value(
+            json.get("value")
+                .cloned()
+                .ok_or_else(|| anyhow::anyhow!("Missing 'value' field in response"))?,
+        )?;
+
+        Ok(props)
     }
 }
