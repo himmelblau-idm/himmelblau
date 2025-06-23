@@ -199,19 +199,6 @@ pub trait IdProvider {
         Ok(())
     }
 
-    /// This is similar to a "domain join" process. What do we actually need to pass here
-    /// for this to work for kanidm or himmelblau? Should we make it take a generic?
-    /*
-    async fn configure_machine_identity<D: KeyStoreTxn + Send>(
-        &self,
-        _keystore: &mut D,
-        _tpm: &mut (dyn tpm::Tpm + Send),
-        _machine_key: &tpm::MachineKey,
-    ) -> Result<(), IdpError> {
-        Ok(())
-    }
-    */
-
     async fn check_online(&self, _tpm: &mut tpm::BoxedDynTpm, _now: SystemTime) -> bool;
 
     async fn unix_user_get(
@@ -268,6 +255,7 @@ pub trait IdProvider {
         _shutdown_rx: &broadcast::Receiver<()>,
     ) -> Result<(AuthRequest, AuthCredHandler), IdpError>;
 
+    #[allow(clippy::too_many_arguments)]
     async fn unix_user_online_auth_step<D: KeyStoreTxn + Send>(
         &self,
         _account_id: &str,

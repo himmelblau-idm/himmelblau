@@ -42,7 +42,7 @@ pub async fn apply_intune_policy(
             account_id
         ))?;
 
-    let intune_device_id = match config.get_intune_device_id(&domain) {
+    let intune_device_id = match config.get_intune_device_id(domain) {
         Some(id) => id,
         // This device isn't enrolled in Intune, there is nothing to enforce
         None => {

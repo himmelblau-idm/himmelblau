@@ -15,10 +15,10 @@
    You should have received a copy of the GNU General Public License
    along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
-use reqwest::{header, Client};
-use serde::{Deserialize, Serialize};
 use anyhow::{anyhow, Result};
 use himmelblau::graph::Graph;
+use reqwest::{header, Client};
+use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -65,7 +65,12 @@ impl CliGraph {
         }
     }
 
-    pub(crate) async fn create_application(&self, access_token: &str, display_name: &str, sign_in_audience: Option<&str>) -> Result<()> {
+    pub(crate) async fn create_application(
+        &self,
+        access_token: &str,
+        display_name: &str,
+        sign_in_audience: Option<&str>,
+    ) -> Result<()> {
         let url = format!("{}/v1.0/applications", self.graph_url,);
         let body = json!({
             "displayName": display_name,
