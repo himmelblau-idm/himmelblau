@@ -32,6 +32,7 @@ extern crate tracing;
 
 use std::process::ExitCode;
 
+use broker_client::BrokerClient;
 use clap::Parser;
 use himmelblau::{error::MsalError, graph::Graph, AuthOption, BrokerClientApplication};
 use himmelblau_unix_common::auth_handle_mfa_resp;
@@ -50,6 +51,7 @@ use kanidm_hsm_crypto::{
     soft::SoftTpm, BoxedDynTpm, LoadableIdentityKey, LoadableMsOapxbcRsaKey, Tpm,
 };
 use rpassword::{prompt_password, read_password};
+use serde::Deserialize;
 use serde_json::{json, to_string_pretty, Value};
 use std::io;
 use std::io::Write;
@@ -57,9 +59,7 @@ use std::path::PathBuf;
 use std::thread;
 use std::thread::sleep;
 use std::time::Duration;
-use broker_client::BrokerClient;
 use uuid::Uuid;
-use serde::Deserialize;
 
 include!("./opt/tool.rs");
 
@@ -127,7 +127,7 @@ fn insert_module_line(
     }
 
     // Default to end
-    let insert_index = insert_index.unwrap_or_else(|| lines.len());
+    let insert_index = insert_index.unwrap_or(lines.len());
     lines.insert(insert_index, module_line.to_string());
 
     if dry_run {
@@ -798,8 +798,11 @@ async fn main() -> ExitCode {
                 }
             };
 
-            match cli_graph.create_application(&access_token, &display_name, None).await {
-                Ok(_) => {},
+            match cli_graph
+                .create_application(&access_token, &display_name, None)
+                .await
+            {
+                Ok(_) => {}
                 Err(e) => {
                     error!("Failed to create app: {:?}", e);
                     return ExitCode::FAILURE;
@@ -807,7 +810,7 @@ async fn main() -> ExitCode {
             }
 
             ExitCode::SUCCESS
-        },
+        }
         HimmelblauUnixOpt::AuthTest {
             debug: _,
             account_id,

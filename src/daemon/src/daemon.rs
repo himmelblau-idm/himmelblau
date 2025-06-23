@@ -340,10 +340,10 @@ async fn handle_client(
                                                 PamAuthResponse::Success => {
                                                     if cfg.get_logon_script().is_some() {
                                                         let scopes = cfg.get_logon_token_scopes();
-                                                        let domain = split_username(&account_id)
+                                                        let domain = split_username(account_id)
                                                             .map(|(_, domain)| domain);
                                                         let client_id = domain.and_then(|d| {
-                                                            cfg.get_logon_token_app_id(&d)
+                                                            cfg.get_logon_token_app_id(d)
                                                         });
                                                         let access_token = match cachelayer
                                                             .get_user_accesstoken(

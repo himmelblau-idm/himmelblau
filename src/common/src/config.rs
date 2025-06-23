@@ -692,10 +692,7 @@ impl HimmelblauConfig {
         // if a name is supplied, or to a name if the UPN is supplied.
         if !account_id.contains('@') {
             if let Some(name_mapping_script) = &name_mapping_script {
-                let name_cache = match MappedNameCache::new(MAPPED_NAME_CACHE, &Mode::ReadWrite) {
-                    Ok(name_cache) => Some(name_cache),
-                    Err(_) => None,
-                };
+                let name_cache = MappedNameCache::new(MAPPED_NAME_CACHE, &Mode::ReadWrite).ok();
 
                 let output = Command::new(name_mapping_script).arg(account_id).output();
 

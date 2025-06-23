@@ -102,53 +102,89 @@ impl fmt::Debug for IdmapError {
 
 impl std::error::Error for IdmapError {}
 
+#[derive(Debug, PartialEq, Eq)]
 #[allow(dead_code)]
-struct AadSid {
+pub struct AadSid {
     sid_rev_num: u8,
     num_auths: i8,
     id_auth: u64, // Technically only 48 bits
     sub_auths: [u32; 15],
 }
 
-fn object_id_to_sid(object_id: &Uuid) -> Result<AadSid, IdmapError> {
-    let bytes_array = object_id.as_bytes();
-    let s_bytes_array = [
-        bytes_array[6],
-        bytes_array[7],
-        bytes_array[4],
-        bytes_array[5],
-    ];
+impl AadSid {
+    pub fn from_sid_str(sid_str: &str) -> Result<Self, IdmapError> {
+        let parts: Vec<&str> = sid_str.trim().split('-').collect();
 
-    let mut sid = AadSid {
-        sid_rev_num: 1,
-        num_auths: 5,
-        id_auth: 12,
-        sub_auths: [0; 15],
-    };
+        if parts.len() < 4 || !sid_str.starts_with("S-") {
+            return Err(IDMAP_SID_INVALID);
+        }
 
-    sid.sub_auths[0] = 1;
-    sid.sub_auths[1] = u32::from_be_bytes(
-        bytes_array[0..4]
-            .try_into()
-            .map_err(|_| IDMAP_SID_INVALID)?,
-    );
-    sid.sub_auths[2] = u32::from_be_bytes(s_bytes_array);
-    sid.sub_auths[3] = u32::from_le_bytes(
-        bytes_array[8..12]
-            .try_into()
-            .map_err(|_| IDMAP_SID_INVALID)?,
-    );
-    sid.sub_auths[4] = u32::from_le_bytes(
-        bytes_array[12..]
-            .try_into()
-            .map_err(|_| IDMAP_SID_INVALID)?,
-    );
+        let sid_rev_num = parts[1].parse::<u8>().map_err(|_| IDMAP_SID_INVALID)?;
+        let id_auth = parts[2].parse::<u64>().map_err(|_| IDMAP_SID_INVALID)?;
 
-    Ok(sid)
-}
+        let sub_auths_iter = parts[3..]
+            .iter()
+            .map(|s| s.parse::<u32>().map_err(|_| IDMAP_SID_INVALID));
 
-fn rid_from_sid(sid: &AadSid) -> Result<u32, IdmapError> {
-    Ok(sid.sub_auths[usize::try_from(sid.num_auths).map_err(|_| IDMAP_SID_INVALID)? - 1])
+        let mut sub_auths = [0u32; 15];
+        let mut count = 0;
+
+        for (i, sub_auth) in sub_auths_iter.enumerate() {
+            if i >= sub_auths.len() {
+                return Err(IDMAP_SID_INVALID);
+            }
+            sub_auths[i] = sub_auth?;
+            count += 1;
+        }
+
+        Ok(AadSid {
+            sid_rev_num,
+            num_auths: count as i8,
+            id_auth,
+            sub_auths,
+        })
+    }
+
+    pub fn from_object_id(object_id: &Uuid) -> Result<Self, IdmapError> {
+        let bytes_array = object_id.as_bytes();
+        let s_bytes_array = [
+            bytes_array[6],
+            bytes_array[7],
+            bytes_array[4],
+            bytes_array[5],
+        ];
+
+        let mut sid = AadSid {
+            sid_rev_num: 1,
+            num_auths: 5,
+            id_auth: 12,
+            sub_auths: [0; 15],
+        };
+
+        sid.sub_auths[0] = 1;
+        sid.sub_auths[1] = u32::from_be_bytes(
+            bytes_array[0..4]
+                .try_into()
+                .map_err(|_| IDMAP_SID_INVALID)?,
+        );
+        sid.sub_auths[2] = u32::from_be_bytes(s_bytes_array);
+        sid.sub_auths[3] = u32::from_le_bytes(
+            bytes_array[8..12]
+                .try_into()
+                .map_err(|_| IDMAP_SID_INVALID)?,
+        );
+        sid.sub_auths[4] = u32::from_le_bytes(
+            bytes_array[12..]
+                .try_into()
+                .map_err(|_| IDMAP_SID_INVALID)?,
+        );
+
+        Ok(sid)
+    }
+
+    pub fn rid(&self) -> Result<u32, IdmapError> {
+        Ok(self.sub_auths[usize::try_from(self.num_auths).map_err(|_| IDMAP_SID_INVALID)? - 1])
+    }
 }
 
 pub const DEFAULT_IDMAP_RANGE: (u32, u32) = (200000, 2000200000);
@@ -231,13 +267,8 @@ impl Idmap {
         }
     }
 
-    pub fn object_id_to_unix_id(
-        &self,
-        tenant_id: &str,
-        object_id: &Uuid,
-    ) -> Result<u32, IdmapError> {
-        let sid = object_id_to_sid(object_id)?;
-        let rid = rid_from_sid(&sid)?;
+    pub fn object_id_to_unix_id(&self, tenant_id: &str, sid: &AadSid) -> Result<u32, IdmapError> {
+        let rid = sid.rid()?;
         let idmap_range = match self.ranges.get(tenant_id) {
             Some(idmap_range) => idmap_range,
             None => return Err(IDMAP_NO_RANGE),
@@ -268,7 +299,7 @@ unsafe impl Sync for Idmap {}
 
 #[cfg(test)]
 mod tests {
-    use crate::{Idmap, DEFAULT_IDMAP_RANGE};
+    use crate::{AadSid, Idmap, DEFAULT_IDMAP_RANGE};
     use std::collections::HashMap;
     use uuid::Uuid;
 
@@ -335,9 +366,30 @@ mod tests {
         for (username, (expected_uid, object_id)) in &usermap {
             let object_uuid = Uuid::parse_str(&object_id).expect("Failed parsing object_id");
             let uid = idmap
-                .object_id_to_unix_id(tenant_id, &object_uuid)
+                .object_id_to_unix_id(
+                    tenant_id,
+                    &AadSid::from_object_id(&object_uuid).expect("Failed parsing object id"),
+                )
                 .expect(&format!("Failed converting uuid {} to uid", object_id));
             assert_eq!(uid, *expected_uid, "Uid for {} did not match", username);
         }
+    }
+
+    #[test]
+    fn sid_match_object_id() {
+        let object_id = AadSid::from_object_id(
+            &Uuid::parse_str("e8b5ca15-cb55-4b86-9113-a616d7f84214")
+                .expect("Failed parsing object id"),
+        )
+        .expect("Failed parsing object id as sid");
+        let sid = AadSid::from_sid_str("S-1-12-1-3904227861-1267125077-379982737-339933399")
+            .expect("Failed parsing sid");
+
+        assert_eq!(object_id, sid, "Parsed object id did not match parsed sid!");
+        assert_eq!(
+            object_id.rid(),
+            sid.rid(),
+            "Parsed object id RID did not match parsed sid RID!"
+        );
     }
 }

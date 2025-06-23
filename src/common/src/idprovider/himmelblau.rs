@@ -38,7 +38,7 @@ use himmelblau::error::{MsalError, DEVICE_AUTH_FAIL};
 use himmelblau::graph::{DirectoryObject, Graph};
 use himmelblau::intune::IntuneForLinux;
 use himmelblau::{AuthOption, MFAAuthContinue};
-use idmap::Idmap;
+use idmap::{AadSid, Idmap};
 use kanidm_hsm_crypto::{LoadableIdentityKey, LoadableMsOapxbcRsaKey, PinValue, SealedData, Tpm};
 use regex::Regex;
 use reqwest;
@@ -126,6 +126,12 @@ pub struct BadPinCounter {
     counter: RwLock<HashMap<String, u32>>,
 }
 
+impl Default for BadPinCounter {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl BadPinCounter {
     pub fn new() -> Self {
         BadPinCounter {
@@ -167,7 +173,7 @@ impl HimmelblauMultiProvider {
         let mut providers = HashMap::new();
         let cfg = config.read().await;
         let domains = cfg.get_configured_domains();
-        if domains.len() == 0 {
+        if domains.is_empty() {
             return Err(anyhow!("No domains configured in himmelblau.conf"));
         }
         for domain in domains {
@@ -631,7 +637,7 @@ impl IdProvider for HimmelblauProvider {
         tpm: &mut tpm::BoxedDynTpm,
         machine_key: &tpm::MachineKey,
     ) -> Result<UnixUserToken, IdpError> {
-        if let Err(_) = self.delayed_init().await {
+        if (self.delayed_init().await).is_err() {
             // We can't fetch an access_token when initialization hasn't
             // completed. This only happens when we're offline during first
             // startup. This should never happen!
@@ -675,7 +681,7 @@ impl IdProvider for HimmelblauProvider {
         tpm: &mut tpm::BoxedDynTpm,
         machine_key: &tpm::MachineKey,
     ) -> (Vec<u8>, Vec<u8>) {
-        if let Err(_) = self.delayed_init().await {
+        if (self.delayed_init().await).is_err() {
             // We can't fetch krb5 tgts when initialization hasn't
             // completed. This only happens when we're offline during first
             // startup. This should never happen!
@@ -721,7 +727,7 @@ impl IdProvider for HimmelblauProvider {
         tpm: &mut tpm::BoxedDynTpm,
         machine_key: &tpm::MachineKey,
     ) -> Result<String, IdpError> {
-        if let Err(_) = self.delayed_init().await {
+        if (self.delayed_init().await).is_err() {
             // We can't fetch a PRT cookie when initialization hasn't
             // completed. This only happens when we're offline during first
             // startup. This should never happen!
@@ -755,7 +761,7 @@ impl IdProvider for HimmelblauProvider {
         tpm: &mut tpm::BoxedDynTpm,
         machine_key: &tpm::MachineKey,
     ) -> Result<bool, IdpError> {
-        if let Err(_) = self.delayed_init().await {
+        if (self.delayed_init().await).is_err() {
             // We can't change the Hello PIN when initialization hasn't
             // completed. This only happens when we're offline during first
             // startup.
@@ -830,7 +836,7 @@ impl IdProvider for HimmelblauProvider {
             }
         }
 
-        if let Err(_) = self.delayed_init().await {
+        if (self.delayed_init().await).is_err() {
             // Initialization failed. Report that the system is offline. We
             // can't proceed with initialization until the system is online.
             info!("Network down detected");
@@ -883,10 +889,35 @@ impl IdProvider for HimmelblauProvider {
                                     (user.uid, user.gid)
                                 },
                                 None => match config.get_id_attr_map() {
-                                    // If Uuid mapping is enabled, bail out now.
-                                    // We can only provide a valid idmapping with
-                                    // name idmapping at this point.
-                                    IdAttr::Uuid => return Err(IdpError::BadRequest),
+                                    IdAttr::Uuid => {
+                                        // Attempt to map the UPN to an Object Id.
+                                        let sidtoname = self.client
+                                            .read()
+                                            .await
+                                            .resolve_nametosid(
+                                                &account_id,
+                                                tpm,
+                                                machine_key
+                                            )
+                                            .await
+                                            .map_err(|e| {
+                                                error!("Failed mapping UPN to Object Id: {:?}", e);
+                                                IdpError::BadRequest
+                                            })?;
+                                        let idmap = self.idmap.read().await;
+                                        let sid = AadSid::from_sid_str(&sidtoname.sid).map_err(|e| {
+                                            error!("Failed parsing SID: {:?}", e);
+                                            IdpError::BadRequest
+                                        })?;
+                                        let uid = idmap.object_id_to_unix_id(&self.graph.tenant_id().await.map_err(|e| {
+                                            error!("Failed fetching tenant id: {:?}", e);
+                                            IdpError::BadRequest
+                                        })?, &sid).map_err(|e| {
+                                            error!("Failed mapping object id to uid: {:?}", e);
+                                            IdpError::BadRequest
+                                        })?;
+                                        (uid, uid)
+                                    },
                                     IdAttr::Name | IdAttr::Rfc2307 => {
                                         let idmap = self.idmap.read().await;
                                         let gid = idmap.gen_to_unix(&self.graph.tenant_id().await.map_err(|e| {
@@ -1046,7 +1077,7 @@ impl IdProvider for HimmelblauProvider {
             || !hello_enabled
             || self.bad_pin_counter.bad_pin_count(account_id).await > 3
         {
-            if let Err(_) = self.delayed_init().await {
+            if (self.delayed_init().await).is_err() {
                 // Initialization failed. Report that the system is offline. We
                 // can't proceed with initialization until the system is online.
                 info!("Network down detected");
@@ -1208,7 +1239,7 @@ impl IdProvider for HimmelblauProvider {
             }
         }
 
-        if let Err(_) = self.delayed_init().await {
+        if (self.delayed_init().await).is_err() {
             // Initialization failed. Report that the system is offline. We
             // can't proceed with initialization until the system is online.
             info!("Network down detected");
@@ -2285,7 +2316,10 @@ impl HimmelblauProvider {
                                 error!("{:?}", e);
                                 IdpError::BadRequest
                             })?,
-                            &uuid,
+                            &AadSid::from_object_id(&uuid).map_err(|e| {
+                                error!("Failed parsing object id: {:?}", e);
+                                IdpError::BadRequest
+                            })?,
                         )
                         .map_err(|e| {
                             error!("{:?}", e);
@@ -2399,7 +2433,8 @@ impl HimmelblauProvider {
                         .tenant_id()
                         .await
                         .map_err(|e| anyhow!("{:?}", e))?,
-                    &id,
+                    &AadSid::from_object_id(&id)
+                        .map_err(|e| anyhow!("Failed parsing object id: {:?}", e))?,
                 )
                 .map_err(|e| anyhow!("Failed fetching gid for {}: {:?}", id, e))?,
             IdAttr::Name => idmap
@@ -2428,7 +2463,8 @@ impl HimmelblauProvider {
                                 .tenant_id()
                                 .await
                                 .map_err(|e| anyhow!("{:?}", e))?,
-                            &id,
+                            &AadSid::from_object_id(&id)
+                                .map_err(|e| anyhow!("Failed parsing object id: {:?}", e))?,
                         )
                         .map_err(|e| anyhow!("Failed fetching gid for {}: {:?}", id, e))?,
                     Some(IdAttr::Name) => idmap
