@@ -32,7 +32,7 @@ homepage = "https://github.com/himmelblau-idm/himmelblau"
 repository = "https://github.com/himmelblau-idm/himmelblau"
 
 [workspace.dependencies]
-libc = "^0.2.173"
+libc = "^0.2.174"
 pkg-config = "^0.3.32"
 lazy_static = "^1.4.0"
 paste = "^1.0.12"
@@ -67,7 +67,7 @@ base32 = "^0.5.0"
 base64 = "^0.22.0"
 base64urlsafedata = "0.5.0"
 hex = "^0.4.3"
-num_enum = "^0.7.2"
+num_enum = "^0.7.4"
 scim_proto = "^1.6.4"
 serde_with = "3.13.0"
 time = { version = "^0.3.41", features = ["formatting", "local-offset"] }
