@@ -22,7 +22,7 @@ RUN zypper --non-interactive refresh && zypper --non-interactive update && \
     clang \
     gettext-tools \
     sqlite3-devel \
-    utf8proc-devel \
+    libunistring-devel \
     cargo \
     gobject-introspection-devel \
     cairo-devel \

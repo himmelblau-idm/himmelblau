@@ -29,8 +29,6 @@
 
 #include "sss_idmap.h"
 #include "sss_idmap_private.h"
-//#include "util/util.h"
-//#include "util/sss_endian.h"
 #include "util.h"
 
 #define SID_ID_AUTHS 6

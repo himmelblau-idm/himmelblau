@@ -21,7 +21,7 @@ RUN dnf -y update && \
     clang \
     gettext \
     sqlite-devel \
-    utf8proc-devel \
+    libunistring-devel \
     cargo \
     gobject-introspection-devel \
     cairo-devel \

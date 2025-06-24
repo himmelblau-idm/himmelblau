@@ -4,7 +4,7 @@ FROM rockylinux:8
 # Set environment variables for non-interactive installs
 ENV YUM_VERSION=8
 
-# Enable powertools and subversion-devel (module which owns utf8proc-devel)
+# Enable powertools and subversion-devel (module which owns libunistring-devel)
 RUN yum update -y && dnf install -y 'dnf-command(config-manager)' \
     && dnf config-manager --set-enabled powertools \
     && dnf module enable -y subversion-devel
@@ -28,7 +28,7 @@ RUN yum update -y && yum install -y \
     clang \
     gettext \
     sqlite-devel \
-    utf8proc-devel \
+    libunistring-devel \
     && yum clean all
 
 # Install Rust (latest stable)

@@ -27,7 +27,7 @@
               pkgs.pkg-config rustPlatform.bindgenHook
             ];
             buildInputs = with pkgs; [
-              talloc tevent ding-libs utf8proc
+              talloc tevent ding-libs libunistring
               sqlite.dev openssl.dev libcap.dev
               ldb.dev krb5.dev pcre2.dev
               pam dbus.dev udev.dev
