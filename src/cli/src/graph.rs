@@ -20,6 +20,23 @@ use himmelblau::graph::Graph;
 use reqwest::{header, Client};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use std::fmt;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum GraphResources {
+    GroupReadWriteAll,
+    UserReadWriteAll,
+}
+
+impl fmt::Display for GraphResources {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let id = match self {
+            GraphResources::GroupReadWriteAll => "4e46008b-f24c-477d-8fff-7bb4ec7aafe0",
+            GraphResources::UserReadWriteAll => "204e0828-b5ca-4ad8-b9f3-f32a958e7cc4",
+        };
+        write!(f, "{}", id)
+    }
+}
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ExtensionProperty {
@@ -81,11 +98,35 @@ impl CliGraph {
         access_token: &str,
         display_name: &str,
         sign_in_audience: Option<&str>,
+        redirect_uris: Vec<&str>,
+        graph_resources: &[GraphResources],
     ) -> Result<()> {
-        let url = format!("{}/v1.0/applications", self.graph_url,);
-        let body = json!({
+        let url = format!("{}/v1.0/applications", self.graph_url);
+        let mut body = json!({
             "displayName": display_name,
             "signInAudience": sign_in_audience.unwrap_or("AzureADMyOrg"),
+        });
+        if !graph_resources.is_empty() {
+            body["requiredResourceAccess"] = json!([
+                {
+                    "resourceAppId": "00000003-0000-0000-c000-000000000000",
+                    "resourceAccess": graph_resources.iter()
+                        .map(|r| {
+                            json!({
+                                "id": r.to_string(),
+                                "type": "Scope"
+                            })
+                        })
+                        .collect::<Vec<_>>()
+                }
+            ]);
+        }
+        let mut redirects = vec![];
+        for redirect_uri in redirect_uris {
+            redirects.push(redirect_uri);
+        }
+        body["publicClient"] = json!({
+            "redirectUris": redirects,
         });
         let resp = self
             .client

@@ -78,6 +78,21 @@ pub enum ApplicationOpt {
     ///
     /// The new application will be created with the provided `--display-name`.
     ///
+    /// You may specify one or more `--redirect-uri` options to configure redirect URIs
+    /// for the application (used for public client authentication). If no redirect
+    /// URIs are provided, the application will not include any by default.
+    ///
+    /// Use the `--user-read-write` and/or `--group-read-write` flags to grant the
+    /// application additional Microsoft Graph API permissions at registration time,
+    /// including `User.ReadWrite.All` and `Group.ReadWrite.All`.
+    ///
+    /// ⚠️ If you grant these permissions, it is strongly recommended that you restrict
+    /// access to the application to specific administrators or groups:
+    ///
+    /// 1. In the Microsoft Entra admin portal, go to Entra ID → Enterprise applications and find your app’s entry.
+    /// 2. Under Properties, set “Assignment required?” to Yes.
+    /// 3. Go to Users and groups, click Add, and assign only the specific users or groups you want to have access.
+    ///
     /// If the `--name` parameter is omitted, the command authenticates as the currently
     /// logged-in user via the Himmelblau SSO broker. If the `--name` parameter is
     /// provided, the command attempts to authenticate as the specified Entra ID user.
@@ -93,13 +108,19 @@ pub enum ApplicationOpt {
         client_id: String,
         #[clap(long = "display-name")]
         display_name: String,
+        #[clap(long = "redirect-uri", value_name = "URI")]
+        redirect_uris: Vec<String>,
+        #[clap(long = "user-read-write")]
+        user_read_write: bool,
+        #[clap(long = "group-read-write")]
+        group_read_write: bool,
     },
-    /// Lists the POSIX-related schema extension attributes registered on an Entra ID application.
+    /// Lists the schema extension attributes registered on an Entra ID application.
     ///
     /// This command retrieves the directory extension attributes (e.g., `uidNumber`, `gidNumber`,
     /// etc.) that have been added to the application identified by `--schema-app-object-id`.
     ///
-    /// The `--schema-app-object-id` parameter must be the **Object ID** of the application
+    /// The `--schema-app-object-id` parameter must be the Object ID of the application
     /// (not the Client ID), as shown in the Entra Admin Center. This value corresponds to the
     /// `id` field in Microsoft Graph and is required to query extension properties.
     ///

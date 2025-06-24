@@ -64,7 +64,7 @@ use uuid::Uuid;
 include!("./opt/tool.rs");
 
 mod graph;
-use crate::graph::CliGraph;
+use crate::graph::{CliGraph, GraphResources};
 
 #[derive(Debug, Deserialize)]
 struct Accounts {
@@ -296,6 +296,9 @@ async fn main() -> ExitCode {
             account_id: _,
             client_id: _,
             display_name: _,
+            redirect_uris: _,
+            user_read_write: _,
+            group_read_write: _,
         }) => debug,
         HimmelblauUnixOpt::Application(ApplicationOpt::ListSchemaExtensions {
             debug,
@@ -792,6 +795,9 @@ async fn main() -> ExitCode {
             account_id,
             client_id,
             display_name,
+            redirect_uris,
+            user_read_write,
+            group_read_write,
         }) => {
             debug!("Starting application list tool ...");
 
@@ -810,8 +816,22 @@ async fn main() -> ExitCode {
                 }
             };
 
+            let mut graph_resources = vec![];
+            if user_read_write {
+                graph_resources.push(GraphResources::UserReadWriteAll);
+            }
+            if group_read_write {
+                graph_resources.push(GraphResources::GroupReadWriteAll);
+            }
+
             match cli_graph
-                .create_application(&access_token, &display_name, None)
+                .create_application(
+                    &access_token,
+                    &display_name,
+                    None,
+                    redirect_uris.iter().map(|s| s.as_str()).collect(),
+                    &graph_resources,
+                )
                 .await
             {
                 Ok(_) => {}
