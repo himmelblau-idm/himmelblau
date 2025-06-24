@@ -64,7 +64,7 @@ use uuid::Uuid;
 include!("./opt/tool.rs");
 
 mod graph;
-use crate::graph::CliGraph;
+use crate::graph::{CliGraph, GraphResources};
 
 #[derive(Debug, Deserialize)]
 struct Accounts {
@@ -296,6 +296,21 @@ async fn main() -> ExitCode {
             account_id: _,
             client_id: _,
             display_name: _,
+            redirect_uris: _,
+            user_read_write: _,
+            group_read_write: _,
+        }) => debug,
+        HimmelblauUnixOpt::Application(ApplicationOpt::ListSchemaExtensions {
+            debug,
+            account_id: _,
+            client_id: _,
+            schema_app_object_id: _,
+        }) => debug,
+        HimmelblauUnixOpt::Application(ApplicationOpt::AddSchemaExtensions {
+            debug,
+            account_id: _,
+            client_id: _,
+            schema_app_object_id: _,
         }) => debug,
         HimmelblauUnixOpt::AuthTest {
             debug,
@@ -316,6 +331,24 @@ async fn main() -> ExitCode {
             account_id: _,
             client_id: _,
         } => debug,
+        HimmelblauUnixOpt::User(UserOpt::SetPosixAttrs {
+            debug,
+            account_id: _,
+            schema_client_id: _,
+            user_id: _,
+            uid: _,
+            gid: _,
+            home: _,
+            shell: _,
+            gecos: _,
+        }) => debug,
+        HimmelblauUnixOpt::Group(GroupOpt::SetPosixAttrs {
+            debug,
+            account_id: _,
+            schema_client_id: _,
+            group_id: _,
+            gid: _,
+        }) => debug,
         HimmelblauUnixOpt::Idmap(IdmapOpt::UserAdd {
             debug,
             account_id: _,
@@ -780,6 +813,9 @@ async fn main() -> ExitCode {
             account_id,
             client_id,
             display_name,
+            redirect_uris,
+            user_read_write,
+            group_read_write,
         }) => {
             debug!("Starting application list tool ...");
 
@@ -798,13 +834,107 @@ async fn main() -> ExitCode {
                 }
             };
 
+            let mut graph_resources = vec![];
+            if user_read_write {
+                graph_resources.push(GraphResources::UserReadWriteAll);
+            }
+            if group_read_write {
+                graph_resources.push(GraphResources::GroupReadWriteAll);
+            }
+
             match cli_graph
-                .create_application(&access_token, &display_name, None)
+                .create_application(
+                    &access_token,
+                    &display_name,
+                    None,
+                    redirect_uris.iter().map(|s| s.as_str()).collect(),
+                    &graph_resources,
+                )
                 .await
             {
                 Ok(_) => {}
                 Err(e) => {
                     error!("Failed to create app: {:?}", e);
+                    return ExitCode::FAILURE;
+                }
+            }
+
+            ExitCode::SUCCESS
+        }
+        HimmelblauUnixOpt::Application(ApplicationOpt::ListSchemaExtensions {
+            debug: _,
+            account_id,
+            client_id,
+            schema_app_object_id,
+        }) => {
+            debug!("Starting list schema extensions tool ...");
+
+            let (graph, access_token) = obtain_access_token!(
+                account_id,
+                vec!["https://graph.microsoft.com/Application.Read.All"],
+                None,
+                client_id
+            );
+
+            let cli_graph = match CliGraph::new(&graph).await {
+                Ok(cli_graph) => cli_graph,
+                Err(e) => {
+                    error!("Failed to create cli graph: {:?}", e);
+                    return ExitCode::FAILURE;
+                }
+            };
+
+            let schema_extensions = match cli_graph
+                .list_schema_extensions(&access_token, &schema_app_object_id)
+                .await
+            {
+                Ok(schema_extensions) => schema_extensions,
+                Err(e) => {
+                    error!("Failed listing schema extensions: {:?}", e);
+                    return ExitCode::FAILURE;
+                }
+            };
+            let json = match serde_json::to_string_pretty(&schema_extensions) {
+                Ok(json) => json,
+                Err(e) => {
+                    error!("Failed parsing schema extensions response: {:?}", e);
+                    return ExitCode::FAILURE;
+                }
+            };
+            println!("{}", json);
+
+            ExitCode::SUCCESS
+        }
+        HimmelblauUnixOpt::Application(ApplicationOpt::AddSchemaExtensions {
+            debug: _,
+            account_id,
+            client_id,
+            schema_app_object_id,
+        }) => {
+            debug!("Starting add schema extensions tool ...");
+
+            let (graph, access_token) = obtain_access_token!(
+                account_id,
+                vec!["https://graph.microsoft.com/Application.ReadWrite.All"],
+                None,
+                client_id
+            );
+
+            let cli_graph = match CliGraph::new(&graph).await {
+                Ok(cli_graph) => cli_graph,
+                Err(e) => {
+                    error!("Failed to create cli graph: {:?}", e);
+                    return ExitCode::FAILURE;
+                }
+            };
+
+            match cli_graph
+                .add_schema_extensions(&access_token, &schema_app_object_id)
+                .await
+            {
+                Ok(_) => {}
+                Err(e) => {
+                    error!("Failed adding schema extensions: {:?}", e);
                     return ExitCode::FAILURE;
                 }
             }
@@ -1115,6 +1245,93 @@ async fn main() -> ExitCode {
             }
 
             info!("Users and groups enumerated successfully.");
+
+            ExitCode::SUCCESS
+        }
+        HimmelblauUnixOpt::User(UserOpt::SetPosixAttrs {
+            debug: _,
+            account_id,
+            schema_client_id,
+            user_id,
+            uid,
+            gid,
+            home,
+            shell,
+            gecos,
+        }) => {
+            debug!("Starting user set posix attrs tool ...");
+
+            let (graph, access_token) = obtain_access_token!(
+                account_id,
+                vec!["https://graph.microsoft.com/User.ReadWrite.All"],
+                None,
+                schema_client_id
+            );
+
+            let cli_graph = match CliGraph::new(&graph).await {
+                Ok(cli_graph) => cli_graph,
+                Err(e) => {
+                    error!("Failed to create cli graph: {:?}", e);
+                    return ExitCode::FAILURE;
+                }
+            };
+
+            match cli_graph
+                .set_user_posix_attrs(
+                    &access_token,
+                    &user_id,
+                    &schema_client_id,
+                    uid,
+                    gid,
+                    home,
+                    shell,
+                    gecos,
+                )
+                .await
+            {
+                Ok(_) => (),
+                Err(e) => {
+                    error!("Failed to set user posix attrs: {:?}", e);
+                    return ExitCode::FAILURE;
+                }
+            }
+
+            ExitCode::SUCCESS
+        }
+        HimmelblauUnixOpt::Group(GroupOpt::SetPosixAttrs {
+            debug: _,
+            account_id,
+            schema_client_id,
+            group_id,
+            gid,
+        }) => {
+            debug!("Starting group set posix attrs tool ...");
+
+            let (graph, access_token) = obtain_access_token!(
+                account_id,
+                vec!["https://graph.microsoft.com/Group.ReadWrite.All"],
+                None,
+                schema_client_id
+            );
+
+            let cli_graph = match CliGraph::new(&graph).await {
+                Ok(cli_graph) => cli_graph,
+                Err(e) => {
+                    error!("Failed to create cli graph: {:?}", e);
+                    return ExitCode::FAILURE;
+                }
+            };
+
+            match cli_graph
+                .set_group_posix_attrs(&access_token, &group_id, &schema_client_id, gid)
+                .await
+            {
+                Ok(_) => (),
+                Err(e) => {
+                    error!("Failed to set group posix attrs: {:?}", e);
+                    return ExitCode::FAILURE;
+                }
+            }
 
             ExitCode::SUCCESS
         }
