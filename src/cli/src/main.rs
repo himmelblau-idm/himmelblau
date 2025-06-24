@@ -331,6 +331,24 @@ async fn main() -> ExitCode {
             account_id: _,
             client_id: _,
         } => debug,
+        HimmelblauUnixOpt::User(UserOpt::SetPosixAttrs {
+            debug,
+            account_id: _,
+            schema_client_id: _,
+            user_id: _,
+            uid: _,
+            gid: _,
+            home: _,
+            shell: _,
+            gecos: _,
+        }) => debug,
+        HimmelblauUnixOpt::Group(GroupOpt::SetPosixAttrs {
+            debug,
+            account_id: _,
+            schema_client_id: _,
+            group_id: _,
+            gid: _,
+        }) => debug,
         HimmelblauUnixOpt::Idmap(IdmapOpt::UserAdd {
             debug,
             account_id: _,
@@ -1227,6 +1245,93 @@ async fn main() -> ExitCode {
             }
 
             info!("Users and groups enumerated successfully.");
+
+            ExitCode::SUCCESS
+        }
+        HimmelblauUnixOpt::User(UserOpt::SetPosixAttrs {
+            debug: _,
+            account_id,
+            schema_client_id,
+            user_id,
+            uid,
+            gid,
+            home,
+            shell,
+            gecos,
+        }) => {
+            debug!("Starting user set posix attrs tool ...");
+
+            let (graph, access_token) = obtain_access_token!(
+                account_id,
+                vec!["https://graph.microsoft.com/User.ReadWrite.All"],
+                None,
+                schema_client_id
+            );
+
+            let cli_graph = match CliGraph::new(&graph).await {
+                Ok(cli_graph) => cli_graph,
+                Err(e) => {
+                    error!("Failed to create cli graph: {:?}", e);
+                    return ExitCode::FAILURE;
+                }
+            };
+
+            match cli_graph
+                .set_user_posix_attrs(
+                    &access_token,
+                    &user_id,
+                    &schema_client_id,
+                    uid,
+                    gid,
+                    home,
+                    shell,
+                    gecos,
+                )
+                .await
+            {
+                Ok(_) => (),
+                Err(e) => {
+                    error!("Failed to set user posix attrs: {:?}", e);
+                    return ExitCode::FAILURE;
+                }
+            }
+
+            ExitCode::SUCCESS
+        }
+        HimmelblauUnixOpt::Group(GroupOpt::SetPosixAttrs {
+            debug: _,
+            account_id,
+            schema_client_id,
+            group_id,
+            gid,
+        }) => {
+            debug!("Starting group set posix attrs tool ...");
+
+            let (graph, access_token) = obtain_access_token!(
+                account_id,
+                vec!["https://graph.microsoft.com/Group.ReadWrite.All"],
+                None,
+                schema_client_id
+            );
+
+            let cli_graph = match CliGraph::new(&graph).await {
+                Ok(cli_graph) => cli_graph,
+                Err(e) => {
+                    error!("Failed to create cli graph: {:?}", e);
+                    return ExitCode::FAILURE;
+                }
+            };
+
+            match cli_graph
+                .set_group_posix_attrs(&access_token, &group_id, &schema_client_id, gid)
+                .await
+            {
+                Ok(_) => (),
+                Err(e) => {
+                    error!("Failed to set group posix attrs: {:?}", e);
+                    return ExitCode::FAILURE;
+                }
+            }
 
             ExitCode::SUCCESS
         }

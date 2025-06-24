@@ -19,7 +19,7 @@ use anyhow::{anyhow, Result};
 use himmelblau::graph::Graph;
 use reqwest::{header, Client};
 use serde::{Deserialize, Serialize};
-use serde_json::json;
+use serde_json::{json, Map, Value};
 use std::fmt;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -60,6 +60,16 @@ pub(crate) struct Application {
     pub(crate) app_id: String,
     #[serde(rename = "displayName")]
     pub(crate) display_name: String,
+}
+
+macro_rules! extension_property {
+    ($schema_client_id:ident, $property:expr) => {
+        format!(
+            "extension_{}_{}",
+            $schema_client_id.replace('-', ""),
+            $property
+        )
+    };
 }
 
 pub(crate) struct CliGraph {
@@ -231,5 +241,107 @@ impl CliGraph {
         )?;
 
         Ok(props)
+    }
+
+    pub(crate) async fn set_user_posix_attrs(
+        &self,
+        token: &str,
+        user_id: &str,
+        schema_client_id: &str,
+        uid: Option<u32>,
+        gid: Option<u32>,
+        home: Option<String>,
+        shell: Option<String>,
+        gecos: Option<String>,
+    ) -> Result<(), anyhow::Error> {
+        let mut map = Map::new();
+
+        if let Some(uid) = uid {
+            map.insert(
+                extension_property!(schema_client_id, "uidNumber"),
+                json!(uid),
+            );
+        }
+        if let Some(gid) = gid {
+            map.insert(
+                extension_property!(schema_client_id, "gidNumber"),
+                json!(gid),
+            );
+        }
+        if let Some(home) = home {
+            map.insert(
+                extension_property!(schema_client_id, "unixHomeDirectory"),
+                json!(home),
+            );
+        }
+        if let Some(shell) = shell {
+            map.insert(
+                extension_property!(schema_client_id, "loginShell"),
+                json!(shell),
+            );
+        }
+        if let Some(gecos) = gecos {
+            map.insert(extension_property!(schema_client_id, "gecos"), json!(gecos));
+        }
+
+        if map.is_empty() {
+            return Err(anyhow::anyhow!("No attributes specified"));
+        }
+
+        let url = format!("{}/v1.0/users/{}", self.graph_url, user_id);
+        let resp = self
+            .client
+            .patch(&url)
+            .bearer_auth(token)
+            .json(&Value::Object(map))
+            .send()
+            .await?;
+
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            return Err(anyhow::anyhow!(
+                "Failed to update user {}: {}: {}",
+                user_id,
+                status,
+                body
+            ));
+        }
+
+        Ok(())
+    }
+
+    pub(crate) async fn set_group_posix_attrs(
+        &self,
+        token: &str,
+        group_id: &str,
+        schema_client_id: &str,
+        gid: u32,
+    ) -> Result<(), anyhow::Error> {
+        let body = json!({
+            extension_property!(schema_client_id, "gidNumber"): gid
+        });
+
+        let url = format!("{}/v1.0/groups/{}", self.graph_url, group_id);
+        let resp = self
+            .client
+            .patch(&url)
+            .bearer_auth(token)
+            .json(&body)
+            .send()
+            .await?;
+
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            return Err(anyhow::anyhow!(
+                "Failed to update group {}: {}: {}",
+                group_id,
+                status,
+                body
+            ));
+        }
+
+        Ok(())
     }
 }
