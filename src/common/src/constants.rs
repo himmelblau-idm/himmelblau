@@ -50,3 +50,4 @@ pub const CN_NAME_MAPPING: bool = true;
 pub const DEFAULT_HELLO_PIN_MIN_LEN: usize = 6;
 pub const DEFAULT_CCACHE_DIR: &str = "/tmp/krb5cc_";
 pub const EDGE_BROWSER_CLIENT_ID: &str = "d7b530a4-7680-4c23-a8bf-c52c121d2e87";
+pub const DEFAULT_TPM_TCTI_NAME: &str = "device:/dev/tpmrm0";
