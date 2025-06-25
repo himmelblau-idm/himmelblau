@@ -8,6 +8,8 @@
  * file, You can obtain one at https://mozilla.org/MPL/2.0/.
  */
 use kanidm_hsm_crypto::AuthValue;
+#[cfg(not(feature = "tpm"))]
+use kanidm_hsm_crypto::BoxedDynTpm;
 use std::error::Error;
 use std::path::PathBuf;
 use std::str::FromStr;
@@ -44,10 +46,58 @@ pub async fn write_hsm_pin(hsm_pin_path: &str) -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
+#[cfg(feature = "tpm")]
+pub fn open_tpm(tcti_name: &str) -> Option<BoxedDynTpm> {
+    use kanidm_hsm_crypto::tpm::TpmTss;
+    match TpmTss::new(tcti_name) {
+        Ok(tpm) => {
+            debug!("opened hw tpm");
+            Some(BoxedDynTpm::new(tpm))
+        }
+        Err(tpm_err) => {
+            error!(?tpm_err, "Unable to open requested tpm device");
+            None
+        }
+    }
+}
+
+#[cfg(not(feature = "tpm"))]
+pub fn open_tpm(_tcti_name: &str) -> Option<BoxedDynTpm> {
+    error!("Hardware TPM supported was not enabled in this build. Unable to proceed");
+    None
+}
+
+#[cfg(feature = "tpm")]
+pub fn open_tpm_if_possible(tcti_name: &str) -> BoxedDynTpm {
+    use kanidm_hsm_crypto::tpm::TpmTss;
+    match TpmTss::new(tcti_name) {
+        Ok(tpm) => {
+            debug!("opened hw tpm");
+            BoxedDynTpm::new(tpm)
+        }
+        Err(tpm_err) => {
+            warn!(
+                ?tpm_err,
+                "Unable to open requested tpm device, falling back to soft tpm"
+            );
+            BoxedDynTpm::new(SoftTpm::new())
+        }
+    }
+}
+
+#[cfg(not(feature = "tpm"))]
+pub fn open_tpm_if_possible(_tcti_name: &str) -> BoxedDynTpm {
+    use kanidm_hsm_crypto::soft::SoftTpm;
+    debug!("opened soft tpm");
+    BoxedDynTpm::new(SoftTpm::new())
+}
+
 #[macro_export]
 macro_rules! tpm_init {
     ($cfg:ident) => {{
-        use himmelblau_unix_common::tpm::{read_hsm_pin, write_hsm_pin};
+        use himmelblau_unix_common::tpm::{
+            open_tpm, open_tpm_if_possible, read_hsm_pin, write_hsm_pin,
+        };
         use himmelblau_unix_common::unix_config::HsmType;
         use kanidm_hsm_crypto::AuthValue;
 
@@ -83,10 +133,11 @@ macro_rules! tpm_init {
 
         let mut hsm: BoxedDynTpm = match $cfg.get_hsm_type() {
             HsmType::Soft => BoxedDynTpm::new(SoftTpm::new()),
-            HsmType::Tpm => {
-                error!("TPM not supported ... yet");
-                return ExitCode::FAILURE;
-            }
+            HsmType::TpmIfPossible => open_tpm_if_possible(&$cfg.get_tpm_tcti_name()),
+            HsmType::Tpm => match open_tpm(&$cfg.get_tpm_tcti_name()) {
+                Some(hsm) => hsm,
+                None => return ExitCode::FAILURE,
+            },
         };
 
         (auth_value, hsm)
