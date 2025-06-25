@@ -67,6 +67,7 @@ use himmelblau_unix_common::client_sync::DaemonClientBlocking;
 use himmelblau_unix_common::config::{split_username, HimmelblauConfig};
 use himmelblau_unix_common::constants::BROKER_APP_ID;
 use himmelblau_unix_common::constants::DEFAULT_CONFIG_PATH;
+use himmelblau_unix_common::hello_pin_complexity::is_simple_pin;
 use himmelblau_unix_common::unix_proto::{
     ClientRequest, ClientResponse, PamAuthRequest, PamAuthResponse,
 };
@@ -437,6 +438,18 @@ macro_rules! match_sm_auth_client_response {
                                 Some(cred) => {
                                     if cred.len() < $cfg.get_hello_pin_min_length() {
                                         match conv.send(PAM_TEXT_INFO, &format!("Chosen pin is too short! {} chars required.", $cfg.get_hello_pin_min_length())) {
+                                            Ok(_) => {}
+                                            Err(err) => {
+                                                if $opts.debug {
+                                                    println!("Message prompt failed");
+                                                }
+                                                return err;
+                                            }
+                                        }
+                                        thread::sleep(Duration::from_secs(2));
+                                        continue;
+                                    } else if is_simple_pin(&cred) {
+                                        match conv.send(PAM_TEXT_INFO, "PIN must not use repeating or predictable sequences. Avoid patterns like '111111', '123456', or '135791'.") {
                                             Ok(_) => {}
                                             Err(err) => {
                                                 if $opts.debug {
@@ -1148,6 +1161,20 @@ impl PamHooks for PamKanidm {
                                     return err;
                                 }
                             }
+                            continue;
+                        } else if is_simple_pin(&cred) {
+                            match conv
+                                .send(PAM_TEXT_INFO, "PIN must not use repeating or predictable sequences. Avoid patterns like '111111', '123456', or '135791'.")
+                            {
+                                Ok(_) => {}
+                                Err(err) => {
+                                    if opts.debug {
+                                        println!("Message prompt failed");
+                                    }
+                                    return err;
+                                }
+                            }
+                            thread::sleep(Duration::from_secs(2));
                             continue;
                         }
                         cred

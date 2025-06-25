@@ -41,6 +41,7 @@ use himmelblau_unix_common::client_sync::DaemonClientBlocking;
 use himmelblau_unix_common::config::{split_username, HimmelblauConfig};
 use himmelblau_unix_common::constants::{DEFAULT_CONFIG_PATH, DEFAULT_ODC_PROVIDER, ID_MAP_CACHE};
 use himmelblau_unix_common::db::{Cache, CacheTxn, Db, KeyStoreTxn};
+use himmelblau_unix_common::hello_pin_complexity::is_simple_pin;
 use himmelblau_unix_common::idmap_cache::{StaticGroup, StaticIdCache, StaticUser};
 use himmelblau_unix_common::tpm_init;
 use himmelblau_unix_common::unix_proto::{
@@ -223,6 +224,9 @@ macro_rules! match_sm_auth_client_response {
                             Ok(password) => {
                                 if password.len() < $hello_pin_min_length {
                                     println!("Chosen pin is too short! {} chars required.", $hello_pin_min_length);
+                                    continue;
+                                } else if is_simple_pin(&password) {
+                                    println!("PIN must not use repeating or predictable sequences. Avoid patterns like '111111', '123456', or '135791'.");
                                     continue;
                                 }
                                 password
