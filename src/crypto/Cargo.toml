@@ -27,9 +27,19 @@ kanidm-hsm-crypto = { workspace = true }
 openssl-sys = { workspace = true }
 openssl = { workspace = true }
 rand = { workspace = true }
+md4 = { workspace = true }
+sha2 = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 tracing = { workspace = true }
 uuid = { workspace = true }
+x509-cert = { workspace = true, features = ["pem"] }
+
+md-5 = { workspace = true }
+sha-crypt = { workspace = true }
 
 [dev-dependencies]
 sketching = { workspace = true }
+
+
+[package.metadata.cargo-machete]
+ignored = ["openssl-sys"]

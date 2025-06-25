@@ -62,7 +62,7 @@ use tokio::time;
 use tokio_util::codec::{Decoder, Encoder, Framed};
 use tracing::span;
 
-use kanidm_hsm_crypto::{soft::SoftTpm, BoxedDynTpm, Tpm};
+use kanidm_hsm_crypto::{provider::BoxedDynTpm, provider::SoftTpm, provider::Tpm};
 
 use notify_debouncer_full::{new_debouncer, notify::RecursiveMode};
 

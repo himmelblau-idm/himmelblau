@@ -7,9 +7,8 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at https://mozilla.org/MPL/2.0/.
  */
+use kanidm_hsm_crypto::provider::BoxedDynTpm;
 use kanidm_hsm_crypto::AuthValue;
-#[cfg(not(feature = "tpm"))]
-use kanidm_hsm_crypto::BoxedDynTpm;
 use std::error::Error;
 use std::path::PathBuf;
 use std::str::FromStr;
@@ -48,8 +47,8 @@ pub async fn write_hsm_pin(hsm_pin_path: &str) -> Result<(), Box<dyn Error>> {
 
 #[cfg(feature = "tpm")]
 pub fn open_tpm(tcti_name: &str) -> Option<BoxedDynTpm> {
-    use kanidm_hsm_crypto::tpm::TpmTss;
-    match TpmTss::new(tcti_name) {
+    use kanidm_hsm_crypto::provider::{BoxedDynTpm, TssTpm};
+    match TssTpm::new(tcti_name) {
         Ok(tpm) => {
             debug!("opened hw tpm");
             Some(BoxedDynTpm::new(tpm))
@@ -69,8 +68,8 @@ pub fn open_tpm(_tcti_name: &str) -> Option<BoxedDynTpm> {
 
 #[cfg(feature = "tpm")]
 pub fn open_tpm_if_possible(tcti_name: &str) -> BoxedDynTpm {
-    use kanidm_hsm_crypto::tpm::TpmTss;
-    match TpmTss::new(tcti_name) {
+    use kanidm_hsm_crypto::provider::{BoxedDynTpm, SoftTpm, TssTpm};
+    match TssTpm::new(tcti_name) {
         Ok(tpm) => {
             debug!("opened hw tpm");
             BoxedDynTpm::new(tpm)
@@ -87,7 +86,7 @@ pub fn open_tpm_if_possible(tcti_name: &str) -> BoxedDynTpm {
 
 #[cfg(not(feature = "tpm"))]
 pub fn open_tpm_if_possible(_tcti_name: &str) -> BoxedDynTpm {
-    use kanidm_hsm_crypto::soft::SoftTpm;
+    use kanidm_hsm_crypto::provider::SoftTpm;
     debug!("opened soft tpm");
     BoxedDynTpm::new(SoftTpm::new())
 }
@@ -153,7 +152,7 @@ macro_rules! tpm_loadable_machine_key {
             Ok(None) => {
                 if $create {
                     // No machine key found - create one, and store it.
-                    let loadable_machine_key = match $hsm.machine_key_create(&$auth_value) {
+                    let loadable_machine_key = match $hsm.root_storage_key_create(&$auth_value) {
                         Ok(lmk) => lmk,
                         Err(err) => {
                             error!(?err, "Unable to create hsm loadable machine key");
@@ -195,7 +194,7 @@ macro_rules! tpm_loadable_machine_key {
 #[macro_export]
 macro_rules! tpm_machine_key {
     ($hsm:ident, $auth_value:ident, $loadable_machine_key:ident, $cfg:ident, $on_error:expr) => {
-        match $hsm.machine_key_load(&$auth_value, &$loadable_machine_key) {
+        match $hsm.root_storage_key_load(&$auth_value, &$loadable_machine_key) {
             Ok(mk) => mk,
             Err(err) => {
                 error!(?err, "Unable to load machine root key - This can occur if you have changed your HSM pin");

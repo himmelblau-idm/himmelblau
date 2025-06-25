@@ -39,7 +39,10 @@ use himmelblau::graph::{DirectoryObject, Graph};
 use himmelblau::intune::IntuneForLinux;
 use himmelblau::{AuthOption, MFAAuthContinue};
 use idmap::{AadSid, Idmap};
-use kanidm_hsm_crypto::{LoadableIdentityKey, LoadableMsOapxbcRsaKey, PinValue, SealedData, Tpm};
+use kanidm_hsm_crypto::{
+    structures::LoadableMsDeviceEnrolmentKey, structures::LoadableMsHelloKey,
+    structures::LoadableMsOapxbcRsaKey, structures::SealedData, PinValue,
+};
 use regex::Regex;
 use reqwest;
 use reqwest::Url;
@@ -248,7 +251,7 @@ impl IdProvider for HimmelblauMultiProvider {
      * provider_authenticate, so that we can test the correct provider here.
      * Currently we go offline if ANY provider is down, which could be
      * incorrect. */
-    async fn check_online(&self, tpm: &mut tpm::BoxedDynTpm, now: SystemTime) -> bool {
+    async fn check_online(&self, tpm: &mut tpm::provider::BoxedDynTpm, now: SystemTime) -> bool {
         for (_domain, provider) in self.providers.read().await.iter() {
             if !provider.check_online(tpm, now).await {
                 return false;
@@ -263,8 +266,8 @@ impl IdProvider for HimmelblauMultiProvider {
         scopes: Vec<String>,
         old_token: Option<&UserToken>,
         client_id: Option<String>,
-        tpm: &mut tpm::BoxedDynTpm,
-        machine_key: &tpm::MachineKey,
+        tpm: &mut tpm::provider::BoxedDynTpm,
+        machine_key: &tpm::structures::StorageKey,
     ) -> Result<UnixUserToken, IdpError> {
         let account_id = match old_token {
             Some(token) => token.spn.clone(),
@@ -290,8 +293,8 @@ impl IdProvider for HimmelblauMultiProvider {
         &self,
         id: &Id,
         old_token: Option<&UserToken>,
-        tpm: &mut tpm::BoxedDynTpm,
-        machine_key: &tpm::MachineKey,
+        tpm: &mut tpm::provider::BoxedDynTpm,
+        machine_key: &tpm::structures::StorageKey,
     ) -> (Vec<u8>, Vec<u8>) {
         let account_id = match old_token {
             Some(token) => token.spn.clone(),
@@ -317,8 +320,8 @@ impl IdProvider for HimmelblauMultiProvider {
         &self,
         id: &Id,
         old_token: Option<&UserToken>,
-        tpm: &mut tpm::BoxedDynTpm,
-        machine_key: &tpm::MachineKey,
+        tpm: &mut tpm::provider::BoxedDynTpm,
+        machine_key: &tpm::structures::StorageKey,
     ) -> Result<String, IdpError> {
         let account_id = match old_token {
             Some(token) => token.spn.clone(),
@@ -346,8 +349,8 @@ impl IdProvider for HimmelblauMultiProvider {
         token: &UnixUserToken,
         new_tok: &str,
         keystore: &mut D,
-        tpm: &mut tpm::BoxedDynTpm,
-        machine_key: &tpm::MachineKey,
+        tpm: &mut tpm::provider::BoxedDynTpm,
+        machine_key: &tpm::structures::StorageKey,
     ) -> Result<bool, IdpError> {
         match split_username(account_id) {
             Some((_sam, domain)) => {
@@ -376,8 +379,8 @@ impl IdProvider for HimmelblauMultiProvider {
         &self,
         id: &Id,
         old_token: Option<&UserToken>,
-        tpm: &mut tpm::BoxedDynTpm,
-        machine_key: &tpm::MachineKey,
+        tpm: &mut tpm::provider::BoxedDynTpm,
+        machine_key: &tpm::structures::StorageKey,
     ) -> Result<UserTokenState, IdpError> {
         /* AAD doesn't permit user listing (must use cache entries from auth) */
         let account_id = match old_token {
@@ -405,8 +408,8 @@ impl IdProvider for HimmelblauMultiProvider {
         account_id: &str,
         token: Option<&UserToken>,
         keystore: &mut D,
-        tpm: &mut tpm::BoxedDynTpm,
-        machine_key: &tpm::MachineKey,
+        tpm: &mut tpm::provider::BoxedDynTpm,
+        machine_key: &tpm::structures::StorageKey,
         shutdown_rx: &broadcast::Receiver<()>,
     ) -> Result<(AuthRequest, AuthCredHandler), IdpError> {
         match split_username(account_id) {
@@ -443,8 +446,8 @@ impl IdProvider for HimmelblauMultiProvider {
         cred_handler: &mut AuthCredHandler,
         pam_next_req: PamAuthRequest,
         keystore: &mut D,
-        tpm: &mut tpm::BoxedDynTpm,
-        machine_key: &tpm::MachineKey,
+        tpm: &mut tpm::provider::BoxedDynTpm,
+        machine_key: &tpm::structures::StorageKey,
         shutdown_rx: &broadcast::Receiver<()>,
     ) -> Result<(AuthResult, AuthCacheAction), IdpError> {
         match split_username(account_id) {
@@ -508,8 +511,8 @@ impl IdProvider for HimmelblauMultiProvider {
         cred_handler: &mut AuthCredHandler,
         pam_next_req: PamAuthRequest,
         keystore: &mut D,
-        tpm: &mut tpm::BoxedDynTpm,
-        machine_key: &tpm::MachineKey,
+        tpm: &mut tpm::provider::BoxedDynTpm,
+        machine_key: &tpm::structures::StorageKey,
         online_at_init: bool,
     ) -> Result<AuthResult, IdpError> {
         match split_username(account_id) {
@@ -543,7 +546,7 @@ impl IdProvider for HimmelblauMultiProvider {
     async fn unix_group_get(
         &self,
         _id: &Id,
-        _tpm: &mut tpm::BoxedDynTpm,
+        _tpm: &mut tpm::provider::BoxedDynTpm,
     ) -> Result<GroupToken, IdpError> {
         /* AAD doesn't permit group listing (must use cache entries from auth) */
         Err(IdpError::BadRequest)
@@ -617,7 +620,7 @@ impl HimmelblauProvider {
 #[async_trait]
 impl IdProvider for HimmelblauProvider {
     #[instrument(level = "debug", skip_all)]
-    async fn check_online(&self, tpm: &mut tpm::BoxedDynTpm, now: SystemTime) -> bool {
+    async fn check_online(&self, tpm: &mut tpm::provider::BoxedDynTpm, now: SystemTime) -> bool {
         let state = self.state.lock().await.clone();
         match state {
             // Proceed
@@ -637,8 +640,8 @@ impl IdProvider for HimmelblauProvider {
         scopes: Vec<String>,
         old_token: Option<&UserToken>,
         client_id: Option<String>,
-        tpm: &mut tpm::BoxedDynTpm,
-        machine_key: &tpm::MachineKey,
+        tpm: &mut tpm::provider::BoxedDynTpm,
+        machine_key: &tpm::structures::StorageKey,
     ) -> Result<UnixUserToken, IdpError> {
         if (self.delayed_init().await).is_err() {
             // We can't fetch an access_token when initialization hasn't
@@ -681,8 +684,8 @@ impl IdProvider for HimmelblauProvider {
         &self,
         id: &Id,
         old_token: Option<&UserToken>,
-        tpm: &mut tpm::BoxedDynTpm,
-        machine_key: &tpm::MachineKey,
+        tpm: &mut tpm::provider::BoxedDynTpm,
+        machine_key: &tpm::structures::StorageKey,
     ) -> (Vec<u8>, Vec<u8>) {
         if (self.delayed_init().await).is_err() {
             // We can't fetch krb5 tgts when initialization hasn't
@@ -727,8 +730,8 @@ impl IdProvider for HimmelblauProvider {
         &self,
         id: &Id,
         old_token: Option<&UserToken>,
-        tpm: &mut tpm::BoxedDynTpm,
-        machine_key: &tpm::MachineKey,
+        tpm: &mut tpm::provider::BoxedDynTpm,
+        machine_key: &tpm::structures::StorageKey,
     ) -> Result<String, IdpError> {
         if (self.delayed_init().await).is_err() {
             // We can't fetch a PRT cookie when initialization hasn't
@@ -761,8 +764,8 @@ impl IdProvider for HimmelblauProvider {
         token: &UnixUserToken,
         new_tok: &str,
         keystore: &mut D,
-        tpm: &mut tpm::BoxedDynTpm,
-        machine_key: &tpm::MachineKey,
+        tpm: &mut tpm::provider::BoxedDynTpm,
+        machine_key: &tpm::structures::StorageKey,
     ) -> Result<bool, IdpError> {
         if (self.delayed_init().await).is_err() {
             // We can't change the Hello PIN when initialization hasn't
@@ -820,8 +823,8 @@ impl IdProvider for HimmelblauProvider {
         &self,
         id: &Id,
         old_token: Option<&UserToken>,
-        tpm: &mut tpm::BoxedDynTpm,
-        machine_key: &tpm::MachineKey,
+        tpm: &mut tpm::provider::BoxedDynTpm,
+        machine_key: &tpm::structures::StorageKey,
     ) -> Result<UserTokenState, IdpError> {
         macro_rules! net_down_check {
             ($res:expr, $($pat:pat => $result:expr),*) => {
@@ -1041,8 +1044,8 @@ impl IdProvider for HimmelblauProvider {
         account_id: &str,
         _token: Option<&UserToken>,
         keystore: &mut D,
-        tpm: &mut tpm::BoxedDynTpm,
-        _machine_key: &tpm::MachineKey,
+        tpm: &mut tpm::provider::BoxedDynTpm,
+        _machine_key: &tpm::structures::StorageKey,
         _shutdown_rx: &broadcast::Receiver<()>,
     ) -> Result<(AuthRequest, AuthCredHandler), IdpError> {
         macro_rules! net_down_check {
@@ -1068,7 +1071,7 @@ impl IdProvider for HimmelblauProvider {
         }
 
         let hello_tag = self.fetch_hello_key_tag(account_id);
-        let hello_key: Option<LoadableIdentityKey> =
+        let hello_key: Option<LoadableMsHelloKey> =
             keystore.get_tagged_hsm_key(&hello_tag).map_err(|e| {
                 error!("Failed fetching hello key from keystore: {:?}", e);
                 IdpError::BadRequest
@@ -1223,8 +1226,8 @@ impl IdProvider for HimmelblauProvider {
         cred_handler: &mut AuthCredHandler,
         pam_next_req: PamAuthRequest,
         keystore: &mut D,
-        tpm: &mut tpm::BoxedDynTpm,
-        machine_key: &tpm::MachineKey,
+        tpm: &mut tpm::provider::BoxedDynTpm,
+        machine_key: &tpm::structures::StorageKey,
         _shutdown_rx: &broadcast::Receiver<()>,
     ) -> Result<(AuthResult, AuthCacheAction), IdpError> {
         macro_rules! net_down_check {
@@ -1344,7 +1347,7 @@ impl IdProvider for HimmelblauProvider {
                     error!("Failed setting pin value: {:?}", e);
                     IdpError::Tpm
                 })?;
-                if let Err(e) = tpm.identity_key_load(machine_key, Some(&pin), &$hello_key) {
+                if let Err(e) = tpm.ms_hello_key_load(machine_key, &$hello_key, &pin) {
                     error!("{:?}", e);
                     self.bad_pin_counter
                         .increment_bad_pin_count(account_id)
@@ -1947,7 +1950,7 @@ impl IdProvider for HimmelblauProvider {
         keystore: &mut D,
     ) -> Result<(AuthRequest, AuthCredHandler), IdpError> {
         let hello_tag = self.fetch_hello_key_tag(account_id);
-        let hello_key: Option<LoadableIdentityKey> =
+        let hello_key: Option<LoadableMsHelloKey> =
             keystore.get_tagged_hsm_key(&hello_tag).map_err(|e| {
                 error!("Failed fetching hello key from keystore: {:?}", e);
                 IdpError::BadRequest
@@ -1990,14 +1993,14 @@ impl IdProvider for HimmelblauProvider {
         cred_handler: &mut AuthCredHandler,
         pam_next_req: PamAuthRequest,
         keystore: &mut D,
-        tpm: &mut tpm::BoxedDynTpm,
-        machine_key: &tpm::MachineKey,
+        tpm: &mut tpm::provider::BoxedDynTpm,
+        machine_key: &tpm::structures::StorageKey,
         _online_at_init: bool,
     ) -> Result<AuthResult, IdpError> {
         match (&cred_handler, pam_next_req) {
             (_, PamAuthRequest::Pin { cred }) => {
                 let hello_tag = self.fetch_hello_key_tag(account_id);
-                let hello_key: LoadableIdentityKey = keystore
+                let hello_key: LoadableMsHelloKey = keystore
                     .get_tagged_hsm_key(&hello_tag)
                     .map_err(|e| {
                         error!("Failed fetching hello key from keystore: {:?}", e);
@@ -2012,7 +2015,7 @@ impl IdProvider for HimmelblauProvider {
                     error!("Failed setting pin value: {:?}", e);
                     IdpError::Tpm
                 })?;
-                match tpm.identity_key_load(machine_key, Some(&pin), &hello_key) {
+                match tpm.ms_hello_key_load(machine_key, &hello_key, &pin) {
                     Ok(_) => {
                         self.bad_pin_counter.reset_bad_pin_count(account_id).await;
                         Ok(AuthResult::Success {
@@ -2037,7 +2040,7 @@ impl IdProvider for HimmelblauProvider {
     async fn unix_group_get(
         &self,
         _id: &Id,
-        _tpm: &mut tpm::BoxedDynTpm,
+        _tpm: &mut tpm::provider::BoxedDynTpm,
     ) -> Result<GroupToken, IdpError> {
         /* AAD doesn't permit group listing (must use cache entries from auth) */
         Err(IdpError::BadRequest)
@@ -2126,7 +2129,7 @@ impl HimmelblauProvider {
     }
 
     #[instrument(level = "debug", skip_all)]
-    async fn attempt_online(&self, _tpm: &mut tpm::BoxedDynTpm, now: SystemTime) -> bool {
+    async fn attempt_online(&self, _tpm: &mut tpm::provider::BoxedDynTpm, now: SystemTime) -> bool {
         let cfg = self.config.read().await;
         let authority_host = self
             .graph
@@ -2190,9 +2193,9 @@ impl HimmelblauProvider {
     fn fetch_loadable_cert_key_from_keystore<D: KeyStoreTxn + Send>(
         &self,
         keystore: &mut D,
-    ) -> Result<Option<LoadableIdentityKey>, IdpError> {
+    ) -> Result<Option<LoadableMsDeviceEnrolmentKey>, IdpError> {
         let csr_tag = self.fetch_cert_key_tag();
-        let loadable_id_key: Option<LoadableIdentityKey> =
+        let loadable_id_key: Option<LoadableMsDeviceEnrolmentKey> =
             keystore.get_tagged_hsm_key(&csr_tag).map_err(|ks_err| {
                 error!(?ks_err);
                 IdpError::KeyStore
@@ -2524,10 +2527,10 @@ impl HimmelblauProvider {
 
     async fn join_domain<D: KeyStoreTxn + Send>(
         &self,
-        tpm: &mut tpm::BoxedDynTpm,
+        tpm: &mut tpm::provider::BoxedDynTpm,
         token: &UnixUserToken,
         keystore: &mut D,
-        machine_key: &tpm::MachineKey,
+        machine_key: &tpm::structures::StorageKey,
     ) -> Result<(), MsalError> {
         /* If not already joined, join the domain now. */
         let attrs = EnrollAttrs::new(self.domain.clone(), None, None, None, None)?;

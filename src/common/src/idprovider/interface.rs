@@ -193,20 +193,20 @@ pub trait IdProvider {
     async fn configure_hsm_keys<D: KeyStoreTxn + Send>(
         &self,
         _keystore: &mut D,
-        _tpm: &mut tpm::BoxedDynTpm,
-        _machine_key: &tpm::MachineKey,
+        _tpm: &mut tpm::provider::BoxedDynTpm,
+        _machine_key: &tpm::structures::StorageKey,
     ) -> Result<(), IdpError> {
         Ok(())
     }
 
-    async fn check_online(&self, _tpm: &mut tpm::BoxedDynTpm, _now: SystemTime) -> bool;
+    async fn check_online(&self, _tpm: &mut tpm::provider::BoxedDynTpm, _now: SystemTime) -> bool;
 
     async fn unix_user_get(
         &self,
         _id: &Id,
         _token: Option<&UserToken>,
-        _tpm: &mut tpm::BoxedDynTpm,
-        _machine_key: &tpm::MachineKey,
+        _tpm: &mut tpm::provider::BoxedDynTpm,
+        _machine_key: &tpm::structures::StorageKey,
     ) -> Result<UserTokenState, IdpError>;
 
     async fn unix_user_access(
@@ -215,24 +215,24 @@ pub trait IdProvider {
         _scopes: Vec<String>,
         _token: Option<&UserToken>,
         _client_id: Option<String>,
-        _tpm: &mut tpm::BoxedDynTpm,
-        _machine_key: &tpm::MachineKey,
+        _tpm: &mut tpm::provider::BoxedDynTpm,
+        _machine_key: &tpm::structures::StorageKey,
     ) -> Result<UnixUserToken, IdpError>;
 
     async fn unix_user_ccaches(
         &self,
         _id: &Id,
         _old_token: Option<&UserToken>,
-        _tpm: &mut tpm::BoxedDynTpm,
-        _machine_key: &tpm::MachineKey,
+        _tpm: &mut tpm::provider::BoxedDynTpm,
+        _machine_key: &tpm::structures::StorageKey,
     ) -> (Vec<u8>, Vec<u8>);
 
     async fn unix_user_prt_cookie(
         &self,
         _id: &Id,
         _token: Option<&UserToken>,
-        _tpm: &mut tpm::BoxedDynTpm,
-        _machine_key: &tpm::MachineKey,
+        _tpm: &mut tpm::provider::BoxedDynTpm,
+        _machine_key: &tpm::structures::StorageKey,
     ) -> Result<String, IdpError>;
 
     async fn change_auth_token<D: KeyStoreTxn + Send>(
@@ -241,8 +241,8 @@ pub trait IdProvider {
         _token: &UnixUserToken,
         _new_tok: &str,
         _keystore: &mut D,
-        _tpm: &mut tpm::BoxedDynTpm,
-        _machine_key: &tpm::MachineKey,
+        _tpm: &mut tpm::provider::BoxedDynTpm,
+        _machine_key: &tpm::structures::StorageKey,
     ) -> Result<bool, IdpError>;
 
     async fn unix_user_online_auth_init<D: KeyStoreTxn + Send>(
@@ -250,8 +250,8 @@ pub trait IdProvider {
         _account_id: &str,
         _token: Option<&UserToken>,
         _keystore: &mut D,
-        _tpm: &mut tpm::BoxedDynTpm,
-        _machine_key: &tpm::MachineKey,
+        _tpm: &mut tpm::provider::BoxedDynTpm,
+        _machine_key: &tpm::structures::StorageKey,
         _shutdown_rx: &broadcast::Receiver<()>,
     ) -> Result<(AuthRequest, AuthCredHandler), IdpError>;
 
@@ -264,8 +264,8 @@ pub trait IdProvider {
         _cred_handler: &mut AuthCredHandler,
         _pam_next_req: PamAuthRequest,
         _keystore: &mut D,
-        _tpm: &mut tpm::BoxedDynTpm,
-        _machine_key: &tpm::MachineKey,
+        _tpm: &mut tpm::provider::BoxedDynTpm,
+        _machine_key: &tpm::structures::StorageKey,
         _shutdown_rx: &broadcast::Receiver<()>,
     ) -> Result<(AuthResult, AuthCacheAction), IdpError>;
 
@@ -302,15 +302,15 @@ pub trait IdProvider {
         _cred_handler: &mut AuthCredHandler,
         _pam_next_req: PamAuthRequest,
         _keystore: &mut D,
-        _tpm: &mut tpm::BoxedDynTpm,
-        _machine_key: &tpm::MachineKey,
+        _tpm: &mut tpm::provider::BoxedDynTpm,
+        _machine_key: &tpm::structures::StorageKey,
         _online_at_init: bool,
     ) -> Result<AuthResult, IdpError>;
 
     async fn unix_group_get(
         &self,
         id: &Id,
-        _tpm: &mut tpm::BoxedDynTpm,
+        _tpm: &mut tpm::provider::BoxedDynTpm,
     ) -> Result<GroupToken, IdpError>;
 
     async fn get_cachestate(&self, _account_id: Option<&str>) -> CacheState;

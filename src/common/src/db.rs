@@ -24,7 +24,11 @@ use uuid::Uuid;
 
 use serde::{de::DeserializeOwned, Serialize};
 
-use kanidm_hsm_crypto::{HmacKey, LoadableHmacKey, LoadableMachineKey, Tpm};
+use kanidm_hsm_crypto::{
+    provider::BoxedDynTpm, provider::TpmHmacS256, structures::HmacS256Key as HmacKey,
+    structures::LoadableHmacS256Key as LoadableHmacKey,
+    structures::LoadableStorageKey as LoadableMachineKey,
+};
 
 const DBV_MAIN: &str = "main";
 
@@ -91,7 +95,7 @@ pub trait CacheTxn {
         &mut self,
         a_uuid: Uuid,
         cred: &str,
-        hsm: &mut dyn Tpm,
+        tpm: &mut BoxedDynTpm,
         hmac_key: &HmacKey,
     ) -> Result<(), CacheError>;
 
@@ -99,7 +103,7 @@ pub trait CacheTxn {
         &mut self,
         a_uuid: Uuid,
         cred: &str,
-        hsm: &mut dyn Tpm,
+        tpm: &mut BoxedDynTpm,
         hmac_key: &HmacKey,
     ) -> Result<bool, CacheError>;
 
@@ -824,14 +828,17 @@ impl<'a> CacheTxn for DbTxn<'a> {
         &mut self,
         a_uuid: Uuid,
         cred: &str,
-        hsm: &mut dyn Tpm,
+        tpm: &mut BoxedDynTpm,
         hmac_key: &HmacKey,
     ) -> Result<(), CacheError> {
-        let pw =
-            Password::new_argon2id_hsm(self.crypto_policy, cred, hsm, hmac_key).map_err(|e| {
+        let tpm_ctx: &mut dyn TpmHmacS256 = &mut **tpm;
+
+        let pw = Password::new_argon2id_hsm(self.crypto_policy, cred, tpm_ctx, hmac_key).map_err(
+            |e| {
                 error!("password error -> {:?}", e);
                 CacheError::Cryptography
-            })?;
+            },
+        )?;
 
         let dbpw = pw.to_dbpasswordv1();
         let data = serde_json::to_vec(&dbpw).map_err(|e| {
@@ -855,7 +862,7 @@ impl<'a> CacheTxn for DbTxn<'a> {
         &mut self,
         a_uuid: Uuid,
         cred: &str,
-        hsm: &mut dyn Tpm,
+        tpm: &mut BoxedDynTpm,
         hmac_key: &HmacKey,
     ) -> Result<bool, CacheError> {
         let mut stmt = self
@@ -896,7 +903,9 @@ impl<'a> CacheTxn for DbTxn<'a> {
             _ => return Ok(false),
         };
 
-        pw.verify_ctx(cred, Some((hsm, hmac_key))).map_err(|e| {
+        let tpm_ctx: &mut dyn TpmHmacS256 = &mut **tpm;
+
+        pw.verify_ctx(cred, Some((tpm_ctx, hmac_key))).map_err(|e| {
             error!("password error -> {:?}", e);
             CacheError::Cryptography
         })
@@ -1065,21 +1074,21 @@ mod tests {
 
     use super::{Cache, CacheTxn, Db};
     use crate::idprovider::interface::{GroupToken, Id, UserToken};
-    use kanidm_hsm_crypto::{AuthValue, Tpm};
+    use kanidm_hsm_crypto::{provider::BoxedDynTpm, provider::Tpm, AuthValue};
 
     const TESTACCOUNT1_PASSWORD_A: &str = "password a for account1 test";
     const TESTACCOUNT1_PASSWORD_B: &str = "password b for account1 test";
 
     #[cfg(feature = "tpm")]
-    fn setup_tpm() -> Box<dyn Tpm> {
-        use kanidm_hsm_crypto::tpm::TpmTss;
-        Box::new(TpmTss::new("device:/dev/tpmrm0").expect("Unable to build Tpm Context"))
+    fn setup_tpm() -> BoxedDynTpm {
+        use kanidm_hsm_crypto::provider::TssTpm;
+        BoxedDynTpm::new(TssTpm::new("device:/dev/tpmrm0").expect("Unable to build Tpm Context"))
     }
 
     #[cfg(not(feature = "tpm"))]
-    fn setup_tpm() -> Box<dyn Tpm> {
-        use kanidm_hsm_crypto::soft::SoftTpm;
-        Box::new(SoftTpm::new())
+    fn setup_tpm() -> BoxedDynTpm {
+        use kanidm_hsm_crypto::provider::SoftTpm;
+        BoxedDynTpm::new(SoftTpm::new())
     }
 
     #[tokio::test]
@@ -1324,13 +1333,15 @@ mod tests {
 
         let auth_value = AuthValue::ephemeral().unwrap();
 
-        let loadable_machine_key = hsm.machine_key_create(&auth_value).unwrap();
+        let loadable_machine_key = hsm.root_storage_key_create(&auth_value).unwrap();
         let machine_key = hsm
-            .machine_key_load(&auth_value, &loadable_machine_key)
+            .root_storage_key_load(&auth_value, &loadable_machine_key)
             .unwrap();
 
-        let loadable_hmac_key = hsm.hmac_key_create(&machine_key).unwrap();
-        let hmac_key = hsm.hmac_key_load(&machine_key, &loadable_hmac_key).unwrap();
+        let loadable_hmac_key = hsm.hmac_s256_create(&machine_key).unwrap();
+        let hmac_key = hsm
+            .hmac_s256_load(&machine_key, &loadable_hmac_key)
+            .unwrap();
 
         let uuid1 = uuid::uuid!("0302b99c-f0f6-41ab-9492-852692b0fd16");
         let mut ut1 = UserToken {
@@ -1348,40 +1359,40 @@ mod tests {
 
         // Test that with no account, is false
         assert!(matches!(
-            dbtxn.check_account_password(uuid1, TESTACCOUNT1_PASSWORD_A, &mut *hsm, &hmac_key),
+            dbtxn.check_account_password(uuid1, TESTACCOUNT1_PASSWORD_A, &mut hsm, &hmac_key),
             Ok(false)
         ));
         // test adding an account
         dbtxn.update_account(&ut1, 0).unwrap();
         // check with no password is false.
         assert!(matches!(
-            dbtxn.check_account_password(uuid1, TESTACCOUNT1_PASSWORD_A, &mut *hsm, &hmac_key),
+            dbtxn.check_account_password(uuid1, TESTACCOUNT1_PASSWORD_A, &mut hsm, &hmac_key),
             Ok(false)
         ));
         // update the pw
         assert!(dbtxn
-            .update_account_password(uuid1, TESTACCOUNT1_PASSWORD_A, &mut *hsm, &hmac_key)
+            .update_account_password(uuid1, TESTACCOUNT1_PASSWORD_A, &mut hsm, &hmac_key)
             .is_ok());
         // Check it now works.
         assert!(matches!(
-            dbtxn.check_account_password(uuid1, TESTACCOUNT1_PASSWORD_A, &mut *hsm, &hmac_key),
+            dbtxn.check_account_password(uuid1, TESTACCOUNT1_PASSWORD_A, &mut hsm, &hmac_key),
             Ok(true)
         ));
         assert!(matches!(
-            dbtxn.check_account_password(uuid1, TESTACCOUNT1_PASSWORD_B, &mut *hsm, &hmac_key),
+            dbtxn.check_account_password(uuid1, TESTACCOUNT1_PASSWORD_B, &mut hsm, &hmac_key),
             Ok(false)
         ));
         // Update the pw
         assert!(dbtxn
-            .update_account_password(uuid1, TESTACCOUNT1_PASSWORD_B, &mut *hsm, &hmac_key)
+            .update_account_password(uuid1, TESTACCOUNT1_PASSWORD_B, &mut hsm, &hmac_key)
             .is_ok());
         // Check it matches.
         assert!(matches!(
-            dbtxn.check_account_password(uuid1, TESTACCOUNT1_PASSWORD_A, &mut *hsm, &hmac_key),
+            dbtxn.check_account_password(uuid1, TESTACCOUNT1_PASSWORD_A, &mut hsm, &hmac_key),
             Ok(false)
         ));
         assert!(matches!(
-            dbtxn.check_account_password(uuid1, TESTACCOUNT1_PASSWORD_B, &mut *hsm, &hmac_key),
+            dbtxn.check_account_password(uuid1, TESTACCOUNT1_PASSWORD_B, &mut hsm, &hmac_key),
             Ok(true)
         ));
 
@@ -1389,7 +1400,7 @@ mod tests {
         ut1.displayname = "Test User Update".to_string();
         dbtxn.update_account(&ut1, 0).unwrap();
         assert!(matches!(
-            dbtxn.check_account_password(uuid1, TESTACCOUNT1_PASSWORD_B, &mut *hsm, &hmac_key),
+            dbtxn.check_account_password(uuid1, TESTACCOUNT1_PASSWORD_B, &mut hsm, &hmac_key),
             Ok(true)
         ));
 

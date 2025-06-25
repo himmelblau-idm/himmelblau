@@ -42,7 +42,9 @@ use crate::idprovider::interface::{
 use crate::unix_config::{HomeAttr, UidAttr};
 use crate::unix_proto::{HomeDirectoryInfo, NssGroup, NssUser, PamAuthRequest, PamAuthResponse};
 
-use kanidm_hsm_crypto::{BoxedDynTpm, HmacKey, MachineKey, Tpm};
+use kanidm_hsm_crypto::{
+    provider::BoxedDynTpm, structures::HmacS256Key as HmacKey, structures::StorageKey as MachineKey,
+};
 
 use tokio::sync::broadcast;
 
@@ -132,7 +134,7 @@ where
             Ok(Some(hmk)) => hmk,
             Ok(None) => {
                 // generate a new key.
-                let loadable_hmac_key = hsm_lock.hmac_key_create(&machine_key).map_err(|err| {
+                let loadable_hmac_key = hsm_lock.hmac_s256_create(&machine_key).map_err(|err| {
                     error!(?err, "Unable to create hmac key");
                 })?;
 
@@ -151,7 +153,7 @@ where
         };
 
         let hmac_key = hsm_lock
-            .hmac_key_load(&machine_key, &loadable_hmac_key)
+            .hmac_s256_load(&machine_key, &loadable_hmac_key)
             .map_err(|err| {
                 error!(?err, "Unable to load hmac key");
             })?;
