@@ -31,6 +31,10 @@ license = "GPL-3.0-or-later"
 homepage = "https://github.com/himmelblau-idm/himmelblau"
 repository = "https://github.com/himmelblau-idm/himmelblau"
 
+[patch.crates-io]
+kanidm-hsm-crypto = { git = "https://github.com/dmulder/hsm-crypto.git", branch = "20250523-ms-hello-key" }
+compact_jwt = { git = "https://github.com/kanidm/compact-jwt.git", branch = "main" }
+
 [workspace.dependencies]
 libc = "^0.2.174"
 pkg-config = "^0.3.32"
@@ -41,7 +45,7 @@ serde_json = "^1.0.140"
 tracing-subscriber = "^0.3.17"
 tracing = "^0.1.37"
 himmelblau_unix_common = { path = "src/common" }
-libhimmelblau = { version = "0.6.26", features = ["broker", "changepassword", "on_behalf_of"] }
+libhimmelblau = { version = "0.6.26", features = ["broker", "changepassword", "on_behalf_of", "tpm"] }
 clap = { version = "^4.5", features = ["derive", "env"] }
 clap_complete = "^4.5.54"
 reqwest = { version = "^0.12.20", features = ["json"] }
@@ -106,7 +110,12 @@ opentelemetry-semantic-conventions = "0.27.0"
 tracing-opentelemetry = "0.28.0"
 tracing-core = "0.1.34"
 tonic = "0.12.0"
-compact_jwt = { version = "0.4.0-dev", features = ["hsm-crypto", "msextensions"] }
-kanidm-hsm-crypto = { version = "^0.2.0", features = ["msextensions"] }
+compact_jwt = { version = "0.5.2-dev", features = ["msextensions"] }
+kanidm-hsm-crypto = { version = "^0.3.2" }
 whoami = "1.6.0"
 kanidm_lib_file_permissions = { path = "./src/file_permissions" }
+md4 = "0.10.2"
+md-5 = "0.10.6"
+sha-crypt = "0.5.0"
+sha2 = "0.10.8"
+x509-cert = "0.2.5"
