@@ -56,21 +56,18 @@ pub mod items;
 pub mod macros;
 pub mod module;
 
-use std::collections::BTreeSet;
 use std::convert::TryFrom;
 use std::ffi::CStr;
 
 use himmelblau::error::MsalError;
 use himmelblau::{AuthOption, PublicClientApplication};
-use himmelblau_unix_common::auth_handle_mfa_resp;
 use himmelblau_unix_common::client_sync::DaemonClientBlocking;
 use himmelblau_unix_common::config::{split_username, HimmelblauConfig};
 use himmelblau_unix_common::constants::BROKER_APP_ID;
 use himmelblau_unix_common::constants::DEFAULT_CONFIG_PATH;
 use himmelblau_unix_common::hello_pin_complexity::is_simple_pin;
-use himmelblau_unix_common::unix_proto::{
-    ClientRequest, ClientResponse, PamAuthRequest, PamAuthResponse,
-};
+use himmelblau_unix_common::unix_proto::{ClientRequest, ClientResponse};
+use himmelblau_unix_common::{auth_handle_mfa_resp, pam_fail};
 #[cfg(feature = "interactive")]
 use std::env;
 use std::thread::sleep;
@@ -90,20 +87,8 @@ use tracing_subscriber::prelude::*;
 use std::thread;
 use std::time::Duration;
 
-use authenticator::{
-    authenticatorservice::{AuthenticatorService, SignArgs},
-    ctap2::server::{
-        AuthenticationExtensionsClientInputs, PublicKeyCredentialDescriptor,
-        UserVerificationRequirement,
-    },
-    statecallback::StateCallback,
-    Pin, StatusPinUv, StatusUpdate,
-};
-use base64::engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD};
-use base64::Engine;
-use serde_json::{json, to_string as json_to_string};
-use sha2::{Digest, Sha256};
-use std::sync::mpsc::{channel, RecvError, Sender};
+use himmelblau_unix_common::auth::{authenticate, fido_auth, MessagePrinter};
+use himmelblau_unix_common::pam::Options;
 use std::sync::{Arc, Mutex};
 use tokio::runtime::Runtime;
 
@@ -126,778 +111,44 @@ fn install_subscriber(debug: bool) {
         .try_init();
 }
 
-#[derive(Debug)]
-struct Options {
-    debug: bool,
-    use_first_pass: bool,
-    ignore_unknown_user: bool,
-    mfa_poll_prompt: bool,
-}
-
-impl TryFrom<&Vec<&CStr>> for Options {
-    type Error = ();
-
-    fn try_from(args: &Vec<&CStr>) -> Result<Self, Self::Error> {
-        let opts: Result<BTreeSet<&str>, _> = args.iter().map(|cs| cs.to_str()).collect();
-        let gopts = match opts {
-            Ok(o) => o,
-            Err(e) => {
-                println!("Error in module args -> {:?}", e);
-                return Err(());
-            }
-        };
-
-        Ok(Options {
-            debug: gopts.contains("debug"),
-            use_first_pass: gopts.contains("use_first_pass"),
-            ignore_unknown_user: gopts.contains("ignore_unknown_user"),
-            mfa_poll_prompt: gopts.contains("mfa_poll_prompt"),
-        })
-    }
-}
-
-async fn fido_status_check(conv: Arc<Mutex<PamConv>>) -> Sender<StatusUpdate> {
-    let (status_tx, status_rx) = channel::<StatusUpdate>();
-    thread::spawn(move || loop {
-        match status_rx.recv() {
-            Ok(StatusUpdate::InteractiveManagement(..)) => {
-                error!("Fido STATUS: InteractiveManagement: This can't happen when doing non-interactive usage");
-                break;
-            }
-            Ok(StatusUpdate::SelectDeviceNotice) => {
-                let conv = conv.lock().unwrap();
-                conv.send(
-                    PAM_TEXT_INFO,
-                    "Please select a device by touching one of them.",
-                )
-                .unwrap();
-            }
-            Ok(StatusUpdate::PresenceRequired) => {
-                let conv = conv.lock().unwrap();
-                conv.send(PAM_TEXT_INFO, "Waiting for user presence")
-                    .unwrap();
-            }
-            Ok(StatusUpdate::PinUvError(StatusPinUv::PinRequired(sender))) => {
-                let conv = conv.lock().unwrap();
-                match conv.send(PAM_PROMPT_ECHO_OFF, "Fido PIN: ") {
-                    Ok(Some(pin)) => {
-                        sender.send(Pin::new(&pin)).expect("Failed to send PIN");
-                        continue;
-                    }
-                    _ => {
-                        break;
-                    }
-                }
-            }
-            Ok(StatusUpdate::PinUvError(StatusPinUv::InvalidPin(sender, attempts))) => {
-                let conv = conv.lock().unwrap();
-                let msg = format!(
-                    "Wrong PIN! {}",
-                    attempts.map_or("Try again.".to_string(), |a| format!(
-                        "You have {a} attempts left."
-                    ))
-                );
-                conv.send(PAM_ERROR_MSG, &msg).unwrap();
-                match conv.send(PAM_PROMPT_ECHO_OFF, "Fido PIN: ") {
-                    Ok(Some(pin)) => {
-                        sender.send(Pin::new(&pin)).expect("Failed to send PIN");
-                        continue;
-                    }
-                    _ => {
-                        break;
-                    }
-                }
-            }
-            Ok(StatusUpdate::PinUvError(StatusPinUv::PinAuthBlocked)) => {
-                let conv = conv.lock().unwrap();
-                let msg = "Too many failed attempts in one row. Your device has been temporarily blocked. Please unplug it and plug in again.";
-                conv.send(PAM_ERROR_MSG, msg).unwrap();
-                break;
-            }
-            Ok(StatusUpdate::PinUvError(StatusPinUv::PinBlocked)) => {
-                let conv = conv.lock().unwrap();
-                let msg = "Too many failed attempts. Your device has been blocked. Reset it.";
-                conv.send(PAM_ERROR_MSG, msg).unwrap();
-                break;
-            }
-            Ok(StatusUpdate::PinUvError(StatusPinUv::InvalidUv(attempts))) => {
-                let msg = format!(
-                    "Wrong UV! {}",
-                    attempts.map_or("Try again.".to_string(), |a| format!(
-                        "You have {a} attempts left."
-                    ))
-                );
-                let conv = conv.lock().unwrap();
-                conv.send(PAM_ERROR_MSG, &msg).unwrap();
-                continue;
-            }
-            Ok(StatusUpdate::PinUvError(StatusPinUv::UvBlocked)) => {
-                let conv = conv.lock().unwrap();
-                conv.send(PAM_ERROR_MSG, "Too many failed UV-attempts.")
-                    .unwrap();
-                break;
-            }
-            Ok(StatusUpdate::PinUvError(e)) => {
-                let conv = conv.lock().unwrap();
-                let msg = format!("Unexpected error: {:?}", e);
-                conv.send(PAM_ERROR_MSG, &msg).unwrap();
-                break;
-            }
-            Ok(StatusUpdate::SelectResultNotice(_, _)) => {
-                let conv = conv.lock().unwrap();
-                conv.send(PAM_ERROR_MSG, "Unexpected select device notice")
-                    .unwrap();
-                break;
-            }
-            Err(RecvError) => {
-                debug!("Fido STATUS: end");
-                return;
-            }
-        }
-    });
-    status_tx
-}
-
-fn fido_auth(
-    conv: Arc<Mutex<PamConv>>,
-    fido_challenge: String,
-    fido_allow_list: Vec<String>,
-) -> Result<String, PamResultCode> {
-    // Initialize AuthenticatorService
-    let mut manager = AuthenticatorService::new().map_err(|e| {
-        error!("{:?}", e);
-        PamResultCode::PAM_CRED_INSUFFICIENT
-    })?;
-    manager.add_u2f_usb_hid_platform_transports();
-
-    let challenge_str = json_to_string(&json!({
-        "type": "webauthn.get",
-        "challenge": URL_SAFE_NO_PAD.encode(fido_challenge),
-        "origin": "https://login.microsoft.com"
-    }))
-    .map_err(|e| {
-        error!("{:?}", e);
-        PamResultCode::PAM_CRED_INSUFFICIENT
-    })?;
-
-    // Create a channel for status updates
-    let rt = Runtime::new().map_err(|e| {
-        error!("{:?}", e);
-        PamResultCode::PAM_AUTH_ERR
-    })?;
-    let status_tx = rt.block_on(async { fido_status_check(conv).await });
-
-    let allow_list: Vec<PublicKeyCredentialDescriptor> = fido_allow_list
-        .into_iter()
-        .filter_map(|id| match STANDARD.decode(id) {
-            Ok(decoded_id) => Some(PublicKeyCredentialDescriptor {
-                id: decoded_id,
-                transports: vec![],
-            }),
-            Err(e) => {
-                error!("Failed decoding allow list id: {:?}", e);
-                None
-            }
-        })
-        .collect();
-
-    // Prepare SignArgs
-    let chall_bytes = Sha256::digest(challenge_str.clone()).into();
-    let ctap_args = SignArgs {
-        client_data_hash: chall_bytes,
-        origin: "https://login.microsoft.com".to_string(),
-        relying_party_id: "login.microsoft.com".to_string(),
-        allow_list,
-        user_verification_req: UserVerificationRequirement::Preferred,
-        user_presence_req: true,
-        extensions: AuthenticationExtensionsClientInputs::default(),
-        pin: None,
-        use_ctap1_fallback: false,
-    };
-
-    // Perform authentication
-    let (sign_tx, sign_rx) = channel();
-    let callback = StateCallback::new(Box::new(move |rv| {
-        sign_tx.send(rv).unwrap();
-    }));
-
-    manager
-        .sign(25000, ctap_args, status_tx.clone(), callback)
-        .map_err(|e| {
-            error!("{:?}", e);
-            PamResultCode::PAM_CRED_INSUFFICIENT
-        })?;
-
-    let assertion_result = sign_rx
-        .recv()
-        .map_err(|e| {
-            error!("{:?}", e);
-            PamResultCode::PAM_CRED_INSUFFICIENT
-        })?
-        .map_err(|e| {
-            error!("{:?}", e);
-            PamResultCode::PAM_CRED_INSUFFICIENT
-        })?;
-
-    let credential_id = assertion_result
-        .assertion
-        .credentials
-        .as_ref()
-        .map(|cred| cred.id.clone())
-        .unwrap_or_default();
-    let auth_data = assertion_result.assertion.auth_data;
-    let signature = assertion_result.assertion.signature;
-    let user_handle = assertion_result
-        .assertion
-        .user
-        .as_ref()
-        .map(|user| user.id.clone())
-        .unwrap_or_default();
-    let json_response = json!({
-        "id": URL_SAFE_NO_PAD.encode(credential_id),
-        "clientDataJSON": URL_SAFE_NO_PAD.encode(challenge_str),
-        "authenticatorData": URL_SAFE_NO_PAD.encode(auth_data.to_vec()),
-        "signature": URL_SAFE_NO_PAD.encode(signature),
-        "userHandle": URL_SAFE_NO_PAD.encode(user_handle),
-    });
-
-    // Convert the JSON response to a string
-    json_to_string(&json_response).map_err(|e| {
-        error!("{:?}", e);
-        PamResultCode::PAM_CRED_INSUFFICIENT
-    })
-}
-
 pub struct PamKanidm;
 
 pam_hooks!(PamKanidm);
 
-macro_rules! pam_fail {
-    ($conv:expr, $msg:expr, $ret:expr) => {{
-        let _ = $conv.send(PAM_TEXT_INFO,
-            &format!(
-                "{:?}: {} \nIf you are now prompted for a password from pam_unix, please disregard the prompt, go back and try again.",
-                $ret,
-                $msg
-            )
-        );
-        thread::sleep(Duration::from_secs(2));
-        // Abort the auth attempt, and don't continue executing the stack
-        return PamResultCode::PAM_ABORT;
-    }};
-}
-
-macro_rules! match_sm_auth_client_response {
-    ($daemon_client:expr, $opts:ident, $conv:ident, $req:ident, $authtok:ident, $cfg:ident, $account_id:ident, $service:ident, $($pat:pat => $result:expr),*) => {{
-        let timeout = $cfg.get_unix_sock_timeout();
-        match $daemon_client.call_and_wait(&$req, timeout) {
-            Ok(r) => match r {
-                $($pat => $result),*
-                ClientResponse::PamAuthenticateStepResponse(PamAuthResponse::Success) => {
-                    return PamResultCode::PAM_SUCCESS;
-                }
-                ClientResponse::PamAuthenticateStepResponse(PamAuthResponse::Denied(msg)) => {
-                    let conv = $conv.lock().unwrap();
-                    let _ = conv.send(PAM_TEXT_INFO, &msg);
-                    thread::sleep(Duration::from_secs(2));
-                    $req = ClientRequest::PamAuthenticateInit($account_id.to_string(), $service.to_string());
-                    continue;
-                }
-                ClientResponse::PamAuthenticateStepResponse(PamAuthResponse::InitDenied {
-                    msg,
-                }) => {
-                    pam_fail!($conv.lock().unwrap(), msg, PamResultCode::PAM_ABORT)
-                }
-                ClientResponse::PamAuthenticateStepResponse(PamAuthResponse::Unknown) => {
-                    if $opts.ignore_unknown_user {
-                        return PamResultCode::PAM_IGNORE;
-                    } else {
-                        return PamResultCode::PAM_USER_UNKNOWN;
-                    }
-                }
-                ClientResponse::PamAuthenticateStepResponse(PamAuthResponse::SetupPin {
-                    msg,
-                }) => {
-                    let msg = format!("{}\nThe minimum PIN length is {} characters.", msg, $cfg.get_hello_pin_min_length());
-                    let conv = $conv.lock().unwrap();
-
-                    let mut pin;
-                    let mut confirm;
-                    loop {
-                        match conv.send(PAM_TEXT_INFO, &msg) {
-                            Ok(_) => {}
-                            Err(err) => {
-                                if $opts.debug {
-                                    println!("Message prompt failed");
-                                }
-                                return err;
-                            }
-                        }
-                        pin = match conv.send(PAM_PROMPT_ECHO_OFF, "New PIN: ") {
-                            Ok(password) => match password {
-                                Some(cred) => {
-                                    if cred.len() < $cfg.get_hello_pin_min_length() {
-                                        match conv.send(PAM_TEXT_INFO, &format!("Chosen pin is too short! {} chars required.", $cfg.get_hello_pin_min_length())) {
-                                            Ok(_) => {}
-                                            Err(err) => {
-                                                if $opts.debug {
-                                                    println!("Message prompt failed");
-                                                }
-                                                return err;
-                                            }
-                                        }
-                                        thread::sleep(Duration::from_secs(2));
-                                        continue;
-                                    } else if is_simple_pin(&cred) {
-                                        match conv.send(PAM_TEXT_INFO, "PIN must not use repeating or predictable sequences. Avoid patterns like '111111', '123456', or '135791'.") {
-                                            Ok(_) => {}
-                                            Err(err) => {
-                                                if $opts.debug {
-                                                    println!("Message prompt failed");
-                                                }
-                                                return err;
-                                            }
-                                        }
-                                        thread::sleep(Duration::from_secs(2));
-                                        continue;
-                                    }
-                                    cred
-                                },
-                                None => {
-                                    debug!("no pin");
-                                    pam_fail!(
-                                        conv,
-                                        "No Entra Id Hello PIN was supplied.",
-                                        PamResultCode::PAM_CRED_INSUFFICIENT
-                                    );
-                                }
-                            },
-                            Err(err) => {
-                                debug!("unable to get pin");
-                                pam_fail!(
-                                    conv,
-                                    "No Entra Id Hello PIN was found.",
-                                    err
-                                );
-                            }
-                        };
-
-                        match conv.send(PAM_TEXT_INFO, &msg) {
-                            Ok(_) => {}
-                            Err(err) => {
-                                if $opts.debug {
-                                    println!("Message prompt failed");
-                                }
-                                return err;
-                            }
-                        }
-
-                        confirm = match conv.send(PAM_PROMPT_ECHO_OFF, "Confirm PIN: ") {
-                            Ok(password) => match password {
-                                Some(cred) => cred,
-                                None => {
-                                    debug!("no confirmation pin");
-                                    pam_fail!(
-                                        conv,
-                                        "No Entra Id Hello confirmation PIN was supplied.",
-                                        PamResultCode::PAM_CRED_INSUFFICIENT
-                                    );
-                                }
-                            },
-                            Err(err) => {
-                                debug!("unable to get confirmation pin");
-                                pam_fail!(
-                                    conv,
-                                    "No Entra Id Hello confirmation PIN was found.",
-                                    err
-                                );
-                            }
-                        };
-
-                        if pin == confirm {
-                            break;
-                        } else {
-                            match conv.send(PAM_TEXT_INFO, "Inputs did not match. Try again.") {
-                                Ok(_) => {}
-                                Err(err) => {
-                                    if $opts.debug {
-                                        println!("Message prompt failed");
-                                    }
-                                    return err;
-                                }
-                            }
-                            thread::sleep(Duration::from_secs(2));
-                        }
-                    }
-
-                    let _ = conv.send(PAM_TEXT_INFO, "Enrolling the Hello PIN. Please wait...");
-
-                    // Now setup the request for the next loop.
-                    $req = ClientRequest::PamAuthenticateStep(PamAuthRequest::SetupPin {
-                        pin,
-                    });
-                    continue;
-                },
-                ClientResponse::PamAuthenticateStepResponse(PamAuthResponse::Pin) => {
-                    let mut consume_authtok = None;
-                    // Swap the authtok out with a None, so it can only be consumed once.
-                    // If it's already been swapped, we are just swapping two null pointers
-                    // here effectively.
-                    std::mem::swap(&mut $authtok, &mut consume_authtok);
-                    let cred = if let Some(cred) = consume_authtok {
-                        cred
-                    } else {
-                        let conv = $conv.lock().unwrap();
-                        match conv.send(PAM_TEXT_INFO, "Use the Linux Hello PIN for this device.") {
-                            Ok(_) => {}
-                            Err(err) => {
-                                if $opts.debug {
-                                    println!("Message prompt failed");
-                                }
-                                return err;
-                            }
-                        }
-                        match conv.send(PAM_PROMPT_ECHO_OFF, "PIN: ") {
-                            Ok(password) => match password {
-                                Some(cred) => cred,
-                                None => {
-                                    debug!("no pin");
-                                    pam_fail!(
-                                        conv,
-                                        "No Entra Id Hello PIN was supplied.",
-                                        PamResultCode::PAM_CRED_INSUFFICIENT
-                                    );
-                                }
-                            },
-                            Err(err) => {
-                                debug!("unable to get pin");
-                                pam_fail!(
-                                    conv,
-                                    "No Entra Id Hello PIN was found.",
-                                    err
-                                );
-                            }
-                        }
-                    };
-
-                    // Now setup the request for the next loop.
-                    $req = ClientRequest::PamAuthenticateStep(PamAuthRequest::Pin { cred });
-                    continue;
-                }
-                ClientResponse::PamAuthenticateStepResponse(PamAuthResponse::Fido {
-                    fido_challenge,
-                    fido_allow_list,
-                }) => {
-                    let result = match fido_auth($conv.clone(), fido_challenge, fido_allow_list) {
-                        Ok(assertion) => assertion,
-                        Err(e) => {
-                            pam_fail!(
-                                $conv.lock().unwrap(),
-                                "Entra Id Fido authentication failed.",
-                                e
-                            );
-                        },
-                    };
-
-                    // Now setup the request for the next loop.
-                    $req = ClientRequest::PamAuthenticateStep(PamAuthRequest::Fido { assertion: result });
-                    continue;
-                }
-                ClientResponse::PamAuthenticateStepResponse(PamAuthResponse::ChangePassword {
-                    msg,
-                }) => {
-                    let conv = $conv.lock().unwrap();
-
-                    let mut password;
-                    let mut confirm;
-                    loop {
-                        match conv.send(PAM_TEXT_INFO, &msg) {
-                            Ok(_) => {}
-                            Err(err) => {
-                                if $opts.debug {
-                                    println!("Message prompt failed");
-                                }
-                                return err;
-                            }
-                        }
-                        password = match conv.send(PAM_PROMPT_ECHO_OFF, "New password: ") {
-                            Ok(password) => match password {
-                                Some(cred) => {
-                                    // Entra Id requires a minimum password length of 8 characters
-                                    if cred.len() < 8 {
-                                        match conv.send(PAM_TEXT_INFO, "Chosen password is too short! 8 chars required.") {
-                                            Ok(_) => {}
-                                            Err(err) => {
-                                                if $opts.debug {
-                                                    println!("Message prompt failed");
-                                                }
-                                                return err;
-                                            }
-                                        }
-                                        continue;
-                                    }
-                                    cred
-                                },
-                                None => {
-                                    debug!("no password");
-                                    pam_fail!(
-                                        conv,
-                                        "No Entra Id password was supplied.",
-                                        PamResultCode::PAM_CRED_INSUFFICIENT
-                                    );
-                                }
-                            },
-                            Err(err) => {
-                                debug!("unable to get password");
-                                pam_fail!(
-                                    conv,
-                                    "No Entra Id password was found.",
-                                    err
-                                );
-                            }
-                        };
-
-                        match conv.send(PAM_TEXT_INFO, &msg) {
-                            Ok(_) => {}
-                            Err(err) => {
-                                if $opts.debug {
-                                    println!("Message prompt failed");
-                                }
-                                return err;
-                            }
-                        }
-
-                        confirm = match conv.send(PAM_PROMPT_ECHO_OFF, "Confirm password: ") {
-                            Ok(password) => match password {
-                                Some(cred) => cred,
-                                None => {
-                                    debug!("no confirmation password");
-                                    pam_fail!(
-                                        conv,
-                                        "No Entra Id confirmation password was supplied.",
-                                        PamResultCode::PAM_CRED_INSUFFICIENT
-                                    );
-                                }
-                            },
-                            Err(err) => {
-                                debug!("unable to get confirmation password");
-                                pam_fail!(
-                                    conv,
-                                    "No Entra Id confirmation password was found.",
-                                    err
-                                );
-                            }
-                        };
-
-                        if password == confirm {
-                            break;
-                        } else {
-                            match conv.send(PAM_TEXT_INFO, "Inputs did not match. Try again.") {
-                                Ok(_) => {}
-                                Err(err) => {
-                                    if $opts.debug {
-                                        println!("Message prompt failed");
-                                    }
-                                    return err;
-                                }
-                            }
-                            thread::sleep(Duration::from_secs(2));
-                        }
-                    }
-
-                    let _ = conv.send(PAM_TEXT_INFO, "Changing the password. Please wait...");
-
-                    // Now setup the request for the next loop.
-                    $req = ClientRequest::PamAuthenticateStep(PamAuthRequest::Password {
-                        cred: password,
-                    });
-                    continue;
-                },
-                ClientResponse::PamAuthenticateStepResponse(PamAuthResponse::Password) => {
-                    let mut consume_authtok = None;
-                    // Swap the authtok out with a None, so it can only be consumed once.
-                    // If it's already been swapped, we are just swapping two null pointers
-                    // here effectively.
-                    std::mem::swap(&mut $authtok, &mut consume_authtok);
-                    let cred = if let Some(cred) = consume_authtok {
-                        cred
-                    } else {
-                        let lconv = $conv.lock().unwrap();
-                        match lconv.send(PAM_TEXT_INFO, "Use the password for your Office 365 or Microsoft online login.") {
-                            Ok(_) => {}
-                            Err(err) => {
-                                if $opts.debug {
-                                    println!("Message prompt failed");
-                                }
-                                return err;
-                            }
-                        }
-                        match lconv.send(PAM_PROMPT_ECHO_OFF, "Entra Id Password: ") {
-                            Ok(password) => match password {
-                                Some(cred) => cred,
-                                None => {
-                                    debug!("no password");
-                                    pam_fail!(
-                                        lconv,
-                                        "No Entra Id password was supplied.",
-                                        PamResultCode::PAM_CRED_INSUFFICIENT
-                                    );
-                                }
-                            },
-                            Err(err) => {
-                                debug!("unable to get password");
-                                pam_fail!(
-                                    lconv,
-                                    "No Entra Id password was found.",
-                                    err
-                                );
-                            }
-                        }
-                    };
-
-                    // Now setup the request for the next loop.
-                    $req = ClientRequest::PamAuthenticateStep(PamAuthRequest::Password { cred });
-                    continue;
-                },
-                ClientResponse::PamAuthenticateStepResponse(PamAuthResponse::MFACode {
-                    msg,
-                }) => {
-                    let lconv = $conv.lock().unwrap();
-                    match lconv.send(PAM_TEXT_INFO, &msg) {
-                        Ok(_) => {}
-                        Err(err) => {
-                            if $opts.debug {
-                                println!("Message prompt failed");
-                            }
-                            return err;
-                        }
-                    }
-                    let cred = match lconv.send(PAM_PROMPT_ECHO_OFF, "Code: ") {
-                        Ok(password) => match password {
-                            Some(cred) => cred,
-                            None => {
-                                debug!("no mfa code");
-                                pam_fail!(
-                                    lconv,
-                                    "No Entra Id auth code was supplied.",
-                                    PamResultCode::PAM_CRED_INSUFFICIENT
-                                );
-                            }
-                        },
-                        Err(err) => {
-                            debug!("unable to get mfa code");
-                            pam_fail!(
-                                lconv,
-                                "No Entra Id auth code was found.",
-                                err
-                            );
-                        }
-                    };
-
-                    // Now setup the request for the next loop.
-                    $req = ClientRequest::PamAuthenticateStep(PamAuthRequest::MFACode {
-                        cred,
-                    });
-                    continue;
-                },
-                ClientResponse::PamAuthenticateStepResponse(PamAuthResponse::MFAPoll {
-                    msg,
-                    polling_interval,
-                }) => {
-                    return mfa_poll($daemon_client, $authtok, $conv, $opts, $cfg, &$account_id, &$service, &msg, polling_interval);
-                }
-                _ => {
-                    // unexpected response.
-                    error!(err = ?r, "PAM_IGNORE, unexpected resolver response");
-                    pam_fail!(
-                        $conv.lock().unwrap(),
-                        "An unexpected error occurred.",
-                        PamResultCode::PAM_IGNORE
-                    );
-                }
-            },
-            Err(err) => {
-                error!(?err, "PAM_IGNORE");
-                pam_fail!(
-                    $conv.lock().unwrap(),
-                    "An unexpected error occured.",
-                    PamResultCode::PAM_IGNORE
-                );
-            }
-        }
-    }}
-}
-
-/// This function exists to prevent infinite build-time recursion to the
-/// match_sm_auth_client_response macro. Instead we have run-time recursion.
-fn mfa_poll(
-    mut daemon_client: DaemonClientBlocking,
-    mut authtok: Option<String>,
+pub struct PamConvMessagePrinter {
     conv: Arc<Mutex<PamConv>>,
-    opts: Options,
-    cfg: HimmelblauConfig,
-    account_id: &str,
-    service: &str,
-    msg: &str,
-    polling_interval: u32,
-) -> PamResultCode {
-    // This conversation is intentionally nested within a block
-    // to ensure the lconv lock is dropped before calling the
-    // nested `match_sm_auth_client_response`, otherwise we
-    // deadlock here.
-    {
-        let lconv = conv.lock().unwrap();
-        // Suggest users connect mobile devices to the internet, except when
-        // polling a DAG.
-        let msg = if !msg.contains("https://microsoft.com/devicelogin") {
-            format!(
-                "{}\nNo push? Check your mobile device's internet connection.",
-                msg
-            )
-        } else {
-            msg.to_string()
-        };
-        match lconv.send(PAM_TEXT_INFO, &msg) {
-            Ok(_) => {}
-            Err(err) => {
-                if opts.debug {
-                    println!("Message prompt failed");
-                }
-                return err;
-            }
-        }
+}
 
-        // Necessary because of OpenSSH bug
-        // https://bugzilla.mindrot.org/show_bug.cgi?id=2876 -
-        // PAM_TEXT_INFO and PAM_ERROR_MSG conversation not
-        // honoured during PAM authentication
-        if opts.mfa_poll_prompt {
-            let _ = lconv.send(PAM_PROMPT_ECHO_OFF, "Press enter to continue");
+impl PamConvMessagePrinter {
+    pub fn new(conv: Arc<Mutex<PamConv>>) -> Self {
+        Self { conv }
+    }
+}
+
+impl MessagePrinter for PamConvMessagePrinter {
+    fn print_text(&self, msg: &str) {
+        if let Ok(conv) = self.conv.lock() {
+            if let Err(e) = conv.send(PAM_TEXT_INFO, msg) {
+                error!(?e, "Message prompt failed");
+            }
         }
     }
 
-    let mut poll_attempt = 0;
-    let mut req = ClientRequest::PamAuthenticateStep(PamAuthRequest::MFAPoll { poll_attempt });
-    loop {
-        thread::sleep(Duration::from_secs(polling_interval.into()));
-
-        // Counter intuitive, but we don't need a max poll attempts here because
-        // if the resolver goes away, then this will error on the sock and
-        // will shutdown. This allows the resolver to dynamically extend the
-        // timeout if needed, and removes logic from the front end.
-        match_sm_auth_client_response!(
-            daemon_client, opts, conv, req, authtok, cfg, account_id, service,
-            ClientResponse::PamAuthenticateStepResponse(
-                    PamAuthResponse::MFAPollWait,
-            ) => {
-                // Continue polling if the daemon says to wait
-                poll_attempt += 1;
-                req = ClientRequest::PamAuthenticateStep(
-                    PamAuthRequest::MFAPoll { poll_attempt }
-                );
-                continue;
+    fn print_error(&self, msg: &str) {
+        if let Ok(conv) = self.conv.lock() {
+            if let Err(e) = conv.send(PAM_ERROR_MSG, msg) {
+                error!(?e, "Message prompt failed");
             }
-        );
+        }
+    }
+
+    fn prompt_echo_off(&self, prompt: &str) -> Option<String> {
+        self.conv.lock().ok().and_then(|conv| {
+            conv.send(PAM_PROMPT_ECHO_OFF, prompt)
+                .map_err(|e| error!("PAM conversation failed: {:?}", e))
+                .ok()
+                .flatten()
+        })
     }
 }
 
@@ -1006,19 +257,7 @@ impl PamHooks for PamKanidm {
         };
         let account_id = cfg.map_name_to_upn(&account_id);
 
-        let mut daemon_client = match DaemonClientBlocking::new(cfg.get_socket_path().as_str()) {
-            Ok(dc) => dc,
-            Err(e) => {
-                error!(err = ?e, "Error DaemonClientBlocking::new()");
-                return PamResultCode::PAM_SERVICE_ERR;
-            }
-        };
-
-        // Later we may need to move this to a function and call it as a oneshot for auth methods
-        // that don't require any authtoks at all. For example, imagine a user authed and they
-        // needed to follow a URL to continue. In that case, they would fail here because they
-        // didn't enter an authtok that they didn't need!
-        let mut authtok = match pamh.get_authtok() {
+        let authtok = match pamh.get_authtok() {
             Ok(Some(v)) => Some(v),
             Ok(None) => {
                 if opts.use_first_pass {
@@ -1041,20 +280,14 @@ impl PamHooks for PamKanidm {
             }
         };
 
-        let mut req = ClientRequest::PamAuthenticateInit(account_id.clone(), service.clone());
-
-        loop {
-            match_sm_auth_client_response!(
-                daemon_client,
-                opts,
-                conv,
-                req,
-                authtok,
-                cfg,
-                account_id,
-                service,
-            );
-        } // while true, continue calling PamAuthenticateStep until we get a decision.
+        authenticate(
+            authtok,
+            &cfg,
+            &account_id,
+            &service,
+            opts,
+            Arc::new(PamConvMessagePrinter::new(conv)),
+        )
     }
 
     #[instrument(skip(pamh, args, flags))]
@@ -1322,16 +555,14 @@ impl PamHooks for PamKanidm {
                         }
                     };
 
-                    let assertion = match fido_auth(conv.clone(), fido_challenge, fido_allow_list) {
-                        Ok(assertion) => assertion,
-                        Err(e) => {
-                            pam_fail!(
-                                conv.lock().unwrap(),
-                                "Entra Id Fido authentication failed.",
-                                e
-                            );
-                        }
-                    };
+                    let msg_printer = Arc::new(PamConvMessagePrinter::new(conv));
+                    let assertion =
+                        match fido_auth(msg_printer.clone(), fido_challenge, fido_allow_list) {
+                            Ok(assertion) => assertion,
+                            Err(e) => {
+                                pam_fail!(msg_printer, "Entra Id Fido authentication failed.", e);
+                            }
+                        };
                     match rt.block_on(async {
                         app.acquire_token_by_mfa_flow(
                             &account_id,
