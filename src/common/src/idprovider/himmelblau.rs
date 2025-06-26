@@ -1213,6 +1213,23 @@ impl IdProvider for HimmelblauProvider {
         }
         macro_rules! auth_and_validate_hello_key {
             ($hello_key:ident, $cred:ident) => {{
+                // CRITICAL: Validate that we can load the key, otherwise the offline
+                // fallback will allow the user to authenticate with a bad PIN here.
+                // `acquire_token_by_hello_for_business_key` CAN (and probably will)
+                // respond with a `RequestFailed` prior to validating the PIN, since
+                // the Nonce request will fail (which is sent prior to validation).
+                let pin = PinValue::new(&$cred).map_err(|e| {
+                    error!("Failed setting pin value: {:?}", e);
+                    IdpError::Tpm
+                })?;
+                if let Err(e) = tpm.identity_key_load(machine_key, Some(&pin), &$hello_key) {
+                    error!("{:?}", e);
+                    return Ok((
+                        AuthResult::Denied("Failed to authenticate with Hello PIN.".to_string()),
+                        AuthCacheAction::None,
+                    ));
+                }
+
                 // If an app_id is defined in the config, the app should have the
                 // GroupMember.Read.All API permission.
                 let cfg = self.config.read().await;
