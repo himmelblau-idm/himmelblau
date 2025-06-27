@@ -148,6 +148,9 @@ impl BadPinCounter {
         let mut map = self.counter.write().await;
         let counter = map.entry(account_id.to_string()).or_insert(0);
         *counter += 1;
+
+        // Discourage attackers by waiting for an ever increasing wait time for each bad pin
+        sleep(Duration::from_secs((*counter as u64) * 2));
     }
 
     pub async fn reset_bad_pin_count(&self, account_id: &str) {
@@ -1072,10 +1075,11 @@ impl IdProvider for HimmelblauProvider {
             })?;
         // Skip Hello authentication if it is disabled by config
         let hello_enabled = self.config.read().await.get_enable_hello();
+        let hello_pin_retry_count = self.config.read().await.get_hello_pin_retry_count();
         if !self.is_domain_joined(keystore).await
             || hello_key.is_none()
             || !hello_enabled
-            || self.bad_pin_counter.bad_pin_count(account_id).await > 3
+            || self.bad_pin_counter.bad_pin_count(account_id).await > hello_pin_retry_count
         {
             if (self.delayed_init().await).is_err() {
                 // Initialization failed. Report that the system is offline. We
@@ -1342,6 +1346,9 @@ impl IdProvider for HimmelblauProvider {
                 })?;
                 if let Err(e) = tpm.identity_key_load(machine_key, Some(&pin), &$hello_key) {
                     error!("{:?}", e);
+                    self.bad_pin_counter
+                        .increment_bad_pin_count(account_id)
+                        .await;
                     return Ok((
                         AuthResult::Denied("Failed to authenticate with Hello PIN.".to_string()),
                         AuthCacheAction::None,
@@ -1946,10 +1953,13 @@ impl IdProvider for HimmelblauProvider {
                 IdpError::BadRequest
             })?;
         let sfa_enabled = self.config.read().await.get_enable_sfa_fallback();
+        let hello_pin_retry_count = self.config.read().await.get_hello_pin_retry_count();
         // We only have 2 options when performing an offline auth; Hello PIN,
         // or cached password for SFA users. If neither option is available,
         // we should respond with a resonable error indicating how to proceed.
-        if hello_key.is_some() && self.bad_pin_counter.bad_pin_count(account_id).await <= 3 {
+        if hello_key.is_some()
+            && self.bad_pin_counter.bad_pin_count(account_id).await <= hello_pin_retry_count
+        {
             Ok((AuthRequest::Pin, AuthCredHandler::None))
         } else if sfa_enabled {
             Ok((AuthRequest::Password, AuthCredHandler::None))

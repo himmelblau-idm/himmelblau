@@ -49,6 +49,13 @@
 # for the encryption algorithm.
 # hello_pin_min_length = 6
 #
+# The configured maximum number of invalid Linux Hello PIN attempts
+# before requiring MFA re-authentication.
+# If the user enters an incorrect PIN this many times, they will be prompted
+# to perform MFA. After successful MFA, they will be required to set a new PIN.
+# If the value is not set or cannot be parsed, a default of 3 is used.
+# hello_pin_retry_count = 3
+#
 # Whether to permit attempting a SFA (password only) authentication when MFA
 # methods are unavailable. Sometimes this is possible when MFA has yet to be
 # configured. This is disabled by default.

@@ -63,32 +63,44 @@ NIX := $(shell command -v nix)
 .packaging:
 	mkdir -p ./packaging/
 
-deb: .packaging .submodules
-	for v in ubuntu24.04 ; do \
-		echo "Building Ubuntu $$v packages"; \
-		$(DOCKER) build -t himmelblau-$$v-build -f images/deb/Dockerfile.$$v .; \
-		$(DOCKER) run --rm --security-opt label=disable -it -v ./:/himmelblau himmelblau-$$v-build; \
-		mv ./target/debian/*.deb ./packaging/; \
-	done
-
-rpm: .packaging .submodules
-	for v in rocky8 rocky9 sle15sp6 tumbleweed rawhide fedora41; do \
-		echo "Building $$v RPM packages"; \
-		$(DOCKER) build -t himmelblau-$$v-build -f images/rpm/Dockerfile.$$v .; \
-		$(DOCKER) run --rm --security-opt label=disable -it -v ./:/himmelblau himmelblau-$$v-build; \
-		for file in ./target/generate-rpm/*.rpm; do \
-			mv "$$file" "$${file%.rpm}-$$v.rpm"; \
-		done; \
-		mv ./target/generate-rpm/*.rpm ./packaging/; \
-	done
-	rpmsign --addsign ./packaging/*.rpm
-
 nix: .packaging .submodules
 	echo "Building nix packages"
 	for v in himmelblau himmelblau-desktop; do \
 		$(NIX) --extra-experimental-features 'nix-command flakes' build ".#$$v" --out-link ./packaging/nix-$$v-result; \
 	done
 
-# No need to build nix here, since it's being pushed to cachix
+DEB_TARGETS := ubuntu22.04 ubuntu24.04 debian12
+RPM_TARGETS := rocky8 rocky9 sle15sp6 tumbleweed rawhide fedora41
+
+.PHONY: package deb rpm $(DEB_TARGETS) $(RPM_TARGETS)
+
 package: deb rpm
 	ls ./packaging/
+
+deb: $(DEB_TARGETS)
+
+rpm: $(RPM_TARGETS)
+	rpmsign --addsign ./packaging/*.rpm
+
+$(DEB_TARGETS): %: .packaging .submodules
+	@echo "Building Ubuntu $@ packages"
+	mkdir -p target/$@
+	$(DOCKER) build -t himmelblau-$@-build -f images/deb/Dockerfile.$@ .
+	$(DOCKER) run --rm --security-opt label=disable -it \
+		-v $(CURDIR):/himmelblau \
+		-v $(CURDIR)/target/$@:/himmelblau/target \
+		himmelblau-$@-build
+	mv ./target/$@/debian/*.deb ./packaging/
+
+$(RPM_TARGETS): %: .packaging .submodules
+	@echo "Building $@ RPM packages"
+	mkdir -p target/$@
+	$(DOCKER) build -t himmelblau-$@-build -f images/rpm/Dockerfile.$@ .
+	$(DOCKER) run --rm --security-opt label=disable -it \
+		-v $(CURDIR):/himmelblau \
+		-v $(CURDIR)/target/$@:/himmelblau/target \
+		himmelblau-$@-build
+	for file in ./target/$@/generate-rpm/*.rpm; do \
+		mv "$$file" "$${file%.rpm}-$@.rpm"; \
+	done
+	mv ./target/$@/generate-rpm/*.rpm ./packaging/

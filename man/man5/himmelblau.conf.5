@@ -139,6 +139,14 @@ The minimum length of the PIN for Windows Hello authentication. The value must b
 hello_pin_min_length = 8
 
 .TP
+.B hello_pin_retry_count
+.RE
+The number of invalid Hello PIN attempts allowed before the user is required to perform MFA. After successful MFA, the user will be prompted to set a new PIN. The value must be a non-negative integer.
+
+.EXAMPLES
+hello_pin_retry_count = 3
+
+.TP
 .B enable_sfa_fallback
 .RE
 Determines whether password-only (single-factor) authentication is permitted when MFA is unavailable. Disabled by default.
