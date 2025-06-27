@@ -148,6 +148,9 @@ impl BadPinCounter {
         let mut map = self.counter.write().await;
         let counter = map.entry(account_id.to_string()).or_insert(0);
         *counter += 1;
+
+        // Discourage attackers by waiting for an ever increasing wait time for each bad pin
+        sleep(Duration::from_secs((*counter as u64) * 2));
     }
 
     pub async fn reset_bad_pin_count(&self, account_id: &str) {
