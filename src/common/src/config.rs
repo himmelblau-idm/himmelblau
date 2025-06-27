@@ -604,6 +604,20 @@ impl HimmelblauConfig {
         )
     }
 
+    pub fn get_hello_pin_prompt(&self) -> String {
+        match self.config.get("global", "hello_pin_prompt") {
+            Some(val) => val,
+            None => "Use the Linux Hello PIN for this device.".to_string(),
+        }
+    }
+
+    pub fn get_entra_id_password_prompt(&self) -> String {
+        match self.config.get("global", "entra_id_password_prompt") {
+            Some(val) => val,
+            None => "Use the password for your Office 365 or Microsoft online login.".to_string(),
+        }
+    }
+
     pub async fn get_primary_domain_from_alias(&mut self, alias: &str) -> Option<String> {
         let domains = self.get_configured_domains();
 

@@ -147,6 +147,30 @@ The number of invalid Hello PIN attempts allowed before the user is required to 
 hello_pin_retry_count = 3
 
 .TP
+.B hello_pin_prompt
+.RE
+Customizes the prompt text shown when requesting the user’s Linux Hello PIN. If not set, the default prompt is:
+
+.RS
+Use the Linux Hello PIN for this device.
+.RE
+
+.EXAMPLES
+hello_pin_prompt = Enter your device unlock PIN
+
+.TP
+.B entra_id_password_prompt
+.RE
+Customizes the prompt text shown when requesting the user’s Entra ID password. If not set, the default prompt is:
+
+.RS
+Use the password for your Office 365 or Microsoft online login.
+.RE
+
+.EXAMPLES
+entra_id_password_prompt = Enter your Microsoft 365 password
+
+.TP
 .B enable_sfa_fallback
 .RE
 Determines whether password-only (single-factor) authentication is permitted when MFA is unavailable. Disabled by default.
