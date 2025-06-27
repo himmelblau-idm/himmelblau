@@ -55,35 +55,52 @@ else
 endif
 
 DOCKER := $(shell command -v podman || command -v docker)
+NIX := $(shell command -v nix)
 
-deb:
-	mkdir -p ./packaging/
+.submodules:
 	git submodule init; git submodule update
-	for v in ubuntu22.04 ubuntu24.04 debian12; do \
-		echo "Building Ubuntu $$v packages"; \
-		$(DOCKER) build -t himmelblau-$$v-build -f images/deb/Dockerfile.$$v .; \
-		$(DOCKER) run --rm --security-opt label=disable -it -v ./:/himmelblau himmelblau-$$v-build; \
-		mv ./target/debian/*.deb ./packaging/; \
+
+.packaging:
+	mkdir -p ./packaging/
+
+nix: .packaging .submodules
+	echo "Building nix packages"
+	for v in himmelblau himmelblau-desktop; do \
+		$(NIX) --extra-experimental-features 'nix-command flakes' build ".#$$v" --out-link ./packaging/nix-$$v-result; \
 	done
 
-rpm:
-	mkdir -p ./packaging/
-	git submodule init; git submodule update
-	for v in rocky8 rocky9 sle15sp6 tumbleweed rawhide fedora41; do \
-		echo "Building $$v RPM packages"; \
-		$(DOCKER) build -t himmelblau-$$v-build -f images/rpm/Dockerfile.$$v .; \
-		$(DOCKER) run --rm --security-opt label=disable -it -v ./:/himmelblau himmelblau-$$v-build; \
-		for file in ./target/generate-rpm/*.rpm; do \
-			mv "$$file" "$${file%.rpm}-$$v.rpm"; \
-		done; \
-		mv ./target/generate-rpm/*.rpm ./packaging/; \
-	done
+DEB_TARGETS := ubuntu22.04 ubuntu24.04 debian12
+RPM_TARGETS := rocky8 rocky9 sle15sp6 tumbleweed rawhide fedora41
+
+.PHONY: package deb rpm $(DEB_TARGETS) $(RPM_TARGETS)
+
+package: deb rpm
+	ls ./packaging/
+
+deb: $(DEB_TARGETS)
+
+rpm: $(RPM_TARGETS)
 	rpmsign --addsign ./packaging/*.rpm
 
-nix:
-	mkdir -p ./packaging/
-	git submodule init; git submodule update
-	nix --extra-experimental-features 'nix-command flakes' build --out-link ./packaging/nix-result
+$(DEB_TARGETS): %: .packaging .submodules
+	@echo "Building Ubuntu $@ packages"
+	mkdir -p target/$@
+	$(DOCKER) build -t himmelblau-$@-build -f images/deb/Dockerfile.$@ .
+	$(DOCKER) run --rm --security-opt label=disable -it \
+		-v $(CURDIR):/himmelblau \
+		-v $(CURDIR)/target/$@:/himmelblau/target \
+		himmelblau-$@-build
+	mv ./target/$@/debian/*.deb ./packaging/
 
-package: deb rpm nix
-	ls ./packaging/
+$(RPM_TARGETS): %: .packaging .submodules
+	@echo "Building $@ RPM packages"
+	mkdir -p target/$@
+	$(DOCKER) build -t himmelblau-$@-build -f images/rpm/Dockerfile.$@ .
+	$(DOCKER) run --rm --security-opt label=disable -it \
+		-v $(CURDIR):/himmelblau \
+		-v $(CURDIR)/target/$@:/himmelblau/target \
+		himmelblau-$@-build
+	for file in ./target/$@/generate-rpm/*.rpm; do \
+		mv "$$file" "$${file%.rpm}-$@.rpm"; \
+	done
+	mv ./target/$@/generate-rpm/*.rpm ./packaging/
