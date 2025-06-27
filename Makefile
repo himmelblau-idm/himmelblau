@@ -64,7 +64,7 @@ NIX := $(shell command -v nix)
 	mkdir -p ./packaging/
 
 deb: .packaging .submodules
-	for v in ubuntu22.04 ubuntu24.04 debian12; do \
+	for v in ubuntu24.04 ; do \
 		echo "Building Ubuntu $$v packages"; \
 		$(DOCKER) build -t himmelblau-$$v-build -f images/deb/Dockerfile.$$v .; \
 		$(DOCKER) run --rm --security-opt label=disable -it -v ./:/himmelblau himmelblau-$$v-build; \

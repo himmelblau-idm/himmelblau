@@ -1,0 +1,16 @@
+#!/bin/bash
+
+# Replace --version with version
+args=()
+for arg in "$@"; do
+  if [[ "$arg" == "--version" ]]; then
+    #args+=("version")
+    ../target/debug/aad-tool version
+    exit
+  else
+    args+=("$arg")
+  fi
+done
+
+# Call the command with modified arguments
+../target/debug/aad-tool "${args[@]}"
