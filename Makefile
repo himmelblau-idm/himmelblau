@@ -84,15 +84,23 @@ rpm: $(RPM_TARGETS)
 
 $(DEB_TARGETS): %: .packaging .submodules
 	@echo "Building Ubuntu $@ packages"
+	mkdir -p target/$@
 	$(DOCKER) build -t himmelblau-$@-build -f images/deb/Dockerfile.$@ .
-	$(DOCKER) run --rm --security-opt label=disable -it -v ./:/himmelblau himmelblau-$@-build
-	mv ./target/debian/*.deb ./packaging/
+	$(DOCKER) run --rm --security-opt label=disable -it \
+		-v $(CURDIR):/himmelblau \
+		-v $(CURDIR)/target/$@:/himmelblau/target \
+		himmelblau-$@-build
+	mv ./target/$@/debian/*.deb ./packaging/
 
 $(RPM_TARGETS): %: .packaging .submodules
 	@echo "Building $@ RPM packages"
+	mkdir -p target/$@
 	$(DOCKER) build -t himmelblau-$@-build -f images/rpm/Dockerfile.$@ .
-	$(DOCKER) run --rm --security-opt label=disable -it -v ./:/himmelblau himmelblau-$@-build
-	for file in ./target/generate-rpm/*.rpm; do \
+	$(DOCKER) run --rm --security-opt label=disable -it \
+		-v $(CURDIR):/himmelblau \
+		-v $(CURDIR)/target/$@:/himmelblau/target \
+		himmelblau-$@-build
+	for file in ./target/$@/generate-rpm/*.rpm; do \
 		mv "$$file" "$${file%.rpm}-$@.rpm"; \
 	done
-	mv ./target/generate-rpm/*.rpm ./packaging/
+	mv ./target/$@/generate-rpm/*.rpm ./packaging/
