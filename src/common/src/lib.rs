@@ -53,6 +53,8 @@ pub mod mapping;
 #[cfg(target_family = "unix")]
 pub mod nss_cache;
 #[cfg(target_family = "unix")]
+pub mod pam;
+#[cfg(target_family = "unix")]
 pub mod resolver;
 #[cfg(target_family = "unix")]
 pub mod tpm;

@@ -31,33 +31,31 @@
 extern crate tracing;
 
 use std::process::ExitCode;
+use std::sync::Arc;
 
 use broker_client::BrokerClient;
 use clap::Parser;
 use himmelblau::{error::MsalError, graph::Graph, AuthOption, BrokerClientApplication};
+use himmelblau_unix_common::auth::{authenticate_async, SimpleMessagePrinter};
 use himmelblau_unix_common::auth_handle_mfa_resp;
 use himmelblau_unix_common::client::call_daemon;
-use himmelblau_unix_common::client_sync::DaemonClientBlocking;
 use himmelblau_unix_common::config::{split_username, HimmelblauConfig};
 use himmelblau_unix_common::constants::{DEFAULT_CONFIG_PATH, DEFAULT_ODC_PROVIDER, ID_MAP_CACHE};
 use himmelblau_unix_common::db::{Cache, CacheTxn, Db, KeyStoreTxn};
-use himmelblau_unix_common::hello_pin_complexity::is_simple_pin;
 use himmelblau_unix_common::idmap_cache::{StaticGroup, StaticIdCache, StaticUser};
+use himmelblau_unix_common::pam::{Options, PamResultCode};
 use himmelblau_unix_common::tpm_init;
-use himmelblau_unix_common::unix_proto::{
-    ClientRequest, ClientResponse, PamAuthRequest, PamAuthResponse,
-};
+use himmelblau_unix_common::unix_proto::{ClientRequest, ClientResponse};
 use himmelblau_unix_common::{tpm_loadable_machine_key, tpm_machine_key};
 use kanidm_hsm_crypto::{
     soft::SoftTpm, BoxedDynTpm, LoadableIdentityKey, LoadableMsOapxbcRsaKey, Tpm,
 };
-use rpassword::{prompt_password, read_password};
+use rpassword::read_password;
 use serde::Deserialize;
 use serde_json::{json, to_string_pretty, Value};
 use std::io;
 use std::io::Write;
 use std::path::PathBuf;
-use std::thread;
 use std::thread::sleep;
 use std::time::Duration;
 use uuid::Uuid;
@@ -193,96 +191,6 @@ fn configure_pam(
     )?;
 
     Ok(())
-}
-
-macro_rules! match_sm_auth_client_response {
-    ($expr:expr, $req:ident, $hello_pin_min_length:ident, $($pat:pat => $result:expr),*) => {
-        match $expr {
-            Ok(r) => match r {
-                $($pat => $result),*
-                ClientResponse::PamAuthenticateStepResponse(PamAuthResponse::Success) => {
-                    println!("auth success!");
-                    break;
-                }
-                ClientResponse::PamAuthenticateStepResponse(PamAuthResponse::Denied(msg)) => {
-                    println!("auth failed: {}", msg);
-                    break;
-                }
-                ClientResponse::PamAuthenticateStepResponse(PamAuthResponse::Unknown) => {
-                    println!("auth user unknown");
-                    break;
-                }
-                ClientResponse::PamAuthenticateStepResponse(PamAuthResponse::SetupPin {
-                    msg,
-                }) => {
-                    println!("{}", msg);
-
-                    let mut pin;
-                    let mut confirm;
-                    loop {
-                        pin = match prompt_password("New PIN: ") {
-                            Ok(password) => {
-                                if password.len() < $hello_pin_min_length {
-                                    println!("Chosen pin is too short! {} chars required.", $hello_pin_min_length);
-                                    continue;
-                                } else if is_simple_pin(&password) {
-                                    println!("PIN must not use repeating or predictable sequences. Avoid patterns like '111111', '123456', or '135791'.");
-                                    continue;
-                                }
-                                password
-                            },
-                            Err(err) => {
-                                println!("unable to get pin: {:?}", err);
-                                return ExitCode::FAILURE;
-                            }
-                        };
-
-                        confirm = match prompt_password("Confirm PIN: ") {
-                            Ok(password) => password,
-                            Err(err) => {
-                                println!("unable to get confirmation pin: {:?}", err);
-                                return ExitCode::FAILURE;
-                            }
-                        };
-
-                        if pin == confirm {
-                            break;
-                        } else {
-                            println!("Inputs did not match. Try again.");
-                        }
-                    }
-
-                    // Now setup the request for the next loop.
-                    $req = ClientRequest::PamAuthenticateStep(PamAuthRequest::SetupPin {
-                        pin,
-                    });
-                    continue;
-                },
-                ClientResponse::PamAuthenticateStepResponse(PamAuthResponse::Pin) => {
-                    let cred = match prompt_password("PIN: ") {
-                        Ok(password) => password,
-                        Err(err) => {
-                            debug!("unable to get pin: {:?}", err);
-                            return ExitCode::FAILURE;
-                        }
-                    };
-
-                    // Now setup the request for the next loop.
-                    $req = ClientRequest::PamAuthenticateStep(PamAuthRequest::Pin { cred });
-                    continue;
-                }
-                _ => {
-                    // unexpected response.
-                    error!("Error: unexpected response -> {:?}", r);
-                    break;
-                }
-            },
-            Err(e) => {
-                error!("Error -> {:?}", e);
-                break;
-            }
-        }
-    }
 }
 
 #[tokio::main(flavor = "current_thread")]
@@ -962,89 +870,24 @@ async fn main() -> ExitCode {
             // Map the name
             let account_id = cfg.map_name_to_upn(&account_id);
 
-            let mut timeout = cfg.get_unix_sock_timeout();
-            let mut daemon_client = match DaemonClientBlocking::new(&cfg.get_socket_path()) {
-                Ok(dc) => dc,
-                Err(e) => {
-                    error!(err = ?e, "Error DaemonClientBlocking::new()");
+            let opts = Options::default();
+            let msg_printer = Arc::new(SimpleMessagePrinter::default());
+            match authenticate_async(
+                None,
+                cfg,
+                account_id,
+                "aad-tool".to_string(),
+                opts,
+                msg_printer,
+            )
+            .await
+            {
+                PamResultCode::PAM_SUCCESS => return ExitCode::SUCCESS,
+                e => {
+                    error!("Authentication failed: {:?}", e);
                     return ExitCode::FAILURE;
                 }
-            };
-            let pin_min_len = cfg.get_hello_pin_min_length();
-
-            let mut req =
-                ClientRequest::PamAuthenticateInit(account_id.clone(), "aad-tool".to_string());
-            loop {
-                match_sm_auth_client_response!(daemon_client.call_and_wait(&req, timeout), req, pin_min_len,
-                    ClientResponse::PamAuthenticateStepResponse(PamAuthResponse::Password) => {
-                        // Prompt for and get the password
-                        let cred = match prompt_password("Password: ") {
-                            Ok(p) => p,
-                            Err(e) => {
-                                error!("Problem getting input: {}", e);
-                                return ExitCode::FAILURE;
-                            }
-                        };
-
-                        // Now setup the request for the next loop.
-                        timeout = cfg.get_unix_sock_timeout();
-                        req = ClientRequest::PamAuthenticateStep(PamAuthRequest::Password { cred });
-                        continue;
-                    },
-                    ClientResponse::PamAuthenticateStepResponse(PamAuthResponse::MFACode {
-                        msg,
-                    }) => {
-                        // Prompt for and get the MFA code
-                        println!("{}", msg);
-                        let cred = match prompt_password("Code: ") {
-                            Ok(p) => p,
-                            Err(e) => {
-                                error!("Problem getting input: {}", e);
-                                return ExitCode::FAILURE;
-                            }
-                        };
-
-                        // Now setup the request for the next loop.
-                        timeout = cfg.get_unix_sock_timeout();
-                        req = ClientRequest::PamAuthenticateStep(PamAuthRequest::MFACode {
-                            cred,
-                        });
-                        continue;
-                    },
-                    ClientResponse::PamAuthenticateStepResponse(PamAuthResponse::MFAPoll {
-                        msg,
-                        polling_interval,
-                    }) => {
-                        // Prompt the MFA message
-                        println!("{}", msg);
-
-                        let mut poll_attempt = 0;
-                        req = ClientRequest::PamAuthenticateStep(PamAuthRequest::MFAPoll { poll_attempt });
-                        loop {
-                            thread::sleep(Duration::from_secs(polling_interval.into()));
-
-                            // Counter intuitive, but we don't need a max poll attempts here because
-                            // if the resolver goes away, then this will error on the sock and
-                            // will shutdown. This allows the resolver to dynamically extend the
-                            // timeout if needed, and removes logic from the front end.
-                            match_sm_auth_client_response!(
-                                daemon_client.call_and_wait(&req, timeout), req, pin_min_len,
-                                ClientResponse::PamAuthenticateStepResponse(
-                                        PamAuthResponse::MFAPollWait,
-                                ) => {
-                                    // Continue polling if the daemon says to wait
-                                    poll_attempt += 1;
-                                    req = ClientRequest::PamAuthenticateStep(
-                                        PamAuthRequest::MFAPoll { poll_attempt }
-                                    );
-                                    continue;
-                                }
-                            );
-                        }
-                    }
-                );
             }
-            ExitCode::SUCCESS
         }
         HimmelblauUnixOpt::CacheClear { debug: _, really } => {
             debug!("Starting cache clear tool ...");

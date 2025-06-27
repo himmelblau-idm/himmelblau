@@ -1997,6 +1997,8 @@ version = "1.0.0"
 dependencies = [
  "anyhow",
  "async-trait",
+ "authenticator",
+ "base64 0.22.1",
  "bytes",
  "compact_jwt",
  "configparser",
@@ -2015,10 +2017,12 @@ dependencies = [
  "pem",
  "regex",
  "reqwest",
+ "rpassword",
  "rusqlite",
  "serde",
  "serde_derive",
  "serde_json",
+ "sha2",
  "sketching",
  "tokio",
  "tokio-util",
@@ -3432,14 +3436,10 @@ checksum = "b15813163c1d831bf4a13c3610c05c0d03b39feb07f7e09fa234dac9b15aaf39"
 name = "pam_himmelblau"
 version = "1.0.0"
 dependencies = [
- "authenticator",
- "base64 0.22.1",
  "himmelblau_unix_common",
  "libc",
  "libhimmelblau",
  "pkg-config",
- "serde_json",
- "sha2",
  "tokio",
  "tracing",
  "tracing-subscriber",
