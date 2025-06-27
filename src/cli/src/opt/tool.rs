@@ -20,7 +20,6 @@ use libc::uid_t;
 use libc::gid_t;
 
 #[derive(Debug, Subcommand)]
-#[clap(about = "Idmapping Utility")]
 pub enum IdmapOpt {
     /// Add a static user mapping to the idmap cache. This maps an Entra ID user (by UPN or
     /// SAM-compatible name) to a fixed UID and primary group GID.
@@ -48,7 +47,6 @@ pub enum IdmapOpt {
 }
 
 #[derive(Debug, Subcommand)]
-#[clap(about = "Application Utility")]
 pub enum ApplicationOpt {
     /// Lists Entra ID application registrations in the current tenant.
     ///
@@ -86,11 +84,11 @@ pub enum ApplicationOpt {
     /// application additional Microsoft Graph API permissions at registration time,
     /// including `User.ReadWrite.All` and `Group.ReadWrite.All`.
     ///
-    /// ⚠️ If you grant these permissions, it is strongly recommended that you restrict
+    /// NOTE: If you grant these permissions, it is strongly recommended that you restrict
     /// access to the application to specific administrators or groups:
     ///
-    /// 1. In the Microsoft Entra admin portal, go to Entra ID → Enterprise applications and find your app’s entry.
-    /// 2. Under Properties, set “Assignment required?” to Yes.
+    /// 1. In the Microsoft Entra admin portal, go to Entra ID -> Enterprise applications and find your app's entry.
+    /// 2. Under Properties, set "Assignment required?" to Yes.
     /// 3. Go to Users and groups, click Add, and assign only the specific users or groups you want to have access.
     ///
     /// If the `--name` parameter is omitted, the command authenticates as the currently
@@ -175,7 +173,6 @@ pub enum ApplicationOpt {
 }
 
 #[derive(Debug, Subcommand)]
-#[clap(about = "User and Group Management")]
 pub enum UserOpt {
     /// Sets POSIX-related attributes on a specified Entra ID user object.
     ///
@@ -216,7 +213,6 @@ pub enum UserOpt {
 }
 
 #[derive(Debug, Subcommand)]
-#[clap(about = "Group Management")]
 pub enum GroupOpt {
     /// Sets POSIX-related attributes on a specified Entra ID group object.
     ///
@@ -250,10 +246,12 @@ pub enum GroupOpt {
 #[derive(Debug, Subcommand)]
 #[clap(about = "Himmelblau Management Utility")]
 pub enum HimmelblauUnixOpt {
+    /// Manage Entra ID application registrations, including creation, listing, and extension
+    /// schema configuration.
     #[clap(subcommand)]
     Application(ApplicationOpt),
-    /// Test authentication of a user via the unixd resolver "pam" channel. This does not
-    /// test that your pam configuration is correct - only that unixd is correctly processing
+    /// Test authentication of a user via the himmelblaud resolver "pam" channel. This does not
+    /// test that your pam configuration is correct - only that himmelblaud is correctly processing
     /// and validating authentications.
     AuthTest {
         #[clap(short, long)]
@@ -261,7 +259,7 @@ pub enum HimmelblauUnixOpt {
         #[clap(short = 'D', long = "name")]
         account_id: String,
     },
-    /// Erase the content of the unixd resolver cache. You should probably use `invalidate`
+    /// Erase the content of the himmelblaud resolver cache. You should probably use `invalidate`
     /// instead.
     CacheClear {
         #[clap(short, long)]
@@ -269,8 +267,8 @@ pub enum HimmelblauUnixOpt {
         #[clap(long)]
         really: bool,
     },
-    /// Invalidate, but don't erase the content of the unixd resolver cache. This will force
-    /// the unixd daemon to refresh all user and group content immediately. If the connection
+    /// Invalidate, but don't erase the content of the himmelblaud resolver cache. This will force
+    /// the himmelblaud daemon to refresh all user and group content immediately. If the connection
     /// is offline, entries will still be available and will be refreshed as soon as the daemon
     /// is online again.
     CacheInvalidate {
@@ -312,8 +310,10 @@ pub enum HimmelblauUnixOpt {
         #[clap(long = "client-id")]
         client_id: String,
     },
+    /// Manage Entra ID user accounts, including POSIX attribute assignment and UID mapping.
     #[clap(subcommand)]
     User(UserOpt),
+    /// Manage Entra ID groups, including POSIX attribute assignment and GID mapping.
     #[clap(subcommand)]
     Group(GroupOpt),
     /// Manage the static idmapping cache used to map Entra ID accounts to static UID/GID values.
@@ -321,7 +321,7 @@ pub enum HimmelblauUnixOpt {
     /// need to be preserved.
     #[clap(subcommand)]
     Idmap(IdmapOpt),
-    /// Check that the unixd daemon is online and able to connect correctly to the himmelblaud server.
+    /// Check that the himmelblaud daemon is online and able to connect correctly to the himmelblaud server.
     Status {
         #[clap(short, long)]
         debug: bool,

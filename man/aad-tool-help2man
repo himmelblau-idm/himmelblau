@@ -1,0 +1,66 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+AAD_TOOL="./aad-tool"  # Adjust path if needed
+OUTDIR="./data"
+mkdir $OUTDIR || echo
+
+# Get top-level commands
+echo "Extracting top-level commands..."
+help_output="$($AAD_TOOL --help 2>&1)"
+
+echo "$help_output" > "$OUTDIR/debug-help.txt"
+
+help2man -N \
+    --name "aad-tool" \
+    --output "$OUTDIR/aad-tool.1" \
+    "$AAD_TOOL"
+
+# Use awk to extract lines under 'Commands:' up to the next blank line
+top_commands=()
+in_cmds=0
+while IFS= read -r line; do
+  if [[ "$line" == "Commands:" ]]; then
+    in_cmds=1
+    continue
+  elif [[ "$line" =~ ^[[:space:]]*$ ]]; then
+    in_cmds=0
+  elif [[ "$in_cmds" == 1 && "$line" =~ ^[[:space:]]{2,}([a-z0-9_-]+)[[:space:]]+ ]]; then
+    cmd="${BASH_REMATCH[1]}"
+    top_commands+=("$cmd")
+  fi
+done <<< "$help_output"
+
+echo "Found top-level commands:"
+printf ' - %s\n' "${top_commands[@]}"
+
+for cmd in "${top_commands[@]}"; do
+    if [[ "$cmd" == "help" || "$cmd" == "version" ]] ; then
+        continue
+    fi
+    echo "Processing command: $cmd"
+
+    # Try to get subcommands for this command
+    subcmds=$($AAD_TOOL "$cmd" --help 2>/dev/null | awk '/^  [a-z]/ { print $1 }')
+    echo "Got subcommands of $cmd: $subcmds"
+
+    if [[ -n "$subcmds" ]]; then
+        # Command has subcommands
+        for sub in $subcmds; do
+            if [ "$sub" == "help" ] ; then
+                continue
+            fi
+            echo "  Subcommand: $sub"
+            help2man -N \
+                --name "$cmd $sub subcommand for aad-tool" \
+                --output "$OUTDIR/aad-tool-$cmd-$sub.1" \
+                "$AAD_TOOL $cmd $sub"
+        done
+    else
+        echo "  Generating manpage for: $cmd"
+        help2man -N --no-discard-stderr \
+          --name "$cmd command for aad-tool" \
+          --output "$OUTDIR/aad-tool-$cmd.1" \
+          "$AAD_TOOL $cmd"
+    fi
+done
