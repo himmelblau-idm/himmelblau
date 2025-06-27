@@ -1346,6 +1346,9 @@ impl IdProvider for HimmelblauProvider {
                 })?;
                 if let Err(e) = tpm.identity_key_load(machine_key, Some(&pin), &$hello_key) {
                     error!("{:?}", e);
+                    self.bad_pin_counter
+                        .increment_bad_pin_count(account_id)
+                        .await;
                     return Ok((
                         AuthResult::Denied("Failed to authenticate with Hello PIN.".to_string()),
                         AuthCacheAction::None,
