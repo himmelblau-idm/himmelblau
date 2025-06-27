@@ -56,6 +56,16 @@
 # If the value is not set or cannot be parsed, a default of 3 is used.
 # hello_pin_retry_count = 3
 #
+# Customizes the prompt text shown when requesting the user’s Linux Hello PIN.
+# If unset, the default prompt is:
+#   Use the Linux Hello PIN for this device.
+# hello_pin_prompt = Enter your device unlock PIN
+#
+# Customizes the prompt text shown when requesting the user’s Entra ID password.
+# If unset, the default prompt is:
+#   Use the password for your Office 365 or Microsoft online login.
+# entra_id_password_prompt = Enter your Microsoft 365 password
+#
 # Whether to permit attempting a SFA (password only) authentication when MFA
 # methods are unavailable. Sometimes this is possible when MFA has yet to be
 # configured. This is disabled by default.

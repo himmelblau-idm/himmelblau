@@ -388,7 +388,7 @@ macro_rules! match_sm_auth_client_response {
                     let cred = if let Some(cred) = consume_authtok {
                         cred
                     } else {
-                        $msg_printer.print_text("Use the Linux Hello PIN for this device.");
+                        $msg_printer.print_text(&$cfg.get_hello_pin_prompt());
                         match $msg_printer.prompt_echo_off("PIN: ") {
                             Some(cred) => cred,
                             None => {
@@ -490,7 +490,7 @@ macro_rules! match_sm_auth_client_response {
                     let cred = if let Some(cred) = consume_authtok {
                         cred
                     } else {
-                        $msg_printer.print_text("Use the password for your Office 365 or Microsoft online login.");
+                        $msg_printer.print_text(&$cfg.get_entra_id_password_prompt());
                         match $msg_printer.prompt_echo_off("Entra Id Password: ") {
                             Some(cred) => cred,
                             None => {
