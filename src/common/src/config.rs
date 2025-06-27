@@ -29,10 +29,10 @@ use crate::constants::MAPPED_NAME_CACHE;
 use crate::constants::{
     CN_NAME_MAPPING, DEFAULT_AUTHORITY_HOST, DEFAULT_BROKER_SOCK_PATH, DEFAULT_CACHE_TIMEOUT,
     DEFAULT_CONFIG_PATH, DEFAULT_CONN_TIMEOUT, DEFAULT_DB_PATH, DEFAULT_HELLO_ENABLED,
-    DEFAULT_HELLO_PIN_MIN_LEN, DEFAULT_HOME_ALIAS, DEFAULT_HOME_ATTR, DEFAULT_HOME_PREFIX,
-    DEFAULT_HSM_PIN_PATH, DEFAULT_ID_ATTR_MAP, DEFAULT_ODC_PROVIDER, DEFAULT_SELINUX,
-    DEFAULT_SFA_FALLBACK_ENABLED, DEFAULT_SHELL, DEFAULT_SOCK_PATH, DEFAULT_TASK_SOCK_PATH,
-    DEFAULT_USE_ETC_SKEL, SERVER_CONFIG_PATH,
+    DEFAULT_HELLO_PIN_MIN_LEN, DEFAULT_HELLO_PIN_RETRY_COUNT, DEFAULT_HOME_ALIAS,
+    DEFAULT_HOME_ATTR, DEFAULT_HOME_PREFIX, DEFAULT_HSM_PIN_PATH, DEFAULT_ID_ATTR_MAP,
+    DEFAULT_ODC_PROVIDER, DEFAULT_SELINUX, DEFAULT_SFA_FALLBACK_ENABLED, DEFAULT_SHELL,
+    DEFAULT_SOCK_PATH, DEFAULT_TASK_SOCK_PATH, DEFAULT_USE_ETC_SKEL, SERVER_CONFIG_PATH,
 };
 use crate::mapping::{MappedNameCache, Mode};
 use crate::unix_config::{HomeAttr, HsmType};
@@ -532,6 +532,19 @@ impl HimmelblauConfig {
                 }
             },
             None => DEFAULT_HELLO_PIN_MIN_LEN,
+        }
+    }
+
+    pub fn get_hello_pin_retry_count(&self) -> u32 {
+        match self.config.get("global", "hello_pin_retry_count") {
+            Some(val) => match val.parse::<u32>() {
+                Ok(n) => n,
+                Err(_) => {
+                    error!("Failed parsing hello_pin_retry_count from config: {}", val);
+                    DEFAULT_HELLO_PIN_RETRY_COUNT
+                }
+            },
+            None => DEFAULT_HELLO_PIN_RETRY_COUNT,
         }
     }
 
