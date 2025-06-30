@@ -406,6 +406,27 @@ impl HimmelblauConfig {
     pub fn write_server_config(&self) -> Result<(), Error> {
         let mut srv_conf = self.config.clone();
         srv_conf.remove_section("global");
+
+        let permitted_keys = [
+            "authority_host",
+            "tenant_id",
+            "graph_url",
+            "domain_aliases",
+            "device_id",
+            "intune_device_id",
+        ];
+        let mut keys_to_remove = Vec::new();
+        for (section, keys) in srv_conf.get_map_ref() {
+            for key in keys.keys() {
+                if !permitted_keys.contains(&key.as_str()) {
+                    keys_to_remove.push((section.to_string(), key.clone()));
+                }
+            }
+        }
+        for (section, key) in keys_to_remove {
+            srv_conf.remove_key(&section, &key);
+        }
+
         srv_conf.write(SERVER_CONFIG_PATH)
     }
 
