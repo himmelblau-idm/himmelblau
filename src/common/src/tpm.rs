@@ -7,6 +7,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at https://mozilla.org/MPL/2.0/.
  */
+use kanidm_hsm_crypto::provider::BoxedDynTpm;
 use kanidm_hsm_crypto::AuthValue;
 use std::error::Error;
 use std::path::PathBuf;
@@ -44,10 +45,58 @@ pub async fn write_hsm_pin(hsm_pin_path: &str) -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
+#[cfg(feature = "tpm")]
+pub fn open_tpm(tcti_name: &str) -> Option<BoxedDynTpm> {
+    use kanidm_hsm_crypto::provider::{BoxedDynTpm, TssTpm};
+    match TssTpm::new(tcti_name) {
+        Ok(tpm) => {
+            debug!("opened hw tpm");
+            Some(BoxedDynTpm::new(tpm))
+        }
+        Err(tpm_err) => {
+            error!(?tpm_err, "Unable to open requested tpm device");
+            None
+        }
+    }
+}
+
+#[cfg(not(feature = "tpm"))]
+pub fn open_tpm(_tcti_name: &str) -> Option<BoxedDynTpm> {
+    error!("Hardware TPM supported was not enabled in this build. Unable to proceed");
+    None
+}
+
+#[cfg(feature = "tpm")]
+pub fn open_tpm_if_possible(tcti_name: &str) -> BoxedDynTpm {
+    use kanidm_hsm_crypto::provider::{BoxedDynTpm, SoftTpm, TssTpm};
+    match TssTpm::new(tcti_name) {
+        Ok(tpm) => {
+            debug!("opened hw tpm");
+            BoxedDynTpm::new(tpm)
+        }
+        Err(tpm_err) => {
+            warn!(
+                ?tpm_err,
+                "Unable to open requested tpm device, falling back to soft tpm"
+            );
+            BoxedDynTpm::new(SoftTpm::new())
+        }
+    }
+}
+
+#[cfg(not(feature = "tpm"))]
+pub fn open_tpm_if_possible(_tcti_name: &str) -> BoxedDynTpm {
+    use kanidm_hsm_crypto::provider::SoftTpm;
+    debug!("opened soft tpm");
+    BoxedDynTpm::new(SoftTpm::new())
+}
+
 #[macro_export]
 macro_rules! tpm_init {
     ($cfg:ident) => {{
-        use himmelblau_unix_common::tpm::{read_hsm_pin, write_hsm_pin};
+        use himmelblau_unix_common::tpm::{
+            open_tpm, open_tpm_if_possible, read_hsm_pin, write_hsm_pin,
+        };
         use himmelblau_unix_common::unix_config::HsmType;
         use kanidm_hsm_crypto::AuthValue;
 
@@ -83,10 +132,11 @@ macro_rules! tpm_init {
 
         let mut hsm: BoxedDynTpm = match $cfg.get_hsm_type() {
             HsmType::Soft => BoxedDynTpm::new(SoftTpm::new()),
-            HsmType::Tpm => {
-                error!("TPM not supported ... yet");
-                return ExitCode::FAILURE;
-            }
+            HsmType::TpmIfPossible => open_tpm_if_possible(&$cfg.get_tpm_tcti_name()),
+            HsmType::Tpm => match open_tpm(&$cfg.get_tpm_tcti_name()) {
+                Some(hsm) => hsm,
+                None => return ExitCode::FAILURE,
+            },
         };
 
         (auth_value, hsm)
@@ -102,7 +152,7 @@ macro_rules! tpm_loadable_machine_key {
             Ok(None) => {
                 if $create {
                     // No machine key found - create one, and store it.
-                    let loadable_machine_key = match $hsm.machine_key_create(&$auth_value) {
+                    let loadable_machine_key = match $hsm.root_storage_key_create(&$auth_value) {
                         Ok(lmk) => lmk,
                         Err(err) => {
                             error!(?err, "Unable to create hsm loadable machine key");
@@ -144,7 +194,7 @@ macro_rules! tpm_loadable_machine_key {
 #[macro_export]
 macro_rules! tpm_machine_key {
     ($hsm:ident, $auth_value:ident, $loadable_machine_key:ident, $cfg:ident, $on_error:expr) => {
-        match $hsm.machine_key_load(&$auth_value, &$loadable_machine_key) {
+        match $hsm.root_storage_key_load(&$auth_value, &$loadable_machine_key) {
             Ok(mk) => mk,
             Err(err) => {
                 error!(?err, "Unable to load machine root key - This can occur if you have changed your HSM pin");

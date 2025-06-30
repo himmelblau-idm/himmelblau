@@ -32,7 +32,8 @@ use crate::constants::{
     DEFAULT_HELLO_PIN_MIN_LEN, DEFAULT_HELLO_PIN_RETRY_COUNT, DEFAULT_HOME_ALIAS,
     DEFAULT_HOME_ATTR, DEFAULT_HOME_PREFIX, DEFAULT_HSM_PIN_PATH, DEFAULT_ID_ATTR_MAP,
     DEFAULT_ODC_PROVIDER, DEFAULT_SELINUX, DEFAULT_SFA_FALLBACK_ENABLED, DEFAULT_SHELL,
-    DEFAULT_SOCK_PATH, DEFAULT_TASK_SOCK_PATH, DEFAULT_USE_ETC_SKEL, SERVER_CONFIG_PATH,
+    DEFAULT_SOCK_PATH, DEFAULT_TASK_SOCK_PATH, DEFAULT_TPM_TCTI_NAME, DEFAULT_USE_ETC_SKEL,
+    SERVER_CONFIG_PATH,
 };
 use crate::mapping::{MappedNameCache, Mode};
 use crate::unix_config::{HomeAttr, HsmType};
@@ -361,6 +362,7 @@ impl HimmelblauConfig {
         match self.config.get("global", "hsm_type") {
             Some(val) => match val.to_lowercase().as_str() {
                 "soft" => HsmType::Soft,
+                "tpm_if_possible" => HsmType::TpmIfPossible,
                 "tpm" => HsmType::Tpm,
                 _ => {
                     warn!("Invalid hsm_type configured, using default ...");
@@ -381,6 +383,13 @@ impl HimmelblauConfig {
                 Some(val) => val,
                 None => DEFAULT_HSM_PIN_PATH.to_string(),
             },
+        }
+    }
+
+    pub fn get_tpm_tcti_name(&self) -> String {
+        match self.config.get("global", "tpm_tcti_name") {
+            Some(val) => val,
+            None => DEFAULT_TPM_TCTI_NAME.to_string(),
         }
     }
 

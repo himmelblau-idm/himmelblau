@@ -56,5 +56,16 @@ pub enum HsmType {
     #[cfg_attr(not(feature = "tpm"), default)]
     Soft,
     #[cfg_attr(feature = "tpm", default)]
+    TpmIfPossible,
     Tpm,
+}
+
+impl Display for HsmType {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            HsmType::Soft => write!(f, "Soft"),
+            HsmType::TpmIfPossible => write!(f, "Tpm if possible"),
+            HsmType::Tpm => write!(f, "Tpm"),
+        }
+    }
 }

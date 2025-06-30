@@ -48,7 +48,8 @@ use himmelblau_unix_common::tpm_init;
 use himmelblau_unix_common::unix_proto::{ClientRequest, ClientResponse};
 use himmelblau_unix_common::{tpm_loadable_machine_key, tpm_machine_key};
 use kanidm_hsm_crypto::{
-    soft::SoftTpm, BoxedDynTpm, LoadableIdentityKey, LoadableMsOapxbcRsaKey, Tpm,
+    provider::BoxedDynTpm, provider::SoftTpm, provider::Tpm,
+    structures::LoadableMsDeviceEnrolmentKey, structures::LoadableMsOapxbcRsaKey,
 };
 use rpassword::read_password;
 use serde::Deserialize;
@@ -358,7 +359,7 @@ async fn main() -> ExitCode {
 
             // Fetch the certificate key
             let cert_key_tag = format!("{}/certificate", $domain);
-            let loadable_cert_key: LoadableIdentityKey =
+            let loadable_cert_key: LoadableMsDeviceEnrolmentKey =
                 match db_txn.get_tagged_hsm_key(&cert_key_tag) {
                     Ok(Some(ltk)) => ltk,
                     Err(e) => {
