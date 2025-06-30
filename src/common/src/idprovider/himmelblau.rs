@@ -1418,6 +1418,30 @@ impl IdProvider for HimmelblauProvider {
                     }
                 };
 
+                // Cache the PRT to disk for offline auth SSO
+                if let Some(prt) = &token.prt {
+                    match self.client.read().await.seal_user_prt_with_hello_key(
+                        prt,
+                        &$hello_key,
+                        &$cred,
+                        tpm,
+                        machine_key,
+                    ) {
+                        Ok(hello_prt) => {
+                            let hello_prt_tag = self.fetch_hello_prt_key_tag(account_id);
+                            keystore
+                                .insert_tagged_hsm_key(&hello_prt_tag, &hello_prt)
+                                .map_err(|e| {
+                                    error!("Failed to cache hello prt for {}: {:?}", account_id, e);
+                                    IdpError::Tpm
+                                })?;
+                        }
+                        Err(e) => {
+                            error!("Failed to cache hello prt for {}: {:?}", account_id, e);
+                        }
+                    }
+                }
+
                 match self.token_validate(account_id, &token, None).await {
                     Ok(AuthResult::Success { token }) => {
                         debug!("Returning user token from successful Hello PIN authentication.");
@@ -2017,6 +2041,26 @@ impl IdProvider for HimmelblauProvider {
                 })?;
                 match tpm.ms_hello_key_load(machine_key, &hello_key, &pin) {
                     Ok(_) => {
+                        // Check for and decrypt any cached PRT
+                        let hello_prt_tag = self.fetch_hello_prt_key_tag(account_id);
+                        if let Ok(Some(hello_prt)) = keystore.get_tagged_hsm_key(&hello_prt_tag) {
+                            let prt = self
+                                .client
+                                .read()
+                                .await
+                                .unseal_user_prt_with_hello_key(
+                                    &hello_prt,
+                                    &hello_key,
+                                    &cred,
+                                    tpm,
+                                    machine_key,
+                                )
+                                .map_err(|e| {
+                                    error!("Failed to load hello prt: {:?}", e);
+                                    IdpError::Tpm
+                                })?;
+                            self.refresh_cache.add(account_id, &prt).await;
+                        }
                         self.bad_pin_counter.reset_bad_pin_count(account_id).await;
                         Ok(AuthResult::Success {
                             token: token.clone(),
@@ -2173,6 +2217,10 @@ impl HimmelblauProvider {
 
     fn fetch_tranport_key_tag(&self) -> String {
         format!("{}/transport", self.domain)
+    }
+
+    fn fetch_hello_prt_key_tag(&self, account_id: &str) -> String {
+        format!("{}/hello_prt", account_id.to_lowercase())
     }
 
     fn fetch_loadable_transport_key_from_keystore<D: KeyStoreTxn + Send>(
