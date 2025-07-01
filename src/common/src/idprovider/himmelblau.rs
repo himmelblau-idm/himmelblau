@@ -1082,10 +1082,13 @@ impl IdProvider for HimmelblauProvider {
         // Skip Hello authentication if it is disabled by config
         let hello_enabled = self.config.read().await.get_enable_hello();
         let hello_pin_retry_count = self.config.read().await.get_hello_pin_retry_count();
+        let intune_enrollment_required =
+            self.config.read().await.get_apply_policy() && !self.is_intune_enrolled(keystore).await;
         if !self.is_domain_joined(keystore).await
             || hello_key.is_none()
             || !hello_enabled
             || self.bad_pin_counter.bad_pin_count(account_id).await > hello_pin_retry_count
+            || intune_enrollment_required
         {
             if (self.delayed_init().await).is_err() {
                 // Initialization failed. Report that the system is offline. We
@@ -1262,6 +1265,30 @@ impl IdProvider for HimmelblauProvider {
             ));
         }
 
+        macro_rules! intune_enroll {
+            ($token:ident) => {
+                match self.intune_enroll(None, tpm, &$token, machine_key).await {
+                    Ok((intune_key, intune_device_id)) => {
+                        let mut config = self.config.write().await;
+                        config.set(&self.domain, "intune_device_id", &intune_device_id);
+                        if let Err(e) = config.write_server_config() {
+                            error!(?e, "Failed to write Intune join configuration.");
+                            return Err(IdpError::BadRequest);
+                        }
+                        let intune_tag = self.fetch_intune_key_tag();
+                        if let Err(e) = keystore.insert_tagged_hsm_key(&intune_tag, &intune_key) {
+                            error!(?e, "Failed inserting the intune key into the keystore.");
+                            return Err(IdpError::BadRequest);
+                        }
+                    }
+                    Err(IdpError::NotFound) => {}
+                    Err(e) => {
+                        error!(?e, "Failed to enroll in Intune");
+                        return Err(e);
+                    }
+                }
+            };
+        }
         macro_rules! enroll_and_obtain_enrolled_token {
             ($token:ident) => {{
                 if !self.is_domain_joined(keystore).await {
@@ -1272,6 +1299,8 @@ impl IdProvider for HimmelblauProvider {
                             error!("Failed to join domain: {:?}", e);
                             IdpError::BadRequest
                         })?;
+                } else if !self.is_intune_enrolled(keystore).await {
+                    intune_enroll!($token);
                 }
                 // If an app_id is defined in the config, the app should have the
                 // GroupMember.Read.All API permission.
@@ -2753,59 +2782,34 @@ impl HimmelblauProvider {
                     )));
                 }
 
-                let mut config = self.config.write().await;
-
-                // Enrolling the device in Intune
-                let graph_token = self
-                    .client
-                    .read()
-                    .await
-                    .acquire_token_by_refresh_token(
-                        &token.refresh_token,
-                        vec!["00000003-0000-0000-c000-000000000000/.default"],
-                        None,
-                        Some(DEFAULT_APP_ID),
-                        tpm,
-                        machine_key,
-                    )
-                    .await?;
-                let access_token = graph_token.access_token.clone().ok_or(MsalError::Missing(
-                    "access_token missing from token".to_string(),
-                ))?;
-                let endpoints = self.graph.intune_service_endpoints(&access_token).await?;
-                if let Ok(token) = self
-                    .client
-                    .read()
-                    .await
-                    .acquire_token_by_refresh_token(
-                        &token.refresh_token,
-                        vec!["d4ebce55-015a-49b5-a083-c84d1797ae8c/.default"],
-                        None,
-                        Some(DEFAULT_APP_ID),
-                        tpm,
-                        machine_key,
-                    )
+                let intune_device_id = match self
+                    .intune_enroll(Some(&attrs), tpm, token, machine_key)
                     .await
                 {
-                    let intune = IntuneForLinux::new(endpoints)?;
-                    match intune
-                        .enroll(&token, &attrs, &device_id, tpm, machine_key)
-                        .await
-                    {
-                        Ok((intune_key, intune_device_id)) => {
-                            config.set(&self.domain, "intune_device_id", &intune_device_id);
-                            let intune_tag = self.fetch_intune_key_tag();
-                            if let Err(e) = keystore.insert_tagged_hsm_key(&intune_tag, &intune_key)
-                            {
-                                error!(?e, "Failed inserting the intune key into the keystore.");
-                            }
+                    Ok((intune_key, intune_device_id)) => {
+                        let intune_tag = self.fetch_intune_key_tag();
+                        if let Err(e) = keystore.insert_tagged_hsm_key(&intune_tag, &intune_key) {
+                            error!(?e, "Failed inserting the intune key into the keystore.");
+                            return Err(MsalError::GeneralFailure(format!(
+                                "Failed to join the domain: {:?}",
+                                e
+                            )));
                         }
-                        Err(e) => info!(?e, "Intune device enrollment failed."),
+                        Some(intune_device_id)
                     }
-                } else {
-                    info!("Intune device enrollment failed.");
-                }
+                    Err(IdpError::NotFound) => None,
+                    Err(e) => {
+                        return Err(MsalError::GeneralFailure(format!(
+                            "Failed to join the domain: {:?}",
+                            e
+                        )));
+                    }
+                };
 
+                let mut config = self.config.write().await;
+                if let Some(intune_device_id) = intune_device_id {
+                    config.set(&self.domain, "intune_device_id", &intune_device_id);
+                }
                 config.set(&self.domain, "device_id", &device_id);
                 debug!(
                     "Setting domain {} config device_id to {}",
@@ -2820,6 +2824,99 @@ impl HimmelblauProvider {
                 Ok(())
             }
             Err(e) => Err(e),
+        }
+    }
+
+    async fn intune_enroll(
+        &self,
+        attrs: Option<&EnrollAttrs>,
+        tpm: &mut tpm::provider::BoxedDynTpm,
+        token: &UnixUserToken,
+        machine_key: &tpm::structures::StorageKey,
+    ) -> Result<(LoadableMsDeviceEnrolmentKey, String), IdpError> {
+        // Enrolling the device in Intune
+        let config = self.config.read().await;
+        if config.get_apply_policy() {
+            let graph_token = self
+                .client
+                .read()
+                .await
+                .acquire_token_by_refresh_token(
+                    &token.refresh_token,
+                    vec!["00000003-0000-0000-c000-000000000000/.default"],
+                    None,
+                    Some(DEFAULT_APP_ID),
+                    tpm,
+                    machine_key,
+                )
+                .await
+                .map_err(|e| {
+                    error!(
+                        "Acquiring token for Intune device enrollment failed: {:?}",
+                        e
+                    );
+                    IdpError::BadRequest
+                })?;
+            let access_token = graph_token.access_token.clone().ok_or_else(|| {
+                error!("Acquiring token for Intune device enrollment failed: access_token missing");
+                IdpError::BadRequest
+            })?;
+            let endpoints = self
+                .graph
+                .intune_service_endpoints(&access_token)
+                .await
+                .map_err(|e| {
+                    error!("Failed fetching Intune service endpoints: {:?}", e);
+                    IdpError::BadRequest
+                })?;
+            match self
+                .client
+                .read()
+                .await
+                .acquire_token_by_refresh_token(
+                    &token.refresh_token,
+                    vec!["d4ebce55-015a-49b5-a083-c84d1797ae8c/.default"],
+                    None,
+                    Some(DEFAULT_APP_ID),
+                    tpm,
+                    machine_key,
+                )
+                .await
+            {
+                Ok(token) => {
+                    let intune = IntuneForLinux::new(endpoints).map_err(|e| {
+                        error!(?e, "Intune device enrollment failed.");
+                        IdpError::BadRequest
+                    })?;
+                    let device_id = config
+                        .get(&self.domain, "device_id")
+                        .ok_or(IdpError::BadRequest)?;
+                    let attrs = attrs.cloned().unwrap_or(
+                        EnrollAttrs::new(self.domain.clone(), None, None, None, None).map_err(
+                            |e| {
+                                error!("Failed creating enroll attrs: {:?}", e);
+                                IdpError::BadRequest
+                            },
+                        )?,
+                    );
+                    match intune
+                        .enroll(&token, &attrs, &device_id, tpm, machine_key)
+                        .await
+                    {
+                        Ok((intune_key, intune_device_id)) => Ok((intune_key, intune_device_id)),
+                        Err(e) => {
+                            error!(?e, "Intune device enrollment failed.");
+                            Err(IdpError::BadRequest)
+                        }
+                    }
+                }
+                Err(e) => {
+                    error!(?e, "Intune device enrollment failed.");
+                    Err(IdpError::BadRequest)
+                }
+            }
+        } else {
+            Err(IdpError::NotFound)
         }
     }
 
@@ -2842,6 +2939,23 @@ impl HimmelblauProvider {
             Err(_) => return false,
         };
         if cert_key.is_none() {
+            return false;
+        }
+        true
+    }
+
+    async fn is_intune_enrolled<D: KeyStoreTxn + Send>(&self, keystore: &mut D) -> bool {
+        let config = self.config.read().await;
+        if config.get(&self.domain, "intune_device_id").is_none() {
+            return false;
+        }
+        let intune_tag = self.fetch_intune_key_tag();
+        let intune_key: Option<LoadableMsDeviceEnrolmentKey> =
+            match keystore.get_tagged_hsm_key(&intune_tag) {
+                Ok(intune_key) => intune_key,
+                Err(_) => return false,
+            };
+        if intune_key.is_none() {
             return false;
         }
         true

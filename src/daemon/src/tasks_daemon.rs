@@ -510,8 +510,9 @@ async fn handle_tasks(stream: UnixStream, cfg: &HimmelblauConfig) {
                             .await
                         {
                             error!("Error -> {:?}", e);
+                            return;
                         }
-                        break;
+                        continue;
                     }
                 };
                 debug!("tasks: Got response code `{}` while applying policy", res);
