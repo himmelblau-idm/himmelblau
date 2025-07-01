@@ -779,7 +779,12 @@ impl IdProvider for HimmelblauProvider {
             return Err(IdpError::BadRequest);
         }
 
-        let hello_tag = self.fetch_hello_key_tag(account_id);
+        let amr_ngcmfa = token.amr_ngcmfa().map_err(|e| {
+            error!("{:?}", e);
+            IdpError::NotFound
+        })?;
+
+        let hello_tag = self.fetch_hello_key_tag(account_id, amr_ngcmfa);
 
         // Ensure the user is setting the token for the account it has authenticated to
         if account_id.to_string().to_lowercase()
@@ -1070,12 +1075,10 @@ impl IdProvider for HimmelblauProvider {
             }
         }
 
-        let hello_tag = self.fetch_hello_key_tag(account_id);
-        let hello_key: Option<LoadableMsHelloKey> =
-            keystore.get_tagged_hsm_key(&hello_tag).map_err(|e| {
-                error!("Failed fetching hello key from keystore: {:?}", e);
-                IdpError::BadRequest
-            })?;
+        let hello_key = match self.fetch_hello_key(account_id, keystore) {
+            Ok((hello_key, _keytype)) => Some(hello_key),
+            Err(_) => None,
+        };
         // Skip Hello authentication if it is disabled by config
         let hello_enabled = self.config.read().await.get_enable_hello();
         let hello_pin_retry_count = self.config.read().await.get_hello_pin_retry_count();
@@ -1337,7 +1340,7 @@ impl IdProvider for HimmelblauProvider {
             }};
         }
         macro_rules! auth_and_validate_hello_key {
-            ($hello_key:ident, $cred:ident) => {{
+            ($hello_key:ident, $keytype:ident, $cred:ident) => {{
                 // CRITICAL: Validate that we can load the key, otherwise the offline
                 // fallback will allow the user to authenticate with a bad PIN here.
                 // `acquire_token_by_hello_for_business_key` CAN (and probably will)
@@ -1369,52 +1372,154 @@ impl IdProvider for HimmelblauProvider {
                         vec!["https://graph.microsoft.com/.default"],
                     )
                 };
-                let token = match self
-                    .client
-                    .read()
-                    .await
-                    .acquire_token_by_hello_for_business_key(
-                        account_id,
-                        &$hello_key,
-                        scopes,
-                        None,
-                        client_id,
-                        tpm,
-                        machine_key,
-                        &$cred,
-                    )
-                    .await
-                {
-                    Ok(token) => {
-                        self.bad_pin_counter.reset_bad_pin_count(account_id).await;
-                        token
+                let token = if $keytype == KeyType::Hello {
+                    match self
+                        .client
+                        .read()
+                        .await
+                        .acquire_token_by_hello_for_business_key(
+                            account_id,
+                            &$hello_key,
+                            scopes,
+                            None,
+                            client_id,
+                            tpm,
+                            machine_key,
+                            &$cred,
+                        )
+                        .await
+                    {
+                        Ok(token) => {
+                            self.bad_pin_counter.reset_bad_pin_count(account_id).await;
+                            token
+                        }
+                        // If the network goes down during an online PIN auth, we can downgrade to an
+                        // offline auth and permit the authentication to proceed.
+                        Err(MsalError::RequestFailed(msg)) => {
+                            let url = extract_base_url!(msg);
+                            info!(?url, "Network down detected");
+                            let mut state = self.state.lock().await;
+                            *state =
+                                CacheState::OfflineNextCheck(SystemTime::now() + OFFLINE_NEXT_CHECK);
+                            return Ok((
+                                AuthResult::Success {
+                                    token: old_token.clone(),
+                                },
+                                AuthCacheAction::None,
+                            ));
+                        }
+                        Err(e) => {
+                            self.bad_pin_counter
+                                .increment_bad_pin_count(account_id)
+                                .await;
+                            error!("Failed to authenticate with hello key: {:?}", e);
+                            return Ok((
+                                AuthResult::Denied(
+                                    "Failed to authenticate with Hello PIN.".to_string(),
+                                ),
+                                AuthCacheAction::None,
+                            ));
+                        }
                     }
-                    // If the network goes down during an online PIN auth, we can downgrade to an
-                    // offline auth and permit the authentication to proceed.
-                    Err(MsalError::RequestFailed(msg)) => {
-                        let url = extract_base_url!(msg);
-                        info!(?url, "Network down detected");
-                        let mut state = self.state.lock().await;
-                        *state =
-                            CacheState::OfflineNextCheck(SystemTime::now() + OFFLINE_NEXT_CHECK);
-                        return Ok((
-                            AuthResult::Success {
-                                token: old_token.clone(),
-                            },
-                            AuthCacheAction::None,
-                        ));
-                    }
-                    Err(e) => {
-                        self.bad_pin_counter
-                            .increment_bad_pin_count(account_id)
-                            .await;
-                        error!("Failed to authenticate with hello key: {:?}", e);
-                        return Ok((
-                            AuthResult::Denied(
-                                "Failed to authenticate with Hello PIN.".to_string(),
-                            ),
-                            AuthCacheAction::None,
-                        ));
+                } else { // This Hello key is decoupled
+                    // Check for and decrypt any cached PRT
+                    let hello_prt_tag = self.fetch_hello_prt_key_tag(account_id);
+                    let prt = match keystore.get_tagged_hsm_key(&hello_prt_tag) {
+                        Ok(Some(hello_prt)) => self
+                            .client
+                            .read()
+                            .await
+                            .unseal_user_prt_with_hello_key(
+                                &hello_prt,
+                                &$hello_key,
+                                &$cred,
+                                tpm,
+                                machine_key,
+                            ).ok(),
+                        // If we just authenticated for the first time, the PRT is instead
+                        // in the mem cache.
+                        Err(_) | Ok(None) => self.refresh_cache.refresh_token(account_id).await.ok(),
+                    };
+                    if let Some(prt) = prt {
+                        match self
+                            .client
+                            .read()
+                            .await
+                            .exchange_prt_for_access_token(
+                                &prt,
+                                scopes,
+                                None,
+                                client_id,
+                                tpm,
+                                machine_key,
+                            ).await {
+                                Ok(mut token) => {
+                                    // Request a new PRT to attach to the token (kick
+                                    // the can down the road).
+                                    if let Ok(new_prt) = self
+                                        .client
+                                        .read()
+                                        .await
+                                        .exchange_prt_for_prt(
+                                            &prt,
+                                            tpm,
+                                            machine_key,
+                                            true,
+                                        ).await {
+                                            token.prt = Some(new_prt);
+                                        };
+                                    self.bad_pin_counter.reset_bad_pin_count(account_id).await;
+                                    token
+                                }
+                                // If the network goes down during an online exchange auth, we can
+                                // downgrade to an offline auth and permit the authentication to proceed.
+                                Err(MsalError::RequestFailed(msg)) => {
+                                    let url = extract_base_url!(msg);
+                                    info!(?url, "Network down detected");
+                                    let mut state = self.state.lock().await;
+                                    *state =
+                                        CacheState::OfflineNextCheck(SystemTime::now() + OFFLINE_NEXT_CHECK);
+                                    return Ok((
+                                        AuthResult::Success {
+                                            token: old_token.clone(),
+                                        },
+                                        AuthCacheAction::None,
+                                    ));
+                                }
+                                Err(_) => {
+                                    // Access token request for this PRT failed. Delete the
+                                    // PRT and hello key, then demand a new auth.
+                                    keystore
+                                        .delete_tagged_hsm_key(&hello_prt_tag)
+                                        .map_err(|e| {
+                                            error!("Failed to delete hello prt: {:?}", e);
+                                            IdpError::Tpm
+                                        })?;
+                                    let hello_key_tag = self.fetch_hello_key_tag(account_id, false);
+                                    keystore
+                                        .delete_tagged_hsm_key(&hello_key_tag)
+                                        .map_err(|e| {
+                                            error!("Failed to delete hello key: {:?}", e);
+                                            IdpError::Tpm
+                                        })?;
+                                    // It's ok to reset the pin count here, since they must
+                                    // online auth at this point and create a new pin.
+                                    self.bad_pin_counter.reset_bad_pin_count(account_id).await;
+                                    return Err(IdpError::BadRequest);
+                                }
+                            }
+                    } else {
+                        error!("Failed fetching hello prt from cache");
+                        // We don't have access to a PRT, and can't proceed. Delete
+                        // the decoupled hello key.
+                        let hello_key_tag = self.fetch_hello_key_tag(account_id, false);
+                            keystore
+                                .delete_tagged_hsm_key(&hello_key_tag)
+                                .map_err(|e| {
+                                    error!("Failed to delete hello key: {:?}", e);
+                                    IdpError::Tpm
+                                })?;
+                        return Err(IdpError::BadRequest);
                     }
                 };
 
@@ -1466,27 +1571,46 @@ impl IdProvider for HimmelblauProvider {
         }
         match (&mut *cred_handler, pam_next_req) {
             (AuthCredHandler::SetupPin { token }, PamAuthRequest::SetupPin { pin }) => {
-                let hello_tag = self.fetch_hello_key_tag(account_id);
+                // Skip Hello enrollment if the token doesn't have the ngcmfa amr
+                let amr_ngcmfa = token.amr_ngcmfa().map_err(|e| {
+                    error!("{:?}", e);
+                    IdpError::NotFound
+                })?;
+                let hello_tag = self.fetch_hello_key_tag(account_id, amr_ngcmfa);
 
-                let hello_key = net_down_check!(
-                    self.client
-                        .read()
-                        .await
-                        .provision_hello_for_business_key(token, tpm, machine_key, &pin)
-                        .await,
-                    Ok(hello_key) => hello_key,
-                    Err(e) => {
-                        return Ok((
-                            AuthResult::Next(AuthRequest::SetupPin {
-                                msg: format!(
-                                    "Failed to provision hello key: {:?}\n{}",
-                                    e, "Create a PIN to use in place of passwords."
-                                ),
-                            }),
-                            AuthCacheAction::None,
-                        ));
-                    }
-                );
+                let (hello_key, keytype) = if amr_ngcmfa {
+                    net_down_check!(
+                        self.client
+                            .read()
+                            .await
+                            .provision_hello_for_business_key(token, tpm, machine_key, &pin)
+                            .await,
+                        Ok(hello_key) => (hello_key, KeyType::Hello),
+                        Err(e) => {
+                            return Ok((
+                                AuthResult::Next(AuthRequest::SetupPin {
+                                    msg: format!(
+                                        "Failed to provision hello key: {:?}\n{}",
+                                        e, "Create a PIN to use in place of passwords."
+                                    ),
+                                }),
+                                AuthCacheAction::None,
+                            ));
+                        }
+                    )
+                } else {
+                    let pin = PinValue::new(&pin).map_err(|e| {
+                        error!("Failed setting pin value: {:?}", e);
+                        IdpError::Tpm
+                    })?;
+                    (
+                        tpm.ms_hello_key_create(machine_key, &pin).map_err(|e| {
+                            error!("Failed to create hello key: {:?}", e);
+                            IdpError::Tpm
+                        })?,
+                        KeyType::Decoupled,
+                    )
+                };
                 keystore
                     .insert_tagged_hsm_key(&hello_tag, &hello_key)
                     .map_err(|e| {
@@ -1494,22 +1618,12 @@ impl IdProvider for HimmelblauProvider {
                         IdpError::Tpm
                     })?;
 
-                auth_and_validate_hello_key!(hello_key, pin)
+                auth_and_validate_hello_key!(hello_key, keytype, pin)
             }
             (_, PamAuthRequest::Pin { cred }) => {
-                let hello_tag = self.fetch_hello_key_tag(account_id);
-                let hello_key = keystore
-                    .get_tagged_hsm_key(&hello_tag)
-                    .map_err(|e| {
-                        error!("Failed fetching hello key from keystore: {:?}", e);
-                        IdpError::BadRequest
-                    })?
-                    .ok_or_else(|| {
-                        error!("Authentication failed. Hello key missing.");
-                        IdpError::BadRequest
-                    })?;
+                let (hello_key, keytype) = self.fetch_hello_key(account_id, keystore)?;
 
-                auth_and_validate_hello_key!(hello_key, cred)
+                auth_and_validate_hello_key!(hello_key, keytype, cred)
             }
             (change_password, PamAuthRequest::Password { mut cred }) => {
                 if let AuthCredHandler::ChangePassword { old_cred } = change_password {
@@ -1775,7 +1889,12 @@ impl IdProvider for HimmelblauProvider {
                             error!("{:?}", e);
                             IdpError::NotFound
                         })?;
-                        if !hello_enabled || !amr_ngcmfa {
+                        // If the token at least has an mfa amr, then we can fake a hello key
+                        let amr_mfa = token2.amr_mfa().map_err(|e| {
+                            error!("{:?}", e);
+                            IdpError::NotFound
+                        })?;
+                        if !hello_enabled || (!amr_ngcmfa && !amr_mfa) {
                             info!("Skipping Hello enrollment because it is disabled");
                             return Ok((
                                 AuthResult::Success { token: token3 },
@@ -1863,7 +1982,12 @@ impl IdProvider for HimmelblauProvider {
                             error!("{:?}", e);
                             IdpError::NotFound
                         })?;
-                        if !hello_enabled || !amr_ngcmfa {
+                        // If the token at least has an mfa amr, then we can fake a hello key
+                        let amr_mfa = token2.amr_mfa().map_err(|e| {
+                            error!("{:?}", e);
+                            IdpError::NotFound
+                        })?;
+                        if !hello_enabled || (!amr_ngcmfa && !amr_mfa) {
                             info!("Skipping Hello enrollment because it is disabled");
                             return Ok((
                                 AuthResult::Success { token: token3 },
@@ -1973,12 +2097,7 @@ impl IdProvider for HimmelblauProvider {
         _token: Option<&UserToken>,
         keystore: &mut D,
     ) -> Result<(AuthRequest, AuthCredHandler), IdpError> {
-        let hello_tag = self.fetch_hello_key_tag(account_id);
-        let hello_key: Option<LoadableMsHelloKey> =
-            keystore.get_tagged_hsm_key(&hello_tag).map_err(|e| {
-                error!("Failed fetching hello key from keystore: {:?}", e);
-                IdpError::BadRequest
-            })?;
+        let hello_key = self.fetch_hello_key(account_id, keystore).ok();
         let sfa_enabled = self.config.read().await.get_enable_sfa_fallback();
         let hello_pin_retry_count = self.config.read().await.get_hello_pin_retry_count();
         // We only have 2 options when performing an offline auth; Hello PIN,
@@ -2023,17 +2142,7 @@ impl IdProvider for HimmelblauProvider {
     ) -> Result<AuthResult, IdpError> {
         match (&cred_handler, pam_next_req) {
             (_, PamAuthRequest::Pin { cred }) => {
-                let hello_tag = self.fetch_hello_key_tag(account_id);
-                let hello_key: LoadableMsHelloKey = keystore
-                    .get_tagged_hsm_key(&hello_tag)
-                    .map_err(|e| {
-                        error!("Failed fetching hello key from keystore: {:?}", e);
-                        IdpError::BadRequest
-                    })?
-                    .ok_or_else(|| {
-                        error!("Authentication failed. Hello key missing.");
-                        IdpError::BadRequest
-                    })?;
+                let (hello_key, _keytype) = self.fetch_hello_key(account_id, keystore)?;
 
                 let pin = PinValue::new(&cred).map_err(|e| {
                     error!("Failed setting pin value: {:?}", e);
@@ -2093,6 +2202,12 @@ impl IdProvider for HimmelblauProvider {
     async fn get_cachestate(&self, _account_id: Option<&str>) -> CacheState {
         (*self.state.lock().await).clone()
     }
+}
+
+#[derive(PartialEq)]
+enum KeyType {
+    Hello,
+    Decoupled,
 }
 
 impl HimmelblauProvider {
@@ -2203,8 +2318,35 @@ impl HimmelblauProvider {
         }
     }
 
-    fn fetch_hello_key_tag(&self, account_id: &str) -> String {
-        format!("{}/hello", account_id.to_lowercase())
+    fn fetch_hello_key_tag(&self, account_id: &str, amr_ngcmfa: bool) -> String {
+        if amr_ngcmfa {
+            format!("{}/hello", account_id.to_lowercase())
+        } else {
+            format!("{}/hello_decoupled", account_id.to_lowercase())
+        }
+    }
+
+    fn fetch_hello_key<D: KeyStoreTxn + Send>(
+        &self,
+        account_id: &str,
+        keystore: &mut D,
+    ) -> Result<(LoadableMsHelloKey, KeyType), IdpError> {
+        match keystore.get_tagged_hsm_key(&format!("{}/hello", account_id.to_lowercase())) {
+            Ok(Some(hello_key)) => Ok((hello_key, KeyType::Hello)),
+            Err(_) | Ok(None) => {
+                let hello_key = keystore
+                    .get_tagged_hsm_key(&format!("{}/hello_decoupled", account_id.to_lowercase()))
+                    .map_err(|e| {
+                        error!("Failed fetching hello key from keystore: {:?}", e);
+                        IdpError::BadRequest
+                    })?
+                    .ok_or_else(|| {
+                        error!("Authentication failed. Hello key missing.");
+                        IdpError::BadRequest
+                    })?;
+                Ok((hello_key, KeyType::Decoupled))
+            }
+        }
     }
 
     fn fetch_cert_key_tag(&self) -> String {
