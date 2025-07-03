@@ -2693,7 +2693,7 @@ impl HimmelblauProvider {
                         .tenant_id()
                         .await
                         .map_err(|e| anyhow!("{:?}", e))?,
-                    &name,
+                    &id.to_string(),
                 )
                 .map_err(|e| anyhow!("Failed fetching gid for {}: {:?}", name, e))?,
             IdAttr::Rfc2307 => match value.extension_attrs.get("gidNumber") {
