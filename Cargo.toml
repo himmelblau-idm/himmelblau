@@ -44,9 +44,9 @@ himmelblau_unix_common = { path = "src/common" }
 libhimmelblau = { version = "0.7.1", features = ["broker", "changepassword", "on_behalf_of", "tpm"] }
 clap = { version = "^4.5", features = ["derive", "env"] }
 clap_complete = "^4.5.54"
-reqwest = { version = "^0.12.20", features = ["json"] }
+reqwest = { version = "^0.12.22", features = ["json"] }
 anyhow = "^1.0.98"
-tokio = { version = "^1.45.1", features = ["rt", "macros", "sync", "time", "net", "io-util", "signal", "rt-multi-thread"] }
+tokio = { version = "^1.46.1", features = ["rt", "macros", "sync", "time", "net", "io-util", "signal", "rt-multi-thread"] }
 tokio-util = { version = "^0.7.15", features = ["codec"] }
 async-trait = "^0.1.88"
 himmelblau_policies = { path = "src/policies" }
@@ -69,7 +69,7 @@ base64urlsafedata = "0.5.0"
 hex = "^0.4.3"
 num_enum = "^0.7.4"
 scim_proto = "^1.6.4"
-serde_with = "3.13.0"
+serde_with = "3.14.0"
 time = { version = "^0.3.41", features = ["formatting", "local-offset"] }
 url = "^2.4.0"
 urlencoding = "2.1.3"
