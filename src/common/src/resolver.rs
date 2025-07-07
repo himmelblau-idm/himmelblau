@@ -481,18 +481,21 @@ where
         token: Option<UserToken>,
     ) -> Result<Option<UserToken>, ()> {
         let mut hsm_lock = self.hsm.lock().await;
+        let mut dbtxn = self.db.write().await;
 
         let user_get_result = self
             .client
             .unix_user_get(
                 account_id,
                 token.as_ref(),
+                &mut dbtxn,
                 hsm_lock.deref_mut(),
                 &self.machine_key,
             )
             .await;
 
         drop(hsm_lock);
+        dbtxn.commit().map_err(|_| ())?;
 
         match user_get_result {
             Ok(UserTokenState::Update(mut n_tok)) => {

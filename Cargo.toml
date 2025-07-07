@@ -31,6 +31,10 @@ license = "GPL-3.0-or-later"
 homepage = "https://github.com/himmelblau-idm/himmelblau"
 repository = "https://github.com/himmelblau-idm/himmelblau"
 
+[patch.crates-io]
+compact_jwt = { git = "https://github.com/kanidm/compact-jwt.git", branch = "main" }
+libhimmelblau = { git = "https://gitlab.com/samba-team/libhimmelblau.git", branch = "main" }
+
 [workspace.dependencies]
 libc = "^0.2.174"
 pkg-config = "^0.3.32"
@@ -41,7 +45,7 @@ serde_json = "^1.0.140"
 tracing-subscriber = "^0.3.17"
 tracing = "^0.1.37"
 himmelblau_unix_common = { path = "src/common" }
-libhimmelblau = { version = "0.7.1", features = ["broker", "changepassword", "on_behalf_of", "tpm"] }
+libhimmelblau = { version = "0.7.2", features = ["broker", "changepassword", "on_behalf_of", "tpm"] }
 clap = { version = "^4.5", features = ["derive", "env"] }
 clap_complete = "^4.5.54"
 reqwest = { version = "^0.12.22", features = ["json"] }
