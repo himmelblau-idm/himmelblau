@@ -160,12 +160,12 @@ Flake based configurations add this repository to their inputs, enable the servi
 
 The following packages are required on openSUSE to build and test this package.
 
-    sudo zypper in make cargo git gcc sqlite3-devel libopenssl-3-devel pam-devel libcap-devel libtalloc-devel libtevent-devel libldb-devel libdhash-devel krb5-devel pcre2-devel libclang13 autoconf make automake  gettext-tools clang dbus-1-devel libunistring-devel gobject-introspection-devel cairo-devel gdk-pixbuf-devel libsoup-devel pango-devel atk-devel gtk3-devel webkit2gtk3-devel libudev-devel mercurial python311-gyp
+    sudo zypper in make cargo git gcc sqlite3-devel libopenssl-3-devel pam-devel libcap-devel libtalloc-devel libtevent-devel libldb-devel libdhash-devel krb5-devel pcre2-devel libclang13 autoconf make automake  gettext-tools clang dbus-1-devel libunistring-devel gobject-introspection-devel cairo-devel gdk-pixbuf-devel libsoup-devel pango-devel atk-devel gtk3-devel webkit2gtk3-devel libudev-devel mercurial tpm2-0-tss-devel
 
 
 Or on Debian based systems:
 
-    sudo apt-get install make gcc libpam0g-dev libudev-dev libssl-dev pkg-config tpm-udev libtss2-dev libcap-dev libtalloc-dev libtevent-dev libldb-dev libdhash-dev libkrb5-dev libpcre2-dev libclang-18-dev autoconf gettext libsqlite3-dev build-essentials libdbus-1-dev libunistring-dev
+    sudo apt-get install make gcc libpam0g-dev libudev-dev libssl-dev pkg-config tpm-udev libtss2-dev libcap-dev libtalloc-dev libtevent-dev libldb-dev libdhash-dev libkrb5-dev libpcre2-dev libclang-18-dev autoconf gettext libsqlite3-dev build-essentials libdbus-1-dev libunistring-dev libtss2-dev
 
     curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
     source "$HOME/.cargo/env"
