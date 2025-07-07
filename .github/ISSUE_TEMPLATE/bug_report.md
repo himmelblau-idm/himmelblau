@@ -49,4 +49,8 @@ Want to see this bug fixed faster? Fund its implementation through our **Backer'
 
 [![Donate to Our Collective](https://opencollective.com/himmelblau/donate/button.png?color=blue)](https://himmelblau-idm.org/backers.html#backers-bounty)
 
+For US tax exempt donations:
+
+[![Donate US Tax Exempt](https://www.spi-inc.org/images/paypal_btn_donateCC_LG.gif)](https://www.paypal.com/cgi-bin/webscr?cmd=_s-xclick&hosted_button_id=8GYKFLX9UNCH2)
+
 Your support helps drive Himmelblau’s evolution!
