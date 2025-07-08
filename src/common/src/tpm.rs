@@ -93,7 +93,7 @@ pub fn open_tpm_if_possible(_tcti_name: &str) -> BoxedDynTpm {
 
 #[macro_export]
 macro_rules! tpm_init {
-    ($cfg:ident) => {{
+    ($cfg:ident, $on_error:expr) => {{
         use himmelblau_unix_common::tpm::{
             open_tpm, open_tpm_if_possible, read_hsm_pin, write_hsm_pin,
         };
@@ -107,7 +107,7 @@ macro_rules! tpm_init {
                 "Failed to create HSM PIN into {}",
                 &$cfg.get_hsm_pin_path()
             );
-            return ExitCode::FAILURE;
+            $on_error
         };
         // read the hsm pin
         let hsm_pin = match read_hsm_pin(&$cfg.get_hsm_pin_path()).await {
@@ -118,7 +118,7 @@ macro_rules! tpm_init {
                     "Failed to read HSM PIN from {}",
                     &$cfg.get_hsm_pin_path()
                 );
-                return ExitCode::FAILURE;
+                $on_error
             }
         };
 
@@ -126,7 +126,7 @@ macro_rules! tpm_init {
             Ok(av) => av,
             Err(err) => {
                 error!(?err, "invalid hsm pin");
-                return ExitCode::FAILURE;
+                $on_error
             }
         };
 
@@ -135,7 +135,7 @@ macro_rules! tpm_init {
             HsmType::TpmIfPossible => open_tpm_if_possible(&$cfg.get_tpm_tcti_name()),
             HsmType::Tpm => match open_tpm(&$cfg.get_tpm_tcti_name()) {
                 Some(hsm) => hsm,
-                None => return ExitCode::FAILURE,
+                None => $on_error,
             },
         };
 
@@ -203,4 +203,98 @@ macro_rules! tpm_machine_key {
             }
         }
     };
+}
+
+pub fn confidential_client_creds<D: crate::db::KeyStoreTxn + Send>(
+    hsm: &mut kanidm_hsm_crypto::provider::BoxedDynTpm,
+    keystore: &mut D,
+    machine_key: &kanidm_hsm_crypto::structures::StorageKey,
+    domain: &str,
+) -> Result<Option<(String, himmelblau::ClientCredential)>, crate::idprovider::interface::IdpError>
+{
+    use crate::constants::{
+        CONFIDENTIAL_CLIENT_CERT_KEY_TAG, CONFIDENTIAL_CLIENT_CERT_TAG,
+        CONFIDENTIAL_CLIENT_SECRET_TAG,
+    };
+    use crate::idprovider::interface::IdpError;
+    use der::asn1::Utf8StringRef;
+    use der::Decode;
+    use serde_json::Value;
+
+    let secret_tag = format!("{}/{}", domain, CONFIDENTIAL_CLIENT_SECRET_TAG);
+    if let Ok(Some(sealed_secret)) = keystore.get_tagged_hsm_key(&secret_tag) {
+        if let Ok(secret_info) = hsm.unseal_data(machine_key, &sealed_secret) {
+            let value: Value =
+                serde_json::from_str(&String::from_utf8(secret_info.to_vec()).map_err(|e| {
+                    error!(?e, "Failed extracting secret from cache");
+                    IdpError::KeyStore
+                })?)
+                .map_err(|e| {
+                    error!(?e, "Failed extracting secret from cache");
+                    IdpError::KeyStore
+                })?;
+
+            let secret = value["secret"].as_str().ok_or_else(|| {
+                error!("Failed extracting secret from cache");
+                IdpError::KeyStore
+            })?;
+            let client_id = value["client_id"].as_str().ok_or_else(|| {
+                error!("Failed extracting secret client_id from cache");
+                IdpError::KeyStore
+            })?;
+
+            return Ok(Some((
+                client_id.to_string(),
+                himmelblau::ClientCredential::from_secret(secret.to_string()),
+            )));
+        }
+    }
+
+    let key_tag = format!("{}/{}", domain, CONFIDENTIAL_CLIENT_CERT_KEY_TAG);
+    if let Ok(Some(loadable_cert_key)) = keystore.get_tagged_hsm_key(&key_tag) {
+        let key = hsm
+            .msoapxbc_rsa_key_load(machine_key, &loadable_cert_key)
+            .map_err(|e| {
+                error!("Failed to load IdentityKey: {:?}", e);
+                IdpError::KeyStore
+            })?;
+
+        let cert_tag = format!("{}/{}", domain, CONFIDENTIAL_CLIENT_CERT_TAG);
+        if let Ok(Some(sealed_cert)) = keystore.get_tagged_hsm_key(&cert_tag) {
+            let cert = kanidm_lib_crypto::x509_cert::Certificate::from_der(
+                &hsm.unseal_data(machine_key, &sealed_cert).map_err(|e| {
+                    error!("Failed to unseal certificate: {:?}", e);
+                    IdpError::KeyStore
+                })?,
+            )
+            .map_err(|e| {
+                error!("Failed to load certificate: {:?}", e);
+                IdpError::KeyStore
+            })?;
+
+            let client_id = cert
+                .tbs_certificate
+                .subject
+                .as_ref()
+                .iter()
+                .flat_map(|rdn| rdn.0.iter())
+                .find_map(|attr| {
+                    (attr.oid.to_string() == "2.5.4.3")
+                        .then(|| attr.value.decode_as::<Utf8StringRef>().ok())
+                        .flatten()
+                })
+                .ok_or_else(|| {
+                    error!("Failed extracting client_id from certificate");
+                    IdpError::KeyStore
+                })?
+                .to_string();
+
+            return Ok(Some((
+                client_id,
+                himmelblau::ClientCredential::from_certificate(&cert, key),
+            )));
+        }
+    }
+
+    Ok(None)
 }

@@ -36,6 +36,7 @@ use std::sync::Arc;
 
 use broker_client::BrokerClient;
 use clap::Parser;
+use himmelblau::ConfidentialClientApplication;
 use himmelblau::{error::MsalError, graph::Graph, AuthOption, BrokerClientApplication};
 use himmelblau_unix_common::auth::{authenticate_async, SimpleMessagePrinter};
 use himmelblau_unix_common::auth_handle_mfa_resp;
@@ -48,6 +49,7 @@ use himmelblau_unix_common::constants::{
 use himmelblau_unix_common::db::{Cache, CacheTxn, Db, KeyStoreTxn};
 use himmelblau_unix_common::idmap_cache::{StaticGroup, StaticIdCache, StaticUser};
 use himmelblau_unix_common::pam::{Options, PamResultCode};
+use himmelblau_unix_common::tpm::confidential_client_creds;
 use himmelblau_unix_common::tpm_init;
 use himmelblau_unix_common::unix_proto::{ClientRequest, ClientResponse};
 use himmelblau_unix_common::{tpm_loadable_machine_key, tpm_machine_key};
@@ -205,6 +207,93 @@ fn configure_pam(
     Ok(())
 }
 
+async fn confidential_client_access_token(
+    client_id: Option<String>,
+    account_id: Option<String>,
+    domain: Option<String>,
+) -> Option<(String, String)> {
+    if unsafe { libc::geteuid() } != 0 {
+        return None;
+    }
+
+    let cfg = match HimmelblauConfig::new(Some(DEFAULT_CONFIG_PATH)) {
+        Ok(c) => c,
+        Err(_) => {
+            error!("Failed to parse {}", DEFAULT_CONFIG_PATH);
+            return None;
+        }
+    };
+
+    let domain = if let Some(account_id) = &account_id {
+        match split_username(&account_id) {
+            Some((_, domain)) => domain.to_string(),
+            None => {
+                error!("Could not split domain from input username");
+                return None;
+            }
+        }
+    } else if let Some(domain) = domain {
+        domain
+    } else {
+        // Attempt using the default domain
+        cfg.get_configured_domains()[0].clone()
+    };
+
+    let (auth_value, mut tpm) = tpm_init!(cfg, return None);
+
+    let db = match Db::new(&cfg.get_db_path()) {
+        Ok(db) => db,
+        Err(e) => {
+            error!("Failed loading Himmelblau cache: {:?}", e);
+            return None;
+        }
+    };
+
+    // Fetch the machine key
+    let loadable_machine_key = tpm_loadable_machine_key!(db, tpm, auth_value, false, return None);
+    let machine_key = tpm_machine_key!(tpm, auth_value, loadable_machine_key, cfg, return None);
+
+    let mut keystore = db.write().await;
+    if let Ok(Some((cred_client_id, client_creds))) =
+        confidential_client_creds(&mut tpm, &mut keystore, &machine_key, &domain)
+    {
+        if let Some(client_id) = client_id {
+            if client_id.to_lowercase() != cred_client_id.to_lowercase() {
+                return None;
+            }
+        }
+        let authority_host = cfg.get_authority_host(&domain);
+        let tenant_id = match cfg.get_tenant_id(&domain) {
+            Some(tenant_id) => tenant_id,
+            None => "common".to_string(),
+        };
+        let authority = format!("https://{}/{}", authority_host, tenant_id);
+
+        let app = match ConfidentialClientApplication::new(
+            &cred_client_id,
+            Some(&authority),
+            client_creds,
+        ) {
+            Ok(app) => app,
+            Err(e) => {
+                error!(?e, "Failed initializing confidential client");
+                return None;
+            }
+        };
+        if let Ok(token) = app
+            .acquire_token_silent(
+                vec!["00000003-0000-0000-c000-000000000000/.default"],
+                Some(&mut tpm),
+            )
+            .await
+        {
+            debug!("Proceeding with confidential client credentials...");
+            return Some((domain, token.access_token.clone()));
+        }
+    }
+    None
+}
+
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> ExitCode {
     let opt = HimmelblauUnixParser::parse();
@@ -343,7 +432,7 @@ async fn main() -> ExitCode {
 
     macro_rules! obtain_host_data {
         ($domain:expr, $cfg:ident) => {{
-            let (auth_value, mut tpm) = tpm_init!($cfg);
+            let (auth_value, mut tpm) = tpm_init!($cfg, return ExitCode::FAILURE);
 
             let db = match Db::new(&$cfg.get_db_path()) {
                 Ok(db) => db,
@@ -733,7 +822,7 @@ async fn main() -> ExitCode {
                 }
             };
 
-            let (auth_value, mut tpm) = tpm_init!(cfg);
+            let (auth_value, mut tpm) = tpm_init!(cfg, return ExitCode::FAILURE);
 
             let db = match Db::new(&cfg.get_db_path()) {
                 Ok(db) => db,
@@ -935,7 +1024,7 @@ async fn main() -> ExitCode {
                 }
             };
 
-            let (auth_value, mut tpm) = tpm_init!(cfg);
+            let (auth_value, mut tpm) = tpm_init!(cfg, return ExitCode::FAILURE);
 
             let db = match Db::new(&cfg.get_db_path()) {
                 Ok(db) => db,
@@ -1291,44 +1380,65 @@ async fn main() -> ExitCode {
         } => {
             debug!("Starting enumerate tool ...");
 
-            if unsafe { libc::geteuid() } != 0 {
-                error!("This command must be run as root.");
-                return ExitCode::FAILURE;
-            }
-
-            let cfg = match HimmelblauConfig::new(Some(DEFAULT_CONFIG_PATH)) {
-                Ok(c) => c,
-                Err(_e) => {
-                    error!("Failed to parse {}", DEFAULT_CONFIG_PATH);
-                    return ExitCode::FAILURE;
-                }
-            };
-
-            let (graph, domain, authority) = init!(cfg, Some(account_id.clone()), None);
-            let (mut tpm, loadable_transport_key, loadable_cert_key, machine_key) =
-                obtain_host_data!(domain, cfg);
-            let app = client!(
-                authority,
-                Some(loadable_transport_key),
-                Some(loadable_cert_key)
-            );
-            let token = auth!(app, account_id);
-
-            let token = on_behalf_of_token!(
-                app,
-                token,
-                tpm,
-                machine_key,
-                vec!["https://graph.microsoft.com/User.Read.All"],
+            let (graph, access_token) = match confidential_client_access_token(
+                Some(client_id.clone()),
+                Some(account_id.clone()),
                 None,
-                Some(&client_id)
-            );
-
-            let access_token = match &token.access_token {
-                Some(access_token) => access_token.clone(),
+            )
+            .await
+            {
+                Some((domain, access_token)) => {
+                    let graph =
+                        match Graph::new(DEFAULT_ODC_PROVIDER, &domain, None, None, None).await {
+                            Ok(graph) => graph,
+                            Err(e) => {
+                                error!("Failed discovering tenant: {:?}", e);
+                                return ExitCode::FAILURE;
+                            }
+                        };
+                    (graph, access_token)
+                }
                 None => {
-                    error!("Failed to get access token");
-                    return ExitCode::FAILURE;
+                    if unsafe { libc::geteuid() } != 0 {
+                        error!("This command must be run as root.");
+                        return ExitCode::FAILURE;
+                    }
+
+                    let cfg = match HimmelblauConfig::new(Some(DEFAULT_CONFIG_PATH)) {
+                        Ok(c) => c,
+                        Err(_e) => {
+                            error!("Failed to parse {}", DEFAULT_CONFIG_PATH);
+                            return ExitCode::FAILURE;
+                        }
+                    };
+
+                    let (graph, domain, authority) = init!(cfg, Some(account_id.clone()), None);
+                    let (mut tpm, loadable_transport_key, loadable_cert_key, machine_key) =
+                        obtain_host_data!(domain, cfg);
+                    let app = client!(
+                        authority,
+                        Some(loadable_transport_key),
+                        Some(loadable_cert_key)
+                    );
+                    let token = auth!(app, account_id);
+
+                    let token = on_behalf_of_token!(
+                        app,
+                        token,
+                        tpm,
+                        machine_key,
+                        vec!["https://graph.microsoft.com/User.Read.All"],
+                        None,
+                        Some(&client_id)
+                    );
+
+                    match &token.access_token {
+                        Some(access_token) => (graph, access_token.clone()),
+                        None => {
+                            error!("Failed to get access token");
+                            return ExitCode::FAILURE;
+                        }
+                    }
                 }
             };
 

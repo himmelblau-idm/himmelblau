@@ -1061,7 +1061,7 @@ async fn main() -> ExitCode {
                     return ExitCode::FAILURE
                 }
 
-            let (auth_value, mut hsm) = tpm_init!(cfg);
+            let (auth_value, mut hsm) = tpm_init!(cfg, return ExitCode::FAILURE);
 
             // With the assistance of the DB, setup the HSM and its machine key.
 

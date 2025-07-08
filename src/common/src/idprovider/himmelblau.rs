@@ -23,20 +23,16 @@ use crate::auth_handle_mfa_resp;
 use crate::config::split_username;
 use crate::config::HimmelblauConfig;
 use crate::config::IdAttr;
-use crate::constants::CONFIDENTIAL_CLIENT_CERT_KEY_TAG;
-use crate::constants::CONFIDENTIAL_CLIENT_CERT_TAG;
-use crate::constants::CONFIDENTIAL_CLIENT_SECRET_TAG;
 use crate::constants::DEFAULT_APP_ID;
 use crate::constants::EDGE_BROWSER_CLIENT_ID;
 use crate::constants::ID_MAP_CACHE;
 use crate::db::KeyStoreTxn;
 use crate::idmap_cache::StaticIdCache;
 use crate::idprovider::interface::{tpm, UserTokenState};
+use crate::tpm::confidential_client_creds;
 use crate::unix_proto::PamAuthRequest;
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
-use der::asn1::Utf8StringRef;
-use der::Decode;
 use himmelblau::auth::{BrokerClientApplication, UserToken as UnixUserToken};
 use himmelblau::discovery::EnrollAttrs;
 use himmelblau::error::{MsalError, DEVICE_AUTH_FAIL};
@@ -44,18 +40,16 @@ use himmelblau::graph::UserObject;
 use himmelblau::graph::{DirectoryObject, Graph};
 use himmelblau::intune::IntuneForLinux;
 use himmelblau::{AuthOption, MFAAuthContinue};
-use himmelblau::{ClientCredential, ClientToken, ConfidentialClientApplication};
+use himmelblau::{ClientToken, ConfidentialClientApplication};
 use idmap::{AadSid, Idmap};
 use kanidm_hsm_crypto::{
     structures::LoadableMsDeviceEnrolmentKey, structures::LoadableMsHelloKey,
     structures::LoadableMsOapxbcRsaKey, structures::SealedData, PinValue,
 };
-use kanidm_lib_crypto::x509_cert::Certificate;
 use regex::Regex;
 use reqwest;
 use reqwest::Url;
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::thread::sleep;
@@ -883,7 +877,7 @@ impl IdProvider for HimmelblauProvider {
         };
 
         macro_rules! fetch_user_confidential_client {
-            ($client_id:expr, $client_credential:expr) => {
+            ($client_id:expr, $client_credential:expr) => {{
                 let cfg = self.config.read().await;
                 let authority_host = cfg.get_authority_host(&self.domain);
                 let tenant_id = cfg.get_tenant_id(&self.domain).ok_or_else(|| {
@@ -941,83 +935,14 @@ impl IdProvider for HimmelblauProvider {
                         error!(?e, "Failed to acquire token silently using confidential client");
                     }
                 }
-            };
+            }};
         }
 
         // If we have ConfidentialClient creds, use those
-        let secret_tag = format!("{}/{}", self.domain, CONFIDENTIAL_CLIENT_SECRET_TAG);
-        if let Ok(Some(sealed_secret)) = keystore.get_tagged_hsm_key(&secret_tag) {
-            if let Ok(secret_info) = tpm.unseal_data(machine_key, &sealed_secret) {
-                let value: Value = serde_json::from_str(
-                    &String::from_utf8(secret_info.to_vec()).map_err(|e| {
-                        error!(?e, "Failed extracting secret from cache");
-                        IdpError::KeyStore
-                    })?,
-                )
-                .map_err(|e| {
-                    error!(?e, "Failed extracting secret from cache");
-                    IdpError::KeyStore
-                })?;
-
-                let secret = value["secret"].as_str().ok_or_else(|| {
-                    error!("Failed extracting secret from cache");
-                    IdpError::KeyStore
-                })?;
-                let client_id = value["client_id"].as_str().ok_or_else(|| {
-                    error!("Failed extracting secret client_id from cache");
-                    IdpError::KeyStore
-                })?;
-
-                fetch_user_confidential_client!(
-                    client_id,
-                    ClientCredential::from_secret(secret.to_string())
-                );
-            }
-        }
-        let key_tag = format!("{}/{}", self.domain, CONFIDENTIAL_CLIENT_CERT_KEY_TAG);
-        if let Ok(Some(loadable_cert_key)) = keystore.get_tagged_hsm_key(&key_tag) {
-            let key = tpm
-                .msoapxbc_rsa_key_load(machine_key, &loadable_cert_key)
-                .map_err(|e| {
-                    error!("Failed to load IdentityKey: {:?}", e);
-                    IdpError::KeyStore
-                })?;
-
-            let cert_tag = format!("{}/{}", self.domain, CONFIDENTIAL_CLIENT_CERT_TAG);
-            if let Ok(Some(sealed_cert)) = keystore.get_tagged_hsm_key(&cert_tag) {
-                let cert = Certificate::from_der(
-                    &tpm.unseal_data(machine_key, &sealed_cert).map_err(|e| {
-                        error!("Failed to unseal certificate: {:?}", e);
-                        IdpError::KeyStore
-                    })?,
-                )
-                .map_err(|e| {
-                    error!("Failed to load certificate: {:?}", e);
-                    IdpError::KeyStore
-                })?;
-
-                let client_id = cert
-                    .tbs_certificate
-                    .subject
-                    .as_ref()
-                    .iter()
-                    .flat_map(|rdn| rdn.0.iter())
-                    .find_map(|attr| {
-                        (attr.oid.to_string() == "2.5.4.3")
-                            .then(|| attr.value.decode_as::<Utf8StringRef>().ok())
-                            .flatten()
-                    })
-                    .ok_or_else(|| {
-                        error!("Failed extracting client_id from certificate");
-                        IdpError::KeyStore
-                    })?
-                    .to_string();
-
-                fetch_user_confidential_client!(
-                    &client_id,
-                    ClientCredential::from_certificate(&cert, key)
-                );
-            }
+        if let Ok(Some((client_id, creds))) =
+            confidential_client_creds(tpm, keystore, machine_key, &self.domain)
+        {
+            fetch_user_confidential_client!(&client_id, creds)
         }
 
         let idmap_cache = StaticIdCache::new(ID_MAP_CACHE, false).map_err(|e| {
