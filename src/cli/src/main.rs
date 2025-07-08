@@ -31,6 +31,7 @@
 extern crate tracing;
 
 use std::process::ExitCode;
+use std::str::FromStr;
 use std::sync::Arc;
 
 use broker_client::BrokerClient;
@@ -40,13 +41,23 @@ use himmelblau_unix_common::auth::{authenticate_async, SimpleMessagePrinter};
 use himmelblau_unix_common::auth_handle_mfa_resp;
 use himmelblau_unix_common::client::call_daemon;
 use himmelblau_unix_common::config::{split_username, HimmelblauConfig};
-use himmelblau_unix_common::constants::{DEFAULT_CONFIG_PATH, DEFAULT_ODC_PROVIDER, ID_MAP_CACHE};
+use himmelblau_unix_common::constants::{
+    CONFIDENTIAL_CLIENT_CERT_KEY_TAG, CONFIDENTIAL_CLIENT_CERT_TAG, CONFIDENTIAL_CLIENT_SECRET_TAG,
+    DEFAULT_CONFIG_PATH, DEFAULT_ODC_PROVIDER, ID_MAP_CACHE,
+};
 use himmelblau_unix_common::db::{Cache, CacheTxn, Db, KeyStoreTxn};
 use himmelblau_unix_common::idmap_cache::{StaticGroup, StaticIdCache, StaticUser};
 use himmelblau_unix_common::pam::{Options, PamResultCode};
 use himmelblau_unix_common::tpm_init;
 use himmelblau_unix_common::unix_proto::{ClientRequest, ClientResponse};
 use himmelblau_unix_common::{tpm_loadable_machine_key, tpm_machine_key};
+use kanidm_hsm_crypto::glue::traits::EncodeDer;
+use kanidm_hsm_crypto::glue::{
+    spki::der::pem::LineEnding,
+    traits::{EncodePem, Keypair},
+    x509,
+    x509::Builder,
+};
 use kanidm_hsm_crypto::{
     provider::BoxedDynTpm, provider::SoftTpm, provider::Tpm,
     structures::LoadableMsDeviceEnrolmentKey, structures::LoadableMsOapxbcRsaKey,
@@ -58,7 +69,7 @@ use std::io;
 use std::io::Write;
 use std::path::PathBuf;
 use std::thread::sleep;
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 use uuid::Uuid;
 
 include!("./opt/tool.rs");
@@ -199,6 +210,19 @@ async fn main() -> ExitCode {
     let opt = HimmelblauUnixParser::parse();
 
     let debug = match opt.commands {
+        HimmelblauUnixOpt::AddCred(AddCredOpt::Cert {
+            debug,
+            client_id: _,
+            domain: _,
+            valid_days: _,
+            cert_out: _,
+        }) => debug,
+        HimmelblauUnixOpt::AddCred(AddCredOpt::Secret {
+            debug,
+            client_id: _,
+            domain: _,
+            secret: _,
+        }) => debug,
         HimmelblauUnixOpt::Application(ApplicationOpt::List {
             debug,
             account_id: _,
@@ -283,13 +307,20 @@ async fn main() -> ExitCode {
     sketching::tracing_subscriber::fmt::init();
 
     macro_rules! init {
-        ($cfg:expr, $account_id:expr) => {{
-            let (_, domain) = match split_username(&$account_id) {
-                Some(out) => out,
-                None => {
-                    error!("Could not split domain from input username");
-                    return ExitCode::FAILURE;
+        ($cfg:expr, $account_id:expr, $domain:expr) => {{
+            let domain = if let Some(account_id) = $account_id {
+                match split_username(&account_id) {
+                    Some((_, domain)) => domain.to_string(),
+                    None => {
+                        error!("Could not split domain from input username");
+                        return ExitCode::FAILURE;
+                    }
                 }
+            } else if let Some(domain) = $domain {
+                domain
+            } else {
+                error!("No domain input provided.");
+                return ExitCode::FAILURE;
             };
 
             let graph = match Graph::new(DEFAULT_ODC_PROVIDER, &domain, None, None, None).await {
@@ -300,11 +331,11 @@ async fn main() -> ExitCode {
                 }
             };
 
-            let tenant_id = match $cfg.get_tenant_id(domain) {
+            let tenant_id = match $cfg.get_tenant_id(&domain) {
                 Some(tenant_id) => tenant_id,
                 None => "common".to_string(),
             };
-            let authority = format!("https://{}/{}", $cfg.get_authority_host(domain), tenant_id);
+            let authority = format!("https://{}/{}", $cfg.get_authority_host(&domain), tenant_id);
 
             (graph, domain, authority)
         }};
@@ -569,7 +600,7 @@ async fn main() -> ExitCode {
                         }
                     };
 
-                    let (graph, domain, authority) = init!(cfg, account_id);
+                    let (graph, domain, authority) = init!(cfg, Some(account_id.to_string()), None);
                     let (mut tpm, loadable_transport_key, loadable_cert_key, machine_key) =
                         obtain_host_data!(domain, cfg);
                     let app = client!(
@@ -642,7 +673,7 @@ async fn main() -> ExitCode {
                         }
                     };
 
-                    let (graph, _, authority) = init!(cfg, account_id);
+                    let (graph, _, authority) = init!(cfg, Some(account_id.to_string()), None);
 
                     match broker.acquire_token_silently(
                         "0.0",
@@ -680,6 +711,281 @@ async fn main() -> ExitCode {
     }
 
     match opt.commands {
+        HimmelblauUnixOpt::AddCred(AddCredOpt::Cert {
+            debug: _,
+            client_id,
+            domain,
+            valid_days,
+            cert_out,
+        }) => {
+            debug!("Starting add-cred cert tool ...");
+
+            if unsafe { libc::geteuid() } != 0 {
+                error!("This command must be run as root.");
+                return ExitCode::FAILURE;
+            }
+
+            let cfg = match HimmelblauConfig::new(Some(DEFAULT_CONFIG_PATH)) {
+                Ok(c) => c,
+                Err(_e) => {
+                    error!("Failed to parse {}", DEFAULT_CONFIG_PATH);
+                    return ExitCode::FAILURE;
+                }
+            };
+
+            let (auth_value, mut tpm) = tpm_init!(cfg);
+
+            let db = match Db::new(&cfg.get_db_path()) {
+                Ok(db) => db,
+                Err(e) => {
+                    error!("Failed loading Himmelblau cache: {:?}", e);
+                    return ExitCode::FAILURE;
+                }
+            };
+
+            // Fetch the machine key
+            let loadable_machine_key =
+                tpm_loadable_machine_key!(db, tpm, auth_value, false, return ExitCode::FAILURE);
+            let machine_key = tpm_machine_key!(
+                tpm,
+                auth_value,
+                loadable_machine_key,
+                cfg,
+                return ExitCode::FAILURE
+            );
+
+            let loadable_cert_key = match tpm.msoapxbc_rsa_key_create(&machine_key) {
+                Ok(loadable_cert_key) => loadable_cert_key,
+                Err(e) => {
+                    error!(?e, "Unable to create new cert key");
+                    return ExitCode::FAILURE;
+                }
+            };
+            let cert_key = match tpm.msoapxbc_rsa_key_load(&machine_key, &loadable_cert_key) {
+                Ok(cert_key) => cert_key,
+                Err(e) => {
+                    error!(?e, "Unable to load cert key");
+                    return ExitCode::FAILURE;
+                }
+            };
+            let signing_key = match tpm.rs256_keypair(&cert_key) {
+                Ok(signing_key) => signing_key,
+                Err(e) => {
+                    error!(?e, "Failed getting keypair");
+                    return ExitCode::FAILURE;
+                }
+            };
+
+            // Prepare X.509 fields
+            let serial_number = x509::SerialNumber::from(1u32);
+
+            let now = SystemTime::now();
+            let validity = x509::Validity {
+                not_before: match x509::Time::try_from(now) {
+                    Ok(not_before) => not_before,
+                    Err(e) => {
+                        error!(?e, ?now, "Failed parsing timestamp");
+                        return ExitCode::FAILURE;
+                    }
+                },
+                not_after: match x509::Time::try_from(now + Duration::from_secs(valid_days * 86400))
+                {
+                    Ok(not_after) => not_after,
+                    Err(e) => {
+                        error!(?e, ?now, "Failed parsing timestamp");
+                        return ExitCode::FAILURE;
+                    }
+                },
+            };
+
+            let subject = match x509::Name::from_str(&format!("CN={}", client_id)) {
+                Ok(subject) => subject,
+                Err(e) => {
+                    error!(?e, "Failed setting subject");
+                    return ExitCode::FAILURE;
+                }
+            };
+
+            // Get the SubjectPublicKeyInfo from the TPM key
+            let subject_public_key_info =
+                match x509::SubjectPublicKeyInfoOwned::from_key(signing_key.verifying_key()) {
+                    Ok(subject_public_key_info) => subject_public_key_info,
+                    Err(e) => {
+                        error!(?e, "Failed setting subject key info");
+                        return ExitCode::FAILURE;
+                    }
+                };
+
+            // Build the certificate (self-signed, so issuer = None)
+            let mut cert_builder = match x509::CertificateBuilder::new(
+                x509::Profile::Manual { issuer: None },
+                serial_number,
+                validity,
+                subject,
+                subject_public_key_info,
+                &signing_key,
+            ) {
+                Ok(cert_builder) => cert_builder,
+                Err(e) => {
+                    error!(?e, "Failed building certificate");
+                    return ExitCode::FAILURE;
+                }
+            };
+
+            // Encode the TBS certificate
+            let tbs = match cert_builder.finalize() {
+                Ok(tbs) => tbs,
+                Err(e) => {
+                    error!(?e, "Failed encoding the TBS certificate");
+                    return ExitCode::FAILURE;
+                }
+            };
+
+            // Sign it using the TPM RSA key
+            let signature = match tpm.rs256_sign_to_bitstring(&cert_key, &tbs) {
+                Ok(signature) => signature,
+                Err(e) => {
+                    error!(?e, "Failed signing the certificate");
+                    return ExitCode::FAILURE;
+                }
+            };
+
+            // Complete the certificate assembly
+            let cert = match cert_builder.assemble(signature) {
+                Ok(cert) => cert,
+                Err(e) => {
+                    error!(?e, "Failed assembling the certificate");
+                    return ExitCode::FAILURE;
+                }
+            };
+
+            let mut db_txn = db.write().await;
+
+            // Write the key to the cache
+            let key_tag = format!("{}/{}", domain, CONFIDENTIAL_CLIENT_CERT_KEY_TAG);
+            if let Err(e) = db_txn.insert_tagged_hsm_key(&key_tag, &loadable_cert_key) {
+                error!(?e, "Failed inserting certificate key into cache");
+                return ExitCode::FAILURE;
+            }
+
+            // Seal the certificate, and store that also
+            let cert_tag = format!("{}/{}", domain, CONFIDENTIAL_CLIENT_CERT_TAG);
+            let sealed_cert = match tpm.seal_data(
+                &machine_key,
+                match cert.to_der() {
+                    Ok(der) => der,
+                    Err(e) => {
+                        error!(?e, "Failed fetching certificate der");
+                        return ExitCode::FAILURE;
+                    }
+                }
+                .into(),
+            ) {
+                Ok(sealed_cert) => sealed_cert,
+                Err(e) => {
+                    error!(?e, "Failed sealing certificate");
+                    return ExitCode::FAILURE;
+                }
+            };
+            if let Err(e) = db_txn.insert_tagged_hsm_key(&cert_tag, &sealed_cert) {
+                error!(?e, "Failed inserting certificate key into cache");
+                return ExitCode::FAILURE;
+            }
+
+            if let Err(e) = db_txn.commit() {
+                error!(?e, "Failed inserting certificate key into cache");
+                return ExitCode::FAILURE;
+            }
+
+            // Write to PEM
+            if let Err(e) = std::fs::write(
+                cert_out.clone(),
+                match cert.to_pem(LineEnding::LF) {
+                    Ok(pem) => pem,
+                    Err(e) => {
+                        error!(?e, "Failed fetching certificate pem");
+                        return ExitCode::FAILURE;
+                    }
+                },
+            ) {
+                error!(?e, "Failed writing certificate to {}", cert_out);
+                return ExitCode::FAILURE;
+            }
+
+            ExitCode::SUCCESS
+        }
+        HimmelblauUnixOpt::AddCred(AddCredOpt::Secret {
+            debug: _,
+            client_id,
+            domain,
+            secret,
+        }) => {
+            debug!("Starting add-cred secret tool ...");
+
+            if unsafe { libc::geteuid() } != 0 {
+                error!("This command must be run as root.");
+                return ExitCode::FAILURE;
+            }
+
+            let cfg = match HimmelblauConfig::new(Some(DEFAULT_CONFIG_PATH)) {
+                Ok(c) => c,
+                Err(_e) => {
+                    error!("Failed to parse {}", DEFAULT_CONFIG_PATH);
+                    return ExitCode::FAILURE;
+                }
+            };
+
+            let (auth_value, mut tpm) = tpm_init!(cfg);
+
+            let db = match Db::new(&cfg.get_db_path()) {
+                Ok(db) => db,
+                Err(e) => {
+                    error!("Failed loading Himmelblau cache: {:?}", e);
+                    return ExitCode::FAILURE;
+                }
+            };
+
+            // Fetch the machine key
+            let loadable_machine_key =
+                tpm_loadable_machine_key!(db, tpm, auth_value, false, return ExitCode::FAILURE);
+            let machine_key = tpm_machine_key!(
+                tpm,
+                auth_value,
+                loadable_machine_key,
+                cfg,
+                return ExitCode::FAILURE
+            );
+
+            let secret_info = json!({
+                "secret": secret,
+                "client_id": client_id,
+            });
+
+            let sealed_secret =
+                match tpm.seal_data(&machine_key, secret_info.to_string().into_bytes().into()) {
+                    Ok(sealed_secret) => sealed_secret,
+                    Err(e) => {
+                        error!(?e, "Failed sealing secret");
+                        return ExitCode::FAILURE;
+                    }
+                };
+
+            let mut db_txn = db.write().await;
+
+            // Write the secret to the cache
+            let secret_tag = format!("{}/{}", domain, CONFIDENTIAL_CLIENT_SECRET_TAG);
+            if let Err(e) = db_txn.insert_tagged_hsm_key(&secret_tag, &sealed_secret) {
+                error!(?e, "Failed inserting sealed secret into cache");
+                return ExitCode::FAILURE;
+            }
+
+            if let Err(e) = db_txn.commit() {
+                error!(?e, "Failed inserting certificate key into cache");
+                return ExitCode::FAILURE;
+            }
+
+            ExitCode::SUCCESS
+        }
         HimmelblauUnixOpt::Application(ApplicationOpt::List {
             debug: _,
             account_id,
@@ -998,7 +1304,7 @@ async fn main() -> ExitCode {
                 }
             };
 
-            let (graph, domain, authority) = init!(cfg, account_id);
+            let (graph, domain, authority) = init!(cfg, Some(account_id.clone()), None);
             let (mut tpm, loadable_transport_key, loadable_cert_key, machine_key) =
                 obtain_host_data!(domain, cfg);
             let app = client!(

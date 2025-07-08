@@ -23,6 +23,9 @@ use crate::auth_handle_mfa_resp;
 use crate::config::split_username;
 use crate::config::HimmelblauConfig;
 use crate::config::IdAttr;
+use crate::constants::CONFIDENTIAL_CLIENT_CERT_KEY_TAG;
+use crate::constants::CONFIDENTIAL_CLIENT_CERT_TAG;
+use crate::constants::CONFIDENTIAL_CLIENT_SECRET_TAG;
 use crate::constants::DEFAULT_APP_ID;
 use crate::constants::EDGE_BROWSER_CLIENT_ID;
 use crate::constants::ID_MAP_CACHE;
@@ -32,21 +35,27 @@ use crate::idprovider::interface::{tpm, UserTokenState};
 use crate::unix_proto::PamAuthRequest;
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
+use der::asn1::Utf8StringRef;
+use der::Decode;
 use himmelblau::auth::{BrokerClientApplication, UserToken as UnixUserToken};
 use himmelblau::discovery::EnrollAttrs;
 use himmelblau::error::{MsalError, DEVICE_AUTH_FAIL};
+use himmelblau::graph::UserObject;
 use himmelblau::graph::{DirectoryObject, Graph};
 use himmelblau::intune::IntuneForLinux;
 use himmelblau::{AuthOption, MFAAuthContinue};
+use himmelblau::{ClientCredential, ClientToken, ConfidentialClientApplication};
 use idmap::{AadSid, Idmap};
 use kanidm_hsm_crypto::{
     structures::LoadableMsDeviceEnrolmentKey, structures::LoadableMsHelloKey,
     structures::LoadableMsOapxbcRsaKey, structures::SealedData, PinValue,
 };
+use kanidm_lib_crypto::x509_cert::Certificate;
 use regex::Regex;
 use reqwest;
 use reqwest::Url;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::thread::sleep;
@@ -375,10 +384,11 @@ impl IdProvider for HimmelblauMultiProvider {
         }
     }
 
-    async fn unix_user_get(
+    async fn unix_user_get<D: KeyStoreTxn + Send>(
         &self,
         id: &Id,
         old_token: Option<&UserToken>,
+        keystore: &mut D,
         tpm: &mut tpm::provider::BoxedDynTpm,
         machine_key: &tpm::structures::StorageKey,
     ) -> Result<UserTokenState, IdpError> {
@@ -393,7 +403,7 @@ impl IdProvider for HimmelblauMultiProvider {
                 match find_provider!(self, providers, domain) {
                     Some(provider) => {
                         provider
-                            .unix_user_get(id, old_token, tpm, machine_key)
+                            .unix_user_get(id, old_token, keystore, tpm, machine_key)
                             .await
                     }
                     None => Err(IdpError::NotFound),
@@ -617,6 +627,11 @@ impl HimmelblauProvider {
     }
 }
 
+enum TokenOrObj {
+    UserToken(Box<UnixUserToken>),
+    UserObj((ClientToken, UserObject)),
+}
+
 #[async_trait]
 impl IdProvider for HimmelblauProvider {
     #[instrument(level = "debug", skip_all)]
@@ -823,11 +838,12 @@ impl IdProvider for HimmelblauProvider {
         Ok(true)
     }
 
-    #[instrument(skip(self, old_token, tpm, machine_key))]
-    async fn unix_user_get(
+    #[instrument(skip(self, old_token, keystore, tpm, machine_key))]
+    async fn unix_user_get<D: KeyStoreTxn + Send>(
         &self,
         id: &Id,
         old_token: Option<&UserToken>,
+        keystore: &mut D,
         tpm: &mut tpm::provider::BoxedDynTpm,
         machine_key: &tpm::structures::StorageKey,
     ) -> Result<UserTokenState, IdpError> {
@@ -861,11 +877,148 @@ impl IdProvider for HimmelblauProvider {
             return Ok(UserTokenState::UseCached);
         }
 
-        /* Use the prt mem cache to refresh the user token */
         let account_id = match old_token {
             Some(token) => token.spn.clone(),
             None => id.to_string().clone(),
         };
+
+        macro_rules! fetch_user_confidential_client {
+            ($client_id:expr, $client_credential:expr) => {
+                let cfg = self.config.read().await;
+                let authority_host = cfg.get_authority_host(&self.domain);
+                let tenant_id = cfg.get_tenant_id(&self.domain).ok_or_else(|| {
+                    error!("tenant_id not found");
+                    IdpError::BadRequest
+                })?;
+                let authority = format!("https://{}/{}", authority_host, tenant_id);
+                let app = ConfidentialClientApplication::new(
+                    $client_id,
+                    Some(&authority),
+                    $client_credential,
+                )
+                .map_err(|e| {
+                    error!(?e, "Failed initializing confidential client");
+                    IdpError::BadRequest
+                })?;
+
+                match app
+                    .acquire_token_silent(
+                        vec!["00000003-0000-0000-c000-000000000000/.default"],
+                        Some(tpm),
+                )
+                .await
+                {
+                    Ok(token) => {
+                        match self.graph.request_user(&token.access_token, &account_id).await {
+                            Ok(userobj) => {
+                                match self
+                                    .user_token_from_unix_user_token(
+                                        TokenOrObj::UserObj((token, userobj)),
+                                        old_token,
+                                    )
+                                    .await
+                                {
+                                    Ok(mut token) => {
+                                        /* Set the GECOS from the old_token, since MS doesn't
+                                         * provide this during a silent acquire
+                                         */
+                                        if let Some(old_token) = old_token {
+                                            token.displayname.clone_from(&old_token.displayname)
+                                        }
+                                        return Ok(UserTokenState::Update(token));
+                                    }
+                                    Err(e) => {
+                                        error!(?e, "Failed to obtain token from user object using confidential client");
+                                    }
+                                }
+                            }
+                            Err(e) => {
+                                error!(?e, "Failed to acquire user object from graph using confidential client creds");
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        error!(?e, "Failed to acquire token silently using confidential client");
+                    }
+                }
+            };
+        }
+
+        // If we have ConfidentialClient creds, use those
+        let secret_tag = format!("{}/{}", self.domain, CONFIDENTIAL_CLIENT_SECRET_TAG);
+        if let Ok(Some(sealed_secret)) = keystore.get_tagged_hsm_key(&secret_tag) {
+            if let Ok(secret_info) = tpm.unseal_data(machine_key, &sealed_secret) {
+                let value: Value = serde_json::from_str(
+                    &String::from_utf8(secret_info.to_vec()).map_err(|e| {
+                        error!(?e, "Failed extracting secret from cache");
+                        IdpError::KeyStore
+                    })?,
+                )
+                .map_err(|e| {
+                    error!(?e, "Failed extracting secret from cache");
+                    IdpError::KeyStore
+                })?;
+
+                let secret = value["secret"].as_str().ok_or_else(|| {
+                    error!("Failed extracting secret from cache");
+                    IdpError::KeyStore
+                })?;
+                let client_id = value["client_id"].as_str().ok_or_else(|| {
+                    error!("Failed extracting secret client_id from cache");
+                    IdpError::KeyStore
+                })?;
+
+                fetch_user_confidential_client!(
+                    client_id,
+                    ClientCredential::from_secret(secret.to_string())
+                );
+            }
+        }
+        let key_tag = format!("{}/{}", self.domain, CONFIDENTIAL_CLIENT_CERT_KEY_TAG);
+        if let Ok(Some(loadable_cert_key)) = keystore.get_tagged_hsm_key(&key_tag) {
+            let key = tpm
+                .msoapxbc_rsa_key_load(machine_key, &loadable_cert_key)
+                .map_err(|e| {
+                    error!("Failed to load IdentityKey: {:?}", e);
+                    IdpError::KeyStore
+                })?;
+
+            let cert_tag = format!("{}/{}", self.domain, CONFIDENTIAL_CLIENT_CERT_TAG);
+            if let Ok(Some(sealed_cert)) = keystore.get_tagged_hsm_key(&cert_tag) {
+                let cert = Certificate::from_der(
+                    &tpm.unseal_data(machine_key, &sealed_cert).map_err(|e| {
+                        error!("Failed to unseal certificate: {:?}", e);
+                        IdpError::KeyStore
+                    })?,
+                )
+                .map_err(|e| {
+                    error!("Failed to load certificate: {:?}", e);
+                    IdpError::KeyStore
+                })?;
+
+                let client_id = cert
+                    .tbs_certificate
+                    .subject
+                    .as_ref()
+                    .iter()
+                    .flat_map(|rdn| rdn.0.iter())
+                    .find_map(|attr| {
+                        (attr.oid.to_string() == "2.5.4.3")
+                            .then(|| attr.value.decode_as::<Utf8StringRef>().ok())
+                            .flatten()
+                    })
+                    .ok_or_else(|| {
+                        error!("Failed extracting client_id from certificate");
+                        IdpError::KeyStore
+                    })?
+                    .to_string();
+
+                fetch_user_confidential_client!(
+                    &client_id,
+                    ClientCredential::from_certificate(&cert, key)
+                );
+            }
+        }
 
         let idmap_cache = StaticIdCache::new(ID_MAP_CACHE, false).map_err(|e| {
             error!("Failed reading from the idmap cache: {:?}", e);
@@ -2453,7 +2606,10 @@ impl HimmelblauProvider {
                 }
                 Ok(AuthResult::Success {
                     token: self
-                        .user_token_from_unix_user_token(token, old_token)
+                        .user_token_from_unix_user_token(
+                            TokenOrObj::UserToken(Box::new(token.clone())),
+                            old_token,
+                        )
                         .await?,
                 })
             }
@@ -2466,29 +2622,40 @@ impl HimmelblauProvider {
 
     async fn user_token_from_unix_user_token(
         &self,
-        value: &UnixUserToken,
+        value: TokenOrObj,
         old_token: Option<&UserToken>,
     ) -> Result<UserToken, IdpError> {
         let config = self.config.read().await;
         let mut groups: Vec<GroupToken>;
         let posix_attrs: HashMap<String, String>;
-        let spn = match value.spn() {
-            Ok(spn) => spn,
-            Err(e) => {
-                debug!("Failed fetching user spn: {:?}", e);
-                return Err(IdpError::BadRequest);
-            }
+        let spn = match &value {
+            TokenOrObj::UserObj((_, value)) => value.upn.clone(),
+            TokenOrObj::UserToken(value) => value.spn().map_err(|e| {
+                error!("Failed fetching user spn: {:?}", e);
+                IdpError::BadRequest
+            })?,
         };
-        let uuid = match value.uuid() {
-            Ok(uuid) => uuid,
-            Err(e) => {
-                debug!("Failed fetching user uuid: {:?}", e);
-                return Err(IdpError::BadRequest);
-            }
+        let uuid = match &value {
+            TokenOrObj::UserObj((_, value)) => Uuid::parse_str(&value.id).map_err(|e| {
+                error!("Failed fetching user uuid: {:?}", e);
+                IdpError::BadRequest
+            })?,
+            TokenOrObj::UserToken(value) => value.uuid().map_err(|e| {
+                error!("Failed fetching user uuid: {:?}", e);
+                IdpError::BadRequest
+            })?,
         };
-        match &value.access_token {
+        let access_token = match &value {
+            TokenOrObj::UserObj((token, _)) => Some(token.access_token.clone()),
+            TokenOrObj::UserToken(value) => value.access_token.clone(),
+        };
+        match &access_token {
             Some(access_token) => {
-                groups = match self.graph.request_user_groups(access_token).await {
+                groups = match self
+                    .graph
+                    .request_user_groups_by_user_id(access_token, &uuid.to_string())
+                    .await
+                {
                     Ok(groups) => {
                         let mut gt_groups = vec![];
                         for g in groups {
@@ -2515,8 +2682,9 @@ impl HimmelblauProvider {
                 posix_attrs = if config.get_id_attr_map() == IdAttr::Rfc2307 {
                     match self
                         .graph
-                        .fetch_user_extension_attributes(
+                        .fetch_user_extension_attributes_by_user_id(
                             access_token,
+                            &uuid.to_string(),
                             vec![
                                 "uidNumber",
                                 "gidNumber",
@@ -2626,7 +2794,11 @@ impl HimmelblauProvider {
 
         let displayname = match posix_attrs.get("gecos") {
             Some(gecos) => gecos.clone(),
-            None => value.id_token.name.clone(),
+            None => match &value {
+                TokenOrObj::UserObj((_, value)) => value.displayname.clone(),
+                TokenOrObj::UserToken(value) => value.id_token.name.clone(),
+            },
+            //value.id_token.name.clone(),
         };
 
         let shell = match posix_attrs.get("loginShell") {
@@ -2693,7 +2865,7 @@ impl HimmelblauProvider {
                         .tenant_id()
                         .await
                         .map_err(|e| anyhow!("{:?}", e))?,
-                    &name,
+                    &id.to_string(),
                 )
                 .map_err(|e| anyhow!("Failed fetching gid for {}: {:?}", name, e))?,
             IdAttr::Rfc2307 => match value.extension_attrs.get("gidNumber") {

@@ -201,10 +201,11 @@ pub trait IdProvider {
 
     async fn check_online(&self, _tpm: &mut tpm::provider::BoxedDynTpm, _now: SystemTime) -> bool;
 
-    async fn unix_user_get(
+    async fn unix_user_get<D: KeyStoreTxn + Send>(
         &self,
         _id: &Id,
         _token: Option<&UserToken>,
+        _keystore: &mut D,
         _tpm: &mut tpm::provider::BoxedDynTpm,
         _machine_key: &tpm::structures::StorageKey,
     ) -> Result<UserTokenState, IdpError>;
