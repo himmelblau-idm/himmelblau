@@ -399,7 +399,10 @@ async fn main() -> ExitCode {
     };
 
     if debug {
-        std::env::set_var("RUST_LOG", "debug");
+        std::env::set_var(
+            "RUST_LOG",
+            "debug,selectors=off,html5ever=off,hyper_util=off,kanidm_lib_crypto=off",
+        );
     }
     sketching::tracing_subscriber::fmt::init();
 
