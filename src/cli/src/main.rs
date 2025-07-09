@@ -89,6 +89,8 @@ struct Account {
     username: String,
 }
 
+const EDGE_BROWSER_CLIENT_ID: &str = "d7b530a4-7680-4c23-a8bf-c52c121d2e87";
+
 #[derive(Debug, Deserialize)]
 struct BrokerTokenResponse {
     #[serde(rename = "accessToken")]
@@ -101,6 +103,7 @@ struct Token {
     response: BrokerTokenResponse,
 }
 
+#[instrument(skip(after_pred, before_pred))]
 fn insert_module_line(
     pam_file: &str,
     module_line: &str,
@@ -156,6 +159,7 @@ fn insert_module_line(
     Ok(())
 }
 
+#[instrument]
 fn configure_pam(
     dry_run: bool,
     auth_file: Option<&str>,
@@ -207,6 +211,7 @@ fn configure_pam(
     Ok(())
 }
 
+#[instrument]
 async fn confidential_client_access_token(
     client_id: Option<String>,
     account_id: Option<String>,
@@ -225,7 +230,7 @@ async fn confidential_client_access_token(
     };
 
     let domain = if let Some(account_id) = &account_id {
-        match split_username(&account_id) {
+        match split_username(account_id) {
             Some((_, domain)) => domain.to_string(),
             None => {
                 error!("Could not split domain from input username");
@@ -236,6 +241,7 @@ async fn confidential_client_access_token(
         domain
     } else {
         // Attempt using the default domain
+        debug!(?domain, "Using default domain");
         cfg.get_configured_domains()[0].clone()
     };
 
@@ -259,6 +265,7 @@ async fn confidential_client_access_token(
     {
         if let Some(client_id) = client_id {
             if client_id.to_lowercase() != cred_client_id.to_lowercase() {
+                debug!("Specified client_id does not match confidential client cred client_id");
                 return None;
             }
         }
@@ -294,6 +301,7 @@ async fn confidential_client_access_token(
     None
 }
 
+#[instrument]
 #[tokio::main(flavor = "current_thread")]
 async fn main() -> ExitCode {
     let opt = HimmelblauUnixParser::parse();
@@ -673,129 +681,100 @@ async fn main() -> ExitCode {
     }
 
     macro_rules! obtain_access_token {
-        ($account_id:ident, $scopes:expr, $resource:expr, $client_id:ident) => {{
-            match $account_id {
-                Some(account_id) => {
-                    if unsafe { libc::geteuid() } != 0 {
-                        error!("Authenticating as another user can only be performed by root.");
-                        return ExitCode::FAILURE;
+        ($account_id:ident, $scopes:expr, $client_id:expr, $skip_confidential:expr) => {{
+            let mut result = None;
+
+            // 1. Try confidential client
+            if result.is_none() && !$skip_confidential && unsafe { libc::geteuid() } == 0 {
+                if let Some((domain, access_token)) = confidential_client_access_token(
+                    $client_id.clone(), $account_id.clone(), None
+                ).await {
+                    if let Ok(graph) = Graph::new(DEFAULT_ODC_PROVIDER, &domain, None, None, None).await {
+                        result = Some((graph, access_token));
                     }
+                }
+            }
 
-                    let cfg = match HimmelblauConfig::new(Some(DEFAULT_CONFIG_PATH)) {
-                        Ok(c) => c,
-                        Err(_e) => {
-                            error!("Failed to parse {}", DEFAULT_CONFIG_PATH);
-                            return ExitCode::FAILURE;
-                        }
-                    };
-
-                    let (graph, domain, authority) = init!(cfg, Some(account_id.to_string()), None);
-                    let (mut tpm, loadable_transport_key, loadable_cert_key, machine_key) =
-                        obtain_host_data!(domain, cfg);
-                    let app = client!(
-                        authority,
-                        Some(loadable_transport_key),
-                        Some(loadable_cert_key)
-                    );
-                    let token = auth!(app, account_id);
-
-                    match on_behalf_of_token!(
-                        app,
-                        token,
-                        tpm,
-                        machine_key,
-                        $scopes,
-                        $resource,
-                        Some(&$client_id)
-                    ).access_token.clone() {
-                        Some(access_token) => (graph, access_token),
-                        None => {
-                            error!("Failed obtaining access token!");
-                            return ExitCode::FAILURE;
-                        }
-                    }
-                },
-                None => {
-                    let broker = match BrokerClient::new().await {
-                        Ok(broker) => broker,
-                        Err(e) => {
-                            error!("Failed initiating broker: {:?}", e);
-                            return ExitCode::FAILURE;
-                        }
-                    };
-                    let session_id = Uuid::new_v4().to_string();
-
-                    let account = match broker.get_accounts(
-                        "0.0",
-                        &session_id,
-                        &json!({
-                            "clientId": $client_id.clone(),
-                            "redirectUri": session_id.clone(),
-                        }),
-                    )
-                    .await {
-                        Ok(accounts) => match serde_json::from_value::<Accounts>(accounts) {
-                            Ok(accounts) => accounts.accounts[0].clone(),
-                            Err(e) => {
-                                error!("Failed deserializing authenticated account: {:?}", e);
-                                return ExitCode::FAILURE;
+            // 2. Try on-behalf-of flow
+            if result.is_none() {
+                if let Some(account_id) = &$account_id {
+                    if unsafe { libc::geteuid() } == 0 {
+                        if let Ok(cfg) = HimmelblauConfig::new(Some(DEFAULT_CONFIG_PATH)) {
+                            let (graph, domain, authority) = init!(cfg, Some(account_id.clone()), None);
+                            let (mut tpm, loadable_transport_key, loadable_cert_key, machine_key) =
+                                obtain_host_data!(domain, cfg);
+                            let app = client!(authority, Some(loadable_transport_key), Some(loadable_cert_key));
+                            let user_token = auth!(app, account_id.clone());
+                            let token = on_behalf_of_token!(
+                                app, user_token, tpm, machine_key,
+                                $scopes.clone(), None, $client_id.as_deref()
+                            );
+                            if let Some(access_token) = &token.access_token {
+                                result = Some((graph, access_token.clone()));
                             }
-                        }
-                        Err(e) => {
-                            error!("Failed discovering authenticated account: {:?}", e);
-                            return ExitCode::FAILURE;
-                        }
-                    };
-                    let account_id = match serde_json::from_value::<Account>(account.clone()) {
-                        Ok(account) => account.username,
-                        Err(e) => {
-                            error!("Failed deserializing authenticated account: {:?}", e);
-                            return ExitCode::FAILURE;
-                        }
-                    };
-
-                    let cfg = match HimmelblauConfig::new(Some(DEFAULT_CONFIG_PATH)) {
-                        Ok(c) => c,
-                        Err(_e) => {
-                            error!("Failed to parse {}", DEFAULT_CONFIG_PATH);
-                            return ExitCode::FAILURE;
-                        }
-                    };
-
-                    let (graph, _, authority) = init!(cfg, Some(account_id.to_string()), None);
-
-                    match broker.acquire_token_silently(
-                        "0.0",
-                        &session_id,
-                        &json!({
-                            "account": account,
-                            "authParameters": {
-                                "account": account,
-                                "additionalQueryParametersForAuthorization": {},
-                                "authority": authority,
-                                "authorizationType": 8,
-                                "clientId": $client_id,
-                                "redirectUri": "https://login.microsoftonline.com/common/oauth2/nativeclient",
-                                "requestedScopes": $scopes,
-                                "ssoUrl": "https://login.microsoftonline.com/",
-                            }
-                        }),
-                    )
-                    .await {
-                        Ok(token) => match serde_json::from_value::<Token>(token) {
-                            Ok(token) => (graph, token.response.access_token),
-                            Err(_) => {
-                                error!("Failed to parse token response!");
-                                return ExitCode::FAILURE;
-                            }
-                        }
-                        Err(e) => {
-                            error!("Failed requesting authenticated account token: {:?}", e);
-                            return ExitCode::FAILURE;
                         }
                     }
                 }
             }
+
+            // 3. Try SSO Broker
+            if result.is_none() {
+                if let Ok(broker) = BrokerClient::new().await {
+                    let session_id = Uuid::new_v4().to_string();
+                    let client_id = $client_id.unwrap_or(EDGE_BROWSER_CLIENT_ID.to_string());
+                    if let Ok(account_val) = broker.get_accounts(
+                        "0.0", &session_id,
+                        &json!({"clientId": client_id.clone(), "redirectUri": session_id.clone()})
+                    ).await {
+                        if let Ok(accounts) = serde_json::from_value::<Accounts>(account_val) {
+                            if let Some(account) = accounts.accounts.into_iter().next() {
+                                if let Ok(Account { username, .. }) = serde_json::from_value::<Account>(account.clone()) {
+                                    if let Ok(cfg) = HimmelblauConfig::new(Some(DEFAULT_CONFIG_PATH)) {
+                                        let (graph, _, authority) = init!(cfg, Some(username), None);
+                                        if let Ok(token_val) = broker.acquire_token_silently(
+                                            "0.0", &session_id,
+                                            &json!({
+                                                "account": account,
+                                                "authParameters": {
+                                                    "account": account,
+                                                    "additionalQueryParametersForAuthorization": {},
+                                                    "authority": authority,
+                                                    "authorizationType": 8,
+                                                    "clientId": client_id,
+                                                    "redirectUri": "https://login.microsoftonline.com/common/oauth2/nativeclient",
+                                                    "requestedScopes": $scopes,
+                                                    "ssoUrl": "https://login.microsoftonline.com/"
+                                                }
+                                            })
+                                        ).await {
+                                            if let Ok(token) = serde_json::from_value::<Token>(token_val) {
+                                                result = Some((graph, token.response.access_token));
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            if result.is_none() {
+                error!("Failed to obtain any access token");
+                if unsafe { libc::geteuid() } != 0 {
+                    if $account_id.is_some() {
+                        error!("Utilizing the --name parameter requires running as root (sudo)");
+                    } else if $skip_confidential {
+                        error!("Try running as root (sudo) with the --name parameter to authenticate");
+                    } else if !$skip_confidential {
+                        error!("Try running as root (sudo) to authenticate");
+                    }
+                } else if $account_id.is_none() {
+                    error!("Try specifying the --name parameter for authentication");
+                }
+            }
+
+            result
         }};
     }
 
@@ -1082,12 +1061,17 @@ async fn main() -> ExitCode {
         }) => {
             debug!("Starting application list tool ...");
 
-            let (graph, access_token) = obtain_access_token!(
+            let (graph, access_token) = match obtain_access_token!(
                 account_id,
                 vec!["https://graph.microsoft.com/Application.Read.All"],
-                None,
-                client_id
-            );
+                Some(client_id.clone()),
+                true
+            ) {
+                Some(res) => res,
+                None => {
+                    return ExitCode::FAILURE;
+                }
+            };
 
             let cli_graph = match CliGraph::new(&graph).await {
                 Ok(cli_graph) => cli_graph,
@@ -1127,12 +1111,17 @@ async fn main() -> ExitCode {
         }) => {
             debug!("Starting application list tool ...");
 
-            let (graph, access_token) = obtain_access_token!(
+            let (graph, access_token) = match obtain_access_token!(
                 account_id,
                 vec!["https://graph.microsoft.com/Application.ReadWrite.All"],
-                None,
-                client_id
-            );
+                Some(client_id.clone()),
+                true
+            ) {
+                Some(res) => res,
+                None => {
+                    return ExitCode::FAILURE;
+                }
+            };
 
             let cli_graph = match CliGraph::new(&graph).await {
                 Ok(cli_graph) => cli_graph,
@@ -1177,12 +1166,17 @@ async fn main() -> ExitCode {
         }) => {
             debug!("Starting list schema extensions tool ...");
 
-            let (graph, access_token) = obtain_access_token!(
+            let (graph, access_token) = match obtain_access_token!(
                 account_id,
                 vec!["https://graph.microsoft.com/Application.Read.All"],
-                None,
-                client_id
-            );
+                Some(client_id.clone()),
+                true
+            ) {
+                Some(res) => res,
+                None => {
+                    return ExitCode::FAILURE;
+                }
+            };
 
             let cli_graph = match CliGraph::new(&graph).await {
                 Ok(cli_graph) => cli_graph,
@@ -1221,12 +1215,17 @@ async fn main() -> ExitCode {
         }) => {
             debug!("Starting add schema extensions tool ...");
 
-            let (graph, access_token) = obtain_access_token!(
+            let (graph, access_token) = match obtain_access_token!(
                 account_id,
                 vec!["https://graph.microsoft.com/Application.ReadWrite.All"],
-                None,
-                client_id
-            );
+                Some(client_id.clone()),
+                true
+            ) {
+                Some(res) => res,
+                None => {
+                    return ExitCode::FAILURE;
+                }
+            };
 
             let cli_graph = match CliGraph::new(&graph).await {
                 Ok(cli_graph) => cli_graph,
@@ -1380,65 +1379,18 @@ async fn main() -> ExitCode {
         } => {
             debug!("Starting enumerate tool ...");
 
-            let (graph, access_token) = match confidential_client_access_token(
-                Some(client_id.clone()),
-                Some(account_id.clone()),
-                None,
-            )
-            .await
-            {
-                Some((domain, access_token)) => {
-                    let graph =
-                        match Graph::new(DEFAULT_ODC_PROVIDER, &domain, None, None, None).await {
-                            Ok(graph) => graph,
-                            Err(e) => {
-                                error!("Failed discovering tenant: {:?}", e);
-                                return ExitCode::FAILURE;
-                            }
-                        };
-                    (graph, access_token)
-                }
+            let (graph, access_token) = match obtain_access_token!(
+                account_id,
+                vec![
+                    "https://graph.microsoft.com/User.Read.All",
+                    "https://graph.microsoft.com/Group.Read.All"
+                ],
+                client_id.clone(),
+                false
+            ) {
+                Some(res) => res,
                 None => {
-                    if unsafe { libc::geteuid() } != 0 {
-                        error!("This command must be run as root.");
-                        return ExitCode::FAILURE;
-                    }
-
-                    let cfg = match HimmelblauConfig::new(Some(DEFAULT_CONFIG_PATH)) {
-                        Ok(c) => c,
-                        Err(_e) => {
-                            error!("Failed to parse {}", DEFAULT_CONFIG_PATH);
-                            return ExitCode::FAILURE;
-                        }
-                    };
-
-                    let (graph, domain, authority) = init!(cfg, Some(account_id.clone()), None);
-                    let (mut tpm, loadable_transport_key, loadable_cert_key, machine_key) =
-                        obtain_host_data!(domain, cfg);
-                    let app = client!(
-                        authority,
-                        Some(loadable_transport_key),
-                        Some(loadable_cert_key)
-                    );
-                    let token = auth!(app, account_id);
-
-                    let token = on_behalf_of_token!(
-                        app,
-                        token,
-                        tpm,
-                        machine_key,
-                        vec!["https://graph.microsoft.com/User.Read.All"],
-                        None,
-                        Some(&client_id)
-                    );
-
-                    match &token.access_token {
-                        Some(access_token) => (graph, access_token.clone()),
-                        None => {
-                            error!("Failed to get access token");
-                            return ExitCode::FAILURE;
-                        }
-                    }
+                    return ExitCode::FAILURE;
                 }
             };
 
@@ -1525,12 +1477,17 @@ async fn main() -> ExitCode {
         }) => {
             debug!("Starting user set posix attrs tool ...");
 
-            let (graph, access_token) = obtain_access_token!(
+            let (graph, access_token) = match obtain_access_token!(
                 account_id,
                 vec!["https://graph.microsoft.com/User.ReadWrite.All"],
-                None,
-                schema_client_id
-            );
+                Some(schema_client_id.clone()),
+                true
+            ) {
+                Some(res) => res,
+                None => {
+                    return ExitCode::FAILURE;
+                }
+            };
 
             let cli_graph = match CliGraph::new(&graph).await {
                 Ok(cli_graph) => cli_graph,
@@ -1571,12 +1528,17 @@ async fn main() -> ExitCode {
         }) => {
             debug!("Starting group set posix attrs tool ...");
 
-            let (graph, access_token) = obtain_access_token!(
+            let (graph, access_token) = match obtain_access_token!(
                 account_id,
                 vec!["https://graph.microsoft.com/Group.ReadWrite.All"],
-                None,
-                schema_client_id
-            );
+                Some(schema_client_id.clone()),
+                true
+            ) {
+                Some(res) => res,
+                None => {
+                    return ExitCode::FAILURE;
+                }
+            };
 
             let cli_graph = match CliGraph::new(&graph).await {
                 Ok(cli_graph) => cli_graph,
