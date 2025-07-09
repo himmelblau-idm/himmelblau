@@ -36,8 +36,8 @@ use std::sync::Arc;
 
 use broker_client::BrokerClient;
 use clap::Parser;
-use himmelblau::ConfidentialClientApplication;
 use himmelblau::{error::MsalError, graph::Graph, AuthOption, BrokerClientApplication};
+use himmelblau::{ConfidentialClientApplication, UserToken};
 use himmelblau_unix_common::auth::{authenticate_async, SimpleMessagePrinter};
 use himmelblau_unix_common::auth_handle_mfa_resp;
 use himmelblau_unix_common::client::call_daemon;
@@ -209,6 +209,151 @@ fn configure_pam(
     )?;
 
     Ok(())
+}
+
+#[instrument(skip(app))]
+async fn auth(app: &BrokerClientApplication, account_id: &str) -> Option<UserToken> {
+    let auth_options = vec![AuthOption::Passwordless];
+    let auth_init = match app.check_user_exists(account_id, &auth_options).await {
+        Ok(auth_init) => auth_init,
+        Err(e) => {
+            error!("Failed checking if user exists: {:?}", e);
+            return None;
+        }
+    };
+
+    debug!("User {} exists? {}", &account_id, auth_init.exists());
+
+    let password = if !auth_init.passwordless() {
+        print!("{} password: ", &account_id);
+        if io::stdout().flush().is_err() {
+            error!("Failed flushing stdout");
+            return None;
+        }
+        match read_password() {
+            Ok(password) => Some(password),
+            Err(e) => {
+                error!("{:?}", e);
+                return None;
+            }
+        }
+    } else {
+        None
+    };
+
+    let mut mfa_req = match app
+        .initiate_acquire_token_by_mfa_flow_for_device_enrollment(
+            account_id,
+            password.as_deref(),
+            &auth_options,
+            Some(auth_init),
+        )
+        .await
+    {
+        Ok(mfa) => mfa,
+        Err(e) => match e {
+            MsalError::PasswordRequired => {
+                print!("{} password: ", &account_id);
+                if io::stdout().flush().is_err() {
+                    error!("Failed flushing stdout");
+                    return None;
+                }
+                let password = match read_password() {
+                    Ok(password) => Some(password),
+                    Err(e) => {
+                        error!("{:?}", e);
+                        return None;
+                    }
+                };
+                let auth_init = match app.check_user_exists(account_id, &auth_options).await {
+                    Ok(auth_init) => auth_init,
+                    Err(e) => {
+                        error!("Failed checking if user exists: {:?}", e);
+                        return None;
+                    }
+                };
+                match app
+                    .initiate_acquire_token_by_mfa_flow_for_device_enrollment(
+                        account_id,
+                        password.as_deref(),
+                        &auth_options,
+                        Some(auth_init),
+                    )
+                    .await
+                {
+                    Ok(mfa) => mfa,
+                    Err(e) => {
+                        error!("{:?}", e);
+                        return None;
+                    }
+                }
+            }
+            _ => {
+                error!("{:?}", e);
+                return None;
+            }
+        },
+    };
+    print!("{}", mfa_req.msg);
+    if io::stdout().flush().is_err() {
+        error!("Failed flushing stdout");
+        return None;
+    }
+
+    let token = auth_handle_mfa_resp!(
+        mfa_req,
+        // FIDO
+        {
+            error!("Fido not enabled");
+            return None;
+        },
+        // PROMPT
+        {
+            let input = match read_password() {
+                Ok(password) => password,
+                Err(e) => {
+                    error!("{:?} ", e);
+                    return None;
+                }
+            };
+            match app
+                .acquire_token_by_mfa_flow(account_id, Some(&input), None, &mut mfa_req)
+                .await
+            {
+                Ok(token) => token,
+                Err(e) => {
+                    error!("MFA FAIL: {:?}", e);
+                    return None;
+                }
+            }
+        },
+        // POLL
+        {
+            let mut poll_attempt = 1;
+            let polling_interval = mfa_req.polling_interval.unwrap_or(5000);
+            loop {
+                match app
+                    .acquire_token_by_mfa_flow(account_id, None, Some(poll_attempt), &mut mfa_req)
+                    .await
+                {
+                    Ok(token) => break token,
+                    Err(e) => match e {
+                        MsalError::MFAPollContinue => {
+                            poll_attempt += 1;
+                            sleep(Duration::from_millis(polling_interval.into()));
+                            continue;
+                        }
+                        e => {
+                            error!("MFA FAIL: {:?}", e);
+                            return None;
+                        }
+                    },
+                }
+            }
+        }
+    );
+    println!();
+    Some(token)
 }
 
 #[instrument]
@@ -399,7 +544,10 @@ async fn main() -> ExitCode {
     };
 
     if debug {
-        std::env::set_var("RUST_LOG", "debug");
+        std::env::set_var(
+            "RUST_LOG",
+            "debug,selectors=off,html5ever=off,hyper_util=off,kanidm_lib_crypto=off",
+        );
     }
     sketching::tracing_subscriber::fmt::init();
 
@@ -516,148 +664,6 @@ async fn main() -> ExitCode {
         }};
     }
 
-    macro_rules! auth {
-        ($app:expr, $account_id:expr) => {{
-            let auth_options = vec![AuthOption::Passwordless];
-            let auth_init = match $app.check_user_exists(&$account_id, &auth_options).await {
-                Ok(auth_init) => auth_init,
-                Err(e) => {
-                    error!("Failed checking if user exists: {:?}", e);
-                    return ExitCode::FAILURE;
-                }
-            };
-            debug!("User {} exists? {}", &$account_id, auth_init.exists());
-
-            let password = if !auth_init.passwordless() {
-                print!("{} password: ", &$account_id);
-                io::stdout().flush().unwrap();
-                match read_password() {
-                    Ok(password) => Some(password),
-                    Err(e) => {
-                        error!("{:?}", e);
-                        return ExitCode::FAILURE;
-                    }
-                }
-            } else {
-                None
-            };
-
-            let mut mfa_req = match $app
-                .initiate_acquire_token_by_mfa_flow_for_device_enrollment(
-                    &$account_id,
-                    password.as_deref(),
-                    &auth_options,
-                    Some(auth_init),
-                )
-                .await
-            {
-                Ok(mfa) => mfa,
-                Err(e) => match e {
-                    MsalError::PasswordRequired => {
-                        print!("{} password: ", &$account_id);
-                        io::stdout().flush().unwrap();
-                        let password = match read_password() {
-                            Ok(password) => Some(password),
-                            Err(e) => {
-                                error!("{:?}", e);
-                                return ExitCode::FAILURE;
-                            }
-                        };
-                        let auth_init =
-                            match $app.check_user_exists(&$account_id, &auth_options).await {
-                                Ok(auth_init) => auth_init,
-                                Err(e) => {
-                                    error!("Failed checking if user exists: {:?}", e);
-                                    return ExitCode::FAILURE;
-                                }
-                            };
-                        match $app
-                            .initiate_acquire_token_by_mfa_flow_for_device_enrollment(
-                                &$account_id,
-                                password.as_deref(),
-                                &auth_options,
-                                Some(auth_init),
-                            )
-                            .await
-                        {
-                            Ok(mfa) => mfa,
-                            Err(e) => {
-                                error!("{:?}", e);
-                                return ExitCode::FAILURE;
-                            }
-                        }
-                    }
-                    _ => {
-                        error!("{:?}", e);
-                        return ExitCode::FAILURE;
-                    }
-                },
-            };
-            print!("{}", mfa_req.msg);
-            io::stdout().flush().unwrap();
-
-            let token = auth_handle_mfa_resp!(
-                mfa_req,
-                // FIDO
-                {
-                    error!("Fido not enabled");
-                    return ExitCode::FAILURE;
-                },
-                // PROMPT
-                {
-                    let input = match read_password() {
-                        Ok(password) => password,
-                        Err(e) => {
-                            error!("{:?} ", e);
-                            return ExitCode::FAILURE;
-                        }
-                    };
-                    match $app
-                        .acquire_token_by_mfa_flow(&$account_id, Some(&input), None, &mut mfa_req)
-                        .await
-                    {
-                        Ok(token) => token,
-                        Err(e) => {
-                            error!("MFA FAIL: {:?}", e);
-                            return ExitCode::FAILURE;
-                        }
-                    }
-                },
-                // POLL
-                {
-                    let mut poll_attempt = 1;
-                    let polling_interval = mfa_req.polling_interval.unwrap_or(5000);
-                    loop {
-                        match $app
-                            .acquire_token_by_mfa_flow(
-                                &$account_id,
-                                None,
-                                Some(poll_attempt),
-                                &mut mfa_req,
-                            )
-                            .await
-                        {
-                            Ok(token) => break token,
-                            Err(e) => match e {
-                                MsalError::MFAPollContinue => {
-                                    poll_attempt += 1;
-                                    sleep(Duration::from_millis(polling_interval.into()));
-                                    continue;
-                                }
-                                e => {
-                                    error!("MFA FAIL: {:?}", e);
-                                    return ExitCode::FAILURE;
-                                }
-                            },
-                        }
-                    }
-                }
-            );
-            println!();
-            token
-        }};
-    }
-
     macro_rules! on_behalf_of_token {
         ($app:expr, $token:expr, $tpm:expr, $machine_key:expr, $scope:expr, $resource:expr, $client_id:expr) => {{
             match $app
@@ -684,8 +690,9 @@ async fn main() -> ExitCode {
         ($account_id:ident, $scopes:expr, $client_id:expr, $skip_confidential:expr) => {{
             let mut result = None;
 
-            // 1. Try confidential client
+            // 1. Try confidential client auth
             if result.is_none() && !$skip_confidential && unsafe { libc::geteuid() } == 0 {
+                debug!("Attempting confidential client auth ...");
                 if let Some((domain, access_token)) = confidential_client_access_token(
                     $client_id.clone(), $account_id.clone(), None
                 ).await {
@@ -695,30 +702,9 @@ async fn main() -> ExitCode {
                 }
             }
 
-            // 2. Try on-behalf-of flow
-            if result.is_none() {
-                if let Some(account_id) = &$account_id {
-                    if unsafe { libc::geteuid() } == 0 {
-                        if let Ok(cfg) = HimmelblauConfig::new(Some(DEFAULT_CONFIG_PATH)) {
-                            let (graph, domain, authority) = init!(cfg, Some(account_id.clone()), None);
-                            let (mut tpm, loadable_transport_key, loadable_cert_key, machine_key) =
-                                obtain_host_data!(domain, cfg);
-                            let app = client!(authority, Some(loadable_transport_key), Some(loadable_cert_key));
-                            let user_token = auth!(app, account_id.clone());
-                            let token = on_behalf_of_token!(
-                                app, user_token, tpm, machine_key,
-                                $scopes.clone(), None, $client_id.as_deref()
-                            );
-                            if let Some(access_token) = &token.access_token {
-                                result = Some((graph, access_token.clone()));
-                            }
-                        }
-                    }
-                }
-            }
-
-            // 3. Try SSO Broker
-            if result.is_none() {
+            // 2. Try SSO Broker
+            if result.is_none() && unsafe { libc::geteuid() } != 0 {
+                debug!("Attempting SSO Broker auth ...");
                 if let Ok(broker) = BrokerClient::new().await {
                     let session_id = Uuid::new_v4().to_string();
                     let client_id = $client_id.unwrap_or(EDGE_BROWSER_CLIENT_ID.to_string());
@@ -729,29 +715,56 @@ async fn main() -> ExitCode {
                         if let Ok(accounts) = serde_json::from_value::<Accounts>(account_val) {
                             if let Some(account) = accounts.accounts.into_iter().next() {
                                 if let Ok(Account { username, .. }) = serde_json::from_value::<Account>(account.clone()) {
-                                    if let Ok(cfg) = HimmelblauConfig::new(Some(DEFAULT_CONFIG_PATH)) {
-                                        let (graph, _, authority) = init!(cfg, Some(username), None);
-                                        if let Ok(token_val) = broker.acquire_token_silently(
-                                            "0.0", &session_id,
-                                            &json!({
-                                                "account": account,
-                                                "authParameters": {
+                                    if $account_id.is_none() || $account_id.clone().map(|s| s.to_lowercase()).as_ref().unwrap_or(&"".to_string()) == &username.to_lowercase() {
+                                        if let Ok(cfg) = HimmelblauConfig::new(Some(DEFAULT_CONFIG_PATH)) {
+                                            let (graph, _, authority) = init!(cfg, Some(username), None);
+                                            if let Ok(token_val) = broker.acquire_token_silently(
+                                                "0.0", &session_id,
+                                                &json!({
                                                     "account": account,
-                                                    "additionalQueryParametersForAuthorization": {},
-                                                    "authority": authority,
-                                                    "authorizationType": 8,
-                                                    "clientId": client_id,
-                                                    "redirectUri": "https://login.microsoftonline.com/common/oauth2/nativeclient",
-                                                    "requestedScopes": $scopes,
-                                                    "ssoUrl": "https://login.microsoftonline.com/"
+                                                    "authParameters": {
+                                                        "account": account,
+                                                        "additionalQueryParametersForAuthorization": {},
+                                                        "authority": authority,
+                                                        "authorizationType": 8,
+                                                        "clientId": client_id,
+                                                        "redirectUri": "https://login.microsoftonline.com/common/oauth2/nativeclient",
+                                                        "requestedScopes": $scopes,
+                                                        "ssoUrl": "https://login.microsoftonline.com/"
+                                                    }
+                                                })
+                                            ).await {
+                                                if let Ok(token) = serde_json::from_value::<Token>(token_val) {
+                                                    result = Some((graph, token.response.access_token));
                                                 }
-                                            })
-                                        ).await {
-                                            if let Ok(token) = serde_json::from_value::<Token>(token_val) {
-                                                result = Some((graph, token.response.access_token));
                                             }
                                         }
                                     }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // 3. Try broker on-behalf-of flow auth
+            if result.is_none() {
+                if let Some(account_id) = &$account_id {
+                    if unsafe { libc::geteuid() } == 0 {
+                        debug!("Attempting broker on-behalf-of flow auth ...");
+                        if let Ok(cfg) = HimmelblauConfig::new(Some(DEFAULT_CONFIG_PATH)) {
+                            let (graph, domain, authority) = init!(cfg, Some(account_id.clone()), None);
+                            let (mut tpm, loadable_transport_key, loadable_cert_key, machine_key) =
+                                obtain_host_data!(domain, cfg);
+                            let app = client!(authority, Some(loadable_transport_key), Some(loadable_cert_key));
+                            let user_token = auth(&app, &account_id).await;
+                            if let Some(user_token) = &user_token {
+                                let token = on_behalf_of_token!(
+                                    app, user_token, tpm, machine_key,
+                                    $scopes.clone(), None, $client_id.as_deref()
+                                );
+                                if let Some(access_token) = &token.access_token {
+                                    result = Some((graph, access_token.clone()));
                                 }
                             }
                         }
