@@ -243,33 +243,6 @@ pub enum GroupOpt {
     },
 }
 
-/*#[derive(Parser)]
-pub struct SecretArgs {
-    /// The Azure AD application (client) ID this secret is associated with.
-    #[arg(long)]
-    pub client_id: String,
-
-    /// The client secret value copied from the Entra ID portal.
-    #[arg(long)]
-    pub secret: String,
-}
-
-#[derive(Parser)]
-pub struct CertArgs {
-    /// The Azure AD application (client) ID this certificate is associated with.
-    #[arg(long)]
-    pub client_id: String,
-
-    /// Number of days the self-signed certificate will be valid.
-    #[arg(long)]
-    pub valid_days: u32,
-
-    /// Path to write the generated PEM certificate file.
-    /// This is the file you will upload to Entra ID.
-    #[arg(long)]
-    pub cert_out: String,
-}*/
-
 #[derive(Debug, Subcommand)]
 pub enum AddCredOpt {
     /// Store a client secret for confidential client authentication.
@@ -407,8 +380,8 @@ pub enum HimmelblauUnixOpt {
     /// mappings are needed before authentication can succeed, but are normally
     /// only retrievable after login.
     ///
-    /// The `--client-id` parameter is required and must refer to a registered
-    /// Entra ID application with `User.Read.All` permissions.
+    /// The `--client-id` parameter is optional and must refer to a registered
+    /// Entra ID application with `User.Read.All` and `Group.Read.All` permissions.
     ///
     /// The `--name` parameter specifies the Entra ID user on whose behalf the token
     /// is requested, enabling delegated access through the specified client application.
@@ -418,9 +391,9 @@ pub enum HimmelblauUnixOpt {
         #[clap(short, long)]
         debug: bool,
         #[clap(short = 'D', long = "name")]
-        account_id: String,
+        account_id: Option<String>,
         #[clap(long = "client-id")]
-        client_id: String,
+        client_id: Option<String>,
     },
     /// Manage Entra ID user accounts, including POSIX attribute assignment and UID mapping.
     #[clap(subcommand)]
