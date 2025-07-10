@@ -895,8 +895,9 @@ checksum = "5b63caa9aa9397e2d9480a9b13673856c78d8ac123288526c37d7839f2a86990"
 
 [[package]]
 name = "compact_jwt"
-version = "0.5.2-dev"
-source = "git+https://github.com/kanidm/compact-jwt.git?branch=main#64bbf4173cea0e38e0acdf496fc2d7f0379f7ee7"
+version = "0.5.3-dev"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "23812e87894027686e22bc5b0940522315b1f0ba9347383cc41016ec0caf6c35"
 dependencies = [
  "base64 0.21.7",
  "base64urlsafedata",
@@ -2939,7 +2940,8 @@ dependencies = [
 [[package]]
 name = "libhimmelblau"
 version = "0.7.3"
-source = "git+https://gitlab.com/samba-team/libhimmelblau.git?branch=main#1ef3cec8cff076e846917e5e728d09b239f44b65"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f6517a3e6f998b3c6576305f0d2153c64f2c8fbeeb46c4e73d990c225ec795a5"
 dependencies = [
  "base64 0.22.1",
  "browser-window",
