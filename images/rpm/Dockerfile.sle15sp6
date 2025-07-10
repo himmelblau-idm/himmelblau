@@ -24,6 +24,7 @@ RUN zypper --non-interactive refresh && zypper --non-interactive update && \
     sqlite3-devel \
     libunistring-devel \
     cargo \
+    tpm2-0-tss-devel \
     && zypper clean --all
 
 # Set environment for Rust

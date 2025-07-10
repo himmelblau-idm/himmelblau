@@ -10,7 +10,7 @@ homepage.workspace = true
 repository.workspace = true
 
 [features]
-tpm = ["kanidm-hsm-crypto/tpm"]
+tpm = ["kanidm-hsm-crypto/tpm", "libhimmelblau/tpm"]
 
 [lib]
 name = "himmelblau_unix_common"

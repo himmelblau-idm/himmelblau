@@ -46,4 +46,4 @@ WORKDIR /himmelblau
 RUN cargo install cargo-generate-rpm
 
 # Build the project and create the .deb package
-CMD cargo build --release --features tpm && strip -s target/release/*.so && strip -s target/release/aad-tool && strip -s target/release/himmelblaud && strip -s target/release/himmelblaud_tasks && strip -s target/release/broker && cargo generate-rpm -p src/daemon && cargo generate-rpm -p src/nss && cargo generate-rpm -p src/pam && cargo generate-rpm -p src/sshd-config && cargo generate-rpm -p src/sso && cargo generate-rpm -p src/qr-greeter
+CMD cargo build --release && strip -s target/release/*.so && strip -s target/release/aad-tool && strip -s target/release/himmelblaud && strip -s target/release/himmelblaud_tasks && strip -s target/release/broker && cargo generate-rpm -p src/daemon && cargo generate-rpm -p src/nss && cargo generate-rpm -p src/pam && cargo generate-rpm -p src/sshd-config && cargo generate-rpm -p src/sso && cargo generate-rpm -p src/qr-greeter

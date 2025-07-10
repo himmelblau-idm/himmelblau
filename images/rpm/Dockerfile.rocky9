@@ -35,6 +35,7 @@ RUN yum update -y && yum install -y \
     atk-devel \
     gtk3-devel \
     webkit2gtk3-devel \
+    tpm2-tss-devel \
     && yum clean all
 
 # Install Rust (latest stable)
