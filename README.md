@@ -255,3 +255,13 @@ Setup PAM
     password        optional        pam_gnome_keyring.so    use_authtok
     password	sufficient	pam_unix.so	use_authtok nullok shadow try_first_pass 
     password	required	pam_deny.so
+
+---
+
+## Developer Builds
+
+If you need to generate a Himmelblau developer build (for advanced debugging with proxy traffic capture),
+please see [`DEVELOPER-BUILDS.md`](./DEVELOPER-BUILDS.md) in this repository.
+
+> 🚨 **Note:** Developer builds enable sensitive authentication traffic to be proxied for debugging.
+> They are **never** intended for production environments.
