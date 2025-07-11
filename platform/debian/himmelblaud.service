@@ -16,6 +16,7 @@ Upholds=himmelblaud-tasks.service
 
 [Service]
 DynamicUser=yes
+SupplementaryGroups=tss
 UMask=0027
 CacheDirectory=himmelblaud # /var/cache/himmelblaud
 RuntimeDirectory=himmelblaud # /run/himmelblaud
