@@ -244,7 +244,7 @@ pub enum GroupOpt {
 }
 
 #[derive(Debug, Subcommand)]
-pub enum AddCredOpt {
+pub enum CredOpt {
     /// Store a client secret for confidential client authentication.
     ///
     /// To set this up:
@@ -264,7 +264,7 @@ pub enum AddCredOpt {
     /// again to replace the expired secret.
     /// 
     /// Example:
-    ///     aad-tool add-cred secret --client-id <CLIENT_ID> --secret <SECRET_VALUE>
+    ///     aad-tool cred secret --client-id <CLIENT_ID> --secret <SECRET_VALUE>
     Secret {
         #[clap(short, long)]
         debug: bool,
@@ -299,7 +299,7 @@ pub enum AddCredOpt {
     /// again to replace the expired certificate.
     ///
     /// Example:
-    ///     aad-tool add-cred cert --client-id <CLIENT_ID> --valid-days 365 --cert-out /tmp/my-cert.crt
+    ///     aad-tool cred cert --client-id <CLIENT_ID> --valid-days 365 --cert-out /tmp/my-cert.crt
     Cert {
         #[clap(short, long)]
         debug: bool,
@@ -317,20 +317,47 @@ pub enum AddCredOpt {
         #[arg(long)]
         cert_out: String,
     },
+    /// Delete confidential client credentials (secret, certificate, or both)
+    ///
+    /// This deletes stored confidential client credentials from Himmelblau's
+    /// encrypted cache. If neither `--secret` nor `--cert` is specified,
+    /// both will be deleted.
+    ///
+    /// Example:
+    ///     aad-tool cred delete --domain <DOMAIN>
+    ///     aad-tool cred delete --domain <DOMAIN> --secret
+    ///     aad-tool cred delete --domain <DOMAIN> --cert
+    Delete {
+        #[clap(short, long)]
+        debug: bool,
+        /// The tenant domain whose creds will be deleted.
+        #[arg(long)]
+        domain: String,
+        /// Delete only the client secret (not the certificate).
+        #[arg(long)]
+        secret: bool,
+        /// Delete only the client certificate (not the secret).
+        #[arg(long)]
+        cert: bool,
+    },
+    /// List the presence of confidential client credentials
+    ///
+    /// This checks Himmelblau's encrypted cache to see whether a client secret
+    /// and/or client certificate exists for the given domain.
+    ///
+    /// Example:
+    ///     aad-tool cred list --domain <DOMAIN>
+    List {
+        #[clap(short, long)]
+        debug: bool,
+        #[arg(long)]
+        domain: String,
+    },
 }
 
 #[derive(Debug, Subcommand)]
 #[clap(about = "Himmelblau Management Utility")]
 pub enum HimmelblauUnixOpt {
-    /// Add a confidential client credential for authenticating to Entra ID.
-    ///
-    /// This command has two modes: `secret` and `cert`, each of which stores
-    /// credentials securely in Himmelblau’s encrypted cache.
-    ///
-    /// These credentials are used for querying Entra ID for user and group
-    /// attributes (such as rfc2307 uid/gid or group names).
-    #[clap(subcommand)]
-    AddCred(AddCredOpt),
     /// Manage Entra ID application registrations, including creation, listing, and extension
     /// schema configuration.
     #[clap(subcommand)]
@@ -375,6 +402,15 @@ pub enum HimmelblauUnixOpt {
         #[clap(long = "password-file")]
         password_file: Option<String>,
     },
+    /// Manage confidential client credentials for authenticating to Entra ID.
+    ///
+    /// This command supports storing (`secret` or `cert`), deleting, and listing
+    /// credentials in Himmelblau’s encrypted cache.
+    ///
+    /// These credentials are used to securely query Entra ID for user and group
+    /// attributes (such as rfc2307 uid/gid or group memberships).
+    #[clap(subcommand)]
+    Cred(CredOpt),
     /// Enumerate all users and groups in Entra ID that have `rfc2307` attributes,
     /// and cache their values locally. This addresses the issue where UID/GID
     /// mappings are needed before authentication can succeed, but are normally
