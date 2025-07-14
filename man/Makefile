@@ -1,2 +1,2 @@
 all:
-	./aad-tool-help2man && ./combine.py
+	rm -rf ./data && ./aad-tool-help2man && ./combine.py

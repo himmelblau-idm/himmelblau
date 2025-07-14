@@ -60,6 +60,7 @@ use kanidm_hsm_crypto::glue::{
     x509,
     x509::Builder,
 };
+use kanidm_hsm_crypto::structures::{LoadableRS256Key, SealedData};
 use kanidm_hsm_crypto::{
     provider::BoxedDynTpm, provider::SoftTpm, provider::Tpm,
     structures::LoadableMsDeviceEnrolmentKey, structures::LoadableMsOapxbcRsaKey,
@@ -452,19 +453,26 @@ async fn main() -> ExitCode {
     let opt = HimmelblauUnixParser::parse();
 
     let debug = match opt.commands {
-        HimmelblauUnixOpt::AddCred(AddCredOpt::Cert {
+        HimmelblauUnixOpt::Cred(CredOpt::Cert {
             debug,
             client_id: _,
             domain: _,
             valid_days: _,
             cert_out: _,
         }) => debug,
-        HimmelblauUnixOpt::AddCred(AddCredOpt::Secret {
+        HimmelblauUnixOpt::Cred(CredOpt::Secret {
             debug,
             client_id: _,
             domain: _,
             secret: _,
         }) => debug,
+        HimmelblauUnixOpt::Cred(CredOpt::Delete {
+            debug,
+            domain: _,
+            secret: _,
+            cert: _,
+        }) => debug,
+        HimmelblauUnixOpt::Cred(CredOpt::List { debug, domain: _ }) => debug,
         HimmelblauUnixOpt::Application(ApplicationOpt::List {
             debug,
             account_id: _,
@@ -792,7 +800,7 @@ async fn main() -> ExitCode {
     }
 
     match opt.commands {
-        HimmelblauUnixOpt::AddCred(AddCredOpt::Cert {
+        HimmelblauUnixOpt::Cred(CredOpt::Cert {
             debug: _,
             client_id,
             domain,
@@ -995,7 +1003,7 @@ async fn main() -> ExitCode {
 
             ExitCode::SUCCESS
         }
-        HimmelblauUnixOpt::AddCred(AddCredOpt::Secret {
+        HimmelblauUnixOpt::Cred(CredOpt::Secret {
             debug: _,
             client_id,
             domain,
@@ -1063,6 +1071,114 @@ async fn main() -> ExitCode {
             if let Err(e) = db_txn.commit() {
                 error!(?e, "Failed inserting certificate key into cache");
                 return ExitCode::FAILURE;
+            }
+
+            ExitCode::SUCCESS
+        }
+        HimmelblauUnixOpt::Cred(CredOpt::Delete {
+            debug: _,
+            domain,
+            secret,
+            cert,
+        }) => {
+            debug!("Starting cred delete tool ...");
+
+            if unsafe { libc::geteuid() } != 0 {
+                error!("This command must be run as root.");
+                return ExitCode::FAILURE;
+            }
+
+            let cfg = match HimmelblauConfig::new(Some(DEFAULT_CONFIG_PATH)) {
+                Ok(c) => c,
+                Err(_e) => {
+                    error!("Failed to parse {}", DEFAULT_CONFIG_PATH);
+                    return ExitCode::FAILURE;
+                }
+            };
+
+            let db = match Db::new(&cfg.get_db_path()) {
+                Ok(db) => db,
+                Err(e) => {
+                    error!("Failed loading Himmelblau cache: {:?}", e);
+                    return ExitCode::FAILURE;
+                }
+            };
+
+            let mut db_txn = db.write().await;
+
+            if secret || !cert {
+                let secret_tag = format!("{}/{}", domain, CONFIDENTIAL_CLIENT_SECRET_TAG);
+                if let Err(e) = db_txn.delete_tagged_hsm_key(&secret_tag) {
+                    error!(?e, "Failed deleting secret from cache");
+                    return ExitCode::FAILURE;
+                }
+            }
+
+            if cert || !secret {
+                let key_tag = format!("{}/{}", domain, CONFIDENTIAL_CLIENT_CERT_KEY_TAG);
+                if let Err(e) = db_txn.delete_tagged_hsm_key(&key_tag) {
+                    error!(?e, "Failed deleting cert key from cache");
+                    return ExitCode::FAILURE;
+                }
+                let cert_tag = format!("{}/{}", domain, CONFIDENTIAL_CLIENT_CERT_TAG);
+                if let Err(e) = db_txn.delete_tagged_hsm_key(&cert_tag) {
+                    error!(?e, "Failed deleting cert from cache");
+                    return ExitCode::FAILURE;
+                }
+            }
+
+            if let Err(e) = db_txn.commit() {
+                error!(?e, "Failed deleting secrets from cache");
+                return ExitCode::FAILURE;
+            }
+
+            ExitCode::SUCCESS
+        }
+        HimmelblauUnixOpt::Cred(CredOpt::List { debug: _, domain }) => {
+            debug!("Starting cred list tool ...");
+
+            if unsafe { libc::geteuid() } != 0 {
+                error!("This command must be run as root.");
+                return ExitCode::FAILURE;
+            }
+
+            let cfg = match HimmelblauConfig::new(Some(DEFAULT_CONFIG_PATH)) {
+                Ok(c) => c,
+                Err(_e) => {
+                    error!("Failed to parse {}", DEFAULT_CONFIG_PATH);
+                    return ExitCode::FAILURE;
+                }
+            };
+
+            let db = match Db::new(&cfg.get_db_path()) {
+                Ok(db) => db,
+                Err(e) => {
+                    error!("Failed loading Himmelblau cache: {:?}", e);
+                    return ExitCode::FAILURE;
+                }
+            };
+
+            let mut db_txn = db.write().await;
+
+            print!("Client secret: ");
+            let secret_tag = format!("{}/{}", domain, CONFIDENTIAL_CLIENT_SECRET_TAG);
+            if let Ok(Some(_)) = db_txn.get_tagged_hsm_key::<SealedData>(&secret_tag) {
+                println!("Present");
+            } else {
+                println!("Not present");
+            }
+
+            print!("Client certificate: ");
+            let key_tag = format!("{}/{}", domain, CONFIDENTIAL_CLIENT_CERT_KEY_TAG);
+            if let Ok(Some(_)) = db_txn.get_tagged_hsm_key::<LoadableRS256Key>(&key_tag) {
+                let cert_tag = format!("{}/{}", domain, CONFIDENTIAL_CLIENT_CERT_TAG);
+                if let Ok(Some(_)) = db_txn.get_tagged_hsm_key::<SealedData>(&cert_tag) {
+                    println!("Present");
+                } else {
+                    println!("Not present");
+                }
+            } else {
+                println!("Not present");
             }
 
             ExitCode::SUCCESS
