@@ -72,7 +72,7 @@ struct Token(Option<String>, String);
 
 pub struct HimmelblauMultiProvider {
     config: Arc<RwLock<HimmelblauConfig>>,
-    providers: RwLock<HashMap<String, HimmelblauProvider>>,
+    providers: Arc<RwLock<HashMap<String, HimmelblauProvider>>>,
 }
 
 struct RefreshCache {
@@ -173,10 +173,25 @@ impl HimmelblauMultiProvider {
             providers.insert(domain.to_string(), provider);
         }
 
-        Ok(HimmelblauMultiProvider {
+        let providers = HimmelblauMultiProvider {
             config: config.clone(),
-            providers: RwLock::new(providers),
-        })
+            providers: Arc::new(RwLock::new(providers)),
+        };
+
+        // Spawn periodic cookie clearing loop (Fixes bugs #591 and #491)
+        let providers_ref = providers.providers.clone();
+        tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(std::time::Duration::from_secs(12 * 60 * 60)).await;
+                let providers = providers_ref.read().await;
+                for (_, provider) in providers.iter() {
+                    let app = provider.client.write().await;
+                    app.clear_cookies();
+                }
+            }
+        });
+
+        Ok(providers)
     }
 }
 
