@@ -626,6 +626,44 @@ enum TokenOrObj {
     UserObj((ClientToken, UserObject)),
 }
 
+macro_rules! handle_hello_bad_pin_count {
+    ($self:expr, $account_id:expr, $keystore:expr, $ret_fn:expr) => {{
+        $self.bad_pin_counter
+            .increment_bad_pin_count($account_id)
+            .await;
+
+        let hello_pin_retry_count = $self.config.read().await.get_hello_pin_retry_count();
+        let bad_pin_count = $self.bad_pin_counter.bad_pin_count($account_id).await;
+
+        if bad_pin_count == hello_pin_retry_count {
+            return $ret_fn(
+                "Failed to authenticate with Hello PIN. One more failed attempt will require multi-factor authentication and resetting your Linux Hello PIN."
+            );
+        }
+
+        // If we've exceeded the bad pin count, delete the Hello key
+        if bad_pin_count > hello_pin_retry_count {
+            let hello_key_tag = $self.fetch_hello_key_tag($account_id, true);
+            $keystore
+                .delete_tagged_hsm_key(&hello_key_tag)
+                .map_err(|e| {
+                    error!("Failed to delete hello key: {:?}", e);
+                    IdpError::Tpm
+                })?;
+            let hello_prt_tag = $self.fetch_hello_key_tag($account_id, false);
+            $keystore
+                .delete_tagged_hsm_key(&hello_prt_tag)
+                .map_err(|e| {
+                    error!("Failed to delete hello PRT: {:?}", e);
+                    IdpError::Tpm
+                })?;
+            return $ret_fn(
+                "Too many incorrect PIN attempts. You will need to enroll a new Linux Hello PIN."
+            );
+        }
+    }};
+}
+
 #[async_trait]
 impl IdProvider for HimmelblauProvider {
     #[instrument(level = "debug", skip_all)]
@@ -1459,9 +1497,9 @@ impl IdProvider for HimmelblauProvider {
                 })?;
                 if let Err(e) = tpm.ms_hello_key_load(machine_key, &$hello_key, &pin) {
                     error!("{:?}", e);
-                    self.bad_pin_counter
-                        .increment_bad_pin_count(account_id)
-                        .await;
+                    handle_hello_bad_pin_count!(self, account_id, keystore, |msg: &str| {
+                        Ok((AuthResult::Denied(msg.to_string()), AuthCacheAction::None))
+                    });
                     return Ok((
                         AuthResult::Denied("Failed to authenticate with Hello PIN.".to_string()),
                         AuthCacheAction::None,
@@ -1516,10 +1554,10 @@ impl IdProvider for HimmelblauProvider {
                             ));
                         }
                         Err(e) => {
-                            self.bad_pin_counter
-                                .increment_bad_pin_count(account_id)
-                                .await;
                             error!("Failed to authenticate with hello key: {:?}", e);
+                            handle_hello_bad_pin_count!(self, account_id, keystore, |msg: &str| {
+                                Ok((AuthResult::Denied(msg.to_string()), AuthCacheAction::None))
+                            });
                             return Ok((
                                 AuthResult::Denied(
                                     "Failed to authenticate with Hello PIN.".to_string(),
@@ -2283,10 +2321,10 @@ impl IdProvider for HimmelblauProvider {
                         })
                     }
                     Err(e) => {
-                        self.bad_pin_counter
-                            .increment_bad_pin_count(account_id)
-                            .await;
                         error!("{:?}", e);
+                        handle_hello_bad_pin_count!(self, account_id, keystore, |msg: &str| {
+                            Ok(AuthResult::Denied(msg.to_string()))
+                        });
                         Ok(AuthResult::Denied(
                             "Failed to authenticate with Hello PIN.".to_string(),
                         ))
