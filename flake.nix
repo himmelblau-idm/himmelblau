@@ -367,7 +367,7 @@
                       order = super.auth.unix.order - 10;
                       control = "sufficient";
                       modulePath = "${cfg.package}/lib/libpam_himmelblau.so";
-                      settings.mfa_poll_prompt = cfg.mfaSshWorkaroundFlag;
+                      settings.mfa_poll_prompt = cfg.mfaSshWorkaroundFlag && service == "sshd";
                       settings.debug = cfg.debugFlag;
                     };
                     session.himmelblau = {
