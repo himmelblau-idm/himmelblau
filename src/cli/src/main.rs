@@ -1208,7 +1208,7 @@ async fn main() -> ExitCode {
                 account_id,
                 vec!["https://graph.microsoft.com/Application.Read.All"],
                 Some(client_id.clone()),
-                true
+                false
             ) {
                 Some(res) => res,
                 None => {
@@ -1258,7 +1258,7 @@ async fn main() -> ExitCode {
                 account_id,
                 vec!["https://graph.microsoft.com/Application.ReadWrite.All"],
                 Some(client_id.clone()),
-                true
+                false
             ) {
                 Some(res) => res,
                 None => {
@@ -1313,7 +1313,7 @@ async fn main() -> ExitCode {
                 account_id,
                 vec!["https://graph.microsoft.com/Application.Read.All"],
                 Some(client_id.clone()),
-                true
+                false
             ) {
                 Some(res) => res,
                 None => {
@@ -1362,7 +1362,7 @@ async fn main() -> ExitCode {
                 account_id,
                 vec!["https://graph.microsoft.com/Application.ReadWrite.All"],
                 Some(client_id.clone()),
-                true
+                false
             ) {
                 Some(res) => res,
                 None => {
@@ -1704,7 +1704,7 @@ async fn main() -> ExitCode {
                 account_id,
                 vec!["https://graph.microsoft.com/User.ReadWrite.All"],
                 Some(schema_client_id.clone()),
-                true
+                false
             ) {
                 Some(res) => res,
                 None => {
@@ -1755,7 +1755,7 @@ async fn main() -> ExitCode {
                 account_id,
                 vec!["https://graph.microsoft.com/Group.ReadWrite.All"],
                 Some(schema_client_id.clone()),
-                true
+                false
             ) {
                 Some(res) => res,
                 None => {
