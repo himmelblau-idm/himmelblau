@@ -664,6 +664,26 @@ macro_rules! handle_hello_bad_pin_count {
     }};
 }
 
+macro_rules! check_new_device_enrollment_required {
+    ($aadsts_err:expr, $self:expr, $keystore:expr, $ret_fn:expr, $ret_fail:expr) => {{
+        if $aadsts_err.error_codes.contains(&(135011 as u32))
+            || $aadsts_err.error_codes.contains(&DEVICE_AUTH_FAIL)
+        {
+            let csr_tag = $self.fetch_cert_key_tag();
+            if let Err(e) = $keystore.delete_tagged_hsm_key(&csr_tag) {
+                return $ret_fail(format!("Failed to delete CSR key: {:?}", e));
+            }
+            let intune_tag = $self.fetch_intune_key_tag();
+            if let Err(e) = $keystore.delete_tagged_hsm_key(&intune_tag) {
+                return $ret_fail(format!("Failed to delete intune key: {:?}", e));
+            }
+
+            return $ret_fn(format!("Device has been removed from the domain."));
+        }
+        return $ret_fail(format!("{:?}", $aadsts_err));
+    }};
+}
+
 #[async_trait]
 impl IdProvider for HimmelblauProvider {
     #[instrument(level = "debug", skip_all)]
@@ -1363,6 +1383,17 @@ impl IdProvider for HimmelblauProvider {
                         // Report the network outage to the user via PAM INFO.
                         return Ok((AuthResult::Denied("Network outage detected.".to_string()), AuthCacheAction::None));
                     },
+                    Err(MsalError::AcquireTokenFailed(e)) => {
+                        check_new_device_enrollment_required!(e, self, keystore,
+                            |msg: String| {
+                                return Ok((AuthResult::Denied(msg), AuthCacheAction::None))
+                            },
+                            |msg: String| {
+                                error!("{}", msg);
+                                return Err(IdpError::BadRequest)
+                            }
+                        )
+                    },
                     $($pat => $result),*
                 }
             }
@@ -1553,6 +1584,17 @@ impl IdProvider for HimmelblauProvider {
                                 AuthCacheAction::None,
                             ));
                         }
+                        Err(MsalError::AcquireTokenFailed(e)) => {
+                            check_new_device_enrollment_required!(e, self, keystore,
+                                |msg: String| {
+                                    return Ok((AuthResult::Denied(msg), AuthCacheAction::None))
+                                },
+                                |msg: String| {
+                                    error!("{}", msg);
+                                    return Err(IdpError::BadRequest)
+                                }
+                            )
+                        }
                         Err(e) => {
                             error!("Failed to authenticate with hello key: {:?}", e);
                             handle_hello_bad_pin_count!(self, account_id, keystore, |msg: &str| {
@@ -1631,6 +1673,17 @@ impl IdProvider for HimmelblauProvider {
                                         AuthCacheAction::None,
                                     ));
                                 }
+                                Err(MsalError::AcquireTokenFailed(e)) => {
+                                    check_new_device_enrollment_required!(e, self, keystore,
+                                        |msg: String| {
+                                            return Ok((AuthResult::Denied(msg), AuthCacheAction::None))
+                                        },
+                                        |msg: String| {
+                                            error!("{}", msg);
+                                            return Err(IdpError::BadRequest)
+                                        }
+                                    )
+                                },
                                 Err(_) => {
                                     // Access token request for this PRT failed. Delete the
                                     // PRT and hello key, then demand a new auth.
