@@ -371,21 +371,51 @@ pub enum HimmelblauUnixOpt {
         #[clap(short = 'D', long = "name")]
         account_id: String,
     },
-    /// Erase the content of the himmelblaud resolver cache. You should probably use `invalidate`
-    /// instead.
+    /// Clear or invalidate the himmelblaud resolver cache.
+    ///
+    /// By default, this marks all cached user and group entries as stale,
+    /// forcing them to refresh immediately when next used.
+    ///
+    /// Specify --enumerate, --idmap, --nss, or --mapped to clear these individual
+    /// caches as well. Omit all these to clear them all.
+    ///
+    /// Use `--full` to completely purge the user and group cache entries and unjoin the host
+    /// from Entra ID.
+    /// This is irreversible.
     CacheClear {
         #[clap(short, long)]
         debug: bool,
+        /// Only clear the enumerated users/groups cache
         #[clap(long)]
-        really: bool,
+        enumerate: bool,
+        /// Only clear the idmap cache (alias for --enumerate)
+        #[clap(long)]
+        idmap: bool,
+        /// Only clear the nss cache
+        #[clap(long)]
+        nss: bool,
+        /// Only clear the mapped name cache
+        #[clap(long)]
+        mapped: bool,
+        /// Force a full cache wipe and unjoin the host from Entra ID. This is probably not what you want.
+        #[clap(long)]
+        full: bool,
     },
-    /// Invalidate, but don't erase the content of the himmelblaud resolver cache. This will force
-    /// the himmelblaud daemon to refresh all user and group content immediately. If the connection
-    /// is offline, entries will still be available and will be refreshed as soon as the daemon
-    /// is online again.
+    /// (Deprecated) Previously used to mark cache entries as stale for immediate refresh.
+    /// Now behaves identically to `cache-clear` and will be removed in a future release.
     CacheInvalidate {
         #[clap(short, long)]
         debug: bool,
+        #[clap(long)]
+        enumerate: bool,
+        #[clap(long)]
+        idmap: bool,
+        #[clap(long)]
+        nss: bool,
+        #[clap(long)]
+        mapped: bool,
+        #[clap(long)]
+        full: bool,
     },
     /// Configure PAM to use pam_himmelblau
     ConfigurePam {

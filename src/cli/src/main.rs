@@ -44,7 +44,7 @@ use himmelblau_unix_common::client::call_daemon;
 use himmelblau_unix_common::config::{split_username, HimmelblauConfig};
 use himmelblau_unix_common::constants::{
     CONFIDENTIAL_CLIENT_CERT_KEY_TAG, CONFIDENTIAL_CLIENT_CERT_TAG, CONFIDENTIAL_CLIENT_SECRET_TAG,
-    DEFAULT_CONFIG_PATH, DEFAULT_ODC_PROVIDER, ID_MAP_CACHE,
+    DEFAULT_CONFIG_PATH, DEFAULT_ODC_PROVIDER, ID_MAP_CACHE, MAPPED_NAME_CACHE, NSS_CACHE,
 };
 use himmelblau_unix_common::db::{Cache, CacheTxn, Db, KeyStoreTxn};
 use himmelblau_unix_common::idmap_cache::{StaticGroup, StaticIdCache, StaticUser};
@@ -68,11 +68,11 @@ use kanidm_hsm_crypto::{
 use rpassword::read_password;
 use serde::Deserialize;
 use serde_json::{json, to_string_pretty, Value};
-use std::io;
 use std::io::Write;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::thread::sleep;
 use std::time::{Duration, SystemTime};
+use std::{fs, io};
 use uuid::Uuid;
 
 include!("./opt/tool.rs");
@@ -503,8 +503,22 @@ async fn main() -> ExitCode {
             debug,
             account_id: _,
         } => debug,
-        HimmelblauUnixOpt::CacheClear { debug, really: _ } => debug,
-        HimmelblauUnixOpt::CacheInvalidate { debug } => debug,
+        HimmelblauUnixOpt::CacheClear {
+            debug,
+            enumerate: _,
+            idmap: _,
+            nss: _,
+            mapped: _,
+            full: _,
+        } => debug,
+        HimmelblauUnixOpt::CacheInvalidate {
+            debug,
+            enumerate: _,
+            idmap: _,
+            nss: _,
+            mapped: _,
+            full: _,
+        } => debug,
         HimmelblauUnixOpt::ConfigurePam {
             debug,
             really: _,
@@ -1413,64 +1427,135 @@ async fn main() -> ExitCode {
                 }
             }
         }
-        HimmelblauUnixOpt::CacheClear { debug: _, really } => {
+        HimmelblauUnixOpt::CacheClear {
+            debug: _,
+            enumerate,
+            idmap,
+            nss,
+            mapped,
+            full,
+        }
+        | HimmelblauUnixOpt::CacheInvalidate {
+            debug: _,
+            enumerate,
+            idmap,
+            nss,
+            mapped,
+            full,
+        } => {
             debug!("Starting cache clear tool ...");
 
-            let cfg = match HimmelblauConfig::new(Some(DEFAULT_CONFIG_PATH)) {
-                Ok(c) => c,
-                Err(_e) => {
-                    error!("Failed to parse {}", DEFAULT_CONFIG_PATH);
-                    return ExitCode::FAILURE;
-                }
-            };
-
-            if !really {
-                error!("Are you sure you want to proceed? This will revert the host to an unjoined state while NOT removing the host object from Entra Id. If so use --really");
-                return ExitCode::SUCCESS;
+            if unsafe { libc::geteuid() } != 0 {
+                error!("This command must be run as root.");
+                return ExitCode::FAILURE;
             }
 
-            let req = ClientRequest::ClearCache;
+            let clear_all = !enumerate && !idmap && !nss && !mapped;
 
-            match call_daemon(&cfg.get_socket_path(), req, cfg.get_unix_sock_timeout()).await {
-                Ok(r) => match r {
-                    ClientResponse::Ok => info!("success"),
-                    _ => {
-                        error!("Error: unexpected response -> {:?}", r);
+            macro_rules! clear_cache {
+                () => {{
+                    // Remove the idmap cache
+                    let path = Path::new(ID_MAP_CACHE);
+                    if path.exists() && (enumerate || idmap || clear_all) {
+                        if let Err(e) = fs::remove_file(path) {
+                            error!("Failed to remove idmap cache: {:?}", e);
+                            return ExitCode::FAILURE;
+                        }
                     }
-                },
-                Err(e) => {
-                    error!("Error -> {:?}", e);
-                }
-            };
-            println!("success");
-            ExitCode::SUCCESS
-        }
-        HimmelblauUnixOpt::CacheInvalidate { debug: _ } => {
-            debug!("Starting cache invalidate tool ...");
 
-            let cfg = match HimmelblauConfig::new(Some(DEFAULT_CONFIG_PATH)) {
-                Ok(c) => c,
-                Err(_e) => {
-                    error!("Failed to parse {}", DEFAULT_CONFIG_PATH);
+                    // Remove the nss cache
+                    let path = Path::new(NSS_CACHE);
+                    if path.exists() && (nss || clear_all) {
+                        if let Err(e) = fs::remove_file(path) {
+                            error!("Failed to remove nss cache: {:?}", e);
+                            return ExitCode::FAILURE;
+                        }
+                    }
+
+                    // Remove the mapped name cache
+                    let path = Path::new(MAPPED_NAME_CACHE);
+                    if path.exists() && (mapped || clear_all) {
+                        if let Err(e) = fs::remove_file(path) {
+                            error!("Failed to remove nss cache: {:?}", e);
+                            return ExitCode::FAILURE;
+                        }
+                    }
+                }};
+            }
+
+            if full {
+                print!("This will unjoin the host, clear all caches, and cannot be undone. Proceed? [Y/N]: ");
+                if io::stdout().flush().is_err() {
                     return ExitCode::FAILURE;
                 }
-            };
 
-            let req = ClientRequest::InvalidateCache;
-
-            match call_daemon(&cfg.get_socket_path(), req, cfg.get_unix_sock_timeout()).await {
-                Ok(r) => match r {
-                    ClientResponse::Ok => info!("success"),
-                    _ => {
-                        error!("Error: unexpected response -> {:?}", r);
+                let mut input = String::new();
+                match io::stdin().read_line(&mut input) {
+                    Ok(_) => {
+                        let response = input.trim().to_lowercase();
+                        if response != "y" && response != "yes" {
+                            return ExitCode::SUCCESS;
+                        }
                     }
-                },
-                Err(e) => {
-                    error!("Error -> {:?}", e);
+                    Err(_) => {
+                        return ExitCode::FAILURE;
+                    }
                 }
-            };
-            println!("success");
-            ExitCode::SUCCESS
+
+                let cfg = match HimmelblauConfig::new(Some(DEFAULT_CONFIG_PATH)) {
+                    Ok(c) => c,
+                    Err(_e) => {
+                        error!("Failed to parse {}", DEFAULT_CONFIG_PATH);
+                        return ExitCode::FAILURE;
+                    }
+                };
+
+                let req = ClientRequest::ClearCache;
+
+                match call_daemon(&cfg.get_socket_path(), req, cfg.get_unix_sock_timeout()).await {
+                    Ok(r) => match r {
+                        ClientResponse::Ok => info!("success"),
+                        _ => {
+                            error!("Error: unexpected response -> {:?}", r);
+                        }
+                    },
+                    Err(e) => {
+                        error!("Error -> {:?}", e);
+                    }
+                };
+
+                clear_cache!();
+
+                println!("success");
+                ExitCode::SUCCESS
+            } else {
+                let cfg = match HimmelblauConfig::new(Some(DEFAULT_CONFIG_PATH)) {
+                    Ok(c) => c,
+                    Err(_e) => {
+                        error!("Failed to parse {}", DEFAULT_CONFIG_PATH);
+                        return ExitCode::FAILURE;
+                    }
+                };
+
+                let req = ClientRequest::InvalidateCache;
+
+                match call_daemon(&cfg.get_socket_path(), req, cfg.get_unix_sock_timeout()).await {
+                    Ok(r) => match r {
+                        ClientResponse::Ok => info!("success"),
+                        _ => {
+                            error!("Error: unexpected response -> {:?}", r);
+                        }
+                    },
+                    Err(e) => {
+                        error!("Error -> {:?}", e);
+                    }
+                };
+
+                clear_cache!();
+
+                println!("success");
+                ExitCode::SUCCESS
+            }
         }
         HimmelblauUnixOpt::ConfigurePam {
             debug: _,
@@ -1544,6 +1629,15 @@ async fn main() -> ExitCode {
                     return ExitCode::FAILURE;
                 }
             };
+
+            // First clear the cache of old entries
+            let path = Path::new(ID_MAP_CACHE);
+            if path.exists() {
+                if let Err(e) = fs::remove_file(path) {
+                    error!("Failed to remove idmap cache: {:?}", e);
+                    return ExitCode::FAILURE;
+                }
+            }
 
             let cache = match StaticIdCache::new(ID_MAP_CACHE, true) {
                 Ok(cache) => cache,
