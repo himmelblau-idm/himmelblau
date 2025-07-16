@@ -289,6 +289,53 @@ The location of the cache database. This file is used to store cached authentica
 db_path = /var/cache/himmelblau/himmelblau.cache.db
 
 .TP
+.B hsm_type
+.RE
+Specifies how Himmelblau should handle secure key storage. This option determines whether to use a software-based HSM, a TPM (Trusted Platform Module), or a hybrid approach.
+
+The available options are:
+
+•
+.B soft
+– Use a software-based HSM that encrypts key material locally on the system.
+
+•
+.B tpm
+– Use a hardware TPM exclusively for storing and binding cryptographic keys.
+
+•
+.B tpm_if_possible
+– Attempt to use a hardware TPM if available; if not, fall back to the software HSM. If the TPM has previously been used for key storage, the system will not fall back to the software HSM.
+
+The default is
+.B soft
+. This setting is important for protecting sensitive cryptographic keys in a secure environment, reducing the risk of compromise if the system is breached.
+
+.EXAMPLES
+hsm_type = soft
+
+.TP
+.B tpm_tcti_name
+.RE
+Specifies the TCTI (Trusted Computing Technology Interface) to use when communicating with a Trusted Platform Module (TPM) for secure key operations. This setting is only relevant when
+.B hsm_type
+is set to
+.B tpm
+or
+.B tpm_if_possible.
+
+Common values include:
+
+•
+.B device:/dev/tpmrm0
+– This uses the kernel TPM resource manager device, which is the recommended default for most Linux systems.
+
+Other TCTI strings may be required depending on your system’s TPM driver or configuration. This option allows advanced control over how Himmelblau connects to the TPM for performing cryptographic operations.
+
+.EXAMPLES
+tpm_tcti_name = device:/dev/tpmrm0
+
+.TP
 .B hsm_pin_path
 .RE
 The location where the HSM (Hardware Security Module) PIN will be stored. This PIN is used to protect sensitive cryptographic operations.
