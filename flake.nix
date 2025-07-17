@@ -1,6 +1,6 @@
 {
   inputs = {
-    nixpkgs.url = "github:nixos/nixpkgs/nixos-24.11";
+    nixpkgs.url = "github:nixos/nixpkgs/nixos-25.05";
     flake-utils.url = "github:numtide/flake-utils";
   };
 
@@ -33,7 +33,7 @@
               pam dbus.dev udev.dev
             ] ++ lib.optionals enableInteractive [
               gobject-introspection.dev cairo.dev gdk-pixbuf.dev
-              libsoup.dev pango.dev atk.dev gtk3.dev webkitgtk_4_1
+              libsoup_2_4.dev pango.dev atk.dev gtk3.dev webkitgtk_4_1
             ];
             postBuild = "cp -r man $man/";
             postInstall = "ln -s $out/lib/libnss_himmelblau.so $out/lib/libnss_himmelblau.so.2";
