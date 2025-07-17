@@ -287,6 +287,15 @@
                   description = "Package to use for Himmelblau service.";
                 };
 
+                mfaSshWorkaroundFlag = mkOption {
+                  type = types.bool;
+                  default = false;
+                  description = ''
+                    Whether to add the mfa_poll_prompt option to the libpam_himmelblau.so PAM module
+                    to workaround OpenSSH Bug 2876.
+                  '';
+                };
+
                 debugFlag = mkOption {
                   type = types.bool;
                   default = false;
@@ -358,6 +367,7 @@
                       order = super.auth.unix.order - 10;
                       control = "sufficient";
                       modulePath = "${cfg.package}/lib/libpam_himmelblau.so";
+                      settings.mfa_poll_prompt = cfg.mfaSshWorkaroundFlag && service == "sshd";
                       settings.debug = cfg.debugFlag;
                     };
                     session.himmelblau = {
