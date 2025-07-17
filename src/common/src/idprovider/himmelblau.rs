@@ -2383,6 +2383,22 @@ impl IdProvider for HimmelblauProvider {
                                     error!("Failed to load hello prt: {:?}", e);
                                     IdpError::Tpm
                                 })?;
+                            // Check if the cached PRT has expired.
+                            // This happens after 14 days of no online contact.
+                            if self
+                                .client
+                                .read()
+                                .await
+                                .is_prt_expired(&prt, tpm, machine_key)
+                                .map_err(|e| {
+                                    error!("Failed to check prt expiration: {:?}", e);
+                                    IdpError::Tpm
+                                })?
+                            {
+                                return Ok(AuthResult::Denied(
+                                    "Offline auth has expired. Please connect to the network to continue.".to_string(),
+                                ));
+                            }
                             self.refresh_cache.add(account_id, &prt).await;
                         }
                         self.bad_pin_counter.reset_bad_pin_count(account_id).await;
