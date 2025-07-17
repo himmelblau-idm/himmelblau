@@ -302,7 +302,7 @@ macro_rules! match_sm_auth_client_response {
                 ClientResponse::PamAuthenticateStepResponse(PamAuthResponse::Denied(msg)) => {
                     $msg_printer.print_text(&msg);
                     thread::sleep(Duration::from_secs(2));
-                    $req = ClientRequest::PamAuthenticateInit($account_id.to_string(), $service.to_string());
+                    $req = ClientRequest::PamAuthenticateInit($account_id.to_string(), $service.to_string(), $opts.no_hello_pin);
                     continue;
                 }
                 ClientResponse::PamAuthenticateStepResponse(PamAuthResponse::InitDenied {
@@ -632,7 +632,11 @@ pub fn authenticate(
         }
     };
 
-    let mut req = ClientRequest::PamAuthenticateInit(account_id.to_string(), service.to_string());
+    let mut req = ClientRequest::PamAuthenticateInit(
+        account_id.to_string(),
+        service.to_string(),
+        opts.no_hello_pin,
+    );
 
     loop {
         match_sm_auth_client_response!(

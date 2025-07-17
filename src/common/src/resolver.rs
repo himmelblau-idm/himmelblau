@@ -66,6 +66,7 @@ pub enum AuthSession {
         /// that tasks which .resubscribe() to this channel can then select! on it and be notified
         /// when they need to stop.
         shutdown_rx: broadcast::Receiver<()>,
+        no_hello_pin: bool,
     },
     Success(String),
     Denied,
@@ -966,6 +967,7 @@ where
         &self,
         account_id: &str,
         service: &str,
+        no_hello_pin: bool,
         shutdown_rx: broadcast::Receiver<()>,
     ) -> Result<(AuthSession, PamAuthResponse), ()> {
         // Setup an auth session. If possible bring the resolver online.
@@ -994,6 +996,7 @@ where
                 .unix_user_online_auth_init(
                     account_id,
                     token.as_ref(),
+                    no_hello_pin,
                     &mut dbtxn,
                     hsm_lock.deref_mut(),
                     &self.machine_key,
@@ -1008,7 +1011,12 @@ where
                         CacheState::Offline | CacheState::OfflineNextCheck(_) => {
                             // Attempt to proceed offline
                             self.client
-                                .unix_user_offline_auth_init(account_id, token.as_ref(), &mut dbtxn)
+                                .unix_user_offline_auth_init(
+                                    account_id,
+                                    token.as_ref(),
+                                    no_hello_pin,
+                                    &mut dbtxn,
+                                )
                                 .await
                         }
                         _ => Err(e),
@@ -1020,7 +1028,7 @@ where
 
             // Can the auth proceed offline?
             self.client
-                .unix_user_offline_auth_init(account_id, token.as_ref(), &mut dbtxn)
+                .unix_user_offline_auth_init(account_id, token.as_ref(), no_hello_pin, &mut dbtxn)
                 .await
         };
 
@@ -1034,6 +1042,7 @@ where
                     online_at_init,
                     cred_handler,
                     shutdown_rx,
+                    no_hello_pin,
                 };
 
                 // Now identify what credentials are needed next. The auth session tells
@@ -1063,6 +1072,7 @@ where
                 online_at_init: _,
                 cred_handler: _,
                 shutdown_rx: _,
+                no_hello_pin: _,
             } => self.get_cachestate(Some(account_id)).await,
             _ => self.get_cachestate(None).await,
         };
@@ -1077,6 +1087,7 @@ where
                     online_at_init: true,
                     ref mut cred_handler,
                     ref shutdown_rx,
+                    no_hello_pin,
                 },
                 CacheState::Online,
             ) => {
@@ -1089,6 +1100,7 @@ where
                         account_id,
                         token,
                         service,
+                        no_hello_pin,
                         cred_handler,
                         pam_next_req,
                         &mut dbtxn,
@@ -1146,6 +1158,7 @@ where
                     ref mut cred_handler,
                     // Only need in online auth.
                     shutdown_rx: _,
+                    no_hello_pin: _,
                 },
                 _,
             ) => {
@@ -1259,83 +1272,6 @@ where
             Err(e) => {
                 error!("{:?}", e);
                 Err(())
-            }
-        }
-    }
-
-    // Can this be cfg debug/test?
-    pub async fn pam_account_authenticate(
-        &self,
-        account_id: &str,
-        service: &str,
-        password: &str,
-    ) -> Result<Option<bool>, ()> {
-        let (_shutdown_tx, shutdown_rx) = broadcast::channel(1);
-
-        let mut auth_session = match self
-            .pam_account_authenticate_init(account_id, service, shutdown_rx)
-            .await?
-        {
-            (auth_session, PamAuthResponse::Password) => {
-                // Can continue!
-                auth_session
-            }
-            (auth_session, PamAuthResponse::MFACode { .. }) => {
-                // Can continue!
-                auth_session
-            }
-            (auth_session, PamAuthResponse::MFAPoll { .. }) => {
-                // Can continue!
-                auth_session
-            }
-            (auth_session, PamAuthResponse::MFAPollWait) => {
-                // Can continue!
-                auth_session
-            }
-            (auth_session, PamAuthResponse::SetupPin { .. }) => {
-                // Can continue!
-                auth_session
-            }
-            (auth_session, PamAuthResponse::Pin) => {
-                // Can continue!
-                auth_session
-            }
-            (auth_session, PamAuthResponse::Fido { .. }) => {
-                // Can continue!
-                auth_session
-            }
-            (auth_session, PamAuthResponse::InitDenied { .. }) => {
-                // Can continue!
-                auth_session
-            }
-            (_, PamAuthResponse::Unknown) => return Ok(None),
-            (_, PamAuthResponse::Denied(_)) => return Ok(Some(false)),
-            (_, PamAuthResponse::Success) => {
-                // Should never get here "off the rip".
-                debug_assert!(false);
-                return Ok(Some(true));
-            }
-            (auth_session, PamAuthResponse::ChangePassword { .. }) => {
-                // Can continue!
-                auth_session
-            }
-        };
-
-        // Now we can make the next step.
-        let pam_next_req = PamAuthRequest::Password {
-            cred: password.to_string(),
-        };
-        match self
-            .pam_account_authenticate_step(&mut auth_session, pam_next_req)
-            .await?
-        {
-            PamAuthResponse::Success => Ok(Some(true)),
-            PamAuthResponse::Denied(_) => Ok(Some(false)),
-            _ => {
-                // Should not be able to get here, if the user was unknown they should
-                // be out. If it wants more mechanisms, we can't proceed here.
-                // debug_assert!(false);
-                Ok(None)
             }
         }
     }

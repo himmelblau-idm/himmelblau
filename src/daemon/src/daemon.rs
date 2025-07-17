@@ -296,7 +296,7 @@ async fn handle_client(
                         ClientResponse::NssGroup(None)
                     })
             }
-            ClientRequest::PamAuthenticateInit(account_id, service) => {
+            ClientRequest::PamAuthenticateInit(account_id, service, no_hello_pin) => {
                 let span = span!(Level::INFO, "pam authenticate init");
                 trace!("pam authenticate init");
 
@@ -307,6 +307,7 @@ async fn handle_client(
                         .pam_account_authenticate_init(
                             account_id.as_str(),
                             service.as_str(),
+                            no_hello_pin,
                             shutdown_tx.subscribe(),
                         )
                         .await

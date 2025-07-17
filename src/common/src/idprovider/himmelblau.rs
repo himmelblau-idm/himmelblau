@@ -411,6 +411,7 @@ impl IdProvider for HimmelblauMultiProvider {
         &self,
         account_id: &str,
         token: Option<&UserToken>,
+        no_hello_pin: bool,
         keystore: &mut D,
         tpm: &mut tpm::provider::BoxedDynTpm,
         machine_key: &tpm::structures::StorageKey,
@@ -425,6 +426,7 @@ impl IdProvider for HimmelblauMultiProvider {
                             .unix_user_online_auth_init(
                                 account_id,
                                 token,
+                                no_hello_pin,
                                 keystore,
                                 tpm,
                                 machine_key,
@@ -447,6 +449,7 @@ impl IdProvider for HimmelblauMultiProvider {
         account_id: &str,
         old_token: &UserToken,
         service: &str,
+        no_hello_pin: bool,
         cred_handler: &mut AuthCredHandler,
         pam_next_req: PamAuthRequest,
         keystore: &mut D,
@@ -464,6 +467,7 @@ impl IdProvider for HimmelblauMultiProvider {
                                 account_id,
                                 old_token,
                                 service,
+                                no_hello_pin,
                                 cred_handler,
                                 pam_next_req,
                                 keystore,
@@ -487,6 +491,7 @@ impl IdProvider for HimmelblauMultiProvider {
         &self,
         account_id: &str,
         token: Option<&UserToken>,
+        no_hello_pin: bool,
         keystore: &mut D,
     ) -> Result<(AuthRequest, AuthCredHandler), IdpError> {
         match split_username(account_id) {
@@ -495,7 +500,7 @@ impl IdProvider for HimmelblauMultiProvider {
                 match find_provider!(self, providers, domain) {
                     Some(provider) => {
                         provider
-                            .unix_user_offline_auth_init(account_id, token, keystore)
+                            .unix_user_offline_auth_init(account_id, token, no_hello_pin, keystore)
                             .await
                     }
                     None => Err(IdpError::NotFound),
@@ -1184,6 +1189,7 @@ impl IdProvider for HimmelblauProvider {
         &self,
         account_id: &str,
         _token: Option<&UserToken>,
+        no_hello_pin: bool,
         keystore: &mut D,
         tpm: &mut tpm::provider::BoxedDynTpm,
         _machine_key: &tpm::structures::StorageKey,
@@ -1225,6 +1231,7 @@ impl IdProvider for HimmelblauProvider {
             || !hello_enabled
             || self.bad_pin_counter.bad_pin_count(account_id).await > hello_pin_retry_count
             || intune_enrollment_required
+            || no_hello_pin
         {
             if (self.delayed_init().await).is_err() {
                 // Initialization failed. Report that the system is offline. We
@@ -1365,6 +1372,7 @@ impl IdProvider for HimmelblauProvider {
         account_id: &str,
         old_token: &UserToken,
         service: &str,
+        no_hello_pin: bool,
         cred_handler: &mut AuthCredHandler,
         pam_next_req: PamAuthRequest,
         keystore: &mut D,
@@ -2092,7 +2100,7 @@ impl IdProvider for HimmelblauProvider {
                             error!("{:?}", e);
                             IdpError::NotFound
                         })?;
-                        if !hello_enabled || (!amr_ngcmfa && !amr_mfa) {
+                        if !hello_enabled || (!amr_ngcmfa && !amr_mfa) || no_hello_pin {
                             info!("Skipping Hello enrollment because it is disabled");
                             return Ok((
                                 AuthResult::Success { token: token3 },
@@ -2185,7 +2193,7 @@ impl IdProvider for HimmelblauProvider {
                             error!("{:?}", e);
                             IdpError::NotFound
                         })?;
-                        if !hello_enabled || (!amr_ngcmfa && !amr_mfa) {
+                        if !hello_enabled || (!amr_ngcmfa && !amr_mfa) || no_hello_pin {
                             info!("Skipping Hello enrollment because it is disabled");
                             return Ok((
                                 AuthResult::Success { token: token3 },
@@ -2256,7 +2264,7 @@ impl IdProvider for HimmelblauProvider {
                     Ok(AuthResult::Success { token: token3 }) => {
                         // Skip Hello enrollment if it is disabled by config
                         let hello_enabled = self.config.read().await.get_enable_hello();
-                        if !hello_enabled {
+                        if !hello_enabled || no_hello_pin {
                             info!("Skipping Hello enrollment because it is disabled");
                             return Ok((
                                 AuthResult::Success { token: token3 },
@@ -2293,6 +2301,7 @@ impl IdProvider for HimmelblauProvider {
         &self,
         account_id: &str,
         _token: Option<&UserToken>,
+        no_hello_pin: bool,
         keystore: &mut D,
     ) -> Result<(AuthRequest, AuthCredHandler), IdpError> {
         let hello_key = self.fetch_hello_key(account_id, keystore).ok();
@@ -2303,6 +2312,7 @@ impl IdProvider for HimmelblauProvider {
         // we should respond with a resonable error indicating how to proceed.
         if hello_key.is_some()
             && self.bad_pin_counter.bad_pin_count(account_id).await <= hello_pin_retry_count
+            && !no_hello_pin
         {
             Ok((AuthRequest::Pin, AuthCredHandler::None))
         } else if sfa_enabled {
