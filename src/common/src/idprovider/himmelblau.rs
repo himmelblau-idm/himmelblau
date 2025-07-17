@@ -655,7 +655,14 @@ macro_rules! handle_hello_bad_pin_count {
                     error!("Failed to delete hello key: {:?}", e);
                     IdpError::Tpm
                 })?;
-            let hello_prt_tag = $self.fetch_hello_key_tag($account_id, false);
+            let hello_key_tag = $self.fetch_hello_key_tag($account_id, false);
+            $keystore
+                .delete_tagged_hsm_key(&hello_key_tag)
+                .map_err(|e| {
+                    error!("Failed to delete hello key: {:?}", e);
+                    IdpError::Tpm
+                })?;
+            let hello_prt_tag = $self.fetch_hello_prt_key_tag($account_id);
             $keystore
                 .delete_tagged_hsm_key(&hello_prt_tag)
                 .map_err(|e| {
