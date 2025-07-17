@@ -72,6 +72,7 @@ pub struct Options {
     pub use_first_pass: bool,
     pub ignore_unknown_user: bool,
     pub mfa_poll_prompt: bool,
+    pub no_hello_pin: bool,
 }
 
 impl TryFrom<&Vec<&CStr>> for Options {
@@ -92,6 +93,7 @@ impl TryFrom<&Vec<&CStr>> for Options {
             use_first_pass: gopts.contains("use_first_pass"),
             ignore_unknown_user: gopts.contains("ignore_unknown_user"),
             mfa_poll_prompt: gopts.contains("mfa_poll_prompt"),
+            no_hello_pin: gopts.contains("no_hello_pin"),
         })
     }
 }

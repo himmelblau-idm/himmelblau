@@ -250,6 +250,7 @@ pub trait IdProvider {
         &self,
         _account_id: &str,
         _token: Option<&UserToken>,
+        _no_hello_pin: bool,
         _keystore: &mut D,
         _tpm: &mut tpm::provider::BoxedDynTpm,
         _machine_key: &tpm::structures::StorageKey,
@@ -262,6 +263,7 @@ pub trait IdProvider {
         _account_id: &str,
         _old_token: &UserToken,
         _service: &str,
+        _no_hello_pin: bool,
         _cred_handler: &mut AuthCredHandler,
         _pam_next_req: PamAuthRequest,
         _keystore: &mut D,
@@ -274,6 +276,7 @@ pub trait IdProvider {
         &self,
         _account_id: &str,
         _token: Option<&UserToken>,
+        _no_hello_pin: bool,
         _keystore: &mut D,
     ) -> Result<(AuthRequest, AuthCredHandler), IdpError>;
 
