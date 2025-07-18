@@ -1,0 +1,55 @@
+# Use the official Rocky Linux 10 image as the base
+FROM rockylinux:10
+
+# Enable CRB repository (needed for some devel packages)
+RUN dnf install -y 'dnf-command(config-manager)' && \
+    dnf config-manager --set-enabled crb
+
+# Update system and install build dependencies
+RUN dnf update -y && \
+    dnf install -y \
+    git \
+    gcc \
+    gcc-c++ \
+    make \
+    openssl-devel \
+    dbus-devel \
+    libtool \
+    pkgconfig \
+    autoconf \
+    pam-devel \
+    systemd-devel \
+    libcap-devel \
+    krb5-devel \
+    pcre2-devel \
+    clang \
+    gettext \
+    sqlite-devel \
+    tpm2-tss-devel \
+    libunistring-devel && \
+    dnf clean all
+
+# Install Rust (latest stable)
+RUN curl https://sh.rustup.rs -sSf | sh -s -- -y
+ENV PATH="/root/.cargo/bin:${PATH}"
+
+# Install the cargo rpm tool
+RUN cargo install cargo-generate-rpm
+
+# Mount your source code directory
+VOLUME /himmelblau
+WORKDIR /himmelblau
+
+# Default command to build and package
+CMD cargo build --release --features tpm && \
+    strip -s target/release/*.so && \
+    strip -s target/release/aad-tool && \
+    strip -s target/release/himmelblaud && \
+    strip -s target/release/himmelblaud_tasks && \
+    strip -s target/release/broker && \
+    cargo generate-rpm -p src/daemon && \
+    cargo generate-rpm -p src/nss && \
+    cargo generate-rpm -p src/pam && \
+    cargo generate-rpm -p src/sshd-config && \
+    cargo generate-rpm -p src/sso && \
+    cargo generate-rpm -p src/qr-greeter
