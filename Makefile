@@ -71,15 +71,16 @@ nix: .packaging .submodules
 
 DEB_TARGETS := ubuntu22.04 ubuntu24.04 debian12
 RPM_TARGETS := rocky8 rocky9 rocky10 sle15sp6 tumbleweed rawhide fedora41 fedora42
+SLE_TARGETS := sle15sp7
 
-.PHONY: package deb rpm $(DEB_TARGETS) $(RPM_TARGETS)
+.PHONY: package deb rpm $(DEB_TARGETS) $(RPM_TARGETS) ${SLE_TARGETS}
 
 package: deb rpm
 	ls ./packaging/
 
 deb: $(DEB_TARGETS)
 
-rpm: $(RPM_TARGETS)
+rpm: $(RPM_TARGETS) $(SLE_TARGETS)
 	rpmsign --addsign ./packaging/*.rpm
 
 $(DEB_TARGETS): %: .packaging .submodules
@@ -96,6 +97,19 @@ $(RPM_TARGETS): %: .packaging .submodules
 	@echo "Building $@ RPM packages"
 	mkdir -p target/$@
 	$(DOCKER) build -t himmelblau-$@-build -f images/rpm/Dockerfile.$@ .
+	$(DOCKER) run --rm --security-opt label=disable -it \
+		-v $(CURDIR):/himmelblau \
+		-v $(CURDIR)/target/$@:/himmelblau/target \
+		himmelblau-$@-build
+	for file in ./target/$@/generate-rpm/*.rpm; do \
+		mv "$$file" "$${file%.rpm}-$@.rpm"; \
+	done
+	mv ./target/$@/generate-rpm/*.rpm ./packaging/
+
+$(SLE_TARGETS): %: .packaging .submodules
+	@echo "Building $@ RPM packages"
+	mkdir -p target/$@
+	$(DOCKER) build --secret id=scc_regcode,src=${HOME}/.secrets/scc_regcode -t himmelblau-$@-build -f images/rpm/Dockerfile.$@ .
 	$(DOCKER) run --rm --security-opt label=disable -it \
 		-v $(CURDIR):/himmelblau \
 		-v $(CURDIR)/target/$@:/himmelblau/target \
