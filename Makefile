@@ -70,7 +70,7 @@ nix: .packaging .submodules
 	done
 
 DEB_TARGETS := ubuntu22.04 ubuntu24.04 debian12
-RPM_TARGETS := rocky8 rocky9 sle15sp6 tumbleweed rawhide fedora41
+RPM_TARGETS := rocky8 rocky9 sle15sp6 tumbleweed rawhide fedora41 fedora42
 
 .PHONY: package deb rpm $(DEB_TARGETS) $(RPM_TARGETS)
 
