@@ -32,7 +32,6 @@ RUN dnf -y update && \
     atk-devel \
     gtk3-devel \
     tpm2-tss-devel \
-    utf8proc-devel \
     webkit2gtk3-devel && \
     dnf clean all
 
