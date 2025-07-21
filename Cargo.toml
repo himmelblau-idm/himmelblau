@@ -37,11 +37,11 @@ pkg-config = "^0.3.32"
 lazy_static = "^1.4.0"
 paste = "^1.0.12"
 serde = { version = "^1.0.219", features = ["derive"] }
-serde_json = "^1.0.140"
+serde_json = "^1.0.141"
 tracing-subscriber = "^0.3.17"
 tracing = "^0.1.37"
 himmelblau_unix_common = { path = "src/common" }
-libhimmelblau = { version = "0.7.6", features = ["broker", "changepassword", "on_behalf_of"] }
+libhimmelblau = { version = "0.7.7", features = ["broker", "changepassword", "on_behalf_of"] }
 clap = { version = "^4.5", features = ["derive", "env"] }
 clap_complete = "^4.5.55"
 reqwest = { version = "^0.12.22", features = ["json"] }
@@ -78,7 +78,7 @@ webauthn-rs-proto = "0.5.0"
 kanidm_proto = { path = "./src/proto" }
 openssl-sys = "^0.9"
 openssl = "^0.10.73"
-rand = "^0.9.0"
+rand = "^0.9.2"
 tss-esapi = "^7.2.0"
 sketching = { path = "./src/sketching" }
 tracing-forest = "^0.1.6"
