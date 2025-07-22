@@ -494,10 +494,21 @@ async fn handle_tasks(stream: UnixStream, cfg: &HimmelblauConfig) {
                     return;
                 }
             }
-            Some(Ok(TaskRequest::ApplyPolicy(account_id, graph_token, intune_token))) => {
+            Some(Ok(TaskRequest::ApplyPolicy(
+                account_id,
+                graph_token,
+                intune_token,
+                iwservice_token,
+            ))) => {
                 debug!("Received task -> ApplyPolicy({})", account_id);
-                let res = match apply_intune_policy(cfg, &account_id, &graph_token, &intune_token)
-                    .await
+                let res = match apply_intune_policy(
+                    cfg,
+                    &account_id,
+                    &graph_token,
+                    &intune_token,
+                    &iwservice_token,
+                )
+                .await
                 {
                     Ok(r) => r,
                     Err(e) => {

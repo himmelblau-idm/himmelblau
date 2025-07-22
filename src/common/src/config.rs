@@ -613,6 +613,14 @@ impl HimmelblauConfig {
         )
     }
 
+    pub fn get_enable_experimental_intune_custom_compliance(&self) -> bool {
+        match_bool(
+            self.config
+                .get("global", "enable_experimental_intune_custom_compliance"),
+            false,
+        )
+    }
+
     pub fn get_hello_pin_prompt(&self) -> String {
         match self.config.get("global", "hello_pin_prompt") {
             Some(val) => val,
@@ -1256,6 +1264,30 @@ mod tests {
         let config_empty = HimmelblauConfig::new(None).unwrap();
         assert_eq!(
             config_empty.get_enable_experimental_passwordless_fido(),
+            false
+        );
+    }
+
+    #[test]
+    fn test_get_enable_experimental_intune_custom_compliance() {
+        let config_data = r#"
+        [global]
+        enable_experimental_intune_custom_compliance = true
+        "#;
+
+        let temp_file = create_temp_config(config_data);
+        let config = HimmelblauConfig::new(Some(&temp_file)).unwrap();
+
+        // Test when explicitly set to true
+        assert_eq!(
+            config.get_enable_experimental_intune_custom_compliance(),
+            true
+        );
+
+        // Test fallback default (false) when config is missing
+        let config_empty = HimmelblauConfig::new(None).unwrap();
+        assert_eq!(
+            config_empty.get_enable_experimental_intune_custom_compliance(),
             false
         );
     }
