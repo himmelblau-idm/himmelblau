@@ -17,6 +17,7 @@
 */
 use crate::compliance_ext::ComplianceCSE;
 use crate::cse::CSE;
+use crate::custom_compliance_ext::CustomComplianceCSE;
 use crate::scripts_ext::ScriptsCSE;
 use anyhow::{anyhow, Result};
 use himmelblau::graph::Graph;
@@ -24,7 +25,9 @@ use himmelblau::intune::{IntuneForLinux, IntuneStatus};
 use himmelblau::{ClientInfo, EnrollAttrs, IdToken, UserToken};
 use himmelblau_unix_common::config::{split_username, HimmelblauConfig};
 use std::sync::Arc;
-use tracing::{debug, instrument};
+use std::thread::sleep;
+use std::time::Duration;
+use tracing::{debug, error, instrument};
 
 #[instrument(skip(config, graph_token, intune_token))]
 pub async fn apply_intune_policy(
@@ -32,6 +35,7 @@ pub async fn apply_intune_policy(
     account_id: &str,
     graph_token: &str,
     intune_token: &str,
+    iwservice_token: &str,
 ) -> Result<bool> {
     debug!(?account_id, "Attempting to enforce policies");
 
@@ -96,12 +100,16 @@ pub async fn apply_intune_policy(
         .map_err(|e| anyhow!(e))?;
     debug!("Received policy enforcement actions:\n{:#?}", policies);
     let mut statuses: IntuneStatus = policies.into();
-    statuses.set_device_id(intune_device_id);
+    statuses.set_device_id(intune_device_id.clone());
 
-    let gp_extensions: Vec<Arc<dyn CSE>> = vec![
+    let mut gp_extensions: Vec<Arc<dyn CSE>> = vec![
         Arc::new(ScriptsCSE::new(config, account_id)),
         Arc::new(ComplianceCSE::new(config, account_id)),
     ];
+
+    if config.get_enable_experimental_intune_custom_compliance() {
+        gp_extensions.push(Arc::new(CustomComplianceCSE::new(config, account_id)));
+    }
 
     let mut errors = vec![];
     for ext in gp_extensions {
@@ -120,6 +128,34 @@ pub async fn apply_intune_policy(
         .status(&token, statuses)
         .await
         .map_err(|e| anyhow!(e))?;
+
+    let iwservice_token = UserToken {
+        token_type: String::new(),
+        scope: None,
+        expires_in: 0,
+        ext_expires_in: 0,
+        refresh_token: String::new(),
+        access_token: Some(iwservice_token.to_string()),
+        client_info: ClientInfo::default(),
+        id_token: IdToken::default(),
+        prt: None,
+    };
+
+    // Check compliance status
+    sleep(Duration::from_secs(3));
+    let device_info = intune
+        .get_compliance_info(&iwservice_token, &intune_device_id)
+        .await
+        .map_err(|e| anyhow!(e))?;
+    debug!(?device_info.compliance_state, "Intune compliance status");
+    if !device_info.noncompliant_rules.is_empty() {
+        error!(?device_info.noncompliant_rules, "Intune NonCompliant rules report");
+    }
+
+    /* TODO: Right now we ignore the NonCompliant Rules report because Custom
+     * Compliance policy responses are not parsing correctly in Intune. Once
+     * this issue is resolved, we can enforce NonCompliance.
+     */
 
     if !errors.is_empty() {
         Err(anyhow!("Policy enforcement failed: {:?}", errors))

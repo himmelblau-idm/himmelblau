@@ -17,7 +17,7 @@
 */
 use crate::client_sync::DaemonClientBlocking;
 use crate::config::HimmelblauConfig;
-use crate::hello_pin_complexity::is_simple_pin;
+use crate::hello_pin_complexity::{is_simple_pin, meets_intune_pin_policy};
 use crate::unix_proto::{ClientRequest, ClientResponse, PamAuthRequest, PamAuthResponse};
 use std::sync::Arc;
 
@@ -334,6 +334,10 @@ macro_rules! match_sm_auth_client_response {
                                     continue;
                                 } else if is_simple_pin(&cred) {
                                     $msg_printer.print_text("PIN must not use repeating or predictable sequences. Avoid patterns like '111111', '123456', or '135791'.");
+                                    thread::sleep(Duration::from_secs(2));
+                                    continue;
+                                } else if let Err(msg) = meets_intune_pin_policy(&cred) {
+                                    $msg_printer.print_text(&msg);
                                     thread::sleep(Duration::from_secs(2));
                                     continue;
                                 }

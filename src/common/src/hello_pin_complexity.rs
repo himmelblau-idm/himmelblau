@@ -15,7 +15,10 @@
    You should have received a copy of the GNU General Public License
    along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
-use crate::constants::DEFAULT_HELLO_PIN_MIN_LEN;
+use crate::{
+    constants::{DEFAULT_HELLO_PIN_MIN_LEN, POLICY_CACHE},
+    policy_cache::{PolicyCache, PolicyValue},
+};
 
 /// Returns true if the provided PIN is too simple (constant delta pattern)
 /// and should be disallowed, per Hello PIN rules.
@@ -44,6 +47,50 @@ pub fn is_simple_pin(pin: &str) -> bool {
 
     // Check if all deltas are equal
     deltas.windows(2).all(|w| w[0] == w[1])
+}
+
+pub fn meets_intune_pin_policy(pin: &str) -> Result<(), String> {
+    let policy_cache = PolicyCache::new(POLICY_CACHE, false)
+        .map_err(|_| "Failed to load policy cache.".to_string())?;
+
+    let count_digits = pin.chars().filter(|c| c.is_ascii_digit()).count() as u32;
+    let count_lower = pin.chars().filter(|c| c.is_ascii_lowercase()).count() as u32;
+    let count_upper = pin.chars().filter(|c| c.is_ascii_uppercase()).count() as u32;
+    let count_symbols = pin.chars().filter(|c| !(c.is_ascii_alphanumeric())).count() as u32;
+    let length = pin.chars().count() as u32;
+
+    macro_rules! check_policy {
+        ($key:expr, $actual:expr, $label:expr) => {
+            if let Some(PolicyValue::Int(min)) = policy_cache.get($key) {
+                if $actual < min {
+                    return Err(format!(
+                        "PIN is not compliant with administrator policy: must contain at least {} {} character{}.",
+                        min, $label, if min == 1 { "" } else { "s" }
+                    ));
+                }
+            }
+        };
+    }
+
+    check_policy!("linux_passwordpolicy_minimumlength", length, "total");
+    check_policy!("linux_passwordpolicy_minimumdigits", count_digits, "digit");
+    check_policy!(
+        "linux_passwordpolicy_minimumlowercase",
+        count_lower,
+        "lowercase"
+    );
+    check_policy!(
+        "linux_passwordpolicy_minimumuppercase",
+        count_upper,
+        "uppercase"
+    );
+    check_policy!(
+        "linux_passwordpolicy_minimumsymbols",
+        count_symbols,
+        "symbol"
+    );
+
+    Ok(())
 }
 
 #[cfg(test)]

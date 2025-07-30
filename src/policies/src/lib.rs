@@ -42,3 +42,6 @@ pub mod scripts_ext;
 
 #[cfg(target_family = "unix")]
 pub mod compliance_ext;
+
+#[cfg(target_family = "unix")]
+pub mod custom_compliance_ext;
