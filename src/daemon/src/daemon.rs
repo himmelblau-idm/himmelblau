@@ -560,9 +560,15 @@ async fn handle_client(
                                                                         Ok(()) => {
                                                                             // Now wait for the other end OR timeout.
                                                                             match time::timeout_at(
+                                                                                /* From the MS specs:
+                                                                                 * Custom compliance discovery scripts for Microsoft Intune
+                                                                                 * Limits:
+                                                                                 * Scripts must have a limited run time:
+                                                                                 *   On Linux, scripts must take five minutes or less to run.
+                                                                                 */
                                                                                 time::Instant::now()
                                                                                     + Duration::from_secs(
-                                                                                        5,
+                                                                                        300,
                                                                                     ),
                                                                                 rx,
                                                                             )
