@@ -18,9 +18,9 @@ Upholds=himmelblaud-tasks.service
 DynamicUser=yes
 SupplementaryGroups=tss
 UMask=0027
-CacheDirectory=himmelblaud # /var/cache/himmelblaud
-RuntimeDirectory=himmelblaud # /run/himmelblaud
-StateDirectory=himmelblaud # /var/lib/himmelblaud
+CacheDirectory=himmelblaud
+RuntimeDirectory=himmelblaud
+StateDirectory=himmelblaud
 
 Type=notify-reload
 ExecStart=/usr/sbin/himmelblaud
