@@ -29,7 +29,7 @@ use std::thread::sleep;
 use std::time::Duration;
 use tracing::{debug, error, instrument};
 
-#[instrument(skip(config, graph_token, intune_token))]
+#[instrument(skip(config, graph_token, intune_token, iwservice_token))]
 pub async fn apply_intune_policy(
     config: &HimmelblauConfig,
     account_id: &str,
