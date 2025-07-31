@@ -495,13 +495,26 @@ async fn handle_tasks(stream: UnixStream, cfg: &HimmelblauConfig) {
                 }
             }
             Some(Ok(TaskRequest::ApplyPolicy(
+                intune_device_id,
                 account_id,
                 graph_token,
                 intune_token,
                 iwservice_token,
             ))) => {
                 debug!("Received task -> ApplyPolicy({})", account_id);
+                let intune_device_id = match intune_device_id {
+                    Some(id) => id,
+                    None => {
+                        debug!("Device not enrolled in Intune, skipping");
+                        if let Err(e) = reqs.send(TaskResponse::Success(0)).await {
+                            error!("Error -> {:?}", e);
+                            return;
+                        }
+                        continue;
+                    }
+                };
                 let res = match apply_intune_policy(
+                    &intune_device_id,
                     cfg,
                     &account_id,
                     &graph_token,
