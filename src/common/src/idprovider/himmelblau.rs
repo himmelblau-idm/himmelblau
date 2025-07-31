@@ -1775,6 +1775,10 @@ impl IdProvider for HimmelblauProvider {
                     }
                 }
 
+                if !self.is_intune_enrolled(keystore).await {
+                    intune_enroll!(token);
+                }
+
                 match self.token_validate(account_id, &token, None).await {
                     Ok(AuthResult::Success { token }) => {
                         debug!("Returning user token from successful Hello PIN authentication.");
@@ -3073,7 +3077,7 @@ impl HimmelblauProvider {
         // Enrolling the device in Intune
         let config = self.config.read().await;
         if config.get_apply_policy() {
-            let graph_token = self
+            let graph_token = match self
                 .client
                 .read()
                 .await
@@ -3086,13 +3090,25 @@ impl HimmelblauProvider {
                     machine_key,
                 )
                 .await
-                .map_err(|e| {
-                    error!(
-                        "Acquiring token for Intune device enrollment failed: {:?}",
-                        e
-                    );
-                    IdpError::BadRequest
-                })?;
+            {
+                Ok(token) => token,
+                Err(MsalError::AcquireTokenFailed(e)) => {
+                    if e.error_codes.contains(&DEVICE_AUTH_FAIL) {
+                        error!(
+                            ?e,
+                            "Device auth failed for Intune device enrollment, delaying enrollment."
+                        );
+                        return Err(IdpError::NotFound);
+                    } else {
+                        error!(?e, "Acquiring token for Intune device enrollment failed.");
+                        return Err(IdpError::BadRequest);
+                    }
+                }
+                Err(e) => {
+                    error!(?e, "Acquiring token for Intune device enrollment failed.");
+                    return Err(IdpError::BadRequest);
+                }
+            };
             let access_token = graph_token.access_token.clone().ok_or_else(|| {
                 error!("Acquiring token for Intune device enrollment failed: access_token missing");
                 IdpError::BadRequest
