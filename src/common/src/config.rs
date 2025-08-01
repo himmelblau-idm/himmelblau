@@ -31,9 +31,9 @@ use crate::constants::{
     DEFAULT_CONFIG_PATH, DEFAULT_CONN_TIMEOUT, DEFAULT_DB_PATH, DEFAULT_HELLO_ENABLED,
     DEFAULT_HELLO_PIN_MIN_LEN, DEFAULT_HELLO_PIN_RETRY_COUNT, DEFAULT_HOME_ALIAS,
     DEFAULT_HOME_ATTR, DEFAULT_HOME_PREFIX, DEFAULT_HSM_PIN_PATH, DEFAULT_ID_ATTR_MAP,
-    DEFAULT_ODC_PROVIDER, DEFAULT_SELINUX, DEFAULT_SFA_FALLBACK_ENABLED, DEFAULT_SHELL,
-    DEFAULT_SOCK_PATH, DEFAULT_TASK_SOCK_PATH, DEFAULT_TPM_TCTI_NAME, DEFAULT_USE_ETC_SKEL,
-    SERVER_CONFIG_PATH,
+    DEFAULT_ODC_PROVIDER, DEFAULT_POLICIES_DB_DIR, DEFAULT_SELINUX, DEFAULT_SFA_FALLBACK_ENABLED,
+    DEFAULT_SHELL, DEFAULT_SOCK_PATH, DEFAULT_TASK_SOCK_PATH, DEFAULT_TPM_TCTI_NAME,
+    DEFAULT_USE_ETC_SKEL, SERVER_CONFIG_PATH,
 };
 use crate::mapping::{MappedNameCache, Mode};
 use crate::unix_config::{HomeAttr, HsmType};
@@ -355,6 +355,13 @@ impl HimmelblauConfig {
         match self.config.get("global", "db_path") {
             Some(val) => val,
             None => DEFAULT_DB_PATH.to_string(),
+        }
+    }
+
+    pub fn get_policies_db_path(&self) -> String {
+        match self.config.get("global", "policies_db_path") {
+            Some(val) => val,
+            None => DEFAULT_POLICIES_DB_DIR.to_string(),
         }
     }
 

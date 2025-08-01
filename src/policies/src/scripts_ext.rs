@@ -141,9 +141,8 @@ impl CSE for ScriptsCSE {
 
 impl ScriptsCSE {
     async fn script_path(&self) -> Result<String> {
-        let db_path = self.config.get_db_path();
+        let db_path = self.config.get_policies_db_path();
         let mut cache_path = PathBuf::from(db_path);
-        cache_path.pop();
         cache_path.push("bin");
         let script_path = cache_path
             .to_str()
@@ -156,9 +155,8 @@ impl ScriptsCSE {
     }
 
     async fn cache_path(&self) -> Result<String> {
-        let db_path = self.config.get_db_path();
+        let db_path = self.config.get_policies_db_path();
         let mut path = PathBuf::from(db_path);
-        path.pop();
         // Append a filename, e.g., "cache_<username>_scripts.json"
         path.push(format!("cache_{}_scripts.json", self.username));
         path.to_str()

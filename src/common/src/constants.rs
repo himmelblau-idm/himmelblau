@@ -23,6 +23,7 @@ pub const DEFAULT_SOCK_PATH: &str = "/var/run/himmelblaud/socket";
 pub const DEFAULT_TASK_SOCK_PATH: &str = "/var/run/himmelblaud/task_sock";
 pub const DEFAULT_BROKER_SOCK_PATH: &str = "/var/run/himmelblaud/broker_sock";
 pub const DEFAULT_DB_PATH: &str = "/var/cache/himmelblaud/himmelblau.cache.db";
+pub const DEFAULT_POLICIES_DB_DIR: &str = "/var/cache/himmelblau-policies/";
 pub const MAPPED_NAME_CACHE: &str = "/var/cache/nss-himmelblau/mapping.cache.db";
 pub const NSS_CACHE: &str = "/var/cache/nss-himmelblau/cache.db";
 pub const ID_MAP_CACHE: &str = "/var/cache/nss-himmelblau/idmap.cache.db";

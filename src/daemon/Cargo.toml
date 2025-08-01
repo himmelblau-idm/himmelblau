@@ -71,6 +71,7 @@ assets = [
   ["../../man/man8/himmelblaud.8", "usr/share/man/man8/", "644"],
   ["../../man/man8/himmelblaud_tasks.8", "usr/share/man/man8/", "644"],
 ]
+maintainer-scripts = "scripts"
 
 [package.metadata.generate-rpm]
 name = "himmelblau"
@@ -91,6 +92,7 @@ assets = [
   { source = "../../man/man8/himmelblaud.8", dest = "/usr/share/man/man8/", mode = "644" },
   { source = "../../man/man8/himmelblaud_tasks.8", dest = "/usr/share/man/man8/", mode = "644" },
 ]
+scripts = { post = "scripts/postinst" }
 
 [package.metadata.generate-rpm.recommends]
 nss-himmelblau = "*"
