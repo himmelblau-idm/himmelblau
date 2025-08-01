@@ -511,7 +511,14 @@ async fn handle_client(
                                                     {
                                                         let intune_device_id = split_username(account_id)
                                                             .map(|(_, domain)| domain)
-                                                            .and_then(|domain| cfg.get_intune_device_id(domain));
+                                                            .and_then(|domain| {
+                                                                // The intune_device_id may have been written after startup,
+                                                                // so we re-read the config here.
+                                                                HimmelblauConfig::new(Some(&cfg.get_config_file())).ok()
+                                                                .map(|cfg| {
+                                                                    cfg.get_intune_device_id(domain)
+                                                                })
+                                                            }).flatten();
                                                         let graph_token = cachelayer
                                                             .get_user_accesstoken(
                                                                 Id::Name(account_id.clone()),
