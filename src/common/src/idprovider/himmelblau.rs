@@ -2579,6 +2579,7 @@ impl HimmelblauProvider {
         }
     }
 
+    #[instrument(level = "debug", skip_all)]
     fn fetch_hello_key<D: KeyStoreTxn + Send>(
         &self,
         account_id: &str,
@@ -2618,6 +2619,7 @@ impl HimmelblauProvider {
         format!("{}/hello_prt", account_id.to_lowercase())
     }
 
+    #[instrument(level = "debug", skip_all)]
     fn fetch_loadable_transport_key_from_keystore<D: KeyStoreTxn + Send>(
         &self,
         keystore: &mut D,
@@ -2633,6 +2635,7 @@ impl HimmelblauProvider {
         Ok(loadable_id_key)
     }
 
+    #[instrument(level = "debug", skip_all)]
     fn fetch_loadable_cert_key_from_keystore<D: KeyStoreTxn + Send>(
         &self,
         keystore: &mut D,
@@ -2647,6 +2650,7 @@ impl HimmelblauProvider {
         Ok(loadable_id_key)
     }
 
+    #[instrument(level = "debug", skip_all)]
     async fn token_validate(
         &self,
         account_id: &str,
@@ -2691,6 +2695,7 @@ impl HimmelblauProvider {
         }
     }
 
+    #[instrument(level = "debug", skip_all)]
     async fn user_token_from_unix_user_token(
         &self,
         value: TokenOrObj,
@@ -2905,6 +2910,7 @@ impl HimmelblauProvider {
         })
     }
 
+    #[instrument(level = "debug", skip_all)]
     async fn group_token_from_directory_object(
         &self,
         value: DirectoryObject,
@@ -2987,6 +2993,7 @@ impl HimmelblauProvider {
         })
     }
 
+    #[instrument(level = "debug", skip_all)]
     async fn join_domain<D: KeyStoreTxn + Send>(
         &self,
         tpm: &mut tpm::provider::BoxedDynTpm,
@@ -3070,6 +3077,7 @@ impl HimmelblauProvider {
         }
     }
 
+    #[instrument(level = "debug", skip_all)]
     async fn intune_enroll(
         &self,
         device_id: Option<&str>,
@@ -3179,6 +3187,7 @@ impl HimmelblauProvider {
         }
     }
 
+    #[instrument(level = "debug", skip_all)]
     async fn is_domain_joined<D: KeyStoreTxn + Send>(&self, keystore: &mut D) -> bool {
         /* If we have access to tpm keys, and the domain device_id is
          * configured, we'll assume we are domain joined. */
@@ -3203,6 +3212,7 @@ impl HimmelblauProvider {
         true
     }
 
+    #[instrument(level = "debug", skip_all)]
     async fn is_intune_enrolled<D: KeyStoreTxn + Send>(&self, keystore: &mut D) -> bool {
         let config = self.config.read().await;
         if config.get(&self.domain, "intune_device_id").is_none() {
