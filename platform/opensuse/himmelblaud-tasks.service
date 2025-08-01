@@ -17,11 +17,11 @@ User=root
 Type=notify
 ExecStart=/usr/sbin/himmelblaud_tasks
 
-CapabilityBoundingSet=CAP_CHOWN CAP_FOWNER CAP_DAC_OVERRIDE CAP_DAC_READ_SEARCH CAP_SETUID
+CapabilityBoundingSet=CAP_CHOWN CAP_FOWNER CAP_DAC_OVERRIDE CAP_DAC_READ_SEARCH
 # SystemCallFilter=@aio @basic-io @chown @file-system @io-event @network-io @sync
 ProtectSystem=strict
-ReadWritePaths=/home /run/himmelblaud /tmp /etc/krb5.conf.d /etc /var/lib /var/cache/himmelblaud /var/cache/nss-himmelblau
-NoNewPrivileges=false
+ReadWritePaths=/home /run/himmelblaud /tmp /etc/krb5.conf.d /etc /var/lib /var/cache/nss-himmelblau /var/cache/himmelblau-policies
+NoNewPrivileges=true
 PrivateDevices=true
 ProtectHostname=true
 ProtectClock=true

@@ -1444,7 +1444,10 @@ impl IdProvider for HimmelblauProvider {
 
         macro_rules! intune_enroll {
             ($token:ident) => {
-                match self.intune_enroll(None, tpm, &$token, machine_key).await {
+                match self
+                    .intune_enroll(None, None, tpm, &$token, machine_key)
+                    .await
+                {
                     Ok((intune_key, intune_device_id)) => {
                         let mut config = self.config.write().await;
                         config.set(&self.domain, "intune_device_id", &intune_device_id);
@@ -1773,6 +1776,10 @@ impl IdProvider for HimmelblauProvider {
                             error!("Failed to cache hello prt for {}: {:?}", account_id, e);
                         }
                     }
+                }
+
+                if !self.is_intune_enrolled(keystore).await {
+                    intune_enroll!(token);
                 }
 
                 match self.token_validate(account_id, &token, None).await {
@@ -2572,6 +2579,7 @@ impl HimmelblauProvider {
         }
     }
 
+    #[instrument(level = "debug", skip_all)]
     fn fetch_hello_key<D: KeyStoreTxn + Send>(
         &self,
         account_id: &str,
@@ -2611,6 +2619,7 @@ impl HimmelblauProvider {
         format!("{}/hello_prt", account_id.to_lowercase())
     }
 
+    #[instrument(level = "debug", skip_all)]
     fn fetch_loadable_transport_key_from_keystore<D: KeyStoreTxn + Send>(
         &self,
         keystore: &mut D,
@@ -2626,6 +2635,7 @@ impl HimmelblauProvider {
         Ok(loadable_id_key)
     }
 
+    #[instrument(level = "debug", skip_all)]
     fn fetch_loadable_cert_key_from_keystore<D: KeyStoreTxn + Send>(
         &self,
         keystore: &mut D,
@@ -2640,6 +2650,7 @@ impl HimmelblauProvider {
         Ok(loadable_id_key)
     }
 
+    #[instrument(level = "debug", skip_all)]
     async fn token_validate(
         &self,
         account_id: &str,
@@ -2684,6 +2695,7 @@ impl HimmelblauProvider {
         }
     }
 
+    #[instrument(level = "debug", skip_all)]
     async fn user_token_from_unix_user_token(
         &self,
         value: TokenOrObj,
@@ -2898,6 +2910,7 @@ impl HimmelblauProvider {
         })
     }
 
+    #[instrument(level = "debug", skip_all)]
     async fn group_token_from_directory_object(
         &self,
         value: DirectoryObject,
@@ -2980,6 +2993,7 @@ impl HimmelblauProvider {
         })
     }
 
+    #[instrument(level = "debug", skip_all)]
     async fn join_domain<D: KeyStoreTxn + Send>(
         &self,
         tpm: &mut tpm::provider::BoxedDynTpm,
@@ -3019,7 +3033,7 @@ impl HimmelblauProvider {
                 }
 
                 let intune_device_id = match self
-                    .intune_enroll(Some(&attrs), tpm, token, machine_key)
+                    .intune_enroll(Some(&device_id), Some(&attrs), tpm, token, machine_key)
                     .await
                 {
                     Ok((intune_key, intune_device_id)) => {
@@ -3027,7 +3041,7 @@ impl HimmelblauProvider {
                         if let Err(e) = keystore.insert_tagged_hsm_key(&intune_tag, &intune_key) {
                             error!(?e, "Failed inserting the intune key into the keystore.");
                             return Err(MsalError::GeneralFailure(format!(
-                                "Failed to join the domain: {:?}",
+                                "Failed to enroll in Intune: {:?}",
                                 e
                             )));
                         }
@@ -3036,7 +3050,7 @@ impl HimmelblauProvider {
                     Err(IdpError::NotFound) => None,
                     Err(e) => {
                         return Err(MsalError::GeneralFailure(format!(
-                            "Failed to join the domain: {:?}",
+                            "Failed to enroll in Intune: {:?}",
                             e
                         )));
                     }
@@ -3063,8 +3077,10 @@ impl HimmelblauProvider {
         }
     }
 
+    #[instrument(level = "debug", skip_all)]
     async fn intune_enroll(
         &self,
+        device_id: Option<&str>,
         attrs: Option<&EnrollAttrs>,
         tpm: &mut tpm::provider::BoxedDynTpm,
         token: &UnixUserToken,
@@ -3073,7 +3089,7 @@ impl HimmelblauProvider {
         // Enrolling the device in Intune
         let config = self.config.read().await;
         if config.get_apply_policy() {
-            let graph_token = self
+            let graph_token = match self
                 .client
                 .read()
                 .await
@@ -3086,13 +3102,25 @@ impl HimmelblauProvider {
                     machine_key,
                 )
                 .await
-                .map_err(|e| {
-                    error!(
-                        "Acquiring token for Intune device enrollment failed: {:?}",
-                        e
-                    );
-                    IdpError::BadRequest
-                })?;
+            {
+                Ok(token) => token,
+                Err(MsalError::AcquireTokenFailed(e)) => {
+                    if e.error_codes.contains(&DEVICE_AUTH_FAIL) {
+                        error!(
+                            ?e,
+                            "Device auth failed for Intune device enrollment, delaying enrollment."
+                        );
+                        return Err(IdpError::NotFound);
+                    } else {
+                        error!(?e, "Acquiring token for Intune device enrollment failed.");
+                        return Err(IdpError::BadRequest);
+                    }
+                }
+                Err(e) => {
+                    error!(?e, "Acquiring token for Intune device enrollment failed.");
+                    return Err(IdpError::BadRequest);
+                }
+            };
             let access_token = graph_token.access_token.clone().ok_or_else(|| {
                 error!("Acquiring token for Intune device enrollment failed: access_token missing");
                 IdpError::BadRequest
@@ -3124,9 +3152,12 @@ impl HimmelblauProvider {
                         error!(?e, "Intune device enrollment failed.");
                         IdpError::BadRequest
                     })?;
-                    let device_id = config
-                        .get(&self.domain, "device_id")
-                        .ok_or(IdpError::BadRequest)?;
+                    let device_id = match device_id {
+                        Some(v) => v.to_string(),
+                        None => config
+                            .get(&self.domain, "device_id")
+                            .ok_or(IdpError::BadRequest)?,
+                    };
                     let attrs = attrs.cloned().unwrap_or(
                         EnrollAttrs::new(self.domain.clone(), None, None, None, None).map_err(
                             |e| {
@@ -3156,6 +3187,7 @@ impl HimmelblauProvider {
         }
     }
 
+    #[instrument(level = "debug", skip_all)]
     async fn is_domain_joined<D: KeyStoreTxn + Send>(&self, keystore: &mut D) -> bool {
         /* If we have access to tpm keys, and the domain device_id is
          * configured, we'll assume we are domain joined. */
@@ -3180,6 +3212,7 @@ impl HimmelblauProvider {
         true
     }
 
+    #[instrument(level = "debug", skip_all)]
     async fn is_intune_enrolled<D: KeyStoreTxn + Send>(&self, keystore: &mut D) -> bool {
         let config = self.config.read().await;
         if config.get(&self.domain, "intune_device_id").is_none() {

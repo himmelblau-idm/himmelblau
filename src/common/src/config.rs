@@ -31,9 +31,9 @@ use crate::constants::{
     DEFAULT_CONFIG_PATH, DEFAULT_CONN_TIMEOUT, DEFAULT_DB_PATH, DEFAULT_HELLO_ENABLED,
     DEFAULT_HELLO_PIN_MIN_LEN, DEFAULT_HELLO_PIN_RETRY_COUNT, DEFAULT_HOME_ALIAS,
     DEFAULT_HOME_ATTR, DEFAULT_HOME_PREFIX, DEFAULT_HSM_PIN_PATH, DEFAULT_ID_ATTR_MAP,
-    DEFAULT_ODC_PROVIDER, DEFAULT_SELINUX, DEFAULT_SFA_FALLBACK_ENABLED, DEFAULT_SHELL,
-    DEFAULT_SOCK_PATH, DEFAULT_TASK_SOCK_PATH, DEFAULT_TPM_TCTI_NAME, DEFAULT_USE_ETC_SKEL,
-    SERVER_CONFIG_PATH,
+    DEFAULT_ODC_PROVIDER, DEFAULT_POLICIES_DB_DIR, DEFAULT_SELINUX, DEFAULT_SFA_FALLBACK_ENABLED,
+    DEFAULT_SHELL, DEFAULT_SOCK_PATH, DEFAULT_TASK_SOCK_PATH, DEFAULT_TPM_TCTI_NAME,
+    DEFAULT_USE_ETC_SKEL, SERVER_CONFIG_PATH,
 };
 use crate::mapping::{MappedNameCache, Mode};
 use crate::unix_config::{HomeAttr, HsmType};
@@ -358,6 +358,13 @@ impl HimmelblauConfig {
         }
     }
 
+    pub fn get_policies_db_path(&self) -> String {
+        match self.config.get("global", "policies_db_path") {
+            Some(val) => val,
+            None => DEFAULT_POLICIES_DB_DIR.to_string(),
+        }
+    }
+
     pub fn get_hsm_type(&self) -> HsmType {
         match self.config.get("global", "hsm_type") {
             Some(val) => match val.to_lowercase().as_str() {
@@ -598,7 +605,10 @@ impl HimmelblauConfig {
     }
 
     pub fn get_intune_device_id(&self, domain: &str) -> Option<String> {
-        self.config.get(domain, "intune_device_id")
+        let domain = self
+            .get_primary_domain_from_alias_simple(domain)
+            .unwrap_or(domain.to_string());
+        self.config.get(&domain, "intune_device_id")
     }
 
     pub fn get_enable_experimental_mfa(&self) -> bool {
@@ -635,21 +645,35 @@ impl HimmelblauConfig {
         }
     }
 
-    pub async fn get_primary_domain_from_alias(&mut self, alias: &str) -> Option<String> {
+    pub fn get_primary_domain_from_alias_simple(&self, alias: &str) -> Option<String> {
         let domains = self.get_configured_domains();
 
-        // Attempt to short-circut the request by checking if the alias is
-        // already configured.
         for domain in &domains {
+            if domain.to_lowercase() == alias.to_lowercase() {
+                return Some(domain.to_string());
+            }
             let domain_aliases = match self.config.get(domain, "domain_aliases") {
-                Some(aliases) => aliases.split(",").map(|s| s.to_string()).collect(),
+                Some(aliases) => aliases
+                    .split(",")
+                    .map(|s| s.to_string().to_lowercase())
+                    .collect(),
                 None => vec![],
             };
-            if domain_aliases.contains(&alias.to_string()) {
+            if domain_aliases.contains(&alias.to_string().to_lowercase()) {
                 return Some(domain.to_string());
             }
         }
+        None
+    }
 
+    pub async fn get_primary_domain_from_alias(&mut self, alias: &str) -> Option<String> {
+        // Attempt to short-circut the request by checking if the alias is
+        // already configured.
+        if let Some(primary) = self.get_primary_domain_from_alias_simple(alias) {
+            return Some(primary);
+        }
+
+        let domains = self.get_configured_domains();
         let mut modified_config = false;
 
         // We don't recognize this alias, so now we need to search for it the

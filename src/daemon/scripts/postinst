@@ -1,0 +1,19 @@
+#!/bin/sh
+set -e
+
+# Only patch on Debian 12
+if grep -q '^ID=debian' /etc/os-release && grep -q '^VERSION_ID="12"' /etc/os-release; then
+    echo "Patching Himmelblau systemd unit files for Debian 12"
+
+    # Patch himmelblaud.service: Type=notify-reload → Type=notify
+    sed -i 's/^Type=notify-reload/Type=notify/' /etc/systemd/system/himmelblaud.service
+
+    # Patch himmelblaud-tasks.service: remove ConditionPathExists line
+    sed -i '/^ConditionPathExists=\/run\/himmelblaud\/task_sock$/d' /etc/systemd/system/himmelblaud-tasks.service
+
+    # Reload systemd units in any case
+    systemctl daemon-reload || true
+fi
+
+# Add nss cache directory with correct permissions
+install -d -o root -g root -m 0600 /var/cache/himmelblau-policies

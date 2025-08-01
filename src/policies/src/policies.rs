@@ -29,8 +29,9 @@ use std::thread::sleep;
 use std::time::Duration;
 use tracing::{debug, error, instrument};
 
-#[instrument(skip(config, graph_token, intune_token))]
+#[instrument(skip(config, graph_token, intune_token, iwservice_token))]
 pub async fn apply_intune_policy(
+    intune_device_id: &str,
     config: &HimmelblauConfig,
     account_id: &str,
     graph_token: &str,
@@ -46,14 +47,6 @@ pub async fn apply_intune_policy(
             account_id
         ))?;
 
-    let intune_device_id = match config.get_intune_device_id(domain) {
-        Some(id) => id,
-        // This device isn't enrolled in Intune, there is nothing to enforce
-        None => {
-            debug!("Device not enrolled in Intune, skipping");
-            return Ok(true);
-        }
-    };
     debug!(
         ?account_id,
         ?intune_device_id,
@@ -88,19 +81,19 @@ pub async fn apply_intune_policy(
     let attrs =
         EnrollAttrs::new(domain.to_string(), None, None, None, None).map_err(|e| anyhow!(e))?;
     intune
-        .details(&token, &attrs, &intune_device_id)
+        .details(&token, &attrs, intune_device_id)
         .await
         .map_err(|e| anyhow!(e))?;
     debug!("Updated Intune device details");
 
     // Get the list of policies to apply
     let policies = intune
-        .policies(&token, &intune_device_id)
+        .policies(&token, intune_device_id)
         .await
         .map_err(|e| anyhow!(e))?;
     debug!("Received policy enforcement actions:\n{:#?}", policies);
     let mut statuses: IntuneStatus = policies.into();
-    statuses.set_device_id(intune_device_id.clone());
+    statuses.set_device_id(intune_device_id.to_string());
 
     let mut gp_extensions: Vec<Arc<dyn CSE>> = vec![
         Arc::new(ScriptsCSE::new(config, account_id)),
@@ -144,7 +137,7 @@ pub async fn apply_intune_policy(
     // Check compliance status
     sleep(Duration::from_secs(3));
     let device_info = intune
-        .get_compliance_info(&iwservice_token, &intune_device_id)
+        .get_compliance_info(&iwservice_token, intune_device_id)
         .await
         .map_err(|e| anyhow!(e))?;
     debug!(?device_info.compliance_state, "Intune compliance status");
