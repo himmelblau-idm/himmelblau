@@ -1,0 +1,5 @@
+#!/bin/sh
+set -e
+
+# Add nss cache directory with correct permissions
+install -d -o root -g root -m 0600 /var/cache/himmelblau-policies
