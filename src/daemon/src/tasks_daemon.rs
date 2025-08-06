@@ -314,12 +314,12 @@ fn write_bytes_to_file(bytes: &[u8], filename: &Path, uid: uid_t, gid: uid_t) ->
         Err(_) => return 1,
     };
 
-    if file.write_all(bytes).is_err() {
-        return 2;
-    }
-
     if chown(filename, uid, gid).is_err() {
         return 3;
+    }
+
+    if file.write_all(bytes).is_err() {
+        return 2;
     }
 
     0
