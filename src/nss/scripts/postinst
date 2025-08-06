@@ -1,5 +1,15 @@
 #!/bin/sh
 set -e
 
+if [ -f /etc/nsswitch.conf ]; then
+	sed -i '/^passwd:/ {/himmelblau/! s/$/ himmelblau/}' /etc/nsswitch.conf
+	sed -i '/^group:/ {/himmelblau/! s/$/ himmelblau/}' /etc/nsswitch.conf
+	sed -i '/^shadow:/ {/himmelblau/! s/$/ himmelblau/}' /etc/nsswitch.conf
+elif [ -f /usr/etc/nsswitch.conf ]; then
+	sed -i '/^passwd:/ {/himmelblau/! s/$/ himmelblau/}' /usr/etc/nsswitch.conf
+	sed -i '/^group:/ {/himmelblau/! s/$/ himmelblau/}' /usr/etc/nsswitch.conf
+	sed -i '/^shadow:/ {/himmelblau/! s/$/ himmelblau/}' /usr/etc/nsswitch.conf
+fi
+
 # Add nss cache directory with correct permissions
 install -d -o root -g root -m 0755 /var/cache/nss-himmelblau
