@@ -15,5 +15,9 @@ if grep -q '^ID=debian' /etc/os-release && grep -q '^VERSION_ID="12"' /etc/os-re
     systemctl daemon-reload || true
 fi
 
+sed -i '/^passwd:/ {/himmelblau/! s/\<files\>/& himmelblau/}' /etc/nsswitch.conf
+sed -i '/^group:/ {/himmelblau/! s/\<files\>/& himmelblau/}' /etc/nsswitch.conf
+sed -i '/^shadow:/ {/himmelblau/! s/\<files\>/& himmelblau/}' /etc/nsswitch.conf
+
 # Add nss cache directory with correct permissions
 install -d -o root -g root -m 0600 /var/cache/himmelblau-policies
