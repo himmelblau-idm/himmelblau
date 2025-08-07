@@ -92,7 +92,7 @@ assets = [
   { source = "../../man/man8/himmelblaud.8", dest = "/usr/share/man/man8/", mode = "644" },
   { source = "../../man/man8/himmelblaud_tasks.8", dest = "/usr/share/man/man8/", mode = "644" },
 ]
-scripts = { post = "scripts/postinst" }
+post_install_script = "scripts/postinst"
 
 [package.metadata.generate-rpm.recommends]
 nss-himmelblau = "*"
