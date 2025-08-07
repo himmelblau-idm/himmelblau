@@ -36,4 +36,4 @@ maintainer = "David Mulder <dmulder@suse.com>"
 assets = [
   { source = "target/release/libnss_himmelblau.so", dest = "/usr/lib64/libnss_himmelblau.so.2", mode = "755" },
 ]
-scripts = { post = "scripts/postinst" }
+post_install_script = "scripts/postinst"
