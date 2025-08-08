@@ -1,0 +1,8 @@
+#!/bin/sh
+set -e
+if [ -e /sys/fs/selinux/enforce ] && [ "$(cat /sys/fs/selinux/enforce 2>/dev/null)" != "0" ]; then
+  if command -v semodule >/dev/null 2>&1; then
+    semodule -n -i /usr/share/selinux/packages/himmelblaud.pp || true
+  fi
+fi
+exit 0
