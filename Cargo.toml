@@ -17,6 +17,7 @@ members = [
 	"src/sso",
 	"src/qr-greeter",
 	"src/broker-client",
+	"src/selinux",
 ]
 resolver = "2"
 

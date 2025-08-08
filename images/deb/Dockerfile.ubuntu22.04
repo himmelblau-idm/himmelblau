@@ -57,4 +57,4 @@ WORKDIR /himmelblau
 RUN cargo install cargo-deb
 
 # Build the project and create the .deb package
-CMD cargo deb --features tpm --deb-revision=ubuntu22.04 -p himmelblaud && cargo deb --features tpm --deb-revision=ubuntu22.04 -p nss_himmelblau && cargo deb --features tpm --deb-revision=ubuntu22.04 -p pam_himmelblau && cargo deb --deb-revision=ubuntu22.04 -p sshd-config && cargo deb --features tpm --deb-revision=ubuntu22.04 -p sso && cargo deb --deb-revision=ubuntu22.04 -p qr-greeter
+CMD cargo deb --features tpm --deb-revision=ubuntu22.04 -p himmelblaud && cargo deb --features tpm --deb-revision=ubuntu22.04 -p nss_himmelblau && cargo deb --features tpm --deb-revision=ubuntu22.04 -p pam_himmelblau && cargo deb --deb-revision=ubuntu22.04 -p sshd-config && cargo deb --features tpm --deb-revision=ubuntu22.04 -p sso && cargo deb --deb-revision=ubuntu22.04 -p qr-greeter && cargo deb --deb-revision=ubuntu22.04 -p selinux
