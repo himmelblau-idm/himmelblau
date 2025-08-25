@@ -1,0 +1,40 @@
+[package]
+name = "o365"
+description = "Himmelblau Office 365 Integration"
+version.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+edition.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[dependencies]
+
+[build-dependencies]
+reqwest = { version = "0.12", features = ["blocking", "rustls-tls"] }
+anyhow = "1.0"
+
+[package.metadata.deb]
+depends = ["curl", "libfuse2"]
+assets = [
+  ["src/o365.sh", "usr/bin/o365", "755"],
+  ["generated/*.desktop", "/usr/share/applications/", "644"],
+  ["generated/*.png", "usr/share/icons/hicolor/256x256/apps/", "644"],
+  ["src/o365-apps.png", "usr/share/icons/hicolor/256x256/apps/o365-apps.png", "644"],
+]
+maintainer-scripts = "scripts"
+
+[package.metadata.generate-rpm]
+assets = [
+  { source = "src/o365.sh", dest = "/usr/bin/o365", mode = "755" },
+  { source = "generated/*.desktop", dest = "/usr/share/applications/" },
+  { source = "generated/*.png", dest = "/usr/share/icons/hicolor/256x256/apps/" },
+  { source = "src/o365-apps.png", dest = "/usr/share/icons/hicolor/256x256/apps/o365-apps.png" },
+]
+post_install_script = "scripts/postinst"
+post_uninstall_script = "scripts/postrm"
+
+[package.metadata.generate-rpm.requires]
+curl = "*"
+libfuse2 = "*"
