@@ -40,11 +40,12 @@ struct AuthParametersReq {
     requested_scopes: Vec<String>,
     #[serde(rename = "clientId")]
     client_id: Option<String>,
+    account: Option<AccountReq>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
 struct TokenReq {
-    account: AccountReq,
+    account: Option<AccountReq>,
     #[serde(rename = "authParameters")]
     auth_parameters: AuthParametersReq,
 }
@@ -88,13 +89,18 @@ impl HimmelblauBroker for Broker {
             .ok_or("Unable to find account")?;
         let request: TokenReq =
             serde_json::from_str(&request_json).map_err(|e| format!("{:?}", e))?;
-        if request.account.username.to_lowercase() != user.spn.to_lowercase() {
+        // account can be at root (Firefox, Chrome) or in authParameters (Edge)
+        let account = match request.account {
+            Some(x) => x,
+            None => request.auth_parameters.account.unwrap()
+        };
+        if account.username.to_lowercase() != user.spn.to_lowercase() {
             return Err("Invalid request for user!".into());
         }
         let token = self
             .cachelayer
             .get_user_accesstoken(
-                Id::Name(user.spn),
+                Id::Name(user.spn.clone()),
                 request.auth_parameters.requested_scopes,
                 request.auth_parameters.client_id,
             )
@@ -107,13 +113,13 @@ impl HimmelblauBroker for Broker {
             "brokerTokenResponse": {
                 "accessToken": token.access_token.clone()
                     .ok_or("Failed to fetch access token")?,
-                "accessTokenType": token.token_type,
+                "accessTokenType": 0,
                 "clientInfo": URL_SAFE_NO_PAD.encode(json!(&token.client_info).to_string()),
                 "expiresOn": (token.expires_in as u128) + now.as_millis(),
                 "extendedExpiresOn": (token.ext_expires_in as u64) + now.as_secs(),
                 "grantedScopes": token.scope.clone()
                     .ok_or("Failed to fetch scopes")?,
-                "idToken": URL_SAFE_NO_PAD.encode(json!(&token.id_token).to_string()),
+                "idToken": token.id_token.raw.clone().unwrap(),
             }
         });
         Ok(res.to_string())
@@ -136,6 +142,7 @@ impl HimmelblauBroker for Broker {
         let res = json!({
             "accounts": [
                 {
+                    "environment": "login.windows.net",
                     "givenName": user.displayname,
                     "homeAccountId": format!("{}.{}", user.uuid.to_string(), user.tenant_id.map(|uuid| uuid.to_string()).unwrap_or("".to_string())),
                     "localAccountId": user.uuid.to_string(),
