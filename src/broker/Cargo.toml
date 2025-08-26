@@ -9,7 +9,7 @@ homepage.workspace = true
 repository.workspace = true
 
 [dependencies]
-dbus = "0.9.7"
+dbus = "0.9.8"
 himmelblau_unix_common.workspace = true
 identity_dbus_broker.workspace = true
 tokio.workspace = true
