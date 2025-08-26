@@ -98,3 +98,6 @@ post_install_script = "scripts/postinst"
 nss-himmelblau = "*"
 pam-himmelblau = "*"
 krb5 = "*"
+
+[package.metadata.generate-rpm.requires]
+system-user-tss = "*"
