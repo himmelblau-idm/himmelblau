@@ -70,10 +70,13 @@ nix: .packaging .submodules
 	done
 
 DEB_TARGETS := ubuntu22.04 ubuntu24.04 debian12
-RPM_TARGETS := rocky8 rocky9 rocky10 sle15sp6 tumbleweed rawhide fedora41 fedora42
-SLE_TARGETS := sle15sp7 sle16
+RPM_TARGETS := rocky8 rocky9 rocky10 tumbleweed rawhide fedora41 fedora42
+SLE_TARGETS := sle15sp6 sle15sp7 sle16
 
-.PHONY: package deb rpm $(DEB_TARGETS) $(RPM_TARGETS) ${SLE_TARGETS}
+dockerfiles:
+	python3 scripts/gen_dockerfiles.py --out ./images/
+
+.PHONY: package deb rpm $(DEB_TARGETS) $(RPM_TARGETS) ${SLE_TARGETS} dockerfiles
 
 package: deb rpm
 	ls ./packaging/
@@ -83,20 +86,20 @@ deb: $(DEB_TARGETS)
 rpm: $(RPM_TARGETS) $(SLE_TARGETS)
 	rpmsign --addsign ./packaging/*.rpm
 
-$(DEB_TARGETS): %: .packaging .submodules
+$(DEB_TARGETS): %: .packaging .submodules dockerfiles
 	@echo "Building Ubuntu $@ packages"
 	mkdir -p target/$@
-	$(DOCKER) build -t himmelblau-$@-build -f images/deb/Dockerfile.$@ .
+	$(DOCKER) build -t himmelblau-$@-build -f images/Dockerfile.$@ .
 	$(DOCKER) run --rm --security-opt label=disable -it \
 		-v $(CURDIR):/himmelblau \
 		-v $(CURDIR)/target/$@:/himmelblau/target \
 		himmelblau-$@-build
 	mv ./target/$@/debian/*.deb ./packaging/
 
-$(RPM_TARGETS): %: .packaging .submodules
+$(RPM_TARGETS): %: .packaging .submodules dockerfiles
 	@echo "Building $@ RPM packages"
 	mkdir -p target/$@
-	$(DOCKER) build -t himmelblau-$@-build -f images/rpm/Dockerfile.$@ .
+	$(DOCKER) build -t himmelblau-$@-build -f images/Dockerfile.$@ .
 	$(DOCKER) run --rm --security-opt label=disable -it \
 		-v $(CURDIR):/himmelblau \
 		-v $(CURDIR)/target/$@:/himmelblau/target \
@@ -106,10 +109,10 @@ $(RPM_TARGETS): %: .packaging .submodules
 	done
 	mv ./target/$@/generate-rpm/*.rpm ./packaging/
 
-$(SLE_TARGETS): %: .packaging .submodules
+$(SLE_TARGETS): %: .packaging .submodules dockerfiles
 	@echo "Building $@ SLE RPM packages"
 	mkdir -p target/$@
-	$(DOCKER) build --secret id=scc_regcode,src=${HOME}/.secrets/scc_regcode -t himmelblau-$@-build -f images/rpm/Dockerfile.$@ .
+	$(DOCKER) build --secret id=scc_regcode,src=${HOME}/.secrets/scc_regcode -t himmelblau-$@-build -f images/Dockerfile.$@ .
 	$(DOCKER) run --rm --security-opt label=disable -it \
 		-v $(CURDIR):/himmelblau \
 		-v $(CURDIR)/target/$@:/himmelblau/target \
