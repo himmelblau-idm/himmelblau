@@ -186,10 +186,17 @@ impl HimmelblauBroker for Broker {
         }
         let prt = self
             .cachelayer
-            .get_user_prt_cookie(Id::Name(user.spn))
+            .get_user_prt_cookie(Id::Name(user.spn.clone()))
             .await
             .ok_or("Failed to fetch prt sso cookie")?;
         let res = json!({
+            "account": {
+                "environment": "login.microsoftonline.com",
+                "homeAccountId": format!("{}.{}", user.uuid.to_string(), user.tenant_id.map(|uuid| uuid.to_string()).unwrap_or("".to_string())),
+                "localAccountId": user.uuid.to_string(),
+                "realm": user.tenant_id.map(|uuid| uuid.to_string()).unwrap_or("".to_string()),
+                "username": user.spn.to_string(),
+            },
             "cookieContent": prt,
             "cookieName": "x-ms-RefreshTokenCredential",
         });
