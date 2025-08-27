@@ -106,6 +106,7 @@ PACKAGES = [
     ("sso", "src/sso", True),
     ("qr-greeter", "src/qr-greeter", False),
     ("selinux", "src/selinux", False),
+    ("o365", "src/o365", False),
 ]
 
 
