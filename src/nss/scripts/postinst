@@ -1,14 +1,21 @@
 #!/bin/sh
-set -e
 
-if [ -f /etc/nsswitch.conf ]; then
-	sed -i '/^passwd:/ {/himmelblau/! s/$/ himmelblau/}' /etc/nsswitch.conf
-	sed -i '/^group:/ {/himmelblau/! s/$/ himmelblau/}' /etc/nsswitch.conf
-	sed -i '/^shadow:/ {/himmelblau/! s/$/ himmelblau/}' /etc/nsswitch.conf
-elif [ -f /usr/etc/nsswitch.conf ]; then
-	sed -i '/^passwd:/ {/himmelblau/! s/$/ himmelblau/}' /usr/etc/nsswitch.conf
-	sed -i '/^group:/ {/himmelblau/! s/$/ himmelblau/}' /usr/etc/nsswitch.conf
-	sed -i '/^shadow:/ {/himmelblau/! s/$/ himmelblau/}' /usr/etc/nsswitch.conf
+set -eu
+
+handle_nsswitch_conf() {
+  conf=$1
+  sed -i '/^passwd:/ {/himmelblau/! s/$/ himmelblau/}' $conf
+  sed -i '/^group:/ {/himmelblau/! s/$/ himmelblau/}' $conf
+  sed -i '/^shadow:/ {/himmelblau/! s/$/ himmelblau/}' $conf
+}
+
+etc_nsswitch_conf="/etc/nsswitch.conf"
+usr_etc_nsswitch_conf="/usr/etc/nsswitch.conf"
+if [ -f $etc_nsswitch_conf ]; then
+  handle_nsswitch_conf $etc_nsswitch_conf
+elif [ -f $usr_etc_nsswitch_conf ]; then
+  cp $usr_etc_nsswitch_conf $etc_nsswitch_conf
+  handle_nsswitch_conf $etc_nsswitch_conf
 fi
 
 # Add nss cache directory with correct permissions

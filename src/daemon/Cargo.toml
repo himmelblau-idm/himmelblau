@@ -99,3 +99,6 @@ nss-himmelblau = "*"
 pam-himmelblau = "*"
 krb5 = "*"
 cron = "*" # For Intune policy scripts
+
+[package.metadata.generate-rpm.requires]
+system-user-tss = "*"

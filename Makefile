@@ -123,10 +123,13 @@ $(RPM_TARGETS): %: .packaging dockerfiles
 		-v $(CURDIR):/himmelblau \
 		-v $(CURDIR)/target/$@:/himmelblau/target \
 		himmelblau-$@-build
-	for file in ./target/$@/generate-rpm/*.rpm; do \
-		mv "$$file" "$${file%.rpm}-$@.rpm"; \
-	done
-	mv ./target/$@/generate-rpm/*.rpm ./packaging/
+	$(DOCKER) run --rm --security-opt label=disable -it \
+		-v $(CURDIR):/himmelblau \
+		-v $(CURDIR)/target/$@:/himmelblau/target \
+		himmelblau-$@-build /bin/sh -c \
+			'for f in ./target/generate-rpm/*.rpm; do \
+				mv $$f $${f%.rpm}-$@.rpm; \
+			done && mv ./target/generate-rpm/*.rpm ./packaging/'
 
 $(SLE_TARGETS): %: .packaging dockerfiles
 	@echo "Building $@ SLE RPM packages"
