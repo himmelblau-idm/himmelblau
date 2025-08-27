@@ -25,15 +25,11 @@ all: .packaging dockerfiles
 	$(MAKE) $$TARGET; \
 	echo "Packages written to ./packaging/"
 
-build-tests:
-	$(MAKE) -C tests
-
-test: build-tests
-	$(MAKE) -C tests test
+test:
+	cargo test
 
 clean:
 	cargo clean
-	$(MAKE) -C tests clean
 
 PLATFORM := $(shell grep '^ID=' /etc/os-release | awk -F= '{ print $$2 }' | tr -d '"')
 
