@@ -1,4 +1,4 @@
-all: .packaging dockerfiles
+all: .packaging dockerfiles ## Auto-detect host distro and build packages just for this host
 	@set -euo pipefail; \
 	source /etc/os-release; \
 	ID="$${ID}"; VER="$${VERSION_ID}"; LIKE="$${ID_LIKE:-}"; \
@@ -25,10 +25,10 @@ all: .packaging dockerfiles
 	$(MAKE) $$TARGET; \
 	echo "Packages written to ./packaging/"
 
-test:
+test: ## Run cargo tests
 	cargo test
 
-clean:
+clean: ## Remove cargo build artifacts
 	cargo clean
 
 PLATFORM := $(shell grep '^ID=' /etc/os-release | awk -F= '{ print $$2 }' | tr -d '"')
@@ -39,7 +39,7 @@ NIX := $(shell command -v nix)
 .packaging:
 	mkdir -p ./packaging/
 
-nix: .packaging
+nix: .packaging ## Build Nix packages into ./packaging/
 	echo "Building nix packages"
 	for v in himmelblau himmelblau-desktop; do \
 		$(NIX) --extra-experimental-features 'nix-command flakes' build ".#$$v" --out-link ./packaging/nix-$$v-result; \
@@ -50,7 +50,7 @@ RPM_TARGETS := rocky8 rocky9 rocky10 tumbleweed rawhide fedora41 fedora42
 SLE_TARGETS := sle15sp6 sle15sp7 sle16
 ALL_PACKAGE_TARGETS := $(DEB_TARGETS) $(RPM_TARGETS) $(SLE_TARGETS)
 
-install:
+install: ## Install packages from ./packaging onto this host (apt/dnf/yum/zypper auto-detected)
 	@set -euo pipefail; \
 	source /etc/os-release; \
 	ID="$${ID}"; VER="$${VERSION_ID}"; \
@@ -73,7 +73,7 @@ install:
 	sh -c "$$INSTALL_CMD"; \
 	echo "Install complete."
 
-uninstall:
+uninstall: ## Uninstall Himmelblau packages from this host (apt/dnf/yum/zypper auto-detected)
 	@set -e; \
 	PM=""; PKGTYPE=""; \
 	if command -v apt-get >/dev/null 2>&1; then \
@@ -95,14 +95,14 @@ uninstall:
 dockerfiles:
 	python3 scripts/gen_dockerfiles.py --out ./images/
 
-.PHONY: package deb rpm $(DEB_TARGETS) $(RPM_TARGETS) ${SLE_TARGETS} dockerfiles install uninstall
+.PHONY: package deb rpm $(DEB_TARGETS) $(RPM_TARGETS) ${SLE_TARGETS} dockerfiles install uninstall help
 
-package: deb rpm
+package: deb rpm ## Build packages for all supported distros (DEB+RPM)
 	ls ./packaging/
 
-deb: $(DEB_TARGETS)
+deb: $(DEB_TARGETS) ## Build all DEB targets
 
-rpm: $(RPM_TARGETS) $(SLE_TARGETS)
+rpm: $(RPM_TARGETS) $(SLE_TARGETS) ## Build all RPM targets; then sign RPMS with rpmsign
 	rpmsign --addsign ./packaging/*.rpm
 
 $(DEB_TARGETS): %: .packaging dockerfiles
@@ -150,3 +150,24 @@ $(SLE_TARGETS): %: .packaging dockerfiles
 			'for f in ./target/generate-rpm/*.rpm; do \
 				mv $$f $${f%.rpm}-$@.rpm; \
 			done && mv ./target/generate-rpm/*.rpm ./packaging/'
+
+# Pretty/help colors (safe if your shell prints raw escapes; adjust or remove if you prefer plain)
+HELP_COL := \033[36m
+HELP_RST := \033[0m
+
+help: ## Show this help
+	@printf "Himmelblau Packaging Makefile\n\n"
+	@printf "Usage:\n  make [target]\n\n"
+	@printf "Common targets:\n"
+	@awk 'BEGIN {FS = ":.*##"} \
+	     /^[A-Za-z0-9_.-]+:.*##/ { \
+	         printf "  %s%-18s%s %s\n", "$(HELP_COL)", $$1, "$(HELP_RST)", $$2 \
+	     }' $(MAKEFILE_LIST)
+	@printf "\nPer-distro build targets (build only that distro):\n"
+	@for t in $(ALL_PACKAGE_TARGETS); do printf "  - %s\n" "make $$t"; done
+	@printf "\nDetected tools:\n  DOCKER: %s\n  NIX: %s\n" "$(DOCKER)" "$(NIX)"
+	@printf "\nTips:\n"
+	@printf "  • Running plain 'make' invokes the default 'all' target (auto-detects host distro).\n"
+	@printf "  • You can install a development build of Himmelblau on the current host with 'make && sudo make install'\n"
+	@printf "  • Built packages are written to ./packaging/\n\n"
+	@printf "If you'd like a new distro added to the supported packages list, contact a maintainer. We're happy to help.\n"
