@@ -54,7 +54,7 @@ console-subscriber = { workspace = true, optional = true }
 name = "himmelblau"
 maintainer = "David Mulder <dmulder@suse.com>"
 depends = ["$auto"]
-recommends = ["nss-himmelblau", "pam-himmelblau", "krb5-user"]
+recommends = ["nss-himmelblau", "pam-himmelblau", "krb5-user", "cron"]
 assets = [
   ["../../platform/debian/himmelblau.conf.example", "etc/himmelblau/himmelblau.conf", "644"],
   ["../../src/config/krb5_himmelblau.conf", "etc/krb5.conf.d/", "644"],
@@ -98,6 +98,7 @@ post_install_script = "scripts/postinst"
 nss-himmelblau = "*"
 pam-himmelblau = "*"
 krb5 = "*"
+cron = "*" # For Intune policy scripts
 
 [package.metadata.generate-rpm.requires]
 system-user-tss = "*"

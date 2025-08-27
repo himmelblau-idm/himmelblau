@@ -1,0 +1,125 @@
+
+module himmelblaud 1.0;
+
+require {
+	type NetworkManager_t;
+	type accountsd_t;
+	type colord_t;
+	type home_root_t;
+	type xdm_t;
+	type policykit_t;
+	type unconfined_service_t;
+	type var_run_t;
+	type init_t;
+	type sshd_t;
+	type var_t;
+	type systemd_logind_t;
+	type systemd_user_runtimedir_t;
+	class sock_file write;
+	class unix_stream_socket connectto;
+	class file { create getattr lock open read setattr unlink write };
+	class dir { add_name read remove_name setattr write };
+}
+
+#============= NetworkManager_t ==============
+
+#!!!! This avc is allowed in the current policy
+allow NetworkManager_t unconfined_service_t:unix_stream_socket connectto;
+
+#!!!! This avc is allowed in the current policy
+allow NetworkManager_t var_run_t:sock_file write;
+
+#!!!! This avc is allowed in the current policy
+allow NetworkManager_t var_t:dir { add_name read remove_name setattr write };
+
+#!!!! This avc is allowed in the current policy
+allow NetworkManager_t var_t:file { create getattr lock open read setattr unlink write };
+
+#============= accountsd_t ==============
+
+#!!!! This avc is allowed in the current policy
+allow accountsd_t unconfined_service_t:unix_stream_socket connectto;
+
+#!!!! This avc is allowed in the current policy
+allow accountsd_t var_run_t:sock_file write;
+
+#!!!! This avc is allowed in the current policy
+allow accountsd_t var_t:file { getattr lock open read write };
+
+#============= colord_t ==============
+
+#!!!! This avc is allowed in the current policy
+allow colord_t unconfined_service_t:unix_stream_socket connectto;
+
+#!!!! This avc is allowed in the current policy
+allow colord_t var_run_t:sock_file write;
+
+#!!!! This avc is allowed in the current policy
+allow colord_t var_t:file { getattr open read };
+
+#============= init_t ==============
+
+#!!!! This avc is allowed in the current policy
+allow init_t unconfined_service_t:unix_stream_socket connectto;
+
+#============= policykit_t ==============
+
+#!!!! This avc is allowed in the current policy
+allow policykit_t unconfined_service_t:unix_stream_socket connectto;
+
+#!!!! This avc is allowed in the current policy
+allow policykit_t var_run_t:sock_file write;
+
+#!!!! This avc is allowed in the current policy
+allow policykit_t var_t:file { getattr open read };
+
+#============= sshd_t ==============
+
+#!!!! This avc is allowed in the current policy
+allow sshd_t unconfined_service_t:unix_stream_socket connectto;
+
+#!!!! This avc is allowed in the current policy
+allow sshd_t var_run_t:sock_file write;
+
+#!!!! This avc is allowed in the current policy
+allow sshd_t var_t:dir setattr;
+
+#!!!! This avc is allowed in the current policy
+allow sshd_t var_t:file { create getattr lock open read write };
+allow sshd_t var_t:file { setattr unlink };
+
+#============= systemd_logind_t ==============
+
+#!!!! This avc is allowed in the current policy
+allow systemd_logind_t unconfined_service_t:unix_stream_socket connectto;
+
+#!!!! This avc is allowed in the current policy
+allow systemd_logind_t var_run_t:sock_file write;
+
+#!!!! This avc is allowed in the current policy
+allow systemd_logind_t var_t:file { getattr lock open read write };
+
+#============= systemd_user_runtimedir_t ==============
+
+#!!!! This avc is allowed in the current policy
+allow systemd_user_runtimedir_t unconfined_service_t:unix_stream_socket connectto;
+
+#!!!! This avc is allowed in the current policy
+allow systemd_user_runtimedir_t var_run_t:sock_file write;
+
+#!!!! This avc is allowed in the current policy
+allow systemd_user_runtimedir_t var_t:dir add_name;
+
+#!!!! This avc is allowed in the current policy
+allow systemd_user_runtimedir_t var_t:file { create getattr lock open read setattr write };
+
+#============= xdm_t ==============
+
+#!!!! This avc is allowed in the current policy
+allow xdm_t home_root_t:dir add_name;
+
+#!!!! This avc is allowed in the current policy
+allow xdm_t var_run_t:sock_file write;
+
+#!!!! This avc is allowed in the current policy
+allow xdm_t var_t:file { create setattr unlink write };

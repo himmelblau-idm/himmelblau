@@ -7,6 +7,9 @@ on:
     branches:
       - main
 
+env:
+  HIMMELBLAU_ALLOW_MISSING_SELINUX: "1"
+
 jobs:
   nixos:
     runs-on: ubuntu-latest

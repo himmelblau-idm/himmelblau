@@ -1,0 +1,38 @@
+[package]
+name = "selinux"
+description = "Himmelblau SELinux config"
+version.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+edition.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[package.metadata.generate-rpm]
+name = "himmelblau-selinux"
+assets = [
+  { source = "target/selinux/himmelblaud.pp", dest = "/usr/share/selinux/packages/himmelblaud.pp", mode = "0644" },
+]
+post_install_script = '''
+if command -v selinuxenabled >/dev/null 2>&1 && selinuxenabled; then
+  semodule -n -i /usr/share/selinux/packages/himmelblaud.pp || :
+fi
+'''
+post_uninstall_script = '''
+if [ "$1" -eq 0 ]; then
+  if command -v selinuxenabled >/dev/null 2>&1 && selinuxenabled; then
+    semodule -n -r himmelblaud || :
+  fi
+fi
+'''
+[package.metadata.generate-rpm.requires]
+policycoreutils = "*"
+
+[package.metadata.deb]
+name = "himmelblau-selinux"
+depends = "selinux-policy-default, policycoreutils, selinux-utils"
+assets = [
+  ["target/selinux/himmelblaud.pp", "/usr/share/selinux/packages/", "644"],
+]
+maintainer-scripts = "scripts"

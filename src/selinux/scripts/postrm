@@ -1,0 +1,10 @@
+#!/bin/sh
+set -e
+if [ "$1" = "purge" ]; then
+  if [ -e /sys/fs/selinux/enforce ] && [ "$(cat /sys/fs/selinux/enforce 2>/dev/null)" != "0" ]; then
+    if command -v semodule >/dev/null 2>&1; then
+      semodule -n -r himmelblaud || true
+    fi
+  fi
+fi
+exit 0
