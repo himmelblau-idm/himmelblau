@@ -40,13 +40,10 @@ PLATFORM := $(shell grep '^ID=' /etc/os-release | awk -F= '{ print $$2 }' | tr -
 DOCKER := $(shell command -v podman || command -v docker)
 NIX := $(shell command -v nix)
 
-.submodules:
-	git submodule init; git submodule update
-
 .packaging:
 	mkdir -p ./packaging/
 
-nix: .packaging .submodules
+nix: .packaging
 	echo "Building nix packages"
 	for v in himmelblau himmelblau-desktop; do \
 		$(NIX) --extra-experimental-features 'nix-command flakes' build ".#$$v" --out-link ./packaging/nix-$$v-result; \
@@ -93,7 +90,7 @@ deb: $(DEB_TARGETS)
 rpm: $(RPM_TARGETS) $(SLE_TARGETS)
 	rpmsign --addsign ./packaging/*.rpm
 
-$(DEB_TARGETS): %: .packaging .submodules dockerfiles
+$(DEB_TARGETS): %: .packaging dockerfiles
 	@echo "Building Ubuntu $@ packages"
 	mkdir -p target/$@
 	$(DOCKER) build -t himmelblau-$@-build -f images/Dockerfile.$@ .
@@ -103,7 +100,7 @@ $(DEB_TARGETS): %: .packaging .submodules dockerfiles
 		himmelblau-$@-build
 	mv ./target/$@/debian/*.deb ./packaging/
 
-$(RPM_TARGETS): %: .packaging .submodules dockerfiles
+$(RPM_TARGETS): %: .packaging dockerfiles
 	@echo "Building $@ RPM packages"
 	mkdir -p target/$@
 	$(DOCKER) build -t himmelblau-$@-build -f images/Dockerfile.$@ .
@@ -116,7 +113,7 @@ $(RPM_TARGETS): %: .packaging .submodules dockerfiles
 	done
 	mv ./target/$@/generate-rpm/*.rpm ./packaging/
 
-$(SLE_TARGETS): %: .packaging .submodules dockerfiles
+$(SLE_TARGETS): %: .packaging dockerfiles
 	@echo "Building $@ SLE RPM packages"
 	mkdir -p target/$@
 	$(DOCKER) build --secret id=scc_regcode,src=${HOME}/.secrets/scc_regcode -t himmelblau-$@-build -f images/Dockerfile.$@ .
