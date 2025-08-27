@@ -156,41 +156,74 @@ Flake based configurations add this repository to their inputs, enable the servi
 
 [![Azure Entra ID MFA Authentication over SSH: Himmelblau](img/ssh.png)](https://www.youtube.com/watch?v=IAqC8FoYLGc "Azure Entra ID MFA Authentication over SSH: Himmelblau")
 
+---
+
 ## Contributing
 
-The following packages are required on openSUSE to build and test this package.
+> **Note:** The packages you build here are from the current development branch and are intended for testing and evaluation. **Do not deploy to production.** Use a VM or a non-critical host.
 
-    sudo zypper in make cargo git gcc sqlite3-devel libopenssl-3-devel pam-devel libcap-devel libtalloc-devel libtevent-devel libldb-devel libdhash-devel krb5-devel pcre2-devel libclang13 autoconf make automake  gettext-tools clang dbus-1-devel libunistring-devel gobject-introspection-devel cairo-devel gdk-pixbuf-devel libsoup-devel pango-devel atk-devel gtk3-devel webkit2gtk3-devel libudev-devel mercurial tpm2-0-tss-devel
+### Build packages for your host distro
 
+This detects your distro and builds the matching packages (inside a container).
+Artifacts land in `./packaging/`.
 
-Or on Debian based systems:
+```bash
+make
+```
 
-    sudo apt-get install make gcc libpam0g-dev libudev-dev libssl-dev pkg-config tpm-udev libtss2-dev libcap-dev libtalloc-dev libtevent-dev libldb-dev libdhash-dev libkrb5-dev libpcre2-dev libclang-18-dev autoconf gettext libsqlite3-dev build-essentials libdbus-1-dev libunistring-dev libtss2-dev
+### Install the packages you just built
 
-    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-    source "$HOME/.cargo/env"
-    rustup default stable
+This installs whatever is already in `./packaging/`.
 
-On Debian systems, rust must be installed using [rustup](https://rustup.rs), because the version of Rust shipped with Debian is very old. The package `build-essentials` may not be available. Ignore this requirement if not found.
+```bash
+sudo make install
+```
 
-You can build the components with
+Under the hood, `make install` uses your system package manager (`apt`, `dnf`/`yum`, or `zypper`) to install the locally built packages.
 
-    cd himmelblau; make
+### Building for Other Distros (Optional)
 
-Install the binaries
+You can also target specific distros explicitly.
+Available targets (as of now):
 
-> **WARNING** you should only do this on a disposable machine or a machine you are willing to
-> recover with single user mode.
+* **DEB:** `ubuntu22.04` `ubuntu24.04` `debian12` `debian13`
+* **RHEL family:** `rocky8` `rocky9` `rocky10` `fedora41` `fedora42` `rawhide`
+* **SUSE:** `sle15sp6` `sle15sp7` `sle16` `tumbleweed`
 
-    sudo make install
+Examples:
 
-Configure your instance
+```bash
+# Build Ubuntu 22.04 packages
+make ubuntu22.04
+
+# Build Rocky 9 packages
+make rocky9
+
+# Build openSUSE Tumbleweed packages
+make tumbleweed
+```
+
+Packages will be written to `./packaging/`. You can then copy them to a target machine and install with the native package manager.
+
+> **Note (SLE targets):** For `sle15sp6`, `sle15sp7`, or `sle16` builds, put your SCC email and regcode in `${HOME}/.secrets/scc_regcode`, formatted as follows:
+
+```
+email=SCC_REGISTRATION_EMAIL
+regcode=SCC_REGISTRATION_CODE
+```
+
+### Uninstall
+
+```bash
+sudo make uninstall   # removes installed Himmelblau packages
+```
+
+### Configure your instance
 
     vim /etc/himmelblau/himmelblau.conf
 
-It's essential that you configure the `domains` and `pam_allow_groups` options, otherwise
-no users will be able to authenticate. These options designate the list of domains and users
-or groups which are allowed access to the host.
+It's essential that you configure the `domains` option, otherwise
+no users will be able to authenticate.
 
 Run the daemon with:
 

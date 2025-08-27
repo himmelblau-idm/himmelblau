@@ -4879,6 +4879,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "selinux"
+version = "2.0.0"
+
+[[package]]
 name = "semver"
 version = "1.0.26"
 source = "registry+https://github.com/rust-lang/crates.io-index"

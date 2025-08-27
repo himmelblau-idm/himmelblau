@@ -21,6 +21,7 @@ on:
 env:
   SCCACHE_GHA_ENABLED: "true"
   RUSTC_WRAPPER: "sccache"
+  HIMMELBLAU_ALLOW_MISSING_SELINUX: "1"
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
