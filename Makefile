@@ -73,10 +73,29 @@ install:
 	sh -c "$$INSTALL_CMD"; \
 	echo "Install complete."
 
+uninstall:
+	@set -e; \
+	PM=""; PKGTYPE=""; \
+	if command -v apt-get >/dev/null 2>&1; then \
+		PKGTYPE="deb"; PM="sudo apt-get remove -y"; \
+	elif command -v dnf >/dev/null 2>&1; then \
+		PKGTYPE="rpm"; PM="sudo dnf remove -y"; \
+	elif command -v yum >/dev/null 2>&1; then \
+		PKGTYPE="rpm"; PM="sudo yum remove -y"; \
+	elif command -v zypper >/dev/null 2>&1; then \
+		PKGTYPE="rpm"; PM="sudo zypper rm -y"; \
+	else \
+		echo "Error: no supported package manager found (apt/dnf/yum/zypper)."; exit 2; \
+	fi; \
+	pkgs="himmelblau himmelblau-qr-greeter himmelblau-selinux himmelblau-sshd-config himmelblau-sso nss-himmelblau pam-himmelblau"; \
+	echo "Removing: $$pkgs"; \
+	$$PM $$pkgs; \
+	echo "Uninstall complete."
+
 dockerfiles:
 	python3 scripts/gen_dockerfiles.py --out ./images/
 
-.PHONY: package deb rpm $(DEB_TARGETS) $(RPM_TARGETS) ${SLE_TARGETS} dockerfiles
+.PHONY: package deb rpm $(DEB_TARGETS) $(RPM_TARGETS) ${SLE_TARGETS} dockerfiles install uninstall
 
 package: deb rpm
 	ls ./packaging/
