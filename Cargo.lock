@@ -2669,9 +2669,9 @@ checksum = "b9e0384b61958566e926dc50660321d12159025e767c18e043daf26b70104c39"
 
 [[package]]
 name = "identity_dbus_broker"
-version = "0.1.3"
+version = "0.1.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1c6c262fcb1865e02fe19c9b93196349ffc1a0e591844c5e891f1b155be95099"
+checksum = "a6f43966f9a9e03e8c5c106c309f1e0dd836da9830f075849f70252b154a7d46"
 dependencies = [
  "async-trait",
  "bytes",
@@ -3009,9 +3009,9 @@ dependencies = [
 
 [[package]]
 name = "libhimmelblau"
-version = "0.7.11"
+version = "0.7.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a249633177e7cdbde3c31bd6d20209e779e2a679f782da590ddc814592806f2f"
+checksum = "2bf66ecbbd88ea533c3aad3d2820403e1f35a960433fd01978c433676767d342"
 dependencies = [
  "base64 0.22.1",
  "browser-window",
@@ -4401,7 +4401,7 @@ dependencies = [
  "once_cell",
  "socket2 0.5.9",
  "tracing",
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
