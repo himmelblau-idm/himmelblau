@@ -69,7 +69,7 @@ nix: .packaging .submodules
 		$(NIX) --extra-experimental-features 'nix-command flakes' build ".#$$v" --out-link ./packaging/nix-$$v-result; \
 	done
 
-DEB_TARGETS := ubuntu22.04 ubuntu24.04 debian12
+DEB_TARGETS := ubuntu22.04 ubuntu24.04 debian12 debian13
 RPM_TARGETS := rocky8 rocky9 rocky10 tumbleweed rawhide fedora41 fedora42
 SLE_TARGETS := sle15sp6 sle15sp7 sle16
 

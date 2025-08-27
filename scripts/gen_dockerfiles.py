@@ -142,6 +142,16 @@ DISTS = {
         "interactive": False,
         "tpm": True,
     },
+    "debian13": {
+        "family": "deb",
+        "image": "debian:13",
+        "replace": {
+            "@development-tools": "",
+            "libgdk-pixbuf2.0-dev": "libgdk-pixbuf-xlib-2.0-dev",
+        },
+        "interactive": False,
+        "tpm": True,
+    },
     "ubuntu22.04": {
         "family": "deb",
         "image": "ubuntu:22.04",
