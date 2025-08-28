@@ -77,7 +77,7 @@ maintainer-scripts = "scripts"
 name = "himmelblau"
 maintainer = "David Mulder <dmulder@suse.com>"
 assets = [
-  { source = "../../src/config/himmelblau.conf.example", dest = "/etc/himmelblau/himmelblau.conf", mode = "644", config = true },
+  { source = "../../src/config/himmelblau.conf.example", dest = "/etc/himmelblau/himmelblau.conf", mode = "644", config = "noreplace" },
   { source = "../../src/config/krb5_himmelblau.conf", dest = "/etc/krb5.conf.d/", mode = "644" },
   { source = "../../src/config/gdm3_service_override.conf", dest = "/usr/lib/systemd/system/display-manager.service.d/override.conf", mode = "644" },
   { source = "target/release/aad-tool", dest = "/usr/bin/", mode = "755" },
