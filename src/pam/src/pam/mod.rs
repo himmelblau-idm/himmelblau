@@ -501,21 +501,48 @@ impl PamHooks for PamKanidm {
                 None
             };
 
-            let mut mfa_req = match rt.block_on(async {
-                app.initiate_acquire_token_by_mfa_flow(
-                    &account_id,
-                    password.as_deref(),
-                    vec![],
-                    None,
-                    &auth_options,
-                    Some(auth_init),
-                )
-                .await
-            }) {
-                Ok(mfa) => mfa,
-                Err(e) => {
-                    error!("{:?}", e);
-                    return PamResultCode::PAM_AUTH_ERR;
+            let mut mfa_req = match cfg.get_mfa_method() {
+                Some(mfa_method) => {
+                    // Use the configured MFA method
+                    debug!("Using configured MFA method: {}", mfa_method);
+                    match rt.block_on(async {
+                        app.initiate_acquire_token_by_mfa_flow_with_method(
+                            &account_id,
+                            password.as_deref(),
+                            vec![],
+                            None,
+                            &auth_options,
+                            Some(auth_init),
+                            &mfa_method,
+                        )
+                        .await
+                    }) {
+                        Ok(mfa) => mfa,
+                        Err(e) => {
+                            error!("Failed to initiate MFA with configured method '{}': {:?}", mfa_method, e);
+                            return PamResultCode::PAM_AUTH_ERR;
+                        }
+                    }
+                }
+                None => {
+                    // Use default MFA method
+                    match rt.block_on(async {
+                        app.initiate_acquire_token_by_mfa_flow(
+                            &account_id,
+                            password.as_deref(),
+                            vec![],
+                            None,
+                            &auth_options,
+                            Some(auth_init),
+                        )
+                        .await
+                    }) {
+                        Ok(mfa) => mfa,
+                        Err(e) => {
+                            error!("{:?}", e);
+                            return PamResultCode::PAM_AUTH_ERR;
+                        }
+                    }
                 }
             };
 

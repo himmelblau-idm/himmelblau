@@ -163,6 +163,30 @@ Determines whether password-only (single-factor) authentication is permitted whe
 enable_sfa_fallback = true
 
 .TP
+.B mfa_method
+.RE
+Specifies a preferred MFA (Multi-Factor Authentication) method to use during authentication. When set, Himmelblau will attempt to use this specific MFA method instead of the default method configured in the user's Entra ID profile. If not set or if the specified method is not available for the user, the default MFA method will be used.
+
+Valid values include:
+.RS
+.IP \(bu 2
+PhoneAppNotification - Authenticator app push notification
+.IP \(bu 2
+PhoneAppOTP - Authenticator app verification code
+.IP \(bu 2
+OneWaySMS - Text message code
+.IP \(bu 2
+TwoWayVoiceMobile - Phone call to mobile
+.IP \(bu 2
+TwoWayVoiceOffice - Phone call to office
+.IP \(bu 2
+ConsolidatedTelephony - Call or text message
+.RE
+
+.EXAMPLES
+mfa_method = TwoWayVoiceMobile
+
+.TP
 .B cn_name_mapping
 .RE
 Allows users to enter the short form of their username (e.g., 'dave') instead of the full UPN.

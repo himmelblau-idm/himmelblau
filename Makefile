@@ -1,3 +1,5 @@
+SHELL := /bin/bash
+
 all: .packaging dockerfiles ## Auto-detect host distro and build packages just for this host
 	@set -euo pipefail; \
 	. /etc/os-release; \
@@ -40,6 +42,15 @@ PLATFORM := $(shell grep '^ID=' /etc/os-release | awk -F= '{ print $$2 }' | tr -
 
 DOCKER := $(shell command -v podman || command -v docker)
 NIX := $(shell command -v nix)
+
+# Optional: Mount local libhimmelblau for development testing
+# Usage: LIBHIMMELBLAU_LOCAL=/path/to/libhimmelblau make ubuntu24.04
+ifdef LIBHIMMELBLAU_LOCAL
+  LIBHIMMELBLAU_MOUNT := -v $(LIBHIMMELBLAU_LOCAL):/libhimmelblau:ro
+  $(info Using local libhimmelblau from: $(LIBHIMMELBLAU_LOCAL))
+else
+  LIBHIMMELBLAU_MOUNT :=
+endif
 
 .packaging:
 	mkdir -p ./packaging/
@@ -211,10 +222,12 @@ $(DEB_TARGETS): %: .packaging dockerfiles
 	$(DOCKER) run --rm --security-opt label=disable -it \
 		-v $(CURDIR):/himmelblau \
 		-v $(CURDIR)/target/$@:/himmelblau/target \
+		$(LIBHIMMELBLAU_MOUNT) \
 		himmelblau-$@-build
 	$(DOCKER) run --rm --security-opt label=disable -it \
 		-v $(CURDIR):/himmelblau \
 		-v $(CURDIR)/target/$@:/himmelblau/target \
+		$(LIBHIMMELBLAU_MOUNT) \
 		himmelblau-$@-build /bin/sh -c \
 			'mv ./target/debian/*.deb ./packaging/'
 
@@ -225,10 +238,12 @@ $(RPM_TARGETS): %: .packaging dockerfiles
 	$(DOCKER) run --rm --security-opt label=disable -it \
 		-v $(CURDIR):/himmelblau \
 		-v $(CURDIR)/target/$@:/himmelblau/target \
+		$(LIBHIMMELBLAU_MOUNT) \
 		himmelblau-$@-build
 	$(DOCKER) run --rm --security-opt label=disable -it \
 		-v $(CURDIR):/himmelblau \
 		-v $(CURDIR)/target/$@:/himmelblau/target \
+		$(LIBHIMMELBLAU_MOUNT) \
 		himmelblau-$@-build /bin/sh -c \
 			'for f in ./target/generate-rpm/*.rpm; do \
 				mv $$f $${f%.rpm}-$@.rpm; \
@@ -241,10 +256,12 @@ $(SLE_TARGETS): %: .packaging dockerfiles
 	$(DOCKER) run --rm --security-opt label=disable -it \
 		-v $(CURDIR):/himmelblau \
 		-v $(CURDIR)/target/$@:/himmelblau/target \
+		$(LIBHIMMELBLAU_MOUNT) \
 		himmelblau-$@-build
 	$(DOCKER) run --rm --security-opt label=disable -it \
 		-v $(CURDIR):/himmelblau \
 		-v $(CURDIR)/target/$@:/himmelblau/target \
+		$(LIBHIMMELBLAU_MOUNT) \
 		himmelblau-$@-build /bin/sh -c \
 			'for f in ./target/generate-rpm/*.rpm; do \
 				mv $$f $${f%.rpm}-$@.rpm; \
@@ -268,5 +285,6 @@ help: ## Show this help
 	@printf "\nTips:\n"
 	@printf "  • Running plain 'make' invokes the default 'all' target (auto-detects host distro).\n"
 	@printf "  • You can install a development build of Himmelblau on the current host with 'make && sudo make install'\n"
-	@printf "  • Built packages are written to ./packaging/\n\n"
+	@printf "  • Built packages are written to ./packaging/\n"
+	@printf "  • To use local libhimmelblau: LIBHIMMELBLAU_LOCAL=/path/to/libhimmelblau make <target>\n\n"
 	@printf "If you'd like a new distro added to the supported packages list, contact a maintainer. We're happy to help.\n"
