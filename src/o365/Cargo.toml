@@ -35,6 +35,6 @@ assets = [
 post_install_script = "scripts/postinst"
 post_uninstall_script = "scripts/postrm"
 
-[package.metadata.generate-rpm.requires]
+[package.metadata.generate-rpm.recommends]
 curl = "*"
 libfuse2 = "*"
