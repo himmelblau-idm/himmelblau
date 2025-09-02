@@ -17,6 +17,7 @@ on:
       - stable-0.7.x
       - stable-0.8.x
       - stable-0.9.x
+      - stable-1.x
 
 env:
   SCCACHE_GHA_ENABLED: "true"
@@ -29,7 +30,7 @@ concurrency:
 jobs:
   build:
     name: Build
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     steps:
       - uses: actions/checkout@v4
       - name: Setup sccache
@@ -81,7 +82,7 @@ jobs:
 
   clippy:
     name: Clippy
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     needs: build
     steps:
       - uses: actions/checkout@v4
@@ -105,7 +106,7 @@ jobs:
 
   test:
     name: Test
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     steps:
       - uses: actions/checkout@v4
       - name: Setup sccache

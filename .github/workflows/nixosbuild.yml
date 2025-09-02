@@ -8,10 +8,11 @@ on:
   pull_request:
     branches:
       - stable-0.9.x
+      - stable-1.x
 
 jobs:
   nixos:
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     steps:
     - uses: actions/checkout@v4
     - uses: cachix/install-nix-action@v25
