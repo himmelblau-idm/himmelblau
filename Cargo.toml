@@ -19,7 +19,7 @@ members = [
 resolver = "2"
 
 [workspace.package]
-version = "0.9.22"
+version = "0.9.23"
 authors = [
     "David Mulder <dmulder@suse.com>"
 ]
