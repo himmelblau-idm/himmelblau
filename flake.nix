@@ -9,7 +9,9 @@
       let pkgs = nixpkgs.legacyPackages.${system};
           rustPlatform = pkgs.rustPlatform;
           cargoToml = builtins.fromTOML (builtins.readFile ./Cargo.toml);
-          recipe = {lib, enableInteractive ? false}: rustPlatform.buildRustPackage {
+          recipe = {
+            lib, enableInteractive ? false, withSelinux ? true,
+          }: rustPlatform.buildRustPackage {
             pname = "himmelblau";
             version = cargoToml.workspace.package.version;
             src = with lib.fileset; toSource {
@@ -25,6 +27,8 @@
             buildFeatures = lib.optionals enableInteractive [ "interactive" ];
             nativeBuildInputs = [
               pkgs.pkg-config rustPlatform.bindgenHook
+            ] ++ lib.optionals withSelinux [
+              pkgs.checkpolicy pkgs.semodule-utils
             ];
             buildInputs = with pkgs; [
               talloc tevent ding-libs libunistring
@@ -35,8 +39,16 @@
               gobject-introspection.dev cairo.dev gdk-pixbuf.dev
               libsoup_2_4.dev pango.dev atk.dev gtk3.dev webkitgtk_4_1
             ];
+            env = lib.attrsets.optionalAttrs (!withSelinux) {
+              HIMMELBLAU_ALLOW_MISSING_SELINUX = "1";
+            };
             postBuild = "cp -r man $man/";
-            postInstall = "ln -s $out/lib/libnss_himmelblau.so $out/lib/libnss_himmelblau.so.2";
+            postInstall = "
+              ln -s $out/lib/libnss_himmelblau.so $out/lib/libnss_himmelblau.so.2
+            " + lib.optionalString withSelinux "
+              mkdir -p $out/share
+              cp -r src/selinux/target/selinux $out/share/selinux
+            ";
             meta = with lib; {
               description = "Himmelblau is an interoperability suite for Microsoft Azure Entra ID and Intune.";
               homepage = "https://github.com/himmelblau-idm/himmelblau";
