@@ -4,7 +4,7 @@ version = 3
 
 [[package]]
 name = "aad-tool"
-version = "0.7.17"
+version = "0.7.18"
 dependencies = [
  "anyhow",
  "clap 4.5.37",
@@ -427,7 +427,7 @@ dependencies = [
 
 [[package]]
 name = "broker"
-version = "0.7.17"
+version = "0.7.18"
 dependencies = [
  "dbus",
  "himmelblau_unix_common",
@@ -1710,7 +1710,7 @@ dependencies = [
 
 [[package]]
 name = "himmelblau_unix_common"
-version = "0.7.17"
+version = "0.7.18"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1745,7 +1745,7 @@ dependencies = [
 
 [[package]]
 name = "himmelblaud"
-version = "0.7.17"
+version = "0.7.18"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -2169,7 +2169,7 @@ dependencies = [
 
 [[package]]
 name = "idmap"
-version = "0.7.17"
+version = "0.7.18"
 dependencies = [
  "bindgen 0.70.1",
  "cc",
@@ -2353,7 +2353,7 @@ dependencies = [
 
 [[package]]
 name = "kanidm_lib_crypto"
-version = "0.7.17"
+version = "0.7.18"
 dependencies = [
  "argon2",
  "base64 0.22.1",
@@ -2372,7 +2372,7 @@ dependencies = [
 
 [[package]]
 name = "kanidm_lib_file_permissions"
-version = "0.7.17"
+version = "0.7.18"
 dependencies = [
  "kanidm_utils_users",
  "whoami",
@@ -2380,7 +2380,7 @@ dependencies = [
 
 [[package]]
 name = "kanidm_proto"
-version = "0.7.17"
+version = "0.7.18"
 dependencies = [
  "base32",
  "base64urlsafedata",
@@ -2400,14 +2400,14 @@ dependencies = [
 
 [[package]]
 name = "kanidm_unix_common"
-version = "0.7.17"
+version = "0.7.18"
 dependencies = [
  "himmelblau_unix_common",
 ]
 
 [[package]]
 name = "kanidm_utils_users"
-version = "0.7.17"
+version = "0.7.18"
 dependencies = [
  "libc",
 ]
@@ -2790,7 +2790,7 @@ dependencies = [
 
 [[package]]
 name = "nss_himmelblau"
-version = "0.7.17"
+version = "0.7.18"
 dependencies = [
  "himmelblau_unix_common",
  "kanidm_unix_common",
@@ -3168,7 +3168,7 @@ checksum = "e2355d85b9a3786f481747ced0e0ff2ba35213a1f9bd406ed906554d7af805a1"
 
 [[package]]
 name = "pam_himmelblau"
-version = "0.7.17"
+version = "0.7.18"
 dependencies = [
  "himmelblau_unix_common",
  "kanidm_unix_common",
@@ -4196,7 +4196,7 @@ checksum = "56199f7ddabf13fe5074ce809e7d3f42b42ae711800501b5b16ea82ad029c39d"
 
 [[package]]
 name = "sketching"
-version = "0.7.17"
+version = "0.7.18"
 dependencies = [
  "gethostname",
  "num_enum",
@@ -4271,11 +4271,11 @@ checksum = "6980e8d7511241f8acf4aebddbb1ff938df5eebe98691418c4468d0b72a96a67"
 
 [[package]]
 name = "sshd-config"
-version = "0.7.17"
+version = "0.7.18"
 
 [[package]]
 name = "sso"
-version = "0.7.17"
+version = "0.7.18"
 
 [[package]]
 name = "stable_deref_trait"
