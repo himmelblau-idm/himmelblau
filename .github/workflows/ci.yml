@@ -29,7 +29,7 @@ concurrency:
 jobs:
   build:
     name: Build
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     steps:
       - uses: actions/checkout@v4
       - name: Setup sccache
@@ -81,7 +81,7 @@ jobs:
 
   clippy:
     name: Clippy
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     needs: build
     steps:
       - uses: actions/checkout@v4
@@ -105,7 +105,7 @@ jobs:
 
   test:
     name: Test
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     steps:
       - uses: actions/checkout@v4
       - name: Setup sccache
