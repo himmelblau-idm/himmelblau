@@ -504,12 +504,12 @@ impl PamHooks for PamKanidm {
             let mut mfa_req = match cfg.get_mfa_method() {
                 Some(mfa_method) => {
                     // Use the configured MFA method
-                    debug!("Using configured MFA method: {}", mfa_method);
+                    debug!("sm_chauthtok(): Using configured MFA method: {}", mfa_method);
                     match rt.block_on(async {
                         app.initiate_acquire_token_by_mfa_flow_with_method(
                             &account_id,
                             password.as_deref(),
-                            vec![],
+                            vec!["offline_access"],
                             None,
                             &auth_options,
                             Some(auth_init),
@@ -525,12 +525,12 @@ impl PamHooks for PamKanidm {
                     }
                 }
                 None => {
-                    // Use default MFA method
+                    debug!("sm_chauthtok(): Using default MFA method");
                     match rt.block_on(async {
                         app.initiate_acquire_token_by_mfa_flow(
                             &account_id,
                             password.as_deref(),
-                            vec![],
+                            vec!["offline_access"],
                             None,
                             &auth_options,
                             Some(auth_init),

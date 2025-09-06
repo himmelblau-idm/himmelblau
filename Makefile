@@ -46,10 +46,15 @@ NIX := $(shell command -v nix)
 # Optional: Mount local libhimmelblau for development testing
 # Usage: LIBHIMMELBLAU_LOCAL=/path/to/libhimmelblau make ubuntu24.04
 ifdef LIBHIMMELBLAU_LOCAL
-  LIBHIMMELBLAU_MOUNT := -v $(LIBHIMMELBLAU_LOCAL):/libhimmelblau:ro
+  LIBHIMMELBLAU_MOUNT := -v $(LIBHIMMELBLAU_LOCAL):/libhimmelblau
+  LIBHIMMELBLAU_BUILD_ARG := --build-arg "CARGO_PATCH_ARG=--config 'patch.crates-io.libhimmelblau.path=\"/libhimmelblau\"'"
+  PATCH_LIBHIMMELBLAU := --patch-libhimmelblau
   $(info Using local libhimmelblau from: $(LIBHIMMELBLAU_LOCAL))
+  $(info LIBHIMMELBLAU_BUILD_ARG: $(LIBHIMMELBLAU_BUILD_ARG))
 else
   LIBHIMMELBLAU_MOUNT :=
+  LIBHIMMELBLAU_BUILD_ARG :=
+  PATCH_LIBHIMMELBLAU :=
 endif
 
 .packaging:
@@ -109,7 +114,7 @@ uninstall: ## Uninstall Himmelblau packages from this host (apt/dnf/yum/zypper a
 	echo "Uninstall complete."
 
 dockerfiles:
-	python3 scripts/gen_dockerfiles.py --out ./images/
+	python3 scripts/gen_dockerfiles.py --out ./images/ $(PATCH_LIBHIMMELBLAU)
 
 deb-servicefiles:
 	python3 ./scripts/gen_servicefiles.py --out ./platform/debian/
@@ -218,7 +223,7 @@ sign-rpms: sign-el8-sle sign-others
 $(DEB_TARGETS): %: .packaging dockerfiles
 	@echo "Building Ubuntu $@ packages"
 	mkdir -p target/$@
-	$(DOCKER) build -t himmelblau-$@-build -f images/Dockerfile.$@ .
+	$(DOCKER) build $(LIBHIMMELBLAU_BUILD_ARG) -t himmelblau-$@-build -f images/Dockerfile.$@ .
 	$(DOCKER) run --rm --security-opt label=disable -it \
 		-v $(CURDIR):/himmelblau \
 		-v $(CURDIR)/target/$@:/himmelblau/target \
@@ -234,7 +239,7 @@ $(DEB_TARGETS): %: .packaging dockerfiles
 $(RPM_TARGETS): %: .packaging dockerfiles
 	@echo "Building $@ RPM packages"
 	mkdir -p target/$@
-	$(DOCKER) build -t himmelblau-$@-build -f images/Dockerfile.$@ .
+	$(DOCKER) build $(LIBHIMMELBLAU_BUILD_ARG) -t himmelblau-$@-build -f images/Dockerfile.$@ .
 	$(DOCKER) run --rm --security-opt label=disable -it \
 		-v $(CURDIR):/himmelblau \
 		-v $(CURDIR)/target/$@:/himmelblau/target \
@@ -252,7 +257,7 @@ $(RPM_TARGETS): %: .packaging dockerfiles
 $(SLE_TARGETS): %: .packaging dockerfiles
 	@echo "Building $@ SLE RPM packages"
 	mkdir -p target/$@
-	$(DOCKER) build --secret id=scc_regcode,src=${HOME}/.secrets/scc_regcode -t himmelblau-$@-build -f images/Dockerfile.$@ .
+	$(DOCKER) build --secret id=scc_regcode,src=${HOME}/.secrets/scc_regcode $(LIBHIMMELBLAU_BUILD_ARG) -t himmelblau-$@-build -f images/Dockerfile.$@ .
 	$(DOCKER) run --rm --security-opt label=disable -it \
 		-v $(CURDIR):/himmelblau \
 		-v $(CURDIR)/target/$@:/himmelblau/target \
