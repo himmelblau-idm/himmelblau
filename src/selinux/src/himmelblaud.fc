@@ -1,0 +1,24 @@
+# Execs — include both paths for usr-merge environments
+/usr/bin/himmelblaud         --  gen_context(system_u:object_r:himmelblaud_exec_t,s0)
+/usr/bin/himmelblaud_tasks   --  gen_context(system_u:object_r:himmelblaud_tasks_exec_t,s0)
+/usr/sbin/himmelblaud        --  gen_context(system_u:object_r:himmelblaud_exec_t,s0)
+/usr/sbin/himmelblaud_tasks  --  gen_context(system_u:object_r:himmelblaud_tasks_exec_t,s0)
+
+# Config
+/etc/himmelblau(/.*)?                    gen_context(system_u:object_r:himmelblau_etc_t,s0)
+
+# Runtime
+/run/himmelblaud(/.*)?                   gen_context(system_u:object_r:himmelblau_var_run_t,s0)
+
+# daemon cache (private)
+/var/cache/private/himmelblaud(/.*)?    gen_context(system_u:object_r:himmelblau_var_cache_t,s0)
+# compatibility symlink target (if present)
+/var/cache/himmelblaud(/.*)?            gen_context(system_u:object_r:himmelblau_var_cache_t,s0)
+
+# NSS side cache (separate type so we can grant `init_t` narrowly)
+/var/cache/nss-himmelblau(/.*)?         gen_context(system_u:object_r:himmelblau_nss_cache_t,s0)
+
+# daemon state (private)
+/var/lib/private/himmelblaud(/.*)?     gen_context(system_u:object_r:himmelblau_var_lib_t,s0)
+# compatibility symlink target (if present)
+/var/lib/himmelblaud(/.*)?             gen_context(system_u:object_r:himmelblau_var_lib_t,s0)

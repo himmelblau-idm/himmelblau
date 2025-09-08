@@ -1,8 +1,30 @@
 #!/bin/sh
 set -e
-if [ -e /sys/fs/selinux/enforce ] && [ "$(cat /sys/fs/selinux/enforce 2>/dev/null)" != "0" ]; then
-  if command -v semodule >/dev/null 2>&1; then
-    semodule -n -i /usr/share/selinux/packages/himmelblaud.pp || true
+if command -v selinuxenabled >/dev/null 2>&1 && selinuxenabled; then
+  if semodule -i /usr/share/selinux/packages/himmelblaud.pp; then
+    semanage fcontext -a -t himmelblau_var_cache_t '/var/cache/himmelblaud'
+    #restorecon -v -h /var/cache/himmelblaud
+    TARGET="$(readlink -f /var/cache/himmelblaud)"
+    semanage fcontext -a -t himmelblau_var_cache_t "${TARGET}(/.*)?"
+    #restorecon -Rv "${TARGET}"
+
+    # Relabel installed binaries (fc covers /usr/bin and /usr/sbin) /usr/sbin/himmelblaud /usr/sbin/himmelblaud_tasks
+    restorecon -Fv /usr/sbin/himmelblaud /usr/sbin/himmelblaud_tasks || :
+
+    # Relabel existing dirs only (DynamicUser will create cache dirs on first start)
+    [ -d /etc/himmelblau ]                && restorecon -RFv /etc/himmelblau || :
+    [ -d /run/himmelblaud ]               && restorecon -RFv /run/himmelblaud || :
+    [ -d /var/cache/private/himmelblaud ] && restorecon -RFv /var/cache/private/himmelblaud || :
+    [ -d /var/cache/himmelblaud ]         && restorecon -RFv /var/cache/himmelblaud || :
+    [ -d /var/cache/nss-himmelblau ]      && restorecon -RFv /var/cache/nss-himmelblau || :
+
+    # /var/lib/himmelblaud is a systemd DynamicUser symlink to /var/lib/private/himmelblaud
+    semanage fcontext -a -t himmelblau_var_lib_t '/var/lib/himmelblaud'
+    #restorecon -v -h /var/lib/himmelblaud
+    LIBTARGET="$(readlink -f /var/lib/himmelblaud || true)"
+    [ -n "$LIBTARGET" ] && semanage fcontext -a -t himmelblau_var_lib_t "${LIBTARGET}(/.*)?"
+    # If the private dir already exists (e.g. after a previous run), relabel it
+    [ -d "$LIBTARGET" ] && restorecon -RFv "$LIBTARGET" || :
   fi
 fi
 exit 0
