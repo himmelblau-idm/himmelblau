@@ -53,6 +53,7 @@ PKG_PAIRS = [
     ("libsqlite3-dev", "sqlite-devel"),
     ("libunistring-dev", "libunistring-devel"),
     ("policycoreutils-dev", "policycoreutils-devel"),
+    ("selinux-basics selinux-policy-default", "selinux-policy-targeted"),
     # Interactive feature only
     ("libgirepository1.0-dev", "gobject-introspection-devel"),
     ("libcairo2-dev", "cairo-devel"),

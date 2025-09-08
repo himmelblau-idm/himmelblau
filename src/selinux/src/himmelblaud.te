@@ -61,6 +61,7 @@ allow colord_t var_t:file { getattr open read };
 
 #!!!! This avc is allowed in the current policy
 allow init_t unconfined_service_t:unix_stream_socket connectto;
+allow init_t var_t:file read;
 
 #============= policykit_t ==============
 
