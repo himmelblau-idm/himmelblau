@@ -45,6 +45,7 @@ name = "pam-himmelblau"
 maintainer = "David Mulder <dmulder@suse.com>"
 assets = [
   { source = "target/release/libpam_himmelblau.so", dest = "/usr/lib64/security/pam_himmelblau.so", mode = "755" },
+  { source = "platform/el/authselect/*", dest = "/usr/share/authselect/vendor/himmelblau/", mode = "755" },
 ]
 post_install_script = '''
 # Only create a symlink if it doesn't already exist
@@ -52,10 +53,29 @@ if [ ! -e /lib64/security/pam_himmelblau.so ]; then
     mkdir -p /lib64/security
     ln -s /usr/lib64/security/pam_himmelblau.so /lib64/security/pam_himmelblau.so
 fi
+if command -v authselect >/dev/null 2>&1; then
+    feats="$(authselect current 2>/dev/null | awk '"'"'/Enabled features:/{f=1;next} f && /^-/{print $2}'"'"')"
+    authselect select himmelblau $feats --force >/dev/null 2>&1 || :
+    authselect apply-changes >/dev/null 2>&1 || :
+fi
 '''
 post_uninstall_script = '''
 # Only remove a symlink if it exists and is a symlink
 if [ -L /lib64/security/pam_himmelblau.so ]; then
     rm -f /lib64/security/pam_himmelblau.so
+fi
+'''
+pre_uninstall_script='''
+# $1 is set by RPM: 0=uninstall, 1=upgrade. If your packager doesn’t pass it, we default to 0.
+if [ "${1:-0}" -ne 0 ]; then exit 0; fi   # don’t switch on upgrade
+if command -v authselect >/dev/null 2>&1; then
+    if authselect current 2>/dev/null | grep -qE "^Profile ID:\s+himmelblau$"; then
+        if   [ -d /usr/share/authselect/default/local   ]; then base=local
+        elif [ -d /usr/share/authselect/default/minimal ]; then base=minimal
+        else base=sssd; fi
+        feats="$(authselect current 2>/dev/null | awk '"'"'/Enabled features:/{f=1;next} f && /^-/{print $2}'"'"')"
+        authselect select "$base" $feats --force >/dev/null 2>&1 || :
+        authselect apply-changes >/dev/null 2>&1 || :
+    fi
 fi
 '''

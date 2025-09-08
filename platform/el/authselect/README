@@ -1,0 +1,122 @@
+Himmelblau
+=======================================
+
+Selecting this profile enables local files for identity (like the "minimal"
+profile) and inserts Himmelblau into the PAM stacks to provide Microsoft
+Entra ID sign-in and session integration.
+
+This profile is intended for systems that utilizes both Entra Id enterprise
+sign-in, as well as local users/groups.
+
+WHAT THIS PROFILE CHANGES
+-------------------------
+
+PAM (both system-auth and password-auth):
+- Adds at the top of each stack:
+    `auth     sufficient   pam_himmelblau.so ignore_unknown_user`
+- Adds:
+    `account  sufficient   pam_himmelblau.so ignore_unknown_user`
+- Adds:
+    `password sufficient   pam_himmelblau.so ignore_unknown_user`
+- Adds:
+    `session  optional     pam_himmelblau.so`
+
+Notes:
+- `ignore_unknown_user` avoids failures for services with an unexpected user.
+- Himmelblau is placed before faillock/unix so that the correct prompts are
+  displayed. Himmelblau doesn't display a typical password prompt, like most
+  pam modules, but instead prompts for MFA and Hello PIN setup/auth. Placing
+  other pam modules before pam_himmelblau will cause the incorrect prompt to
+  be displayed (potentially confusing end users).
+
+AVAILABLE OPTIONAL FEATURES
+---------------------------
+
+with-faillock::
+    Enable account locking in case of too many consecutive
+    authentication failures.
+
+with-mkhomedir::
+    Enable automatic creation of home directories for users on their
+    first login.
+
+with-ecryptfs::
+    Enable automatic per-user ecryptfs.
+
+with-silent-lastlog::
+    Do not produce pam_lastlog message during login.
+
+with-pamaccess::
+    Check access.conf during account authorization.
+
+with-pwhistory::
+    Enable pam_pwhistory module for local users.
+
+with-altfiles::
+    Use nss_altfiles for passwd and group nsswitch databases.
+
+without-nullok::
+    Do not add nullok parameter to pam_unix.
+
+DISABLE SPECIFIC NSSWITCH DATABASES
+-----------------------------------
+
+Normally, nsswitch databases set by the profile overwrites values set in
+user-nsswitch.conf. The following options can force authselect to
+ignore value set by the profile and use the one set in user-nsswitch.conf
+instead.
+
+with-custom-aliases::
+Ignore "aliases" map set by the profile.
+
+with-custom-automount::
+Ignore "automount" map set by the profile.
+
+with-custom-ethers::
+Ignore "ethers" map set by the profile.
+
+with-custom-group::
+Ignore "group" map set by the profile.
+
+with-custom-hosts::
+Ignore "hosts" map set by the profile.
+
+with-custom-initgroups::
+Ignore "initgroups" map set by the profile.
+
+with-custom-netgroup::
+Ignore "netgroup" map set by the profile.
+
+with-custom-networks::
+Ignore "networks" map set by the profile.
+
+with-custom-passwd::
+Ignore "passwd" map set by the profile.
+
+with-custom-protocols::
+Ignore "protocols" map set by the profile.
+
+with-custom-publickey::
+Ignore "publickey" map set by the profile.
+
+with-custom-rpc::
+Ignore "rpc" map set by the profile.
+
+with-custom-services::
+Ignore "services" map set by the profile.
+
+with-custom-shadow::
+Ignore "shadow" map set by the profile.
+
+EXAMPLES
+--------
+
+* Enable the himmelblau profile
+
+  authselect select vendor/himmelblau
+
+SEE ALSO
+--------
+* man authselect(8)
+* man pam.d(5)
+* man pam_himmelblau(8)

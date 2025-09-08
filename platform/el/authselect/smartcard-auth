@@ -1,0 +1,1 @@
+auth required pam_debug.so auth=authinfo_unavail
