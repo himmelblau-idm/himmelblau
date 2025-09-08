@@ -1,9 +1,10 @@
 #!/bin/sh
 set -e
+# $1 is "remove" or "purge"; only remove module on purge to be polite
 if [ "$1" = "purge" ]; then
-  if [ -e /sys/fs/selinux/enforce ] && [ "$(cat /sys/fs/selinux/enforce 2>/dev/null)" != "0" ]; then
+  if command -v selinuxenabled >/dev/null 2>&1 && selinuxenabled; then
     if command -v semodule >/dev/null 2>&1; then
-      semodule -n -r himmelblaud || true
+      semodule -r himmelblaud || true
     fi
   fi
 fi
