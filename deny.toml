@@ -1,0 +1,30 @@
+[licenses]
+allow = [
+  # GPL/LGPL that are OK to combine with GPL-3.0
+  "GPL-3.0-only", "GPL-3.0-or-later", "GPL-2.0-or-later",
+  "LGPL-3.0-only", "LGPL-3.0-or-later", "LGPL-2.1-or-later",
+  # Deprecated string used by libnss
+  "LGPL-3.0",
+
+  # Permissive mainstays
+  "Apache-2.0", "Apache-2.0 WITH LLVM-exception",
+  "MIT", "MIT-0", "0BSD",
+  "BSD-2-Clause", "BSD-3-Clause", "BSD-3-Clause-Clear",
+  "ISC", "Zlib",
+  "BSL-1.0",           # Boost
+  "Artistic-2.0",
+  "NCSA",              # University of Illinois/NCSA
+  "PostgreSQL",
+  "ICU",
+  "Unlicense",
+  "MPL-2.0",
+
+  # Data/fonts and common public-domain dedications seen in crates
+  "CC0-1.0",
+  "Unicode-DFS-2016", "Unicode-DFS-2015",
+  "W3C", "CDLA-Permissive-2.0",
+
+  "Unicode-3.0",
+]
+unused-allowed-license = "allow"
+confidence-threshold = 0.8
