@@ -22,7 +22,7 @@ permissions:
 
 jobs:
   dependabot:
-    runs-on: self-hosted
+    runs-on: ubuntu-latest
     # limit this to PRs opened by dependabot
     if: ${{ github.actor == 'dependabot[bot]' }}
     steps:
