@@ -68,8 +68,6 @@ use himmelblau_unix_common::constants::DEFAULT_CONFIG_PATH;
 use himmelblau_unix_common::hello_pin_complexity::is_simple_pin;
 use himmelblau_unix_common::unix_proto::{ClientRequest, ClientResponse};
 use himmelblau_unix_common::{auth_handle_mfa_resp, pam_fail};
-#[cfg(feature = "interactive")]
-use std::env;
 use std::thread::sleep;
 
 use crate::pam::constants::*;
@@ -459,33 +457,7 @@ impl PamHooks for PamKanidm {
                 return PamResultCode::PAM_AUTH_ERR;
             }
         };
-        let interactive;
-        #[cfg(feature = "interactive")]
-        {
-            interactive = !cfg.get_enable_experimental_mfa()
-                || env::var("INTERACTIVE")
-                    .map(|value| value.to_lowercase() == "true")
-                    .unwrap_or(false);
-        }
-        #[cfg(not(feature = "interactive"))]
-        {
-            interactive = false;
-        }
-        let token = if !interactive {
-            #[cfg(feature = "interactive")]
-            match conv.send(
-                PAM_TEXT_INFO,
-                "If necessary, you can authenticate via a browser by setting the environment variable INTERACTIVE=true"
-            ) {
-                Ok(_) => {}
-                Err(err) => {
-                    if opts.debug {
-                        println!("Message prompt failed");
-                    }
-                    return err;
-                }
-            }
-
+        let token = {
             let auth_options = vec![AuthOption::Fido, AuthOption::Passwordless];
             let auth_init = match rt.block_on(async {
                 app.check_user_exists(&account_id, None, &auth_options)
@@ -644,20 +616,6 @@ impl PamHooks for PamKanidm {
                     }
                 }
             )
-        } else {
-            #[cfg(feature = "interactive")]
-            match rt.block_on(async { app.acquire_token_interactive(&account_id, None).await }) {
-                Ok(token) => token,
-                Err(e) => {
-                    error!(err = ?e, "acquire_token");
-                    return PamResultCode::PAM_AUTH_ERR;
-                }
-            }
-            #[cfg(not(feature = "interactive"))]
-            {
-                error!("Himmelblau was built without interactive support");
-                return PamResultCode::PAM_AUTH_ERR;
-            }
         };
 
         let req = ClientRequest::PamChangeAuthToken(
