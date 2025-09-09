@@ -29,4 +29,4 @@ semver = "1.0.25"
 libhimmelblau.workspace = true
 uuid.workspace = true
 libc.workspace = true
-tempfile = "3.21.0"
+tempfile = "3.22.0"
