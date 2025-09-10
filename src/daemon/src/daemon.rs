@@ -253,6 +253,7 @@ async fn handle_client(
                     })
             }
             ClientRequest::NssAccountByName(account_id) => {
+                let account_id = account_id.to_lowercase();
                 trace!("nssaccountbyname req");
                 cachelayer
                     .get_nssaccount_name(account_id.as_str())
@@ -297,6 +298,7 @@ async fn handle_client(
                     })
             }
             ClientRequest::PamAuthenticateInit(account_id, service, no_hello_pin) => {
+                let account_id = account_id.to_lowercase();
                 let span = span!(Level::INFO, "pam authenticate init");
                 trace!("pam authenticate init");
 
@@ -337,11 +339,12 @@ async fn handle_client(
                                 ClientResponse::PamAuthenticateStepResponse(mut resp) => {
                                     match auth_session {
                                         AuthSession::Success(account_id) => {
+                                            let account_id = account_id.to_lowercase();
                                             match resp {
                                                 PamAuthResponse::Success => {
                                                     if cfg.get_logon_script().is_some() {
                                                         let scopes = cfg.get_logon_token_scopes();
-                                                        let domain = split_username(account_id)
+                                                        let domain = split_username(&account_id)
                                                             .map(|(_, domain)| domain);
                                                         let client_id = domain.and_then(|d| {
                                                             cfg.get_logon_token_app_id(d)
@@ -509,7 +512,7 @@ async fn handle_client(
                                                     // Apply Intune policies
                                                     if cfg.get_apply_policy()
                                                     {
-                                                        let intune_device_id = split_username(account_id)
+                                                        let intune_device_id = split_username(&account_id)
                                                             .map(|(_, domain)| domain)
                                                             .and_then(|domain| {
                                                                 // The intune_device_id may have been written after startup,
@@ -647,6 +650,7 @@ async fn handle_client(
                 .await
             }
             ClientRequest::PamAccountAllowed(account_id) => {
+                let account_id = account_id.to_lowercase();
                 trace!("pam account allowed");
                 cachelayer
                     .pam_account_allowed(account_id.as_str())
@@ -655,6 +659,7 @@ async fn handle_client(
                     .unwrap_or(ClientResponse::Error)
             }
             ClientRequest::PamAccountBeginSession(account_id) => {
+                let account_id = account_id.to_lowercase();
                 let span = span!(Level::INFO, "pam account begin session");
                 async {
                     trace!("pam account begin session");
@@ -741,6 +746,7 @@ async fn handle_client(
                 .await
             }
             ClientRequest::PamChangeAuthToken(account_id, access_token, refresh_token, new_pin) => {
+                let account_id = account_id.to_lowercase();
                 let span = span!(Level::INFO, "sm_chauthtok req");
                 async {
                     trace!("sm_chauthtok req");
