@@ -2571,11 +2571,20 @@ impl HimmelblauProvider {
         }
     }
 
-    fn fetch_hello_key_tag(&self, account_id: &str, amr_ngcmfa: bool) -> String {
-        if amr_ngcmfa {
-            format!("{}/hello", account_id.to_lowercase())
+    fn normalize_account_name(&self, account_name: &str) -> String {
+        if let Some((cn, _)) = split_username(account_name) {
+            format!("{}@{}", cn, self.domain).to_lowercase()
         } else {
-            format!("{}/hello_decoupled", account_id.to_lowercase())
+            account_name.to_string().to_lowercase()
+        }
+    }
+
+    fn fetch_hello_key_tag(&self, account_id: &str, amr_ngcmfa: bool) -> String {
+        let account_id = self.normalize_account_name(account_id);
+        if amr_ngcmfa {
+            format!("{}/hello", account_id)
+        } else {
+            format!("{}/hello_decoupled", account_id)
         }
     }
 
@@ -2585,11 +2594,12 @@ impl HimmelblauProvider {
         account_id: &str,
         keystore: &mut D,
     ) -> Result<(LoadableMsHelloKey, KeyType), IdpError> {
-        match keystore.get_tagged_hsm_key(&format!("{}/hello", account_id.to_lowercase())) {
+        let account_id = self.normalize_account_name(account_id);
+        match keystore.get_tagged_hsm_key(&format!("{}/hello", account_id)) {
             Ok(Some(hello_key)) => Ok((hello_key, KeyType::Hello)),
             Err(_) | Ok(None) => {
                 let hello_key = keystore
-                    .get_tagged_hsm_key(&format!("{}/hello_decoupled", account_id.to_lowercase()))
+                    .get_tagged_hsm_key(&format!("{}/hello_decoupled", account_id))
                     .map_err(|e| {
                         error!("Failed fetching hello key from keystore: {:?}", e);
                         IdpError::BadRequest
@@ -2616,7 +2626,8 @@ impl HimmelblauProvider {
     }
 
     fn fetch_hello_prt_key_tag(&self, account_id: &str) -> String {
-        format!("{}/hello_prt", account_id.to_lowercase())
+        let account_id = self.normalize_account_name(account_id);
+        format!("{}/hello_prt", account_id)
     }
 
     #[instrument(level = "debug", skip_all)]
@@ -2710,7 +2721,8 @@ impl HimmelblauProvider {
                 error!("Failed fetching user spn: {:?}", e);
                 IdpError::BadRequest
             })?,
-        }.to_lowercase();
+        }
+        .to_lowercase();
         let uuid = match &value {
             TokenOrObj::UserObj((_, value)) => Uuid::parse_str(&value.id).map_err(|e| {
                 error!("Failed fetching user uuid: {:?}", e);
