@@ -2710,7 +2710,7 @@ impl HimmelblauProvider {
                 error!("Failed fetching user spn: {:?}", e);
                 IdpError::BadRequest
             })?,
-        };
+        }.to_lowercase();
         let uuid = match &value {
             TokenOrObj::UserObj((_, value)) => Uuid::parse_str(&value.id).map_err(|e| {
                 error!("Failed fetching user uuid: {:?}", e);
