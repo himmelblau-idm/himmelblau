@@ -1,0 +1,1183 @@
+
+# cargo-vet audits file
+
+[[wildcard-audits.compact_jwt]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+user-id = 31100 # Firstyear (Firstyear)
+start = "2021-10-23"
+end = "2026-09-11"
+
+[[wildcard-audits.crypto-glue]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+user-id = 31100 # Firstyear (Firstyear)
+start = "2024-09-09"
+end = "2026-09-11"
+
+[[wildcard-audits.kanidm-hsm-crypto]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+user-id = 31100 # Firstyear (Firstyear)
+start = "2023-11-01"
+end = "2026-09-11"
+
+[[wildcard-audits.kanidm_lib_crypto]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+user-id = 31100 # Firstyear (Firstyear)
+start = "2024-02-07"
+end = "2026-09-11"
+
+[[wildcard-audits.kanidm_lib_file_permissions]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+user-id = 31100 # Firstyear (Firstyear)
+start = "2024-02-07"
+end = "2026-09-11"
+
+[[wildcard-audits.kanidm_proto]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+user-id = 31100 # Firstyear (Firstyear)
+start = "2019-12-17"
+end = "2026-09-11"
+
+[[wildcard-audits.kanidm_utils_users]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+user-id = 31100 # Firstyear (Firstyear)
+start = "2024-02-07"
+end = "2026-09-11"
+
+[[wildcard-audits.libhimmelblau]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+user-id = 247655 # David Mulder (dmulder)
+start = "2024-06-03"
+end = "2026-09-11"
+
+[[wildcard-audits.sketching]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+user-id = 31100 # Firstyear (Firstyear)
+start = "2024-02-07"
+end = "2026-09-11"
+
+[audits]
+
+[[trusted.aho-corasick]]
+criteria = "safe-to-deploy"
+user-id = 189 # Andrew Gallant (BurntSushi)
+start = "2019-03-28"
+end = "2026-09-11"
+
+[[trusted.anstream]]
+criteria = "safe-to-deploy"
+user-id = 6743 # Ed Page (epage)
+start = "2023-03-16"
+end = "2026-09-11"
+
+[[trusted.anstyle]]
+criteria = "safe-to-deploy"
+user-id = 6743 # Ed Page (epage)
+start = "2022-05-18"
+end = "2026-09-11"
+
+[[trusted.anstyle-parse]]
+criteria = "safe-to-deploy"
+user-id = 6743 # Ed Page (epage)
+start = "2023-03-08"
+end = "2026-09-11"
+
+[[trusted.anstyle-query]]
+criteria = "safe-to-deploy"
+user-id = 6743 # Ed Page (epage)
+start = "2023-04-13"
+end = "2026-09-11"
+
+[[trusted.anstyle-wincon]]
+criteria = "safe-to-deploy"
+user-id = 6743 # Ed Page (epage)
+start = "2023-03-08"
+end = "2026-09-11"
+
+[[trusted.anyhow]]
+criteria = "safe-to-deploy"
+user-id = 3618 # David Tolnay (dtolnay)
+start = "2019-10-05"
+end = "2026-09-11"
+
+[[trusted.async-stream]]
+criteria = "safe-to-deploy"
+user-id = 10
+start = "2019-06-07"
+end = "2026-09-11"
+
+[[trusted.async-stream-impl]]
+criteria = "safe-to-deploy"
+user-id = 10
+start = "2019-08-13"
+end = "2026-09-11"
+
+[[trusted.async-trait]]
+criteria = "safe-to-deploy"
+user-id = 3618 # David Tolnay (dtolnay)
+start = "2019-07-23"
+end = "2026-09-11"
+
+[[trusted.backtrace]]
+criteria = "safe-to-deploy"
+user-id = 55123 # rust-lang-owner
+start = "2025-05-06"
+end = "2026-09-11"
+
+[[trusted.base64urlsafedata]]
+criteria = "safe-to-deploy"
+user-id = 31100 # Firstyear (Firstyear)
+start = "2022-05-19"
+end = "2026-09-11"
+
+[[trusted.bstr]]
+criteria = "safe-to-deploy"
+user-id = 189 # Andrew Gallant (BurntSushi)
+start = "2019-04-02"
+end = "2026-09-11"
+
+[[trusted.bytes]]
+criteria = "safe-to-deploy"
+user-id = 6741 # Alice Ryhl (Darksonn)
+start = "2021-01-11"
+end = "2026-09-11"
+
+[[trusted.cc]]
+criteria = "safe-to-deploy"
+user-id = 55123 # rust-lang-owner
+start = "2022-10-29"
+end = "2026-09-11"
+
+[[trusted.clap]]
+criteria = "safe-to-deploy"
+user-id = 6743 # Ed Page (epage)
+start = "2021-12-08"
+end = "2026-09-11"
+
+[[trusted.clap_builder]]
+criteria = "safe-to-deploy"
+user-id = 6743 # Ed Page (epage)
+start = "2023-03-28"
+end = "2026-09-11"
+
+[[trusted.clap_complete]]
+criteria = "safe-to-deploy"
+user-id = 6743 # Ed Page (epage)
+start = "2021-12-31"
+end = "2026-09-11"
+
+[[trusted.clap_derive]]
+criteria = "safe-to-deploy"
+user-id = 6743 # Ed Page (epage)
+start = "2021-12-08"
+end = "2026-09-11"
+
+[[trusted.clap_lex]]
+criteria = "safe-to-deploy"
+user-id = 6743 # Ed Page (epage)
+start = "2022-04-15"
+end = "2026-09-11"
+
+[[trusted.cmake]]
+criteria = "safe-to-deploy"
+user-id = 55123 # rust-lang-owner
+start = "2022-10-29"
+end = "2026-09-11"
+
+[[trusted.colorchoice]]
+criteria = "safe-to-deploy"
+user-id = 6743 # Ed Page (epage)
+start = "2023-04-13"
+end = "2026-09-11"
+
+[[trusted.cssparser]]
+criteria = "safe-to-deploy"
+user-id = 1139 # Manish Goregaokar (Manishearth)
+start = "2019-11-25"
+end = "2026-09-11"
+
+[[trusted.csv]]
+criteria = "safe-to-deploy"
+user-id = 189 # Andrew Gallant (BurntSushi)
+start = "2019-04-05"
+end = "2026-09-11"
+
+[[trusted.csv-core]]
+criteria = "safe-to-deploy"
+user-id = 189 # Andrew Gallant (BurntSushi)
+start = "2019-06-26"
+end = "2026-09-11"
+
+[[trusted.derive_more]]
+criteria = "safe-to-deploy"
+user-id = 3797 # Jelte Fennema-Nio (JelteF)
+start = "2019-05-25"
+end = "2026-09-11"
+
+[[trusted.derive_more-impl]]
+criteria = "safe-to-deploy"
+user-id = 3797 # Jelte Fennema-Nio (JelteF)
+start = "2023-07-23"
+end = "2026-09-11"
+
+[[trusted.dtoa]]
+criteria = "safe-to-deploy"
+user-id = 3618 # David Tolnay (dtolnay)
+start = "2019-05-02"
+end = "2026-09-11"
+
+[[trusted.dyn-clone]]
+criteria = "safe-to-deploy"
+user-id = 3618 # David Tolnay (dtolnay)
+start = "2019-12-23"
+end = "2026-09-11"
+
+[[trusted.errno]]
+criteria = "safe-to-deploy"
+user-id = 6825 # Dan Gohman (sunfishcode)
+start = "2023-08-29"
+end = "2026-09-11"
+
+[[trusted.ff]]
+criteria = "safe-to-deploy"
+user-id = 6289 # Jack Grigg (str4d)
+start = "2021-08-11"
+end = "2026-09-11"
+
+[[trusted.filetime]]
+criteria = "safe-to-deploy"
+user-id = 1 # Alex Crichton (alexcrichton)
+start = "2019-04-23"
+end = "2026-09-11"
+
+[[trusted.find-msvc-tools]]
+criteria = "safe-to-deploy"
+user-id = 539 # Josh Stone (cuviper)
+start = "2025-08-29"
+end = "2026-09-11"
+
+[[trusted.flate2]]
+criteria = "safe-to-deploy"
+user-id = 980 # Sebastian Thiel (Byron)
+start = "2023-08-15"
+end = "2026-09-11"
+
+[[trusted.getopts]]
+criteria = "safe-to-deploy"
+user-id = 55123 # rust-lang-owner
+start = "2025-06-09"
+end = "2026-09-11"
+
+[[trusted.gix]]
+criteria = "safe-to-deploy"
+user-id = 980 # Sebastian Thiel (Byron)
+start = "2023-02-10"
+end = "2026-09-11"
+
+[[trusted.gix-actor]]
+criteria = "safe-to-deploy"
+user-id = 980 # Sebastian Thiel (Byron)
+start = "2023-02-17"
+end = "2026-09-11"
+
+[[trusted.gix-chunk]]
+criteria = "safe-to-deploy"
+user-id = 980 # Sebastian Thiel (Byron)
+start = "2023-02-17"
+end = "2026-09-11"
+
+[[trusted.gix-command]]
+criteria = "safe-to-deploy"
+user-id = 980 # Sebastian Thiel (Byron)
+start = "2023-02-17"
+end = "2026-09-11"
+
+[[trusted.gix-commitgraph]]
+criteria = "safe-to-deploy"
+user-id = 980 # Sebastian Thiel (Byron)
+start = "2023-02-17"
+end = "2026-09-11"
+
+[[trusted.gix-config]]
+criteria = "safe-to-deploy"
+user-id = 980 # Sebastian Thiel (Byron)
+start = "2023-02-17"
+end = "2026-09-11"
+
+[[trusted.gix-config-value]]
+criteria = "safe-to-deploy"
+user-id = 980 # Sebastian Thiel (Byron)
+start = "2023-02-17"
+end = "2026-09-11"
+
+[[trusted.gix-date]]
+criteria = "safe-to-deploy"
+user-id = 980 # Sebastian Thiel (Byron)
+start = "2023-02-17"
+end = "2026-09-11"
+
+[[trusted.gix-diff]]
+criteria = "safe-to-deploy"
+user-id = 980 # Sebastian Thiel (Byron)
+start = "2023-02-17"
+end = "2026-09-11"
+
+[[trusted.gix-discover]]
+criteria = "safe-to-deploy"
+user-id = 980 # Sebastian Thiel (Byron)
+start = "2023-02-17"
+end = "2026-09-11"
+
+[[trusted.gix-features]]
+criteria = "safe-to-deploy"
+user-id = 980 # Sebastian Thiel (Byron)
+start = "2023-02-17"
+end = "2026-09-11"
+
+[[trusted.gix-fs]]
+criteria = "safe-to-deploy"
+user-id = 980 # Sebastian Thiel (Byron)
+start = "2023-04-19"
+end = "2026-09-11"
+
+[[trusted.gix-glob]]
+criteria = "safe-to-deploy"
+user-id = 980 # Sebastian Thiel (Byron)
+start = "2023-02-17"
+end = "2026-09-11"
+
+[[trusted.gix-hash]]
+criteria = "safe-to-deploy"
+user-id = 980 # Sebastian Thiel (Byron)
+start = "2023-02-17"
+end = "2026-09-11"
+
+[[trusted.gix-hashtable]]
+criteria = "safe-to-deploy"
+user-id = 980 # Sebastian Thiel (Byron)
+start = "2023-02-17"
+end = "2026-09-11"
+
+[[trusted.gix-lock]]
+criteria = "safe-to-deploy"
+user-id = 980 # Sebastian Thiel (Byron)
+start = "2023-02-17"
+end = "2026-09-11"
+
+[[trusted.gix-object]]
+criteria = "safe-to-deploy"
+user-id = 980 # Sebastian Thiel (Byron)
+start = "2023-02-17"
+end = "2026-09-11"
+
+[[trusted.gix-odb]]
+criteria = "safe-to-deploy"
+user-id = 980 # Sebastian Thiel (Byron)
+start = "2023-02-17"
+end = "2026-09-11"
+
+[[trusted.gix-pack]]
+criteria = "safe-to-deploy"
+user-id = 980 # Sebastian Thiel (Byron)
+start = "2023-02-17"
+end = "2026-09-11"
+
+[[trusted.gix-packetline]]
+criteria = "safe-to-deploy"
+user-id = 980 # Sebastian Thiel (Byron)
+start = "2023-02-17"
+end = "2026-09-11"
+
+[[trusted.gix-path]]
+criteria = "safe-to-deploy"
+user-id = 980 # Sebastian Thiel (Byron)
+start = "2023-02-17"
+end = "2026-09-11"
+
+[[trusted.gix-protocol]]
+criteria = "safe-to-deploy"
+user-id = 980 # Sebastian Thiel (Byron)
+start = "2023-02-17"
+end = "2026-09-11"
+
+[[trusted.gix-quote]]
+criteria = "safe-to-deploy"
+user-id = 980 # Sebastian Thiel (Byron)
+start = "2023-02-17"
+end = "2026-09-11"
+
+[[trusted.gix-ref]]
+criteria = "safe-to-deploy"
+user-id = 980 # Sebastian Thiel (Byron)
+start = "2023-02-17"
+end = "2026-09-11"
+
+[[trusted.gix-refspec]]
+criteria = "safe-to-deploy"
+user-id = 980 # Sebastian Thiel (Byron)
+start = "2023-02-17"
+end = "2026-09-11"
+
+[[trusted.gix-revision]]
+criteria = "safe-to-deploy"
+user-id = 980 # Sebastian Thiel (Byron)
+start = "2023-02-17"
+end = "2026-09-11"
+
+[[trusted.gix-revwalk]]
+criteria = "safe-to-deploy"
+user-id = 980 # Sebastian Thiel (Byron)
+start = "2023-06-10"
+end = "2026-09-11"
+
+[[trusted.gix-sec]]
+criteria = "safe-to-deploy"
+user-id = 980 # Sebastian Thiel (Byron)
+start = "2023-02-17"
+end = "2026-09-11"
+
+[[trusted.gix-shallow]]
+criteria = "safe-to-deploy"
+user-id = 980 # Sebastian Thiel (Byron)
+start = "2024-12-22"
+end = "2026-09-11"
+
+[[trusted.gix-tempfile]]
+criteria = "safe-to-deploy"
+user-id = 980 # Sebastian Thiel (Byron)
+start = "2023-02-17"
+end = "2026-09-11"
+
+[[trusted.gix-trace]]
+criteria = "safe-to-deploy"
+user-id = 980 # Sebastian Thiel (Byron)
+start = "2023-06-16"
+end = "2026-09-11"
+
+[[trusted.gix-transport]]
+criteria = "safe-to-deploy"
+user-id = 980 # Sebastian Thiel (Byron)
+start = "2023-02-17"
+end = "2026-09-11"
+
+[[trusted.gix-traverse]]
+criteria = "safe-to-deploy"
+user-id = 980 # Sebastian Thiel (Byron)
+start = "2023-02-17"
+end = "2026-09-11"
+
+[[trusted.gix-url]]
+criteria = "safe-to-deploy"
+user-id = 980 # Sebastian Thiel (Byron)
+start = "2023-02-17"
+end = "2026-09-11"
+
+[[trusted.gix-utils]]
+criteria = "safe-to-deploy"
+user-id = 980 # Sebastian Thiel (Byron)
+start = "2023-04-19"
+end = "2026-09-11"
+
+[[trusted.gix-validate]]
+criteria = "safe-to-deploy"
+user-id = 980 # Sebastian Thiel (Byron)
+start = "2023-02-17"
+end = "2026-09-11"
+
+[[trusted.group]]
+criteria = "safe-to-deploy"
+user-id = 1244 # ebfull
+start = "2019-10-08"
+end = "2026-09-11"
+
+[[trusted.h2]]
+criteria = "safe-to-deploy"
+user-id = 359 # Sean McArthur (seanmonstar)
+start = "2019-03-13"
+end = "2026-09-11"
+
+[[trusted.hashbrown]]
+criteria = "safe-to-deploy"
+user-id = 2915 # Amanieu d'Antras (Amanieu)
+start = "2019-04-02"
+end = "2026-09-11"
+
+[[trusted.hashbrown]]
+criteria = "safe-to-deploy"
+user-id = 55123 # rust-lang-owner
+start = "2025-04-30"
+end = "2026-09-11"
+
+[[trusted.http]]
+criteria = "safe-to-deploy"
+user-id = 359 # Sean McArthur (seanmonstar)
+start = "2019-04-05"
+end = "2026-09-11"
+
+[[trusted.http-body-util]]
+criteria = "safe-to-deploy"
+user-id = 359 # Sean McArthur (seanmonstar)
+start = "2022-10-25"
+end = "2026-09-11"
+
+[[trusted.httparse]]
+criteria = "safe-to-deploy"
+user-id = 359 # Sean McArthur (seanmonstar)
+start = "2019-07-03"
+end = "2026-09-11"
+
+[[trusted.hyper]]
+criteria = "safe-to-deploy"
+user-id = 359 # Sean McArthur (seanmonstar)
+start = "2019-03-01"
+end = "2026-09-11"
+
+[[trusted.hyper-tls]]
+criteria = "safe-to-deploy"
+user-id = 359 # Sean McArthur (seanmonstar)
+start = "2019-03-19"
+end = "2026-09-11"
+
+[[trusted.hyper-util]]
+criteria = "safe-to-deploy"
+user-id = 359 # Sean McArthur (seanmonstar)
+start = "2022-01-15"
+end = "2026-09-11"
+
+[[trusted.identity_dbus_broker]]
+criteria = "safe-to-deploy"
+user-id = 247655 # David Mulder (dmulder)
+start = "2024-09-11"
+end = "2026-09-11"
+
+[[trusted.indexmap]]
+criteria = "safe-to-deploy"
+user-id = 539 # Josh Stone (cuviper)
+start = "2020-01-15"
+end = "2026-09-11"
+
+[[trusted.is_terminal_polyfill]]
+criteria = "safe-to-deploy"
+user-id = 6743 # Ed Page (epage)
+start = "2024-05-02"
+end = "2026-09-11"
+
+[[trusted.jiff]]
+criteria = "safe-to-deploy"
+user-id = 189 # Andrew Gallant (BurntSushi)
+start = "2024-02-17"
+end = "2026-09-11"
+
+[[trusted.jiff-static]]
+criteria = "safe-to-deploy"
+user-id = 189 # Andrew Gallant (BurntSushi)
+start = "2025-03-06"
+end = "2026-09-11"
+
+[[trusted.jiff-tzdb]]
+criteria = "safe-to-deploy"
+user-id = 189 # Andrew Gallant (BurntSushi)
+start = "2024-07-09"
+end = "2026-09-11"
+
+[[trusted.jiff-tzdb-platform]]
+criteria = "safe-to-deploy"
+user-id = 189 # Andrew Gallant (BurntSushi)
+start = "2024-07-09"
+end = "2026-09-11"
+
+[[trusted.jobserver]]
+criteria = "safe-to-deploy"
+user-id = 55123 # rust-lang-owner
+start = "2024-07-23"
+end = "2026-09-11"
+
+[[trusted.js-sys]]
+criteria = "safe-to-deploy"
+user-id = 1 # Alex Crichton (alexcrichton)
+start = "2019-03-04"
+end = "2026-09-11"
+
+[[trusted.kanidm_build_profiles]]
+criteria = "safe-to-deploy"
+user-id = 31100 # Firstyear (Firstyear)
+start = "2023-08-01"
+end = "2026-09-11"
+
+[[trusted.kanidm_lib_crypto]]
+criteria = "safe-to-deploy"
+user-id = 31100 # Firstyear (Firstyear)
+start = "2024-02-07"
+end = "2026-09-11"
+
+[[trusted.kanidm_lib_file_permissions]]
+criteria = "safe-to-deploy"
+user-id = 31100 # Firstyear (Firstyear)
+start = "2024-02-07"
+end = "2026-09-11"
+
+[[trusted.kanidm_proto]]
+criteria = "safe-to-deploy"
+user-id = 31100 # Firstyear (Firstyear)
+start = "2019-12-17"
+end = "2026-09-11"
+
+[[trusted.kanidm_utils_users]]
+criteria = "safe-to-deploy"
+user-id = 31100 # Firstyear (Firstyear)
+start = "2024-02-07"
+end = "2026-09-11"
+
+[[trusted.libc]]
+criteria = "safe-to-deploy"
+user-id = 55123 # rust-lang-owner
+start = "2024-08-15"
+end = "2026-09-11"
+
+[[trusted.libm]]
+criteria = "safe-to-deploy"
+user-id = 55123 # rust-lang-owner
+start = "2024-10-26"
+end = "2026-09-11"
+
+[[trusted.linux-raw-sys]]
+criteria = "safe-to-deploy"
+user-id = 6825 # Dan Gohman (sunfishcode)
+start = "2021-06-12"
+end = "2026-09-11"
+
+[[trusted.lock_api]]
+criteria = "safe-to-deploy"
+user-id = 2915 # Amanieu d'Antras (Amanieu)
+start = "2019-05-04"
+end = "2026-09-11"
+
+[[trusted.memchr]]
+criteria = "safe-to-deploy"
+user-id = 189 # Andrew Gallant (BurntSushi)
+start = "2019-07-07"
+end = "2026-09-11"
+
+[[trusted.mime]]
+criteria = "safe-to-deploy"
+user-id = 359 # Sean McArthur (seanmonstar)
+start = "2019-09-09"
+end = "2026-09-11"
+
+[[trusted.mio]]
+criteria = "safe-to-deploy"
+user-id = 6025 # Thomas de Zeeuw (Thomasdezeeuw)
+start = "2019-12-17"
+end = "2026-09-11"
+
+[[trusted.new_debug_unreachable]]
+criteria = "safe-to-deploy"
+user-id = 2017 # Matt Brubeck (mbrubeck)
+start = "2019-02-26"
+end = "2026-09-11"
+
+[[trusted.notify]]
+criteria = "safe-to-deploy"
+user-id = 51017 # Yuki Okushi (JohnTitor)
+start = "2020-01-07"
+end = "2026-09-11"
+
+[[trusted.num]]
+criteria = "safe-to-deploy"
+user-id = 539 # Josh Stone (cuviper)
+start = "2020-01-10"
+end = "2026-09-11"
+
+[[trusted.num-bigint]]
+criteria = "safe-to-deploy"
+user-id = 539 # Josh Stone (cuviper)
+start = "2019-09-04"
+end = "2026-09-11"
+
+[[trusted.num-complex]]
+criteria = "safe-to-deploy"
+user-id = 539 # Josh Stone (cuviper)
+start = "2019-06-10"
+end = "2026-09-11"
+
+[[trusted.once_cell_polyfill]]
+criteria = "safe-to-deploy"
+user-id = 6743 # Ed Page (epage)
+start = "2025-05-22"
+end = "2026-09-11"
+
+[[trusted.openssl-probe]]
+criteria = "safe-to-deploy"
+user-id = 1 # Alex Crichton (alexcrichton)
+start = "2020-08-04"
+end = "2026-09-11"
+
+[[trusted.parking_lot]]
+criteria = "safe-to-deploy"
+user-id = 2915 # Amanieu d'Antras (Amanieu)
+start = "2019-05-04"
+end = "2026-09-11"
+
+[[trusted.parking_lot_core]]
+criteria = "safe-to-deploy"
+user-id = 2915 # Amanieu d'Antras (Amanieu)
+start = "2019-05-04"
+end = "2026-09-11"
+
+[[trusted.paste]]
+criteria = "safe-to-deploy"
+user-id = 3618 # David Tolnay (dtolnay)
+start = "2019-03-19"
+end = "2026-09-11"
+
+[[trusted.phf]]
+criteria = "safe-to-deploy"
+user-id = 51017 # Yuki Okushi (JohnTitor)
+start = "2021-06-17"
+end = "2026-09-11"
+
+[[trusted.phf_codegen]]
+criteria = "safe-to-deploy"
+user-id = 51017 # Yuki Okushi (JohnTitor)
+start = "2021-06-17"
+end = "2026-09-11"
+
+[[trusted.phf_generator]]
+criteria = "safe-to-deploy"
+user-id = 51017 # Yuki Okushi (JohnTitor)
+start = "2021-06-17"
+end = "2026-09-11"
+
+[[trusted.phf_macros]]
+criteria = "safe-to-deploy"
+user-id = 51017 # Yuki Okushi (JohnTitor)
+start = "2021-06-17"
+end = "2026-09-11"
+
+[[trusted.phf_shared]]
+criteria = "safe-to-deploy"
+user-id = 51017 # Yuki Okushi (JohnTitor)
+start = "2021-06-17"
+end = "2026-09-11"
+
+[[trusted.prettyplease]]
+criteria = "safe-to-deploy"
+user-id = 3618 # David Tolnay (dtolnay)
+start = "2022-01-04"
+end = "2026-09-11"
+
+[[trusted.proc-macro2]]
+criteria = "safe-to-deploy"
+user-id = 3618 # David Tolnay (dtolnay)
+start = "2019-04-23"
+end = "2026-09-11"
+
+[[trusted.prodash]]
+criteria = "safe-to-deploy"
+user-id = 980 # Sebastian Thiel (Byron)
+start = "2020-02-16"
+end = "2026-09-11"
+
+[[trusted.quote]]
+criteria = "safe-to-deploy"
+user-id = 3618 # David Tolnay (dtolnay)
+start = "2019-04-09"
+end = "2026-09-11"
+
+[[trusted.ref-cast]]
+criteria = "safe-to-deploy"
+user-id = 3618 # David Tolnay (dtolnay)
+start = "2019-05-05"
+end = "2026-09-11"
+
+[[trusted.ref-cast-impl]]
+criteria = "safe-to-deploy"
+user-id = 3618 # David Tolnay (dtolnay)
+start = "2019-05-05"
+end = "2026-09-11"
+
+[[trusted.regex]]
+criteria = "safe-to-deploy"
+user-id = 189 # Andrew Gallant (BurntSushi)
+start = "2019-02-27"
+end = "2026-09-11"
+
+[[trusted.regex-automata]]
+criteria = "safe-to-deploy"
+user-id = 189 # Andrew Gallant (BurntSushi)
+start = "2019-02-25"
+end = "2026-09-11"
+
+[[trusted.reqwest]]
+criteria = "safe-to-deploy"
+user-id = 359 # Sean McArthur (seanmonstar)
+start = "2019-03-04"
+end = "2026-09-11"
+
+[[trusted.rustix]]
+criteria = "safe-to-deploy"
+user-id = 6825 # Dan Gohman (sunfishcode)
+start = "2021-10-29"
+end = "2026-09-11"
+
+[[trusted.ryu]]
+criteria = "safe-to-deploy"
+user-id = 3618 # David Tolnay (dtolnay)
+start = "2019-05-02"
+end = "2026-09-11"
+
+[[trusted.same-file]]
+criteria = "safe-to-deploy"
+user-id = 189 # Andrew Gallant (BurntSushi)
+start = "2019-07-16"
+end = "2026-09-11"
+
+[[trusted.scim_proto]]
+criteria = "safe-to-deploy"
+user-id = 31100 # Firstyear (Firstyear)
+start = "2023-01-25"
+end = "2026-09-11"
+
+[[trusted.scopeguard]]
+criteria = "safe-to-deploy"
+user-id = 2915 # Amanieu d'Antras (Amanieu)
+start = "2020-02-16"
+end = "2026-09-11"
+
+[[trusted.serde_bytes]]
+criteria = "safe-to-deploy"
+user-id = 3618 # David Tolnay (dtolnay)
+start = "2019-02-25"
+end = "2026-09-11"
+
+[[trusted.serde_cbor_2]]
+criteria = "safe-to-deploy"
+user-id = 31100 # Firstyear (Firstyear)
+start = "2022-09-16"
+end = "2026-09-11"
+
+[[trusted.serde_json]]
+criteria = "safe-to-deploy"
+user-id = 3618 # David Tolnay (dtolnay)
+start = "2019-02-28"
+end = "2026-09-11"
+
+[[trusted.serde_repr]]
+criteria = "safe-to-deploy"
+user-id = 3618 # David Tolnay (dtolnay)
+start = "2019-04-26"
+end = "2026-09-11"
+
+[[trusted.serde_spanned]]
+criteria = "safe-to-deploy"
+user-id = 6743 # Ed Page (epage)
+start = "2023-01-20"
+end = "2026-09-11"
+
+[[trusted.sketching]]
+criteria = "safe-to-deploy"
+user-id = 31100 # Firstyear (Firstyear)
+start = "2024-02-07"
+end = "2026-09-11"
+
+[[trusted.slab]]
+criteria = "safe-to-deploy"
+user-id = 6741 # Alice Ryhl (Darksonn)
+start = "2021-10-13"
+end = "2026-09-11"
+
+[[trusted.smallvec]]
+criteria = "safe-to-deploy"
+user-id = 2017 # Matt Brubeck (mbrubeck)
+start = "2019-10-28"
+end = "2026-09-11"
+
+[[trusted.socket2]]
+criteria = "safe-to-deploy"
+user-id = 6025 # Thomas de Zeeuw (Thomasdezeeuw)
+start = "2020-09-09"
+end = "2026-09-11"
+
+[[trusted.sshkey-attest]]
+criteria = "safe-to-deploy"
+user-id = 31100 # Firstyear (Firstyear)
+start = "2024-05-01"
+end = "2026-09-11"
+
+[[trusted.syn]]
+criteria = "safe-to-deploy"
+user-id = 3618 # David Tolnay (dtolnay)
+start = "2019-03-01"
+end = "2026-09-11"
+
+[[trusted.target-lexicon]]
+criteria = "safe-to-deploy"
+user-id = 696 # Nick Fitzgerald (fitzgen)
+start = "2024-07-30"
+end = "2026-09-11"
+
+[[trusted.thiserror]]
+criteria = "safe-to-deploy"
+user-id = 3618 # David Tolnay (dtolnay)
+start = "2019-10-09"
+end = "2026-09-11"
+
+[[trusted.thiserror-impl]]
+criteria = "safe-to-deploy"
+user-id = 3618 # David Tolnay (dtolnay)
+start = "2019-10-09"
+end = "2026-09-11"
+
+[[trusted.tokio]]
+criteria = "safe-to-deploy"
+user-id = 6741 # Alice Ryhl (Darksonn)
+start = "2020-12-25"
+end = "2026-09-11"
+
+[[trusted.tokio-macros]]
+criteria = "safe-to-deploy"
+user-id = 6741 # Alice Ryhl (Darksonn)
+start = "2020-10-26"
+end = "2026-09-11"
+
+[[trusted.tokio-util]]
+criteria = "safe-to-deploy"
+user-id = 6741 # Alice Ryhl (Darksonn)
+start = "2021-01-12"
+end = "2026-09-11"
+
+[[trusted.toml]]
+criteria = "safe-to-deploy"
+user-id = 6743 # Ed Page (epage)
+start = "2022-12-14"
+end = "2026-09-11"
+
+[[trusted.toml_datetime]]
+criteria = "safe-to-deploy"
+user-id = 6743 # Ed Page (epage)
+start = "2022-10-21"
+end = "2026-09-11"
+
+[[trusted.toml_edit]]
+criteria = "safe-to-deploy"
+user-id = 6743 # Ed Page (epage)
+start = "2021-09-13"
+end = "2026-09-11"
+
+[[trusted.toml_write]]
+criteria = "safe-to-deploy"
+user-id = 6743 # Ed Page (epage)
+start = "2025-04-25"
+end = "2026-09-11"
+
+[[trusted.tower]]
+criteria = "safe-to-deploy"
+user-id = 359 # Sean McArthur (seanmonstar)
+start = "2024-09-09"
+end = "2026-09-11"
+
+[[trusted.tower-http]]
+criteria = "safe-to-deploy"
+user-id = 359 # Sean McArthur (seanmonstar)
+start = "2024-09-23"
+end = "2026-09-11"
+
+[[trusted.tower-layer]]
+criteria = "safe-to-deploy"
+user-id = 10
+start = "2019-04-27"
+end = "2026-09-11"
+
+[[trusted.walkdir]]
+criteria = "safe-to-deploy"
+user-id = 189 # Andrew Gallant (BurntSushi)
+start = "2019-06-09"
+end = "2026-09-11"
+
+[[trusted.wasi]]
+criteria = "safe-to-deploy"
+user-id = 1 # Alex Crichton (alexcrichton)
+start = "2020-06-03"
+end = "2026-09-11"
+
+[[trusted.wasm-bindgen]]
+criteria = "safe-to-deploy"
+user-id = 1 # Alex Crichton (alexcrichton)
+start = "2019-03-04"
+end = "2026-09-11"
+
+[[trusted.wasm-bindgen-backend]]
+criteria = "safe-to-deploy"
+user-id = 1 # Alex Crichton (alexcrichton)
+start = "2019-03-04"
+end = "2026-09-11"
+
+[[trusted.wasm-bindgen-futures]]
+criteria = "safe-to-deploy"
+user-id = 1 # Alex Crichton (alexcrichton)
+start = "2019-03-04"
+end = "2026-09-11"
+
+[[trusted.wasm-bindgen-macro]]
+criteria = "safe-to-deploy"
+user-id = 1 # Alex Crichton (alexcrichton)
+start = "2019-03-04"
+end = "2026-09-11"
+
+[[trusted.wasm-bindgen-macro-support]]
+criteria = "safe-to-deploy"
+user-id = 1 # Alex Crichton (alexcrichton)
+start = "2019-03-04"
+end = "2026-09-11"
+
+[[trusted.wasm-bindgen-shared]]
+criteria = "safe-to-deploy"
+user-id = 1 # Alex Crichton (alexcrichton)
+start = "2019-03-04"
+end = "2026-09-11"
+
+[[trusted.web-sys]]
+criteria = "safe-to-deploy"
+user-id = 1 # Alex Crichton (alexcrichton)
+start = "2019-03-04"
+end = "2026-09-11"
+
+[[trusted.webauthn-attestation-ca]]
+criteria = "safe-to-deploy"
+user-id = 31100 # Firstyear (Firstyear)
+start = "2023-10-31"
+end = "2026-09-11"
+
+[[trusted.webauthn-rs-core]]
+criteria = "safe-to-deploy"
+user-id = 31100 # Firstyear (Firstyear)
+start = "2022-07-08"
+end = "2026-09-11"
+
+[[trusted.webauthn-rs-proto]]
+criteria = "safe-to-deploy"
+user-id = 31100 # Firstyear (Firstyear)
+start = "2022-07-08"
+end = "2026-09-11"
+
+[[trusted.winapi-util]]
+criteria = "safe-to-deploy"
+user-id = 189 # Andrew Gallant (BurntSushi)
+start = "2020-01-11"
+end = "2026-09-11"
+
+[[trusted.windows-core]]
+criteria = "safe-to-deploy"
+user-id = 64539 # Kenny Kerr (kennykerr)
+start = "2021-11-15"
+end = "2026-09-11"
+
+[[trusted.windows-implement]]
+criteria = "safe-to-deploy"
+user-id = 64539 # Kenny Kerr (kennykerr)
+start = "2022-01-27"
+end = "2026-09-11"
+
+[[trusted.windows-interface]]
+criteria = "safe-to-deploy"
+user-id = 64539 # Kenny Kerr (kennykerr)
+start = "2022-02-18"
+end = "2026-09-11"
+
+[[trusted.windows-link]]
+criteria = "safe-to-deploy"
+user-id = 64539 # Kenny Kerr (kennykerr)
+start = "2024-07-17"
+end = "2026-09-11"
+
+[[trusted.windows-registry]]
+criteria = "safe-to-deploy"
+user-id = 64539 # Kenny Kerr (kennykerr)
+start = "2024-02-15"
+end = "2026-09-11"
+
+[[trusted.windows-result]]
+criteria = "safe-to-deploy"
+user-id = 64539 # Kenny Kerr (kennykerr)
+start = "2024-02-02"
+end = "2026-09-11"
+
+[[trusted.windows-strings]]
+criteria = "safe-to-deploy"
+user-id = 64539 # Kenny Kerr (kennykerr)
+start = "2024-02-02"
+end = "2026-09-11"
+
+[[trusted.windows-sys]]
+criteria = "safe-to-deploy"
+user-id = 64539 # Kenny Kerr (kennykerr)
+start = "2021-11-15"
+end = "2026-09-11"
+
+[[trusted.windows-targets]]
+criteria = "safe-to-deploy"
+user-id = 64539 # Kenny Kerr (kennykerr)
+start = "2022-09-09"
+end = "2026-09-11"
+
+[[trusted.windows_aarch64_gnullvm]]
+criteria = "safe-to-deploy"
+user-id = 64539 # Kenny Kerr (kennykerr)
+start = "2022-09-01"
+end = "2026-09-11"
+
+[[trusted.windows_aarch64_msvc]]
+criteria = "safe-to-deploy"
+user-id = 64539 # Kenny Kerr (kennykerr)
+start = "2021-11-05"
+end = "2026-09-11"
+
+[[trusted.windows_i686_gnu]]
+criteria = "safe-to-deploy"
+user-id = 64539 # Kenny Kerr (kennykerr)
+start = "2021-10-28"
+end = "2026-09-11"
+
+[[trusted.windows_i686_gnullvm]]
+criteria = "safe-to-deploy"
+user-id = 64539 # Kenny Kerr (kennykerr)
+start = "2024-04-02"
+end = "2026-09-11"
+
+[[trusted.windows_i686_msvc]]
+criteria = "safe-to-deploy"
+user-id = 64539 # Kenny Kerr (kennykerr)
+start = "2021-10-27"
+end = "2026-09-11"
+
+[[trusted.windows_x86_64_gnu]]
+criteria = "safe-to-deploy"
+user-id = 64539 # Kenny Kerr (kennykerr)
+start = "2021-10-28"
+end = "2026-09-11"
+
+[[trusted.windows_x86_64_gnullvm]]
+criteria = "safe-to-deploy"
+user-id = 64539 # Kenny Kerr (kennykerr)
+start = "2022-09-01"
+end = "2026-09-11"
+
+[[trusted.windows_x86_64_msvc]]
+criteria = "safe-to-deploy"
+user-id = 64539 # Kenny Kerr (kennykerr)
+start = "2021-10-27"
+end = "2026-09-11"
+
+[[trusted.winnow]]
+criteria = "safe-to-deploy"
+user-id = 6743 # Ed Page (epage)
+start = "2023-02-22"
+end = "2026-09-11"
