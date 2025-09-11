@@ -949,7 +949,7 @@ async fn main() -> ExitCode {
                     "Client config missing from {} - cannot start up. Quitting.",
                     cfg_path_str
                 );
-                let diag = file_permissions::diagnose_path(cfg_path.as_ref());
+                let diag = kanidm_lib_file_permissions::diagnose_path(cfg_path.as_ref());
                 info!(%diag);
                 return ExitCode::FAILURE
             } else {
@@ -957,12 +957,12 @@ async fn main() -> ExitCode {
                     Ok(v) => v,
                     Err(e) => {
                         error!("Unable to read metadata for {} - {:?}", cfg_path_str, e);
-                        let diag = file_permissions::diagnose_path(cfg_path.as_ref());
+                        let diag = kanidm_lib_file_permissions::diagnose_path(cfg_path.as_ref());
                         info!(%diag);
                         return ExitCode::FAILURE
                     }
                 };
-                if !file_permissions::readonly(&cfg_meta) {
+                if !kanidm_lib_file_permissions::readonly(&cfg_meta) {
                     warn!("permissions on {} may not be secure. Should be readonly to running uid. This could be a security risk ...",
                         cfg_path_str
                         );
@@ -1006,7 +1006,7 @@ async fn main() -> ExitCode {
                                 .to_str()
                                 .unwrap_or("<db_parent_path invalid>")
                         );
-                        let diag = file_permissions::diagnose_path(db_path.as_ref());
+                        let diag = kanidm_lib_file_permissions::diagnose_path(db_path.as_ref());
                         info!(%diag);
                         return ExitCode::FAILURE
                     }
@@ -1036,7 +1036,7 @@ async fn main() -> ExitCode {
                         );
                         return ExitCode::FAILURE
                     }
-                    if file_permissions::readonly(&i_meta) {
+                    if kanidm_lib_file_permissions::readonly(&i_meta) {
                         warn!("WARNING: DB folder permissions on {} indicate it may not be RW. This could cause the server start up to fail!", db_par_path_buf.to_str()
                         .unwrap_or("<db_par_path_buf invalid>")
                         );
@@ -1056,7 +1056,7 @@ async fn main() -> ExitCode {
                             "Refusing to run - DB path {} already exists and is not a file.",
                             db_path.to_str().unwrap_or("<db_path invalid>")
                         );
-                        let diag = file_permissions::diagnose_path(db_path.as_ref());
+                        let diag = kanidm_lib_file_permissions::diagnose_path(db_path.as_ref());
                         info!(%diag);
                         return ExitCode::FAILURE
                     };
@@ -1069,7 +1069,7 @@ async fn main() -> ExitCode {
                                 db_path.to_str().unwrap_or("<db_path invalid>"),
                                 e
                             );
-                            let diag = file_permissions::diagnose_path(db_path.as_ref());
+                            let diag = kanidm_lib_file_permissions::diagnose_path(db_path.as_ref());
                             info!(%diag);
                             return ExitCode::FAILURE
                         }
