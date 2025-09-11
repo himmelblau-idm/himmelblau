@@ -38,6 +38,10 @@ Please include:
 5. A new release is published, including CVE(s) and changelog entry.
 6. Public GitHub Security Advisory is published post-fix.
 
+Maintainers follow a published Incident Response Checklist with phase gates (Lead Validation → Mitigation → Scoping → Notification).
+- Maintainers: see [Incident Response Checklist](./incident-response.md).
+- Users: during notifications we will include a short **How to check if you’re affected** guide.
+
 We follow responsible disclosure practices and work closely with reporters to ensure a safe and timely resolution.
 ## Contact
 
