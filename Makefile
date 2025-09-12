@@ -97,6 +97,10 @@ dockerfiles:
 
 .PHONY: package deb rpm $(DEB_TARGETS) $(RPM_TARGETS) ${SLE_TARGETS} dockerfiles install uninstall help sbom
 
+check-licenses: ## Validate dependant licenses comply with GPLv3
+	cargo deny -V >/dev/null || (echo "cargo-deny required" && cargo install cargo-deny)
+	cargo deny --all-features check licenses
+
 sbom: .packaging ## Generate a Software Bill of Materials
 	cargo sbom -V >/dev/null || (echo "cargo-sbom required" && cargo install cargo-sbom)
 	cargo sbom > ./packaging/sbom.json
