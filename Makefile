@@ -95,9 +95,13 @@ uninstall: ## Uninstall Himmelblau packages from this host (apt/dnf/yum/zypper a
 dockerfiles:
 	python3 scripts/gen_dockerfiles.py --out ./images/
 
-.PHONY: package deb rpm $(DEB_TARGETS) $(RPM_TARGETS) ${SLE_TARGETS} dockerfiles install uninstall help
+.PHONY: package deb rpm $(DEB_TARGETS) $(RPM_TARGETS) ${SLE_TARGETS} dockerfiles install uninstall help sbom
 
-package: deb rpm ## Build packages for all supported distros (DEB+RPM)
+sbom: .packaging ## Generate a Software Bill of Materials
+	cargo sbom -V >/dev/null || (echo "cargo-sbom required" && cargo install cargo-sbom)
+	cargo sbom > ./packaging/sbom.json
+
+package: deb rpm sbom ## Build packages for all supported distros (DEB+RPM)
 	ls ./packaging/
 
 deb: $(DEB_TARGETS) ## Build all DEB targets
