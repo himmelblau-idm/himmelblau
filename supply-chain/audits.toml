@@ -64,10 +64,30 @@ user-id = 31100 # Firstyear (Firstyear)
 start = "2024-02-07"
 end = "2026-09-11"
 
+[[audits.cc]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+version = "1.2.37"
+
 [[audits.libhimmelblau]]
 who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
 version = "0.7.16"
+
+[[audits.semver]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+version = "1.0.27"
+
+[[audits.serde]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+version = "1.0.224"
+
+[[audits.serde_derive]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+version = "1.0.224"
 
 [[trusted.aho-corasick]]
 criteria = "safe-to-deploy"
@@ -866,6 +886,12 @@ criteria = "safe-to-deploy"
 user-id = 31100 # Firstyear (Firstyear)
 start = "2022-09-16"
 end = "2026-09-11"
+
+[[trusted.serde_core]]
+criteria = "safe-to-deploy"
+user-id = 3618 # David Tolnay (dtolnay)
+start = "2025-09-13"
+end = "2026-09-15"
 
 [[trusted.serde_json]]
 criteria = "safe-to-deploy"
