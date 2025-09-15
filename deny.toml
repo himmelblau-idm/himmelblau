@@ -26,5 +26,11 @@ allow = [
 
   "Unicode-3.0",
 ]
+exceptions = [
+  # Exception for aws-lc-sys, since this appears to be incorrect,
+  # according to the project page:
+  # https://github.com/aws/aws-lc-rs?tab=License-1-ov-file
+  { crate = "aws-lc-sys", allow = ["OpenSSL"] },
+]
 unused-allowed-license = "allow"
 confidence-threshold = 0.8

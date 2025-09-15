@@ -64,7 +64,10 @@ user-id = 31100 # Firstyear (Firstyear)
 start = "2024-02-07"
 end = "2026-09-11"
 
-[audits]
+[[audits.libhimmelblau]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+version = "0.7.16"
 
 [[trusted.aho-corasick]]
 criteria = "safe-to-deploy"
