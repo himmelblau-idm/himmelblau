@@ -797,7 +797,7 @@ where
         }
     }
 
-    async fn get_groupmembers(&self, g_uuid: Uuid) -> Vec<String> {
+    pub async fn get_groupmembers(&self, g_uuid: Uuid) -> Vec<String> {
         let mut dbtxn = self.db.write().await;
 
         dbtxn

@@ -825,6 +825,24 @@ impl HimmelblauConfig {
         }
         res
     }
+
+    pub fn get_sudo_groups(&self) -> Vec<String> {
+        let mut sudo_groups = vec![];
+        for section in self.config.sections() {
+            sudo_groups.extend(match self.config.get(&section, "sudo_groups") {
+                Some(val) => val.split(',').map(|s| s.trim().to_string()).collect(),
+                None => vec![],
+            });
+        }
+        sudo_groups
+    }
+
+    pub fn get_local_sudo_group(&self) -> String {
+        match self.config.get("global", "local_sudo_group") {
+            Some(val) => val,
+            None => "sudo".to_string(),
+        }
+    }
 }
 
 impl fmt::Debug for HimmelblauConfig {

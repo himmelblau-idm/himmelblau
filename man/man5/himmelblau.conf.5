@@ -87,6 +87,13 @@ A comma-separated list of Entra Id Users and Groups permitted to access the syst
 pam_allow_groups = f3c9a7e4-7d5a-47e8-832f-3d2d92abcd12,5ba4ef1d-e454-4f43-ba7c-6fe6f1601915,admin@himmelblau-idm.org
 
 .TP
+.B local_sudo_group
+.RE
+The local group that should be given to users in any of the groups specified in sudo_groups.
+Only has an affect if sudo_groups is set.
+Removes group from user if they are no longer a member of the specified entra group.
+
+.TP
 .B id_attr_map
 .RE
 Specify whether to map uid/gid based on the object name, the object uuid, or based on the rfc2307 schema extension attributes synchronized from an on-prem Active Directory instance. Mapping by name or by rfc2307 is recommeneded.
@@ -586,6 +593,15 @@ is not set, this app_id will also be used for requesting access tokens for the l
 .EXAMPLES
 [example.com]
 app_id = d023f7aa-d214-4b59-911d-6074de623765
+
+.TP
+.B sudo_groups
+.RE
+A comma separated list of entra groups that should have access to sudo.
+If local_sudo_group is not set, the local group 'sudo' will be used.
+
+.EXAMPLES
+sudo_groups = f3c9a7e4-7d5a-47e8-832f-3d2d92abcd12,5ba4ef1d-e454-4f43-ba7c-6fe6f1601915
 
 .SH SEE ALSO
 .BR himmelblaud(8),
