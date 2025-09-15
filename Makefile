@@ -106,8 +106,39 @@ package: deb rpm sbom ## Build packages for all supported distros (DEB+RPM)
 
 deb: $(DEB_TARGETS) ## Build all DEB targets
 
-rpm: $(RPM_TARGETS) $(SLE_TARGETS) ## Build all RPM targets; then sign RPMS with rpmsign
-	rpmsign --addsign ./packaging/*.rpm
+GPG_KEY_RSA_EL8   := 0xFFE471BA97CD96ED7330E0B4F5A25D2D6AA97EC9
+GPG_KEY_ED25519   := 0x3D46C88168B2FF8D75D0B1786CCA48F23916FC03
+rpm: $(RPM_TARGETS) $(SLE_TARGETS) sign-rpms ## Build all RPM targets; then sign RPMS with rpmsign
+
+# Sign EL8/SLE15 with RSA (older rpm doesn’t support Ed25519)
+sign-el8-sle:
+	@set -e; shopt -s nullglob; \
+	el8_sle_pkgs=(./packaging/*rocky8*.rpm); \
+	if [ $${#el8_sle_pkgs[@]} -gt 0 ]; then \
+	  echo "Signing EL8 with $(GPG_KEY_RSA_EL8)"; \
+	  rpmsign --define "_gpg_name $(GPG_KEY_RSA_EL8)" --addsign "$${el8_sle_pkgs[@]}"; \
+	else \
+	  echo "No EL8 RPMs to sign."; \
+	fi
+
+# Sign everything else with Ed25519
+sign-others:
+	@set -e; shopt -s nullglob; \
+	all=(./packaging/*.rpm); \
+	excl=(./packaging/*rocky8*.rpm); \
+	sign_list=(); \
+	for f in "$${all[@]}"; do \
+	  skip=0; for e in "$${excl[@]}"; do [[ "$$f" == "$$e" ]] && skip=1 && break; done; \
+	  [ $$skip -eq 0 ] && sign_list+=("$$f"); \
+	done; \
+	if [ $${#sign_list[@]} -gt 0 ]; then \
+	  echo "Signing non-EL8 with $(GPG_KEY_ED25519)"; \
+	  rpmsign --define "_gpg_name $(GPG_KEY_ED25519)" --addsign "$${sign_list[@]}"; \
+	else \
+	  echo "No non-EL8 RPMs to sign."; \
+	fi
+
+sign-rpms: sign-el8-sle sign-others
 
 $(DEB_TARGETS): %: .packaging dockerfiles
 	@echo "Building Ubuntu $@ packages"
