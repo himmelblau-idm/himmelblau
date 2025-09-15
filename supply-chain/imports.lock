@@ -791,23 +791,9 @@ user-id = 2017
 user-login = "mbrubeck"
 user-name = "Matt Brubeck"
 
-[[publisher.num]]
-version = "0.4.3"
-when = "2024-05-08"
-user-id = 539
-user-login = "cuviper"
-user-name = "Josh Stone"
-
 [[publisher.num-bigint]]
 version = "0.4.6"
 when = "2024-06-27"
-user-id = 539
-user-login = "cuviper"
-user-name = "Josh Stone"
-
-[[publisher.num-complex]]
-version = "0.4.6"
-when = "2024-05-07"
 user-id = 539
 user-login = "cuviper"
 user-name = "Josh Stone"
@@ -1179,13 +1165,6 @@ user-name = "Manish Goregaokar"
 [[publisher.unicode-width]]
 version = "0.2.1"
 when = "2025-06-09"
-user-id = 1139
-user-login = "Manishearth"
-user-name = "Manish Goregaokar"
-
-[[publisher.unicode-xid]]
-version = "0.2.6"
-when = "2024-09-19"
 user-id = 1139
 user-login = "Manishearth"
 user-name = "Manish Goregaokar"
