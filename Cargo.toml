@@ -36,12 +36,12 @@ libc = "^0.2.175"
 pkg-config = "^0.3.32"
 lazy_static = "^1.4.0"
 paste = "^1.0.12"
-serde = { version = "^1.0.219", features = ["derive"] }
-serde_json = "^1.0.143"
+serde = { version = "^1.0.224", features = ["derive"] }
+serde_json = "^1.0.145"
 tracing-subscriber = "^0.3.20"
 tracing = "^0.1.37"
 himmelblau_unix_common = { path = "src/common" }
-libhimmelblau = { version = "0.7.15", features = ["broker", "changepassword", "on_behalf_of"] }
+libhimmelblau = { version = "0.7.16", features = ["broker", "changepassword", "on_behalf_of"] }
 clap = { version = "^4.5", features = ["derive", "env"] }
 clap_complete = "^4.5.57"
 reqwest = { version = "^0.12.23", features = ["json"] }
