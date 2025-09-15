@@ -987,9 +987,16 @@ user-id = 31100
 user-login = "Firstyear"
 user-name = "Firstyear"
 
+[[publisher.serde_core]]
+version = "1.0.224"
+when = "2025-09-15"
+user-id = 3618
+user-login = "dtolnay"
+user-name = "David Tolnay"
+
 [[publisher.serde_json]]
-version = "1.0.143"
-when = "2025-08-19"
+version = "1.0.145"
+when = "2025-09-14"
 user-id = 3618
 user-login = "dtolnay"
 user-name = "David Tolnay"
