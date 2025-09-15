@@ -28,7 +28,7 @@ allow = [
 ]
 exceptions = [
   # Exception for aws-lc-sys, since this appears to be incorrect,
-  # according the project page:
+  # according to the project page:
   # https://github.com/aws/aws-lc-rs?tab=License-1-ov-file
   { crate = "aws-lc-sys", allow = ["OpenSSL"] },
 ]
