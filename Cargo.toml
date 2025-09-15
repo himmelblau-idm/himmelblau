@@ -34,8 +34,8 @@ libc = "^0.2.175"
 pkg-config = "^0.3.27"
 lazy_static = "^1.4.0"
 paste = "^1.0.12"
-serde = { version = "^1.0.180", features = ["derive"] }
-serde_json = "^1.0.143"
+serde = { version = "^1.0.224", features = ["derive"] }
+serde_json = "^1.0.145"
 tracing-subscriber = "^0.3.20"
 tracing = "^0.1.37"
 himmelblau_unix_common = { path = "src/common" }
