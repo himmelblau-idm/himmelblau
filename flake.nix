@@ -46,7 +46,7 @@
               sqlite.dev openssl.dev libcap.dev
               ldb.dev krb5.dev pcre2.dev
               pam dbus.dev udev.dev
-            ]
+            ];
             env = lib.attrsets.optionalAttrs (!withSelinux) {
               HIMMELBLAU_ALLOW_MISSING_SELINUX = "1";
             };
