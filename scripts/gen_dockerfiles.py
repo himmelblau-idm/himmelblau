@@ -8,7 +8,6 @@ Usage:
 This follows a config-driven pattern inspired by Samba's bootstrap/config.py:
 - deb family => cargo deb chain with per-package feature flags and --deb-revision=<distro>
 - rpm/zypper family => cargo build + strip + cargo generate-rpm chain
-- Per-distro toggle for the "interactive" feature (some distros cannot build with it)
 """
 import os, sys, argparse
 
@@ -53,16 +52,6 @@ PKG_PAIRS = [
     ("libsqlite3-dev", "sqlite-devel"),
     ("libunistring-dev", "libunistring-devel"),
     ("policycoreutils-dev", "policycoreutils-devel"),
-    # Interactive feature only
-    ("libgirepository1.0-dev", "gobject-introspection-devel"),
-    ("libcairo2-dev", "cairo-devel"),
-    ("libgdk-pixbuf2.0-dev", "gdk-pixbuf-devel"),
-    ("libsoup-3.0-dev", "libsoup-devel"),
-    ("libpango1.0-dev", "pango-devel"),
-    ("libatk1.0-dev", "atk-devel"),
-    ("libgtk-3-dev", "gtk3-devel"),
-    ("libwebkit2gtk-4.1-dev", "webkit2gtk3-devel"),
-    ("libjavascriptcoregtk-4.1-dev", "javascriptcoregtk4.1-devel"),
 ]
 
 DEB_PKGS = COMMON + [p for p, _ in PKG_PAIRS if p]
@@ -140,7 +129,6 @@ DISTS = {
         "replace": {
             "@development-tools": "",
         },
-        "interactive": False,
         "tpm": True,
     },
     "debian13": {
@@ -148,52 +136,33 @@ DISTS = {
         "image": "debian:13",
         "replace": {
             "@development-tools": "",
-            "libgdk-pixbuf2.0-dev": "libgdk-pixbuf-xlib-2.0-dev",
         },
-        "interactive": False,
         "tpm": True,
     },
     "ubuntu22.04": {
         "family": "deb",
         "image": "ubuntu:22.04",
-        "interactive": False,
         "tpm": True,
     },
     "ubuntu24.04": {
         "family": "deb",
         "image": "ubuntu:24.04",
-        "interactive": False,
         "tpm": True,
     },
     # ---- Fedora family ----
     "fedora41": {
         "family": "rpm",
         "image": "fedora:41",
-        "replace": {
-            "gdk-pixbuf-devel": "",
-            "webkit2gtk3-devel": "webkit2gtk4.1-devel",
-        },
-        "interactive": True,
         "tpm": True,
     },
     "fedora42": {
         "family": "rpm",
         "image": "fedora:42",
-        "replace": {
-            "gdk-pixbuf-devel": "",
-            "webkit2gtk3-devel": "webkit2gtk4.1-devel",
-        },
-        "interactive": True,
         "tpm": True,
     },
     "rawhide": {
         "family": "rpm",
         "image": "fedora:rawhide",
-        "replace": {
-            "gdk-pixbuf-devel": "",
-            "webkit2gtk3-devel": "webkit2gtk4.1-devel",
-        },
-        "interactive": True,
         "tpm": True,
     },
     # ---- Rocky family ----
@@ -206,17 +175,7 @@ DISTS = {
         "replace": {
             "build-essential": '"@Development Tools"',
             "@development-tools": "",
-            "gobject-introspection-devel": "",
-            "cairo-devel": "",
-            "gdk-pixbuf-devel": "",
-            "libsoup-devel": "",
-            "pango-devel": "",
-            "atk-devel": "",
-            "gtk3-devel": "",
-            "webkit2gtk3-devel": "",
-            "javascriptcoregtk4.1-devel": "",
         },
-        "interactive": False,
         "tpm": False,
     },
     "rocky9": {
@@ -228,18 +187,8 @@ DISTS = {
         "replace": {
             "build-essential": '"@Development Tools"',
             "@development-tools": "",
-            "gobject-introspection-devel": "",
-            "cairo-devel": "",
-            "gdk-pixbuf-devel": "",
-            "libsoup-devel": "",
-            "pango-devel": "",
-            "atk-devel": "",
-            "gtk3-devel": "",
-            "webkit2gtk3-devel": "",
-            "javascriptcoregtk4.1-devel": "",
             "curl": "",  # avoid the curl/curl-minimal install conflict
         },
-        "interactive": False,
         "tpm": True,
     },
     "rocky10": {
@@ -251,17 +200,7 @@ DISTS = {
         "replace": {
             "build-essential": '"@Development Tools"',
             "@development-tools": "",
-            "gobject-introspection-devel": "",
-            "cairo-devel": "",
-            "gdk-pixbuf-devel": "",
-            "libsoup-devel": "",
-            "pango-devel": "",
-            "atk-devel": "",
-            "gtk3-devel": "",
-            "webkit2gtk3-devel": "",
-            "javascriptcoregtk4.1-devel": "",
         },
-        "interactive": False,
         "tpm": True,
     },
     # ---- SUSE family ----
@@ -276,9 +215,7 @@ DISTS = {
             "dbus-devel": "dbus-1-devel",
             "tpm2-tss-devel": "tpm2-0-tss-devel",
             "sqlite-devel": "sqlite3-devel",
-            "javascriptcoregtk4.1-devel": "",
         },
-        "interactive": False,
         "tpm": True,
     },
     "sle15sp7": {
@@ -292,10 +229,8 @@ DISTS = {
             "dbus-devel": "dbus-1-devel",
             "tpm2-tss-devel": "tpm2-0-tss-devel",
             "sqlite-devel": "sqlite3-devel",
-            "javascriptcoregtk4.1-devel": "",
             "clang": "clang7",
         },
-        "interactive": False,
         "tpm": True,
     },
     "sle16": {
@@ -309,9 +244,7 @@ DISTS = {
             "dbus-devel": "dbus-1-devel",
             "tpm2-tss-devel": "tpm2-0-tss-devel",
             "sqlite-devel": "sqlite3-devel",
-            "javascriptcoregtk4.1-devel": "",
         },
-        "interactive": False,
         "tpm": True,
     },
     "tumbleweed": {
@@ -323,9 +256,7 @@ DISTS = {
             "dbus-devel": "dbus-1-devel",
             "tpm2-tss-devel": "tpm2-0-tss-devel",
             "sqlite-devel": "sqlite3-devel",
-            "javascriptcoregtk4.1-devel": "",
         },
-        "interactive": True,
         "tpm": True,
     },
 }
@@ -398,13 +329,10 @@ def render(dist_name, dist_cfg):
     )
 
     # Features
-    interactive = bool(dist_cfg.get("interactive", False))
     tpm = bool(dist_cfg.get("tpm", False))
     features = []
     if tpm:
         features.append("tpm")
-    if interactive:
-        features.append("interactive")
 
     final_cmd = ""
     if dist_cfg["family"] == "deb":
