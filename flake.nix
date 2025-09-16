@@ -22,7 +22,7 @@
           };
           cargoToml = builtins.fromTOML (builtins.readFile ./Cargo.toml);
           recipe = {
-            lib, enableInteractive ? false, withSelinux ? true,
+            lib, withSelinux ? true,
           }: rustPlatform.buildRustPackage {
             pname = "himmelblau";
             version = cargoToml.workspace.package.version;
@@ -36,7 +36,6 @@
               allowBuiltinFetchGit = true;
             };
 
-            buildFeatures = lib.optionals enableInteractive [ "interactive" ];
             nativeBuildInputs = [
               pkgs.pkg-config rustPlatform.bindgenHook
             ] ++ lib.optionals withSelinux [
@@ -47,10 +46,7 @@
               sqlite.dev openssl.dev libcap.dev
               ldb.dev krb5.dev pcre2.dev
               pam dbus.dev udev.dev
-            ] ++ lib.optionals enableInteractive [
-              gobject-introspection.dev cairo.dev gdk-pixbuf.dev
-              libsoup_2_4.dev pango.dev atk.dev gtk3.dev webkitgtk_4_1
-            ];
+            ]
             env = lib.attrsets.optionalAttrs (!withSelinux) {
               HIMMELBLAU_ALLOW_MISSING_SELINUX = "1";
             };
@@ -75,7 +71,7 @@
           };
       in rec {
         packages.himmelblau = pkgs.callPackage recipe {};
-        packages.himmelblau-desktop = pkgs.callPackage recipe { enableInteractive = true; };
+        packages.himmelblau-desktop = pkgs.callPackage recipe {};
         packages.default = packages.himmelblau;
 
         devShells.default = pkgs.mkShell {
