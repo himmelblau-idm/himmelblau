@@ -195,6 +195,15 @@
                     type = types.bool;
                     default = false;
                   };
+                  local_sudo_group = mkOption {
+                    type = types.nullOr (types.str);
+                    default = null;
+                    example = [ "sudo" ];
+                    description = ''
+                      The local group that should be given to users in any of the groups specified in sudo_groups.
+                      Only has an affect if sudo_groups is set.
+                    '';
+                  };
                 };
                 domainOptions = {
                   pam_allow_groups = mkOption {
@@ -268,7 +277,6 @@
                       failure causing authentication to fail.
                     '';
                   };
-
                   home_prefix = mkOption {
                     type = types.str;
                     default = "/home/";
@@ -288,6 +296,16 @@
                   idmap_range = mkOption {
                     type = types.str;
                     default = "5000000-5999999";
+                  };
+                  sudo_groups = mkOption {
+                    default = null;
+                    type = types.nullOr (types.listOf types.str);
+                    example = [ "XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX" ];
+                    description = ''
+                      A comma separated list of entra groups that should have access to sudo.
+                      If local_sudo_group is not set, the local group 'sudo' will be used.
+                      Removes group from user if they are no longer a member of the specified entra group.
+                    '';
                   };
                 };
               in {

@@ -247,10 +247,10 @@ fn create_home_directory(
 }
 
 fn add_user_to_group(account_id: &str, local_group: &str) {
-    match Command::new("usermod")
-        .arg("-aG")
-        .arg(local_group)
+    match Command::new("gpasswd")
+        .arg("-a")
         .arg(account_id)
+        .arg(local_group)
         .output()
     {
         Ok(res) => {
@@ -264,6 +264,30 @@ fn add_user_to_group(account_id: &str, local_group: &str) {
         Err(e) => {
             error!(
                 "Failed adding user {} to local group {}: {:?}",
+                account_id, local_group, e
+            );
+        }
+    }
+}
+
+fn remove_user_from_group(account_id: &str, local_group: &str) {
+    match Command::new("gpasswd")
+        .arg("-d")
+        .arg(account_id)
+        .arg(local_group)
+        .output()
+    {
+        Ok(res) => {
+            if !res.status.success() {
+                error!(
+                    "Failed removing user {} from local group {}",
+                    account_id, local_group
+                );
+            }
+        }
+        Err(e) => {
+            error!(
+                "Failed removing user {} from local group {}: {:?}",
                 account_id, local_group, e
             );
         }
@@ -380,12 +404,20 @@ async fn handle_tasks(stream: UnixStream, cfg: &HimmelblauConfig) {
                 }
                 // All good, loop.
             }
-            Some(Ok(TaskRequest::LocalGroups(mut account_id))) => {
-                debug!("Received task -> LocalGroups({})", account_id);
+            Some(Ok(TaskRequest::LocalGroups(mut account_id, is_sudoer))) => {
+                debug!("Received task -> LocalGroups({}, {})", account_id, is_sudoer);
                 account_id = cfg.map_upn_to_name(&account_id);
+
                 let local_groups = cfg.get_local_groups();
                 for local_group in local_groups {
                     add_user_to_group(&account_id, &local_group);
+                }
+
+                let local_sudo_group = cfg.get_local_sudo_group();
+                if is_sudoer {
+                    add_user_to_group(&account_id, &local_sudo_group);
+                } else {
+                    remove_user_from_group(&account_id, &local_sudo_group);
                 }
 
                 // Always indicate success here

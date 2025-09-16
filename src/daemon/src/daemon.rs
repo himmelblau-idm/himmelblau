@@ -29,6 +29,7 @@ use std::process::ExitCode;
 use std::sync::Arc;
 use std::time::Duration;
 
+use uuid::Uuid;
 use bytes::{BufMut, BytesMut};
 use clap::{Arg, ArgAction, Command};
 use futures::{SinkExt, StreamExt};
@@ -703,9 +704,22 @@ async fn handle_client(
 
                             let (tx, rx) = oneshot::channel();
 
+                            let sudo_groups = cfg.get_sudo_groups();
+                            let mut is_sudoer: bool = false;
+
+                            for sudo_group in sudo_groups {
+                                let sudo_group_uuid = Uuid::parse_str(&sudo_group)
+                                    .expect("invalid UUID in sudo_groups");
+
+                                let members = cachelayer.get_groupmembers(sudo_group_uuid).await;
+                                if members.contains(&account_id) {
+                                    is_sudoer = true;
+                                }
+                            }
+
                             let resp2 = match task_channel_tx
                                 .send_timeout(
-                                    (TaskRequest::LocalGroups(account_id.to_string()), tx),
+                                    (TaskRequest::LocalGroups(account_id.to_string(), is_sudoer), tx),
                                     Duration::from_millis(100),
                                 )
                                 .await

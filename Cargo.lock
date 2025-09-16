@@ -2661,6 +2661,7 @@ dependencies = [
  "tokio-util",
  "tracing",
  "tracing-subscriber",
+ "uuid",
  "uzers",
  "walkdir",
 ]

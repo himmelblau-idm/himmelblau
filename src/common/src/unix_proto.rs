@@ -156,7 +156,7 @@ pub struct HomeDirectoryInfo {
 #[derive(Serialize, Deserialize, Clone)]
 pub enum TaskRequest {
     HomeDirectory(HomeDirectoryInfo),
-    LocalGroups(String),
+    LocalGroups(String, bool),
     LogonScript(String, String),
     KerberosCCache(uid_t, uid_t, Vec<u8>, Vec<u8>),
     LoadProfilePhoto(String, String),
@@ -168,7 +168,9 @@ impl TaskRequest {
     pub fn as_safe_string(&self) -> String {
         match self {
             TaskRequest::HomeDirectory(info) => format!("HomeDirectory({:?})", info),
-            TaskRequest::LocalGroups(groups) => format!("LocalGroups({})", groups),
+            TaskRequest::LocalGroups(account_id, is_sudoer) => {
+                format!("LocalGroups({}, {})", account_id, is_sudoer)
+            }
             TaskRequest::LogonScript(account_id, _) => format!("LogonScript({}, ...)", account_id),
             TaskRequest::KerberosCCache(uid, gid, _, _) => {
                 format!("KerberosCCache({}, {}, ...)", uid, gid)
