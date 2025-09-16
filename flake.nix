@@ -2,15 +2,27 @@
   inputs = {
     nixpkgs.url = "github:nixos/nixpkgs/nixos-25.05";
     flake-utils.url = "github:numtide/flake-utils";
+    rust-overlay = {
+      url = "github:oxalica/rust-overlay";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
   };
 
-  outputs = { self, nixpkgs, flake-utils }:
+  outputs = { self, nixpkgs, flake-utils, rust-overlay, ... }:
     flake-utils.lib.eachDefaultSystem (system:
-      let pkgs = nixpkgs.legacyPackages.${system};
-          rustPlatform = pkgs.rustPlatform;
+      let 
+          pkgs = import nixpkgs {
+            inherit system;
+            overlays = [ rust-overlay.overlays.default ];
+          };
+          rust = pkgs.rust-bin.stable.latest.default;
+          rustPlatform = pkgs.makeRustPlatform {
+            cargo = rust;
+            rustc = rust;
+          };
           cargoToml = builtins.fromTOML (builtins.readFile ./Cargo.toml);
           recipe = {
-            lib, enableInteractive ? false, withSelinux ? true,
+            lib, withSelinux ? true,
           }: rustPlatform.buildRustPackage {
             pname = "himmelblau";
             version = cargoToml.workspace.package.version;
@@ -24,7 +36,6 @@
               allowBuiltinFetchGit = true;
             };
 
-            buildFeatures = lib.optionals enableInteractive [ "interactive" ];
             nativeBuildInputs = [
               pkgs.pkg-config rustPlatform.bindgenHook
             ] ++ lib.optionals withSelinux [
@@ -35,9 +46,6 @@
               sqlite.dev openssl.dev libcap.dev
               ldb.dev krb5.dev pcre2.dev
               pam dbus.dev udev.dev
-            ] ++ lib.optionals enableInteractive [
-              gobject-introspection.dev cairo.dev gdk-pixbuf.dev
-              libsoup_2_4.dev pango.dev atk.dev gtk3.dev webkitgtk_4_1
             ];
             env = lib.attrsets.optionalAttrs (!withSelinux) {
               HIMMELBLAU_ALLOW_MISSING_SELINUX = "1";
@@ -63,7 +71,7 @@
           };
       in rec {
         packages.himmelblau = pkgs.callPackage recipe {};
-        packages.himmelblau-desktop = pkgs.callPackage recipe { enableInteractive = true; };
+        packages.himmelblau-desktop = pkgs.callPackage recipe {};
         packages.default = packages.himmelblau;
 
         devShells.default = pkgs.mkShell {
