@@ -31,6 +31,7 @@ struct App {
     slug: &'static str,
     url: &'static str,
     categories: &'static str,
+    x_close: bool,
 }
 
 fn apps() -> Vec<App> {
@@ -40,48 +41,56 @@ fn apps() -> Vec<App> {
             slug: "outlook",
             url: "https://outlook.office.com/mail/",
             categories: "Office;Calendar;Contacts;Email;Network;",
+            x_close: false,
         },
         App {
             name: "Teams",
             slug: "teams",
             url: "https://teams.microsoft.com/",
             categories: "Office;Utility;",
+            x_close: false,
         },
         App {
             name: "Word",
             slug: "word",
             url: "https://word.cloud.microsoft/",
             categories: "Office;WordProcessor;",
+            x_close: true,
         },
         App {
             name: "Excel",
             slug: "excel",
             url: "https://excel.cloud.microsoft/",
             categories: "Office;Spreadsheet;",
+            x_close: true,
         },
         App {
             name: "PowerPoint",
             slug: "powerpoint",
             url: "https://powerpoint.cloud.microsoft/",
             categories: "Office;Presentation;",
+            x_close: true,
         },
         App {
             name: "OneNote",
             slug: "onenote",
             url: "https://m365.cloud.microsoft/launch/OneNote/",
             categories: "Office;Utility;",
+            x_close: true,
         },
         App {
             name: "OneDrive",
             slug: "onedrive",
             url: "https://www.office.com/onedrive",
             categories: "Office;FileTransfer;Network;",
+            x_close: true,
         },
         App {
             name: "SharePoint",
             slug: "sharepoint",
             url: "https://www.office.com/launch/sharepoint",
             categories: "Office;Network;",
+            x_close: true,
         },
     ]
 }
@@ -115,11 +124,12 @@ fn write_desktop(path: &Path, app: &App, exec_path: &str) {
     let mut f = File::create(path).expect("write .desktop");
     // Icon= must be the basename without extension (theme lookup). We install as o365-<slug>.png.
     let icon_name = format!("o365-{}", app.slug);
+    let tray_icon = !app.x_close;
     let content = format!(
         r#"[Desktop Entry]
 Name=Microsoft {name}
 Comment=Open Microsoft 365 {name}
-Exec={exec} --url={url} --profile={name} --appIcon=/usr/share/icons/hicolor/256x256/apps/{icon}.png --appTitle={name} %U
+Exec={exec} --url={url} --profile={name} --appIcon=/usr/share/icons/hicolor/256x256/apps/{icon}.png --appTitle={name} --closeAppOnCross={x_close} --trayIconEnabled={tray_icon} %U
 Terminal=false
 Type=Application
 Categories={cats}
@@ -131,6 +141,8 @@ Icon={icon}
         url = app.url,
         cats = app.categories,
         icon = icon_name,
+        x_close = app.x_close,
+        tray_icon = tray_icon,
     );
     f.write_all(content.as_bytes()).unwrap();
 }
