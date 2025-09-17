@@ -147,11 +147,17 @@ done
 make_profile_flags() {
   local slug="$1"
   [[ -z "$slug" ]] && return 0
+
   local dir="$HOME/.config/o365-profiles/$slug"
   mkdir -p "$dir"
-  # Use the flags documented by teams-for-linux for multi-instance:
-  #   --user-data-dir and --class (window manager grouping)
-  printf -- "--user-data-dir=%s\n--class=%s\n" "$dir" "o365-$slug"
+
+  # Derive a class slug without a trailing "-<number>" (e.g., "Word-2" -> "Word")
+  local class_slug="$slug"
+  if [[ "$class_slug" =~ ^(.+)-([0-9]+)$ ]]; then
+    class_slug="${BASH_REMATCH[1]}"
+  fi
+
+  printf -- "--user-data-dir=%s\n--class=%s\n" "$dir" "o365-$class_slug"
 }
 
 userns_clone_enabled() {

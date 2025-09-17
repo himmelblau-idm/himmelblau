@@ -19,18 +19,20 @@ anyhow = "1.0"
 depends = ["curl", "libfuse2"]
 assets = [
   ["src/o365.sh", "usr/bin/o365", "755"],
+  ["src/o365-multi.sh", "usr/bin/o365-multi", "755"],
+  ["src/o365-url-handler.sh", "usr/bin/o365-url-handler", "755"],
   ["generated/*.desktop", "/usr/share/applications/", "644"],
-  ["generated/*.png", "usr/share/icons/hicolor/256x256/apps/", "644"],
-  ["src/o365-apps.png", "usr/share/icons/hicolor/256x256/apps/o365-apps.png", "644"],
+  ["src/*.png", "usr/share/icons/hicolor/256x256/apps/", "644"],
 ]
 maintainer-scripts = "scripts"
 
 [package.metadata.generate-rpm]
 assets = [
   { source = "src/o365.sh", dest = "/usr/bin/o365", mode = "755" },
+  { source = "src/o365-multi.sh", dest = "/usr/bin/o365-multi", mode = "755" },
+  { source = "src/o365-url-handler.sh", dest = "/usr/bin/o365-url-handler", mode = "755" },
   { source = "generated/*.desktop", dest = "/usr/share/applications/" },
-  { source = "generated/*.png", dest = "/usr/share/icons/hicolor/256x256/apps/" },
-  { source = "src/o365-apps.png", dest = "/usr/share/icons/hicolor/256x256/apps/o365-apps.png" },
+  { source = "src/*.png", dest = "/usr/share/icons/hicolor/256x256/apps/" },
 ]
 post_install_script = "scripts/postinst"
 post_uninstall_script = "scripts/postrm"
