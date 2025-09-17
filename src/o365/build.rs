@@ -32,6 +32,7 @@ struct App {
     url: &'static str,
     categories: &'static str,
     multi: bool,
+    url_handler: bool,
 }
 
 fn apps() -> Vec<App> {
@@ -42,6 +43,7 @@ fn apps() -> Vec<App> {
             url: "https://outlook.office.com/mail/",
             categories: "Office;Calendar;Contacts;Email;Network;",
             multi: false,
+            url_handler: true,
         },
         App {
             name: "Teams",
@@ -49,6 +51,7 @@ fn apps() -> Vec<App> {
             url: "https://teams.microsoft.com/",
             categories: "Office;Utility;",
             multi: false,
+            url_handler: true,
         },
         App {
             name: "Word",
@@ -56,6 +59,7 @@ fn apps() -> Vec<App> {
             url: "https://word.cloud.microsoft/",
             categories: "Office;WordProcessor;",
             multi: true,
+            url_handler: false,
         },
         App {
             name: "Excel",
@@ -63,6 +67,7 @@ fn apps() -> Vec<App> {
             url: "https://excel.cloud.microsoft/",
             categories: "Office;Spreadsheet;",
             multi: true,
+            url_handler: false,
         },
         App {
             name: "PowerPoint",
@@ -70,6 +75,7 @@ fn apps() -> Vec<App> {
             url: "https://powerpoint.cloud.microsoft/",
             categories: "Office;Presentation;",
             multi: true,
+            url_handler: false,
         },
         App {
             name: "OneNote",
@@ -77,6 +83,7 @@ fn apps() -> Vec<App> {
             url: "https://m365.cloud.microsoft/launch/OneNote/",
             categories: "Office;Utility;",
             multi: true,
+            url_handler: false,
         },
         App {
             name: "OneDrive",
@@ -84,6 +91,7 @@ fn apps() -> Vec<App> {
             url: "https://www.office.com/onedrive",
             categories: "Office;FileTransfer;Network;",
             multi: true,
+            url_handler: true,
         },
         App {
             name: "SharePoint",
@@ -91,6 +99,7 @@ fn apps() -> Vec<App> {
             url: "https://www.office.com/launch/sharepoint",
             categories: "Office;Network;",
             multi: true,
+            url_handler: false,
         },
     ]
 }
@@ -127,11 +136,12 @@ fn write_desktop(path: &Path, app: &App, exec_path: &str) {
     let tray_icon = !app.multi;
     let x_close = app.multi;
     let multi = if app.multi { "-multi" } else { "" };
+    let url_handler = if app.url_handler { "--defaultURLHandler /usr/bin/o365-url-handler" } else { "" };
     let content = format!(
         r#"[Desktop Entry]
 Name=Microsoft {name}
 Comment=Open Microsoft 365 {name}
-Exec={exec}{multi} --url={url} --profile={name} --appIcon=/usr/share/icons/hicolor/256x256/apps/{icon}.png --appTitle={name} --closeAppOnCross={x_close} --trayIconEnabled={tray_icon} %U
+Exec={exec}{multi} --url={url} --profile={name} --appIcon=/usr/share/icons/hicolor/256x256/apps/{icon}.png --appTitle={name} --closeAppOnCross={x_close} --trayIconEnabled={tray_icon} {url_handler} %U
 Terminal=false
 Type=Application
 Categories={cats}
@@ -146,6 +156,7 @@ Icon={icon}
         x_close = x_close,
         tray_icon = tray_icon,
         multi = multi,
+        url_handler = url_handler,
     );
     f.write_all(content.as_bytes()).unwrap();
 }
