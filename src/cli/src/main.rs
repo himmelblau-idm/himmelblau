@@ -212,7 +212,7 @@ fn configure_pam(
     Ok(())
 }
 
-#[instrument(skip(app))]
+#[instrument(skip(app, account_id))]
 async fn auth(app: &BrokerClientApplication, account_id: &str) -> Option<UserToken> {
     let auth_options = vec![AuthOption::Passwordless];
     let auth_init = match app.check_user_exists(account_id, &auth_options).await {

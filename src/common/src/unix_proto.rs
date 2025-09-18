@@ -167,19 +167,15 @@ impl TaskRequest {
     /// Get a safe display version of the request, without credentials.
     pub fn as_safe_string(&self) -> String {
         match self {
-            TaskRequest::HomeDirectory(info) => format!("HomeDirectory({:?})", info),
-            TaskRequest::LocalGroups(account_id, is_sudoer) => {
-                format!("LocalGroups({}, {})", account_id, is_sudoer)
-            }
-            TaskRequest::LogonScript(account_id, _) => format!("LogonScript({}, ...)", account_id),
+            TaskRequest::HomeDirectory(_) => "HomeDirectory(...)".to_string(),
+            TaskRequest::LocalGroups(_, _) => "LocalGroups(...)".to_string(),
+            TaskRequest::LogonScript(_, _) => "LogonScript(...)".to_string(),
             TaskRequest::KerberosCCache(uid, gid, _, _) => {
                 format!("KerberosCCache({}, {}, ...)", uid, gid)
             }
-            TaskRequest::LoadProfilePhoto(account_id, _) => {
-                format!("LoadProfilePhoto({}, ...)", account_id)
-            }
-            TaskRequest::ApplyPolicy(intune_device_id, account_id, _, _, _) => {
-                format!("ApplyPolicy({:?}, {}, ...)", intune_device_id, account_id)
+            TaskRequest::LoadProfilePhoto(_, _) => "LoadProfilePhoto(...)".to_string(),
+            TaskRequest::ApplyPolicy(intune_device_id, _, _, _, _) => {
+                format!("ApplyPolicy({:?}, ...)", intune_device_id)
             }
         }
     }

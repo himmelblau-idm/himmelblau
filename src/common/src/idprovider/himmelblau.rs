@@ -453,7 +453,7 @@ impl IdProvider for HimmelblauMultiProvider {
                 }
             }
             None => {
-                debug!("Authentication ignored for local user '{}'", account_id);
+                debug!("Authentication ignored for local user");
                 Err(IdpError::NotFound)
             }
         }
@@ -496,7 +496,7 @@ impl IdProvider for HimmelblauMultiProvider {
                 }
             }
             None => {
-                debug!("Authentication ignored for local user '{}'", account_id);
+                debug!("Authentication ignored for local user");
                 Err(IdpError::NotFound)
             }
         }
@@ -522,7 +522,7 @@ impl IdProvider for HimmelblauMultiProvider {
                 }
             }
             None => {
-                debug!("Authentication ignored for local user '{}'", account_id);
+                debug!("Authentication ignored for local user");
                 Err(IdpError::NotFound)
             }
         }
@@ -561,7 +561,7 @@ impl IdProvider for HimmelblauMultiProvider {
                 }
             }
             None => {
-                debug!("Authentication ignored for local user '{}'", account_id);
+                debug!("Authentication ignored for local user");
                 Err(IdpError::NotFound)
             }
         }
@@ -727,7 +727,7 @@ impl IdProvider for HimmelblauProvider {
         }
     }
 
-    #[instrument(skip(self, old_token, tpm, machine_key))]
+    #[instrument(skip(self, id, old_token, tpm, machine_key))]
     async fn unix_user_access(
         &self,
         id: &Id,
@@ -773,7 +773,7 @@ impl IdProvider for HimmelblauProvider {
             })
     }
 
-    #[instrument(skip(self, old_token, tpm, machine_key))]
+    #[instrument(skip_all)]
     async fn unix_user_ccaches(
         &self,
         id: &Id,
@@ -819,7 +819,7 @@ impl IdProvider for HimmelblauProvider {
         (cloud_ccache, ad_ccache)
     }
 
-    #[instrument(skip(self, old_token, tpm, machine_key))]
+    #[instrument(skip_all)]
     async fn unix_user_prt_cookie(
         &self,
         id: &Id,
@@ -851,7 +851,7 @@ impl IdProvider for HimmelblauProvider {
             })
     }
 
-    #[instrument(skip(self, token, new_tok, keystore, tpm, machine_key))]
+    #[instrument(skip_all)]
     async fn change_auth_token<D: KeyStoreTxn + Send>(
         &self,
         account_id: &str,
@@ -917,7 +917,7 @@ impl IdProvider for HimmelblauProvider {
         Ok(true)
     }
 
-    #[instrument(skip(self, old_token, keystore, tpm, machine_key))]
+    #[instrument(skip_all)]
     async fn unix_user_get<D: KeyStoreTxn + Send>(
         &self,
         id: &Id,
@@ -1206,7 +1206,7 @@ impl IdProvider for HimmelblauProvider {
         }
     }
 
-    #[instrument(skip(self, _token, keystore, tpm, _machine_key, _shutdown_rx))]
+    #[instrument(skip(self, account_id, _token, keystore, tpm, _machine_key, _shutdown_rx))]
     async fn unix_user_online_auth_init<D: KeyStoreTxn + Send>(
         &self,
         account_id: &str,
@@ -1381,6 +1381,7 @@ impl IdProvider for HimmelblauProvider {
 
     #[instrument(skip(
         self,
+        account_id,
         old_token,
         cred_handler,
         pam_next_req,
@@ -1768,12 +1769,14 @@ impl IdProvider for HimmelblauProvider {
                             keystore
                                 .insert_tagged_hsm_key(&hello_prt_tag, &hello_prt)
                                 .map_err(|e| {
-                                    error!("Failed to cache hello prt for {}: {:?}", account_id, e);
+                                    let uuid = token.uuid().map(|v| v.to_string()).unwrap_or("".to_string());
+                                    error!("Failed to cache hello prt for {}: {:?}", uuid, e);
                                     IdpError::Tpm
                                 })?;
                         }
                         Err(e) => {
-                            error!("Failed to cache hello prt for {}: {:?}", account_id, e);
+                            let uuid = token.uuid().map(|v| v.to_string()).unwrap_or("".to_string());
+                            error!("Failed to cache hello prt for {}: {:?}", uuid, e);
                         }
                     }
                 }
@@ -2325,7 +2328,7 @@ impl IdProvider for HimmelblauProvider {
         }
     }
 
-    #[instrument(skip(self, _token, keystore))]
+    #[instrument(skip(self, account_id, _token, keystore))]
     async fn unix_user_offline_auth_init<D: KeyStoreTxn + Send>(
         &self,
         account_id: &str,
@@ -2356,16 +2359,7 @@ impl IdProvider for HimmelblauProvider {
         }
     }
 
-    #[instrument(skip(
-        self,
-        token,
-        cred_handler,
-        pam_next_req,
-        keystore,
-        tpm,
-        machine_key,
-        _online_at_init
-    ))]
+    #[instrument(skip_all)]
     async fn unix_user_offline_auth_step<D: KeyStoreTxn + Send>(
         &self,
         account_id: &str,
@@ -2668,6 +2662,10 @@ impl HimmelblauProvider {
         token: &UnixUserToken,
         old_token: Option<&UserToken>,
     ) -> Result<AuthResult, IdpError> {
+        let uuid = token.uuid().map_err(|e| {
+            error!("Failed fetching user uuid: {:?}", e);
+            IdpError::BadRequest
+        })?;
         match &token.access_token {
             Some(_) => {
                 /* Fixes bug#37: MFA can respond with different user than requested.
@@ -2678,14 +2676,11 @@ impl HimmelblauProvider {
                     IdpError::BadRequest
                 })?;
                 if account_id.to_string().to_lowercase() != spn.to_string().to_lowercase() {
-                    let msg = format!(
-                        "Authenticated user {} does not match requested user {}",
-                        spn, account_id
-                    );
+                    let msg = format!("Authenticated user {} does not match requested user", uuid);
                     error!(msg);
                     return Ok(AuthResult::Denied(msg));
                 }
-                info!("Authentication successful for user '{}'", account_id);
+                info!("Authentication successful for user '{}'", uuid);
                 // If an encrypted PRT is present, store it in the mem cache
                 if let Some(prt) = &token.prt {
                     self.refresh_cache.add(account_id, prt).await;
@@ -2700,7 +2695,7 @@ impl HimmelblauProvider {
                 })
             }
             None => {
-                info!("Authentication failed for user '{}'", account_id);
+                info!("Authentication failed for user '{}'", uuid);
                 Err(IdpError::NotFound)
             }
         }
@@ -2750,14 +2745,14 @@ impl HimmelblauProvider {
                             match self.group_token_from_directory_object(g).await {
                                 Ok(group) => gt_groups.push(group),
                                 Err(e) => {
-                                    debug!("Failed fetching group for user {}: {}", &spn, e)
+                                    debug!("Failed fetching group for user {}: {}", uuid, e)
                                 }
                             };
                         }
                         gt_groups
                     }
                     Err(_e) => {
-                        debug!("Failed fetching user groups for {}", &spn);
+                        debug!("Failed fetching user groups for {}", uuid);
                         /* If we failed to fetch the groups, and we have an old
                          * token, preserve the existing cached group memberships.
                          */
@@ -2794,7 +2789,7 @@ impl HimmelblauProvider {
                 };
             }
             None => {
-                debug!("Failed fetching user groups for {}", &spn);
+                debug!("Failed fetching user groups for {}", uuid);
                 /* If we failed to fetch the groups, and we have an old
                  * token, preserve the existing cached group memberships.
                  */
@@ -2851,7 +2846,7 @@ impl HimmelblauProvider {
                             IdpError::BadRequest
                         })?,
                         None => {
-                            error!("User {} has no uidNumber defined in the directory!", spn);
+                            error!("User {} has no uidNumber defined in the directory!", uuid);
                             return Err(IdpError::BadRequest);
                         }
                     },
