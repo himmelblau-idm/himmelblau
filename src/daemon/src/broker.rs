@@ -92,7 +92,7 @@ impl HimmelblauBroker for Broker {
         // account can be at root (Firefox, Chrome) or in authParameters (Edge)
         let account = match request.account {
             Some(x) => x,
-            None => request.auth_parameters.account.unwrap()
+            None => request.auth_parameters.account.unwrap(),
         };
         if account.username.to_lowercase() != user.spn.to_lowercase() {
             return Err("Invalid request for user!".into());

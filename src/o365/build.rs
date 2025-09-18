@@ -136,7 +136,11 @@ fn write_desktop(path: &Path, app: &App, exec_path: &str) {
     let tray_icon = !app.multi;
     let x_close = app.multi;
     let multi = if app.multi { "-multi" } else { "" };
-    let url_handler = if app.url_handler { "--defaultURLHandler /usr/bin/o365-url-handler" } else { "" };
+    let url_handler = if app.url_handler {
+        "--defaultURLHandler /usr/bin/o365-url-handler"
+    } else {
+        ""
+    };
     let content = format!(
         r#"[Desktop Entry]
 Name=Microsoft {name}
