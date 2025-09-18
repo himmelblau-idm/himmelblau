@@ -29,7 +29,6 @@ use std::process::ExitCode;
 use std::sync::Arc;
 use std::time::Duration;
 
-use uuid::Uuid;
 use bytes::{BufMut, BytesMut};
 use clap::{Arg, ArgAction, Command};
 use futures::{SinkExt, StreamExt};
@@ -46,6 +45,7 @@ use himmelblau_unix_common::unix_proto::{
     ClientRequest, ClientResponse, PamAuthResponse, TaskRequest, TaskResponse,
 };
 use himmelblau_unix_common::{tpm_init, tpm_loadable_machine_key, tpm_machine_key};
+use uuid::Uuid;
 
 use kanidm_utils_users::{get_current_gid, get_current_uid, get_effective_gid, get_effective_uid};
 use libc::umask;
@@ -708,8 +708,13 @@ async fn handle_client(
                             let mut is_sudoer: bool = false;
 
                             for sudo_group in sudo_groups {
-                                let sudo_group_uuid = Uuid::parse_str(&sudo_group)
-                                    .expect("invalid UUID in sudo_groups");
+                                let sudo_group_uuid = match Uuid::parse_str(&sudo_group) {
+                                    Ok(uuid) => uuid,
+                                    Err(e) => {
+                                        debug!("Failed to parse a sudo group: {}", e);
+                                        continue;
+                                    }
+                                };
 
                                 let members = cachelayer.get_groupmembers(sudo_group_uuid).await;
                                 if members.contains(&account_id) {
@@ -719,7 +724,10 @@ async fn handle_client(
 
                             let resp2 = match task_channel_tx
                                 .send_timeout(
-                                    (TaskRequest::LocalGroups(account_id.to_string(), is_sudoer), tx),
+                                    (
+                                        TaskRequest::LocalGroups(account_id.to_string(), is_sudoer),
+                                        tx,
+                                    ),
                                     Duration::from_millis(100),
                                 )
                                 .await

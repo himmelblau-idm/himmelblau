@@ -92,7 +92,7 @@ impl HimmelblauBroker for Broker {
         // account can be at root (Firefox, Chrome) or in authParameters (Edge)
         let account = match request.account {
             Some(x) => x,
-            None => request.auth_parameters.account.unwrap()
+            None => request.auth_parameters.account.ok_or("Missing account")?,
         };
         if account.username.to_lowercase() != user.spn.to_lowercase() {
             return Err("Invalid request for user!".into());
@@ -119,7 +119,7 @@ impl HimmelblauBroker for Broker {
                 "extendedExpiresOn": (token.ext_expires_in as u64) + now.as_secs(),
                 "grantedScopes": token.scope.clone()
                     .ok_or("Failed to fetch scopes")?,
-                "idToken": token.id_token.raw.clone().unwrap(),
+                "idToken": token.id_token.raw.clone().ok_or("Missing raw token")?,
             }
         });
         Ok(res.to_string())

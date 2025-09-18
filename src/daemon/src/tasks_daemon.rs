@@ -255,17 +255,11 @@ fn add_user_to_group(account_id: &str, local_group: &str) {
     {
         Ok(res) => {
             if !res.status.success() {
-                error!(
-                    "Failed adding user {} to local group {}",
-                    account_id, local_group
-                );
+                error!("Failed adding user to local group {}", local_group);
             }
         }
         Err(e) => {
-            error!(
-                "Failed adding user {} to local group {}: {:?}",
-                account_id, local_group, e
-            );
+            error!("Failed adding user to local group {}: {:?}", local_group, e);
         }
     }
 }
@@ -279,16 +273,13 @@ fn remove_user_from_group(account_id: &str, local_group: &str) {
     {
         Ok(res) => {
             if !res.status.success() {
-                error!(
-                    "Failed removing user {} from local group {}",
-                    account_id, local_group
-                );
+                error!("Failed removing user from local group {}", local_group);
             }
         }
         Err(e) => {
             error!(
-                "Failed removing user {} from local group {}: {:?}",
-                account_id, local_group, e
+                "Failed removing user from local group {}: {:?}",
+                local_group, e
             );
         }
     }
@@ -405,7 +396,7 @@ async fn handle_tasks(stream: UnixStream, cfg: &HimmelblauConfig) {
                 // All good, loop.
             }
             Some(Ok(TaskRequest::LocalGroups(mut account_id, is_sudoer))) => {
-                debug!("Received task -> LocalGroups({}, {})", account_id, is_sudoer);
+                debug!("Received task -> LocalGroups(...)",);
                 account_id = cfg.map_upn_to_name(&account_id);
 
                 let local_groups = cfg.get_local_groups();
@@ -427,7 +418,7 @@ async fn handle_tasks(stream: UnixStream, cfg: &HimmelblauConfig) {
                 }
             }
             Some(Ok(TaskRequest::LogonScript(account_id, access_token))) => {
-                debug!("Received task -> LogonScript({}, ...)", account_id);
+                debug!("Received task -> LogonScript(...)");
                 let mut status = 0;
                 if let Some(script) = cfg.get_logon_script() {
                     status = execute_user_script(&account_id, &script, &access_token);
@@ -486,7 +477,7 @@ async fn handle_tasks(stream: UnixStream, cfg: &HimmelblauConfig) {
                 }
             }
             Some(Ok(TaskRequest::LoadProfilePhoto(mut account_id, access_token))) => {
-                debug!("Received task -> LoadProfilePhoto({}, ...)", account_id);
+                debug!("Received task -> LoadProfilePhoto(...)");
                 let icons_dir = "/var/lib/AccountsService/icons/";
                 if !Path::new(icons_dir).exists() {
                     info!("Profile photo directory '{}' doesn't exist.", icons_dir);
@@ -537,7 +528,7 @@ async fn handle_tasks(stream: UnixStream, cfg: &HimmelblauConfig) {
                             }
                         }
                     } else {
-                        error!("Couldn't parse domain from name {}", account_id);
+                        error!("Couldn't parse domain from name");
                     }
                 }
 
@@ -554,7 +545,7 @@ async fn handle_tasks(stream: UnixStream, cfg: &HimmelblauConfig) {
                 intune_token,
                 iwservice_token,
             ))) => {
-                debug!("Received task -> ApplyPolicy({})", account_id);
+                debug!("Received task -> ApplyPolicy(...)");
                 let intune_device_id = match intune_device_id {
                     Some(id) => id,
                     None => {

@@ -27,11 +27,13 @@
 
 use std::ffi::{CStr, CString};
 use std::{mem, ptr};
+use tracing::error;
 
 use libc::c_char;
 
 use crate::pam::constants::{PamFlag, PamItemType, PamResultCode};
 use crate::pam::items::{PamAuthTok, PamRHost, PamService, PamTty};
+use himmelblau_unix_common::pam::PamResultCode::PAM_BUF_ERR;
 
 /// Opaque type, used as a pointer when making pam API calls.
 ///
@@ -121,7 +123,11 @@ impl PamHandle {
         let c_key = CString::new(key).unwrap();
         let mut ptr: *const PamDataT = ptr::null();
         let res = pam_get_data(self, c_key.as_ptr(), &mut ptr);
-        if PamResultCode::PAM_SUCCESS == res && !ptr.is_null() {
+        if ptr.is_null() {
+            error!("Null pointer returned from `pam_get_data`");
+            return Err(PAM_BUF_ERR);
+        }
+        if PamResultCode::PAM_SUCCESS == res {
             let typed_ptr: *const T = ptr as *const T;
             let data: &T = &*typed_ptr;
             Ok(data)
@@ -158,6 +164,10 @@ impl PamHandle {
         let mut ptr: *const PamItemT = ptr::null();
         let (res, item) = unsafe {
             let r = pam_get_item(self, T::item_type(), &mut ptr);
+            if ptr.is_null() {
+                error!("Null pointer returned from `pam_get_item`");
+                return Err(PAM_BUF_ERR);
+            }
             let typed_ptr: *const T = ptr as *const T;
             let t: &T = &*typed_ptr;
             (r, t)

@@ -25,11 +25,13 @@
 */
 use std::ffi::{CStr, CString};
 use std::ptr;
+use tracing::error;
 
 use libc::{c_char, c_int};
 
 use crate::pam::constants::{PamResultCode, *};
 use crate::pam::module::{PamItem, PamResult};
+use himmelblau_unix_common::pam::PamResultCode::PAM_BUF_ERR;
 
 #[allow(missing_copy_implementations)]
 pub enum AppDataPtr {}
@@ -88,6 +90,10 @@ impl PamConv {
         };
 
         let ret = (self.conv)(1, &&msg, &mut resp_ptr, self.appdata_ptr);
+        if resp_ptr.is_null() {
+            error!("Null pointer returned from PAM conv");
+            return Err(PAM_BUF_ERR);
+        }
 
         if PamResultCode::PAM_SUCCESS == ret {
             // PamResponse.resp is null for styles that don't return user input like PAM_TEXT_INFO

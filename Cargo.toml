@@ -22,7 +22,7 @@ version = "2.0.0"
 authors = [
     "David Mulder <dmulder@suse.com>"
 ]
-rust-version = "1.70"
+rust-version = "1.73"
 edition = "2021"
 license = "GPL-3.0-or-later"
 homepage = "https://github.com/himmelblau-idm/himmelblau"

@@ -952,7 +952,11 @@ where
 
                 debug!(
                     "Checking if user is in allowed groups ({:?}) -> {:?}",
-                    self.pam_allow_groups, user_set,
+                    self.pam_allow_groups,
+                    user_set
+                        .iter()
+                        .filter(|s| s.as_str() != account_id)
+                        .cloned(),
                 );
                 let intersection_count = user_set.intersection(&self.pam_allow_groups).count();
                 debug!("Number of intersecting groups: {}", intersection_count);
