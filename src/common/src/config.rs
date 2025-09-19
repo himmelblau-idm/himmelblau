@@ -61,8 +61,8 @@ impl From<JoinType> for u32 {
         // 0 = Device Join (standard join)
         // 4 = Device Registration (register only)
         match val {
-            JoinType::Join => 0,      // Device Join
-            JoinType::Register => 4,  // Device Registration
+            JoinType::Join => 0,     // Device Join
+            JoinType::Register => 4, // Device Registration
         }
     }
 }
@@ -705,6 +705,11 @@ impl HimmelblauConfig {
         }
 
         let domains = self.get_configured_domains();
+        if domains.is_empty() {
+            info!("No domains are configured.");
+            return None;
+        }
+
         let mut modified_config = false;
 
         // We don't recognize this alias, so now we need to search for it the

@@ -80,6 +80,7 @@ macro_rules! extract_base_url {
 pub struct HimmelblauMultiProvider {
     config: Arc<RwLock<HimmelblauConfig>>,
     providers: Arc<RwLock<HashMap<String, HimmelblauProvider>>>,
+    idmap: Arc<RwLock<Idmap>>,
 }
 
 struct RefreshCache {
@@ -162,6 +163,60 @@ impl BadPinCounter {
 }
 
 impl HimmelblauMultiProvider {
+    async fn add_tenant<D: KeyStoreTxn + Send>(
+        &self,
+        domain: &str,
+        cfg: &HimmelblauConfig,
+        keystore: &mut D,
+    ) -> Result<(), IdpError> {
+        debug!("Adding provider for domain {}", domain);
+        let authority_host = cfg.get_authority_host(domain);
+        let tenant_id = cfg.get_tenant_id(domain);
+        let graph_url = cfg.get_graph_url(domain);
+        let graph = match Graph::new(
+            &cfg.get_odc_provider(domain),
+            domain,
+            Some(&authority_host),
+            tenant_id.as_deref(),
+            graph_url.as_deref(),
+        )
+        .await
+        {
+            Ok(graph) => graph,
+            Err(e) => {
+                error!("Failed initializing provider: {:?}", e);
+                return Err(IdpError::BadRequest);
+            }
+        };
+        let app_id = cfg.get_app_id(domain);
+        let app =
+            BrokerClientApplication::new(None, app_id.as_deref(), None, None).map_err(|e| {
+                error!("Failed initializing provider: {:?}", e);
+                IdpError::BadRequest
+            })?;
+        let provider = HimmelblauProvider::new(app, &self.config, domain, graph, &self.idmap)
+            .map_err(|e| {
+                error!("Failed to initialize the provider: {:?}", e);
+                IdpError::BadRequest
+            })?;
+        {
+            // A client write lock is required here.
+            let mut client = provider.client.write().await;
+            if let Ok(transport_key) = provider.fetch_loadable_transport_key_from_keystore(keystore)
+            {
+                client.set_transport_key(transport_key);
+            }
+            if let Ok(cert_key) = provider.fetch_loadable_cert_key_from_keystore(keystore) {
+                client.set_cert_key(cert_key);
+            }
+        }
+        self.providers
+            .write()
+            .await
+            .insert(domain.to_string(), provider);
+        Ok(())
+    }
+
     pub async fn new<D: KeyStoreTxn + Send>(
         config_filename: &str,
         keystore: &mut D,
@@ -175,56 +230,25 @@ impl HimmelblauMultiProvider {
             Err(e) => return Err(anyhow!("{:?}", e)),
         };
 
-        let mut providers = HashMap::new();
+        let providers = HashMap::new();
         let cfg = config.read().await;
         let domains = cfg.get_configured_domains();
         if domains.is_empty() {
-            return Err(anyhow!("No domains configured in himmelblau.conf"));
-        }
-        for domain in domains {
-            debug!("Adding provider for domain {}", domain);
-            let authority_host = cfg.get_authority_host(&domain);
-            let tenant_id = cfg.get_tenant_id(&domain);
-            let graph_url = cfg.get_graph_url(&domain);
-            let graph = match Graph::new(
-                &cfg.get_odc_provider(&domain),
-                &domain,
-                Some(&authority_host),
-                tenant_id.as_deref(),
-                graph_url.as_deref(),
-            )
-            .await
-            {
-                Ok(graph) => graph,
-                Err(e) => {
-                    error!("Failed initializing provider: {:?}", e);
-                    continue;
-                }
-            };
-            let app_id = cfg.get_app_id(&domain);
-            let app = BrokerClientApplication::new(None, app_id.as_deref(), None, None)
-                .map_err(|e| anyhow!("{:?}", e))?;
-            let provider = HimmelblauProvider::new(app, &config, &domain, graph, &idmap)
-                .map_err(|_| anyhow!("Failed to initialize the provider"))?;
-            {
-                // A client write lock is required here.
-                let mut client = provider.client.write().await;
-                if let Ok(transport_key) =
-                    provider.fetch_loadable_transport_key_from_keystore(keystore)
-                {
-                    client.set_transport_key(transport_key);
-                }
-                if let Ok(cert_key) = provider.fetch_loadable_cert_key_from_keystore(keystore) {
-                    client.set_cert_key(cert_key);
-                }
-            }
-            providers.insert(domain.to_string(), provider);
+            warn!("No domains configured in himmelblau.conf. All tenants will be allowed!");
         }
 
         let providers = HimmelblauMultiProvider {
             config: config.clone(),
             providers: Arc::new(RwLock::new(providers)),
+            idmap,
         };
+
+        for domain in domains {
+            providers
+                .add_tenant(&domain, &cfg, keystore)
+                .await
+                .map_err(|e| anyhow!("{:?}", e))?;
+        }
 
         // Spawn periodic cookie clearing loop (Fixes bugs #591 and #491)
         let providers_ref = providers.providers.clone();
@@ -244,7 +268,7 @@ impl HimmelblauMultiProvider {
 }
 
 macro_rules! find_provider {
-    ($hmp:ident, $providers:ident, $domain:ident) => {{
+    ($hmp:ident, $providers:ident, $domain:ident, $keystore:ident) => {{
         match $providers.get($domain) {
             Some(provider) => Some(provider),
             None => {
@@ -252,7 +276,17 @@ macro_rules! find_provider {
                 let mut cfg = $hmp.config.write().await;
                 match cfg.get_primary_domain_from_alias($domain).await {
                     Some(domain) => $providers.get(&domain),
-                    None => None,
+                    None => {
+                        if cfg.get_configured_domains().len() == 0 {
+                            let _ = $hmp.add_tenant($domain, &cfg, $keystore).await;
+                            match $providers.get($domain) {
+                                Some(provider) => Some(provider),
+                                None => None,
+                            }
+                        } else {
+                            None
+                        }
+                    }
                 }
             }
         }
@@ -274,12 +308,13 @@ impl IdProvider for HimmelblauMultiProvider {
         true
     }
 
-    async fn unix_user_access(
+    async fn unix_user_access<D: KeyStoreTxn + Send>(
         &self,
         id: &Id,
         scopes: Vec<String>,
         old_token: Option<&UserToken>,
         client_id: Option<String>,
+        keystore: &mut D,
         tpm: &mut tpm::provider::BoxedDynTpm,
         machine_key: &tpm::structures::StorageKey,
     ) -> Result<UnixUserToken, IdpError> {
@@ -290,10 +325,18 @@ impl IdProvider for HimmelblauMultiProvider {
         match split_username(&account_id) {
             Some((_sam, domain)) => {
                 let providers = self.providers.read().await;
-                match find_provider!(self, providers, domain) {
+                match find_provider!(self, providers, domain, keystore) {
                     Some(provider) => {
                         provider
-                            .unix_user_access(id, scopes, old_token, client_id, tpm, machine_key)
+                            .unix_user_access(
+                                id,
+                                scopes,
+                                old_token,
+                                client_id,
+                                keystore,
+                                tpm,
+                                machine_key,
+                            )
                             .await
                     }
                     None => Err(IdpError::NotFound),
@@ -303,10 +346,11 @@ impl IdProvider for HimmelblauMultiProvider {
         }
     }
 
-    async fn unix_user_ccaches(
+    async fn unix_user_ccaches<D: KeyStoreTxn + Send>(
         &self,
         id: &Id,
         old_token: Option<&UserToken>,
+        keystore: &mut D,
         tpm: &mut tpm::provider::BoxedDynTpm,
         machine_key: &tpm::structures::StorageKey,
     ) -> (Vec<u8>, Vec<u8>) {
@@ -317,10 +361,10 @@ impl IdProvider for HimmelblauMultiProvider {
         match split_username(&account_id) {
             Some((_sam, domain)) => {
                 let providers = self.providers.read().await;
-                match find_provider!(self, providers, domain) {
+                match find_provider!(self, providers, domain, keystore) {
                     Some(provider) => {
                         provider
-                            .unix_user_ccaches(id, old_token, tpm, machine_key)
+                            .unix_user_ccaches(id, old_token, keystore, tpm, machine_key)
                             .await
                     }
                     None => (vec![], vec![]),
@@ -330,10 +374,11 @@ impl IdProvider for HimmelblauMultiProvider {
         }
     }
 
-    async fn unix_user_prt_cookie(
+    async fn unix_user_prt_cookie<D: KeyStoreTxn + Send>(
         &self,
         id: &Id,
         old_token: Option<&UserToken>,
+        keystore: &mut D,
         tpm: &mut tpm::provider::BoxedDynTpm,
         machine_key: &tpm::structures::StorageKey,
     ) -> Result<String, IdpError> {
@@ -344,10 +389,10 @@ impl IdProvider for HimmelblauMultiProvider {
         match split_username(&account_id) {
             Some((_sam, domain)) => {
                 let providers = self.providers.read().await;
-                match find_provider!(self, providers, domain) {
+                match find_provider!(self, providers, domain, keystore) {
                     Some(provider) => {
                         provider
-                            .unix_user_prt_cookie(id, old_token, tpm, machine_key)
+                            .unix_user_prt_cookie(id, old_token, keystore, tpm, machine_key)
                             .await
                     }
                     None => Err(IdpError::NotFound),
@@ -369,7 +414,7 @@ impl IdProvider for HimmelblauMultiProvider {
         match split_username(account_id) {
             Some((_sam, domain)) => {
                 let providers = self.providers.read().await;
-                match find_provider!(self, providers, domain) {
+                match find_provider!(self, providers, domain, keystore) {
                     Some(provider) => {
                         provider
                             .change_auth_token(
@@ -405,7 +450,7 @@ impl IdProvider for HimmelblauMultiProvider {
         match split_username(&account_id) {
             Some((_sam, domain)) => {
                 let providers = self.providers.read().await;
-                match find_provider!(self, providers, domain) {
+                match find_provider!(self, providers, domain, keystore) {
                     Some(provider) => {
                         provider
                             .unix_user_get(id, old_token, keystore, tpm, machine_key)
@@ -431,7 +476,7 @@ impl IdProvider for HimmelblauMultiProvider {
         match split_username(account_id) {
             Some((_sam, domain)) => {
                 let providers = self.providers.read().await;
-                match find_provider!(self, providers, domain) {
+                match find_provider!(self, providers, domain, keystore) {
                     Some(provider) => {
                         provider
                             .unix_user_online_auth_init(
@@ -471,7 +516,7 @@ impl IdProvider for HimmelblauMultiProvider {
         match split_username(account_id) {
             Some((_sam, domain)) => {
                 let providers = self.providers.read().await;
-                match find_provider!(self, providers, domain) {
+                match find_provider!(self, providers, domain, keystore) {
                     Some(provider) => {
                         provider
                             .unix_user_online_auth_step(
@@ -508,7 +553,7 @@ impl IdProvider for HimmelblauMultiProvider {
         match split_username(account_id) {
             Some((_sam, domain)) => {
                 let providers = self.providers.read().await;
-                match find_provider!(self, providers, domain) {
+                match find_provider!(self, providers, domain, keystore) {
                     Some(provider) => {
                         provider
                             .unix_user_offline_auth_init(account_id, token, no_hello_pin, keystore)
@@ -538,7 +583,7 @@ impl IdProvider for HimmelblauMultiProvider {
         match split_username(account_id) {
             Some((_sam, domain)) => {
                 let providers = self.providers.read().await;
-                match find_provider!(self, providers, domain) {
+                match find_provider!(self, providers, domain, keystore) {
                     Some(provider) => {
                         provider
                             .unix_user_offline_auth_step(
@@ -572,13 +617,19 @@ impl IdProvider for HimmelblauMultiProvider {
         Err(IdpError::BadRequest)
     }
 
-    async fn get_cachestate(&self, account_id: Option<&str>) -> CacheState {
+    async fn get_cachestate<D: KeyStoreTxn + Send>(
+        &self,
+        account_id: Option<&str>,
+        keystore: &mut D,
+    ) -> CacheState {
         match account_id {
             Some(account_id) => match split_username(account_id) {
                 Some((_sam, domain)) => {
                     let providers = self.providers.read().await;
-                    match find_provider!(self, providers, domain) {
-                        Some(provider) => return provider.get_cachestate(Some(account_id)).await,
+                    match find_provider!(self, providers, domain, keystore) {
+                        Some(provider) => {
+                            return provider.get_cachestate(Some(account_id), keystore).await
+                        }
                         None => return CacheState::Offline,
                     }
                 }
@@ -586,7 +637,7 @@ impl IdProvider for HimmelblauMultiProvider {
             },
             None => {
                 for (_domain, provider) in self.providers.read().await.iter() {
-                    match provider.get_cachestate(None).await {
+                    match provider.get_cachestate(None, keystore).await {
                         CacheState::Offline => return CacheState::Offline,
                         CacheState::OfflineNextCheck(time) => {
                             return CacheState::OfflineNextCheck(time)
@@ -723,13 +774,14 @@ impl IdProvider for HimmelblauProvider {
         }
     }
 
-    #[instrument(skip(self, id, old_token, tpm, machine_key))]
-    async fn unix_user_access(
+    #[instrument(skip(self, id, old_token, _keystore, tpm, machine_key))]
+    async fn unix_user_access<D: KeyStoreTxn + Send>(
         &self,
         id: &Id,
         scopes: Vec<String>,
         old_token: Option<&UserToken>,
         client_id: Option<String>,
+        _keystore: &mut D,
         tpm: &mut tpm::provider::BoxedDynTpm,
         machine_key: &tpm::structures::StorageKey,
     ) -> Result<UnixUserToken, IdpError> {
@@ -770,10 +822,11 @@ impl IdProvider for HimmelblauProvider {
     }
 
     #[instrument(skip_all)]
-    async fn unix_user_ccaches(
+    async fn unix_user_ccaches<D: KeyStoreTxn + Send>(
         &self,
         id: &Id,
         old_token: Option<&UserToken>,
+        _keystore: &mut D,
         tpm: &mut tpm::provider::BoxedDynTpm,
         machine_key: &tpm::structures::StorageKey,
     ) -> (Vec<u8>, Vec<u8>) {
@@ -816,10 +869,11 @@ impl IdProvider for HimmelblauProvider {
     }
 
     #[instrument(skip_all)]
-    async fn unix_user_prt_cookie(
+    async fn unix_user_prt_cookie<D: KeyStoreTxn + Send>(
         &self,
         id: &Id,
         old_token: Option<&UserToken>,
+        _keystore: &mut D,
         tpm: &mut tpm::provider::BoxedDynTpm,
         machine_key: &tpm::structures::StorageKey,
     ) -> Result<String, IdpError> {
@@ -2450,7 +2504,11 @@ impl IdProvider for HimmelblauProvider {
         Err(IdpError::BadRequest)
     }
 
-    async fn get_cachestate(&self, _account_id: Option<&str>) -> CacheState {
+    async fn get_cachestate<D: KeyStoreTxn + Send>(
+        &self,
+        _account_id: Option<&str>,
+        _keystore: &mut D,
+    ) -> CacheState {
         (*self.state.lock().await).clone()
     }
 }
