@@ -11,7 +11,7 @@ updates:
     directory: "/"
     target-branch: main
     schedule:
-      interval: "weekly"
+      interval: "monthly"
     commit-message:
       prefix: "deps(rust)"
     ignore:
@@ -26,7 +26,7 @@ updates:
     directory: "/"
     target-branch: stable-1.x
     schedule:
-      interval: "weekly"
+      interval: "quarterly"
     commit-message:
       prefix: "deps(rust)"
     ignore:
@@ -41,7 +41,7 @@ updates:
     directory: "/"
     target-branch: stable-0.9.x
     schedule:
-      interval: "weekly"
+      interval: "quarterly"
     commit-message:
       prefix: "deps(rust)"
     ignore:
@@ -56,7 +56,7 @@ updates:
     directory: "/"
     target-branch: stable-0.7.x
     schedule:
-      interval: "weekly"
+      interval: "quarterly"
     commit-message:
       prefix: "deps(rust)"
     ignore:
