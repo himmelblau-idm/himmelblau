@@ -51,7 +51,7 @@ use reqwest;
 use reqwest::Url;
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::thread::sleep;
+use tokio::time::sleep;
 use std::time::Duration;
 use std::time::SystemTime;
 use tokio::sync::{broadcast, Mutex, RwLock};
@@ -152,7 +152,7 @@ impl BadPinCounter {
         *counter += 1;
 
         // Discourage attackers by waiting for an ever increasing wait time for each bad pin
-        sleep(Duration::from_secs((*counter as u64) * 2));
+        sleep(Duration::from_secs((*counter as u64) * 2)).await;
     }
 
     pub async fn reset_bad_pin_count(&self, account_id: &str) {
@@ -1163,7 +1163,7 @@ impl IdProvider for HimmelblauProvider {
             Ok(val) => val,
             Err(MsalError::RequestFailed(_)) => {
                 // Retry on network failure, as these can be rather common
-                sleep(Duration::from_millis(500));
+                sleep(Duration::from_millis(500)).await;
                 net_down_check!(
                     self.client
                         .read()
@@ -1515,7 +1515,7 @@ impl IdProvider for HimmelblauProvider {
                                      * device object. Wait 5 seconds and try again. */
                                     info!("Azure hasn't finished replicating the device...");
                                     info!("Retrying in 5 seconds");
-                                    sleep(Duration::from_secs(5));
+                                    sleep(Duration::from_secs(5)).await;
                                     net_down_check!(
                                         self.client
                                             .read()
