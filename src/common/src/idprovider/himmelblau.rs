@@ -2460,12 +2460,21 @@ impl HimmelblauProvider {
         // possible. This permits the daemon to start, without requiring we be
         // connected to the internet. This way we can send messages to the user
         // via PAM indicating that the network is down.
-        let init = *self.init.read().await;
-        if !init {
+        if !*self.init.read().await {
+            let mut init = self.init.write().await;
+            if *init {
+                // Another thread initialized while we were waiting for the lock.
+                return Ok(());
+            }
+
             // Send the federation provider request, if necessary. If these were
             // cached previously, then a network connection is not necessary at
             // this moment. If they were not cached, and supplied to the graph
             // object, then we require a network connection now.
+            //
+            // Note: we hold the write lock on `init` for the duration of this
+            // block to prevent a race condition where multiple threads could
+            // attempt to initialize simultaneously.
             let tenant_id = self.graph.tenant_id().await.map_err(|e| {
                 error!("Failed discovering the tenant_id: {}", e);
                 IdpError::BadRequest
@@ -2504,7 +2513,7 @@ impl HimmelblauProvider {
                 })?;
 
             // Mark the provider as initialized
-            *self.init.write().await = true;
+            *init = true;
 
             // Cache the federation provider responses
             let mut cfg = self.config.write().await;
