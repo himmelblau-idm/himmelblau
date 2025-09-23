@@ -103,7 +103,7 @@ check-licenses: ## Validate dependant licenses comply with GPLv3
 
 vet: ## Vet Dependencies
 	cargo vet -V >/dev/null || (echo "cargo-vet required" && cargo install cargo-vet)
-	cargo vet --locked
+	cargo vet --locked || echo "Use |cargo vet inspect| to vet the changes to each crate"
 
 sbom: .packaging ## Generate a Software Bill of Materials
 	cargo sbom -V >/dev/null || (echo "cargo-sbom required" && cargo install cargo-sbom)

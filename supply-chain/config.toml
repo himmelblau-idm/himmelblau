@@ -252,18 +252,6 @@ criteria = "safe-to-deploy"
 version = "0.9.2"
 criteria = "safe-to-deploy"
 
-[[exemptions.darling]]
-version = "0.20.11"
-criteria = "safe-to-deploy"
-
-[[exemptions.darling_core]]
-version = "0.20.11"
-criteria = "safe-to-deploy"
-
-[[exemptions.darling_macro]]
-version = "0.20.11"
-criteria = "safe-to-deploy"
-
 [[exemptions.data-encoding]]
 version = "2.9.0"
 criteria = "safe-to-deploy"
@@ -378,10 +366,6 @@ criteria = "safe-to-deploy"
 
 [[exemptions.file-id]]
 version = "0.2.2"
-criteria = "safe-to-deploy"
-
-[[exemptions.find-msvc-tools]]
-version = "0.1.1"
 criteria = "safe-to-deploy"
 
 [[exemptions.flagset]]
@@ -936,16 +920,8 @@ criteria = "safe-to-deploy"
 version = "4.1.0"
 criteria = "safe-to-deploy"
 
-[[exemptions.rustls]]
-version = "0.23.31"
-criteria = "safe-to-deploy"
-
 [[exemptions.rustls-pki-types]]
 version = "1.12.0"
-criteria = "safe-to-deploy"
-
-[[exemptions.rustls-webpki]]
-version = "0.103.4"
 criteria = "safe-to-deploy"
 
 [[exemptions.schannel]]
@@ -986,14 +962,6 @@ criteria = "safe-to-deploy"
 
 [[exemptions.serde_urlencoded]]
 version = "0.7.1"
-criteria = "safe-to-deploy"
-
-[[exemptions.serde_with]]
-version = "3.14.0"
-criteria = "safe-to-deploy"
-
-[[exemptions.serde_with_macros]]
-version = "3.14.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.servo_arc]]
@@ -1064,16 +1032,8 @@ criteria = "safe-to-deploy"
 version = "2.2.2"
 criteria = "safe-to-deploy"
 
-[[exemptions.tempfile]]
-version = "3.22.0"
-criteria = "safe-to-deploy"
-
 [[exemptions.tendril]]
 version = "0.4.3"
-criteria = "safe-to-deploy"
-
-[[exemptions.time]]
-version = "0.3.43"
 criteria = "safe-to-deploy"
 
 [[exemptions.time-core]]
