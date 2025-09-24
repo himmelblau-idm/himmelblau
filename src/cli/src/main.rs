@@ -505,16 +505,12 @@ async fn main() -> ExitCode {
         } => debug,
         HimmelblauUnixOpt::CacheClear {
             debug,
-            enumerate: _,
-            idmap: _,
             nss: _,
             mapped: _,
             full: _,
         } => debug,
         HimmelblauUnixOpt::CacheInvalidate {
             debug,
-            enumerate: _,
-            idmap: _,
             nss: _,
             mapped: _,
             full: _,
@@ -561,6 +557,7 @@ async fn main() -> ExitCode {
             account_id: _,
             gid: _,
         }) => debug,
+        HimmelblauUnixOpt::Idmap(IdmapOpt::Clear { debug }) => debug,
         HimmelblauUnixOpt::Status { debug } => debug,
         HimmelblauUnixOpt::Version { debug } => debug,
     };
@@ -1429,16 +1426,12 @@ async fn main() -> ExitCode {
         }
         HimmelblauUnixOpt::CacheClear {
             debug: _,
-            enumerate,
-            idmap,
             nss,
             mapped,
             full,
         }
         | HimmelblauUnixOpt::CacheInvalidate {
             debug: _,
-            enumerate,
-            idmap,
             nss,
             mapped,
             full,
@@ -1450,19 +1443,10 @@ async fn main() -> ExitCode {
                 return ExitCode::FAILURE;
             }
 
-            let clear_all = !enumerate && !idmap && !nss && !mapped;
+            let clear_all = !nss && !mapped;
 
             macro_rules! clear_cache {
                 () => {{
-                    // Remove the idmap cache
-                    let path = Path::new(ID_MAP_CACHE);
-                    if path.exists() && (enumerate || idmap || clear_all) {
-                        if let Err(e) = fs::remove_file(path) {
-                            error!("Failed to remove idmap cache: {:?}", e);
-                            return ExitCode::FAILURE;
-                        }
-                    }
-
                     // Remove the nss cache
                     let path = Path::new(NSS_CACHE);
                     if path.exists() && (nss || clear_all) {
@@ -1848,7 +1832,44 @@ async fn main() -> ExitCode {
 
                     info!("Group mapping inserted successfully.");
                 }
+
+                IdmapOpt::Clear { debug: _ } => {
+                    trace!("Clearing id mapping ...");
+
+                    // Remove the idmap cache
+                    let path = Path::new(ID_MAP_CACHE);
+                    if path.exists() {
+                        if let Err(e) = fs::remove_file(path) {
+                            error!("Failed to remove idmap cache: {:?}", e);
+                            return ExitCode::FAILURE;
+                        }
+                    }
+                }
             }
+
+            // Invalidate the himmelblaud cache, otherwise these changes wont
+            // take effect immediately.
+            let cfg = match HimmelblauConfig::new(Some(DEFAULT_CONFIG_PATH)) {
+                Ok(c) => c,
+                Err(_e) => {
+                    error!("Failed to parse {}", DEFAULT_CONFIG_PATH);
+                    return ExitCode::FAILURE;
+                }
+            };
+
+            let req = ClientRequest::InvalidateCache;
+
+            match call_daemon(&cfg.get_socket_path(), req, cfg.get_unix_sock_timeout()).await {
+                Ok(r) => match r {
+                    ClientResponse::Ok => info!("success"),
+                    _ => {
+                        error!("Error: unexpected response -> {:?}", r);
+                    }
+                },
+                Err(e) => {
+                    error!("Error -> {:?}", e);
+                }
+            };
 
             ExitCode::SUCCESS
         }
