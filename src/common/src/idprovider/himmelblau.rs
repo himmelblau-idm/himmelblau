@@ -2928,64 +2928,70 @@ impl HimmelblauProvider {
         let id =
             Uuid::parse_str(&value.id).map_err(|e| anyhow!("Failed parsing user uuid: {}", e))?;
         let idmap = self.idmap.read().await;
-        let gidnumber = match config.get_id_attr_map() {
-            IdAttr::Uuid => idmap
-                .object_id_to_unix_id(
-                    &self
-                        .graph
-                        .tenant_id()
-                        .await
-                        .map_err(|e| anyhow!("{:?}", e))?,
-                    &AadSid::from_object_id(&id)
-                        .map_err(|e| anyhow!("Failed parsing object id: {:?}", e))?,
-                )
-                .map_err(|e| anyhow!("Failed fetching gid for {}: {:?}", id, e))?,
-            IdAttr::Name => idmap
-                .gen_to_unix(
-                    &self
-                        .graph
-                        .tenant_id()
-                        .await
-                        .map_err(|e| anyhow!("{:?}", e))?,
-                    &id.to_string(),
-                )
-                .map_err(|e| anyhow!("Failed fetching gid for {}: {:?}", name, e))?,
-            IdAttr::Rfc2307 => match value.extension_attrs.get("gidNumber") {
-                Some(gid_number) => gid_number.parse::<u32>().map_err(|e| {
-                    anyhow!(
-                        "Invalid gidNumber ('{}') synced from on-prem AD: {:?}",
-                        gid_number,
-                        e
+        let idmap_cache_entry = StaticIdCache::new(ID_MAP_CACHE, false)
+            .ok()
+            .and_then(|idmap_cache| idmap_cache.get_group_by_name(&id.to_string()));
+        let gidnumber = match idmap_cache_entry {
+            Some(group) => group.gid,
+            None => match config.get_id_attr_map() {
+                IdAttr::Uuid => idmap
+                    .object_id_to_unix_id(
+                        &self
+                            .graph
+                            .tenant_id()
+                            .await
+                            .map_err(|e| anyhow!("{:?}", e))?,
+                        &AadSid::from_object_id(&id)
+                            .map_err(|e| anyhow!("Failed parsing object id: {:?}", e))?,
                     )
-                })?,
-                None => match config.get_rfc2307_group_fallback_map() {
-                    Some(IdAttr::Uuid) => idmap
-                        .object_id_to_unix_id(
-                            &self
-                                .graph
-                                .tenant_id()
-                                .await
-                                .map_err(|e| anyhow!("{:?}", e))?,
-                            &AadSid::from_object_id(&id)
-                                .map_err(|e| anyhow!("Failed parsing object id: {:?}", e))?,
+                    .map_err(|e| anyhow!("Failed fetching gid for {}: {:?}", id, e))?,
+                IdAttr::Name => idmap
+                    .gen_to_unix(
+                        &self
+                            .graph
+                            .tenant_id()
+                            .await
+                            .map_err(|e| anyhow!("{:?}", e))?,
+                        &id.to_string(),
+                    )
+                    .map_err(|e| anyhow!("Failed fetching gid for {}: {:?}", name, e))?,
+                IdAttr::Rfc2307 => match value.extension_attrs.get("gidNumber") {
+                    Some(gid_number) => gid_number.parse::<u32>().map_err(|e| {
+                        anyhow!(
+                            "Invalid gidNumber ('{}') synced from on-prem AD: {:?}",
+                            gid_number,
+                            e
                         )
-                        .map_err(|e| anyhow!("Failed fetching gid for {}: {:?}", id, e))?,
-                    Some(IdAttr::Name) => idmap
-                        .gen_to_unix(
-                            &self
-                                .graph
-                                .tenant_id()
-                                .await
-                                .map_err(|e| anyhow!("{:?}", e))?,
-                            &name,
-                        )
-                        .map_err(|e| anyhow!("Failed fetching gid for {}: {:?}", name, e))?,
-                    Some(_) | None => {
-                        return Err(anyhow!(
+                    })?,
+                    None => match config.get_rfc2307_group_fallback_map() {
+                        Some(IdAttr::Uuid) => idmap
+                            .object_id_to_unix_id(
+                                &self
+                                    .graph
+                                    .tenant_id()
+                                    .await
+                                    .map_err(|e| anyhow!("{:?}", e))?,
+                                &AadSid::from_object_id(&id)
+                                    .map_err(|e| anyhow!("Failed parsing object id: {:?}", e))?,
+                            )
+                            .map_err(|e| anyhow!("Failed fetching gid for {}: {:?}", id, e))?,
+                        Some(IdAttr::Name) => idmap
+                            .gen_to_unix(
+                                &self
+                                    .graph
+                                    .tenant_id()
+                                    .await
+                                    .map_err(|e| anyhow!("{:?}", e))?,
+                                &name,
+                            )
+                            .map_err(|e| anyhow!("Failed fetching gid for {}: {:?}", name, e))?,
+                        Some(_) | None => {
+                            return Err(anyhow!(
                             "Group {} has no gidNumber defined in the directory and no fallback was set!",
                             name
                         ));
-                    }
+                        }
+                    },
                 },
             },
         };
