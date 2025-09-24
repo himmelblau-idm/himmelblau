@@ -33,17 +33,22 @@ pub enum IdmapOpt {
         #[clap(short = 'g', long = "gid")]
         gid: gid_t,
     },
-    /// Add a static group mapping to the idmap cache. This maps an Entra ID group (by name)
-    /// to a fixed GID. This can be used to maintain group identity and membership compatibility
-    /// after moving to Entra ID.
+    /// Add a static group mapping to the idmap cache. This maps an Entra ID group (by Object Id
+    /// GUID) to a fixed GID. This can be used to maintain group identity and membership
+    /// compatibility after moving to Entra ID.
     GroupAdd {
         #[clap(short, long)]
         debug: bool,
-        #[clap(short = 'D', long = "name")]
-        account_id: String,
+        #[clap(short = 'D', long = "object_id")]
+        object_id: String,
         #[clap(short = 'g', long = "gid")]
         gid: gid_t,
     },
+    /// Clear the contents of the idmap static cache.
+    Clear {
+        #[clap(short, long)]
+        debug: bool,
+    }
 }
 
 #[derive(Debug, Subcommand)]
@@ -376,8 +381,8 @@ pub enum HimmelblauUnixOpt {
     /// By default, this marks all cached user and group entries as stale,
     /// forcing them to refresh immediately when next used.
     ///
-    /// Specify --enumerate, --idmap, --nss, or --mapped to clear these individual
-    /// caches as well. Omit all these to clear them all.
+    /// Specify --nss or --mapped to clear these individual
+    /// caches as well. Omit both these to clear them all.
     ///
     /// Use `--full` to completely purge the user and group cache entries and unjoin the host
     /// from Entra ID.
@@ -385,12 +390,6 @@ pub enum HimmelblauUnixOpt {
     CacheClear {
         #[clap(short, long)]
         debug: bool,
-        /// Only clear the enumerated users/groups cache
-        #[clap(long)]
-        enumerate: bool,
-        /// Only clear the idmap cache (alias for --enumerate)
-        #[clap(long)]
-        idmap: bool,
         /// Only clear the nss cache
         #[clap(long)]
         nss: bool,
@@ -406,10 +405,6 @@ pub enum HimmelblauUnixOpt {
     CacheInvalidate {
         #[clap(short, long)]
         debug: bool,
-        #[clap(long)]
-        enumerate: bool,
-        #[clap(long)]
-        idmap: bool,
         #[clap(long)]
         nss: bool,
         #[clap(long)]
