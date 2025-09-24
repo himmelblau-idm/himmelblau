@@ -44,6 +44,11 @@ pub enum IdmapOpt {
         #[clap(short = 'g', long = "gid")]
         gid: gid_t,
     },
+    /// Clear the contents of the idmap static cache.
+    Clear {
+        #[clap(short, long)]
+        debug: bool,
+    }
 }
 
 #[derive(Debug, Subcommand)]
@@ -376,8 +381,8 @@ pub enum HimmelblauUnixOpt {
     /// By default, this marks all cached user and group entries as stale,
     /// forcing them to refresh immediately when next used.
     ///
-    /// Specify --enumerate, --idmap, --nss, or --mapped to clear these individual
-    /// caches as well. Omit all these to clear them all.
+    /// Specify --nss or --mapped to clear these individual
+    /// caches as well. Omit both these to clear them all.
     ///
     /// Use `--full` to completely purge the user and group cache entries and unjoin the host
     /// from Entra ID.
@@ -385,12 +390,6 @@ pub enum HimmelblauUnixOpt {
     CacheClear {
         #[clap(short, long)]
         debug: bool,
-        /// Only clear the enumerated users/groups cache
-        #[clap(long)]
-        enumerate: bool,
-        /// Only clear the idmap cache (alias for --enumerate)
-        #[clap(long)]
-        idmap: bool,
         /// Only clear the nss cache
         #[clap(long)]
         nss: bool,
@@ -406,10 +405,6 @@ pub enum HimmelblauUnixOpt {
     CacheInvalidate {
         #[clap(short, long)]
         debug: bool,
-        #[clap(long)]
-        enumerate: bool,
-        #[clap(long)]
-        idmap: bool,
         #[clap(long)]
         nss: bool,
         #[clap(long)]
