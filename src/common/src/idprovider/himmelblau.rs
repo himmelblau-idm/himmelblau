@@ -1855,7 +1855,11 @@ impl IdProvider for HimmelblauProvider {
                 auth_and_validate_hello_key!(hello_key, keytype, pin)
             }
             (_, PamAuthRequest::Pin { cred }) => {
-                let (hello_key, keytype) = self.fetch_hello_key(account_id, keystore)?;
+                let (hello_key, keytype) =
+                    self.fetch_hello_key(account_id, keystore).map_err(|e| {
+                        error!("Online authentication failed. Hello key missing.");
+                        e
+                    })?;
 
                 auth_and_validate_hello_key!(hello_key, keytype, cred)
             }
@@ -2369,7 +2373,11 @@ impl IdProvider for HimmelblauProvider {
     ) -> Result<AuthResult, IdpError> {
         match (&cred_handler, pam_next_req) {
             (_, PamAuthRequest::Pin { cred }) => {
-                let (hello_key, _keytype) = self.fetch_hello_key(account_id, keystore)?;
+                let (hello_key, _keytype) =
+                    self.fetch_hello_key(account_id, keystore).map_err(|e| {
+                        error!("Offline authentication failed. Hello key missing.");
+                        e
+                    })?;
 
                 let pin = PinValue::new(&cred).map_err(|e| {
                     error!("Failed setting pin value: {:?}", e);
@@ -2590,14 +2598,8 @@ impl HimmelblauProvider {
             Err(_) | Ok(None) => {
                 let hello_key = keystore
                     .get_tagged_hsm_key(&format!("{}/hello_decoupled", account_id))
-                    .map_err(|e| {
-                        error!("Failed fetching hello key from keystore: {:?}", e);
-                        IdpError::BadRequest
-                    })?
-                    .ok_or_else(|| {
-                        error!("Authentication failed. Hello key missing.");
-                        IdpError::BadRequest
-                    })?;
+                    .map_err(|_| IdpError::BadRequest)?
+                    .ok_or_else(|| IdpError::BadRequest)?;
                 Ok((hello_key, KeyType::Decoupled))
             }
         }
