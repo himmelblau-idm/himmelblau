@@ -554,7 +554,7 @@ async fn main() -> ExitCode {
         }) => debug,
         HimmelblauUnixOpt::Idmap(IdmapOpt::GroupAdd {
             debug,
-            account_id: _,
+            object_id: _,
             gid: _,
         }) => debug,
         HimmelblauUnixOpt::Idmap(IdmapOpt::Clear { debug }) => debug,
@@ -1807,7 +1807,7 @@ async fn main() -> ExitCode {
 
                 IdmapOpt::GroupAdd {
                     debug: _,
-                    account_id,
+                    object_id,
                     gid,
                 } => {
                     trace!("Configuring id group mapping ...");
@@ -1821,7 +1821,7 @@ async fn main() -> ExitCode {
                     };
 
                     let group = StaticGroup {
-                        name: account_id,
+                        name: object_id,
                         gid,
                     };
 

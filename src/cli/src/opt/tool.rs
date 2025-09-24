@@ -33,14 +33,14 @@ pub enum IdmapOpt {
         #[clap(short = 'g', long = "gid")]
         gid: gid_t,
     },
-    /// Add a static group mapping to the idmap cache. This maps an Entra ID group (by name)
-    /// to a fixed GID. This can be used to maintain group identity and membership compatibility
-    /// after moving to Entra ID.
+    /// Add a static group mapping to the idmap cache. This maps an Entra ID group (by Object Id
+    /// GUID) to a fixed GID. This can be used to maintain group identity and membership
+    /// compatibility after moving to Entra ID.
     GroupAdd {
         #[clap(short, long)]
         debug: bool,
-        #[clap(short = 'D', long = "name")]
-        account_id: String,
+        #[clap(short = 'D', long = "object_id")]
+        object_id: String,
         #[clap(short = 'g', long = "gid")]
         gid: gid_t,
     },
