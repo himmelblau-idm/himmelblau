@@ -25,14 +25,19 @@ jobs:
     # limit this to PRs opened by dependabot
     if: ${{ github.actor == 'dependabot[bot]' }}
     steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@f4a75cfd619ee5ce8d5b864b0d183aff3c69b55a # v2.13.1
+        with:
+          egress-policy: audit
+
       - name: Dependabot metadata
         id: metadata
-        uses: dependabot/fetch-metadata@v2
+        uses: dependabot/fetch-metadata@08eff52bf64351f401fb50d4972fa95b9f2c2d1b # v2.4.0
         with:
           github-token: "${{ secrets.GITHUB_TOKEN }}"
           alert-lookup: true
           compat-lookup: true
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4.3.0
       - name: Enable auto-merge for Dependabot PRs
         run: gh pr merge --auto --squash "$PR_URL"
         env:
