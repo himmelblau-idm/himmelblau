@@ -13,11 +13,16 @@ jobs:
   nixos:
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v4
-    - uses: cachix/install-nix-action@v25
+    - name: Harden the runner (Audit all outbound calls)
+      uses: step-security/harden-runner@f4a75cfd619ee5ce8d5b864b0d183aff3c69b55a # v2.13.1
+      with:
+        egress-policy: audit
+
+    - uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955 # v4.3.0
+    - uses: cachix/install-nix-action@6004951b182f8860210c8d6f0d808ec5b1a33d28 # v25
       with:
         extra_nix_config: experimental-features = nix-command flakes
-    - uses: cachix/cachix-action@v14
+    - uses: cachix/cachix-action@18cf96c7c98e048e10a83abd92116114cd8504be # v14
       with:
         name: himmelblau
         signingKey: '${{ secrets.CACHIX_SIGNING_KEY }}'
