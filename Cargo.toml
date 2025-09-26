@@ -34,7 +34,7 @@ libc = "^0.2.176"
 pkg-config = "^0.3.32"
 lazy_static = "^1.4.0"
 paste = "^1.0.12"
-serde = { version = "^1.0.226", features = ["derive"] }
+serde = { version = "^1.0.227", features = ["derive"] }
 serde_json = "^1.0.145"
 tracing-subscriber = "^0.3.20"
 tracing = "^0.1.37"
