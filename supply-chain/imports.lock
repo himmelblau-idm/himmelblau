@@ -43,6 +43,13 @@ user-id = 6743
 user-login = "epage"
 user-name = "Ed Page"
 
+[[publisher.arbitrary]]
+version = "1.4.2"
+when = "2025-08-14"
+user-id = 696
+user-login = "fitzgen"
+user-name = "Nick Fitzgerald"
+
 [[publisher.async-trait]]
 version = "0.1.89"
 when = "2025-08-14"
@@ -187,6 +194,13 @@ when = "2025-02-12"
 user-id = 189
 user-login = "BurntSushi"
 user-name = "Andrew Gallant"
+
+[[publisher.derive_arbitrary]]
+version = "1.4.2"
+when = "2025-08-14"
+user-id = 696
+user-login = "fitzgen"
+user-name = "Nick Fitzgerald"
 
 [[publisher.derive_more]]
 version = "2.0.1"
@@ -721,6 +735,13 @@ version = "0.2.176"
 when = "2025-09-23"
 user-id = 55123
 user-login = "rust-lang-owner"
+
+[[publisher.libfuzzer-sys]]
+version = "0.4.10"
+when = "2025-07-03"
+user-id = 696
+user-login = "fitzgen"
+user-name = "Nick Fitzgerald"
 
 [[publisher.libm]]
 version = "0.2.15"
@@ -1443,12 +1464,28 @@ user-login = "wasmtime-publish"
 
 [audits.actix.audits]
 
+[[audits.bytecode-alliance.wildcard-audits.arbitrary]]
+who = "Nick Fitzgerald <fitzgen@gmail.com>"
+criteria = "safe-to-deploy"
+user-id = 696 # Nick Fitzgerald (fitzgen)
+start = "2020-01-14"
+end = "2026-08-21"
+notes = "I am an author of this crate."
+
 [[audits.bytecode-alliance.wildcard-audits.bumpalo]]
 who = "Nick Fitzgerald <fitzgen@gmail.com>"
 criteria = "safe-to-deploy"
 user-id = 696 # Nick Fitzgerald (fitzgen)
 start = "2019-03-16"
 end = "2026-08-21"
+
+[[audits.bytecode-alliance.wildcard-audits.derive_arbitrary]]
+who = "Nick Fitzgerald <fitzgen@gmail.com>"
+criteria = "safe-to-deploy"
+user-id = 696 # Nick Fitzgerald (fitzgen)
+start = "2020-01-14"
+end = "2026-08-21"
+notes = "I am an author of this crate"
 
 [[audits.bytecode-alliance.wildcard-audits.wit-bindgen-rt]]
 who = "Alex Crichton <alex@alexcrichton.com>"

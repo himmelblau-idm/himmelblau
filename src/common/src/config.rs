@@ -348,7 +348,7 @@ impl HimmelblauConfig {
     }
 
     pub fn get_unix_sock_timeout(&self) -> u64 {
-        self.get_connection_timeout() * 2
+        self.get_connection_timeout().saturating_mul(2)
     }
 
     pub fn get_db_path(&self) -> String {

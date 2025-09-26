@@ -2599,7 +2599,7 @@ impl HimmelblauProvider {
                 let hello_key = keystore
                     .get_tagged_hsm_key(&format!("{}/hello_decoupled", account_id))
                     .map_err(|_| IdpError::BadRequest)?
-                    .ok_or_else(|| IdpError::BadRequest)?;
+                    .ok_or(IdpError::BadRequest)?;
                 Ok((hello_key, KeyType::Decoupled))
             }
         }

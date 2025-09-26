@@ -735,6 +735,12 @@ user-id = 55123 # rust-lang-owner
 start = "2024-08-15"
 end = "2026-09-11"
 
+[[trusted.libfuzzer-sys]]
+criteria = "safe-to-deploy"
+user-id = 696 # Nick Fitzgerald (fitzgen)
+start = "2020-01-14"
+end = "2026-09-26"
+
 [[trusted.libm]]
 criteria = "safe-to-deploy"
 user-id = 55123 # rust-lang-owner
