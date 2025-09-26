@@ -2595,8 +2595,10 @@ version = "2.0.0"
 dependencies = [
  "arbitrary",
  "himmelblau_unix_common",
+ "idmap",
  "libfuzzer-sys",
  "tempfile",
+ "uuid",
 ]
 
 [[package]]

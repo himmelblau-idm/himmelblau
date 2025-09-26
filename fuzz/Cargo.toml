@@ -15,12 +15,21 @@ cargo-fuzz = true
 [dependencies]
 libfuzzer-sys = "0.4"
 himmelblau_unix_common = { workspace = true }
+idmap = { workspace = true }
 arbitrary = { version = "1.4.2", features = ["derive"] }
 tempfile = "3.23.0"
+uuid = "1.18.1"
 
 [[bin]]
 name = "config"
 path = "fuzz_targets/config.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "idmap"
+path = "fuzz_targets/idmap.rs"
 test = false
 doc = false
 bench = false
