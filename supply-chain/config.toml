@@ -308,10 +308,6 @@ criteria = "safe-to-deploy"
 version = "1.0.5"
 criteria = "safe-to-deploy"
 
-[[exemptions.ecb]]
-version = "0.1.2"
-criteria = "safe-to-deploy"
-
 [[exemptions.ecdsa]]
 version = "0.16.9"
 criteria = "safe-to-deploy"
@@ -342,10 +338,6 @@ criteria = "safe-to-deploy"
 
 [[exemptions.event-listener-strategy]]
 version = "0.5.4"
-criteria = "safe-to-deploy"
-
-[[exemptions.failure_derive]]
-version = "0.1.8"
 criteria = "safe-to-deploy"
 
 [[exemptions.fallible-iterator]]
@@ -426,30 +418,6 @@ criteria = "safe-to-deploy"
 
 [[exemptions.hermit-abi]]
 version = "0.4.0"
-criteria = "safe-to-deploy"
-
-[[exemptions.himmelblau_kerberos_asn1]]
-version = "0.4.2"
-criteria = "safe-to-deploy"
-
-[[exemptions.himmelblau_kerberos_ccache]]
-version = "0.4.1"
-criteria = "safe-to-deploy"
-
-[[exemptions.himmelblau_kerberos_constants]]
-version = "0.4.1"
-criteria = "safe-to-deploy"
-
-[[exemptions.himmelblau_kerberos_crypto]]
-version = "0.4.1"
-criteria = "safe-to-deploy"
-
-[[exemptions.himmelblau_red_asn1]]
-version = "0.3.7"
-criteria = "safe-to-deploy"
-
-[[exemptions.himmelblau_red_asn1_derive]]
-version = "0.2.3"
 criteria = "safe-to-deploy"
 
 [[exemptions.hkdf]]
@@ -622,10 +590,6 @@ criteria = "safe-to-deploy"
 
 [[exemptions.nix]]
 version = "0.15.0"
-criteria = "safe-to-deploy"
-
-[[exemptions.nom]]
-version = "8.0.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.notify]]
@@ -876,10 +840,6 @@ criteria = "safe-to-deploy"
 version = "5.2.0"
 criteria = "safe-to-deploy"
 
-[[exemptions.rc4]]
-version = "0.1.0"
-criteria = "safe-to-deploy"
-
 [[exemptions.redox_syscall]]
 version = "0.5.12"
 criteria = "safe-to-deploy"
@@ -966,10 +926,6 @@ criteria = "safe-to-deploy"
 
 [[exemptions.servo_arc]]
 version = "0.4.1"
-criteria = "safe-to-deploy"
-
-[[exemptions.sha-1]]
-version = "0.10.1"
 criteria = "safe-to-deploy"
 
 [[exemptions.sha-crypt]]
