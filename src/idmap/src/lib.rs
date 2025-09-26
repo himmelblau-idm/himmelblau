@@ -32,6 +32,7 @@
 use std::collections::HashMap;
 use std::ffi::CString;
 use std::fmt;
+use std::num::NonZeroU32;
 use std::ptr;
 use std::sync::RwLock;
 use uuid::Uuid;
@@ -269,12 +270,9 @@ impl Idmap {
 
     pub fn object_id_to_unix_id(&self, tenant_id: &str, sid: &AadSid) -> Result<u32, IdmapError> {
         let rid = sid.rid()?;
-        let idmap_range = match self.ranges.get(tenant_id) {
-            Some(idmap_range) => idmap_range,
-            None => return Err(IDMAP_NO_RANGE),
-        };
-        let uid_count = idmap_range.1 - idmap_range.0;
-        Ok((rid % uid_count) + idmap_range.0)
+        let &(lo, hi) = self.ranges.get(tenant_id).ok_or(IDMAP_NO_RANGE)?;
+        let uid_count = NonZeroU32::new(hi.saturating_sub(lo)).ok_or(IDMAP_NO_RANGE)?;
+        Ok((rid % uid_count) + lo)
     }
 }
 
