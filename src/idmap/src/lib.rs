@@ -217,6 +217,9 @@ impl Idmap {
         tenant_id: &str,
         range: (u32, u32),
     ) -> Result<(), IdmapError> {
+        if self.ranges.contains_key(tenant_id) {
+            return Err(IDMAP_COLLISION);
+        }
         let ctx = self.ctx.write().map_err(|e| {
             error!("Failed obtaining write lock on sss_idmap_ctx: {}", e);
             IDMAP_ERROR
