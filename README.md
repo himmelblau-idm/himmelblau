@@ -1,5 +1,7 @@
 [![Primary Sponsor: SUSE](https://img.shields.io/badge/Primary%20Sponsor-SUSE-brightgreen)](https://www.suse.com)
 
+[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/himmelblau-idm/himmelblau/badge)](https://scorecard.dev/viewer/?uri=github.com/himmelblau-idm/himmelblau) [![OpenSSF Best Practices](https://www.bestpractices.dev/projects/11235/badge)](https://www.bestpractices.dev/projects/11235)
+
 [![Donate to Our Collective](https://opencollective.com/yourproject/donate/button.png?color=blue)](https://opencollective.com/himmelblau)
 
 # Himmelblau
