@@ -14,6 +14,7 @@ members = [
 	"src/broker-client",
 	"src/selinux",
 	"src/o365",
+	"fuzz",
 ]
 resolver = "2"
 

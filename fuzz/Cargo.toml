@@ -1,0 +1,26 @@
+[package]
+name = "himmelblau-fuzz"
+version.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+edition.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+publish = false
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+himmelblau_unix_common = { workspace = true }
+arbitrary = { version = "1.4.2", features = ["derive"] }
+tempfile = "3.23.0"
+
+[[bin]]
+name = "config"
+path = "fuzz_targets/config.rs"
+test = false
+doc = false
+bench = false
