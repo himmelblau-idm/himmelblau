@@ -251,6 +251,9 @@ impl Idmap {
     }
 
     pub fn gen_to_unix(&self, tenant_id: &str, input: &str) -> Result<u32, IdmapError> {
+        if !self.ranges.contains_key(tenant_id) {
+            return Err(IDMAP_NO_DOMAIN);
+        }
         let ctx = self.ctx.write().map_err(|e| {
             error!("Failed obtaining write lock on sss_idmap_ctx: {}", e);
             IDMAP_ERROR
