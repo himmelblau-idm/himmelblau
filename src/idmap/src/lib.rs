@@ -32,6 +32,7 @@
 use std::collections::HashMap;
 use std::ffi::CString;
 use std::fmt;
+use std::num::NonZeroU32;
 use std::ptr;
 use std::sync::RwLock;
 use uuid::Uuid;
@@ -216,6 +217,9 @@ impl Idmap {
         tenant_id: &str,
         range: (u32, u32),
     ) -> Result<(), IdmapError> {
+        if self.ranges.contains_key(tenant_id) {
+            return Err(IDMAP_COLLISION);
+        }
         let ctx = self.ctx.write().map_err(|e| {
             error!("Failed obtaining write lock on sss_idmap_ctx: {}", e);
             IDMAP_ERROR
@@ -247,6 +251,9 @@ impl Idmap {
     }
 
     pub fn gen_to_unix(&self, tenant_id: &str, input: &str) -> Result<u32, IdmapError> {
+        if !self.ranges.contains_key(tenant_id) {
+            return Err(IDMAP_NO_DOMAIN);
+        }
         let ctx = self.ctx.write().map_err(|e| {
             error!("Failed obtaining write lock on sss_idmap_ctx: {}", e);
             IDMAP_ERROR
@@ -269,12 +276,9 @@ impl Idmap {
 
     pub fn object_id_to_unix_id(&self, tenant_id: &str, sid: &AadSid) -> Result<u32, IdmapError> {
         let rid = sid.rid()?;
-        let idmap_range = match self.ranges.get(tenant_id) {
-            Some(idmap_range) => idmap_range,
-            None => return Err(IDMAP_NO_RANGE),
-        };
-        let uid_count = idmap_range.1 - idmap_range.0;
-        Ok((rid % uid_count) + idmap_range.0)
+        let &(lo, hi) = self.ranges.get(tenant_id).ok_or(IDMAP_NO_RANGE)?;
+        let uid_count = NonZeroU32::new(hi.saturating_sub(lo)).ok_or(IDMAP_NO_RANGE)?;
+        Ok((rid % uid_count) + lo)
     }
 }
 

@@ -70,8 +70,8 @@ jobs:
             arr+=("$(basename "$f" .rs)")
           done
           if [ ${#arr[@]} -eq 0 ]; then
-            echo '::warning::No fuzz targets found; defaulting to config_fuzz'
-            arr=("config_fuzz")
+            echo '::warning::No fuzz targets found; defaulting to config and idmap'
+            arr=("config" "idmap")
           fi
           json=$(printf '%s\n' "${arr[@]}" | jq -R -s -c 'split("\n")[:-1]')
           echo "targets=$json" >> "$GITHUB_OUTPUT"   # step output -> job output

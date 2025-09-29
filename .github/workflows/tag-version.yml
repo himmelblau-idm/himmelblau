@@ -10,11 +10,14 @@ on:
       - stable-0.9.x
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   create-tag:
     runs-on: ubuntu-latest
+
+    permissions:
+      contents: write
 
     steps:
     - name: Harden the runner (Audit all outbound calls)
