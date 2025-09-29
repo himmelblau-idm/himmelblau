@@ -1283,6 +1283,9 @@ enum idmap_error_code sss_idmap_offset_murmurhash3(void *pvt,
     out = murmurhash3(val, strlen(val), offset_murmurhash3_data->seed);
     free(tmp);
 
+    if (range_size == 0) {
+        return IDMAP_NO_RANGE;
+    }
     out %= range_size;
 
     *offset = out;
