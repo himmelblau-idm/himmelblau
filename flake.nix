@@ -163,7 +163,6 @@
                       configuration.
                     '';
                   };
-
                   db_path = mkOption {
                     type = types.str;
                     default = "/var/cache/himmelblaud/himmelblau.cache.db";
@@ -210,6 +209,14 @@
                     description = ''
                       The local group that should be given to users in any of the groups specified in sudo_groups.
                       Only has an affect if sudo_groups is set.
+                    '';
+                  };
+                  apply_policy = mkOption {
+                    type = types.bool;
+                    default = false;
+                    description = ''
+                      A boolean option that enables the application and enforcement of Intune policies to the authenticated user.
+                      By default, this option is disabled.
                     '';
                   };
                 };
