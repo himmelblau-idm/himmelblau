@@ -1,0 +1,4 @@
+[advisories]
+ignore = [
+  "RUSTSEC-2025-0057", # fxhash — replaced via [patch] with maintained rustc-hash wrapper
+]
