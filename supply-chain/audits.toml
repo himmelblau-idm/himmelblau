@@ -139,6 +139,11 @@ who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
 version = "1.0.226"
 
+[[audits.serde]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+version = "1.0.228"
+
 [[audits.serde_derive]]
 who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"

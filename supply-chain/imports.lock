@@ -833,13 +833,6 @@ user-id = 2915
 user-login = "Amanieu"
 user-name = "Amanieu d'Antras"
 
-[[publisher.paste]]
-version = "1.0.15"
-when = "2024-05-07"
-user-id = 3618
-user-login = "dtolnay"
-user-name = "David Tolnay"
-
 [[publisher.phf]]
 version = "0.11.3"
 when = "2025-01-06"
@@ -966,13 +959,6 @@ user-id = 2915
 user-login = "Amanieu"
 user-name = "Amanieu d'Antras"
 
-[[publisher.serde]]
-version = "1.0.227"
-when = "2025-09-25"
-user-id = 3618
-user-login = "dtolnay"
-user-name = "David Tolnay"
-
 [[publisher.serde_bytes]]
 version = "0.11.17"
 when = "2025-03-09"
@@ -995,15 +981,15 @@ user-login = "Firstyear"
 user-name = "Firstyear"
 
 [[publisher.serde_core]]
-version = "1.0.227"
-when = "2025-09-25"
+version = "1.0.228"
+when = "2025-09-27"
 user-id = 3618
 user-login = "dtolnay"
 user-name = "David Tolnay"
 
 [[publisher.serde_derive]]
-version = "1.0.227"
-when = "2025-09-25"
+version = "1.0.228"
+when = "2025-09-27"
 user-id = 3618
 user-login = "dtolnay"
 user-name = "David Tolnay"
