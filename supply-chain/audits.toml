@@ -104,6 +104,11 @@ who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
 version = "0.1.2"
 
+[[audits.half]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+version = "2.6.0"
+
 [[audits.libhimmelblau]]
 who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
@@ -133,6 +138,11 @@ version = "1.0.224"
 who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
 version = "1.0.226"
+
+[[audits.serde]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+version = "1.0.228"
 
 [[audits.serde_derive]]
 who = "David Mulder <dmulder@samba.org>"
