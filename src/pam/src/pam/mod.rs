@@ -506,14 +506,14 @@ impl PamHooks for PamKanidm {
                     // Use the configured MFA method
                     debug!("sm_chauthtok(): Using configured MFA method: {}", mfa_method);
                     match rt.block_on(async {
-                        app.initiate_acquire_token_by_mfa_flow_with_method(
+                        app.initiate_acquire_token_by_mfa_flow(
                             &account_id,
                             password.as_deref(),
                             vec!["offline_access"],
                             None,
                             &auth_options,
                             Some(auth_init),
-                            &mfa_method,
+                            Some(&mfa_method),
                         )
                         .await
                     }) {
@@ -534,6 +534,7 @@ impl PamHooks for PamKanidm {
                             None,
                             &auth_options,
                             Some(auth_init),
+                            None, /* MFA method */
                         )
                         .await
                     }) {
@@ -581,6 +582,7 @@ impl PamHooks for PamKanidm {
                             Some(&assertion),
                             None,
                             &mut mfa_req,
+                            None,
                         )
                         .await
                     }) {
@@ -607,7 +609,7 @@ impl PamHooks for PamKanidm {
                         }
                     };
                     match rt.block_on(async {
-                        app.acquire_token_by_mfa_flow(&account_id, Some(&input), None, &mut mfa_req)
+                        app.acquire_token_by_mfa_flow(&account_id, Some(&input), None, &mut mfa_req, None)
                             .await
                     }) {
                         Ok(token) => token,
@@ -637,6 +639,7 @@ impl PamHooks for PamKanidm {
                                 None,
                                 Some(poll_attempt),
                                 &mut mfa_req,
+                                None
                             )
                             .await
                         }) {

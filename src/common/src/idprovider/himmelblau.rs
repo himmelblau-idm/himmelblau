@@ -1326,8 +1326,10 @@ impl IdProvider for HimmelblauProvider {
                             .initiate_acquire_token_by_mfa_flow_for_device_enrollment(
                                 account_id,
                                 None,
+                                None, /* scopes */
                                 &auth_options,
                                 Some(auth_init),
+                                None /* MFA method */
                             )
                             .await,
                         Err(MsalError::PasswordRequired) => {
@@ -1945,13 +1947,13 @@ impl IdProvider for HimmelblauProvider {
                         .client
                         .read()
                         .await
-                        .initiate_acquire_token_by_mfa_flow_for_device_enrollment_with_method(
+                        .initiate_acquire_token_by_mfa_flow_for_device_enrollment(
                             account_id,
                             Some(&cred),
-                            scopes,
+                            Some(scopes),
                             &opts,
                             None,
-                            method,
+                            Some(method),
                         )
                         .await
                 } else {
@@ -1964,8 +1966,10 @@ impl IdProvider for HimmelblauProvider {
                         .initiate_acquire_token_by_mfa_flow_for_device_enrollment(
                             account_id,
                             Some(&cred),
+                            None, /* scopes */
                             &opts,
                             None,
+                            None, /* MFA method */
                         )
                         .await
                 };
@@ -2142,7 +2146,7 @@ impl IdProvider for HimmelblauProvider {
                     self.client
                         .read()
                         .await
-                        .acquire_token_by_mfa_flow(account_id, Some(&cred), None, flow)
+                        .acquire_token_by_mfa_flow(account_id, Some(&cred), None, flow, None)
                         .await,
                     Ok(token) => token,
                     Err(e) => {
@@ -2229,7 +2233,7 @@ impl IdProvider for HimmelblauProvider {
                     self.client
                         .read()
                         .await
-                        .acquire_token_by_mfa_flow(account_id, None, Some(poll_attempt), flow)
+                        .acquire_token_by_mfa_flow(account_id, None, Some(poll_attempt), flow, None)
                         .await,
                     Ok(token) => token,
                     Err(e) => match e {
@@ -2318,7 +2322,7 @@ impl IdProvider for HimmelblauProvider {
                     self.client
                         .read()
                         .await
-                        .acquire_token_by_mfa_flow(account_id, Some(&assertion), None, flow)
+                        .acquire_token_by_mfa_flow(account_id, Some(&assertion), None, flow, None)
                         .await,
                     Ok(token) => token,
                     Err(e) => {
