@@ -1,0 +1,17 @@
+[package]
+name = "paste"
+version = "1.0.15"
+publish = false
+
+authors.workspace = true
+rust-version.workspace = true
+edition.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+#[lib]
+#proc-macro = true
+
+[dependencies]
+pastey = "0.1.1"
