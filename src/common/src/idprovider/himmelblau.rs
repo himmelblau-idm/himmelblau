@@ -3012,8 +3012,15 @@ impl HimmelblauProvider {
         keystore: &mut D,
         machine_key: &tpm::structures::StorageKey,
     ) -> Result<(), MsalError> {
+        let join_type = self.config.read().await.get_join_type();
         /* If not already joined, join the domain now. */
-        let attrs = EnrollAttrs::new(self.domain.clone(), None, None, None, None)?;
+        let attrs = EnrollAttrs::new(
+            self.domain.clone(),
+            None,
+            None,
+            Some(join_type.into()),
+            None,
+        )?;
         // A client write lock is required here.
         let res = self
             .client

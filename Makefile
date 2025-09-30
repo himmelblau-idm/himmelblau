@@ -25,8 +25,13 @@ all: .packaging dockerfiles ## Auto-detect host distro and build packages just f
 	$(MAKE) $$TARGET; \
 	echo "Packages written to ./packaging/"
 
-test: ## Run cargo tests
-	cargo test
+test: dockerfiles ## Run cargo tests in a container
+	mkdir -p target/test
+	$(DOCKER) build -t himmelblau-test-build -f images/Dockerfile.test .
+	$(DOCKER) run --rm --security-opt label=disable -it \
+                -v $(CURDIR):/himmelblau \
+		-v $(CURDIR)/target/test:/himmelblau/target \
+                himmelblau-test-build
 
 clean: ## Remove cargo build artifacts
 	cargo clean

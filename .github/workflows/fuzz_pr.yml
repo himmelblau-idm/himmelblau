@@ -11,13 +11,8 @@ permissions:
 jobs:
   fuzz_pr_setup:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
     outputs:
       targets: ${{ steps.discover.outputs.targets }}  # <-- expose to next job
-    env:
-      ASAN_OPTIONS: detect_leaks=0
-      RUST_BACKTRACE: 1
-      MAX_TIME: 300       # ~5 min per target
 
     steps:
       - name: Harden the runner (Audit all outbound calls)
@@ -26,40 +21,6 @@ jobs:
           egress-policy: audit
 
       - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
-      - uses: dtolnay/rust-toolchain@55d80eb3c5a4228eec5390a083c092095115c6f1 # nightly
-        with: { components: llvm-tools-preview }
-      - name: Install deps
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y clang lld llvm jq pkg-config libudev-dev
-      - name: Cache cargo
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: cargo-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
-
-      - name: Cache fuzz corpora
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
-        with:
-          path: |
-            fuzz/corpus
-            fuzz/artifacts
-          key: fuzz-pr-corpus-${{ runner.os }}-${{ github.sha }}
-          restore-keys: |
-            fuzz-pr-corpus-${{ runner.os }}-
-            fuzz-weekly-corpus-${{ runner.os }}-
-
-      - name: Install cargo-fuzz
-        run: cargo install cargo-fuzz --locked
-
-      - name: Ensure fuzz workspace is initialized
-        run: |
-          if [ ! -f fuzz/Cargo.toml ]; then
-            cargo fuzz init
-          fi
       - name: Discover fuzz targets
         id: discover
         shell: bash
@@ -79,7 +40,7 @@ jobs:
   fuzz_pr_run:
     needs: fuzz_pr_setup
     runs-on: ubuntu-latest
-    timeout-minutes: 12
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:

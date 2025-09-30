@@ -160,6 +160,11 @@ DISTS = {
         "image": "ubuntu:24.04",
         "tpm": True,
     },
+    "test": {
+        "family": "deb",
+        "image": "ubuntu:24.04",
+        "tpm": False,
+    },
     # ---- Fedora family ----
     "fedora41": {
         "family": "rpm",
@@ -344,8 +349,10 @@ def render(dist_name, dist_cfg):
         features.append("tpm")
 
     final_cmd = ""
-    if dist_cfg["family"] == "deb":
+    if dist_cfg["family"] == "deb" and dist_name != "test":
         final_cmd = build_deb_final_cmd(features, dist_name)
+    elif dist_name == "test":
+        final_cmd = "CMD cargo test"
     else:
         final_cmd = build_rpm_final_cmd(features)
 
