@@ -25,15 +25,14 @@ use std::path::PathBuf;
 use std::process::Command;
 use tracing::{debug, error};
 
-use crate::constants::MAPPED_NAME_CACHE;
 use crate::constants::{
     CN_NAME_MAPPING, DEFAULT_AUTHORITY_HOST, DEFAULT_BROKER_SOCK_PATH, DEFAULT_CACHE_TIMEOUT,
     DEFAULT_CONFIG_PATH, DEFAULT_CONN_TIMEOUT, DEFAULT_DB_PATH, DEFAULT_HELLO_ENABLED,
     DEFAULT_HELLO_PIN_MIN_LEN, DEFAULT_HELLO_PIN_RETRY_COUNT, DEFAULT_HOME_ALIAS,
     DEFAULT_HOME_ATTR, DEFAULT_HOME_PREFIX, DEFAULT_HSM_PIN_PATH, DEFAULT_ID_ATTR_MAP,
-    DEFAULT_ODC_PROVIDER, DEFAULT_POLICIES_DB_DIR, DEFAULT_SELINUX, DEFAULT_SFA_FALLBACK_ENABLED,
-    DEFAULT_SHELL, DEFAULT_SOCK_PATH, DEFAULT_TASK_SOCK_PATH, DEFAULT_TPM_TCTI_NAME,
-    DEFAULT_USE_ETC_SKEL, SERVER_CONFIG_PATH,
+    DEFAULT_JOIN_TYPE, DEFAULT_ODC_PROVIDER, DEFAULT_POLICIES_DB_DIR, DEFAULT_SELINUX,
+    DEFAULT_SFA_FALLBACK_ENABLED, DEFAULT_SHELL, DEFAULT_SOCK_PATH, DEFAULT_TASK_SOCK_PATH,
+    DEFAULT_TPM_TCTI_NAME, DEFAULT_USE_ETC_SKEL, MAPPED_NAME_CACHE, SERVER_CONFIG_PATH,
 };
 use crate::mapping::{MappedNameCache, Mode};
 use crate::unix_config::{HomeAttr, HsmType};
@@ -48,6 +47,21 @@ pub enum IdAttr {
     Uuid,
     Name,
     Rfc2307,
+}
+
+#[derive(Debug, Copy, Clone, PartialEq)]
+pub enum JoinType {
+    Join,
+    Register,
+}
+
+impl From<JoinType> for u32 {
+    fn from(val: JoinType) -> Self {
+        match val {
+            JoinType::Join => 0,
+            JoinType::Register => 4,
+        }
+    }
 }
 
 pub fn split_username(username: &str) -> Option<(&str, &str)> {
@@ -413,6 +427,20 @@ impl HimmelblauConfig {
             });
         }
         pam_allow_groups
+    }
+
+    pub fn get_join_type(&self) -> JoinType {
+        match self.config.get("global", "join_type") {
+            Some(val) => match val.to_lowercase().as_str() {
+                "join" => JoinType::Join,
+                "register" => JoinType::Register,
+                _ => {
+                    error!("Unrecognized join_type choice: {}", val);
+                    DEFAULT_JOIN_TYPE
+                }
+            },
+            None => DEFAULT_JOIN_TYPE,
+        }
     }
 
     pub fn write(&self) -> Result<(), Error> {
@@ -981,6 +1009,28 @@ mod tests {
         expected_groups.sort();
 
         assert_eq!(groups, expected_groups);
+    }
+
+    #[test]
+    fn test_get_join_type() {
+        let config_data = r#"
+        [global]
+        join_type = register
+        "#;
+
+        let temp_file = create_temp_config(config_data);
+        let config = HimmelblauConfig::new(Some(&temp_file)).unwrap();
+        assert_eq!(config.get_join_type(), JoinType::Register);
+        let config_empty = HimmelblauConfig::new(None).unwrap();
+        assert_eq!(config_empty.get_join_type(), JoinType::Join);
+
+        let config_data = r#"
+        [global]
+        join_type = join
+        "#;
+        let temp_file = create_temp_config(config_data);
+        let config = HimmelblauConfig::new(Some(&temp_file)).unwrap();
+        assert_eq!(config.get_join_type(), JoinType::Join);
     }
 
     #[test]

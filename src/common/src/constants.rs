@@ -15,7 +15,7 @@
    You should have received a copy of the GNU General Public License
    along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
-use crate::config::IdAttr;
+use crate::config::{IdAttr, JoinType};
 use crate::unix_config::HomeAttr;
 
 pub const DEFAULT_CONFIG_PATH: &str = "/etc/himmelblau/himmelblau.conf";
@@ -57,3 +57,4 @@ pub const DEFAULT_TPM_TCTI_NAME: &str = "device:/dev/tpmrm0";
 pub const CONFIDENTIAL_CLIENT_CERT_KEY_TAG: &str = "confidential_client_certificate_key";
 pub const CONFIDENTIAL_CLIENT_SECRET_TAG: &str = "confidential_client_secret";
 pub const CONFIDENTIAL_CLIENT_CERT_TAG: &str = "confidential_client_certificate";
+pub const DEFAULT_JOIN_TYPE: JoinType = JoinType::Join;
