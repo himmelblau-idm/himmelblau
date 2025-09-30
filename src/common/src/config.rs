@@ -57,9 +57,12 @@ pub enum JoinType {
 
 impl From<JoinType> for u32 {
     fn from(val: JoinType) -> Self {
+        // Microsoft Entra ID enrollment join types:
+        // 0 = Device Join (standard join)
+        // 4 = Device Registration (register only)
         match val {
-            JoinType::Join => 0,
-            JoinType::Register => 4,
+            JoinType::Join => 0,      // Device Join
+            JoinType::Register => 4,  // Device Registration
         }
     }
 }
