@@ -28,7 +28,7 @@
             version = cargoToml.workspace.package.version;
             src = with lib.fileset; toSource {
               root = ./.;
-              fileset = unions [ ./src ./man ./Cargo.toml ./Cargo.lock ./scripts/test_script_echo.sh ];
+              fileset = unions [ ./fuzz ./src ./man ./Cargo.toml ./Cargo.lock ./scripts/test_script_echo.sh ];
             };
             outputs = [ "out" "man" ];
             cargoLock = {
