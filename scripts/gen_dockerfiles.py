@@ -127,7 +127,7 @@ def build_rpm_final_cmd(features: list) -> str:
         ]
     )
     rpms = CMD_SEP.join([f"cargo generate-rpm -p {s}" for _, s, _ in PACKAGES])
-    return f'CMD ["/bin/sh", "-c", \\\n{CMD_TAB}"{build}{strip} \\\n{CMD_TAB}{rpms}"]'
+    return f'CMD ["/bin/sh", "-c", \\\n{CMD_TAB}"{build}{strip} && \\\n{CMD_TAB}{rpms}"]'
 
 
 # ---- Distro targets ----------------------------------------------------------
