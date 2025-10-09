@@ -54,8 +54,9 @@ PKG_PAIRS = [
     ("libpcre2-dev", "pcre2-devel"),
     ("libsqlite3-dev", "sqlite-devel"),
     ("libunistring-dev", "libunistring-devel"),
-    ("policycoreutils-dev", "policycoreutils-devel"),
 ]
+
+SELINUX_PKGS = ["policycoreutils-devel", "selinux-policy-targeted"]
 
 DEB_PKGS = COMMON + [p for p, _ in PKG_PAIRS if p]
 RPM_PKGS = COMMON + [q for _, q in PKG_PAIRS if q]
@@ -73,7 +74,7 @@ FAMILIES = {
     "deb": {
         "bootstrap": APT_BOOTSTRAP,
         "pkgs": DEB_PKGS,
-        "env": "ENV DEBIAN_FRONTEND=noninteractive",
+        "env": "ENV DEBIAN_FRONTEND=noninteractive HIMMELBLAU_ALLOW_MISSING_SELINUX=1",
     },
     "rpm": {
         "bootstrap": DNF_BOOTSTRAP,
@@ -108,6 +109,8 @@ CMD_SEP = f" && \ \n{CMD_TAB}"
 def build_deb_final_cmd(features: list, distro_slug: str) -> str:
     parts = []
     for pkg, _, needs_tpm in PACKAGES:
+        if pkg == "selinux": # Debian doesn't use selinux
+            continue
         if not needs_tpm and "tpm" in features:
             features.remove("tpm")
         feat_str = f" --features {','.join(features)}" if features else ""
@@ -117,7 +120,7 @@ def build_deb_final_cmd(features: list, distro_slug: str) -> str:
     return f'CMD ["/bin/sh", "-c", \\\n{CMD_TAB}"{CMD_SEP.join(parts)} "]'
 
 
-def build_rpm_final_cmd(features: list) -> str:
+def build_rpm_final_cmd(features: list, selinux: bool) -> str:
     feat_str = f" --features {','.join(features)}" if features else ""
     build = f"cargo build --release{feat_str} && \\ \n{CMD_TAB}"
     strip = CMD_SEP.join(
@@ -126,8 +129,12 @@ def build_rpm_final_cmd(features: list) -> str:
             for s in ["*.so", "aad-tool", "himmelblaud", "himmelblaud_tasks", "broker"]
         ]
     )
-    rpms = CMD_SEP.join([f"cargo generate-rpm -p {s}" for _, s, _ in PACKAGES])
-    return f'CMD ["/bin/sh", "-c", \\\n{CMD_TAB}"{build}{strip} \\\n{CMD_TAB}{rpms}"]'
+    if selinux:
+        pkgs = PACKAGES
+    else:
+        pkgs = [pkg for pkg in PACKAGES if pkg[0] != "selinux"]
+    rpms = CMD_SEP.join([f"cargo generate-rpm -p {s}" for _, s, _ in pkgs])
+    return f'CMD ["/bin/sh", "-c", \\\n{CMD_TAB}"{build}{strip} && \\\n{CMD_TAB}{rpms}"]'
 
 
 # ---- Distro targets ----------------------------------------------------------
@@ -170,16 +177,19 @@ DISTS = {
         "family": "rpm",
         "image": "fedora:41",
         "tpm": True,
+        "selinux": True,
     },
     "fedora42": {
         "family": "rpm",
         "image": "fedora:42",
         "tpm": True,
+        "selinux": True,
     },
     "rawhide": {
         "family": "rpm",
         "image": "fedora:rawhide",
         "tpm": True,
+        "selinux": True,
     },
     # ---- Rocky family ----
     "rocky8": {
@@ -193,12 +203,14 @@ DISTS = {
             "@development-tools": "",
         },
         "tpm": False,
+        "selinux": True,
     },
     "rocky9": {
         "family": "rpm",
         "image": "rockylinux:9",
         "extra_prep": [
-            "RUN dnf -y install 'dnf-command(config-manager)' && dnf config-manager --set-enabled crb"
+            "RUN dnf -y install 'dnf-command(config-manager)' && dnf config-manager --set-enabled crb",
+            "RUN sed -i -e 's|$rltype||g' /etc/yum.repos.d/rocky*.repo",
         ],
         "replace": {
             "build-essential": '"@Development Tools"',
@@ -206,18 +218,21 @@ DISTS = {
             "curl": "",  # avoid the curl/curl-minimal install conflict
         },
         "tpm": True,
+        "selinux": True,
     },
     "rocky10": {
         "family": "rpm",
         "image": "rockylinux:10",
         "extra_prep": [
-            "RUN dnf install -y 'dnf-command(config-manager)' && dnf config-manager --set-enabled crb"
+            "RUN dnf install -y 'dnf-command(config-manager)' && dnf config-manager --set-enabled crb",
+            "RUN sed -i -e 's|$rltype||g' /etc/yum.repos.d/rocky*.repo",
         ],
         "replace": {
             "build-essential": '"@Development Tools"',
             "@development-tools": "",
         },
         "tpm": True,
+        "selinux": True,
     },
     # ---- SUSE family ----
     "sle15sp6": {
@@ -231,6 +246,8 @@ DISTS = {
             "dbus-devel": "dbus-1-devel",
             "tpm2-tss-devel": "tpm2-0-tss-devel",
             "sqlite-devel": "sqlite3-devel",
+            "policycoreutils-devel": "",
+            "selinux-policy-targeted": "",
         },
         "tpm": True,
     },
@@ -246,6 +263,8 @@ DISTS = {
             "tpm2-tss-devel": "tpm2-0-tss-devel",
             "sqlite-devel": "sqlite3-devel",
             "clang": "clang7",
+            "policycoreutils-devel": "",
+            "selinux-policy-targeted": "",
         },
         "tpm": True,
     },
@@ -260,8 +279,10 @@ DISTS = {
             "dbus-devel": "dbus-1-devel",
             "tpm2-tss-devel": "tpm2-0-tss-devel",
             "sqlite-devel": "sqlite3-devel",
+            "selinux-policy-targeted": "selinux-tools",
         },
         "tpm": True,
+        "selinux": True,
     },
     "tumbleweed": {
         "family": "zypper",
@@ -274,6 +295,7 @@ DISTS = {
             "sqlite-devel": "sqlite3-devel",
         },
         "tpm": True,
+        "selinux": True,
     },
 }
 
@@ -298,6 +320,7 @@ WORKDIR /himmelblau
 RUN curl https://sh.rustup.rs -sSf | sh -s -- -y && \\
     cargo install cargo-deb cargo-generate-rpm
 
+{selinux_enabled}
 # Build the project and create the packages
 {final_cmd}
 """
@@ -319,7 +342,7 @@ RUN --mount=type=secret,id=scc_regcode,dst=/run/secrets/scc_regcode \\
 """
 
 
-def build_pkg_list(dist_cfg):
+def build_pkg_list(dist_cfg, selinux):
     fam = FAMILIES[dist_cfg["family"]]
     pkgs = list(fam["pkgs"])
     rep = dist_cfg.get("replace", {})
@@ -328,6 +351,8 @@ def build_pkg_list(dist_cfg):
         q = rep.get(p, p)
         if q:
             out.append(q)
+    if selinux:
+        out += SELINUX_PKGS
     out = sorted(set(out))
     sep = " \\\n        "
     return sep.join(out)
@@ -335,7 +360,8 @@ def build_pkg_list(dist_cfg):
 
 def render(dist_name, dist_cfg):
     fam = FAMILIES[dist_cfg["family"]]
-    pkgs = build_pkg_list(dist_cfg)
+    selinux = bool(dist_cfg.get("selinux", False))
+    pkgs = build_pkg_list(dist_cfg, selinux)
     bootstrap = fam["bootstrap"].format(pkgs=pkgs).rstrip()
     env = fam["env"] or ""
     sle_connect = (
@@ -354,7 +380,7 @@ def render(dist_name, dist_cfg):
     elif dist_name == "test":
         final_cmd = "CMD cargo test"
     else:
-        final_cmd = build_rpm_final_cmd(features)
+        final_cmd = build_rpm_final_cmd(features, selinux)
 
     blocks = []
     if dist_cfg.get("extra_prep"):
@@ -367,6 +393,7 @@ def render(dist_name, dist_cfg):
         env=env,
         bootstrap=(extra + bootstrap),
         sle_connect=("\n" + sle_connect + "\n" if sle_connect else ""),
+        selinux_enabled=("ENV HIMMELBLAU_ALLOW_MISSING_SELINUX=1" if not selinux else ""),
         final_cmd=final_cmd,
     )
     return df

@@ -1,125 +1,56 @@
+policy_module(himmelblaud, 1.0)
 
-module himmelblaud 1.0;
+########################################
+# Domains for your daemons
 
-require {
-	type NetworkManager_t;
-	type accountsd_t;
-	type colord_t;
-	type home_root_t;
-	type xdm_t;
-	type policykit_t;
-	type unconfined_service_t;
-	type var_run_t;
-	type init_t;
-	type sshd_t;
-	type var_t;
-	type systemd_logind_t;
-	type systemd_user_runtimedir_t;
-	class sock_file write;
-	class unix_stream_socket connectto;
-	class file { create getattr lock open read setattr unlink write };
-	class dir { add_name read remove_name setattr write };
-}
+type himmelblaud_t;
+type himmelblaud_exec_t;
+init_daemon_domain(himmelblaud_t, himmelblaud_exec_t)
 
-#============= NetworkManager_t ==============
+type himmelblaud_tasks_t;
+type himmelblaud_tasks_exec_t;
+init_daemon_domain(himmelblaud_tasks_t, himmelblaud_tasks_exec_t)
 
-#!!!! This avc is allowed in the current policy
-allow NetworkManager_t unconfined_service_t:unix_stream_socket connectto;
+# Share common rules across both daemons via an attribute
+attribute himmelblau_daemon;
+typeattribute himmelblaud_t himmelblau_daemon;
+typeattribute himmelblaud_tasks_t himmelblau_daemon;
 
-#!!!! This avc is allowed in the current policy
-allow NetworkManager_t var_run_t:sock_file write;
+########################################
+# App-specific file types
 
-#!!!! This avc is allowed in the current policy
-allow NetworkManager_t var_t:dir { add_name read remove_name setattr write };
+# config: /etc/himmelblau(/.*)?
+type himmelblau_etc_t;
+files_config_file(himmelblau_etc_t)
 
-#!!!! This avc is allowed in the current policy
-allow NetworkManager_t var_t:file { create getattr lock open read setattr unlink write };
+# logs: /var/log/himmelblau(/.*)?
+type himmelblau_log_t;
+logging_log_file(himmelblau_log_t)
 
-#============= accountsd_t ==============
+# runtime: /run/himmelblau(/.*)?
+type himmelblau_var_run_t;
+files_pid_file(himmelblau_var_run_t)
 
-#!!!! This avc is allowed in the current policy
-allow accountsd_t unconfined_service_t:unix_stream_socket connectto;
+########################################
+# Minimal, practical access
 
-#!!!! This avc is allowed in the current policy
-allow accountsd_t var_run_t:sock_file write;
+# read config
+allow himmelblau_daemon himmelblau_etc_t:dir  { read search open getattr };
+allow himmelblau_daemon himmelblau_etc_t:file { read open getattr };
 
-#!!!! This avc is allowed in the current policy
-allow accountsd_t var_t:file { getattr lock open read write };
+# write logs
+allow himmelblau_daemon himmelblau_log_t:dir  { search open getattr add_name create write };
+allow himmelblau_daemon himmelblau_log_t:file { create write append open getattr };
 
-#============= colord_t ==============
+# create pid/sockets in /run/himmelblau
+allow himmelblau_daemon himmelblau_var_run_t:dir  { search open getattr add_name create write remove_name };
+allow himmelblau_daemon himmelblau_var_run_t:file { create write open getattr unlink };
 
-#!!!! This avc is allowed in the current policy
-allow colord_t unconfined_service_t:unix_stream_socket connectto;
-
-#!!!! This avc is allowed in the current policy
-allow colord_t var_run_t:sock_file write;
-
-#!!!! This avc is allowed in the current policy
-allow colord_t var_t:file { getattr open read };
-
-#============= init_t ==============
-
-#!!!! This avc is allowed in the current policy
-allow init_t unconfined_service_t:unix_stream_socket connectto;
-
-#============= policykit_t ==============
-
-#!!!! This avc is allowed in the current policy
-allow policykit_t unconfined_service_t:unix_stream_socket connectto;
-
-#!!!! This avc is allowed in the current policy
-allow policykit_t var_run_t:sock_file write;
-
-#!!!! This avc is allowed in the current policy
-allow policykit_t var_t:file { getattr open read };
-
-#============= sshd_t ==============
-
-#!!!! This avc is allowed in the current policy
-allow sshd_t unconfined_service_t:unix_stream_socket connectto;
-
-#!!!! This avc is allowed in the current policy
-allow sshd_t var_run_t:sock_file write;
-
-#!!!! This avc is allowed in the current policy
-allow sshd_t var_t:dir setattr;
-
-#!!!! This avc is allowed in the current policy
-allow sshd_t var_t:file { create getattr lock open read write };
-allow sshd_t var_t:file { setattr unlink };
-
-#============= systemd_logind_t ==============
-
-#!!!! This avc is allowed in the current policy
-allow systemd_logind_t unconfined_service_t:unix_stream_socket connectto;
-
-#!!!! This avc is allowed in the current policy
-allow systemd_logind_t var_run_t:sock_file write;
-
-#!!!! This avc is allowed in the current policy
-allow systemd_logind_t var_t:file { getattr lock open read write };
-
-#============= systemd_user_runtimedir_t ==============
-
-#!!!! This avc is allowed in the current policy
-allow systemd_user_runtimedir_t unconfined_service_t:unix_stream_socket connectto;
-
-#!!!! This avc is allowed in the current policy
-allow systemd_user_runtimedir_t var_run_t:sock_file write;
-
-#!!!! This avc is allowed in the current policy
-allow systemd_user_runtimedir_t var_t:dir add_name;
-
-#!!!! This avc is allowed in the current policy
-allow systemd_user_runtimedir_t var_t:file { create getattr lock open read setattr write };
-
-#============= xdm_t ==============
-
-#!!!! This avc is allowed in the current policy
-allow xdm_t home_root_t:dir add_name;
-
-#!!!! This avc is allowed in the current policy
-allow xdm_t var_run_t:sock_file write;
-
-#!!!! This avc is allowed in the current policy
-allow xdm_t var_t:file { create setattr unlink write };
+########################################
+# Networking / DBus hooks (enable as needed)
+# corenet_tcp_bind_http_port(himmelblaud_t)
+# corenet_tcp_connect_all_ports(himmelblaud_tasks_t)
+# dbus_system_bus_client(himmelblaud_t)
+# dbus_system_bus_client(himmelblaud_tasks_t)
+# polkitd_dbus_chat(himmelblaud_t)
+# polkitd_dbus_chat(himmelblaud_tasks_t)
