@@ -3062,7 +3062,8 @@ impl HimmelblauProvider {
                             ?e,
                             "Device auth failed for Intune device enrollment, delaying enrollment."
                         );
-                        return Err(IdpError::NotFound);
+                        // TODO: Is NotFound the correct error type here? BadRequest better here?
+                        return Err(IdpError::NotFound { what: "refresh_token".to_string(), where_: "intune_enroll".to_string() });
                     } else {
                         error!(?e, "Acquiring token for Intune device enrollment failed.");
                         return Err(IdpError::BadRequest);
@@ -3135,7 +3136,7 @@ impl HimmelblauProvider {
                 }
             }
         } else {
-            // Is NotFound the correct error type here? BadRequest better here?
+            // TODO: Is NotFound the correct error type here? BadRequest better here?
             Err(IdpError::NotFound { what: "apply_policy".to_string(), where_: "intune_enroll".to_string() })
         }
     }
