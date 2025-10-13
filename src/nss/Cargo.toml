@@ -21,6 +21,7 @@ libnss = "0.9.0"
 libc = { workspace = true }
 paste = { workspace = true }
 lazy_static = { workspace = true }
+uuid = { workspace = true }
 
 [package.metadata.deb]
 name = "nss-himmelblau"

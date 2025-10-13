@@ -61,8 +61,8 @@ impl From<JoinType> for u32 {
         // 0 = Device Join (standard join)
         // 4 = Device Registration (register only)
         match val {
-            JoinType::Join => 0,      // Device Join
-            JoinType::Register => 4,  // Device Registration
+            JoinType::Join => 0,     // Device Join
+            JoinType::Register => 4, // Device Registration
         }
     }
 }
