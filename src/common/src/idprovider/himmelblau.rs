@@ -2925,6 +2925,15 @@ impl HimmelblauProvider {
             Some(name) => name,
             None => value.id.clone(),
         };
+        // Prohibit group names which look like a UPN
+        if name.contains("@") {
+            // Including the "@" symbol in a group name is discouraged by MS,
+            // and permits a potential name collision risk (a user could
+            // create a group which collides with a fake primary group).
+            // Group names with an "@" will also resolve via NSS, which we
+            // NEVER permit (see CVE-2025-49012).
+            return Err(anyhow!("Group names cannot contain the '@' symbol."));
+        }
         let id =
             Uuid::parse_str(&value.id).map_err(|e| anyhow!("Failed parsing user uuid: {}", e))?;
         let idmap = self.idmap.read().await;
