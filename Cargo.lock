@@ -3270,6 +3270,7 @@ dependencies = [
  "libc",
  "libnss",
  "paste",
+ "uuid",
 ]
 
 [[package]]
