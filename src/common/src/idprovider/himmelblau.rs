@@ -49,7 +49,6 @@ use kanidm_hsm_crypto::{
 use regex::Regex;
 use reqwest;
 use reqwest::Url;
-use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::thread::sleep;
@@ -77,9 +76,6 @@ macro_rules! extract_base_url {
         }
     }};
 }
-
-#[derive(Deserialize, Serialize)]
-struct Token(Option<String>, String);
 
 pub struct HimmelblauMultiProvider {
     config: Arc<RwLock<HimmelblauConfig>>,
