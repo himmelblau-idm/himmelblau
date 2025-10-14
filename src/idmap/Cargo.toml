@@ -19,5 +19,5 @@ tracing.workspace = true
 uuid.workspace = true
 
 [build-dependencies]
-cc = "1.2.39"
+cc = "1.2.41"
 bindgen = "0.72.1"
