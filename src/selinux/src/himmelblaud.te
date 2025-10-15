@@ -1,125 +1,836 @@
+policy_module(himmelblaud, 1.0)
 
-module himmelblaud 1.0;
+############################
+# Domains
+
+# himmelblaud
+type himmelblaud_t;
+type himmelblaud_exec_t; files_type(himmelblaud_exec_t)
+ifdef(`init_nnp_daemon_domain',
+      `init_nnp_daemon_domain(himmelblaud_t, himmelblaud_exec_t)',
+      `init_daemon_domain(himmelblaud_t, himmelblaud_exec_t)')
+
+# himmelblaud_tasks
+type himmelblaud_tasks_t;
+type himmelblaud_tasks_exec_t; files_type(himmelblaud_tasks_exec_t)
+ifdef(`init_nnp_daemon_domain',
+      `init_nnp_daemon_domain(himmelblaud_tasks_t, himmelblaud_tasks_exec_t)',
+      `init_daemon_domain(himmelblaud_tasks_t, himmelblaud_tasks_exec_t)')
+
+# Let these be valid process domains under system_r
+role system_r types himmelblaud_t;
+role system_r types himmelblaud_tasks_t;
+
+# --- For himmelblaud
+require {
+    type himmelblaud_t, himmelblaud_exec_t;
+    class file { entrypoint execute read open getattr map };
+}
+allow himmelblaud_t himmelblaud_exec_t:file { entrypoint execute read open getattr map };
+require {
+    type init_t, himmelblaud_t;
+    class process transition;
+}
+allow init_t himmelblaud_t:process transition;
+require {
+    type init_t, himmelblaud_t;
+    class process2 nnp_transition;
+}
+allow init_t himmelblaud_t:process2 nnp_transition;
+
+# --- For himmelblaud_tasks
+require {
+    type himmelblaud_tasks_t, himmelblaud_tasks_exec_t;
+    class file { entrypoint execute read open getattr map };
+}
+allow himmelblaud_tasks_t himmelblaud_tasks_exec_t:file { entrypoint execute read open getattr map };
+require {
+    type init_t, himmelblaud_tasks_t;
+    class process transition;
+}
+allow init_t himmelblaud_tasks_t:process transition;
+require {
+    type init_t, himmelblaud_tasks_t;
+    class process2 nnp_transition;
+}
+allow init_t himmelblaud_tasks_t:process2 nnp_transition;
 
 require {
-	type NetworkManager_t;
-	type accountsd_t;
-	type colord_t;
-	type home_root_t;
-	type xdm_t;
-	type policykit_t;
-	type unconfined_service_t;
-	type var_run_t;
-	type init_t;
-	type sshd_t;
-	type var_t;
-	type systemd_logind_t;
-	type systemd_user_runtimedir_t;
-	class sock_file write;
-	class unix_stream_socket connectto;
-	class file { create getattr lock open read setattr unlink write };
-	class dir { add_name read remove_name setattr write };
+    type init_t, himmelblau_var_cache_t;
+    class lnk_file read;
+    class dir  { add_name search open getattr setattr };
+    class file { create open read write getattr lock };
 }
 
-#============= NetworkManager_t ==============
+# systemd needs to read the /var/cache/himmelblaud symlink during CacheDirectory= setup
+allow init_t himmelblau_var_cache_t:lnk_file read;
+allow init_t himmelblau_var_cache_t:dir  { add_name search open getattr setattr };
+allow init_t himmelblau_var_cache_t:file { create open read write getattr lock };
 
-#!!!! This avc is allowed in the current policy
-allow NetworkManager_t unconfined_service_t:unix_stream_socket connectto;
+# --- transition from PID 1 (systemd) into himmelblaud_t ---
 
-#!!!! This avc is allowed in the current policy
-allow NetworkManager_t var_run_t:sock_file write;
+require {
+    type init_t, himmelblaud_t, himmelblaud_exec_t;
+    class file { read open execute getattr map };
+    class process2 nnp_transition;
+}
 
-#!!!! This avc is allowed in the current policy
-allow NetworkManager_t var_t:dir { add_name read remove_name setattr write };
+# systemd must be able to exec the labeled entrypoint file
+allow init_t himmelblaud_exec_t:file { read open execute getattr map };
 
-#!!!! This avc is allowed in the current policy
-allow NetworkManager_t var_t:file { create getattr lock open read setattr unlink write };
+# ensure the domain transition actually happens on exec()
+type_transition init_t himmelblaud_exec_t:process himmelblaud_t;
 
-#============= accountsd_t ==============
+# NNP-safe transition (you were denied on this earlier)
+allow init_t himmelblaud_t:process2 nnp_transition;
 
-#!!!! This avc is allowed in the current policy
-allow accountsd_t unconfined_service_t:unix_stream_socket connectto;
+# systemd (init_t) may create/open the NSS cache file *before* exec
+require {
+    type init_t, himmelblau_nss_cache_t;
+    class dir  { add_name search open getattr };
+    class file { create open read write getattr lock };
+}
+allow init_t himmelblau_nss_cache_t:dir  { add_name search open getattr };
+allow init_t himmelblau_nss_cache_t:file { create open read write getattr lock };
 
-#!!!! This avc is allowed in the current policy
-allow accountsd_t var_run_t:sock_file write;
+############################
+# App-specific types
 
-#!!!! This avc is allowed in the current policy
-allow accountsd_t var_t:file { getattr lock open read write };
+type himmelblau_etc_t;
+files_config_file(himmelblau_etc_t)
 
-#============= colord_t ==============
+type himmelblau_log_t;
+logging_log_file(himmelblau_log_t)
 
-#!!!! This avc is allowed in the current policy
-allow colord_t unconfined_service_t:unix_stream_socket connectto;
+type himmelblau_var_run_t;
+files_pid_file(himmelblau_var_run_t)
 
-#!!!! This avc is allowed in the current policy
-allow colord_t var_run_t:sock_file write;
+type himmelblau_var_cache_t;
+files_type(himmelblau_var_cache_t)
 
-#!!!! This avc is allowed in the current policy
-allow colord_t var_t:file { getattr open read };
+# NSS cache lives in /var/cache/nss-himmelblau
+type himmelblau_nss_cache_t;
+files_type(himmelblau_nss_cache_t)
 
-#============= init_t ==============
+############################
+# Minimal, practical access for the daemons
+# (Bind directly to both daemon domains — no custom attribute)
 
-#!!!! This avc is allowed in the current policy
-allow init_t unconfined_service_t:unix_stream_socket connectto;
+# read config
+allow { himmelblaud_t himmelblaud_tasks_t } himmelblau_etc_t:dir  { read search open getattr };
+allow { himmelblaud_t himmelblaud_tasks_t } himmelblau_etc_t:file { read open getattr };
 
-#============= policykit_t ==============
+# write logs
+allow { himmelblaud_t himmelblaud_tasks_t } himmelblau_log_t:dir  { search open getattr add_name create write };
+allow { himmelblaud_t himmelblaud_tasks_t } himmelblau_log_t:file { create write append open getattr };
 
-#!!!! This avc is allowed in the current policy
-allow policykit_t unconfined_service_t:unix_stream_socket connectto;
+# /run
+allow { himmelblaud_t himmelblaud_tasks_t } himmelblau_var_run_t:dir      { search open getattr add_name create write remove_name };
+allow { himmelblaud_t himmelblaud_tasks_t } himmelblau_var_run_t:file     { create write open getattr unlink };
+allow { himmelblaud_t himmelblaud_tasks_t } himmelblau_var_run_t:sock_file { open read getattr write };
 
-#!!!! This avc is allowed in the current policy
-allow policykit_t var_run_t:sock_file write;
+# manage writable cache
+manage_dirs_pattern(himmelblaud_t,       himmelblau_var_cache_t, himmelblau_var_cache_t)
+manage_files_pattern(himmelblaud_t,      himmelblau_var_cache_t, himmelblau_var_cache_t)
+manage_dirs_pattern(himmelblaud_tasks_t, himmelblau_var_cache_t, himmelblau_var_cache_t)
+manage_files_pattern(himmelblaud_tasks_t, himmelblau_var_cache_t, himmelblau_var_cache_t)
 
-#!!!! This avc is allowed in the current policy
-allow policykit_t var_t:file { getattr open read };
+# traverse /var; follow the /var/cache/himmelblaud -> /var/cache/private/himmelblaud symlink
+require {
+  type var_t;                           # <— only var_t now
+  class dir { search getattr };
+  class lnk_file read;
+}
+allow himmelblaud_t var_t:dir { search getattr };
 
-#============= sshd_t ==============
+# you already have your own cache type; keep the symlink read
+allow himmelblaud_t himmelblau_var_cache_t:lnk_file read;
 
-#!!!! This avc is allowed in the current policy
-allow sshd_t unconfined_service_t:unix_stream_socket connectto;
+############################
+# NSS/login clients (guarded per distro; avoids load failures)
 
-#!!!! This avc is allowed in the current policy
-allow sshd_t var_run_t:sock_file write;
+define(`HB_CACHE_DIR_PERMS',  `{ create add_name remove_name write open read getattr search setattr }')
+define(`HB_CACHE_FILE_PERMS', `{ create open read write append getattr lock setattr unlink rename }')
+define(`HB_SOCKFILE_PERMS',   `{ open read getattr write }')
+define(`HB_ETC_DIR_PERMS',    `{ search open read getattr }')
+define(`HB_ETC_FILE_PERMS',   `{ open read getattr }')
 
-#!!!! This avc is allowed in the current policy
-allow sshd_t var_t:dir setattr;
+optional_policy(`
+  require { type accountsd_t; class unix_stream_socket connectto; }
+  allow accountsd_t himmelblau_nss_cache_t:dir  HB_CACHE_DIR_PERMS;
+  allow accountsd_t himmelblau_nss_cache_t:file HB_CACHE_FILE_PERMS;
+  allow accountsd_t himmelblau_etc_t:dir        HB_ETC_DIR_PERMS;
+  allow accountsd_t himmelblau_etc_t:file       HB_ETC_FILE_PERMS;
+  allow accountsd_t himmelblau_var_run_t:sock_file HB_SOCKFILE_PERMS;
+  allow accountsd_t himmelblaud_t:unix_stream_socket connectto;
+')
 
-#!!!! This avc is allowed in the current policy
-allow sshd_t var_t:file { create getattr lock open read write };
-allow sshd_t var_t:file { setattr unlink };
+optional_policy(`
+  require { type xdm_t; class unix_stream_socket connectto; }
+  allow xdm_t himmelblau_nss_cache_t:dir  HB_CACHE_DIR_PERMS;
+  allow xdm_t himmelblau_nss_cache_t:file HB_CACHE_FILE_PERMS;
+  allow xdm_t himmelblau_etc_t:dir        HB_ETC_DIR_PERMS;
+  allow xdm_t himmelblau_etc_t:file       HB_ETC_FILE_PERMS;
+  allow xdm_t himmelblau_var_run_t:sock_file HB_SOCKFILE_PERMS;
+  allow xdm_t himmelblaud_t:unix_stream_socket connectto;
+')
 
-#============= systemd_logind_t ==============
+optional_policy(`
+  require { type systemd_logind_t; class unix_stream_socket connectto; }
+  allow systemd_logind_t himmelblau_nss_cache_t:dir  HB_CACHE_DIR_PERMS;
+  allow systemd_logind_t himmelblau_nss_cache_t:file HB_CACHE_FILE_PERMS;
+  allow systemd_logind_t himmelblau_etc_t:dir        HB_ETC_DIR_PERMS;
+  allow systemd_logind_t himmelblau_etc_t:file       HB_ETC_FILE_PERMS;
+  allow systemd_logind_t himmelblau_var_run_t:sock_file HB_SOCKFILE_PERMS;
+  allow systemd_logind_t himmelblaud_t:unix_stream_socket connectto;
+')
 
-#!!!! This avc is allowed in the current policy
-allow systemd_logind_t unconfined_service_t:unix_stream_socket connectto;
+optional_policy(`
+  require { type policykit_t; class unix_stream_socket connectto; }
+  allow policykit_t himmelblau_nss_cache_t:dir  HB_CACHE_DIR_PERMS;
+  allow policykit_t himmelblau_nss_cache_t:file HB_CACHE_FILE_PERMS;
+  allow policykit_t himmelblau_etc_t:dir        HB_ETC_DIR_PERMS;
+  allow policykit_t himmelblau_etc_t:file       HB_ETC_FILE_PERMS;
+  allow policykit_t himmelblau_var_run_t:sock_file HB_SOCKFILE_PERMS;
+  allow policykit_t himmelblaud_t:unix_stream_socket connectto;
+')
 
-#!!!! This avc is allowed in the current policy
-allow systemd_logind_t var_run_t:sock_file write;
+optional_policy(`
+  require { type systemd_user_runtimedir_t; class unix_stream_socket connectto; }
+  allow systemd_user_runtimedir_t himmelblau_nss_cache_t:dir  HB_CACHE_DIR_PERMS;
+  allow systemd_user_runtimedir_t himmelblau_nss_cache_t:file HB_CACHE_FILE_PERMS;
+  allow systemd_user_runtimedir_t himmelblau_etc_t:dir        HB_ETC_DIR_PERMS;
+  allow systemd_user_runtimedir_t himmelblau_etc_t:file       HB_ETC_FILE_PERMS;
+  allow systemd_user_runtimedir_t himmelblau_var_run_t:sock_file HB_SOCKFILE_PERMS;
+  allow systemd_user_runtimedir_t himmelblaud_t:unix_stream_socket connectto;
+')
 
-#!!!! This avc is allowed in the current policy
-allow systemd_logind_t var_t:file { getattr lock open read write };
+optional_policy(`
+  require { type chkpwd_t; }
+  allow chkpwd_t himmelblau_nss_cache_t:dir  HB_CACHE_DIR_PERMS;
+  allow chkpwd_t himmelblau_nss_cache_t:file HB_CACHE_FILE_PERMS;
+  allow chkpwd_t himmelblau_etc_t:dir        HB_ETC_DIR_PERMS;
+  allow chkpwd_t himmelblau_etc_t:file       HB_ETC_FILE_PERMS;
+  allow chkpwd_t himmelblau_var_run_t:sock_file HB_SOCKFILE_PERMS;
+')
 
-#============= systemd_user_runtimedir_t ==============
+# 1) keep inherited rlimits/signals/atsecure across the init_t -> himmelblaud_t exec
+require {
+    type init_t, himmelblaud_t;
+    class process { noatsecure rlimitinh siginh };
+}
+allow init_t himmelblaud_t:process { noatsecure rlimitinh siginh };
 
-#!!!! This avc is allowed in the current policy
-allow systemd_user_runtimedir_t unconfined_service_t:unix_stream_socket connectto;
+# 2) allow the daemon to USE the file descriptors it inherits from systemd (init_t)
+require {
+    type init_t, himmelblaud_t;
+    class fd use;
+}
+allow himmelblaud_t init_t:fd use;
 
-#!!!! This avc is allowed in the current policy
-allow systemd_user_runtimedir_t var_run_t:sock_file write;
+# 3) allow /dev/null I/O for the daemon
+require {
+    type himmelblaud_t, null_device_t;
+    class chr_file { read write open getattr };
+}
+allow himmelblaud_t null_device_t:chr_file { read write open getattr };
 
-#!!!! This avc is allowed in the current policy
-allow systemd_user_runtimedir_t var_t:dir add_name;
+# 4) let systemd (init_t) stat/search the daemon's /proc/<pid> directory
+require {
+    type init_t, himmelblaud_t;
+    class dir search;
+}
+allow init_t himmelblaud_t:dir search;
 
-#!!!! This avc is allowed in the current policy
-allow systemd_user_runtimedir_t var_t:file { create getattr lock open read setattr write };
+require {
+    type init_t, himmelblaud_t;
+    class unix_stream_socket { read write };
+}
+allow himmelblaud_t init_t:unix_stream_socket { read write };
 
-#============= xdm_t ==============
+require {
+    type himmelblaud_t, ld_so_t;
+    class file { map read open getattr execute };
+}
+allow himmelblaud_t ld_so_t:file { map read open getattr execute };
 
-#!!!! This avc is allowed in the current policy
-allow xdm_t home_root_t:dir add_name;
+require {
+    type init_t, himmelblaud_t;
+    class file read;
+}
+allow init_t himmelblaud_t:file read;
 
-#!!!! This avc is allowed in the current policy
-allow xdm_t var_run_t:sock_file write;
+require {
+    type himmelblaud_t, lib_t;
+    class file { map read open getattr execute };
+}
+allow himmelblaud_t lib_t:file { map read open getattr execute };
 
-#!!!! This avc is allowed in the current policy
-allow xdm_t var_t:file { create setattr unlink write };
+require {
+    type himmelblaud_t, null_device_t;
+    class chr_file { open read write getattr };
+}
+allow himmelblaud_t null_device_t:chr_file { open read write getattr };
+
+require {
+    type himmelblaud_t, init_t;
+    class fd use;
+}
+allow himmelblaud_t init_t:fd use;
+
+require {
+    type himmelblaud_t, root_t;
+    class dir search;
+}
+allow himmelblaud_t root_t:dir search;
+
+require {
+    type init_t, himmelblaud_t;
+    class file { read open };
+}
+allow init_t himmelblaud_t:file { read open };
+
+require {
+    type himmelblaud_t, etc_t, usr_t;
+    class dir search;
+}
+allow himmelblaud_t etc_t:dir search;
+allow himmelblaud_t usr_t:dir  search;
+
+require {
+    type himmelblaud_t, lib_t;
+    class lnk_file read;
+}
+allow himmelblaud_t lib_t:lnk_file read;
+
+require {
+    type himmelblaud_t, ld_so_t;
+    class file { map read open getattr execute };
+}
+allow himmelblaud_t ld_so_t:file { map read open getattr execute };
+
+require {
+    type himmelblaud_t, ld_so_cache_t;
+    class file { read open getattr map };
+}
+allow himmelblaud_t ld_so_cache_t:file { read open getattr map };
+
+# 5) Traverse /usr/lib64 (lib_t) directories
+require {
+    type himmelblaud_t, lib_t;
+    class dir { search getattr };
+}
+allow himmelblaud_t lib_t:dir { search getattr };
+
+# 6) Map regular shared libraries (e.g., libunistring.so.5) labeled lib_t
+require {
+    type himmelblaud_t, lib_t;
+    class file { read open getattr map execute };
+}
+allow himmelblaud_t lib_t:file { read open getattr map execute };
+
+# A) Let the daemon create and use its own Unix stream sockets (Tokio's socketpair)
+require {
+    type himmelblaud_t;
+    class unix_stream_socket { create connect read write getattr ioctl setopt getopt shutdown };
+}
+allow himmelblaud_t self:unix_stream_socket { create connect read write getattr ioctl setopt getopt shutdown };
+
+# B) Allow basic traversal of /proc (needed when libc/runtime looks at /proc)
+require {
+    type proc_t, himmelblaud_t;
+    class dir { search getattr };
+}
+allow himmelblaud_t proc_t:dir { search getattr };
+
+# /proc/self symlink
+require { type himmelblaud_t, proc_t; class lnk_file read; }
+allow himmelblaud_t proc_t:lnk_file read;
+
+# /run traversal and /var/run -> /run symlink
+require {
+  type himmelblaud_t, var_run_t;
+  class dir { search };
+  class lnk_file { read };
+}
+allow himmelblaud_t var_run_t:dir      { search };
+allow himmelblaud_t var_run_t:lnk_file { read };
+
+# /var/cache/himmelblaud symlink (read + getattr)
+require { type himmelblaud_t, himmelblau_var_cache_t; class lnk_file { read getattr }; }
+allow himmelblaud_t himmelblau_var_cache_t:lnk_file { read getattr };
+
+############################
+# New var-lib type for state files
+
+type himmelblau_var_lib_t;
+files_type(himmelblau_var_lib_t)
+
+# Let the daemon manage its var-lib content
+manage_dirs_pattern(himmelblaud_t, himmelblau_var_lib_t, himmelblau_var_lib_t)
+manage_files_pattern(himmelblaud_t, himmelblau_var_lib_t, himmelblau_var_lib_t)
+# (optional, if tasks helper also needs it)
+# manage_dirs_pattern(himmelblaud_tasks_t, himmelblau_var_lib_t, himmelblau_var_lib_t)
+# manage_files_pattern(himmelblaud_tasks_t, himmelblau_var_lib_t, himmelblau_var_lib_t)
+
+############################
+# Harmless lookups seen in AVCs
+
+# /proc/<pid> dir labelled with our own domain (proc entry for self)
+require { type himmelblaud_t; class dir search; }
+allow himmelblaud_t himmelblaud_t:dir search;
+
+# /run/systemd (init_var_run_t) traversal
+require { type himmelblaud_t, init_var_run_t; class dir search; }
+allow himmelblaud_t init_var_run_t:dir search;
+
+# devtmpfs root dir (device_t) traversal
+require { type himmelblaud_t, device_t; class dir search; }
+allow himmelblaud_t device_t:dir search;
+
+require {
+  type init_t, himmelblau_nss_cache_t;
+  class file { setattr unlink };
+  class dir  { remove_name };
+}
+
+allow init_t himmelblau_nss_cache_t:file { setattr unlink };
+allow init_t himmelblau_nss_cache_t:dir  { remove_name };
+
+require {
+  type himmelblaud_t;
+  class dir  search;
+  class file { open read getattr };
+}
+
+# /proc/<self>/ directory + files like "maps"
+allow himmelblaud_t himmelblaud_t:dir  search;
+allow himmelblaud_t himmelblaud_t:file { open read getattr };
+
+require {
+  type init_t, syslogd_t, himmelblaud_t;
+  class dir  search;
+  class file { getattr open read ioctl };
+}
+
+# systemd querying /proc/<pid>/{comm,cgroup}
+allow init_t himmelblaud_t:dir  search;
+allow init_t himmelblaud_t:file { getattr open read ioctl };
+
+# journald listing /proc/<pid>
+allow syslogd_t himmelblaud_t:dir search;
+
+require {
+  type himmelblaud_t, var_t, systemd_unit_file_t;
+  class lnk_file read;
+  class dir getattr;
+}
+
+# follow /var/... symlinks that are still var_t
+allow himmelblaud_t var_t:lnk_file read;
+
+# cheap getattr on /run/systemd/system
+allow himmelblaud_t systemd_unit_file_t:dir getattr;
+
+require {
+  type himmelblaud_t, urandom_device_t;
+  class chr_file { open read getattr };
+  class process getsched;
+}
+
+# read from /dev/urandom
+allow himmelblaud_t urandom_device_t:chr_file { open read getattr };
+
+# inspect own scheduler settings
+allow himmelblaud_t himmelblaud_t:process getsched;
+
+require {
+  type syslogd_t, himmelblaud_t;
+  class dir  search;
+  class file read;
+  class lnk_file read;
+}
+
+# let journald read common /proc files for this domain
+allow syslogd_t himmelblaud_t:dir      search;
+allow syslogd_t himmelblaud_t:file     read;      # comm, cmdline, status, sessionid, loginuid, cgroup
+allow syslogd_t himmelblaud_t:lnk_file read;      # exe
+
+require {
+  type himmelblaud_t, himmelblau_var_lib_t;
+  class dir  { search write add_name remove_name getattr };
+  class file { create open read write setattr unlink };
+}
+
+allow himmelblaud_t himmelblau_var_lib_t:dir  { search write add_name remove_name getattr };
+allow himmelblaud_t himmelblau_var_lib_t:file { create open read write setattr unlink };
+
+require {
+  type unconfined_t, himmelblaud_t;
+  class dir search;
+}
+allow unconfined_t himmelblaud_t:dir search;
+
+############################################
+# Runtime needs
+############################################
+require {
+  type himmelblaud_t, urandom_device_t, syslogd_t;
+  class chr_file { open read getattr };
+  class process { getsched };
+  class dir  { search getattr write add_name remove_name };
+  class file { create open read write setattr unlink rename };
+  class lnk_file read;
+}
+
+# /dev/urandom
+allow himmelblaud_t urandom_device_t:chr_file { open read getattr };
+
+# own scheduler info (seen as getsched)
+allow himmelblaud_t himmelblaud_t:process getsched;
+
+############################################
+# /var/cache/himmelblaud (sqlite DB + journal)
+############################################
+allow himmelblaud_t himmelblau_var_cache_t:dir  { search getattr write add_name remove_name };
+allow himmelblaud_t himmelblau_var_cache_t:file { create open read write setattr unlink rename };
+
+############################################
+# /var/lib/himmelblaud (HSM PIN file)
+############################################
+allow himmelblaud_t himmelblau_var_lib_t:dir  { search getattr write add_name remove_name };
+allow himmelblaud_t himmelblau_var_lib_t:file { create open read write setattr unlink };
+
+############################################
+# Quiet the journald /proc noise (optional)
+############################################
+allow syslogd_t himmelblaud_t:dir      search;
+allow syslogd_t himmelblaud_t:file     read;      # comm, cmdline, status, sessionid, loginuid, cgroup
+allow syslogd_t himmelblaud_t:lnk_file read;      # exe
+
+allow himmelblaud_t himmelblau_var_cache_t:lnk_file { read getattr };
+
+# allow directory traversal and file operations in the cache dir
+allow himmelblaud_t himmelblau_var_cache_t:dir  { search getattr write add_name remove_name };
+allow himmelblaud_t himmelblau_var_cache_t:file { create open read write getattr setattr unlink rename };
+
+# /var/lib/himmelblaud symlink (read + getattr)
+require { type himmelblaud_t, himmelblau_var_lib_t; class lnk_file { read getattr }; }
+allow himmelblaud_t himmelblau_var_lib_t:lnk_file { read getattr };
+
+require {
+  type init_t, himmelblau_var_lib_t;
+  class lnk_file read;
+  class dir  { add_name search open getattr setattr };
+  class file { create open read write getattr lock };
+}
+allow init_t himmelblau_var_lib_t:lnk_file read;
+allow init_t himmelblau_var_lib_t:dir  { add_name search open getattr setattr };
+allow init_t himmelblau_var_lib_t:file { create open read write getattr lock };
+
+allow himmelblaud_t himmelblau_var_lib_t:dir  { search getattr write add_name remove_name };
+allow himmelblaud_t himmelblau_var_lib_t:file { create open read write setattr unlink };
+
+require {
+  type himmelblaud_t, var_lib_t;
+  class dir { search getattr };
+}
+allow himmelblaud_t var_lib_t:dir { search getattr };
+
+# allow thread/process creation inside the domain
+require { type himmelblaud_t; class process { fork }; }
+allow himmelblaud_t self:process fork;
+
+require { type syslogd_t, himmelblaud_t; class file { open read }; }
+allow syslogd_t himmelblaud_t:file { open read };
+
+require { type unconfined_t, himmelblaud_t; class dir search; class file { open read }; }
+allow unconfined_t himmelblaud_t:dir  search;
+allow unconfined_t himmelblaud_t:file { open read };
+
+# Read nsswitch/host.conf (etc_t)
+require { type himmelblaud_t, etc_t; class file { open read getattr }; }
+allow himmelblaud_t etc_t:file { open read getattr };
+
+# Follow the OpenSSL config symlink (etc_t -> lnk_file)
+require { type himmelblaud_t, etc_t; class lnk_file read; }
+allow himmelblaud_t etc_t:lnk_file read;
+
+# Read resolv.conf and hosts (net_conf_t)
+require { type himmelblaud_t, net_conf_t; class file { open read getattr }; }
+allow himmelblaud_t net_conf_t:file { open read getattr };
+
+# Browse system CA locations (/etc/ssl, /usr/share/… labeled cert_t)
+require { type himmelblaud_t, cert_t; class dir { search getattr }; class file { open read getattr }; }
+allow himmelblaud_t cert_t:dir  { search getattr };
+allow himmelblaud_t cert_t:file { open read getattr };
+
+# Create & use a UDP socket for DNS
+require { type himmelblaud_t; class udp_socket { create connect getattr getopt setopt read write }; }
+allow himmelblaud_t self:udp_socket { create connect getattr getopt setopt read write };
+
+require { type himmelblaud_t, sysctl_t; class dir search; }
+allow himmelblaud_t sysctl_t:dir search;
+
+############################################
+# Outbound TCP (HTTPS)
+############################################
+require {
+  type himmelblaud_t, http_port_t;
+  class tcp_socket { create connect getopt setopt read write };
+}
+# create/connect a TCP client socket
+allow himmelblaud_t self:tcp_socket { create connect getopt setopt read write };
+# allow connecting to remote port type 443 (http_port_t)
+allow himmelblaud_t http_port_t:tcp_socket name_connect;
+
+############################################
+# DNS (UDP/53)
+############################################
+require {
+  type himmelblaud_t, dns_port_t;
+  class udp_socket { create connect getopt setopt read write };
+}
+# client UDP socket + connect
+allow himmelblaud_t self:udp_socket { create connect getopt setopt read write };
+
+############################################
+# Netlink route (used by runtime to query routes/ifaddrs)
+############################################
+require {
+  type himmelblaud_t;
+  class netlink_route_socket { create bind getattr getopt setopt nlmsg_read nlmsg_write read write };
+}
+allow himmelblaud_t self:netlink_route_socket { create bind getattr getopt setopt nlmsg_read nlmsg_write read write };
+
+############################################
+# Read crypto policies / CA bundle
+############################################
+require {
+  type himmelblaud_t, usr_t, cert_t, sysctl_crypto_t;
+  class dir  { search getattr };
+  class file { open read getattr };
+  class lnk_file read;
+}
+
+# /usr/share/crypto-policies/**, /usr/share/ssl, /usr/local/share
+allow himmelblaud_t usr_t:dir  { search getattr };
+allow himmelblaud_t usr_t:file { open read getattr };
+
+# /etc/ssl and CA bundle/certs (cert_t) + symlinks
+allow himmelblaud_t cert_t:dir      { search getattr };
+allow himmelblaud_t cert_t:file     { open read getattr };
+allow himmelblaud_t cert_t:lnk_file read;
+
+# /proc/sys/crypto lookups
+allow himmelblaud_t sysctl_crypto_t:dir search;
+
+# Allow binding a pathname (name_bind) under /run/himmelblaud
+require {
+  type himmelblaud_t, himmelblau_var_run_t;
+  class dir { search write add_name remove_name setattr };
+  class sock_file { create write getattr unlink };
+  class unix_stream_socket { bind listen accept };
+}
+
+# you already have these, but keeping together for clarity
+allow himmelblaud_t himmelblau_var_run_t:dir      { search write add_name remove_name setattr };
+allow himmelblaud_t himmelblau_var_run_t:sock_file { create write getattr unlink };
+
+# socket object perms
+allow himmelblaud_t self:unix_stream_socket { bind listen accept };
+
+# /proc/sys/crypto/fips_enabled
+require {
+  type himmelblaud_t, sysctl_crypto_t;
+  class file { open read getattr };
+}
+allow himmelblaud_t sysctl_crypto_t:file { open read getattr };
+
+# /etc/localtime is a symlink (locale_t)
+require {
+  type himmelblaud_t, locale_t;
+  class lnk_file read;
+}
+allow himmelblaud_t locale_t:lnk_file read;
+
+# our own TCP sockets: allow getattr (seen in AVC)
+require {
+  type himmelblaud_t;
+  class tcp_socket getattr;
+}
+allow himmelblaud_t self:tcp_socket getattr;
+
+# read /etc/passwd
+require {
+  type himmelblaud_t, passwd_file_t;
+  class file { open read getattr };
+}
+allow himmelblaud_t passwd_file_t:file { open read getattr };
+
+# occasional getattr on /
+require {
+  type himmelblaud_t, root_t;
+  class dir getattr;
+}
+allow himmelblaud_t root_t:dir getattr;
+
+require {
+  type syslogd_t, himmelblaud_t;
+  class dir  search;
+  class file { getattr open read ioctl };
+  class lnk_file read;
+}
+allow syslogd_t himmelblaud_t:dir      search;
+allow syslogd_t himmelblaud_t:file     { getattr open read ioctl };  # comm, cmdline, status, sessionid, loginuid, cgroup
+allow syslogd_t himmelblaud_t:lnk_file read;                         # exe
+
+# --- timezone database: /usr/share/zoneinfo (locale_t)
+require {
+  type himmelblaud_t, locale_t;
+  class dir  { search getattr };
+  class file { open read getattr };
+}
+allow himmelblaud_t locale_t:dir  { search getattr };
+allow himmelblaud_t locale_t:file { open read getattr };
+
+# --- inotify watch on /etc/passwd (passwd_file_t:file watch)
+require {
+  type himmelblaud_t, passwd_file_t;
+  class file { watch open read getattr };
+}
+allow himmelblaud_t passwd_file_t:file { watch open read getattr };
+
+# (optional, only if you later see a dir watch denial on /etc)
+# require { type himmelblaud_t, etc_t; class dir watch; }
+# allow himmelblaud_t etc_t:dir watch;
+
+# allow the daemon to create/use datagram unix sockets (sd_notify)
+require {
+  type himmelblaud_t;
+  class unix_dgram_socket { create read write getattr ioctl setopt getopt shutdown sendto };
+}
+allow himmelblaud_t self:unix_dgram_socket { create read write getattr ioctl setopt getopt shutdown sendto };
+
+# allow sending the datagram *to systemd* via /run/systemd/notify
+require {
+  type himmelblaud_t, init_t, init_var_run_t;
+  class unix_dgram_socket sendto;
+  class sock_file write;
+}
+# send the datagram to PID 1
+allow himmelblaud_t init_t:unix_dgram_socket sendto;
+# write to /run/systemd/notify (sock_file is under init_var_run_t)
+allow himmelblaud_t init_var_run_t:sock_file write;
+
+# allow systemd (init_t) to signal/kill himmelblaud_t
+require {
+  type init_t, himmelblaud_t;
+  class process { signal sigkill signull };
+}
+allow init_t himmelblaud_t:process { signal sigkill signull };
+
+# let unconfined shells (sudo/su) connect to /run/himmelblaud/socket
+require {
+  type unconfined_t, himmelblaud_t, himmelblau_var_run_t;
+  class unix_stream_socket connectto;
+  class sock_file { open read write getattr };
+}
+allow unconfined_t himmelblaud_t:unix_stream_socket connectto;
+allow unconfined_t himmelblau_var_run_t:sock_file { open read write getattr };
+
+require {
+  type himmelblaud_t, var_t;
+  class lnk_file { read getattr };
+}
+allow himmelblaud_t var_t:lnk_file { read getattr };
+
+# systemd must be able to exec the tasks entrypoint file
+require {
+    type init_t, himmelblaud_tasks_exec_t, himmelblaud_tasks_t;
+    class file { read open execute getattr map };
+    class process2 nnp_transition;
+}
+allow init_t himmelblaud_tasks_exec_t:file { read open execute getattr map };
+
+# ensure the domain transition actually happens on exec()
+type_transition init_t himmelblaud_tasks_exec_t:process himmelblaud_tasks_t;
+
+# allow NNP-safe transition, if your unit uses NoNewPrivileges=yes
+allow init_t himmelblaud_tasks_t:process2 nnp_transition;
+allow init_t himmelblaud_tasks_t:process transition;
+
+require {
+  type himmelblaud_tasks_t, locale_t;
+  class dir { search getattr read open };
+  class file { getattr read open map };
+  class lnk_file { read getattr };
+}
+allow himmelblaud_tasks_t locale_t:dir { search getattr read open };
+allow himmelblaud_tasks_t locale_t:file { getattr read open map };
+allow himmelblaud_tasks_t locale_t:lnk_file { read getattr };
+
+require {
+  type himmelblaud_tasks_t, null_device_t, proc_t;
+  class chr_file { open read ioctl };
+  class lnk_file { read };
+  class file { open read getattr };
+}
+allow himmelblaud_tasks_t null_device_t:chr_file { open read ioctl };
+allow himmelblaud_tasks_t proc_t:lnk_file read;          # e.g. /proc/self
+allow himmelblaud_tasks_t proc_t:file { open read getattr };  # loginuid, status, etc.
+
+require {
+  type himmelblaud_t, himmelblaud_tasks_t, init_t, chkpwd_t, unconfined_t;
+  type var_run_t;           # or define your own himmelblau_var_run_t and label the path
+  class unix_stream_socket { create connectto getattr read write };
+  class unix_dgram_socket { create write read };
+  class sock_file { create write getattr unlink };
+}
+
+# let the daemon create and use its sockets
+allow himmelblaud_t self:unix_stream_socket { create getattr read write };
+allow himmelblaud_t self:unix_dgram_socket  { create read write };
+
+# if your sockfile is at /run/himmelblaud/socket and inherits var_run_t:
+allow himmelblaud_t var_run_t:sock_file { create write getattr unlink };
+
+# allow common clients to connect to the daemon’s stream socket
+allow { init_t chkpwd_t unconfined_t } himmelblaud_t:unix_stream_socket connectto;
+
+require {
+  type syslogd_t, himmelblaud_tasks_t;
+  class dir { search getattr };
+  class file getattr;
+}
+dontaudit syslogd_t himmelblaud_tasks_t:dir { search getattr };
+dontaudit syslogd_t himmelblaud_tasks_t:file getattr;
+
+require {
+  type himmelblaud_tasks_t, groupadd_exec_t, ld_so_t, bin_t, etc_t, passwd_file_t;
+  class file { read open execute execute_no_trans getattr map };
+  class dir { search getattr read open };
+}
+allow himmelblaud_tasks_t groupadd_exec_t:file { read open execute execute_no_trans getattr map }; # /usr/bin/gpasswd
+allow himmelblaud_tasks_t ld_so_t:file { read open execute getattr map };
+allow himmelblaud_tasks_t bin_t:dir { search };
+allow himmelblaud_tasks_t etc_t:dir { search getattr read open };
+allow himmelblaud_tasks_t passwd_file_t:file { getattr read open };  # read /etc/passwd
+
+require {
+  type himmelblaud_tasks_t, home_root_t;
+  class dir { search add_name create setattr getattr };
+  class lnk_file { create write };
+}
+allow himmelblaud_tasks_t home_root_t:dir { search add_name create setattr getattr };
+allow himmelblaud_tasks_t home_root_t:lnk_file { create write };
+
+require { type himmelblaud_tasks_t, root_t; class dir getattr; }
+allow himmelblaud_tasks_t root_t:dir getattr;
+
+require { type himmelblaud_tasks_t; class tcp_socket getattr; }
+allow himmelblaud_tasks_t self:tcp_socket getattr;
+
+# Temporarily run Himmelblau domains permissive (still logs AVCs)
+permissive himmelblaud_t;
+permissive himmelblaud_tasks_t;

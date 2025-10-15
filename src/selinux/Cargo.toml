@@ -12,20 +12,13 @@ repository.workspace = true
 [package.metadata.generate-rpm]
 name = "himmelblau-selinux"
 assets = [
-  { source = "target/selinux/himmelblaud.pp", dest = "/usr/share/selinux/packages/himmelblaud.pp", mode = "0644" },
+  { source = "target/release/himmelblaud.pp", dest = "/usr/share/selinux/packages/himmelblaud.pp", mode = "0644" },
+  { source = "src/himmelblaud.te", dest = "/usr/share/doc/himmelblau-selinux/selinux/himmelblaud.te", mode = "0644" },
+  { source = "src/himmelblaud.fc", dest = "/usr/share/doc/himmelblau-selinux/selinux/himmelblaud.fc", mode = "0644" }
 ]
-post_install_script = '''
-if command -v selinuxenabled >/dev/null 2>&1 && selinuxenabled; then
-  semodule -n -i /usr/share/selinux/packages/himmelblaud.pp || :
-fi
-'''
-post_uninstall_script = '''
-if [ "$1" -eq 0 ]; then
-  if command -v selinuxenabled >/dev/null 2>&1 && selinuxenabled; then
-    semodule -n -r himmelblaud || :
-  fi
-fi
-'''
+post_trans_script = "scripts/postinst"
+post_uninstall_script = "scripts/postrm"
+
 [package.metadata.generate-rpm.requires]
 policycoreutils = "*"
 
@@ -33,6 +26,8 @@ policycoreutils = "*"
 name = "himmelblau-selinux"
 depends = "selinux-policy-default, policycoreutils, selinux-utils"
 assets = [
-  ["target/selinux/himmelblaud.pp", "/usr/share/selinux/packages/", "644"],
+  ["target/release/himmelblaud.pp", "usr/share/selinux/packages/", "0644"],
+  ["src/himmelblaud.te", "usr/share/doc/himmelblau-selinux/selinux/", "0644"],
+  ["src/himmelblaud.fc", "usr/share/doc/himmelblau-selinux/selinux/", "0644"]
 ]
 maintainer-scripts = "scripts"
