@@ -36,6 +36,7 @@ COMMON = [
     "gettext",
     "checkpolicy",
     "policycoreutils",
+    "python3",
 ]
 
 PKG_PAIRS = [
@@ -117,7 +118,8 @@ def build_deb_final_cmd(features: list, distro_slug: str) -> str:
         if "pam" in pkg or "nss" in pkg:
             feat_str += " --multiarch=same"
         parts.append(f"cargo deb{feat_str} --deb-revision={distro_slug} -p {pkg}")
-    return f'CMD ["/bin/sh", "-c", \\\n{CMD_TAB}"{CMD_SEP.join(parts)} "]'
+    gen_servicefiles = "make deb-servicefiles"
+    return f'CMD ["/bin/sh", "-c", \\\n{CMD_TAB}"{gen_servicefiles} && {CMD_SEP.join(parts)} "]'
 
 
 def build_rpm_final_cmd(features: list, selinux: bool) -> str:
@@ -134,7 +136,8 @@ def build_rpm_final_cmd(features: list, selinux: bool) -> str:
     else:
         pkgs = [pkg for pkg in PACKAGES if pkg[0] != "selinux"]
     rpms = CMD_SEP.join([f"cargo generate-rpm -p {s}" for _, s, _ in pkgs])
-    return f'CMD ["/bin/sh", "-c", \\\n{CMD_TAB}"{build}{strip} && \\\n{CMD_TAB}{rpms}"]'
+    gen_servicefiles = "make rpm-servicefiles"
+    return f'CMD ["/bin/sh", "-c", \\\n{CMD_TAB}"{gen_servicefiles} && {build}{strip} && \\\n{CMD_TAB}{rpms}"]'
 
 
 # ---- Distro targets ----------------------------------------------------------
