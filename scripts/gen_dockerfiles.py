@@ -286,7 +286,7 @@ DISTS = {
             "dbus-devel": "dbus-1-devel",
             "tpm2-tss-devel": "tpm2-0-tss-devel",
             "sqlite-devel": "sqlite3-devel",
-            "selinux-policy-targeted": "selinux-tools",
+            "selinux-policy-targeted": "selinux-tools selinux-policy-devel",
         },
         "tpm": True,
         "selinux": True,
@@ -354,12 +354,12 @@ def build_pkg_list(dist_cfg, selinux):
     pkgs = list(fam["pkgs"])
     rep = dist_cfg.get("replace", {})
     out = []
+    if selinux:
+        pkgs += SELINUX_PKGS
     for p in pkgs:
         q = rep.get(p, p)
         if q:
             out.append(q)
-    if selinux:
-        out += SELINUX_PKGS
     out = sorted(set(out))
     sep = " \\\n        "
     return sep.join(out)
