@@ -276,6 +276,10 @@ DISTS = {
         "image": "registry.suse.com/bci/bci-sle16-kernel-module-devel:16.0",
         "scc": True,
         "scc_vers": "16.0",
+        "extra_prep": [
+            # Temporary patch for broken SLE libudev1 version in the base image
+            "RUN zypper in -y --oldpackage libudev1-257.7-160000.2.2.x86_64"
+        ],
         "replace": {
             "build-essential": "",
             "@development-tools": "",
