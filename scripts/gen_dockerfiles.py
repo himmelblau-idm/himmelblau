@@ -188,6 +188,9 @@ DISTS = {
     "rawhide": {
         "family": "rpm",
         "image": "fedora:rawhide",
+        "extra_prep": [
+            "RUN dnf -y --refresh update glibc glibc-common glibc-minimal-langpack systemd-libs systemd-standalone-sysusers rpm-libs rpm && dnf -y --refresh update"
+        ],
         "tpm": True,
         "selinux": True,
     },
@@ -273,13 +276,17 @@ DISTS = {
         "image": "registry.suse.com/bci/bci-sle16-kernel-module-devel:16.0",
         "scc": True,
         "scc_vers": "16.0",
+        "extra_prep": [
+            # Temporary patch for broken SLE libudev1 version in the base image
+            "RUN zypper in -y --oldpackage libudev1-257.7-160000.2.2.x86_64"
+        ],
         "replace": {
             "build-essential": "",
             "@development-tools": "",
             "dbus-devel": "dbus-1-devel",
             "tpm2-tss-devel": "tpm2-0-tss-devel",
             "sqlite-devel": "sqlite3-devel",
-            "selinux-policy-targeted": "selinux-tools",
+            "selinux-policy-targeted": "selinux-tools selinux-policy-devel",
         },
         "tpm": True,
         "selinux": True,
@@ -347,12 +354,12 @@ def build_pkg_list(dist_cfg, selinux):
     pkgs = list(fam["pkgs"])
     rep = dist_cfg.get("replace", {})
     out = []
+    if selinux:
+        pkgs += SELINUX_PKGS
     for p in pkgs:
         q = rep.get(p, p)
         if q:
             out.append(q)
-    if selinux:
-        out += SELINUX_PKGS
     out = sorted(set(out))
     sep = " \\\n        "
     return sep.join(out)
