@@ -84,6 +84,11 @@ who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
 version = "1.2.39"
 
+[[audits.cc]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+version = "1.2.41"
+
 [[audits.darling]]
 who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
@@ -114,6 +119,11 @@ who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
 version = "0.7.16"
 
+[[audits.pem]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+version = "3.0.6"
+
 [[audits.rustls]]
 who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
@@ -123,6 +133,11 @@ version = "0.23.32"
 who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
 version = "0.103.6"
+
+[[audits.scim_proto]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+version = "1.7.4"
 
 [[audits.semver]]
 who = "David Mulder <dmulder@samba.org>"
@@ -159,10 +174,20 @@ who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
 version = "3.14.1"
 
+[[audits.serde_with]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+version = "3.15.0"
+
 [[audits.serde_with_macros]]
 who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
 version = "3.14.1"
+
+[[audits.serde_with_macros]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+version = "3.15.0"
 
 [[audits.tempfile]]
 who = "David Mulder <dmulder@samba.org>"
@@ -173,6 +198,11 @@ version = "3.23.0"
 who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
 version = "0.3.44"
+
+[[audits.zeroize]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+version = "1.8.2"
 
 [[trusted.aho-corasick]]
 criteria = "safe-to-deploy"
@@ -718,31 +748,61 @@ end = "2026-09-11"
 criteria = "safe-to-deploy"
 user-id = 31100 # Firstyear (Firstyear)
 start = "2023-08-01"
-end = "2026-09-11"
+end = "2026-10-15"
+
+[[trusted.kanidm_build_profiles]]
+criteria = "safe-to-deploy"
+user-id = 127515 # James Hodgkinson (yaleman)
+start = "2023-10-31"
+end = "2026-10-15"
 
 [[trusted.kanidm_lib_crypto]]
 criteria = "safe-to-deploy"
 user-id = 31100 # Firstyear (Firstyear)
 start = "2024-02-07"
-end = "2026-09-11"
+end = "2026-10-15"
+
+[[trusted.kanidm_lib_crypto]]
+criteria = "safe-to-deploy"
+user-id = 127515 # James Hodgkinson (yaleman)
+start = "2023-10-31"
+end = "2026-10-15"
 
 [[trusted.kanidm_lib_file_permissions]]
 criteria = "safe-to-deploy"
 user-id = 31100 # Firstyear (Firstyear)
 start = "2024-02-07"
-end = "2026-09-11"
+end = "2026-10-15"
+
+[[trusted.kanidm_lib_file_permissions]]
+criteria = "safe-to-deploy"
+user-id = 127515 # James Hodgkinson (yaleman)
+start = "2023-10-31"
+end = "2026-10-15"
 
 [[trusted.kanidm_proto]]
 criteria = "safe-to-deploy"
 user-id = 31100 # Firstyear (Firstyear)
 start = "2019-12-17"
-end = "2026-09-11"
+end = "2026-10-15"
+
+[[trusted.kanidm_proto]]
+criteria = "safe-to-deploy"
+user-id = 127515 # James Hodgkinson (yaleman)
+start = "2023-10-31"
+end = "2026-10-15"
 
 [[trusted.kanidm_utils_users]]
 criteria = "safe-to-deploy"
 user-id = 31100 # Firstyear (Firstyear)
 start = "2024-02-07"
-end = "2026-09-11"
+end = "2026-10-15"
+
+[[trusted.kanidm_utils_users]]
+criteria = "safe-to-deploy"
+user-id = 127515 # James Hodgkinson (yaleman)
+start = "2023-10-31"
+end = "2026-10-15"
 
 [[trusted.libc]]
 criteria = "safe-to-deploy"
@@ -958,7 +1018,7 @@ end = "2026-09-11"
 criteria = "safe-to-deploy"
 user-id = 31100 # Firstyear (Firstyear)
 start = "2023-01-25"
-end = "2026-09-11"
+end = "2026-10-15"
 
 [[trusted.scopeguard]]
 criteria = "safe-to-deploy"
@@ -1018,7 +1078,13 @@ end = "2026-09-11"
 criteria = "safe-to-deploy"
 user-id = 31100 # Firstyear (Firstyear)
 start = "2024-02-07"
-end = "2026-09-11"
+end = "2026-10-15"
+
+[[trusted.sketching]]
+criteria = "safe-to-deploy"
+user-id = 127515 # James Hodgkinson (yaleman)
+start = "2023-10-31"
+end = "2026-10-15"
 
 [[trusted.slab]]
 criteria = "safe-to-deploy"

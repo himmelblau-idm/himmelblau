@@ -716,10 +716,6 @@ criteria = "safe-to-deploy"
 version = "0.8.5"
 criteria = "safe-to-deploy"
 
-[[exemptions.pem]]
-version = "3.0.5"
-criteria = "safe-to-deploy"
-
 [[exemptions.pem-rfc7468]]
 version = "0.7.0"
 criteria = "safe-to-deploy"
