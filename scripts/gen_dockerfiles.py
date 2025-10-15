@@ -188,6 +188,9 @@ DISTS = {
     "rawhide": {
         "family": "rpm",
         "image": "fedora:rawhide",
+        "extra_prep": [
+            "RUN dnf -y --refresh update glibc glibc-common glibc-minimal-langpack systemd-libs systemd-standalone-sysusers rpm-libs rpm && dnf -y --refresh update"
+        ],
         "tpm": True,
         "selinux": True,
     },
