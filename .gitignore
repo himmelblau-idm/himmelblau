@@ -25,3 +25,9 @@ packaging/
 src/selinux/src/himmelblaud.if
 src/selinux/src/himmelblaud.pp
 src/selinux/src/tmp/
+
+# Generated systemd service files
+platform/debian/himmelblaud-tasks.service
+platform/debian/himmelblaud.service
+platform/opensuse/himmelblaud-tasks.service
+platform/opensuse/himmelblaud.service

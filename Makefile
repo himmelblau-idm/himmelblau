@@ -100,7 +100,13 @@ uninstall: ## Uninstall Himmelblau packages from this host (apt/dnf/yum/zypper a
 dockerfiles:
 	python3 scripts/gen_dockerfiles.py --out ./images/
 
-.PHONY: package deb rpm $(DEB_TARGETS) $(RPM_TARGETS) ${SLE_TARGETS} dockerfiles install uninstall help sbom
+deb-servicefiles:
+	python3 ./scripts/gen_servicefiles.py --out ./platform/debian/
+
+rpm-servicefiles:
+	python3 ./scripts/gen_servicefiles.py --out ./platform/opensuse/
+
+.PHONY: package deb rpm $(DEB_TARGETS) $(RPM_TARGETS) ${SLE_TARGETS} dockerfiles deb-servicefiles rpm-servicefiles install uninstall help sbom
 
 check-licenses: ## Validate dependant licenses comply with GPLv3
 	cargo deny -V >/dev/null || (echo "cargo-deny required" && cargo install cargo-deny)
