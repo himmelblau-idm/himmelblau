@@ -106,29 +106,29 @@ user-login = "emilio"
 user-name = "Emilio Cobos Álvarez"
 
 [[publisher.clap]]
-version = "4.5.48"
-when = "2025-09-19"
+version = "4.5.49"
+when = "2025-10-13"
 user-id = 6743
 user-login = "epage"
 user-name = "Ed Page"
 
 [[publisher.clap_builder]]
-version = "4.5.48"
-when = "2025-09-19"
+version = "4.5.49"
+when = "2025-10-13"
 user-id = 6743
 user-login = "epage"
 user-name = "Ed Page"
 
 [[publisher.clap_complete]]
-version = "4.5.58"
-when = "2025-09-16"
+version = "4.5.59"
+when = "2025-10-13"
 user-id = 6743
 user-login = "epage"
 user-name = "Ed Page"
 
 [[publisher.clap_derive]]
-version = "4.5.47"
-when = "2025-09-02"
+version = "4.5.49"
+when = "2025-10-13"
 user-id = 6743
 user-login = "epage"
 user-name = "Ed Page"
@@ -257,6 +257,13 @@ when = "2024-08-27"
 user-id = 1
 user-login = "alexcrichton"
 user-name = "Alex Crichton"
+
+[[publisher.find-msvc-tools]]
+version = "0.1.0"
+when = "2025-08-29"
+user-id = 539
+user-login = "cuviper"
+user-name = "Josh Stone"
 
 [[publisher.flate2]]
 version = "1.1.1"
@@ -696,43 +703,43 @@ user-login = "Firstyear"
 user-name = "Firstyear"
 
 [[publisher.kanidm_build_profiles]]
-version = "1.7.3"
-when = "2025-09-09"
-user-id = 31100
-user-login = "Firstyear"
-user-name = "Firstyear"
+version = "1.7.4"
+when = "2025-10-13"
+user-id = 127515
+user-login = "yaleman"
+user-name = "James Hodgkinson"
 
 [[publisher.kanidm_lib_crypto]]
-version = "1.7.3"
-when = "2025-09-09"
-user-id = 31100
-user-login = "Firstyear"
-user-name = "Firstyear"
+version = "1.7.4"
+when = "2025-10-13"
+user-id = 127515
+user-login = "yaleman"
+user-name = "James Hodgkinson"
 
 [[publisher.kanidm_lib_file_permissions]]
-version = "1.7.3"
-when = "2025-09-09"
-user-id = 31100
-user-login = "Firstyear"
-user-name = "Firstyear"
+version = "1.7.4"
+when = "2025-10-13"
+user-id = 127515
+user-login = "yaleman"
+user-name = "James Hodgkinson"
 
 [[publisher.kanidm_proto]]
-version = "1.7.3"
-when = "2025-09-09"
-user-id = 31100
-user-login = "Firstyear"
-user-name = "Firstyear"
+version = "1.7.4"
+when = "2025-10-13"
+user-id = 127515
+user-login = "yaleman"
+user-name = "James Hodgkinson"
 
 [[publisher.kanidm_utils_users]]
-version = "1.7.3"
-when = "2025-09-09"
-user-id = 31100
-user-login = "Firstyear"
-user-name = "Firstyear"
+version = "1.7.4"
+when = "2025-10-13"
+user-id = 127515
+user-login = "yaleman"
+user-name = "James Hodgkinson"
 
 [[publisher.libc]]
-version = "0.2.176"
-when = "2025-09-23"
+version = "0.2.177"
+when = "2025-10-09"
 user-id = 55123
 user-login = "rust-lang-owner"
 
@@ -742,6 +749,13 @@ when = "2025-07-03"
 user-id = 696
 user-login = "fitzgen"
 user-name = "Nick Fitzgerald"
+
+[[publisher.libhimmelblau]]
+version = "0.7.18"
+when = "2025-10-08"
+user-id = 247655
+user-login = "dmulder"
+user-name = "David Mulder"
 
 [[publisher.libm]]
 version = "0.2.15"
@@ -897,22 +911,22 @@ user-login = "dtolnay"
 user-name = "David Tolnay"
 
 [[publisher.regex]]
-version = "1.11.3"
-when = "2025-09-25"
+version = "1.12.2"
+when = "2025-10-13"
 user-id = 189
 user-login = "BurntSushi"
 user-name = "Andrew Gallant"
 
 [[publisher.regex-automata]]
-version = "0.4.11"
-when = "2025-09-25"
+version = "0.4.13"
+when = "2025-10-13"
 user-id = 189
 user-login = "BurntSushi"
 user-name = "Andrew Gallant"
 
 [[publisher.reqwest]]
-version = "0.12.23"
-when = "2025-08-12"
+version = "0.12.24"
+when = "2025-10-13"
 user-id = 359
 user-login = "seanmonstar"
 user-name = "Sean McArthur"
@@ -1016,11 +1030,11 @@ user-login = "epage"
 user-name = "Ed Page"
 
 [[publisher.sketching]]
-version = "1.7.3"
-when = "2025-09-09"
-user-id = 31100
-user-login = "Firstyear"
-user-name = "Firstyear"
+version = "1.7.4"
+when = "2025-10-13"
+user-id = 127515
+user-login = "yaleman"
+user-name = "James Hodgkinson"
 
 [[publisher.slab]]
 version = "0.4.9"
@@ -1631,6 +1645,12 @@ who = "Alex Crichton <alex@alexcrichton.com>"
 criteria = "safe-to-deploy"
 delta = "2.1.1 -> 2.3.0"
 notes = "Minor refactoring, nothing new."
+
+[[audits.bytecode-alliance.audits.find-msvc-tools]]
+who = "Alex Crichton <alex@alexcrichton.com>"
+criteria = "safe-to-deploy"
+delta = "0.1.0 -> 0.1.4"
+notes = "Nothing out of the ordinary for a crate finding MSVC tooling."
 
 [[audits.bytecode-alliance.audits.foldhash]]
 who = "Alex Crichton <alex@alexcrichton.com>"

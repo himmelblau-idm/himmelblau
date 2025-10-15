@@ -48,7 +48,7 @@ kanidm_utils_users = { workspace = true }
 csv = { workspace = true }
 sketching = { workspace = true }
 kanidm_lib_file_permissions.workspace = true
-regex = "1.11.3"
+regex = "1.12.2"
 sha2 = "0.10.9"
 base64.workspace = true
 authenticator = { version = "0.4.1", default-features = false, features = ["crypto_openssl"] }

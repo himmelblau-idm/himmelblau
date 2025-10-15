@@ -16,6 +16,7 @@ use himmelblau_unix_common::unix_proto::{ClientRequest, ClientResponse, NssGroup
 use libnss::group::{Group, GroupHooks};
 use libnss::interop::Response;
 use libnss::passwd::{Passwd, PasswdHooks};
+use uuid::Uuid;
 
 struct HimmelblauPasswd;
 libnss_passwd_hooks!(himmelblau, HimmelblauPasswd);
@@ -274,7 +275,6 @@ impl GroupHooks for HimmelblauGroup {
             }
         };
         let upn = cfg.map_name_to_upn(&name);
-        let req = ClientRequest::NssGroupByName(upn.clone());
         let mut daemon_client = match DaemonClientBlocking::new(cfg.get_socket_path().as_str()) {
             Ok(dc) => dc,
             Err(_) => {
@@ -282,67 +282,69 @@ impl GroupHooks for HimmelblauGroup {
             }
         };
 
-        let resp = match daemon_client
-            .call_and_wait(&req, cfg.get_unix_sock_timeout())
-            .map(|r| match r {
-                ClientResponse::NssGroup(opt) => opt
-                    .map(|ng| {
-                        let mut group = group_from_nssgroup(ng);
-                        group.name = cfg.map_upn_to_name(&group.name);
-                        group.members = group
-                            .members
-                            .into_iter()
-                            .map(|member| cfg.map_upn_to_name(&member))
-                            .collect();
-                        Response::Success(group)
-                    })
-                    .unwrap_or_else(|| Response::NotFound),
-                _ => Response::NotFound,
-            })
-            .unwrap_or_else(|_| Response::NotFound)
-        {
+        // Attempt to respond to a request for the fake primary group name.
+        match if upn.contains("@") {
+            let req = ClientRequest::NssGroupByName(upn);
+            daemon_client
+                .call_and_wait(&req, cfg.get_unix_sock_timeout())
+                .map(|r| match r {
+                    ClientResponse::NssGroup(opt) => opt
+                        .map(|ng| {
+                            let mut group = group_from_nssgroup(ng);
+                            group.name = cfg.map_upn_to_name(&group.name);
+                            group.members = group
+                                .members
+                                .into_iter()
+                                .map(|member| cfg.map_upn_to_name(&member))
+                                .collect();
+                            Response::Success(group)
+                        })
+                        .unwrap_or_else(|| Response::NotFound),
+                    _ => Response::NotFound,
+                })
+                .unwrap_or_else(|_| Response::NotFound)
+        } else {
+            Response::NotFound
+        } {
             Response::NotFound => {
                 // If the mapped UPN name isn't found, then this is probably a
                 // real Entra Id group, instead of a fake primary group.
-                let req = ClientRequest::NssGroupByName(name.clone());
-                daemon_client
-                    .call_and_wait(&req, cfg.get_unix_sock_timeout())
-                    .map(|r| match r {
-                        ClientResponse::NssGroup(opt) => opt
-                            .map(|ng| {
-                                let mut group = group_from_nssgroup(ng);
-                                group.members = group
-                                    .members
-                                    .into_iter()
-                                    .map(|member| cfg.map_upn_to_name(&member))
-                                    .collect();
-                                Response::Success(group)
-                            })
-                            .unwrap_or_else(|| Response::NotFound),
-                        _ => Response::NotFound,
-                    })
-                    .unwrap_or_else(|_| Response::NotFound)
-            }
-            other => other,
-        };
-        match resp {
-            Response::Success(group) => {
-                // Never ever EVER respond to a group request by Entra Id group
-                // name. This is a SECURITY RISK! See CVE-2025-49012. Group
-                // names ARE NOT unique in Entra Id. Responding to this name
-                // request could expose SUDO and other privileged commands to
-                // an attacker. Admins should only ever specify group names in
-                // configuration via the Object Id GUID or the GID. Ignoring
-                // this request will still permit commands such as `ls`, etc
-                // to display the group name, while prohibiting dangerous
-                // behavior.
-                if group.name.to_lowercase() == name.to_lowercase() {
-                    Response::NotFound
+                //
+                // If this appears to be a GUID, we can respond to that request (but
+                // we have to validate that GUID wasn't the Group name!).
+                if Uuid::parse_str(&name).is_ok() {
+                    let req = ClientRequest::NssGroupByName(name.clone());
+                    daemon_client
+                        .call_and_wait(&req, cfg.get_unix_sock_timeout())
+                        .map(|r| match r {
+                            ClientResponse::NssGroup(opt) => opt
+                                .map(|ng| {
+                                    let group = group_from_nssgroup(ng);
+                                    // We can only respond if the request was not by name
+                                    if name.to_lowercase() != group.name.to_lowercase() {
+                                        Response::Success(group)
+                                    } else {
+                                        Response::NotFound
+                                    }
+                                })
+                                .unwrap_or_else(|| Response::NotFound),
+                            _ => Response::NotFound,
+                        })
+                        .unwrap_or_else(|_| Response::NotFound)
                 } else {
-                    Response::Success(group)
+                    // Never ever EVER respond to a group request by Entra Id group
+                    // name. This is a SECURITY RISK! See CVE-2025-49012. Group
+                    // names ARE NOT unique in Entra Id. Responding to this name
+                    // request could expose SUDO and other privileged commands to
+                    // an attacker. Admins should only ever specify group names in
+                    // configuration via the Object Id GUID or the GID. Ignoring
+                    // this request will still permit commands such as `ls`, etc
+                    // to display the group name, while prohibiting dangerous
+                    // behavior.
+                    Response::NotFound
                 }
             }
-            _ => resp,
+            other => other,
         }
     }
 }
