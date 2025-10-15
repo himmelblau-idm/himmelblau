@@ -1,0 +1,12 @@
+[package]
+name = "sshkey-attest"
+version = "0.5.999"
+authors.workspace = true
+rust-version.workspace = true
+edition.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[dependencies]
+serde.workspace = true
