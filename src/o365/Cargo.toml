@@ -16,7 +16,7 @@ reqwest = { version = "0.12", features = ["blocking", "rustls-tls"] }
 anyhow = "1.0"
 
 [package.metadata.deb]
-depends = ["curl", "libfuse2"]
+depends = ["curl", "libfuse2", "jq"]
 assets = [
   ["src/o365.sh", "usr/bin/o365", "755"],
   ["src/o365-multi.sh", "usr/bin/o365-multi", "755"],
@@ -40,3 +40,4 @@ post_uninstall_script = "scripts/postrm"
 [package.metadata.generate-rpm.recommends]
 curl = "*"
 libfuse2 = "*"
+jq = "*"
