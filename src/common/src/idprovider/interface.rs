@@ -37,7 +37,10 @@ pub enum IdpError {
     BadRequest,
     /// The idp has indicated that the requested resource does not exist and should
     /// be considered deleted, removed, or not present.
-    NotFound,
+    NotFound {
+        what: String,
+        where_: String,
+    },
     /// The idp was unable to perform an operation on the underlying hsm keystorage
     KeyStore,
     /// The idp failed to interact with the configured TPM
