@@ -168,3 +168,61 @@ allow systemd_user_runtimedir_t himmelblau_var_run_t:sock_file write;
 #============= xdm_t ==============
 allow xdm_t himmelblau_var_cache_t:lnk_file read;
 
+require {
+	type policykit_t;
+	type home_root_t;
+	type himmelblau_etc_t;
+	type himmelblau_var_run_t;
+	type colord_t;
+	type NetworkManager_t;
+	type cupsd_t;
+	type accountsd_t;
+	type himmelblau_var_cache_t;
+	type xdm_t;
+	type himmelblau_nss_cache_t;
+	class sock_file write;
+	class file { create getattr lock open read setattr unlink write };
+	class dir { add_name create getattr open read remove_name search };
+	class lnk_file read;
+}
+
+#============= NetworkManager_t ==============
+allow NetworkManager_t himmelblau_etc_t:file { getattr open read };
+allow NetworkManager_t himmelblau_nss_cache_t:dir { add_name read remove_name };
+allow NetworkManager_t himmelblau_nss_cache_t:file { create getattr lock open read setattr unlink write };
+allow NetworkManager_t himmelblau_var_cache_t:file { getattr open read };
+allow NetworkManager_t himmelblau_var_cache_t:lnk_file read;
+allow NetworkManager_t himmelblau_var_run_t:sock_file write;
+
+#============= accountsd_t ==============
+allow accountsd_t himmelblau_etc_t:file { getattr open read };
+allow accountsd_t himmelblau_nss_cache_t:file { getattr lock open read write };
+allow accountsd_t himmelblau_var_cache_t:file { getattr open read };
+allow accountsd_t himmelblau_var_run_t:sock_file write;
+
+#============= colord_t ==============
+allow colord_t himmelblau_etc_t:file { getattr open read };
+allow colord_t himmelblau_nss_cache_t:file { getattr open read };
+allow colord_t himmelblau_var_cache_t:lnk_file read;
+allow colord_t himmelblau_var_run_t:sock_file write;
+
+#============= cupsd_t ==============
+allow cupsd_t himmelblau_etc_t:dir search;
+allow cupsd_t himmelblau_etc_t:file { getattr open read };
+allow cupsd_t himmelblau_nss_cache_t:dir { add_name getattr open read remove_name search };
+allow cupsd_t himmelblau_nss_cache_t:file { create getattr lock open read setattr unlink write };
+allow cupsd_t himmelblau_var_cache_t:dir search;
+allow cupsd_t himmelblau_var_cache_t:file { getattr open read };
+allow cupsd_t himmelblau_var_cache_t:lnk_file read;
+allow cupsd_t himmelblau_var_run_t:sock_file write;
+
+#============= policykit_t ==============
+allow policykit_t himmelblau_nss_cache_t:file { getattr open read };
+
+#============= xdm_t ==============
+allow xdm_t himmelblau_nss_cache_t:dir { add_name remove_name };
+allow xdm_t himmelblau_nss_cache_t:file { create getattr lock open read setattr unlink write };
+allow xdm_t himmelblau_var_cache_t:file { getattr open read };
+allow xdm_t himmelblau_var_run_t:sock_file write;
+allow xdm_t home_root_t:dir add_name;
+allow xdm_t home_root_t:dir create;
