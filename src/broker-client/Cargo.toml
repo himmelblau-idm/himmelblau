@@ -10,4 +10,4 @@ repository.workspace = true
 
 [dependencies]
 serde_json.workspace = true
-zbus = "^5.9"
+zbus = "^5.12"
