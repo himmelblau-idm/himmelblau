@@ -246,7 +246,6 @@ async fn auth(app: &BrokerClientApplication, account_id: &str) -> Option<UserTok
         .initiate_acquire_token_by_mfa_flow_for_device_enrollment(
             account_id,
             password.as_deref(),
-            None, /* scopes */
             &auth_options,
             Some(auth_init),
             None, /* MFA method */
@@ -279,7 +278,6 @@ async fn auth(app: &BrokerClientApplication, account_id: &str) -> Option<UserTok
                     .initiate_acquire_token_by_mfa_flow_for_device_enrollment(
                         account_id,
                         password.as_deref(),
-                        None, /* scopes */
                         &auth_options,
                         Some(auth_init),
                         None, /* MFA method */
