@@ -1364,7 +1364,6 @@ impl IdProvider for HimmelblauProvider {
                             .initiate_acquire_token_by_mfa_flow_for_device_enrollment(
                                 account_id,
                                 None,
-                                None, /* scopes */
                                 &auth_options,
                                 Some(auth_init),
                                 None /* MFA method */
@@ -2007,10 +2006,8 @@ impl IdProvider for HimmelblauProvider {
                 // Call the appropriate method based on whether mfa_method is configured
                 let mresp = if let Some(ref method) = mfa_method {
                     debug!("Using configured MFA method: {}", method);
-                    // When mfa_method is set, use the method that accepts it
-                    // Include offline_access scope as required for v2.0 endpoint
+                    // TODO: Include offline_access scope as required for v2.0 endpoint
                     // https://learn.microsoft.com/en-us/entra/identity-platform/scopes-oidc#the-offline_access-scope
-                    let scopes = vec!["offline_access"];
                     self
                         .client
                         .read()
@@ -2018,7 +2015,6 @@ impl IdProvider for HimmelblauProvider {
                         .initiate_acquire_token_by_mfa_flow_for_device_enrollment(
                             account_id,
                             Some(&cred),
-                            Some(scopes),
                             &opts,
                             None,
                             Some(method),
@@ -2034,7 +2030,6 @@ impl IdProvider for HimmelblauProvider {
                         .initiate_acquire_token_by_mfa_flow_for_device_enrollment(
                             account_id,
                             Some(&cred),
-                            None, /* scopes */
                             &opts,
                             None,
                             None, /* MFA method */
