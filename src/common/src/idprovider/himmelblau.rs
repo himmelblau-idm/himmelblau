@@ -1307,6 +1307,7 @@ impl IdProvider for HimmelblauProvider {
                                 None,
                                 &auth_options,
                                 Some(auth_init),
+                                None /* MFA method */
                             )
                             .await,
                         Err(MsalError::PasswordRequired) => {
@@ -1904,17 +1905,42 @@ impl IdProvider for HimmelblauProvider {
                 if sfa_enabled {
                     opts.push(AuthOption::NoDAGFallback);
                 }
-                let mresp = self
-                    .client
-                    .read()
-                    .await
-                    .initiate_acquire_token_by_mfa_flow_for_device_enrollment(
-                        account_id,
-                        Some(&cred),
-                        &opts,
-                        None,
-                    )
-                    .await;
+
+                let mfa_method = self.config.read().await.get_mfa_method();
+
+                // Call the appropriate method based on whether mfa_method is configured
+                let mresp = if let Some(ref method) = mfa_method {
+                    debug!("Using configured MFA method: {}", method);
+                    // TODO: Include offline_access scope as required for v2.0 endpoint
+                    // https://learn.microsoft.com/en-us/entra/identity-platform/scopes-oidc#the-offline_access-scope
+                    self
+                        .client
+                        .read()
+                        .await
+                        .initiate_acquire_token_by_mfa_flow_for_device_enrollment(
+                            account_id,
+                            Some(&cred),
+                            &opts,
+                            None,
+                            Some(method),
+                        )
+                        .await
+                } else {
+                    debug!("No MFA method configured, using default flow");
+                    // Fallback to original method when no mfa_method is configured
+                    self
+                        .client
+                        .read()
+                        .await
+                        .initiate_acquire_token_by_mfa_flow_for_device_enrollment(
+                            account_id,
+                            Some(&cred),
+                            &opts,
+                            None,
+                            None, /* MFA method */
+                        )
+                        .await
+                };
                 // We need to wait to handle the response until after we've released
                 // the write lock on the client, otherwise we will deadlock.
                 let resp = net_down_check!(mresp,
@@ -2087,7 +2113,7 @@ impl IdProvider for HimmelblauProvider {
                     self.client
                         .read()
                         .await
-                        .acquire_token_by_mfa_flow(account_id, Some(&cred), None, flow)
+                        .acquire_token_by_mfa_flow(account_id, Some(&cred), None, flow, None)
                         .await,
                     Ok(token) => token,
                     Err(e) => {
@@ -2173,7 +2199,7 @@ impl IdProvider for HimmelblauProvider {
                     self.client
                         .read()
                         .await
-                        .acquire_token_by_mfa_flow(account_id, None, Some(poll_attempt), flow)
+                        .acquire_token_by_mfa_flow(account_id, None, Some(poll_attempt), flow, None)
                         .await,
                     Ok(token) => token,
                     Err(e) => match e {
@@ -2261,7 +2287,7 @@ impl IdProvider for HimmelblauProvider {
                     self.client
                         .read()
                         .await
-                        .acquire_token_by_mfa_flow(account_id, Some(&assertion), None, flow)
+                        .acquire_token_by_mfa_flow(account_id, Some(&assertion), None, flow, None)
                         .await,
                     Ok(token) => token,
                     Err(e) => {
