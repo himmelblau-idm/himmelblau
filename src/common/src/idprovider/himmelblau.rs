@@ -1269,8 +1269,6 @@ impl IdProvider for HimmelblauProvider {
             || intune_enrollment_required
             || no_hello_pin
         {
-            debug!("HimmelblauProvider::unix_user_online_auth_init");
-
             if (self.delayed_init().await).is_err() {
                 // Initialization failed. Report that the system is offline. We
                 // can't proceed with initialization until the system is online.
@@ -1318,7 +1316,6 @@ impl IdProvider for HimmelblauProvider {
                     }
                     Ok((AuthRequest::Password, AuthCredHandler::None))
                 } else {
-
                     let flow = net_down_check!(
                         self.client
                             .read()
@@ -1355,8 +1352,6 @@ impl IdProvider for HimmelblauProvider {
                     ))
                 }
             } else {
-                debug!("unix_user_online_auth_init(): initiate_device_flow_for_device_enrollment");
-
                 let resp = net_down_check!(
                     self.client
                         .read()
@@ -1388,8 +1383,6 @@ impl IdProvider for HimmelblauProvider {
                 ))
             }
         } else {
-            debug!("unix_user_online_auth_init(): attempt_online()");
-
             // Check if the network is even up prior to sending a PIN prompt,
             // otherwise we duplicate the PIN prompt when the network goes down.
             if !self.attempt_online(tpm, SystemTime::now()).await {
@@ -1931,8 +1924,6 @@ impl IdProvider for HimmelblauProvider {
                     opts.push(AuthOption::NoDAGFallback);
                 }
 
-                debug!("unix_user_online_auth_step(): initiate_acquire_token_by_mfa_flow_for_device_enrollment");
-
                 let mfa_method = self.config.read().await.get_mfa_method();
 
                 // Call the appropriate method based on whether mfa_method is configured
@@ -2136,7 +2127,6 @@ impl IdProvider for HimmelblauProvider {
                 },
                 PamAuthRequest::MFACode { cred },
             ) => {
-                debug!("unix_user_online_auth_step(): acquire_token_by_mfa_flow 1");
                 let token = net_down_check!(
                     self.client
                         .read()
@@ -2223,7 +2213,6 @@ impl IdProvider for HimmelblauProvider {
                     error!("MFA polling timed out");
                     return Err(IdpError::BadRequest);
                 }
-                debug!("unix_user_online_auth_step(): acquire_token_by_mfa_flow 2");
                 let token = net_down_check!(
                     self.client
                         .read()
@@ -2312,7 +2301,6 @@ impl IdProvider for HimmelblauProvider {
                 },
                 PamAuthRequest::Fido { assertion },
             ) => {
-                debug!("unix_user_online_auth_step(): acquire_token_by_mfa_flow 3");
                 let token = net_down_check!(
                     self.client
                         .read()
