@@ -62,10 +62,14 @@ for each domain to avoid conflicts in user and group ID mappings. Overlapping ID
 .EXAMPLES
 domains = example.com,example2.com
 
+.P
 [example.com]
+.br
 idmap_range = 5000000-5999999
 
+.P
 [example2.com]
+.br
 idmap_range = 6000000-6999999
 
 .TP
@@ -538,7 +542,9 @@ Domain-specific sections override global values for the specified domain.
 Overrides the `odc_provider` value for this domain.
 
 .EXAMPLES
+.P
 [example.com]
+.br
 odc_provider = custom.odcprovider.example.com
 
 .TP
@@ -547,7 +553,9 @@ odc_provider = custom.odcprovider.example.com
 Overrides the `home_prefix` value for this domain.
 
 .EXAMPLES
+.P
 [example.com]
+.br
 home_prefix = /home/
 
 .TP
@@ -556,7 +564,9 @@ home_prefix = /home/
 Overrides the `home_attr` value for this domain.
 
 .EXAMPLES
+.P
 [example.com]
+.br
 home_attr = UUID
 
 .TP
@@ -565,7 +575,9 @@ home_attr = UUID
 Overrides the `home_alias` value for this domain.
 
 .EXAMPLES
+.P
 [example.com]
+.br
 home_alias = SPN
 
 .TP
@@ -574,7 +586,9 @@ home_alias = SPN
 Overrides the `shell` value for this domain.
 
 .EXAMPLES
+.P
 [example.com]
+.br
 shell = /bin/bash
 
 .TP
@@ -593,7 +607,9 @@ sudo aad-tool cache-clear --really
 To ensure that old cached ID mappings are cleared, preventing potential UID overlaps caused by stale cache data.
 
 .EXAMPLES
+.P
 [example.com]
+.br
 idmap_range = 5000000-5999999
 
 .TP
@@ -609,7 +625,9 @@ This option allows configuring a separate application ID specifically for logon 
 \fBNote:\fR In the Azure Portal for the application corresponding to \fBlogon_token_app_id\fR, ensure that the redirect URI \fIhttps://login.microsoftonline.com/common/oauth2/nativeclient\fR is enabled in the application's Authentication section under “Mobile and desktop applications.” This is required so that Himmelblau can obtain the necessary tokens.
 
 .EXAMPLES
+.P
 [example.com]
+.br
 logon_token_app_id = 544e695f-5d78-442e-b14e-e114e95e640c
 
 .TP
@@ -629,7 +647,9 @@ is not set, this app_id will also be used for requesting access tokens for the l
 \fBNote:\fR For the application corresponding to \fBapp_id\fR, ensure that the redirect URI \fIhimmelblau://Himmelblau.EntraId.BrokerPlugin\fR is added in the application's Authentication section under “Mobile and desktop applications” in the Azure Portal. This allows Himmelblau to properly handle token redirection for the extended attribute lookups.
 
 .EXAMPLES
+.P
 [example.com]
+.br
 app_id = d023f7aa-d214-4b59-911d-6074de623765
 
 .TP
@@ -639,7 +659,9 @@ A comma separated list of entra groups that should have access to sudo.
 If local_sudo_group is not set, the local group 'sudo' will be used.
 
 .EXAMPLES
+.P
 [example.com]
+.br
 sudo_groups = f3c9a7e4-7d5a-47e8-832f-3d2d92abcd12,5ba4ef1d-e454-4f43-ba7c-6fe6f1601915
 
 .SH SEE ALSO
