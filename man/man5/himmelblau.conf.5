@@ -494,6 +494,36 @@ Specifies whether the system should join or register with Microsoft Entra ID.
 .EXAMPLES
 join_type = register
 
+.TP
+.B user_map_file
+.RE
+Specifies the path to a user-mapping file used to map local user accounts to Azure Entra ID user accounts, allowing them to authenticate using Entra ID credentials.
+
+Each line of the file must contain a single mapping entry in the format:
+.IP
+local_username:name@domain
+.PP
+Blank lines and lines beginning with ‘#’ are ignored.
+
+If this option is not set, the default path
+.I /etc/himmelblau/user-map
+is used.
+
+.EXAMPLES
+user_map_file = /path/to/user_map
+
+.EXAMPLES
+.P
+# Example user-map file entries:
+.br
+# local_username:samaccountname@domain
+.br
+alice:alice@contoso.com
+.br
+bob:bob.smith@example.org
+.br
+svcuser:service.account@tenant.local
+
 .SH DOMAIN-SPECIFIC SECTIONS
 Overrides can be defined for individual domains by using a section named after the domain in square brackets.
 

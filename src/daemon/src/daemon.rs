@@ -44,6 +44,7 @@ use himmelblau_unix_common::unix_passwd::{parse_etc_group, parse_etc_passwd};
 use himmelblau_unix_common::unix_proto::{
     ClientRequest, ClientResponse, PamAuthResponse, TaskRequest, TaskResponse,
 };
+use himmelblau_unix_common::user_map::UserMap;
 use himmelblau_unix_common::{tpm_init, tpm_loadable_machine_key, tpm_machine_key};
 use uuid::Uuid;
 
@@ -1163,6 +1164,7 @@ async fn main() -> ExitCode {
 
             let task_channel_tx_cln = task_channel_tx.clone();
 
+            let user_map = UserMap::new(&cfg.get_user_map_file());
             let cl_inner = match Resolver::new(
                 db,
                 idprovider,
@@ -1176,7 +1178,7 @@ async fn main() -> ExitCode {
                 cfg.get_home_alias(None),
                 UidAttr::Name,
                 UidAttr::Name,
-                vec![], // TODO: Implement local account override
+                user_map.get_id_overrides(),
             )
             .await
             {

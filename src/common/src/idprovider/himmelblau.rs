@@ -31,6 +31,7 @@ use crate::idmap_cache::StaticIdCache;
 use crate::idprovider::interface::{tpm, UserTokenState};
 use crate::tpm::confidential_client_creds;
 use crate::unix_proto::PamAuthRequest;
+use crate::user_map::UserMap;
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use himmelblau::auth::{BrokerClientApplication, UserToken as UnixUserToken};
@@ -46,10 +47,12 @@ use kanidm_hsm_crypto::{
     structures::LoadableMsDeviceEnrolmentKey, structures::LoadableMsHelloKey,
     structures::LoadableMsOapxbcRsaKey, structures::SealedData, PinValue,
 };
+use libc::getpwnam;
 use regex::Regex;
 use reqwest;
 use reqwest::Url;
 use std::collections::HashMap;
+use std::ffi::CString;
 use std::sync::Arc;
 use std::thread::sleep;
 use std::time::Duration;
@@ -2799,77 +2802,100 @@ impl HimmelblauProvider {
             }
         };
         let valid = true;
-        let idmap = self.idmap.read().await;
-        let idmap_cache = StaticIdCache::new(ID_MAP_CACHE, false).map_err(|e| {
-            error!("Failed reading from the idmap cache: {:?}", e);
-            IdpError::BadRequest
-        })?;
-        let (uidnumber, gidnumber) = match idmap_cache.get_user_by_name(&spn) {
-            Some(user) => (user.uid, user.gid),
-            None => {
-                let uidnumber = match config.get_id_attr_map() {
-                    IdAttr::Uuid => idmap
-                        .object_id_to_unix_id(
-                            &self.graph.tenant_id().await.map_err(|e| {
-                                error!("{:?}", e);
-                                IdpError::BadRequest
-                            })?,
-                            &AadSid::from_object_id(&uuid).map_err(|e| {
-                                error!("Failed parsing object id: {:?}", e);
-                                IdpError::BadRequest
-                            })?,
-                        )
-                        .map_err(|e| {
-                            error!("{:?}", e);
-                            IdpError::BadRequest
-                        })?,
-                    IdAttr::Name => idmap
-                        .gen_to_unix(
-                            &self.graph.tenant_id().await.map_err(|e| {
-                                error!("{:?}", e);
-                                IdpError::BadRequest
-                            })?,
-                            &spn,
-                        )
-                        .map_err(|e| {
-                            error!("{:?}", e);
-                            IdpError::BadRequest
-                        })?,
-                    IdAttr::Rfc2307 => match posix_attrs.get("uidNumber") {
-                        Some(uid_number) => uid_number.parse::<u32>().map_err(|e| {
-                            error!(
-                                "Invalid uidNumber ('{}') synced from on-prem AD: {:?}",
-                                uid_number, e
-                            );
-                            IdpError::BadRequest
-                        })?,
-                        None => {
-                            error!("User {} has no uidNumber defined in the directory!", uuid);
-                            return Err(IdpError::BadRequest);
-                        }
-                    },
-                };
-
-                // Utilize the existing primary group if set
-                let gidnumber = if let Some(gid_number) = posix_attrs.get("gidNumber") {
-                    gid_number.parse::<u32>().map_err(|e| {
-                        error!(
-                            "Invalid gidNumber ('{}') synced from on-prem AD: {:?}",
-                            gid_number, e
-                        );
+        let user_map = UserMap::new(&config.get_user_map_file());
+        let (uidnumber, gidnumber) = match user_map.get_local_from_upn(&spn) {
+            Some(user) => {
+                let pwd = unsafe {
+                    let cstr_user = CString::new(user).map_err(|e| {
+                        error!("Failec converting username to CString: {}", e);
                         IdpError::BadRequest
-                    })?
-                } else {
-                    // Otherwise add a fake primary group
-                    groups.push(GroupToken {
-                        name: spn.clone(),
-                        spn: spn.clone(),
-                        uuid,
-                        gidnumber: uidnumber,
-                    });
-                    uidnumber
+                    })?;
+                    let user = CString::into_raw(cstr_user);
+                    let pwd = getpwnam(user);
+                    if pwd.is_null() {
+                        return Err(IdpError::NotFound);
+                    }
+                    *pwd
                 };
-                (uidnumber, gidnumber)
+                (pwd.pw_uid as u32, pwd.pw_gid as u32)
+            }
+            None => {
+                let idmap = self.idmap.read().await;
+                let idmap_cache = StaticIdCache::new(ID_MAP_CACHE, false).map_err(|e| {
+                    error!("Failed reading from the idmap cache: {:?}", e);
+                    IdpError::BadRequest
+                })?;
+                match idmap_cache.get_user_by_name(&spn) {
+                    Some(user) => (user.uid, user.gid),
+                    None => {
+                        let uidnumber = match config.get_id_attr_map() {
+                            IdAttr::Uuid => idmap
+                                .object_id_to_unix_id(
+                                    &self.graph.tenant_id().await.map_err(|e| {
+                                        error!("{:?}", e);
+                                        IdpError::BadRequest
+                                    })?,
+                                    &AadSid::from_object_id(&uuid).map_err(|e| {
+                                        error!("Failed parsing object id: {:?}", e);
+                                        IdpError::BadRequest
+                                    })?,
+                                )
+                                .map_err(|e| {
+                                    error!("{:?}", e);
+                                    IdpError::BadRequest
+                                })?,
+                            IdAttr::Name => idmap
+                                .gen_to_unix(
+                                    &self.graph.tenant_id().await.map_err(|e| {
+                                        error!("{:?}", e);
+                                        IdpError::BadRequest
+                                    })?,
+                                    &spn,
+                                )
+                                .map_err(|e| {
+                                    error!("{:?}", e);
+                                    IdpError::BadRequest
+                                })?,
+                            IdAttr::Rfc2307 => match posix_attrs.get("uidNumber") {
+                                Some(uid_number) => uid_number.parse::<u32>().map_err(|e| {
+                                    error!(
+                                        "Invalid uidNumber ('{}') synced from on-prem AD: {:?}",
+                                        uid_number, e
+                                    );
+                                    IdpError::BadRequest
+                                })?,
+                                None => {
+                                    error!(
+                                        "User {} has no uidNumber defined in the directory!",
+                                        uuid
+                                    );
+                                    return Err(IdpError::BadRequest);
+                                }
+                            },
+                        };
+
+                        // Utilize the existing primary group if set
+                        let gidnumber = if let Some(gid_number) = posix_attrs.get("gidNumber") {
+                            gid_number.parse::<u32>().map_err(|e| {
+                                error!(
+                                    "Invalid gidNumber ('{}') synced from on-prem AD: {:?}",
+                                    gid_number, e
+                                );
+                                IdpError::BadRequest
+                            })?
+                        } else {
+                            // Otherwise add a fake primary group
+                            groups.push(GroupToken {
+                                name: spn.clone(),
+                                spn: spn.clone(),
+                                uuid,
+                                gidnumber: uidnumber,
+                            });
+                            uidnumber
+                        };
+                        (uidnumber, gidnumber)
+                    }
+                }
             }
         };
 

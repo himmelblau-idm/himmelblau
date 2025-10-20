@@ -32,7 +32,8 @@ use crate::constants::{
     DEFAULT_HOME_ATTR, DEFAULT_HOME_PREFIX, DEFAULT_HSM_PIN_PATH, DEFAULT_ID_ATTR_MAP,
     DEFAULT_JOIN_TYPE, DEFAULT_ODC_PROVIDER, DEFAULT_POLICIES_DB_DIR, DEFAULT_SELINUX,
     DEFAULT_SFA_FALLBACK_ENABLED, DEFAULT_SHELL, DEFAULT_SOCK_PATH, DEFAULT_TASK_SOCK_PATH,
-    DEFAULT_TPM_TCTI_NAME, DEFAULT_USE_ETC_SKEL, MAPPED_NAME_CACHE, SERVER_CONFIG_PATH,
+    DEFAULT_TPM_TCTI_NAME, DEFAULT_USER_MAP_FILE, DEFAULT_USE_ETC_SKEL, MAPPED_NAME_CACHE,
+    SERVER_CONFIG_PATH,
 };
 use crate::mapping::{MappedNameCache, Mode};
 use crate::unix_config::{HomeAttr, HsmType};
@@ -873,6 +874,12 @@ impl HimmelblauConfig {
             Some(val) => val,
             None => "sudo".to_string(),
         }
+    }
+
+    pub fn get_user_map_file(&self) -> String {
+        self.config
+            .get("global", "user_map_file")
+            .unwrap_or(DEFAULT_USER_MAP_FILE.to_string())
     }
 }
 
@@ -1749,5 +1756,23 @@ mod tests {
         let account_id = "user";
 
         assert_eq!(config.map_name_to_upn(account_id), account_id.to_string());
+    }
+
+    #[test]
+    fn test_user_map_file() {
+        let config_data = r#"
+        [global]
+        "#;
+        let temp_file = create_temp_config(config_data);
+        let config = HimmelblauConfig::new(Some(&temp_file)).unwrap();
+        assert_eq!(config.get_user_map_file(), DEFAULT_USER_MAP_FILE);
+
+        let config_data = r#"
+        [global]
+        user_map_file = /path/to/user_map
+        "#;
+        let temp_file = create_temp_config(config_data);
+        let config = HimmelblauConfig::new(Some(&temp_file)).unwrap();
+        assert_eq!(config.get_user_map_file(), "/path/to/user_map");
     }
 }

@@ -13,6 +13,7 @@ use himmelblau_unix_common::constants::{DEFAULT_CONFIG_PATH, NSS_CACHE};
 use himmelblau_unix_common::idprovider::interface::Id;
 use himmelblau_unix_common::nss_cache::{Mode, NssCache};
 use himmelblau_unix_common::unix_proto::{ClientRequest, ClientResponse, NssGroup, NssUser};
+use himmelblau_unix_common::user_map::UserMap;
 use libnss::group::{Group, GroupHooks};
 use libnss::interop::Response;
 use libnss::passwd::{Passwd, PasswdHooks};
@@ -153,6 +154,13 @@ impl PasswdHooks for HimmelblauPasswd {
                 return Response::Unavail;
             }
         };
+
+        // Ignore request for mapped users (some other nss module handles this name)
+        let user_map = UserMap::new(&cfg.get_user_map_file());
+        if user_map.get_upn_from_local(&name).is_some() {
+            return Response::NotFound;
+        }
+
         let upn = cfg.map_name_to_upn(&name);
         let req = ClientRequest::NssAccountByName(upn.clone());
 
