@@ -666,6 +666,16 @@ impl HimmelblauConfig {
         None
     }
 
+    pub async fn domains_are_aliases(&mut self, domain1: &str, domain2: &str) -> bool {
+        if let Some(primary) = self.get_primary_domain_from_alias(domain1).await {
+            domain2 == primary
+        } else if let Some(primary) = self.get_primary_domain_from_alias(domain2).await {
+            domain1 == primary
+        } else {
+            false
+        }
+    }
+
     pub async fn get_primary_domain_from_alias(&mut self, alias: &str) -> Option<String> {
         // Attempt to short-circut the request by checking if the alias is
         // already configured.
