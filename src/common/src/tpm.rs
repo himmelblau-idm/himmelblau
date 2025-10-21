@@ -10,12 +10,54 @@
 use kanidm_hsm_crypto::provider::BoxedDynTpm;
 use kanidm_hsm_crypto::AuthValue;
 use std::error::Error;
+use std::io::Read;
 use std::path::PathBuf;
+use std::process::{Command, Stdio};
 use std::str::FromStr;
 use tokio::fs::File;
 use tokio::io::AsyncReadExt;
+use zeroize::{Zeroize, Zeroizing};
 
-pub async fn read_hsm_pin(hsm_pin_path: &str) -> Result<Vec<u8>, Box<dyn Error>> {
+pub fn decrypt_hsm_pin(hsm_pin_path: &str) -> Result<Zeroizing<Vec<u8>>, Box<dyn Error>> {
+    let mut child = Command::new("systemd-creds")
+        .arg("decrypt")
+        .arg(format!("--name=hsm-pin"))
+        .arg(hsm_pin_path)
+        .arg("-")
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()?;
+
+    let mut stdout = child.stdout.take().ok_or({
+        std::io::Error::new(
+            std::io::ErrorKind::Other,
+            format!("Failed decrypting HSM PIN from {}", hsm_pin_path),
+        )
+    })?;
+    let mut buf = Vec::new();
+    stdout.read_to_end(&mut buf)?;
+
+    // Wait for child exit
+    let status = child.wait()?;
+    if !status.success() {
+        let code = status.code().unwrap_or(-1);
+        buf.zeroize();
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::Other,
+            format!("Failed decrypting HSM PIN from {}: {}", hsm_pin_path, code),
+        )
+        .into());
+    }
+
+    while buf.last().map(|b| *b) == Some(b'\n') {
+        buf.pop();
+    }
+
+    Ok(buf.into())
+}
+
+pub async fn read_hsm_pin(hsm_pin_path: &str) -> Result<Zeroizing<Vec<u8>>, Box<dyn Error>> {
     if !PathBuf::from_str(hsm_pin_path)?.exists() {
         return Err(std::io::Error::new(
             std::io::ErrorKind::NotFound,
@@ -27,7 +69,7 @@ pub async fn read_hsm_pin(hsm_pin_path: &str) -> Result<Vec<u8>, Box<dyn Error>>
     let mut file = File::open(hsm_pin_path).await?;
     let mut contents = vec![];
     file.read_to_end(&mut contents).await?;
-    Ok(contents)
+    Ok(contents.into())
 }
 
 pub async fn write_hsm_pin(hsm_pin_path: &str) -> Result<(), Box<dyn Error>> {
@@ -94,31 +136,44 @@ pub fn open_tpm_if_possible(_tcti_name: &str) -> BoxedDynTpm {
 #[macro_export]
 macro_rules! tpm_init {
     ($cfg:ident, $on_error:expr) => {{
+        use himmelblau_unix_common::constants::DEFAULT_HSM_PIN_PATH_ENC;
         use himmelblau_unix_common::tpm::{
-            open_tpm, open_tpm_if_possible, read_hsm_pin, write_hsm_pin,
+            decrypt_hsm_pin, open_tpm, open_tpm_if_possible, read_hsm_pin, write_hsm_pin,
         };
         use himmelblau_unix_common::unix_config::HsmType;
         use kanidm_hsm_crypto::AuthValue;
 
-        // Check for and create the hsm pin if required.
-        if let Err(err) = write_hsm_pin(&$cfg.get_hsm_pin_path()).await {
-            error!(
-                ?err,
-                "Failed to create HSM PIN into {}",
-                &$cfg.get_hsm_pin_path()
-            );
-            $on_error
-        };
-        // read the hsm pin
-        let hsm_pin = match read_hsm_pin(&$cfg.get_hsm_pin_path()).await {
-            Ok(hp) => hp,
-            Err(err) => {
-                error!(
-                    ?err,
-                    "Failed to read HSM PIN from {}",
-                    &$cfg.get_hsm_pin_path()
-                );
-                $on_error
+        // Check for an existing encrypted hsm pin. If present, we MUST be root
+        // to decrypt it (aad-tool will use this, or himmelblaud started with
+        // `skip-root-check`).
+        let hsm_pin = match decrypt_hsm_pin(DEFAULT_HSM_PIN_PATH_ENC) {
+            Ok(hsm_pin) => hsm_pin,
+            Err(e) => {
+                // Himmelblaud might still read the decrypted PIN from systemd
+                // later, so we don't want this message explicitly printed to debug.
+                trace!("Failed reading encrypted HSM PIN: {}", e);
+
+                // Check for and create the hsm pin if required.
+                if let Err(err) = write_hsm_pin(&$cfg.get_hsm_pin_path()).await {
+                    error!(
+                        ?err,
+                        "Failed to create HSM PIN into {}",
+                        &$cfg.get_hsm_pin_path()
+                    );
+                    $on_error
+                };
+                // read the hsm pin
+                match read_hsm_pin(&$cfg.get_hsm_pin_path()).await {
+                    Ok(hp) => hp,
+                    Err(err) => {
+                        error!(
+                            ?err,
+                            "Failed to read HSM PIN from {}",
+                            &$cfg.get_hsm_pin_path()
+                        );
+                        $on_error
+                    }
+                }
             }
         };
 

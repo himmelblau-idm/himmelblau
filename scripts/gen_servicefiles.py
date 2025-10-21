@@ -41,6 +41,7 @@ MINVER = {
     "MemoryDenyWriteExecute": 231,
     "CacheRuntimeStateDirs": 235,  # CacheDirectory/RuntimeDirectory/StateDirectory
     "ConditionPathExists": 12,
+    "LoadCredentialEncrypted": 250,
 }
 
 def detect_systemd_version():
@@ -218,6 +219,8 @@ Conflicts=nscd.service
 {os.linesep.join(dirs_block)}
 
 {type_line}
+{'LoadCredentialEncrypted=hsm-pin:/var/lib/himmelblaud/hsm-pin.enc' if supported('LoadCredentialEncrypted') else ''}
+{'Environment=HIMMELBLAU_HSM_PIN_PATH=%d/hsm-pin' if supported('LoadCredentialEncrypted') else ''}
 ExecStart=/usr/sbin/himmelblaud
 
 {daemon_rw_paths_comment}

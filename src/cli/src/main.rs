@@ -44,13 +44,15 @@ use himmelblau_unix_common::client::call_daemon;
 use himmelblau_unix_common::config::{split_username, HimmelblauConfig};
 use himmelblau_unix_common::constants::{
     CONFIDENTIAL_CLIENT_CERT_KEY_TAG, CONFIDENTIAL_CLIENT_CERT_TAG, CONFIDENTIAL_CLIENT_SECRET_TAG,
-    DEFAULT_CONFIG_PATH, DEFAULT_ODC_PROVIDER, ID_MAP_CACHE, MAPPED_NAME_CACHE, NSS_CACHE,
+    DEFAULT_CONFIG_PATH, DEFAULT_HSM_PIN_PATH_ENC, DEFAULT_ODC_PROVIDER, ID_MAP_CACHE,
+    MAPPED_NAME_CACHE, NSS_CACHE,
 };
 use himmelblau_unix_common::db::{Cache, CacheTxn, Db, KeyStoreTxn};
 use himmelblau_unix_common::idmap_cache::{StaticGroup, StaticIdCache, StaticUser};
 use himmelblau_unix_common::pam::{Options, PamResultCode};
 use himmelblau_unix_common::tpm::confidential_client_creds;
 use himmelblau_unix_common::tpm_init;
+use himmelblau_unix_common::unix_config::HsmType;
 use himmelblau_unix_common::unix_proto::{ClientRequest, ClientResponse};
 use himmelblau_unix_common::{tpm_loadable_machine_key, tpm_machine_key};
 use kanidm_hsm_crypto::glue::traits::EncodeDer;
@@ -559,6 +561,7 @@ async fn main() -> ExitCode {
         }) => debug,
         HimmelblauUnixOpt::Idmap(IdmapOpt::Clear { debug }) => debug,
         HimmelblauUnixOpt::Status { debug } => debug,
+        HimmelblauUnixOpt::Tpm { debug } => debug,
         HimmelblauUnixOpt::Version { debug } => debug,
     };
 
@@ -1249,7 +1252,7 @@ async fn main() -> ExitCode {
             user_read_write,
             group_read_write,
         }) => {
-            debug!("Starting application list tool ...");
+            debug!("Starting application create tool ...");
 
             let (graph, access_token) = match obtain_access_token!(
                 account_id,
@@ -1905,6 +1908,46 @@ async fn main() -> ExitCode {
                     }
                 }
             }
+            ExitCode::SUCCESS
+        }
+        HimmelblauUnixOpt::Tpm { debug: _ } => {
+            debug!("Starting tpm tool ...");
+
+            if unsafe { libc::geteuid() } != 0 {
+                error!("This command must be run as root.");
+                return ExitCode::FAILURE;
+            }
+
+            let tpm_present =
+                fs::metadata("/dev/tpmrm0").is_ok() || fs::metadata("/dev/tpm0").is_ok();
+            if tpm_present {
+                let encrypted_pin_present = match PathBuf::from_str(DEFAULT_HSM_PIN_PATH_ENC) {
+                    Ok(path) => path.exists(),
+                    Err(_) => false,
+                };
+                if encrypted_pin_present {
+                    println!("Himmelblau TPM state: \x1b[32mTPM in use\x1b[0m")
+                } else {
+                    let cfg = match HimmelblauConfig::new(Some(DEFAULT_CONFIG_PATH)) {
+                        Ok(c) => c,
+                        Err(_e) => {
+                            error!("Failed to parse {}", DEFAULT_CONFIG_PATH);
+                            return ExitCode::FAILURE;
+                        }
+                    };
+                    match cfg.get_hsm_type() {
+                        HsmType::Tpm | HsmType::TpmIfPossible => {
+                            println!("Himmelblau TPM state: \x1b[32mTPM in use\x1b[0m");
+                        }
+                        HsmType::Soft => {
+                            println!("Himmelblau TPM state: \x1b[31mTPM not in use\x1b[0m");
+                        }
+                    }
+                }
+            } else {
+                println!("Himmelblau TPM state: \x1b[31mNo TPM detected\x1b[0m");
+            }
+
             ExitCode::SUCCESS
         }
         HimmelblauUnixOpt::Version { debug: _ } => {

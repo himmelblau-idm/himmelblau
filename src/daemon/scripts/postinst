@@ -1,19 +1,33 @@
 #!/bin/sh
 set -e
 
-# Only patch on Debian 12
-if grep -q '^ID=debian' /etc/os-release && grep -q '^VERSION_ID="12"' /etc/os-release; then
-    echo "Patching Himmelblau systemd unit files for Debian 12"
-
-    # Patch himmelblaud.service: Type=notify-reload → Type=notify
-    sed -i 's/^Type=notify-reload/Type=notify/' /etc/systemd/system/himmelblaud.service
-
-    # Patch himmelblaud-tasks.service: remove ConditionPathExists line
-    sed -i '/^ConditionPathExists=\/run\/himmelblaud\/task_sock$/d' /etc/systemd/system/himmelblaud-tasks.service
-
-    # Reload systemd units in any case
-    systemctl daemon-reload || true
-fi
-
 # Add nss cache directory with correct permissions
 install -d -o root -g root -m 0600 /var/cache/himmelblau-policies
+
+gen_pin_hex() {
+    if command -v openssl >/dev/null 2>&1; then
+        openssl rand -hex 24 | tr -d '\n'
+    else
+        head -c 24 /dev/urandom | od -An -t x1 | tr -d ' \n'
+    fi
+}
+
+if command -v systemd-creds >/dev/null 2>&1; then
+    # Migrate the hsm-pin to a TPM bound cred (where a TPM is available)
+    LEGACY=/var/lib/private/himmelblaud/hsm-pin
+    CRED=/var/lib/private/himmelblaud/hsm-pin.enc
+
+    if [ ! -f $CRED ]; then
+        # Generate a new PIN if one doesn't exist, otherwise use the existing one
+        if [ ! -f $LEGACY ]; then
+            HSM_PIN=$(gen_pin_hex)
+        else
+            echo "Migrating existing HSM-PIN to encrypted credential"
+            HSM_PIN=$(cat $LEGACY)
+        fi
+
+        # Encrypt the PIN
+	install -d -m 755 /var/lib/private/himmelblaud
+        printf '%s' "$HSM_PIN" | systemd-creds encrypt --name=hsm-pin --with-key=auto --tpm2-device=auto - "$CRED" && (rm -f $LEGACY || true)
+    fi
+fi
