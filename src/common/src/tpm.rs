@@ -21,7 +21,7 @@ use zeroize::{Zeroize, Zeroizing};
 pub fn decrypt_hsm_pin(hsm_pin_path: &str) -> Result<Zeroizing<Vec<u8>>, Box<dyn Error>> {
     let mut child = Command::new("systemd-creds")
         .arg("decrypt")
-        .arg(format!("--name=hsm-pin"))
+        .arg("--name=hsm-pin")
         .arg(hsm_pin_path)
         .arg("-")
         .stdin(Stdio::null())
@@ -50,7 +50,7 @@ pub fn decrypt_hsm_pin(hsm_pin_path: &str) -> Result<Zeroizing<Vec<u8>>, Box<dyn
         .into());
     }
 
-    while buf.last().map(|b| *b) == Some(b'\n') {
+    while buf.last().copied() == Some(b'\n') {
         buf.pop();
     }
 
