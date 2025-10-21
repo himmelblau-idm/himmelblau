@@ -44,6 +44,7 @@ pub const DEFAULT_CONN_TIMEOUT: u64 = 30;
 pub const DEFAULT_CACHE_TIMEOUT: u64 = 300;
 pub const DEFAULT_SELINUX: bool = true;
 pub const DEFAULT_HSM_PIN_PATH: &str = "/var/lib/himmelblaud/hsm-pin";
+pub const DEFAULT_HSM_PIN_PATH_ENC: &str = "/var/lib/himmelblaud/hsm-pin.enc";
 pub const DEFAULT_HELLO_ENABLED: bool = true;
 pub const DEFAULT_SFA_FALLBACK_ENABLED: bool = false;
 pub const DEFAULT_ID_ATTR_MAP: IdAttr = IdAttr::Name;

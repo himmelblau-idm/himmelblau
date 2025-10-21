@@ -472,6 +472,11 @@ pub enum HimmelblauUnixOpt {
         #[clap(short, long)]
         debug: bool,
     },
+    /// Check whether Himmelblau is utilizing the TPM
+    Tpm {
+        #[clap(short, long)]
+        debug: bool,
+    },
     /// Show the version of this tool.
     Version {
         #[clap(short, long)]
