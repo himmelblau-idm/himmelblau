@@ -2677,9 +2677,18 @@ impl HimmelblauProvider {
                     IdpError::BadRequest
                 })?;
                 if account_id.to_string().to_lowercase() != spn.to_string().to_lowercase() {
-                    let msg = format!("Authenticated user {} does not match requested user", uuid);
-                    error!(msg);
-                    return Ok(AuthResult::Denied(msg));
+                    /* Fixes bug#801: The authenticated user might have a mis-matched
+                     * response because the domains are aliases of one another.
+                     */
+                    let mut cfg = self.config.write().await;
+                    let (_, domain1) = split_username(account_id).ok_or(IdpError::BadRequest)?;
+                    let (_, domain2) = split_username(&spn).ok_or(IdpError::BadRequest)?;
+                    if !cfg.domains_are_aliases(domain1, domain2).await {
+                        let msg =
+                            format!("Authenticated user {} does not match requested user", uuid);
+                        error!(msg);
+                        return Ok(AuthResult::Denied(msg));
+                    }
                 }
                 info!("Authentication successful for user '{}'", uuid);
                 // If an encrypted PRT is present, store it in the mem cache
