@@ -67,6 +67,7 @@ use himmelblau_unix_common::constants::BROKER_APP_ID;
 use himmelblau_unix_common::constants::DEFAULT_CONFIG_PATH;
 use himmelblau_unix_common::hello_pin_complexity::is_simple_pin;
 use himmelblau_unix_common::unix_proto::{ClientRequest, ClientResponse};
+use himmelblau_unix_common::user_map::UserMap;
 use himmelblau_unix_common::{auth_handle_mfa_resp, pam_fail};
 use std::thread::sleep;
 
@@ -177,7 +178,11 @@ impl PamHooks for PamKanidm {
             Ok(cfg) => cfg,
             Err(e) => return e,
         };
-        let account_id = cfg.map_name_to_upn(&account_id);
+        let user_map = UserMap::new(&cfg.get_user_map_file());
+        let account_id = match user_map.get_upn_from_local(&account_id) {
+            Some(account_id) => account_id,
+            None => cfg.map_name_to_upn(&account_id),
+        };
         let req = ClientRequest::PamAccountAllowed(account_id);
         // PamResultCode::PAM_IGNORE
 
@@ -253,7 +258,11 @@ impl PamHooks for PamKanidm {
             Ok(cfg) => cfg,
             Err(e) => return e,
         };
-        let account_id = cfg.map_name_to_upn(&account_id);
+        let user_map = UserMap::new(&cfg.get_user_map_file());
+        let account_id = match user_map.get_upn_from_local(&account_id) {
+            Some(account_id) => account_id,
+            None => cfg.map_name_to_upn(&account_id),
+        };
 
         let authtok = match pamh.get_authtok() {
             Ok(Some(v)) => Some(v),
@@ -321,7 +330,11 @@ impl PamHooks for PamKanidm {
             Ok(cfg) => cfg,
             Err(e) => return e,
         };
-        let account_id = cfg.map_name_to_upn(&account_id);
+        let user_map = UserMap::new(&cfg.get_user_map_file());
+        let account_id = match user_map.get_upn_from_local(&account_id) {
+            Some(account_id) => account_id,
+            None => cfg.map_name_to_upn(&account_id),
+        };
 
         let mut daemon_client = match DaemonClientBlocking::new(cfg.get_socket_path().as_str()) {
             Ok(dc) => dc,
@@ -680,7 +693,12 @@ impl PamHooks for PamKanidm {
             Ok(cfg) => cfg,
             Err(e) => return e,
         };
-        let account_id = cfg.map_name_to_upn(&account_id);
+        let user_map = UserMap::new(&cfg.get_user_map_file());
+        let account_id = match user_map.get_upn_from_local(&account_id) {
+            Some(account_id) => account_id,
+            None => cfg.map_name_to_upn(&account_id),
+        };
+
         let req = ClientRequest::PamAccountBeginSession(account_id);
 
         let mut daemon_client = match DaemonClientBlocking::new(cfg.get_socket_path().as_str()) {

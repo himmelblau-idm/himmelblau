@@ -64,3 +64,5 @@ pub mod tpm;
 pub mod unix_passwd;
 #[cfg(target_family = "unix")]
 pub mod unix_proto;
+#[cfg(target_family = "unix")]
+pub mod user_map;

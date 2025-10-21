@@ -29,6 +29,7 @@ pub const NSS_CACHE: &str = "/var/cache/nss-himmelblau/cache.db";
 pub const ID_MAP_CACHE: &str = "/var/cache/nss-himmelblau/idmap.cache.db";
 pub const POLICY_CACHE: &str = "/var/cache/nss-himmelblau/policies.cache.db";
 pub const SERVER_CONFIG_PATH: &str = "/var/cache/himmelblaud/himmelblau.conf";
+pub const DEFAULT_USER_MAP_FILE: &str = "/etc/himmelblau/user-map";
 pub const DEFAULT_HOME_PREFIX: &str = "/home/";
 pub const DEFAULT_HOME_ATTR: HomeAttr = HomeAttr::Uuid;
 pub const DEFAULT_HOME_ALIAS: Option<HomeAttr> = Some(HomeAttr::Spn);
