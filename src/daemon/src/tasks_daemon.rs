@@ -400,7 +400,7 @@ async fn handle_tasks(stream: UnixStream, cfg: &HimmelblauConfig) {
                 account_id = cfg.map_upn_to_name(&account_id);
 
                 let local_groups = cfg.get_local_groups();
-                for local_group in local_groups {
+                for local_group in &local_groups {
                     add_user_to_group(&account_id, &local_group);
                 }
 
