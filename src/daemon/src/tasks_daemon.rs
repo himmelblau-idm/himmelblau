@@ -405,10 +405,14 @@ async fn handle_tasks(stream: UnixStream, cfg: &HimmelblauConfig) {
                 }
 
                 let local_sudo_group = cfg.get_local_sudo_group();
-                if is_sudoer {
-                    add_user_to_group(&account_id, &local_sudo_group);
-                } else {
-                    remove_user_from_group(&account_id, &local_sudo_group);
+
+                // Only run sudo groups if local_groups does not contain local_sudo_group (default = sudo)
+                if !local_groups.contains(local_sudo_group) {
+                    if is_sudoer {
+                        add_user_to_group(&account_id, &local_sudo_group);
+                    } else {
+                        remove_user_from_group(&account_id, &local_sudo_group);
+                    }
                 }
 
                 // Always indicate success here
