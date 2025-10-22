@@ -22,7 +22,7 @@
           };
           cargoToml = builtins.fromTOML (builtins.readFile ./Cargo.toml);
           recipe = {
-            lib, withSelinux ? true,
+            lib, withSelinux ? false,
           }: rustPlatform.buildRustPackage {
             pname = "himmelblau";
             version = cargoToml.workspace.package.version;
