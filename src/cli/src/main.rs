@@ -1921,20 +1921,24 @@ async fn main() -> ExitCode {
             let tpm_present =
                 fs::metadata("/dev/tpmrm0").is_ok() || fs::metadata("/dev/tpm0").is_ok();
             if tpm_present {
+                let cfg = match HimmelblauConfig::new(Some(DEFAULT_CONFIG_PATH)) {
+                    Ok(c) => c,
+                    Err(_e) => {
+                        error!("Failed to parse {}", DEFAULT_CONFIG_PATH);
+                        return ExitCode::FAILURE;
+                    }
+                };
+                let unencrypted_pin_present = match PathBuf::from_str(&cfg.get_hsm_pin_path()) {
+                    Ok(path) => path.exists(),
+                    Err(_) => false,
+                };
                 let encrypted_pin_present = match PathBuf::from_str(DEFAULT_HSM_PIN_PATH_ENC) {
                     Ok(path) => path.exists(),
                     Err(_) => false,
                 };
-                if encrypted_pin_present {
+                if encrypted_pin_present && !unencrypted_pin_present {
                     println!("Himmelblau TPM state: \x1b[32mTPM in use\x1b[0m")
                 } else {
-                    let cfg = match HimmelblauConfig::new(Some(DEFAULT_CONFIG_PATH)) {
-                        Ok(c) => c,
-                        Err(_e) => {
-                            error!("Failed to parse {}", DEFAULT_CONFIG_PATH);
-                            return ExitCode::FAILURE;
-                        }
-                    };
                     match cfg.get_hsm_type() {
                         HsmType::Tpm | HsmType::TpmIfPossible => {
                             println!("Himmelblau TPM state: \x1b[32mTPM in use\x1b[0m");

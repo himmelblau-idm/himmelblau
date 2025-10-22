@@ -312,13 +312,13 @@ db_path = /var/cache/himmelblau/himmelblau.cache.db
 .TP
 .B hsm_type
 .RE
-Specifies how Himmelblau should handle secure key storage. This option determines whether to use a software-based HSM, a TPM (Trusted Platform Module), or a hybrid approach.
+Specifies how Himmelblau should handle secure key storage. This option determines whether to use a TPM (Trusted Platform Module) bound software-based HSM, a TPM, or a hybrid approach.
 
 The available options are:
 
 •
-.B soft
-– Use a software-based HSM that encrypts key material locally on the system.
+.B tpm_bound_soft_if_possible
+– Use a software-based HSM that encrypts key material locally on the system, but binds the parent AuthCode to the TPM, if available.
 
 •
 .B tpm
@@ -329,11 +329,20 @@ The available options are:
 – Attempt to use a hardware TPM if available; if not, fall back to the software HSM. If the TPM has previously been used for key storage, the system will not fall back to the software HSM.
 
 The default is
-.B soft
+.B tpm_bound_soft_if_possible
 . This setting is important for protecting sensitive cryptographic keys in a secure environment, reducing the risk of compromise if the system is breached.
 
+Note that the old
+.B soft
+option has been deprecated. Environments currently enrolled using
+.B soft
+will be automatically migrated to
+.B tpm_bound_soft_if_possible.
+
+To validate whether Himmelblau is utilizing the hardware TPM, run the command `sudo aad-tool tpm` for a status report.
+
 .EXAMPLES
-hsm_type = soft
+hsm_type = tpm_bound_soft_if_possible
 
 .TP
 .B tpm_tcti_name
