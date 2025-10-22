@@ -386,7 +386,7 @@ impl HimmelblauConfig {
     pub fn get_hsm_type(&self) -> HsmType {
         match self.config.get("global", "hsm_type") {
             Some(val) => match val.to_lowercase().as_str() {
-                "soft" => HsmType::Soft,
+                "soft" | "tpm_bound_soft_if_possible" => HsmType::Soft,
                 "tpm_if_possible" => HsmType::TpmIfPossible,
                 "tpm" => HsmType::Tpm,
                 _ => {

@@ -62,7 +62,9 @@ pub enum HsmType {
 impl Display for HsmType {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         match self {
-            HsmType::Soft => write!(f, "Soft"),
+            HsmType::Soft => {
+                write!(f, "Soft with Tpm bound AuthValue, if possible")
+            }
             HsmType::TpmIfPossible => write!(f, "Tpm if possible"),
             HsmType::Tpm => write!(f, "Tpm"),
         }
