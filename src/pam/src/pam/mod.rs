@@ -501,49 +501,22 @@ impl PamHooks for PamKanidm {
                 None
             };
 
-            let mut mfa_req = match cfg.get_mfa_method() {
-                Some(mfa_method) => {
-                    // Use the configured MFA method
-                    debug!("sm_chauthtok(): Using configured MFA method: {}", mfa_method);
-                    match rt.block_on(async {
-                        app.initiate_acquire_token_by_mfa_flow(
-                            &account_id,
-                            password.as_deref(),
-                            vec!["offline_access"],
-                            None,
-                            &auth_options,
-                            Some(auth_init),
-                            Some(&mfa_method),
-                        )
-                        .await
-                    }) {
-                        Ok(mfa) => mfa,
-                        Err(e) => {
-                            error!("Failed to initiate MFA with configured method '{}': {:?}", mfa_method, e);
-                            return PamResultCode::PAM_AUTH_ERR;
-                        }
-                    }
-                }
-                None => {
-                    debug!("sm_chauthtok(): Using default MFA method");
-                    match rt.block_on(async {
-                        app.initiate_acquire_token_by_mfa_flow(
-                            &account_id,
-                            password.as_deref(),
-                            vec!["offline_access"],
-                            None,
-                            &auth_options,
-                            Some(auth_init),
-                            None, /* MFA method */
-                        )
-                        .await
-                    }) {
-                        Ok(mfa) => mfa,
-                        Err(e) => {
-                            error!("{:?}", e);
-                            return PamResultCode::PAM_AUTH_ERR;
-                        }
-                    }
+            let mut mfa_req = match rt.block_on(async {
+                app.initiate_acquire_token_by_mfa_flow(
+                    &account_id,
+                    password.as_deref(),
+                    vec![],
+                    None,
+                    &auth_options,
+                    Some(auth_init),
+                    cfg.get_mfa_method().as_deref()
+                )
+                .await
+            }) {
+                Ok(mfa) => mfa,
+                Err(e) => {
+                    error!("{:?}", e);
+                    return PamResultCode::PAM_AUTH_ERR;
                 }
             };
 
