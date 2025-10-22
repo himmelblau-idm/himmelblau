@@ -30,10 +30,13 @@
 #![deny(clippy::needless_pass_by_value)]
 #![deny(clippy::trivially_copy_pass_by_ref)]
 use std::collections::HashMap;
+use std::ffi::c_char;
+use std::ffi::CStr;
 use std::ffi::CString;
 use std::fmt;
 use std::num::NonZeroU32;
 use std::ptr;
+use std::ptr::null_mut;
 use std::sync::RwLock;
 use uuid::Uuid;
 
@@ -269,6 +272,30 @@ impl Idmap {
                 &mut id,
             )) {
                 IDMAP_SUCCESS => Ok(id),
+                e => Err(e),
+            }
+        }
+    }
+
+    pub fn unix_to_account_id(&self, uid: u32) -> Result<String, IdmapError> {
+        let ctx = self.ctx.write().map_err(|e| {
+            error!("Failed obtaining write lock on sss_idmap_ctx: {}", e);
+            IDMAP_ERROR
+        })?;
+        unsafe {
+            let mut out: *mut c_char = null_mut();
+            match IdmapError(ffi::sss_idmap_unix_to_gen(*ctx, uid, &mut out)) {
+                IDMAP_SUCCESS => {
+                    let res = CStr::from_ptr(out)
+                        .to_str()
+                        .map_err(|e| {
+                            error!("Failed converting CStr to str: {}", e);
+                            IDMAP_ERROR
+                        })?
+                        .to_string();
+                    libc::free(out as *mut libc::c_void);
+                    Ok(res)
+                }
                 e => Err(e),
             }
         }
