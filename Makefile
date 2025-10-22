@@ -1,6 +1,6 @@
 all: .packaging dockerfiles ## Auto-detect host distro and build packages just for this host
 	@set -euo pipefail; \
-	source /etc/os-release; \
+	. /etc/os-release; \
 	ID="$${ID}"; VER="$${VERSION_ID}"; LIKE="$${ID_LIKE:-}"; \
 	TARGET=""; \
 	echo "Detecting host distro: ID=$$ID VERSION_ID=$$VER ID_LIKE=$$LIKE"; \
@@ -57,7 +57,7 @@ ALL_PACKAGE_TARGETS := $(DEB_TARGETS) $(RPM_TARGETS) $(SLE_TARGETS)
 
 install: ## Install packages from ./packaging onto this host (apt/dnf/yum/zypper auto-detected)
 	@set -euo pipefail; \
-	source /etc/os-release; \
+	. /etc/os-release; \
 	ID="$${ID}"; VER="$${VERSION_ID}"; \
 	PKGTYPE=""; RPM_SUFFIX=""; INSTALL_CMD=""; \
 	case "$$ID" in \
