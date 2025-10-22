@@ -81,6 +81,7 @@ macro_rules! extract_base_url {
 }
 
 pub struct HimmelblauMultiProvider {
+    idmap: Arc<RwLock<Idmap>>,
     config: Arc<RwLock<HimmelblauConfig>>,
     providers: Arc<RwLock<HashMap<String, HimmelblauProvider>>>,
 }
@@ -225,6 +226,7 @@ impl HimmelblauMultiProvider {
         }
 
         let providers = HimmelblauMultiProvider {
+            idmap,
             config: config.clone(),
             providers: Arc::new(RwLock::new(providers)),
         };
@@ -286,10 +288,7 @@ impl IdProvider for HimmelblauMultiProvider {
         tpm: &mut tpm::provider::BoxedDynTpm,
         machine_key: &tpm::structures::StorageKey,
     ) -> Result<UnixUserToken, IdpError> {
-        let account_id = match old_token {
-            Some(token) => token.spn.clone(),
-            None => id.to_string().clone(),
-        };
+        let account_id = self.account_id_from_id(id, old_token).await?;
         match split_username(&account_id) {
             Some((_sam, domain)) => {
                 let providers = self.providers.read().await;
@@ -313,9 +312,8 @@ impl IdProvider for HimmelblauMultiProvider {
         tpm: &mut tpm::provider::BoxedDynTpm,
         machine_key: &tpm::structures::StorageKey,
     ) -> (Vec<u8>, Vec<u8>) {
-        let account_id = match old_token {
-            Some(token) => token.spn.clone(),
-            None => id.to_string().clone(),
+        let Ok(account_id) = self.account_id_from_id(id, old_token).await else {
+            return (vec![], vec![]);
         };
         match split_username(&account_id) {
             Some((_sam, domain)) => {
@@ -340,10 +338,7 @@ impl IdProvider for HimmelblauMultiProvider {
         tpm: &mut tpm::provider::BoxedDynTpm,
         machine_key: &tpm::structures::StorageKey,
     ) -> Result<String, IdpError> {
-        let account_id = match old_token {
-            Some(token) => token.spn.clone(),
-            None => id.to_string().clone(),
-        };
+        let account_id = self.account_id_from_id(id, old_token).await?;
         match split_username(&account_id) {
             Some((_sam, domain)) => {
                 let providers = self.providers.read().await;
@@ -401,10 +396,7 @@ impl IdProvider for HimmelblauMultiProvider {
         machine_key: &tpm::structures::StorageKey,
     ) -> Result<UserTokenState, IdpError> {
         /* AAD doesn't permit user listing (must use cache entries from auth) */
-        let account_id = match old_token {
-            Some(token) => token.spn.clone(),
-            None => id.to_string().clone(),
-        };
+        let account_id = self.account_id_from_id(id, old_token).await?;
         match split_username(&account_id) {
             Some((_sam, domain)) => {
                 let providers = self.providers.read().await;
@@ -603,6 +595,53 @@ impl IdProvider for HimmelblauMultiProvider {
     }
 }
 
+macro_rules! account_id_from_id {
+    ($self:ident, $id:ident, $old_token:ident) => {
+        match $old_token {
+            Some(token) => Ok(token.spn.clone()),
+            None => match $id {
+                Id::Name(account_id) => Ok(account_id.clone()),
+                Id::Gid(uid) => {
+                    let idmap_cache = StaticIdCache::new(ID_MAP_CACHE, false).map_err(|e| {
+                        error!("Failed reading from the idmap cache: {:?}", e);
+                        IdpError::BadRequest
+                    })?;
+
+                    match idmap_cache.get_user_by_id(*uid) {
+                        Some(user) => Ok(user.name),
+                        None => {
+                            let config = $self.config.read().await;
+                            match config.get_id_attr_map() {
+                                IdAttr::Uuid => {
+                                    let idmap = $self.idmap.read().await;
+                                    idmap.unix_to_account_id(*uid).map_err(|e| {
+                                        error!("NotFound account_id in unix_user_access: {}", e);
+                                        IdpError::NotFound
+                                    })
+                                }
+                                _ => {
+                                    error!("NotFound account_id in unix_user_access");
+                                    Err(IdpError::NotFound)
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+        }
+    };
+}
+
+impl HimmelblauMultiProvider {
+    async fn account_id_from_id(
+        &self,
+        id: &Id,
+        old_token: Option<&UserToken>,
+    ) -> Result<String, IdpError> {
+        account_id_from_id!(self, id, old_token)
+    }
+}
+
 // If the provider is offline, we need to backoff and wait a bit.
 const OFFLINE_NEXT_CHECK: Duration = Duration::from_secs(15);
 
@@ -637,6 +676,14 @@ impl HimmelblauProvider {
             init: RwLock::new(false),
             bad_pin_counter: BadPinCounter::new(),
         })
+    }
+
+    async fn account_id_from_id(
+        &self,
+        id: &Id,
+        old_token: Option<&UserToken>,
+    ) -> Result<String, IdpError> {
+        account_id_from_id!(self, id, old_token)
     }
 }
 
@@ -749,10 +796,7 @@ impl IdProvider for HimmelblauProvider {
         }
 
         /* Use the prt mem cache to refresh the user token */
-        let account_id = match old_token {
-            Some(token) => token.spn.clone(),
-            None => id.to_string().clone(),
-        };
+        let account_id = self.account_id_from_id(id, old_token).await?;
         let prt = self.refresh_cache.refresh_token(&account_id).await?;
         self.client
             .read()
@@ -792,9 +836,8 @@ impl IdProvider for HimmelblauProvider {
             return (vec![], vec![]);
         }
 
-        let account_id = match old_token {
-            Some(token) => token.spn.clone(),
-            None => id.to_string().clone(),
+        let Ok(account_id) = self.account_id_from_id(id, old_token).await else {
+            return (vec![], vec![]);
         };
         let prt = match self.refresh_cache.refresh_token(&account_id).await {
             Ok(prt) => prt,
@@ -834,10 +877,7 @@ impl IdProvider for HimmelblauProvider {
         }
 
         /* Use the prt mem cache to generate the sso cookie */
-        let account_id = match old_token {
-            Some(token) => token.spn.clone(),
-            None => id.to_string().clone(),
-        };
+        let account_id = self.account_id_from_id(id, old_token).await?;
         let prt = self.refresh_cache.refresh_token(&account_id).await?;
         self.client
             .read()
@@ -957,10 +997,7 @@ impl IdProvider for HimmelblauProvider {
 
         // Look for common names of local systemd, sssd, etc users, and warn
         // that the nss configuration is possibly incorrect.
-        let account_id = match old_token {
-            Some(token) => token.spn.clone(),
-            None => id.to_string().clone(),
-        };
+        let account_id = self.account_id_from_id(id, old_token).await?;
         if let Some((cn, _)) = split_username(&account_id) {
             let other_module_warn_users =
                 ["gdm", "sssd", "gnome-initial-setup", "systemd-coredump"];
