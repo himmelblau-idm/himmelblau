@@ -340,7 +340,7 @@ VOLUME /himmelblau
 WORKDIR /himmelblau
 
 # Install the cargo-deb and cargo-generate-rpm tools
-RUN --mount=type=cache,target=/usr/local/cargo/registry cargo install cargo-deb cargo-generate-rpm
+RUN --mount=type=cache,target=/root/.cargo/registry cargo install cargo-deb cargo-generate-rpm
 
 {patch_libhimmelblau}
 
