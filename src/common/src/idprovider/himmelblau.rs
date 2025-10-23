@@ -908,7 +908,22 @@ impl IdProvider for HimmelblauProvider {
             return Ok(UserTokenState::UseCached);
         }
 
+        // Look for common names of local systemd, sssd, etc users, and warn
+        // that the nss configuration is possibly incorrect.
         let account_id = self.account_id_from_id(id, old_token).await?;
+        if let Some((cn, _)) = split_username(&account_id) {
+            let other_module_warn_users = vec![
+                "gdm",
+                "sssd",
+                "gnome-initial-setup",
+                "systemd-coredump",
+            ];
+            if other_module_warn_users.contains(&cn) {
+                warn!("'{}' appears to be a systemd or other local user \
+                      account. Please reconfigure your nsswitch.conf to \
+                      place himmelblau at the end", cn);
+            }
+        }
 
         macro_rules! fetch_user_confidential_client {
             ($client_id:expr, $client_credential:expr) => {{
