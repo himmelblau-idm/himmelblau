@@ -991,6 +991,7 @@ impl IdProvider for HimmelblauProvider {
                             Ok(userobj) => {
                                 match self
                                     .user_token_from_unix_user_token(
+                                        &account_id,
                                         TokenOrObj::UserObj((token, userobj)),
                                         old_token,
                                     )
@@ -2698,6 +2699,7 @@ impl HimmelblauProvider {
                 Ok(AuthResult::Success {
                     token: self
                         .user_token_from_unix_user_token(
+                            account_id,
                             TokenOrObj::UserToken(Box::new(token.clone())),
                             old_token,
                         )
@@ -2714,20 +2716,13 @@ impl HimmelblauProvider {
     #[instrument(level = "debug", skip_all)]
     async fn user_token_from_unix_user_token(
         &self,
+        spn: &str,
         value: TokenOrObj,
         old_token: Option<&UserToken>,
     ) -> Result<UserToken, IdpError> {
         let config = self.config.read().await;
         let mut groups: Vec<GroupToken>;
         let posix_attrs: HashMap<String, String>;
-        let spn = match &value {
-            TokenOrObj::UserObj((_, value)) => value.upn.clone(),
-            TokenOrObj::UserToken(value) => value.spn().map_err(|e| {
-                error!("Failed fetching user spn: {:?}", e);
-                IdpError::BadRequest
-            })?,
-        }
-        .to_lowercase();
         let uuid = match &value {
             TokenOrObj::UserObj((_, value)) => Uuid::parse_str(&value.id).map_err(|e| {
                 error!("Failed fetching user uuid: {:?}", e);
@@ -2812,7 +2807,7 @@ impl HimmelblauProvider {
         };
         let valid = true;
         let user_map = UserMap::new(&config.get_user_map_file());
-        let (uidnumber, gidnumber) = match user_map.get_local_from_upn(&spn) {
+        let (uidnumber, gidnumber) = match user_map.get_local_from_upn(spn) {
             Some(user) => {
                 let pwd = unsafe {
                     let cstr_user = CString::new(user).map_err(|e| {
@@ -2834,7 +2829,7 @@ impl HimmelblauProvider {
                     error!("Failed reading from the idmap cache: {:?}", e);
                     IdpError::BadRequest
                 })?;
-                match idmap_cache.get_user_by_name(&spn) {
+                match idmap_cache.get_user_by_name(spn) {
                     Some(user) => (user.uid, user.gid),
                     None => {
                         let uidnumber = match config.get_id_attr_map() {
@@ -2859,7 +2854,7 @@ impl HimmelblauProvider {
                                         error!("{:?}", e);
                                         IdpError::BadRequest
                                     })?,
-                                    &spn,
+                                    spn,
                                 )
                                 .map_err(|e| {
                                     error!("{:?}", e);
@@ -2895,8 +2890,8 @@ impl HimmelblauProvider {
                         } else {
                             // Otherwise add a fake primary group
                             groups.push(GroupToken {
-                                name: spn.clone(),
-                                spn: spn.clone(),
+                                name: spn.to_string(),
+                                spn: spn.to_string(),
                                 uuid,
                                 gidnumber: uidnumber,
                             });
@@ -2928,8 +2923,8 @@ impl HimmelblauProvider {
         }
 
         Ok(UserToken {
-            name: spn.clone(),
-            spn: spn.clone(),
+            name: spn.to_string(),
+            spn: spn.to_string(),
             uuid,
             real_gidnumber: Some(gidnumber),
             gidnumber: uidnumber,
