@@ -999,16 +999,15 @@ impl IdProvider for HimmelblauProvider {
         // that the nss configuration is possibly incorrect.
         let account_id = self.account_id_from_id(id, old_token).await?;
         if let Some((cn, _)) = split_username(&account_id) {
-            let other_module_warn_users = vec![
-                "gdm",
-                "sssd",
-                "gnome-initial-setup",
-                "systemd-coredump",
-            ];
+            let other_module_warn_users =
+                ["gdm", "sssd", "gnome-initial-setup", "systemd-coredump"];
             if other_module_warn_users.contains(&cn) {
-                warn!("'{}' appears to be a systemd or other local user \
+                warn!(
+                    "'{}' appears to be a systemd or other local user \
                       account. Please reconfigure your nsswitch.conf to \
-                      place himmelblau at the end", cn);
+                      place himmelblau at the end",
+                    cn
+                );
             }
         }
 
@@ -2859,7 +2858,7 @@ impl HimmelblauProvider {
         };
         let valid = true;
         let user_map = UserMap::new(&config.get_user_map_file());
-        let (uidnumber, gidnumber) = match user_map.get_local_from_upn(&spn) {
+        let (uidnumber, gidnumber) = match user_map.get_local_from_upn(spn) {
             Some(user) => {
                 let pwd = unsafe {
                     let cstr_user = CString::new(user).map_err(|e| {
@@ -2881,7 +2880,7 @@ impl HimmelblauProvider {
                     error!("Failed reading from the idmap cache: {:?}", e);
                     IdpError::BadRequest
                 })?;
-                match idmap_cache.get_user_by_name(&spn) {
+                match idmap_cache.get_user_by_name(spn) {
                     Some(user) => (user.uid, user.gid),
                     None => {
                         let uidnumber = match config.get_id_attr_map() {
@@ -2906,7 +2905,7 @@ impl HimmelblauProvider {
                                         error!("{:?}", e);
                                         IdpError::BadRequest
                                     })?,
-                                    &spn,
+                                    spn,
                                 )
                                 .map_err(|e| {
                                     error!("{:?}", e);
