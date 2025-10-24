@@ -22,7 +22,7 @@
           };
           cargoToml = builtins.fromTOML (builtins.readFile ./Cargo.toml);
           recipe = {
-            lib, withSelinux ? true,
+            lib, withSelinux ? false,
           }: rustPlatform.buildRustPackage {
             pname = "himmelblau";
             version = cargoToml.workspace.package.version;
@@ -110,6 +110,16 @@
                       Specify whether to map uid/gid based on the object name or the object uuid.
                       By object uuid mapping is the old default, but can cause authentication
                       issues over SSH. Mapping by name is recommeneded.
+                    '';
+                  };
+                  join_type = mkOption {
+                    type = types.enum [
+                      "join"
+                      "register"
+                    ];
+                    default = "join";
+                    description = ''
+                      The device join type for Azure. Standard device join, or register only.
                     '';
                   };
                   enable_hello = mkOption {

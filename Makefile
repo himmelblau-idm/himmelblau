@@ -1,6 +1,6 @@
 all: .packaging dockerfiles ## Auto-detect host distro and build packages just for this host
 	@set -euo pipefail; \
-	source /etc/os-release; \
+	. /etc/os-release; \
 	ID="$${ID}"; VER="$${VERSION_ID}"; LIKE="$${ID_LIKE:-}"; \
 	TARGET=""; \
 	echo "Detecting host distro: ID=$$ID VERSION_ID=$$VER ID_LIKE=$$LIKE"; \
@@ -57,7 +57,7 @@ ALL_PACKAGE_TARGETS := $(DEB_TARGETS) $(RPM_TARGETS) $(SLE_TARGETS)
 
 install: ## Install packages from ./packaging onto this host (apt/dnf/yum/zypper auto-detected)
 	@set -euo pipefail; \
-	source /etc/os-release; \
+	. /etc/os-release; \
 	ID="$${ID}"; VER="$${VERSION_ID}"; \
 	PKGTYPE=""; RPM_SUFFIX=""; INSTALL_CMD=""; \
 	case "$$ID" in \
@@ -123,11 +123,56 @@ sbom: .packaging ## Generate a Software Bill of Materials
 package: deb rpm sbom ## Build packages for all supported distros (DEB+RPM)
 	ls ./packaging/
 
-deb: $(DEB_TARGETS) ## Build all DEB targets
+# ---- failure tracking (used by deb/rpm/package) ----
+FAIL_DIR := $(CURDIR)/target/fail
+FAIL_FILE := $(FAIL_DIR)/failures.txt
+MISS_FILE := $(FAIL_DIR)/no_artifacts.txt
 
-GPG_KEY_RSA_EL8   := 0xFFE471BA97CD96ED7330E0B4F5A25D2D6AA97EC9
-GPG_KEY_ED25519   := 0x3D46C88168B2FF8D75D0B1786CCA48F23916FC03
-rpm: $(RPM_TARGETS) $(SLE_TARGETS) sign-rpms ## Build all RPM targets; then sign RPMS with rpmsign
+deb: .packaging dockerfiles ## Build all DEB targets (continue on failure, summarize)
+	@set -e; mkdir -p "$(FAIL_DIR)"; rm -f "$(FAIL_FILE)" "$(MISS_FILE)"; \
+	for t in $(DEB_TARGETS); do \
+	  echo "==== [DEB] Building $$t ===="; \
+	  mark="$$(mktemp)"; \
+	  if $(MAKE) --no-print-directory $$t; then :; else \
+	    echo "$$t" >> "$(FAIL_FILE)"; echo "FAIL: $$t build failed"; rm -f "$$mark"; continue; \
+	  fi; \
+	  cnt=$$(find ./packaging -type f -newer "$$mark" -name "himmelblau_*-$${t}_amd64.deb" | wc -l); \
+	  if [ "$$cnt" -gt 0 ]; then \
+	    echo "OK: $$t produced .deb(s)"; \
+	  else \
+	    echo "$$t" >> "$(MISS_FILE)"; echo "WARN: $$t produced no .deb artifacts"; \
+	  fi; \
+	  rm -f "$$mark"; \
+	done
+
+rpm: .packaging dockerfiles ## Build all RPM targets; continue on failure; then sign whatever exists
+	@set -e; mkdir -p "$(FAIL_DIR)"; : > /dev/null; \
+	for t in $(RPM_TARGETS) $(SLE_TARGETS); do \
+	  echo "==== [RPM] Building $$t ===="; \
+	  mark="$$(mktemp)"; \
+	  if $(MAKE) --no-print-directory $$t; then :; else \
+	    echo "$$t" >> "$(FAIL_FILE)"; echo "FAIL: $$t build failed"; rm -f "$$mark"; continue; \
+	  fi; \
+	  cnt=$$(find ./packaging -type f -newer "$$mark" -name "*-$$t.rpm" | wc -l); \
+	  if [ "$$cnt" -gt 0 ]; then \
+	    echo "OK: $$t produced .rpm(s)"; \
+	  else \
+	    echo "$$t" >> "$(MISS_FILE)"; echo "WARN: $$t produced no .rpm artifacts"; \
+	  fi; \
+	  rm -f "$$mark"; \
+	done; \
+	$(MAKE) --no-print-directory sign-rpms
+
+# Load GPG key IDs from ~/.himmelblau-signing.conf (if present)
+GPG_CONF_FILE := $(HOME)/.himmelblau-signing.conf
+
+ifneq ("$(wildcard $(GPG_CONF_FILE))","")
+  include $(GPG_CONF_FILE)
+else
+  $(warning No $(GPG_CONF_FILE) found; using dummy placeholders)
+  GPG_KEY_RSA_EL8   := UNSPECIFIED_RSA_KEY
+  GPG_KEY_ED25519   := UNSPECIFIED_ED25519_KEY
+endif
 
 # Sign EL8/SLE15 with RSA (older rpm doesn’t support Ed25519)
 sign-el8-sle:

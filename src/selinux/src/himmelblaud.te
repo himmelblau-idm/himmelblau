@@ -66,7 +66,8 @@ allow init_t himmelblau_var_lib_t:dir add_name;
 allow init_t himmelblau_var_lib_t:file { create open write };
 accountsd_manage_lib_files(init_t)
 corenet_tcp_connect_http_port(init_t)
-files_manage_home_dir(init_t)
+files_search_home(init_t)
+userdom_manage_user_home_content(init_t)
 
 ############################
 # himmelblaud-tasks
@@ -226,3 +227,7 @@ allow xdm_t himmelblau_var_cache_t:file { getattr open read };
 allow xdm_t himmelblau_var_run_t:sock_file write;
 allow xdm_t home_root_t:dir add_name;
 allow xdm_t home_root_t:dir create;
+
+# Temporarily run Himmelblau domains permissive (still logs AVCs)
+permissive himmelblaud_t;
+permissive himmelblaud_tasks_t;

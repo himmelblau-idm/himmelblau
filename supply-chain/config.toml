@@ -528,10 +528,6 @@ criteria = "safe-to-deploy"
 version = "0.1.4"
 criteria = "safe-to-deploy"
 
-[[exemptions.lru]]
-version = "0.13.0"
-criteria = "safe-to-deploy"
-
 [[exemptions.lru-slab]]
 version = "0.1.2"
 criteria = "safe-to-deploy"
@@ -638,14 +634,6 @@ criteria = "safe-to-deploy"
 
 [[exemptions.once_cell]]
 version = "1.12.0"
-criteria = "safe-to-deploy"
-
-[[exemptions.openssl]]
-version = "0.10.73"
-criteria = "safe-to-deploy"
-
-[[exemptions.openssl-sys]]
-version = "0.9.109"
 criteria = "safe-to-deploy"
 
 [[exemptions.opentelemetry]]
@@ -1138,14 +1126,6 @@ criteria = "safe-to-deploy"
 
 [[exemptions.x509-parser]]
 version = "0.16.0"
-criteria = "safe-to-deploy"
-
-[[exemptions.zbus]]
-version = "5.9.0"
-criteria = "safe-to-deploy"
-
-[[exemptions.zbus_macros]]
-version = "5.9.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.zbus_names]]

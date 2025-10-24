@@ -386,7 +386,7 @@ impl HimmelblauConfig {
     pub fn get_hsm_type(&self) -> HsmType {
         match self.config.get("global", "hsm_type") {
             Some(val) => match val.to_lowercase().as_str() {
-                "soft" => HsmType::Soft,
+                "soft" | "tpm_bound_soft_if_possible" => HsmType::Soft,
                 "tpm_if_possible" => HsmType::TpmIfPossible,
                 "tpm" => HsmType::Tpm,
                 _ => {
@@ -616,7 +616,7 @@ impl HimmelblauConfig {
 
     pub fn get_local_groups(&self) -> Vec<String> {
         match self.config.get("global", "local_groups") {
-            Some(val) => val.split(',').map(|s| s.to_string()).collect(),
+            Some(val) => val.split(',').map(|s| s.trim().to_string()).collect(),
             None => vec![],
         }
     }
