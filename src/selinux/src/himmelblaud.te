@@ -227,3 +227,7 @@ allow xdm_t himmelblau_var_cache_t:file { getattr open read };
 allow xdm_t himmelblau_var_run_t:sock_file write;
 allow xdm_t home_root_t:dir add_name;
 allow xdm_t home_root_t:dir create;
+
+# Temporarily run Himmelblau domains permissive (still logs AVCs)
+permissive himmelblaud_t;
+permissive himmelblaud_tasks_t;
