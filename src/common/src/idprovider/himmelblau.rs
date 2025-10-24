@@ -1029,33 +1029,51 @@ impl IdProvider for HimmelblauProvider {
                                 },
                                 None => match config.get_id_attr_map() {
                                     IdAttr::Uuid => {
-                                        // Attempt to map the UPN to an Object Id.
-                                        let sidtoname = self.client
-                                            .read()
-                                            .await
-                                            .resolve_nametosid(
-                                                &account_id,
-                                                tpm,
-                                                machine_key
-                                            )
-                                            .await
-                                            .map_err(|e| {
-                                                error!("Failed mapping UPN to Object Id: {:?}", e);
+                                        // We can't request the Object Id until after we join
+                                        if self.is_domain_joined(keystore).await {
+                                            // Attempt to map the UPN to an Object Id.
+                                            let sidtoname = self.client
+                                                .read()
+                                                .await
+                                                .resolve_nametosid(
+                                                    &account_id,
+                                                    tpm,
+                                                    machine_key
+                                                )
+                                                .await
+                                                .map_err(|e| {
+                                                    error!("Failed mapping UPN to Object Id: {:?}", e);
+                                                    IdpError::BadRequest
+                                                })?;
+                                            let idmap = self.idmap.read().await;
+                                            let sid = AadSid::from_sid_str(&sidtoname.sid).map_err(|e| {
+                                                error!("Failed parsing SID: {:?}", e);
                                                 IdpError::BadRequest
                                             })?;
-                                        let idmap = self.idmap.read().await;
-                                        let sid = AadSid::from_sid_str(&sidtoname.sid).map_err(|e| {
-                                            error!("Failed parsing SID: {:?}", e);
-                                            IdpError::BadRequest
-                                        })?;
-                                        let uid = idmap.object_id_to_unix_id(&self.graph.tenant_id().await.map_err(|e| {
-                                            error!("Failed fetching tenant id: {:?}", e);
-                                            IdpError::BadRequest
-                                        })?, &sid).map_err(|e| {
-                                            error!("Failed mapping object id to uid: {:?}", e);
-                                            IdpError::BadRequest
-                                        })?;
-                                        (uid, uid)
+                                            let uid = idmap.object_id_to_unix_id(&self.graph.tenant_id().await.map_err(|e| {
+                                                error!("Failed fetching tenant id: {:?}", e);
+                                                IdpError::BadRequest
+                                            })?, &sid).map_err(|e| {
+                                                error!("Failed mapping object id to uid: {:?}", e);
+                                                IdpError::BadRequest
+                                            })?;
+                                            (uid, uid)
+                                        } else {
+                                            // Temporarily map by-name, since we
+                                            // aren't enrolled and can't obtain the
+                                            // Object Id.
+                                            let idmap = self.idmap.read().await;
+                                            let gid = idmap.gen_to_unix(&self.graph.tenant_id().await.map_err(|e| {
+                                                error!("{:?}", e);
+                                                IdpError::BadRequest
+                                            })?, &account_id).map_err(
+                                                |e| {
+                                                    error!("{:?}", e);
+                                                    IdpError::BadRequest
+                                                },
+                                            )?;
+                                            (gid, gid)
+                                        }
                                     },
                                     IdAttr::Name | IdAttr::Rfc2307 => {
                                         let idmap = self.idmap.read().await;
