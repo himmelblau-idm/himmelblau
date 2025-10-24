@@ -129,6 +129,23 @@ impl StaticIdCache {
         })
     }
 
+    pub fn get_user_by_id(&self, id: u32) -> Option<StaticUser> {
+        self.conn.as_ref()?;
+        let conn = self.conn.as_ref()?;
+
+        let mut stmt = conn
+            .prepare("SELECT name, uid, gid FROM static_users WHERE uid = ?1")
+            .ok()?;
+        let mut rows = stmt.query([id]).ok()?;
+        let row = rows.next().ok().flatten()?;
+
+        Some(StaticUser {
+            name: row.get(0).ok()?,
+            uid: row.get(1).ok()?,
+            gid: row.get(2).ok()?,
+        })
+    }
+
     pub fn get_group_by_name(&self, name: &str) -> Option<StaticGroup> {
         self.conn.as_ref()?;
         let conn = self.conn.as_ref()?;

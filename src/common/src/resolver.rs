@@ -1240,9 +1240,16 @@ where
                     }
                 }
             }
-            (&mut AuthSession::InProgress { token: None, .. }, _) => {
-                // Can't do much with offline auth when there is no token ...
-                warn!("Unable to proceed with offline auth, no token available");
+            (&mut AuthSession::InProgress { token: None, .. }, state) => {
+                // Can't do much with online/offline auth when there is no token ...
+                match state {
+                    CacheState::Online => {
+                        warn!("Unable to proceed with online auth, no token available");
+                    }
+                    CacheState::Offline | CacheState::OfflineNextCheck(_) => {
+                        warn!("Unable to proceed with offline auth, no token available");
+                    }
+                }
                 Err(IdpError::NotFound)
             }
             (&mut AuthSession::Success(_), _) | (&mut AuthSession::Denied, _) => {
