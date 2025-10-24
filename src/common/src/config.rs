@@ -308,7 +308,7 @@ impl HimmelblauConfig {
                     }
                 }
                 None => {
-                    error!(
+                    warn!(
                         "No idmap_range range specified in config, using {}-{}!",
                         DEFAULT_IDMAP_RANGE.0, DEFAULT_IDMAP_RANGE.1
                     );
