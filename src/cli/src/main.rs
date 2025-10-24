@@ -250,6 +250,7 @@ async fn auth(app: &BrokerClientApplication, account_id: &str) -> Option<UserTok
             password.as_deref(),
             &auth_options,
             Some(auth_init),
+            None, /* MFA method */
         )
         .await
     {
@@ -281,6 +282,7 @@ async fn auth(app: &BrokerClientApplication, account_id: &str) -> Option<UserTok
                         password.as_deref(),
                         &auth_options,
                         Some(auth_init),
+                        None, /* MFA method */
                     )
                     .await
                 {
@@ -320,7 +322,7 @@ async fn auth(app: &BrokerClientApplication, account_id: &str) -> Option<UserTok
                 }
             };
             match app
-                .acquire_token_by_mfa_flow(account_id, Some(&input), None, &mut mfa_req)
+                .acquire_token_by_mfa_flow(account_id, Some(&input), None, &mut mfa_req, None)
                 .await
             {
                 Ok(token) => token,
@@ -336,7 +338,7 @@ async fn auth(app: &BrokerClientApplication, account_id: &str) -> Option<UserTok
             let polling_interval = mfa_req.polling_interval.unwrap_or(5000);
             loop {
                 match app
-                    .acquire_token_by_mfa_flow(account_id, None, Some(poll_attempt), &mut mfa_req)
+                    .acquire_token_by_mfa_flow(account_id, None, Some(poll_attempt), &mut mfa_req, None)
                     .await
                 {
                     Ok(token) => break token,

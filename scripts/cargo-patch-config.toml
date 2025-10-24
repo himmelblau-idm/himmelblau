@@ -1,0 +1,6 @@
+# for optionally patching in a local working copy of libhimmelblau into
+# the Docker-based package build process to support testing changes
+#
+# see the LIBHIMMELBLAU_MOUNT variable in the Makefile for more details
+[patch.crates-io]
+libhimmelblau = { path = '/libhimmelblau' }
