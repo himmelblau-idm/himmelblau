@@ -1070,12 +1070,18 @@ where
                 account_id,
                 service: _,
                 id: _,
-                token: _,
+                token,
                 online_at_init: _,
                 cred_handler: _,
                 shutdown_rx: _,
                 no_hello_pin: _,
-            } => self.get_cachestate(Some(account_id)).await,
+            } => {
+                if token.is_none() {
+                    debug!("Requesting UserToken...");
+                    *token = self.refresh_usertoken(&Id::Name(account_id.to_string()), None).await?.map(|o| Box::new(o));
+                }
+                self.get_cachestate(Some(account_id)).await
+            },
             _ => self.get_cachestate(None).await,
         };
 
