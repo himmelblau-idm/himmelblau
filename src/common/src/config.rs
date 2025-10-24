@@ -616,7 +616,7 @@ impl HimmelblauConfig {
 
     pub fn get_local_groups(&self) -> Vec<String> {
         match self.config.get("global", "local_groups") {
-            Some(val) => val.split(',').map(|s| s.to_string()).collect(),
+            Some(val) => val.split(',').map(|s| s.trim().to_string()).collect(),
             None => vec![],
         }
     }
