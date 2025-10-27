@@ -4,7 +4,7 @@ version = 3
 
 [[package]]
 name = "aad-tool"
-version = "1.4.0"
+version = "1.4.1"
 dependencies = [
  "anyhow",
  "broker-client",
@@ -633,7 +633,7 @@ dependencies = [
 
 [[package]]
 name = "broker"
-version = "1.4.0"
+version = "1.4.1"
 dependencies = [
  "dbus",
  "himmelblau_unix_common",
@@ -644,7 +644,7 @@ dependencies = [
 
 [[package]]
 name = "broker-client"
-version = "1.4.0"
+version = "1.4.1"
 dependencies = [
  "serde_json",
  "zbus",
@@ -2131,7 +2131,7 @@ checksum = "7f24254aa9a54b5c858eaee2f5bccdb46aaf0e486a595ed5fd8f86ba55232a70"
 
 [[package]]
 name = "himmelblau_policies"
-version = "1.4.0"
+version = "1.4.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2153,7 +2153,7 @@ dependencies = [
 
 [[package]]
 name = "himmelblau_unix_common"
-version = "1.4.0"
+version = "1.4.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2194,7 +2194,7 @@ dependencies = [
 
 [[package]]
 name = "himmelblaud"
-version = "1.4.0"
+version = "1.4.1"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -2580,7 +2580,7 @@ dependencies = [
 
 [[package]]
 name = "idmap"
-version = "1.4.0"
+version = "1.4.1"
 dependencies = [
  "bindgen 0.72.1",
  "cc",
@@ -2782,7 +2782,7 @@ dependencies = [
 
 [[package]]
 name = "kanidm_lib_crypto"
-version = "1.4.0"
+version = "1.4.1"
 dependencies = [
  "argon2",
  "base64 0.22.1",
@@ -2806,7 +2806,7 @@ dependencies = [
 
 [[package]]
 name = "kanidm_lib_file_permissions"
-version = "1.4.0"
+version = "1.4.1"
 dependencies = [
  "kanidm_utils_users",
  "whoami",
@@ -2814,7 +2814,7 @@ dependencies = [
 
 [[package]]
 name = "kanidm_proto"
-version = "1.4.0"
+version = "1.4.1"
 dependencies = [
  "base32",
  "base64urlsafedata",
@@ -2834,7 +2834,7 @@ dependencies = [
 
 [[package]]
 name = "kanidm_utils_users"
-version = "1.4.0"
+version = "1.4.1"
 dependencies = [
  "libc",
 ]
@@ -2900,9 +2900,9 @@ dependencies = [
 
 [[package]]
 name = "libhimmelblau"
-version = "0.7.17"
+version = "0.8.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8b6e6f529d689a1a7b897f61a4311508d2ef6dae26911b46c098e9ca223b8032"
+checksum = "ff077e587fed5ac39772fd62a2d64e9a2154d66dc29009e866b9314b7f62a7a7"
 dependencies = [
  "base64 0.22.1",
  "browser-window",
@@ -2923,6 +2923,7 @@ dependencies = [
  "reqwest",
  "reqwest_cookie_store",
  "scraper",
+ "semver",
  "serde",
  "serde_bytes",
  "serde_json",
@@ -3263,7 +3264,7 @@ checksum = "5e0826a989adedc2a244799e823aece04662b66609d96af8dff7ac6df9a8925d"
 
 [[package]]
 name = "nss_himmelblau"
-version = "1.4.0"
+version = "1.4.1"
 dependencies = [
  "himmelblau_unix_common",
  "lazy_static",
@@ -3599,7 +3600,7 @@ dependencies = [
 
 [[package]]
 name = "pam_himmelblau"
-version = "1.4.0"
+version = "1.4.1"
 dependencies = [
  "himmelblau_unix_common",
  "libc",
@@ -4154,7 +4155,7 @@ dependencies = [
 
 [[package]]
 name = "qr-greeter"
-version = "1.4.0"
+version = "1.4.1"
 
 [[package]]
 name = "quote"
@@ -4910,7 +4911,7 @@ checksum = "56199f7ddabf13fe5074ce809e7d3f42b42ae711800501b5b16ea82ad029c39d"
 
 [[package]]
 name = "sketching"
-version = "1.4.0"
+version = "1.4.1"
 dependencies = [
  "num_enum",
  "opentelemetry",
@@ -5004,11 +5005,11 @@ dependencies = [
 
 [[package]]
 name = "sshd-config"
-version = "1.4.0"
+version = "1.4.1"
 
 [[package]]
 name = "sso"
-version = "1.4.0"
+version = "1.4.1"
 dependencies = [
  "broker-client",
  "clap",

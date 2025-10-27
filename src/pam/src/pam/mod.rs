@@ -642,7 +642,8 @@ impl PamHooks for PamKanidm {
                             },
                         }
                     }
-                }
+                },
+                return PamResultCode::PAM_AUTH_ERR
             )
         } else {
             #[cfg(feature = "interactive")]
