@@ -21,7 +21,7 @@ members = [
 resolver = "2"
 
 [workspace.package]
-version = "1.4.1"
+version = "1.4.2"
 authors = [
     "David Mulder <dmulder@suse.com>"
 ]
@@ -41,7 +41,7 @@ serde_json = "^1.0.145"
 tracing-subscriber = "^0.3.20"
 tracing = "^0.1.37"
 himmelblau_unix_common = { path = "src/common" }
-libhimmelblau = { version = "0.8.1", features = ["broker", "changepassword", "on_behalf_of"] }
+libhimmelblau = { version = "0.7.19", features = ["broker", "changepassword", "on_behalf_of"] }
 clap = { version = "^4.5", features = ["derive", "env"] }
 clap_complete = "^4.5.58"
 reqwest = { version = "^0.12.23", features = ["json"] }

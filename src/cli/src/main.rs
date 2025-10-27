@@ -351,8 +351,7 @@ async fn auth(app: &BrokerClientApplication, account_id: &str) -> Option<UserTok
                     },
                 }
             }
-        },
-        return None
+        }
     );
     println!();
     Some(token)

@@ -1,5 +1,5 @@
 # Use the official Rocky Linux 10 image as the base
-FROM rockylinux:10
+FROM rockylinux/rockylinux:10
 
 # Enable CRB repository (needed for some devel packages)
 RUN dnf install -y 'dnf-command(config-manager)' && \
