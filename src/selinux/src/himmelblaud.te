@@ -91,7 +91,8 @@ allow init_t himmelblau_nss_cache_t:file { create lock open read setattr unlink 
 allow init_t himmelblau_var_cache_t:lnk_file read;
 accountsd_manage_lib_files(init_t)
 corenet_tcp_connect_http_port(init_t)
-files_manage_home_dir(init_t)
+files_search_home(init_t)
+userdom_manage_user_home_content(init_t)
 
 ############################
 # Additional discovered via audit2allow
