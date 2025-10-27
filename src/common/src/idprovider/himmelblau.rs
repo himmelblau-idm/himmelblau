@@ -2070,7 +2070,8 @@ impl IdProvider for HimmelblauProvider {
                              * disconnects the network to complete the auth). */
                             AuthCacheAction::None,
                         ));
-                    }
+                    },
+                    return Err(IdpError::BadRequest)
                 )
             }
             (
