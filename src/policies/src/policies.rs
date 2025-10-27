@@ -63,7 +63,8 @@ pub async fn apply_intune_policy(
         .map_err(|e| anyhow!(e))?;
     debug!("Discovered Intune service endpoints");
 
-    let intune = IntuneForLinux::new(endpoints, None).map_err(|e| anyhow!(e))?;
+    let intune_app_vers = config.get_intune_app_vers();
+    let intune = IntuneForLinux::new(endpoints, intune_app_vers.as_deref()).map_err(|e| anyhow!(e))?;
 
     let token = UserToken {
         token_type: String::new(),

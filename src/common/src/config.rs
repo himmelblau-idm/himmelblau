@@ -881,6 +881,10 @@ impl HimmelblauConfig {
             .get("global", "user_map_file")
             .unwrap_or(DEFAULT_USER_MAP_FILE.to_string())
     }
+
+    pub fn get_intune_app_vers(&self) -> Option<String> {
+        self.config.get("global", "intune_app_vers")
+    }
 }
 
 impl fmt::Debug for HimmelblauConfig {
@@ -1774,5 +1778,24 @@ mod tests {
         let temp_file = create_temp_config(config_data);
         let config = HimmelblauConfig::new(Some(&temp_file)).unwrap();
         assert_eq!(config.get_user_map_file(), "/path/to/user_map");
+    }
+
+    #[test]
+    fn test_get_intune_app_vers() {
+        let config_data = r#"
+        [global]
+        intune_app_vers = 1.2508.17
+        "#;
+
+        let temp_file = create_temp_config(config_data);
+        let config = HimmelblauConfig::new(Some(&temp_file)).unwrap();
+
+        assert_eq!(
+            config.get_intune_app_vers(),
+            Some("1.2508.17".to_string())
+        );
+
+        let config_missing = HimmelblauConfig::new(None).unwrap();
+        assert_eq!(config_missing.get_intune_app_vers(), None);
     }
 }

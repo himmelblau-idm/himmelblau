@@ -412,6 +412,12 @@ pub enum HimmelblauUnixOpt {
         #[clap(long)]
         full: bool,
     },
+    CheckIntuneAppVers {
+        #[clap(short, long)]
+        debug: bool,
+        #[clap(short = 'D', long = "name")]
+        account_id: Option<String>,
+    },
     /// Configure PAM to use pam_himmelblau
     ConfigurePam {
         #[clap(short, long)]

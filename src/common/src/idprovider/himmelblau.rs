@@ -3202,7 +3202,8 @@ impl HimmelblauProvider {
                 .await
             {
                 Ok(token) => {
-                    let intune = IntuneForLinux::new(endpoints, None).map_err(|e| {
+                    let intune_app_vers = config.get_intune_app_vers();
+                    let intune = IntuneForLinux::new(endpoints, intune_app_vers.as_deref()).map_err(|e| {
                         error!(?e, "Intune device enrollment failed.");
                         IdpError::BadRequest
                     })?;

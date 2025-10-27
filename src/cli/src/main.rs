@@ -37,7 +37,7 @@ use std::sync::Arc;
 use broker_client::BrokerClient;
 use clap::Parser;
 use himmelblau::{error::MsalError, graph::Graph, AuthOption, BrokerClientApplication};
-use himmelblau::{ConfidentialClientApplication, UserToken};
+use himmelblau::{ClientInfo, ConfidentialClientApplication, IdToken, UserToken};
 use himmelblau_unix_common::auth::{authenticate_async, SimpleMessagePrinter};
 use himmelblau_unix_common::auth_handle_mfa_resp;
 use himmelblau_unix_common::client::call_daemon;
@@ -76,6 +76,7 @@ use std::thread::sleep;
 use std::time::{Duration, SystemTime};
 use std::{fs, io};
 use uuid::Uuid;
+use himmelblau::intune::{fetch_intune_portal_versions, IntuneForLinux, IntuneStatus};
 
 include!("./opt/tool.rs");
 
@@ -518,6 +519,7 @@ async fn main() -> ExitCode {
             mapped: _,
             full: _,
         } => debug,
+        HimmelblauUnixOpt::CheckIntuneAppVers { debug, account_id: _ } => debug,
         HimmelblauUnixOpt::ConfigurePam {
             debug,
             really: _,
@@ -1544,6 +1546,96 @@ async fn main() -> ExitCode {
                 println!("success");
                 ExitCode::SUCCESS
             }
+        }
+        HimmelblauUnixOpt::CheckIntuneAppVers { debug: _, account_id} => {
+            debug!("Starting check intune app version tool ...");
+
+            println!("
+aad-tool check-intune-app-vers
+
+This command determines which Intune Portal for Linux versions are currently
+supported by the Intune service.
+
+It first retrieves the list of available versions from the Microsoft package
+repository, then queries the Intune endpoint to test which versions are
+permitted to communicate with the Intune for Linux protocol.
+
+After validating connectivity, a list of functional versions will be displayed
+to the user. You should select one of these versions and set it in your
+`himmelblau.conf` under the `[global]` section as:
+
+    intune_app_vers = <version>
+
+This ensures that Himmelblau uses a version of Intune Portal known to be
+compatible with the current Intune protocol.");
+
+
+            let client_id: Option<String> = None;
+            let (graph, access_token) = match obtain_access_token!(
+                account_id,
+                vec!["00000003-0000-0000-c000-000000000000/.default",
+                     "0000000a-0000-0000-c000-000000000000/.default"],
+                client_id.clone(),
+                true
+            ) {
+                Some(res) => res,
+                None => {
+                    return ExitCode::FAILURE;
+                }
+            };
+
+            let token = UserToken {
+                token_type: String::new(),
+                scope: None,
+                expires_in: 0,
+                ext_expires_in: 0,
+                refresh_token: String::new(),
+                access_token: Some(access_token.clone()),
+                client_info: ClientInfo::default(),
+                id_token: IdToken::default(),
+                prt: None,
+            };
+
+            let versions = match fetch_intune_portal_versions(None).await {
+                Ok(versions) => versions,
+                Err(e) => {
+                    error!("Failed to fetch intune portal versions: {:?}", e);
+                    return ExitCode::FAILURE;
+                }
+            };
+            let mut accepted_vers = vec![];
+            for vers in versions {
+                let endpoints = match graph
+                    .intune_service_endpoints(&access_token)
+                    .await {
+                        Ok(endpoints) => endpoints,
+                        Err(e) => {
+                            error!("Failed to fetch intune service endpoints: {:?}", e);
+                            return ExitCode::FAILURE;
+                        }
+                    };
+                let intune = match IntuneForLinux::new(endpoints, Some(&vers)) {
+                    Ok(intune) => intune,
+                    Err(e) => {
+                        error!("Failed to initialize intune: {:?}", e);
+                        return ExitCode::FAILURE;
+                    }
+                };
+                let status = IntuneStatus {
+                    device_id: None,
+                    policy_statuses: vec![],
+                };
+                match intune.status(&token, status).await {
+                    Ok(_) => {
+                        accepted_vers.push(vers);
+                    }
+                    Err(e) => {
+                        error!("intune.status response: {}", e);
+                    }
+                };
+            }
+
+            ExitCode::SUCCESS
         }
         HimmelblauUnixOpt::ConfigurePam {
             debug: _,
