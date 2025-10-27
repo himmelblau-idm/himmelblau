@@ -2076,7 +2076,8 @@ impl IdProvider for HimmelblauProvider {
                              * disconnects the network to complete the auth). */
                             AuthCacheAction::None,
                         ));
-                    }
+                    },
+                    return Err(IdpError::BadRequest)
                 )
             }
             (
@@ -3201,7 +3202,7 @@ impl HimmelblauProvider {
                 .await
             {
                 Ok(token) => {
-                    let intune = IntuneForLinux::new(endpoints).map_err(|e| {
+                    let intune = IntuneForLinux::new(endpoints, None).map_err(|e| {
                         error!(?e, "Intune device enrollment failed.");
                         IdpError::BadRequest
                     })?;

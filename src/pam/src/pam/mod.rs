@@ -627,7 +627,8 @@ impl PamHooks for PamKanidm {
                             },
                         }
                     }
-                }
+                },
+                return PamResultCode::PAM_AUTH_ERR
             )
         };
 
