@@ -1,5 +1,5 @@
 # Use the official Rocky Linux 9 image as the base
-FROM rockylinux:9
+FROM rockylinux/rockylinux:9
 
 # Set environment variables for non-interactive installs
 ENV YUM_VERSION=8
