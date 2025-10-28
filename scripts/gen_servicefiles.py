@@ -48,12 +48,13 @@ def detect_systemd_version():
     cmds = [
         ["systemctl", "--version"],
         ["systemd-analyze", "--version"],
+        ["systemd-hwdb", "--version"],
     ]
     for cmd in cmds:
         try:
-            out = subprocess.check_output(cmd, stderr=subprocess.STDOUT, text=True)
+            out = subprocess.check_output(cmd, stderr=subprocess.STDOUT).decode()
             # First line usually: "systemd 256 (256.6-1)"
-            m = re.search(r"\bsystemd\s+(\d+)", out)
+            m = re.search(r"\bsystemd\s+([^\s]+)", out)
             if m:
                 return int(m.group(1))
         except Exception:
