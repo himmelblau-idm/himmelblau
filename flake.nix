@@ -112,6 +112,16 @@
                       issues over SSH. Mapping by name is recommeneded.
                     '';
                   };
+                  join_type = mkOption {
+                    type = types.enum [
+                      "join"
+                      "register"
+                    ];
+                    default = "join";
+                    description = ''
+                      The device join type for Azure. Standard device join, or register only.
+                    '';
+                  };
                   enable_hello = mkOption {
                     type = types.bool;
                     default = true;

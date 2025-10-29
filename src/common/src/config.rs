@@ -308,7 +308,7 @@ impl HimmelblauConfig {
                     }
                 }
                 None => {
-                    error!(
+                    warn!(
                         "No idmap_range range specified in config, using {}-{}!",
                         DEFAULT_IDMAP_RANGE.0, DEFAULT_IDMAP_RANGE.1
                     );
@@ -616,7 +616,7 @@ impl HimmelblauConfig {
 
     pub fn get_local_groups(&self) -> Vec<String> {
         match self.config.get("global", "local_groups") {
-            Some(val) => val.split(',').map(|s| s.to_string()).collect(),
+            Some(val) => val.split(',').map(|s| s.trim().to_string()).collect(),
             None => vec![],
         }
     }
@@ -847,25 +847,33 @@ impl HimmelblauConfig {
     /// enabled, it will map the upn to the cn. Otherwise it will return the
     /// name unchanged.
     pub fn map_upn_to_name(&self, upn: &str) -> String {
-        if !upn.contains('@') {
-            // This isn't a upn, just return the input unchanged
-            return upn.to_string();
-        }
-
-        let res;
-        if self.get_name_mapping_script().is_some() {
-            if let Ok(name_mapping_cache) = MappedNameCache::new(MAPPED_NAME_CACHE, &Mode::ReadOnly)
-            {
-                res = name_mapping_cache.get_mapped_name(upn);
+        if let Some((name, domain)) = split_username(upn) {
+            let primary = self
+                .get_configured_domains()
+                .first()
+                .map(|e| e.as_str())
+                .unwrap_or("")
+                .to_lowercase();
+            let res;
+            if self.get_name_mapping_script().is_some() {
+                if let Ok(name_mapping_cache) =
+                    MappedNameCache::new(MAPPED_NAME_CACHE, &Mode::ReadOnly)
+                {
+                    res = name_mapping_cache.get_mapped_name(upn);
+                } else {
+                    res = upn.to_string();
+                }
+            // Only perform cn name mapping for the primary domain
+            } else if self.get_cn_name_mapping() && primary == domain.to_lowercase() {
+                res = name.to_string();
             } else {
                 res = upn.to_string();
             }
-        } else if self.get_cn_name_mapping() {
-            res = upn.split('@').next().unwrap_or(upn).to_string();
+            res
         } else {
-            res = upn.to_string();
+            // This isn't a upn, just return the input unchanged
+            upn.to_string()
         }
-        res
     }
 
     pub fn get_sudo_groups(&self) -> Vec<String> {

@@ -37,6 +37,7 @@ COMMON = [
     "checkpolicy",
     "policycoreutils",
     "python3",
+    "systemd",
 ]
 
 PKG_PAIRS = [
@@ -200,7 +201,7 @@ DISTS = {
     # ---- Rocky family ----
     "rocky8": {
         "family": "rpm",
-        "image": "rockylinux:8",
+        "image": "rockylinux/rockylinux:8",
         "extra_prep": [
             "RUN dnf -y install 'dnf-command(config-manager)' && dnf config-manager --set-enabled powertools"
         ],
@@ -213,7 +214,7 @@ DISTS = {
     },
     "rocky9": {
         "family": "rpm",
-        "image": "rockylinux:9",
+        "image": "rockylinux/rockylinux:9",
         "extra_prep": [
             "RUN dnf -y install 'dnf-command(config-manager)' && dnf config-manager --set-enabled crb",
             "RUN sed -i -e 's|$rltype||g' /etc/yum.repos.d/rocky*.repo",
@@ -228,7 +229,7 @@ DISTS = {
     },
     "rocky10": {
         "family": "rpm",
-        "image": "rockylinux:10",
+        "image": "rockylinux/rockylinux:10",
         "extra_prep": [
             "RUN dnf install -y 'dnf-command(config-manager)' && dnf config-manager --set-enabled crb",
             "RUN sed -i -e 's|$rltype||g' /etc/yum.repos.d/rocky*.repo",
