@@ -955,10 +955,24 @@ impl IdProvider for HimmelblauProvider {
             return Ok(UserTokenState::UseCached);
         }
 
+        // Look for common names of local systemd, sssd, etc users, and warn
+        // that the nss configuration is possibly incorrect.
         let account_id = match old_token {
             Some(token) => token.spn.clone(),
             None => id.to_string().clone(),
         };
+        if let Some((cn, _)) = split_username(&account_id) {
+            let other_module_warn_users =
+                ["gdm", "sssd", "gnome-initial-setup", "systemd-coredump"];
+            if other_module_warn_users.contains(&cn) {
+                warn!(
+                    "'{}' appears to be a systemd or other local user \
+                      account. Please reconfigure your nsswitch.conf to \
+                      place himmelblau at the end",
+                    cn
+                );
+            }
+        }
 
         macro_rules! fetch_user_confidential_client {
             ($client_id:expr, $client_credential:expr) => {{
@@ -991,6 +1005,7 @@ impl IdProvider for HimmelblauProvider {
                             Ok(userobj) => {
                                 match self
                                     .user_token_from_unix_user_token(
+                                        &account_id,
                                         TokenOrObj::UserObj((token, userobj)),
                                         old_token,
                                     )
@@ -2677,9 +2692,18 @@ impl HimmelblauProvider {
                     IdpError::BadRequest
                 })?;
                 if account_id.to_string().to_lowercase() != spn.to_string().to_lowercase() {
-                    let msg = format!("Authenticated user {} does not match requested user", uuid);
-                    error!(msg);
-                    return Ok(AuthResult::Denied(msg));
+                    /* Fixes bug#801: The authenticated user might have a mis-matched
+                     * response because the domains are aliases of one another.
+                     */
+                    let mut cfg = self.config.write().await;
+                    let (_, domain1) = split_username(account_id).ok_or(IdpError::BadRequest)?;
+                    let (_, domain2) = split_username(&spn).ok_or(IdpError::BadRequest)?;
+                    if !cfg.domains_are_aliases(domain1, domain2).await {
+                        let msg =
+                            format!("Authenticated user {} does not match requested user", uuid);
+                        error!(msg);
+                        return Ok(AuthResult::Denied(msg));
+                    }
                 }
                 info!("Authentication successful for user '{}'", uuid);
                 // If an encrypted PRT is present, store it in the mem cache
@@ -2689,6 +2713,7 @@ impl HimmelblauProvider {
                 Ok(AuthResult::Success {
                     token: self
                         .user_token_from_unix_user_token(
+                            account_id,
                             TokenOrObj::UserToken(Box::new(token.clone())),
                             old_token,
                         )
@@ -2705,20 +2730,13 @@ impl HimmelblauProvider {
     #[instrument(level = "debug", skip_all)]
     async fn user_token_from_unix_user_token(
         &self,
+        spn: &str,
         value: TokenOrObj,
         old_token: Option<&UserToken>,
     ) -> Result<UserToken, IdpError> {
         let config = self.config.read().await;
         let mut groups: Vec<GroupToken>;
         let posix_attrs: HashMap<String, String>;
-        let spn = match &value {
-            TokenOrObj::UserObj((_, value)) => value.upn.clone(),
-            TokenOrObj::UserToken(value) => value.spn().map_err(|e| {
-                error!("Failed fetching user spn: {:?}", e);
-                IdpError::BadRequest
-            })?,
-        }
-        .to_lowercase();
         let uuid = match &value {
             TokenOrObj::UserObj((_, value)) => Uuid::parse_str(&value.id).map_err(|e| {
                 error!("Failed fetching user uuid: {:?}", e);
@@ -2803,7 +2821,7 @@ impl HimmelblauProvider {
         };
         let valid = true;
         let user_map = UserMap::new(&config.get_user_map_file());
-        let (uidnumber, gidnumber) = match user_map.get_local_from_upn(&spn) {
+        let (uidnumber, gidnumber) = match user_map.get_local_from_upn(spn) {
             Some(user) => {
                 let pwd = unsafe {
                     let cstr_user = CString::new(user).map_err(|e| {
@@ -2825,7 +2843,7 @@ impl HimmelblauProvider {
                     error!("Failed reading from the idmap cache: {:?}", e);
                     IdpError::BadRequest
                 })?;
-                match idmap_cache.get_user_by_name(&spn) {
+                match idmap_cache.get_user_by_name(spn) {
                     Some(user) => (user.uid, user.gid),
                     None => {
                         let uidnumber = match config.get_id_attr_map() {
@@ -2850,7 +2868,7 @@ impl HimmelblauProvider {
                                         error!("{:?}", e);
                                         IdpError::BadRequest
                                     })?,
-                                    &spn,
+                                    spn,
                                 )
                                 .map_err(|e| {
                                     error!("{:?}", e);
@@ -2886,8 +2904,8 @@ impl HimmelblauProvider {
                         } else {
                             // Otherwise add a fake primary group
                             groups.push(GroupToken {
-                                name: spn.clone(),
-                                spn: spn.clone(),
+                                name: spn.to_string(),
+                                spn: spn.to_string(),
                                 uuid,
                                 gidnumber: uidnumber,
                             });
@@ -2919,8 +2937,8 @@ impl HimmelblauProvider {
         }
 
         Ok(UserToken {
-            name: spn.clone(),
-            spn: spn.clone(),
+            name: spn.to_string(),
+            spn: spn.to_string(),
             uuid,
             real_gidnumber: Some(gidnumber),
             gidnumber: uidnumber,

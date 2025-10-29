@@ -698,6 +698,16 @@ impl HimmelblauConfig {
         None
     }
 
+    pub async fn domains_are_aliases(&mut self, domain1: &str, domain2: &str) -> bool {
+        if let Some(primary) = self.get_primary_domain_from_alias(domain1).await {
+            domain2 == primary
+        } else if let Some(primary) = self.get_primary_domain_from_alias(domain2).await {
+            domain1 == primary
+        } else {
+            false
+        }
+    }
+
     pub async fn get_primary_domain_from_alias(&mut self, alias: &str) -> Option<String> {
         // Attempt to short-circut the request by checking if the alias is
         // already configured.
@@ -837,25 +847,33 @@ impl HimmelblauConfig {
     /// enabled, it will map the upn to the cn. Otherwise it will return the
     /// name unchanged.
     pub fn map_upn_to_name(&self, upn: &str) -> String {
-        if !upn.contains('@') {
-            // This isn't a upn, just return the input unchanged
-            return upn.to_string();
-        }
-
-        let res;
-        if self.get_name_mapping_script().is_some() {
-            if let Ok(name_mapping_cache) = MappedNameCache::new(MAPPED_NAME_CACHE, &Mode::ReadOnly)
-            {
-                res = name_mapping_cache.get_mapped_name(upn);
+        if let Some((name, domain)) = split_username(upn) {
+            let primary = self
+                .get_configured_domains()
+                .first()
+                .map(|e| e.as_str())
+                .unwrap_or("")
+                .to_lowercase();
+            let res;
+            if self.get_name_mapping_script().is_some() {
+                if let Ok(name_mapping_cache) =
+                    MappedNameCache::new(MAPPED_NAME_CACHE, &Mode::ReadOnly)
+                {
+                    res = name_mapping_cache.get_mapped_name(upn);
+                } else {
+                    res = upn.to_string();
+                }
+            // Only perform cn name mapping for the primary domain
+            } else if self.get_cn_name_mapping() && primary == domain.to_lowercase() {
+                res = name.to_string();
             } else {
                 res = upn.to_string();
             }
-        } else if self.get_cn_name_mapping() {
-            res = upn.split('@').next().unwrap_or(upn).to_string();
+            res
         } else {
-            res = upn.to_string();
+            // This isn't a upn, just return the input unchanged
+            upn.to_string()
         }
-        res
     }
 
     pub fn get_sudo_groups(&self) -> Vec<String> {
