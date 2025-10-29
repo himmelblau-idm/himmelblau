@@ -401,7 +401,7 @@ async fn handle_tasks(stream: UnixStream, cfg: &HimmelblauConfig) {
 
                 let local_groups = cfg.get_local_groups();
                 for local_group in &local_groups {
-                    add_user_to_group(&account_id, &local_group);
+                    add_user_to_group(&account_id, local_group);
                 }
 
                 let local_sudo_group = cfg.get_local_sudo_group();
