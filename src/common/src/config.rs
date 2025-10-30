@@ -716,6 +716,11 @@ impl HimmelblauConfig {
         }
 
         let domains = self.get_configured_domains();
+        if domains.is_empty() {
+            info!("No domains are configured.");
+            return None;
+        }
+
         let mut modified_config = false;
 
         // We don't recognize this alias, so now we need to search for it the
