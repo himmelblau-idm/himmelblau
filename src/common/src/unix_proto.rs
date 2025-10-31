@@ -91,6 +91,7 @@ pub enum ClientRequest {
     PamChangeAuthToken(String, String, String, String),
     InvalidateCache,
     ClearCache,
+    OfflineBreakGlass(Option<u64>),
     Status,
 }
 
@@ -120,6 +121,7 @@ impl ClientRequest {
             }
             ClientRequest::InvalidateCache => "InvalidateCache".to_string(),
             ClientRequest::ClearCache => "ClearCache".to_string(),
+            ClientRequest::OfflineBreakGlass(ttl) => format!("OfflineBreakGlass({:?})", ttl),
             ClientRequest::Status => "Status".to_string(),
         }
     }

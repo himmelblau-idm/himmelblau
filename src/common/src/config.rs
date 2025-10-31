@@ -30,10 +30,10 @@ use crate::constants::{
     DEFAULT_CONFIG_PATH, DEFAULT_CONN_TIMEOUT, DEFAULT_DB_PATH, DEFAULT_HELLO_ENABLED,
     DEFAULT_HELLO_PIN_MIN_LEN, DEFAULT_HELLO_PIN_RETRY_COUNT, DEFAULT_HOME_ALIAS,
     DEFAULT_HOME_ATTR, DEFAULT_HOME_PREFIX, DEFAULT_HSM_PIN_PATH, DEFAULT_ID_ATTR_MAP,
-    DEFAULT_JOIN_TYPE, DEFAULT_ODC_PROVIDER, DEFAULT_POLICIES_DB_DIR, DEFAULT_SELINUX,
-    DEFAULT_SFA_FALLBACK_ENABLED, DEFAULT_SHELL, DEFAULT_SOCK_PATH, DEFAULT_TASK_SOCK_PATH,
-    DEFAULT_TPM_TCTI_NAME, DEFAULT_USER_MAP_FILE, DEFAULT_USE_ETC_SKEL, MAPPED_NAME_CACHE,
-    SERVER_CONFIG_PATH,
+    DEFAULT_JOIN_TYPE, DEFAULT_ODC_PROVIDER, DEFAULT_OFFLINE_BREAKGLASS_TTL,
+    DEFAULT_POLICIES_DB_DIR, DEFAULT_SELINUX, DEFAULT_SFA_FALLBACK_ENABLED, DEFAULT_SHELL,
+    DEFAULT_SOCK_PATH, DEFAULT_TASK_SOCK_PATH, DEFAULT_TPM_TCTI_NAME, DEFAULT_USER_MAP_FILE,
+    DEFAULT_USE_ETC_SKEL, MAPPED_NAME_CACHE, SERVER_CONFIG_PATH,
 };
 use crate::mapping::{MappedNameCache, Mode};
 use crate::unix_config::{HomeAttr, HsmType};
@@ -74,6 +74,54 @@ pub fn split_username(username: &str) -> Option<(&str, &str)> {
         return Some((tup[0], tup[1]));
     }
     None
+}
+
+/// Parse a TTL string into seconds.
+///
+/// Returns an `Option<u64>` representing the number of seconds parsed from the TTL string,
+/// or `None` if parsing fails.
+///
+/// Supported suffixes:
+/// - 'm' for minutes
+/// - 'h' for hours
+/// - 'd' for days
+///
+/// If no suffix is provided, the value is treated as seconds.
+pub fn parse_ttl_to_seconds(ttl_str: &str) -> Option<u64> {
+    let ttl_str = ttl_str.trim().to_lowercase();
+
+    // Directly check if last character is alphabetic and extract suffix
+    let (num_part, suffix) = match ttl_str.chars().last() {
+        Some(last_char) if last_char.is_ascii_alphabetic() => {
+            (&ttl_str[..ttl_str.len() - 1], last_char)
+        }
+        Some(_) => (ttl_str.as_str(), 's'),
+        None => {
+            error!("TTL string is empty");
+            return None;
+        }
+    };
+
+    let number: u64 = match num_part.parse() {
+        Ok(number) => number,
+        Err(e) => {
+            error!("Invalid TTL number: {}", e);
+            return None;
+        }
+    };
+
+    let seconds = match suffix {
+        's' => number,
+        'm' => number * 60,
+        'h' => number * 3600,
+        'd' => number * 86400,
+        _ => {
+            error!("Invalid TTL unit '{}'", suffix);
+            return None;
+        }
+    };
+
+    Some(seconds)
 }
 
 #[derive(Debug, Deserialize)]
@@ -898,6 +946,17 @@ impl HimmelblauConfig {
         self.config
             .get("global", "user_map_file")
             .unwrap_or(DEFAULT_USER_MAP_FILE.to_string())
+    }
+
+    pub fn get_offline_breakglass_enabled(&self) -> bool {
+        match_bool(self.config.get("offline_breakglass", "enabled"), false)
+    }
+
+    pub fn get_offline_breakglass_ttl(&self) -> u64 {
+        match self.config.get("offline_breakglass", "ttl") {
+            Some(val) => parse_ttl_to_seconds(&val).unwrap_or(DEFAULT_OFFLINE_BREAKGLASS_TTL),
+            None => DEFAULT_OFFLINE_BREAKGLASS_TTL,
+        }
     }
 }
 
@@ -1792,5 +1851,78 @@ mod tests {
         let temp_file = create_temp_config(config_data);
         let config = HimmelblauConfig::new(Some(&temp_file)).unwrap();
         assert_eq!(config.get_user_map_file(), "/path/to/user_map");
+    }
+
+    #[test]
+    fn test_get_offline_breakglass_enabled() {
+        // Explicitly disabled
+        let config_data = r#"
+        [offline_breakglass]
+        enabled = false
+        "#;
+        let temp_file = create_temp_config(config_data);
+        let config = HimmelblauConfig::new(Some(&temp_file)).unwrap();
+        assert_eq!(config.get_offline_breakglass_enabled(), false);
+
+        // Explicitly enabled
+        let config_data = r#"
+        [offline_breakglass]
+        enabled = true
+        "#;
+        let temp_file = create_temp_config(config_data);
+        let config = HimmelblauConfig::new(Some(&temp_file)).unwrap();
+        assert_eq!(config.get_offline_breakglass_enabled(), true);
+
+        // Missing value → default (false)
+        let config_data = r#"
+        [offline_breakglass]
+        "#;
+        let temp_file = create_temp_config(config_data);
+        let config = HimmelblauConfig::new(Some(&temp_file)).unwrap();
+        assert_eq!(config.get_offline_breakglass_enabled(), false);
+    }
+
+    #[test]
+    fn test_get_offline_breakglass_ttl() {
+        // TTL with hours
+        let config_data = r#"
+        [offline_breakglass]
+        ttl = 2h
+        "#;
+        let temp_file = create_temp_config(config_data);
+        let config = HimmelblauConfig::new(Some(&temp_file)).unwrap();
+        assert_eq!(config.get_offline_breakglass_ttl(), 7200);
+
+        // TTL with minutes
+        let config_data = r#"
+        [offline_breakglass]
+        ttl = 30m
+        "#;
+        let temp_file = create_temp_config(config_data);
+        let config = HimmelblauConfig::new(Some(&temp_file)).unwrap();
+        assert_eq!(config.get_offline_breakglass_ttl(), 1800);
+
+        // Invalid TTL → fallback to default
+        let config_data = r#"
+        [offline_breakglass]
+        ttl = nonsense
+        "#;
+        let temp_file = create_temp_config(config_data);
+        let config = HimmelblauConfig::new(Some(&temp_file)).unwrap();
+        assert_eq!(
+            config.get_offline_breakglass_ttl(),
+            DEFAULT_OFFLINE_BREAKGLASS_TTL
+        );
+
+        // Missing → default
+        let config_data = r#"
+        [offline_breakglass]
+        "#;
+        let temp_file = create_temp_config(config_data);
+        let config = HimmelblauConfig::new(Some(&temp_file)).unwrap();
+        assert_eq!(
+            config.get_offline_breakglass_ttl(),
+            DEFAULT_OFFLINE_BREAKGLASS_TTL
+        );
     }
 }

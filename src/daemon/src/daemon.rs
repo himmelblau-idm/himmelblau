@@ -814,6 +814,19 @@ async fn handle_client(
                     ClientResponse::Error
                 }
             }
+            ClientRequest::OfflineBreakGlass(ttl) => {
+                trace!("offline break glass");
+                if ucred.uid() == 0 {
+                    cachelayer
+                        .offline_break_glass(ttl)
+                        .await
+                        .map(|_| ClientResponse::Ok)
+                        .unwrap_or(ClientResponse::Error)
+                } else {
+                    error!("Only root may set the offline break glass time to live");
+                    ClientResponse::Error
+                }
+            }
             ClientRequest::Status => {
                 trace!("status check");
                 if cachelayer.test_connection().await {

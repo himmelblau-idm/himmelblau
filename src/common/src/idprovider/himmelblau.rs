@@ -264,6 +264,13 @@ macro_rules! find_provider {
 
 #[async_trait]
 impl IdProvider for HimmelblauMultiProvider {
+    async fn offline_break_glass(&self, ttl: Option<u64>) -> Result<(), IdpError> {
+        for (_domain, provider) in self.providers.read().await.iter() {
+            provider.offline_break_glass(ttl).await?;
+        }
+        Ok(())
+    }
+
     /* TODO: Kanidm should be modified to provide the account_id to
      * provider_authenticate, so that we can test the correct provider here.
      * Currently we go offline if ANY provider is down, which could be
@@ -712,6 +719,25 @@ macro_rules! check_new_device_enrollment_required {
 
 #[async_trait]
 impl IdProvider for HimmelblauProvider {
+    async fn offline_break_glass(&self, ttl: Option<u64>) -> Result<(), IdpError> {
+        let mut state = self.state.lock().await;
+        let (ttl, enabled) = {
+            let cfg = self.config.read().await;
+            (
+                match ttl {
+                    Some(ttl) => ttl,
+                    None => cfg.get_offline_breakglass_ttl(),
+                },
+                cfg.get_offline_breakglass_enabled(),
+            )
+        };
+        if enabled {
+            let offline_next_check = Duration::from_secs(ttl);
+            *state = CacheState::OfflineNextCheck(SystemTime::now() + offline_next_check);
+        }
+        Ok(())
+    }
+
     #[instrument(level = "debug", skip_all)]
     async fn check_online(&self, tpm: &mut tpm::provider::BoxedDynTpm, now: SystemTime) -> bool {
         let state = self.state.lock().await.clone();
@@ -2040,18 +2066,21 @@ impl IdProvider for HimmelblauProvider {
                             resp.fido_allow_list.clone().ok_or(IdpError::BadRequest)?;
                         *cred_handler = AuthCredHandler::MFA {
                             flow: resp,
-                            password: Some(cred),
+                            password: Some(cred.clone()),
+                        };
+                        let action = if self.config.read().await.get_offline_breakglass_enabled() {
+                            AuthCacheAction::PasswordHashUpdate { cred }
+                        } else {
+                            AuthCacheAction::None
                         };
                         return Ok((
                             AuthResult::Next(AuthRequest::Fido {
                                 fido_allow_list,
                                 fido_challenge,
                             }),
-                            /* An MFA auth cannot cache the password. This would
-                             * lead to a potential downgrade to SFA attack (where
-                             * the attacker auths with a stolen password, then
-                             * disconnects the network to complete the auth). */
-                            AuthCacheAction::None,
+                            /* Cache the offline password hash for breakglass
+                             * conditions, if enabled. */
+                            action,
                         ));
                     },
                     // PROMPT
@@ -2059,15 +2088,18 @@ impl IdProvider for HimmelblauProvider {
                         let msg = resp.msg.clone();
                         *cred_handler = AuthCredHandler::MFA {
                             flow: resp,
-                            password: Some(cred),
+                            password: Some(cred.clone()),
+                        };
+                        let action = if self.config.read().await.get_offline_breakglass_enabled() {
+                            AuthCacheAction::PasswordHashUpdate { cred }
+                        } else {
+                            AuthCacheAction::None
                         };
                         return Ok((
                             AuthResult::Next(AuthRequest::MFACode { msg }),
-                            /* An MFA auth cannot cache the password. This would
-                             * lead to a potential downgrade to SFA attack (where
-                             * the attacker auths with a stolen password, then
-                             * disconnects the network to complete the auth). */
-                            AuthCacheAction::None,
+                            /* Cache the offline password hash for breakglass
+                             * conditions, if enabled. */
+                            action,
                         ));
                     },
                     // POLL
@@ -2076,7 +2108,12 @@ impl IdProvider for HimmelblauProvider {
                         let polling_interval = resp.polling_interval.unwrap_or(5000);
                         *cred_handler = AuthCredHandler::MFA {
                             flow: resp,
-                            password: Some(cred),
+                            password: Some(cred.clone()),
+                        };
+                        let action = if self.config.read().await.get_offline_breakglass_enabled() {
+                            AuthCacheAction::PasswordHashUpdate { cred }
+                        } else {
+                            AuthCacheAction::None
                         };
                         return Ok((
                             AuthResult::Next(AuthRequest::MFAPoll {
@@ -2085,11 +2122,9 @@ impl IdProvider for HimmelblauProvider {
                                 // seconds, not milliseconds.
                                 polling_interval: polling_interval / 1000,
                             }),
-                            /* An MFA auth cannot cache the password. This would
-                             * lead to a potential downgrade to SFA attack (where
-                             * the attacker auths with a stolen password, then
-                             * disconnects the network to complete the auth). */
-                            AuthCacheAction::None,
+                            /* Cache the offline password hash for breakglass
+                             * conditions, if enabled. */
+                            action,
                         ));
                     }
                 )
@@ -2355,8 +2390,14 @@ impl IdProvider for HimmelblauProvider {
         keystore: &mut D,
     ) -> Result<(AuthRequest, AuthCredHandler), IdpError> {
         let hello_key = self.fetch_hello_key(account_id, keystore).ok();
-        let sfa_enabled = self.config.read().await.get_enable_sfa_fallback();
-        let hello_pin_retry_count = self.config.read().await.get_hello_pin_retry_count();
+        let (sfa_enabled, hello_pin_retry_count, breakglass_enabled) = {
+            let cfg = self.config.read().await;
+            (
+                cfg.get_enable_sfa_fallback(),
+                cfg.get_hello_pin_retry_count(),
+                cfg.get_offline_breakglass_enabled(),
+            )
+        };
         // We only have 2 options when performing an offline auth; Hello PIN,
         // or cached password for SFA users. If neither option is available,
         // we should respond with a resonable error indicating how to proceed.
@@ -2365,7 +2406,7 @@ impl IdProvider for HimmelblauProvider {
             && !no_hello_pin
         {
             Ok((AuthRequest::Pin, AuthCredHandler::None))
-        } else if sfa_enabled {
+        } else if sfa_enabled || breakglass_enabled {
             Ok((AuthRequest::Password, AuthCredHandler::None))
         } else {
             Ok((

@@ -537,6 +537,110 @@ bob:bob.smith@example.org
 .br
 svcuser:service.account@tenant.local
 
+.SH OFFLINE BREAKGLASS CONFIGURATION
+The
+.B [offline_breakglass]
+section configures Himmelblau’s emergency offline authentication mechanism,
+used when Azure Entra ID is unavailable.
+
+.P
+Offline breakglass allows Entra ID users who normally require multi-factor authentication (MFA)
+to authenticate with their cached password when the host is offline.
+This feature provides a controlled fallback for MFA-only users who would otherwise be unable
+to sign in during an outage.
+
+.P
+Single-factor authentication (SFA-only) users and Hello-PIN users
+already have offline sign-in capability, and are unaffected by this setting.
+This option exists solely to extend limited offline access to
+MFA-enabled users when network connectivity to Entra ID cannot be established.
+
+.SS [offline_breakglass]
+This section controls whether and how Himmelblau may perform offline password authentication
+for MFA-enabled users in emergency conditions.
+
+.TP
+.B enabled
+.RE
+Boolean value specifying whether offline breakglass mode is permitted.
+
+.P
+When set to
+.B true,
+Himmelblau will cache secure, salted password verifiers for
+.B MFA-enabled
+Entra ID users who successfully authenticate online.
+These verifiers can then be used to authenticate the same users when Entra ID is unreachable,
+allowing MFA users to log in using their cached password.
+
+.P
+If this option is set to
+.B false
+(the default),
+Himmelblau will continue to cache password verifiers only for SFA-only users,
+and MFA-enabled users will
+.B not
+be able to authenticate when offline.
+The
+.BR aad-tool (1)
+command
+.B aad-tool offline-breakglass
+will also have no effect.
+
+.P
+Administrators must enable this option well in advance of an outage,
+as password verifiers for MFA users are only stored following a successful online authentication.
+It is too late to enable this feature once Entra ID is already unreachable.
+
+.P
+Enabling offline breakglass mode carries significant risk.
+If a device is stolen or compromised, and network access to Entra ID is blocked,
+attackers could effectively disable MFA protection by forcing the system into
+a simple password-only (SFA) authentication state.
+Administrators should enable this mode
+.B only after careful consideration
+of their organization’s security posture and offline access requirements.
+
+.P
+This feature does not apply to passwordless accounts.
+If an MFA user signs in using a passwordless method,
+no password hash exists to cache, and offline breakglass cannot function for that user.
+
+.EXAMPLES
+.P
+[offline_breakglass]
+.br
+enabled = true
+.br
+ttl = 2h
+.br
+# Allow MFA users to authenticate offline for up to 2 hours
+
+.TP
+.B ttl
+.RE
+Specifies how long breakglass mode should remain active once triggered.
+The value may include a suffix to indicate the unit of time:
+.B m
+for minutes,
+.B h
+for hours, or
+.B d
+for days.
+If no suffix is provided, the value is interpreted as seconds.
+After the specified period, offline breakglass mode automatically expires
+and normal authentication resumes.
+
+.EXAMPLES
+.P
+[offline_breakglass]
+.br
+enabled = true
+.br
+ttl = 1d
+.br
+# Permit offline MFA logins for up to 24 hours after activation
+
 .SH DOMAIN-SPECIFIC SECTIONS
 Overrides can be defined for individual domains by using a section named after the domain in square brackets.
 
