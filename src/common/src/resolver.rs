@@ -691,6 +691,14 @@ where
         })
     }
 
+    pub async fn offline_break_glass(&self, ttl: Option<u64>) -> Result<(), ()> {
+        let res = self.client.offline_break_glass(ttl).await;
+
+        res.map_err(|e| {
+            trace!("offline_break_glass error -> {:?}", e);
+        })
+    }
+
     pub async fn get_usertoken(&self, account_id: Id) -> Result<Option<UserToken>, ()> {
         trace!("get_usertoken");
         // get the item from the cache
@@ -1126,6 +1134,10 @@ where
                         // Might need a rework with the tpm code.
                         self.set_cache_userpassword(token.uuid, &cred).await?;
                         Ok(AuthResult::Success { token })
+                    }
+                    Ok((AuthResult::Next(next), AuthCacheAction::PasswordHashUpdate { cred })) => {
+                        self.set_cache_userpassword(token.uuid, &cred).await?;
+                        Ok(AuthResult::Next(next))
                     }
                     // I think this state is actually invalid?
                     Ok((_, AuthCacheAction::PasswordHashUpdate { .. })) => {

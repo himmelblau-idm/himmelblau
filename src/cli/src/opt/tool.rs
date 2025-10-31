@@ -263,7 +263,7 @@ pub enum CredOpt {
     /// 
     /// 4. Copy the Value (not Secret ID) immediately. You won't be able to see it again.
     /// 
-    /// 5. Use that value with this command to store it in Himmelblau’s encrypted cache.
+    /// 5. Use that value with this command to store it in Himmelblau's encrypted cache.
     ///
     /// When this cred needs renewed in the future, simple run this command
     /// again to replace the expired secret.
@@ -430,7 +430,7 @@ pub enum HimmelblauUnixOpt {
     /// Manage confidential client credentials for authenticating to Entra ID.
     ///
     /// This command supports storing (`secret` or `cert`), deleting, and listing
-    /// credentials in Himmelblau’s encrypted cache.
+    /// credentials in Himmelblau's encrypted cache.
     ///
     /// These credentials are used to securely query Entra ID for user and group
     /// attributes (such as rfc2307 uid/gid or group memberships).
@@ -467,6 +467,51 @@ pub enum HimmelblauUnixOpt {
     /// need to be preserved.
     #[clap(subcommand)]
     Idmap(IdmapOpt),
+    /// Activate or deactivate Himmelblau's offline breakglass mode.
+    ///
+    /// This command enables temporary offline password authentication when Azure Entra ID
+    /// is unreachable. When invoked, Himmelblau enters a controlled "breakglass" state,
+    /// allowing cached Entra ID user passwords to be used for login until the TTL expires.
+    ///
+    /// Breakglass mode can only be activated if it was previously enabled in
+    /// `/etc/himmelblau/himmelblau.conf` under the `[offline_breakglass]` section. If the feature
+    /// was disabled, calling this command will have no effect, and no password verifiers
+    /// will have been cached.
+    ///
+    /// Once activated, Himmelblau will:
+    ///   * Allow cached Entra ID users to log in using their known password.
+    ///   * Automatically exit breakglass mode after the TTL expires or once Entra ID connectivity
+    ///     has been restored.
+    ///
+    /// Use `--ttl` to override the configured duration for this session. The TTL value
+    /// accepts a time unit suffix (`m`, `h`, or `d`) and defaults to the value defined in
+    /// `himmelblau.conf` if omitted.
+    ///
+    /// To manually exit breakglass mode before TTL expiry, run:
+    ///     aad-tool offline-breakglass --ttl 0
+    ///
+    /// Examples:
+    ///
+    ///     # Activate breakglass mode for 2 hours
+    ///     aad-tool offline-breakglass --ttl 2h
+    ///
+    ///     # Force disable breakglass mode immediately
+    ///     aad-tool offline-breakglass --ttl 0
+    ///
+    ///     # Use the configured default TTL (from himmelblau.conf)
+    ///     aad-tool offline-breakglass
+    ///
+    /// Notes:
+    ///   - If `[offline_breakglass] enabled = false` in himmelblau.conf, this command will do nothing.
+    ///   - Himmelblau will not cache Entra ID password hashes unless offline breakglass has
+    ///     been explicitly enabled in advance.
+    ///   - This feature should only be used for emergency access during verified outages.
+    OfflineBreakglass {
+        #[clap(short, long)]
+        debug: bool,
+        #[clap(long)]
+        ttl: Option<String>,
+    },
     /// Check that the himmelblaud daemon is online and able to connect correctly to the himmelblaud server.
     Status {
         #[clap(short, long)]

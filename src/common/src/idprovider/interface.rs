@@ -318,4 +318,6 @@ pub trait IdProvider {
     ) -> Result<GroupToken, IdpError>;
 
     async fn get_cachestate(&self, _account_id: Option<&str>) -> CacheState;
+
+    async fn offline_break_glass(&self, _ttl: Option<u64>) -> Result<(), IdpError>;
 }

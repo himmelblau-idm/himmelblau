@@ -41,7 +41,7 @@ use himmelblau::{ConfidentialClientApplication, UserToken};
 use himmelblau_unix_common::auth::{authenticate_async, SimpleMessagePrinter};
 use himmelblau_unix_common::auth_handle_mfa_resp;
 use himmelblau_unix_common::client::call_daemon;
-use himmelblau_unix_common::config::{split_username, HimmelblauConfig};
+use himmelblau_unix_common::config::{parse_ttl_to_seconds, split_username, HimmelblauConfig};
 use himmelblau_unix_common::constants::{
     CONFIDENTIAL_CLIENT_CERT_KEY_TAG, CONFIDENTIAL_CLIENT_CERT_TAG, CONFIDENTIAL_CLIENT_SECRET_TAG,
     DEFAULT_CONFIG_PATH, DEFAULT_HSM_PIN_PATH_ENC, DEFAULT_ODC_PROVIDER, ID_MAP_CACHE,
@@ -560,6 +560,7 @@ async fn main() -> ExitCode {
             gid: _,
         }) => debug,
         HimmelblauUnixOpt::Idmap(IdmapOpt::Clear { debug }) => debug,
+        HimmelblauUnixOpt::OfflineBreakglass { debug, ttl: _ } => debug,
         HimmelblauUnixOpt::Status { debug } => debug,
         HimmelblauUnixOpt::Tpm { debug } => debug,
         HimmelblauUnixOpt::Version { debug } => debug,
@@ -1861,6 +1862,39 @@ async fn main() -> ExitCode {
             };
 
             let req = ClientRequest::InvalidateCache;
+
+            match call_daemon(&cfg.get_socket_path(), req, cfg.get_unix_sock_timeout()).await {
+                Ok(r) => match r {
+                    ClientResponse::Ok => info!("success"),
+                    _ => {
+                        error!("Error: unexpected response -> {:?}", r);
+                    }
+                },
+                Err(e) => {
+                    error!("Error -> {:?}", e);
+                }
+            };
+
+            ExitCode::SUCCESS
+        }
+        HimmelblauUnixOpt::OfflineBreakglass { debug: _, ttl } => {
+            debug!("Starting offline breakglass tool ...");
+
+            if unsafe { libc::geteuid() } != 0 {
+                error!("This command must be run as root.");
+                return ExitCode::FAILURE;
+            }
+
+            let cfg = match HimmelblauConfig::new(Some(DEFAULT_CONFIG_PATH)) {
+                Ok(c) => c,
+                Err(_e) => {
+                    error!("Failed to parse {}", DEFAULT_CONFIG_PATH);
+                    return ExitCode::FAILURE;
+                }
+            };
+
+            let ttl = ttl.and_then(|v| parse_ttl_to_seconds(&v));
+            let req = ClientRequest::OfflineBreakGlass(ttl);
 
             match call_daemon(&cfg.get_socket_path(), req, cfg.get_unix_sock_timeout()).await {
                 Ok(r) => match r {
