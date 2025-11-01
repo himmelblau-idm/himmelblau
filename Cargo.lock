@@ -3345,9 +3345,9 @@ dependencies = [
 
 [[package]]
 name = "libhimmelblau"
-version = "0.7.19"
+version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ec657afd7aac26c2c31bba7915c1584b07cb2a8401e92946c6b2d1a1d6da4b12"
+checksum = "d006d77b72b37129c5760325b92c444aa26bc4bf8cc1d7529abc0dff0c001e68"
 dependencies = [
  "base64 0.22.1",
  "cbindgen",
@@ -3367,7 +3367,6 @@ dependencies = [
  "reqwest",
  "reqwest_cookie_store",
  "scraper",
- "semver",
  "serde",
  "serde_bytes",
  "serde_json",

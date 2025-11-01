@@ -169,6 +169,8 @@ Flake based configurations add this repository to their inputs, enable the servi
 This detects your distro and builds the matching packages (inside a container).
 Artifacts land in `./packaging/`.
 
+[Docker BuildKit](https://docs.docker.com/build/buildkit/#getting-started) is required to enable cache volumes.
+
 ```bash
 make
 ```
@@ -288,7 +290,7 @@ Setup PAM
     # vim /etc/pam.d/common-password
     password	sufficient	pam_himmelblau.so ignore_unknown_user
     password        optional        pam_gnome_keyring.so    use_authtok
-    password	sufficient	pam_unix.so	use_authtok nullok shadow try_first_pass 
+    password	sufficient	pam_unix.so	use_authtok nullok shadow try_first_pass
     password	required	pam_deny.so
 
 ---

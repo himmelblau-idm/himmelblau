@@ -1351,6 +1351,7 @@ impl IdProvider for HimmelblauProvider {
                                 None,
                                 &auth_options,
                                 Some(auth_init),
+                                None /* MFA method */
                             )
                             .await,
                         Err(MsalError::PasswordRequired) => {
@@ -1948,6 +1949,8 @@ impl IdProvider for HimmelblauProvider {
                 if sfa_enabled {
                     opts.push(AuthOption::NoDAGFallback);
                 }
+
+                // Call the appropriate method based on whether mfa_method is configured
                 let mresp = self
                     .client
                     .read()
@@ -1957,8 +1960,10 @@ impl IdProvider for HimmelblauProvider {
                         Some(&cred),
                         &opts,
                         None,
+                        self.config.read().await.get_mfa_method().as_deref(), /* MFA method */
                     )
                     .await;
+
                 // We need to wait to handle the response until after we've released
                 // the write lock on the client, otherwise we will deadlock.
                 let resp = net_down_check!(mresp,
@@ -2140,7 +2145,7 @@ impl IdProvider for HimmelblauProvider {
                     self.client
                         .read()
                         .await
-                        .acquire_token_by_mfa_flow(account_id, Some(&cred), None, flow)
+                        .acquire_token_by_mfa_flow(account_id, Some(&cred), None, flow, None)
                         .await,
                     Ok(token) => token,
                     Err(e) => {
@@ -2226,7 +2231,7 @@ impl IdProvider for HimmelblauProvider {
                     self.client
                         .read()
                         .await
-                        .acquire_token_by_mfa_flow(account_id, None, Some(poll_attempt), flow)
+                        .acquire_token_by_mfa_flow(account_id, None, Some(poll_attempt), flow, None)
                         .await,
                     Ok(token) => token,
                     Err(e) => match e {
@@ -2314,7 +2319,7 @@ impl IdProvider for HimmelblauProvider {
                     self.client
                         .read()
                         .await
-                        .acquire_token_by_mfa_flow(account_id, Some(&assertion), None, flow)
+                        .acquire_token_by_mfa_flow(account_id, Some(&assertion), None, flow, None)
                         .await,
                     Ok(token) => token,
                     Err(e) => {
