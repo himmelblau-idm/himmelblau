@@ -270,7 +270,7 @@ macro_rules! find_provider {
 }
 
 fn idp_get_domain_for_account(account_id: &str) -> Result<&str, IdpError> {
-    match split_username(&account_id) {
+    match split_username(account_id) {
         Some((_sam, domain)) => Ok(domain),
         None => {
             debug!("Authentication ignored for local user");
@@ -381,7 +381,7 @@ impl IdProvider for HimmelblauMultiProvider {
         tpm: &mut tpm::provider::BoxedDynTpm,
         machine_key: &tpm::structures::StorageKey,
     ) -> Result<bool, IdpError> {
-        let domain = idp_get_domain_for_account(&account_id)?;
+        let domain = idp_get_domain_for_account(account_id)?;
         let providers = self.providers.read().await;
         let provider = find_provider!(self, providers, domain)?;
 
@@ -422,7 +422,7 @@ impl IdProvider for HimmelblauMultiProvider {
         machine_key: &tpm::structures::StorageKey,
         shutdown_rx: &broadcast::Receiver<()>,
     ) -> Result<(AuthRequest, AuthCredHandler), IdpError> {
-        let domain = idp_get_domain_for_account(&account_id)?;
+        let domain = idp_get_domain_for_account(account_id)?;
         let providers = self.providers.read().await;
         let provider = find_provider!(self, providers, domain)?;
 
@@ -452,7 +452,7 @@ impl IdProvider for HimmelblauMultiProvider {
         machine_key: &tpm::structures::StorageKey,
         shutdown_rx: &broadcast::Receiver<()>,
     ) -> Result<(AuthResult, AuthCacheAction), IdpError> {
-        let domain = idp_get_domain_for_account(&account_id)?;
+        let domain = idp_get_domain_for_account(account_id)?;
         let providers = self.providers.read().await;
         let provider = find_provider!(self, providers, domain)?;
 
@@ -479,7 +479,7 @@ impl IdProvider for HimmelblauMultiProvider {
         no_hello_pin: bool,
         keystore: &mut D,
     ) -> Result<(AuthRequest, AuthCredHandler), IdpError> {
-        let domain = idp_get_domain_for_account(&account_id)?;
+        let domain = idp_get_domain_for_account(account_id)?;
         let providers = self.providers.read().await;
         let provider = find_provider!(self, providers, domain)?;
 
@@ -499,7 +499,7 @@ impl IdProvider for HimmelblauMultiProvider {
         machine_key: &tpm::structures::StorageKey,
         online_at_init: bool,
     ) -> Result<AuthResult, IdpError> {
-        let domain = idp_get_domain_for_account(&account_id)?;
+        let domain = idp_get_domain_for_account(account_id)?;
         let providers = self.providers.read().await;
         let provider = find_provider!(self, providers, domain)?;
 
@@ -2843,7 +2843,10 @@ impl HimmelblauProvider {
                     let user = CString::into_raw(cstr_user);
                     let pwd = getpwnam(user);
                     if pwd.is_null() {
-                        return Err(IdpError::NotFound);
+                        return Err(IdpError::NotFound {
+                            what: "getpwnam".to_string(),
+                            where_: "local user map".to_string(),
+                        });
                     }
                     *pwd
                 };
