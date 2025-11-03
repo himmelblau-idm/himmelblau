@@ -24,4 +24,4 @@ jobs:
       with:
         extra_nix_config: experimental-features = nix-command flakes
     - run: nix flake check
-    - run: nix build --max-jobs 1 ".#himmelblau" ".#himmelblau-desktop"
+    - run: nix build --max-jobs 1 ".#himmelblau" ".#himmelblau-desktop" 2>&1
