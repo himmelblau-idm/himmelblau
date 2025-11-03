@@ -189,7 +189,7 @@ You can also target specific distros explicitly.
 Available targets (as of now):
 
 * **DEB:** `ubuntu22.04` `ubuntu24.04` `debian12` `debian13`
-* **RHEL family:** `rocky8` `rocky9` `rocky10` `fedora41` `fedora42` `rawhide`
+* **RHEL family:** `rocky8` `rocky9` `rocky10` `fedora41` `fedora42` `fedora43` `rawhide`
 * **SUSE:** `sle15sp6` `sle15sp7` `sle16` `tumbleweed`
 
 Examples:
@@ -288,7 +288,7 @@ Setup PAM
     # vim /etc/pam.d/common-password
     password	sufficient	pam_himmelblau.so ignore_unknown_user
     password        optional        pam_gnome_keyring.so    use_authtok
-    password	sufficient	pam_unix.so	use_authtok nullok shadow try_first_pass 
+    password	sufficient	pam_unix.so	use_authtok nullok shadow try_first_pass
     password	required	pam_deny.so
 
 ---

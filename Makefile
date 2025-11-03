@@ -11,7 +11,7 @@ all: .packaging dockerfiles ## Auto-detect host distro and build packages just f
 	  rocky|almalinux|rhel|ol|oraclelinux|centos|centos_stream|centos-stream) \
 		major=$$(echo "$$VER" | awk -F. '{print $$1}'); \
 		case "$$major" in 8) TARGET="rocky8" ;; 9) TARGET="rocky9" ;; 10) TARGET="rocky10" ;; esac ;; \
-	  fedora)         case "$$VER" in 41*) TARGET="fedora41" ;; 42*) TARGET="fedora42" ;; *) TARGET="rawhide" ;; esac ;; \
+	  fedora)         case "$$VER" in 41*) TARGET="fedora41" ;; 42*) TARGET="fedora42" ;; 43*) TARGET="fedora43" ;; *) TARGET="rawhide" ;; esac ;; \
 	  sles|sled|sle_micro|suse|suse-linux-enterprise) \
 		case "$$VER" in 15.6*|15-SP6*) TARGET="sle15sp6" ;; 15.7*|15-SP7*) TARGET="sle15sp7" ;; 16*|16.*) TARGET="sle16" ;; esac ;; \
 	  opensuse-leap)  case "$$VER" in 15.6*) TARGET="sle15sp6" ;; 15.7*) TARGET="sle15sp7" ;; esac ;; \
@@ -51,7 +51,7 @@ nix: .packaging ## Build Nix packages into ./packaging/
 	done
 
 DEB_TARGETS := ubuntu22.04 ubuntu24.04 debian12 debian13
-RPM_TARGETS := rocky8 rocky9 rocky10 tumbleweed rawhide fedora41 fedora42
+RPM_TARGETS := rocky8 rocky9 rocky10 tumbleweed rawhide fedora41 fedora42 fedora43
 SLE_TARGETS := sle15sp6 sle15sp7 sle16
 ALL_PACKAGE_TARGETS := $(DEB_TARGETS) $(RPM_TARGETS) $(SLE_TARGETS)
 
