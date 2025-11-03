@@ -111,7 +111,7 @@ CMD_SEP = f" && \ \n{CMD_TAB}"
 def build_deb_final_cmd(features: list, distro_slug: str) -> str:
     parts = []
     for pkg, _, needs_tpm in PACKAGES:
-        if pkg == "selinux": # Debian doesn't use selinux
+        if pkg == "selinux":  # Debian doesn't use selinux
             continue
         if not needs_tpm and "tpm" in features:
             features.remove("tpm")
@@ -127,10 +127,7 @@ def build_rpm_final_cmd(features: list, selinux: bool) -> str:
     feat_str = f" --features {','.join(features)}" if features else ""
     build = f"cargo build --release{feat_str} && \\ \n{CMD_TAB}"
     strip = CMD_SEP.join(
-        [
-            "strip -s target/release/%s" % s
-            for s in ["*.so", "aad-tool", "himmelblaud", "himmelblaud_tasks", "broker"]
-        ]
+        ["strip -s target/release/%s" % s for s in ["*.so", "aad-tool", "himmelblaud", "himmelblaud_tasks", "broker"]]
     )
     if selinux:
         pkgs = PACKAGES
@@ -186,6 +183,12 @@ DISTS = {
     "fedora42": {
         "family": "rpm",
         "image": "fedora:42",
+        "tpm": True,
+        "selinux": True,
+    },
+    "fedora43": {
+        "family": "rpm",
+        "image": "fedora:43",
         "tpm": True,
         "selinux": True,
     },
@@ -375,9 +378,7 @@ def render(dist_name, dist_cfg):
     pkgs = build_pkg_list(dist_cfg, selinux)
     bootstrap = fam["bootstrap"].format(pkgs=pkgs).rstrip()
     env = fam["env"] or ""
-    sle_connect = (
-        SLE_CONNECT_TPL % dist_cfg.get("scc_vers") if dist_cfg.get("scc") else ""
-    )
+    sle_connect = SLE_CONNECT_TPL % dist_cfg.get("scc_vers") if dist_cfg.get("scc") else ""
 
     # Features
     tpm = bool(dist_cfg.get("tpm", False))
@@ -413,9 +414,7 @@ def render(dist_name, dist_cfg):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", default="./dockerfiles", help="Output directory")
-    ap.add_argument(
-        "--only", default="", help="Comma-separated list of dists to render"
-    )
+    ap.add_argument("--only", default="", help="Comma-separated list of dists to render")
     args = ap.parse_args()
 
     if args.only:
