@@ -174,12 +174,6 @@ DISTS = {
         "tpm": False,
     },
     # ---- Fedora family ----
-    "fedora41": {
-        "family": "rpm",
-        "image": "fedora:41",
-        "tpm": True,
-        "selinux": True,
-    },
     "fedora42": {
         "family": "rpm",
         "image": "fedora:42",
