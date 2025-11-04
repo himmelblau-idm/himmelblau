@@ -323,13 +323,6 @@ ARG CARGO_PATCH_ARG=""
 # Install essential build dependencies
 {bootstrap}
 
-# Install Rust (latest stable), verifying sha256sum of rustup-init.sh script
-# current sha256 sum is for rustup-init 1.28.2 (d1f31992a 2025-04-28)
-RUN curl --proto '=https' --tlsv1.2 -sSf -o rustup-init.sh https://sh.rustup.rs && \\
-    echo "17247e4bcacf6027ec2e11c79a72c494c9af69ac8d1abcc1b271fa4375a106c2 rustup-init.sh" | sha256sum --check --status && \\
-    sh ./rustup-init.sh -y && \\
-    /root/.cargo/bin/rustc --version
-
 # Set environment for Rust
 ENV PATH="/root/.cargo/bin:${{PATH}}"
 
@@ -338,6 +331,11 @@ VOLUME /himmelblau
 
 # Change directory to the repository
 WORKDIR /himmelblau
+
+
+# Install Rust (latest stable)
+RUN curl https://sh.rustup.rs -sSf | sh -s -- -y && \\
+    cargo install cargo-deb cargo-generate-rpm
 
 # Install the cargo-deb and cargo-generate-rpm tools
 RUN --mount=type=cache,target=/root/.cargo/registry cargo install cargo-deb cargo-generate-rpm
