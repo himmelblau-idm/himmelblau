@@ -55,9 +55,6 @@ macro_rules! auth_handle_mfa_resp {
                     _ => $on_poll,
                 }
             }
-            // TODO: Will there always be a default MFA method?
-            // If get_default_mfa_method_details() doesn't return a value
-            // we can use, maybe we need to raise an error here?
             None => $on_poll
         }
     };

@@ -1363,7 +1363,7 @@ impl IdProvider for HimmelblauProvider {
                                 None,
                                 &auth_options,
                                 Some(auth_init),
-                                None /* MFA method */
+                                self.config.read().await.get_mfa_method().as_deref()
                             )
                             .await,
                         Err(MsalError::PasswordRequired) => {
