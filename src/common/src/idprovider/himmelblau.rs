@@ -2002,7 +2002,7 @@ impl IdProvider for HimmelblauProvider {
                         Some(&cred),
                         &opts,
                         None,
-                        self.config.read().await.get_mfa_method().as_deref(), /* MFA method */
+                        self.config.read().await.get_mfa_method().as_deref(),
                     )
                     .await;
 

@@ -334,11 +334,8 @@ WORKDIR /himmelblau
 
 
 # Install Rust (latest stable)
-RUN curl https://sh.rustup.rs -sSf | sh -s -- -y && \\
+RUN --mount=type=cache,target=/root/.cargo/registry curl https://sh.rustup.rs -sSf | sh -s -- -y && \\
     cargo install cargo-deb cargo-generate-rpm
-
-# Install the cargo-deb and cargo-generate-rpm tools
-RUN --mount=type=cache,target=/root/.cargo/registry cargo install cargo-deb cargo-generate-rpm
 
 {patch_libhimmelblau}
 
