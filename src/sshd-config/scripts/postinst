@@ -1,0 +1,9 @@
+#!/bin/sh
+
+set -eu
+
+# Comment out the `KbdInteractiveAuthentication no` line if present
+CONF="/etc/ssh/sshd_config"
+if [ -f "$CONF" ]; then
+    sed -i 's/^KbdInteractiveAuthentication[[:space:]]\+no/#KbdInteractiveAuthentication no/' "$CONF"
+fi
