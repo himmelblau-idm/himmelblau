@@ -2596,20 +2596,11 @@ impl HimmelblauProvider {
         }
     }
 
-    fn normalize_account_name(&self, account_name: &str) -> String {
-        if let Some((cn, _)) = split_username(account_name) {
-            format!("{}@{}", cn, self.domain).to_lowercase()
-        } else {
-            account_name.to_string().to_lowercase()
-        }
-    }
-
     fn fetch_hello_key_tag(&self, account_id: &str, amr_ngcmfa: bool) -> String {
-        let account_id = self.normalize_account_name(account_id);
         if amr_ngcmfa {
-            format!("{}/hello", account_id)
+            format!("{}/hello", account_id.to_lowercase())
         } else {
-            format!("{}/hello_decoupled", account_id)
+            format!("{}/hello_decoupled", account_id.to_lowercase())
         }
     }
 
@@ -2619,12 +2610,11 @@ impl HimmelblauProvider {
         account_id: &str,
         keystore: &mut D,
     ) -> Result<(LoadableMsHelloKey, KeyType), IdpError> {
-        let account_id = self.normalize_account_name(account_id);
-        match keystore.get_tagged_hsm_key(&format!("{}/hello", account_id)) {
+        match keystore.get_tagged_hsm_key(&format!("{}/hello", account_id.to_lowercase())) {
             Ok(Some(hello_key)) => Ok((hello_key, KeyType::Hello)),
             Err(_) | Ok(None) => {
                 let hello_key = keystore
-                    .get_tagged_hsm_key(&format!("{}/hello_decoupled", account_id))
+                    .get_tagged_hsm_key(&format!("{}/hello_decoupled", account_id.to_lowercase()))
                     .map_err(|_| IdpError::BadRequest)?
                     .ok_or(IdpError::BadRequest)?;
                 Ok((hello_key, KeyType::Decoupled))
@@ -2645,8 +2635,7 @@ impl HimmelblauProvider {
     }
 
     fn fetch_hello_prt_key_tag(&self, account_id: &str) -> String {
-        let account_id = self.normalize_account_name(account_id);
-        format!("{}/hello_prt", account_id)
+        format!("{}/hello_prt", account_id.to_lowercase())
     }
 
     #[instrument(level = "debug", skip_all)]
@@ -2749,6 +2738,7 @@ impl HimmelblauProvider {
         let config = self.config.read().await;
         let mut groups: Vec<GroupToken>;
         let posix_attrs: HashMap<String, String>;
+        let spn = spn.to_lowercase();
         let uuid = match &value {
             TokenOrObj::UserObj((_, value)) => Uuid::parse_str(&value.id).map_err(|e| {
                 error!("Failed fetching user uuid: {:?}", e);
@@ -2833,7 +2823,7 @@ impl HimmelblauProvider {
         };
         let valid = true;
         let user_map = UserMap::new(&config.get_user_map_file());
-        let (uidnumber, gidnumber) = match user_map.get_local_from_upn(spn) {
+        let (uidnumber, gidnumber) = match user_map.get_local_from_upn(&spn) {
             Some(user) => {
                 let pwd = unsafe {
                     let cstr_user = CString::new(user).map_err(|e| {
@@ -2858,7 +2848,7 @@ impl HimmelblauProvider {
                     error!("Failed reading from the idmap cache: {:?}", e);
                     IdpError::BadRequest
                 })?;
-                match idmap_cache.get_user_by_name(spn) {
+                match idmap_cache.get_user_by_name(&spn) {
                     Some(user) => (user.uid, user.gid),
                     None => {
                         let uidnumber = match config.get_id_attr_map() {
@@ -2883,7 +2873,7 @@ impl HimmelblauProvider {
                                         error!("{:?}", e);
                                         IdpError::BadRequest
                                     })?,
-                                    spn,
+                                    &spn,
                                 )
                                 .map_err(|e| {
                                     error!("{:?}", e);
@@ -2919,8 +2909,8 @@ impl HimmelblauProvider {
                         } else {
                             // Otherwise add a fake primary group
                             groups.push(GroupToken {
-                                name: spn.to_string(),
-                                spn: spn.to_string(),
+                                name: spn.clone(),
+                                spn: spn.clone(),
                                 uuid,
                                 gidnumber: uidnumber,
                             });
@@ -2952,8 +2942,8 @@ impl HimmelblauProvider {
         }
 
         Ok(UserToken {
-            name: spn.to_string(),
-            spn: spn.to_string(),
+            name: spn.clone(),
+            spn: spn.clone(),
             uuid,
             real_gidnumber: Some(gidnumber),
             gidnumber: uidnumber,
