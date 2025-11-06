@@ -320,7 +320,10 @@ impl HimmelblauConfig {
     }
 
     pub fn get_app_id(&self, domain: &str) -> Option<String> {
-        self.config.get(domain, "app_id")
+        match self.config.get(domain, "app_id") {
+            Some(val) => Some(val),
+            None => self.config.get("global", "app_id"),
+        }
     }
 
     pub fn get_idmap_range(&self, domain: &str) -> (u32, u32) {
@@ -681,7 +684,10 @@ impl HimmelblauConfig {
     }
 
     pub fn get_logon_token_app_id(&self, domain: &str) -> Option<String> {
-        self.config.get(domain, "logon_token_app_id")
+        match self.config.get(domain, "logon_token_app_id") {
+            Some(val) => Some(val),
+            None => self.config.get("global", "logon_token_app_id"),
+        }
     }
 
     pub fn get_intune_device_id(&self, domain: &str) -> Option<String> {
@@ -925,7 +931,10 @@ impl HimmelblauConfig {
     }
 
     pub fn get_sudo_groups(&self) -> Vec<String> {
-        let mut sudo_groups = vec![];
+        let mut sudo_groups = match self.config.get("global", "sudo_groups") {
+            Some(val) => val.split(',').map(|s| s.trim().to_string()).collect(),
+            None => vec![],
+        };
         for section in self.config.sections() {
             sudo_groups.extend(match self.config.get(&section, "sudo_groups") {
                 Some(val) => val.split(',').map(|s| s.trim().to_string()).collect(),

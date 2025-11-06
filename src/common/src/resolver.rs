@@ -268,9 +268,19 @@ where
         }
     }
 
-    pub async fn check_nxset(&self, name: &str, idnumber: u32) -> bool {
+    pub async fn check_nxset(&self, name: Option<&str>, idnumber: Option<u32>) -> bool {
         let nxset_txn = self.nxset.lock().await;
-        nxset_txn.contains(&Id::Gid(idnumber)) || nxset_txn.contains(&Id::Name(name.to_string()))
+        if let Some(name) = name {
+            if nxset_txn.contains(&Id::Name(name.to_string())) {
+                return true;
+            }
+        }
+        if let Some(idnumber) = idnumber {
+            if nxset_txn.contains(&Id::Gid(idnumber)) {
+                return true;
+            }
+        }
+        false
     }
 
     async fn get_cached_usertoken(&self, account_id: &Id) -> Result<(bool, Option<UserToken>), ()> {
@@ -539,7 +549,10 @@ where
 
         match group_get_result {
             Ok(n_tok) => {
-                if self.check_nxset(&n_tok.name, n_tok.gidnumber).await {
+                if self
+                    .check_nxset(Some(&n_tok.name), Some(n_tok.gidnumber))
+                    .await
+                {
                     // Refuse to release the token, it's in the denied set.
                     self.delete_cache_grouptoken(n_tok.uuid).await?;
                     Ok(None)
@@ -563,6 +576,15 @@ where
         scopes: Vec<String>,
         client_id: Option<String>,
     ) -> Option<UnixUserToken> {
+        // Validate the user isn't in the nxset (aka, it's a local user or group).
+        let (name, idnumber) = match account_id.clone() {
+            Id::Name(name) => (Some(name), None),
+            Id::Gid(idnumber) => (None, Some(idnumber)),
+        };
+        if self.check_nxset(name.as_deref(), idnumber).await {
+            return None;
+        }
+
         let token = match self.get_usertoken(account_id.clone()).await {
             Ok(Some(token)) => token,
             _ => {
@@ -600,6 +622,15 @@ where
         &self,
         account_id: Id,
     ) -> Option<(uid_t, uid_t, Vec<u8>, Vec<u8>)> {
+        // Validate the user isn't in the nxset (aka, it's a local user or group).
+        let (name, idnumber) = match account_id.clone() {
+            Id::Name(name) => (Some(name), None),
+            Id::Gid(idnumber) => (None, Some(idnumber)),
+        };
+        if self.check_nxset(name.as_deref(), idnumber).await {
+            return None;
+        }
+
         let token = match self.get_usertoken(account_id.clone()).await {
             Ok(Some(token)) => token,
             _ => {
@@ -631,6 +662,15 @@ where
     }
 
     pub async fn get_user_prt_cookie(&self, account_id: Id) -> Option<String> {
+        // Validate the user isn't in the nxset (aka, it's a local user or group).
+        let (name, idnumber) = match account_id.clone() {
+            Id::Name(name) => (Some(name), None),
+            Id::Gid(idnumber) => (None, Some(idnumber)),
+        };
+        if self.check_nxset(name.as_deref(), idnumber).await {
+            return None;
+        }
+
         let token = match self.get_usertoken(account_id.clone()).await {
             Ok(Some(token)) => token,
             _ => {
@@ -668,6 +708,11 @@ where
         token: &UnixUserToken,
         new_tok: &str,
     ) -> Result<bool, ()> {
+        // Validate the user isn't in the nxset (aka, it's a local user or group).
+        if self.check_nxset(Some(account_id), None).await {
+            return Ok(false);
+        }
+
         let mut hsm_lock = self.hsm.lock().await;
         let mut dbtxn = self.db.write().await;
 
@@ -700,6 +745,15 @@ where
     }
 
     pub async fn get_usertoken(&self, account_id: Id) -> Result<Option<UserToken>, ()> {
+        // Validate the user isn't in the nxset (aka, it's a local user or group).
+        let (name, idnumber) = match account_id.clone() {
+            Id::Name(name) => (Some(name), None),
+            Id::Gid(idnumber) => (None, Some(idnumber)),
+        };
+        if self.check_nxset(name.as_deref(), idnumber).await {
+            return Ok(None);
+        }
+
         trace!("get_usertoken");
         // get the item from the cache
         let (expired, item) = self.get_cached_usertoken(&account_id).await.map_err(|e| {
@@ -987,6 +1041,12 @@ where
         // weird interactions - they should assume online/offline only for
         // the duration of their operation. A failure of connectivity during
         // an online operation will take the cache offline however.
+
+        // Skip the whole auth dance if this user is in the nxset (aka, it's a
+        // local user or group).
+        if self.check_nxset(Some(account_id), None).await {
+            return Ok((AuthSession::Denied, PamAuthResponse::Unknown));
+        }
 
         let id = Id::Name(account_id.to_string());
         let (_expired, token) = self.get_cached_usertoken(&id).await?;
@@ -1278,7 +1338,10 @@ where
         match maybe_err {
             // What did the provider direct us to do next?
             Ok(AuthResult::Success { mut token }) => {
-                if self.check_nxset(&token.name, token.gidnumber).await {
+                if self
+                    .check_nxset(Some(&token.name), Some(token.gidnumber))
+                    .await
+                {
                     // Refuse to release the token, it's in the denied set.
                     self.delete_cache_usertoken(token.uuid).await?;
                     *auth_session = AuthSession::Denied;
