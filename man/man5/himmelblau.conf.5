@@ -45,32 +45,20 @@ Lines beginning with a '#' are comments and are ignored by the parser.
 This section contains settings that apply globally to all operations of Himmelblau.
 
 .TP
-.B domains
+.B domain
 .RE
-A comma-separated list of primary domains for your Azure Entra ID tenants. This parameter is
-.B REQUIRED
-for successful authentication. If this option is not specified, no users will be permitted to authenticate. The first user to authenticate to each domain will become the owner of the device object in the directory.
-
-Specify ONLY the primary domain for each tenant. Specifying multiple custom domains which belong to a single tenant will cause an idmap range overlap and the himmelblaud daemon will NOT start.
-
-If multiple domains are specified, you
+The primary Azure Entra ID domain name used for authentication. This value
 .B MUST
-define an
-.B idmap_range
-for each domain to avoid conflicts in user and group ID mappings. Overlapping ID ranges will cause the idmapper to throw a critical error and stop the daemon. This safeguard ensures that two users are not mistakenly mapped to the same UID.
+match the domain name that users enter when signing in (for example, the domain portion of their UPN).
+
+In most cases, this will be the primary domain of your Azure Entra ID tenant. If your organization uses multiple verified domains or aliases, choose the one that your users actually use to sign in.
+
+This parameter is
+.B REQUIRED
+for successful authentication. If it is not specified, no users will be permitted to authenticate.
 
 .EXAMPLES
-domains = example.com,example2.com
-
-.P
-[example.com]
-.br
-idmap_range = 5000000-5999999
-
-.P
-[example2.com]
-.br
-idmap_range = 6000000-6999999
+domain = example.com
 
 .TP
 .B debug
@@ -89,13 +77,6 @@ A comma-separated list of Entra Id Users and Groups permitted to access the syst
 
 .EXAMPLES
 pam_allow_groups = f3c9a7e4-7d5a-47e8-832f-3d2d92abcd12,5ba4ef1d-e454-4f43-ba7c-6fe6f1601915,admin@himmelblau-idm.org
-
-.TP
-.B local_sudo_group
-.RE
-The local group that should be given to users in any of the groups specified in sudo_groups.
-Only has an affect if sudo_groups is set.
-Removes group from user if they are no longer a member of the specified entra group.
 
 .TP
 .B id_attr_map
@@ -124,14 +105,6 @@ will not be available to NSS.
 
 .EXAMPLES
 rfc2307_group_fallback_map = <name|uuid>
-
-.TP
-.B odc_provider
-.RE
-Specifies the hostname for sending federationProvider requests.
-
-.EXAMPLES
-odc_provider = odc.officeapps.live.com
 
 .TP
 .B enable_hello
@@ -206,17 +179,32 @@ A comma-separated list of local groups that every Entra ID user should be a memb
 local_groups = sudo,admin
 
 .TP
+.B sudo_groups
+.RE
+A comma-separated list of Azure Entra ID group object IDs whose members should be granted
+.B sudo
+access on this system.
+If
+.B local_sudo_group
+is not defined, the local group
+.B sudo
+will be used.
+
+.EXAMPLES
+.P
+sudo_groups = f3c9a7e4-7d5a-47e8-832f-3d2d92abcd12,5ba4ef1d-e454-4f43-ba7c-6fe6f1601915
+
+.TP
+.B local_sudo_group
+.RE
+The local group that should be given to users in any of the groups specified in sudo_groups.
+Only has an affect if sudo_groups is set.
+Removes group from user if they are no longer a member of the specified entra group.
+
+.TP
 .B logon_script
 .RE
-A script that will execute every time a user logs on. Two environment variables are set: USERNAME, and ACCESS_TOKEN. The ACCESS_TOKEN environment variable is an access token for the MS Graph. The token scope config option sets the comma-separated scopes that should be requested for the ACCESS_TOKEN. ACCESS_TOKEN will be empty during offline logon. The return code of the script determines how authentication proceeds. 0 is success, 1 is a soft failure and authentication will proceed, while 2 is a hard failure causing authentication to fail. The
-.B app_id
-option
-.B MUST
-be set for each domain to ensure the
-.B logon_token_scopes
-option has the correct API permissions. Failing to do so will prevent the
-.B logon_script
-from executing.
+A script that will execute every time a user logs on. Two environment variables are set: USERNAME, and ACCESS_TOKEN. The ACCESS_TOKEN environment variable is an access token for the MS Graph. The token scope config option sets the comma-separated scopes that should be requested for the ACCESS_TOKEN. ACCESS_TOKEN will be empty during offline logon. The return code of the script determines how authentication proceeds. 0 is success, 1 is a soft failure and authentication will proceed, while 2 is a hard failure causing authentication to fail.
 
 .EXAMPLES
 logon_script = /etc/himmelblau/logon.sh
@@ -228,10 +216,55 @@ A comma-separated list of the scopes to be requested for the ACCESS_TOKEN during
 .B MUST
 correspond to the API permissions assigned to the Entra Id Application specified by the
 .B app_id
-domain option.
+option.
 
 .EXAMPLES
 logon_token_scopes = user.read,mail.read
+
+.TP
+.B app_id
+.RE
+Specifies the Azure Entra ID application (client) ID used by Himmelblau for directory operations such as reading extended attributes (for example,
+the
+.B gidNumber
+attribute used in RFC 2307 idmapping).
+
+If
+.B logon_token_app_id
+is not set, this application ID is also used when requesting access tokens for the user logon script.
+
+.PP
+\fBNote:\fR In the Azure Portal for the application corresponding to \fBapp_id\fR, ensure that the redirect URI
+\fIhimmelblau://Himmelblau.EntraId.BrokerPlugin\fR
+is enabled under “Mobile and desktop applications” in the Authentication section.
+This allows Himmelblau to correctly handle interactive token redirection.
+
+.EXAMPLES
+.P
+app_id = d023f7aa-d214-4b59-911d-6074de623765
+
+
+.TP
+.B logon_token_app_id
+.RE
+Specifies an alternate Azure Entra ID application (client) ID to be used exclusively for acquiring
+.B ACCESS_TOKEN
+values on behalf of the user during logon script execution.
+If not set, the value of
+.B app_id
+will be used instead.
+
+This option allows using a separate application registration that carries the specific API permissions required by logon scripts.
+
+.PP
+\fBNote:\fR In the Azure Portal for the application corresponding to \fBlogon_token_app_id\fR, ensure that the redirect URI
+\fIhttps://login.microsoftonline.com/common/oauth2/nativeclient\fR
+is enabled under “Mobile and desktop applications” in the Authentication section.
+This is required for Himmelblau to obtain tokens via the public client flow.
+
+.EXAMPLES
+.P
+logon_token_app_id = 544e695f-5d78-442e-b14e-e114e95e640c
 
 .TP
 .B enable_experimental_mfa
@@ -640,142 +673,6 @@ enabled = true
 ttl = 1d
 .br
 # Permit offline MFA logins for up to 24 hours after activation
-
-.SH DOMAIN-SPECIFIC SECTIONS
-Overrides can be defined for individual domains by using a section named after the domain in square brackets.
-
-.SS [example.com]
-This section allows customization of specific parameters for the domain
-.B example.com.
-Domain-specific sections override global values for the specified domain.
-
-.TP
-.B odc_provider
-.RE
-Overrides the `odc_provider` value for this domain.
-
-.EXAMPLES
-.P
-[example.com]
-.br
-odc_provider = custom.odcprovider.example.com
-
-.TP
-.B home_prefix
-.RE
-Overrides the `home_prefix` value for this domain.
-
-.EXAMPLES
-.P
-[example.com]
-.br
-home_prefix = /home/
-
-.TP
-.B home_attr
-.RE
-Overrides the `home_attr` value for this domain.
-
-.EXAMPLES
-.P
-[example.com]
-.br
-home_attr = UUID
-
-.TP
-.B home_alias
-.RE
-Overrides the `home_alias` value for this domain.
-
-.EXAMPLES
-.P
-[example.com]
-.br
-home_alias = SPN
-
-.TP
-.B shell
-.RE
-Overrides the `shell` value for this domain.
-
-.EXAMPLES
-.P
-[example.com]
-.br
-shell = /bin/bash
-
-.TP
-.B idmap_range
-.RE
-Overrides the `idmap_range` value for this domain.
-
-When this option is modified, you
-.B SHOULD
-run:
-.RS
-.IP
-sudo aad-tool cache-clear --really
-.RE
-
-To ensure that old cached ID mappings are cleared, preventing potential UID overlaps caused by stale cache data.
-
-.EXAMPLES
-.P
-[example.com]
-.br
-idmap_range = 5000000-5999999
-
-.TP
-.B logon_token_app_id
-.RE
-Specifies the Entra ID application ID to be used when requesting an ACCESS_TOKEN on behalf of the user for the logon script. If not set, the domain’s
-.B app_id
-will be used instead.
-
-This option allows configuring a separate application ID specifically for logon token requests, ensuring the correct API permissions are applied.
-
-.PP
-\fBNote:\fR In the Azure Portal for the application corresponding to \fBlogon_token_app_id\fR, ensure that the redirect URI \fIhttps://login.microsoftonline.com/common/oauth2/nativeclient\fR is enabled in the application's Authentication section under “Mobile and desktop applications.” This is required so that Himmelblau can obtain the necessary tokens.
-
-.EXAMPLES
-.P
-[example.com]
-.br
-logon_token_app_id = 544e695f-5d78-442e-b14e-e114e95e640c
-
-.TP
-.B app_id
-.RE
-Specifies the Entra ID application identifier that permits Himmelblau to fetch the
-.B gidNumber
-extended attribute using the
-.B GroupMember.Read.All
-API permission for rfc2307 idmapping.
-
-If
-.B logon_token_app_id
-is not set, this app_id will also be used for requesting access tokens for the logon script.
-
-.PP
-\fBNote:\fR For the application corresponding to \fBapp_id\fR, ensure that the redirect URI \fIhimmelblau://Himmelblau.EntraId.BrokerPlugin\fR is added in the application's Authentication section under “Mobile and desktop applications” in the Azure Portal. This allows Himmelblau to properly handle token redirection for the extended attribute lookups.
-
-.EXAMPLES
-.P
-[example.com]
-.br
-app_id = d023f7aa-d214-4b59-911d-6074de623765
-
-.TP
-.B sudo_groups
-.RE
-A comma separated list of entra groups that should have access to sudo.
-If local_sudo_group is not set, the local group 'sudo' will be used.
-
-.EXAMPLES
-.P
-[example.com]
-.br
-sudo_groups = f3c9a7e4-7d5a-47e8-832f-3d2d92abcd12,5ba4ef1d-e454-4f43-ba7c-6fe6f1601915
 
 .SH SEE ALSO
 .BR himmelblaud(8),
