@@ -75,3 +75,6 @@ if command -v authselect >/dev/null 2>&1; then
     fi
 fi
 '''
+
+[package.metadata.generate-rpm.recommends]
+oddjob_mkhomedir = "*" # For authselect dependencies
