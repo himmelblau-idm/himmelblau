@@ -7,7 +7,7 @@ permissions:
 on:
   pull_request:
     branches:
-      - stable-1.x
+      - stable-2.x
 
 jobs:
   nixos:
