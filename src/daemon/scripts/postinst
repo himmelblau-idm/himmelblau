@@ -33,3 +33,11 @@ if command -v systemd-creds >/dev/null 2>&1; then
         printf '%s' "$HSM_PIN" | systemd-creds encrypt --name=hsm-pin --with-key=auto --tpm2-device=auto - "$CRED" && (rm -f $LEGACY || true)
     fi
 fi
+
+# Enable and start Himmelblau daemons if systemd is available
+if command -v systemctl >/dev/null 2>&1; then
+    echo "Enabling and starting Himmelblau services..."
+    systemctl daemon-reload || true
+    systemctl enable himmelblaud.service himmelblaud-tasks.service || true
+    systemctl restart himmelblaud.service himmelblaud-tasks.service || true
+fi
