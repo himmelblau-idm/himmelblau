@@ -83,6 +83,7 @@ macro_rules! extract_base_url {
 pub struct HimmelblauMultiProvider {
     config: Arc<RwLock<HimmelblauConfig>>,
     providers: Arc<RwLock<HashMap<String, HimmelblauProvider>>>,
+    permit_new_providers: Arc<Mutex<bool>>,
     idmap: Arc<RwLock<Idmap>>,
 }
 
@@ -175,6 +176,12 @@ impl HimmelblauMultiProvider {
         cfg: &HimmelblauConfig,
         keystore: &mut D,
     ) -> Result<(), IdpError> {
+        if !*self.permit_new_providers.lock().await {
+            return Err(IdpError::NotFound {
+                what: "domain".to_string(),
+                where_: domain.to_string(),
+            });
+        }
         debug!("Adding provider for domain {}", domain);
         let authority_host = cfg.get_authority_host(domain);
         let tenant_id = cfg.get_tenant_id(domain);
@@ -247,14 +254,20 @@ impl HimmelblauMultiProvider {
             config: config.clone(),
             providers: Arc::new(RwLock::new(providers)),
             idmap,
+            permit_new_providers: Arc::new(Mutex::new(true)),
         };
 
+        let mut permit_new_providers = true;
         for domain in domains {
             providers
                 .add_tenant(&domain, &cfg, keystore)
                 .await
                 .map_err(|e| anyhow!("{:?}", e))?;
+            // If a provide is already configured (or multiple providers), do
+            // not permit new providers.
+            permit_new_providers = false;
         }
+        *providers.permit_new_providers.lock().await = permit_new_providers;
 
         // Spawn periodic cookie clearing loop (Fixes bugs #591 and #491)
         let providers_ref = providers.providers.clone();
