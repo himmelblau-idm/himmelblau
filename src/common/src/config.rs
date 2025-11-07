@@ -551,7 +551,6 @@ impl HimmelblauConfig {
         };
         let domain = match self.config.get("global", "domain") {
             Some(val) => {
-                info!("Mistyped `domain` parameter detected in himmelblau.conf. Did you mean `domains`?");
                 val.split(',').map(|s| s.trim().to_string()).collect()
             }
             None => vec![],
