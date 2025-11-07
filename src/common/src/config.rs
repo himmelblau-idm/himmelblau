@@ -550,9 +550,7 @@ impl HimmelblauConfig {
             None => vec![],
         };
         let domain = match self.config.get("global", "domain") {
-            Some(val) => {
-                val.split(',').map(|s| s.trim().to_string()).collect()
-            }
+            Some(val) => val.split(',').map(|s| s.trim().to_string()).collect(),
             None => vec![],
         };
         domains.extend(domain);
@@ -769,6 +767,11 @@ impl HimmelblauConfig {
         }
 
         let domains = self.get_configured_domains();
+        if domains.is_empty() {
+            info!("No domains are configured.");
+            return None;
+        }
+
         let mut modified_config = false;
 
         // We don't recognize this alias, so now we need to search for it the

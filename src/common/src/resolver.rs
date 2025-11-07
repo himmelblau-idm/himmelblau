@@ -203,7 +203,15 @@ where
     }
 
     async fn get_cachestate(&self, account_id: Option<&str>) -> CacheState {
-        self.client.get_cachestate(account_id).await
+        let mut dbtxn = self.db.write().await;
+        let res = self.client.get_cachestate(account_id, &mut dbtxn).await;
+        if let Err(e) = dbtxn.commit() {
+            error!(
+                "Failed to commit db transaction after getting cache state: {:?}",
+                e
+            );
+        }
+        res
     }
 
     pub async fn clear_cache(&self) -> Result<(), ()> {
@@ -594,6 +602,7 @@ where
         };
 
         let mut hsm_lock = self.hsm.lock().await;
+        let mut dbtxn = self.db.write().await;
 
         let user_get_result = self
             .client
@@ -602,12 +611,17 @@ where
                 scopes,
                 Some(&token),
                 client_id,
+                &mut dbtxn,
                 hsm_lock.deref_mut(),
                 &self.machine_key,
             )
             .await;
 
         drop(hsm_lock);
+        if dbtxn.commit().is_err() {
+            error!("Failed to commit user token DB transaction");
+            return None;
+        }
 
         match user_get_result {
             Ok(token) => Some(token),
@@ -640,18 +654,24 @@ where
         };
 
         let mut hsm_lock = self.hsm.lock().await;
+        let mut dbtxn = self.db.write().await;
 
         let (cloud_ccache, ad_ccache) = self
             .client
             .unix_user_ccaches(
                 &account_id,
                 Some(&token),
+                &mut dbtxn,
                 hsm_lock.deref_mut(),
                 &self.machine_key,
             )
             .await;
 
         drop(hsm_lock);
+        if dbtxn.commit().is_err() {
+            error!("Failed to commit user token DB transaction");
+            return None;
+        }
 
         Some((
             token.gidnumber,
@@ -680,18 +700,24 @@ where
         };
 
         let mut hsm_lock = self.hsm.lock().await;
+        let mut dbtxn = self.db.write().await;
 
         let cookie = self
             .client
             .unix_user_prt_cookie(
                 &account_id,
                 Some(&token),
+                &mut dbtxn,
                 hsm_lock.deref_mut(),
                 &self.machine_key,
             )
             .await;
 
         drop(hsm_lock);
+        if dbtxn.commit().is_err() {
+            error!("Failed to commit user token DB transaction");
+            return None;
+        }
 
         match cookie {
             Ok(cookie) => Some(cookie),

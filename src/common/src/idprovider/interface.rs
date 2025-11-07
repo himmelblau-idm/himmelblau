@@ -210,28 +210,31 @@ pub trait IdProvider {
         _machine_key: &tpm::structures::StorageKey,
     ) -> Result<UserTokenState, IdpError>;
 
-    async fn unix_user_access(
+    async fn unix_user_access<D: KeyStoreTxn + Send>(
         &self,
         _id: &Id,
         _scopes: Vec<String>,
         _token: Option<&UserToken>,
         _client_id: Option<String>,
+        _keystore: &mut D,
         _tpm: &mut tpm::provider::BoxedDynTpm,
         _machine_key: &tpm::structures::StorageKey,
     ) -> Result<UnixUserToken, IdpError>;
 
-    async fn unix_user_ccaches(
+    async fn unix_user_ccaches<D: KeyStoreTxn + Send>(
         &self,
         _id: &Id,
         _old_token: Option<&UserToken>,
+        _keystore: &mut D,
         _tpm: &mut tpm::provider::BoxedDynTpm,
         _machine_key: &tpm::structures::StorageKey,
     ) -> (Vec<u8>, Vec<u8>);
 
-    async fn unix_user_prt_cookie(
+    async fn unix_user_prt_cookie<D: KeyStoreTxn + Send>(
         &self,
         _id: &Id,
         _token: Option<&UserToken>,
+        _keystore: &mut D,
         _tpm: &mut tpm::provider::BoxedDynTpm,
         _machine_key: &tpm::structures::StorageKey,
     ) -> Result<String, IdpError>;
@@ -317,7 +320,11 @@ pub trait IdProvider {
         _tpm: &mut tpm::provider::BoxedDynTpm,
     ) -> Result<GroupToken, IdpError>;
 
-    async fn get_cachestate(&self, _account_id: Option<&str>) -> CacheState;
+    async fn get_cachestate<D: KeyStoreTxn + Send>(
+        &self,
+        _account_id: Option<&str>,
+        _keystore: &mut D,
+    ) -> CacheState;
 
     async fn offline_break_glass(&self, _ttl: Option<u64>) -> Result<(), IdpError>;
 }
