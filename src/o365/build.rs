@@ -105,9 +105,6 @@ fn apps() -> Vec<App> {
 }
 
 fn main() {
-    // Rebuild triggers
-    println!("cargo:rerun-if-changed=build.rs");
-
     let exec = env::var("O365_EXEC").unwrap_or_else(|_| DEFAULT_EXEC.to_string());
     let manifest = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());
     let gen_root = env::var("O365_GEN_DIR")
