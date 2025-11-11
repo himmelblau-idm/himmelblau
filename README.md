@@ -169,6 +169,8 @@ Flake based configurations add this repository to their inputs, enable the servi
 This detects your distro and builds the matching packages (inside a container).
 Artifacts land in `./packaging/`.
 
+[Docker BuildKit](https://docs.docker.com/build/buildkit/#getting-started) is required to enable cache volumes.
+
 ```bash
 make
 ```

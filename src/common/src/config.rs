@@ -714,6 +714,10 @@ impl HimmelblauConfig {
         )
     }
 
+    pub fn get_mfa_method(&self) -> Option<String> {
+        self.config.get("global", "mfa_method")
+    }
+
     pub fn get_hello_pin_prompt(&self) -> String {
         match self.config.get("global", "hello_pin_prompt") {
             Some(val) => val,
@@ -1738,6 +1742,36 @@ mod tests {
         // Test empty configuration
         let config_empty = HimmelblauConfig::new(None).unwrap();
         assert_eq!(config_empty.get_logon_token_app_id("example.com"), None);
+    }
+
+    #[test]
+    fn test_get_mfa_method() {
+        let config_data = r#"
+        [global]
+        mfa_method = TwoWayVoiceMobile
+        "#;
+
+        let temp_file = create_temp_config(config_data);
+        let config = HimmelblauConfig::new(Some(&temp_file)).unwrap();
+
+        // Test when MFA method is set
+        assert_eq!(
+            config.get_mfa_method(),
+            Some("TwoWayVoiceMobile".to_string())
+        );
+
+        // Test when config is missing (should return None)
+        let config_empty = HimmelblauConfig::new(None).unwrap();
+        assert_eq!(config_empty.get_mfa_method(), None);
+
+        // Test with different MFA method
+        let config_data_sms = r#"
+        [global]
+        mfa_method = OneWaySMS
+        "#;
+        let temp_file_sms = create_temp_config(config_data_sms);
+        let config_sms = HimmelblauConfig::new(Some(&temp_file_sms)).unwrap();
+        assert_eq!(config_sms.get_mfa_method(), Some("OneWaySMS".to_string()));
     }
 
     #[test]

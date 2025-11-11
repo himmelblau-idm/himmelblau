@@ -63,8 +63,12 @@ SELINUX_PKGS = ["policycoreutils-devel", "selinux-policy-targeted"]
 DEB_PKGS = COMMON + [p for p, _ in PKG_PAIRS if p]
 RPM_PKGS = COMMON + [q for _, q in PKG_PAIRS if q]
 
+# enable caching of apt packages: https://docs.docker.com/build/cache/optimize/#use-cache-mounts
 APT_BOOTSTRAP = """\
-RUN apt-get update && apt-get install -y \\\n    {pkgs} \\\n && rm -rf /var/lib/apt/lists/*\n"""
+RUN rm -f /etc/apt/apt.conf.d/docker-clean; echo 'Binary::apt::APT::Keep-Downloaded-Packages "true";' > /etc/apt/apt.conf.d/keep-cache \n
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \\
+    --mount=type=cache,target=/var/lib/apt,sharing=locked \\
+    apt-get update && apt-get install -y \\\n    {pkgs} \\\n && rm -rf /var/lib/apt/lists/*\n"""
 
 DNF_BOOTSTRAP = """\
 RUN dnf -y update && dnf -y install \\\n    {pkgs} \\\n && dnf clean all\n"""
@@ -118,14 +122,14 @@ def build_deb_final_cmd(features: list, distro_slug: str) -> str:
         feat_str = f" --features {','.join(features)}" if features else ""
         if "pam" in pkg or "nss" in pkg:
             feat_str += " --multiarch=same"
-        parts.append(f"cargo deb{feat_str} --deb-revision={distro_slug} -p {pkg}")
+        parts.append(f"cargo deb ${{CARGO_PATCH_ARG}}{feat_str} --deb-revision={distro_slug} -p {pkg}")
     gen_servicefiles = "make deb-servicefiles"
     return f'CMD ["/bin/sh", "-c", \\\n{CMD_TAB}"{gen_servicefiles} && {CMD_SEP.join(parts)} "]'
 
 
 def build_rpm_final_cmd(features: list, selinux: bool) -> str:
     feat_str = f" --features {','.join(features)}" if features else ""
-    build = f"cargo build --release{feat_str} && \\ \n{CMD_TAB}"
+    build = f"cargo build ${{CARGO_PATCH_ARG}} --release{feat_str} && \\ \n{CMD_TAB}"
     strip = CMD_SEP.join(
         ["strip -s target/release/%s" % s for s in ["*.so", "aad-tool", "himmelblaud", "himmelblaud_tasks", "broker"]]
     )
@@ -312,6 +316,10 @@ DOCKERFILE_TPL = """\
 
 {env}
 {sle_connect}
+
+# Build argument for optional Cargo patch configuration
+ARG CARGO_PATCH_ARG=""
+
 # Install essential build dependencies
 {bootstrap}
 
@@ -324,9 +332,12 @@ VOLUME /himmelblau
 # Change directory to the repository
 WORKDIR /himmelblau
 
+
 # Install Rust (latest stable)
-RUN curl https://sh.rustup.rs -sSf | sh -s -- -y && \\
+RUN --mount=type=cache,target=/root/.cargo/registry curl https://sh.rustup.rs -sSf | sh -s -- -y && \\
     cargo install cargo-deb cargo-generate-rpm
+
+{patch_libhimmelblau}
 
 {selinux_enabled}
 # Build the project and create the packages
@@ -366,7 +377,7 @@ def build_pkg_list(dist_cfg, selinux):
     return sep.join(out)
 
 
-def render(dist_name, dist_cfg):
+def render(dist_name, dist_cfg, patch_libhimmelblau):
     fam = FAMILIES[dist_cfg["family"]]
     selinux = bool(dist_cfg.get("selinux", False))
     pkgs = build_pkg_list(dist_cfg, selinux)
@@ -400,6 +411,7 @@ def render(dist_name, dist_cfg):
         bootstrap=(extra + bootstrap),
         sle_connect=("\n" + sle_connect + "\n" if sle_connect else ""),
         selinux_enabled=("ENV HIMMELBLAU_ALLOW_MISSING_SELINUX=1" if not selinux else ""),
+        patch_libhimmelblau="COPY ./scripts/cargo-patch-config.toml /root/.cargo/config.toml" if patch_libhimmelblau else "",
         final_cmd=final_cmd,
     )
     return df
@@ -409,6 +421,11 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", default="./dockerfiles", help="Output directory")
     ap.add_argument("--only", default="", help="Comma-separated list of dists to render")
+    ap.add_argument(
+        "--patch-libhimmelblau",
+        action=argparse.BooleanOptionalAction,
+        help="Whether to patch the libhimmelblau with a local copy mounted at /libhimmelblau"
+    )
     args = ap.parse_args()
 
     if args.only:
@@ -423,7 +440,7 @@ def main():
         if name not in DISTS:
             print(f"[skip] unknown dist: {name}")
             continue
-        df = render(name, DISTS[name])
+        df = render(name, DISTS[name], args.patch_libhimmelblau)
         path = os.path.join(args.out, f"Dockerfile.{name}")
         with open(path, "w", encoding="utf-8") as f:
             f.write(df)

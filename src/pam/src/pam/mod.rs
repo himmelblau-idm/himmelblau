@@ -509,6 +509,7 @@ impl PamHooks for PamKanidm {
                     None,
                     &auth_options,
                     Some(auth_init),
+                    cfg.get_mfa_method().as_deref(),
                 )
                 .await
             }) {
@@ -554,6 +555,7 @@ impl PamHooks for PamKanidm {
                             Some(&assertion),
                             None,
                             &mut mfa_req,
+                            None,
                         )
                         .await
                     }) {
@@ -580,8 +582,14 @@ impl PamHooks for PamKanidm {
                         }
                     };
                     match rt.block_on(async {
-                        app.acquire_token_by_mfa_flow(&account_id, Some(&input), None, &mut mfa_req)
-                            .await
+                        app.acquire_token_by_mfa_flow(
+                            &account_id,
+                            Some(&input),
+                            None,
+                            &mut mfa_req,
+                            None,
+                        )
+                        .await
                     }) {
                         Ok(token) => token,
                         Err(e) => {
@@ -610,6 +618,7 @@ impl PamHooks for PamKanidm {
                                 None,
                                 Some(poll_attempt),
                                 &mut mfa_req,
+                                None,
                             )
                             .await
                         }) {
