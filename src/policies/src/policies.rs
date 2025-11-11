@@ -95,14 +95,11 @@ pub async fn apply_intune_policy(
     let mut statuses: IntuneStatus = policies.into();
     statuses.set_device_id(intune_device_id.to_string());
 
-    let mut gp_extensions: Vec<Arc<dyn CSE>> = vec![
+    let gp_extensions: Vec<Arc<dyn CSE>> = vec![
         Arc::new(ScriptsCSE::new(config, account_id)),
         Arc::new(ComplianceCSE::new(config, account_id)),
+        Arc::new(CustomComplianceCSE::new(config, account_id)),
     ];
-
-    if config.get_enable_experimental_intune_custom_compliance() {
-        gp_extensions.push(Arc::new(CustomComplianceCSE::new(config, account_id)));
-    }
 
     let mut errors = vec![];
     for ext in gp_extensions {
