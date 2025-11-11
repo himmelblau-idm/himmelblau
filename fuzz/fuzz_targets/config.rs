@@ -315,7 +315,6 @@ fn exercise_config(cfg: &HimmelblauConfig) {
     let _ = cfg.get_enable_sfa_fallback();
     let _ = cfg.get_enable_experimental_mfa();
     let _ = cfg.get_enable_experimental_passwordless_fido();
-    let _ = cfg.get_enable_experimental_intune_custom_compliance();
 
     let _ = cfg.get_connection_timeout();
     let _ = cfg.get_cache_timeout();
