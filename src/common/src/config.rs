@@ -1755,7 +1755,10 @@ mod tests {
         let config = HimmelblauConfig::new(Some(&temp_file)).unwrap();
 
         // Test when MFA method is set
-        assert_eq!(config.get_mfa_method(), Some("TwoWayVoiceMobile".to_string()));
+        assert_eq!(
+            config.get_mfa_method(),
+            Some("TwoWayVoiceMobile".to_string())
+        );
 
         // Test when config is missing (should return None)
         let config_empty = HimmelblauConfig::new(None).unwrap();

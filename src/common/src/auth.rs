@@ -48,14 +48,12 @@ use tokio::runtime::Runtime;
 macro_rules! auth_handle_mfa_resp {
     ($resp:ident, $on_fido:expr, $on_prompt:expr, $on_poll:expr) => {
         match $resp.get_default_mfa_method_details() {
-            Some(value) => {
-                match value.auth_method_id.as_str() {
-                    "FidoKey" => $on_fido,
-                    "AccessPass" | "PhoneAppOTP" | "OneWaySMS" | "ConsolidatedTelephony" => $on_prompt,
-                    _ => $on_poll,
-                }
-            }
-            None => $on_poll
+            Some(value) => match value.auth_method_id.as_str() {
+                "FidoKey" => $on_fido,
+                "AccessPass" | "PhoneAppOTP" | "OneWaySMS" | "ConsolidatedTelephony" => $on_prompt,
+                _ => $on_poll,
+            },
+            None => $on_poll,
         }
     };
 }
