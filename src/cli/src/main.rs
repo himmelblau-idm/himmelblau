@@ -244,13 +244,19 @@ async fn auth(app: &BrokerClientApplication, account_id: &str) -> Option<UserTok
         None
     };
 
+    let mfa_method = if let Ok(cfg) = HimmelblauConfig::new(Some(DEFAULT_CONFIG_PATH)) {
+        cfg.get_mfa_method()
+    } else {
+        None
+    };
+
     let mut mfa_req = match app
         .initiate_acquire_token_by_mfa_flow_for_device_enrollment(
             account_id,
             password.as_deref(),
             &auth_options,
             Some(auth_init),
-            None, /* MFA method */
+            mfa_method.as_deref(),
         )
         .await
     {
@@ -282,7 +288,7 @@ async fn auth(app: &BrokerClientApplication, account_id: &str) -> Option<UserTok
                         password.as_deref(),
                         &auth_options,
                         Some(auth_init),
-                        None, /* MFA method */
+                        mfa_method.as_deref(),
                     )
                     .await
                 {
