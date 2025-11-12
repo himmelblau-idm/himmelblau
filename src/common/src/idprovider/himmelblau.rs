@@ -1374,6 +1374,21 @@ impl IdProvider for HimmelblauProvider {
                             return Err(IdpError::BadRequest);
                         }
                     );
+                    // Check if Azure provided FIDO credentials (passwordless FIDO/passkey)
+                    if let (Some(fido_challenge), Some(fido_allow_list)) =
+                        (flow.fido_challenge.clone(), flow.fido_allow_list.clone())
+                    {
+                        return Ok((
+                            AuthRequest::Fido {
+                                fido_challenge,
+                                fido_allow_list,
+                            },
+                            AuthCredHandler::MFA {
+                                flow,
+                                password: None,
+                            },
+                        ));
+                    }
                     let msg = flow.msg.clone();
                     let polling_interval = flow.polling_interval.unwrap_or(5000);
                     Ok((
