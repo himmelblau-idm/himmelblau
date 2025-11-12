@@ -423,9 +423,17 @@ def main():
     ap.add_argument("--only", default="", help="Comma-separated list of dists to render")
     ap.add_argument(
         "--patch-libhimmelblau",
-        action=argparse.BooleanOptionalAction,
-        help="Whether to patch the libhimmelblau with a local copy mounted at /libhimmelblau"
+        dest="patch_libhimmelblau",
+        action="store_true",
+        help="Patch libhimmelblau with a local copy mounted at /libhimmelblau",
     )
+    ap.add_argument(
+        "--no-patch-libhimmelblau",
+        dest="patch_libhimmelblau",
+        action="store_false",
+        help=argparse.SUPPRESS
+    )
+    ap.set_defaults(patch_libhimmelblau=False)
     args = ap.parse_args()
 
     if args.only:
