@@ -429,7 +429,9 @@ def main():
     )
     ap.add_argument(
         "--no-patch-libhimmelblau",
-        dest="patch_libhimmelblau", action="store_false", help=argparse.SUPPRESS
+        dest="patch_libhimmelblau",
+        action="store_false",
+        help=argparse.SUPPRESS
     )
     ap.set_defaults(patch_libhimmelblau=False)
     args = ap.parse_args()
