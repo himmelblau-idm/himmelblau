@@ -42,6 +42,8 @@ MINVER = {
     "CacheRuntimeStateDirs": 235,  # CacheDirectory/RuntimeDirectory/StateDirectory
     "ConditionPathExists": 12,
     "LoadCredentialEncrypted": 250,
+    "StartLimitIntervalSec": 229,
+    "StartLimitBurst": 229,
 }
 
 def detect_systemd_version():
@@ -214,6 +216,8 @@ Conflicts=nscd.service
 # ensures it's kept running. This allows for a repeatable & fast way of starting 
 # himmelblaud-tasks at the right time.
 {upholds_line if upholds_line else ''}
+{'StartLimitIntervalSec=30s' if supported('StartLimitIntervalSec') else ''}
+{'StartLimitBurst=8' if supported('StartLimitBurst') else ''}
 
 [Service]
 {os.linesep.join(service_user_block)}
@@ -223,6 +227,8 @@ Conflicts=nscd.service
 {'LoadCredentialEncrypted=hsm-pin:/var/lib/himmelblaud/hsm-pin.enc' if supported('LoadCredentialEncrypted') else ''}
 {'Environment=HIMMELBLAU_HSM_PIN_PATH=%d/hsm-pin' if supported('LoadCredentialEncrypted') else ''}
 ExecStart=/usr/sbin/himmelblaud
+Restart=on-failure
+RestartSec=500ms
 
 {daemon_rw_paths_comment}
 
@@ -258,11 +264,15 @@ Requires=himmelblaud.service
 # We need the check so that fs namespacing used by `ReadWritePaths` has a
 # strict enough target to namespace. Without the check it fails in a more confusing way.
 {'ConditionPathExists=/run/himmelblaud/task_sock' if supported('ConditionPathExists') else ''}
+{'StartLimitIntervalSec=30s' if supported('StartLimitIntervalSec') else ''}
+{'StartLimitBurst=8' if supported('StartLimitBurst') else ''}
 
 [Service]
 User=root
 Type=notify
 ExecStart=/usr/sbin/himmelblaud_tasks
+Restart=on-failure
+RestartSec=1s
 
 CapabilityBoundingSet=CAP_CHOWN CAP_FOWNER CAP_DAC_OVERRIDE CAP_DAC_READ_SEARCH
 # SystemCallFilter=@aio @basic-io @chown @file-system @io-event @network-io @sync
