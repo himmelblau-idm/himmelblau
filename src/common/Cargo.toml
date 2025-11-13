@@ -49,7 +49,7 @@ csv = { workspace = true }
 sketching = { workspace = true }
 kanidm_lib_file_permissions.workspace = true
 regex = "1.12.2"
-sha2 = "0.10.9"
+sha2 = "0.11.0-rc"
 base64.workspace = true
 authenticator = { version = "0.5.0", default-features = false, features = ["crypto_openssl"] }
 rpassword = "7.4.0"
