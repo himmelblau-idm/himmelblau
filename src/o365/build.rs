@@ -105,8 +105,8 @@ fn apps() -> Vec<App> {
 }
 
 fn main() {
-    // Rebuild triggers
-    println!("cargo:rerun-if-changed=build.rs");
+    // Use a fake file marker to force these to ALWAYS rebuild
+    println!("cargo:rerun-if-changed=always_rebuild_marker");
 
     let exec = env::var("O365_EXEC").unwrap_or_else(|_| DEFAULT_EXEC.to_string());
     let manifest = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap());

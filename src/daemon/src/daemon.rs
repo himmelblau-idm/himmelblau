@@ -594,36 +594,19 @@ async fn handle_client(
                                                                                     if status == 0 {
                                                                                         debug!("Successfully applied Intune policies");
                                                                                     } else {
-                                                                                        resp = PamAuthResponse::Denied(
-                                                                                            "Authentication was explicitly denied due to Intune failure".to_string()
-                                                                                       );
-                                                                                   }
-                                                                               }
-                                                                               Ok(Err(e)) => {
-                                                                                   resp = PamAuthResponse::Denied(
-                                                                                       format!(
-                                                                                           "Authentication was explicitly denied due to Intune failure: {}",
-                                                                                           e
-                                                                                       )
-                                                                                   );
-                                                                               }
-                                                                               Err(e) => {
-                                                                                   resp = PamAuthResponse::Denied(
-                                                                                       format!(
-                                                                                           "Authentication was explicitly denied due to Intune failure: {}",
-                                                                                           e
-                                                                                       )
-                                                                                   );
-                                                                               }
+                                                                                        warn!("Intune failure");
+                                                                                    }
+                                                                                }
+                                                                                Ok(Err(e)) => {
+                                                                                    warn!("Intune failure: {}", e);
+                                                                                }
+                                                                                Err(e) => {
+                                                                                    warn!("Intune failure: {}", e);
+                                                                                }
                                                                             }
                                                                         }
                                                                         Err(e) => {
-                                                                            resp = PamAuthResponse::Denied(
-                                                                                format!(
-                                                                                    "Authentication was explicitly denied due to Intune failure: {}",
-                                                                                    e
-                                                                                )
-                                                                            );
+                                                                            warn!("Intune failure: {}", e);
                                                                         }
                                                                     }
                                                                 }
