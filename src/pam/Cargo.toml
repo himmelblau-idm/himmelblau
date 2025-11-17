@@ -34,6 +34,7 @@ assets = [
   ["../../platform/debian/pam-config", "usr/share/pam-configs/himmelblau", "644"],
   ["../../platform/debian/apparmor.unix-chkpwd.local", "etc/apparmor.d/local/unix-chkpwd", "644"],
 ]
+recommends = ["patch"]
 maintainer-scripts = "../../platform/debian/scripts"
 
 [package.metadata.generate-rpm]
