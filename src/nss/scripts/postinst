@@ -19,4 +19,4 @@ elif [ -f $usr_etc_nsswitch_conf ]; then
 fi
 
 # Ensure cache directory is created immediately after installation, ignoring failures
-systemd-tmpfiles --create /usr/lib/tmpfiles.d/nss-himmelblau.conf 2>/dev/null || true
+systemd-tmpfiles --create /usr/lib/tmpfiles.d/nss-himmelblau.conf 2>/dev/null || systemd-tmpfiles --create /usr/lib/x86_64-linux-gnu/tmpfiles.d/nss-himmelblau.conf 2>/dev/null || true
