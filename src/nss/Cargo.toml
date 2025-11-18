@@ -28,6 +28,7 @@ name = "nss-himmelblau"
 maintainer = "David Mulder <dmulder@suse.com>"
 assets = [
   ["target/release/libnss_himmelblau.so", "usr/lib/libnss_himmelblau.so.2", "755"],
+  ["src/nss-himmelblau.tmpfiles.conf", "usr/lib/tmpfiles.d/nss-himmelblau.conf", "644"],
 ]
 maintainer-scripts = "scripts"
 
@@ -36,5 +37,6 @@ name = "nss-himmelblau"
 maintainer = "David Mulder <dmulder@suse.com>"
 assets = [
   { source = "target/release/libnss_himmelblau.so", dest = "/usr/lib64/libnss_himmelblau.so.2", mode = "755" },
+  { source = "src/nss-himmelblau.tmpfiles.conf", dest = "/usr/lib/tmpfiles.d/nss-himmelblau.conf", mode = "644" },
 ]
 post_install_script = "scripts/postinst"
