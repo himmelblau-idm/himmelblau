@@ -1050,6 +1050,12 @@ where
 
         let id = Id::Name(account_id.to_string());
         let (_expired, token) = self.get_cached_usertoken(&id).await?;
+        // If we don't have a token here, then NSS has yet to be called. Failing
+        // to request a token now will result in an auth failure in pam_account_authenticate_step.
+        let token = match token {
+            Some(token) => Some(token),
+            None => self.refresh_usertoken(&id, None).await?,
+        };
         let state = self.get_cachestate(Some(account_id)).await;
 
         let online_at_init = if !matches!(state, CacheState::Online) {
