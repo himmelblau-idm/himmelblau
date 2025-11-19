@@ -488,10 +488,10 @@ When this option is modified, you
 run:
 .RS
 .IP
-sudo aad-tool cache-clear --really
+sudo aad-tool cache-clear --full
 .RE
 
-To ensure that old cached ID mappings are cleared, preventing potential UID overlaps caused by stale cache data.
+To ensure that old cached ID mappings are cleared, preventing potential UID overlaps caused by stale cache data. Afterwards, restart himmelblaud.
 
 .EXAMPLES
 idmap_range = 5000000-5999999
