@@ -20,6 +20,7 @@ members = [
 	"src/paste",
 	"src/sshkey-attest",
 	"src/kanidm_build_profiles",
+	"src/picky-krb",
 ]
 resolver = "2"
 
@@ -29,6 +30,7 @@ serde_cbor = { path = "src/serde_cbor" }
 paste = { path = "src/paste" }
 sshkey-attest = { path = "src/sshkey-attest" }
 kanidm_build_profiles = { path = "src/kanidm_build_profiles" }
+picky-krb = { path = "src/picky-krb" }
 
 [workspace.package]
 version = "3.0.0"

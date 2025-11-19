@@ -1021,15 +1021,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "460fbee9c2c2f33933d720630a6a0bac33ba7053db5344fac858d4b8952d77d5"
 
 [[package]]
-name = "crypto"
-version = "0.5.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bf1e6e5492f8f0830c37f301f6349e0dac8b2466e4fe89eef90e9eef906cd046"
-dependencies = [
- "crypto-common 0.1.6",
-]
-
-[[package]]
 name = "crypto-bigint"
 version = "0.5.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1287,15 +1278,6 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.101",
-]
-
-[[package]]
-name = "des"
-version = "0.8.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ffdd80ce8ce993de27e9f063a444a4d53ce8e8db4c1f00cc03af5ad5a9867a1e"
-dependencies = [
- "cipher",
 ]
 
 [[package]]
@@ -3087,7 +3069,6 @@ dependencies = [
  "num-iter",
  "num-traits",
  "rand 0.8.5",
- "serde",
  "smallvec",
  "zeroize",
 ]
@@ -3444,17 +3425,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "35fb2e5f958ec131621fdd531e9fc186ed768cbe395337403ae56c17a74c68ec"
 
 [[package]]
-name = "pbkdf2"
-version = "0.12.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f8ed6a7761f76e3b9f92dfb0a60a6a6477c61024b775147ff0973a02653abaf2"
-dependencies = [
- "digest 0.10.7",
- "hmac 0.12.1",
- "sha1",
-]
-
-[[package]]
 name = "peeking_take_while"
 version = "0.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3622,42 +3592,8 @@ dependencies = [
 ]
 
 [[package]]
-name = "picky-asn1-x509"
-version = "0.14.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "511c46b93e7f08571a375882879d3a468dfe8793d73249907b2e3332950cb33e"
-dependencies = [
- "base64 0.22.1",
- "oid",
- "picky-asn1 0.10.1",
- "picky-asn1-der 0.5.2",
- "serde",
-]
-
-[[package]]
 name = "picky-krb"
 version = "0.11.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b45ffe5f2122cdda5e9059ab837a65ba1b77729db43fc1500f2fce6b27070eab"
-dependencies = [
- "aes",
- "byteorder",
- "cbc",
- "crypto",
- "des",
- "hmac 0.12.1",
- "num-bigint-dig",
- "oid",
- "pbkdf2",
- "picky-asn1 0.10.1",
- "picky-asn1-der 0.5.2",
- "picky-asn1-x509 0.14.3",
- "rand 0.8.5",
- "serde",
- "sha1",
- "thiserror 1.0.69",
- "uuid",
-]
 
 [[package]]
 name = "pin-project"
@@ -5489,7 +5425,7 @@ dependencies = [
  "oid",
  "paste",
  "picky-asn1 0.8.0",
- "picky-asn1-x509 0.12.0",
+ "picky-asn1-x509",
  "regex",
  "semver",
  "serde",
