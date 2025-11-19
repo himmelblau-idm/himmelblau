@@ -19,6 +19,7 @@ members = [
 	"src/serde_cbor",
 	"src/paste",
 	"src/sshkey-attest",
+	"src/kanidm_build_profiles",
 ]
 resolver = "2"
 
@@ -27,6 +28,7 @@ fxhash = { path = "src/fxhash" }
 serde_cbor = { path = "src/serde_cbor" }
 paste = { path = "src/paste" }
 sshkey-attest = { path = "src/sshkey-attest" }
+kanidm_build_profiles = { path = "src/kanidm_build_profiles" }
 
 [workspace.package]
 version = "2.0.3"
