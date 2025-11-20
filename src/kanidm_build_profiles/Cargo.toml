@@ -1,0 +1,15 @@
+[package]
+name = "kanidm_build_profiles"
+version = "1.8.1"
+authors.workspace = true
+rust-version.workspace = true
+edition.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[lib]
+name = "profiles"
+path = "src/lib.rs"
+
+[dependencies]
