@@ -1,6 +1,6 @@
 [package]
 name = "kanidm_build_profiles"
-version = "1.7.4"
+version = "1.8.1"
 authors.workspace = true
 rust-version.workspace = true
 edition.workspace = true

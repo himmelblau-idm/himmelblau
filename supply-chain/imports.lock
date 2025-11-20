@@ -65,8 +65,8 @@ user-login = "jschanck"
 user-name = "John Schanck"
 
 [[publisher.base64urlsafedata]]
-version = "0.5.2"
-when = "2025-07-04"
+version = "0.5.3"
+when = "2025-10-23"
 user-id = 31100
 user-login = "Firstyear"
 user-name = "Firstyear"
@@ -162,8 +162,8 @@ user-login = "jrmuizel"
 user-name = "Jeff Muizelaar"
 
 [[publisher.crypto-glue]]
-version = "0.1.8"
-when = "2025-06-19"
+version = "0.1.11"
+when = "2025-10-14"
 user-id = 31100
 user-login = "Firstyear"
 user-name = "Firstyear"
@@ -374,32 +374,32 @@ user-login = "Firstyear"
 user-name = "Firstyear"
 
 [[publisher.kanidm_lib_crypto]]
-version = "1.7.4"
-when = "2025-10-13"
-user-id = 127515
-user-login = "yaleman"
-user-name = "James Hodgkinson"
+version = "1.8.1"
+when = "2025-11-19"
+user-id = 31100
+user-login = "Firstyear"
+user-name = "Firstyear"
 
 [[publisher.kanidm_lib_file_permissions]]
-version = "1.7.4"
-when = "2025-10-13"
-user-id = 127515
-user-login = "yaleman"
-user-name = "James Hodgkinson"
+version = "1.8.1"
+when = "2025-11-19"
+user-id = 31100
+user-login = "Firstyear"
+user-name = "Firstyear"
 
 [[publisher.kanidm_proto]]
-version = "1.7.4"
-when = "2025-10-13"
-user-id = 127515
-user-login = "yaleman"
-user-name = "James Hodgkinson"
+version = "1.8.1"
+when = "2025-11-19"
+user-id = 31100
+user-login = "Firstyear"
+user-name = "Firstyear"
 
 [[publisher.kanidm_utils_users]]
-version = "1.7.4"
-when = "2025-10-13"
-user-id = 127515
-user-login = "yaleman"
-user-name = "James Hodgkinson"
+version = "1.8.1"
+when = "2025-11-19"
+user-id = 31100
+user-login = "Firstyear"
+user-name = "Firstyear"
 
 [[publisher.libc]]
 version = "0.2.177"
@@ -601,6 +601,13 @@ when = "2020-01-11"
 user-id = 189
 user-login = "BurntSushi"
 user-name = "Andrew Gallant"
+
+[[publisher.scim_proto]]
+version = "1.8.1"
+when = "2025-11-19"
+user-id = 31100
+user-login = "Firstyear"
+user-name = "Firstyear"
 
 [[publisher.scopeguard]]
 version = "1.2.0"
@@ -862,8 +869,8 @@ user-login = "alexcrichton"
 user-name = "Alex Crichton"
 
 [[publisher.webauthn-rs-proto]]
-version = "0.5.2"
-when = "2025-07-04"
+version = "0.5.3"
+when = "2025-10-23"
 user-id = 31100
 user-login = "Firstyear"
 user-name = "Firstyear"
@@ -2068,12 +2075,6 @@ criteria = "safe-to-deploy"
 delta = "0.1.0 -> 0.1.2"
 notes = "Addition of safe comparison APIs since last audit"
 aggregated-from = "https://chromium.googlesource.com/chromium/src/+/main/third_party/rust/chromium_crates_io/supply-chain/audits.toml?format=TEXT"
-
-[[audits.google.audits.proc-macro-error-attr]]
-who = "George Burgess IV <gbiv@google.com>"
-criteria = "safe-to-deploy"
-version = "1.0.4"
-aggregated-from = "https://chromium.googlesource.com/chromiumos/third_party/rust_crates/+/refs/heads/main/cargo-vet/audits.toml?format=TEXT"
 
 [[audits.google.audits.proc-macro2]]
 who = "Lukasz Anforowicz <lukasza@chromium.org>"

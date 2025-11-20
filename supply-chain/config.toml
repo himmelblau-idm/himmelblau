@@ -671,10 +671,6 @@ criteria = "safe-to-deploy"
 version = "3.3.0"
 criteria = "safe-to-deploy"
 
-[[exemptions.proc-macro-error]]
-version = "1.0.4"
-criteria = "safe-to-deploy"
-
 [[exemptions.prost]]
 version = "0.13.1"
 criteria = "safe-to-deploy"
@@ -928,7 +924,7 @@ version = "4.2.3"
 criteria = "safe-to-deploy"
 
 [[exemptions.utoipa-gen]]
-version = "4.3.1"
+version = "5.4.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.uuid]]
