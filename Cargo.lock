@@ -517,9 +517,9 @@ checksum = "89e25b6adfb930f02d1981565a6e5d9c547ac15a96606256d3b59040e5cd4ca3"
 
 [[package]]
 name = "base64urlsafedata"
-version = "0.5.2"
+version = "0.5.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e5913e643e4dfb43d5908e9e6f1386f8e0dfde086ecef124a6450c6195d89160"
+checksum = "215ee31f8a88f588c349ce2d20108b2ed96089b96b9c2b03775dc35dd72938e8"
 dependencies = [
  "base64 0.21.7",
  "pastey",
@@ -1054,9 +1054,9 @@ dependencies = [
 
 [[package]]
 name = "crypto-glue"
-version = "0.1.8"
+version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5ced4b5f9fc64fbaa14ba7fcb2c95cdc258f985a525f60065e5bb110dfd16021"
+checksum = "e98f6df6b404773fa49b2dcb7937cf1ba25663296bfa6de377292a88fddef77b"
 dependencies = [
  "aes",
  "aes-gcm",
@@ -2518,17 +2518,18 @@ dependencies = [
 
 [[package]]
 name = "kanidm_build_profiles"
-version = "1.7.4"
+version = "1.8.1"
 
 [[package]]
 name = "kanidm_lib_crypto"
-version = "1.7.4"
+version = "1.8.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "812502c272314ba9fcbce4cb9339c90f5c3c40c5b53e5685559b26578e1bdbfb"
+checksum = "6943b721c8b8b8e5dffabcaf947830d7eb6bfbc1d35eff3c69dbd3fe5be856fa"
 dependencies = [
  "argon2",
  "base64 0.22.1",
  "base64urlsafedata",
+ "crypto-glue",
  "hex",
  "kanidm-hsm-crypto",
  "kanidm_proto",
@@ -2548,22 +2549,23 @@ dependencies = [
 
 [[package]]
 name = "kanidm_lib_file_permissions"
-version = "1.7.4"
+version = "1.8.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "859fd22294e1c35622b9ba91f5e8b2c9ca8f2dbf19f96b2868badc3e3d2615f3"
+checksum = "4c45da5eb501e29fc6fbacc821d27b39e01d49d15479b3bc21a7e36e89e9af17"
 dependencies = [
  "kanidm_utils_users",
 ]
 
 [[package]]
 name = "kanidm_proto"
-version = "1.7.4"
+version = "1.8.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "785eec48dfb3880564832cea5ee66d6d6210c2685726c1954f0576335677b0c0"
+checksum = "1bc9f173e8cf35225f2e2c59b3393398004e96258fed1a7b2aa1d4561b13ab32"
 dependencies = [
  "base32",
  "base64 0.22.1",
  "clap",
+ "crypto-glue",
  "kanidm_build_profiles",
  "num_enum",
  "peg",
@@ -2584,9 +2586,9 @@ dependencies = [
 
 [[package]]
 name = "kanidm_utils_users"
-version = "1.7.4"
+version = "1.8.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d46e651828d575de44419f2ffaa4fca120f83ece96de0efa104cb22d04d5d9aa"
+checksum = "0886e2726d88f96c27b16aee6850d3e503632ab661c06fa23e64808d288ba5f9"
 dependencies = [
  "libc",
 ]
@@ -3751,30 +3753,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "proc-macro-error"
-version = "1.0.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "da25490ff9892aab3fcf7c36f08cfb902dd3e71ca0f9f9517bea02a73a5ce38c"
-dependencies = [
- "proc-macro-error-attr",
- "proc-macro2",
- "quote",
- "syn 1.0.109",
- "version_check",
-]
-
-[[package]]
-name = "proc-macro-error-attr"
-version = "1.0.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a1be40180e52ecc98ad80b184934baf3d0d29f979574e439af5a55274b35f869"
-dependencies = [
- "proc-macro2",
- "quote",
- "version_check",
-]
-
-[[package]]
 name = "proc-macro2"
 version = "1.0.95"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4322,9 +4300,9 @@ dependencies = [
 
 [[package]]
 name = "scim_proto"
-version = "1.7.4"
+version = "1.8.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8f07cedfba29f94d0e107f3ab01631d0a13c720bceb26789cd59f0f6fbcd53ca"
+checksum = "76dde345a3090efb42093c45a265fd72edc6caafc8d970de610f8f9e0b35d9a9"
 dependencies = [
  "base64urlsafedata",
  "peg",
@@ -4754,9 +4732,9 @@ dependencies = [
 
 [[package]]
 name = "sshkeys"
-version = "0.3.3"
+version = "0.3.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "45287473d24bf7ad9ebad1aff097ad0424c16cd9430549170c3a67c5b05705bd"
+checksum = "43dd24cd9c70e02c48882a32b74e784d8f2aaddba2a3a30c403d5a6e416fa117"
 dependencies = [
  "base64 0.22.1",
  "byteorder",
@@ -5527,9 +5505,9 @@ checksum = "06abde3611657adf66d383f00b093d7faecc7fa57071cce2578660c9f1010821"
 
 [[package]]
 name = "utoipa"
-version = "4.2.3"
+version = "5.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c5afb1a60e207dca502682537fefcfd9921e71d0b83e9576060f09abc6efab23"
+checksum = "2fcc29c80c21c31608227e0912b2d7fddba57ad76b606890627ba8ee7964e993"
 dependencies = [
  "indexmap 2.9.0",
  "serde",
@@ -5539,11 +5517,10 @@ dependencies = [
 
 [[package]]
 name = "utoipa-gen"
-version = "4.3.1"
+version = "5.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "20c24e8ab68ff9ee746aad22d39b5535601e6416d1b0feeabf78be986a5c4392"
+checksum = "6d79d08d92ab8af4c5e8a6da20c47ae3f61a0f1dabc1997cdf2d082b757ca08b"
 dependencies = [
- "proc-macro-error",
  "proc-macro2",
  "quote",
  "syn 2.0.101",
@@ -5730,9 +5707,9 @@ dependencies = [
 
 [[package]]
 name = "webauthn-rs-proto"
-version = "0.5.2"
+version = "0.5.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "144dbee9abb4bfad78fd283a2613f0312a0ed5955051b7864cfc98679112ae60"
+checksum = "9e786894f89facb9aaf1c5f6559670236723c98382e045521c76f3d5ca5047bd"
 dependencies = [
  "base64 0.21.7",
  "base64urlsafedata",

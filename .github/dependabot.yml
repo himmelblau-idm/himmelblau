@@ -14,12 +14,6 @@ updates:
       interval: "monthly"
     commit-message:
       prefix: "deps(rust)"
-    ignore:
-      - dependency-name: "utoipa"
-      # Temporary, until we update to 3.x
-      - dependency-name: "libhimmelblau"
-        versions:
-          - ">=0.8.0"
     groups:
       all-cargo-updates:
         patterns:
@@ -34,7 +28,6 @@ updates:
     commit-message:
       prefix: "deps(rust)"
     ignore:
-      - dependency-name: "utoipa"
       - dependency-name: "libhimmelblau"
         versions:
           - ">=0.8.0"
