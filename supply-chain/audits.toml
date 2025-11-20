@@ -119,6 +119,16 @@ who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
 delta = "0.4.1 -> 0.5.0"
 
+[[audits.crc32fast]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+delta = "1.4.2 -> 1.5.0"
+
+[[audits.crypto-common]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+delta = "0.2.0-rc.4 -> 0.2.0-rc.5"
+
 [[audits.darling]]
 who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
@@ -143,6 +153,11 @@ version = "0.1.2"
 who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
 version = "0.2.0"
+
+[[audits.gethostname]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+version = "1.1.0"
 
 [[audits.half]]
 who = "David Mulder <dmulder@samba.org>"
@@ -188,6 +203,21 @@ version = "0.10.74"
 who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
 version = "0.9.110"
+
+[[audits.openssl-sys]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+delta = "0.9.110 -> 0.9.111"
+
+[[audits.opentelemetry-http]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+delta = "0.27.0 -> 0.31.0"
+
+[[audits.pastey]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+delta = "0.1.1 -> 0.2.0"
 
 [[audits.pem]]
 who = "David Mulder <dmulder@samba.org>"
@@ -298,6 +328,11 @@ delta = "0.12.3 -> 0.14.2"
 who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
 version = "0.14.2"
+
+[[audits.tracing-forest]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+delta = "0.2.0 -> 0.3.0"
 
 [[audits.utoipa]]
 who = "David Mulder <dmulder@samba.org>"
@@ -451,6 +486,12 @@ user-id = 6743 # Ed Page (epage)
 start = "2023-04-13"
 end = "2026-09-11"
 
+[[trusted.const-oid]]
+criteria = "safe-to-deploy"
+user-id = 267 # Tony Arcieri (tarcieri)
+start = "2020-08-04"
+end = "2026-11-20"
+
 [[trusted.cssparser]]
 criteria = "safe-to-deploy"
 user-id = 1139 # Manish Goregaokar (Manishearth)
@@ -480,6 +521,12 @@ criteria = "safe-to-deploy"
 user-id = 3797 # Jelte Fennema-Nio (JelteF)
 start = "2023-07-23"
 end = "2026-09-11"
+
+[[trusted.digest]]
+criteria = "safe-to-deploy"
+user-id = 267 # Tony Arcieri (tarcieri)
+start = "2020-06-10"
+end = "2026-11-20"
 
 [[trusted.dtoa]]
 criteria = "safe-to-deploy"
@@ -867,7 +914,7 @@ end = "2026-10-15"
 
 [[trusted.kanidm_build_profiles]]
 criteria = "safe-to-deploy"
-user-id = 127515 # James Hodgkinson (yaleman)
+user-id = 127515
 start = "2023-10-31"
 end = "2026-10-15"
 
@@ -879,7 +926,7 @@ end = "2026-10-15"
 
 [[trusted.kanidm_lib_crypto]]
 criteria = "safe-to-deploy"
-user-id = 127515 # James Hodgkinson (yaleman)
+user-id = 127515
 start = "2023-10-31"
 end = "2026-10-15"
 
@@ -891,7 +938,7 @@ end = "2026-10-15"
 
 [[trusted.kanidm_lib_file_permissions]]
 criteria = "safe-to-deploy"
-user-id = 127515 # James Hodgkinson (yaleman)
+user-id = 127515
 start = "2023-10-31"
 end = "2026-10-15"
 
@@ -903,7 +950,7 @@ end = "2026-10-15"
 
 [[trusted.kanidm_proto]]
 criteria = "safe-to-deploy"
-user-id = 127515 # James Hodgkinson (yaleman)
+user-id = 127515
 start = "2023-10-31"
 end = "2026-10-15"
 
@@ -915,7 +962,7 @@ end = "2026-10-15"
 
 [[trusted.kanidm_utils_users]]
 criteria = "safe-to-deploy"
-user-id = 127515 # James Hodgkinson (yaleman)
+user-id = 127515
 start = "2023-10-31"
 end = "2026-10-15"
 
@@ -1117,6 +1164,12 @@ user-id = 6825 # Dan Gohman (sunfishcode)
 start = "2021-10-29"
 end = "2026-09-11"
 
+[[trusted.rustls]]
+criteria = "safe-to-deploy"
+user-id = 4556 # Dirkjan Ochtman (djc)
+start = "2022-05-18"
+end = "2026-11-20"
+
 [[trusted.ryu]]
 criteria = "safe-to-deploy"
 user-id = 3618 # David Tolnay (dtolnay)
@@ -1189,6 +1242,12 @@ user-id = 6743 # Ed Page (epage)
 start = "2023-01-20"
 end = "2026-09-11"
 
+[[trusted.sha2]]
+criteria = "safe-to-deploy"
+user-id = 267 # Tony Arcieri (tarcieri)
+start = "2020-05-24"
+end = "2026-11-20"
+
 [[trusted.sketching]]
 criteria = "safe-to-deploy"
 user-id = 31100 # Firstyear (Firstyear)
@@ -1197,7 +1256,7 @@ end = "2026-10-15"
 
 [[trusted.sketching]]
 criteria = "safe-to-deploy"
-user-id = 127515 # James Hodgkinson (yaleman)
+user-id = 127515
 start = "2023-10-31"
 end = "2026-10-15"
 
