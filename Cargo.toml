@@ -119,7 +119,7 @@ tracing-opentelemetry = "0.28.0"
 tracing-core = "0.1.34"
 tonic = "0.14.2"
 compact_jwt = { version = "0.5.3-dev", features = ["msextensions"] }
-kanidm-hsm-crypto = { version = "^0.3.4" }
+kanidm-hsm-crypto = { version = "^0.3.5" }
 whoami = "1.6.1"
 kanidm_lib_file_permissions = "1.8.1"
 md4 = "0.10.2"
