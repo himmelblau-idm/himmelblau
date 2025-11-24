@@ -395,8 +395,8 @@ user-login = "alexcrichton"
 user-name = "Alex Crichton"
 
 [[publisher.kanidm-hsm-crypto]]
-version = "0.3.4"
-when = "2025-06-28"
+version = "0.3.5"
+when = "2025-11-21"
 user-id = 31100
 user-login = "Firstyear"
 user-name = "Firstyear"
