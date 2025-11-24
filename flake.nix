@@ -10,7 +10,7 @@
 
   outputs = { self, nixpkgs, flake-utils, rust-overlay, ... }:
     flake-utils.lib.eachDefaultSystem (system:
-      let 
+      let
           pkgs = import nixpkgs {
             inherit system;
             overlays = [ rust-overlay.overlays.default ];
@@ -86,15 +86,17 @@
             options = with lib; {
               services.himmelblau = let
                 globalOptions = {
-                  domains = mkOption {
-                    type = types.listOf types.str;
-                    example = [ "my.domain.com" ];
+                  domain = mkOption {
+                    type = types.str;
+                    example = "my.domain.com" ;
                     description = ''
-                      REQUIRED: The list of configured domains. This must be specified, or no users
-                      will be permitted to authenticate. The first user to authenticate to each
-                      domain will be the owner of the device object in the directory. Typically
-                      this would be the primary user of the device.
-                    '';
+                      The primary Azure Entra ID domain name used for authentication. This value SHOULD
+                      match the domain name that users enter when signing in (for example, the domain portion of their UPN).
+                      In most cases, this will be the primary domain of your Azure Entra ID tenant.
+                      If your organization uses multiple verified domains or aliases, choose the one that your users actually use to sign in.
+
+                      This parameter is REQUIRED for successful authentication.
+                      If it is not specified, no users will be permitted to authenticate.'';
                   };
                   debug = mkOption {
                     type = types.bool;
@@ -403,9 +405,9 @@
 
               # Add himmelblau to the list of name services to lookup users/groups
               system.nssModules = [ cfg.package ];
-              system.nssDatabases.passwd = [ "himmelblau" ];  # will be merged with entries from other modules
-              system.nssDatabases.group  = [ "himmelblau" ];  # will be merged with entries from other modules
-              system.nssDatabases.shadow = [ "himmelblau" ];  # will be merged with entries from other modules
+              system.nssDatabases.passwd = lib.mkOrder 1501 [ "himmelblau" ];  # will be merged with entries from other modules
+              system.nssDatabases.group  = lib.mkOrder 1501 [ "himmelblau" ];  # will be merged with entries from other modules
+              system.nssDatabases.shadow = lib.mkOrder 1501 [ "himmelblau" ];  # will be merged with entries from other modules
 
               # Add entries for authenticating users via pam
               security.pam.services = let
@@ -439,6 +441,7 @@
                   ++ lib.optional config.services.sshd.enable "sshd";
               in lib.genAttrs services genServiceCfg;
 
+
               systemd.services = let
                 commonServiceConfig = {
                   Type="notify";
@@ -455,10 +458,13 @@
                   MemoryDenyWriteExecute = true;
                 };
               in {
+
                 himmelblaud = {
                   description = "Himmelblau Authentication Daemon";
                   wants = [ "chronyd.service" "ntpd.service" "network-online.target" ];
-                  wantedBy = [ "multi-user.target" ];
+                  before = [ "accounts-daemon.service" ];
+                  wantedBy = [ "multi-user.target" "accounts-daemon.service" ];
+                  upholds = [ "himmelblaud-tasks.service" ];
                   serviceConfig = commonServiceConfig // {
                     ExecStart = "${cfg.package}/bin/himmelblaud" + lib.optionalString cfg.debugFlag " -d";
                     Restart = "on-failure";
@@ -477,12 +483,15 @@
                   bindsTo = [ "himmelblaud.service" ];
                   wantedBy = [ "multi-user.target" ];
                   path = [ pkgs.shadow pkgs.bash ];
+                  unitConfig = {
+                    ConditionPathExists = "/var/run/himmelblaud/task_sock";
+                  };
                   serviceConfig = commonServiceConfig // {
                     ExecStart = "${cfg.package}/bin/himmelblaud_tasks";
                     Restart = "on-failure";
                     User = "root";
                     ProtectSystem = "strict";
-                    ReadWritePaths = "/home /var/run/himmelblaud /tmp /etc/krb5.conf.d /etc";
+                    ReadWritePaths = "/home /var/run/himmelblaud /tmp /etc/krb5.conf.d /etc /var/lib /var/cache/nss-himmelblau";
                     RestrictAddressFamilies = "AF_UNIX";
                   };
                 };
@@ -506,7 +515,7 @@
             services.himmelblau = {
               enable = true;
               settings = {
-                domains = ["example.com"];
+                domain = "example.com";
                 pam_allow_groups = [ "XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX" ];
               };
               domains."extra.com" = {
