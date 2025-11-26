@@ -40,3 +40,6 @@ assets = [
   { source = "src/nss-himmelblau.tmpfiles.conf", dest = "/usr/lib/tmpfiles.d/nss-himmelblau.conf", mode = "644" },
 ]
 post_install_script = "scripts/postinst"
+
+[package.metadata.generate-rpm.provides]
+libnss-aad = ""
