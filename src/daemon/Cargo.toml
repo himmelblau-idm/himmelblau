@@ -103,3 +103,15 @@ pam-himmelblau = "*"
 krb5 = "*"
 cron = "*" # For Intune policy scripts
 system-user-tss = "*"
+
+[package.metadata.generate-rpm.provides]
+aad-cli = ""
+aad-common = ""
+authd = ""
+authd-msentraid = ""
+
+[package.metadata.generate-rpm.suggests]
+himmelblau-sso = ""
+
+[package.metadata.generate-rpm.requires]
+man = ""

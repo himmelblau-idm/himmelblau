@@ -29,3 +29,6 @@ post_install_script = "scripts/postinst"
 
 [package.metadata.generate-rpm.requires]
 openssh-server = "*"
+
+[package.metadata.generate-rpm.supplements]
+"(pam-himmelblau and openssh-server)" = ""
