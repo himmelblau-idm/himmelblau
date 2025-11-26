@@ -50,3 +50,14 @@ assets = [
   { source = "../../platform/opensuse/com.microsoft.identity.broker1.service", dest = "/usr/share/dbus-1/services/", mode = "644" },
   { source = "target/release/broker", dest = "/usr/sbin/", mode = "755" },
 ]
+
+[package.metadata.generate-rpm.supplements]
+"(MozillaFirefox and himmelblau)" = ""
+"(chromium and himmelblau)" = ""
+"(google-chrome-stable and himmelblau)" = ""
+"(microsoft-edge-stable and himmelblau)" = ""
+
+[package.metadata.generate-rpm.provides]
+linux-entra-sso = ""
+intune-portal = ""
+microsoft-identity-broker = ""

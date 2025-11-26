@@ -37,7 +37,7 @@ COMMON = [
     "checkpolicy",
     "policycoreutils",
     "python3",
-    "systemd",
+    "systemd-devel",
 ]
 
 PKG_PAIRS = [
@@ -305,6 +305,7 @@ DISTS = {
             "dbus-devel": "dbus-1-devel",
             "tpm2-tss-devel": "tpm2-0-tss-devel",
             "sqlite-devel": "sqlite3-devel",
+            "selinux-policy-targeted": "selinux-tools selinux-policy-devel",
         },
         "tpm": True,
         "selinux": True,
