@@ -4,6 +4,9 @@ set -e
 # Ensure cache directory is created with correct permissions
 systemd-tmpfiles --create /usr/lib/tmpfiles.d/himmelblau-policies.conf 2>/dev/null || true
 
+# Ensure private data directory is created with correct permissions
+systemd-tmpfiles --create /usr/lib/tmpfiles.d/himmelblaud.conf 2>/dev/null || true
+
 gen_pin_hex() {
     if command -v openssl >/dev/null 2>&1; then
         openssl rand -hex 24 | tr -d '\n'
@@ -27,7 +30,6 @@ if command -v systemd-creds >/dev/null 2>&1; then
         fi
 
         # Encrypt the PIN
-	install -d -m 755 /var/lib/private/himmelblaud
         printf '%s' "$HSM_PIN" | systemd-creds encrypt --name=hsm-pin --with-key=auto --tpm2-device=auto - "$CRED" && (rm -f $LEGACY || true)
     fi
 fi
