@@ -192,7 +192,7 @@ def merge_metadata(crate_names: list[str], metadata: list[dict], repo_root: Path
         assets = []
         for asset in crate["generate_rpm"]["assets"]:
             src = asset["source"]
-            if src.startswith("target/"):
+            if src.startswith("target/") or src.startswith("platform/"):
                 assets.append(asset)
                 continue # target is already a path relative to the root
             abs_src = (crate_dir / src).resolve()
@@ -430,7 +430,7 @@ def generate_script_sections(metadata, name=None, extras={}):
         contents = contents.strip()
 
         section = rpm_script_section(script)
-        if contents and len(contents.split('\n')) == 1:
+        if contents and len(contents.split('\n')) == 1 and contents[0] != '%':
             res += "%s %s-p %s" % (section, ("-n %s " % name if name else ""), contents)
             res += "\n\n"
         elif contents:
@@ -553,6 +553,12 @@ Group:          Productivity/Networking/Security
 Source:         %{{name}}-%{{version}}.tar.bz2
 Source1:        vendor.tar.zst
 Source2:        cargo_config
+BuildRequires:  binutils
+BuildRequires:  cargo
+BuildRequires:  cargo-packaging
+BuildRequires:  clang-devel
+BuildRequires:  patchelf
+BuildRequires:  systemd-rpm-macros
 {'\n'.join([sel_wrap('BuildRequires:  '+dep.strip()) for dep in deps[args.target]['packages']])}
 ExclusiveArch:  %{{rust_tier1_arches}}
 {dep_gen(himmelblau_metadata)}
@@ -633,6 +639,7 @@ patchelf --set-soname libnss_himmelblau.so.2 target/release/libnss_himmelblau.so
 
 # PAM
 install -D -d -m 0755 %{{buildroot}}/%{{_pam_moduledir}}
+install -D -d -m 0755 %{{buildroot}}/%{{_datadir}}/authselect/vendor/himmelblau/
 strip --strip-unneeded target/release/libpam_himmelblau.so
 {generate_install_section(pam_metadata)}
 
@@ -644,7 +651,10 @@ install -D -d -m 0755 %{{buildroot}}/%{{_sysconfdir}}/himmelblau
 install -D -d -m 0755 %{{buildroot}}%{{_datarootdir}}/dbus-1/services
 install -D -d -m 0755 %{{buildroot}}%{{_sysconfdir}}/ssh/sshd_config.d
 install -D -d -m 0755 %{{buildroot}}%{{_sysconfdir}}/krb5.conf.d
+install -D -d -m 0755 %{{buildroot}}/%{{_unitdir}}/display-manager.service.d/
 install -d -m 0600 %{{buildroot}}%{{_localstatedir}}/cache/himmelblau-policies
+install -D -d -m 0755 %{{buildroot}}%{{_datadir}}/doc/himmelblau/
+install -D -d -m 0755 %{{buildroot}}/%{{_tmpfilesdir}}/
 install -D -d -m 0755 %{{buildroot}}%{{_mandir}}/man1
 install -D -d -m 0755 %{{buildroot}}%{{_mandir}}/man5
 install -D -d -m 0755 %{{buildroot}}%{{_mandir}}/man8
@@ -700,7 +710,11 @@ install -D -d -m 0755 %{{buildroot}}%{{_datarootdir}}/gnome-shell/extensions/qr-
 {generate_files_section(sshd_metadata, name="himmelblau-sshd-config", extras=["%if 0%{?sle_version} <= 150500\n%dir %{_sysconfdir}/ssh/sshd_config.d\n%endif"])}
 
 {generate_files_section(sso_metadata, name="himmelblau-sso", dirs=["%{_libdir}/mozilla", "%{_libdir}/mozilla/native-messaging-hosts", "%{_sysconfdir}/firefox", "%{_sysconfdir}/firefox/policies", "/etc/chromium", "/etc/chromium/native-messaging-hosts", "/etc/chromium/policies", "/etc/chromium/policies/managed", "/etc/opt/chrome", "/etc/opt/chrome/native-messaging-hosts", "/etc/opt/chrome/policies", "/etc/opt/chrome/policies/managed", "/usr/share/google-chrome", "%{chrome_nm_dir}", "%{chromium_nm_dir}", "%attr(0555,root,root) %{chrome_policy_dir}", "%attr(0555,root,root) %{chromium_policy_dir}", "%{chrome_ext_dir}", "%{_iconsdir}/hicolor", "%{_iconsdir}/hicolor/256x256", "%{_iconsdir}/hicolor/256x256/apps"])}""".rstrip() + "\n"
-    print(spec_contents)
+    if args.output:
+        with open(args.output, 'w') as w:
+            w.write(spec_contents)
+    else:
+        print(spec_contents)
     return 0
 
 
