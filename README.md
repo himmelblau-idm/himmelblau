@@ -108,7 +108,7 @@ in {
 
     services.himmelblau.enable = true;
     services.himmelblau.settings = {
-        domains = ["my.domain.net"];
+        domain = "my.domain.net";
         pam_allow_groups = [ "ENTRA-GROUP-GUID-HERE" ];
         local_groups = [ "wheel" "docker" ];
     };
@@ -132,7 +132,7 @@ Flake based configurations add this repository to their inputs, enable the servi
             services.himmelblau = {
                 enable = true;
                 settings = {
-                    domains = ["my.domain.net"];
+                    domain = "my.domain.net";
                     pam_allow_groups = [ "ENTRA-GROUP-GUID-HERE" ];
                     local_groups = [ "wheel" "docker" ];
                 };
