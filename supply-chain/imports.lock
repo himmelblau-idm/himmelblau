@@ -442,6 +442,13 @@ user-id = 696
 user-login = "fitzgen"
 user-name = "Nick Fitzgerald"
 
+[[publisher.libhimmelblau]]
+version = "0.8.3"
+when = "2025-12-02"
+user-id = 247655
+user-login = "dmulder"
+user-name = "David Mulder"
+
 [[publisher.libm]]
 version = "0.2.15"
 when = "2025-05-06"
