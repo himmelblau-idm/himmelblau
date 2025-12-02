@@ -1879,39 +1879,10 @@ impl IdProvider for HimmelblauProvider {
             }};
         }
 
-        macro_rules! check_amr_mfa {
-            ($token:expr, $which: expr) => {{
-                $token.amr_mfa().map_err(|e| {
-                    error!("{:?}", e);
-                    IdpError::NotFound {
-                        what: format!(
-                            "MFA authorization in {} token ({})",
-                            $which, $token.token_type
-                        ),
-                        where_: "unix_user_online_auth_step".to_string(),
-                    }
-                })
-            }};
-        }
-        macro_rules! check_amr_ngcmfa {
-            ($token:expr, $which: expr) => {{
-                $token.amr_ngcmfa().map_err(|e| {
-                    error!("{:?}", e);
-                    IdpError::NotFound {
-                        what: format!(
-                            "NGC MFA authorization in {} token ({})",
-                            $which, $token.token_type
-                        ),
-                        where_: "unix_user_online_auth_step".to_string(),
-                    }
-                })
-            }};
-        }
-
         match (&mut *cred_handler, pam_next_req) {
             (AuthCredHandler::SetupPin { token }, PamAuthRequest::SetupPin { pin }) => {
                 // Skip Hello enrollment if the token doesn't have the ngcmfa amr
-                let amr_ngcmfa = check_amr_ngcmfa!(token, "SetupPin")?;
+                let amr_ngcmfa = token.amr_ngcmfa().unwrap_or(false);
                 let hello_tag = self.fetch_hello_key_tag(account_id, amr_ngcmfa);
 
                 let (hello_key, keytype) = if amr_ngcmfa {
@@ -2202,7 +2173,7 @@ impl IdProvider for HimmelblauProvider {
                     self.client
                         .read()
                         .await
-                        .acquire_token_by_mfa_flow(account_id, Some(&cred), None, flow, None)
+                        .acquire_token_by_mfa_flow(account_id, Some(&cred), None, flow)
                         .await,
                     Ok(token) => token,
                     Err(e) => {
@@ -2238,9 +2209,9 @@ impl IdProvider for HimmelblauProvider {
                         // Skip Hello enrollment if it is disabled by config
                         let hello_enabled = self.config.read().await.get_enable_hello();
                         // Skip Hello enrollment if the token doesn't have the ngcmfa amr
-                        let amr_ngcmfa = check_amr_ngcmfa!(token2, "enrolled")?;
+                        let amr_ngcmfa = token2.amr_ngcmfa().unwrap_or(false);
                         // If the token at least has an mfa amr, then we can fake a hello key
-                        let amr_mfa = check_amr_mfa!(token2, "enrolled")?;
+                        let amr_mfa = token2.amr_mfa().unwrap_or(false);
                         if !hello_enabled || (!amr_ngcmfa && !amr_mfa) || no_hello_pin {
                             info!("Skipping Hello enrollment because it is disabled");
                             return Ok((
@@ -2282,7 +2253,7 @@ impl IdProvider for HimmelblauProvider {
                     self.client
                         .read()
                         .await
-                        .acquire_token_by_mfa_flow(account_id, None, Some(poll_attempt), flow, None)
+                        .acquire_token_by_mfa_flow(account_id, None, Some(poll_attempt), flow)
                         .await,
                     Ok(token) => token,
                     Err(e) => match e {
@@ -2319,16 +2290,33 @@ impl IdProvider for HimmelblauProvider {
                         }
                     }
                 );
-                let token2 = enroll_and_obtain_enrolled_token!(token);
+                // Check whether the token is a for the special MSA tenant,
+                // meaning we need skip device enrollment (it's a personal
+                // account).
+                let msa_tenant = token.tenant_id().map_err(|e| {
+                    error!("{:?}", e);
+                    IdpError::NotFound {
+                        what: "tenant_id from token".to_string(),
+                        where_: "unix_user_online_auth_step".to_string(),
+                    }
+                })? == "9188040d-6c67-4c5b-b112-36a304b66dad";
+                let token2 = if msa_tenant {
+                    token.clone()
+                } else {
+                    enroll_and_obtain_enrolled_token!(token)
+                };
                 match self.token_validate(account_id, &token2, None).await {
                     Ok(AuthResult::Success { token: token3 }) => {
                         // Skip Hello enrollment if it is disabled by config
                         let hello_enabled = self.config.read().await.get_enable_hello();
                         // Skip Hello enrollment if the token doesn't have the ngcmfa amr
-                        let amr_ngcmfa = check_amr_ngcmfa!(token2, "enrolled")?;
+                        let amr_ngcmfa = token2.amr_ngcmfa().unwrap_or(false);
                         // If the token at least has an mfa amr, then we can fake a hello key
-                        let amr_mfa = check_amr_mfa!(token2, "enrolled")?;
-                        if !hello_enabled || (!amr_ngcmfa && !amr_mfa) || no_hello_pin {
+                        let amr_mfa = token2.amr_mfa().unwrap_or(false);
+                        if !hello_enabled
+                            || (!amr_ngcmfa && !amr_mfa && !msa_tenant)
+                            || no_hello_pin
+                        {
                             info!("Skipping Hello enrollment because it is disabled");
                             return Ok((
                                 AuthResult::Success { token: token3 },
@@ -2364,7 +2352,7 @@ impl IdProvider for HimmelblauProvider {
                     self.client
                         .read()
                         .await
-                        .acquire_token_by_mfa_flow(account_id, Some(&assertion), None, flow, None)
+                        .acquire_token_by_mfa_flow(account_id, Some(&assertion), None, flow)
                         .await,
                     Ok(token) => token,
                     Err(e) => {
