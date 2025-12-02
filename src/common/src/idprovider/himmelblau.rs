@@ -34,7 +34,9 @@ use crate::unix_proto::PamAuthRequest;
 use crate::user_map::UserMap;
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
-use himmelblau::auth::{BrokerClientApplication, UserToken as UnixUserToken};
+use himmelblau::auth::{
+    BrokerClientApplication, PublicClientApplication, UserToken as UnixUserToken, BROKER_APP_ID,
+};
 use himmelblau::discovery::EnrollAttrs;
 use himmelblau::error::{MsalError, DEVICE_AUTH_FAIL};
 use himmelblau::graph::UserObject;
@@ -89,24 +91,39 @@ pub struct HimmelblauMultiProvider {
 
 struct RefreshCache {
     refresh_cache: RwLock<HashMap<String, (SealedData, SystemTime)>>,
+    refresh_token_cache: RwLock<HashMap<String, (String, SystemTime)>>,
+}
+
+enum RefreshCacheEntry {
+    Prt(SealedData),
+    RefreshToken(String),
 }
 
 impl RefreshCache {
     fn new() -> Self {
         RefreshCache {
             refresh_cache: RwLock::new(HashMap::new()),
+            refresh_token_cache: RwLock::new(HashMap::new()),
         }
     }
 
-    async fn refresh_token(&self, account_id: &str) -> Result<SealedData, IdpError> {
+    async fn refresh_token(&self, account_id: &str) -> Result<RefreshCacheEntry, IdpError> {
         self.purge().await;
         let refresh_cache = self.refresh_cache.read().await;
         match refresh_cache.get(account_id.to_lowercase().as_str()) {
-            Some((refresh_token, _)) => Ok(refresh_token.clone()),
-            None => Err(IdpError::NotFound {
-                what: "account_id".to_string(),
-                where_: "refresh_cache".to_string(),
-            }),
+            Some((refresh_token, _)) => Ok(RefreshCacheEntry::Prt(refresh_token.clone())),
+            None => {
+                let refresh_token_cache = self.refresh_token_cache.read().await;
+                match refresh_token_cache.get(account_id.to_lowercase().as_str()) {
+                    Some((refresh_token, _)) => {
+                        Ok(RefreshCacheEntry::RefreshToken(refresh_token.clone()))
+                    }
+                    None => Err(IdpError::NotFound {
+                        what: "account_id".to_string(),
+                        where_: "refresh_cache".to_string(),
+                    }),
+                }
+            }
         }
     }
 
@@ -121,14 +138,35 @@ impl RefreshCache {
         for k in remove_list.iter() {
             refresh_cache.remove_entry(k);
         }
+        let mut refresh_token_cache = self.refresh_token_cache.write().await;
+        let mut remove_list = vec![];
+        for (k, (_, iat)) in refresh_token_cache.iter() {
+            if *iat > SystemTime::now() + Duration::from_secs(86400) {
+                remove_list.push(k.clone());
+            }
+        }
+        for k in remove_list.iter() {
+            refresh_token_cache.remove_entry(k);
+        }
     }
 
-    async fn add(&self, account_id: &str, prt: &SealedData) {
-        let mut refresh_cache = self.refresh_cache.write().await;
-        refresh_cache.insert(
-            account_id.to_string().to_lowercase(),
-            (prt.clone(), SystemTime::now()),
-        );
+    async fn add(&self, account_id: &str, refresh_token: &RefreshCacheEntry) {
+        match refresh_token {
+            RefreshCacheEntry::Prt(prt) => {
+                let mut refresh_cache = self.refresh_cache.write().await;
+                refresh_cache.insert(
+                    account_id.to_string().to_lowercase(),
+                    (prt.clone(), SystemTime::now()),
+                );
+            }
+            RefreshCacheEntry::RefreshToken(refresh_token) => {
+                let mut refresh_token_cache = self.refresh_token_cache.write().await;
+                refresh_token_cache.insert(
+                    account_id.to_string().to_lowercase(),
+                    (refresh_token.clone(), SystemTime::now()),
+                );
+            }
+        }
     }
 }
 
@@ -696,6 +734,13 @@ macro_rules! handle_hello_bad_pin_count {
                     error!("Failed to delete hello PRT: {:?}", e);
                     IdpError::Tpm
                 })?;
+            let hello_refresh_token_tag = $self.fetch_hello_refresh_token_key_tag($account_id);
+            $keystore
+                .delete_tagged_hsm_key(&hello_refresh_token_tag)
+                .map_err(|e| {
+                    error!("Failed to delete hello refresh token: {:?}", e);
+                    IdpError::Tpm
+                })?;
             return $ret_fn(
                 "Too many incorrect PIN attempts. You will need to enroll a new Linux Hello PIN."
             );
@@ -786,23 +831,42 @@ impl IdProvider for HimmelblauProvider {
             Some(token) => token.spn.clone(),
             None => id.to_string().clone(),
         };
-        let prt = self.refresh_cache.refresh_token(&account_id).await?;
-        self.client
-            .read()
-            .await
-            .exchange_prt_for_access_token(
-                &prt,
-                scopes.iter().map(|s| s.as_ref()).collect(),
-                None,
-                client_id.as_deref(),
-                tpm,
-                machine_key,
-            )
-            .await
-            .map_err(|e| {
-                error!("{:?}", e);
-                IdpError::BadRequest
-            })
+        let refresh_cache_entry = self.refresh_cache.refresh_token(&account_id).await?;
+        match refresh_cache_entry {
+            RefreshCacheEntry::Prt(prt) => self
+                .client
+                .read()
+                .await
+                .exchange_prt_for_access_token(
+                    &prt,
+                    scopes.iter().map(|s| s.as_ref()).collect(),
+                    None,
+                    client_id.as_deref(),
+                    tpm,
+                    machine_key,
+                )
+                .await
+                .map_err(|e| {
+                    error!("{:?}", e);
+                    IdpError::BadRequest
+                }),
+            RefreshCacheEntry::RefreshToken(refresh_token) => {
+                let client = PublicClientApplication::new(BROKER_APP_ID, None).map_err(|e| {
+                    error!("Failed to create public client application: {:?}", e);
+                    IdpError::BadRequest
+                })?;
+                client
+                    .acquire_token_by_refresh_token(
+                        &refresh_token,
+                        scopes.iter().map(|s| s.as_ref()).collect(),
+                    )
+                    .await
+                    .map_err(|e| {
+                        error!("Failed to refresh token: {:?}", e);
+                        IdpError::BadRequest
+                    })
+            }
+        }
     }
 
     #[instrument(skip_all)]
@@ -830,10 +894,20 @@ impl IdProvider for HimmelblauProvider {
             Some(token) => token.spn.clone(),
             None => id.to_string().clone(),
         };
-        let prt = match self.refresh_cache.refresh_token(&account_id).await {
-            Ok(prt) => prt,
+        let refresh_cache_entry = match self.refresh_cache.refresh_token(&account_id).await {
+            Ok(refresh_cache_entry) => refresh_cache_entry,
             Err(e) => {
-                error!("Failed fetching PRT for Kerberos CCache: {:?}", e);
+                error!(
+                    "Failed fetching refresh cache entry for Kerberos CCache: {:?}",
+                    e
+                );
+                return (vec![], vec![]);
+            }
+        };
+        let prt = match refresh_cache_entry {
+            RefreshCacheEntry::Prt(prt) => prt,
+            RefreshCacheEntry::RefreshToken(_) => {
+                // We need a PRT to fetch Kerberos CCaches
                 return (vec![], vec![]);
             }
         };
@@ -873,7 +947,14 @@ impl IdProvider for HimmelblauProvider {
             Some(token) => token.spn.clone(),
             None => id.to_string().clone(),
         };
-        let prt = self.refresh_cache.refresh_token(&account_id).await?;
+        let refresh_cache_entry = self.refresh_cache.refresh_token(&account_id).await?;
+        let prt = match refresh_cache_entry {
+            RefreshCacheEntry::Prt(prt) => prt,
+            RefreshCacheEntry::RefreshToken(_) => {
+                // We need a PRT to fetch a PRT cookie
+                return Err(IdpError::BadRequest);
+            }
+        };
         self.client
             .read()
             .await
@@ -1194,8 +1275,8 @@ impl IdProvider for HimmelblauProvider {
                 }
             };
         }
-        let prt = match self.refresh_cache.refresh_token(&account_id).await {
-            Ok(prt) => prt,
+        let refresh_cache_entry = match self.refresh_cache.refresh_token(&account_id).await {
+            Ok(refresh_cache_entry) => refresh_cache_entry,
             Err(_) => fake_user!(),
         };
         // If an app_id is defined in the config, the app should have the
@@ -1209,36 +1290,83 @@ impl IdProvider for HimmelblauProvider {
                 vec!["https://graph.microsoft.com/.default"],
             )
         };
-        let mtoken = self
-            .client
-            .read()
-            .await
-            .exchange_prt_for_access_token(&prt, scopes.clone(), None, client_id, tpm, machine_key)
-            .await;
-        let token = match mtoken {
-            Ok(val) => val,
-            Err(MsalError::RequestFailed(_)) => {
-                // Retry on network failure, as these can be rather common
-                sleep(Duration::from_millis(500));
-                net_down_check!(
-                    self.client
-                        .read()
-                        .await
-                        .exchange_prt_for_access_token(&prt, scopes, None, client_id, tpm, machine_key)
-                        .await,
+        let token = match refresh_cache_entry {
+            RefreshCacheEntry::Prt(prt) => {
+                let mtoken = self
+                    .client
+                    .read()
+                    .await
+                    .exchange_prt_for_access_token(
+                        &prt,
+                        scopes.clone(),
+                        None,
+                        client_id,
+                        tpm,
+                        machine_key,
+                    )
+                    .await;
+                match mtoken {
+                    Ok(val) => val,
+                    Err(MsalError::RequestFailed(_)) => {
+                        // Retry on network failure, as these can be rather common
+                        sleep(Duration::from_millis(500));
+                        net_down_check!(
+                            self.client
+                                .read()
+                                .await
+                                .exchange_prt_for_access_token(&prt, scopes, None, client_id, tpm, machine_key)
+                                .await,
+                            Err(e) => {
+                                error!("{:?}", e);
+                                // Never return IdpError::NotFound. This deletes the existing
+                                // user from the cache.
+                                fake_user!()
+                            }
+                        )
+                    }
                     Err(e) => {
                         error!("{:?}", e);
                         // Never return IdpError::NotFound. This deletes the existing
                         // user from the cache.
                         fake_user!()
                     }
-                )
+                }
             }
-            Err(e) => {
-                error!("{:?}", e);
-                // Never return IdpError::NotFound. This deletes the existing
-                // user from the cache.
-                fake_user!()
+            RefreshCacheEntry::RefreshToken(refresh_token) => {
+                let client = PublicClientApplication::new(BROKER_APP_ID, None).map_err(|e| {
+                    error!("Failed to create public client application: {:?}", e);
+                    IdpError::BadRequest
+                })?;
+                let mtoken = client
+                    .acquire_token_by_refresh_token(&refresh_token, vec![])
+                    .await;
+                match mtoken {
+                    Ok(val) => val,
+                    Err(MsalError::RequestFailed(_)) => {
+                        // Retry on network failure, as these can be rather common
+                        sleep(Duration::from_millis(500));
+                        net_down_check!(
+                            client
+                                .acquire_token_by_refresh_token(
+                                    &refresh_token,
+                                    vec![],
+                                )
+                                .await,
+                            Err(e) => {
+                                error!("{:?}", e);
+                                // Never return IdpError::NotFound. This deletes the existing
+                                // user from the cache.
+                                fake_user!()
+                            }
+                        )
+                    }
+                    Err(e) => {
+                        error!("{:?}", e);
+                        // Never return IdpError::NotFound. This deletes the existing
+                        // user from the cache.
+                        fake_user!()
+                    }
+                }
             }
         };
         match self.token_validate(&account_id, &token, old_token).await {
@@ -1714,9 +1842,10 @@ impl IdProvider for HimmelblauProvider {
                         }
                     }
                 } else { // This Hello key is decoupled
-                    // Check for and decrypt any cached PRT
+                    // Check for and decrypt any cached tokens
                     let hello_prt_tag = self.fetch_hello_prt_key_tag(account_id);
-                    let prt = match keystore.get_tagged_hsm_key(&hello_prt_tag) {
+                    let hello_refresh_token_tag = self.fetch_hello_refresh_token_key_tag(account_id);
+                    let refresh_cache_entry = match keystore.get_tagged_hsm_key(&hello_prt_tag) {
                         Ok(Some(hello_prt)) => self
                             .client
                             .read()
@@ -1727,12 +1856,41 @@ impl IdProvider for HimmelblauProvider {
                                 &$cred,
                                 tpm,
                                 machine_key,
-                            ).ok(),
-                        // If we just authenticated for the first time, the PRT is instead
-                        // in the mem cache.
-                        Err(_) | Ok(None) => self.refresh_cache.refresh_token(account_id).await.ok(),
+                            ).ok().map(|prt| RefreshCacheEntry::Prt(prt)),
+                        // If we don't have a cached PRT, check for a cached refresh token
+                        Err(_) | Ok(None) => {
+                            match keystore.get_tagged_hsm_key(&hello_refresh_token_tag) {
+                                Ok(Some(sealed_refresh_token)) => {
+                                    let pin = PinValue::new(&$cred).map_err(|e| {
+                                        error!("Failed initializing pin value: {:?}", e);
+                                        IdpError::Tpm
+                                    })?;
+                                    let (_key, win_hello_storage_key) = tpm
+                                        .ms_hello_key_load(machine_key, &$hello_key, &pin)
+                                        .map_err(|e| {
+                                            error!("Failed loading hello key for prt cache: {:?}", e);
+                                            IdpError::Tpm
+                                        })?;
+                                    match tpm.unseal_data(&win_hello_storage_key, &sealed_refresh_token) {
+                                        Ok(refresh_token_bytes) => {
+                                            let refresh_token = String::from_utf8(
+                                                refresh_token_bytes.to_vec(),
+                                            ).map_err(|e| {
+                                                error!("Failed converting refresh token to string: {:?}", e);
+                                                IdpError::Tpm
+                                            })?;
+                                            Some(RefreshCacheEntry::RefreshToken(refresh_token))
+                                        }
+                                        Err(_) => self.refresh_cache.refresh_token(account_id).await.ok(),
+                                    }
+                                }
+                                // If we just authenticated for the first time, the PRT is instead
+                                // in the mem cache.
+                                Err(_) | Ok(None) => self.refresh_cache.refresh_token(account_id).await.ok(),
+                            }
+                        },
                     };
-                    if let Some(prt) = prt {
+                    if let Some(RefreshCacheEntry::Prt(prt)) = refresh_cache_entry {
                         match self
                             .client
                             .read()
@@ -1811,6 +1969,58 @@ impl IdProvider for HimmelblauProvider {
                                     return Err(IdpError::BadRequest);
                                 }
                             }
+                    } else if let Some(RefreshCacheEntry::RefreshToken(refresh_token)) = refresh_cache_entry {
+                        // We have a refresh token, exchange that for an access token
+                        let app = PublicClientApplication::new(BROKER_APP_ID, None).map_err(|e| {
+                            error!("Failed to create PublicClientApplication: {:?}", e);
+                            IdpError::BadRequest
+                        })?;
+                        match app.acquire_token_by_refresh_token(
+                            &refresh_token,
+                            vec![],
+                        ).await {
+                            Ok(token) => {
+                                self.bad_pin_counter.reset_bad_pin_count(account_id).await;
+                                token
+                            },
+                            // If the network goes down during an online exchange auth, we can
+                            // downgrade to an offline auth and permit the authentication to proceed.
+                            Err(MsalError::RequestFailed(msg)) => {
+                                let url = extract_base_url!(msg);
+                                info!(?url, "Network down detected");
+                                let mut state = self.state.lock().await;
+                                *state =
+                                    CacheState::OfflineNextCheck(SystemTime::now() + OFFLINE_NEXT_CHECK);
+                                return Ok((
+                                    AuthResult::Success {
+                                        token: old_token.clone(),
+                                    },
+                                    AuthCacheAction::None,
+                                ));
+                            }
+                            Err(e) => {
+                                error!("Failed to exchange refresh token for access token: {:?}", e);
+                                // Access token request for this refresh token failed. Delete the
+                                // refresh token and hello key, then demand a new auth.
+                                keystore
+                                    .delete_tagged_hsm_key(&hello_refresh_token_tag)
+                                    .map_err(|e| {
+                                        error!("Failed to delete hello refresh token: {:?}", e);
+                                        IdpError::Tpm
+                                    })?;
+                                let hello_key_tag = self.fetch_hello_key_tag(account_id, false);
+                                keystore
+                                    .delete_tagged_hsm_key(&hello_key_tag)
+                                    .map_err(|e| {
+                                        error!("Failed to delete hello key: {:?}", e);
+                                        IdpError::Tpm
+                                    })?;
+                                // It's ok to reset the pin count here, since they must
+                                // online auth at this point and create a new pin.
+                                self.bad_pin_counter.reset_bad_pin_count(account_id).await;
+                                return Err(IdpError::BadRequest);
+                            }
+                        }
                     } else {
                         error!("Failed fetching hello prt from cache");
                         // We don't have access to a PRT, and can't proceed. Delete
@@ -1850,6 +2060,34 @@ impl IdProvider for HimmelblauProvider {
                             error!("Failed to cache hello prt for {}: {:?}", uuid, e);
                         }
                     }
+                } else {
+                    // If there is no PRT, cache the refresh token instead
+                    let pin = PinValue::new(&$cred).map_err(|e| {
+                        error!("Failed initializing pin value: {:?}", e);
+                        IdpError::Tpm
+                    })?;
+                    let (_key, win_hello_storage_key) = tpm
+                        .ms_hello_key_load(machine_key, &$hello_key, &pin)
+                        .map_err(|e| {
+                            error!("Failed loading hello key for prt cache: {:?}", e);
+                            IdpError::Tpm
+                        })?;
+                    let refresh_token_zeroizing =
+                        zeroize::Zeroizing::new(token.refresh_token.as_bytes().to_vec());
+                    tpm.seal_data(&win_hello_storage_key, refresh_token_zeroizing)
+                        .map_err(|e| {
+                            let uuid = token.uuid().map(|v| v.to_string()).unwrap_or("".to_string());
+                            error!("Failed to seal refresh token for {}: {:?}", uuid, e);
+                            IdpError::Tpm
+                        })
+                        .and_then(|sealed_prt| {
+                            let hello_prt_tag = self.fetch_hello_refresh_token_key_tag(account_id);
+                            keystore.insert_tagged_hsm_key(&hello_prt_tag, &sealed_prt).map_err(|e| {
+                                let uuid = token.uuid().map(|v| v.to_string()).unwrap_or("".to_string());
+                                error!("Failed to cache hello refresh token for {}: {:?}", uuid, e);
+                                IdpError::Tpm
+                            })
+                        })?;
                 }
 
                 if !self.is_intune_enrolled(keystore).await {
@@ -2484,7 +2722,7 @@ impl IdProvider for HimmelblauProvider {
                     IdpError::Tpm
                 })?;
                 match tpm.ms_hello_key_load(machine_key, &hello_key, &pin) {
-                    Ok(_) => {
+                    Ok((_, win_hello_storage_key)) => {
                         // Check for and decrypt any cached PRT
                         let hello_prt_tag = self.fetch_hello_prt_key_tag(account_id);
                         if let Ok(Some(hello_prt)) = keystore.get_tagged_hsm_key(&hello_prt_tag) {
@@ -2519,7 +2757,30 @@ impl IdProvider for HimmelblauProvider {
                                     "Offline auth has expired. Please connect to the network to continue.".to_string(),
                                 ));
                             }
-                            self.refresh_cache.add(account_id, &prt).await;
+                            self.refresh_cache
+                                .add(account_id, &RefreshCacheEntry::Prt(prt.clone()))
+                                .await;
+                        }
+                        let hello_refresh_token_tag =
+                            self.fetch_hello_refresh_token_key_tag(account_id);
+                        if let Ok(Some(sealed_refresh_token)) =
+                            keystore.get_tagged_hsm_key(&hello_refresh_token_tag)
+                        {
+                            let refresh_token = String::from_utf8(
+                                tpm.unseal_data(&win_hello_storage_key, &sealed_refresh_token)
+                                    .map_err(|e| {
+                                        error!("Failed to unseal refresh token: {:?}", e);
+                                        IdpError::Tpm
+                                    })?
+                                    .to_vec(),
+                            )
+                            .map_err(|e| {
+                                error!("Failed to decode refresh token: {:?}", e);
+                                IdpError::Tpm
+                            })?;
+                            self.refresh_cache
+                                .add(account_id, &RefreshCacheEntry::RefreshToken(refresh_token))
+                                .await;
                         }
                         self.bad_pin_counter.reset_bad_pin_count(account_id).await;
                         Ok(AuthResult::Success {
@@ -2715,6 +2976,10 @@ impl HimmelblauProvider {
         format!("{}/hello_prt", account_id.to_lowercase())
     }
 
+    fn fetch_hello_refresh_token_key_tag(&self, account_id: &str) -> String {
+        format!("{}/hello_refresh_token", account_id.to_lowercase())
+    }
+
     #[instrument(level = "debug", skip_all)]
     fn fetch_loadable_transport_key_from_keystore<D: KeyStoreTxn + Send>(
         &self,
@@ -2783,7 +3048,18 @@ impl HimmelblauProvider {
                 info!("Authentication successful for user '{}'", uuid);
                 // If an encrypted PRT is present, store it in the mem cache
                 if let Some(prt) = &token.prt {
-                    self.refresh_cache.add(account_id, prt).await;
+                    self.refresh_cache
+                        .add(account_id, &RefreshCacheEntry::Prt(prt.clone()))
+                        .await;
+                }
+                // MSA Accounts don't have PRTs, so instead cache the refresh token
+                else {
+                    self.refresh_cache
+                        .add(
+                            account_id,
+                            &RefreshCacheEntry::RefreshToken(token.refresh_token.clone()),
+                        )
+                        .await;
                 }
                 Ok(AuthResult::Success {
                     token: self
@@ -3349,6 +3625,10 @@ impl HimmelblauProvider {
 
     #[instrument(level = "debug", skip_all)]
     async fn is_domain_joined<D: KeyStoreTxn + Send>(&self, keystore: &mut D) -> bool {
+        if self.is_consumer_tenant().await {
+            // Pretend we are always joined for MSA accounts
+            return true;
+        }
         /* If we have access to tpm keys, and the domain device_id is
          * configured, we'll assume we are domain joined. */
         let config = self.config.read().await;
@@ -3373,7 +3653,21 @@ impl HimmelblauProvider {
     }
 
     #[instrument(level = "debug", skip_all)]
+    async fn is_consumer_tenant(&self) -> bool {
+        let config = self.config.read().await;
+        let tenant_id = config
+            .get(&self.domain, "tenant_id")
+            .unwrap_or("".to_string());
+        tenant_id == "9188040d-6c67-4c5b-b112-36a304b66dad"
+            || tenant_id == "9cd80435-793b-4f48-844b-6b3f37d1c1f3"
+    }
+
+    #[instrument(level = "debug", skip_all)]
     async fn is_intune_enrolled<D: KeyStoreTxn + Send>(&self, keystore: &mut D) -> bool {
+        if self.is_consumer_tenant().await {
+            // Pretend we are always enrolled for MSA accounts
+            return true;
+        }
         let config = self.config.read().await;
         if config.get(&self.domain, "intune_device_id").is_none() {
             return false;
