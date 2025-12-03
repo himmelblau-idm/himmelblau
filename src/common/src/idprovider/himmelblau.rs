@@ -855,6 +855,18 @@ impl IdProvider for HimmelblauProvider {
                     error!("Failed to create public client application: {:?}", e);
                     IdpError::BadRequest
                 })?;
+                let scopes = if self.is_consumer_tenant().await {
+                    // Remove "https://graph.microsoft.com/.default" from the
+                    // scopes for consumer tenants. This is the default scope
+                    // requested by the SSO extension, but it is not valid for
+                    // consumer tenants.
+                    scopes
+                        .into_iter()
+                        .filter(|s| s != "https://graph.microsoft.com/.default")
+                        .collect()
+                } else {
+                    scopes
+                };
                 client
                     .acquire_token_by_refresh_token(
                         &refresh_token,
