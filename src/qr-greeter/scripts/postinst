@@ -1,0 +1,14 @@
+#!/bin/sh
+set -e
+
+if command -v machinectl >/dev/null 2>&1 && getent passwd gdm >/dev/null 2>&1; then
+    echo "Enabling Himmelblau QR Greeter GNOME Shell extension for GDM user..."
+
+    # Run the gsettings command inside a non-interactive gdm shell.
+    machinectl --quiet shell gdm@ /bin/bash -lc \
+        "gsettings set org.gnome.shell enabled-extensions \"['qr-greeter@himmelblau-idm.org']\"" \
+        || echo 'Warning: unable to enable QR Greeter extension for gdm user' >&2
+    echo "Himmelblau QR Greeter GNOME Shell extension enabled for GDM user. You must restart for the changes to take effect."
+else
+    echo 'Info: machinectl or gdm user not available; skipping automatic extension enable.' >&2
+fi

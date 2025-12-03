@@ -62,8 +62,14 @@ export default class QrGreeterExtension extends Extension {
             }
 
             const targetUrl = "https://microsoft.com/devicelogin";
+            const consumerTargetUrl = "https://www.microsoft.com/link";
             if (message && message.includes(targetUrl)) {
                 const fileUri = "file:///usr/share/gnome-shell/extensions/qr-greeter@himmelblau-idm.org/msdag.png";
+                this._qrContainer.set_style(`background-image: url('${fileUri}');`);
+                this._qrContainer.show();
+                this._qrLabel.show();
+            } else if (message && message.includes(consumerTargetUrl)) {
+                const fileUri = "file:///usr/share/gnome-shell/extensions/qr-greeter@himmelblau-idm.org/ms-consumer-dag.png";
                 this._qrContainer.set_style(`background-image: url('${fileUri}');`);
                 this._qrContainer.show();
                 this._qrLabel.show();
