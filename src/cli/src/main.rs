@@ -255,8 +255,9 @@ fn configure_pam(
         insert_module_line(
             auth_file,
             "auth\tsufficient\tpam_himmelblau.so ignore_unknown_user",
-            Some(&|l: &str| l.contains("pam_localuser.so")),
-            Some(&|l: &str| l.contains("pam_unix.so") && l.contains("auth")),
+            None,
+            // pam_himmelblau should always come first on the auth stack
+            Some(&|_: &str| true),
             dry_run,
         )?;
     }
@@ -267,7 +268,10 @@ fn configure_pam(
             account_file,
             "account\tsufficient\tpam_himmelblau.so ignore_unknown_user",
             None,
-            Some(&|l: &str| l.contains("pam_unix.so") && l.contains("account")),
+            Some(&|l: &str| {
+                (l.contains("pam_unix.so") && l.contains("account"))
+                    || (l.contains("pam_faillock.so") && l.contains("account"))
+            }),
             dry_run,
         )?;
     }
