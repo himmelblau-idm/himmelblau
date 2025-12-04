@@ -106,7 +106,10 @@ deb-servicefiles:
 rpm-servicefiles:
 	python3 ./scripts/gen_servicefiles.py --out ./platform/opensuse/
 
-.PHONY: package deb rpm $(DEB_TARGETS) $(RPM_TARGETS) ${SLE_TARGETS} dockerfiles deb-servicefiles rpm-servicefiles install uninstall help sbom
+authselect:
+	python3 ./scripts/gen_authselect.py --root=./ --aad-tool=./target/debug/aad-tool --output-dir=./platform/el/authselect/
+
+.PHONY: package deb rpm $(DEB_TARGETS) $(RPM_TARGETS) ${SLE_TARGETS} dockerfiles deb-servicefiles rpm-servicefiles authselect install uninstall help sbom
 
 check-licenses: ## Validate dependant licenses comply with GPLv3
 	cargo deny -V >/dev/null || (echo "cargo-deny required" && cargo install cargo-deny)

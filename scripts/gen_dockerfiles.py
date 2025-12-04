@@ -59,9 +59,10 @@ PKG_PAIRS = [
 ]
 
 SELINUX_PKGS = ["policycoreutils-devel", "selinux-policy-targeted"]
+AUTHSELECT_PKGS = ["authselect"]
 
 DEB_PKGS = COMMON + [p for p, _ in PKG_PAIRS if p]
-RPM_PKGS = COMMON + [q for _, q in PKG_PAIRS if q]
+RPM_PKGS = COMMON + AUTHSELECT_PKGS + [q for _, q in PKG_PAIRS if q]
 
 APT_BOOTSTRAP = """\
 RUN apt-get update && apt-get install -y \\\n    {pkgs} \\\n && rm -rf /var/lib/apt/lists/*\n"""
@@ -135,7 +136,8 @@ def build_rpm_final_cmd(features: list, selinux: bool) -> str:
         pkgs = [pkg for pkg in PACKAGES if pkg[0] != "selinux"]
     rpms = CMD_SEP.join([f"cargo generate-rpm -p {s}" for _, s, _ in pkgs])
     gen_servicefiles = "make rpm-servicefiles"
-    return f'CMD ["/bin/sh", "-c", \\\n{CMD_TAB}"{gen_servicefiles} && {build}{strip} && \\\n{CMD_TAB}{rpms}"]'
+    gen_authselect = "(authselect select minimal --force || authselect select local --force) && make authselect"
+    return f'CMD ["/bin/sh", "-c", \\\n{CMD_TAB}"{gen_servicefiles} && {gen_authselect} && {build}{strip} && \\\n{CMD_TAB}{rpms}"]'
 
 
 # ---- Distro targets ----------------------------------------------------------
@@ -279,7 +281,10 @@ DISTS = {
         "scc_vers": "16.0",
         "extra_prep": [
             # Temporary patch for broken SLE libudev1 version in the base image
-            "RUN zypper in -y --oldpackage libudev1-257.7-160000.2.2.x86_64"
+            "RUN zypper in -y --oldpackage libudev1-257.7-160000.2.2.x86_64",
+            # Temporary authselect build, since it hasn't landed in PackageHub yet
+            "RUN zypper ar -e https://download.opensuse.org/repositories/home:/dmulder:/branches:/authselect/16.0/home:dmulder:branches:authselect.repo",
+            "RUN zypper --non-interactive --gpg-auto-import-keys refresh home_dmulder_branches_authselect"
         ],
         "replace": {
             "build-essential": "",
