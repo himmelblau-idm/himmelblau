@@ -141,7 +141,7 @@ def build_rpm_final_cmd(features: list, selinux: bool) -> str:
     rpms = CMD_SEP.join([f"cargo generate-rpm -p {s}" for _, s, _ in pkgs])
     gen_servicefiles = "make rpm-servicefiles"
     gen_authselect = "(authselect select minimal --force || authselect select local --force) && make authselect"
-    return f'CMD ["/bin/sh", "-c", \\\n{CMD_TAB}"{gen_servicefiles} && {gen_authselect} && {build}{strip} && \\\n{CMD_TAB}{rpms}"]'
+    return f'CMD ["/bin/sh", "-c", \\\n{CMD_TAB}"{gen_servicefiles} && {build}{strip} && {gen_authselect} && \\\n{CMD_TAB}{rpms}"]'
 
 
 # ---- Distro targets ----------------------------------------------------------
