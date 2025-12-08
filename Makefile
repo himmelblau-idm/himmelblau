@@ -107,7 +107,7 @@ rpm-servicefiles:
 	python3 ./scripts/gen_servicefiles.py --out ./platform/opensuse/
 
 authselect:
-	python3 ./scripts/gen_authselect.py --root=./ --aad-tool=./target/debug/aad-tool --output-dir=./platform/el/authselect/
+	python3 ./scripts/gen_authselect.py --root=./ --aad-tool=./target/release/aad-tool --output-dir=./platform/el/authselect/
 
 .PHONY: package deb rpm $(DEB_TARGETS) $(RPM_TARGETS) ${SLE_TARGETS} dockerfiles deb-servicefiles rpm-servicefiles authselect install uninstall help sbom
 
