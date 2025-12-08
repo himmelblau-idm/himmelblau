@@ -117,7 +117,11 @@ fn insert_module_line(
     let original = std::fs::read_to_string(pam_file)?;
     let mut lines: Vec<String> = original.lines().map(|l| l.to_string()).collect();
 
-    if lines.iter().any(|l| l.contains("pam_himmelblau.so")) {
+    if lines.iter().any(|l| {
+        l.contains("pam_himmelblau.so")
+            && l.trim_start()
+                .starts_with(module_line.split_whitespace().next().unwrap_or(""))
+    }) {
         debug!("{} already contains pam_himmelblau; skipping", pam_file);
         return Ok(());
     }
@@ -163,6 +167,38 @@ fn insert_module_line(
 }
 
 #[instrument]
+fn detect_pam_files(
+    explicit: Option<&str>,
+    candidates: &[&str],
+    role: &str,
+) -> anyhow::Result<Vec<String>> {
+    if let Some(path) = explicit {
+        return Ok(vec![path.to_owned()]);
+    }
+
+    let mut found: Vec<String> = candidates
+        .iter()
+        .map(|p| p.to_string())
+        .filter(|p| Path::new(p).exists())
+        .collect();
+
+    // Deduplicate in case the same file shows up more than once
+    found.sort();
+    found.dedup();
+
+    if found.is_empty() {
+        anyhow::bail!(
+            "Could not find any PAM configuration file for {}. \
+             Tried: {}. Consider using --auth-file/--account-file/--session-file/--password-file.",
+            role,
+            candidates.join(", "),
+        );
+    }
+
+    Ok(found)
+}
+
+#[instrument]
 fn configure_pam(
     dry_run: bool,
     auth_file: Option<&str>,
@@ -170,46 +206,101 @@ fn configure_pam(
     session_file: Option<&str>,
     password_file: Option<&str>,
 ) -> anyhow::Result<()> {
-    let auth_file = auth_file.unwrap_or("/etc/pam.d/common-auth");
-    let account_file = account_file.unwrap_or("/etc/pam.d/common-account");
-    let session_file = session_file.unwrap_or("/etc/pam.d/common-session");
-    let password_file = password_file.unwrap_or("/etc/pam.d/common-password");
-
-    insert_module_line(
+    let auth_files = detect_pam_files(
         auth_file,
-        "auth\tsufficient\tpam_himmelblau.so ignore_unknown_user",
-        Some(&|l: &str| l.contains("pam_localuser.so")),
-        Some(&|l: &str| l.contains("pam_unix.so") && l.contains("auth")),
-        dry_run,
+        &[
+            "/etc/pam.d/common-auth",
+            "/etc/pam.d/system-auth",
+            "/etc/pam.d/password-auth",
+            "/etc/pam.d/system-login",
+        ],
+        "auth",
     )?;
 
-    insert_module_line(
+    let account_files = detect_pam_files(
         account_file,
-        "account\tsufficient\tpam_himmelblau.so ignore_unknown_user",
-        None,
-        Some(&|l: &str| l.contains("pam_unix.so") && l.contains("account")),
-        dry_run,
+        &[
+            "/etc/pam.d/common-account",
+            "/etc/pam.d/system-auth",
+            "/etc/pam.d/password-auth",
+            "/etc/pam.d/system-login",
+        ],
+        "account",
     )?;
 
-    insert_module_line(
+    let session_files = detect_pam_files(
         session_file,
-        "session\toptional\tpam_himmelblau.so",
-        None,
-        None,
-        dry_run,
+        &[
+            "/etc/pam.d/common-session",
+            "/etc/pam.d/system-auth",
+            "/etc/pam.d/password-auth",
+            "/etc/pam.d/system-login",
+        ],
+        "session",
     )?;
 
-    insert_module_line(
+    let password_files = detect_pam_files(
         password_file,
-        "password\tsufficient\tpam_himmelblau.so ignore_unknown_user",
-        None,
-        Some(&|l: &str| {
-            l.contains("pam_unix.so") && l.contains("password")
-                || l.contains("pam_cracklib.so") && l.contains("password")
-                || l.contains("pam_pwquality.so") && l.contains("password")
-        }),
-        dry_run,
+        &[
+            "/etc/pam.d/common-password",
+            "/etc/pam.d/system-auth",
+            "/etc/pam.d/password-auth",
+            "/etc/pam.d/system-login",
+        ],
+        "password",
     )?;
+
+    // AUTH
+    for auth_file in &auth_files {
+        insert_module_line(
+            auth_file,
+            "auth\tsufficient\tpam_himmelblau.so ignore_unknown_user",
+            None,
+            // pam_himmelblau should always come first on the auth stack
+            Some(&|_: &str| true),
+            dry_run,
+        )?;
+    }
+
+    // ACCOUNT
+    for account_file in &account_files {
+        insert_module_line(
+            account_file,
+            "account\tsufficient\tpam_himmelblau.so ignore_unknown_user",
+            None,
+            Some(&|l: &str| {
+                (l.contains("pam_unix.so") && l.contains("account"))
+                    || (l.contains("pam_faillock.so") && l.contains("account"))
+            }),
+            dry_run,
+        )?;
+    }
+
+    // SESSION
+    for session_file in &session_files {
+        insert_module_line(
+            session_file,
+            "session\toptional\tpam_himmelblau.so",
+            None,
+            None,
+            dry_run,
+        )?;
+    }
+
+    // PASSWORD
+    for password_file in &password_files {
+        insert_module_line(
+            password_file,
+            "password\tsufficient\tpam_himmelblau.so ignore_unknown_user",
+            None,
+            Some(&|l: &str| {
+                (l.contains("pam_unix.so") && l.contains("password"))
+                    || (l.contains("pam_cracklib.so") && l.contains("password"))
+                    || (l.contains("pam_pwquality.so") && l.contains("password"))
+            }),
+            dry_run,
+        )?;
+    }
 
     Ok(())
 }
