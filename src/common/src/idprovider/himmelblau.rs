@@ -29,6 +29,7 @@ use crate::constants::ID_MAP_CACHE;
 use crate::db::KeyStoreTxn;
 use crate::idmap_cache::StaticIdCache;
 use crate::idprovider::interface::{tpm, UserTokenState};
+use crate::idprovider::openidconnect::OidcProvider;
 use crate::tpm::confidential_client_creds;
 use crate::unix_proto::PamAuthRequest;
 use crate::user_map::UserMap;
@@ -82,9 +83,15 @@ macro_rules! extract_base_url {
     }};
 }
 
+#[allow(clippy::large_enum_variant)]
+enum Providers {
+    Oidc(OidcProvider),
+    Himmelblau(HimmelblauProvider),
+}
+
 pub struct HimmelblauMultiProvider {
     config: Arc<RwLock<HimmelblauConfig>>,
-    providers: Arc<RwLock<HashMap<String, HimmelblauProvider>>>,
+    providers: Arc<RwLock<HashMap<String, Providers>>>,
     permit_new_providers: Arc<Mutex<bool>>,
     idmap: Arc<RwLock<Idmap>>,
 }
@@ -264,7 +271,17 @@ impl HimmelblauMultiProvider {
         self.providers
             .write()
             .await
-            .insert(domain.to_string(), provider);
+            .insert(domain.to_string(), Providers::Himmelblau(provider));
+        Ok(())
+    }
+
+    async fn add_oidc_tenant(&self, domain: &str) -> Result<(), IdpError> {
+        let provider = OidcProvider::new(&self.config, &self.idmap).await?;
+
+        self.providers
+            .write()
+            .await
+            .insert(domain.to_string(), Providers::Oidc(provider));
         Ok(())
     }
 
@@ -305,6 +322,14 @@ impl HimmelblauMultiProvider {
             // not permit new providers.
             permit_new_providers = false;
         }
+        // Add the oidc provider, if present
+        if let Some(domain) = cfg.get_oidc_domain() {
+            providers
+                .add_oidc_tenant(&domain)
+                .await
+                .map_err(|e| anyhow!("{:?}", e))?;
+            permit_new_providers = false;
+        }
         *providers.permit_new_providers.lock().await = permit_new_providers;
 
         // Spawn periodic cookie clearing loop (Fixes bugs #591 and #491)
@@ -314,8 +339,13 @@ impl HimmelblauMultiProvider {
                 tokio::time::sleep(std::time::Duration::from_secs(12 * 60 * 60)).await;
                 let providers = providers_ref.read().await;
                 for (_, provider) in providers.iter() {
-                    let app = provider.client.write().await;
-                    app.clear_cookies();
+                    match provider {
+                        Providers::Oidc(_) => {}
+                        Providers::Himmelblau(provider) => {
+                            let app = provider.client.write().await;
+                            app.clear_cookies();
+                        }
+                    }
                 }
             }
         });
@@ -377,7 +407,12 @@ fn idp_get_domain_for_account(account_id: &str) -> Result<&str, IdpError> {
 impl IdProvider for HimmelblauMultiProvider {
     async fn offline_break_glass(&self, ttl: Option<u64>) -> Result<(), IdpError> {
         for (_domain, provider) in self.providers.read().await.iter() {
-            provider.offline_break_glass(ttl).await?;
+            match provider {
+                Providers::Oidc(provider) => provider.offline_break_glass(ttl).await?,
+                Providers::Himmelblau(provider) => {
+                    provider.offline_break_glass(ttl).await?;
+                }
+            }
         }
         Ok(())
     }
@@ -388,8 +423,17 @@ impl IdProvider for HimmelblauMultiProvider {
      * incorrect. */
     async fn check_online(&self, tpm: &mut tpm::provider::BoxedDynTpm, now: SystemTime) -> bool {
         for (_domain, provider) in self.providers.read().await.iter() {
-            if !provider.check_online(tpm, now).await {
-                return false;
+            match provider {
+                Providers::Oidc(provider) => {
+                    if !provider.check_online(tpm, now).await {
+                        return false;
+                    }
+                }
+                Providers::Himmelblau(provider) => {
+                    if !provider.check_online(tpm, now).await {
+                        return false;
+                    }
+                }
             }
         }
         true
@@ -413,9 +457,18 @@ impl IdProvider for HimmelblauMultiProvider {
         let mut providers = self.providers.read().await;
         let provider = find_provider!(self, providers, domain, keystore)?;
 
-        provider
-            .unix_user_access(id, scopes, old_token, client_id, keystore, tpm, machine_key)
-            .await
+        match provider {
+            Providers::Oidc(provider) => {
+                provider
+                    .unix_user_access(id, scopes, old_token, client_id, keystore, tpm, machine_key)
+                    .await
+            }
+            Providers::Himmelblau(provider) => {
+                provider
+                    .unix_user_access(id, scopes, old_token, client_id, keystore, tpm, machine_key)
+                    .await
+            }
+        }
     }
 
     async fn unix_user_ccaches<D: KeyStoreTxn + Send>(
@@ -440,9 +493,18 @@ impl IdProvider for HimmelblauMultiProvider {
             return empty;
         };
 
-        provider
-            .unix_user_ccaches(id, old_token, keystore, tpm, machine_key)
-            .await
+        match provider {
+            Providers::Oidc(provider) => {
+                provider
+                    .unix_user_ccaches(id, old_token, keystore, tpm, machine_key)
+                    .await
+            }
+            Providers::Himmelblau(provider) => {
+                provider
+                    .unix_user_ccaches(id, old_token, keystore, tpm, machine_key)
+                    .await
+            }
+        }
     }
 
     async fn unix_user_prt_cookie<D: KeyStoreTxn + Send>(
@@ -461,9 +523,18 @@ impl IdProvider for HimmelblauMultiProvider {
         let mut providers = self.providers.read().await;
         let provider = find_provider!(self, providers, domain, keystore)?;
 
-        provider
-            .unix_user_prt_cookie(id, old_token, keystore, tpm, machine_key)
-            .await
+        match provider {
+            Providers::Oidc(provider) => {
+                provider
+                    .unix_user_prt_cookie(id, old_token, keystore, tpm, machine_key)
+                    .await
+            }
+            Providers::Himmelblau(provider) => {
+                provider
+                    .unix_user_prt_cookie(id, old_token, keystore, tpm, machine_key)
+                    .await
+            }
+        }
     }
 
     async fn change_auth_token<D: KeyStoreTxn + Send>(
@@ -479,9 +550,18 @@ impl IdProvider for HimmelblauMultiProvider {
         let mut providers = self.providers.read().await;
         let provider = find_provider!(self, providers, domain, keystore)?;
 
-        provider
-            .change_auth_token(account_id, token, new_tok, keystore, tpm, machine_key)
-            .await
+        match provider {
+            Providers::Oidc(provider) => {
+                provider
+                    .change_auth_token(account_id, token, new_tok, keystore, tpm, machine_key)
+                    .await
+            }
+            Providers::Himmelblau(provider) => {
+                provider
+                    .change_auth_token(account_id, token, new_tok, keystore, tpm, machine_key)
+                    .await
+            }
+        }
     }
 
     async fn unix_user_get<D: KeyStoreTxn + Send>(
@@ -501,9 +581,18 @@ impl IdProvider for HimmelblauMultiProvider {
         let mut providers = self.providers.read().await;
         let provider = find_provider!(self, providers, domain, keystore)?;
 
-        provider
-            .unix_user_get(id, old_token, keystore, tpm, machine_key)
-            .await
+        match provider {
+            Providers::Oidc(provider) => {
+                provider
+                    .unix_user_get(id, old_token, keystore, tpm, machine_key)
+                    .await
+            }
+            Providers::Himmelblau(provider) => {
+                provider
+                    .unix_user_get(id, old_token, keystore, tpm, machine_key)
+                    .await
+            }
+        }
     }
 
     async fn unix_user_online_auth_init<D: KeyStoreTxn + Send>(
@@ -520,17 +609,34 @@ impl IdProvider for HimmelblauMultiProvider {
         let mut providers = self.providers.read().await;
         let provider = find_provider!(self, providers, domain, keystore)?;
 
-        provider
-            .unix_user_online_auth_init(
-                account_id,
-                token,
-                no_hello_pin,
-                keystore,
-                tpm,
-                machine_key,
-                shutdown_rx,
-            )
-            .await
+        match provider {
+            Providers::Oidc(provider) => {
+                provider
+                    .unix_user_online_auth_init(
+                        account_id,
+                        token,
+                        no_hello_pin,
+                        keystore,
+                        tpm,
+                        machine_key,
+                        shutdown_rx,
+                    )
+                    .await
+            }
+            Providers::Himmelblau(provider) => {
+                provider
+                    .unix_user_online_auth_init(
+                        account_id,
+                        token,
+                        no_hello_pin,
+                        keystore,
+                        tpm,
+                        machine_key,
+                        shutdown_rx,
+                    )
+                    .await
+            }
+        }
     }
 
     async fn unix_user_online_auth_step<D: KeyStoreTxn + Send>(
@@ -550,20 +656,40 @@ impl IdProvider for HimmelblauMultiProvider {
         let mut providers = self.providers.read().await;
         let provider = find_provider!(self, providers, domain, keystore)?;
 
-        provider
-            .unix_user_online_auth_step(
-                account_id,
-                old_token,
-                service,
-                no_hello_pin,
-                cred_handler,
-                pam_next_req,
-                keystore,
-                tpm,
-                machine_key,
-                shutdown_rx,
-            )
-            .await
+        match provider {
+            Providers::Oidc(provider) => {
+                provider
+                    .unix_user_online_auth_step(
+                        account_id,
+                        old_token,
+                        service,
+                        no_hello_pin,
+                        cred_handler,
+                        pam_next_req,
+                        keystore,
+                        tpm,
+                        machine_key,
+                        shutdown_rx,
+                    )
+                    .await
+            }
+            Providers::Himmelblau(provider) => {
+                provider
+                    .unix_user_online_auth_step(
+                        account_id,
+                        old_token,
+                        service,
+                        no_hello_pin,
+                        cred_handler,
+                        pam_next_req,
+                        keystore,
+                        tpm,
+                        machine_key,
+                        shutdown_rx,
+                    )
+                    .await
+            }
+        }
     }
 
     async fn unix_user_offline_auth_init<D: KeyStoreTxn + Send>(
@@ -577,9 +703,18 @@ impl IdProvider for HimmelblauMultiProvider {
         let mut providers = self.providers.read().await;
         let provider = find_provider!(self, providers, domain, keystore)?;
 
-        provider
-            .unix_user_offline_auth_init(account_id, token, no_hello_pin, keystore)
-            .await
+        match provider {
+            Providers::Oidc(provider) => {
+                provider
+                    .unix_user_offline_auth_init(account_id, token, no_hello_pin, keystore)
+                    .await
+            }
+            Providers::Himmelblau(provider) => {
+                provider
+                    .unix_user_offline_auth_init(account_id, token, no_hello_pin, keystore)
+                    .await
+            }
+        }
     }
 
     async fn unix_user_offline_auth_step<D: KeyStoreTxn + Send>(
@@ -597,18 +732,36 @@ impl IdProvider for HimmelblauMultiProvider {
         let mut providers = self.providers.read().await;
         let provider = find_provider!(self, providers, domain, keystore)?;
 
-        provider
-            .unix_user_offline_auth_step(
-                account_id,
-                token,
-                cred_handler,
-                pam_next_req,
-                keystore,
-                tpm,
-                machine_key,
-                online_at_init,
-            )
-            .await
+        match provider {
+            Providers::Oidc(provider) => {
+                provider
+                    .unix_user_offline_auth_step(
+                        account_id,
+                        token,
+                        cred_handler,
+                        pam_next_req,
+                        keystore,
+                        tpm,
+                        machine_key,
+                        online_at_init,
+                    )
+                    .await
+            }
+            Providers::Himmelblau(provider) => {
+                provider
+                    .unix_user_offline_auth_step(
+                        account_id,
+                        token,
+                        cred_handler,
+                        pam_next_req,
+                        keystore,
+                        tpm,
+                        machine_key,
+                        online_at_init,
+                    )
+                    .await
+            }
+        }
     }
 
     async fn unix_group_get(
@@ -630,9 +783,14 @@ impl IdProvider for HimmelblauMultiProvider {
                 Some((_sam, domain)) => {
                     let mut providers = self.providers.read().await;
                     match find_provider!(self, providers, domain, keystore) {
-                        Ok(provider) => {
-                            return provider.get_cachestate(Some(account_id), keystore).await
-                        }
+                        Ok(provider) => match provider {
+                            Providers::Oidc(provider) => {
+                                return provider.get_cachestate(Some(account_id), keystore).await
+                            }
+                            Providers::Himmelblau(provider) => {
+                                return provider.get_cachestate(Some(account_id), keystore).await
+                            }
+                        },
                         Err(..) => return CacheState::Offline,
                     }
                 }
@@ -640,12 +798,25 @@ impl IdProvider for HimmelblauMultiProvider {
             },
             None => {
                 for (_domain, provider) in self.providers.read().await.iter() {
-                    match provider.get_cachestate(None, keystore).await {
-                        CacheState::Offline => return CacheState::Offline,
-                        CacheState::OfflineNextCheck(time) => {
-                            return CacheState::OfflineNextCheck(time)
+                    match provider {
+                        Providers::Oidc(provider) => {
+                            match provider.get_cachestate(None, keystore).await {
+                                CacheState::Offline => return CacheState::Offline,
+                                CacheState::OfflineNextCheck(time) => {
+                                    return CacheState::OfflineNextCheck(time)
+                                }
+                                _ => continue,
+                            }
                         }
-                        _ => continue,
+                        Providers::Himmelblau(provider) => {
+                            match provider.get_cachestate(None, keystore).await {
+                                CacheState::Offline => return CacheState::Offline,
+                                CacheState::OfflineNextCheck(time) => {
+                                    return CacheState::OfflineNextCheck(time)
+                                }
+                                _ => continue,
+                            }
+                        }
                     }
                 }
             }
@@ -1526,6 +1697,7 @@ impl IdProvider for HimmelblauProvider {
                             AuthCredHandler::MFA {
                                 flow,
                                 password: None,
+                                extra_data: None,
                             },
                         ));
                     }
@@ -1541,6 +1713,7 @@ impl IdProvider for HimmelblauProvider {
                         AuthCredHandler::MFA {
                             flow,
                             password: None,
+                            extra_data: None,
                         },
                     ))
                 }
@@ -1572,6 +1745,7 @@ impl IdProvider for HimmelblauProvider {
                     AuthCredHandler::MFA {
                         flow,
                         password: None,
+                        extra_data: None,
                     },
                 ))
             }
@@ -2350,6 +2524,7 @@ impl IdProvider for HimmelblauProvider {
                         *cred_handler = AuthCredHandler::MFA {
                             flow: resp,
                             password: Some(cred.clone()),
+                            extra_data: None,
                         };
                         let action = if self.config.read().await.get_offline_breakglass_enabled() {
                             AuthCacheAction::PasswordHashUpdate { cred }
@@ -2372,6 +2547,7 @@ impl IdProvider for HimmelblauProvider {
                         *cred_handler = AuthCredHandler::MFA {
                             flow: resp,
                             password: Some(cred.clone()),
+                            extra_data: None,
                         };
                         let action = if self.config.read().await.get_offline_breakglass_enabled() {
                             AuthCacheAction::PasswordHashUpdate { cred }
@@ -2392,6 +2568,7 @@ impl IdProvider for HimmelblauProvider {
                         *cred_handler = AuthCredHandler::MFA {
                             flow: resp,
                             password: Some(cred.clone()),
+                            extra_data: None,
                         };
                         let action = if self.config.read().await.get_offline_breakglass_enabled() {
                             AuthCacheAction::PasswordHashUpdate { cred }
@@ -2416,6 +2593,7 @@ impl IdProvider for HimmelblauProvider {
                 AuthCredHandler::MFA {
                     ref mut flow,
                     password,
+                    extra_data: _,
                 },
                 PamAuthRequest::MFACode { cred },
             ) => {
@@ -2491,6 +2669,7 @@ impl IdProvider for HimmelblauProvider {
                 AuthCredHandler::MFA {
                     ref mut flow,
                     password,
+                    extra_data: _,
                 },
                 PamAuthRequest::MFAPoll { poll_attempt },
             ) => {
@@ -2595,6 +2774,7 @@ impl IdProvider for HimmelblauProvider {
                 AuthCredHandler::MFA {
                     ref mut flow,
                     password,
+                    extra_data: _,
                 },
                 PamAuthRequest::Fido { assertion },
             ) => {

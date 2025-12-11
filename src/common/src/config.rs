@@ -965,6 +965,18 @@ impl HimmelblauConfig {
             None => DEFAULT_OFFLINE_BREAKGLASS_TTL,
         }
     }
+
+    pub fn get_oidc_domain(&self) -> Option<String> {
+        self.config.get("oidc", "domain")
+    }
+
+    pub fn get_oidc_client_id(&self) -> Option<String> {
+        self.config.get("oidc", "client_id")
+    }
+
+    pub fn get_oidc_issuer_url(&self) -> Option<String> {
+        self.config.get("oidc", "issuer_url")
+    }
 }
 
 impl fmt::Debug for HimmelblauConfig {
