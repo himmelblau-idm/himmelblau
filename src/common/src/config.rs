@@ -555,7 +555,7 @@ impl HimmelblauConfig {
         };
         domains.extend(domain);
         let mut sections = self.config.sections();
-        sections.retain(|s| s != "global");
+        sections.retain(|s| s != "global" && s != "oidc" || s != "offline_breakglass");
         for section in sections {
             if !domains.contains(&section) {
                 domains.push(section);
@@ -964,6 +964,18 @@ impl HimmelblauConfig {
             Some(val) => parse_ttl_to_seconds(&val).unwrap_or(DEFAULT_OFFLINE_BREAKGLASS_TTL),
             None => DEFAULT_OFFLINE_BREAKGLASS_TTL,
         }
+    }
+
+    pub fn get_oidc_domain(&self) -> Option<String> {
+        self.config.get("oidc", "domain")
+    }
+
+    pub fn get_oidc_client_id(&self) -> Option<String> {
+        self.config.get("oidc", "client_id")
+    }
+
+    pub fn get_oidc_issuer_url(&self) -> Option<String> {
+        self.config.get("oidc", "issuer_url")
     }
 }
 

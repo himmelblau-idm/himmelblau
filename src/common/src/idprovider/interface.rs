@@ -96,6 +96,7 @@ pub enum AuthCredHandler {
     MFA {
         flow: MFAAuthContinue,
         password: Option<String>,
+        extra_data: Option<String>,
     },
     SetupPin {
         token: UnixUserToken,
