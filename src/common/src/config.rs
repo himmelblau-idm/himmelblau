@@ -555,7 +555,7 @@ impl HimmelblauConfig {
         };
         domains.extend(domain);
         let mut sections = self.config.sections();
-        sections.retain(|s| s != "global");
+        sections.retain(|s| s != "global" && s != "oidc" || s != "offline_breakglass");
         for section in sections {
             if !domains.contains(&section) {
                 domains.push(section);
