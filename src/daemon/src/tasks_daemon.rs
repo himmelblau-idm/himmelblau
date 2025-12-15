@@ -39,6 +39,7 @@ use himmelblau_unix_common::unix_proto::{HomeDirectoryInfo, TaskRequest, TaskRes
 use kanidm_utils_users::{get_effective_gid, get_effective_uid};
 use libc::{lchown, umask};
 use libc::{mode_t, uid_t};
+use libkrimes::proto::KerberosCredentials;
 use sd_notify::NotifyState;
 use sketching::tracing_forest::traits::*;
 use sketching::tracing_forest::util::*;
@@ -457,6 +458,46 @@ fn create_ccache_dir(ccache_dir: &Path, uid: uid_t, gid: uid_t) -> io::Result<()
     })
 }
 
+fn store_tgt(tgt: &KerberosCredentials, uid: uid_t, gid: uid_t) -> Result<(), String> {
+    let ccname = Some(format!("KEYRING:persistent:{}", uid));
+
+    debug!(?ccname, "Storing kerberos ticket in credential cache");
+
+    let guard = uzers::switch::switch_user_group(uid, gid)
+        .map_err(|e| format!("Failed to switch user/group: {}", e))?;
+
+    let mut ccache = match libkrimes::ccache::resolve(ccname.as_deref()) {
+        Ok(ccache) => ccache,
+        Err(e) => {
+            drop(guard);
+            let msg = format!("Failed to resolve credential cache {:?}: {:?}", ccname, e);
+            return Err(msg);
+        }
+    };
+
+    match ccache.init(tgt.name(), None) {
+        Ok(_) => (),
+        Err(e) => {
+            drop(guard);
+            let msg = format!("Failed to init credential cache {:?}: {:?}", ccname, e);
+            return Err(msg);
+        }
+    }
+
+    match ccache.store(tgt) {
+        Ok(_) => (),
+        Err(e) => {
+            drop(guard);
+            let msg = format!("Failed to store TGT in credential cache: {:?}", e);
+            return Err(msg);
+        }
+    }
+
+    drop(guard);
+
+    Ok(())
+}
+
 async fn handle_tasks(stream: UnixStream, cfg: &HimmelblauConfig) {
     let mut reqs = Framed::new(stream, TaskCodec::new());
 
@@ -566,6 +607,30 @@ async fn handle_tasks(stream: UnixStream, cfg: &HimmelblauConfig) {
                 };
 
                 // Indicate the status response
+                if let Err(e) = reqs.send(response).await {
+                    error!("Error -> {:?}", e);
+                    return;
+                }
+            }
+            Some(Ok(TaskRequest::KerberosTGTs(uid, gid, tgt_cloud, tgt_ad))) => {
+                debug!("Received task -> KerberosCCache({}, {}, ...)", uid, gid);
+
+                let cloud_ret = if let Some(tgt_cloud) = tgt_cloud {
+                    store_tgt(tgt_cloud.as_ref(), uid, gid)
+                } else {
+                    Ok(())
+                };
+
+                let ad_ret = if let Some(tgt_ad) = tgt_ad {
+                    store_tgt(tgt_ad.as_ref(), uid, gid)
+                } else {
+                    Ok(())
+                };
+
+                let response = match cloud_ret.and(ad_ret) {
+                    Ok(_) => TaskResponse::Success(0),
+                    Err(msg) => TaskResponse::Error(msg),
+                };
                 if let Err(e) = reqs.send(response).await {
                     error!("Error -> {:?}", e);
                     return;

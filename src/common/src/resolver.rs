@@ -11,6 +11,7 @@
 // use async_trait::async_trait;
 use hashbrown::HashSet;
 use libc::uid_t;
+use libkrimes::proto::KerberosCredentials;
 use std::collections::BTreeSet;
 use std::fmt::Display;
 use std::fs;
@@ -659,6 +660,60 @@ where
         let (cloud_ccache, ad_ccache) = self
             .client
             .unix_user_ccaches(
+                &account_id,
+                Some(&token),
+                &mut dbtxn,
+                hsm_lock.deref_mut(),
+                &self.machine_key,
+            )
+            .await;
+
+        drop(hsm_lock);
+        if dbtxn.commit().is_err() {
+            error!("Failed to commit user token DB transaction");
+            return None;
+        }
+
+        Some((
+            token.gidnumber,
+            token.real_gidnumber.unwrap_or(token.gidnumber),
+            cloud_ccache,
+            ad_ccache,
+        ))
+    }
+
+    pub async fn get_user_tgts(
+        &self,
+        account_id: Id,
+    ) -> Option<(
+        uid_t,
+        uid_t,
+        Option<Box<KerberosCredentials>>,
+        Option<Box<KerberosCredentials>>,
+    )> {
+        // Validate the user isn't in the nxset (aka, it's a local user or group).
+        let (name, idnumber) = match account_id.clone() {
+            Id::Name(name) => (Some(name), None),
+            Id::Gid(idnumber) => (None, Some(idnumber)),
+        };
+        if self.check_nxset(name.as_deref(), idnumber).await {
+            return None;
+        }
+
+        let token = match self.get_usertoken(account_id.clone()).await {
+            Ok(Some(token)) => token,
+            _ => {
+                error!("Failed to fetch unix user token during access token request!");
+                return None;
+            }
+        };
+
+        let mut hsm_lock = self.hsm.lock().await;
+        let mut dbtxn = self.db.write().await;
+
+        let (cloud_ccache, ad_ccache) = self
+            .client
+            .unix_user_tgts(
                 &account_id,
                 Some(&token),
                 &mut dbtxn,

@@ -411,9 +411,9 @@ async fn handle_client(
                                                     }
 
                                                     // Initialize the user Kerberos ccache
-                                                    if let Some((uid, gid, cloud_ccache, ad_ccache)) =
+                                                    if let Some((uid, gid, tgt_cloud, tgt_ad)) =
                                                         cachelayer
-                                                            .get_user_ccaches(Id::Name(
+                                                            .get_user_tgts(Id::Name(
                                                                 account_id.to_string(),
                                                             ))
                                                             .await
@@ -423,11 +423,11 @@ async fn handle_client(
                                                         match task_channel_tx
                                                             .send_timeout(
                                                                 (
-                                                                    TaskRequest::KerberosCCache(
+                                                                    TaskRequest::KerberosTGTs(
                                                                         uid,
                                                                         gid,
-                                                                        cloud_ccache,
-                                                                        ad_ccache,
+                                                                        tgt_cloud,
+                                                                        tgt_ad,
                                                                     ),
                                                                     tx,
                                                                 ),

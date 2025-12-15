@@ -1419,6 +1419,20 @@ impl IdProvider for OidcProvider {
         (vec![], vec![])
     }
 
+    async fn unix_user_tgts<D: KeyStoreTxn + Send>(
+        &self,
+        _id: &Id,
+        _old_token: Option<&UserToken>,
+        _keystore: &mut D,
+        _tpm: &mut tpm::provider::BoxedDynTpm,
+        _machine_key: &tpm::structures::StorageKey,
+    ) -> (
+        Option<Box<libkrimes::proto::KerberosCredentials>>,
+        Option<Box<libkrimes::proto::KerberosCredentials>>,
+    ) {
+        (None, None)
+    }
+
     #[instrument(level = "debug", skip_all)]
     async fn unix_user_prt_cookie<D: KeyStoreTxn + Send>(
         &self,
