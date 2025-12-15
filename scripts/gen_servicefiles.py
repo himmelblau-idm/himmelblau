@@ -24,7 +24,7 @@ MINVER = {
     # Unit section
     "Upholds": 249,
     # Service section
-    "TypeNotifyReload": 253,   # Use Type=notify-reload when >= this; else Type=notify
+    "TypeNotifyReload": 253,  # Use Type=notify-reload when >= this; else Type=notify
     "DynamicUser": 235,
     "ProtectSystemStrict": 214,
     "ReadWritePaths": 231,
@@ -46,6 +46,7 @@ MINVER = {
     "StartLimitBurst": 229,
 }
 
+
 def detect_systemd_version():
     cmds = [
         ["systemctl", "--version"],
@@ -63,28 +64,62 @@ def detect_systemd_version():
             continue
     return None
 
+
 def bool_env(val: str) -> bool:
     return val.lower() in ("1", "true", "yes", "on")
 
+
 def main():
     ap = argparse.ArgumentParser(description="Generate Himmelblau systemd unit files.")
-    ap.add_argument("--out-dir", default=".", help="Output directory for generated units.")
-    ap.add_argument("--assume-version", type=int, default=None,
-                    help="Assume this systemd version (skip detection).")
-    ap.add_argument("--force-notify-reload", action="store_true",
-                    help="Force Type=notify-reload regardless of detected version.")
-    ap.add_argument("--disable-notify-reload", action="store_true",
-                    help="Force Type=notify even if notify-reload is supported.")
-    ap.add_argument("--disable-upholds", action="store_true",
-                    help="Do not emit Upholds= (even if supported).")
+    ap.add_argument(
+        "--out-dir", default=".", help="Output directory for generated units."
+    )
+    ap.add_argument(
+        "--assume-version",
+        type=int,
+        default=None,
+        help="Assume this systemd version (skip detection).",
+    )
+    ap.add_argument(
+        "--force-notify-reload",
+        action="store_true",
+        help="Force Type=notify-reload regardless of detected version.",
+    )
+    ap.add_argument(
+        "--disable-notify-reload",
+        action="store_true",
+        help="Force Type=notify even if notify-reload is supported.",
+    )
+    ap.add_argument(
+        "--disable-upholds",
+        action="store_true",
+        help="Do not emit Upholds= (even if supported).",
+    )
 
-    ap.add_argument("--static-user", default=None,
-                    help="If set, use a fixed User= (and Group= if --static-group given) instead of DynamicUser.")
-    ap.add_argument("--static-group", default=None, help="Group to set when using static user.")
-    ap.add_argument("--tss-group", default="tss", help="Supplementary tss group (or empty to disable).")
+    ap.add_argument(
+        "--static-user",
+        default=None,
+        help="If set, use a fixed User= (and Group= if --static-group given) instead of DynamicUser.",
+    )
+    ap.add_argument(
+        "--static-group", default=None, help="Group to set when using static user."
+    )
+    ap.add_argument(
+        "--tss-group",
+        default="tss",
+        help="Supplementary tss group (or empty to disable).",
+    )
 
-    ap.add_argument("--after-extra", default="", help="Extra units/targets to include in After= (space-separated).")
-    ap.add_argument("--wants-extra", default="", help="Extra units/targets to include in Wants= (space-separated).")
+    ap.add_argument(
+        "--after-extra",
+        default="",
+        help="Extra units/targets to include in After= (space-separated).",
+    )
+    ap.add_argument(
+        "--wants-extra",
+        default="",
+        help="Extra units/targets to include in Wants= (space-separated).",
+    )
 
     args = ap.parse_args()
 
@@ -109,7 +144,9 @@ def main():
     elif args.disable_notify_reload:
         type_line = "Type=notify"
     else:
-        type_line = "Type=notify-reload" if supported("TypeNotifyReload") else "Type=notify"
+        type_line = (
+            "Type=notify-reload" if supported("TypeNotifyReload") else "Type=notify"
+        )
 
     # ---- Decide DynamicUser vs static ----
     dyn_user_ok = supported("DynamicUser") and (args.static_user is None)
@@ -133,12 +170,14 @@ def main():
     # ---- Directory helpers ----
     dirs_block = []
     if supported("CacheRuntimeStateDirs"):
-        dirs_block.extend([
-            "UMask=0027",
-            "CacheDirectory=himmelblaud",
-            "RuntimeDirectory=himmelblaud",
-            "StateDirectory=himmelblaud",
-        ])
+        dirs_block.extend(
+            [
+                "UMask=0027",
+                "CacheDirectory=himmelblaud",
+                "RuntimeDirectory=himmelblaud",
+                "StateDirectory=himmelblaud",
+            ]
+        )
 
     # ---- Security hardening (toggle by version) ----
     hardening = []
@@ -165,17 +204,34 @@ def main():
     if supported("ProtectSystemStrict"):
         hardening.append("ProtectSystem=strict")
     # ReadWritePaths only if ProtectSystem=strict available
-    rw_paths_available = supported("ReadWritePaths") and supported("ProtectSystemStrict")
+    rw_paths_available = supported("ReadWritePaths") and supported(
+        "ProtectSystemStrict"
+    )
 
     # ---- Common headers ----
     # After= and Wants= lines vary slightly across distros; expose flags.
-    base_after = ["chronyd.service", "nscd.service", "ntpd.service", "network-online.target", "suspend.target"]
-    tasks_after = ["chronyd.service", "ntpd.service", "network-online.target", "suspend.target"]
+    base_after = [
+        "chronyd.service",
+        "nscd.service",
+        "ntpd.service",
+        "network-online.target",
+        "suspend.target",
+    ]
+    tasks_after = [
+        "chronyd.service",
+        "ntpd.service",
+        "network-online.target",
+        "suspend.target",
+    ]
     if args.after_extra.strip():
         base_after += args.after_extra.split()
         tasks_after += args.after_extra.split()
 
-    base_before = ["systemd-user-sessions.service", "sshd.service", "nss-user-lookup.target"]
+    base_before = [
+        "systemd-user-sessions.service",
+        "sshd.service",
+        "nss-user-lookup.target",
+    ]
     base_wants = ["nss-user-lookup.target"]
     if args.wants_extra.strip():
         base_wants += args.wants_extra.split()
@@ -193,8 +249,14 @@ def main():
         hsm_pin_init_wants = "Wants=himmelblau-hsm-pin-init.service"
 
     # ---- Compose himmelblaud.service ----
-    daemon_private_devices = "PrivateDevices=false" if supported("PrivateDevices") else ""
-    daemon_hardening = [h for h in hardening if h != "ProtectSystem=strict"] + ["ProtectSystem=strict"] if supported("ProtectSystemStrict") else [h for h in hardening if h != "ProtectSystem=strict"]
+    daemon_private_devices = (
+        "PrivateDevices=false" if supported("PrivateDevices") else ""
+    )
+    daemon_hardening = (
+        [h for h in hardening if h != "ProtectSystem=strict"] + ["ProtectSystem=strict"]
+        if supported("ProtectSystemStrict")
+        else [h for h in hardening if h != "ProtectSystem=strict"]
+    )
 
     daemon_rw_paths_comment = dedent("""\
         # Implied by dynamic user.
@@ -207,15 +269,16 @@ def main():
         # Keep comment but we don't add ReadWritePaths for daemon by default since the daemon primarily writes those dirs via XDG helpers.
         pass
 
-    daemon_unit = f"""\
+    daemon_unit = (
+        f"""\
 # You should not need to edit this file. Instead, use a drop-in file:
 #   systemctl edit himmelblaud.service
 
 [Unit]
 Description=Himmelblau Authentication Daemon
-After={' '.join(base_after)}{' ' + hsm_pin_init_after if hsm_pin_init_after else ''}
-Before={' '.join(base_before)}
-Wants={' '.join(base_wants)}
+After={" ".join(base_after)}{" " + hsm_pin_init_after if hsm_pin_init_after else ""}
+Before={" ".join(base_before)}
+Wants={" ".join(base_wants)}
 {hsm_pin_init_wants}
 # While it seems confusing, we need to be after nscd.service so that the
 # Conflicts will trigger and then automatically stop it.
@@ -223,17 +286,17 @@ Conflicts=nscd.service
 # `Upholds` like a `Wants` directive ensures that himmelblaud-tasks is started but also
 # ensures it's kept running. This allows for a repeatable & fast way of starting 
 # himmelblaud-tasks at the right time.
-{upholds_line if upholds_line else ''}
-{'StartLimitIntervalSec=30s' if supported('StartLimitIntervalSec') else ''}
-{'StartLimitBurst=8' if supported('StartLimitBurst') else ''}
+{upholds_line if upholds_line else ""}
+{"StartLimitIntervalSec=30s" if supported("StartLimitIntervalSec") else ""}
+{"StartLimitBurst=8" if supported("StartLimitBurst") else ""}
 
 [Service]
 {os.linesep.join(service_user_block)}
 {os.linesep.join(dirs_block)}
 
 {type_line}
-{'LoadCredentialEncrypted=hsm-pin:/var/lib/himmelblaud/hsm-pin.enc' if supported('LoadCredentialEncrypted') else ''}
-{'Environment=HIMMELBLAU_HSM_PIN_PATH=%d/hsm-pin' if supported('LoadCredentialEncrypted') else ''}
+{"LoadCredentialEncrypted=hsm-pin:/var/lib/himmelblaud/hsm-pin.enc" if supported("LoadCredentialEncrypted") else ""}
+{"Environment=HIMMELBLAU_HSM_PIN_PATH=%d/hsm-pin" if supported("LoadCredentialEncrypted") else ""}
 ExecStart=/usr/sbin/himmelblaud
 Restart=on-failure
 RestartSec=500ms
@@ -248,7 +311,9 @@ PrivateTmp=true
 
 [Install]
 WantedBy=multi-user.target
-""".rstrip() + "\n"
+""".rstrip()
+        + "\n"
+    )
 
     # ---- Compose himmelblaud-tasks.service ----
     tasks_hardening = list(hardening)  # copy
@@ -258,22 +323,23 @@ WantedBy=multi-user.target
     rw_paths = "/home /run/himmelblaud /tmp /etc/krb5.conf.d /etc /var/lib /var/cache/nss-himmelblau /var/cache/himmelblau-policies"
     rw_line = f"ReadWritePaths={rw_paths}" if rw_paths_available else ""
 
-    tasks_unit = f"""\
+    tasks_unit = (
+        f"""\
 # You should not need to edit this file. Instead, use a drop-in file:
 #   systemctl edit himmelblaud-tasks.service
 
 [Unit]
 Description=Himmelblau Local Tasks
-After={' '.join(tasks_after)} himmelblaud.service
+After={" ".join(tasks_after)} himmelblaud.service
 Requires=himmelblaud.service
 
 # This prevents starting himmelblaud-tasks before himmelblaud is running and
 # has created the socket necessary for communication.
 # We need the check so that fs namespacing used by `ReadWritePaths` has a
 # strict enough target to namespace. Without the check it fails in a more confusing way.
-{'ConditionPathExists=/run/himmelblaud/task_sock' if supported('ConditionPathExists') else ''}
-{'StartLimitIntervalSec=30s' if supported('StartLimitIntervalSec') else ''}
-{'StartLimitBurst=8' if supported('StartLimitBurst') else ''}
+{"ConditionPathExists=/run/himmelblaud/task_sock" if supported("ConditionPathExists") else ""}
+{"StartLimitIntervalSec=30s" if supported("StartLimitIntervalSec") else ""}
+{"StartLimitBurst=8" if supported("StartLimitBurst") else ""}
 
 [Service]
 User=root
@@ -283,16 +349,19 @@ Restart=on-failure
 RestartSec=1s
 
 CacheDirectory=nss-himmelblau
-CapabilityBoundingSet=CAP_CHOWN CAP_FOWNER CAP_DAC_OVERRIDE CAP_DAC_READ_SEARCH
+CapabilityBoundingSet=CAP_CHOWN CAP_FOWNER CAP_DAC_OVERRIDE CAP_DAC_READ_SEARCH CAP_SETUID CAP_SETGID
+AmbientCapabilities=CAP_SETUID CAP_SETGID
 # SystemCallFilter=@aio @basic-io @chown @file-system @io-event @network-io @sync
-{ 'ProtectSystem=strict' if supported('ProtectSystemStrict') else '' }
+{"ProtectSystem=strict" if supported("ProtectSystemStrict") else ""}
 {rw_line}
-{os.linesep.join([h for h in tasks_hardening if not h.startswith('ProtectSystem=') and not h.startswith('PrivateTmp=')])}
+{os.linesep.join([h for h in tasks_hardening if not h.startswith("ProtectSystem=") and not h.startswith("PrivateTmp=")])}
 {tasks_private_devices}
 
 [Install]
 WantedBy=multi-user.target
-""".rstrip() + "\n"
+""".rstrip()
+        + "\n"
+    )
 
     # ---- Compose himmelblau-hsm-pin-init.service ----
     # Always generate this file so cargo-deb can find it. On older systemd without
@@ -329,7 +398,7 @@ WantedBy=himmelblaud.service
         return s
 
     daemon_unit = squeeze_blank_lines(daemon_unit)
-    tasks_unit  = squeeze_blank_lines(tasks_unit)
+    tasks_unit = squeeze_blank_lines(tasks_unit)
     hsm_pin_init_unit = squeeze_blank_lines(hsm_pin_init_unit)
 
     (out_dir / "himmelblaud.service").write_text(daemon_unit)
@@ -337,9 +406,10 @@ WantedBy=himmelblaud.service
     (out_dir / "himmelblau-hsm-pin-init.service").write_text(hsm_pin_init_unit)
 
     print(f"[gen-systemd] systemd version detected/assumed: {ver}")
-    print(f"[gen-systemd] Wrote: {out_dir/'himmelblaud.service'}")
-    print(f"[gen-systemd] Wrote: {out_dir/'himmelblaud-tasks.service'}")
-    print(f"[gen-systemd] Wrote: {out_dir/'himmelblau-hsm-pin-init.service'}")
+    print(f"[gen-systemd] Wrote: {out_dir / 'himmelblaud.service'}")
+    print(f"[gen-systemd] Wrote: {out_dir / 'himmelblaud-tasks.service'}")
+    print(f"[gen-systemd] Wrote: {out_dir / 'himmelblau-hsm-pin-init.service'}")
+
 
 if __name__ == "__main__":
     main()

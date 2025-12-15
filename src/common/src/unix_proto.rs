@@ -9,6 +9,7 @@
  */
 
 use libc::uid_t;
+use libkrimes::proto::KerberosCredentials;
 use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -166,6 +167,12 @@ pub enum TaskRequest {
     LocalGroups(String, bool),
     LogonScript(String, String),
     KerberosCCache(uid_t, uid_t, Vec<u8>, Vec<u8>),
+    KerberosTGTs(
+        uid_t,
+        uid_t,
+        Option<Box<KerberosCredentials>>,
+        Option<Box<KerberosCredentials>>,
+    ),
     LoadProfilePhoto(String, String),
     ApplyPolicy(Option<String>, String, String, String, String),
     /// Set up subordinate UID/GID mappings for container support (podman, etc.)
@@ -182,6 +189,9 @@ impl TaskRequest {
             TaskRequest::LogonScript(_, _) => "LogonScript(...)".to_string(),
             TaskRequest::KerberosCCache(uid, gid, _, _) => {
                 format!("KerberosCCache({}, {}, ...)", uid, gid)
+            }
+            TaskRequest::KerberosTGTs(uid, gid, _, _) => {
+                format!("KerberosTGTs({}, {}, ...)", uid, gid)
             }
             TaskRequest::LoadProfilePhoto(_, _) => "LoadProfilePhoto(...)".to_string(),
             TaskRequest::ApplyPolicy(intune_device_id, _, _, _, _) => {
