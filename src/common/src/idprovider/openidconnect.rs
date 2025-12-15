@@ -20,14 +20,22 @@ use crate::config::HimmelblauConfig;
 use crate::constants::ID_MAP_CACHE;
 use crate::db::KeyStoreTxn;
 use crate::idmap_cache::StaticIdCache;
+use crate::idprovider::common::KeyType;
+use crate::idprovider::common::{BadPinCounter, RefreshCache, RefreshCacheEntry};
 use crate::idprovider::interface::{
     tpm, AuthCacheAction, AuthCredHandler, AuthRequest, AuthResult, CacheState, GroupToken, Id,
     IdProvider, IdpError, UserToken, UserTokenState,
 };
 use crate::unix_proto::PamAuthRequest;
+use crate::{
+    extract_base_url, handle_hello_bad_pin_count, impl_himmelblau_hello_key_helpers,
+    impl_himmelblau_offline_auth_init, impl_himmelblau_offline_auth_step, load_cached_prt_no_op,
+};
 use async_trait::async_trait;
 use himmelblau::{error::MsalError, MFAAuthContinue, UserToken as UnixUserToken};
 use idmap::Idmap;
+use kanidm_hsm_crypto::structures::LoadableMsHelloKey;
+use kanidm_hsm_crypto::PinValue;
 use oauth2::basic::BasicTokenType;
 use oauth2::{
     DeviceAuthorizationResponse as OauthDeviceAuthResponse, EmptyExtraTokenFields,
@@ -45,6 +53,8 @@ use openidconnect::{
     EndpointMaybeSet, EndpointNotSet, EndpointSet, IdTokenFields, IssuerUrl, OAuth2TokenResponse,
     ProviderMetadata, Scope,
 };
+use regex::Regex;
+use reqwest::Url;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
@@ -137,10 +147,12 @@ struct OidcDelayedInit {
 }
 
 pub struct OidcProvider {
-    cfg: Arc<RwLock<HimmelblauConfig>>,
+    config: Arc<RwLock<HimmelblauConfig>>,
     idmap: Arc<RwLock<Idmap>>,
     state: Mutex<CacheState>,
     client: RwLock<Option<OidcDelayedInit>>,
+    refresh_cache: RefreshCache,
+    bad_pin_counter: BadPinCounter,
 }
 
 impl OidcProvider {
@@ -150,10 +162,12 @@ impl OidcProvider {
         idmap: &Arc<RwLock<Idmap>>,
     ) -> Result<Self, IdpError> {
         Ok(Self {
-            cfg: cfg.clone(),
+            config: cfg.clone(),
             idmap: idmap.clone(),
             state: Mutex::new(CacheState::OfflineNextCheck(SystemTime::now())),
             client: RwLock::new(None),
+            refresh_cache: RefreshCache::new(),
+            bad_pin_counter: BadPinCounter::new(),
         })
     }
 
@@ -175,6 +189,7 @@ impl OidcProvider {
             Scope::new("openid".to_string()),
             Scope::new("profile".to_string()),
             Scope::new("email".to_string()),
+            Scope::new("offline_access".to_string()),
         ];
         if let Some(delayed_init) = &*self.client.read().await {
             let details = delayed_init
@@ -206,7 +221,7 @@ impl OidcProvider {
     async fn acquire_token_by_device_flow(
         &self,
         flow: &DeviceAuthorizationResponse<EmptyExtraDeviceAuthorizationFields>,
-    ) -> Result<UserToken, MsalError> {
+    ) -> Result<OidcTokenResponse, MsalError> {
         if (self.delayed_init().await).is_err() {
             // Initialization failed. Report that the system is offline. We
             // can't proceed with initialization until the system is online.
@@ -264,18 +279,9 @@ impl OidcProvider {
                 ))
             })?;
             if status.is_success() {
-                self.user_token_from_oidc(
-                    &serde_json::from_slice::<OidcTokenResponse>(&bytes).map_err(|e| {
-                        MsalError::GeneralFailure(format!(
-                            "Failed to parse device access token response: {e}"
-                        ))
-                    })?,
-                )
-                .await
-                .map_err(|e| {
+                serde_json::from_slice::<OidcTokenResponse>(&bytes).map_err(|e| {
                     MsalError::GeneralFailure(format!(
-                        "Failed to convert OIDC token to user token: {:?}",
-                        e
+                        "Failed to parse device access token response: {e}"
                     ))
                 })
             } else {
@@ -351,8 +357,151 @@ impl OidcProvider {
     }
 
     #[instrument(level = "debug", skip_all)]
+    async fn acquire_token_by_refresh_token(
+        &self,
+        refresh_token: &str,
+        scopes: Vec<&str>,
+    ) -> Result<OidcTokenResponse, MsalError> {
+        if (self.delayed_init().await).is_err() {
+            // Initialization failed. Report that the system is offline. We
+            // can't proceed with initialization until the system is online.
+            let mut state = self.state.lock().await;
+            *state = CacheState::OfflineNextCheck(SystemTime::now() + OFFLINE_NEXT_CHECK);
+            return Err(MsalError::RequestFailed(
+                "Network down detected".to_string(),
+            ));
+        }
+
+        if let Some(delayed_init) = &*self.client.read().await {
+            // Token endpoint
+            let token_url = delayed_init
+                .client
+                .token_uri()
+                .map(|u| u.url().clone())
+                .ok_or_else(|| {
+                    MsalError::GeneralFailure("OIDC client missing token endpoint URL".to_string())
+                })?;
+
+            // Client id as string (used for public clients; confidential clients may also require secret)
+            let client_id = delayed_init.client.client_id().as_str().to_owned();
+
+            // Space-separated scopes per OAuth2
+            let scope_string = scopes.join(" ");
+
+            #[derive(Serialize)]
+            struct RefreshTokenRequest<'a> {
+                grant_type: &'static str,
+                refresh_token: &'a str,
+                client_id: &'a str,
+                #[serde(skip_serializing_if = "str::is_empty")]
+                scope: &'a str,
+            }
+
+            let body = RefreshTokenRequest {
+                grant_type: "refresh_token",
+                refresh_token,
+                client_id: &client_id,
+                scope: &scope_string,
+            };
+
+            let resp = delayed_init
+                .http_client
+                .post(token_url)
+                .header(reqwest::header::ACCEPT, "application/json")
+                .form(&body)
+                .send()
+                .await
+                .map_err(|e| {
+                    MsalError::GeneralFailure(format!("Failed to send refresh token request: {e}"))
+                })?;
+
+            let status = resp.status();
+            let bytes = resp.bytes().await.map_err(|e| {
+                MsalError::GeneralFailure(format!(
+                    "Failed to read refresh token response body: {e}"
+                ))
+            })?;
+
+            if status.is_success() {
+                serde_json::from_slice::<OidcTokenResponse>(&bytes).map_err(|e| {
+                    MsalError::GeneralFailure(format!(
+                        "Failed to parse refresh token response: {e}"
+                    ))
+                })
+            } else {
+                #[derive(Deserialize, Debug)]
+                struct RefreshTokenErrorResponse {
+                    error: String,
+                    #[allow(dead_code)]
+                    error_description: Option<String>,
+                }
+
+                let err: RefreshTokenErrorResponse =
+                    serde_json::from_slice(&bytes).map_err(|e| {
+                        error!(
+                            ?e,
+                            status = ?status,
+                            body = %String::from_utf8_lossy(&bytes),
+                            "Unexpected refresh token response"
+                        );
+                        MsalError::GeneralFailure(format!(
+                            "Failed to parse refresh token error response: {e}"
+                        ))
+                    })?;
+
+                match err.error.as_str() {
+                    // Most common refresh failures
+                    "invalid_grant" => {
+                        error!(
+                            desc = ?err.error_description,
+                            "Refresh token rejected (invalid_grant)"
+                        );
+                        Err(MsalError::GeneralFailure(
+                            "Refresh token rejected (invalid_grant)".to_string(),
+                        ))
+                    }
+                    "invalid_client" => {
+                        error!(
+                            desc = ?err.error_description,
+                            "Client authentication failed (invalid_client)"
+                        );
+                        Err(MsalError::GeneralFailure(
+                            "Client authentication failed (invalid_client)".to_string(),
+                        ))
+                    }
+                    "invalid_scope" => {
+                        error!(
+                            desc = ?err.error_description,
+                            "Requested scope is invalid for refresh (invalid_scope)"
+                        );
+                        Err(MsalError::GeneralFailure(
+                            "Requested scope is invalid for refresh (invalid_scope)".to_string(),
+                        ))
+                    }
+                    other => {
+                        error!(
+                            error = %other,
+                            desc = ?err.error_description,
+                            status = ?status,
+                            "Refresh token grant failed with unexpected error"
+                        );
+                        Err(MsalError::GeneralFailure(format!(
+                            "Refresh token grant failed with error: {}",
+                            other
+                        )))
+                    }
+                }
+            }
+        } else {
+            Err(MsalError::RequestFailed(
+                "OIDC client not initialized".to_string(),
+            ))
+        }
+    }
+
+    #[instrument(level = "debug", skip_all)]
     async fn tenant_id(&self) -> Result<Uuid, IdpError> {
-        let config = self.cfg.read().await;
+        let config = self.config.read().await;
         let issuer = config.get_oidc_issuer_url().ok_or({
             error!("Missing OIDC issuer URL in config");
             IdpError::BadRequest
@@ -427,7 +576,7 @@ impl OidcProvider {
                 .and_then(|n| n.get(None))
                 .map(|n| n.to_string())
                 .unwrap_or_default(),
-            shell: Some(self.cfg.read().await.get_shell(None)),
+            shell: Some(self.config.read().await.get_shell(None)),
             groups: vec![GroupToken {
                 name: account_id.to_string(),
                 spn: account_id.to_string(),
@@ -493,7 +642,7 @@ impl OidcProvider {
         // via PAM indicating that the network is down.
         let init = self.client.read().await.is_some();
         if !init {
-            let cfg = self.cfg.read().await;
+            let cfg = self.config.read().await;
 
             let client_id = ClientId::new(cfg.get_oidc_client_id().ok_or({
                 error!("Missing OIDC client ID in config");
@@ -566,6 +715,38 @@ impl OidcProvider {
             });
         }
         Ok(())
+    }
+
+    impl_himmelblau_hello_key_helpers!();
+
+    #[instrument(level = "debug", skip_all)]
+    async fn token_validate(
+        &self,
+        account_id: &str,
+        token: &OidcTokenResponse,
+    ) -> Result<AuthResult, IdpError> {
+        let token2 = self.user_token_from_oidc(token).await?;
+        if account_id.to_string().to_lowercase() != token2.name.to_string().to_lowercase() {
+            let msg = format!(
+                "Authenticated user {} does not match requested user",
+                token2.uuid
+            );
+            error!(msg);
+            return Ok(AuthResult::Denied(msg));
+        }
+        info!("Authentication successful for user '{}'", token2.uuid);
+        if let Some(refresh_token) = token.refresh_token() {
+            debug!("Caching refresh token for user '{}'", token2.uuid);
+            self.refresh_cache
+                .add(
+                    account_id,
+                    &RefreshCacheEntry::RefreshToken(refresh_token.secret().to_string()),
+                )
+                .await;
+        }
+        Ok(AuthResult::Success {
+            token: token2.clone(),
+        })
     }
 }
 
@@ -652,7 +833,7 @@ impl IdProvider for OidcProvider {
             real_gidnumber: Some(uid),
             gidnumber: gid,
             displayname,
-            shell: Some(self.cfg.read().await.get_shell(None)),
+            shell: Some(self.config.read().await.get_shell(None)),
             groups: vec![GroupToken {
                 name: account_id.to_string(),
                 spn: account_id.to_string(),
@@ -667,10 +848,10 @@ impl IdProvider for OidcProvider {
     #[instrument(level = "debug", skip_all)]
     async fn unix_user_online_auth_init<D: KeyStoreTxn + Send>(
         &self,
-        _account_id: &str,
+        account_id: &str,
         _token: Option<&UserToken>,
-        _no_hello_pin: bool,
-        _keystore: &mut D,
+        no_hello_pin: bool,
+        keystore: &mut D,
         _tpm: &mut tpm::provider::BoxedDynTpm,
         _machine_key: &tpm::structures::StorageKey,
         _shutdown_rx: &broadcast::Receiver<()>,
@@ -689,38 +870,60 @@ impl IdProvider for OidcProvider {
             ));
         }
 
-        let (flow, extra_data) =
-            mfa_from_oidc_device(self.initiate_device_flow().await.map_err(|e| {
-                error!(?e, "Failed to initiate device flow");
-                IdpError::BadRequest
-            })?)?;
+        let hello_key = match self.fetch_hello_key(account_id, keystore) {
+            Ok((hello_key, _keytype)) => Some(hello_key),
+            Err(_) => None,
+        };
+        // Skip Hello authentication if it is disabled by config
+        let hello_enabled = self.config.read().await.get_enable_hello();
+        let hello_pin_retry_count = self.config.read().await.get_hello_pin_retry_count();
+        if hello_key.is_none()
+            || !hello_enabled
+            || self.bad_pin_counter.bad_pin_count(account_id).await > hello_pin_retry_count
+            || no_hello_pin
+        {
+            let (flow, extra_data) =
+                mfa_from_oidc_device(self.initiate_device_flow().await.map_err(|e| {
+                    error!(?e, "Failed to initiate device flow");
+                    IdpError::BadRequest
+                })?)?;
 
-        let polling_interval = flow.polling_interval.unwrap_or(5000);
-        Ok((
-            AuthRequest::MFAPoll {
-                msg: flow.msg.clone(),
-                polling_interval: polling_interval / 1000,
-            },
-            AuthCredHandler::MFA {
-                flow,
-                password: None,
-                extra_data: Some(extra_data),
-            },
-        ))
+            let polling_interval = flow.polling_interval.unwrap_or(5000);
+            Ok((
+                AuthRequest::MFAPoll {
+                    msg: flow.msg.clone(),
+                    polling_interval: polling_interval / 1000,
+                },
+                AuthCredHandler::MFA {
+                    flow,
+                    password: None,
+                    extra_data: Some(extra_data),
+                },
+            ))
+        } else {
+            // Check if the network is even up prior to sending a PIN prompt,
+            // otherwise we duplicate the PIN prompt when the network goes down.
+            if !self.attempt_online(SystemTime::now()).await {
+                // We are offline, fail the authentication now
+                return Err(IdpError::BadRequest);
+            }
+
+            Ok((AuthRequest::Pin, AuthCredHandler::None))
+        }
     }
 
     #[instrument(level = "debug", skip_all)]
     async fn unix_user_online_auth_step<D: KeyStoreTxn + Send>(
         &self,
         account_id: &str,
-        _old_token: &UserToken,
+        old_token: &UserToken,
         _service: &str,
-        _no_hello_pin: bool,
+        no_hello_pin: bool,
         cred_handler: &mut AuthCredHandler,
         pam_next_req: PamAuthRequest,
-        _keystore: &mut D,
-        _tpm: &mut tpm::provider::BoxedDynTpm,
-        _machine_key: &tpm::structures::StorageKey,
+        keystore: &mut D,
+        tpm: &mut tpm::provider::BoxedDynTpm,
+        machine_key: &tpm::structures::StorageKey,
         _shutdown_rx: &broadcast::Receiver<()>,
     ) -> Result<(AuthResult, AuthCacheAction), IdpError> {
         if (self.delayed_init().await).is_err() {
@@ -735,7 +938,221 @@ impl IdProvider for OidcProvider {
             ));
         }
 
+        macro_rules! auth_and_validate_hello_key {
+            ($hello_key:ident, $keytype:ident, $cred:ident) => {{
+                // CRITICAL: Validate that we can load the key, otherwise the offline
+                // fallback will allow the user to authenticate with a bad PIN here.
+                let pin = PinValue::new(&$cred).map_err(|e| {
+                    error!("Failed setting pin value: {:?}", e);
+                    IdpError::Tpm
+                })?;
+                if let Err(e) = tpm.ms_hello_key_load(machine_key, &$hello_key, &pin) {
+                    error!("{:?}", e);
+                    handle_hello_bad_pin_count!(self, account_id, keystore, |msg: &str| {
+                        Ok((AuthResult::Denied(msg.to_string()), AuthCacheAction::None))
+                    });
+                    return Ok((
+                        AuthResult::Denied("Failed to authenticate with Hello PIN.".to_string()),
+                        AuthCacheAction::None,
+                    ));
+                }
+
+                let hello_refresh_token_tag = self.fetch_hello_refresh_token_key_tag(account_id);
+                let refresh_cache_entry = keystore.get_tagged_hsm_key(&hello_refresh_token_tag);
+                let token = if $keytype == KeyType::Decoupled {
+                    // Check for and decrypt any cached tokens
+                    let hello_refresh_token_tag = self.fetch_hello_refresh_token_key_tag(account_id);
+                    let refresh_token = if let Ok(Some(sealed_refresh_token)) = refresh_cache_entry {
+                        let pin = PinValue::new(&$cred).map_err(|e| {
+                            error!("Failed initializing pin value: {:?}", e);
+                            IdpError::Tpm
+                        })?;
+                        let (_key, win_hello_storage_key) = tpm
+                            .ms_hello_key_load(machine_key, &$hello_key, &pin)
+                            .map_err(|e| {
+                                error!("Failed loading hello key for refresh token cache: {:?}", e);
+                                IdpError::Tpm
+                            })?;
+                        match tpm.unseal_data(&win_hello_storage_key, &sealed_refresh_token) {
+                            Ok(refresh_token_bytes) => {
+                                let refresh_token = String::from_utf8(
+                                    refresh_token_bytes.to_vec(),
+                                ).map_err(|e| {
+                                    error!("Failed converting refresh token to string: {:?}", e);
+                                    IdpError::Tpm
+                                })?;
+                                refresh_token
+                            }
+                            Err(e) => match self.refresh_cache.refresh_token(account_id).await {
+                                Ok(RefreshCacheEntry::RefreshToken(refresh_token)) => refresh_token,
+                                Ok(_) => {
+                                    error!("Invalid refresh cache entry type");
+                                    return Err(IdpError::BadRequest);
+                                }
+                                Err(e2) => {
+                                    error!(?e, "Failed unsealing hello refresh token from TPM");
+                                    error!(?e2, "Failed retrieving refresh token from mem cache");
+                                    return Err(IdpError::BadRequest);
+                                }
+                            },
+                        }
+                    } else {
+                        match self.refresh_cache.refresh_token(account_id).await {
+                            Ok(RefreshCacheEntry::RefreshToken(refresh_token)) => refresh_token,
+                            Ok(_) => {
+                                error!("Invalid refresh cache entry type");
+                                return Err(IdpError::BadRequest);
+                            }
+                            Err(e) => {
+                                error!(?e, "Failed retrieving refresh token from mem cache");
+                                return Err(IdpError::BadRequest);
+                            }
+                        }
+                    };
+                    // We have a refresh token, exchange that for an access token
+                    match self.acquire_token_by_refresh_token(
+                        &refresh_token,
+                        vec![],
+                    ).await {
+                        Ok(token) => {
+                            self.bad_pin_counter.reset_bad_pin_count(account_id).await;
+                            token
+                        },
+                        // If the network goes down during an online exchange auth, we can
+                        // downgrade to an offline auth and permit the authentication to proceed.
+                        Err(MsalError::RequestFailed(msg)) => {
+                            let url = extract_base_url!(msg);
+                            info!(?url, "Network down detected");
+                            let mut state = self.state.lock().await;
+                            *state =
+                                CacheState::OfflineNextCheck(SystemTime::now() + OFFLINE_NEXT_CHECK);
+                            return Ok((
+                                AuthResult::Success {
+                                    token: old_token.clone(),
+                                },
+                                AuthCacheAction::None,
+                            ));
+                        }
+                        Err(e) => {
+                            error!("Failed to exchange refresh token for access token: {:?}", e);
+                            // Access token request for this refresh token failed. Delete the
+                            // refresh token and hello key, then demand a new auth.
+                            keystore
+                                .delete_tagged_hsm_key(&hello_refresh_token_tag)
+                                .map_err(|e| {
+                                    error!("Failed to delete hello refresh token: {:?}", e);
+                                    IdpError::Tpm
+                                })?;
+                            let hello_key_tag = self.fetch_hello_key_tag(account_id, false);
+                            keystore
+                                .delete_tagged_hsm_key(&hello_key_tag)
+                                .map_err(|e| {
+                                    error!("Failed to delete hello key: {:?}", e);
+                                    IdpError::Tpm
+                                })?;
+                            // It's ok to reset the pin count here, since they must
+                            // online auth at this point and create a new pin.
+                            self.bad_pin_counter.reset_bad_pin_count(account_id).await;
+                            return Err(IdpError::BadRequest);
+                        }
+                    }
+                } else {
+                    error!("Unsupported Hello key type for online auth");
+                    let hello_key_tag = self.fetch_hello_key_tag(account_id, false);
+                        keystore
+                            .delete_tagged_hsm_key(&hello_key_tag)
+                            .map_err(|e| {
+                                error!("Failed to delete hello key: {:?}", e);
+                                IdpError::Tpm
+                            })?;
+                    return Err(IdpError::BadRequest);
+                };
+
+                // Cache the refresh token to disk for offline auth SSO
+                let (_key, win_hello_storage_key) = tpm
+                    .ms_hello_key_load(machine_key, &$hello_key, &pin)
+                    .map_err(|e| {
+                        error!("Failed loading hello key for refresh token cache: {:?}", e);
+                        IdpError::Tpm
+                    })?;
+                let refresh_token_zeroizing =
+                    zeroize::Zeroizing::new(token.refresh_token().map(|r| r.secret().to_owned()).ok_or_else(|| {
+                        error!("Missing refresh token in OIDC response");
+                        IdpError::BadRequest
+                    })?.as_bytes().to_vec());
+                let token2 = self.user_token_from_oidc(&token).await?;
+                tpm.seal_data(&win_hello_storage_key, refresh_token_zeroizing)
+                    .map_err(|e| {
+                        let uuid = token2.uuid.to_string();
+                        error!("Failed to seal refresh token for {}: {:?}", uuid, e);
+                        IdpError::Tpm
+                    })
+                    .and_then(|sealed_prt| {
+                        let hello_prt_tag = self.fetch_hello_refresh_token_key_tag(account_id);
+                        keystore.insert_tagged_hsm_key(&hello_prt_tag, &sealed_prt).map_err(|e| {
+                            let uuid = token2.uuid.to_string();
+                            error!("Failed to cache hello refresh token for {}: {:?}", uuid, e);
+                            IdpError::Tpm
+                        })
+                    })?;
+
+                match self.token_validate(account_id, &token).await {
+                    Ok(AuthResult::Success { token }) => {
+                        debug!("Returning user token from successful Hello PIN authentication.");
+                        Ok((AuthResult::Success { token }, AuthCacheAction::None))
+                    }
+                    /* This should never happen. It doesn't make sense to
+                     * continue from a Pin auth. */
+                    Ok(AuthResult::Next(_)) => {
+                        debug!("Invalid additional authentication requested with Hello auth.");
+                        Err(IdpError::BadRequest)
+                    }
+                    Ok(auth_result) => {
+                        debug!("Hello auth failed.");
+                        Ok((auth_result, AuthCacheAction::None))
+                    }
+                    Err(e) => {
+                        error!("Error encountered during Hello auth: {:?}", e);
+                        Err(e)
+                    }
+                }
+            }};
+        }
+
         match (&mut *cred_handler, pam_next_req) {
+            (AuthCredHandler::SetupPin { token: _ }, PamAuthRequest::SetupPin { pin: cred }) => {
+                let hello_tag = self.fetch_hello_key_tag(account_id, false);
+
+                let pin = PinValue::new(&cred).map_err(|e| {
+                    error!("Failed setting pin value: {:?}", e);
+                    IdpError::Tpm
+                })?;
+                let (hello_key, keytype) = (
+                    tpm.ms_hello_key_create(machine_key, &pin).map_err(|e| {
+                        error!("Failed to create hello key: {:?}", e);
+                        IdpError::Tpm
+                    })?,
+                    KeyType::Decoupled,
+                );
+
+                keystore
+                    .insert_tagged_hsm_key(&hello_tag, &hello_key)
+                    .map_err(|e| {
+                        error!("Failed to provision hello key: {:?}", e);
+                        IdpError::Tpm
+                    })?;
+
+                auth_and_validate_hello_key!(hello_key, keytype, cred)
+            }
+            (_, PamAuthRequest::Pin { cred }) => {
+                let (hello_key, keytype) =
+                    self.fetch_hello_key(account_id, keystore).map_err(|e| {
+                        error!("Online authentication failed. Hello key missing.");
+                        e
+                    })?;
+
+                auth_and_validate_hello_key!(hello_key, keytype, cred)
+            }
             (
                 AuthCredHandler::MFA {
                     ref mut flow,
@@ -758,19 +1175,34 @@ impl IdProvider for OidcProvider {
                     IdpError::BadRequest
                 })?;
                 match self.acquire_token_by_device_flow(&flow).await {
-                    Ok(token) => {
-                        if account_id.to_string().to_lowercase()
-                            != token.name.to_string().to_lowercase()
-                        {
-                            let msg = format!(
-                                "Authenticated user {} does not match requested user",
-                                token.uuid
-                            );
-                            error!(msg);
-                            return Ok((AuthResult::Denied(msg), AuthCacheAction::None));
+                    Ok(token) => match self.token_validate(account_id, &token).await {
+                        Ok(AuthResult::Success { token: token2 }) => {
+                            // Skip Hello enrollment if it is disabled by config
+                            let hello_enabled = self.config.read().await.get_enable_hello();
+                            if !hello_enabled || no_hello_pin {
+                                info!("Skipping Hello enrollment because it is disabled");
+                                return Ok((
+                                    AuthResult::Success { token: token2 },
+                                    AuthCacheAction::None,
+                                ));
+                            }
+
+                            // Setup Windows Hello
+                            *cred_handler = AuthCredHandler::SetupPin { token: None };
+                            return Ok((
+                                AuthResult::Next(AuthRequest::SetupPin {
+                                    msg: format!(
+                                        "Set up a PIN\n {}{}",
+                                        "A Hello PIN is a fast, secure way to sign",
+                                        "in to your device, apps, and services."
+                                    ),
+                                }),
+                                AuthCacheAction::None,
+                            ));
                         }
-                        Ok((AuthResult::Success { token }, AuthCacheAction::None))
-                    }
+                        Ok(auth_result) => Ok((auth_result, AuthCacheAction::None)),
+                        Err(e) => Err(e),
+                    },
                     Err(MsalError::MFAPollContinue) => Ok((
                         AuthResult::Next(AuthRequest::MFAPollWait),
                         AuthCacheAction::None,
@@ -858,27 +1290,37 @@ impl IdProvider for OidcProvider {
     #[instrument(level = "debug", skip_all)]
     async fn unix_user_offline_auth_init<D: KeyStoreTxn + Send>(
         &self,
-        _account_id: &str,
+        account_id: &str,
         _token: Option<&UserToken>,
-        _no_hello_pin: bool,
-        _keystore: &mut D,
+        no_hello_pin: bool,
+        keystore: &mut D,
     ) -> Result<(AuthRequest, AuthCredHandler), IdpError> {
-        Err(IdpError::BadRequest)
+        impl_himmelblau_offline_auth_init!(self, account_id, no_hello_pin, keystore, false)
     }
 
     #[instrument(level = "debug", skip_all)]
     async fn unix_user_offline_auth_step<D: KeyStoreTxn + Send>(
         &self,
-        _account_id: &str,
-        _token: &UserToken,
-        _cred_handler: &mut AuthCredHandler,
-        _pam_next_req: PamAuthRequest,
-        _keystore: &mut D,
-        _tpm: &mut tpm::provider::BoxedDynTpm,
-        _machine_key: &tpm::structures::StorageKey,
+        account_id: &str,
+        token: &UserToken,
+        cred_handler: &mut AuthCredHandler,
+        pam_next_req: PamAuthRequest,
+        keystore: &mut D,
+        tpm: &mut tpm::provider::BoxedDynTpm,
+        machine_key: &tpm::structures::StorageKey,
         _online_at_init: bool,
     ) -> Result<AuthResult, IdpError> {
-        Err(IdpError::BadRequest)
+        impl_himmelblau_offline_auth_step!(
+            cred_handler,
+            pam_next_req,
+            self,
+            account_id,
+            keystore,
+            tpm,
+            machine_key,
+            token,
+            load_cached_prt_no_op
+        )
     }
 
     #[instrument(level = "debug", skip_all)]

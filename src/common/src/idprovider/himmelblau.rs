@@ -28,11 +28,18 @@ use crate::constants::EDGE_BROWSER_CLIENT_ID;
 use crate::constants::ID_MAP_CACHE;
 use crate::db::KeyStoreTxn;
 use crate::idmap_cache::StaticIdCache;
+use crate::idprovider::common::KeyType;
+use crate::idprovider::common::RefreshCacheEntry;
+use crate::idprovider::common::{BadPinCounter, RefreshCache};
 use crate::idprovider::interface::{tpm, UserTokenState};
 use crate::idprovider::openidconnect::OidcProvider;
 use crate::tpm::confidential_client_creds;
 use crate::unix_proto::PamAuthRequest;
 use crate::user_map::UserMap;
+use crate::{
+    extract_base_url, handle_hello_bad_pin_count, impl_himmelblau_hello_key_helpers,
+    impl_himmelblau_offline_auth_init, impl_himmelblau_offline_auth_step, load_cached_prt,
+};
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use himmelblau::auth::{
@@ -48,7 +55,7 @@ use himmelblau::{ClientToken, ConfidentialClientApplication};
 use idmap::{AadSid, Idmap};
 use kanidm_hsm_crypto::{
     structures::LoadableMsDeviceEnrolmentKey, structures::LoadableMsHelloKey,
-    structures::LoadableMsOapxbcRsaKey, structures::SealedData, PinValue,
+    structures::LoadableMsOapxbcRsaKey, PinValue,
 };
 use libc::getpwnam;
 use regex::Regex;
@@ -63,26 +70,6 @@ use std::time::SystemTime;
 use tokio::sync::{broadcast, Mutex, RwLock};
 use uuid::Uuid;
 
-macro_rules! extract_base_url {
-    ($msg:expr) => {{
-        if let Ok(regex) = Regex::new(r#"https?://[^\s"'<>]+"#) {
-            if let Some(mat) = regex.find(&$msg) {
-                if let Ok(mut parsed) = Url::parse(mat.as_str()) {
-                    parsed.set_query(None);
-                    parsed.set_fragment(None);
-                    Some(parsed.to_string())
-                } else {
-                    None
-                }
-            } else {
-                None
-            }
-        } else {
-            None
-        }
-    }};
-}
-
 #[allow(clippy::large_enum_variant)]
 enum Providers {
     Oidc(OidcProvider),
@@ -94,124 +81,6 @@ pub struct HimmelblauMultiProvider {
     providers: Arc<RwLock<HashMap<String, Providers>>>,
     permit_new_providers: Arc<Mutex<bool>>,
     idmap: Arc<RwLock<Idmap>>,
-}
-
-struct RefreshCache {
-    refresh_cache: RwLock<HashMap<String, (SealedData, SystemTime)>>,
-    refresh_token_cache: RwLock<HashMap<String, (String, SystemTime)>>,
-}
-
-enum RefreshCacheEntry {
-    Prt(SealedData),
-    RefreshToken(String),
-}
-
-impl RefreshCache {
-    fn new() -> Self {
-        RefreshCache {
-            refresh_cache: RwLock::new(HashMap::new()),
-            refresh_token_cache: RwLock::new(HashMap::new()),
-        }
-    }
-
-    async fn refresh_token(&self, account_id: &str) -> Result<RefreshCacheEntry, IdpError> {
-        self.purge().await;
-        let refresh_cache = self.refresh_cache.read().await;
-        match refresh_cache.get(account_id.to_lowercase().as_str()) {
-            Some((refresh_token, _)) => Ok(RefreshCacheEntry::Prt(refresh_token.clone())),
-            None => {
-                let refresh_token_cache = self.refresh_token_cache.read().await;
-                match refresh_token_cache.get(account_id.to_lowercase().as_str()) {
-                    Some((refresh_token, _)) => {
-                        Ok(RefreshCacheEntry::RefreshToken(refresh_token.clone()))
-                    }
-                    None => Err(IdpError::NotFound {
-                        what: "account_id".to_string(),
-                        where_: "refresh_cache".to_string(),
-                    }),
-                }
-            }
-        }
-    }
-
-    async fn purge(&self) {
-        let mut refresh_cache = self.refresh_cache.write().await;
-        let mut remove_list = vec![];
-        for (k, (_, iat)) in refresh_cache.iter() {
-            if *iat > SystemTime::now() + Duration::from_secs(86400) {
-                remove_list.push(k.clone());
-            }
-        }
-        for k in remove_list.iter() {
-            refresh_cache.remove_entry(k);
-        }
-        let mut refresh_token_cache = self.refresh_token_cache.write().await;
-        let mut remove_list = vec![];
-        for (k, (_, iat)) in refresh_token_cache.iter() {
-            if *iat > SystemTime::now() + Duration::from_secs(86400) {
-                remove_list.push(k.clone());
-            }
-        }
-        for k in remove_list.iter() {
-            refresh_token_cache.remove_entry(k);
-        }
-    }
-
-    async fn add(&self, account_id: &str, refresh_token: &RefreshCacheEntry) {
-        match refresh_token {
-            RefreshCacheEntry::Prt(prt) => {
-                let mut refresh_cache = self.refresh_cache.write().await;
-                refresh_cache.insert(
-                    account_id.to_string().to_lowercase(),
-                    (prt.clone(), SystemTime::now()),
-                );
-            }
-            RefreshCacheEntry::RefreshToken(refresh_token) => {
-                let mut refresh_token_cache = self.refresh_token_cache.write().await;
-                refresh_token_cache.insert(
-                    account_id.to_string().to_lowercase(),
-                    (refresh_token.clone(), SystemTime::now()),
-                );
-            }
-        }
-    }
-}
-
-pub struct BadPinCounter {
-    counter: RwLock<HashMap<String, u32>>,
-}
-
-impl Default for BadPinCounter {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl BadPinCounter {
-    pub fn new() -> Self {
-        BadPinCounter {
-            counter: RwLock::new(HashMap::new()),
-        }
-    }
-
-    pub async fn bad_pin_count(&self, account_id: &str) -> u32 {
-        let map = self.counter.read().await;
-        *map.get(account_id).unwrap_or(&0)
-    }
-
-    pub async fn increment_bad_pin_count(&self, account_id: &str) {
-        let mut map = self.counter.write().await;
-        let counter = map.entry(account_id.to_string()).or_insert(0);
-        *counter += 1;
-
-        // Discourage attackers by waiting for an ever increasing wait time for each bad pin
-        sleep(Duration::from_secs((*counter as u64) * 2));
-    }
-
-    pub async fn reset_bad_pin_count(&self, account_id: &str) {
-        let mut map = self.counter.write().await;
-        map.insert(account_id.to_string(), 0);
-    }
 }
 
 impl HimmelblauMultiProvider {
@@ -865,58 +734,6 @@ impl HimmelblauProvider {
 enum TokenOrObj {
     UserToken(Box<UnixUserToken>),
     UserObj((ClientToken, UserObject)),
-}
-
-macro_rules! handle_hello_bad_pin_count {
-    ($self:expr, $account_id:expr, $keystore:expr, $ret_fn:expr) => {{
-        $self.bad_pin_counter
-            .increment_bad_pin_count($account_id)
-            .await;
-
-        let hello_pin_retry_count = $self.config.read().await.get_hello_pin_retry_count();
-        let bad_pin_count = $self.bad_pin_counter.bad_pin_count($account_id).await;
-
-        if bad_pin_count == hello_pin_retry_count {
-            return $ret_fn(
-                "Failed to authenticate with Hello PIN. One more failed attempt will require multi-factor authentication and resetting your Linux Hello PIN."
-            );
-        }
-
-        // If we've exceeded the bad pin count, delete the Hello key
-        if bad_pin_count > hello_pin_retry_count {
-            let hello_key_tag = $self.fetch_hello_key_tag($account_id, true);
-            $keystore
-                .delete_tagged_hsm_key(&hello_key_tag)
-                .map_err(|e| {
-                    error!("Failed to delete hello key: {:?}", e);
-                    IdpError::Tpm
-                })?;
-            let hello_key_tag = $self.fetch_hello_key_tag($account_id, false);
-            $keystore
-                .delete_tagged_hsm_key(&hello_key_tag)
-                .map_err(|e| {
-                    error!("Failed to delete hello key: {:?}", e);
-                    IdpError::Tpm
-                })?;
-            let hello_prt_tag = $self.fetch_hello_prt_key_tag($account_id);
-            $keystore
-                .delete_tagged_hsm_key(&hello_prt_tag)
-                .map_err(|e| {
-                    error!("Failed to delete hello PRT: {:?}", e);
-                    IdpError::Tpm
-                })?;
-            let hello_refresh_token_tag = $self.fetch_hello_refresh_token_key_tag($account_id);
-            $keystore
-                .delete_tagged_hsm_key(&hello_refresh_token_tag)
-                .map_err(|e| {
-                    error!("Failed to delete hello refresh token: {:?}", e);
-                    IdpError::Tpm
-                })?;
-            return $ret_fn(
-                "Too many incorrect PIN attempts. You will need to enroll a new Linux Hello PIN."
-            );
-        }
-    }};
 }
 
 macro_rules! check_new_device_enrollment_required {
@@ -2305,6 +2122,10 @@ impl IdProvider for HimmelblauProvider {
 
         match (&mut *cred_handler, pam_next_req) {
             (AuthCredHandler::SetupPin { token }, PamAuthRequest::SetupPin { pin }) => {
+                let token = token.clone().ok_or_else(|| {
+                    error!("Missing enrollment token for Hello PIN setup.");
+                    IdpError::BadRequest
+                })?;
                 // Skip Hello enrollment if the token doesn't have the ngcmfa amr
                 let amr_ngcmfa = token.amr_ngcmfa().unwrap_or(false);
                 let hello_tag = self.fetch_hello_key_tag(account_id, amr_ngcmfa);
@@ -2314,7 +2135,7 @@ impl IdProvider for HimmelblauProvider {
                         self.client
                             .read()
                             .await
-                            .provision_hello_for_business_key(token, tpm, machine_key, &pin)
+                            .provision_hello_for_business_key(&token, tpm, machine_key, &pin)
                             .await,
                         Ok(hello_key) => (hello_key, KeyType::Hello),
                         Err(e) => {
@@ -2649,7 +2470,7 @@ impl IdProvider for HimmelblauProvider {
                         }
 
                         // Setup Windows Hello
-                        *cred_handler = AuthCredHandler::SetupPin { token };
+                        *cred_handler = AuthCredHandler::SetupPin { token: Some(token) };
                         return Ok((
                             AuthResult::Next(AuthRequest::SetupPin {
                                 msg: format!(
@@ -2754,7 +2575,7 @@ impl IdProvider for HimmelblauProvider {
                         }
 
                         // Setup Windows Hello
-                        *cred_handler = AuthCredHandler::SetupPin { token };
+                        *cred_handler = AuthCredHandler::SetupPin { token: Some(token) };
                         return Ok((
                             AuthResult::Next(AuthRequest::SetupPin {
                                 msg: format!(
@@ -2826,7 +2647,7 @@ impl IdProvider for HimmelblauProvider {
                         }
 
                         // Setup Windows Hello
-                        *cred_handler = AuthCredHandler::SetupPin { token };
+                        *cred_handler = AuthCredHandler::SetupPin { token: Some(token) };
                         return Ok((
                             AuthResult::Next(AuthRequest::SetupPin {
                                 msg: format!(
@@ -2860,33 +2681,7 @@ impl IdProvider for HimmelblauProvider {
         no_hello_pin: bool,
         keystore: &mut D,
     ) -> Result<(AuthRequest, AuthCredHandler), IdpError> {
-        let hello_key = self.fetch_hello_key(account_id, keystore).ok();
-        let (sfa_enabled, hello_pin_retry_count, breakglass_enabled) = {
-            let cfg = self.config.read().await;
-            (
-                cfg.get_enable_sfa_fallback(),
-                cfg.get_hello_pin_retry_count(),
-                cfg.get_offline_breakglass_enabled(),
-            )
-        };
-        // We only have 2 options when performing an offline auth; Hello PIN,
-        // or cached password for SFA users. If neither option is available,
-        // we should respond with a resonable error indicating how to proceed.
-        if hello_key.is_some()
-            && self.bad_pin_counter.bad_pin_count(account_id).await <= hello_pin_retry_count
-            && !no_hello_pin
-        {
-            Ok((AuthRequest::Pin, AuthCredHandler::None))
-        } else if sfa_enabled || breakglass_enabled {
-            Ok((AuthRequest::Password, AuthCredHandler::None))
-        } else {
-            Ok((
-                AuthRequest::InitDenied {
-                    msg: "Network outage detected.".to_string(),
-                },
-                AuthCredHandler::None,
-            ))
-        }
+        impl_himmelblau_offline_auth_init!(self, account_id, no_hello_pin, keystore, true)
     }
 
     #[instrument(skip_all)]
@@ -2901,97 +2696,17 @@ impl IdProvider for HimmelblauProvider {
         machine_key: &tpm::structures::StorageKey,
         _online_at_init: bool,
     ) -> Result<AuthResult, IdpError> {
-        match (&cred_handler, pam_next_req) {
-            (_, PamAuthRequest::Pin { cred }) => {
-                let (hello_key, _keytype) =
-                    self.fetch_hello_key(account_id, keystore).map_err(|e| {
-                        error!("Offline authentication failed. Hello key missing.");
-                        e
-                    })?;
-
-                let pin = PinValue::new(&cred).map_err(|e| {
-                    error!("Failed setting pin value: {:?}", e);
-                    IdpError::Tpm
-                })?;
-                match tpm.ms_hello_key_load(machine_key, &hello_key, &pin) {
-                    Ok((_, win_hello_storage_key)) => {
-                        // Check for and decrypt any cached PRT
-                        let hello_prt_tag = self.fetch_hello_prt_key_tag(account_id);
-                        if let Ok(Some(hello_prt)) = keystore.get_tagged_hsm_key(&hello_prt_tag) {
-                            let prt = self
-                                .client
-                                .read()
-                                .await
-                                .unseal_user_prt_with_hello_key(
-                                    &hello_prt,
-                                    &hello_key,
-                                    &cred,
-                                    tpm,
-                                    machine_key,
-                                )
-                                .map_err(|e| {
-                                    error!("Failed to load hello prt: {:?}", e);
-                                    IdpError::Tpm
-                                })?;
-                            // Check if the cached PRT has expired.
-                            // This happens after 14 days of no online contact.
-                            if self
-                                .client
-                                .read()
-                                .await
-                                .is_prt_expired(&prt, tpm, machine_key)
-                                .map_err(|e| {
-                                    error!("Failed to check prt expiration: {:?}", e);
-                                    IdpError::Tpm
-                                })?
-                            {
-                                return Ok(AuthResult::Denied(
-                                    "Offline auth has expired. Please connect to the network to continue.".to_string(),
-                                ));
-                            }
-                            self.refresh_cache
-                                .add(account_id, &RefreshCacheEntry::Prt(prt.clone()))
-                                .await;
-                        }
-                        let hello_refresh_token_tag =
-                            self.fetch_hello_refresh_token_key_tag(account_id);
-                        if let Ok(Some(sealed_refresh_token)) =
-                            keystore.get_tagged_hsm_key(&hello_refresh_token_tag)
-                        {
-                            let refresh_token = String::from_utf8(
-                                tpm.unseal_data(&win_hello_storage_key, &sealed_refresh_token)
-                                    .map_err(|e| {
-                                        error!("Failed to unseal refresh token: {:?}", e);
-                                        IdpError::Tpm
-                                    })?
-                                    .to_vec(),
-                            )
-                            .map_err(|e| {
-                                error!("Failed to decode refresh token: {:?}", e);
-                                IdpError::Tpm
-                            })?;
-                            self.refresh_cache
-                                .add(account_id, &RefreshCacheEntry::RefreshToken(refresh_token))
-                                .await;
-                        }
-                        self.bad_pin_counter.reset_bad_pin_count(account_id).await;
-                        Ok(AuthResult::Success {
-                            token: token.clone(),
-                        })
-                    }
-                    Err(e) => {
-                        error!("{:?}", e);
-                        handle_hello_bad_pin_count!(self, account_id, keystore, |msg: &str| {
-                            Ok(AuthResult::Denied(msg.to_string()))
-                        });
-                        Ok(AuthResult::Denied(
-                            "Failed to authenticate with Hello PIN.".to_string(),
-                        ))
-                    }
-                }
-            }
-            _ => Err(IdpError::BadRequest),
-        }
+        impl_himmelblau_offline_auth_step!(
+            cred_handler,
+            pam_next_req,
+            self,
+            account_id,
+            keystore,
+            tpm,
+            machine_key,
+            token,
+            load_cached_prt
+        )
     }
 
     async fn unix_group_get(
@@ -3010,12 +2725,6 @@ impl IdProvider for HimmelblauProvider {
     ) -> CacheState {
         (*self.state.lock().await).clone()
     }
-}
-
-#[derive(PartialEq)]
-enum KeyType {
-    Hello,
-    Decoupled,
 }
 
 impl HimmelblauProvider {
@@ -3126,31 +2835,7 @@ impl HimmelblauProvider {
         }
     }
 
-    fn fetch_hello_key_tag(&self, account_id: &str, amr_ngcmfa: bool) -> String {
-        if amr_ngcmfa {
-            format!("{}/hello", account_id.to_lowercase())
-        } else {
-            format!("{}/hello_decoupled", account_id.to_lowercase())
-        }
-    }
-
-    #[instrument(level = "debug", skip_all)]
-    fn fetch_hello_key<D: KeyStoreTxn + Send>(
-        &self,
-        account_id: &str,
-        keystore: &mut D,
-    ) -> Result<(LoadableMsHelloKey, KeyType), IdpError> {
-        match keystore.get_tagged_hsm_key(&format!("{}/hello", account_id.to_lowercase())) {
-            Ok(Some(hello_key)) => Ok((hello_key, KeyType::Hello)),
-            Err(_) | Ok(None) => {
-                let hello_key = keystore
-                    .get_tagged_hsm_key(&format!("{}/hello_decoupled", account_id.to_lowercase()))
-                    .map_err(|_| IdpError::BadRequest)?
-                    .ok_or(IdpError::BadRequest)?;
-                Ok((hello_key, KeyType::Decoupled))
-            }
-        }
-    }
+    impl_himmelblau_hello_key_helpers!();
 
     fn fetch_cert_key_tag(&self) -> String {
         format!("{}/certificate", self.domain)
@@ -3162,14 +2847,6 @@ impl HimmelblauProvider {
 
     fn fetch_tranport_key_tag(&self) -> String {
         format!("{}/transport", self.domain)
-    }
-
-    fn fetch_hello_prt_key_tag(&self, account_id: &str) -> String {
-        format!("{}/hello_prt", account_id.to_lowercase())
-    }
-
-    fn fetch_hello_refresh_token_key_tag(&self, account_id: &str) -> String {
-        format!("{}/hello_refresh_token", account_id.to_lowercase())
     }
 
     #[instrument(level = "debug", skip_all)]

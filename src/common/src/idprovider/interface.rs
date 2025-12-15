@@ -99,7 +99,7 @@ pub enum AuthCredHandler {
         extra_data: Option<String>,
     },
     SetupPin {
-        token: UnixUserToken,
+        token: Option<UnixUserToken>,
     },
     ChangePassword {
         old_cred: String,
