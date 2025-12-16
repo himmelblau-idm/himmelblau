@@ -148,7 +148,7 @@ impl HimmelblauMultiProvider {
     }
 
     async fn add_oidc_tenant(&self, domain: &str) -> Result<(), IdpError> {
-        let provider = OidcProvider::new(&self.config, &self.idmap).await?;
+        let provider = OidcProvider::new(&self.config, domain, &self.idmap).await?;
 
         self.providers
             .write()
@@ -185,22 +185,25 @@ impl HimmelblauMultiProvider {
         };
 
         let mut permit_new_providers = true;
-        for domain in domains {
-            providers
-                .add_tenant(&domain, &cfg, keystore)
-                .await
-                .map_err(|e| anyhow!("{:?}", e))?;
-            // If a provide is already configured (or multiple providers), do
-            // not permit new providers.
-            permit_new_providers = false;
-        }
-        // Add the oidc provider, if present
-        if let Some(domain) = cfg.get_oidc_domain() {
-            providers
-                .add_oidc_tenant(&domain)
-                .await
-                .map_err(|e| anyhow!("{:?}", e))?;
-            permit_new_providers = false;
+        if cfg.get_oidc_issuer_url().is_none() {
+            for domain in domains {
+                providers
+                    .add_tenant(&domain, &cfg, keystore)
+                    .await
+                    .map_err(|e| anyhow!("{:?}", e))?;
+                // If a provide is already configured (or multiple providers), do
+                // not permit new providers.
+                permit_new_providers = false;
+            }
+        } else {
+            // Add the oidc provider, if present
+            for domain in domains {
+                providers
+                    .add_oidc_tenant(&domain)
+                    .await
+                    .map_err(|e| anyhow!("{:?}", e))?;
+                permit_new_providers = false;
+            }
         }
         *providers.permit_new_providers.lock().await = permit_new_providers;
 

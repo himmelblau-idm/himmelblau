@@ -966,16 +966,8 @@ impl HimmelblauConfig {
         }
     }
 
-    pub fn get_oidc_domain(&self) -> Option<String> {
-        self.config.get("oidc", "domain")
-    }
-
-    pub fn get_oidc_client_id(&self) -> Option<String> {
-        self.config.get("oidc", "client_id")
-    }
-
     pub fn get_oidc_issuer_url(&self) -> Option<String> {
-        self.config.get("oidc", "issuer_url")
+        self.config.get("global", "oidc_issuer_url")
     }
 }
 

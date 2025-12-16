@@ -220,12 +220,14 @@ pub struct OidcProvider {
     client: RwLock<Option<OidcDelayedInit>>,
     refresh_cache: RefreshCache,
     bad_pin_counter: BadPinCounter,
+    domain: String,
 }
 
 impl OidcProvider {
     #[instrument(level = "debug", skip_all)]
     pub async fn new(
         cfg: &Arc<RwLock<HimmelblauConfig>>,
+        domain: &str,
         idmap: &Arc<RwLock<Idmap>>,
     ) -> Result<Self, IdpError> {
         Ok(Self {
@@ -235,6 +237,7 @@ impl OidcProvider {
             client: RwLock::new(None),
             refresh_cache: RefreshCache::new(),
             bad_pin_counter: BadPinCounter::new(),
+            domain: domain.to_string(),
         })
     }
 
@@ -711,8 +714,10 @@ impl OidcProvider {
         if !init {
             let cfg = self.config.read().await;
 
-            let client_id = ClientId::new(cfg.get_oidc_client_id().ok_or({
-                error!("Missing OIDC client ID in config");
+            let client_id = ClientId::new(cfg.get_app_id(&self.domain).ok_or({
+                error!(
+                    "Missing OIDC client ID in config: `[global] app_id` required for OIDC auth"
+                );
                 IdpError::BadRequest
             })?);
 
@@ -759,15 +764,11 @@ impl OidcProvider {
                 .set_auth_type(AuthType::RequestBody);
 
             // Initialize the idmap range
-            let domain = cfg.get_oidc_domain().ok_or({
-                error!("Missing OIDC domain in config");
-                IdpError::BadRequest
-            })?;
             let tenant_id = self.tenant_id().await?.to_string();
-            let range = cfg.get_idmap_range(&domain);
+            let range = cfg.get_idmap_range(&self.domain);
             let mut idmap = self.idmap.write().await;
             idmap
-                .add_gen_domain(&domain, &tenant_id, range)
+                .add_gen_domain(&self.domain, &tenant_id, range)
                 .map_err(|e| {
                     error!("Failed adding the idmap domain: {}", e);
                     IdpError::BadRequest
