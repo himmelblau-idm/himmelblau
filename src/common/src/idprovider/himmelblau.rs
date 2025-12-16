@@ -37,8 +37,10 @@ use crate::tpm::confidential_client_creds;
 use crate::unix_proto::PamAuthRequest;
 use crate::user_map::UserMap;
 use crate::{
-    extract_base_url, handle_hello_bad_pin_count, impl_himmelblau_hello_key_helpers,
-    impl_himmelblau_offline_auth_init, impl_himmelblau_offline_auth_step, load_cached_prt,
+    entra_id_prt_token_fetch, entra_id_refresh_token_token_fetch, extract_base_url,
+    handle_hello_bad_pin_count, impl_himmelblau_hello_key_helpers,
+    impl_himmelblau_offline_auth_init, impl_himmelblau_offline_auth_step, impl_unix_user_access,
+    load_cached_prt,
 };
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
@@ -802,71 +804,17 @@ impl IdProvider for HimmelblauProvider {
         tpm: &mut tpm::provider::BoxedDynTpm,
         machine_key: &tpm::structures::StorageKey,
     ) -> Result<UnixUserToken, IdpError> {
-        if (self.delayed_init().await).is_err() {
-            // We can't fetch an access_token when initialization hasn't
-            // completed. This only happens when we're offline during first
-            // startup. This should never happen!
-            return Err(IdpError::BadRequest);
-        }
-
-        if !self.check_online(tpm, SystemTime::now()).await {
-            // We can't fetch an access_token when offline
-            return Err(IdpError::BadRequest);
-        }
-
-        /* Use the prt mem cache to refresh the user token */
-        let account_id = match old_token {
-            Some(token) => token.spn.clone(),
-            None => id.to_string().clone(),
-        };
-        let refresh_cache_entry = self.refresh_cache.refresh_token(&account_id).await?;
-        match refresh_cache_entry {
-            RefreshCacheEntry::Prt(prt) => self
-                .client
-                .read()
-                .await
-                .exchange_prt_for_access_token(
-                    &prt,
-                    scopes.iter().map(|s| s.as_ref()).collect(),
-                    None,
-                    client_id.as_deref(),
-                    tpm,
-                    machine_key,
-                )
-                .await
-                .map_err(|e| {
-                    error!("{:?}", e);
-                    IdpError::BadRequest
-                }),
-            RefreshCacheEntry::RefreshToken(refresh_token) => {
-                let client = PublicClientApplication::new(BROKER_APP_ID, None).map_err(|e| {
-                    error!("Failed to create public client application: {:?}", e);
-                    IdpError::BadRequest
-                })?;
-                let scopes = if self.is_consumer_tenant().await {
-                    // Remove "https://graph.microsoft.com/.default" from the
-                    // scopes for consumer tenants. This is the default scope
-                    // requested by the SSO extension, but it is not valid for
-                    // consumer tenants.
-                    scopes
-                        .into_iter()
-                        .filter(|s| s != "https://graph.microsoft.com/.default")
-                        .collect()
-                } else {
-                    scopes
-                };
-                client
-                    .acquire_token_by_refresh_token(
-                        &refresh_token,
-                        scopes.iter().map(|s| s.as_ref()).collect(),
-                    )
-                    .await
-                    .map_err(|e| {
-                        error!("Failed to refresh token: {:?}", e);
-                        IdpError::BadRequest
-                    })
-            }
-        }
+        impl_unix_user_access!(
+            self,
+            old_token,
+            scopes,
+            client_id,
+            id,
+            tpm,
+            machine_key,
+            entra_id_prt_token_fetch,
+            entra_id_refresh_token_token_fetch
+        )
     }
 
     #[instrument(skip_all)]

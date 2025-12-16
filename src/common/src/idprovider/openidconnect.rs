@@ -29,10 +29,12 @@ use crate::idprovider::interface::{
 use crate::unix_proto::PamAuthRequest;
 use crate::{
     extract_base_url, handle_hello_bad_pin_count, impl_himmelblau_hello_key_helpers,
-    impl_himmelblau_offline_auth_init, impl_himmelblau_offline_auth_step, load_cached_prt_no_op,
+    impl_himmelblau_offline_auth_init, impl_himmelblau_offline_auth_step, impl_unix_user_access,
+    load_cached_prt_no_op, no_op_prt_token_fetch, oidc_refresh_token_token_fetch,
 };
 use async_trait::async_trait;
 use himmelblau::{error::MsalError, MFAAuthContinue, UserToken as UnixUserToken};
+use himmelblau::{ClientInfo, IdToken};
 use idmap::Idmap;
 use kanidm_hsm_crypto::structures::LoadableMsHelloKey;
 use kanidm_hsm_crypto::PinValue;
@@ -56,6 +58,7 @@ use openidconnect::{
 use regex::Regex;
 use reqwest::Url;
 use serde::{Deserialize, Serialize};
+use std::str::FromStr;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 use tokio::sync::{broadcast, Mutex, RwLock};
@@ -139,6 +142,68 @@ type OidcTokenResponse = StandardTokenResponse<
     >,
     BasicTokenType,
 >;
+
+pub trait OidcTokenResponseExt {
+    fn into_user_token(self) -> Result<UnixUserToken, MsalError>;
+}
+
+impl OidcTokenResponseExt for OidcTokenResponse {
+    fn into_user_token(self) -> Result<UnixUserToken, MsalError> {
+        let refresh_token = self
+            .refresh_token()
+            .ok_or(MsalError::InvalidParse("Missing refresh token".to_string()))?
+            .secret()
+            .to_owned();
+
+        let scope = self.scopes().and_then(|scopes| {
+            if scopes.is_empty() {
+                None
+            } else {
+                Some(
+                    scopes
+                        .iter()
+                        .map(|s| s.as_ref())
+                        .collect::<Vec<_>>()
+                        .join(" "),
+                )
+            }
+        });
+
+        let expires_in = self
+            .expires_in()
+            .map(|d: Duration| d.as_secs().min(u64::from(u32::MAX)) as u32)
+            .unwrap_or(0);
+
+        let ext_expires_in = expires_in;
+
+        let token_type = self.token_type().as_ref().to_owned();
+        let access_token = Some(self.access_token().secret().to_owned());
+
+        let id_token = {
+            let raw = self
+                .extra_fields()
+                .id_token()
+                .ok_or_else(|| MsalError::InvalidParse("Missing id_token".to_string()))?
+                .to_string();
+
+            IdToken::from_str(&raw).map_err(|e| {
+                MsalError::InvalidParse(format!("Failed to parse id_token: {:?}", e))
+            })?
+        };
+
+        Ok(UnixUserToken {
+            token_type,
+            scope,
+            expires_in,
+            ext_expires_in,
+            access_token,
+            refresh_token,
+            id_token,
+            client_info: ClientInfo::default(),
+            prt: None,
+        })
+    }
+}
 
 struct OidcDelayedInit {
     client: DagClient,
@@ -1238,16 +1303,25 @@ impl IdProvider for OidcProvider {
     #[instrument(level = "debug", skip_all)]
     async fn unix_user_access<D: KeyStoreTxn + Send>(
         &self,
-        _id: &Id,
-        _scopes: Vec<String>,
-        _token: Option<&UserToken>,
+        id: &Id,
+        scopes: Vec<String>,
+        old_token: Option<&UserToken>,
         _client_id: Option<String>,
         _keystore: &mut D,
-        _tpm: &mut tpm::provider::BoxedDynTpm,
+        tpm: &mut tpm::provider::BoxedDynTpm,
         _machine_key: &tpm::structures::StorageKey,
     ) -> Result<UnixUserToken, IdpError> {
-        //TODO
-        Err(IdpError::BadRequest)
+        impl_unix_user_access!(
+            self,
+            old_token,
+            scopes,
+            _client_id,
+            id,
+            tpm,
+            _machine_key,
+            no_op_prt_token_fetch,
+            oidc_refresh_token_token_fetch
+        )
     }
 
     #[instrument(level = "debug", skip_all)]
