@@ -67,7 +67,7 @@ use tokio::sync::{broadcast, Mutex, RwLock};
 use uuid::Uuid;
 
 #[instrument(level = "debug", skip_all)]
-fn mfa_from_oidc_device(
+pub fn mfa_from_oidc_device(
     details: OauthDeviceAuthResponse<EmptyExtraDeviceAuthorizationFields>,
 ) -> Result<(MFAAuthContinue, String), IdpError> {
     let polling_interval = details.interval().as_secs() as u32;
@@ -146,11 +146,11 @@ type OidcTokenResponse = StandardTokenResponse<
 >;
 
 pub trait OidcTokenResponseExt {
-    fn into_user_token(self) -> Result<UnixUserToken, MsalError>;
+    fn into_unix_user_token(self) -> Result<UnixUserToken, MsalError>;
 }
 
 impl OidcTokenResponseExt for OidcTokenResponse {
-    fn into_user_token(self) -> Result<UnixUserToken, MsalError> {
+    fn into_unix_user_token(self) -> Result<UnixUserToken, MsalError> {
         let refresh_token = self
             .refresh_token()
             .ok_or(MsalError::InvalidParse("Missing refresh token".to_string()))?
@@ -213,48 +213,102 @@ struct OidcDelayedInit {
     authorization_endpoint: String,
 }
 
-pub struct OidcProvider {
-    config: Arc<RwLock<HimmelblauConfig>>,
-    idmap: Arc<RwLock<Idmap>>,
-    state: Mutex<CacheState>,
+pub struct OidcApplication {
     client: RwLock<Option<OidcDelayedInit>>,
-    refresh_cache: RefreshCache,
-    bad_pin_counter: BadPinCounter,
-    domain: String,
 }
 
-impl OidcProvider {
+impl OidcApplication {
     #[instrument(level = "debug", skip_all)]
-    pub async fn new(
-        cfg: &Arc<RwLock<HimmelblauConfig>>,
-        domain: &str,
-        idmap: &Arc<RwLock<Idmap>>,
-    ) -> Result<Self, IdpError> {
-        Ok(Self {
-            config: cfg.clone(),
-            idmap: idmap.clone(),
-            state: Mutex::new(CacheState::OfflineNextCheck(SystemTime::now())),
+    pub fn new() -> Self {
+        Self {
             client: RwLock::new(None),
-            refresh_cache: RefreshCache::new(),
-            bad_pin_counter: BadPinCounter::new(),
-            domain: domain.to_string(),
-        })
+        }
     }
 
     #[instrument(level = "debug", skip_all)]
-    async fn initiate_device_flow(
+    pub async fn with_init(config: &HimmelblauConfig, domain: &str) -> Result<Self, IdpError> {
+        let app = Self::new();
+        app.delayed_init(config, domain).await?;
+        Ok(app)
+    }
+
+    #[instrument(level = "debug", skip_all)]
+    async fn delayed_init(&self, config: &HimmelblauConfig, domain: &str) -> Result<(), IdpError> {
+        let init = self.client.read().await.is_some();
+        if !init {
+            let client_id = ClientId::new(config.get_app_id(domain).ok_or({
+                error!(
+                    "Missing OIDC client ID in config: `[global] app_id` required for OIDC auth"
+                );
+                IdpError::BadRequest
+            })?);
+
+            let issuer_url = IssuerUrl::new(config.get_oidc_issuer_url().ok_or({
+                error!("Missing OIDC issuer URL in config");
+                IdpError::BadRequest
+            })?)
+            .map_err(|e| {
+                error!(
+                    ?e,
+                    "Invalid OIDC issuer URL: {:?}",
+                    config.get_oidc_issuer_url()
+                );
+                IdpError::BadRequest
+            })?;
+
+            let http_client = reqwest::ClientBuilder::new()
+                .redirect(reqwest::redirect::Policy::none())
+                .build()
+                .map_err(|e| {
+                    error!(?e, "Failed to build HTTP client for OIDC");
+                    IdpError::BadRequest
+                })?;
+
+            // Discover provider metadata (includes our custom device endpoint field).
+            let provider_metadata =
+                DeviceProviderMetadata::discover_async(issuer_url, &http_client)
+                    .await
+                    .map_err(|e| {
+                        error!(?e, "Failed to discover OIDC provider metadata");
+                        IdpError::BadRequest
+                    })?;
+            let authorization_endpoint = provider_metadata.authorization_endpoint().to_string();
+
+            let device_endpoint = provider_metadata
+                .additional_metadata()
+                .device_authorization_endpoint
+                .clone();
+
+            // Create a public client: pass None for the client secret.
+            // Whether this works depends on provider configuration. Many support it.
+            let client = CoreClient::from_provider_metadata(provider_metadata, client_id, None)
+                .set_device_authorization_url(device_endpoint)
+                .set_auth_type(AuthType::RequestBody);
+
+            // Store provider initialization
+            self.client.write().await.replace(OidcDelayedInit {
+                client,
+                http_client,
+                authorization_endpoint,
+            });
+        }
+        Ok(())
+    }
+
+    #[instrument(level = "debug", skip_all)]
+    async fn read(&self) -> tokio::sync::RwLockReadGuard<'_, Option<OidcDelayedInit>> {
+        self.client.read().await
+    }
+
+    #[instrument(level = "debug", skip_all)]
+    async fn write(&self) -> tokio::sync::RwLockWriteGuard<'_, Option<OidcDelayedInit>> {
+        self.client.write().await
+    }
+
+    #[instrument(level = "debug", skip_all)]
+    pub async fn initiate_device_flow(
         &self,
     ) -> Result<DeviceAuthorizationResponse<EmptyExtraDeviceAuthorizationFields>, MsalError> {
-        if (self.delayed_init().await).is_err() {
-            // Initialization failed. Report that the system is offline. We
-            // can't proceed with initialization until the system is online.
-            let mut state = self.state.lock().await;
-            *state = CacheState::OfflineNextCheck(SystemTime::now() + OFFLINE_NEXT_CHECK);
-            return Err(MsalError::RequestFailed(
-                "Network down detected".to_string(),
-            ));
-        }
-
         let scopes = vec![
             Scope::new("openid".to_string()),
             Scope::new("profile".to_string()),
@@ -288,20 +342,10 @@ impl OidcProvider {
     }
 
     #[instrument(level = "debug", skip_all)]
-    async fn acquire_token_by_device_flow(
+    pub async fn acquire_token_by_device_flow(
         &self,
         flow: &DeviceAuthorizationResponse<EmptyExtraDeviceAuthorizationFields>,
     ) -> Result<OidcTokenResponse, MsalError> {
-        if (self.delayed_init().await).is_err() {
-            // Initialization failed. Report that the system is offline. We
-            // can't proceed with initialization until the system is online.
-            let mut state = self.state.lock().await;
-            *state = CacheState::OfflineNextCheck(SystemTime::now() + OFFLINE_NEXT_CHECK);
-            return Err(MsalError::RequestFailed(
-                "Network down detected".to_string(),
-            ));
-        }
-
         if let Some(delayed_init) = &*self.client.read().await {
             // Try to get the token endpoint URL from the oauth2 Client
             let token_url = delayed_init
@@ -427,21 +471,11 @@ impl OidcProvider {
     }
 
     #[instrument(level = "debug", skip_all)]
-    async fn acquire_token_by_refresh_token(
+    pub async fn acquire_token_by_refresh_token(
         &self,
         refresh_token: &str,
         scopes: Vec<&str>,
     ) -> Result<OidcTokenResponse, MsalError> {
-        if (self.delayed_init().await).is_err() {
-            // Initialization failed. Report that the system is offline. We
-            // can't proceed with initialization until the system is online.
-            let mut state = self.state.lock().await;
-            *state = CacheState::OfflineNextCheck(SystemTime::now() + OFFLINE_NEXT_CHECK);
-            return Err(MsalError::RequestFailed(
-                "Network down detected".to_string(),
-            ));
-        }
-
         if let Some(delayed_init) = &*self.client.read().await {
             // Token endpoint
             let token_url = delayed_init
@@ -570,19 +604,12 @@ impl OidcProvider {
     }
 
     #[instrument(level = "debug", skip_all)]
-    async fn tenant_id(&self) -> Result<Uuid, IdpError> {
-        let config = self.config.read().await;
-        let issuer = config.get_oidc_issuer_url().ok_or({
-            error!("Missing OIDC issuer URL in config");
-            IdpError::BadRequest
-        })?;
-        Ok(Uuid::new_v5(&HIMMELBLAU_OIDC_NAMESPACE, issuer.as_bytes()))
-    }
-
-    #[instrument(level = "debug", skip_all)]
     async fn user_token_from_oidc(
         &self,
         token: &openidconnect::core::CoreTokenResponse,
+        config: &HimmelblauConfig,
+        idmap: &Idmap,
+        tenant_id: &Uuid,
     ) -> Result<UserToken, IdpError> {
         let access_token = token.access_token();
         let userinfo: CoreUserInfoClaims = if let Some(delayed_init) = &*self.client.read().await {
@@ -612,9 +639,8 @@ impl OidcProvider {
                 IdpError::BadRequest
             })?;
 
-        let tenant_id = self.tenant_id().await?;
         let subject = userinfo.subject().to_string();
-        let object_id = uuid::Uuid::new_v5(&tenant_id, subject.as_bytes());
+        let object_id = uuid::Uuid::new_v5(tenant_id, subject.as_bytes());
 
         let idmap_cache = StaticIdCache::new(ID_MAP_CACHE, false).map_err(|e| {
             error!("Failed reading from the idmap cache: {:?}", e);
@@ -624,7 +650,6 @@ impl OidcProvider {
         let (uid, gid) = match idmap_cache.get_user_by_name(&account_id) {
             Some(user) => (user.uid, user.gid),
             None => {
-                let idmap = self.idmap.read().await;
                 let gid = idmap
                     .gen_to_unix(&tenant_id.to_string(), &account_id)
                     .map_err(|e| {
@@ -646,16 +671,55 @@ impl OidcProvider {
                 .and_then(|n| n.get(None))
                 .map(|n| n.to_string())
                 .unwrap_or_default(),
-            shell: Some(self.config.read().await.get_shell(None)),
+            shell: Some(config.get_shell(None)),
             groups: vec![GroupToken {
                 name: account_id.to_string(),
                 spn: account_id.to_string(),
                 uuid: object_id,
                 gidnumber: gid,
             }],
-            tenant_id: Some(tenant_id),
+            tenant_id: Some(*tenant_id),
             valid: true,
         })
+    }
+}
+
+pub struct OidcProvider {
+    config: Arc<RwLock<HimmelblauConfig>>,
+    idmap: Arc<RwLock<Idmap>>,
+    state: Mutex<CacheState>,
+    client: OidcApplication,
+    refresh_cache: RefreshCache,
+    bad_pin_counter: BadPinCounter,
+    domain: String,
+}
+
+impl OidcProvider {
+    #[instrument(level = "debug", skip_all)]
+    pub fn new(
+        cfg: &Arc<RwLock<HimmelblauConfig>>,
+        domain: &str,
+        idmap: &Arc<RwLock<Idmap>>,
+    ) -> Result<Self, IdpError> {
+        Ok(Self {
+            config: cfg.clone(),
+            idmap: idmap.clone(),
+            state: Mutex::new(CacheState::OfflineNextCheck(SystemTime::now())),
+            client: OidcApplication::new(),
+            refresh_cache: RefreshCache::new(),
+            bad_pin_counter: BadPinCounter::new(),
+            domain: domain.to_string(),
+        })
+    }
+
+    #[instrument(level = "debug", skip_all)]
+    async fn tenant_id(&self) -> Result<Uuid, IdpError> {
+        let config = self.config.read().await;
+        let issuer = config.get_oidc_issuer_url().ok_or({
+            error!("Missing OIDC issuer URL in config");
+            IdpError::BadRequest
+        })?;
+        Ok(Uuid::new_v5(&HIMMELBLAU_OIDC_NAMESPACE, issuer.as_bytes()))
     }
 
     #[instrument(level = "debug", skip(self, _tpm))]
@@ -714,55 +778,6 @@ impl OidcProvider {
         if !init {
             let cfg = self.config.read().await;
 
-            let client_id = ClientId::new(cfg.get_app_id(&self.domain).ok_or({
-                error!(
-                    "Missing OIDC client ID in config: `[global] app_id` required for OIDC auth"
-                );
-                IdpError::BadRequest
-            })?);
-
-            let issuer_url = IssuerUrl::new(cfg.get_oidc_issuer_url().ok_or({
-                error!("Missing OIDC issuer URL in config");
-                IdpError::BadRequest
-            })?)
-            .map_err(|e| {
-                error!(
-                    ?e,
-                    "Invalid OIDC issuer URL: {:?}",
-                    cfg.get_oidc_issuer_url()
-                );
-                IdpError::BadRequest
-            })?;
-
-            let http_client = reqwest::ClientBuilder::new()
-                .redirect(reqwest::redirect::Policy::none())
-                .build()
-                .map_err(|e| {
-                    error!(?e, "Failed to build HTTP client for OIDC");
-                    IdpError::BadRequest
-                })?;
-
-            // Discover provider metadata (includes our custom device endpoint field).
-            let provider_metadata =
-                DeviceProviderMetadata::discover_async(issuer_url, &http_client)
-                    .await
-                    .map_err(|e| {
-                        error!(?e, "Failed to discover OIDC provider metadata");
-                        IdpError::BadRequest
-                    })?;
-            let authorization_endpoint = provider_metadata.authorization_endpoint().to_string();
-
-            let device_endpoint = provider_metadata
-                .additional_metadata()
-                .device_authorization_endpoint
-                .clone();
-
-            // Create a public client: pass None for the client secret.
-            // Whether this works depends on provider configuration. Many support it.
-            let client = CoreClient::from_provider_metadata(provider_metadata, client_id, None)
-                .set_device_authorization_url(device_endpoint)
-                .set_auth_type(AuthType::RequestBody);
-
             // Initialize the idmap range
             let tenant_id = self.tenant_id().await?.to_string();
             let range = cfg.get_idmap_range(&self.domain);
@@ -773,14 +788,8 @@ impl OidcProvider {
                     error!("Failed adding the idmap domain: {}", e);
                     IdpError::BadRequest
                 })?;
-            drop(cfg);
 
-            // Store provider initialization
-            self.client.write().await.replace(OidcDelayedInit {
-                client,
-                http_client,
-                authorization_endpoint,
-            });
+            self.client.delayed_init(&cfg, &self.domain).await?;
         }
         Ok(())
     }
@@ -793,7 +802,15 @@ impl OidcProvider {
         account_id: &str,
         token: &OidcTokenResponse,
     ) -> Result<AuthResult, IdpError> {
-        let token2 = self.user_token_from_oidc(token).await?;
+        let token2 = self
+            .client
+            .user_token_from_oidc(
+                token,
+                &*self.config.read().await,
+                &*self.idmap.read().await,
+                &self.tenant_id().await?,
+            )
+            .await?;
         if account_id.to_string().to_lowercase() != token2.name.to_string().to_lowercase() {
             let msg = format!(
                 "Authenticated user {} does not match requested user",
@@ -942,7 +959,7 @@ impl IdProvider for OidcProvider {
             || no_hello_pin
         {
             let (flow, extra_data) =
-                mfa_from_oidc_device(self.initiate_device_flow().await.map_err(|e| {
+                mfa_from_oidc_device(self.client.initiate_device_flow().await.map_err(|e| {
                     error!(?e, "Failed to initiate device flow");
                     IdpError::BadRequest
                 })?)?;
@@ -1069,7 +1086,7 @@ impl IdProvider for OidcProvider {
                         }
                     };
                     // We have a refresh token, exchange that for an access token
-                    match self.acquire_token_by_refresh_token(
+                    match self.client.acquire_token_by_refresh_token(
                         &refresh_token,
                         vec![],
                     ).await {
@@ -1139,7 +1156,12 @@ impl IdProvider for OidcProvider {
                         error!("Missing refresh token in OIDC response");
                         IdpError::BadRequest
                     })?.as_bytes().to_vec());
-                let token2 = self.user_token_from_oidc(&token).await?;
+                let token2 = self.client.user_token_from_oidc(
+                    &token,
+                    &*self.config.read().await,
+                    &*self.idmap.read().await,
+                    &self.tenant_id().await?,
+                ).await?;
                 tpm.seal_data(&win_hello_storage_key, refresh_token_zeroizing)
                     .map_err(|e| {
                         let uuid = token2.uuid.to_string();
@@ -1232,7 +1254,7 @@ impl IdProvider for OidcProvider {
                     error!(?e, "Failed to deserialize OIDC DAG");
                     IdpError::BadRequest
                 })?;
-                match self.acquire_token_by_device_flow(&flow).await {
+                match self.client.acquire_token_by_device_flow(&flow).await {
                     Ok(token) => match self.token_validate(account_id, &token).await {
                         Ok(AuthResult::Success { token: token2 }) => {
                             // Skip Hello enrollment if it is disabled by config

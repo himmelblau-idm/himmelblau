@@ -149,7 +149,7 @@ impl HimmelblauMultiProvider {
     }
 
     async fn add_oidc_tenant(&self, domain: &str) -> Result<(), IdpError> {
-        let provider = OidcProvider::new(&self.config, domain, &self.idmap).await?;
+        let provider = OidcProvider::new(&self.config, domain, &self.idmap)?;
 
         self.providers
             .write()

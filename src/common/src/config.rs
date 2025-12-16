@@ -555,7 +555,7 @@ impl HimmelblauConfig {
         };
         domains.extend(domain);
         let mut sections = self.config.sections();
-        sections.retain(|s| s != "global" && s != "oidc" || s != "offline_breakglass");
+        sections.retain(|s| s != "global" && s != "offline_breakglass");
         for section in sections {
             if !domains.contains(&section) {
                 domains.push(section);
@@ -756,6 +756,11 @@ impl HimmelblauConfig {
     }
 
     pub async fn get_primary_domain_from_alias(&mut self, alias: &str) -> Option<String> {
+        // Short-circuit the request if this is an OIDC provider domain.
+        if self.get_oidc_issuer_url().is_some() {
+            return None;
+        }
+
         // Attempt to short-circut the request by checking if the alias is
         // already configured.
         if let Some(primary) = self.get_primary_domain_from_alias_simple(alias) {

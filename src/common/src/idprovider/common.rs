@@ -506,13 +506,14 @@ macro_rules! entra_id_refresh_token_token_fetch {
 macro_rules! oidc_refresh_token_token_fetch {
     ($self:ident, $refresh_token:ident, $scopes:ident) => {
         match $self
+            .client
             .acquire_token_by_refresh_token(
                 &$refresh_token,
                 $scopes.iter().map(|s| s.as_ref()).collect(),
             )
             .await
         {
-            Ok(token) => token.into_user_token().map_err(|e| {
+            Ok(token) => token.into_unix_user_token().map_err(|e| {
                 error!("Failed to convert token to user token: {:?}", e);
                 IdpError::BadRequest
             }),
