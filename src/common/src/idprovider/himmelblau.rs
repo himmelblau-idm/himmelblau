@@ -38,10 +38,11 @@ use crate::unix_proto::PamAuthRequest;
 use crate::user_map::UserMap;
 use crate::{
     entra_id_prt_token_fetch, entra_id_refresh_token_token_fetch, extract_base_url,
-    handle_hello_bad_pin_count, impl_change_auth_token, impl_create_decoupled_hello_key,
-    impl_himmelblau_hello_key_helpers, impl_himmelblau_offline_auth_init,
-    impl_himmelblau_offline_auth_step, impl_offline_break_glass, impl_provision_hello_key,
-    impl_provision_or_create_hello_key, impl_unix_user_access, load_cached_prt,
+    handle_hello_bad_pin_count, impl_change_auth_token, impl_check_online,
+    impl_create_decoupled_hello_key, impl_himmelblau_hello_key_helpers,
+    impl_himmelblau_offline_auth_init, impl_himmelblau_offline_auth_step, impl_offline_break_glass,
+    impl_provision_hello_key, impl_provision_or_create_hello_key, impl_unix_user_access,
+    load_cached_prt,
 };
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
@@ -770,16 +771,7 @@ impl IdProvider for HimmelblauProvider {
 
     #[instrument(level = "debug", skip_all)]
     async fn check_online(&self, tpm: &mut tpm::provider::BoxedDynTpm, now: SystemTime) -> bool {
-        let state = self.state.lock().await.clone();
-        match state {
-            // Proceed
-            CacheState::Online => true,
-            CacheState::OfflineNextCheck(at_time) if now >= at_time => {
-                // Attempt online. If fails, return token.
-                self.attempt_online(tpm, now).await
-            }
-            CacheState::OfflineNextCheck(_) | CacheState::Offline => false,
-        }
+        impl_check_online!(self, tpm, now)
     }
 
     #[instrument(skip(self, id, old_token, _keystore, tpm, machine_key))]
@@ -2029,11 +2021,7 @@ impl IdProvider for HimmelblauProvider {
 
                 let (hello_key, keytype) = if amr_ngcmfa {
                     net_down_check!(
-                        self.client
-                            .read()
-                            .await
-                            .provision_hello_for_business_key(&token, tpm, machine_key, &pin)
-                            .await,
+                        impl_provision_hello_key!(self, token, pin, tpm, machine_key),
                         Ok(hello_key) => (hello_key, KeyType::Hello),
                         Err(e) => {
                             return Ok((
@@ -2048,15 +2036,16 @@ impl IdProvider for HimmelblauProvider {
                         }
                     )
                 } else {
-                    let pin = PinValue::new(&pin).map_err(|e| {
-                        error!("Failed setting pin value: {:?}", e);
-                        IdpError::Tpm
-                    })?;
                     (
-                        tpm.ms_hello_key_create(machine_key, &pin).map_err(|e| {
-                            error!("Failed to create hello key: {:?}", e);
+                        impl_create_decoupled_hello_key!(
+                            self,
+                            token,
+                            amr_ngcmfa,
+                            tpm,
+                            machine_key,
+                            pin,
                             IdpError::Tpm
-                        })?,
+                        ),
                         KeyType::Decoupled,
                     )
                 };

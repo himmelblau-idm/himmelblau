@@ -658,3 +658,19 @@ macro_rules! impl_change_auth_token {
         Ok(true)
     }};
 }
+
+#[macro_export]
+macro_rules! impl_check_online {
+    ($self:ident, $tpm:ident, $now:expr) => {{
+        let state = $self.state.lock().await.clone();
+        match state {
+            // Proceed
+            CacheState::Online => true,
+            CacheState::OfflineNextCheck(at_time) if $now >= at_time => {
+                // Attempt online. If fails, return token.
+                $self.attempt_online($tpm, $now).await
+            }
+            CacheState::OfflineNextCheck(_) | CacheState::Offline => false,
+        }
+    }};
+}

@@ -28,7 +28,7 @@ use crate::idprovider::interface::{
 };
 use crate::unix_proto::PamAuthRequest;
 use crate::{
-    extract_base_url, handle_hello_bad_pin_count, impl_change_auth_token,
+    extract_base_url, handle_hello_bad_pin_count, impl_change_auth_token, impl_check_online,
     impl_create_decoupled_hello_key, impl_himmelblau_hello_key_helpers,
     impl_himmelblau_offline_auth_init, impl_himmelblau_offline_auth_step, impl_offline_break_glass,
     impl_unix_user_access, load_cached_prt_no_op, no_op_prt_token_fetch,
@@ -658,8 +658,8 @@ impl OidcProvider {
         })
     }
 
-    #[instrument(level = "debug", skip(self))]
-    async fn attempt_online(&self, now: SystemTime) -> bool {
+    #[instrument(level = "debug", skip(self, _tpm))]
+    async fn attempt_online(&self, _tpm: &mut tpm::provider::BoxedDynTpm, now: SystemTime) -> bool {
         if (self.delayed_init().await).is_err() {
             // Initialization failed. Report that the system is offline. We
             // can't proceed with initialization until the system is online.
@@ -820,18 +820,9 @@ impl OidcProvider {
 
 #[async_trait]
 impl IdProvider for OidcProvider {
-    #[instrument(level = "debug", skip(self, _tpm))]
-    async fn check_online(&self, _tpm: &mut tpm::provider::BoxedDynTpm, now: SystemTime) -> bool {
-        let state = self.state.lock().await.clone();
-        match state {
-            // Proceed
-            CacheState::Online => true,
-            CacheState::OfflineNextCheck(at_time) if now >= at_time => {
-                // Attempt online. If fails, return token.
-                self.attempt_online(now).await
-            }
-            CacheState::OfflineNextCheck(_) | CacheState::Offline => false,
-        }
+    #[instrument(level = "debug", skip(self, tpm))]
+    async fn check_online(&self, tpm: &mut tpm::provider::BoxedDynTpm, now: SystemTime) -> bool {
+        impl_check_online!(self, tpm, now)
     }
 
     #[instrument(level = "debug", skip_all)]
@@ -920,7 +911,7 @@ impl IdProvider for OidcProvider {
         _token: Option<&UserToken>,
         no_hello_pin: bool,
         keystore: &mut D,
-        _tpm: &mut tpm::provider::BoxedDynTpm,
+        tpm: &mut tpm::provider::BoxedDynTpm,
         _machine_key: &tpm::structures::StorageKey,
         _shutdown_rx: &broadcast::Receiver<()>,
     ) -> Result<(AuthRequest, AuthCredHandler), IdpError> {
@@ -971,7 +962,7 @@ impl IdProvider for OidcProvider {
         } else {
             // Check if the network is even up prior to sending a PIN prompt,
             // otherwise we duplicate the PIN prompt when the network goes down.
-            if !self.attempt_online(SystemTime::now()).await {
+            if !self.attempt_online(tpm, SystemTime::now()).await {
                 // We are offline, fail the authentication now
                 return Err(IdpError::BadRequest);
             }
@@ -1191,17 +1182,16 @@ impl IdProvider for OidcProvider {
             (AuthCredHandler::SetupPin { token: _ }, PamAuthRequest::SetupPin { pin: cred }) => {
                 let hello_tag = self.fetch_hello_key_tag(account_id, false);
 
-                let pin = PinValue::new(&cred).map_err(|e| {
-                    error!("Failed setting pin value: {:?}", e);
+                let hello_key = impl_create_decoupled_hello_key!(
+                    self,
+                    None,
+                    false,
+                    tpm,
+                    machine_key,
+                    cred,
                     IdpError::Tpm
-                })?;
-                let (hello_key, keytype) = (
-                    tpm.ms_hello_key_create(machine_key, &pin).map_err(|e| {
-                        error!("Failed to create hello key: {:?}", e);
-                        IdpError::Tpm
-                    })?,
-                    KeyType::Decoupled,
                 );
+                let keytype = KeyType::Decoupled;
 
                 keystore
                     .insert_tagged_hsm_key(&hello_tag, &hello_key)
