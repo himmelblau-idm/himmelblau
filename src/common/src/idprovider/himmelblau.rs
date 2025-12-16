@@ -39,8 +39,8 @@ use crate::user_map::UserMap;
 use crate::{
     entra_id_prt_token_fetch, entra_id_refresh_token_token_fetch, extract_base_url,
     handle_hello_bad_pin_count, impl_himmelblau_hello_key_helpers,
-    impl_himmelblau_offline_auth_init, impl_himmelblau_offline_auth_step, impl_unix_user_access,
-    load_cached_prt,
+    impl_himmelblau_offline_auth_init, impl_himmelblau_offline_auth_step, impl_offline_break_glass,
+    impl_unix_user_access, load_cached_prt,
 };
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
@@ -761,22 +761,7 @@ macro_rules! check_new_device_enrollment_required {
 #[async_trait]
 impl IdProvider for HimmelblauProvider {
     async fn offline_break_glass(&self, ttl: Option<u64>) -> Result<(), IdpError> {
-        let mut state = self.state.lock().await;
-        let (ttl, enabled) = {
-            let cfg = self.config.read().await;
-            (
-                match ttl {
-                    Some(ttl) => ttl,
-                    None => cfg.get_offline_breakglass_ttl(),
-                },
-                cfg.get_offline_breakglass_enabled(),
-            )
-        };
-        if enabled {
-            let offline_next_check = Duration::from_secs(ttl);
-            *state = CacheState::OfflineNextCheck(SystemTime::now() + offline_next_check);
-        }
-        Ok(())
+        impl_offline_break_glass!(self, ttl)
     }
 
     #[instrument(level = "debug", skip_all)]

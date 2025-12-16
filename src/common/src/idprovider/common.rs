@@ -226,6 +226,28 @@ pub(crate) enum KeyType {
 }
 
 #[macro_export]
+macro_rules! impl_offline_break_glass {
+    ($self:ident, $ttl:ident) => {{
+        let mut state = $self.state.lock().await;
+        let (ttl, enabled) = {
+            let cfg = $self.config.read().await;
+            (
+                match $ttl {
+                    Some(ttl) => ttl,
+                    None => cfg.get_offline_breakglass_ttl(),
+                },
+                cfg.get_offline_breakglass_enabled(),
+            )
+        };
+        if enabled {
+            let offline_next_check = Duration::from_secs(ttl);
+            *state = CacheState::OfflineNextCheck(SystemTime::now() + offline_next_check);
+        }
+        Ok(())
+    }};
+}
+
+#[macro_export]
 macro_rules! impl_himmelblau_hello_key_helpers {
     () => {
         fn fetch_hello_key_tag(&self, account_id: &str, amr_ngcmfa: bool) -> String {

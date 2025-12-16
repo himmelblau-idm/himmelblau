@@ -29,8 +29,9 @@ use crate::idprovider::interface::{
 use crate::unix_proto::PamAuthRequest;
 use crate::{
     extract_base_url, handle_hello_bad_pin_count, impl_himmelblau_hello_key_helpers,
-    impl_himmelblau_offline_auth_init, impl_himmelblau_offline_auth_step, impl_unix_user_access,
-    load_cached_prt_no_op, no_op_prt_token_fetch, oidc_refresh_token_token_fetch,
+    impl_himmelblau_offline_auth_init, impl_himmelblau_offline_auth_step, impl_offline_break_glass,
+    impl_unix_user_access, load_cached_prt_no_op, no_op_prt_token_fetch,
+    oidc_refresh_token_token_fetch,
 };
 use async_trait::async_trait;
 use himmelblau::{error::MsalError, MFAAuthContinue, UserToken as UnixUserToken};
@@ -1295,9 +1296,8 @@ impl IdProvider for OidcProvider {
     }
 
     #[instrument(level = "debug", skip_all)]
-    async fn offline_break_glass(&self, _ttl: Option<u64>) -> Result<(), IdpError> {
-        // TODO
-        Ok(())
+    async fn offline_break_glass(&self, ttl: Option<u64>) -> Result<(), IdpError> {
+        impl_offline_break_glass!(self, ttl)
     }
 
     #[instrument(level = "debug", skip_all)]
