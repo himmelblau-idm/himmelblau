@@ -38,9 +38,10 @@ use crate::unix_proto::PamAuthRequest;
 use crate::user_map::UserMap;
 use crate::{
     entra_id_prt_token_fetch, entra_id_refresh_token_token_fetch, extract_base_url,
-    handle_hello_bad_pin_count, impl_himmelblau_hello_key_helpers,
-    impl_himmelblau_offline_auth_init, impl_himmelblau_offline_auth_step, impl_offline_break_glass,
-    impl_unix_user_access, load_cached_prt,
+    handle_hello_bad_pin_count, impl_change_auth_token, impl_create_decoupled_hello_key,
+    impl_himmelblau_hello_key_helpers, impl_himmelblau_offline_auth_init,
+    impl_himmelblau_offline_auth_step, impl_offline_break_glass, impl_provision_hello_key,
+    impl_provision_or_create_hello_key, impl_unix_user_access, load_cached_prt,
 };
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
@@ -909,63 +910,23 @@ impl IdProvider for HimmelblauProvider {
         tpm: &mut tpm::provider::BoxedDynTpm,
         machine_key: &tpm::structures::StorageKey,
     ) -> Result<bool, IdpError> {
-        if (self.delayed_init().await).is_err() {
-            // We can't change the Hello PIN when initialization hasn't
-            // completed. This only happens when we're offline during first
-            // startup.
-            return Err(IdpError::BadRequest);
-        }
-
-        if !self.check_online(tpm, SystemTime::now()).await {
-            // We can't change the Hello PIN when offline
-            return Err(IdpError::BadRequest);
-        }
-
-        let amr_ngcmfa = token.amr_ngcmfa().map_err(|e| {
-            error!("{:?}", e);
-            IdpError::NotFound {
-                what: "NGC MFA authorization in UnixUserToken".to_string(),
-                where_: format!("access token ({})", token.token_type),
-            }
-        })?;
-
-        let hello_tag = self.fetch_hello_key_tag(account_id, amr_ngcmfa);
-
-        // Ensure the user is setting the token for the account it has authenticated to
-        if account_id.to_string().to_lowercase()
-            != token
-                .spn()
-                .map_err(|e| {
-                    error!("Failed checking the spn on the user token: {:?}", e);
-                    IdpError::BadRequest
-                })?
-                .to_lowercase()
-        {
-            error!("A hello key may only be set by the authenticated user!");
-            return Err(IdpError::BadRequest);
-        }
-
-        // Set the hello pin
-        let hello_key = match self
-            .client
-            .read()
-            .await
-            .provision_hello_for_business_key(token, tpm, machine_key, new_tok)
-            .await
-        {
-            Ok(hello_key) => hello_key,
-            Err(e) => {
-                error!("Failed to provision hello key: {:?}", e);
-                return Ok(false);
-            }
-        };
-        keystore
-            .insert_tagged_hsm_key(&hello_tag, &hello_key)
-            .map_err(|e| {
-                error!("Failed to provision hello key: {:?}", e);
-                IdpError::Tpm
-            })?;
-        Ok(true)
+        impl_change_auth_token!(
+            self,
+            account_id,
+            token,
+            new_tok,
+            keystore,
+            tpm,
+            machine_key,
+            token.amr_ngcmfa().map_err(|e| {
+                error!("{:?}", e);
+                IdpError::NotFound {
+                    what: "NGC MFA authorization in UnixUserToken".to_string(),
+                    where_: format!("access token ({})", token.token_type),
+                }
+            })?,
+            impl_provision_or_create_hello_key
+        )
     }
 
     #[instrument(skip_all)]
