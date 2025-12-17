@@ -54,3 +54,5 @@ base64.workspace = true
 authenticator = { version = "0.5.0", default-features = false, features = ["crypto_openssl"] }
 rpassword = "7.4.0"
 der = "0.7.10"
+openidconnect = "4.0.1"
+oauth2 = "5.0.0"

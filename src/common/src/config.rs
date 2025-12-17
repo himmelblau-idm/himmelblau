@@ -17,6 +17,7 @@
 */
 use crate::unix_passwd::parse_etc_passwd;
 use configparser::ini::Ini;
+use oauth2::url;
 use std::fmt;
 use std::fs::File;
 use std::io::Error;
@@ -555,7 +556,7 @@ impl HimmelblauConfig {
         };
         domains.extend(domain);
         let mut sections = self.config.sections();
-        sections.retain(|s| s != "global");
+        sections.retain(|s| s != "global" && s != "offline_breakglass");
         for section in sections {
             if !domains.contains(&section) {
                 domains.push(section);
@@ -756,6 +757,11 @@ impl HimmelblauConfig {
     }
 
     pub async fn get_primary_domain_from_alias(&mut self, alias: &str) -> Option<String> {
+        // Short-circuit the request if this is an OIDC provider domain.
+        if self.get_oidc_issuer_url().is_some() {
+            return None;
+        }
+
         // Attempt to short-circut the request by checking if the alias is
         // already configured.
         if let Some(primary) = self.get_primary_domain_from_alias_simple(alias) {
@@ -964,6 +970,31 @@ impl HimmelblauConfig {
             Some(val) => parse_ttl_to_seconds(&val).unwrap_or(DEFAULT_OFFLINE_BREAKGLASS_TTL),
             None => DEFAULT_OFFLINE_BREAKGLASS_TTL,
         }
+    }
+
+    pub fn get_oidc_issuer_url(&self) -> Option<String> {
+        let res = self.config.get("global", "oidc_issuer_url").map(|s| {
+            s.trim()
+                .strip_suffix("/.well-known/openid-configuration")
+                .unwrap_or(s.trim())
+                .trim_end_matches('/')
+                .to_string()
+        });
+        if let Some(ref s) = res {
+            if s.is_empty() {
+                return None;
+            } else if !s.starts_with("https://") {
+                error!("OIDC issuer URL must use https://");
+                return None;
+            } else if s.contains('?') || s.contains('#') {
+                warn!("OIDC issuer URL must not contain query or fragment");
+                return None;
+            } else if url::Url::parse(s).is_err() {
+                error!("OIDC issuer URL is not a valid URL");
+                return None;
+            }
+        }
+        res
     }
 }
 

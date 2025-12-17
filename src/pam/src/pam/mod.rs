@@ -66,6 +66,9 @@ use himmelblau_unix_common::config::{split_username, HimmelblauConfig};
 use himmelblau_unix_common::constants::BROKER_APP_ID;
 use himmelblau_unix_common::constants::DEFAULT_CONFIG_PATH;
 use himmelblau_unix_common::hello_pin_complexity::is_simple_pin;
+use himmelblau_unix_common::idprovider::openidconnect::{
+    mfa_from_oidc_device, OidcApplication, OidcTokenResponseExt,
+};
 use himmelblau_unix_common::unix_proto::{ClientRequest, ClientResponse};
 use himmelblau_unix_common::user_map::UserMap;
 use himmelblau_unix_common::{auth_handle_mfa_resp, pam_fail};
@@ -351,18 +354,6 @@ impl PamHooks for PamKanidm {
                 return PamResultCode::PAM_AUTH_ERR;
             }
         };
-        let tenant_id = match cfg.get_tenant_id(domain) {
-            Some(tenant_id) => tenant_id,
-            None => "common".to_string(),
-        };
-        let authority = format!("https://{}/{}", cfg.get_authority_host(domain), tenant_id);
-        let app = match PublicClientApplication::new(BROKER_APP_ID, Some(&authority)) {
-            Ok(app) => app,
-            Err(e) => {
-                error!(err = ?e, "PublicClientApplication");
-                return PamResultCode::PAM_AUTH_ERR;
-            }
-        };
 
         let conv = match pamh.get_item::<PamConv>() {
             Ok(conv) => conv,
@@ -470,7 +461,22 @@ impl PamHooks for PamKanidm {
                 return PamResultCode::PAM_AUTH_ERR;
             }
         };
-        let token = {
+
+        let tenant_id = match cfg.get_tenant_id(domain) {
+            Some(tenant_id) => tenant_id,
+            None => "common".to_string(),
+        };
+        let authority = format!("https://{}/{}", cfg.get_authority_host(domain), tenant_id);
+        let app = match PublicClientApplication::new(BROKER_APP_ID, Some(&authority)) {
+            Ok(app) => app,
+            Err(e) => {
+                error!(err = ?e, "PublicClientApplication");
+                return PamResultCode::PAM_AUTH_ERR;
+            }
+        };
+
+        let oidc_client = cfg.get_oidc_issuer_url().is_some();
+        let token = if !oidc_client {
             let auth_options = vec![AuthOption::Fido, AuthOption::Passwordless];
             let auth_init = match rt.block_on(async {
                 app.check_user_exists(&account_id, None, &auth_options)
@@ -630,6 +636,65 @@ impl PamHooks for PamKanidm {
                     }
                 }
             )
+        } else {
+            let client = match rt.block_on(async { OidcApplication::with_init(&cfg, domain).await })
+            {
+                Ok(client) => client,
+                Err(e) => {
+                    error!(err = ?e, "OidcApplication::with_init");
+                    return PamResultCode::PAM_AUTH_ERR;
+                }
+            };
+
+            let flow = match rt.block_on(async { client.initiate_device_flow().await }) {
+                Ok(token) => token,
+                Err(e) => {
+                    error!(err = ?e, "acquire_token_by_refresh_token_token_fetch");
+                    return PamResultCode::PAM_AUTH_ERR;
+                }
+            };
+            let (mfa_req, _) = match mfa_from_oidc_device(flow.clone()) {
+                Ok(mfa_req) => mfa_req,
+                Err(e) => {
+                    error!(err = ?e, "mfa_from_oidc_device");
+                    return PamResultCode::PAM_AUTH_ERR;
+                }
+            };
+
+            match conv.send(PAM_TEXT_INFO, &mfa_req.msg) {
+                Ok(_) => {}
+                Err(err) => {
+                    if opts.debug {
+                        println!("Message prompt failed");
+                    }
+                    return err;
+                }
+            }
+            let polling_interval = mfa_req.polling_interval.unwrap_or(5000);
+            loop {
+                match rt.block_on(async { client.acquire_token_by_device_flow(&flow).await }) {
+                    Ok(token) => {
+                        let token = match token.into_unix_user_token() {
+                            Ok(token) => token,
+                            Err(e) => {
+                                error!(err = ?e, "into_unix_user_token");
+                                return PamResultCode::PAM_AUTH_ERR;
+                            }
+                        };
+                        break token;
+                    }
+                    Err(e) => match e {
+                        MsalError::MFAPollContinue => {
+                            sleep(Duration::from_millis(polling_interval.into()));
+                            continue;
+                        }
+                        e => {
+                            error!("MFA FAIL: {:?}", e);
+                            return PamResultCode::PAM_AUTH_ERR;
+                        }
+                    },
+                }
+            }
         };
 
         let req = ClientRequest::PamChangeAuthToken(

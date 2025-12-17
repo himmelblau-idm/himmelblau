@@ -572,6 +572,12 @@ user-id = 3618 # David Tolnay (dtolnay)
 start = "2019-12-23"
 end = "2026-09-11"
 
+[[trusted.ed25519]]
+criteria = "safe-to-deploy"
+user-id = 267 # Tony Arcieri (tarcieri)
+start = "2019-08-10"
+end = "2026-12-17"
+
 [[trusted.errno]]
 criteria = "safe-to-deploy"
 user-id = 6825 # Dan Gohman (sunfishcode)
@@ -1088,6 +1094,12 @@ user-id = 1 # Alex Crichton (alexcrichton)
 start = "2020-08-04"
 end = "2026-09-11"
 
+[[trusted.ordered-float]]
+criteria = "safe-to-deploy"
+user-id = 2017 # Matt Brubeck (mbrubeck)
+start = "2019-03-13"
+end = "2026-12-17"
+
 [[trusted.parking_lot]]
 criteria = "safe-to-deploy"
 user-id = 2915 # Amanieu d'Antras (Amanieu)
@@ -1261,6 +1273,12 @@ criteria = "safe-to-deploy"
 user-id = 3618 # David Tolnay (dtolnay)
 start = "2019-02-28"
 end = "2026-09-11"
+
+[[trusted.serde_path_to_error]]
+criteria = "safe-to-deploy"
+user-id = 3618 # David Tolnay (dtolnay)
+start = "2019-08-20"
+end = "2026-12-17"
 
 [[trusted.serde_repr]]
 criteria = "safe-to-deploy"

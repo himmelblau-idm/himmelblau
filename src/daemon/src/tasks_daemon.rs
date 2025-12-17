@@ -264,7 +264,33 @@ fn add_user_to_group(account_id: &str, local_group: &str) {
     }
 }
 
+fn user_in_group(account_id: &str, local_group: &str) -> bool {
+    let output = Command::new("getent")
+        .arg("group")
+        .arg(local_group)
+        .output();
+
+    if let Ok(out) = output {
+        if out.status.success() {
+            let stdout = String::from_utf8_lossy(&out.stdout);
+            if let Some(users) = stdout.split(':').nth(3) {
+                return users.split(',').any(|u| u == account_id);
+            }
+        }
+    }
+    false
+}
+
 fn remove_user_from_group(account_id: &str, local_group: &str) {
+    if !user_in_group(account_id, local_group) {
+        trace!(
+            "User {} is not a member of {}, nothing to remove",
+            account_id,
+            local_group
+        );
+        return;
+    }
+
     match Command::new("gpasswd")
         .arg("-d")
         .arg(account_id)
