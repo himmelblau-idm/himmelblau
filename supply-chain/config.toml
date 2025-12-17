@@ -200,6 +200,14 @@ criteria = "safe-to-deploy"
 version = "0.9.2"
 criteria = "safe-to-deploy"
 
+[[exemptions.curve25519-dalek]]
+version = "4.1.0"
+criteria = "safe-to-deploy"
+
+[[exemptions.curve25519-dalek-derive]]
+version = "0.1.0"
+criteria = "safe-to-deploy"
+
 [[exemptions.dbus]]
 version = "0.9.9"
 criteria = "safe-to-deploy"
@@ -234,6 +242,10 @@ criteria = "safe-to-deploy"
 
 [[exemptions.ecdsa]]
 version = "0.16.9"
+criteria = "safe-to-deploy"
+
+[[exemptions.ed25519-dalek]]
+version = "2.2.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.ego-tree]]
@@ -381,6 +393,10 @@ version = "0.7.8"
 criteria = "safe-to-deploy"
 
 [[exemptions.itertools]]
+version = "0.10.5"
+criteria = "safe-to-deploy"
+
+[[exemptions.itertools]]
 version = "0.13.0"
 criteria = "safe-to-deploy"
 
@@ -508,12 +524,20 @@ criteria = "safe-to-deploy"
 version = "0.1.7"
 criteria = "safe-to-deploy"
 
+[[exemptions.oauth2]]
+version = "5.0.0"
+criteria = "safe-to-deploy"
+
 [[exemptions.oid]]
 version = "0.2.1"
 criteria = "safe-to-deploy"
 
 [[exemptions.once_cell]]
 version = "1.12.0"
+criteria = "safe-to-deploy"
+
+[[exemptions.openidconnect]]
+version = "4.0.1"
 criteria = "safe-to-deploy"
 
 [[exemptions.opentelemetry]]
@@ -754,6 +778,10 @@ criteria = "safe-to-deploy"
 
 [[exemptions.selectors]]
 version = "0.31.0"
+criteria = "safe-to-deploy"
+
+[[exemptions.serde_plain]]
+version = "1.0.2"
 criteria = "safe-to-deploy"
 
 [[exemptions.serde_urlencoded]]
