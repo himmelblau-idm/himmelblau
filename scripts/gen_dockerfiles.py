@@ -304,6 +304,10 @@ DISTS = {
     "tumbleweed": {
         "family": "zypper",
         "image": "opensuse/tumbleweed:latest",
+        "extra_prep": [
+            "RUN zypper ar -e https://download.opensuse.org/repositories/security:/idm/openSUSE_Tumbleweed/security:idm.repo",
+            "RUN zypper --non-interactive --gpg-auto-import-keys refresh security_idm"
+        ],
         "replace": {
             "build-effective": "",
             "@development-tools": "",
