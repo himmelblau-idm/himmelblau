@@ -35,7 +35,7 @@ serde_json.workspace = true
 futures = "^0.3.28"
 systemd-journal-logger = "^2.2.2"
 himmelblau_policies = { workspace = true }
-uzers = "^0.12.1"
+uzers = "^0.12.2"
 sketching = { workspace = true }
 walkdir = { workspace = true }
 libc = { workspace = true }
