@@ -30,6 +30,7 @@ use crate::db::KeyStoreTxn;
 use crate::idmap_cache::StaticIdCache;
 use crate::idprovider::common::KeyType;
 use crate::idprovider::common::RefreshCacheEntry;
+use crate::idprovider::common::TotpEnrollmentRecord;
 use crate::idprovider::common::{BadPinCounter, RefreshCache};
 use crate::idprovider::interface::{tpm, UserTokenState};
 use crate::idprovider::openidconnect::OidcProvider;
@@ -37,12 +38,13 @@ use crate::tpm::confidential_client_creds;
 use crate::unix_proto::PamAuthRequest;
 use crate::user_map::UserMap;
 use crate::{
-    entra_id_prt_token_fetch, entra_id_refresh_token_token_fetch, extract_base_url,
-    handle_hello_bad_pin_count, impl_change_auth_token, impl_check_online,
-    impl_create_decoupled_hello_key, impl_himmelblau_hello_key_helpers,
+    check_hello_totp_enabled, check_hello_totp_setup, entra_id_prt_token_fetch,
+    entra_id_refresh_token_token_fetch, extract_base_url, handle_hello_bad_pin_count,
+    impl_change_auth_token, impl_check_online, impl_create_decoupled_hello_key,
+    impl_handle_hello_pin_totp_auth, impl_himmelblau_hello_key_helpers,
     impl_himmelblau_offline_auth_init, impl_himmelblau_offline_auth_step, impl_offline_break_glass,
-    impl_provision_hello_key, impl_provision_or_create_hello_key, impl_unix_user_access,
-    load_cached_prt,
+    impl_provision_hello_key, impl_provision_or_create_hello_key, impl_setup_hello_totp,
+    impl_unix_user_access, load_cached_prt,
 };
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
@@ -57,6 +59,7 @@ use himmelblau::intune::IntuneForLinux;
 use himmelblau::{AuthOption, MFAAuthContinue};
 use himmelblau::{ClientToken, ConfidentialClientApplication};
 use idmap::{AadSid, Idmap};
+use kanidm_hsm_crypto::structures::SealedData;
 use kanidm_hsm_crypto::{
     structures::LoadableMsDeviceEnrolmentKey, structures::LoadableMsHelloKey,
     structures::LoadableMsOapxbcRsaKey, PinValue,
@@ -72,7 +75,9 @@ use std::thread::sleep;
 use std::time::Duration;
 use std::time::SystemTime;
 use tokio::sync::{broadcast, Mutex, RwLock};
+use totp_rs::{Algorithm, Secret, TOTP};
 use uuid::Uuid;
+use zeroize::Zeroizing;
 
 #[allow(clippy::large_enum_variant)]
 enum Providers {
@@ -1702,12 +1707,34 @@ impl IdProvider for HimmelblauProvider {
                             let mut state = self.state.lock().await;
                             *state =
                                 CacheState::OfflineNextCheck(SystemTime::now() + OFFLINE_NEXT_CHECK);
-                            return Ok((
-                                AuthResult::Success {
-                                    token: old_token.clone(),
-                                },
-                                AuthCacheAction::None,
-                            ));
+                            if check_hello_totp_enabled!(self) {
+                                if !check_hello_totp_setup!(self, account_id, keystore) {
+                                    return impl_setup_hello_totp!(
+                                        self,
+                                        account_id,
+                                        keystore,
+                                        old_token,
+                                        $cred,
+                                        tpm,
+                                        machine_key
+                                    );
+                                } else {
+                                    *cred_handler = AuthCredHandler::HelloTOTP {
+                                        cred: $cred.clone(),
+                                    };
+                                    return Ok((AuthResult::Next(AuthRequest::HelloTOTP {
+                                        msg: "Please enter your Hello TOTP code from your Authenticator: "
+                                            .to_string(),
+                                    }), AuthCacheAction::None));
+                                }
+                            } else {
+                                return Ok((
+                                    AuthResult::Success {
+                                        token: old_token.clone(),
+                                    },
+                                    AuthCacheAction::None,
+                                ));
+                            }
                         }
                         Err(MsalError::AcquireTokenFailed(e)) => {
                             check_new_device_enrollment_required!(e, self, keystore,
@@ -1821,12 +1848,34 @@ impl IdProvider for HimmelblauProvider {
                                     let mut state = self.state.lock().await;
                                     *state =
                                         CacheState::OfflineNextCheck(SystemTime::now() + OFFLINE_NEXT_CHECK);
-                                    return Ok((
-                                        AuthResult::Success {
-                                            token: old_token.clone(),
-                                        },
-                                        AuthCacheAction::None,
-                                    ));
+                                    if check_hello_totp_enabled!(self) {
+                                        if !check_hello_totp_setup!(self, account_id, keystore) {
+                                            return impl_setup_hello_totp!(
+                                                self,
+                                                account_id,
+                                                keystore,
+                                                old_token,
+                                                $cred,
+                                                tpm,
+                                                machine_key
+                                            );
+                                        } else {
+                                            *cred_handler = AuthCredHandler::HelloTOTP {
+                                                cred: $cred.clone(),
+                                            };
+                                            return Ok((AuthResult::Next(AuthRequest::HelloTOTP {
+                                                msg: "Please enter your Hello TOTP code from your Authenticator: "
+                                                    .to_string(),
+                                            }), AuthCacheAction::None));
+                                        }
+                                    } else {
+                                        return Ok((
+                                            AuthResult::Success {
+                                                token: old_token.clone(),
+                                            },
+                                            AuthCacheAction::None,
+                                        ));
+                                    }
                                 }
                                 Err(MsalError::AcquireTokenFailed(e)) => {
                                     check_new_device_enrollment_required!(e, self, keystore,
@@ -1883,12 +1932,34 @@ impl IdProvider for HimmelblauProvider {
                                 let mut state = self.state.lock().await;
                                 *state =
                                     CacheState::OfflineNextCheck(SystemTime::now() + OFFLINE_NEXT_CHECK);
-                                return Ok((
-                                    AuthResult::Success {
-                                        token: old_token.clone(),
-                                    },
-                                    AuthCacheAction::None,
-                                ));
+                                if check_hello_totp_enabled!(self) {
+                                    if !check_hello_totp_setup!(self, account_id, keystore) {
+                                        return impl_setup_hello_totp!(
+                                            self,
+                                            account_id,
+                                            keystore,
+                                            old_token,
+                                            $cred,
+                                            tpm,
+                                            machine_key
+                                        );
+                                    } else {
+                                        *cred_handler = AuthCredHandler::HelloTOTP {
+                                            cred: $cred.clone(),
+                                        };
+                                        return Ok((AuthResult::Next(AuthRequest::HelloTOTP {
+                                            msg: "Please enter your Hello TOTP code from your Authenticator: "
+                                                .to_string(),
+                                        }), AuthCacheAction::None));
+                                    }
+                                } else {
+                                    return Ok((
+                                        AuthResult::Success {
+                                            token: old_token.clone(),
+                                        },
+                                        AuthCacheAction::None,
+                                    ));
+                                }
                             }
                             Err(e) => {
                                 error!("Failed to exchange refresh token for access token: {:?}", e);
@@ -1988,8 +2059,30 @@ impl IdProvider for HimmelblauProvider {
 
                 match self.token_validate(account_id, &token, None).await {
                     Ok(AuthResult::Success { token }) => {
-                        debug!("Returning user token from successful Hello PIN authentication.");
-                        Ok((AuthResult::Success { token }, AuthCacheAction::None))
+                        if check_hello_totp_enabled!(self) {
+                            if !check_hello_totp_setup!(self, account_id, keystore) {
+                                return impl_setup_hello_totp!(
+                                    self,
+                                    account_id,
+                                    keystore,
+                                    old_token,
+                                    $cred,
+                                    tpm,
+                                    machine_key
+                                );
+                            } else {
+                                *cred_handler = AuthCredHandler::HelloTOTP {
+                                    cred: $cred.clone(),
+                                };
+                                return Ok((AuthResult::Next(AuthRequest::HelloTOTP {
+                                    msg: "Please enter your Hello TOTP code from your Authenticator: "
+                                        .to_string(),
+                                }), AuthCacheAction::None));
+                            }
+                        } else {
+                            debug!("Returning user token from successful Hello PIN authentication.");
+                            Ok((AuthResult::Success { token }, AuthCacheAction::None))
+                        }
                     }
                     /* This should never happen. It doesn't make sense to
                      * continue from a Pin auth. */
@@ -2548,6 +2641,22 @@ impl IdProvider for HimmelblauProvider {
                     Ok(auth_result) => Ok((auth_result, AuthCacheAction::None)),
                     Err(e) => Err(e),
                 }
+            }
+            (
+                AuthCredHandler::HelloTOTP { cred: hello_pin },
+                PamAuthRequest::HelloTOTP { cred },
+            ) => {
+                impl_handle_hello_pin_totp_auth!(
+                    self,
+                    account_id,
+                    keystore,
+                    old_token,
+                    cred,
+                    hello_pin,
+                    tpm,
+                    machine_key,
+                    |auth_result| { (auth_result, AuthCacheAction::None) }
+                )
             }
             _ => {
                 error!("Unexpected AuthCredHandler and PamAuthRequest pairing");

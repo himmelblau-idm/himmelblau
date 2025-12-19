@@ -132,6 +132,14 @@ criteria = "safe-to-deploy"
 version = "1.6.1"
 criteria = "safe-to-deploy"
 
+[[exemptions.bytemuck]]
+version = "1.23.2"
+criteria = "safe-to-deploy"
+
+[[exemptions.byteorder-lite]]
+version = "0.1.0"
+criteria = "safe-to-deploy"
+
 [[exemptions.cbc]]
 version = "0.1.2"
 criteria = "safe-to-deploy"
@@ -374,6 +382,10 @@ criteria = "safe-to-deploy"
 
 [[exemptions.hyper-timeout]]
 version = "0.5.2"
+criteria = "safe-to-deploy"
+
+[[exemptions.image]]
+version = "0.25.6"
 criteria = "safe-to-deploy"
 
 [[exemptions.inotify]]
@@ -692,6 +704,14 @@ criteria = "safe-to-deploy"
 version = "2.3.0"
 criteria = "safe-to-deploy"
 
+[[exemptions.qrcodegen]]
+version = "1.8.0"
+criteria = "safe-to-deploy"
+
+[[exemptions.qrcodegen-image]]
+version = "1.5.0"
+criteria = "safe-to-deploy"
+
 [[exemptions.quinn]]
 version = "0.11.8"
 criteria = "safe-to-deploy"
@@ -870,6 +890,10 @@ criteria = "safe-to-deploy"
 
 [[exemptions.tonic]]
 version = "0.12.3"
+criteria = "safe-to-deploy"
+
+[[exemptions.totp-rs]]
+version = "5.7.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.tower-layer]]

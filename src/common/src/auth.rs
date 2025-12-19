@@ -413,6 +413,28 @@ macro_rules! match_sm_auth_client_response {
                     $req = ClientRequest::PamAuthenticateStep(PamAuthRequest::Pin { cred });
                     continue;
                 }
+                ClientResponse::PamAuthenticateStepResponse(PamAuthResponse::HelloTOTP {
+                    msg,
+                }) => {
+                    $msg_printer.print_text(&msg);
+                    let cred = match $msg_printer.prompt_echo_off("TOTP Code: ") {
+                        Some(cred) => cred,
+                        None => {
+                            debug!("no hello totp code");
+                            pam_fail!(
+                                $msg_printer,
+                                "No Hello TOTP code was supplied.",
+                                PamResultCode::PAM_CRED_INSUFFICIENT
+                            );
+                        }
+                    };
+
+                    // Now setup the request for the next loop.
+                    $req = ClientRequest::PamAuthenticateStep(PamAuthRequest::HelloTOTP {
+                        cred,
+                    });
+                    continue;
+                },
                 ClientResponse::PamAuthenticateStepResponse(PamAuthResponse::Fido {
                     fido_challenge,
                     fido_allow_list,

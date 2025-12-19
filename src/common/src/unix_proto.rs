@@ -38,6 +38,10 @@ pub enum PamAuthResponse {
     MFACode {
         msg: String,
     },
+    /// PAM must prompt for a TOTP code
+    HelloTOTP {
+        msg: String,
+    },
     /// PAM will poll for an external response
     MFAPoll {
         /// Initial message to display as the polling begins.
@@ -70,6 +74,7 @@ pub enum PamAuthResponse {
 pub enum PamAuthRequest {
     Password { cred: String },
     MFACode { cred: String },
+    HelloTOTP { cred: String },
     MFAPoll { poll_attempt: u32 },
     SetupPin { pin: String },
     Pin { cred: String },

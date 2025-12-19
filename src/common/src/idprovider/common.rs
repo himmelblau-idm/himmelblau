@@ -17,12 +17,23 @@
 */
 use crate::idprovider::interface::IdpError;
 use kanidm_hsm_crypto::structures::SealedData;
+use serde::{Deserialize, Serialize};
 use std::thread::sleep;
 use std::{
     collections::HashMap,
     time::{Duration, SystemTime},
 };
 use tokio::sync::RwLock;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TotpEnrollmentRecord {
+    pub secret_b32: String,
+    pub digits: usize,
+    pub skew: u8,
+    pub step: u64,
+    pub issuer: String,
+    pub account_name: String,
+}
 
 #[macro_export]
 macro_rules! extract_base_url {
@@ -286,6 +297,10 @@ macro_rules! impl_himmelblau_hello_key_helpers {
         fn fetch_hello_refresh_token_key_tag(&self, account_id: &str) -> String {
             format!("{}/hello_refresh_token", account_id.to_lowercase())
         }
+
+        fn fetch_hello_totp_key_tag(&self, account_id: &str) -> String {
+            format!("{}/hello_totp", account_id.to_lowercase())
+        }
     };
 }
 
@@ -370,6 +385,116 @@ macro_rules! impl_himmelblau_offline_auth_init {
 }
 
 #[macro_export]
+macro_rules! impl_handle_hello_pin_totp_auth {
+    ($self:ident, $account_id:expr, $keystore:expr, $token:expr, $cred:ident, $hello_pin:ident, $tpm:expr, $machine_key:expr, $auth_cache_action:expr) => {{
+        let hello_totp_tag = $self.fetch_hello_totp_key_tag($account_id);
+        if let Ok(Some(sealed_totp_secret)) = $keystore.get_tagged_hsm_key(&hello_totp_tag) {
+            let (hello_key, _keytype) =
+                $self.fetch_hello_key($account_id, $keystore).map_err(|e| {
+                    error!("Offline authentication failed. Hello key missing.");
+                    e
+                })?;
+
+            let pin = PinValue::new(&$hello_pin).map_err(|e| {
+                error!("Failed setting pin value: {:?}", e);
+                IdpError::Tpm
+            })?;
+            match $tpm.ms_hello_key_load($machine_key, &hello_key, &pin) {
+                Ok((_, win_hello_storage_key)) => {
+                    let totp_secret = String::from_utf8(
+                        $tpm.unseal_data(&win_hello_storage_key, &sealed_totp_secret)
+                            .map_err(|e| {
+                                error!("Failed to unseal totp secrets: {:?}", e);
+                                IdpError::Tpm
+                            })?
+                            .to_vec(),
+                    )
+                    .map_err(|e| {
+                        error!("Failed to decode totp secrets: {:?}", e);
+                        IdpError::Tpm
+                    })?;
+                    let record: TotpEnrollmentRecord =
+                        serde_json::from_str(&totp_secret).map_err(|e| {
+                            error!("Failed to parse totp record: {:?}", e);
+                            IdpError::Tpm
+                        })?;
+                    let totp = TOTP::new(
+                        Algorithm::SHA1,
+                        record.digits,
+                        record.skew,
+                        record.step,
+                        Secret::Encoded(record.secret_b32.clone())
+                            .to_bytes()
+                            .map_err(|e| {
+                                error!("Failed to decode totp secret: {:?}", e);
+                                IdpError::Tpm
+                            })?,
+                        Some(record.issuer.clone()),
+                        record.account_name.clone(),
+                    )
+                    .map_err(|e| {
+                        error!("Failed to create TOTP instance: {:?}", e);
+                        IdpError::Tpm
+                    })?;
+                    if totp.check_current(&$cred).map_err(|e| {
+                        error!("Failed to verify TOTP code: {:?}", e);
+                        IdpError::Tpm
+                    })? {
+                        $self.bad_pin_counter.reset_bad_pin_count($account_id).await;
+                        Ok(($auth_cache_action)(AuthResult::Success {
+                            token: $token.clone(),
+                        }))
+                    } else {
+                        handle_hello_bad_pin_count!($self, $account_id, $keystore, |msg: &str| {
+                            Ok(($auth_cache_action)(AuthResult::Denied(msg.to_string())))
+                        });
+                        Ok(($auth_cache_action)(AuthResult::Denied(
+                            "Failed to authenticate with Hello TOTP code.".to_string(),
+                        )))
+                    }
+                }
+                Err(e) => {
+                    error!("{:?}", e);
+                    handle_hello_bad_pin_count!($self, $account_id, $keystore, |msg: &str| {
+                        Ok(($auth_cache_action)(AuthResult::Denied(msg.to_string())))
+                    });
+                    Ok(($auth_cache_action)(AuthResult::Denied(
+                        "Failed to authenticate with Hello PIN.".to_string(),
+                    )))
+                }
+            }
+        } else {
+            error!("Failed to get hello totp key");
+            return Err(IdpError::BadRequest);
+        }
+    }};
+}
+
+#[macro_export]
+macro_rules! check_hello_totp_setup {
+    ($self:ident, $account_id:expr, $keystore:expr) => {{
+        let hello_totp_tag = $self.fetch_hello_totp_key_tag($account_id);
+        let totp_key: Option<SealedData> = $keystore
+            .get_tagged_hsm_key(&hello_totp_tag)
+            .map_err(|e| {
+                error!("Failed to get hello totp key: {:?}", e);
+                IdpError::Tpm
+            })
+            .ok()
+            .flatten();
+        totp_key.is_some()
+    }};
+}
+
+#[macro_export]
+macro_rules! check_hello_totp_enabled {
+    ($self:ident) => {{
+        let cfg = $self.config.read().await;
+        cfg.get_enable_hello_totp()
+    }};
+}
+
+#[macro_export]
 macro_rules! impl_himmelblau_offline_auth_step {
     ($cred_handler:expr, $pam_next_req:expr, $self:ident, $account_id:expr, $keystore:expr, $tpm:expr, $machine_key:expr, $token:expr, $load_cached_prt:ident) => {{
         match (&$cred_handler, $pam_next_req) {
@@ -418,10 +543,19 @@ macro_rules! impl_himmelblau_offline_auth_step {
                                 .add($account_id, &RefreshCacheEntry::RefreshToken(refresh_token))
                                 .await;
                         }
-                        $self.bad_pin_counter.reset_bad_pin_count($account_id).await;
-                        Ok(AuthResult::Success {
-                            token: $token.clone(),
-                        })
+                        if check_hello_totp_setup!($self, $account_id, $keystore)
+                            && check_hello_totp_enabled!($self)
+                        {
+                            Ok(AuthResult::Next(AuthRequest::HelloTOTP {
+                                msg: "Please enter your Hello TOTP code from your Authenticator: "
+                                    .to_string(),
+                            }))
+                        } else {
+                            $self.bad_pin_counter.reset_bad_pin_count($account_id).await;
+                            Ok(AuthResult::Success {
+                                token: $token.clone(),
+                            })
+                        }
                     }
                     Err(e) => {
                         error!("{:?}", e);
@@ -433,6 +567,22 @@ macro_rules! impl_himmelblau_offline_auth_step {
                         ))
                     }
                 }
+            }
+            (
+                AuthCredHandler::HelloTOTP { cred: hello_pin },
+                PamAuthRequest::HelloTOTP { cred },
+            ) => {
+                impl_handle_hello_pin_totp_auth!(
+                    $self,
+                    $account_id,
+                    $keystore,
+                    $token,
+                    cred,
+                    hello_pin,
+                    $tpm,
+                    $machine_key,
+                    |auth_result| { auth_result }
+                )
             }
             _ => Err(IdpError::BadRequest),
         }
@@ -673,5 +823,81 @@ macro_rules! impl_check_online {
             }
             CacheState::OfflineNextCheck(_) | CacheState::Offline => false,
         }
+    }};
+}
+
+#[macro_export]
+macro_rules! impl_setup_hello_totp {
+    ($self:ident, $account_id:ident, $keystore:ident, $old_token:ident, $hello_pin:ident, $tpm:ident, $machine_key:ident) => {{
+        let hostname = hostname::get()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_string();
+        let issuer = format!("Himmelblau {}", hostname);
+        let totp = TOTP::new(
+            Algorithm::SHA1,
+            6,
+            1,
+            30,
+            Secret::generate_secret().to_bytes().map_err(|e| {
+                error!("Failed to generate totp secret: {:?}", e);
+                IdpError::Tpm
+            })?,
+            Some(issuer.clone()),
+            $account_id.to_string(),
+        )
+        .map_err(|e| {
+            error!("Failed to create TOTP instance: {:?}", e);
+            IdpError::Tpm
+        })?;
+        let secret_b32 = totp.get_secret_base32();
+        let record = TotpEnrollmentRecord {
+            secret_b32: secret_b32.clone(),
+            digits: 6,
+            skew: 1,
+            step: 30,
+            issuer: issuer.clone(),
+            account_name: $account_id.to_string(),
+        };
+        let record_json = serde_json::to_string(&record).map_err(|e| {
+            error!("Failed to serialize TOTP record: {:?}", e);
+            IdpError::Tpm
+        })?;
+        let msg = format!(
+            "Enter the setup key {} to enroll a TOTP Authenticator app. Use '{}' for the code name.", secret_b32, issuer
+        );
+        let pin = PinValue::new(&$hello_pin).map_err(|e| {
+            error!("Failed setting pin value: {:?}", e);
+            IdpError::Tpm
+        })?;
+        let (hello_key, _) =
+                    $self.fetch_hello_key($account_id, $keystore).map_err(|e| {
+                        error!("Online authentication failed. Hello key missing.");
+                        e
+                    })?;
+        let (_, win_hello_storage_key) = $tpm.ms_hello_key_load($machine_key, &hello_key, &pin).map_err(|e| {
+            error!("Failed to load hello key: {:?}", e);
+            IdpError::Tpm
+        })?;
+        let record_json_zeroizing = Zeroizing::new(record_json.as_bytes().to_vec());
+        let sealed_totp_secret = $tpm
+            .seal_data(&win_hello_storage_key, record_json_zeroizing)
+            .map_err(|e| {
+                error!("Failed to seal totp secret: {:?}", e);
+                IdpError::Tpm
+            })?;
+        let hello_totp_tag = $self.fetch_hello_totp_key_tag($account_id);
+        $keystore
+            .insert_tagged_hsm_key(&hello_totp_tag, &sealed_totp_secret)
+            .map_err(|e| {
+                error!("Failed to store hello totp key: {:?}", e);
+                IdpError::Tpm
+            })?;
+        Ok((
+            AuthResult::Next(AuthRequest::HelloTOTP {
+                msg,
+            }),
+            AuthCacheAction::None,
+        ))
     }};
 }

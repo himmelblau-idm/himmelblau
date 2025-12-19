@@ -1304,7 +1304,7 @@ where
                         // AuthCredHandler::ChangePassword is invalid for offline auth
                         return Err(());
                     }
-                    (_, PamAuthRequest::Pin { .. }) => {
+                    (_, PamAuthRequest::Pin { .. }) | (_, PamAuthRequest::HelloTOTP { .. }) => {
                         // The Pin acts as a single device password, and can be
                         // used to unlock the TPM to validate the authentication.
                         let mut hsm_lock = self.hsm.lock().await;
@@ -1328,6 +1328,10 @@ where
                         dbtxn.commit().map_err(|_| ())?;
 
                         auth_result
+                    }
+                    (AuthCredHandler::HelloTOTP { .. }, _) => {
+                        // AuthCredHandler::HelloTOTP with anything other than HelloTOTP is invalid
+                        return Err(());
                     }
                     (AuthCredHandler::None, PamAuthRequest::MFACode { .. }) => {
                         // AuthCredHandler::None is invalid with MFACode

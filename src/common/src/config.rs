@@ -1,3 +1,4 @@
+use crate::constants::DEFAULT_HELLO_TOTP_ENABLED;
 /*
    Unix Azure Entra ID implementation
    Copyright (C) David Mulder <dmulder@samba.org> 2024
@@ -970,6 +971,13 @@ impl HimmelblauConfig {
             Some(val) => parse_ttl_to_seconds(&val).unwrap_or(DEFAULT_OFFLINE_BREAKGLASS_TTL),
             None => DEFAULT_OFFLINE_BREAKGLASS_TTL,
         }
+    }
+
+    pub fn get_enable_hello_totp(&self) -> bool {
+        match_bool(
+            self.config.get("global", "enable_hello_totp"),
+            DEFAULT_HELLO_TOTP_ENABLED,
+        )
     }
 
     pub fn get_oidc_issuer_url(&self) -> Option<String> {
