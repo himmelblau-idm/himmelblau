@@ -21,6 +21,7 @@ use crate::constants::ID_MAP_CACHE;
 use crate::db::KeyStoreTxn;
 use crate::idmap_cache::StaticIdCache;
 use crate::idprovider::common::KeyType;
+use crate::idprovider::common::TotpEnrollmentRecord;
 use crate::idprovider::common::{BadPinCounter, RefreshCache, RefreshCacheEntry};
 use crate::idprovider::interface::{
     tpm, AuthCacheAction, AuthCredHandler, AuthRequest, AuthResult, CacheState, GroupToken, Id,
@@ -28,10 +29,11 @@ use crate::idprovider::interface::{
 };
 use crate::unix_proto::PamAuthRequest;
 use crate::{
-    extract_base_url, handle_hello_bad_pin_count, impl_change_auth_token, impl_check_online,
-    impl_create_decoupled_hello_key, impl_himmelblau_hello_key_helpers,
+    check_hello_totp_enabled, check_hello_totp_setup, extract_base_url, handle_hello_bad_pin_count,
+    impl_change_auth_token, impl_check_online, impl_create_decoupled_hello_key,
+    impl_handle_hello_pin_totp_auth, impl_himmelblau_hello_key_helpers,
     impl_himmelblau_offline_auth_init, impl_himmelblau_offline_auth_step, impl_offline_break_glass,
-    impl_unix_user_access, load_cached_prt_no_op, no_op_prt_token_fetch,
+    impl_setup_hello_totp, impl_unix_user_access, load_cached_prt_no_op, no_op_prt_token_fetch,
     oidc_refresh_token_token_fetch,
 };
 use async_trait::async_trait;
@@ -39,6 +41,7 @@ use himmelblau::{error::MsalError, MFAAuthContinue, UserToken as UnixUserToken};
 use himmelblau::{ClientInfo, IdToken};
 use idmap::Idmap;
 use kanidm_hsm_crypto::structures::LoadableMsHelloKey;
+use kanidm_hsm_crypto::structures::SealedData;
 use kanidm_hsm_crypto::PinValue;
 use oauth2::basic::BasicTokenType;
 use oauth2::{
@@ -64,7 +67,9 @@ use std::str::FromStr;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 use tokio::sync::{broadcast, Mutex, RwLock};
+use totp_rs::{Algorithm, Secret, TOTP};
 use uuid::Uuid;
+use zeroize::Zeroizing;
 
 #[instrument(level = "debug", skip_all)]
 pub fn mfa_from_oidc_device(
@@ -1102,12 +1107,34 @@ impl IdProvider for OidcProvider {
                             let mut state = self.state.lock().await;
                             *state =
                                 CacheState::OfflineNextCheck(SystemTime::now() + OFFLINE_NEXT_CHECK);
-                            return Ok((
-                                AuthResult::Success {
-                                    token: old_token.clone(),
-                                },
-                                AuthCacheAction::None,
-                            ));
+                            if check_hello_totp_enabled!(self) {
+                                if !check_hello_totp_setup!(self, account_id, keystore) {
+                                    return impl_setup_hello_totp!(
+                                        self,
+                                        account_id,
+                                        keystore,
+                                        old_token,
+                                        $cred,
+                                        tpm,
+                                        machine_key
+                                    );
+                                } else {
+                                    *cred_handler = AuthCredHandler::HelloTOTP {
+                                        cred: $cred.clone(),
+                                    };
+                                    return Ok((AuthResult::Next(AuthRequest::HelloTOTP {
+                                        msg: "Please enter your Hello TOTP code from your Authenticator: "
+                                            .to_string(),
+                                    }), AuthCacheAction::None));
+                                }
+                            } else {
+                                return Ok((
+                                    AuthResult::Success {
+                                        token: old_token.clone(),
+                                    },
+                                    AuthCacheAction::None,
+                                ));
+                            }
                         }
                         Err(e) => {
                             error!("Failed to exchange refresh token for access token: {:?}", e);
@@ -1179,8 +1206,30 @@ impl IdProvider for OidcProvider {
 
                 match self.token_validate(account_id, &token).await {
                     Ok(AuthResult::Success { token }) => {
-                        debug!("Returning user token from successful Hello PIN authentication.");
-                        Ok((AuthResult::Success { token }, AuthCacheAction::None))
+                        if check_hello_totp_enabled!(self) {
+                            if !check_hello_totp_setup!(self, account_id, keystore) {
+                                return impl_setup_hello_totp!(
+                                    self,
+                                    account_id,
+                                    keystore,
+                                    old_token,
+                                    $cred,
+                                    tpm,
+                                    machine_key
+                                );
+                            } else {
+                                *cred_handler = AuthCredHandler::HelloTOTP {
+                                    cred: $cred.clone(),
+                                };
+                                return Ok((AuthResult::Next(AuthRequest::HelloTOTP {
+                                    msg: "Please enter your Hello TOTP code from your Authenticator: "
+                                        .to_string(),
+                                }), AuthCacheAction::None));
+                            }
+                        } else {
+                            debug!("Returning user token from successful Hello PIN authentication.");
+                            Ok((AuthResult::Success { token }, AuthCacheAction::None))
+                        }
                     }
                     /* This should never happen. It doesn't make sense to
                      * continue from a Pin auth. */
@@ -1292,6 +1341,22 @@ impl IdProvider for OidcProvider {
                         return Err(IdpError::BadRequest);
                     }
                 }
+            }
+            (
+                AuthCredHandler::HelloTOTP { cred: hello_pin },
+                PamAuthRequest::HelloTOTP { cred },
+            ) => {
+                impl_handle_hello_pin_totp_auth!(
+                    self,
+                    account_id,
+                    keystore,
+                    old_token,
+                    cred,
+                    hello_pin,
+                    tpm,
+                    machine_key,
+                    |auth_result| { (auth_result, AuthCacheAction::None) }
+                )
             }
             _ => {
                 error!("Invalid auth step");

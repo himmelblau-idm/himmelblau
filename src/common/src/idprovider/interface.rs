@@ -101,6 +101,9 @@ pub enum AuthCredHandler {
     SetupPin {
         token: Option<UnixUserToken>,
     },
+    HelloTOTP {
+        cred: String,
+    },
     ChangePassword {
         old_cred: String,
     },
@@ -112,6 +115,7 @@ impl fmt::Debug for AuthCredHandler {
         match self {
             AuthCredHandler::MFA { .. } => f.write_str("MFA { .. }"),
             AuthCredHandler::SetupPin { .. } => f.write_str("SetupPin { .. }"),
+            AuthCredHandler::HelloTOTP { .. } => f.write_str("HelloTOTP { .. }"),
             AuthCredHandler::ChangePassword { .. } => f.write_str("ChangePassword { .. }"),
             AuthCredHandler::None => f.write_str("None"),
         }
@@ -121,6 +125,9 @@ impl fmt::Debug for AuthCredHandler {
 pub enum AuthRequest {
     Password,
     MFACode {
+        msg: String,
+    },
+    HelloTOTP {
         msg: String,
     },
     MFAPoll {
@@ -155,6 +162,7 @@ impl Into<PamAuthResponse> for AuthRequest {
         match self {
             AuthRequest::Password => PamAuthResponse::Password,
             AuthRequest::MFACode { msg } => PamAuthResponse::MFACode { msg },
+            AuthRequest::HelloTOTP { msg } => PamAuthResponse::HelloTOTP { msg },
             AuthRequest::MFAPoll {
                 msg,
                 polling_interval,
