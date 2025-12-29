@@ -7,6 +7,7 @@
 let
   cfg = config.services.himmelblau;
   ini = pkgs.formats.ini { };
+  configFile = ini.generate "himmelblau.conf" cfg.settings;
 in
 {
 
@@ -39,6 +40,7 @@ in
         default = [
           "passwd"
           "login"
+          "systemd-user"
         ];
         description = "Which PAM services to add the himmelblau module to.";
       };
@@ -59,7 +61,29 @@ in
 
   config = lib.mkIf cfg.enable {
     environment.etc."krb5.conf.d/krb5_himmelblau.conf".source = ../../src/config/krb5_himmelblau.conf;
-    environment.etc."himmelblau/himmelblau.conf".text = lib.generators.toINI { } cfg.settings;
+    environment.etc."himmelblau/himmelblau.conf".source = configFile;
+
+    systemd.tmpfiles.rules = [
+      "d /var/cache/nss-himmelblau 0755 root root -"
+    ];
+
+    programs.firefox = {
+      policies = {
+        Extensions.Install = [
+          "https://github.com/siemens/linux-entra-sso/releases/download/v1.7.1/linux_entra_sso-1.7.1.xpi"
+        ];
+      };
+      nativeMessagingHosts.packages = [ cfg.package ];
+    };
+
+    programs.chromium.extensions = [
+      "jlnfnnolkbjieggibinobhkjdfbpcohn"
+    ];
+    environment.etc."chromium/native-messaging-hosts/linux_entra_sso.json".source =
+      "${cfg.package}/lib/chromium/native-messaging-hosts/linux_entra_sso.json";
+    environment.etc."opt/chrome/native-messaging-hosts/linux_entra_sso.json".source =
+      "${cfg.package}/lib/chromium/native-messaging-hosts/linux_entra_sso.json";
+    services.dbus.packages = [ cfg.package ];
 
     # Add himmelblau to the list of name services to lookup users/groups
     system.nssModules = [ cfg.package ];
@@ -137,6 +161,11 @@ in
             "multi-user.target"
             "accounts-daemon.service"
           ];
+          # This is just so that the service restarts on config change
+          # Normall we would do `--config ${configFile}`
+          # Himmelblau has however a bug where if we supply a config file with `--config`,
+          # the default values for fields do not get set.
+          environment.HIMMELBLAU_DUMMY_CONFIG = configFile;
           upholds = [ "himmelblaud-tasks.service" ];
           serviceConfig = commonServiceConfig // {
             ExecStart = "${cfg.package}/bin/himmelblaud" + lib.optionalString cfg.debugFlag " -d";

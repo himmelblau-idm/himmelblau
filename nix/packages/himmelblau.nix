@@ -34,6 +34,7 @@ rustPlatform.buildRustPackage (finalAttrs: {
         ../../Cargo.toml
         ../../Cargo.lock
         ../../scripts/test_script_echo.sh
+        ../../platform
       ];
     };
 
@@ -77,6 +78,24 @@ rustPlatform.buildRustPackage (finalAttrs: {
   };
 
   postBuild = "cp -r man $man/";
+
+  preConfigure = ''
+    mkdir -p $out/share/dbus-1/services
+    mkdir -p $out/lib/mozilla/native-messaging-hosts
+    mkdir -p $out/lib/chromium/native-messaging-hosts
+    cp platform/debian/com.microsoft.identity.broker1.service $out/share/dbus-1/services/com.microsoft.identity.broker1.service
+    cp src/sso/src/firefox/linux_entra_sso.json $out/lib/mozilla/native-messaging-hosts/linux_entra_sso.json
+    cp src/sso/src/chrome/linux_entra_sso.json $out/lib/chromium/native-messaging-hosts/linux_entra_sso.json
+
+    substituteInPlace \
+        $out/lib/mozilla/native-messaging-hosts/linux_entra_sso.json \
+        $out/lib/chromium/native-messaging-hosts/linux_entra_sso.json \
+         --replace-fail "/usr/bin/" "$out/bin/"
+
+    substituteInPlace \
+        $out/share/dbus-1/services/com.microsoft.identity.broker1.service \
+         --replace-fail "/usr/sbin/" "$out/bin/"
+  '';
 
   postInstall = ''
     ln -s $out/lib/libnss_himmelblau.so $out/lib/libnss_himmelblau.so.2
