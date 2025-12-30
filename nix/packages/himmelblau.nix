@@ -18,7 +18,17 @@
   dbus,
   udev,
   withSelinux ? false,
+  callPackage,
+  copyDesktopItems,
+  config,
 }:
+let
+  # TODO: make this optional
+  # TODO: Permit opening multiple instances
+  mkO365 = callPackage ../functions/o365.nix {
+    himmelblau = config.services.himmelblau.package;
+  };
+in
 rustPlatform.buildRustPackage (finalAttrs: {
   pname = "himmelblau";
   version = "3.0.0";
@@ -51,6 +61,7 @@ rustPlatform.buildRustPackage (finalAttrs: {
   nativeBuildInputs = [
     pkg-config
     rustPlatform.bindgenHook
+    copyDesktopItems
   ]
   ++ lib.optionals withSelinux [
     checkpolicy
@@ -95,6 +106,9 @@ rustPlatform.buildRustPackage (finalAttrs: {
     substituteInPlace \
         $out/share/dbus-1/services/com.microsoft.identity.broker1.service \
          --replace-fail "/usr/sbin/" "$out/bin/"
+
+    mkdir -p $out/share/icons/hicolor/256x256/apps
+    cp src/o365/src/*.png $out/share/icons/hicolor/256x256/apps/
   '';
 
   postInstall = ''
@@ -118,4 +132,78 @@ rustPlatform.buildRustPackage (finalAttrs: {
     ];
     platforms = lib.platforms.linux;
   };
+
+  desktopItems = [
+    (mkO365 {
+      name = "Outlook";
+      url = "https://outlook.office.com/mail/";
+      categories = [
+        "Office"
+        "Calendar"
+        "Email"
+      ];
+    })
+    (mkO365 {
+      name = "Teams";
+      url = "https://teams.microsoft.com/";
+      categories = [
+        "Office"
+        "Chat"
+      ];
+    })
+    (mkO365 {
+      name = "Word";
+      url = "https://word.cloud.microsoft/";
+      categories = [
+        "Office"
+        "WordProcessor"
+      ];
+    })
+    (mkO365 {
+      name = "Excel";
+      url = "https://excel.cloud.microsoft/";
+      categories = [
+        "Office"
+        "Spreadsheet"
+      ];
+    })
+    (mkO365 {
+      name = "PowerPoint";
+      url = "https://powerpoint.cloud.microsoft/";
+      categories = [
+        "Office"
+        "Presentation"
+      ];
+    })
+    (mkO365 {
+      name = "PowerPoint";
+      url = "https://powerpoint.cloud.microsoft/";
+      categories = [
+        "Office"
+        "Presentation"
+      ];
+    })
+    (mkO365 {
+      name = "OneNote";
+      url = "https://onenote.cloud.microsoft/launch/OneNote";
+      categories = [
+        "Office"
+      ];
+    })
+    (mkO365 {
+      name = "OneDrive";
+      url = "https://www.office.com/onedrive";
+      categories = [
+        "Office"
+        "FileTransfer"
+      ];
+    })
+    (mkO365 {
+      name = "SharePoint";
+      url = "https://www.office.com/launch/sharepoint";
+      categories = [
+        "Office"
+      ];
+    })
+  ];
 })
