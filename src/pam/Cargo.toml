@@ -25,7 +25,7 @@ tracing = { workspace = true }
 himmelblau_unix_common.workspace = true
 tokio.workspace = true
 libhimmelblau.workspace = true
-authenticator = { version = "0.4.1", default-features = false, features = ["crypto_openssl"] }
+authenticator = { version = "0.5.0", default-features = false, features = ["crypto_openssl"] }
 base64.workspace = true
 serde_json.workspace = true
 sha2 = "0.10.9"
