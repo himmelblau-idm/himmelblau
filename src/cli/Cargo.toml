@@ -23,6 +23,6 @@ tracing = { workspace = true }
 clap = { workspace = true, features = ["derive"] }
 clap_complete = { workspace = true }
 anyhow = { workspace = true }
-uzers = "^0.12.1"
+uzers = "^0.12.2"
 sketching = { workspace = true }
 rpassword = "^7.2.0"
