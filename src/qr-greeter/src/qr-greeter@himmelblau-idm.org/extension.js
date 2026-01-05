@@ -14,6 +14,44 @@ let activeTotpTempFiles = new Set();
 // Regex to match TOTP setup messages
 const TOTP_SETUP_RE = /Enter the setup key '([^']+)'.*Use '([^']+)'.*'([^']+)' as the label\/name\./s;
 
+// Regex to match URLs in messages (excluding known static-QR URLs)
+const URL_RE = /https?:\/\/[^\s<>"')\]]+/g;
+
+// Known URLs that have static QR code images
+const STATIC_QR_URLS = {
+    'https://microsoft.com/devicelogin': 'msdag.png',
+    'https://www.microsoft.com/link': 'ms-consumer-dag.png',
+};
+
+// Maximum URL length for QR code generation (longer URLs create denser, harder to scan codes)
+const MAX_URL_LENGTH = 500;
+
+// Validate and normalize a URL for QR code generation
+function validateUrl(urlString) {
+    if (!urlString || urlString.length > MAX_URL_LENGTH) {
+        return null;
+    }
+
+    try {
+        // Use GLib.Uri for proper URL parsing and validation
+        const uri = GLib.Uri.parse(urlString, GLib.UriFlags.NONE);
+
+        // Ensure we have a valid scheme and host
+        const scheme = uri.get_scheme();
+        const host = uri.get_host();
+
+        if (!scheme || !host || (scheme !== 'http' && scheme !== 'https')) {
+            return null;
+        }
+
+        // Return the normalized URL string
+        return uri.to_string();
+    } catch (e) {
+        console.error("Himmelblau QR Greeter: Invalid URL:", e);
+        return null;
+    }
+}
+
 // Generate SVG content from a QR code
 function qrCodeToSvg(qr, border, lightColor, darkColor) {
     const size = qr.size + border * 2;
@@ -159,8 +197,6 @@ export default class QrGreeterExtension extends Extension {
                 this._totpTempFile = null;
             }
 
-            const targetUrl = "https://microsoft.com/devicelogin";
-            const consumerTargetUrl = "https://www.microsoft.com/link";
             const totpMatch = message ? TOTP_SETUP_RE.exec(message) : null;
 
             if (totpMatch) {
@@ -192,21 +228,78 @@ export default class QrGreeterExtension extends Extension {
                     if (this._qrContainer) this._qrContainer.hide();
                     if (this._qrLabel) this._qrLabel.hide();
                 }
-            } else if (message && message.includes(targetUrl)) {
-                const fileUri = "file:///usr/share/gnome-shell/extensions/qr-greeter@himmelblau-idm.org/msdag.png";
-                this._qrContainer.set_style(`background-image: url('${fileUri}');`);
-                this._qrContainer.show();
-                this._qrLabel.set_text("Scan with your phone");
-                this._qrLabel.show();
-            } else if (message && message.includes(consumerTargetUrl)) {
-                const fileUri = "file:///usr/share/gnome-shell/extensions/qr-greeter@himmelblau-idm.org/ms-consumer-dag.png";
-                this._qrContainer.set_style(`background-image: url('${fileUri}');`);
-                this._qrContainer.show();
-                this._qrLabel.set_text("Scan with your phone");
-                this._qrLabel.show();
             } else {
-                if (this._qrContainer) this._qrContainer.hide();
-                if (this._qrLabel) this._qrLabel.hide();
+                // Check for URLs in the message
+                let qrDisplayed = false;
+
+                if (message) {
+                    // First check for known URLs with static QR codes
+                    for (const [url, pngFile] of Object.entries(STATIC_QR_URLS)) {
+                        if (message.includes(url)) {
+                            const fileUri = `file:///usr/share/gnome-shell/extensions/qr-greeter@himmelblau-idm.org/${pngFile}`;
+                            this._qrContainer.set_style(`background-image: url('${fileUri}');`);
+                            this._qrContainer.show();
+                            this._qrLabel.set_text("Scan with your phone");
+                            this._qrLabel.show();
+                            qrDisplayed = true;
+                            break;
+                        }
+                    }
+
+                    // If no static QR was displayed, check for any other URLs
+                    if (!qrDisplayed) {
+                        // Reset the regex lastIndex to ensure fresh matching
+                        URL_RE.lastIndex = 0;
+                        const urlMatches = message.match(URL_RE);
+
+                        if (urlMatches) {
+                            // Filter out known static URLs to find new URLs
+                            const dynamicUrls = urlMatches.filter(url => {
+                                for (const staticUrl of Object.keys(STATIC_QR_URLS)) {
+                                    if (url.startsWith(staticUrl)) {
+                                        return false;
+                                    }
+                                }
+                                return true;
+                            });
+
+                            if (dynamicUrls.length > 0) {
+                                // Use the first valid URL found
+                                let targetUrl = null;
+                                for (const url of dynamicUrls) {
+                                    const validated = validateUrl(url);
+                                    if (validated) {
+                                        targetUrl = validated;
+                                        break;
+                                    }
+                                }
+
+                                if (targetUrl) {
+                                    try {
+                                        const qr = QrCode.encodeText(targetUrl, Ecc.MEDIUM);
+                                        const svgContent = qrCodeToSvg(qr, 2, '#ffffff', '#000000');
+                                        const tempFilePath = writeSvgToTempFile(svgContent);
+                                        this._totpTempFile = tempFilePath;
+                                        activeTotpTempFiles.add(tempFilePath);
+                                        const fileUri = `file://${tempFilePath}`;
+                                        this._qrContainer.set_style(`background-image: url('${fileUri}'); background-size: contain; background-repeat: no-repeat; background-position: center;`);
+                                        this._qrContainer.show();
+                                        this._qrLabel.set_text("Scan with your phone");
+                                        this._qrLabel.show();
+                                        qrDisplayed = true;
+                                    } catch (e) {
+                                        console.error("Himmelblau QR Greeter: Failed to generate QR code for URL:", e);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                if (!qrDisplayed) {
+                    if (this._qrContainer) this._qrContainer.hide();
+                    if (this._qrLabel) this._qrLabel.hide();
+                }
             }
         };
 
