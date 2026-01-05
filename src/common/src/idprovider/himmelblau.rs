@@ -1709,6 +1709,9 @@ impl IdProvider for HimmelblauProvider {
                                 CacheState::OfflineNextCheck(SystemTime::now() + OFFLINE_NEXT_CHECK);
                             if check_hello_totp_enabled!(self) {
                                 if !check_hello_totp_setup!(self, account_id, keystore) {
+                                    *cred_handler = AuthCredHandler::HelloTOTP {
+                                        cred: $cred.clone(),
+                                    };
                                     return impl_setup_hello_totp!(
                                         self,
                                         account_id,
@@ -1850,6 +1853,9 @@ impl IdProvider for HimmelblauProvider {
                                         CacheState::OfflineNextCheck(SystemTime::now() + OFFLINE_NEXT_CHECK);
                                     if check_hello_totp_enabled!(self) {
                                         if !check_hello_totp_setup!(self, account_id, keystore) {
+                                            *cred_handler = AuthCredHandler::HelloTOTP {
+                                                cred: $cred.clone(),
+                                            };
                                             return impl_setup_hello_totp!(
                                                 self,
                                                 account_id,
@@ -1934,6 +1940,9 @@ impl IdProvider for HimmelblauProvider {
                                     CacheState::OfflineNextCheck(SystemTime::now() + OFFLINE_NEXT_CHECK);
                                 if check_hello_totp_enabled!(self) {
                                     if !check_hello_totp_setup!(self, account_id, keystore) {
+                                        *cred_handler = AuthCredHandler::HelloTOTP {
+                                            cred: $cred.clone(),
+                                        };
                                         return impl_setup_hello_totp!(
                                             self,
                                             account_id,
@@ -2061,6 +2070,9 @@ impl IdProvider for HimmelblauProvider {
                     Ok(AuthResult::Success { token }) => {
                         if check_hello_totp_enabled!(self) {
                             if !check_hello_totp_setup!(self, account_id, keystore) {
+                                *cred_handler = AuthCredHandler::HelloTOTP {
+                                    cred: $cred.clone(),
+                                };
                                 return impl_setup_hello_totp!(
                                     self,
                                     account_id,
