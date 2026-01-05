@@ -1109,9 +1109,6 @@ impl IdProvider for OidcProvider {
                                 CacheState::OfflineNextCheck(SystemTime::now() + OFFLINE_NEXT_CHECK);
                             if check_hello_totp_enabled!(self) {
                                 if !check_hello_totp_setup!(self, account_id, keystore) {
-                                    *cred_handler = AuthCredHandler::HelloTOTP {
-                                        cred: $cred.clone(),
-                                    };
                                     return impl_setup_hello_totp!(
                                         self,
                                         account_id,
@@ -1119,11 +1116,13 @@ impl IdProvider for OidcProvider {
                                         old_token,
                                         $cred,
                                         tpm,
-                                        machine_key
+                                        machine_key,
+                                        cred_handler
                                     );
                                 } else {
                                     *cred_handler = AuthCredHandler::HelloTOTP {
                                         cred: $cred.clone(),
+                                        pending_sealed_totp: None,
                                     };
                                     return Ok((AuthResult::Next(AuthRequest::HelloTOTP {
                                         msg: "Please enter your Hello TOTP code from your Authenticator: "
@@ -1211,9 +1210,6 @@ impl IdProvider for OidcProvider {
                     Ok(AuthResult::Success { token }) => {
                         if check_hello_totp_enabled!(self) {
                             if !check_hello_totp_setup!(self, account_id, keystore) {
-                                *cred_handler = AuthCredHandler::HelloTOTP {
-                                    cred: $cred.clone(),
-                                };
                                 return impl_setup_hello_totp!(
                                     self,
                                     account_id,
@@ -1221,11 +1217,13 @@ impl IdProvider for OidcProvider {
                                     old_token,
                                     $cred,
                                     tpm,
-                                    machine_key
+                                    machine_key,
+                                    cred_handler
                                 );
                             } else {
                                 *cred_handler = AuthCredHandler::HelloTOTP {
                                     cred: $cred.clone(),
+                                    pending_sealed_totp: None,
                                 };
                                 return Ok((AuthResult::Next(AuthRequest::HelloTOTP {
                                     msg: "Please enter your Hello TOTP code from your Authenticator: "
@@ -1349,7 +1347,7 @@ impl IdProvider for OidcProvider {
                 }
             }
             (
-                AuthCredHandler::HelloTOTP { cred: hello_pin },
+                AuthCredHandler::HelloTOTP { cred: hello_pin, pending_sealed_totp },
                 PamAuthRequest::HelloTOTP { cred },
             ) => {
                 impl_handle_hello_pin_totp_auth!(
@@ -1361,6 +1359,7 @@ impl IdProvider for OidcProvider {
                     hello_pin,
                     tpm,
                     machine_key,
+                    pending_sealed_totp,
                     |auth_result| { (auth_result, AuthCacheAction::None) }
                 )
             }
