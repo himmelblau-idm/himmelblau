@@ -38,12 +38,34 @@ function writeSvgToTempFile(svgContent) {
     const tempDir = GLib.get_tmp_dir();
     const tempPath = GLib.build_filenamev([tempDir, `himmelblau-totp-qr-${GLib.get_monotonic_time()}.svg`]);
     const file = Gio.File.new_for_path(tempPath);
-    // Create file with restrictive permissions (0600 - owner read/write only)
-    const outputStream = file.replace(null, false, Gio.FileCreateFlags.PRIVATE, null);
-    const bytes = new TextEncoder().encode(svgContent);
-    outputStream.write_all(bytes, null);
-    outputStream.close(null);
-    return tempPath;
+    let outputStream = null;
+    try {
+        // Create file with restrictive permissions (0600 - owner read/write only)
+        outputStream = file.replace(null, false, Gio.FileCreateFlags.PRIVATE, null);
+        const bytes = new TextEncoder().encode(svgContent);
+        outputStream.write_all(bytes, null);
+        outputStream.close(null);
+        return tempPath;
+    } catch (e) {
+        console.error("Himmelblau QR Greeter: Failed to write SVG to temp file:", e);
+        // Best-effort close of the stream if it was opened
+        if (outputStream) {
+            try {
+                outputStream.close(null);
+            } catch (closeError) {
+                console.error("Himmelblau QR Greeter: Additionally failed to close output stream:", closeError);
+            }
+        }
+        // Best-effort cleanup of any partially created file
+        try {
+            if (file.query_exists(null)) {
+                file.delete(null);
+            }
+        } catch (deleteError) {
+            console.error("Himmelblau QR Greeter: Additionally failed to delete incomplete temp file:", deleteError);
+        }
+        throw e;
+    }
 }
 
 // Delete a temporary file if it exists
@@ -72,7 +94,7 @@ function cleanupAllTempFiles() {
 function buildTotpUri(secret, issuer, label) {
     const encodedIssuer = encodeURIComponent(issuer);
     const encodedLabel = encodeURIComponent(label);
-    return `otpauth://totp/${encodedIssuer}:${encodedLabel}?secret=${secret}&issuer=${encodedIssuer}`;
+    return `otpauth://totp/${encodedIssuer}:${encodedLabel}?secret=${secret}&issuer=${encodedIssuer}&algorithm=SHA1&digits=6&period=30`;
 }
 
 export default class QrGreeterExtension extends Extension {

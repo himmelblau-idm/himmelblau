@@ -479,7 +479,7 @@ macro_rules! impl_handle_hello_pin_totp_auth {
                     Ok(($auth_cache_action)(AuthResult::Denied(msg.to_string())))
                 });
                 Ok(($auth_cache_action)(AuthResult::Denied(
-                    "Failed to authenticate with Hello PIN.".to_string(),
+                    "Failed to authenticate with Hello TOTP code.".to_string(),
                 )))
             }
         }
@@ -883,6 +883,8 @@ macro_rules! impl_setup_hello_totp {
         // DANGER ZONE ---->
         // WARNING: This message is **parsed** by the QR Greeter plugin. Modifying
         // the message format may break the plugin!
+        // The exact regex used by the QR Greeter plugin is:
+        // const TOTP_SETUP_RE = /Enter the setup key '([^']+)'.*Use '([^']+)'.*'([^']+)' as the label\/name\./s;
         let msg = format!(
             "Enter the setup key '{}' to enroll a TOTP Authenticator app. Use '{}' for the code name and '{}' as the label/name.",
             secret_b32, issuer, $account_id
