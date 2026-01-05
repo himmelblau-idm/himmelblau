@@ -863,9 +863,14 @@ macro_rules! impl_setup_hello_totp {
             error!("Failed to serialize TOTP record: {:?}", e);
             IdpError::Tpm
         })?;
+        // DANGER ZONE ---->
+        // WARNING: This message is **parsed** by the QR Greeter plugin. Modifying
+        // the message format may break the plugin!
         let msg = format!(
-            "Enter the setup key {} to enroll a TOTP Authenticator app. Use '{}' for the code name.", secret_b32, issuer
+            "Enter the setup key '{}' to enroll a TOTP Authenticator app. Use '{}' for the code name and '{}' as the label/name.",
+            secret_b32, issuer, $account_id
         );
+        // <---- DANGER ZONE
         let pin = PinValue::new(&$hello_pin).map_err(|e| {
             error!("Failed setting pin value: {:?}", e);
             IdpError::Tpm
