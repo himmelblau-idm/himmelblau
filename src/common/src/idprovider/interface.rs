@@ -266,6 +266,7 @@ pub trait IdProvider {
         &self,
         _account_id: &str,
         _token: Option<&UserToken>,
+        _service: &str,
         _no_hello_pin: bool,
         _keystore: &mut D,
         _tpm: &mut tpm::provider::BoxedDynTpm,

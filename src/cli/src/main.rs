@@ -1679,6 +1679,10 @@ async fn main() -> ExitCode {
             client_id,
         } => {
             debug!("Starting enumerate tool ...");
+            if unsafe { libc::geteuid() } != 0 {
+                error!("This command must be run as root.");
+                return ExitCode::FAILURE;
+            }
 
             let (graph, access_token) = match obtain_access_token!(
                 account_id,

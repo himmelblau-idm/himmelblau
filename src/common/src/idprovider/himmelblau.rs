@@ -480,6 +480,7 @@ impl IdProvider for HimmelblauMultiProvider {
         &self,
         account_id: &str,
         token: Option<&UserToken>,
+        service: &str,
         no_hello_pin: bool,
         keystore: &mut D,
         tpm: &mut tpm::provider::BoxedDynTpm,
@@ -496,6 +497,7 @@ impl IdProvider for HimmelblauMultiProvider {
                     .unix_user_online_auth_init(
                         account_id,
                         token,
+                        service,
                         no_hello_pin,
                         keystore,
                         tpm,
@@ -509,6 +511,7 @@ impl IdProvider for HimmelblauMultiProvider {
                     .unix_user_online_auth_init(
                         account_id,
                         token,
+                        service,
                         no_hello_pin,
                         keystore,
                         tpm,
@@ -1285,6 +1288,7 @@ impl IdProvider for HimmelblauProvider {
         &self,
         account_id: &str,
         _token: Option<&UserToken>,
+        service: &str,
         no_hello_pin: bool,
         keystore: &mut D,
         tpm: &mut tpm::provider::BoxedDynTpm,
@@ -1342,6 +1346,25 @@ impl IdProvider for HimmelblauProvider {
                     AuthCredHandler::None,
                 ));
             }
+            // For remote connections (SSH), force MFA to ensure security.
+            // For local terminal authentication (GDM, etc.), don't force MFA
+            // to allow natural passwordless flow without prematurely triggering
+            // MFA notifications.
+            let console_password_only = self.config.read().await.get_allow_console_password_only();
+            let remote_services = self
+                .config
+                .read()
+                .await
+                .get_password_only_remote_services_deny_list();
+            // Check if this is a remote service:
+            // - Service starts with "remote:" (set by PAM module when PAM_RHOST is set)
+            // - Service name contains any entry from remote_services_deny_list
+            let is_remote_service = service.starts_with("remote:")
+                || remote_services.iter().any(|s| service.contains(s));
+            debug!(
+                "Service '{}' remote_service={} console_password_only={}",
+                service, is_remote_service, console_password_only
+            );
             if self.config.read().await.get_enable_experimental_mfa() {
                 let mut auth_options = vec![AuthOption::Fido, AuthOption::Passwordless];
                 if self
@@ -1351,6 +1374,13 @@ impl IdProvider for HimmelblauProvider {
                     .get_enable_experimental_passwordless_fido()
                 {
                     auth_options.push(AuthOption::PasswordlessFido);
+                }
+
+                if is_remote_service || !console_password_only {
+                    auth_options.push(AuthOption::ForceMFA);
+                }
+                if is_remote_service {
+                    auth_options.push(AuthOption::RemoteSession);
                 }
                 let auth_init = net_down_check!(
                     self.client
@@ -1396,21 +1426,24 @@ impl IdProvider for HimmelblauProvider {
                             return Err(IdpError::BadRequest);
                         }
                     );
-                    // Check if Azure provided FIDO credentials (passwordless FIDO/passkey)
-                    if let (Some(fido_challenge), Some(fido_allow_list)) =
-                        (flow.fido_challenge.clone(), flow.fido_allow_list.clone())
-                    {
-                        return Ok((
-                            AuthRequest::Fido {
-                                fido_challenge,
-                                fido_allow_list,
-                            },
-                            AuthCredHandler::MFA {
-                                flow,
-                                password: None,
-                                extra_data: None,
-                            },
-                        ));
+                    // Check if Azure provided FIDO credentials (passwordless FIDO)
+                    // Skip if this is a passkey - we don't support passkey auth
+                    if !flow.fido_is_passkey {
+                        if let (Some(fido_challenge), Some(fido_allow_list)) =
+                            (flow.fido_challenge.clone(), flow.fido_allow_list.clone())
+                        {
+                            return Ok((
+                                AuthRequest::Fido {
+                                    fido_challenge,
+                                    fido_allow_list,
+                                },
+                                AuthCredHandler::MFA {
+                                    flow,
+                                    password: None,
+                                    extra_data: None,
+                                },
+                            ));
+                        }
                     }
                     let msg = flow.msg.clone();
                     let polling_interval = flow.polling_interval.unwrap_or(5000);
@@ -1429,11 +1462,18 @@ impl IdProvider for HimmelblauProvider {
                     ))
                 }
             } else {
+                let mut auth_options = vec![];
+                if is_remote_service || !console_password_only {
+                    auth_options.push(AuthOption::ForceMFA);
+                }
+                if is_remote_service {
+                    auth_options.push(AuthOption::RemoteSession);
+                }
                 let resp = net_down_check!(
                     self.client
                         .read()
                         .await
-                        .initiate_device_flow_for_device_enrollment()
+                        .initiate_device_flow_for_device_enrollment(&auth_options)
                         .await,
                     Err(e) => {
                         error!("{:?}", e);
@@ -2185,14 +2225,22 @@ impl IdProvider for HimmelblauProvider {
                         }
                     );
                 }
-                // Always attempt to force MFA when enrolling the device, otherwise
-                // the device object will not have the MFA claim. If we are already
-                // enrolled but creating a new Hello Pin, we follow the same process,
-                // since only an enrollment token can be exchanged for a PRT (which
-                // will be needed to enroll the Hello Pin).
+
                 let mut opts = vec![];
-                // Prohibit Fido over ssh (since it can't work)
-                if service != "ssh" {
+                // Prohibit Fido over a remote service (since it can't work)
+                let remote_services = self
+                    .config
+                    .read()
+                    .await
+                    .get_password_only_remote_services_deny_list();
+                // Check if this is a remote service:
+                // - Service starts with "remote:" (set by PAM module when PAM_RHOST is set)
+                // - Service name contains any entry from remote_services_deny_list
+                // - Service name or TTY contains "ssh" (fallback check)
+                let is_remote_service = service.starts_with("remote:")
+                    || remote_services.iter().any(|s| service.contains(s))
+                    || service.to_lowercase().contains("ssh");
+                if !is_remote_service {
                     opts.push(AuthOption::Fido);
                     if self
                         .config
@@ -2202,6 +2250,9 @@ impl IdProvider for HimmelblauProvider {
                     {
                         opts.push(AuthOption::PasswordlessFido);
                     }
+                } else {
+                    opts.push(AuthOption::ForceMFA);
+                    opts.push(AuthOption::RemoteSession);
                 }
                 // If SFA is enabled, disable the DAG fallback, otherwise SFA users
                 // will always be prompted for DAG.
@@ -2444,11 +2495,7 @@ impl IdProvider for HimmelblauProvider {
                     Ok(AuthResult::Success { token: token3 }) => {
                         // Skip Hello enrollment if it is disabled by config
                         let hello_enabled = self.config.read().await.get_enable_hello();
-                        // Skip Hello enrollment if the token doesn't have the ngcmfa amr
-                        let amr_ngcmfa = token2.amr_ngcmfa().unwrap_or(false);
-                        // If the token at least has an mfa amr, then we can fake a hello key
-                        let amr_mfa = token2.amr_mfa().unwrap_or(false);
-                        if !hello_enabled || (!amr_ngcmfa && !amr_mfa) || no_hello_pin {
+                        if !hello_enabled || no_hello_pin {
                             info!("Skipping Hello enrollment because it is disabled");
                             return Ok((
                                 AuthResult::Success { token: token3 },
@@ -2546,14 +2593,7 @@ impl IdProvider for HimmelblauProvider {
                     Ok(AuthResult::Success { token: token3 }) => {
                         // Skip Hello enrollment if it is disabled by config
                         let hello_enabled = self.config.read().await.get_enable_hello();
-                        // Skip Hello enrollment if the token doesn't have the ngcmfa amr
-                        let amr_ngcmfa = token2.amr_ngcmfa().unwrap_or(false);
-                        // If the token at least has an mfa amr, then we can fake a hello key
-                        let amr_mfa = token2.amr_mfa().unwrap_or(false);
-                        if !hello_enabled
-                            || (!amr_ngcmfa && !amr_mfa && !msa_tenant)
-                            || no_hello_pin
-                        {
+                        if !hello_enabled || no_hello_pin {
                             info!("Skipping Hello enrollment because it is disabled");
                             return Ok((
                                 AuthResult::Success { token: token3 },
