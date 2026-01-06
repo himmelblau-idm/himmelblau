@@ -15,10 +15,7 @@ fn parse_major_version(version_str: &str) -> Option<u32> {
     let version_str = version_str.trim();
 
     // Strip epoch prefix (e.g., "1:45.0" -> "45.0")
-    let version_str = version_str
-        .split(':')
-        .last()
-        .unwrap_or(version_str);
+    let version_str = version_str.split(':').last().unwrap_or(version_str);
 
     // Get major version (first number before '.')
     if let Some(major_str) = version_str.split('.').next() {
@@ -32,10 +29,7 @@ fn parse_major_version(version_str: &str) -> Option<u32> {
 
 /// Detect GNOME version from the running gnome-shell binary
 fn detect_from_gnome_shell() -> Option<u32> {
-    let output = Command::new("gnome-shell")
-        .arg("--version")
-        .output()
-        .ok()?;
+    let output = Command::new("gnome-shell").arg("--version").output().ok()?;
 
     if output.status.success() {
         let version_str = String::from_utf8_lossy(&output.stdout);
@@ -170,10 +164,7 @@ fn infer_from_os_release() -> Option<u32> {
     let id = os_info.get("ID").map(|s| s.as_str()).unwrap_or("");
     let version_id = os_info.get("VERSION_ID").map(|s| s.as_str()).unwrap_or("");
     let id_like = os_info.get("ID_LIKE").map(|s| s.as_str()).unwrap_or("");
-    let pretty_name = os_info
-        .get("PRETTY_NAME")
-        .map(|s| s.as_str())
-        .unwrap_or("");
+    let pretty_name = os_info.get("PRETTY_NAME").map(|s| s.as_str()).unwrap_or("");
 
     // Check for rolling release distros first - these always have latest GNOME
     match id {
@@ -185,10 +176,7 @@ fn infer_from_os_release() -> Option<u32> {
     }
 
     // Parse version for comparison
-    let version_major: Option<u32> = version_id
-        .split('.')
-        .next()
-        .and_then(|s| s.parse().ok());
+    let version_major: Option<u32> = version_id.split('.').next().and_then(|s| s.parse().ok());
 
     // Match specific distributions
     match id {
@@ -296,24 +284,36 @@ fn detect_gnome_version() -> Option<u32> {
     // Strategy 1: Check for explicit environment variable override
     if let Ok(v) = env::var("GNOME_VERSION") {
         if let Ok(version) = v.parse::<u32>() {
-            println!("cargo:warning=Using GNOME version from GNOME_VERSION env var: {}", version);
+            println!(
+                "cargo:warning=Using GNOME version from GNOME_VERSION env var: {}",
+                version
+            );
             return Some(version);
         }
     }
 
     // Strategy 2: Try running gnome-shell --version (if GNOME is installed)
     if let Some(v) = detect_from_gnome_shell() {
-        println!("cargo:warning=Detected GNOME version from gnome-shell binary: {}", v);
+        println!(
+            "cargo:warning=Detected GNOME version from gnome-shell binary: {}",
+            v
+        );
         return Some(v);
     }
 
     // Strategy 3: Try querying installed packages
     if let Some(v) = detect_from_rpm_installed() {
-        println!("cargo:warning=Detected GNOME version from installed RPM: {}", v);
+        println!(
+            "cargo:warning=Detected GNOME version from installed RPM: {}",
+            v
+        );
         return Some(v);
     }
     if let Some(v) = detect_from_dpkg_installed() {
-        println!("cargo:warning=Detected GNOME version from installed DEB: {}", v);
+        println!(
+            "cargo:warning=Detected GNOME version from installed DEB: {}",
+            v
+        );
         return Some(v);
     }
 
@@ -323,7 +323,10 @@ fn detect_gnome_version() -> Option<u32> {
         return Some(v);
     }
     if let Some(v) = detect_from_zypper_repo() {
-        println!("cargo:warning=Detected GNOME version from Zypper repo: {}", v);
+        println!(
+            "cargo:warning=Detected GNOME version from Zypper repo: {}",
+            v
+        );
         return Some(v);
     }
     if let Some(v) = detect_from_apt_cache() {
@@ -333,7 +336,10 @@ fn detect_gnome_version() -> Option<u32> {
 
     // Strategy 5: Infer from /etc/os-release based on known distro versions
     if let Some(v) = infer_from_os_release() {
-        println!("cargo:warning=Inferred GNOME version from OS release: {}", v);
+        println!(
+            "cargo:warning=Inferred GNOME version from OS release: {}",
+            v
+        );
         return Some(v);
     }
 

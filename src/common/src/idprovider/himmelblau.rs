@@ -2651,7 +2651,10 @@ impl IdProvider for HimmelblauProvider {
                 }
             }
             (
-                AuthCredHandler::HelloTOTP { cred: hello_pin, pending_sealed_totp },
+                AuthCredHandler::HelloTOTP {
+                    cred: hello_pin,
+                    pending_sealed_totp,
+                },
                 PamAuthRequest::HelloTOTP { cred },
             ) => {
                 impl_handle_hello_pin_totp_auth!(
