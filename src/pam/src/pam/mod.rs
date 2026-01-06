@@ -238,15 +238,46 @@ impl PamHooks for PamKanidm {
 
         install_subscriber(opts.debug);
 
-        // This will == "Ok(Some("ssh"))" on remote auth.
-        let tty = pamh.get_tty();
-        let rhost = pamh.get_rhost();
+        // Gather all PAM context for service detection
+        let pam_service = pamh.get_service();
+        let pam_tty = pamh.get_tty();
+        let pam_rhost = pamh.get_rhost();
 
-        debug!(?args, ?opts, ?tty, ?rhost, "sm_authenticate");
+        debug!(
+            ?args,
+            ?opts,
+            ?pam_service,
+            ?pam_tty,
+            ?pam_rhost,
+            "sm_authenticate PAM context"
+        );
 
-        let service = match tty {
-            Ok(Some(service)) => service,
-            _ => "unknown".to_string(),
+        // Use PAM_SERVICE as the primary service identifier (most reliable).
+        // This is the service name passed by the application to pam_start().
+        let service = match pam_service {
+            Ok(Some(svc)) => svc,
+            _ => match pam_tty {
+                // Fall back to TTY if service is not available
+                Ok(Some(tty)) => tty,
+                _ => "unknown".to_string(),
+            },
+        };
+
+        // Check if this is a remote connection based on PAM_RHOST.
+        // If rhost is set to a non-localhost value, treat as remote.
+        let is_remote = match &pam_rhost {
+            Ok(Some(rhost)) => {
+                !rhost.is_empty() && rhost != "localhost" && rhost != "127.0.0.1" && rhost != "::1"
+            }
+            _ => false,
+        };
+
+        // For remote connections, prefix the service with "remote:" to signal
+        // to the daemon that this is a remote auth attempt.
+        let service = if is_remote {
+            format!("remote:{}", service)
+        } else {
+            service
         };
 
         let account_id = match pamh.get_user(None) {
