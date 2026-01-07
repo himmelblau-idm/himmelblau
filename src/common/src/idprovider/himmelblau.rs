@@ -610,6 +610,7 @@ impl IdProvider for HimmelblauMultiProvider {
         _tpm: &mut tpm::provider::BoxedDynTpm,
     ) -> Result<GroupToken, IdpError> {
         /* AAD doesn't permit group listing (must use cache entries from auth) */
+        debug!("Group fetching not supported for HimmelblauMultiProvider");
         Err(IdpError::BadRequest)
     }
 
@@ -935,6 +936,7 @@ impl IdProvider for HimmelblauProvider {
             // We can't fetch a PRT cookie when initialization hasn't
             // completed. This only happens when we're offline during first
             // startup. This should never happen!
+            debug!("Provider not initialized");
             return Err(IdpError::BadRequest);
         }
 
@@ -1509,6 +1511,7 @@ impl IdProvider for HimmelblauProvider {
             // otherwise we duplicate the PIN prompt when the network goes down.
             if !self.attempt_online(tpm, SystemTime::now()).await {
                 // We are offline, fail the authentication now
+                debug!("Network down encountered during online auth init");
                 return Err(IdpError::BadRequest);
             }
 
@@ -1967,6 +1970,7 @@ impl IdProvider for HimmelblauProvider {
                                     // It's ok to reset the pin count here, since they must
                                     // online auth at this point and create a new pin.
                                     self.bad_pin_counter.reset_bad_pin_count(account_id).await;
+                                    debug!("Returning BadRequest due to failed PRT exchange.");
                                     return Err(IdpError::BadRequest);
                                 }
                             }
@@ -2738,6 +2742,7 @@ impl IdProvider for HimmelblauProvider {
         _tpm: &mut tpm::provider::BoxedDynTpm,
     ) -> Result<GroupToken, IdpError> {
         /* AAD doesn't permit group listing (must use cache entries from auth) */
+        debug!("Group listing not supported in HimmelblauProvider");
         Err(IdpError::BadRequest)
     }
 
@@ -2958,8 +2963,14 @@ impl HimmelblauProvider {
                      * response because the domains are aliases of one another.
                      */
                     let mut cfg = self.config.write().await;
-                    let (_, domain1) = split_username(account_id).ok_or(IdpError::BadRequest)?;
-                    let (_, domain2) = split_username(&spn).ok_or(IdpError::BadRequest)?;
+                    let (_, domain1) = split_username(account_id).ok_or({
+                        error!("Failed splitting account_id username");
+                        IdpError::BadRequest
+                    })?;
+                    let (_, domain2) = split_username(&spn).ok_or({
+                        error!("Failed splitting spn username");
+                        IdpError::BadRequest
+                    })?;
                     if !cfg.domains_are_aliases(domain1, domain2).await {
                         let msg =
                             format!("Authenticated user {} does not match requested user", uuid);
@@ -3506,9 +3517,10 @@ impl HimmelblauProvider {
                         })?;
                     let device_id = match device_id {
                         Some(v) => v.to_string(),
-                        None => config
-                            .get(&self.domain, "device_id")
-                            .ok_or(IdpError::BadRequest)?,
+                        None => config.get(&self.domain, "device_id").ok_or({
+                            error!("Device ID missing for Intune device enrollment.");
+                            IdpError::BadRequest
+                        })?,
                     };
                     let attrs = attrs.cloned().unwrap_or(
                         EnrollAttrs::new(self.domain.clone(), None, None, None, None).map_err(
