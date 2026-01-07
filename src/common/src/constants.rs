@@ -66,4 +66,4 @@ pub const CONFIDENTIAL_CLIENT_SECRET_TAG: &str = "confidential_client_secret";
 pub const CONFIDENTIAL_CLIENT_CERT_TAG: &str = "confidential_client_certificate";
 pub const DEFAULT_JOIN_TYPE: JoinType = JoinType::Join;
 pub const DEFAULT_OFFLINE_BREAKGLASS_TTL: u64 = 7200;
-pub const DEFAULT_HELLO_TOTP_ENABLED: bool = true;
+pub const DEFAULT_HELLO_TOTP_ENABLED: bool = false;
