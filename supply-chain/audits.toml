@@ -189,6 +189,11 @@ who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
 version = "0.16.2"
 
+[[audits.lru]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+version = "0.16.3"
+
 [[audits.matchit]]
 who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
