@@ -15,7 +15,7 @@ fn parse_major_version(version_str: &str) -> Option<u32> {
     let version_str = version_str.trim();
 
     // Strip epoch prefix (e.g., "1:45.0" -> "45.0")
-    let version_str = version_str.split(':').last().unwrap_or(version_str);
+    let version_str = version_str.split(':').next_back().unwrap_or(version_str);
 
     // Get major version (first number before '.')
     if let Some(major_str) = version_str.split('.').next() {
