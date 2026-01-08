@@ -47,7 +47,7 @@ use tokio::runtime::Runtime;
 #[macro_export]
 macro_rules! auth_handle_mfa_resp {
     ($resp:ident, $on_fido:expr, $on_prompt:expr, $on_poll:expr) => {
-        match $resp.mfa_method.as_str() {
+        match $resp.mfa_method().as_str() {
             "FidoKey" => $on_fido,
             "AccessPass" | "PhoneAppOTP" | "OneWaySMS" | "ConsolidatedTelephony" => $on_prompt,
             _ => $on_poll,
