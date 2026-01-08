@@ -69,6 +69,11 @@ who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
 version = "1.0.100"
 
+[[audits.assert_hex]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+version = "0.4.1"
+
 [[audits.authenticator]]
 who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
@@ -83,6 +88,36 @@ delta = "0.7.9 -> 0.8.6"
 who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
 delta = "0.4.5 -> 0.5.5"
+
+[[audits.binary-stream]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+version = "3.4.0"
+
+[[audits.binrw]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+version = "0.15.0"
+
+[[audits.binrw_derive]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+version = "0.15.0"
+
+[[audits.bitmask-enum]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+version = "2.2.5"
+
+[[audits.bytemuck]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+version = "1.24.0"
+
+[[audits.c-types]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+version = "6.0.0"
 
 [[audits.cc]]
 who = "David Mulder <dmulder@samba.org>"
@@ -144,6 +179,16 @@ who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
 version = "0.21.3"
 
+[[audits.der]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+version = "0.8.0-rc.10"
+
+[[audits.der_derive]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+version = "0.8.0-rc.6"
+
 [[audits.find-msvc-tools]]
 who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
@@ -164,6 +209,26 @@ who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
 version = "2.6.0"
 
+[[audits.keyutils]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+version = "0.4.0"
+
+[[audits.keyutils-raw]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+version = "0.4.0"
+
+[[audits.lber]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+version = "0.4.2"
+
+[[audits.ldap3_proto]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+version = "0.6.2"
+
 [[audits.libhimmelblau]]
 who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
@@ -183,6 +248,11 @@ version = "0.16.2"
 who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
 delta = "0.7.3 -> 0.8.4"
+
+[[audits.md5]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+version = "0.8.0"
 
 [[audits.num_enum]]
 who = "David Mulder <dmulder@samba.org>"
@@ -214,10 +284,20 @@ who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
 delta = "0.27.0 -> 0.31.0"
 
+[[audits.owo-colors]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+version = "4.2.3"
+
 [[audits.pastey]]
 who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
 delta = "0.1.1 -> 0.2.0"
+
+[[audits.pbkdf2]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+version = "0.12.2"
 
 [[audits.pem]]
 who = "David Mulder <dmulder@samba.org>"
@@ -263,6 +343,11 @@ version = "1.0.226"
 who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
 version = "1.0.228"
+
+[[audits.serde-binary]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+version = "0.5.0"
 
 [[audits.serde_derive]]
 who = "David Mulder <dmulder@samba.org>"
@@ -333,6 +418,11 @@ version = "0.14.2"
 who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
 delta = "0.2.0 -> 0.3.0"
+
+[[audits.uninit]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+version = "0.3.0"
 
 [[audits.utoipa]]
 who = "David Mulder <dmulder@samba.org>"
@@ -977,6 +1067,12 @@ criteria = "safe-to-deploy"
 user-id = 696 # Nick Fitzgerald (fitzgen)
 start = "2020-01-14"
 end = "2026-09-26"
+
+[[trusted.libkrimes]]
+criteria = "safe-to-deploy"
+user-id = 31100 # Firstyear (Firstyear)
+start = "2026-01-08"
+end = "2027-01-08"
 
 [[trusted.libm]]
 criteria = "safe-to-deploy"
