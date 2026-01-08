@@ -12,6 +12,7 @@ use crate::db::KeyStoreTxn;
 use crate::unix_proto::{PamAuthRequest, PamAuthResponse};
 use async_trait::async_trait;
 use himmelblau::{MFAAuthContinue, UserToken as UnixUserToken};
+use kanidm_hsm_crypto::structures::SealedData;
 use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::time::SystemTime;
@@ -103,6 +104,9 @@ pub enum AuthCredHandler {
     },
     HelloTOTP {
         cred: String,
+        /// Sealed TOTP secret pending validation - only set during initial setup.
+        /// Will be saved to HSM after successful TOTP validation.
+        pending_sealed_totp: Option<SealedData>,
     },
     ChangePassword {
         old_cred: String,
@@ -262,6 +266,7 @@ pub trait IdProvider {
         &self,
         _account_id: &str,
         _token: Option<&UserToken>,
+        _service: &str,
         _no_hello_pin: bool,
         _keystore: &mut D,
         _tpm: &mut tpm::provider::BoxedDynTpm,

@@ -306,11 +306,6 @@ impl OidcApplication {
     }
 
     #[instrument(level = "debug", skip_all)]
-    async fn write(&self) -> tokio::sync::RwLockWriteGuard<'_, Option<OidcDelayedInit>> {
-        self.client.write().await
-    }
-
-    #[instrument(level = "debug", skip_all)]
     pub async fn initiate_device_flow(
         &self,
     ) -> Result<DeviceAuthorizationResponse<EmptyExtraDeviceAuthorizationFields>, MsalError> {
@@ -931,6 +926,7 @@ impl IdProvider for OidcProvider {
         &self,
         account_id: &str,
         _token: Option<&UserToken>,
+        _service: &str,
         no_hello_pin: bool,
         keystore: &mut D,
         tpm: &mut tpm::provider::BoxedDynTpm,
@@ -1116,11 +1112,13 @@ impl IdProvider for OidcProvider {
                                         old_token,
                                         $cred,
                                         tpm,
-                                        machine_key
+                                        machine_key,
+                                        cred_handler
                                     );
                                 } else {
                                     *cred_handler = AuthCredHandler::HelloTOTP {
                                         cred: $cred.clone(),
+                                        pending_sealed_totp: None,
                                     };
                                     return Ok((AuthResult::Next(AuthRequest::HelloTOTP {
                                         msg: "Please enter your Hello TOTP code from your Authenticator: "
@@ -1215,11 +1213,13 @@ impl IdProvider for OidcProvider {
                                     old_token,
                                     $cred,
                                     tpm,
-                                    machine_key
+                                    machine_key,
+                                    cred_handler
                                 );
                             } else {
                                 *cred_handler = AuthCredHandler::HelloTOTP {
                                     cred: $cred.clone(),
+                                    pending_sealed_totp: None,
                                 };
                                 return Ok((AuthResult::Next(AuthRequest::HelloTOTP {
                                     msg: "Please enter your Hello TOTP code from your Authenticator: "
@@ -1343,7 +1343,10 @@ impl IdProvider for OidcProvider {
                 }
             }
             (
-                AuthCredHandler::HelloTOTP { cred: hello_pin },
+                AuthCredHandler::HelloTOTP {
+                    cred: hello_pin,
+                    pending_sealed_totp,
+                },
                 PamAuthRequest::HelloTOTP { cred },
             ) => {
                 impl_handle_hello_pin_totp_auth!(
@@ -1355,6 +1358,7 @@ impl IdProvider for OidcProvider {
                     hello_pin,
                     tpm,
                     machine_key,
+                    pending_sealed_totp,
                     |auth_result| { (auth_result, AuthCacheAction::None) }
                 )
             }

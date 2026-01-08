@@ -8,10 +8,12 @@ Usage:
 This follows a config-driven pattern inspired by Samba's bootstrap/config.py:
 - deb family => cargo deb chain with per-package feature flags and --deb-revision=<distro>
 - rpm/zypper family => cargo build + strip + cargo generate-rpm chain
+- ebuild family => generates Gentoo ebuild file via gen_ebuild.py
 """
 
 import argparse
 import os
+from pathlib import Path
 
 GENERATED_MARKER = """\
 #
@@ -93,6 +95,12 @@ FAMILIES = {
         "pkgs": RPM_PKGS,
         "env": None,
     },
+    "ebuild": {
+        # Minimal bootstrap for ebuild generation - just needs Python (in base image)
+        "bootstrap": "# No additional packages needed - Python is in the base image",
+        "pkgs": [],
+        "env": None,
+    },
 }
 
 # ---- Final command builders --------------------------------------------------
@@ -142,6 +150,11 @@ def build_rpm_final_cmd(features: list, selinux: bool) -> str:
     gen_servicefiles = "make rpm-servicefiles"
     gen_authselect = "(authselect select minimal --force || authselect select local --force) && make authselect"
     return f'CMD ["/bin/sh", "-c", \\\n{CMD_TAB}"{gen_servicefiles} && {build}{strip} && {gen_authselect} && \\\n{CMD_TAB}{rpms}"]'
+
+
+def build_gentoo_final_cmd(features: list, repo_root: Path) -> str:
+    """Build command for Gentoo - generates an ebuild file."""
+    return 'CMD ["python3", "scripts/gen_ebuild.py", "--out", "./packaging/"]'
 
 
 # ---- Distro targets ----------------------------------------------------------
@@ -319,6 +332,16 @@ DISTS = {
         "tpm": True,
         "selinux": True,
     },
+    # ---- Gentoo family ----
+    # Gentoo generates an ebuild file instead of building binaries
+    # Uses a lightweight Python image since no Gentoo-specific tools are needed
+    "gentoo": {
+        "family": "ebuild",
+        "image": "python:3.11-slim",
+        "extra_prep": [],
+        "tpm": True,
+        "selinux": False,
+    },
 }
 
 DOCKERFILE_TPL = """\
@@ -351,6 +374,20 @@ RUN --mount=type=cache,target=/root/.cargo/registry curl https://sh.rustup.rs -s
 
 {selinux_enabled}
 # Build the project and create the packages
+{final_cmd}
+"""
+
+# Minimal Dockerfile template for ebuild generation (no Rust needed)
+DOCKERFILE_EBUILD_TPL = """\
+{GENERATED_MARKER}FROM {base_image}
+
+# Project layout
+VOLUME /himmelblau
+
+# Change directory to the repository
+WORKDIR /himmelblau
+
+# Generate the ebuild file
 {final_cmd}
 """
 
@@ -391,7 +428,11 @@ def render(dist_name, dist_cfg, patch_libhimmelblau):
     fam = FAMILIES[dist_cfg["family"]]
     selinux = bool(dist_cfg.get("selinux", False))
     pkgs = build_pkg_list(dist_cfg, selinux)
-    bootstrap = fam["bootstrap"].format(pkgs=pkgs).rstrip()
+    # Handle bootstrap - some families (like ebuild) don't need package formatting
+    if "{pkgs}" in fam["bootstrap"]:
+        bootstrap = fam["bootstrap"].format(pkgs=pkgs).rstrip()
+    else:
+        bootstrap = fam["bootstrap"].rstrip()
     env = fam["env"] or ""
     sle_connect = SLE_CONNECT_TPL % dist_cfg.get("scc_vers") if dist_cfg.get("scc") else ""
 
@@ -406,6 +447,10 @@ def render(dist_name, dist_cfg, patch_libhimmelblau):
         final_cmd = build_deb_final_cmd(features, dist_name)
     elif dist_name == "test":
         final_cmd = "CMD cargo test"
+    elif dist_cfg["family"] == "ebuild":
+        # Ebuild generation - lightweight, just runs gen_ebuild.py
+        repo_root = Path(__file__).parent.parent.resolve()
+        final_cmd = build_gentoo_final_cmd(features, repo_root)
     else:
         final_cmd = build_rpm_final_cmd(features, selinux)
 
@@ -414,16 +459,24 @@ def render(dist_name, dist_cfg, patch_libhimmelblau):
         blocks.extend(dist_cfg["extra_prep"])
     extra = "\n".join(blocks) + ("\n" if blocks else "")
 
-    df = DOCKERFILE_TPL.format(
-        GENERATED_MARKER=GENERATED_MARKER,
-        base_image=dist_cfg["image"],
-        env=env,
-        bootstrap=(extra + bootstrap),
-        sle_connect=("\n" + sle_connect + "\n" if sle_connect else ""),
-        selinux_enabled=("ENV HIMMELBLAU_ALLOW_MISSING_SELINUX=1" if not selinux else ""),
-        patch_libhimmelblau="COPY ./scripts/cargo-patch-config.toml /root/.cargo/config.toml" if patch_libhimmelblau else "",
-        final_cmd=final_cmd,
-    )
+    # Use minimal template for ebuild generation
+    if dist_cfg["family"] == "ebuild":
+        df = DOCKERFILE_EBUILD_TPL.format(
+            GENERATED_MARKER=GENERATED_MARKER,
+            base_image=dist_cfg["image"],
+            final_cmd=final_cmd,
+        )
+    else:
+        df = DOCKERFILE_TPL.format(
+            GENERATED_MARKER=GENERATED_MARKER,
+            base_image=dist_cfg["image"],
+            env=env,
+            bootstrap=(extra + bootstrap),
+            sle_connect=("\n" + sle_connect + "\n" if sle_connect else ""),
+            selinux_enabled=("ENV HIMMELBLAU_ALLOW_MISSING_SELINUX=1" if not selinux else ""),
+            patch_libhimmelblau="COPY ./scripts/cargo-patch-config.toml /root/.cargo/config.toml" if patch_libhimmelblau else "",
+            final_cmd=final_cmd,
+        )
     return df
 
 

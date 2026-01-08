@@ -112,6 +112,11 @@ version = "1.2.41"
 [[audits.cc]]
 who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
+version = "1.2.51"
+
+[[audits.cc]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
 delta = "1.2.41 -> 1.2.44"
 
 [[audits.cc]]
@@ -144,10 +149,20 @@ who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
 version = "0.21.3"
 
+[[audits.dbus]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+version = "0.9.10"
+
 [[audits.find-msvc-tools]]
 who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
 version = "0.1.2"
+
+[[audits.find-msvc-tools]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+version = "0.1.6"
 
 [[audits.find-msvc-tools]]
 who = "David Mulder <dmulder@samba.org>"
@@ -169,6 +184,16 @@ who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
 version = "2.6.0"
 
+[[audits.hostname]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+version = "0.4.2"
+
+[[audits.libdbus-sys]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+version = "0.2.7"
+
 [[audits.libhimmelblau]]
 who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
@@ -188,6 +213,11 @@ version = "0.8.2"
 who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
 version = "0.16.2"
+
+[[audits.lru]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+version = "0.16.3"
 
 [[audits.matchit]]
 who = "David Mulder <dmulder@samba.org>"
@@ -227,6 +257,11 @@ delta = "0.9.110 -> 0.9.111"
 [[audits.pastey]]
 who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
+version = "0.2.1"
+
+[[audits.pastey]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
 delta = "0.1.1 -> 0.2.0"
 
 [[audits.pem]]
@@ -238,6 +273,11 @@ version = "3.0.6"
 who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
 version = "0.23.32"
+
+[[audits.rustls]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+version = "0.23.36"
 
 [[audits.rustls]]
 who = "David Mulder <dmulder@samba.org>"
@@ -297,6 +337,11 @@ version = "3.15.0"
 [[audits.serde_with]]
 who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
+version = "3.16.1"
+
+[[audits.serde_with]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
 delta = "3.15.0 -> 3.15.1"
 
 [[audits.serde_with]]
@@ -313,6 +358,11 @@ version = "3.14.1"
 who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
 version = "3.15.0"
+
+[[audits.serde_with_macros]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+version = "3.16.1"
 
 [[audits.serde_with_macros]]
 who = "David Mulder <dmulder@samba.org>"
@@ -334,6 +384,11 @@ who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
 version = "3.23.0"
 
+[[audits.tempfile]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+version = "3.24.0"
+
 [[audits.time]]
 who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
@@ -349,15 +404,45 @@ who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
 version = "0.14.2"
 
+[[audits.tracing]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+version = "0.1.44"
+
+[[audits.tracing-attributes]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+version = "0.1.31"
+
+[[audits.tracing-core]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+version = "0.1.36"
+
 [[audits.tracing-forest]]
 who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
 delta = "0.2.0 -> 0.3.0"
 
+[[audits.tracing-subscriber]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+version = "0.3.22"
+
 [[audits.utoipa]]
 who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
 delta = "4.2.3 -> 5.4.0"
+
+[[audits.uuid]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+version = "1.19.0"
+
+[[audits.uzers]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+version = "0.12.2"
 
 [[audits.zbus]]
 who = "David Mulder <dmulder@samba.org>"
@@ -373,6 +458,11 @@ version = "5.12.0"
 who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
 version = "1.8.2"
+
+[[audits.zmij]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+version = "1.0.12"
 
 [[trusted.aho-corasick]]
 criteria = "safe-to-deploy"
@@ -541,6 +631,18 @@ criteria = "safe-to-deploy"
 user-id = 189 # Andrew Gallant (BurntSushi)
 start = "2019-06-26"
 end = "2026-09-11"
+
+[[trusted.der]]
+criteria = "safe-to-deploy"
+user-id = 267 # Tony Arcieri (tarcieri)
+start = "2020-12-17"
+end = "2027-01-07"
+
+[[trusted.der_derive]]
+criteria = "safe-to-deploy"
+user-id = 267 # Tony Arcieri (tarcieri)
+start = "2020-12-18"
+end = "2027-01-07"
 
 [[trusted.derive_more]]
 criteria = "safe-to-deploy"
@@ -1004,6 +1106,12 @@ user-id = 127515
 start = "2023-10-31"
 end = "2026-10-15"
 
+[[trusted.ldap3_proto]]
+criteria = "safe-to-deploy"
+user-id = 31100 # Firstyear (Firstyear)
+start = "2022-02-03"
+end = "2027-01-07"
+
 [[trusted.libc]]
 criteria = "safe-to-deploy"
 user-id = 55123 # rust-lang-owner
@@ -1015,6 +1123,12 @@ criteria = "safe-to-deploy"
 user-id = 696 # Nick Fitzgerald (fitzgen)
 start = "2020-01-14"
 end = "2026-09-26"
+
+[[trusted.libkrimes]]
+criteria = "safe-to-deploy"
+user-id = 31100 # Firstyear (Firstyear)
+start = "2026-01-08"
+end = "2027-01-08"
 
 [[trusted.libm]]
 criteria = "safe-to-deploy"
@@ -1118,6 +1232,12 @@ user-id = 3618 # David Tolnay (dtolnay)
 start = "2019-03-19"
 end = "2026-09-11"
 
+[[trusted.pbkdf2]]
+criteria = "safe-to-deploy"
+user-id = 267 # Tony Arcieri (tarcieri)
+start = "2020-06-10"
+end = "2027-01-07"
+
 [[trusted.phf]]
 criteria = "safe-to-deploy"
 user-id = 51017 # Yuki Okushi (JohnTitor)
@@ -1202,6 +1322,12 @@ user-id = 359 # Sean McArthur (seanmonstar)
 start = "2019-03-04"
 end = "2026-09-11"
 
+[[trusted.rsa]]
+criteria = "safe-to-deploy"
+user-id = 267 # Tony Arcieri (tarcieri)
+start = "2022-03-10"
+end = "2027-01-07"
+
 [[trusted.rustix]]
 criteria = "safe-to-deploy"
 user-id = 6825 # Dan Gohman (sunfishcode)
@@ -1210,7 +1336,7 @@ end = "2026-09-11"
 
 [[trusted.rustls]]
 criteria = "safe-to-deploy"
-user-id = 4556 # Dirkjan Ochtman (djc)
+user-id = 4556
 start = "2022-05-18"
 end = "2026-11-20"
 

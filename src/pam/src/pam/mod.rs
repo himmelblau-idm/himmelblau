@@ -98,6 +98,41 @@ pub fn get_cfg() -> Result<HimmelblauConfig, PamResultCode> {
     HimmelblauConfig::new(Some(DEFAULT_CONFIG_PATH)).map_err(|_| PamResultCode::PAM_SERVICE_ERR)
 }
 
+/// Checks if the given host string represents a loopback address.
+///
+/// Handles various loopback representations:
+/// - "localhost" (case-insensitive)
+/// - IPv4 loopback: "127.0.0.1" and the entire 127.0.0.0/8 range
+/// - IPv6 loopback: "::1"
+/// - IPv6 with brackets: "[::1]"
+/// - IPv6 with zone identifiers: "::1%lo", "::1%eth0", "[::1%lo]"
+fn is_loopback_address(host: &str) -> bool {
+    if host.is_empty() {
+        return false;
+    }
+
+    // Check for "localhost" (case-insensitive)
+    if host.eq_ignore_ascii_case("localhost") {
+        return true;
+    }
+
+    // Remove brackets if present (for IPv6 bracket notation)
+    let host = host.trim_start_matches('[').trim_end_matches(']');
+
+    // Remove zone identifier if present (e.g., "::1%lo" -> "::1")
+    let host = match host.find('%') {
+        Some(idx) => &host[..idx],
+        None => host,
+    };
+
+    // Try to parse as an IP address
+    match host.parse::<std::net::IpAddr>() {
+        Ok(std::net::IpAddr::V4(ipv4)) => ipv4.is_loopback(),
+        Ok(std::net::IpAddr::V6(ipv6)) => ipv6.is_loopback(),
+        Err(_) => false,
+    }
+}
+
 fn install_subscriber(debug: bool) {
     let fmt_layer = fmt::layer().with_target(false);
 
@@ -238,15 +273,44 @@ impl PamHooks for PamKanidm {
 
         install_subscriber(opts.debug);
 
-        // This will == "Ok(Some("ssh"))" on remote auth.
-        let tty = pamh.get_tty();
-        let rhost = pamh.get_rhost();
+        // Gather all PAM context for service detection
+        let pam_service = pamh.get_service();
+        let pam_tty = pamh.get_tty();
+        let pam_rhost = pamh.get_rhost();
 
-        debug!(?args, ?opts, ?tty, ?rhost, "sm_authenticate");
+        debug!(
+            ?args,
+            ?opts,
+            ?pam_service,
+            ?pam_tty,
+            ?pam_rhost,
+            "sm_authenticate PAM context"
+        );
 
-        let service = match tty {
-            Ok(Some(service)) => service,
-            _ => "unknown".to_string(),
+        // Use PAM_SERVICE as the primary service identifier (most reliable).
+        // This is the service name passed by the application to pam_start().
+        let service = match pam_service {
+            Ok(Some(svc)) => svc,
+            _ => match pam_tty {
+                // Fall back to TTY if service is not available
+                Ok(Some(tty)) => tty,
+                _ => "unknown".to_string(),
+            },
+        };
+
+        // Check if this is a remote connection based on PAM_RHOST.
+        // If rhost is set to a non-localhost value, treat as remote.
+        let is_remote = match &pam_rhost {
+            Ok(Some(rhost)) => !rhost.is_empty() && !is_loopback_address(rhost),
+            _ => false,
+        };
+
+        // For remote connections, prefix the service with "remote:" to signal
+        // to the daemon that this is a remote auth attempt.
+        let service = if is_remote {
+            format!("remote:{}", service)
+        } else {
+            service
         };
 
         let account_id = match pamh.get_user(None) {
@@ -799,5 +863,61 @@ impl PamHooks for PamKanidm {
         debug!(?args, ?opts, "sm_setcred");
 
         PamResultCode::PAM_SUCCESS
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_is_loopback_address_empty() {
+        assert!(!is_loopback_address(""));
+    }
+
+    #[test]
+    fn test_is_loopback_address_localhost() {
+        assert!(is_loopback_address("localhost"));
+        assert!(is_loopback_address("LOCALHOST"));
+        assert!(is_loopback_address("LocalHost"));
+    }
+
+    #[test]
+    fn test_is_loopback_address_ipv4() {
+        assert!(is_loopback_address("127.0.0.1"));
+        assert!(is_loopback_address("127.0.0.2"));
+        assert!(is_loopback_address("127.255.255.255"));
+        assert!(!is_loopback_address("192.168.1.1"));
+        assert!(!is_loopback_address("10.0.0.1"));
+    }
+
+    #[test]
+    fn test_is_loopback_address_ipv6() {
+        assert!(is_loopback_address("::1"));
+        assert!(!is_loopback_address("::2"));
+        assert!(!is_loopback_address("fe80::1"));
+        assert!(!is_loopback_address("2001:db8::1"));
+    }
+
+    #[test]
+    fn test_is_loopback_address_ipv6_brackets() {
+        assert!(is_loopback_address("[::1]"));
+        assert!(!is_loopback_address("[::2]"));
+        assert!(!is_loopback_address("[fe80::1]"));
+    }
+
+    #[test]
+    fn test_is_loopback_address_ipv6_zone_identifier() {
+        assert!(is_loopback_address("::1%lo"));
+        assert!(is_loopback_address("::1%eth0"));
+        assert!(is_loopback_address("[::1%lo]"));
+        assert!(!is_loopback_address("fe80::1%eth0"));
+    }
+
+    #[test]
+    fn test_is_loopback_address_non_ip() {
+        assert!(!is_loopback_address("example.com"));
+        assert!(!is_loopback_address("remotehost"));
+        assert!(!is_loopback_address("192.168.1.invalid"));
     }
 }

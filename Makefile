@@ -18,6 +18,7 @@ all: .packaging dockerfiles ## Auto-detect host distro and build packages just f
 		case "$$VER" in 15.6*|15-SP6*) TARGET="sle15sp6" ;; 15.7*|15-SP7*) TARGET="sle15sp7" ;; 16*|16.*) TARGET="sle16" ;; esac ;; \
 	  opensuse-leap)  case "$$VER" in 15.6*) TARGET="sle15sp6" ;; 15.7*) TARGET="sle15sp7" ;; esac ;; \
 	  opensuse-tumbleweed) TARGET="tumbleweed" ;; \
+	  gentoo)         TARGET="gentoo" ;; \
 	esac; \
 	if [ -z "$$TARGET" ]; then echo "Error: unsupported or unmapped distro: $$ID $$VER"; exit 2; fi; \
 	all_targets="$(ALL_PACKAGE_TARGETS)"; \
@@ -69,7 +70,8 @@ nix: .packaging ## Build Nix packages into ./packaging/
 DEB_TARGETS := ubuntu22.04 ubuntu24.04 debian12 debian13
 RPM_TARGETS := rocky8 rocky9 rocky10 tumbleweed rawhide fedora42 fedora43
 SLE_TARGETS := sle15sp6 sle15sp7 sle16
-ALL_PACKAGE_TARGETS := $(DEB_TARGETS) $(RPM_TARGETS) $(SLE_TARGETS)
+GENTOO_TARGETS := gentoo
+ALL_PACKAGE_TARGETS := $(DEB_TARGETS) $(RPM_TARGETS) $(SLE_TARGETS) $(GENTOO_TARGETS)
 
 install: ## Install packages from ./packaging onto this host (apt/dnf/yum/zypper auto-detected)
 	@set -euo pipefail; \
@@ -83,14 +85,16 @@ install: ## Install packages from ./packaging onto this host (apt/dnf/yum/zypper
 		PKGTYPE="rpm"; INSTALL_CMD='(command -v dnf >/dev/null && dnf -y install ./packaging/*.rpm) || \
 		                            (command -v yum >/dev/null && yum -y localinstall ./packaging/*.rpm) || \
 		                            (command -v zypper >/dev/null && zypper --non-interactive --no-gpg-checks in ./packaging/*.rpm)';; \
+	  gentoo) \
+		PKGTYPE="gentoo"; INSTALL_CMD='python3 scripts/install_local.py --no-build --destdir $(DESTDIR)/';; \
 	esac; \
 	if [ -z "$$PKGTYPE" ]; then echo "Error: unknown distro family for install"; exit 2; fi; \
 	if [ "$$PKGTYPE" = "deb" ]; then \
 	  ls ./packaging/*.deb >/dev/null 2>&1 || { echo "Error: no .deb packages in ./packaging/ — run 'make' first"; exit 4; }; \
-	else \
+	elif [ "$$PKGTYPE" = "rpm" ]; then \
 	  ls ./packaging/*.rpm >/dev/null 2>&1 || { echo "Error: no .rpm packages in ./packaging/ — run 'make' first"; exit 4; }; \
 	fi; \
-	echo "Installing from ./packaging/…"; \
+	echo "Installing..."; \
 	sh -c "$$INSTALL_CMD"; \
 	echo "Install complete."
 
@@ -125,15 +129,14 @@ rpm-servicefiles:
 authselect:
 	python3 ./scripts/gen_authselect.py --root=./ --aad-tool=./target/release/aad-tool --output-dir=./platform/el/authselect/
 
-.PHONY: package deb rpm $(DEB_TARGETS) $(RPM_TARGETS) ${SLE_TARGETS} dockerfiles deb-servicefiles rpm-servicefiles authselect install uninstall help sbom
+.PHONY: package deb rpm $(DEB_TARGETS) $(RPM_TARGETS) ${SLE_TARGETS} $(GENTOO_TARGETS) dockerfiles deb-servicefiles rpm-servicefiles authselect install uninstall help sbom
 
 check-licenses: ## Validate dependant licenses comply with GPLv3
 	cargo deny -V >/dev/null || (echo "cargo-deny required" && cargo install cargo-deny)
 	cargo deny --all-features check licenses
 
-vet: ## Vet Dependencies
-	cargo vet -V >/dev/null || (echo "cargo-vet required" && cargo install cargo-vet)
-	cargo vet || echo "Use |cargo vet inspect| to vet the changes to each crate"
+vet: ## Interactive dependency review with AI analysis
+	@python3 scripts/cargo_vet_review.py
 
 sbom: .packaging ## Generate a Software Bill of Materials
 	cargo sbom -V >/dev/null || (echo "cargo-sbom required" && cargo install cargo-sbom)
@@ -274,6 +277,18 @@ $(SLE_TARGETS): %: .packaging dockerfiles
 			'for f in ./target/generate-rpm/*.rpm; do \
 				mv $$f $${f%.rpm}-$@.rpm; \
 			done && mv ./target/generate-rpm/*.rpm ./packaging/'
+
+$(GENTOO_TARGETS): %: .packaging dockerfiles
+	@echo "Generating $@ ebuild"
+	$(DOCKER) build -t himmelblau-$@-build -f images/Dockerfile.$@ .
+	$(DOCKER) run --rm --security-opt label=disable \
+		-v $(CURDIR):/himmelblau \
+		himmelblau-$@-build
+	@echo "Building from local sources..."
+	python3 scripts/gen_servicefiles.py --out ./platform/opensuse/
+	cargo build --release --features tpm
+	strip -s target/release/*.so 2>/dev/null || true
+	strip -s target/release/aad-tool target/release/himmelblaud target/release/himmelblaud_tasks target/release/broker target/release/linux-entra-sso 2>/dev/null || true
 
 # Pretty/help colors (safe if your shell prints raw escapes; adjust or remove if you prefer plain)
 HELP_COL := \033[36m
