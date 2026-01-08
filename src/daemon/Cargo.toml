@@ -35,7 +35,7 @@ serde_json.workspace = true
 futures = "^0.3.28"
 systemd-journal-logger = "^2.2.2"
 himmelblau_policies = { workspace = true }
-uzers = "^0.12.1"
+uzers = "^0.12.2"
 sketching = { workspace = true }
 walkdir = { workspace = true }
 libc = { workspace = true }
@@ -59,10 +59,10 @@ recommends = ["nss-himmelblau", "pam-himmelblau", "krb5-user", "cron"]
 assets = [
   ["../../platform/debian/himmelblau.conf.example", "etc/himmelblau/himmelblau.conf", "644"],
   ["../../src/config/krb5_himmelblau.conf", "etc/krb5.conf.d/", "644"],
-  ["../../src/config/gdm3_service_override.conf", "etc/systemd/system/gdm3.service.d/override.conf", "644"],
+  ["../../src/config/gdm3_service_override.conf", "usr/lib/systemd/system/gdm3.service.d/himmelblau-override.conf", "644"],
   ["target/release/aad-tool", "usr/bin/", "755"],
-  ["../../platform/debian/himmelblaud-tasks.service", "etc/systemd/system/", "644"],
-  ["../../platform/debian/himmelblaud.service", "etc/systemd/system/", "644"],
+  ["../../platform/debian/himmelblaud-tasks.service", "usr/lib/systemd/system/", "644"],
+  ["../../platform/debian/himmelblaud.service", "usr/lib/systemd/system/", "644"],
   ["target/release/himmelblaud", "usr/sbin/", "755"],
   ["target/release/himmelblaud_tasks", "usr/sbin/", "755"],
   ["../../README.md", "usr/share/doc/himmelblau/README", "644"],
