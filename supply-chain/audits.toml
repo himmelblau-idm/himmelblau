@@ -189,6 +189,11 @@ who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
 version = "0.16.2"
 
+[[audits.lru]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+version = "0.16.3"
+
 [[audits.matchit]]
 who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
@@ -541,6 +546,18 @@ criteria = "safe-to-deploy"
 user-id = 189 # Andrew Gallant (BurntSushi)
 start = "2019-06-26"
 end = "2026-09-11"
+
+[[trusted.der]]
+criteria = "safe-to-deploy"
+user-id = 267 # Tony Arcieri (tarcieri)
+start = "2020-12-17"
+end = "2027-01-07"
+
+[[trusted.der_derive]]
+criteria = "safe-to-deploy"
+user-id = 267 # Tony Arcieri (tarcieri)
+start = "2020-12-18"
+end = "2027-01-07"
 
 [[trusted.derive_more]]
 criteria = "safe-to-deploy"
@@ -1004,6 +1021,12 @@ user-id = 127515
 start = "2023-10-31"
 end = "2026-10-15"
 
+[[trusted.ldap3_proto]]
+criteria = "safe-to-deploy"
+user-id = 31100 # Firstyear (Firstyear)
+start = "2022-02-03"
+end = "2027-01-07"
+
 [[trusted.libc]]
 criteria = "safe-to-deploy"
 user-id = 55123 # rust-lang-owner
@@ -1015,6 +1038,12 @@ criteria = "safe-to-deploy"
 user-id = 696 # Nick Fitzgerald (fitzgen)
 start = "2020-01-14"
 end = "2026-09-26"
+
+[[trusted.libkrimes]]
+criteria = "safe-to-deploy"
+user-id = 31100 # Firstyear (Firstyear)
+start = "2026-01-08"
+end = "2027-01-08"
 
 [[trusted.libm]]
 criteria = "safe-to-deploy"
@@ -1118,6 +1147,12 @@ user-id = 3618 # David Tolnay (dtolnay)
 start = "2019-03-19"
 end = "2026-09-11"
 
+[[trusted.pbkdf2]]
+criteria = "safe-to-deploy"
+user-id = 267 # Tony Arcieri (tarcieri)
+start = "2020-06-10"
+end = "2027-01-07"
+
 [[trusted.phf]]
 criteria = "safe-to-deploy"
 user-id = 51017 # Yuki Okushi (JohnTitor)
@@ -1201,6 +1236,12 @@ criteria = "safe-to-deploy"
 user-id = 359 # Sean McArthur (seanmonstar)
 start = "2019-03-04"
 end = "2026-09-11"
+
+[[trusted.rsa]]
+criteria = "safe-to-deploy"
+user-id = 267 # Tony Arcieri (tarcieri)
+start = "2022-03-10"
+end = "2027-01-07"
 
 [[trusted.rustix]]
 criteria = "safe-to-deploy"

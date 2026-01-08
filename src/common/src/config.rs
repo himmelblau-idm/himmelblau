@@ -29,13 +29,14 @@ use tracing::{debug, error};
 
 use crate::constants::{
     CN_NAME_MAPPING, DEFAULT_AUTHORITY_HOST, DEFAULT_BROKER_SOCK_PATH, DEFAULT_CACHE_TIMEOUT,
-    DEFAULT_CONFIG_PATH, DEFAULT_CONN_TIMEOUT, DEFAULT_DB_PATH, DEFAULT_HELLO_ENABLED,
-    DEFAULT_HELLO_PIN_MIN_LEN, DEFAULT_HELLO_PIN_RETRY_COUNT, DEFAULT_HOME_ALIAS,
-    DEFAULT_HOME_ATTR, DEFAULT_HOME_PREFIX, DEFAULT_HSM_PIN_PATH, DEFAULT_ID_ATTR_MAP,
-    DEFAULT_JOIN_TYPE, DEFAULT_ODC_PROVIDER, DEFAULT_OFFLINE_BREAKGLASS_TTL,
-    DEFAULT_POLICIES_DB_DIR, DEFAULT_SELINUX, DEFAULT_SFA_FALLBACK_ENABLED, DEFAULT_SHELL,
-    DEFAULT_SOCK_PATH, DEFAULT_TASK_SOCK_PATH, DEFAULT_TPM_TCTI_NAME, DEFAULT_USER_MAP_FILE,
-    DEFAULT_USE_ETC_SKEL, MAPPED_NAME_CACHE, SERVER_CONFIG_PATH,
+    DEFAULT_CONFIG_PATH, DEFAULT_CONN_TIMEOUT, DEFAULT_CONSOLE_PASSWORD_ONLY, DEFAULT_DB_PATH,
+    DEFAULT_HELLO_ENABLED, DEFAULT_HELLO_PIN_MIN_LEN, DEFAULT_HELLO_PIN_RETRY_COUNT,
+    DEFAULT_HOME_ALIAS, DEFAULT_HOME_ATTR, DEFAULT_HOME_PREFIX, DEFAULT_HSM_PIN_PATH,
+    DEFAULT_ID_ATTR_MAP, DEFAULT_JOIN_TYPE, DEFAULT_ODC_PROVIDER, DEFAULT_OFFLINE_BREAKGLASS_TTL,
+    DEFAULT_PASSWORD_ONLY_REMOTE_SERVICES_DENY_LIST, DEFAULT_POLICIES_DB_DIR, DEFAULT_SELINUX,
+    DEFAULT_SFA_FALLBACK_ENABLED, DEFAULT_SHELL, DEFAULT_SOCK_PATH, DEFAULT_TASK_SOCK_PATH,
+    DEFAULT_TPM_TCTI_NAME, DEFAULT_USER_MAP_FILE, DEFAULT_USE_ETC_SKEL, MAPPED_NAME_CACHE,
+    SERVER_CONFIG_PATH,
 };
 use crate::mapping::{MappedNameCache, Mode};
 use crate::unix_config::{HomeAttr, HsmType};
@@ -607,6 +608,26 @@ impl HimmelblauConfig {
             self.config.get("global", "enable_sfa_fallback"),
             DEFAULT_SFA_FALLBACK_ENABLED,
         )
+    }
+
+    pub fn get_allow_console_password_only(&self) -> bool {
+        match_bool(
+            self.config.get("global", "allow_console_password_only"),
+            DEFAULT_CONSOLE_PASSWORD_ONLY,
+        )
+    }
+
+    pub fn get_password_only_remote_services_deny_list(&self) -> Vec<String> {
+        match self
+            .config
+            .get("global", "password_only_remote_services_deny_list")
+        {
+            Some(val) => val.split(',').map(|s| s.trim().to_string()).collect(),
+            None => DEFAULT_PASSWORD_ONLY_REMOTE_SERVICES_DENY_LIST
+                .split(',')
+                .map(|s| s.trim().to_string())
+                .collect(),
+        }
     }
 
     pub fn get_debug(&self) -> bool {
@@ -1976,5 +1997,191 @@ mod tests {
             config.get_offline_breakglass_ttl(),
             DEFAULT_OFFLINE_BREAKGLASS_TTL
         );
+    }
+
+    #[test]
+    fn test_get_password_only_remote_services_deny_list_comma_separated() {
+        let config_data = r#"
+        [global]
+        password_only_remote_services_deny_list = ssh,telnet,ftp
+        "#;
+
+        let temp_file = create_temp_config(config_data);
+        let config = HimmelblauConfig::new(Some(&temp_file)).unwrap();
+
+        let result = config.get_password_only_remote_services_deny_list();
+        assert_eq!(result, vec!["ssh", "telnet", "ftp"]);
+    }
+
+    #[test]
+    fn test_get_password_only_remote_services_deny_list_whitespace_trimming() {
+        let config_data = r#"
+        [global]
+        password_only_remote_services_deny_list = ssh , telnet,  ftp  ,vnc
+        "#;
+
+        let temp_file = create_temp_config(config_data);
+        let config = HimmelblauConfig::new(Some(&temp_file)).unwrap();
+
+        let result = config.get_password_only_remote_services_deny_list();
+        assert_eq!(result, vec!["ssh", "telnet", "ftp", "vnc"]);
+    }
+
+    #[test]
+    fn test_get_password_only_remote_services_deny_list_empty_string() {
+        let config_data = r#"
+        [global]
+        password_only_remote_services_deny_list =
+        "#;
+
+        let temp_file = create_temp_config(config_data);
+        let config = HimmelblauConfig::new(Some(&temp_file)).unwrap();
+
+        let result = config.get_password_only_remote_services_deny_list();
+        // Empty string split by comma produces a single empty string element
+        assert_eq!(result, vec![""]);
+    }
+
+    #[test]
+    fn test_get_password_only_remote_services_deny_list_default_value() {
+        let config_data = r#"
+        [global]
+        "#;
+
+        let temp_file = create_temp_config(config_data);
+        let config = HimmelblauConfig::new(Some(&temp_file)).unwrap();
+
+        let result = config.get_password_only_remote_services_deny_list();
+        // Should return the default list parsed from DEFAULT_PASSWORD_ONLY_REMOTE_SERVICES_DENY_LIST
+        let expected: Vec<String> = DEFAULT_PASSWORD_ONLY_REMOTE_SERVICES_DENY_LIST
+            .split(',')
+            .map(|s| s.trim().to_string())
+            .collect();
+        assert_eq!(result, expected);
+        // Verify default contains expected services
+        assert!(result.contains(&"ssh".to_string()));
+        assert!(result.contains(&"telnet".to_string()));
+    }
+
+    #[test]
+    fn test_get_password_only_remote_services_deny_list_case_sensitivity() {
+        // Values are stored as-is (case-sensitive). The caller (himmelblau.rs)
+        // may apply case-insensitive matching, but the config parser preserves case.
+        let config_data = r#"
+        [global]
+        password_only_remote_services_deny_list = SSH,Telnet,FTP
+        "#;
+
+        let temp_file = create_temp_config(config_data);
+        let config = HimmelblauConfig::new(Some(&temp_file)).unwrap();
+
+        let result = config.get_password_only_remote_services_deny_list();
+        assert_eq!(result, vec!["SSH", "Telnet", "FTP"]);
+        // Case is preserved - these are not lowercased
+        assert!(result.contains(&"SSH".to_string()));
+        assert!(!result.contains(&"ssh".to_string()));
+    }
+
+    #[test]
+    fn test_get_password_only_remote_services_deny_list_single_value() {
+        let config_data = r#"
+        [global]
+        password_only_remote_services_deny_list = ssh
+        "#;
+
+        let temp_file = create_temp_config(config_data);
+        let config = HimmelblauConfig::new(Some(&temp_file)).unwrap();
+
+        let result = config.get_password_only_remote_services_deny_list();
+        assert_eq!(result, vec!["ssh"]);
+    }
+
+    // Tests for parse_ttl_to_seconds()
+
+    #[test]
+    fn test_parse_ttl_seconds() {
+        assert_eq!(parse_ttl_to_seconds("10"), Some(10));
+        assert_eq!(parse_ttl_to_seconds("10s"), Some(10));
+        assert_eq!(parse_ttl_to_seconds("10S"), Some(10));
+        assert_eq!(parse_ttl_to_seconds("0s"), Some(0));
+        assert_eq!(parse_ttl_to_seconds("1"), Some(1));
+    }
+
+    #[test]
+    fn test_parse_ttl_minutes() {
+        assert_eq!(parse_ttl_to_seconds("1m"), Some(60));
+        assert_eq!(parse_ttl_to_seconds("5m"), Some(300));
+        assert_eq!(parse_ttl_to_seconds("30M"), Some(1800));
+    }
+
+    #[test]
+    fn test_parse_ttl_hours() {
+        assert_eq!(parse_ttl_to_seconds("1h"), Some(3600));
+        assert_eq!(parse_ttl_to_seconds("2h"), Some(7200));
+        assert_eq!(parse_ttl_to_seconds("24H"), Some(86400));
+    }
+
+    #[test]
+    fn test_parse_ttl_days() {
+        assert_eq!(parse_ttl_to_seconds("1d"), Some(86400));
+        assert_eq!(parse_ttl_to_seconds("7d"), Some(604800));
+        assert_eq!(parse_ttl_to_seconds("30D"), Some(2592000));
+    }
+
+    #[test]
+    fn test_parse_ttl_whitespace() {
+        assert_eq!(parse_ttl_to_seconds("  10s  "), Some(10));
+        assert_eq!(parse_ttl_to_seconds("\t5m\n"), Some(300));
+    }
+
+    #[test]
+    fn test_parse_ttl_invalid() {
+        // Empty string
+        assert_eq!(parse_ttl_to_seconds(""), None);
+        // Invalid suffix
+        assert_eq!(parse_ttl_to_seconds("10x"), None);
+        assert_eq!(parse_ttl_to_seconds("10w"), None);
+        // Non-numeric
+        assert_eq!(parse_ttl_to_seconds("abc"), None);
+        assert_eq!(parse_ttl_to_seconds("tenm"), None);
+        // Negative (parse as u64 fails)
+        assert_eq!(parse_ttl_to_seconds("-10s"), None);
+        // Floating point
+        assert_eq!(parse_ttl_to_seconds("1.5h"), None);
+    }
+
+    // Tests for split_username()
+
+    #[test]
+    fn test_split_username_valid() {
+        assert_eq!(
+            split_username("user@example.com"),
+            Some(("user", "example.com"))
+        );
+        assert_eq!(
+            split_username("alice@contoso.onmicrosoft.com"),
+            Some(("alice", "contoso.onmicrosoft.com"))
+        );
+    }
+
+    #[test]
+    fn test_split_username_no_at() {
+        assert_eq!(split_username("username"), None);
+        assert_eq!(split_username(""), None);
+    }
+
+    #[test]
+    fn test_split_username_multiple_at() {
+        // More than one @ returns None (len != 2)
+        assert_eq!(split_username("user@domain@extra"), None);
+    }
+
+    #[test]
+    fn test_split_username_edge_cases() {
+        // Empty parts are still valid splits
+        assert_eq!(split_username("@domain"), Some(("", "domain")));
+        assert_eq!(split_username("user@"), Some(("user", "")));
+        // Just @ sign
+        assert_eq!(split_username("@"), Some(("", "")));
     }
 }
