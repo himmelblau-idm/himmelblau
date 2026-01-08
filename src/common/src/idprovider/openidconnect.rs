@@ -306,11 +306,6 @@ impl OidcApplication {
     }
 
     #[instrument(level = "debug", skip_all)]
-    async fn write(&self) -> tokio::sync::RwLockWriteGuard<'_, Option<OidcDelayedInit>> {
-        self.client.write().await
-    }
-
-    #[instrument(level = "debug", skip_all)]
     pub async fn initiate_device_flow(
         &self,
     ) -> Result<DeviceAuthorizationResponse<EmptyExtraDeviceAuthorizationFields>, MsalError> {
