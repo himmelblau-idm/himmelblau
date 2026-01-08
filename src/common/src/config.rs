@@ -2095,4 +2095,93 @@ mod tests {
         let result = config.get_password_only_remote_services_deny_list();
         assert_eq!(result, vec!["ssh"]);
     }
+
+    // Tests for parse_ttl_to_seconds()
+
+    #[test]
+    fn test_parse_ttl_seconds() {
+        assert_eq!(parse_ttl_to_seconds("10"), Some(10));
+        assert_eq!(parse_ttl_to_seconds("10s"), Some(10));
+        assert_eq!(parse_ttl_to_seconds("10S"), Some(10));
+        assert_eq!(parse_ttl_to_seconds("0s"), Some(0));
+        assert_eq!(parse_ttl_to_seconds("1"), Some(1));
+    }
+
+    #[test]
+    fn test_parse_ttl_minutes() {
+        assert_eq!(parse_ttl_to_seconds("1m"), Some(60));
+        assert_eq!(parse_ttl_to_seconds("5m"), Some(300));
+        assert_eq!(parse_ttl_to_seconds("30M"), Some(1800));
+    }
+
+    #[test]
+    fn test_parse_ttl_hours() {
+        assert_eq!(parse_ttl_to_seconds("1h"), Some(3600));
+        assert_eq!(parse_ttl_to_seconds("2h"), Some(7200));
+        assert_eq!(parse_ttl_to_seconds("24H"), Some(86400));
+    }
+
+    #[test]
+    fn test_parse_ttl_days() {
+        assert_eq!(parse_ttl_to_seconds("1d"), Some(86400));
+        assert_eq!(parse_ttl_to_seconds("7d"), Some(604800));
+        assert_eq!(parse_ttl_to_seconds("30D"), Some(2592000));
+    }
+
+    #[test]
+    fn test_parse_ttl_whitespace() {
+        assert_eq!(parse_ttl_to_seconds("  10s  "), Some(10));
+        assert_eq!(parse_ttl_to_seconds("\t5m\n"), Some(300));
+    }
+
+    #[test]
+    fn test_parse_ttl_invalid() {
+        // Empty string
+        assert_eq!(parse_ttl_to_seconds(""), None);
+        // Invalid suffix
+        assert_eq!(parse_ttl_to_seconds("10x"), None);
+        assert_eq!(parse_ttl_to_seconds("10w"), None);
+        // Non-numeric
+        assert_eq!(parse_ttl_to_seconds("abc"), None);
+        assert_eq!(parse_ttl_to_seconds("tenm"), None);
+        // Negative (parse as u64 fails)
+        assert_eq!(parse_ttl_to_seconds("-10s"), None);
+        // Floating point
+        assert_eq!(parse_ttl_to_seconds("1.5h"), None);
+    }
+
+    // Tests for split_username()
+
+    #[test]
+    fn test_split_username_valid() {
+        assert_eq!(
+            split_username("user@example.com"),
+            Some(("user", "example.com"))
+        );
+        assert_eq!(
+            split_username("alice@contoso.onmicrosoft.com"),
+            Some(("alice", "contoso.onmicrosoft.com"))
+        );
+    }
+
+    #[test]
+    fn test_split_username_no_at() {
+        assert_eq!(split_username("username"), None);
+        assert_eq!(split_username(""), None);
+    }
+
+    #[test]
+    fn test_split_username_multiple_at() {
+        // More than one @ returns None (len != 2)
+        assert_eq!(split_username("user@domain@extra"), None);
+    }
+
+    #[test]
+    fn test_split_username_edge_cases() {
+        // Empty parts are still valid splits
+        assert_eq!(split_username("@domain"), Some(("", "domain")));
+        assert_eq!(split_username("user@"), Some(("user", "")));
+        // Just @ sign
+        assert_eq!(split_username("@"), Some(("", "")));
+    }
 }
