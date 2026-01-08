@@ -400,11 +400,10 @@ macro_rules! impl_handle_hello_pin_totp_auth {
             return Err(IdpError::BadRequest);
         };
 
-        let (hello_key, _keytype) =
-            $self.fetch_hello_key($account_id, $keystore).map_err(|e| {
-                error!("Offline authentication failed. Hello key missing.");
-                e
-            })?;
+        let (hello_key, _keytype) = $self.fetch_hello_key($account_id, $keystore).map_err(|e| {
+            error!("Offline authentication failed. Hello key missing.");
+            e
+        })?;
 
         let pin = PinValue::new(&$hello_pin).map_err(|e| {
             error!("Failed setting pin value: {:?}", e);
@@ -585,7 +584,10 @@ macro_rules! impl_himmelblau_offline_auth_step {
                 }
             }
             (
-                AuthCredHandler::HelloTOTP { cred: hello_pin, pending_sealed_totp },
+                AuthCredHandler::HelloTOTP {
+                    cred: hello_pin,
+                    pending_sealed_totp,
+                },
                 PamAuthRequest::HelloTOTP { cred },
             ) => {
                 impl_handle_hello_pin_totp_auth!(

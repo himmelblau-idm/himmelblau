@@ -931,6 +931,7 @@ impl IdProvider for OidcProvider {
         &self,
         account_id: &str,
         _token: Option<&UserToken>,
+        _service: &str,
         no_hello_pin: bool,
         keystore: &mut D,
         tpm: &mut tpm::provider::BoxedDynTpm,
@@ -1347,7 +1348,10 @@ impl IdProvider for OidcProvider {
                 }
             }
             (
-                AuthCredHandler::HelloTOTP { cred: hello_pin, pending_sealed_totp },
+                AuthCredHandler::HelloTOTP {
+                    cred: hello_pin,
+                    pending_sealed_totp,
+                },
                 PamAuthRequest::HelloTOTP { cred },
             ) => {
                 impl_handle_hello_pin_totp_auth!(

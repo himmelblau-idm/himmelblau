@@ -157,7 +157,7 @@ Enables or disables the use of a local Time-based One-Time Password (TOTP) in co
 
 The TOTP secret is enrolled and enforced locally on the host and is independent of any cloud-based MFA or identity provider. Users who have not yet enrolled a TOTP secret will be prompted to complete TOTP enrollment.
 
-This option is enabled by default.
+This option is disabled by default.
 
 .EXAMPLES
 enable_hello_totp = true
@@ -209,6 +209,61 @@ Determines whether password-only (single-factor) authentication is permitted whe
 
 .EXAMPLES
 enable_sfa_fallback = true
+
+.TP
+.B allow_console_password_only
+.RE
+Enables password-only (single-factor) authentication for local console logins
+(e.g., TTY, GDM, SDDM, LightDM). When enabled, Himmelblau will attempt to authenticate
+using only the user's password for local sessions. If Microsoft Entra ID
+requires MFA (based on Conditional Access policies), the user will be prompted
+for MFA automatically.
+
+This option does
+.B NOT
+affect remote authentication methods such as SSH, which
+always require MFA (unless the user has Hello authentication configured).
+
+Remote connections are detected using multiple signals:
+.RS
+.IP \(bu 2
+PAM_RHOST \- If the remote host is set to a non-localhost value
+.IP \(bu 2
+PAM_SERVICE \- If the service name matches entries in
+.B password_only_remote_services_deny_list
+.IP \(bu 2
+PAM_TTY \- If the terminal name contains "ssh" (fallback check)
+.RE
+
+This option requires the device to be domain-joined and is
+.B enabled
+by default, matching the behavior of Microsoft-managed devices. Users can still
+use Hello PIN authentication if it is configured. To require MFA for all logins
+(including local console), set this option to
+.B false.
+
+.EXAMPLES
+allow_console_password_only = true
+
+.TP
+.B password_only_remote_services_deny_list
+.RE
+A comma-separated list of PAM service names that should always require MFA,
+regardless of the
+.B allow_console_password_only
+setting. These are typically remote access services where password-only
+authentication should never be permitted.
+
+The PAM service name is the name passed by the application when calling
+.B pam_start()
+(e.g., "sshd", "login", "gdm-password").
+
+Entries are matched as substrings, so "ssh" will match "ssh", "sshd", "openssh", etc.
+
+By default: "ssh,telnet,ftp,rsh,rlogin,rexec,vnc,xrdp,cockpit,mosh"
+
+.EXAMPLES
+password_only_remote_services_deny_list = ssh,telnet,vnc,xrdp
 
 .TP
 .B mfa_method
