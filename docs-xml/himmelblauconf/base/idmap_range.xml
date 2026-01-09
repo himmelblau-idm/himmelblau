@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<parameter name="idmap_range"
+           section="global"
+           type="range"
+           rust_type="(u32, u32)"
+           documented="true"
+           domain_specific="true"
+           order="41">
+<description>
+Specifies the range of IDs to be used for the user and group mappings.
+
+When this option is modified, you
+.B SHOULD
+run:
+.RS
+.IP
+sudo aad-tool cache-clear --full
+.RE
+
+To ensure that old cached ID mappings are cleared, preventing potential UID overlaps caused by stale cache data. Afterwards, restart himmelblaud.
+</description>
+<default>5000000-5999999</default>
+<default_const>DEFAULT_IDMAP_RANGE</default_const>
+<example>idmap_range = 10000000-10999999</example>
+<handler>get_idmap_range</handler>
+</parameter>

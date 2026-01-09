@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<parameter name="use_etc_skel"
+           section="global"
+           type="bool"
+           rust_type="bool"
+           documented="true"
+           domain_specific="false"
+           order="44">
+<description>
+If set to
+.B true,
+Himmelblau will use the contents of /etc/skel when creating new user directories.
+</description>
+<default>false</default>
+<default_const>DEFAULT_USE_ETC_SKEL</default_const>
+<example>use_etc_skel = true</example>
+</parameter>

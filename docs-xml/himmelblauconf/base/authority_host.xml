@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<parameter name="authority_host"
+           section="global"
+           type="string"
+           rust_type="String"
+           documented="true"
+           domain_specific="true"
+           order="29">
+<description>
+Specifies the hostname for Microsoft authentication.
+</description>
+<default>login.microsoftonline.com</default>
+<default_const>DEFAULT_AUTHORITY_HOST</default_const>
+<example>authority_host = login.microsoftonline.us</example>
+<handler>get_authority_host</handler>
+</parameter>

@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<parameter name="hello_pin_retry_count"
+                      section="global"
+                      type="u32"
+                      rust_type="u32"
+                      documented="true"
+                      domain_specific="false"
+                      order="10"
+                     >
+<description>
+The number of invalid Hello PIN attempts allowed before the user is required to perform MFA. After successful MFA, the user will be prompted to set a new PIN. The value must be a non-negative integer.
+</description>
+<default>3</default>
+<default_const>DEFAULT_HELLO_PIN_RETRY_COUNT</default_const>
+<example>hello_pin_retry_count = 5</example>
+</parameter>

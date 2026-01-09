@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<section name="offline_breakglass">
+<title>OFFLINE BREAKGLASS CONFIGURATION</title>
+<preamble>
+The
+.B [offline_breakglass]
+section configures Himmelblau's emergency offline authentication mechanism,
+used when Azure Entra ID is unavailable.
+
+.P
+Offline breakglass allows Entra ID users who normally require multi-factor authentication (MFA)
+to authenticate with their cached password when the host is offline.
+This feature provides a controlled fallback for MFA-only users who would otherwise be unable
+to sign in during an outage.
+
+.P
+Single-factor authentication (SFA-only) users and Hello-PIN users
+already have offline sign-in capability, and are unaffected by this setting.
+This option exists solely to extend limited offline access to
+MFA-enabled users when network connectivity to Entra ID cannot be established.
+</preamble>
+<subsection_intro>
+This section controls whether and how Himmelblau may perform offline password authentication
+for MFA-enabled users in emergency conditions.
+</subsection_intro>
+</section>

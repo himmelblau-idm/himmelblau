@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<parameter name="socket_path"
+           section="global"
+           type="string"
+           rust_type="String"
+           documented="true"
+           domain_specific="false"
+           order="34">
+<description>
+The path to the socket file for communication between the pam and nss modules and the Himmelblau daemon.
+</description>
+<default>/var/run/himmelblaud/socket</default>
+<default_const>DEFAULT_SOCK_PATH</default_const>
+<example>socket_path = /tmp/himmelblaud.sock</example>
+</parameter>

@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<parameter name="debug"
+                      section="global"
+                      type="bool"
+                      rust_type="bool"
+                      documented="true"
+                      domain_specific="false"
+                      order="3"
+                     >
+<description>
+A boolean option that enables debug-level logging. When set to
+.B true,
+debug messages are output to the system journal.
+</description>
+<default>false</default>
+<example>debug = true</example>
+</parameter>

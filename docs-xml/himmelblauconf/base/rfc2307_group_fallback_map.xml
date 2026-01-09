@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<parameter name="rfc2307_group_fallback_map"
+                      section="global"
+                      type="enum"
+                      rust_type="Option&lt;IdAttr&gt;"
+                      documented="true"
+                      domain_specific="false"
+                      order="6"
+                     >
+<description>
+Specify whether to map group IDs (GIDs) based on the object name or object UUID when no
+.B gidNumber
+attribute is found in an on-prem Active Directory instance synchronized to Azure Entra ID. This option is only applicable if
+.B id_attr_map
+is set to
+.B rfc2307.
+If
+.B id_attr_map = rfc2307
+and a group does not have a
+.B gidNumber
+defined in the directory, this setting determines the fallback method for mapping the group ID. If this option is not set, groups without a
+.B gidNumber
+will not be available to NSS.
+</description>
+<default></default>
+<example>rfc2307_group_fallback_map = &lt;name|uuid&gt;</example>
+<enum_values>
+  <value rust="IdAttr::Name">name</value>
+  <value rust="IdAttr::Uuid">uuid</value>
+</enum_values>
+<handler>get_rfc2307_group_fallback_map</handler>
+</parameter>

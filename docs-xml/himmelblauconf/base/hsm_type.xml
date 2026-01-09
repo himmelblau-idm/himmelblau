@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<parameter name="hsm_type"
+           section="global"
+           type="enum"
+           rust_type="HsmType"
+           documented="true"
+           domain_specific="false"
+           order="31">
+<description>
+Specifies how Himmelblau should handle secure key storage. This option determines whether to use a TPM (Trusted Platform Module) bound software-based HSM, a TPM, or a hybrid approach.
+
+The available options are:
+
+\(bu
+.B tpm_bound_soft_if_possible
+\(en Use a software-based HSM that encrypts key material locally on the system, but binds the parent AuthCode to the TPM, if available.
+
+\(bu
+.B tpm
+\(en Use a hardware TPM exclusively for storing and binding cryptographic keys.
+
+\(bu
+.B tpm_if_possible
+\(en Attempt to use a hardware TPM if available; if not, fall back to the software HSM. If the TPM has previously been used for key storage, the system will not fall back to the software HSM.
+
+This setting is important for protecting sensitive cryptographic keys in a secure environment, reducing the risk of compromise if the system is breached.
+
+Note that the old
+.B soft
+option has been deprecated. Environments currently enrolled using
+.B soft
+will be automatically migrated to
+.B tpm_bound_soft_if_possible.
+
+To validate whether Himmelblau is utilizing the hardware TPM, run the command `sudo aad-tool tpm` for a status report.
+</description>
+<default>tpm_bound_soft_if_possible</default>
+<default_const>HsmType::Soft</default_const>
+<example>hsm_type = tpm</example>
+<enum_values>
+  <value rust="HsmType::Soft">soft</value>
+  <value rust="HsmType::Soft">tpm_bound_soft_if_possible</value>
+  <value rust="HsmType::TpmIfPossible">tpm_if_possible</value>
+  <value rust="HsmType::Tpm">tpm</value>
+</enum_values>
+<handler>get_hsm_type</handler>
+</parameter>

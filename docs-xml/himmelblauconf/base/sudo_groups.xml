@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<parameter name="sudo_groups"
+           section="global"
+           type="string_list"
+           rust_type="Vec&lt;String&gt;"
+           documented="true"
+           domain_specific="true"
+           order="19">
+<description>
+A comma-separated list of Azure Entra ID group object IDs whose members should be granted
+.B sudo
+access on this system.
+If
+.B local_sudo_group
+is not defined, the local group
+.B sudo
+will be used.
+</description>
+<default></default>
+<example>sudo_groups = f3c9a7e4-7d5a-47e8-832f-3d2d92abcd12,5ba4ef1d-e454-4f43-ba7c-6fe6f1601915</example>
+<handler>get_sudo_groups</handler>
+</parameter>

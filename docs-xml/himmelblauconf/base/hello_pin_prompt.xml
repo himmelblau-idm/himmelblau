@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<parameter name="hello_pin_prompt"
+                      section="global"
+                      type="string"
+                      rust_type="String"
+                      documented="true"
+                      domain_specific="false"
+                      order="11"
+                     >
+<description>
+Customizes the prompt text shown when requesting the user's Linux Hello PIN.
+</description>
+<default>Use the Linux Hello PIN for this device.</default>
+<example>hello_pin_prompt = Enter your device unlock PIN</example>
+</parameter>

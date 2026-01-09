@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<parameter name="id_attr_map"
+                      section="global"
+                      type="enum"
+                      rust_type="IdAttr"
+                      documented="true"
+                      domain_specific="false"
+                      order="5"
+                     >
+<description>
+Specify whether to map uid/gid based on the object name, the object uuid, or based on the rfc2307 schema extension attributes synchronized from an on-prem Active Directory instance. Mapping by name or by rfc2307 is recommended.
+</description>
+<default>name</default>
+<default_const>DEFAULT_ID_ATTR_MAP</default_const>
+<example>id_attr_map = &lt;name|uuid|rfc2307&gt;</example>
+<enum_values>
+  <value rust="IdAttr::Name">name</value>
+  <value rust="IdAttr::Uuid">uuid</value>
+  <value rust="IdAttr::Rfc2307">rfc2307</value>
+</enum_values>
+<handler>get_id_attr_map</handler>
+</parameter>

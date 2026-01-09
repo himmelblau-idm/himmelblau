@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<parameter name="home_alias"
+           section="global"
+           type="enum"
+           rust_type="Option&lt;HomeAttr&gt;"
+           documented="true"
+           domain_specific="true"
+           order="39">
+<description>
+The symlinked alias for the user's home directory. Available options include:
+.RS
+.IP
+\- UUID
+.IP
+\- SPN
+.IP
+\- CN
+.RE
+</description>
+<default>spn</default>
+<default_const>DEFAULT_HOME_ALIAS</default_const>
+<example>home_alias = SPN</example>
+<enum_values>
+  <value rust="HomeAttr::Uuid">uuid</value>
+  <value rust="HomeAttr::Spn">spn</value>
+  <value rust="HomeAttr::Cn">cn</value>
+</enum_values>
+<handler>get_home_alias</handler>
+</parameter>

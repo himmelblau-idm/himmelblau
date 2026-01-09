@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<parameter name="cache_timeout"
+           section="global"
+           type="u64"
+           rust_type="u64"
+           documented="true"
+           domain_specific="false"
+           order="43">
+<description>
+The timeout in seconds for caching authentication data.
+</description>
+<default>300</default>
+<default_const>DEFAULT_CACHE_TIMEOUT</default_const>
+<example>cache_timeout = 10</example>
+</parameter>

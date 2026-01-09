@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<parameter name="pam_allow_groups"
+                      section="global"
+                      type="string_list"
+                      rust_type="Vec&lt;String&gt;"
+                      documented="true"
+                      domain_specific="true"
+                      order="4"
+                     >
+<description>
+A comma-separated list of Entra Id Users and Groups permitted to access the system. Users should be specified by UPN. Groups MUST be specified using their Object ID GUID. Group names may not be used because these names are not guaranteed to be unique in Entra Id.
+
+If not set, all Entra ID users are permitted to authenticate.
+</description>
+<default>All users permitted</default>
+<example>pam_allow_groups = f3c9a7e4-7d5a-47e8-832f-3d2d92abcd12,5ba4ef1d-e454-4f43-ba7c-6fe6f1601915,admin@himmelblau-idm.org</example>
+<handler>get_pam_allow_groups</handler>
+</parameter>

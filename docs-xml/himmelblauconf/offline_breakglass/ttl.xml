@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<parameter name="ttl"
+           section="offline_breakglass"
+           type="ttl"
+           rust_type="u64"
+           documented="true"
+           domain_specific="false"
+           order="2">
+<description>
+Specifies how long breakglass mode should remain active once triggered.
+The value may include a suffix to indicate the unit of time:
+.B m
+for minutes,
+.B h
+for hours, or
+.B d
+for days.
+If no suffix is provided, the value is interpreted as seconds.
+After the specified period, offline breakglass mode automatically expires
+and normal authentication resumes.
+</description>
+<default>7200</default>
+<default_const>DEFAULT_OFFLINE_BREAKGLASS_TTL</default_const>
+<example>[offline_breakglass]
+.br
+enabled = true
+.br
+ttl = 1d
+.br
+# Permit offline MFA logins for up to 24 hours after activation</example>
+</parameter>

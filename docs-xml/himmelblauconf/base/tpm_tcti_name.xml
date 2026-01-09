@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<parameter name="tpm_tcti_name"
+           section="global"
+           type="string"
+           rust_type="String"
+           documented="true"
+           domain_specific="false"
+           order="32">
+<description>
+Specifies the TCTI (Trusted Computing Technology Interface) to use when communicating with a Trusted Platform Module (TPM) for secure key operations. This setting is only relevant when
+.B hsm_type
+is set to
+.B tpm
+or
+.B tpm_if_possible.
+
+Common values include:
+
+\(bu
+.B device:/dev/tpmrm0
+\(en This uses the kernel TPM resource manager device, which is the recommended default for most Linux systems.
+
+Other TCTI strings may be required depending on your system's TPM driver or configuration. This option allows advanced control over how Himmelblau connects to the TPM for performing cryptographic operations.
+</description>
+<default>device:/dev/tpmrm0</default>
+<default_const>DEFAULT_TPM_TCTI_NAME</default_const>
+<example>tpm_tcti_name = device:/dev/tpm0</example>
+</parameter>

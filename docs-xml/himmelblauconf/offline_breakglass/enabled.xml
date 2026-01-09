@@ -1,0 +1,61 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<parameter name="enabled"
+           section="offline_breakglass"
+           type="bool"
+           rust_type="bool"
+           documented="true"
+           domain_specific="false"
+           order="1">
+<description>
+Boolean value specifying whether offline breakglass mode is permitted.
+
+.P
+When set to
+.B true,
+Himmelblau will cache secure, salted password verifiers for
+.B MFA-enabled
+Entra ID users who successfully authenticate online.
+These verifiers can then be used to authenticate the same users when Entra ID is unreachable,
+allowing MFA users to log in using their cached password.
+
+.P
+If this option is set to
+.B false,
+Himmelblau will continue to cache password verifiers only for SFA-only users,
+and MFA-enabled users will
+.B not
+be able to authenticate when offline.
+The
+.BR aad-tool (1)
+command
+.B aad-tool offline-breakglass
+will also have no effect.
+
+.P
+Administrators must enable this option well in advance of an outage,
+as password verifiers for MFA users are only stored following a successful online authentication.
+It is too late to enable this feature once Entra ID is already unreachable.
+
+.P
+Enabling offline breakglass mode carries significant risk.
+If a device is stolen or compromised, and network access to Entra ID is blocked,
+attackers could effectively disable MFA protection by forcing the system into
+a simple password-only (SFA) authentication state.
+Administrators should enable this mode
+.B only after careful consideration
+of their organization's security posture and offline access requirements.
+
+.P
+This feature does not apply to passwordless accounts.
+If an MFA user signs in using a passwordless method,
+no password hash exists to cache, and offline breakglass cannot function for that user.
+</description>
+<default>false</default>
+<example>[offline_breakglass]
+.br
+enabled = true
+.br
+ttl = 2h
+.br
+# Allow MFA users to authenticate offline for up to 2 hours</example>
+</parameter>

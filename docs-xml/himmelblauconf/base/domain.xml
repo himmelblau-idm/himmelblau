@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<parameter name="domain"
+           section="global"
+           type="string"
+           rust_type="Vec&lt;String&gt;"
+           documented="true"
+           domain_specific="false"
+           order="1">
+<description>
+The primary Azure Entra ID domain name used for authentication. This value
+.B SHOULD
+match the domain name that users enter when signing in (for example, the domain portion of their UPN).
+
+In most cases, this will be the primary domain of your Azure Entra ID tenant. If your organization uses multiple verified domains or aliases, choose the one that your users actually use to sign in.
+
+If not specified, the domain is extracted from the UPN of the first user to authenticate and looked up in Entra ID.
+</description>
+<default>Extracted from first user's UPN</default>
+<example>domain = example.com</example>
+<required>true</required>
+<!-- Note: 'domain' is documented as a single string but actually behaves
+     as a comma-separated list, aliased to 'domains'. This is handled by
+     get_configured_domains() which we keep as a custom handler. -->
+<handler>get_configured_domains</handler>
+</parameter>

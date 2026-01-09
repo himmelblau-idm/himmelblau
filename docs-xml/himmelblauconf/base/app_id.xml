@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<parameter name="app_id"
+           section="global"
+           type="string"
+           rust_type="Option&lt;String&gt;"
+           documented="true"
+           domain_specific="true"
+           order="23">
+<description>
+Specifies the Azure Entra ID application (client) ID used by Himmelblau for directory operations such as reading extended attributes (for example,
+the
+.B gidNumber
+attribute used in RFC 2307 idmapping).
+
+If
+.B logon_token_app_id
+is not set, this application ID is also used when requesting access tokens for the user logon script.
+
+.PP
+\fBNote:\fR In the Azure Portal for the application corresponding to \fBapp_id\fR, ensure that the redirect URI
+\fIhimmelblau://Himmelblau.EntraId.BrokerPlugin\fR
+is enabled under "Mobile and desktop applications" in the Authentication section.
+This allows Himmelblau to correctly handle interactive token redirection.
+</description>
+<default></default>
+<example>app_id = d023f7aa-d214-4b59-911d-6074de623765</example>
+<handler>get_app_id</handler>
+</parameter>

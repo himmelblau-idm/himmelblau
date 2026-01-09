@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<parameter name="connection_timeout"
+           section="global"
+           type="u64"
+           rust_type="u64"
+           documented="true"
+           domain_specific="false"
+           order="42">
+<description>
+The timeout in seconds for connections to the authentication server.
+</description>
+<default>30</default>
+<default_const>DEFAULT_CONN_TIMEOUT</default_const>
+<example>connection_timeout = 5</example>
+</parameter>

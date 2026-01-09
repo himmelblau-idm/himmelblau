@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<parameter name="cn_name_mapping"
+           section="global"
+           type="bool"
+           rust_type="bool"
+           documented="true"
+           domain_specific="false"
+           order="17">
+<description>
+Allows users to enter the short form of their username (e.g., 'dave') instead of the full UPN.
+</description>
+<default>true</default>
+<default_const>CN_NAME_MAPPING</default_const>
+<example>cn_name_mapping = false</example>
+</parameter>

@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<parameter name="enable_sfa_fallback"
+                      section="global"
+                      type="bool"
+                      rust_type="bool"
+                      documented="true"
+                      domain_specific="false"
+                      order="13"
+                     >
+<description>
+Determines whether password-only (single-factor) authentication is permitted when MFA is unavailable.
+</description>
+<default>false</default>
+<default_const>DEFAULT_SFA_FALLBACK_ENABLED</default_const>
+<example>enable_sfa_fallback = true</example>
+</parameter>

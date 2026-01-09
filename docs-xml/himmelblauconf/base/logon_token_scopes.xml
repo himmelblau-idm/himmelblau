@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<parameter name="logon_token_scopes"
+           section="global"
+           type="string_list"
+           rust_type="Vec&lt;String&gt;"
+           documented="true"
+           domain_specific="false"
+           order="22">
+<description>
+A comma-separated list of the scopes to be requested for the ACCESS_TOKEN during logon. These scopes
+.B MUST
+correspond to the API permissions assigned to the Entra Id Application specified by the
+.B app_id
+option.
+</description>
+<default></default>
+<example>logon_token_scopes = user.read,mail.read</example>
+</parameter>
