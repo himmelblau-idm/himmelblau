@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<parameter name="join_type"
+           section="global"
+           type="enum"
+           rust_type="JoinType"
+           documented="true"
+           domain_specific="false"
+           order="46">
+<description>
+Specifies whether the system should join or register with Microsoft Entra ID.
+</description>
+<default>join</default>
+<default_const>DEFAULT_JOIN_TYPE</default_const>
+<example>join_type = register</example>
+<enum_values>
+  <value rust="JoinType::Join">join</value>
+  <value rust="JoinType::Register">register</value>
+</enum_values>
+<handler>get_join_type</handler>
+</parameter>

@@ -121,6 +121,9 @@ CMD_TAB = "     "
 CMD_SEP = f" && \ \n{CMD_TAB}"
 
 
+GEN_MANPAGE = "python3 scripts/gen_param_code.py --gen-man --man-output man/man5/himmelblau.conf.5"
+
+
 def build_deb_final_cmd(features: list, distro_slug: str) -> str:
     parts = []
     for pkg, _, needs_tpm in PACKAGES:
@@ -133,7 +136,7 @@ def build_deb_final_cmd(features: list, distro_slug: str) -> str:
             feat_str += " --multiarch=same"
         parts.append(f"cargo deb ${{CARGO_PATCH_ARG}}{feat_str} --deb-revision={distro_slug} -p {pkg}")
     gen_servicefiles = "make deb-servicefiles"
-    return f'CMD ["/bin/sh", "-c", \\\n{CMD_TAB}"{gen_servicefiles} && {CMD_SEP.join(parts)} "]'
+    return f'CMD ["/bin/sh", "-c", \\\n{CMD_TAB}"{GEN_MANPAGE} && {gen_servicefiles} && {CMD_SEP.join(parts)} "]'
 
 
 def build_rpm_final_cmd(features: list, selinux: bool) -> str:
@@ -149,12 +152,12 @@ def build_rpm_final_cmd(features: list, selinux: bool) -> str:
     rpms = CMD_SEP.join([f"cargo generate-rpm -p {s}" for _, s, _ in pkgs])
     gen_servicefiles = "make rpm-servicefiles"
     gen_authselect = "(authselect select minimal --force || authselect select local --force) && make authselect"
-    return f'CMD ["/bin/sh", "-c", \\\n{CMD_TAB}"{gen_servicefiles} && {build}{strip} && {gen_authselect} && \\\n{CMD_TAB}{rpms}"]'
+    return f'CMD ["/bin/sh", "-c", \\\n{CMD_TAB}"{GEN_MANPAGE} && {gen_servicefiles} && {build}{strip} && {gen_authselect} && \\\n{CMD_TAB}{rpms}"]'
 
 
 def build_gentoo_final_cmd(features: list, repo_root: Path) -> str:
     """Build command for Gentoo - generates an ebuild file."""
-    return 'CMD ["python3", "scripts/gen_ebuild.py", "--out", "./packaging/"]'
+    return f'CMD ["/bin/sh", "-c", "{GEN_MANPAGE} && python3 scripts/gen_ebuild.py --out ./packaging/"]'
 
 
 # ---- Distro targets ----------------------------------------------------------

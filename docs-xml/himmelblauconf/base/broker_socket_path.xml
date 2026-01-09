@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<parameter name="broker_socket_path"
+           section="global"
+           type="string"
+           rust_type="String"
+           documented="true"
+           domain_specific="false"
+           order="36">
+<description>
+The path to the socket file for communication with the broker DBus service.
+</description>
+<default>/var/run/himmelblaud/broker_sock</default>
+<default_const>DEFAULT_BROKER_SOCK_PATH</default_const>
+<example>broker_socket_path = /tmp/broker.sock</example>
+</parameter>

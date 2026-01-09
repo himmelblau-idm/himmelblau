@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<parameter name="local_sudo_group"
+           section="global"
+           type="string"
+           rust_type="String"
+           documented="true"
+           domain_specific="false"
+           order="20">
+<description>
+The local group that should be given to users in any of the groups specified in sudo_groups.
+Only has an affect if sudo_groups is set.
+Removes group from user if they are no longer a member of the specified entra group.
+</description>
+<default>sudo</default>
+<example></example>
+</parameter>

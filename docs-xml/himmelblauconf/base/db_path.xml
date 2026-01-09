@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<parameter name="db_path"
+           section="global"
+           type="string"
+           rust_type="String"
+           documented="true"
+           domain_specific="false"
+           order="30">
+<description>
+The location of the cache database. This file is used to store cached authentication data and device state.
+</description>
+<default>/var/cache/himmelblaud/himmelblau.cache.db</default>
+<default_const>DEFAULT_DB_PATH</default_const>
+<example>db_path = /var/cache/himmelblau/himmelblau.cache.db</example>
+</parameter>

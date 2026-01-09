@@ -322,12 +322,6 @@ impl HimmelblauConfig {
         }
     }
 
-    pub fn get_app_id(&self, domain: &str) -> Option<String> {
-        match self.config.get(domain, "app_id") {
-            Some(val) => Some(val),
-            None => self.config.get("global", "app_id"),
-        }
-    }
 
     pub fn get_idmap_range(&self, domain: &str) -> (u32, u32) {
         let default_range = DEFAULT_IDMAP_RANGE;
@@ -372,61 +366,39 @@ impl HimmelblauConfig {
         }
     }
 
-    pub fn get_socket_path(&self) -> String {
-        match self.config.get("global", "socket_path") {
-            Some(val) => val,
-            None => DEFAULT_SOCK_PATH.to_string(),
-        }
-    }
-
-    pub fn get_task_socket_path(&self) -> String {
-        match self.config.get("global", "task_socket_path") {
-            Some(val) => val,
-            None => DEFAULT_TASK_SOCK_PATH.to_string(),
-        }
-    }
-
-    pub fn get_broker_socket_path(&self) -> String {
-        match self.config.get("global", "broker_socket_path") {
-            Some(val) => val,
-            None => DEFAULT_BROKER_SOCK_PATH.to_string(),
-        }
-    }
-
-    pub fn get_connection_timeout(&self) -> u64 {
-        match self.config.get("global", "connection_timeout") {
-            Some(val) => match val.parse::<u64>() {
-                Ok(n) => n,
-                Err(_) => {
-                    error!("Failed parsing connection_timeout from config: {}", val);
-                    DEFAULT_CONN_TIMEOUT
-                }
-            },
-            None => DEFAULT_CONN_TIMEOUT,
-        }
-    }
-
-    pub fn get_cache_timeout(&self) -> u64 {
-        match self.config.get("global", "cache_timeout") {
-            Some(val) => match val.parse::<u64>() {
-                Ok(n) => n,
-                Err(_) => {
-                    error!("Failed parsing cache_timeout from config: {}", val);
-                    DEFAULT_CACHE_TIMEOUT
-                }
-            },
-            None => DEFAULT_CACHE_TIMEOUT,
-        }
-    }
-
     pub fn get_unix_sock_timeout(&self) -> u64 {
         self.get_connection_timeout().saturating_mul(2)
     }
 
-    pub fn get_db_path(&self) -> String {
-        match self.config.get("global", "db_path") {
+    pub fn get_authority_host(&self, domain: &str) -> String {
+        match self.config.get(domain, "authority_host") {
             Some(val) => val,
-            None => DEFAULT_DB_PATH.to_string(),
+            None => {
+                debug!("authority_host unset, using defaults");
+                String::from(DEFAULT_AUTHORITY_HOST)
+            }
+        }
+    }
+
+    pub fn get_tenant_id(&self, domain: &str) -> Option<String> {
+        self.config.get(domain, "tenant_id")
+    }
+
+    pub fn get_graph_url(&self, domain: &str) -> Option<String> {
+        self.config.get(domain, "graph_url")
+    }
+
+    pub fn get_app_id(&self, domain: &str) -> Option<String> {
+        match self.config.get(domain, "app_id") {
+            Some(val) => Some(val),
+            None => self.config.get("global", "app_id"),
+        }
+    }
+
+    pub fn get_logon_token_app_id(&self, domain: &str) -> Option<String> {
+        match self.config.get(domain, "logon_token_app_id") {
+            Some(val) => Some(val),
+            None => self.config.get("global", "logon_token_app_id"),
         }
     }
 
@@ -465,16 +437,7 @@ impl HimmelblauConfig {
         }
     }
 
-    pub fn get_tpm_tcti_name(&self) -> String {
-        match self.config.get("global", "tpm_tcti_name") {
-            Some(val) => val,
-            None => DEFAULT_TPM_TCTI_NAME.to_string(),
-        }
-    }
 
-    pub fn get_apply_policy(&self) -> bool {
-        match_bool(self.config.get("global", "apply_policy"), false)
-    }
 
     pub fn get_pam_allow_groups(&self) -> Vec<String> {
         let mut pam_allow_groups = vec![];
@@ -536,16 +499,6 @@ impl HimmelblauConfig {
         self.config.set(section, key, Some(value.to_string()));
     }
 
-    pub fn get_use_etc_skel(&self) -> bool {
-        match_bool(
-            self.config.get("global", "use_etc_skel"),
-            DEFAULT_USE_ETC_SKEL,
-        )
-    }
-
-    pub fn get_selinux(&self) -> bool {
-        match_bool(self.config.get("global", "selinux"), DEFAULT_SELINUX)
-    }
 
     pub fn get_configured_domains(&self) -> Vec<String> {
         let mut domains = match self.config.get("global", "domains") {
@@ -571,12 +524,6 @@ impl HimmelblauConfig {
         self.filename.clone()
     }
 
-    pub fn get_enable_hello(&self) -> bool {
-        match_bool(
-            self.config.get("global", "enable_hello"),
-            DEFAULT_HELLO_ENABLED,
-        )
-    }
 
     pub fn get_id_attr_map(&self) -> IdAttr {
         match self.config.get("global", "id_attr_map") {
@@ -603,19 +550,6 @@ impl HimmelblauConfig {
             })
     }
 
-    pub fn get_enable_sfa_fallback(&self) -> bool {
-        match_bool(
-            self.config.get("global", "enable_sfa_fallback"),
-            DEFAULT_SFA_FALLBACK_ENABLED,
-        )
-    }
-
-    pub fn get_allow_console_password_only(&self) -> bool {
-        match_bool(
-            self.config.get("global", "allow_console_password_only"),
-            DEFAULT_CONSOLE_PASSWORD_ONLY,
-        )
-    }
 
     pub fn get_password_only_remote_services_deny_list(&self) -> Vec<String> {
         match self
@@ -630,85 +564,7 @@ impl HimmelblauConfig {
         }
     }
 
-    pub fn get_debug(&self) -> bool {
-        match_bool(self.config.get("global", "debug"), false)
-    }
 
-    pub fn get_cn_name_mapping(&self) -> bool {
-        match_bool(
-            self.config.get("global", "cn_name_mapping"),
-            CN_NAME_MAPPING,
-        )
-    }
-
-    pub fn get_hello_pin_min_length(&self) -> usize {
-        match self.config.get("global", "hello_pin_min_length") {
-            Some(val) => match val.parse::<usize>() {
-                Ok(n) => n,
-                Err(_) => {
-                    error!("Failed parsing hello_pin_min_length from config: {}", val);
-                    DEFAULT_HELLO_PIN_MIN_LEN
-                }
-            },
-            None => DEFAULT_HELLO_PIN_MIN_LEN,
-        }
-    }
-
-    pub fn get_hello_pin_retry_count(&self) -> u32 {
-        match self.config.get("global", "hello_pin_retry_count") {
-            Some(val) => match val.parse::<u32>() {
-                Ok(n) => n,
-                Err(_) => {
-                    error!("Failed parsing hello_pin_retry_count from config: {}", val);
-                    DEFAULT_HELLO_PIN_RETRY_COUNT
-                }
-            },
-            None => DEFAULT_HELLO_PIN_RETRY_COUNT,
-        }
-    }
-
-    pub fn get_authority_host(&self, domain: &str) -> String {
-        match self.config.get(domain, "authority_host") {
-            Some(val) => val,
-            None => {
-                debug!("authority_host unset, using defaults");
-                String::from(DEFAULT_AUTHORITY_HOST)
-            }
-        }
-    }
-
-    pub fn get_tenant_id(&self, domain: &str) -> Option<String> {
-        self.config.get(domain, "tenant_id")
-    }
-
-    pub fn get_graph_url(&self, domain: &str) -> Option<String> {
-        self.config.get(domain, "graph_url")
-    }
-
-    pub fn get_local_groups(&self) -> Vec<String> {
-        match self.config.get("global", "local_groups") {
-            Some(val) => val.split(',').map(|s| s.trim().to_string()).collect(),
-            None => vec![],
-        }
-    }
-
-    pub fn get_logon_script(&self) -> Option<String> {
-        self.config.get("global", "logon_script")
-    }
-
-    pub fn get_logon_token_scopes(&self) -> Vec<String> {
-        match self.config.get("global", "logon_token_scopes") {
-            Some(scopes) => scopes.split(",").map(|s| s.to_string()).collect(),
-            None => vec![],
-        }
-    }
-
-    pub fn get_logon_token_app_id(&self, domain: &str) -> Option<String> {
-        match self.config.get(domain, "logon_token_app_id") {
-            Some(val) => Some(val),
-            None => self.config.get("global", "logon_token_app_id"),
-        }
-    }
 
     pub fn get_intune_device_id(&self, domain: &str) -> Option<String> {
         let domain = self
@@ -717,35 +573,6 @@ impl HimmelblauConfig {
         self.config.get(&domain, "intune_device_id")
     }
 
-    pub fn get_enable_experimental_mfa(&self) -> bool {
-        match_bool(self.config.get("global", "enable_experimental_mfa"), true)
-    }
-
-    pub fn get_enable_experimental_passwordless_fido(&self) -> bool {
-        match_bool(
-            self.config
-                .get("global", "enable_experimental_passwordless_fido"),
-            false,
-        )
-    }
-
-    pub fn get_mfa_method(&self) -> Option<String> {
-        self.config.get("global", "mfa_method")
-    }
-
-    pub fn get_hello_pin_prompt(&self) -> String {
-        match self.config.get("global", "hello_pin_prompt") {
-            Some(val) => val,
-            None => "Use the Linux Hello PIN for this device.".to_string(),
-        }
-    }
-
-    pub fn get_entra_id_password_prompt(&self) -> String {
-        match self.config.get("global", "entra_id_password_prompt") {
-            Some(val) => val,
-            None => "Use the password for your Office 365 or Microsoft online login.".to_string(),
-        }
-    }
 
     pub fn get_primary_domain_from_alias_simple(&self, alias: &str) -> Option<String> {
         let domains = self.get_configured_domains();
@@ -851,9 +678,6 @@ impl HimmelblauConfig {
         None
     }
 
-    pub fn get_name_mapping_script(&self) -> Option<String> {
-        self.config.get("global", "name_mapping_script")
-    }
 
     /// This function attempts to convert a username to a valid UPN. On failure it
     /// will leave the name as-is, and respond with the original input. Himmelblau
@@ -970,36 +794,6 @@ impl HimmelblauConfig {
         sudo_groups
     }
 
-    pub fn get_local_sudo_group(&self) -> String {
-        match self.config.get("global", "local_sudo_group") {
-            Some(val) => val,
-            None => "sudo".to_string(),
-        }
-    }
-
-    pub fn get_user_map_file(&self) -> String {
-        self.config
-            .get("global", "user_map_file")
-            .unwrap_or(DEFAULT_USER_MAP_FILE.to_string())
-    }
-
-    pub fn get_offline_breakglass_enabled(&self) -> bool {
-        match_bool(self.config.get("offline_breakglass", "enabled"), false)
-    }
-
-    pub fn get_offline_breakglass_ttl(&self) -> u64 {
-        match self.config.get("offline_breakglass", "ttl") {
-            Some(val) => parse_ttl_to_seconds(&val).unwrap_or(DEFAULT_OFFLINE_BREAKGLASS_TTL),
-            None => DEFAULT_OFFLINE_BREAKGLASS_TTL,
-        }
-    }
-
-    pub fn get_enable_hello_totp(&self) -> bool {
-        match_bool(
-            self.config.get("global", "enable_hello_totp"),
-            DEFAULT_HELLO_TOTP_ENABLED,
-        )
-    }
 
     pub fn get_oidc_issuer_url(&self) -> Option<String> {
         let res = self.config.get("global", "oidc_issuer_url").map(|s| {
@@ -1026,6 +820,9 @@ impl HimmelblauConfig {
         res
     }
 }
+
+// Generated getter methods from XML parameter definitions.
+include!(concat!(env!("OUT_DIR"), "/config_gen.rs"));
 
 impl fmt::Debug for HimmelblauConfig {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {

@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<parameter name="home_attr"
+           section="global"
+           type="enum"
+           rust_type="HomeAttr"
+           documented="true"
+           domain_specific="true"
+           order="38">
+<description>
+The attribute used to create a home directory for a user. Available options include:
+.RS
+.IP
+\- UUID
+.IP
+\- SPN
+.IP
+\- CN
+.RE
+</description>
+<default>uuid</default>
+<default_const>DEFAULT_HOME_ATTR</default_const>
+<example>home_attr = UUID</example>
+<enum_values>
+  <value rust="HomeAttr::Uuid">uuid</value>
+  <value rust="HomeAttr::Spn">spn</value>
+  <value rust="HomeAttr::Cn">cn</value>
+</enum_values>
+<handler>get_home_attr</handler>
+</parameter>
