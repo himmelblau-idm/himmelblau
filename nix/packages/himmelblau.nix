@@ -17,18 +17,14 @@
   pam,
   dbus,
   udev,
+  # o365
+  teams-for-linux,
+  gnugrep,
+  gnused,
+  makeWrapper,
   withSelinux ? false,
-  callPackage,
-  copyDesktopItems,
-  config,
+  withO365 ? false,
 }:
-let
-  # TODO: make this optional
-  # TODO: Permit opening multiple instances
-  mkO365 = callPackage ../functions/o365.nix {
-    himmelblau = config.services.himmelblau.package;
-  };
-in
 rustPlatform.buildRustPackage (finalAttrs: {
   pname = "himmelblau";
   version = "3.0.0";
@@ -45,6 +41,7 @@ rustPlatform.buildRustPackage (finalAttrs: {
         ../../Cargo.lock
         ../../scripts/test_script_echo.sh
         ../../platform
+        ../../nix
       ];
     };
 
@@ -61,7 +58,7 @@ rustPlatform.buildRustPackage (finalAttrs: {
   nativeBuildInputs = [
     pkg-config
     rustPlatform.bindgenHook
-    copyDesktopItems
+    makeWrapper
   ]
   ++ lib.optionals withSelinux [
     checkpolicy
@@ -90,7 +87,9 @@ rustPlatform.buildRustPackage (finalAttrs: {
 
   postBuild = "cp -r man $man/";
 
-  preConfigure = ''
+  postInstall = ''
+    ln -s $out/lib/libnss_himmelblau.so $out/lib/libnss_himmelblau.so.2
+
     mkdir -p $out/share/dbus-1/services
     mkdir -p $out/lib/mozilla/native-messaging-hosts
     mkdir -p $out/lib/chromium/native-messaging-hosts
@@ -106,17 +105,55 @@ rustPlatform.buildRustPackage (finalAttrs: {
     substituteInPlace \
         $out/share/dbus-1/services/com.microsoft.identity.broker1.service \
          --replace-fail "/usr/sbin/" "$out/bin/"
-
-    mkdir -p $out/share/icons/hicolor/256x256/apps
-    cp src/o365/src/*.png $out/share/icons/hicolor/256x256/apps/
-  '';
-
-  postInstall = ''
-    ln -s $out/lib/libnss_himmelblau.so $out/lib/libnss_himmelblau.so.2
   ''
   + lib.optionalString withSelinux ''
     mkdir -p $out/share
     cp -r src/selinux/target/selinux $out/share/selinux
+  ''
+  + lib.optionalString withO365 ''
+    mkdir -p $out/share/icons/hicolor/256x256/apps
+    cp src/o365/src/*.png $out/share/icons/hicolor/256x256/apps/
+
+    mkdir -p $out/share/applications
+    cp src/o365/generated/* $out/share/applications/
+    cp src/o365/src/o365-url-handler.sh $out/bin/o365-url-handler
+    cp src/o365/src/o365-multi.sh $out/bin/o365-multi
+    cp nix/packages/files/o365.sh $out/bin/o365
+    chmod +x $out/bin/o365
+
+    substituteInPlace $out/bin/o365 \
+      --replace-fail "teams-for-linux" "${teams-for-linux}/bin/teams-for-linux"
+
+    substituteInPlace \
+      $out/bin/o365-url-handler \
+      $out/bin/o365-multi \
+      --replace-fail "/usr/bin/o365" "$out/bin/o365"
+
+    substituteInPlace $out/bin/o365-url-handler \
+      --replace-fail "/usr/share/" "$out/share/"
+
+
+    wrapProgram $out/bin/o365-multi \
+      --prefix PATH : ${
+        lib.makeBinPath [
+          gnugrep
+          gnused
+        ]
+      }
+  '';
+
+  postFixup = lib.optionalString withO365 ''
+    substituteInPlace \
+      $out/share/applications/o365-excel.desktop \
+      $out/share/applications/o365-onedrive.desktop \
+      $out/share/applications/o365-onenote.desktop \
+      $out/share/applications/o365-outlook.desktop \
+      $out/share/applications/o365-powerpoint.desktop \
+      $out/share/applications/o365-sharepoint.desktop \
+      $out/share/applications/o365-teams.desktop \
+      $out/share/applications/o365-word.desktop \
+      --replace-fail "/usr/bin/" "$out/bin/" \
+      --replace-fail "/usr/share/" "$out/share/"
   '';
 
   meta = {
@@ -133,77 +170,4 @@ rustPlatform.buildRustPackage (finalAttrs: {
     platforms = lib.platforms.linux;
   };
 
-  desktopItems = [
-    (mkO365 {
-      name = "Outlook";
-      url = "https://outlook.office.com/mail/";
-      categories = [
-        "Office"
-        "Calendar"
-        "Email"
-      ];
-    })
-    (mkO365 {
-      name = "Teams";
-      url = "https://teams.microsoft.com/";
-      categories = [
-        "Office"
-        "Chat"
-      ];
-    })
-    (mkO365 {
-      name = "Word";
-      url = "https://word.cloud.microsoft/";
-      categories = [
-        "Office"
-        "WordProcessor"
-      ];
-    })
-    (mkO365 {
-      name = "Excel";
-      url = "https://excel.cloud.microsoft/";
-      categories = [
-        "Office"
-        "Spreadsheet"
-      ];
-    })
-    (mkO365 {
-      name = "PowerPoint";
-      url = "https://powerpoint.cloud.microsoft/";
-      categories = [
-        "Office"
-        "Presentation"
-      ];
-    })
-    (mkO365 {
-      name = "PowerPoint";
-      url = "https://powerpoint.cloud.microsoft/";
-      categories = [
-        "Office"
-        "Presentation"
-      ];
-    })
-    (mkO365 {
-      name = "OneNote";
-      url = "https://onenote.cloud.microsoft/launch/OneNote";
-      categories = [
-        "Office"
-      ];
-    })
-    (mkO365 {
-      name = "OneDrive";
-      url = "https://www.office.com/onedrive";
-      categories = [
-        "Office"
-        "FileTransfer"
-      ];
-    })
-    (mkO365 {
-      name = "SharePoint";
-      url = "https://www.office.com/launch/sharepoint";
-      categories = [
-        "Office"
-      ];
-    })
-  ];
 })
