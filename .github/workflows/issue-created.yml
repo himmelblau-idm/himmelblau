@@ -1,4 +1,6 @@
 name: Append Footer Based on Issue Type
+permissions:
+  issues: write
 
 on:
   issues:
