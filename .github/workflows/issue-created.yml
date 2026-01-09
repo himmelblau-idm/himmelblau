@@ -15,8 +15,7 @@ jobs:
         with:
           egress-policy: audit
 
-      - name: Append footer for Bugs
-        if: ${{ github.event.issue.form.type == 'Bug' }}
+      - name: Append footer
         uses: julien-deramond/update-issue-body@04d5de9497fa264075b0d91ba018a73ca5ae5654 # v1
         with:
           issue-number: ${{ github.event.issue.number }}
