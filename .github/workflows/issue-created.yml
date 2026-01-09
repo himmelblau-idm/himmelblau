@@ -8,9 +8,14 @@ jobs:
   append-footer:
     runs-on: ubuntu-latest
     steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@20cf305ff2072d973412fa9b1e3a4f227bda3c76 # v2.14.0
+        with:
+          egress-policy: audit
+
       - name: Append footer for Bugs
         if: ${{ github.event.issue.form.type == 'Bug' }}
-        uses: julien-deramond/update-issue-body@v1
+        uses: julien-deramond/update-issue-body@04d5de9497fa264075b0d91ba018a73ca5ae5654 # v1
         with:
           issue-number: ${{ github.event.issue.number }}
           edit-mode: append
@@ -32,7 +37,7 @@ jobs:
 
       - name: Append footer for Enhancements
         if: ${{ github.event.issue.form.type == 'Enhancement' }}
-        uses: julien-deramond/update-issue-body@v1
+        uses: julien-deramond/update-issue-body@04d5de9497fa264075b0d91ba018a73ca5ae5654 # v1
         with:
           issue-number: ${{ github.event.issue.number }}
           edit-mode: append
