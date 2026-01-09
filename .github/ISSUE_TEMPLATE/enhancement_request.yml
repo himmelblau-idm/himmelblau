@@ -1,0 +1,72 @@
+name: Enhancement Request
+description: Suggest an idea for this project.
+type: "Feature"
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to suggest an enhancement!
+
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: Provide a brief summary of the enhancement you are proposing.
+    validations:
+      required: true
+
+  - type: textarea
+    id: problem-statement
+    attributes:
+      label: Problem Statement
+      description: Explain the problem you are trying to solve with this enhancement. Describe any limitations, pain points, or inefficiencies that currently exist.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposed-solution
+    attributes:
+      label: Proposed Solution
+      description: Describe your proposed solution or feature in detail. Include diagrams, code snippets, or examples if applicable.
+    validations:
+      required: true
+
+  - type: textarea
+    id: benefits
+    attributes:
+      label: Benefits
+      description: Explain how this enhancement would improve the project. Consider user experience, performance, maintainability, or any other relevant factors.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives-considered
+    attributes:
+      label: Alternatives Considered
+      description: List any alternative solutions you considered and why you chose not to pursue them.
+    validations:
+      required: false
+
+  - type: textarea
+    id: additional-context
+    attributes:
+      label: Additional Context
+      description: Provide any other context or information that may be relevant to the enhancement. This could include links to related issues, discussions, or relevant documentation.
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: terms
+    attributes:
+      label: Code of Conduct
+      description: By submitting this issue, you agree to follow our [Code of Conduct](https://github.com/himmelblau-idm/himmelblau/blob/main/CODE_OF_CONDUCT.MD).
+      options:
+        - label: I agree to follow this project's Code of Conduct
+          required: true
+
+  - type: markdown
+    attributes:
+      value: |
+        ---
+        
+        *Thank you for suggesting an enhancement to the Himmelblau project! Your input helps make the project better for everyone.*
