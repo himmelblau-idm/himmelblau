@@ -28,6 +28,15 @@ url = "https://raw.githubusercontent.com/mozilla/supply-chain/main/audits.toml"
 [imports.zcash]
 url = "https://raw.githubusercontent.com/zcash/rust-ecosystem/main/supply-chain/audits.toml"
 
+[policy.kanidm_build_profiles]
+audit-as-crates-io = true
+
+[policy.paste]
+audit-as-crates-io = true
+
+[policy.sshkey-attest]
+audit-as-crates-io = true
+
 [[exemptions.aead]]
 version = "0.4.3"
 criteria = "safe-to-deploy"
