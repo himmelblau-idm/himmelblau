@@ -27,7 +27,7 @@ jobs:
         
             ### 💡 Help Make It Happen!
             
-            Want to see this bug fixed faster? Fund its implementation through our **Backer's Bounty** program, where you choose which bug fixes get priority!
+            Want to see this issue resolved faster? Fund its implementation through our **Backer's Bounty** program, where you choose which issues get priority!
             
             [![Donate to Our Collective](https://opencollective.com/himmelblau/donate/button.png?color=blue)](https://himmelblau-idm.org/backers.html#backers-bounty)
             
@@ -36,28 +36,3 @@ jobs:
             [![Donate US Tax Exempt](https://www.spi-inc.org/images/paypal_btn_donateCC_LG.gif)](https://www.paypal.com/cgi-bin/webscr?cmd=_s-xclick&hosted_button_id=8GYKFLX9UNCH2)
             
             Your support helps drive Himmelblau’s evolution!
-
-      - name: Append footer for Enhancements
-        if: ${{ github.event.issue.form.type == 'Enhancement' }}
-        uses: julien-deramond/update-issue-body@04d5de9497fa264075b0d91ba018a73ca5ae5654 # v1
-        with:
-          issue-number: ${{ github.event.issue.number }}
-          edit-mode: append
-          append-separator: newline
-          body: |
-            ---
-            
-            ### 💡 Help Make It Happen!
-            Want to see this feature developed faster? Fund its implementation through our **Backer's Bounty** program, where you choose which features get priority!
-            
-            [![Donate to Our Collective](https://opencollective.com/himmelblau/donate/button.png?color=blue)](https://himmelblau-idm.org/backers.html#backers-bounty)
-            
-            For US tax exempt donations:
-            
-            [![Donate US Tax Exempt](https://www.spi-inc.org/images/paypal_btn_donateCC_LG.gif)](https://www.paypal.com/cgi-bin/webscr?cmd=_s-xclick&hosted_button_id=8GYKFLX9UNCH2)
-            
-            Your support helps drive Himmelblau’s evolution!
-            
-            ---
-            
-            *Thank you for suggesting an enhancement to the Himmelblau project! Your input helps make the project better for everyone.*
