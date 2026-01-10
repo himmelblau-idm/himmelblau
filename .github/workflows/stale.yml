@@ -1,0 +1,32 @@
+name: Stale Checker
+permissions:
+  issues: write
+
+on:
+  issues:
+    types: [opened]
+
+jobs:
+  append-footer:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@20cf305ff2072d973412fa9b1e3a4f227bda3c76 # v2.14.0
+        with:
+          egress-policy: audit
+
+      - name: Stale Issue
+        uses: actions/stale@997185467fa4f803885201cee163a9f38240193d # v10.1.1
+        with:
+          stale-issue-message: >
+            This issue has been automatically marked as stale because it has not had recent activity. 
+            If no further activity occurs, it will be closed in 7 days. 
+            Thank you for your contributions!
+          stale-pr-label: 'stale'
+          days-before-stale: 60
+          days-before-close: 7
+          exempt-draft-pr: true
+          only-issue-types: 'Bug'
+          exempt-issue-labels: 'stale exempt'
+          mark-issue-as-stale: true
+          close-issue: true
