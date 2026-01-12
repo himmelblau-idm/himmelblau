@@ -209,7 +209,6 @@ jobs:
     name: Vet Dependencies
     runs-on: ubuntu-latest
     env:
-      CARGO_VET_VERSION: "0.10.1"
       SCCACHE_GHA_ENABLED: "true"
       RUSTC_WRAPPER: "sccache"
     steps:
@@ -224,6 +223,6 @@ jobs:
         with:
           version: "v0.10.0"
       - name: Install cargo-vet
-        run: cargo install --locked --version "$CARGO_VET_VERSION" cargo-vet
+        run: cargo install --git https://github.com/mozilla/cargo-vet cargo-vet
       - name: Vet
         run: cargo vet --locked
