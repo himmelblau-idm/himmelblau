@@ -15,14 +15,10 @@ This option enables generic OIDC authentication support and allows Himmelblau
 to authenticate against any standards-compliant OIDC provider, rather than
 using the built-in Microsoft Entra ID defaults.
 
-When this option is set, the following options are
+When this option is set, the following option is
 .B REQUIRED
 and must be configured consistently:
-
 .RS
-.IP \(bu 2
-.B domain
-\(en Used for username normalization and login prompts
 .IP \(bu 2
 .B app_id
 \(en Used as the OIDC client identifier
