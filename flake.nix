@@ -28,7 +28,7 @@
             version = cargoToml.workspace.package.version;
             src = with lib.fileset; toSource {
               root = ./.;
-              fileset = unions [ ./fuzz ./src ./man ./Cargo.toml ./Cargo.lock ./scripts/test_script_echo.sh ];
+              fileset = unions [ ./fuzz ./src ./man ./docs-xml ./Cargo.toml ./Cargo.lock ./scripts ];
             };
             outputs = [ "out" "man" ];
             cargoLock = {
@@ -37,7 +37,7 @@
             };
 
             nativeBuildInputs = [
-              pkgs.pkg-config rustPlatform.bindgenHook
+              pkgs.pkg-config pkgs.python3 rustPlatform.bindgenHook
             ] ++ lib.optionals withSelinux [
               pkgs.checkpolicy pkgs.semodule-utils
             ];

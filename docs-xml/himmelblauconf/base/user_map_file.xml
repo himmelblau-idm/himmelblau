@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<parameter name="user_map_file"
+           section="global"
+           type="string"
+           rust_type="String"
+           documented="true"
+           domain_specific="false"
+           order="47">
+<description>
+Specifies the path to a user-mapping file used to map local user accounts to Azure Entra ID user accounts, allowing them to authenticate using Entra ID credentials.
+
+Each line of the file must contain a single mapping entry in the format:
+.IP
+local_username:name@domain
+.PP
+Blank lines and lines beginning with '#' are ignored.
+
+Example user-map file entries:
+.RS 4
+.nf
+# local_username:samaccountname@domain
+alice:alice@contoso.com
+bob:bob.smith@example.org
+svcuser:service.account@tenant.local
+.fi
+.RE
+</description>
+<default>/etc/himmelblau/user-map</default>
+<default_const>DEFAULT_USER_MAP_FILE</default_const>
+<example>user_map_file = /path/to/user_map</example>
+</parameter>

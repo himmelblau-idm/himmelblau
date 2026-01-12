@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<parameter name="home_prefix"
+           section="global"
+           type="string"
+           rust_type="String"
+           documented="true"
+           domain_specific="true"
+           order="37">
+<description>
+The prefix to use for user home directories.
+</description>
+<default>/home/</default>
+<default_const>DEFAULT_HOME_PREFIX</default_const>
+<example>home_prefix = /home/entra/</example>
+<handler>get_home_prefix</handler>
+</parameter>
