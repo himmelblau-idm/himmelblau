@@ -2016,6 +2016,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "himmelblau-embedded-browser"
+version = "3.0.0"
+dependencies = [
+ "bytes",
+ "futures",
+ "himmelblau_unix_common",
+ "kanidm_utils_users",
+ "sd-notify",
+ "serde",
+ "serde_json",
+ "sketching",
+ "tokio",
+ "tokio-util",
+ "tracing",
+]
+
+[[package]]
 name = "himmelblau-fuzz"
 version = "3.0.0"
 dependencies = [

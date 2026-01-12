@@ -14,6 +14,7 @@ members = [
 	"src/broker-client",
 	"src/selinux",
 	"src/o365",
+	"src/embedded-browser",
 	"fuzz",
 	"src/fxhash",
 	"src/serde_cbor",

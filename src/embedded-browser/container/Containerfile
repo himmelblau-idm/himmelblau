@@ -1,0 +1,50 @@
+# Himmelblau Embedded Browser Container
+# Runs Firefox in a headless X11 environment with VNC access
+#
+# Build: podman build -t himmelblau-browser:latest .
+# Run: podman run -d -p 5900:5900 himmelblau-browser:latest "https://microsoft.com/devicelogin"
+
+FROM debian:bookworm-slim
+
+# Install required packages
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    firefox-esr \
+    x11vnc \
+    xvfb \
+    xdotool \
+    xclip \
+    dbus-x11 \
+    python3 \
+    procps \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Playwright (optional - for more sophisticated browser automation)
+# For now, we'll use Firefox directly with xdotool for input
+# RUN pip3 install playwright && playwright install firefox
+
+# Create non-root user for security
+RUN useradd -m -s /bin/bash browseruser
+
+# Set up working directory
+WORKDIR /home/browseruser
+
+# Copy scripts
+COPY --chown=browseruser:browseruser entrypoint.sh /home/browseruser/
+COPY --chown=browseruser:browseruser browser-session.py /home/browseruser/
+RUN chmod +x /home/browseruser/entrypoint.sh /home/browseruser/browser-session.py
+
+# Switch to non-root user
+USER browseruser
+
+# Environment variables
+ENV DISPLAY=:1
+ENV VNC_PORT=5900
+ENV VNC_RESOLUTION=800x600x24
+ENV HOME=/home/browseruser
+
+# Expose VNC port
+EXPOSE 5900
+
+# Entry point
+ENTRYPOINT ["/home/browseruser/entrypoint.sh"]

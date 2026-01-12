@@ -194,6 +194,83 @@ pub enum TaskResponse {
     Error(String),
 }
 
+// Embedded Browser Protocol Types
+// These types are used for communication between the QR greeter extension
+// and the himmelblau-embedded-browser daemon for in-GDM authentication.
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub enum BrowserRequest {
+    /// Check if embedded browser service is available
+    Ping,
+    /// Check if service is ready (container image built)
+    IsReady,
+    /// Start a browser session with the given URL
+    StartSession { url: String, session_id: String },
+    /// Stop an active session
+    StopSession { session_id: String },
+    /// Request VNC frame data for rendering
+    GetVncFrame { session_id: String },
+    /// Forward input event to the browser
+    InputEvent {
+        session_id: String,
+        event: BrowserInputEvent,
+    },
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub enum BrowserResponse {
+    /// Service is available
+    Pong { version: String },
+    /// Service is ready (container image available)
+    Ready,
+    /// Service is initializing (building container image)
+    Initializing { message: String },
+    /// Session started successfully
+    SessionStarted {
+        session_id: String,
+        width: u32,
+        height: u32,
+    },
+    /// Session stopped
+    SessionStopped { session_id: String },
+    /// VNC frame data for rendering (raw RGBA pixels)
+    VncFrame {
+        session_id: String,
+        width: u32,
+        height: u32,
+        data: Vec<u8>,
+    },
+    /// Session completed (authentication successful)
+    SessionCompleted { session_id: String },
+    /// Session failed or timed out
+    SessionFailed { session_id: String, reason: String },
+    /// Input event acknowledged
+    InputAck,
+    /// Error response
+    Error { message: String },
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct BrowserInputEvent {
+    pub event_type: BrowserInputType,
+    pub x: Option<i32>,
+    pub y: Option<i32>,
+    pub button: Option<u8>,
+    pub key_code: Option<u32>,
+    pub key_sym: Option<u32>,
+    pub modifiers: Option<u32>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub enum BrowserInputType {
+    MouseMove,
+    MouseDown,
+    MouseUp,
+    MouseScroll,
+    KeyDown,
+    KeyUp,
+}
+
 #[test]
 fn test_clientrequest_as_safe_string() {
     assert_eq!(

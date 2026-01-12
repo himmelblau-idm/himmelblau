@@ -1,0 +1,62 @@
+[package]
+name = "himmelblau-embedded-browser"
+version.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+edition.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+description = "Embedded browser service for Himmelblau GDM authentication"
+
+[[bin]]
+name = "himmelblau-embedded-browser"
+path = "src/main.rs"
+
+[dependencies]
+himmelblau_unix_common.workspace = true
+tokio.workspace = true
+tokio-util.workspace = true
+tracing.workspace = true
+sketching.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+bytes = "1.10"
+futures = "0.3"
+sd-notify = "0.4.5"
+kanidm_utils_users.workspace = true
+
+[package.metadata.deb]
+name = "himmelblau-embedded-browser"
+maintainer = "David Mulder <dmulder@suse.com>"
+depends = ["$auto", "podman"]
+recommends = ["himmelblau-qr-greeter"]
+assets = [
+  ["target/release/himmelblau-embedded-browser", "usr/sbin/", "755"],
+  ["../../platform/debian/himmelblau-embedded-browser.service", "usr/lib/systemd/system/", "644"],
+  ["container/Containerfile", "usr/share/himmelblau/embedded-browser/container/", "644"],
+  ["container/entrypoint.sh", "usr/share/himmelblau/embedded-browser/container/", "755"],
+  ["container/browser-session.py", "usr/share/himmelblau/embedded-browser/container/", "755"],
+]
+maintainer-scripts = "scripts"
+
+[package.metadata.generate-rpm]
+name = "himmelblau-embedded-browser"
+maintainer = "David Mulder <dmulder@suse.com>"
+assets = [
+  { source = "target/release/himmelblau-embedded-browser", dest = "/usr/sbin/", mode = "755" },
+  { source = "../../platform/opensuse/himmelblau-embedded-browser.service", dest = "/usr/lib/systemd/system/", mode = "644" },
+  { source = "container/Containerfile", dest = "/usr/share/himmelblau/embedded-browser/container/", mode = "644" },
+  { source = "container/entrypoint.sh", dest = "/usr/share/himmelblau/embedded-browser/container/", mode = "755" },
+  { source = "container/browser-session.py", dest = "/usr/share/himmelblau/embedded-browser/container/", mode = "755" },
+]
+post_install_script = "scripts/postinst"
+
+[package.metadata.generate-rpm.requires]
+podman = "*"
+
+[package.metadata.generate-rpm.recommends]
+himmelblau-qr-greeter = "*"
+
+[package.metadata.generate-rpm.supplements]
+"(himmelblau-qr-greeter and podman)" = ""

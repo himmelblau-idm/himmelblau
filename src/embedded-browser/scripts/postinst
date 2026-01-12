@@ -1,0 +1,12 @@
+#!/bin/sh
+set -e
+
+# Enable and start the embedded browser service if systemd is available
+if command -v systemctl >/dev/null 2>&1; then
+    echo "Enabling and starting Himmelblau Embedded Browser service..."
+    systemctl daemon-reload || true
+    systemctl enable himmelblau-embedded-browser.service || true
+    systemctl restart himmelblau-embedded-browser.service || true
+    echo "The embedded browser service will build the container image on first start."
+    echo "This may take a few minutes. Check status with: systemctl status himmelblau-embedded-browser"
+fi

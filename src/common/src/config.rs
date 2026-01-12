@@ -30,13 +30,15 @@ use tracing::{debug, error};
 use crate::constants::{
     CN_NAME_MAPPING, DEFAULT_AUTHORITY_HOST, DEFAULT_BROKER_SOCK_PATH, DEFAULT_CACHE_TIMEOUT,
     DEFAULT_CONFIG_PATH, DEFAULT_CONN_TIMEOUT, DEFAULT_CONSOLE_PASSWORD_ONLY, DEFAULT_DB_PATH,
-    DEFAULT_HELLO_ENABLED, DEFAULT_HELLO_PIN_MIN_LEN, DEFAULT_HELLO_PIN_RETRY_COUNT,
-    DEFAULT_HOME_ALIAS, DEFAULT_HOME_ATTR, DEFAULT_HOME_PREFIX, DEFAULT_HSM_PIN_PATH,
-    DEFAULT_ID_ATTR_MAP, DEFAULT_JOIN_TYPE, DEFAULT_ODC_PROVIDER, DEFAULT_OFFLINE_BREAKGLASS_TTL,
-    DEFAULT_PASSWORD_ONLY_REMOTE_SERVICES_DENY_LIST, DEFAULT_POLICIES_DB_DIR, DEFAULT_SELINUX,
-    DEFAULT_SFA_FALLBACK_ENABLED, DEFAULT_SHELL, DEFAULT_SOCK_PATH, DEFAULT_TASK_SOCK_PATH,
-    DEFAULT_TPM_TCTI_NAME, DEFAULT_USER_MAP_FILE, DEFAULT_USE_ETC_SKEL, MAPPED_NAME_CACHE,
-    SERVER_CONFIG_PATH,
+    DEFAULT_EMBEDDED_BROWSER_CONTAINER_IMAGE, DEFAULT_EMBEDDED_BROWSER_HEIGHT,
+    DEFAULT_EMBEDDED_BROWSER_SOCK_PATH, DEFAULT_EMBEDDED_BROWSER_TIMEOUT,
+    DEFAULT_EMBEDDED_BROWSER_WIDTH, DEFAULT_HELLO_ENABLED, DEFAULT_HELLO_PIN_MIN_LEN,
+    DEFAULT_HELLO_PIN_RETRY_COUNT, DEFAULT_HOME_ALIAS, DEFAULT_HOME_ATTR, DEFAULT_HOME_PREFIX,
+    DEFAULT_HSM_PIN_PATH, DEFAULT_ID_ATTR_MAP, DEFAULT_JOIN_TYPE, DEFAULT_ODC_PROVIDER,
+    DEFAULT_OFFLINE_BREAKGLASS_TTL, DEFAULT_PASSWORD_ONLY_REMOTE_SERVICES_DENY_LIST,
+    DEFAULT_POLICIES_DB_DIR, DEFAULT_SELINUX, DEFAULT_SFA_FALLBACK_ENABLED, DEFAULT_SHELL,
+    DEFAULT_SOCK_PATH, DEFAULT_TASK_SOCK_PATH, DEFAULT_TPM_TCTI_NAME, DEFAULT_USER_MAP_FILE,
+    DEFAULT_USE_ETC_SKEL, MAPPED_NAME_CACHE, SERVER_CONFIG_PATH,
 };
 use crate::mapping::{MappedNameCache, Mode};
 use crate::unix_config::{HomeAttr, HsmType};
@@ -391,6 +393,57 @@ impl HimmelblauConfig {
             Some(val) => val,
             None => DEFAULT_BROKER_SOCK_PATH.to_string(),
         }
+    }
+
+    pub fn get_embedded_browser_socket_path(&self) -> String {
+        match self.config.get("global", "embedded_browser_socket_path") {
+            Some(val) => val,
+            None => DEFAULT_EMBEDDED_BROWSER_SOCK_PATH.to_string(),
+        }
+    }
+
+    pub fn get_embedded_browser_timeout(&self) -> u64 {
+        match self.config.get("global", "embedded_browser_timeout") {
+            Some(val) => match val.parse::<u64>() {
+                Ok(n) => n,
+                Err(_) => {
+                    error!("Failed parsing embedded_browser_timeout from config: {}", val);
+                    DEFAULT_EMBEDDED_BROWSER_TIMEOUT
+                }
+            },
+            None => DEFAULT_EMBEDDED_BROWSER_TIMEOUT,
+        }
+    }
+
+    pub fn get_embedded_browser_container_image(&self) -> String {
+        match self.config.get("global", "embedded_browser_container_image") {
+            Some(val) => val,
+            None => DEFAULT_EMBEDDED_BROWSER_CONTAINER_IMAGE.to_string(),
+        }
+    }
+
+    pub fn get_embedded_browser_resolution(&self) -> (u32, u32) {
+        let width = match self.config.get("global", "embedded_browser_width") {
+            Some(val) => match val.parse::<u32>() {
+                Ok(n) => n,
+                Err(_) => {
+                    error!("Failed parsing embedded_browser_width from config: {}", val);
+                    DEFAULT_EMBEDDED_BROWSER_WIDTH
+                }
+            },
+            None => DEFAULT_EMBEDDED_BROWSER_WIDTH,
+        };
+        let height = match self.config.get("global", "embedded_browser_height") {
+            Some(val) => match val.parse::<u32>() {
+                Ok(n) => n,
+                Err(_) => {
+                    error!("Failed parsing embedded_browser_height from config: {}", val);
+                    DEFAULT_EMBEDDED_BROWSER_HEIGHT
+                }
+            },
+            None => DEFAULT_EMBEDDED_BROWSER_HEIGHT,
+        };
+        (width, height)
     }
 
     pub fn get_connection_timeout(&self) -> u64 {

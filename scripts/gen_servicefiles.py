@@ -285,6 +285,68 @@ CapabilityBoundingSet=CAP_CHOWN CAP_FOWNER CAP_DAC_OVERRIDE CAP_DAC_READ_SEARCH
 WantedBy=multi-user.target
 """.rstrip() + "\n"
 
+    # ---- Compose himmelblau-embedded-browser.service ----
+    # This service runs the embedded browser daemon for DAG authentication.
+    # It needs its own RuntimeDirectory since /run/himmelblaud is owned by DynamicUser.
+    # Podman requires extensive system access, so we use minimal sandboxing.
+    browser_hardening = []
+    if supported("ProtectClock"):
+        browser_hardening.append("ProtectClock=true")
+    # NOTE: ProtectKernelTunables must be false - podman needs to modify /proc/sys/net/ipv4/ip_forward
+    # NOTE: ProtectKernelModules must be false - podman may need to load network modules
+    if supported("ProtectKernelLogs"):
+        browser_hardening.append("ProtectKernelLogs=true")
+
+    browser_rw_line = "ReadWritePaths=/run/himmelblau-browser" if rw_paths_available else ""
+
+    browser_unit = f"""\
+# You should not need to edit this file. Instead, use a drop-in file:
+#   systemctl edit himmelblau-embedded-browser.service
+
+[Unit]
+Description=Himmelblau Embedded Browser Service
+Documentation=https://github.com/himmelblau-idm/himmelblau
+After=network.target podman.socket
+Wants=podman.socket
+
+# This service is optional - only start if podman is available
+{'ConditionPathExists=/usr/bin/podman' if supported('ConditionPathExists') else ''}
+
+{'StartLimitIntervalSec=30s' if supported('StartLimitIntervalSec') else ''}
+{'StartLimitBurst=5' if supported('StartLimitBurst') else ''}
+
+[Service]
+Type=notify
+ExecStart=/usr/sbin/himmelblau-embedded-browser
+Restart=on-failure
+RestartSec=2s
+
+# Create our own runtime directory since /run/himmelblaud is owned by himmelblaud's DynamicUser
+{'RuntimeDirectory=himmelblau-browser' if supported('CacheRuntimeStateDirs') else ''}
+{'RuntimeDirectoryMode=0755' if supported('CacheRuntimeStateDirs') else ''}
+
+# Minimal security hardening - podman requires extensive system access for container networking
+# ProtectSystem is disabled because podman needs write access to /proc, /sys, and /var
+# ProtectKernelTunables is disabled because podman needs to modify /proc/sys/net/ipv4/ip_forward
+{browser_rw_line}
+{'NoNewPrivileges=false' if supported('NoNewPrivileges') else ''}
+{'PrivateTmp=false' if supported('PrivateTmp') else ''}
+{'ProtectHostname=false' if supported('ProtectHostname') else ''}
+
+# Mount propagation settings for podman CNI networking
+# MountFlags=shared ensures network namespace mounts in /run/netns are accessible
+MountFlags=shared
+PrivateMounts=no
+{os.linesep.join(browser_hardening)}
+{'ProtectControlGroups=false' if supported('ProtectControlGroups') else ''}
+
+# Allow network access for VNC and container operations
+PrivateNetwork=false
+
+[Install]
+WantedBy=multi-user.target
+""".rstrip() + "\n"
+
     # Clean extra blank lines from optional inserts
     def squeeze_blank_lines(s: str) -> str:
         s = re.sub(r"\n{3,}", "\n\n", s)
@@ -294,13 +356,16 @@ WantedBy=multi-user.target
 
     daemon_unit = squeeze_blank_lines(daemon_unit)
     tasks_unit  = squeeze_blank_lines(tasks_unit)
+    browser_unit = squeeze_blank_lines(browser_unit)
 
     (out_dir / "himmelblaud.service").write_text(daemon_unit)
     (out_dir / "himmelblaud-tasks.service").write_text(tasks_unit)
+    (out_dir / "himmelblau-embedded-browser.service").write_text(browser_unit)
 
     print(f"[gen-systemd] systemd version detected/assumed: {ver}")
     print(f"[gen-systemd] Wrote: {out_dir/'himmelblaud.service'}")
     print(f"[gen-systemd] Wrote: {out_dir/'himmelblaud-tasks.service'}")
+    print(f"[gen-systemd] Wrote: {out_dir/'himmelblau-embedded-browser.service'}")
 
 if __name__ == "__main__":
     main()

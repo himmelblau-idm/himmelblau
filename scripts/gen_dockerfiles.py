@@ -115,6 +115,7 @@ PACKAGES = [
     ("qr-greeter", "src/qr-greeter", False),
     ("selinux", "src/selinux", False),
     ("o365", "src/o365", False),
+    ("himmelblau-embedded-browser", "src/embedded-browser", False),
 ]
 
 CMD_TAB = "     "
@@ -140,7 +141,7 @@ def build_rpm_final_cmd(features: list, selinux: bool) -> str:
     feat_str = f" --features {','.join(features)}" if features else ""
     build = f"cargo build ${{CARGO_PATCH_ARG}} --release{feat_str} && \\ \n{CMD_TAB}"
     strip = CMD_SEP.join(
-        ["strip -s target/release/%s" % s for s in ["*.so", "aad-tool", "himmelblaud", "himmelblaud_tasks", "broker"]]
+        ["strip -s target/release/%s" % s for s in ["*.so", "aad-tool", "himmelblaud", "himmelblaud_tasks", "broker", "himmelblau-embedded-browser"]]
     )
     if selinux:
         pkgs = PACKAGES

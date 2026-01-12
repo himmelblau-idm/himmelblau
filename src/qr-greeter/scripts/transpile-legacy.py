@@ -65,19 +65,22 @@ def transpile_extension(source: str) -> str:
             continue
 
         # Convert local imports: import { X, Y } from './module.js'
+        # Handle both word characters and dashes in module names
         local_match = re.match(
-            r"import\s+\{\s*(.+?)\s*\}\s+from\s+'\.\/(\w+)\.js';?",
+            r"import\s+\{\s*(.+?)\s*\}\s+from\s+'\.\/([^']+)\.js';?",
             line
         )
         if local_match:
             imports, module_name = local_match.groups()
             import_vars = [v.strip() for v in imports.split(',')]
+            # Convert dashes to underscores for legacy GJS imports
+            legacy_module_name = module_name.replace('-', '_')
             # We'll handle this specially - qrcodegen exports to a global
             local_imports.append(
                 f"const Me = imports.misc.extensionUtils.getCurrentExtension();"
             )
             for var in import_vars:
-                local_imports.append(f"const {var} = Me.imports.{module_name}.{var};")
+                local_imports.append(f"const {var} = Me.imports.{legacy_module_name}.{var};")
             continue
 
         # Detect class definition
@@ -211,6 +214,113 @@ def transpile_qrcodegen(source: str) -> str:
     return '\n'.join(output_lines)
 
 
+def transpile_module(source: str, module_name: str) -> str:
+    """Convert a module with ES6 imports/exports to legacy format."""
+
+    # Replace console.log/error with log() for legacy GJS compatibility
+    source = re.sub(r'console\.log\(', 'log(', source)
+    source = re.sub(r'console\.error\(', 'log(', source)
+    source = re.sub(r'console\.debug\(', 'log(', source)
+
+    lines = source.split('\n')
+    output_lines = []
+
+    # Track imports we need to add at the top
+    gi_imports = []
+    local_imports = []
+    exports = []
+
+    for line in lines:
+        # Convert GI imports: import X from 'gi://X' -> const X = imports.gi.X;
+        gi_match = re.match(r"import\s+(\w+)\s+from\s+'gi://(\w+)';?", line)
+        if gi_match:
+            var_name, module_name_import = gi_match.groups()
+            gi_imports.append(f"const {var_name} = imports.gi.{module_name_import};")
+            continue
+
+        # Convert local imports: import { X, Y } from './module.js'
+        # Use [^']+ to match module names with dashes like 'browser-service'
+        local_match = re.match(
+            r"import\s+\{\s*(.+?)\s*\}\s+from\s+'\.\/([^']+)\.js';?",
+            line
+        )
+        if local_match:
+            imports_str, imported_module = local_match.groups()
+            import_vars = [v.strip() for v in imports_str.split(',')]
+            if not local_imports:
+                local_imports.append(
+                    f"const Me = imports.misc.extensionUtils.getCurrentExtension();"
+                )
+            for var in import_vars:
+                local_imports.append(f"const {var} = Me.imports.{imported_module.replace('-', '_')}.{var};")
+            continue
+
+        # Track exports: export class X or export function X
+        export_class_match = re.match(r'export\s+class\s+(\w+)', line)
+        if export_class_match:
+            class_name = export_class_match.group(1)
+            exports.append(class_name)
+            # Remove export keyword
+            line = re.sub(r'^export\s+', '', line)
+            output_lines.append(line)
+            continue
+
+        export_func_match = re.match(r'export\s+function\s+(\w+)', line)
+        if export_func_match:
+            func_name = export_func_match.group(1)
+            exports.append(func_name)
+            # Remove export keyword
+            line = re.sub(r'^export\s+', '', line)
+            output_lines.append(line)
+            continue
+
+        # Track exports: export const X or export var X
+        export_const_match = re.match(r'export\s+(const|var)\s+(\w+)', line)
+        if export_const_match:
+            const_name = export_const_match.group(2)
+            exports.append(const_name)
+            # Remove export keyword, keep const/var
+            line = re.sub(r'^export\s+', '', line)
+            output_lines.append(line)
+            continue
+
+        # Skip standalone export statements
+        if re.match(r'^export\s+\{', line):
+            continue
+
+        output_lines.append(line)
+
+    # Build the output file
+    result = []
+
+    result.append("// GNOME 40-44 Legacy Format (auto-generated)")
+    result.append(f"// Do not edit - modify {module_name} and run transpile-legacy.py")
+    result.append("")
+
+    for imp in gi_imports:
+        result.append(imp)
+
+    if local_imports:
+        result.append("")
+        seen = set()
+        for imp in local_imports:
+            if imp not in seen:
+                result.append(imp)
+                seen.add(imp)
+
+    result.append("")
+
+    # Add the rest of the code
+    for line in output_lines:
+        result.append(line)
+
+    # Note: In legacy GJS, symbols defined at module scope are automatically
+    # available when imported via Me.imports.module_name.SymbolName
+    # We don't need to add var X = X; exports as that causes redeclaration errors
+
+    return '\n'.join(result)
+
+
 def main():
     script_dir = Path(__file__).parent
     src_dir = script_dir.parent / "src" / "qr-greeter@himmelblau-idm.org"
@@ -246,6 +356,34 @@ def main():
     transpiled = transpile_qrcodegen(source)
     with open(qrcodegen_dst, 'w') as f:
         f.write(transpiled)
+
+    # Transpile browser-service.js (if it exists)
+    browser_service_src = src_dir / "browser-service.js"
+    # Use underscore for legacy import compatibility
+    browser_service_dst = legacy_dir / "browser_service.js"
+
+    if browser_service_src.exists():
+        print(f"Transpiling {browser_service_src} -> {browser_service_dst}")
+        with open(browser_service_src, 'r') as f:
+            source = f.read()
+
+        transpiled = transpile_module(source, "browser-service.js")
+        with open(browser_service_dst, 'w') as f:
+            f.write(transpiled)
+
+    # Transpile vnc-widget.js (if it exists)
+    vnc_widget_src = src_dir / "vnc-widget.js"
+    # Use underscore for legacy import compatibility
+    vnc_widget_dst = legacy_dir / "vnc_widget.js"
+
+    if vnc_widget_src.exists():
+        print(f"Transpiling {vnc_widget_src} -> {vnc_widget_dst}")
+        with open(vnc_widget_src, 'r') as f:
+            source = f.read()
+
+        transpiled = transpile_module(source, "vnc-widget.js")
+        with open(vnc_widget_dst, 'w') as f:
+            f.write(transpiled)
 
     # Copy stylesheet.css (no changes needed)
     import shutil

@@ -20,10 +20,12 @@ path = "src/lib.rs"
 [package.metadata.deb]
 name = "himmelblau-qr-greeter"
 depends = ["gnome-shell"]
-recommends = ["systemd-container"]
+recommends = ["systemd-container", "himmelblau-embedded-browser"]
 assets = [
   ["target/release/qr-greeter-build/qr-greeter@himmelblau-idm.org/extension.js", "usr/share/gnome-shell/extensions/qr-greeter@himmelblau-idm.org/extension.js", "644"],
   ["target/release/qr-greeter-build/qr-greeter@himmelblau-idm.org/qrcodegen.js", "usr/share/gnome-shell/extensions/qr-greeter@himmelblau-idm.org/qrcodegen.js", "644"],
+  ["target/release/qr-greeter-build/qr-greeter@himmelblau-idm.org/browser_service.js", "usr/share/gnome-shell/extensions/qr-greeter@himmelblau-idm.org/browser_service.js", "644"],
+  ["target/release/qr-greeter-build/qr-greeter@himmelblau-idm.org/vnc_widget.js", "usr/share/gnome-shell/extensions/qr-greeter@himmelblau-idm.org/vnc_widget.js", "644"],
   ["target/release/qr-greeter-build/qr-greeter@himmelblau-idm.org/metadata.json", "usr/share/gnome-shell/extensions/qr-greeter@himmelblau-idm.org/metadata.json", "644"],
   ["target/release/qr-greeter-build/qr-greeter@himmelblau-idm.org/stylesheet.css", "usr/share/gnome-shell/extensions/qr-greeter@himmelblau-idm.org/stylesheet.css", "644"],
   ["target/release/qr-greeter-build/qr-greeter@himmelblau-idm.org/msdag.png", "usr/share/gnome-shell/extensions/qr-greeter@himmelblau-idm.org/msdag.png", "644"],
@@ -36,6 +38,8 @@ name = "himmelblau-qr-greeter"
 assets = [
   { source = "target/release/qr-greeter-build/qr-greeter@himmelblau-idm.org/extension.js", dest = "/usr/share/gnome-shell/extensions/qr-greeter@himmelblau-idm.org/extension.js", mode = "644" },
   { source = "target/release/qr-greeter-build/qr-greeter@himmelblau-idm.org/qrcodegen.js", dest = "/usr/share/gnome-shell/extensions/qr-greeter@himmelblau-idm.org/qrcodegen.js", mode = "644" },
+  { source = "target/release/qr-greeter-build/qr-greeter@himmelblau-idm.org/browser_service.js", dest = "/usr/share/gnome-shell/extensions/qr-greeter@himmelblau-idm.org/browser_service.js", mode = "644" },
+  { source = "target/release/qr-greeter-build/qr-greeter@himmelblau-idm.org/vnc_widget.js", dest = "/usr/share/gnome-shell/extensions/qr-greeter@himmelblau-idm.org/vnc_widget.js", mode = "644" },
   { source = "target/release/qr-greeter-build/qr-greeter@himmelblau-idm.org/metadata.json", dest = "/usr/share/gnome-shell/extensions/qr-greeter@himmelblau-idm.org/metadata.json", mode = "644" },
   { source = "target/release/qr-greeter-build/qr-greeter@himmelblau-idm.org/stylesheet.css", dest = "/usr/share/gnome-shell/extensions/qr-greeter@himmelblau-idm.org/stylesheet.css", mode = "644" },
   { source = "target/release/qr-greeter-build/qr-greeter@himmelblau-idm.org/msdag.png", dest = "/usr/share/gnome-shell/extensions/qr-greeter@himmelblau-idm.org/msdag.png", mode = "644" },

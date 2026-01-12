@@ -5,11 +5,17 @@ import Gio from 'gi://Gio';
 import { Extension } from 'resource:///org/gnome/shell/extensions/extension.js';
 import * as AuthPromptModule from 'resource:///org/gnome/shell/gdm/authPrompt.js';
 import { QrCode, Ecc } from './qrcodegen.js';
+import { getBrowserService } from './browser-service.js';
+import { VncWidget } from './vnc-widget.js';
 
 const GdmAuthPrompt = AuthPromptModule.AuthPrompt;
 
 // Track active temp files for cleanup
 let activeTotpTempFiles = new Set();
+
+// Cached browser service availability (checked once at startup)
+let browserServiceAvailable = null;
+let browserServiceChecked = false;
 
 // Regex to match TOTP setup messages
 const TOTP_SETUP_RE = /Enter the setup key '([^']+)'.*Use '([^']+)'.*'([^']+)' as the label\/name\./s;
@@ -135,6 +141,181 @@ function buildTotpUri(secret, issuer, label) {
     return `otpauth://totp/${encodedIssuer}:${encodedLabel}?secret=${secret}&issuer=${encodedIssuer}&algorithm=SHA1&digits=6&period=30`;
 }
 
+// Check if embedded browser service is available (cached)
+async function checkBrowserServiceAvailable() {
+    if (browserServiceChecked) {
+        return browserServiceAvailable;
+    }
+
+    try {
+        const service = getBrowserService();
+        browserServiceAvailable = await service.isAvailable();
+    } catch (e) {
+        console.log("Himmelblau QR Greeter: Browser service check failed:", e.message);
+        browserServiceAvailable = false;
+    }
+
+    browserServiceChecked = true;
+    return browserServiceAvailable;
+}
+
+// Show embedded browser for URL authentication
+async function showEmbeddedBrowser(authPrompt, url) {
+    try {
+        const service = getBrowserService();
+        const session = await service.startSession(url);
+
+        // Create VNC widget if it doesn't exist
+        if (!authPrompt._vncWidget) {
+            authPrompt._vncWidget = new VncWidget({
+                x_expand: false,
+                y_expand: false,
+                x_align: Clutter.ActorAlign.CENTER
+            });
+
+            // Handle session completion
+            authPrompt._vncWidget.connect('session-completed', () => {
+                console.log("Himmelblau QR Greeter: Browser session completed");
+                hideEmbeddedBrowser(authPrompt);
+            });
+
+            authPrompt._vncWidget.connect('session-failed', (widget, reason) => {
+                console.log(`Himmelblau QR Greeter: Browser session failed: ${reason}`);
+                hideEmbeddedBrowser(authPrompt);
+                // Fall back to QR code
+                showQrCode(authPrompt, url);
+            });
+
+            authPrompt._vncWidget.connect('session-error', (widget, error) => {
+                console.error(`Himmelblau QR Greeter: Browser session error: ${error}`);
+                hideEmbeddedBrowser(authPrompt);
+                // Fall back to QR code
+                showQrCode(authPrompt, url);
+            });
+
+            authPrompt._qrVBox.add_child(authPrompt._vncWidget);
+        }
+
+        // Hide QR elements, show browser
+        if (authPrompt._qrContainer) authPrompt._qrContainer.hide();
+        if (authPrompt._qrLabel) authPrompt._qrLabel.hide();
+        authPrompt._vncWidget.show();
+        authPrompt._vncWidget.startSession(session);
+
+        // Update message
+        if (authPrompt._message) {
+            authPrompt._message.set_text("Complete authentication in the browser below");
+        }
+
+        return true;
+    } catch (e) {
+        console.error("Himmelblau QR Greeter: Failed to start embedded browser:", e.message);
+        return false;
+    }
+}
+
+// Hide embedded browser
+function hideEmbeddedBrowser(authPrompt) {
+    if (authPrompt._vncWidget) {
+        authPrompt._vncWidget.stopSession();
+        authPrompt._vncWidget.hide();
+    }
+}
+
+// Show QR code for URL (fallback or primary method)
+function showQrCode(authPrompt, url) {
+    // Check for known static QR codes first
+    for (const [staticUrl, pngFile] of Object.entries(STATIC_QR_URLS)) {
+        if (url.includes(staticUrl)) {
+            const fileUri = `file:///usr/share/gnome-shell/extensions/qr-greeter@himmelblau-idm.org/${pngFile}`;
+            authPrompt._qrContainer.set_style(`background-image: url('${fileUri}');`);
+            authPrompt._qrContainer.show();
+            authPrompt._qrLabel.set_text("Scan with your phone");
+            authPrompt._qrLabel.show();
+            return true;
+        }
+    }
+
+    // Generate dynamic QR code
+    const validated = validateUrl(url);
+    if (validated) {
+        try {
+            const qr = QrCode.encodeText(validated, Ecc.MEDIUM);
+            const svgContent = qrCodeToSvg(qr, 2, '#ffffff', '#000000');
+            const tempFilePath = writeSvgToTempFile(svgContent);
+            authPrompt._totpTempFile = tempFilePath;
+            activeTotpTempFiles.add(tempFilePath);
+            const fileUri = `file://${tempFilePath}`;
+            authPrompt._qrContainer.set_style(`background-image: url('${fileUri}'); background-size: contain; background-repeat: no-repeat; background-position: center;`);
+            authPrompt._qrContainer.show();
+            authPrompt._qrLabel.set_text("Scan with your phone");
+            authPrompt._qrLabel.show();
+            return true;
+        } catch (e) {
+            console.error("Himmelblau QR Greeter: Failed to generate QR code:", e);
+        }
+    }
+
+    return false;
+}
+
+// Handle URL detection - try embedded browser first, fall back to QR
+async function handleUrlDetection(authPrompt, url) {
+    // Hide any existing embedded browser
+    hideEmbeddedBrowser(authPrompt);
+
+    // Check if embedded browser service is available
+    const browserAvailable = await checkBrowserServiceAvailable();
+
+    if (browserAvailable) {
+        const service = getBrowserService();
+
+        // Check if service is ready (container image built)
+        const status = await service.isReady();
+
+        if (status.initializing) {
+            // Service is still initializing (building container image)
+            console.log("Himmelblau QR Greeter: Service initializing:", status.message);
+
+            // Show initializing message and QR code as fallback
+            if (authPrompt._message) {
+                authPrompt._message.set_text(`Browser service is preparing (${status.message}). Use QR code for now.`);
+            }
+            showQrCode(authPrompt, url);
+
+            // Wait for service to become ready in background, then switch to browser
+            service.waitForReady(120000, 2000, (msg) => {
+                console.log("Himmelblau QR Greeter: Still initializing:", msg);
+            }).then((ready) => {
+                if (ready) {
+                    console.log("Himmelblau QR Greeter: Service now ready, switching to browser");
+                    showEmbeddedBrowser(authPrompt, url);
+                }
+            }).catch((e) => {
+                console.log("Himmelblau QR Greeter: Wait for ready failed:", e.message);
+            });
+
+            return true;
+        }
+
+        if (!status.ready) {
+            // Service failed to initialize
+            console.log("Himmelblau QR Greeter: Service not ready, falling back to QR code");
+            return showQrCode(authPrompt, url);
+        }
+
+        console.log("Himmelblau QR Greeter: Attempting embedded browser for URL:", url);
+        const success = await showEmbeddedBrowser(authPrompt, url);
+        if (success) {
+            return true;
+        }
+        console.log("Himmelblau QR Greeter: Embedded browser failed, falling back to QR code");
+    }
+
+    // Fall back to QR code
+    return showQrCode(authPrompt, url);
+}
+
 export default class QrGreeterExtension extends Extension {
     enable() {
         console.log("Himmelblau QR Greeter: enabled...");
@@ -230,73 +411,50 @@ export default class QrGreeterExtension extends Extension {
                 }
             } else {
                 // Check for URLs in the message
-                let qrDisplayed = false;
+                let urlFound = false;
+                let targetUrl = null;
 
                 if (message) {
-                    // First check for known URLs with static QR codes
-                    for (const [url, pngFile] of Object.entries(STATIC_QR_URLS)) {
+                    // Check for known URLs with static QR codes first
+                    for (const [url, _pngFile] of Object.entries(STATIC_QR_URLS)) {
                         if (message.includes(url)) {
-                            const fileUri = `file:///usr/share/gnome-shell/extensions/qr-greeter@himmelblau-idm.org/${pngFile}`;
-                            this._qrContainer.set_style(`background-image: url('${fileUri}');`);
-                            this._qrContainer.show();
-                            this._qrLabel.set_text("Scan with your phone");
-                            this._qrLabel.show();
-                            qrDisplayed = true;
+                            targetUrl = url;
+                            urlFound = true;
                             break;
                         }
                     }
 
-                    // If no static QR was displayed, check for any other URLs
-                    if (!qrDisplayed) {
-                        // Reset the regex lastIndex to ensure fresh matching
+                    // If no static URL found, check for any other URLs
+                    if (!urlFound) {
                         URL_RE.lastIndex = 0;
                         const urlMatches = message.match(URL_RE);
 
                         if (urlMatches) {
-                            // Filter out known static URLs to find new URLs
-                            const dynamicUrls = urlMatches.filter(url => {
-                                for (const staticUrl of Object.keys(STATIC_QR_URLS)) {
-                                    if (url.startsWith(staticUrl)) {
-                                        return false;
-                                    }
-                                }
-                                return true;
-                            });
-
-                            if (dynamicUrls.length > 0) {
-                                // Use the first valid URL found
-                                let targetUrl = null;
-                                for (const url of dynamicUrls) {
-                                    const validated = validateUrl(url);
-                                    if (validated) {
-                                        targetUrl = validated;
-                                        break;
-                                    }
-                                }
-
-                                if (targetUrl) {
-                                    try {
-                                        const qr = QrCode.encodeText(targetUrl, Ecc.MEDIUM);
-                                        const svgContent = qrCodeToSvg(qr, 2, '#ffffff', '#000000');
-                                        const tempFilePath = writeSvgToTempFile(svgContent);
-                                        this._totpTempFile = tempFilePath;
-                                        activeTotpTempFiles.add(tempFilePath);
-                                        const fileUri = `file://${tempFilePath}`;
-                                        this._qrContainer.set_style(`background-image: url('${fileUri}'); background-size: contain; background-repeat: no-repeat; background-position: center;`);
-                                        this._qrContainer.show();
-                                        this._qrLabel.set_text("Scan with your phone");
-                                        this._qrLabel.show();
-                                        qrDisplayed = true;
-                                    } catch (e) {
-                                        console.error("Himmelblau QR Greeter: Failed to generate QR code for URL:", e);
-                                    }
+                            for (const url of urlMatches) {
+                                const validated = validateUrl(url);
+                                if (validated) {
+                                    targetUrl = validated;
+                                    urlFound = true;
+                                    break;
                                 }
                             }
                         }
                     }
                 }
 
-                if (!qrDisplayed) {
+                if (urlFound && targetUrl) {
+                    // Use handleUrlDetection which will try embedded browser first,
+                    // then fall back to QR code
+                    const authPromptRef = this;
+                    handleUrlDetection(authPromptRef, targetUrl).catch(e => {
+                        console.error("Himmelblau QR Greeter: URL detection error:", e);
+                        // Ensure QR elements are hidden on error
+                        if (authPromptRef._qrContainer) authPromptRef._qrContainer.hide();
+                        if (authPromptRef._qrLabel) authPromptRef._qrLabel.hide();
+                    });
+                } else {
+                    // No URL found, hide QR elements and any embedded browser
+                    hideEmbeddedBrowser(this);
                     if (this._qrContainer) this._qrContainer.hide();
                     if (this._qrLabel) this._qrLabel.hide();
                 }
@@ -310,6 +468,9 @@ export default class QrGreeterExtension extends Extension {
         console.log("Himmelblau QR Greeter: disabled...");
         // Clean up any remaining temp files
         cleanupAllTempFiles();
+        // Reset browser service cache state
+        browserServiceAvailable = null;
+        browserServiceChecked = false;
         if (GdmAuthPrompt && this._originalSetMessage) {
             GdmAuthPrompt.prototype.setMessage = this._originalSetMessage;
         }
