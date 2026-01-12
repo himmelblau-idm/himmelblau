@@ -161,14 +161,11 @@ in
             "multi-user.target"
             "accounts-daemon.service"
           ];
-          # This is just so that the service restarts on config change
-          # Normall we would do `--config ${configFile}`
-          # Himmelblau has however a bug where if we supply a config file with `--config`,
-          # the default values for fields do not get set.
-          environment.HIMMELBLAU_DUMMY_CONFIG = configFile;
+
           upholds = [ "himmelblaud-tasks.service" ];
           serviceConfig = commonServiceConfig // {
-            ExecStart = "${cfg.package}/bin/himmelblaud" + lib.optionalString cfg.debugFlag " -d";
+            ExecStart =
+              "${cfg.package}/bin/himmelblaud --config ${configFile}" + lib.optionalString cfg.debugFlag " -d";
             Restart = "on-failure";
             DynamicUser = "yes";
             CacheDirectory = "himmelblaud"; # /var/cache/himmelblaud
