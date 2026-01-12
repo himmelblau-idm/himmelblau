@@ -153,13 +153,13 @@ impl HimmelblauMultiProvider {
         Ok(())
     }
 
-    async fn add_oidc_tenant(&self, domain: &str) -> Result<(), IdpError> {
-        let provider = OidcProvider::new(&self.config, domain, &self.idmap)?;
+    async fn add_oidc_tenant(&self) -> Result<(), IdpError> {
+        let provider = OidcProvider::new(&self.config, "oidc", &self.idmap)?;
 
         self.providers
             .write()
             .await
-            .insert(domain.to_string(), Providers::Oidc(provider));
+            .insert("oidc".to_string(), Providers::Oidc(provider));
         Ok(())
     }
 
@@ -203,13 +203,11 @@ impl HimmelblauMultiProvider {
             }
         } else {
             // Add the oidc provider, if present
-            for domain in domains {
-                providers
-                    .add_oidc_tenant(&domain)
-                    .await
-                    .map_err(|e| anyhow!("{:?}", e))?;
-                permit_new_providers = false;
-            }
+            providers
+                .add_oidc_tenant()
+                .await
+                .map_err(|e| anyhow!("{:?}", e))?;
+            permit_new_providers = false;
         }
         *providers.permit_new_providers.lock().await = permit_new_providers;
 
@@ -271,17 +269,24 @@ macro_rules! find_provider {
     }};
 }
 
-fn idp_get_domain_for_account(account_id: &str) -> Result<&str, IdpError> {
-    match split_username(account_id) {
-        Some((_sam, domain)) => Ok(domain),
-        None => {
-            debug!("Authentication ignored for local user");
-            Err(IdpError::NotFound {
-                what: "domain".to_string(),
-                where_: format!("account_id: {}", account_id),
-            })
+macro_rules! idp_get_domain_for_account {
+    ($hmp:ident, $account_id:expr) => {{
+        let cfg = $hmp.config.read().await;
+        if cfg.get_oidc_issuer_url().is_some() {
+            Ok("oidc")
+        } else {
+            match split_username($account_id) {
+                Some((_sam, domain)) => Ok(domain),
+                None => {
+                    debug!("Authentication ignored for local user");
+                    Err(IdpError::NotFound {
+                        what: "domain".to_string(),
+                        where_: format!("account_id: {}", $account_id),
+                    })
+                }
+            }
         }
-    }
+    }};
 }
 
 #[async_trait]
@@ -334,7 +339,7 @@ impl IdProvider for HimmelblauMultiProvider {
             Some(token) => token.spn.clone(),
             None => id.to_string().clone(),
         };
-        let domain = idp_get_domain_for_account(&account_id)?;
+        let domain = idp_get_domain_for_account!(self, &account_id)?;
         let mut providers = self.providers.read().await;
         let provider = find_provider!(self, providers, domain, keystore)?;
 
@@ -365,7 +370,7 @@ impl IdProvider for HimmelblauMultiProvider {
             None => id.to_string().clone(),
         };
         let empty = (vec![], vec![]);
-        let Ok(domain) = idp_get_domain_for_account(&account_id) else {
+        let Ok(domain) = idp_get_domain_for_account!(self, &account_id) else {
             return empty;
         };
 
@@ -400,7 +405,7 @@ impl IdProvider for HimmelblauMultiProvider {
             Some(token) => token.spn.clone(),
             None => id.to_string().clone(),
         };
-        let domain = idp_get_domain_for_account(&account_id)?;
+        let domain = idp_get_domain_for_account!(self, &account_id)?;
         let mut providers = self.providers.read().await;
         let provider = find_provider!(self, providers, domain, keystore)?;
 
@@ -427,7 +432,7 @@ impl IdProvider for HimmelblauMultiProvider {
         tpm: &mut tpm::provider::BoxedDynTpm,
         machine_key: &tpm::structures::StorageKey,
     ) -> Result<bool, IdpError> {
-        let domain = idp_get_domain_for_account(account_id)?;
+        let domain = idp_get_domain_for_account!(self, account_id)?;
         let mut providers = self.providers.read().await;
         let provider = find_provider!(self, providers, domain, keystore)?;
 
@@ -458,7 +463,7 @@ impl IdProvider for HimmelblauMultiProvider {
             Some(token) => token.spn.clone(),
             None => id.to_string().clone(),
         };
-        let domain = idp_get_domain_for_account(&account_id)?;
+        let domain = idp_get_domain_for_account!(self, &account_id)?;
         let mut providers = self.providers.read().await;
         let provider = find_provider!(self, providers, domain, keystore)?;
 
@@ -487,7 +492,7 @@ impl IdProvider for HimmelblauMultiProvider {
         machine_key: &tpm::structures::StorageKey,
         shutdown_rx: &broadcast::Receiver<()>,
     ) -> Result<(AuthRequest, AuthCredHandler), IdpError> {
-        let domain = idp_get_domain_for_account(account_id)?;
+        let domain = idp_get_domain_for_account!(self, account_id)?;
         let mut providers = self.providers.read().await;
         let provider = find_provider!(self, providers, domain, keystore)?;
 
@@ -536,7 +541,7 @@ impl IdProvider for HimmelblauMultiProvider {
         machine_key: &tpm::structures::StorageKey,
         shutdown_rx: &broadcast::Receiver<()>,
     ) -> Result<(AuthResult, AuthCacheAction), IdpError> {
-        let domain = idp_get_domain_for_account(account_id)?;
+        let domain = idp_get_domain_for_account!(self, account_id)?;
         let mut providers = self.providers.read().await;
         let provider = find_provider!(self, providers, domain, keystore)?;
 
@@ -583,7 +588,7 @@ impl IdProvider for HimmelblauMultiProvider {
         no_hello_pin: bool,
         keystore: &mut D,
     ) -> Result<(AuthRequest, AuthCredHandler), IdpError> {
-        let domain = idp_get_domain_for_account(account_id)?;
+        let domain = idp_get_domain_for_account!(self, account_id)?;
         let mut providers = self.providers.read().await;
         let provider = find_provider!(self, providers, domain, keystore)?;
 
@@ -612,7 +617,7 @@ impl IdProvider for HimmelblauMultiProvider {
         machine_key: &tpm::structures::StorageKey,
         online_at_init: bool,
     ) -> Result<AuthResult, IdpError> {
-        let domain = idp_get_domain_for_account(account_id)?;
+        let domain = idp_get_domain_for_account!(self, account_id)?;
         let mut providers = self.providers.read().await;
         let provider = find_provider!(self, providers, domain, keystore)?;
 
@@ -664,8 +669,8 @@ impl IdProvider for HimmelblauMultiProvider {
         keystore: &mut D,
     ) -> CacheState {
         match account_id {
-            Some(account_id) => match split_username(account_id) {
-                Some((_sam, domain)) => {
+            Some(account_id) => match idp_get_domain_for_account!(self, account_id) {
+                Ok(domain) => {
                     let mut providers = self.providers.read().await;
                     match find_provider!(self, providers, domain, keystore) {
                         Ok(provider) => match provider {
@@ -679,7 +684,7 @@ impl IdProvider for HimmelblauMultiProvider {
                         Err(..) => return CacheState::Offline,
                     }
                 }
-                None => return CacheState::Offline,
+                Err(..) => return CacheState::Offline,
             },
             None => {
                 for (_domain, provider) in self.providers.read().await.iter() {
