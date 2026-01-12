@@ -1,4 +1,4 @@
-.TH HIMMELBLAU.CONF "5" "November 2024" "Himmelblau Configuration" "File Formats"
+.TH HIMMELBLAU.CONF "5" "January 2026" "Himmelblau Configuration" "File Formats"
 .SH NAME
 himmelblau.conf \- Configuration file for Himmelblau, enabling Azure Entra ID authentication on Linux.
 
@@ -18,13 +18,14 @@ daemon, which processes related tasks.
 .B Restarting the Daemons
 To apply changes, restart the Himmelblau services using the following systemd commands:
 
-.EXAMPLES
+.nf
 .RS
 .IP
 sudo systemctl restart himmelblaud
 .IP
 sudo systemctl restart himmelblaud-tasks
 .RE
+.fi
 
 .SH DESCRIPTION
 The
@@ -361,7 +362,7 @@ Example: sudo_groups = f3c9a7e4-7d5a-47e8-832f-3d2d92abcd12,5ba4ef1d-e454-4f43-b
 .B local_sudo_group
 .RE
 The local group that should be given to users in any of the groups specified in sudo_groups.
-Only has an affect if sudo_groups is set.
+Only has an effect if sudo_groups is set.
 Removes group from user if they are no longer a member of the specified entra group.
 
 .P

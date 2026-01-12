@@ -16,12 +16,12 @@ This mirrors Samba's approach of generating code from XML parameter definitions.
 """
 
 import argparse
-import os
 import sys
 import xml.etree.ElementTree as ET
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Optional, List, Dict
 from pathlib import Path
+import datetime
 
 
 @dataclass
@@ -133,13 +133,16 @@ def load_all_parameters(xml_dir: str) -> tuple[List[Parameter], Dict[str, Sectio
     for subdir in sorted(xml_path.iterdir()):
         if not subdir.is_dir():
             continue
-
-        # Load all XML files in this section directory
-        for xml_file in sorted(subdir.glob('*.xml')):
-            params, sections = parse_xml_file(str(xml_file))
-            all_params.extend(params)
-            for section in sections:
-                all_sections[section.name] = section
+        try:
+            # Load all XML files in this section directory
+            for xml_file in sorted(subdir.glob('*.xml')):
+                params, sections = parse_xml_file(str(xml_file))
+                all_params.extend(params)
+                for section in sections:
+                    all_sections[section.name] = section
+        except OSError as e:
+            print(f"Error: Could not read directory {subdir}: {e}", file=sys.stderr)
+            sys.exit(1)
 
     return all_params, all_sections
 
@@ -439,7 +442,8 @@ def generate_man_page(params: List[Parameter], sections: Dict[str, Section]) -> 
     lines = []
 
     # Header
-    lines.append('.TH HIMMELBLAU.CONF "5" "November 2024" "Himmelblau Configuration" "File Formats"')
+    current_date = datetime.datetime.now().strftime("%B %Y")
+    lines.append(f'.TH HIMMELBLAU.CONF "5" "{current_date}" "Himmelblau Configuration" "File Formats"')
     lines.append('.SH NAME')
     lines.append('himmelblau.conf \\- Configuration file for Himmelblau, enabling Azure Entra ID authentication on Linux.')
     lines.append('')
@@ -461,13 +465,14 @@ def generate_man_page(params: List[Parameter], sections: Dict[str, Section]) -> 
     lines.append('.B Restarting the Daemons')
     lines.append('To apply changes, restart the Himmelblau services using the following systemd commands:')
     lines.append('')
-    lines.append('.EXAMPLES')
+    lines.append('.nf')
     lines.append('.RS')
     lines.append('.IP')
     lines.append('sudo systemctl restart himmelblaud')
     lines.append('.IP')
     lines.append('sudo systemctl restart himmelblaud-tasks')
     lines.append('.RE')
+    lines.append('.fi')
     lines.append('')
 
     # Description

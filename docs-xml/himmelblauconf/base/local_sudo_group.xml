@@ -8,7 +8,7 @@
            order="20">
 <description>
 The local group that should be given to users in any of the groups specified in sudo_groups.
-Only has an affect if sudo_groups is set.
+Only has an effect if sudo_groups is set.
 Removes group from user if they are no longer a member of the specified entra group.
 </description>
 <default>sudo</default>
