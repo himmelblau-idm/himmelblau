@@ -5,15 +5,12 @@ Cargo Vet Review Assistant
 Automates the cargo vet workflow by:
 1. Parsing `cargo vet` output to identify unvetted dependencies
 2. Fetching diffs from diff.rs or using local mode
-3. Analyzing changes for security concerns (pattern matching + Claude AI)
+3. Analyzing changes for security concerns (pattern matching + AI)
 4. Providing educated suggestions about safety
 5. Facilitating the certification process
 
 Usage:
-  python scripts/cargo_vet_review.py [--auto] [--skip-large N] [--no-ai]
-
-Environment:
-  CLAUDE_PATH: Path to claude CLI (default: claude)
+  python scripts/cargo_vet_review.py [--ai-provider gemini|claude] [--no-ai]
 """
 
 import argparse
@@ -665,8 +662,8 @@ class DiffFetcher:
         return '\n'.join(diff_lines)
 
 
-class ClaudeAnalyzer:
-    """Use Claude CLI to analyze diffs for security concerns."""
+class AIAnalyzer:
+    """Use an AI provider's CLI to analyze diffs for security concerns."""
 
     SECURITY_REVIEW_PROMPT = """You are a security auditor reviewing Rust crate changes for the cargo-vet tool.
 Your job is to analyze the following code changes and identify potential security concerns.
@@ -742,17 +739,18 @@ Provide a concise security analysis with:
 Keep your response focused and actionable.
 """
 
-    def __init__(self):
-        self.claude_path = os.environ.get('CLAUDE_PATH', 'claude')
-        self._claude_available = None
+    def __init__(self, provider: str, path: Optional[str] = None):
+        self.provider = provider
+        self.cli_path = path or provider
+        self._cli_available = None
 
     def is_available(self) -> bool:
-        """Check if Claude CLI is available."""
-        if self._claude_available is not None:
-            return self._claude_available
+        """Check if the AI provider's CLI is available."""
+        if self._cli_available is not None:
+            return self._cli_available
 
-        self._claude_available = shutil.which(self.claude_path) is not None
-        return self._claude_available
+        self._cli_available = shutil.which(self.cli_path) is not None
+        return self._cli_available
 
     def analyze_diff(
         self,
@@ -764,10 +762,10 @@ Keep your response focused and actionable.
         is_full_crate: bool = False,
         verbose: bool = False,
     ) -> Optional[str]:
-        """Ask Claude to analyze the diff for security concerns."""
+        """Ask an AI to analyze the diff for security concerns."""
         if not self.is_available():
             if verbose:
-                print(f"    Debug: Claude CLI not found at '{self.claude_path}'")
+                print(f"    Debug: {self.provider.capitalize()} CLI not found at '{self.cli_path}'")
             return None
 
         # Truncate very large diffs to avoid token limits
@@ -809,76 +807,61 @@ Keep your response focused and actionable.
                 prompt_file = f.name
 
             if verbose:
-                print(f"    Debug: Prompt written to {prompt_file} ({len(prompt)} chars)")
+                print(f"    Debug: Prompt for {self.provider} written to {prompt_file} ({len(prompt)} chars)")
 
-            # Method 1: Use -p flag with prompt from file (read content)
-            # This avoids shell escaping issues with large prompts
-            result = subprocess.run(
-                [self.claude_path, "-p", prompt, "--output-format", "text"],
-                capture_output=True,
-                text=True,
-                timeout=180,
-            )
+            if self.provider == 'claude':
+                # Method 1: Use -p flag with prompt from file
+                result = subprocess.run(
+                    [self.cli_path, "-p", prompt, "--output-format", "text"],
+                    capture_output=True, text=True, timeout=180,
+                )
+                if result.returncode == 0 and result.stdout and len(result.stdout.strip()) > 10:
+                    return result.stdout.strip()
+                # Method 2: Pipe prompt via stdin
+                result = subprocess.run(
+                    [self.cli_path, "--output-format", "text"],
+                    input=prompt, capture_output=True, text=True, timeout=180,
+                )
+                if result.returncode == 0 and result.stdout and len(result.stdout.strip()) > 10:
+                    return result.stdout.strip()
+                # Method 3: Use --print flag
+                result = subprocess.run(
+                    [self.cli_path, "--print", prompt],
+                    capture_output=True, text=True, timeout=180,
+                )
+                if result.returncode == 0 and result.stdout and len(result.stdout.strip()) > 10:
+                    return result.stdout.strip()
 
-            if verbose:
-                print(f"    Debug: Method 1 - returncode={result.returncode}")
-                print(f"    Debug: Method 1 - stdout length={len(result.stdout) if result.stdout else 0}")
-                print(f"    Debug: Method 1 - stderr={result.stderr[:200] if result.stderr else 'none'}")
+            elif self.provider == 'gemini':
+                # Assume gemini CLI is compatible with one of these patterns
+                # Method 1: Use -p for prompt
+                result = subprocess.run(
+                    [self.cli_path, "-p", prompt],
+                    capture_output=True, text=True, timeout=180,
+                )
+                if result.returncode == 0 and result.stdout and len(result.stdout.strip()) > 10:
+                    return result.stdout.strip()
+                # Method 2: Pipe prompt via stdin
+                result = subprocess.run(
+                    [self.cli_path],
+                    input=prompt, capture_output=True, text=True, timeout=180,
+                )
+                if result.returncode == 0 and result.stdout and len(result.stdout.strip()) > 10:
+                    return result.stdout.strip()
 
-            if result.returncode == 0 and result.stdout and len(result.stdout.strip()) > 10:
-                return result.stdout.strip()
-
-            # Method 2: Pipe prompt via stdin
-            if verbose:
-                print("    Debug: Trying method 2 (stdin pipe)...")
-
-            result = subprocess.run(
-                [self.claude_path, "--output-format", "text"],
-                input=prompt,
-                capture_output=True,
-                text=True,
-                timeout=180,
-            )
-
-            if verbose:
-                print(f"    Debug: Method 2 - returncode={result.returncode}")
-                print(f"    Debug: Method 2 - stdout length={len(result.stdout) if result.stdout else 0}")
-                print(f"    Debug: Method 2 - stderr={result.stderr[:200] if result.stderr else 'none'}")
-
-            if result.returncode == 0 and result.stdout and len(result.stdout.strip()) > 10:
-                return result.stdout.strip()
-
-            # Method 3: Use --print flag for non-interactive single response
-            if verbose:
-                print("    Debug: Trying method 3 (--print)...")
-
-            result = subprocess.run(
-                [self.claude_path, "--print", prompt],
-                capture_output=True,
-                text=True,
-                timeout=180,
-            )
-
-            if verbose:
-                print(f"    Debug: Method 3 - returncode={result.returncode}")
-                print(f"    Debug: Method 3 - stdout length={len(result.stdout) if result.stdout else 0}")
-                print(f"    Debug: Method 3 - stderr={result.stderr[:200] if result.stderr else 'none'}")
-
-            if result.returncode == 0 and result.stdout and len(result.stdout.strip()) > 10:
-                return result.stdout.strip()
 
             # If all methods failed, print debug info
-            print(f"    Warning: All Claude invocation methods failed")
-            if result.stderr:
+            print(f"    Warning: All {self.provider} invocation methods failed")
+            if 'result' in locals() and result.stderr:
                 print(f"    Last error: {result.stderr[:300]}")
 
             return None
 
         except subprocess.TimeoutExpired:
-            print("    Warning: Claude analysis timed out (180s)")
+            print(f"    Warning: {self.provider.capitalize()} analysis timed out (180s)")
             return None
         except Exception as e:
-            print(f"    Warning: Claude analysis failed: {e}")
+            print(f"    Warning: {self.provider.capitalize()} analysis failed: {e}")
             import traceback
             if verbose:
                 traceback.print_exc()
@@ -995,15 +978,13 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  %(prog)s                    # Interactive review with Claude AI analysis
+  %(prog)s                    # Interactive review with Gemini AI analysis
+  %(prog)s --ai-provider claude # Use Claude AI instead
   %(prog)s --no-ai            # Review without AI (pattern matching only)
   %(prog)s --skip-large 5000  # Skip diffs larger than 5000 lines
   %(prog)s --dry-run          # Analyze without certifying
   %(prog)s --json             # Output analysis as JSON
   %(prog)s --crate uuid       # Only analyze a specific crate
-
-Environment Variables:
-  CLAUDE_PATH    Path to claude CLI binary (default: claude)
         """,
     )
     parser.add_argument(
@@ -1028,9 +1009,22 @@ Environment Variables:
         help="Only analyze a specific crate",
     )
     parser.add_argument(
+        "--ai-provider",
+        type=str,
+        default="gemini",
+        choices=["gemini", "claude"],
+        help="The AI provider to use for analysis (default: gemini)",
+    )
+    parser.add_argument(
+        "--ai-provider-path",
+        type=str,
+        default=None,
+        help="Path to the AI provider's CLI binary (e.g., /path/to/gemini)",
+    )
+    parser.add_argument(
         "--no-ai",
         action="store_true",
-        help="Disable Claude AI analysis (use pattern matching only)",
+        help="Disable AI analysis (use pattern matching only)",
     )
     parser.add_argument(
         "--verbose", "-v",
@@ -1080,17 +1074,21 @@ Environment Variables:
 
     # Setup analyzers and fetcher
     analyzer = SecurityAnalyzer()
-    claude_analyzer = ClaudeAnalyzer() if not args.no_ai else None
+    ai_analyzer = None
+    if not args.no_ai:
+        ai_analyzer = AIAnalyzer(provider=args.ai_provider, path=args.ai_provider_path)
     fetcher = DiffFetcher()
     analyses = []
 
-    # Check Claude availability
-    use_ai = not args.no_ai and claude_analyzer and claude_analyzer.is_available()
+    # Check AI availability
+    use_ai = ai_analyzer and ai_analyzer.is_available()
     if not args.no_ai:
+        provider_name = args.ai_provider.capitalize()
         if use_ai:
-            print_color("Claude AI analysis: ENABLED", "green")
+            print_color(f"{provider_name} AI analysis: ENABLED", "green")
         else:
-            print_color("Claude AI analysis: NOT AVAILABLE (install claude CLI or use --no-ai)", "yellow")
+            cli_name = args.ai_provider_path or args.ai_provider
+            print_color(f"{provider_name} AI analysis: NOT AVAILABLE (could not find '{cli_name}', install it or use --no-ai)", "yellow")
     print()
 
     for idx, item in enumerate(items, 1):
@@ -1152,10 +1150,10 @@ Environment Variables:
         analysis.risk_score = analyzer.calculate_risk_score(findings)
         analysis.recommendation = analyzer.generate_recommendation(analysis)
 
-        # Claude AI analysis
+        # AI analysis
         if use_ai:
-            print("    Requesting Claude AI analysis (this may take a moment)...")
-            claude_result = claude_analyzer.analyze_diff(
+            print(f"    Requesting {args.ai_provider.capitalize()} AI analysis (this may take a moment)...")
+            ai_result = ai_analyzer.analyze_diff(
                 diff_content=diff_content,
                 crate_name=item.crate_name,
                 old_version=item.old_version,
@@ -1164,7 +1162,7 @@ Environment Variables:
                 is_full_crate=is_full_crate,
                 verbose=args.verbose,
             )
-            analysis.claude_analysis = claude_result
+            analysis.claude_analysis = ai_result
 
         analyses.append(analysis)
 
@@ -1195,14 +1193,14 @@ Environment Variables:
         else:
             print_color("    No pattern-based concerns found in added code.", "green")
 
-        # Claude AI analysis output
+        # AI analysis output
         if analysis.claude_analysis:
             print()
             print_color("-" * 50, "magenta")
-            print_color("CLAUDE AI ANALYSIS", "bold")
+            print_color("AI ANALYSIS", "bold")
             print_color("-" * 50, "magenta")
             print()
-            # Indent Claude's response
+            # Indent the response
             for line in analysis.claude_analysis.split('\n'):
                 print(f"    {line}")
             print()
@@ -1280,7 +1278,7 @@ Environment Variables:
                     break
                 elif choice == 'a' and use_ai:
                     print("    Re-running AI analysis...")
-                    claude_result = claude_analyzer.analyze_diff(
+                    ai_result = ai_analyzer.analyze_diff(
                         diff_content=diff_content,
                         crate_name=item.crate_name,
                         old_version=item.old_version,
@@ -1289,14 +1287,14 @@ Environment Variables:
                         is_full_crate=is_full_crate,
                         verbose=True,  # Always verbose on re-run for debugging
                     )
-                    if claude_result:
-                        analysis.claude_analysis = claude_result
+                    if ai_result:
+                        analysis.claude_analysis = ai_result
                         print()
                         print_color("-" * 50, "magenta")
-                        print_color("CLAUDE AI ANALYSIS (refreshed)", "bold")
+                        print_color("AI ANALYSIS (refreshed)", "bold")
                         print_color("-" * 50, "magenta")
                         print()
-                        for line in claude_result.split('\n'):
+                        for line in ai_result.split('\n'):
                             print(f"    {line}")
                         print()
                     else:
@@ -1304,7 +1302,7 @@ Environment Variables:
                 elif choice == 'r' and analysis.claude_analysis:
                     print()
                     print_color("-" * 50, "magenta")
-                    print_color("CLAUDE AI ANALYSIS", "bold")
+                    print_color("AI ANALYSIS", "bold")
                     print_color("-" * 50, "magenta")
                     print()
                     for line in analysis.claude_analysis.split('\n'):
