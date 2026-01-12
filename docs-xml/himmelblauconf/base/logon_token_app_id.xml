@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<parameter name="logon_token_app_id"
+           section="global"
+           type="string"
+           rust_type="Option&lt;String&gt;"
+           documented="true"
+           domain_specific="true"
+           order="24">
+<description>
+Specifies an alternate Azure Entra ID application (client) ID to be used exclusively for acquiring
+.B ACCESS_TOKEN
+values on behalf of the user during logon script execution.
+If not set, the value of
+.B app_id
+will be used instead.
+
+This option allows using a separate application registration that carries the specific API permissions required by logon scripts.
+
+.PP
+\fBNote:\fR In the Azure Portal for the application corresponding to \fBlogon_token_app_id\fR, ensure that the redirect URI
+\fIhttps://login.microsoftonline.com/common/oauth2/nativeclient\fR
+is enabled under "Mobile and desktop applications" in the Authentication section.
+This is required for Himmelblau to obtain tokens via the public client flow.
+</description>
+<default></default>
+<example>logon_token_app_id = 544e695f-5d78-442e-b14e-e114e95e640c</example>
+<handler>get_logon_token_app_id</handler>
+</parameter>

@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<parameter name="task_socket_path"
+           section="global"
+           type="string"
+           rust_type="String"
+           documented="true"
+           domain_specific="false"
+           order="35">
+<description>
+The path to the socket file for communication with the task daemon.
+</description>
+<default>/var/run/himmelblaud/task_sock</default>
+<default_const>DEFAULT_TASK_SOCK_PATH</default_const>
+<example>task_socket_path = /tmp/task.sock</example>
+</parameter>

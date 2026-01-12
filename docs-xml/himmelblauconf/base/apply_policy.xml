@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<parameter name="apply_policy"
+           section="global"
+           type="bool"
+           rust_type="bool"
+           documented="true"
+           domain_specific="false"
+           order="28">
+<description>
+A boolean option that enables the application and enforcement of Intune policies to the authenticated user.
+</description>
+<default>false</default>
+<example>apply_policy = true</example>
+</parameter>

@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<parameter name="hsm_pin_path"
+           section="global"
+           type="string"
+           rust_type="String"
+           documented="true"
+           domain_specific="false"
+           order="33">
+<description>
+The location where the HSM (Hardware Security Module) PIN will be stored. This PIN is used to protect sensitive cryptographic operations.
+</description>
+<default>/var/lib/himmelblaud/hsm-pin</default>
+<default_const>DEFAULT_HSM_PIN_PATH</default_const>
+<example>hsm_pin_path = /etc/himmelblau/hsm-pin</example>
+<env_override>HIMMELBLAU_HSM_PIN_PATH</env_override>
+<handler>get_hsm_pin_path</handler>
+</parameter>

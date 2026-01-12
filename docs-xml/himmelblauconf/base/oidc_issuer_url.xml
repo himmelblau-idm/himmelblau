@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<parameter name="oidc_issuer_url"
+                      section="global"
+                      type="string"
+                      rust_type="Option&lt;String&gt;"
+                      documented="true"
+                      domain_specific="false"
+                      order="2"
+                     >
+<description>
+Specifies the OpenID Connect (OIDC) issuer URL used by Himmelblau to discover
+OIDC provider metadata and endpoints.
+
+This option enables generic OIDC authentication support and allows Himmelblau
+to authenticate against any standards-compliant OIDC provider, rather than
+using the built-in Microsoft Entra ID defaults.
+
+When this option is set, the following options are
+.B REQUIRED
+and must be configured consistently:
+
+.RS
+.IP \(bu 2
+.B domain
+\(en Used for username normalization and login prompts
+.IP \(bu 2
+.B app_id
+\(en Used as the OIDC client identifier
+.RE
+
+The issuer URL
+.B MUST
+exactly match the issuer value advertised by the OIDC provider, including
+any required path components.
+Incorrect issuer URLs will cause provider discovery to fail.
+
+If this option is not set, Himmelblau defaults to its native Microsoft Entra ID
+authentication flow.
+</description>
+<default></default>
+<example>oidc_issuer_url = https://login.microsoftonline.com/0656e57d-a8fc-4aa4-8366-8045787115ca/v2.0</example>
+<handler>get_oidc_issuer_url</handler>
+</parameter>

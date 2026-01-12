@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<parameter name="enable_hello"
+                      section="global"
+                      type="bool"
+                      rust_type="bool"
+                      documented="true"
+                      domain_specific="false"
+                      order="7"
+                     >
+<description>
+Enables or disables user enrollment in Windows Hello authentication. If disabled, users will need to provide MFA for each login.
+</description>
+<default>true</default>
+<default_const>DEFAULT_HELLO_ENABLED</default_const>
+<example>enable_hello = false</example>
+</parameter>

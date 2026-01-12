@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<parameter name="shell"
+           section="global"
+           type="string"
+           rust_type="String"
+           documented="true"
+           domain_specific="true"
+           order="40">
+<description>
+The default shell for users. This will be assigned when the user logs in.
+</description>
+<default>/bin/bash</default>
+<default_const>DEFAULT_SHELL</default_const>
+<example>shell = /bin/zsh</example>
+<handler>get_shell</handler>
+</parameter>
