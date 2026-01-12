@@ -16,4 +16,6 @@ rec {
     himmelblau = pkgs.callPackage ./nix/packages/himmelblau.nix { };
     himmelblau-desktop = pkgs.callPackage ./nix/packages/himmelblau.nix { withO365 = true; };
   };
+
+  passthru = { inherit pkgs; };
 }
