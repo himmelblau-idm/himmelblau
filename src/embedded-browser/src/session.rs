@@ -19,6 +19,7 @@ pub struct BrowserSession {
     pub vnc_port: u16,
     pub width: u32,
     pub height: u32,
+    pub container_ip: String,
     pub created_at: Instant,
     pub timeout_secs: u64,
 }
@@ -30,6 +31,7 @@ impl BrowserSession {
         vnc_port: u16,
         width: u32,
         height: u32,
+        container_ip: String,
         timeout_secs: u64,
     ) -> Self {
         Self {
@@ -38,6 +40,7 @@ impl BrowserSession {
             vnc_port,
             width,
             height,
+            container_ip,
             created_at: Instant::now(),
             timeout_secs,
         }

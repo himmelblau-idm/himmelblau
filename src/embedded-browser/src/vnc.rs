@@ -26,8 +26,10 @@ const MSG_FRAMEBUFFER_UPDATE: u8 = 0;
 const ENCODING_RAW: i32 = 0;
 
 /// Connect to a VNC server and capture a frame
-pub async fn get_frame(vnc_port: u16) -> Result<Vec<u8>, String> {
-    let addr = format!("127.0.0.1:{}", vnc_port);
+/// Note: We connect directly to the container IP on port 5900 (the internal VNC port)
+pub async fn get_frame(container_ip: &str, _vnc_port: u16) -> Result<Vec<u8>, String> {
+    // VNC inside the container always listens on port 5900
+    let addr = format!("{}:5900", container_ip);
 
     let mut stream = TcpStream::connect(&addr)
         .await
@@ -202,8 +204,14 @@ pub async fn get_frame(vnc_port: u16) -> Result<Vec<u8>, String> {
 }
 
 /// Send an input event to the VNC server
-pub async fn send_input(vnc_port: u16, event: &BrowserInputEvent) -> Result<(), String> {
-    let addr = format!("127.0.0.1:{}", vnc_port);
+/// Note: We connect directly to the container IP on port 5900 (the internal VNC port)
+pub async fn send_input(
+    container_ip: &str,
+    _vnc_port: u16,
+    event: &BrowserInputEvent,
+) -> Result<(), String> {
+    // VNC inside the container always listens on port 5900
+    let addr = format!("{}:5900", container_ip);
 
     let mut stream = TcpStream::connect(&addr)
         .await

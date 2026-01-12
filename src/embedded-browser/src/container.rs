@@ -148,7 +148,7 @@ impl ContainerManager {
         width: u32,
         height: u32,
         container_image: &str,
-    ) -> Result<u16, String> {
+    ) -> Result<(u16, String), String> {
         // Check if session already exists
         {
             let containers = self.containers.read().await;
@@ -196,6 +196,28 @@ impl ContainerManager {
         let container_id = String::from_utf8_lossy(&output.stdout).trim().to_string();
         debug!("Started container {} with ID: {}", container_name, container_id);
 
+        // Inspect the container to get its IP address
+        let inspect_output = Command::new("podman")
+            .args(["inspect", "-f", "{{.NetworkSettings.IPAddress}}", &container_id])
+            .output()
+            .await
+            .map_err(|e| format!("Failed to inspect container: {}", e))?;
+
+        if !inspect_output.status.success() {
+            let stderr = String::from_utf8_lossy(&inspect_output.stderr);
+            error!("Failed to inspect container for IP address: {}", stderr);
+            // Stop the container we just started
+            let _ = self.stop_browser(session_id).await;
+            return Err(format!("Failed to get container IP address: {}", stderr));
+        }
+
+        let container_ip = String::from_utf8_lossy(&inspect_output.stdout).trim().to_string();
+        if container_ip.is_empty() {
+            return Err("Container IP address is empty".to_string());
+        }
+
+        info!("Container {} has IP address: {}", container_name, container_ip);
+
         // Store the mapping
         {
             let mut containers = self.containers.write().await;
@@ -207,9 +229,9 @@ impl ContainerManager {
         }
 
         // Wait a moment for VNC to start
-        tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+        tokio::time::sleep(tokio::time::Duration::from_secs(3)).await;
 
-        Ok(vnc_port)
+        Ok((vnc_port, container_ip))
     }
 
     /// Stop a browser container for the given session

@@ -187,13 +187,14 @@ async fn handle_client(
                     .start_browser(&session_id, &url, width, height, &container_image)
                     .await
                 {
-                    Ok(vnc_port) => {
+                    Ok((vnc_port, container_ip)) => {
                         let session = BrowserSession::new(
                             session_id.clone(),
                             url.clone(),
                             vnc_port,
                             width,
                             height,
+                            container_ip,
                             timeout,
                         );
 
@@ -257,7 +258,7 @@ async fn handle_client(
             Some(Ok(BrowserRequest::GetVncFrame { session_id })) => {
                 let sm = session_manager.read().await;
                 if let Some(session) = sm.get_session(&session_id) {
-                    match vnc::get_frame(session.vnc_port).await {
+                    match vnc::get_frame(&session.container_ip, session.vnc_port).await {
                         Ok(frame_data) => {
                             let resp = BrowserResponse::VncFrame {
                                 session_id,
@@ -306,7 +307,7 @@ async fn handle_client(
             Some(Ok(BrowserRequest::InputEvent { session_id, event })) => {
                 let sm = session_manager.read().await;
                 if let Some(session) = sm.get_session(&session_id) {
-                    if let Err(e) = vnc::send_input(session.vnc_port, &event).await {
+                    if let Err(e) = vnc::send_input(&session.container_ip, session.vnc_port, &event).await {
                         error!("Failed to send input event: {:?}", e);
                     }
                 }
