@@ -290,6 +290,28 @@ def prompt_result() -> str:
         return 'q'
 
 
+def create_branch(bug: Bug) -> Optional[str]:
+    """Create a new branch for the fix."""
+    default_branch = f"ai-fix/issue-{bug.number}"
+    print(f"Enter branch name (or press Enter for '{default_branch}'):")
+    try:
+        branch_name = input("> ").strip() or default_branch
+    except (KeyboardInterrupt, EOFError):
+        return None
+
+    # Create and checkout the new branch
+    result = subprocess.run(
+        ["git", "checkout", "-b", branch_name],
+        capture_output=True, text=True
+    )
+    if result.returncode != 0:
+        print_color(f"Failed to create branch: {result.stderr}", "red")
+        return None
+
+    print_color(f"Created branch: {branch_name}", "green")
+    return branch_name
+
+
 def create_commit(bug: Bug) -> bool:
     """Create a git commit for the fix."""
     print_color("\nCreating commit...", "yellow")
@@ -480,12 +502,13 @@ Examples:
             result = prompt_result()
 
             if result == 'c':
-                # Create commit
-                if create_commit(bug):
+                # Create branch first, then commit
+                branch_name = create_branch(bug)
+                if branch_name and create_commit(bug):
                     try:
                         create_pr_choice = input("Create PR now? [y/N]: ").strip().lower()
                         if create_pr_choice == 'y':
-                            create_pr(bug)
+                            create_pr(bug, branch_name)
                     except (KeyboardInterrupt, EOFError):
                         pass
                 idx += 1
