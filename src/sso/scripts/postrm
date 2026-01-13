@@ -1,0 +1,52 @@
+#!/bin/sh
+set -e
+
+# Himmelblau SSO postrm script
+# Removes Firefox extension configuration that was merged during install
+# (Chrome/Chromium policy files are handled by package manager directly)
+
+FIREFOX_EXTENSION_URL="https://github.com/siemens/linux-entra-sso/releases/download/v1.3.1/linux_entra_sso-1.3.1.xpi"
+
+# Function to remove Firefox extension from policies.json
+remove_firefox_policy() {
+    POLICY_FILE="$1"
+
+    if [ -f "$POLICY_FILE" ]; then
+        if command -v jq >/dev/null 2>&1; then
+            # Remove the extension URL from the Install array
+            TEMP_FILE=$(mktemp)
+            jq --arg url "$FIREFOX_EXTENSION_URL" '
+                if .policies.Extensions.Install then
+                    .policies.Extensions.Install = [.policies.Extensions.Install[] | select(. != $url)]
+                else
+                    .
+                end
+            ' "$POLICY_FILE" > "$TEMP_FILE" && mv "$TEMP_FILE" "$POLICY_FILE"
+            echo "Removed Firefox SSO extension from $POLICY_FILE"
+
+            # If the Install array is now empty, clean up the structure
+            if jq -e '.policies.Extensions.Install == []' "$POLICY_FILE" >/dev/null 2>&1; then
+                jq 'del(.policies.Extensions.Install)' "$POLICY_FILE" > "$TEMP_FILE" && mv "$TEMP_FILE" "$POLICY_FILE"
+            fi
+            # If Extensions is now empty, clean it up
+            if jq -e '.policies.Extensions == {}' "$POLICY_FILE" >/dev/null 2>&1; then
+                jq 'del(.policies.Extensions)' "$POLICY_FILE" > "$TEMP_FILE" && mv "$TEMP_FILE" "$POLICY_FILE"
+            fi
+            # If policies is now empty, remove the file
+            if jq -e '.policies == {}' "$POLICY_FILE" >/dev/null 2>&1; then
+                rm -f "$POLICY_FILE"
+                echo "Removed empty policy file $POLICY_FILE"
+            fi
+        fi
+    fi
+}
+
+# Only run on purge or remove
+case "$1" in
+    remove|purge)
+        # Remove Firefox policy
+        remove_firefox_policy "/etc/firefox/policies/policies.json"
+
+        echo "Himmelblau SSO Firefox policy configuration removed"
+        ;;
+esac
