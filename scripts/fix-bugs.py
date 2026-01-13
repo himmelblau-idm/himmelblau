@@ -343,7 +343,7 @@ def create_commit(bug: Bug) -> bool:
     # Stage and commit
     subprocess.run(["git", "add", "-A"])
     result = subprocess.run(
-        ["git", "commit", "-m", commit_msg],
+        ["git", "commit", "-m", commit_msg, "--signoff"],
         capture_output=True, text=True
     )
 
