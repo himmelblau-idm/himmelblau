@@ -322,7 +322,6 @@ impl HimmelblauConfig {
         }
     }
 
-
     pub fn get_idmap_range(&self, domain: &str) -> (u32, u32) {
         let default_range = DEFAULT_IDMAP_RANGE;
         match self.config.get(domain, "idmap_range") {
@@ -460,8 +459,6 @@ impl HimmelblauConfig {
         }
     }
 
-
-
     pub fn get_pam_allow_groups(&self) -> Vec<String> {
         let mut pam_allow_groups = vec![];
         for section in self.config.sections() {
@@ -522,7 +519,6 @@ impl HimmelblauConfig {
         self.config.set(section, key, Some(value.to_string()));
     }
 
-
     pub fn get_configured_domains(&self) -> Vec<String> {
         let mut domains = match self.config.get("global", "domains") {
             Some(val) => val.split(',').map(|s| s.trim().to_string()).collect(),
@@ -546,7 +542,6 @@ impl HimmelblauConfig {
     pub fn get_config_file(&self) -> String {
         self.filename.clone()
     }
-
 
     pub fn get_id_attr_map(&self) -> IdAttr {
         match self.config.get("global", "id_attr_map") {
@@ -573,7 +568,6 @@ impl HimmelblauConfig {
             })
     }
 
-
     pub fn get_password_only_remote_services_deny_list(&self) -> Vec<String> {
         match self
             .config
@@ -587,15 +581,12 @@ impl HimmelblauConfig {
         }
     }
 
-
-
     pub fn get_intune_device_id(&self, domain: &str) -> Option<String> {
         let domain = self
             .get_primary_domain_from_alias_simple(domain)
             .unwrap_or(domain.to_string());
         self.config.get(&domain, "intune_device_id")
     }
-
 
     pub fn get_primary_domain_from_alias_simple(&self, alias: &str) -> Option<String> {
         let domains = self.get_configured_domains();
@@ -700,7 +691,6 @@ impl HimmelblauConfig {
         }
         None
     }
-
 
     /// This function attempts to convert a username to a valid UPN. On failure it
     /// will leave the name as-is, and respond with the original input. Himmelblau
@@ -816,7 +806,6 @@ impl HimmelblauConfig {
         }
         sudo_groups
     }
-
 
     pub fn get_oidc_issuer_url(&self) -> Option<String> {
         let res = self.config.get("global", "oidc_issuer_url").map(|s| {

@@ -315,13 +315,7 @@ pub fn gen_subid_start(username: &str, subid_range: (u32, u32)) -> u32 {
 
     // Use MurmurHash3 to hash the username (same algorithm as SSSD idmap)
     let input = username.to_lowercase();
-    let hash = unsafe {
-        ffi::murmurhash3(
-            input.as_ptr() as *const i8,
-            input.len() as i32,
-            SEED,
-        )
-    };
+    let hash = unsafe { ffi::murmurhash3(input.as_ptr() as *const i8, input.len() as i32, SEED) };
 
     // Map hash to a slot number and calculate the start ID
     let slot = hash % num_slots;
@@ -349,7 +343,9 @@ unsafe impl Sync for Idmap {}
 
 #[cfg(test)]
 mod tests {
-    use crate::{gen_subid_start, AadSid, Idmap, DEFAULT_IDMAP_RANGE, DEFAULT_SUBID_RANGE, SUBID_COUNT};
+    use crate::{
+        gen_subid_start, AadSid, Idmap, DEFAULT_IDMAP_RANGE, DEFAULT_SUBID_RANGE, SUBID_COUNT,
+    };
     use std::collections::HashMap;
     use uuid::Uuid;
 
@@ -454,18 +450,34 @@ mod tests {
         let subid2 = gen_subid_start(user2, DEFAULT_SUBID_RANGE);
 
         // Same user should always get the same subid start
-        assert_eq!(subid1_a, subid1_b, "Subid for same user should be deterministic");
+        assert_eq!(
+            subid1_a, subid1_b,
+            "Subid for same user should be deterministic"
+        );
 
         // Different users should (very likely) get different subid starts
         // Note: There's a tiny chance of collision, but with the large range it's unlikely
-        assert_ne!(subid1_a, subid2, "Different users should get different subid ranges");
+        assert_ne!(
+            subid1_a, subid2,
+            "Different users should get different subid ranges"
+        );
 
         // Subid should be within the configured range
-        assert!(subid1_a >= DEFAULT_SUBID_RANGE.0, "Subid should be >= min range");
-        assert!(subid1_a + SUBID_COUNT <= DEFAULT_SUBID_RANGE.1, "Subid + count should be <= max range");
+        assert!(
+            subid1_a >= DEFAULT_SUBID_RANGE.0,
+            "Subid should be >= min range"
+        );
+        assert!(
+            subid1_a + SUBID_COUNT <= DEFAULT_SUBID_RANGE.1,
+            "Subid + count should be <= max range"
+        );
 
         // Subid should be aligned to SUBID_COUNT boundary
-        assert_eq!((subid1_a - DEFAULT_SUBID_RANGE.0) % SUBID_COUNT, 0, "Subid should be slot-aligned");
+        assert_eq!(
+            (subid1_a - DEFAULT_SUBID_RANGE.0) % SUBID_COUNT,
+            0,
+            "Subid should be slot-aligned"
+        );
     }
 
     #[test]

@@ -380,7 +380,12 @@ fn user_has_subid_entry(username: &str, subid_file: &Path) -> bool {
 
 /// Add a subordinate ID entry to /etc/subuid or /etc/subgid
 /// Format: username:start:count
-fn add_subid_entry(username: &str, start: u32, count: u32, subid_file: &Path) -> Result<(), String> {
+fn add_subid_entry(
+    username: &str,
+    start: u32,
+    count: u32,
+    subid_file: &Path,
+) -> Result<(), String> {
     // Check if user already has an entry
     if user_has_subid_entry(username, subid_file) {
         debug!(
