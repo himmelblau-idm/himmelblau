@@ -1,0 +1,63 @@
+#!/bin/sh
+set -e
+
+# Himmelblau SSO postinst script
+# Merges Firefox extension configuration into existing policies without overwriting
+# (Chrome/Chromium use separate policy files per application, so no merging needed)
+
+FIREFOX_EXTENSION_URL="https://github.com/siemens/linux-entra-sso/releases/download/v1.3.1/linux_entra_sso-1.3.1.xpi"
+
+# Function to merge Firefox extension into policies.json
+merge_firefox_policy() {
+    POLICY_FILE="$1"
+    POLICY_DIR=$(dirname "$POLICY_FILE")
+
+    # Ensure directory exists
+    mkdir -p "$POLICY_DIR"
+
+    if [ -f "$POLICY_FILE" ]; then
+        # Check if jq is available for proper JSON merging
+        if command -v jq >/dev/null 2>&1; then
+            # Check if the extension URL is already present
+            if jq -e ".policies.Extensions.Install[]? | select(. == \"$FIREFOX_EXTENSION_URL\")" "$POLICY_FILE" >/dev/null 2>&1; then
+                echo "Firefox SSO extension already configured in $POLICY_FILE"
+                return 0
+            fi
+
+            # Merge the extension into existing policy
+            TEMP_FILE=$(mktemp)
+            jq --arg url "$FIREFOX_EXTENSION_URL" '
+                .policies.Extensions.Install = ((.policies.Extensions.Install // []) + [$url] | unique)
+            ' "$POLICY_FILE" > "$TEMP_FILE" && mv "$TEMP_FILE" "$POLICY_FILE"
+            echo "Merged Firefox SSO extension into $POLICY_FILE"
+        else
+            # Without jq, check if our extension is already there
+            if grep -q "$FIREFOX_EXTENSION_URL" "$POLICY_FILE" 2>/dev/null; then
+                echo "Firefox SSO extension already configured in $POLICY_FILE"
+                return 0
+            fi
+            echo "Warning: jq not found. Cannot safely merge into existing $POLICY_FILE"
+            echo "Please manually add the extension URL to policies.Extensions.Install:"
+            echo "  $FIREFOX_EXTENSION_URL"
+        fi
+    else
+        # Create new policy file
+        cat > "$POLICY_FILE" << EOF
+{
+  "policies": {
+    "Extensions": {
+      "Install": [
+        "$FIREFOX_EXTENSION_URL"
+      ]
+    }
+  }
+}
+EOF
+        echo "Created Firefox SSO policy at $POLICY_FILE"
+    fi
+}
+
+# Merge Firefox policy
+merge_firefox_policy "/etc/firefox/policies/policies.json"
+
+echo "Himmelblau SSO Firefox policy configuration complete"

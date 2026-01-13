@@ -23,10 +23,11 @@ broker-client.workspace = true
 
 [package.metadata.deb]
 name = "himmelblau-sso"
+depends = ["$auto"]
+recommends = ["jq"]
 assets = [
   ["target/release/linux-entra-sso", "usr/bin/linux-entra-sso", "755"],
   ["src/firefox/linux_entra_sso.json", "usr/lib/mozilla/native-messaging-hosts/", "644"],
-  ["src/firefox/policies.json", "etc/firefox/policies/", "644"],
   ["src/chrome/linux_entra_sso.json", "etc/opt/chrome/native-messaging-hosts/", "644"],
   ["src/chrome/linux_entra_sso.json", "etc/chromium/native-messaging-hosts/", "644"],
   ["src/chrome/extension.json", "usr/share/google-chrome/extensions/jlnfnnolkbjieggibinobhkjdfbpcohn.json", "644"],
@@ -34,14 +35,15 @@ assets = [
   ["src/chrome/policies.json", "etc/chromium/policies/managed/himmelblau.json", "644"],
   ["../../platform/debian/com.microsoft.identity.broker1.service", "usr/share/dbus-1/services/", "644"],
   ["target/release/broker", "usr/sbin/", "755"],
+  ["src/firefox/policies.json", "usr/share/doc/himmelblau-sso/firefox-policies.json.example", "644"],
 ]
+maintainer-scripts = "scripts"
 
 [package.metadata.generate-rpm]
 name = "himmelblau-sso"
 assets = [
   { source = "target/release/linux-entra-sso", dest = "/usr/bin/linux-entra-sso", mode = "755" },
   { source = "src/firefox/linux_entra_sso.json", dest = "/usr/lib64/mozilla/native-messaging-hosts/", mode = "644" },
-  { source = "src/firefox/policies.json", dest = "/etc/firefox/policies/", mode = "644" },
   { source = "src/chrome/linux_entra_sso.json", dest = "/etc/opt/chrome/native-messaging-hosts/", mode = "644" },
   { source = "src/chrome/linux_entra_sso.json", dest = "/etc/chromium/native-messaging-hosts/", mode = "644" },
   { source = "src/chrome/extension.json", dest = "/usr/share/google-chrome/extensions/jlnfnnolkbjieggibinobhkjdfbpcohn.json", mode = "644" },
@@ -49,7 +51,10 @@ assets = [
   { source = "src/chrome/policies.json", dest = "/etc/chromium/policies/managed/himmelblau.json", mode = "644" },
   { source = "../../platform/opensuse/com.microsoft.identity.broker1.service", dest = "/usr/share/dbus-1/services/", mode = "644" },
   { source = "target/release/broker", dest = "/usr/sbin/", mode = "755" },
+  { source = "src/firefox/policies.json", dest = "/usr/share/doc/himmelblau-sso/firefox-policies.json.example", mode = "644", doc = true },
 ]
+post_install_script = "scripts/postinst"
+post_uninstall_script = "scripts/postrm"
 
 [package.metadata.generate-rpm.supplements]
 "(MozillaFirefox and himmelblau)" = ""
