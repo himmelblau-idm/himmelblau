@@ -2108,6 +2108,7 @@ dependencies = [
  "himmelblau_policies",
  "himmelblau_unix_common",
  "identity_dbus_broker",
+ "idmap",
  "kanidm-hsm-crypto",
  "kanidm_lib_file_permissions",
  "kanidm_utils_users",

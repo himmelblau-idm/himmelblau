@@ -168,6 +168,9 @@ pub enum TaskRequest {
     KerberosCCache(uid_t, uid_t, Vec<u8>, Vec<u8>),
     LoadProfilePhoto(String, String),
     ApplyPolicy(Option<String>, String, String, String, String),
+    /// Set up subordinate UID/GID mappings for container support (podman, etc.)
+    /// Parameters: (username, subid_start, subid_count)
+    SubordinateIds(String, u32, u32),
 }
 
 impl TaskRequest {
@@ -183,6 +186,9 @@ impl TaskRequest {
             TaskRequest::LoadProfilePhoto(_, _) => "LoadProfilePhoto(...)".to_string(),
             TaskRequest::ApplyPolicy(intune_device_id, _, _, _, _) => {
                 format!("ApplyPolicy({:?}, ...)", intune_device_id)
+            }
+            TaskRequest::SubordinateIds(username, start, count) => {
+                format!("SubordinateIds({}, {}, {})", username, start, count)
             }
         }
     }

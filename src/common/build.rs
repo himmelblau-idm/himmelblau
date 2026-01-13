@@ -37,10 +37,7 @@ fn main() {
             println!("cargo:warning=Generated config_gen.rs successfully");
         }
         Ok(s) => {
-            panic!(
-                "gen_param_code.py failed with exit code: {:?}",
-                s.code()
-            );
+            panic!("gen_param_code.py failed with exit code: {:?}", s.code());
         }
         Err(e) => {
             panic!(

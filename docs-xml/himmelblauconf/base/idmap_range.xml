@@ -19,7 +19,7 @@ sudo aad-tool cache-clear --full
 
 To ensure that old cached ID mappings are cleared, preventing potential UID overlaps caused by stale cache data. Afterwards, restart himmelblaud.
 </description>
-<default>5000000-5999999</default>
+<default>200000-2000200000</default>
 <default_const>DEFAULT_IDMAP_RANGE</default_const>
 <example>idmap_range = 10000000-10999999</example>
 <handler>get_idmap_range</handler>

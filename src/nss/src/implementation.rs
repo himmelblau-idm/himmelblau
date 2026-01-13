@@ -63,7 +63,10 @@ macro_rules! fetch_all_cached_users {
                 .into_iter()
                 .filter_map(|nu| {
                     // Skip users whose UPN is mapped to a local user
-                    if $user_map.get_local_from_upn(&nu.name.to_lowercase()).is_some() {
+                    if $user_map
+                        .get_local_from_upn(&nu.name.to_lowercase())
+                        .is_some()
+                    {
                         return None;
                     }
                     let mut passwd = passwd_from_nssuser(nu);
@@ -106,7 +109,10 @@ impl PasswdHooks for HimmelblauPasswd {
                     .filter_map(|nu| {
                         // Skip users whose UPN is mapped to a local user
                         // (the local NSS module handles these)
-                        if user_map.get_local_from_upn(&nu.name.to_lowercase()).is_some() {
+                        if user_map
+                            .get_local_from_upn(&nu.name.to_lowercase())
+                            .is_some()
+                        {
                             return None;
                         }
                         insert_cached_user!(nss_cache, nu);
@@ -118,7 +124,9 @@ impl PasswdHooks for HimmelblauPasswd {
                 _ => fetch_all_cached_users!(nss_cache, cfg, user_map),
             })
             .map(Response::Success)
-            .unwrap_or_else(|_| Response::Success(fetch_all_cached_users!(nss_cache, cfg, user_map)))
+            .unwrap_or_else(|_| {
+                Response::Success(fetch_all_cached_users!(nss_cache, cfg, user_map))
+            })
     }
 
     fn get_entry_by_uid(uid: libc::uid_t) -> Response<Passwd> {
