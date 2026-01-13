@@ -17,6 +17,7 @@
   pam,
   dbus,
   udev,
+  python3,
   # o365
   teams-for-linux,
   gnugrep,
@@ -39,9 +40,10 @@ rustPlatform.buildRustPackage (finalAttrs: {
         ../../man
         ../../Cargo.toml
         ../../Cargo.lock
-        ../../scripts/test_script_echo.sh
+        ../../scripts
         ../../platform
         ../../nix
+        ../../docs-xml
       ];
     };
 
@@ -59,6 +61,7 @@ rustPlatform.buildRustPackage (finalAttrs: {
     pkg-config
     rustPlatform.bindgenHook
     makeWrapper
+    python3
   ]
   ++ lib.optionals withSelinux [
     checkpolicy
