@@ -822,7 +822,6 @@ def generate_nix_options(params: List[Parameter], sections: Dict[str, Section]) 
 
         # Get section info if available
         section_info = sections.get(section_name)
-        section_title = section_info.title if section_info else section_name
 
         lines.append(f'    # [{section_name}] section options')
         if section_info and section_info.preamble:
