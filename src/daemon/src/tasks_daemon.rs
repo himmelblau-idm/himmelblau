@@ -368,6 +368,66 @@ fn write_bytes_to_file(bytes: &[u8], filename: &Path, uid: uid_t, gid: uid_t, mo
     0
 }
 
+/// Check if a user already has an entry in the given subid file
+fn user_has_subid_entry(username: &str, subid_file: &Path) -> bool {
+    if let Ok(contents) = fs::read_to_string(subid_file) {
+        let prefix = format!("{}:", username);
+        contents.lines().any(|line| line.starts_with(&prefix))
+    } else {
+        false
+    }
+}
+
+/// Add a subordinate ID entry to /etc/subuid or /etc/subgid
+/// Format: username:start:count
+fn add_subid_entry(username: &str, start: u32, count: u32, subid_file: &Path) -> Result<(), String> {
+    // Check if user already has an entry
+    if user_has_subid_entry(username, subid_file) {
+        debug!(
+            "User {} already has an entry in {}, skipping",
+            username,
+            subid_file.display()
+        );
+        return Ok(());
+    }
+
+    // Append the new entry
+    let entry = format!("{}:{}:{}\n", username, start, count);
+
+    let mut file = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(subid_file)
+        .map_err(|e| format!("Failed to open {}: {:?}", subid_file.display(), e))?;
+
+    file.write_all(entry.as_bytes())
+        .map_err(|e| format!("Failed to write to {}: {:?}", subid_file.display(), e))?;
+
+    info!(
+        "Added subordinate ID entry for {} in {}: start={}, count={}",
+        username,
+        subid_file.display(),
+        start,
+        count
+    );
+
+    Ok(())
+}
+
+/// Set up subordinate UID/GID mappings for a user
+fn setup_subordinate_ids(username: &str, start: u32, count: u32) -> Result<(), String> {
+    let subuid_path = Path::new("/etc/subuid");
+    let subgid_path = Path::new("/etc/subgid");
+
+    // Add entry to /etc/subuid
+    add_subid_entry(username, start, count, subuid_path)?;
+
+    // Add entry to /etc/subgid (same range)
+    add_subid_entry(username, start, count, subgid_path)?;
+
+    Ok(())
+}
+
 fn create_ccache_dir(ccache_dir: &Path, uid: uid_t, gid: uid_t) -> io::Result<()> {
     DirBuilder::new()
         .recursive(true)
@@ -620,6 +680,25 @@ async fn handle_tasks(stream: UnixStream, cfg: &HimmelblauConfig) {
                     .send(TaskResponse::Success(if res { 0 } else { 1 }))
                     .await
                 {
+                    error!("Error -> {:?}", e);
+                    return;
+                }
+            }
+            Some(Ok(TaskRequest::SubordinateIds(username, start, count))) => {
+                debug!(
+                    "Received task -> SubordinateIds({}, {}, {})",
+                    username, start, count
+                );
+
+                let resp = match setup_subordinate_ids(&username, start, count) {
+                    Ok(()) => TaskResponse::Success(0),
+                    Err(msg) => {
+                        error!("Failed to setup subordinate IDs for {}: {}", username, msg);
+                        TaskResponse::Error(msg)
+                    }
+                };
+
+                if let Err(e) = reqs.send(resp).await {
                     error!("Error -> {:?}", e);
                     return;
                 }

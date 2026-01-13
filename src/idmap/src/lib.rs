@@ -190,6 +190,14 @@ impl AadSid {
 
 pub const DEFAULT_IDMAP_RANGE: (u32, u32) = (200000, 2000200000);
 
+/// Default range for subordinate UIDs/GIDs used by container runtimes (podman, etc.)
+/// Each user gets a 65536-ID slice from this range.
+/// This range must not overlap with DEFAULT_IDMAP_RANGE (200000-2000200000).
+pub const DEFAULT_SUBID_RANGE: (u32, u32) = (2100000000, 4200000000);
+
+/// Number of subordinate IDs allocated per user (standard for container runtimes)
+pub const SUBID_COUNT: u32 = 65536;
+
 // The ctx is behind a read/write lock to make it 'safer' to Send/Sync.
 // Granted, dereferencing a raw pointer is still inherently unsafe.
 pub struct Idmap {
@@ -282,6 +290,44 @@ impl Idmap {
     }
 }
 
+/// Calculate the subordinate ID range start for a user based on their username.
+/// Uses MurmurHash3 (same as gen_to_unix) to deterministically assign a 65536-ID slot.
+///
+/// # Arguments
+/// * `username` - The user's name (will be lowercased for consistency)
+/// * `subid_range` - The (min, max) range of subordinate IDs available
+///
+/// # Returns
+/// The starting subordinate ID for this user's range
+pub fn gen_subid_start(username: &str, subid_range: (u32, u32)) -> u32 {
+    const SEED: u32 = 0xdeadbeef;
+
+    let (min_id, max_id) = subid_range;
+    let range_size = max_id.saturating_sub(min_id);
+
+    // Calculate number of available slots (each slot is SUBID_COUNT IDs)
+    let num_slots = range_size / SUBID_COUNT;
+
+    if num_slots == 0 {
+        // Range is too small, just return min_id
+        return min_id;
+    }
+
+    // Use MurmurHash3 to hash the username (same algorithm as SSSD idmap)
+    let input = username.to_lowercase();
+    let hash = unsafe {
+        ffi::murmurhash3(
+            input.as_ptr() as *const i8,
+            input.len() as i32,
+            SEED,
+        )
+    };
+
+    // Map hash to a slot number and calculate the start ID
+    let slot = hash % num_slots;
+    min_id + (slot * SUBID_COUNT)
+}
+
 impl Drop for Idmap {
     fn drop(&mut self) {
         match self.ctx.write() {
@@ -303,7 +349,7 @@ unsafe impl Sync for Idmap {}
 
 #[cfg(test)]
 mod tests {
-    use crate::{AadSid, Idmap, DEFAULT_IDMAP_RANGE};
+    use crate::{gen_subid_start, AadSid, Idmap, DEFAULT_IDMAP_RANGE, DEFAULT_SUBID_RANGE, SUBID_COUNT};
     use std::collections::HashMap;
     use uuid::Uuid;
 
@@ -395,5 +441,55 @@ mod tests {
             sid.rid(),
             "Parsed object id RID did not match parsed sid RID!"
         );
+    }
+
+    #[test]
+    fn subid_allocation() {
+        // Test that subid allocation is deterministic
+        let user1 = "tux@contoso.onmicrosoft.com";
+        let user2 = "admin@contoso.onmicrosoft.com";
+
+        let subid1_a = gen_subid_start(user1, DEFAULT_SUBID_RANGE);
+        let subid1_b = gen_subid_start(user1, DEFAULT_SUBID_RANGE);
+        let subid2 = gen_subid_start(user2, DEFAULT_SUBID_RANGE);
+
+        // Same user should always get the same subid start
+        assert_eq!(subid1_a, subid1_b, "Subid for same user should be deterministic");
+
+        // Different users should (very likely) get different subid starts
+        // Note: There's a tiny chance of collision, but with the large range it's unlikely
+        assert_ne!(subid1_a, subid2, "Different users should get different subid ranges");
+
+        // Subid should be within the configured range
+        assert!(subid1_a >= DEFAULT_SUBID_RANGE.0, "Subid should be >= min range");
+        assert!(subid1_a + SUBID_COUNT <= DEFAULT_SUBID_RANGE.1, "Subid + count should be <= max range");
+
+        // Subid should be aligned to SUBID_COUNT boundary
+        assert_eq!((subid1_a - DEFAULT_SUBID_RANGE.0) % SUBID_COUNT, 0, "Subid should be slot-aligned");
+    }
+
+    #[test]
+    fn subid_case_insensitive() {
+        // Test that subid allocation is case-insensitive
+        let user_lower = "tux@contoso.onmicrosoft.com";
+        let user_upper = "TUX@CONTOSO.ONMICROSOFT.COM";
+        let user_mixed = "Tux@Contoso.OnMicrosoft.Com";
+
+        let subid_lower = gen_subid_start(user_lower, DEFAULT_SUBID_RANGE);
+        let subid_upper = gen_subid_start(user_upper, DEFAULT_SUBID_RANGE);
+        let subid_mixed = gen_subid_start(user_mixed, DEFAULT_SUBID_RANGE);
+
+        assert_eq!(subid_lower, subid_upper, "Subid should be case-insensitive");
+        assert_eq!(subid_lower, subid_mixed, "Subid should be case-insensitive");
+    }
+
+    #[test]
+    fn subid_small_range() {
+        // Test behavior with a range smaller than SUBID_COUNT
+        let small_range = (100000, 100100);
+        let subid = gen_subid_start("user@example.com", small_range);
+
+        // Should return min_id when range is too small
+        assert_eq!(subid, small_range.0, "Small range should return min_id");
     }
 }

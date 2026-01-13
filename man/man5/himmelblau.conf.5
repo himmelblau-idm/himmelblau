@@ -684,7 +684,7 @@ sudo aad-tool cache-clear --full
 To ensure that old cached ID mappings are cleared, preventing potential UID overlaps caused by stale cache data. Afterwards, restart himmelblaud.
 
 .P
-Default: 5000000-5999999
+Default: 200000-2000200000
 
 .P
 Example: idmap_range = 10000000-10999999
@@ -699,6 +699,21 @@ Default: 30
 
 .P
 Example: connection_timeout = 5
+
+.TP
+.B subid_range
+.RE
+Specifies the range of subordinate IDs (subuid/subgid) to be allocated for container support (podman, rootless containers, etc.).
+
+Himmelblau will automatically add entries to /etc/subuid and /etc/subgid for each user at login. Each user receives a 65536-ID slice from this range, allocated deterministically based on a hash of their username.
+
+This feature is enabled by default with the default range shown below.
+
+.P
+Default: 2100000000-4200000000
+
+.P
+Example: subid_range = 2100000000-4200000000
 
 .TP
 .B cache_timeout

@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<parameter name="subid_range"
+           section="global"
+           type="range"
+           rust_type="(u32, u32)"
+           documented="true"
+           domain_specific="false"
+           order="42">
+<description>
+Specifies the range of subordinate IDs (subuid/subgid) to be allocated for container support (podman, rootless containers, etc.).
+
+Himmelblau will automatically add entries to /etc/subuid and /etc/subgid for each user at login. Each user receives a 65536-ID slice from this range, allocated deterministically based on a hash of their username.
+
+This feature is enabled by default with the default range shown below.
+</description>
+<default>2100000000-4200000000</default>
+<default_const>DEFAULT_SUBID_RANGE</default_const>
+<example>subid_range = 2100000000-4200000000</example>
+<handler>get_subid_range</handler>
+</parameter>

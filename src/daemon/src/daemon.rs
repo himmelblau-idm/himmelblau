@@ -34,6 +34,7 @@ use clap::{Arg, ArgAction, Command};
 use futures::{SinkExt, StreamExt};
 use himmelblau::{ClientInfo, IdToken, UserToken as UnixUserToken};
 use himmelblau_unix_common::config::{split_username, HimmelblauConfig};
+use idmap::{gen_subid_start, SUBID_COUNT};
 use himmelblau_unix_common::constants::{DEFAULT_APP_ID, DEFAULT_CONFIG_PATH};
 use himmelblau_unix_common::db::{Cache, CacheTxn, Db};
 use himmelblau_unix_common::idprovider::himmelblau::HimmelblauMultiProvider;
@@ -740,6 +741,56 @@ async fn handle_client(
                                 }
                             };
 
+                            // Set up subordinate IDs for container support
+                            let subid_range = cfg.get_subid_range();
+                            let mapped_name = cfg.map_upn_to_name(&account_id);
+                            let subid_start = gen_subid_start(&mapped_name, subid_range);
+
+                            let (tx, rx) = oneshot::channel();
+
+                            let resp3 = match task_channel_tx
+                                .send_timeout(
+                                    (
+                                        TaskRequest::SubordinateIds(
+                                            mapped_name,
+                                            subid_start,
+                                            SUBID_COUNT,
+                                        ),
+                                        tx,
+                                    ),
+                                    Duration::from_millis(100),
+                                )
+                                .await
+                            {
+                                Ok(()) => {
+                                    // Now wait for the other end OR timeout.
+                                    match time::timeout_at(
+                                        time::Instant::now() + Duration::from_millis(1000),
+                                        rx,
+                                    )
+                                    .await
+                                    {
+                                        Ok(Ok(_)) => {
+                                            trace!("SubordinateIds task completed");
+                                            ClientResponse::Ok
+                                        }
+                                        _ => {
+                                            // Timeout or error - log but don't fail the session
+                                            debug!("SubordinateIds task timed out or failed");
+                                            ClientResponse::Ok
+                                        }
+                                    }
+                                }
+                                Err(e) => {
+                                    // Failed to submit - log but don't fail the session
+                                    debug!("Failed to submit SubordinateIds task: {:?}", e);
+                                    ClientResponse::Ok
+                                }
+                            };
+
+                            // Return error only if critical tasks (home dir or local groups) failed
+                            // SubordinateIds failure is non-critical
+                            let _ = resp3; // Acknowledge resp3 but don't affect the result
                             match resp1 {
                                 ClientResponse::Error => ClientResponse::Error,
                                 _ => resp2,
@@ -1002,6 +1053,26 @@ async fn main() -> ExitCode {
                 eprintln!("{:?}", cfg);
                 return ExitCode::SUCCESS;
             }
+
+            // Validate that idmap_range and subid_range don't overlap
+            let subid_range = cfg.get_subid_range();
+            let idmap_range = cfg.get_idmap_range("_");
+
+            // Ranges overlap if one starts before the other ends
+            if idmap_range.0 <= subid_range.1 && subid_range.0 <= idmap_range.1 {
+                error!(
+                    "Configuration error: idmap_range ({}-{}) overlaps with subid_range ({}-{}). \
+                    These ranges must not overlap to prevent ID conflicts. \
+                    Please adjust your configuration.",
+                    idmap_range.0, idmap_range.1, subid_range.0, subid_range.1
+                );
+                return ExitCode::FAILURE;
+            }
+
+            info!(
+                "Subordinate ID support enabled with range {}-{}",
+                subid_range.0, subid_range.1
+            );
 
             let socket_path = cfg.get_socket_path();
             let task_socket_path = cfg.get_task_socket_path();

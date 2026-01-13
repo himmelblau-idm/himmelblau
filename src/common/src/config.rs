@@ -41,7 +41,7 @@ use crate::constants::{
 use crate::mapping::{MappedNameCache, Mode};
 use crate::unix_config::{HomeAttr, HsmType};
 use himmelblau::error::MsalError;
-use idmap::DEFAULT_IDMAP_RANGE;
+use idmap::{DEFAULT_IDMAP_RANGE, DEFAULT_SUBID_RANGE};
 use reqwest::Url;
 use serde::Deserialize;
 use std::env;
@@ -368,6 +368,29 @@ impl HimmelblauConfig {
 
     pub fn get_unix_sock_timeout(&self) -> u64 {
         self.get_connection_timeout().saturating_mul(2)
+    }
+
+    /// Get the subordinate ID range for container support (podman, etc.)
+    /// Returns the configured range, or the default range if not configured.
+    pub fn get_subid_range(&self) -> (u32, u32) {
+        let default_range = DEFAULT_SUBID_RANGE;
+        match self.config.get("global", "subid_range") {
+            Some(val) => {
+                let vals: Vec<u32> = val
+                    .split('-')
+                    .map(|m| m.parse())
+                    .collect::<Result<Vec<u32>, _>>()
+                    .unwrap_or_else(|_| vec![default_range.0, default_range.1]);
+                match vals.as_slice() {
+                    [min, max] => (*min, *max),
+                    _ => {
+                        error!("Invalid range specified [global] subid_range = {}", val);
+                        default_range
+                    }
+                }
+            }
+            None => default_range,
+        }
     }
 
     pub fn get_authority_host(&self, domain: &str) -> String {
@@ -922,6 +945,23 @@ mod tests {
         assert_eq!(config.get_idmap_range("unknown.com"), (1000, 2000));
         let config_empty = create_empty_config();
         assert_eq!(config_empty.get_idmap_range("any.com"), DEFAULT_IDMAP_RANGE);
+    }
+
+    #[test]
+    fn test_get_subid_range() {
+        let config_data = r#"
+        [global]
+        subid_range = 100000-999999
+        "#;
+
+        let temp_file = create_temp_config(config_data);
+        let config = HimmelblauConfig::new(Some(&temp_file)).unwrap();
+
+        assert_eq!(config.get_subid_range(), (100000, 999999));
+
+        // When not configured, use the default range
+        let config_empty = create_empty_config();
+        assert_eq!(config_empty.get_subid_range(), DEFAULT_SUBID_RANGE);
     }
 
     #[test]

@@ -35,6 +35,7 @@ fn main() {
         .blocklist_function("qecvt_r")
         .blocklist_function("strtold")
         .header("src/sss_idmap.h")
+        .header("src/murmurhash3.h")
         .parse_callbacks(Box::new(bindgen::CargoCallbacks::new()))
         .generate()
         .expect("Unable to generate bindings");

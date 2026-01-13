@@ -23,6 +23,7 @@ console = ["dep:console-subscriber"]
 
 [dependencies]
 himmelblau_unix_common = { workspace = true }
+idmap = { workspace = true }
 tokio = { workspace = true, features = ["tracing"] }
 tokio-util = { workspace = true }
 tracing = { workspace = true }
