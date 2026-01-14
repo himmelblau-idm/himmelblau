@@ -239,6 +239,8 @@ pub trait IdProvider {
     ) -> (
         Option<Box<KerberosCredentials>>,
         Option<Box<KerberosCredentials>>,
+        Option<String>,
+        Option<String>,
     );
 
     async fn unix_user_prt_cookie(
