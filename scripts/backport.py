@@ -14,16 +14,39 @@ Usage:
 
 import argparse
 import json
-import os
 import re
 import shutil
 import subprocess
 import sys
-import tempfile
 import urllib.request
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
+
+# Configuration constants
+TIMEOUT_BUILD_FIX_SECONDS = 600  # 10 minutes for complex build fixes
+TIMEOUT_DEPENDENCY_CONFLICT_SECONDS = 300  # 5 minutes for dependency conflicts
+TIMEOUT_AI_PROMPT_SECONDS = 300  # 5 minutes for AI prompts
+TIMEOUT_CARGO_UPDATE_SECONDS = 120  # 2 minutes for cargo update
+TIMEOUT_BUILD_SECONDS = 600  # 10 minutes for cargo build
+TIMEOUT_MAKE_VET_SECONDS = 600  # 10 minutes for make vet
+MAX_BUILD_FIX_ATTEMPTS = 3
+CO_AUTHOR_EMAIL = "Claude Opus 4.5 <noreply@anthropic.com>"
+
+# Git status codes that indicate unresolved conflicts
+CONFLICT_STATUS_CODES = {"UU", "AA", "DD"}
+
+
+def has_unresolved_conflicts(status: str) -> bool:
+    """Check if git status output contains unresolved conflicts.
+
+    Parses porcelain format line-by-line to avoid false positives
+    from filenames containing conflict markers.
+    """
+    for line in status.splitlines():
+        if len(line) >= 3 and line[0:2] in CONFLICT_STATUS_CODES and line[2] == " ":
+            return True
+    return False
 
 
 def print_color(text: str, color: str):
@@ -291,6 +314,7 @@ class GitClient:
             if result.returncode == 0 and result.stdout.strip():
                 return True
         except subprocess.CalledProcessError:
+            # Git command failed; continue to try other detection methods
             pass
 
         # Method 2: Check if commit subject exists in branch (exact match)
@@ -306,6 +330,7 @@ class GitClient:
                 if result.returncode == 0 and result.stdout.strip():
                     return True
             except subprocess.CalledProcessError:
+                # Regex grep failed; try simpler method below
                 pass
 
             # Method 3: Simpler grep without regex anchors
@@ -317,6 +342,7 @@ class GitClient:
                 if result.returncode == 0 and commit_subject in result.stdout:
                     return True
             except subprocess.CalledProcessError:
+                # All detection methods failed; commit not found in branch
                 pass
 
         return False
@@ -338,6 +364,7 @@ class GitClient:
         try:
             self.run("cherry-pick", "--abort")
         except subprocess.CalledProcessError:
+            # Safe to ignore: no cherry-pick in progress or abort already completed
             pass
 
     def reset_hard(self, ref: str = "HEAD"):
@@ -537,11 +564,11 @@ Files: {', '.join(commit.files_changed)}
             # Use -p flag for non-interactive mode that exits when done
             result = subprocess.run(
                 [self.cli_path, "-p", prompt],
-                timeout=600,  # 10 minute timeout for complex fixes
+                timeout=TIMEOUT_BUILD_FIX_SECONDS,
             )
             return result.returncode == 0
         except subprocess.TimeoutExpired:
-            print_color(f"  {self.provider} timed out after 10 minutes", "yellow")
+            print_color(f"  {self.provider} timed out after {TIMEOUT_BUILD_FIX_SECONDS // 60} minutes", "yellow")
             return False
         except KeyboardInterrupt:
             print("\n")
@@ -570,11 +597,11 @@ Files: {', '.join(commit.files_changed)}
             # Use -p flag for non-interactive mode that exits when done
             result = subprocess.run(
                 [self.cli_path, "-p", prompt],
-                timeout=300,  # 5 minute timeout for dependency conflicts
+                timeout=TIMEOUT_DEPENDENCY_CONFLICT_SECONDS,
             )
             return result.returncode == 0
         except subprocess.TimeoutExpired:
-            print_color(f"  {self.provider} timed out after 5 minutes", "yellow")
+            print_color(f"  {self.provider} timed out after {TIMEOUT_DEPENDENCY_CONFLICT_SECONDS // 60} minutes", "yellow")
             return False
         except KeyboardInterrupt:
             print("\n")
@@ -589,7 +616,7 @@ Files: {', '.join(commit.files_changed)}
             if self.provider == 'claude':
                 result = subprocess.run(
                     [self.cli_path, "-p", prompt, "--output-format", "text"],
-                    capture_output=True, text=True, timeout=300,
+                    capture_output=True, text=True, timeout=TIMEOUT_AI_PROMPT_SECONDS,
                 )
                 if result.returncode == 0 and result.stdout.strip():
                     return result.stdout.strip()
@@ -597,7 +624,7 @@ Files: {', '.join(commit.files_changed)}
             elif self.provider == 'gemini':
                 result = subprocess.run(
                     [self.cli_path, "-p", prompt],
-                    capture_output=True, text=True, timeout=300,
+                    capture_output=True, text=True, timeout=TIMEOUT_AI_PROMPT_SECONDS,
                 )
                 if result.returncode == 0 and result.stdout.strip():
                     return result.stdout.strip()
@@ -606,7 +633,7 @@ Files: {', '.join(commit.files_changed)}
             result = subprocess.run(
                 [self.cli_path],
                 input=prompt,
-                capture_output=True, text=True, timeout=300,
+                capture_output=True, text=True, timeout=TIMEOUT_AI_PROMPT_SECONDS,
             )
             if result.returncode == 0 and result.stdout.strip():
                 return result.stdout.strip()
@@ -629,12 +656,14 @@ class BackportManager:
         git: GitClient,
         ai: AIRunner,
         versions: list[SupportedVersion],
+        repository: str = "himmelblau-idm/himmelblau",
         dry_run: bool = False,
     ):
         self.repo_root = repo_root
         self.git = git
         self.ai = ai
         self.versions = versions
+        self.repository = repository
         self.dry_run = dry_run
 
     def update_make_vet_from_main(self, target_branch: str) -> bool:
@@ -643,7 +672,7 @@ class BackportManager:
 
         try:
             # 1. Download latest cargo_vet_review.py from main
-            url = "https://raw.githubusercontent.com/himmelblau-idm/himmelblau/refs/heads/main/scripts/cargo_vet_review.py"
+            url = f"https://raw.githubusercontent.com/{self.repository}/refs/heads/main/scripts/cargo_vet_review.py"
             scripts_dir = self.repo_root / "scripts"
             target_file = scripts_dir / "cargo_vet_review.py"
 
@@ -661,7 +690,7 @@ class BackportManager:
                 print_color(f"  Warning: Could not download cargo_vet_review.py: {e}", "yellow")
 
             # 2. Get the make vet target from main Makefile
-            makefile_url = "https://raw.githubusercontent.com/himmelblau-idm/himmelblau/refs/heads/main/Makefile"
+            makefile_url = f"https://raw.githubusercontent.com/{self.repository}/refs/heads/main/Makefile"
             print(f"  Downloading {makefile_url}...")
             try:
                 req = urllib.request.Request(makefile_url, headers={
@@ -671,7 +700,7 @@ class BackportManager:
                     main_makefile = response.read().decode('utf-8')
 
                 # Extract the vet target from main Makefile
-                vet_match = re.search(r'^vet:.*?(?=^[a-z]|\Z)', main_makefile, re.MULTILINE | re.DOTALL)
+                vet_match = re.search(r'^vet:.*?(?=^\w+:|\Z)', main_makefile, re.MULTILINE | re.DOTALL)
                 if vet_match:
                     main_vet_target = vet_match.group(0).strip()
 
@@ -680,7 +709,7 @@ class BackportManager:
                     local_makefile = local_makefile_path.read_text()
 
                     # Replace or add vet target
-                    local_vet_match = re.search(r'^vet:.*?(?=^[a-z]|\Z)', local_makefile, re.MULTILINE | re.DOTALL)
+                    local_vet_match = re.search(r'^vet:.*?(?=^\w+:|\Z)', local_makefile, re.MULTILINE | re.DOTALL)
                     if local_vet_match:
                         # Replace existing vet target
                         new_makefile = local_makefile[:local_vet_match.start()] + main_vet_target + "\n\n" + local_makefile[local_vet_match.end():]
@@ -705,7 +734,7 @@ class BackportManager:
             if status:
                 self.git.add("scripts/cargo_vet_review.py", "Makefile")
                 self.git.commit(
-                    "Update make vet from main branch\n\nCo-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>",
+                    f"Update make vet from main branch\n\nCo-Authored-By: {CO_AUTHOR_EMAIL}",
                     signoff=True
                 )
                 print_color("  Committed vet updates", "green")
@@ -727,7 +756,7 @@ class BackportManager:
                 cwd=self.repo_root,
                 capture_output=True,
                 text=True,
-                timeout=600,
+                timeout=TIMEOUT_MAKE_VET_SECONDS,
             )
             output = result.stdout + result.stderr
             if result.returncode == 0:
@@ -750,7 +779,7 @@ class BackportManager:
                 cwd=self.repo_root,
                 capture_output=True,
                 text=True,
-                timeout=600,
+                timeout=TIMEOUT_BUILD_SECONDS,
             )
             if result.returncode == 0:
                 print_color("  Build succeeded", "green")
@@ -772,7 +801,7 @@ class BackportManager:
                 cwd=self.repo_root,
                 capture_output=True,
                 text=True,
-                timeout=120,
+                timeout=TIMEOUT_CARGO_UPDATE_SECONDS,
             )
             if result.returncode == 0:
                 # Check if Cargo.lock changed
@@ -780,7 +809,7 @@ class BackportManager:
                 if "Cargo.lock" in status:
                     self.git.add("Cargo.lock")
                     self.git.commit(
-                        "Update libhimmelblau to latest version\n\nCo-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>",
+                        f"Update libhimmelblau to latest version\n\nCo-Authored-By: {CO_AUTHOR_EMAIL}",
                         signoff=True
                     )
                     print_color("  Updated libhimmelblau", "green")
@@ -837,7 +866,7 @@ class BackportManager:
 
                 # Check if conflicts were resolved
                 status = self.git.status_porcelain()
-                if "UU " in status or "AA " in status or "DD " in status:
+                if has_unresolved_conflicts(status):
                     print_color(f"      Conflicts not fully resolved, skipping PR", "yellow")
                     self.git.abort_cherry_pick()
                     continue
@@ -849,7 +878,7 @@ class BackportManager:
                     status = self.git.status_porcelain()
                     if status:
                         self.git.commit(
-                            f"{pr.title}\n\n(cherry-picked from dependabot PR #{pr.number})\n\nCo-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>",
+                            f"{pr.title}\n\n(cherry-picked from dependabot PR #{pr.number})\n\nCo-Authored-By: {CO_AUTHOR_EMAIL}",
                             signoff=True
                         )
                     print_color(f"      Conflict resolved, cherry-pick complete", "green")
@@ -908,7 +937,7 @@ class BackportManager:
 
                 # Check if user resolved conflicts
                 status = self.git.status_porcelain()
-                if "UU " in status or "AA " in status:
+                if has_unresolved_conflicts(status):
                     print_color("  Conflicts not resolved, aborting", "red")
                     self.git.abort_cherry_pick()
                     self.git.checkout("main")
@@ -918,7 +947,7 @@ class BackportManager:
                 self.git.add("-A")
                 try:
                     self.git.commit(
-                        f"{commit.subject}\n\n(cherry-picked from {commit.sha})\n\nCo-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>",
+                        f"{commit.subject}\n\n(cherry-picked from {commit.sha})\n\nCo-Authored-By: {CO_AUTHOR_EMAIL}",
                         signoff=True
                     )
                 except subprocess.CalledProcessError:
@@ -926,7 +955,7 @@ class BackportManager:
 
         # Try to build
         build_success, build_error = self.try_build()
-        max_fix_attempts = 3
+        max_fix_attempts = MAX_BUILD_FIX_ATTEMPTS
         attempt = 0
 
         while not build_success and attempt < max_fix_attempts:
@@ -941,7 +970,7 @@ class BackportManager:
             if status:
                 self.git.add("-A")
                 self.git.commit(
-                    f"Fix build for backport of {commit.short_sha}\n\nCo-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>",
+                    f"Fix build for backport of {commit.short_sha}\n\nCo-Authored-By: {CO_AUTHOR_EMAIL}",
                     signoff=True
                 )
 
@@ -1179,7 +1208,7 @@ Examples:
         if args.ai_provider == "claude":
             print("Install with: npm install -g @anthropic-ai/claude-code")
         elif args.ai_provider == "gemini":
-            print("Install with: npm install -g @anthropic-ai/gemini-cli")
+            print("See https://ai.google.dev/gemini-api/docs for Gemini CLI setup.")
         sys.exit(1)
 
     print_color(f"Using {args.ai_provider.capitalize()} CLI", "green")
@@ -1294,8 +1323,8 @@ Examples:
                         if any(t == v.version.lower() or t in v.version.lower() for t in targets)
                     ]
 
-                for tv in target_versions:
-                    backports_to_apply.append((commit, tv))
+                for target_ver in target_versions:
+                    backports_to_apply.append((commit, target_ver))
 
     if not backports_to_apply:
         print_color("\nNo commits recommended for backporting.", "green")
@@ -1344,20 +1373,20 @@ Examples:
             sys.exit(0)
 
     # Initialize backport manager and dependabot fetcher
-    manager = BackportManager(repo_root, git, ai, versions, args.dry_run)
+    manager = BackportManager(repo_root, git, ai, versions, args.repo, args.dry_run)
     dependabot_fetcher = DependabotPRFetcher(args.repo)
 
     # Group backports by target version
-    by_version: dict[str, list[Commit]] = {}
+    commits_by_version: dict[str, list[Commit]] = {}
     for commit, target in backports_to_apply:
         key = target.version
-        if key not in by_version:
-            by_version[key] = []
-        by_version[key].append(commit)
+        if key not in commits_by_version:
+            commits_by_version[key] = []
+        commits_by_version[key].append(commit)
 
     # Apply backports
     successful_branches = []
-    for version_str, commits_for_version in by_version.items():
+    for version_str, commits_for_version in commits_by_version.items():
         target = next(v for v in versions if v.version == version_str)
         print_color(f"\n{'=' * 70}", "cyan")
         print_color(f"Processing backports to {version_str}", "bold")
@@ -1438,7 +1467,7 @@ Examples:
 
                 # Check if resolved
                 status = git.status_porcelain()
-                if "UU " in status or "AA " in status:
+                if has_unresolved_conflicts(status):
                     print_color("  Conflicts not resolved, skipping commit", "red")
                     git.abort_cherry_pick()
                     all_success = False
@@ -1448,10 +1477,11 @@ Examples:
                 git.add("-A")
                 try:
                     git.commit(
-                        f"{commit.subject}\n\n(cherry-picked from {commit.sha})\n\nCo-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>",
+                        f"{commit.subject}\n\n(cherry-picked from {commit.sha})\n\nCo-Authored-By: {CO_AUTHOR_EMAIL}",
                         signoff=True
                     )
                 except subprocess.CalledProcessError:
+                    # Cherry-pick may have already completed the commit
                     pass
 
             print_color("  Cherry-pick successful", "green")
@@ -1464,7 +1494,7 @@ Examples:
 
         # Try to build
         build_success, build_error = manager.try_build()
-        max_fix_attempts = 3
+        max_fix_attempts = MAX_BUILD_FIX_ATTEMPTS
         attempt = 0
 
         while not build_success and attempt < max_fix_attempts:
@@ -1480,7 +1510,7 @@ Examples:
             if status:
                 git.add("-A")
                 git.commit(
-                    f"Fix build for backport batch\n\nCo-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>",
+                    f"Fix build for backport batch\n\nCo-Authored-By: {CO_AUTHOR_EMAIL}",
                     signoff=True
                 )
 
@@ -1503,12 +1533,18 @@ Examples:
 
         # Commit any supply-chain changes from vetting
         status = git.status_porcelain()
-        if status and ("supply-chain" in status or "audits.toml" in status or "config.toml" in status):
+        # Check line-by-line for supply-chain directory changes to avoid false positives
+        has_supply_chain_changes = any(
+            line.strip().endswith(("supply-chain/audits.toml", "supply-chain/config.toml"))
+            or " supply-chain/" in line
+            for line in status.splitlines()
+        )
+        if status and has_supply_chain_changes:
             print_color("\nCommitting cargo vet supply-chain updates...", "blue")
             git.add("supply-chain/")
             try:
                 git.commit(
-                    "Update cargo vet audits for backport\n\nCo-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>",
+                    f"Update cargo vet audits for backport\n\nCo-Authored-By: {CO_AUTHOR_EMAIL}",
                     signoff=True
                 )
                 print_color("  Committed supply-chain updates", "green")
