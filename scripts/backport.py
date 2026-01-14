@@ -24,6 +24,7 @@ from pathlib import Path
 from typing import Optional
 
 # Configuration constants
+CACHE_DIR = Path.home() / ".cache" / "himmelblau-backport"
 TIMEOUT_AI_PROMPT_SECONDS = 300  # 5 minutes for AI prompts
 TIMEOUT_CARGO_UPDATE_SECONDS = 120  # 2 minutes for cargo update
 TIMEOUT_BUILD_SECONDS = 600  # 10 minutes for cargo build
@@ -61,6 +62,61 @@ def print_color(text: str, color: str):
         'bold': '\033[1m',
     }
     print(f"{colors.get(color, '')}{text}{colors['reset']}")
+
+
+class AnalysisCache:
+    """Cache for AI analysis results, keyed by commit SHA."""
+
+    def __init__(self, cache_dir: Path = CACHE_DIR, enabled: bool = True):
+        self.cache_dir = cache_dir / "analysis"
+        self.enabled = enabled
+        self.cache_dir.mkdir(parents=True, exist_ok=True)
+
+    def _cache_path(self, commit_sha: str) -> Path:
+        """Get the cache file path for a commit."""
+        return self.cache_dir / f"{commit_sha}.json"
+
+    def get(self, commit_sha: str) -> Optional[dict]:
+        """Get cached analysis for a commit, or None if not cached."""
+        if not self.enabled:
+            return None
+        cache_file = self._cache_path(commit_sha)
+        if cache_file.exists():
+            try:
+                data = json.loads(cache_file.read_text())
+                return data.get("analysis")
+            except (json.JSONDecodeError, KeyError):
+                return None
+        return None
+
+    def set(self, commit_sha: str, analysis: dict):
+        """Cache analysis result for a commit."""
+        cache_file = self._cache_path(commit_sha)
+        data = {
+            "commit_sha": commit_sha,
+            "analysis": analysis,
+        }
+        cache_file.write_text(json.dumps(data, indent=2))
+
+    def get_cached_commits(self, commits: list["Commit"]) -> tuple[dict[str, dict], list["Commit"]]:
+        """
+        Check which commits have cached analysis.
+
+        Returns:
+            - dict mapping commit SHA to cached analysis
+            - list of commits that need analysis
+        """
+        cached = {}
+        uncached = []
+
+        for commit in commits:
+            analysis = self.get(commit.sha)
+            if analysis:
+                cached[commit.short_sha] = analysis
+            else:
+                uncached.append(commit)
+
+        return cached, uncached
 
 
 @dataclass
@@ -507,37 +563,86 @@ Tips:
 Please resolve the conflicts and ensure the dependency update is applied correctly.
 """
 
-    def __init__(self, provider: str, cli_path: Optional[str] = None):
+    def __init__(self, provider: str, cli_path: Optional[str] = None, cache: Optional[AnalysisCache] = None):
         self.provider = provider
         self.cli_path = cli_path or provider
+        self.cache = cache or AnalysisCache()
 
     def is_available(self) -> bool:
         """Check if the AI CLI is available."""
         return shutil.which(self.cli_path) is not None
 
-    def analyze_commits(self, commits: list[Commit], versions: list[SupportedVersion]) -> dict:
-        """Ask AI to analyze commits for backporting."""
-        versions_str = "\n".join(f"- {v.version} (branch: {v.branch})" for v in versions)
+    def analyze_commits(
+        self, commits: list[Commit], versions: list[SupportedVersion]
+    ) -> tuple[str, dict[str, dict]]:
+        """Ask AI to analyze commits for backporting.
 
-        commits_str = ""
-        for c in commits:
-            commits_str += f"\n### Commit {c.short_sha}\n"
-            commits_str += f"**Subject**: {c.subject}\n"
-            commits_str += f"**Author**: {c.author}\n"
-            commits_str += f"**Date**: {c.date}\n"
-            commits_str += f"**Files**: {', '.join(c.files_changed[:10])}"
-            if len(c.files_changed) > 10:
-                commits_str += f" (+{len(c.files_changed) - 10} more)"
-            commits_str += "\n"
-            if c.body:
-                commits_str += f"**Body**:\n{c.body[:500]}\n"
+        Uses cache to avoid re-analyzing commits that have been seen before.
 
-        prompt = self.ANALYSIS_PROMPT.format(
-            versions=versions_str,
-            commits=commits_str,
-        )
+        Returns:
+            Tuple of (display_text, parsed_results) where:
+            - display_text: Human-readable analysis output
+            - parsed_results: Dict mapping short_sha to {verdict, targets, reason}
+        """
+        # Check cache for existing analysis
+        cached_results, uncached_commits = self.cache.get_cached_commits(commits)
 
-        return self._run_prompt(prompt)
+        if cached_results:
+            print_color(f"  Found {len(cached_results)} cached analysis result(s)", "green")
+
+        # Build display text for cached results
+        display_parts = []
+        if cached_results:
+            display_parts.append("=== CACHED RESULTS ===")
+            for short_sha, analysis in cached_results.items():
+                display_parts.append(f"COMMIT: {short_sha}")
+                display_parts.append(f"VERDICT: {analysis.get('verdict', 'SKIP')}")
+                targets = analysis.get('targets', [])
+                display_parts.append(f"TARGETS: {', '.join(targets) if targets else 'none'}")
+                display_parts.append(f"REASON: {analysis.get('reason', '(cached)')}")
+                display_parts.append("")
+
+        # Analyze uncached commits with AI
+        new_results = {}
+        if uncached_commits:
+            print_color(f"  Analyzing {len(uncached_commits)} new commit(s) with AI...", "blue")
+
+            versions_str = "\n".join(f"- {v.version} (branch: {v.branch})" for v in versions)
+
+            commits_str = ""
+            for c in uncached_commits:
+                commits_str += f"\n### Commit {c.short_sha}\n"
+                commits_str += f"**Subject**: {c.subject}\n"
+                commits_str += f"**Author**: {c.author}\n"
+                commits_str += f"**Date**: {c.date}\n"
+                commits_str += f"**Files**: {', '.join(c.files_changed[:10])}"
+                if len(c.files_changed) > 10:
+                    commits_str += f" (+{len(c.files_changed) - 10} more)"
+                commits_str += "\n"
+                if c.body:
+                    commits_str += f"**Body**:\n{c.body[:500]}\n"
+
+            prompt = self.ANALYSIS_PROMPT.format(
+                versions=versions_str,
+                commits=commits_str,
+            )
+
+            ai_response = self._run_prompt(prompt)
+            if ai_response:
+                display_parts.append("=== NEW ANALYSIS ===")
+                display_parts.append(ai_response)
+
+                # Parse and cache new results
+                new_results = parse_ai_analysis(ai_response)
+                for commit in uncached_commits:
+                    if commit.short_sha in new_results:
+                        self.cache.set(commit.sha, new_results[commit.short_sha])
+
+        # Merge results
+        all_results = {**cached_results, **new_results}
+        display_text = "\n".join(display_parts) if display_parts else "No analysis available"
+
+        return display_text, all_results
 
     def fix_build_interactive(self, commit: Commit, target_branch: str, build_error: str) -> bool:
         """Launch AI CLI to fix build issues (auto-exits when done)."""
@@ -1168,8 +1273,27 @@ Examples:
         action="store_true",
         help="Skip cherry-picking open dependabot PRs",
     )
+    parser.add_argument(
+        "--no-cache",
+        action="store_true",
+        help="Disable reading from the analysis cache (results will still be cached)",
+    )
+    parser.add_argument(
+        "--clear-cache",
+        action="store_true",
+        help="Clear the analysis cache before running",
+    )
 
     args = parser.parse_args()
+
+    # Handle cache clearing
+    if args.clear_cache:
+        cache_dir = CACHE_DIR / "analysis"
+        if cache_dir.exists():
+            shutil.rmtree(cache_dir)
+            print_color(f"Cleared cache directory: {cache_dir}", "green")
+        else:
+            print_color("Cache directory does not exist, nothing to clear", "yellow")
 
     # Determine repo root
     repo_root = Path(__file__).parent.parent.resolve()
@@ -1181,7 +1305,8 @@ Examples:
 
     # Initialize components
     git = GitClient(repo_root)
-    ai = AIRunner(args.ai_provider, args.ai_provider_path)
+    cache = AnalysisCache(enabled=not args.no_cache)
+    ai = AIRunner(args.ai_provider, args.ai_provider_path, cache=cache)
     security_parser = SecurityMdParser(repo_root)
 
     # Check prerequisites
@@ -1272,12 +1397,12 @@ Examples:
     if len(commits) > 20:
         print(f"  ... and {len(commits) - 20} more")
 
-    # Ask AI to analyze commits
-    print_color("\nAnalyzing commits with AI...", "blue")
-    analysis_result = ai.analyze_commits(commits, versions)
+    # Ask AI to analyze commits (uses cache for previously analyzed commits)
+    print_color("\nAnalyzing commits...", "blue")
+    analysis_display, parsed = ai.analyze_commits(commits, versions)
 
-    if not analysis_result:
-        print_color("AI analysis failed", "red")
+    if not parsed:
+        print_color("AI analysis failed or returned no results", "red")
         sys.exit(1)
 
     print()
@@ -1285,11 +1410,8 @@ Examples:
     print_color("AI ANALYSIS", "bold")
     print_color("=" * 70, "magenta")
     print()
-    print(analysis_result)
+    print(analysis_display)
     print()
-
-    # Parse the analysis
-    parsed = parse_ai_analysis(analysis_result)
 
     # Identify backports to apply
     backports_to_apply = []
