@@ -24,8 +24,6 @@ from pathlib import Path
 from typing import Optional
 
 # Configuration constants
-TIMEOUT_BUILD_FIX_SECONDS = 600  # 10 minutes for complex build fixes
-TIMEOUT_DEPENDENCY_CONFLICT_SECONDS = 300  # 5 minutes for dependency conflicts
 TIMEOUT_AI_PROMPT_SECONDS = 300  # 5 minutes for AI prompts
 TIMEOUT_CARGO_UPDATE_SECONDS = 120  # 2 minutes for cargo update
 TIMEOUT_BUILD_SECONDS = 600  # 10 minutes for cargo build
@@ -558,18 +556,13 @@ Files: {', '.join(commit.files_changed)}
             build_error=build_error,
         )
 
-        print_color(f"\nLaunching {self.provider} CLI to fix build (will exit automatically when done)...", "green")
+        print_color(f"\nLaunching {self.provider} CLI to fix build...", "green")
+        print_color("Exit the AI CLI when done (Ctrl+C or /exit).", "yellow")
 
         try:
-            # Use -p flag for non-interactive mode that exits when done
-            result = subprocess.run(
-                [self.cli_path, "-p", prompt],
-                timeout=TIMEOUT_BUILD_FIX_SECONDS,
-            )
+            # Pass prompt via -p but run interactively (no timeout, no capture)
+            result = subprocess.run([self.cli_path, "-p", prompt])
             return result.returncode == 0
-        except subprocess.TimeoutExpired:
-            print_color(f"  {self.provider} timed out after {TIMEOUT_BUILD_FIX_SECONDS // 60} minutes", "yellow")
-            return False
         except KeyboardInterrupt:
             print("\n")
             return False
@@ -591,18 +584,13 @@ Files: {', '.join(commit.files_changed)}
             conflict_info=conflict_info,
         )
 
-        print_color(f"\nLaunching {self.provider} CLI to fix dependabot conflict (will exit automatically when done)...", "green")
+        print_color(f"\nLaunching {self.provider} CLI to fix dependabot conflict...", "green")
+        print_color("Exit the AI CLI when done (Ctrl+C or /exit).", "yellow")
 
         try:
-            # Use -p flag for non-interactive mode that exits when done
-            result = subprocess.run(
-                [self.cli_path, "-p", prompt],
-                timeout=TIMEOUT_DEPENDENCY_CONFLICT_SECONDS,
-            )
+            # Pass prompt via -p but run interactively (no timeout, no capture)
+            result = subprocess.run([self.cli_path, "-p", prompt])
             return result.returncode == 0
-        except subprocess.TimeoutExpired:
-            print_color(f"  {self.provider} timed out after {TIMEOUT_DEPENDENCY_CONFLICT_SECONDS // 60} minutes", "yellow")
-            return False
         except KeyboardInterrupt:
             print("\n")
             return False
