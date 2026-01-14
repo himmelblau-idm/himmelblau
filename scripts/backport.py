@@ -1391,6 +1391,9 @@ Examples:
     original_count = len(commits)
     commits = [c for c in commits if not c.is_merge and not c.is_dependabot and not c.is_ci_only]
 
+    # Reverse to apply oldest commits first (git log returns newest first)
+    commits = list(reversed(commits))
+
     print(f"  Found {original_count} commits, {len(commits)} after filtering")
     print(f"  (Filtered out merge commits, dependabot updates, and CI-only changes)")
 
