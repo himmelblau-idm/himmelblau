@@ -377,7 +377,6 @@
             };
 
             config = lib.mkIf cfg.enable {
-              environment.etc."krb5.conf.d/krb5_himmelblau.conf".source = ./src/config/krb5_himmelblau.conf;
               environment.etc."himmelblau/himmelblau.conf".text = with lib;  let
                 mkValueString = v:
                   let err = t: v: abort ("mkValueString: ${t} not supported: ${toPretty {} v}");
