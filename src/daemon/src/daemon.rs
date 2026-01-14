@@ -411,13 +411,51 @@ async fn handle_client(
                                                     }
 
                                                     // Initialize the user Kerberos ccache
-                                                    if let Some((uid, gid, tgt_cloud, tgt_ad, _top_level_names, _tenant_id)) =
+                                                    if let Some((uid, gid, tgt_cloud, tgt_ad, top_level_names, tenant_id)) =
                                                         cachelayer
                                                             .get_user_tgts(Id::Name(
                                                                 account_id.to_string(),
                                                             ))
                                                             .await
                                                     {
+                                                        let (tx, rx) = oneshot::channel();
+                                                        match task_channel_tx
+                                                            .send_timeout(
+                                                                (
+                                                                    TaskRequest::KerberosConfig(top_level_names, tenant_id),
+                                                                    tx,
+                                                                ),
+                                                                Duration::from_millis(100),
+                                                            )
+                                                            .await
+                                                        {
+                                                            Ok(()) => {
+                                                                // Now wait for the other end OR timeout.
+                                                                match time::timeout_at(
+                                                                    time::Instant::now()
+                                                                        + Duration::from_secs(60),
+                                                                    rx,
+                                                                )
+                                                                .await
+                                                                {
+                                                                    Ok(Ok(status)) => {
+                                                                        if status != 0 {
+                                                                            error!("Kerberos config failed for {}: Status code: {}", account_id, status);
+                                                                        }
+                                                                    }
+                                                                    Ok(Err(e)) => {
+                                                                        error!("Kerberos config failed for {}: {:?}", account_id, e);
+                                                                    }
+                                                                    Err(e) => {
+                                                                        error!("Kerberos config failed for {}: {:?}", account_id, e);
+                                                                    }
+                                                                }
+                                                            }
+                                                            Err(e) => {
+                                                                error!("Kerberos config failed for {}: {:?}", account_id, e);
+                                                            }
+                                                        }
+
                                                         let (tx, rx) = oneshot::channel();
 
                                                         match task_channel_tx
