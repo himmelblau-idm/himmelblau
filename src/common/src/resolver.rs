@@ -690,6 +690,8 @@ where
         uid_t,
         Option<Box<KerberosCredentials>>,
         Option<Box<KerberosCredentials>>,
+        Option<String>,
+        Option<String>,
     )> {
         // Validate the user isn't in the nxset (aka, it's a local user or group).
         let (name, idnumber) = match account_id.clone() {
@@ -711,7 +713,7 @@ where
         let mut hsm_lock = self.hsm.lock().await;
         let mut dbtxn = self.db.write().await;
 
-        let (cloud_ccache, ad_ccache) = self
+        let (cloud_ccache, ad_ccache, top_level_names, tenant_id) = self
             .client
             .unix_user_tgts(
                 &account_id,
@@ -733,6 +735,8 @@ where
             token.real_gidnumber.unwrap_or(token.gidnumber),
             cloud_ccache,
             ad_ccache,
+            top_level_names,
+            tenant_id,
         ))
     }
 

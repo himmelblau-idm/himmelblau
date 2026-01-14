@@ -404,12 +404,14 @@ impl IdProvider for HimmelblauMultiProvider {
     ) -> (
         Option<Box<KerberosCredentials>>,
         Option<Box<KerberosCredentials>>,
+        Option<String>,
+        Option<String>,
     ) {
         let account_id = match old_token {
             Some(token) => token.spn.clone(),
             None => id.to_string().clone(),
         };
-        let empty = (None, None);
+        let empty = (None, None, None, None);
         let Ok(domain) = idp_get_domain_for_account!(self, &account_id) else {
             return empty;
         };
@@ -920,17 +922,19 @@ impl IdProvider for HimmelblauProvider {
     ) -> (
         Option<Box<KerberosCredentials>>,
         Option<Box<KerberosCredentials>>,
+        Option<String>,
+        Option<String>,
     ) {
         if (self.delayed_init().await).is_err() {
             // We can't fetch krb5 tgts when initialization hasn't
             // completed. This only happens when we're offline during first
             // startup. This should never happen!
-            return (None, None);
+            return (None, None, None, None);
         }
 
         if !self.check_online(tpm, SystemTime::now()).await {
             // We can't fetch krb5 tgts when offline
-            return (None, None);
+            return (None, None, None, None);
         }
 
         let account_id = match old_token {
@@ -944,14 +948,14 @@ impl IdProvider for HimmelblauProvider {
                     "Failed fetching refresh cache entry for Kerberos CCache: {:?}",
                     e
                 );
-                return (None, None);
+                return (None, None, None, None);
             }
         };
         let prt = match refresh_cache_entry {
             RefreshCacheEntry::Prt(prt) => prt,
             RefreshCacheEntry::RefreshToken(_) => {
                 // We need a PRT to fetch Kerberos CCaches
-                return (None, None);
+                return (None, None, None, None);
             }
         };
         let cloud_ccache = self
@@ -966,7 +970,21 @@ impl IdProvider for HimmelblauProvider {
             .await
             .fetch_ad_tgt(&prt, tpm, machine_key)
             .ok();
-        (cloud_ccache, ad_ccache)
+        let top_level_names = self
+            .client
+            .read()
+            .await
+            .unseal_prt_kerberos_top_level_names(&prt, tpm, machine_key)
+            .ok();
+        let tenant_id = match old_token {
+            Some(t) => t.tenant_id.map(|u| u.to_string()),
+            None => match self.config.read().await.get_tenant_id(&self.domain) {
+                Some(t) => Some(t),
+                None => self.graph.tenant_id().await.ok(),
+            },
+        };
+
+        (cloud_ccache, ad_ccache, top_level_names, tenant_id)
     }
 
     #[instrument(skip_all)]

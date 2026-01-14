@@ -411,7 +411,7 @@ async fn handle_client(
                                                     }
 
                                                     // Initialize the user Kerberos ccache
-                                                    if let Some((uid, gid, tgt_cloud, tgt_ad)) =
+                                                    if let Some((uid, gid, tgt_cloud, tgt_ad, _top_level_names, _tenant_id)) =
                                                         cachelayer
                                                             .get_user_tgts(Id::Name(
                                                                 account_id.to_string(),
