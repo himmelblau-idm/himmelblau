@@ -662,14 +662,18 @@ Files: {', '.join(commit.files_changed)}
         )
 
         print_color(f"\nLaunching {self.provider} CLI to fix build...", "green")
-        print_color("Exit the AI CLI when done (Ctrl+C or /exit).", "yellow")
+        print_color("The AI will start with context about the build error.", "yellow")
+        print_color("Use /exit, Ctrl+C, or Ctrl+D to exit when done.\n", "yellow")
 
         try:
-            # Pass prompt via -p but run interactively (no timeout, no capture)
-            result = subprocess.run([self.cli_path, "-p", prompt])
-            return result.returncode == 0
+            # Pass prompt as positional argument for interactive mode
+            subprocess.run([self.cli_path, prompt])
+            return True
         except KeyboardInterrupt:
             print("\n")
+            return True
+        except FileNotFoundError:
+            print_color(f"Error: {self.provider} CLI not found at '{self.cli_path}'", "red")
             return False
         except Exception as e:
             print_color(f"Error running {self.provider}: {e}", "red")
@@ -690,14 +694,18 @@ Files: {', '.join(commit.files_changed)}
         )
 
         print_color(f"\nLaunching {self.provider} CLI to fix dependabot conflict...", "green")
-        print_color("Exit the AI CLI when done (Ctrl+C or /exit).", "yellow")
+        print_color("The AI will start with context about the conflict.", "yellow")
+        print_color("Use /exit, Ctrl+C, or Ctrl+D to exit when done.\n", "yellow")
 
         try:
-            # Pass prompt via -p but run interactively (no timeout, no capture)
-            result = subprocess.run([self.cli_path, "-p", prompt])
-            return result.returncode == 0
+            # Pass prompt as positional argument for interactive mode
+            subprocess.run([self.cli_path, prompt])
+            return True
         except KeyboardInterrupt:
             print("\n")
+            return True
+        except FileNotFoundError:
+            print_color(f"Error: {self.provider} CLI not found at '{self.cli_path}'", "red")
             return False
         except Exception as e:
             print_color(f"Error running {self.provider}: {e}", "red")
@@ -716,7 +724,7 @@ Files: {', '.join(commit.files_changed)}
 
             elif self.provider == 'gemini':
                 result = subprocess.run(
-                    [self.cli_path, "-p", prompt],
+                    [self.cli_path, "-p", prompt, "--output-format", "text"],
                     capture_output=True, text=True, timeout=TIMEOUT_AI_PROMPT_SECONDS,
                 )
                 if result.returncode == 0 and result.stdout.strip():
