@@ -1647,8 +1647,10 @@ impl IdProvider for OidcProvider {
     ) -> (
         Option<Box<libkrimes::proto::KerberosCredentials>>,
         Option<Box<libkrimes::proto::KerberosCredentials>>,
+        Option<String>,
+        Option<String>,
     ) {
-        (None, None)
+        (None, None, None, None)
     }
 
     #[instrument(level = "debug", skip_all)]
