@@ -579,24 +579,55 @@ def generate_man_page(params: List[Parameter], sections: Dict[str, Section]) -> 
 def clean_troff_description(text: str) -> str:
     """Clean troff formatting from description text for use in Nix.
 
-    Removes troff macros and converts to plain text suitable for Nix descriptions.
+    Converts troff macros and escape sequences to markdown-style formatting
+    suitable for Nix descriptions.
     """
     import re
 
-    # Remove common troff macros
-    text = re.sub(r'\.B\s+', '', text)  # Bold macro
-    text = re.sub(r'\.I\s+', '', text)  # Italic macro
-    text = re.sub(r'\.P\s*\n?', '\n\n', text)  # Paragraph
-    text = re.sub(r'\.RS\s*\n?', '', text)  # Right shift start
-    text = re.sub(r'\.RE\s*\n?', '', text)  # Right shift end
-    text = re.sub(r'\.IP\s*\n?', '\n  ', text)  # Indented paragraph
-    text = re.sub(r'\.br\s*\n?', '\n', text)  # Line break
-    text = re.sub(r'\.BR\s+(\S+)\s*\((\d+)\)', r'\1(\2)', text)  # Man page references
-    text = re.sub(r'\.nf\s*\n?', '', text)  # No-fill start
-    text = re.sub(r'\.fi\s*\n?', '', text)  # No-fill end
+    # Handle inline font escapes FIRST (before line-based macros)
+    # \fB...\fR or \fB...\fP -> **...** (bold)
+    # r'\\fB' = raw string with 2 backslashes = regex \fB matching literal backslash+fB
+    text = re.sub(r'\\fB([^\\]*)\\f[RP]', r'**\1**', text)
+    # \fI...\fR or \fI...\fP -> *...* (italic)
+    text = re.sub(r'\\fI([^\\]*)\\f[RP]', r'*\1*', text)
+
+    # Handle troff special character escapes
+    # Use [ \t]* instead of \s* to avoid consuming newlines
+    text = re.sub(r'\\?\(bu[ \t]*\d*', '- ', text)  # Bullet character (e.g., \(bu 2)
+    text = re.sub(r'\\?\(en[ \t]*', '- ', text)  # En dash (often used as list item intro)
+    text = re.sub(r'\\?\(em', '--', text)  # Em dash
+    text = re.sub(r'\\-', '-', text)  # Troff hyphen/minus
+    text = re.sub(r'\\&', '', text)  # Zero-width space (used before periods)
+
+    # Handle line-based macros (order matters - process .IP with args before plain .IP)
+    # Use [ \t] instead of \s to avoid matching across newlines
+    text = re.sub(r'^\.PP[ \t]*\n?', '\n\n', text, flags=re.MULTILINE)  # Paragraph break
+    text = re.sub(r'^\.P[ \t]*\n?', '\n\n', text, flags=re.MULTILINE)  # Paragraph break
+    text = re.sub(r'^\.B[ \t]+(.+)$', r'**\1**', text, flags=re.MULTILINE)  # Bold line
+    text = re.sub(r'^\.I[ \t]+(.+)$', r'*\1*', text, flags=re.MULTILINE)  # Italic line
+    text = re.sub(r'^\.RS[ \t]*\d*[ \t]*\n?', '', text, flags=re.MULTILINE)  # Right shift start (with optional indent)
+    text = re.sub(r'^\.RE[ \t]*\n?', '', text, flags=re.MULTILINE)  # Right shift end
+    text = re.sub(r'^\.IP[ \t]+.*$', '\n- ', text, flags=re.MULTILINE)  # .IP with args (bullet)
+    text = re.sub(r'^\.IP[ \t]*$', '\n- ', text, flags=re.MULTILINE)  # Plain .IP
+    text = re.sub(r'^\.br\s*\n?', '\n', text, flags=re.MULTILINE)  # Line break
+    text = re.sub(r'^\.BR\s+(\S+)\s*\((\d+)\)', r'\1(\2)', text, flags=re.MULTILINE)  # Man page refs
+    text = re.sub(r'^\.nf\s*\n?', '', text, flags=re.MULTILINE)  # No-fill start
+    text = re.sub(r'^\.fi\s*\n?', '', text, flags=re.MULTILINE)  # No-fill end
+
+    # Clean up empty bold/italic markers (only whitespace between them)
+    text = re.sub(r'\*\*\s+\*\*', '', text)  # Empty bold: ** **
+    text = re.sub(r'\*\s+\*', '', text)  # Empty italic: * *
 
     # Clean up multiple newlines and whitespace
     text = re.sub(r'\n{3,}', '\n\n', text)
+    text = re.sub(r'[ \t]+\n', '\n', text)  # Trailing whitespace
+
+    # Hacky fix: clean up redundant/orphaned list markers
+    # 1. Replace double dashes with whitespace between: "- \n- foo" -> "- foo"
+    text = re.sub(r'-[ \t]*\n+[ \t]*-[ \t]+', '- ', text)
+    # 2. Combine lone dash on a line with the following line: "-\n foo" -> "- foo"
+    text = re.sub(r'^-[ \t]*\n+', '- ', text, flags=re.MULTILINE)
+
     text = text.strip()
 
     return text
@@ -855,12 +886,16 @@ def _generate_nix_option(param: Parameter, indent: int = 4) -> List[str]:
     # Option name
     lines.append(f'{ind}{param.name} = mkOption {{')
 
-    # Type - wrap in nullOr to make all options optional
+    # Type - wrap in nullOr to make all options optional (user can set to null to unset)
     nix_type, _ = xml_type_to_nix_type(param)
     lines.append(f'{ind}  type = types.nullOr ({nix_type});')
 
-    # Default - always null to make options optional
-    lines.append(f'{ind}  default = null;')
+    # Default - use actual default value if available, otherwise null
+    nix_default = format_nix_default(param)
+    if nix_default is not None:
+        lines.append(f'{ind}  default = {nix_default};')
+    else:
+        lines.append(f'{ind}  default = null;')
 
     # Description
     if param.description:
@@ -872,12 +907,6 @@ def _generate_nix_option(param: Parameter, indent: int = 4) -> List[str]:
         lines.append(f"{ind}  description = ''")
         for desc_line in clean_desc.split('\n'):
             lines.append(f'{ind}    {desc_line}')
-
-        # Add default info if available
-        if param.default:
-            lines.append(f'{ind}')
-            lines.append(f'{ind}    Default: {param.default}')
-
         lines.append(f"{ind}  '';")
 
     # Example
