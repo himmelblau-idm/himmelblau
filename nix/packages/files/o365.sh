@@ -6,12 +6,12 @@ PROFILE_SLUG=""
 PASSTHRU=()
 for arg in "$@"; do
   case "$arg" in
-    --profile=*)
-      PROFILE_SLUG="${arg#--profile=}"
-      ;;
-    *)
-      PASSTHRU+=("$arg")
-      ;;
+  --profile=*)
+    PROFILE_SLUG="${arg#--profile=}"
+    ;;
+  *)
+    PASSTHRU+=("$arg")
+    ;;
   esac
 done
 
@@ -36,12 +36,11 @@ main() {
   EXTRA_ELECTRON_ARGS=()
   if [[ -n "$PROFILE_SLUG" ]]; then
     while IFS= read -r f; do
-      [[ -n "$f" ]] && EXTRA_ELECTRON_ARGS+=( "$f" )
-    done < <( make_profile_flags "$PROFILE_SLUG" )
+      [[ -n "$f" ]] && EXTRA_ELECTRON_ARGS+=("$f")
+    done < <(make_profile_flags "$PROFILE_SLUG")
   fi
 
-    exec teams-for-linux --ssoInTuneEnabled=true "${EXTRA_ELECTRON_ARGS[@]}" "${PASSTHRU[@]}"
+  exec teams-for-linux --ssoInTuneEnabled=true "${EXTRA_ELECTRON_ARGS[@]}" "${PASSTHRU[@]}"
 }
-
 
 main
