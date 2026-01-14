@@ -1262,7 +1262,7 @@ end = "2026-09-11"
 
 [[trusted.rustls]]
 criteria = "safe-to-deploy"
-user-id = 4556 # Dirkjan Ochtman (djc)
+user-id = 4556
 start = "2022-05-18"
 end = "2026-11-20"
 

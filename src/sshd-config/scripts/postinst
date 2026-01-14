@@ -7,3 +7,9 @@ CONF="/etc/ssh/sshd_config"
 if [ -f "$CONF" ]; then
     sed -i 's/^KbdInteractiveAuthentication[[:space:]]\+no/#KbdInteractiveAuthentication no/' "$CONF"
 fi
+
+# Restart sshd if systemd is available, to make the config change take effect
+if command -v systemctl >/dev/null 2>&1; then
+    echo "Restarting sshd service..."
+    systemctl restart ssh 2>/dev/null || systemctl restart sshd 2>/dev/null || true
+fi

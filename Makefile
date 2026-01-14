@@ -115,7 +115,7 @@ check-licenses: ## Validate dependant licenses comply with GPLv3
 	cargo deny -V >/dev/null || (echo "cargo-deny required" && cargo install cargo-deny)
 	cargo deny --all-features check licenses
 
-vet: ## Vet Dependencies
+vet: ## Interactive dependency review with AI analysis
 	cargo vet -V >/dev/null || (echo "cargo-vet required" && cargo install cargo-vet)
 	cargo vet regenerate imports
 	@python3 scripts/cargo_vet_review.py

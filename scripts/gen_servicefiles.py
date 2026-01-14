@@ -278,7 +278,7 @@ CapabilityBoundingSet=CAP_CHOWN CAP_FOWNER CAP_DAC_OVERRIDE CAP_DAC_READ_SEARCH
 # SystemCallFilter=@aio @basic-io @chown @file-system @io-event @network-io @sync
 { 'ProtectSystem=strict' if supported('ProtectSystemStrict') else '' }
 {rw_line}
-{os.linesep.join([h for h in tasks_hardening if not h.startswith('ProtectSystem=')])}
+{os.linesep.join([h for h in tasks_hardening if not h.startswith('ProtectSystem=') and not h.startswith('PrivateTmp=')])}
 {tasks_private_devices}
 
 [Install]

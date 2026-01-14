@@ -97,22 +97,22 @@ user-login = "emilio"
 user-name = "Emilio Cobos Álvarez"
 
 [[publisher.clap]]
-version = "4.5.53"
-when = "2025-11-19"
+version = "4.5.54"
+when = "2026-01-02"
 user-id = 6743
 user-login = "epage"
 user-name = "Ed Page"
 
 [[publisher.clap_builder]]
-version = "4.5.53"
-when = "2025-11-19"
+version = "4.5.54"
+when = "2026-01-02"
 user-id = 6743
 user-login = "epage"
 user-name = "Ed Page"
 
 [[publisher.clap_complete]]
-version = "4.5.64"
-when = "2025-12-30"
+version = "4.5.65"
+when = "2026-01-07"
 user-id = 6743
 user-login = "epage"
 user-name = "Ed Page"
@@ -413,8 +413,8 @@ user-login = "Firstyear"
 user-name = "Firstyear"
 
 [[publisher.libc]]
-version = "0.2.178"
-when = "2025-12-02"
+version = "0.2.180"
+when = "2026-01-08"
 user-id = 55123
 user-login = "rust-lang-owner"
 
@@ -426,8 +426,8 @@ user-login = "fitzgen"
 user-name = "Nick Fitzgerald"
 
 [[publisher.libhimmelblau]]
-version = "0.8.5"
-when = "2026-01-08"
+version = "0.8.6"
+when = "2026-01-09"
 user-id = 247655
 user-login = "dmulder"
 user-name = "David Mulder"
@@ -606,13 +606,6 @@ user-id = 6825
 user-login = "sunfishcode"
 user-name = "Dan Gohman"
 
-[[publisher.rustls]]
-version = "0.23.35"
-when = "2025-11-04"
-user-id = 4556
-user-login = "djc"
-user-name = "Dirkjan Ochtman"
-
 [[publisher.ryu]]
 version = "1.0.20"
 when = "2025-03-04"
@@ -663,8 +656,8 @@ user-login = "dtolnay"
 user-name = "David Tolnay"
 
 [[publisher.serde_json]]
-version = "1.0.148"
-when = "2025-12-27"
+version = "1.0.149"
+when = "2026-01-06"
 user-id = 3618
 user-login = "dtolnay"
 user-name = "David Tolnay"
@@ -782,8 +775,8 @@ user-login = "dtolnay"
 user-name = "David Tolnay"
 
 [[publisher.tokio]]
-version = "1.48.0"
-when = "2025-10-14"
+version = "1.49.0"
+when = "2026-01-03"
 user-id = 6741
 user-login = "Darksonn"
 user-name = "Alice Ryhl"
@@ -796,8 +789,8 @@ user-login = "Darksonn"
 user-name = "Alice Ryhl"
 
 [[publisher.tokio-util]]
-version = "0.7.17"
-when = "2025-11-02"
+version = "0.7.18"
+when = "2026-01-04"
 user-id = 6741
 user-login = "Darksonn"
 user-name = "Alice Ryhl"
@@ -2592,6 +2585,11 @@ who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
 version = "0.2.7"
 
+[[audits.himmelblau.audits.lru]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+version = "0.16.3"
+
 [[audits.himmelblau.audits.openssl]]
 who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
@@ -2601,6 +2599,11 @@ delta = "0.10.74 -> 0.10.75"
 who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
 version = "0.2.1"
+
+[[audits.himmelblau.audits.rustls]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+version = "0.23.36"
 
 [[audits.himmelblau.audits.tempfile]]
 who = "David Mulder <dmulder@samba.org>"
