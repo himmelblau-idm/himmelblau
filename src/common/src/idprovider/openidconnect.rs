@@ -242,14 +242,14 @@ impl OidcApplication {
     async fn delayed_init(&self, config: &HimmelblauConfig, domain: &str) -> Result<(), IdpError> {
         let init = self.client.read().await.is_some();
         if !init {
-            let client_id = ClientId::new(config.get_app_id(domain).ok_or({
+            let client_id = ClientId::new(config.get_app_id(domain).ok_or_else(|| {
                 error!(
                     "Missing OIDC client ID in config: `[global] app_id` required for OIDC auth"
                 );
                 IdpError::BadRequest
             })?);
 
-            let issuer_url = IssuerUrl::new(config.get_oidc_issuer_url().ok_or({
+            let issuer_url = IssuerUrl::new(config.get_oidc_issuer_url().ok_or_else(|| {
                 error!("Missing OIDC issuer URL in config");
                 IdpError::BadRequest
             })?)
@@ -721,7 +721,7 @@ impl OidcProvider {
     #[instrument(level = "debug", skip_all)]
     async fn tenant_id(&self) -> Result<Uuid, IdpError> {
         let config = self.config.read().await;
-        let issuer = config.get_oidc_issuer_url().ok_or({
+        let issuer = config.get_oidc_issuer_url().ok_or_else(|| {
             error!("Missing OIDC issuer URL in config");
             IdpError::BadRequest
         })?;
