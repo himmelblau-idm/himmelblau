@@ -79,6 +79,12 @@ use totp_rs::{Algorithm, Secret, TOTP};
 use uuid::Uuid;
 use zeroize::Zeroizing;
 
+// AADSTS65002: Consent between first party application and resource is required.
+// This occurs when a tenant has not granted consent for an application to access
+// the Graph API. When this happens, we should gracefully fallback and continue
+// authentication without group name resolution.
+const CONSENT_REQUIRED: u32 = 65002;
+
 #[allow(clippy::large_enum_variant)]
 enum Providers {
     Oidc(OidcProvider),
@@ -1682,6 +1688,14 @@ impl IdProvider for HimmelblauProvider {
                                                 what: "token".to_string(), where_: "refresh".to_string() });
                                         }
                                     )
+                                } else if err_resp.error_codes.contains(&CONSENT_REQUIRED) {
+                                    /* Consent has not been granted for the application
+                                     * to access the Graph API. Continue authentication
+                                     * without group name resolution - groups will use
+                                     * object_id as the name instead. */
+                                    warn!("Consent not granted for Graph API access. \
+                                           Group names will not be resolved.");
+                                    $token.clone()
                                 } else {
                                     return Err(IdpError::NotFound {
                                         what: "DEVICE_AUTH_FAIL".to_string(), where_: "acq_token".to_string() });
@@ -1788,15 +1802,57 @@ impl IdProvider for HimmelblauProvider {
                             }
                         }
                         Err(MsalError::AcquireTokenFailed(e)) => {
-                            check_new_device_enrollment_required!(e, self, keystore,
-                                |msg: String| {
-                                    return Ok((AuthResult::Denied(msg), AuthCacheAction::None))
-                                },
-                                |msg: String| {
-                                    error!("{}", msg);
-                                    return Err(IdpError::BadRequest)
+                            if e.error_codes.contains(&CONSENT_REQUIRED) {
+                                /* Consent has not been granted for the application
+                                 * to access the Graph API. Retry without Graph API
+                                 * scopes - authentication can still proceed but group
+                                 * names will not be resolved. */
+                                warn!("Consent not granted for Graph API access. \
+                                       Retrying authentication without Graph API scopes.");
+                                match self
+                                    .client
+                                    .read()
+                                    .await
+                                    .acquire_token_by_hello_for_business_key(
+                                        account_id,
+                                        &$hello_key,
+                                        vec![],
+                                        None,
+                                        None,
+                                        tpm,
+                                        machine_key,
+                                        &$cred,
+                                    )
+                                    .await
+                                {
+                                    Ok(token) => {
+                                        self.bad_pin_counter.reset_bad_pin_count(account_id).await;
+                                        token
+                                    }
+                                    Err(e) => {
+                                        error!("Failed to authenticate with hello key (retry): {:?}", e);
+                                        handle_hello_bad_pin_count!(self, account_id, keystore, |msg: &str| {
+                                            Ok((AuthResult::Denied(msg.to_string()), AuthCacheAction::None))
+                                        });
+                                        return Ok((
+                                            AuthResult::Denied(
+                                                "Failed to authenticate with Hello PIN.".to_string(),
+                                            ),
+                                            AuthCacheAction::None,
+                                        ));
+                                    }
                                 }
-                            )
+                            } else {
+                                check_new_device_enrollment_required!(e, self, keystore,
+                                    |msg: String| {
+                                        return Ok((AuthResult::Denied(msg), AuthCacheAction::None))
+                                    },
+                                    |msg: String| {
+                                        error!("{}", msg);
+                                        return Err(IdpError::BadRequest)
+                                    }
+                                )
+                            }
                         }
                         Err(e) => {
                             error!("Failed to authenticate with hello key: {:?}", e);
@@ -1931,15 +1987,57 @@ impl IdProvider for HimmelblauProvider {
                                     }
                                 }
                                 Err(MsalError::AcquireTokenFailed(e)) => {
-                                    check_new_device_enrollment_required!(e, self, keystore,
-                                        |msg: String| {
-                                            return Ok((AuthResult::Denied(msg), AuthCacheAction::None))
-                                        },
-                                        |msg: String| {
-                                            error!("{}", msg);
-                                            return Err(IdpError::BadRequest)
-                                        }
-                                    )
+                                    if e.error_codes.contains(&CONSENT_REQUIRED) {
+                                        /* Consent has not been granted for the application
+                                         * to access the Graph API. Retry without Graph API
+                                         * scopes - authentication can still proceed but group
+                                         * names will not be resolved. */
+                                        warn!("Consent not granted for Graph API access. \
+                                               Retrying token exchange without Graph API scopes.");
+                                        match self
+                                            .client
+                                            .read()
+                                            .await
+                                            .exchange_prt_for_access_token(
+                                                &prt,
+                                                vec![],
+                                                None,
+                                                None,
+                                                tpm,
+                                                machine_key,
+                                            ).await {
+                                                Ok(mut token) => {
+                                                    if let Ok(new_prt) = self
+                                                        .client
+                                                        .read()
+                                                        .await
+                                                        .exchange_prt_for_prt(
+                                                            &prt,
+                                                            tpm,
+                                                            machine_key,
+                                                            true,
+                                                        ).await {
+                                                            token.prt = Some(new_prt);
+                                                        };
+                                                    self.bad_pin_counter.reset_bad_pin_count(account_id).await;
+                                                    token
+                                                }
+                                                Err(e) => {
+                                                    error!("Failed to exchange PRT (retry): {:?}", e);
+                                                    return Err(IdpError::BadRequest);
+                                                }
+                                            }
+                                    } else {
+                                        check_new_device_enrollment_required!(e, self, keystore,
+                                            |msg: String| {
+                                                return Ok((AuthResult::Denied(msg), AuthCacheAction::None))
+                                            },
+                                            |msg: String| {
+                                                error!("{}", msg);
+                                                return Err(IdpError::BadRequest)
+                                            }
+                                        )
+                                    }
                                 },
                                 Err(_) => {
                                     // Access token request for this PRT failed. Delete the
