@@ -4,6 +4,8 @@
 # - On first run (no cached AppImage), it attempts a download; if that fails, you'll see an error.
 # - With --profile=<slug>, map to teams-for-linux's supported flags:
 #     --user-data-dir=<abs path> and --class=<name> so multiple apps can run at once.
+#
+# MODIFIED: Uses GitHub redirect instead of rate-limited API to fetch latest version.
 
 set -Eeuo pipefail
 
@@ -18,7 +20,6 @@ SYSTEM_INSTALL_DIR="/opt/teams-for-linux"
 
 APP_BASENAME="Teams-for-Linux"
 CURL_BIN="${CURL_BIN:-curl}"
-JQ_BIN="${JQ_BIN:-jq}"
 SHA512SUM_BIN="${SHA512SUM_BIN:-sha512sum}"
 
 log() { printf '[teams-wrapper] %s\n' "$*" >&2; }
@@ -40,15 +41,6 @@ choose_dir() {
   echo "$TARGET_DIR"
 }
 
-api_get() {
-  local url="$1" ua="teams-appimage-wrapper/1.0"
-  if [[ -n "$GITHUB_TOKEN" ]]; then
-    "$CURL_BIN" -fsSL -H "Accept: application/vnd.github+json" -H "User-Agent: $ua" -H "Authorization: Bearer $GITHUB_TOKEN" "$url"
-  else
-    "$CURL_BIN" -fsSL -H "Accept: application/vnd.github+json" -H "User-Agent: $ua" "$url"
-  fi
-}
-
 have_cmd() { command -v "$1" >/dev/null 2>&1; }
 
 get_current_version() {
@@ -61,24 +53,42 @@ get_current_version() {
 }
 
 fetch_release_info() {
-  if ! have_cmd "$JQ_BIN"; then
-    log "jq not found; skipping update detection."
+  # Uses GitHub redirect instead of rate-limited API
+  local releases_url="https://github.com/${GITHUB_REPO}/releases"
+  
+  if [[ -n "$PINNED_VERSION" ]]; then
+    # Pinned version: normalize by stripping an optional leading 'v'
+    REMOTE_TAG="${PINNED_VERSION#v}"
+  else
+    # Get latest version by following the /releases/latest redirect
+    # The redirect URL contains the version: .../releases/tag/v2.6.18
+    local redirect_url
+    redirect_url="$("$CURL_BIN" -fsSL -o /dev/null -w '%{url_effective}' "$releases_url/latest" 2>/dev/null)" || {
+      log "Failed to fetch latest release info"
+      return 1
+    }
+    # Extract version from URL like: https://github.com/.../releases/tag/v2.6.18
+    REMOTE_TAG="$(printf '%s' "$redirect_url" | sed -n 's|.*/tag/v\{0,1\}\([^/?#]*\).*|\1|p')"
+  fi
+  
+  if [[ -z "$REMOTE_TAG" ]]; then
+    log "Could not determine latest version"
     return 1
   fi
-  local api_base="https://api.github.com/repos/${GITHUB_REPO}/releases" json
-  if [[ -n "$PINNED_VERSION" ]]; then
-    json="$(api_get "$api_base/tags/v${PINNED_VERSION}")" || return 1
-  else
-    json="$(api_get "$api_base/latest")" || return 1
+  
+  # Construct download URLs directly (no API needed)
+  # AppImage naming: teams-for-linux-VERSION.AppImage (lowercase)
+  ASSET_URL="https://github.com/${GITHUB_REPO}/releases/download/v${REMOTE_TAG}/teams-for-linux-${REMOTE_TAG}.AppImage"
+  YML_URL="https://github.com/${GITHUB_REPO}/releases/download/v${REMOTE_TAG}/latest-linux.yml"
+  
+  # Verify the AppImage URL exists (HEAD request, no download)
+  if ! "$CURL_BIN" -fsSL --head "$ASSET_URL" >/dev/null 2>&1; then
+    log "AppImage not found at $ASSET_URL"
+    return 1
   fi
-  REMOTE_TAG="$(printf '%s' "$json" | "$JQ_BIN" -r '.tag_name // empty' | sed 's/^v//')"
-  ASSET_URL="$(printf '%s' "$json" | "$JQ_BIN" -r \
-    '.assets[]?.browser_download_url
-     | select(endswith(".AppImage"))
-     | select(test("arm|aarch|armv7|arm64"; "i")|not)' | head -n1)"
-  YML_URL="$(printf '%s' "$json" | "$JQ_BIN" -r \
-    '.assets[]?.browser_download_url | select(endswith("latest-linux.yml"))' | head -n1)"
-  [[ -n "$ASSET_URL" && "$ASSET_URL" != "null" ]]
+  
+  log "Found version $REMOTE_TAG"
+  return 0
 }
 
 need_update() {
@@ -100,7 +110,7 @@ download_and_switch() {
   chmod +x "$temp"
 
   # Optional sha512 verification if manifest is present (electron-builder uses base64)
-  if [[ -n "$YML_URL" ]]; then
+  if [[ -n "${YML_URL:-}" ]]; then
     log "Fetching checksum manifest (latest-linux.yml)"
     local yml sha_b64 file_b64
     yml="$("$CURL_BIN" -fsSL "$YML_URL" || true)"
@@ -130,7 +140,7 @@ download_and_switch() {
   log "Updated to $APP_BASENAME-$version.AppImage"
 }
 
-# -------- profile handling (NEW) --------
+# -------- profile handling --------
 PROFILE_SLUG=""
 PASSTHRU=()
 for arg in "$@"; do
@@ -158,12 +168,6 @@ make_profile_flags() {
   fi
 
   printf -- "--user-data-dir=%s\n--class=%s\n" "$dir" "o365-$class_slug"
-}
-
-userns_clone_enabled() {
-  # Returns 0 if kernel allows unprivileged user namespaces
-  local f="/proc/sys/kernel/unprivileged_userns_clone"
-  [[ -r "$f" && "$(cat "$f" 2>/dev/null)" == "1" ]]
 }
 
 apparmor_blocks_userns() {
