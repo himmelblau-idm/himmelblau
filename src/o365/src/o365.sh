@@ -53,7 +53,7 @@ get_current_version() {
 }
 
 fetch_release_info() {
-  # NEW: Uses GitHub redirect instead of rate-limited API
+  # Uses GitHub redirect instead of rate-limited API
   local releases_url="https://github.com/${GITHUB_REPO}/releases"
   
   if [[ -n "$PINNED_VERSION" ]]; then
