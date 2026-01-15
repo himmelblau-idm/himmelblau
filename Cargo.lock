@@ -2821,9 +2821,9 @@ dependencies = [
 
 [[package]]
 name = "libhimmelblau"
-version = "0.8.6"
+version = "0.8.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cd303c54cf8b3e9d277d553b9e06232a7f335295eef92f66c13a889b7eb26718"
+checksum = "ecd332ccee0753ff81fd56bad8fb5e8833057f8095fd364be63919e15c4cfab5"
 dependencies = [
  "base64 0.22.1",
  "cbindgen",
