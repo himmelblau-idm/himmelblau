@@ -68,7 +68,7 @@ fetch_release_info() {
       return 1
     }
     # Extract version from URL like: https://github.com/.../releases/tag/v2.6.18
-    REMOTE_TAG="$(printf '%s' "$redirect_url" | sed -n 's|.*/tag/v\{0,1\}||p')"
+    REMOTE_TAG="$(printf '%s' "$redirect_url" | sed -n 's|.*/tag/v\{0,1\}\([^/?#]*\).*|\1|p')"
   fi
   
   if [[ -z "$REMOTE_TAG" ]]; then
