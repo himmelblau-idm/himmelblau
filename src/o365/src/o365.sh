@@ -57,8 +57,8 @@ fetch_release_info() {
   local releases_url="https://github.com/${GITHUB_REPO}/releases"
   
   if [[ -n "$PINNED_VERSION" ]]; then
-    # Pinned version: use it directly
-    REMOTE_TAG="$PINNED_VERSION"
+    # Pinned version: normalize by stripping an optional leading 'v'
+    REMOTE_TAG="${PINNED_VERSION#v}"
   else
     # Get latest version by following the /releases/latest redirect
     # The redirect URL contains the version: .../releases/tag/v2.6.18
