@@ -7,8 +7,6 @@ used in GNOME Shell 44 and earlier.
 """
 
 import re
-import sys
-import os
 from pathlib import Path
 
 
@@ -190,27 +188,6 @@ def transpile_extension(source: str) -> str:
     return '\n'.join(result)
 
 
-def transpile_qrcodegen(source: str) -> str:
-    """Convert qrcodegen.js from ESM exports to legacy format."""
-
-    lines = source.split('\n')
-    output_lines = []
-
-    for line in lines:
-        # Remove ESM export lines
-        if line.startswith('export const'):
-            continue
-        output_lines.append(line)
-
-    # Add legacy-compatible exports
-    output_lines.append("")
-    output_lines.append("// Legacy exports for GNOME 40-44")
-    output_lines.append("var QrCode = qrcodegen.QrCode;")
-    output_lines.append("var Ecc = qrcodegen.QrCode.Ecc;")
-
-    return '\n'.join(output_lines)
-
-
 def main():
     script_dir = Path(__file__).parent
     src_dir = script_dir.parent / "src" / "qr-greeter@himmelblau-idm.org"
@@ -233,18 +210,6 @@ def main():
 
     transpiled = transpile_extension(source)
     with open(extension_dst, 'w') as f:
-        f.write(transpiled)
-
-    # Transpile qrcodegen.js
-    qrcodegen_src = src_dir / "qrcodegen.js"
-    qrcodegen_dst = legacy_dir / "qrcodegen.js"
-
-    print(f"Transpiling {qrcodegen_src} -> {qrcodegen_dst}")
-    with open(qrcodegen_src, 'r') as f:
-        source = f.read()
-
-    transpiled = transpile_qrcodegen(source)
-    with open(qrcodegen_dst, 'w') as f:
         f.write(transpiled)
 
     # Copy stylesheet.css (no changes needed)
