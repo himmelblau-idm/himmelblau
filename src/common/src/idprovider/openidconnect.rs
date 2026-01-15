@@ -216,6 +216,7 @@ struct OidcDelayedInit {
     client: DagClient,
     http_client: reqwest::Client,
     authorization_endpoint: String,
+    openid_configuration_url: String,
 }
 
 pub struct OidcApplication {
@@ -278,6 +279,10 @@ impl OidcApplication {
                         IdpError::BadRequest
                     })?;
             let authorization_endpoint = provider_metadata.authorization_endpoint().to_string();
+            let openid_configuration_url = format!(
+                "{}/.well-known/openid-configuration",
+                provider_metadata.issuer().as_str().trim_end_matches('/')
+            );
 
             let device_endpoint = provider_metadata
                 .additional_metadata()
@@ -295,6 +300,7 @@ impl OidcApplication {
                 client,
                 http_client,
                 authorization_endpoint,
+                openid_configuration_url,
             });
         }
         Ok(())
@@ -732,15 +738,21 @@ impl OidcProvider {
             *state = CacheState::OfflineNextCheck(SystemTime::now() + OFFLINE_NEXT_CHECK);
             return false;
         }
-        let authorization_endpoint = match self.client.read().await.as_ref() {
-            Some(init) => init.authorization_endpoint.clone(),
-            None => {
-                error!("OIDC client not initialized");
-                let mut state = self.state.lock().await;
-                *state = CacheState::OfflineNextCheck(now + OFFLINE_NEXT_CHECK);
-                return false;
-            }
-        };
+        let (authorization_endpoint, openid_configuration_url) =
+            match self.client.read().await.as_ref() {
+                Some(init) => (
+                    init.authorization_endpoint.clone(),
+                    init.openid_configuration_url.clone(),
+                ),
+                None => {
+                    error!("OIDC client not initialized");
+                    let mut state = self.state.lock().await;
+                    *state = CacheState::OfflineNextCheck(now + OFFLINE_NEXT_CHECK);
+                    return false;
+                }
+            };
+
+        // First try the authorization endpoint
         match reqwest::get(&authorization_endpoint).await {
             Ok(resp) => {
                 if resp.status().is_success() {
@@ -748,9 +760,35 @@ impl OidcProvider {
                     let mut state = self.state.lock().await;
                     *state = CacheState::Online;
                     return true;
+                }
+                // Authorization endpoint returned non-success (e.g., Keycloak returns 400).
+                // Fallback to the openid-configuration URL which should always respond.
+                debug!(
+                    ?authorization_endpoint,
+                    status = %resp.status(),
+                    "Authorization endpoint returned non-success, trying openid-configuration"
+                );
+            }
+            Err(err) => {
+                // Network error - provider is definitely offline
+                error!(?err, ?authorization_endpoint, "Provider online failed");
+                let mut state = self.state.lock().await;
+                *state = CacheState::OfflineNextCheck(now + OFFLINE_NEXT_CHECK);
+                return false;
+            }
+        }
+
+        // Fallback: try the .well-known/openid-configuration URL
+        match reqwest::get(&openid_configuration_url).await {
+            Ok(resp) => {
+                if resp.status().is_success() {
+                    debug!("provider is now online (via openid-configuration)");
+                    let mut state = self.state.lock().await;
+                    *state = CacheState::Online;
+                    return true;
                 } else {
                     error!(
-                        ?authorization_endpoint,
+                        ?openid_configuration_url,
                         "Provider online failed: {}",
                         resp.status()
                     );
@@ -760,7 +798,7 @@ impl OidcProvider {
                 }
             }
             Err(err) => {
-                error!(?err, ?authorization_endpoint, "Provider online failed");
+                error!(?err, ?openid_configuration_url, "Provider online failed");
                 let mut state = self.state.lock().await;
                 *state = CacheState::OfflineNextCheck(now + OFFLINE_NEXT_CHECK);
                 return false;
