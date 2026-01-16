@@ -274,7 +274,8 @@ ExecStart=/usr/sbin/himmelblaud_tasks
 Restart=on-failure
 RestartSec=1s
 
-CapabilityBoundingSet=CAP_CHOWN CAP_FOWNER CAP_DAC_OVERRIDE CAP_DAC_READ_SEARCH
+CapabilityBoundingSet=CAP_CHOWN CAP_FOWNER CAP_DAC_OVERRIDE CAP_DAC_READ_SEARCH CAP_SETUID CAP_SETGID
+AmbientCapabilities=CAP_SETUID CAP_SETGID
 # SystemCallFilter=@aio @basic-io @chown @file-system @io-event @network-io @sync
 { 'ProtectSystem=strict' if supported('ProtectSystemStrict') else '' }
 {rw_line}

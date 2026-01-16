@@ -30,6 +30,8 @@ compact_jwt = { workspace = true }
 os-release = { workspace = true }
 zeroize = { workspace = true }
 idmap = { workspace = true }
+libkrimes = { workspace = true }
+
 
 # Kanidm deps
 rusqlite = { workspace = true }

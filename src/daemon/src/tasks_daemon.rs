@@ -23,7 +23,7 @@
 use std::ffi::CString;
 use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::{symlink, DirBuilderExt, OpenOptionsExt};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::str;
 use std::time::Duration;
@@ -34,11 +34,14 @@ use futures::{SinkExt, StreamExt};
 use himmelblau::graph::Graph;
 use himmelblau_policies::policies::apply_intune_policy;
 use himmelblau_unix_common::config::{split_username, HimmelblauConfig};
-use himmelblau_unix_common::constants::{DEFAULT_CCACHE_DIR, DEFAULT_CONFIG_PATH};
+use himmelblau_unix_common::constants::{
+    DEFAULT_CCACHE_DIR, DEFAULT_CONFIG_PATH, DEFAULT_KERBEROS_CONF_DIR,
+};
 use himmelblau_unix_common::unix_proto::{HomeDirectoryInfo, TaskRequest, TaskResponse};
 use kanidm_utils_users::{get_effective_gid, get_effective_uid};
 use libc::{lchown, umask};
 use libc::{mode_t, uid_t};
+use libkrimes::proto::KerberosCredentials;
 use sd_notify::NotifyState;
 use sketching::tracing_forest::traits::*;
 use sketching::tracing_forest::util::*;
@@ -457,6 +460,103 @@ fn create_ccache_dir(ccache_dir: &Path, uid: uid_t, gid: uid_t) -> io::Result<()
     })
 }
 
+fn store_tgt(tgt: &KerberosCredentials, uid: uid_t, gid: uid_t) -> Result<(), String> {
+    let ccname = Some(format!("KEYRING:persistent:{}", uid));
+
+    debug!(?ccname, "Storing kerberos ticket in credential cache");
+
+    let guard = uzers::switch::switch_user_group(uid, gid)
+        .map_err(|e| format!("Failed to switch user/group: {}", e))?;
+
+    let mut ccache = match libkrimes::ccache::resolve(ccname.as_deref()) {
+        Ok(ccache) => ccache,
+        Err(e) => {
+            drop(guard);
+            let msg = format!("Failed to resolve credential cache {:?}: {:?}", ccname, e);
+            return Err(msg);
+        }
+    };
+
+    match ccache.init(tgt.name(), None) {
+        Ok(_) => (),
+        Err(e) => {
+            drop(guard);
+            let msg = format!("Failed to init credential cache {:?}: {:?}", ccname, e);
+            return Err(msg);
+        }
+    }
+
+    match ccache.store(tgt) {
+        Ok(_) => (),
+        Err(e) => {
+            drop(guard);
+            let msg = format!("Failed to store TGT in credential cache: {:?}", e);
+            return Err(msg);
+        }
+    }
+
+    drop(guard);
+
+    Ok(())
+}
+
+fn write_kerberos_config_snippet(
+    top_level_names: Option<String>,
+    tenant_id: String,
+) -> Result<(), String> {
+    if tenant_id.chars().count() <= 0 {
+        return Err("Failed to write Kerberos config snippet, empty tenant_id".to_string());
+    }
+
+    let krb_conf_dir = PathBuf::from(DEFAULT_KERBEROS_CONF_DIR);
+
+    trace!(?krb_conf_dir, "Check kerberos config dir exists");
+    match std::fs::exists(&krb_conf_dir) {
+        Ok(true) => match &krb_conf_dir.is_dir() {
+            false => Err(format!("Path {krb_conf_dir:?} is not a directory")),
+            true => Ok(()),
+        },
+        Ok(false) => Err(format!("Path {krb_conf_dir:?} does not exist")),
+        Err(e) => Err(format!("Failed to check if {krb_conf_dir:?} exists: {e}")),
+    }?;
+
+    let krb_snippet = krb_conf_dir.join(format!("himmelblau_{tenant_id}.conf"));
+    let mut file = match OpenOptions::new()
+        .create(true)
+        .truncate(true)
+        .write(true)
+        .mode(0o644)
+        .open(&krb_snippet)
+    {
+        Ok(file) => file,
+        Err(e) => return Err(format!("Failed to open {krb_snippet:?}: {e}")),
+    };
+
+    let libdefs = "[libdefaults]\n\tdns_canonicalize_hostname = false\n";
+    file.write(libdefs.as_bytes())
+        .map_err(|e| format!("Failed to write to {krb_snippet:?}: {e}"))?;
+
+    let realms = format!(
+        "[realms]\n\tKERBEROS.MICROSOFTONLINE.COM = {{\n\t\tkdc = https://login.microsoftonline.com/{tenant_id}/kerberos\n\t}}\n"
+    );
+    file.write(realms.as_bytes())
+        .map_err(|e| format!("Failed to write to {krb_snippet:?}: {e}"))?;
+
+    let domain_realms: Vec<String> = match top_level_names {
+        Some(s) => s
+            .split(",")
+            .filter(|e| !e.contains(":"))
+            .map(|x| format!("\t{x} = KERBEROS.MICROSOFTONLINE.COM"))
+            .collect(),
+        None => vec![],
+    };
+    let domain_realms = format!("[domain_realm]\n{}\n", domain_realms.join("\n"));
+    file.write(domain_realms.as_bytes())
+        .map_err(|e| format!("Failed to write to {krb_snippet:?}: {e}"))?;
+
+    Ok(())
+}
+
 async fn handle_tasks(stream: UnixStream, cfg: &HimmelblauConfig) {
     let mut reqs = Framed::new(stream, TaskCodec::new());
 
@@ -566,6 +666,48 @@ async fn handle_tasks(stream: UnixStream, cfg: &HimmelblauConfig) {
                 };
 
                 // Indicate the status response
+                if let Err(e) = reqs.send(response).await {
+                    error!("Error -> {:?}", e);
+                    return;
+                }
+            }
+            Some(Ok(TaskRequest::KerberosConfig(top_level_names, tenant_id))) => {
+                debug!("Received task -> KerberosConfig(...)");
+
+                let response = match tenant_id {
+                    Some(t) => match write_kerberos_config_snippet(top_level_names, t) {
+                        Ok(_) => TaskResponse::Success(0),
+                        Err(msg) => TaskResponse::Error(msg),
+                    },
+                    None => TaskResponse::Error(
+                        "Failed to write Kerberos config snippet, no tenant_id".to_string(),
+                    ),
+                };
+
+                if let Err(e) = reqs.send(response).await {
+                    error!("Error -> {:?}", e);
+                    return;
+                }
+            }
+            Some(Ok(TaskRequest::KerberosTGTs(uid, gid, tgt_cloud, tgt_ad))) => {
+                debug!("Received task -> KerberosCCache({}, {}, ...)", uid, gid);
+
+                let cloud_ret = if let Some(tgt_cloud) = tgt_cloud {
+                    store_tgt(tgt_cloud.as_ref(), uid, gid)
+                } else {
+                    Ok(())
+                };
+
+                let ad_ret = if let Some(tgt_ad) = tgt_ad {
+                    store_tgt(tgt_ad.as_ref(), uid, gid)
+                } else {
+                    Ok(())
+                };
+
+                let response = match cloud_ret.and(ad_ret) {
+                    Ok(_) => TaskResponse::Success(0),
+                    Err(msg) => TaskResponse::Error(msg),
+                };
                 if let Err(e) = reqs.send(response).await {
                     error!("Error -> {:?}", e);
                     return;
