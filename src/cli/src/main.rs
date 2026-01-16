@@ -254,7 +254,9 @@ fn configure_pam(
     for auth_file in &auth_files {
         insert_module_line(
             auth_file,
-            "auth\tsufficient\tpam_himmelblau.so ignore_unknown_user",
+            // Set PAM_AUTHTOK from Hello PIN so downstream modules (e.g. gnome-keyring)
+            // can unlock using use_authtok.
+            "auth\tsufficient\tpam_himmelblau.so ignore_unknown_user set_authtok",
             None,
             // pam_himmelblau should always come first on the auth stack
             Some(&|_: &str| true),

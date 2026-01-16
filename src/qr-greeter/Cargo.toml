@@ -45,6 +45,7 @@ post_install_script = "scripts/postinst"
 
 [package.metadata.generate-rpm.requires]
 gnome-shell = "*"
+himmelblau = "*"
 
 [package.metadata.generate-rpm.recommends]
 systemd-container = "*"
