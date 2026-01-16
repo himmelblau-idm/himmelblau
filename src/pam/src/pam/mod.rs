@@ -397,9 +397,10 @@ impl PamHooks for PamKanidm {
             }
         };
 
+        let set_authtok = opts.set_authtok;
         let keyring_secret = Arc::new(Mutex::new(authtok.clone()));
         let base_printer: Arc<dyn MessagePrinter> = Arc::new(PamConvMessagePrinter::new(conv));
-        let msg_printer: Arc<dyn MessagePrinter> = if opts.set_authtok {
+        let msg_printer: Arc<dyn MessagePrinter> = if set_authtok {
             Arc::new(KeyringCaptureMessagePrinter::new(
                 base_printer.clone(),
                 keyring_secret.clone(),
@@ -417,10 +418,9 @@ impl PamHooks for PamKanidm {
             msg_printer,
         );
 
-        if opts.set_authtok && result == PamResultCode::PAM_SUCCESS {
+        if set_authtok && result == PamResultCode::PAM_SUCCESS {
             if let Ok(Some(secret)) = keyring_secret.lock().map(|s| s.clone()) {
-                let pamh_mut = unsafe { &mut *(pamh as *const PamHandle as *mut PamHandle) };
-                if let Err(err) = pamh_mut.set_item_str::<PamAuthTok>(&secret) {
+                if let Err(err) = pamh.set_item_str::<PamAuthTok>(&secret) {
                     error!(?err, "Failed to set PAM_AUTHTOK for keyring");
                 } else {
                     debug!("Set PAM_AUTHTOK for keyring unlock");
