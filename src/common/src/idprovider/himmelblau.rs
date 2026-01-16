@@ -2149,7 +2149,16 @@ impl IdProvider for HimmelblauProvider {
                                     error!("Failed to delete hello key: {:?}", e);
                                     IdpError::Tpm
                                 })?;
-                        return Err(IdpError::BadRequest);
+                        // Don't hard-fail PAM here. Treat this like an auth denial so the
+                        // front-end restarts the auth flow cleanly (user will re-auth and
+                        // re-enroll Hello PIN if needed).
+                        return Ok((
+                            AuthResult::Denied(
+                                "Hello PIN bootstrap data was not found. Please authenticate again to enroll a new Linux Hello PIN."
+                                    .to_string(),
+                            ),
+                            AuthCacheAction::None,
+                        ));
                     }
                 };
 
