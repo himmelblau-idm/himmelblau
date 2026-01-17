@@ -1,0 +1,82 @@
+#!/bin/bash
+#
+# Git pre-commit hook to regenerate NixOS options and man pages from XML definitions.
+#
+# This hook runs automatically before each commit. If any files in docs-xml/
+# or the generator script are staged, it regenerates:
+#   - nix/modules/himmelblau-options.nix (NixOS module options)
+#   - man/man5/himmelblau.conf.5 (man page)
+#
+# Note: Rust code generation is handled by the build system, not this hook.
+#
+# To install this hook, run from the repository root:
+#   git config core.hooksPath .githooks
+#
+# Or use the Makefile target:
+#   make setup-hooks
+
+set -e
+
+# Files/directories that trigger regeneration
+WATCHED_PATHS=(
+    "docs-xml/himmelblauconf/"
+    "scripts/gen_param_code.py"
+)
+
+# Output files that get regenerated
+NIX_OUTPUT="nix/modules/himmelblau-options.nix"
+MAN_OUTPUT="man/man5/himmelblau.conf.5"
+GENERATOR_SCRIPT="scripts/gen_param_code.py"
+
+# Check if any watched paths have staged changes
+needs_regeneration() {
+    for path in "${WATCHED_PATHS[@]}"; do
+        if git diff --cached --name-only | grep -q "^${path}"; then
+            return 0
+        fi
+    done
+    return 1
+}
+
+# Check if the generator script exists
+check_generator() {
+    if [[ ! -f "$GENERATOR_SCRIPT" ]]; then
+        echo "Error: Generator script not found: $GENERATOR_SCRIPT" >&2
+        exit 1
+    fi
+}
+
+# Stage a file if it has changes
+stage_if_changed() {
+    local file="$1"
+    if git diff --quiet "$file" 2>/dev/null; then
+        echo "  $file: no changes"
+    else
+        git add "$file"
+        echo "  $file: staged"
+    fi
+}
+
+# Main logic
+if needs_regeneration; then
+    echo "Detected changes to XML definitions or generator script."
+    echo "Regenerating NixOS options and man page..."
+
+    check_generator
+
+    # Run the generator for both NixOS options and man page (suppress progress messages)
+    if python3 "$GENERATOR_SCRIPT" \
+        --gen-nix --nix-output "$NIX_OUTPUT" \
+        --gen-man --man-output "$MAN_OUTPUT" \
+        2>/dev/null; then
+
+        echo "Regeneration complete:"
+        stage_if_changed "$NIX_OUTPUT"
+        stage_if_changed "$MAN_OUTPUT"
+    else
+        echo "Error: Failed to regenerate files" >&2
+        exit 1
+    fi
+fi
+
+exit 0

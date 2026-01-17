@@ -39,6 +39,10 @@ test: dockerfiles ## Run cargo tests in a container
 clean: ## Remove cargo build artifacts
 	cargo clean
 
+setup-hooks: ## Configure git to use project hooks (auto-regenerates NixOS options)
+	git config core.hooksPath .githooks
+	@echo "Git hooks configured. Pre-commit hook will auto-regenerate nix/modules/himmelblau-options.nix"
+
 PLATFORM := $(shell grep '^ID=' /etc/os-release | awk -F= '{ print $$2 }' | tr -d '"')
 
 DOCKER := $(shell command -v podman || command -v docker)

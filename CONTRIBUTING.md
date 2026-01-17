@@ -64,13 +64,33 @@ sudo make uninstall
 
 ---
 
+## Git Hooks
+
+The repository includes a pre-commit hook that automatically regenerates generated files
+when you modify the XML parameter definitions or the generator script. To enable:
+
+```bash
+make setup-hooks
+```
+
+This configures git to use `.githooks/pre-commit`, which regenerates the following files
+from `docs-xml/himmelblauconf/` whenever those definitions are committed:
+
+* `nix/modules/himmelblau-options.nix` - Typed NixOS module options
+* `man/man5/himmelblau.conf.5` - Man page documentation
+
+Note: Rust code generation is handled by the build system, not the pre-commit hook.
+
+---
+
 ## Coding Guidelines
 
 * **Rust Style:** Run `cargo fmt` before committing.
 * **Linting:** Use `cargo clippy --all-targets --all-features` to catch common issues.
 * **Testing:** Run `cargo test` before opening a PR.
-* **Commits:** Write clear commit messages in the imperative mood (e.g., “Add Intune compliance check”). Add a signed-off tag to each commit (`git commit --signoff`).
+* **Commits:** Write clear commit messages in the imperative mood (e.g., "Add Intune compliance check"). Add a signed-off tag to each commit (`git commit --signoff`).
 * **Docs:** Update relevant documentation/man pages when you change functionality.
+* **Config Parameters:** When adding or modifying configuration options, update the XML definitions in `docs-xml/himmelblauconf/`. The pre-commit hook will regenerate Rust code, man pages, and NixOS options automatically.
 
 ---
 
