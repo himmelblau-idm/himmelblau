@@ -132,6 +132,16 @@ if [ "$pam_config_ok" -ne 1 ]; then
         aad-tool configure-pam --really >/dev/null 2>&1 || :
     fi
 fi
+
+# If GDM is present, ensure keyring consumes the auth token so the keyring unlocks
+# like a normal password login.
+GDM_PAM="/etc/pam.d/gdm-password"
+if [ -f "$GDM_PAM" ]; then
+    # If the keyring auth line exists without use_authtok, add it.
+    if grep -Eq '^[[:space:]]*auth[[:space:]]+optional[[:space:]]+pam_gnome_keyring\.so([[:space:]]*)$' "$GDM_PAM"; then
+        sed -i -E 's/^([[:space:]]*auth[[:space:]]+optional[[:space:]]+pam_gnome_keyring\.so)[[:space:]]*$/\1 use_authtok/' "$GDM_PAM" || :
+    fi
+fi
 '''
 post_uninstall_script = '''
 # Only remove a symlink if it exists and is a symlink

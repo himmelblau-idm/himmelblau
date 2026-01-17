@@ -34,18 +34,18 @@ EOF
 
 # Check if the file /etc/apparmor.d/unix-chkpwd exists
 if [[ -f /etc/apparmor.d/unix-chkpwd ]]; then
-	# Reverse the patch using the patch command
-	echo "$UNIX_CHKPWD_PATCH" | patch --fuzz 2 --silent --reverse -p0 /etc/apparmor.d/unix-chkpwd
-
-	# Reload the AppArmor profile to apply the changes
-	apparmor_parser -r /etc/apparmor.d/unix-chkpwd
+    # Idempotent, non-interactive: only reverse if our change is present
+    if grep -q 'flags=(attach_disconnected)' /etc/apparmor.d/unix-chkpwd; then
+        echo "$UNIX_CHKPWD_PATCH" | patch --batch --fuzz 2 --silent --reverse -p0 /etc/apparmor.d/unix-chkpwd >/dev/null 2>&1 || true
+        apparmor_parser -r /etc/apparmor.d/unix-chkpwd >/dev/null 2>&1 || true
+    fi
 fi
 
 # Check if the file /etc/apparmor.d/usr.lib.libreoffice.program.soffice.bin exists
 if [[ -f /etc/apparmor.d/usr.lib.libreoffice.program.soffice.bin ]]; then
-	# Reverse the patch using the patch command
-	echo "$LIBREOFFICE_PATCH" | patch --fuzz 2 --silent --reverse -p0 /etc/apparmor.d/usr.lib.libreoffice.program.soffice.bin || echo "apparmor libreoffice patch failed"
-
-	# Reload the AppArmor profile to apply the changes
-	apparmor_parser -r /etc/apparmor.d/usr.lib.libreoffice.program.soffice.bin || echo "apparmor reload failed"
+    # Idempotent, non-interactive: only reverse if our change is present
+    if grep -q 'attach_disconnected' /etc/apparmor.d/usr.lib.libreoffice.program.soffice.bin; then
+        echo "$LIBREOFFICE_PATCH" | patch --batch --fuzz 2 --silent --reverse -p0 /etc/apparmor.d/usr.lib.libreoffice.program.soffice.bin >/dev/null 2>&1 || true
+        apparmor_parser -r /etc/apparmor.d/usr.lib.libreoffice.program.soffice.bin >/dev/null 2>&1 || true
+    fi
 fi

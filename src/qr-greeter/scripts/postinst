@@ -4,6 +4,14 @@ set -e
 if command -v machinectl >/dev/null 2>&1 && getent passwd gdm >/dev/null 2>&1; then
     echo "Enabling Himmelblau QR Greeter GNOME Shell extension for GDM user..."
 
+    # Running `machinectl shell gdm@ ...` may trigger PAM (and thus pam_himmelblau),
+    # which will try to connect to himmelblaud. During package installation the daemon
+    # may not be installed or started yet, causing noisy "socket not found" logs.
+    if [ ! -x /usr/sbin/himmelblaud ] && [ ! -S /run/himmelblaud/socket ] && [ ! -S /var/run/himmelblaud/socket ]; then
+        echo 'Info: himmelblaud not available yet; skipping automatic extension enable.' >&2
+        exit 0
+    fi
+
     # Run the gsettings command inside a non-interactive gdm shell.
     machinectl --quiet shell gdm@ /bin/bash -lc \
         "gsettings set org.gnome.shell enabled-extensions \"['qr-greeter@himmelblau-idm.org']\"" \

@@ -73,6 +73,7 @@ pub struct Options {
     pub ignore_unknown_user: bool,
     pub mfa_poll_prompt: bool,
     pub no_hello_pin: bool,
+    pub set_authtok: bool,
 }
 
 impl TryFrom<&Vec<&CStr>> for Options {
@@ -94,6 +95,7 @@ impl TryFrom<&Vec<&CStr>> for Options {
             ignore_unknown_user: gopts.contains("ignore_unknown_user"),
             mfa_poll_prompt: gopts.contains("mfa_poll_prompt"),
             no_hello_pin: gopts.contains("no_hello_pin"),
+            set_authtok: gopts.contains("set_authtok") || gopts.contains("keyring_authtok"),
         })
     }
 }
