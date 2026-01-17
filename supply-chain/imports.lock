@@ -468,8 +468,8 @@ user-login = "fitzgen"
 user-name = "Nick Fitzgerald"
 
 [[publisher.libhimmelblau]]
-version = "0.8.6"
-when = "2026-01-09"
+version = "0.8.7"
+when = "2026-01-15"
 user-id = 247655
 user-login = "dmulder"
 user-name = "David Mulder"
