@@ -555,7 +555,7 @@ in
 
     shell = mkOption {
       type = types.nullOr (types.str);
-      default = "/bin/bash";
+      default = "/run/current-system/sw/bin/bash";
       description = ''
         The default shell for users. This will be assigned when the user logs in.
       '';
