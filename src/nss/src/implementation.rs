@@ -33,11 +33,15 @@ macro_rules! try_nss_cache {
 
 macro_rules! fetch_cached_user {
     ($cache:expr, $cfg:ident, $id:expr, $ret:expr) => {{
+        fetch_cached_user!($cache, $cfg, $id, $ret, None::<String>)
+    }};
+    ($cache:expr, $cfg:ident, $id:expr, $ret:expr, $local_name:expr) => {{
         match $cache {
             Some(ref c) => match c.get_user(&$id) {
                 Some(nu) => {
                     let mut passwd = passwd_from_nssuser(nu);
-                    passwd.name = $cfg.map_upn_to_name(&passwd.name);
+                    // Use local_name override if provided, otherwise use cn_name_mapping
+                    passwd.name = $local_name.unwrap_or_else(|| $cfg.map_upn_to_name(&passwd.name));
                     return Response::Success(passwd);
                 }
                 None => return $ret,
@@ -175,17 +179,21 @@ impl PasswdHooks for HimmelblauPasswd {
             }
         };
 
-        // Ignore request for mapped users (some other nss module handles this name)
+        // Check if this is a mapped local user or a UPN mapped to a local user.
+        // We still need to handle these lookups (not return NotFound), but we
+        // need to look up the UPN and return the result with the local name.
         let user_map = UserMap::new(&cfg.get_user_map_file());
-        if user_map.get_upn_from_local(&name).is_some() {
-            return Response::NotFound;
-        }
-        // Also ignore requests for UPNs that are mapped to local users
-        if user_map.get_local_from_upn(&name.to_lowercase()).is_some() {
-            return Response::NotFound;
-        }
+        let (upn, local_name) = if let Some(mapped_upn) = user_map.get_upn_from_local(&name) {
+            // Local name is mapped to a UPN - look up the UPN
+            (mapped_upn, Some(name.clone()))
+        } else if let Some(local) = user_map.get_local_from_upn(&name.to_lowercase()) {
+            // UPN is mapped to a local name - look up the UPN, return as local name
+            (name.to_lowercase(), Some(local))
+        } else {
+            // No mapping - use standard cn_name_mapping
+            (cfg.map_name_to_upn(&name), None)
+        };
 
-        let upn = cfg.map_name_to_upn(&name);
         let req = ClientRequest::NssAccountByName(upn.clone());
 
         let nss_cache = try_nss_cache!();
@@ -193,7 +201,7 @@ impl PasswdHooks for HimmelblauPasswd {
         let mut daemon_client = match DaemonClientBlocking::new(cfg.get_socket_path().as_str()) {
             Ok(dc) => dc,
             Err(_) => {
-                fetch_cached_user!(nss_cache, cfg, Id::Name(upn), Response::Unavail);
+                fetch_cached_user!(nss_cache, cfg, Id::Name(upn), Response::Unavail, local_name);
             }
         };
 
@@ -204,7 +212,10 @@ impl PasswdHooks for HimmelblauPasswd {
                     .map(|nu| {
                         insert_cached_user!(nss_cache, nu);
                         let mut passwd = passwd_from_nssuser(nu);
-                        passwd.name = cfg.map_upn_to_name(&passwd.name);
+                        // Use the local name from user_map if present, otherwise use cn_name_mapping
+                        passwd.name = local_name
+                            .clone()
+                            .unwrap_or_else(|| cfg.map_upn_to_name(&passwd.name));
                         Response::Success(passwd)
                     })
                     .unwrap_or_else(|| {
@@ -212,13 +223,26 @@ impl PasswdHooks for HimmelblauPasswd {
                             nss_cache,
                             cfg,
                             Id::Name(upn.clone()),
-                            Response::NotFound
+                            Response::NotFound,
+                            local_name.clone()
                         )
                     }),
-                _ => fetch_cached_user!(nss_cache, cfg, Id::Name(upn.clone()), Response::NotFound),
+                _ => fetch_cached_user!(
+                    nss_cache,
+                    cfg,
+                    Id::Name(upn.clone()),
+                    Response::NotFound,
+                    local_name.clone()
+                ),
             })
             .unwrap_or_else(|_| {
-                fetch_cached_user!(nss_cache, cfg, Id::Name(upn), Response::NotFound)
+                fetch_cached_user!(
+                    nss_cache,
+                    cfg,
+                    Id::Name(upn),
+                    Response::NotFound,
+                    local_name
+                )
             })
     }
 }
