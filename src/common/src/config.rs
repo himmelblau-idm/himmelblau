@@ -812,7 +812,6 @@ impl HimmelblauConfig {
             s.trim()
                 .strip_suffix("/.well-known/openid-configuration")
                 .unwrap_or(s.trim())
-                .trim_end_matches('/')
                 .to_string()
         });
         if let Some(ref s) = res {
