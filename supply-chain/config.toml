@@ -492,10 +492,6 @@ criteria = "safe-to-deploy"
 version = "2.0.0"
 criteria = "safe-to-deploy"
 
-[[exemptions.num-bigint-dig]]
-version = "0.8.4"
-criteria = "safe-to-deploy"
-
 [[exemptions.num_enum]]
 version = "0.7.4"
 criteria = "safe-to-deploy"
@@ -686,10 +682,6 @@ criteria = "safe-to-deploy"
 
 [[exemptions.rpassword]]
 version = "7.4.0"
-criteria = "safe-to-deploy"
-
-[[exemptions.rsa]]
-version = "0.9.8"
 criteria = "safe-to-deploy"
 
 [[exemptions.rtoolbox]]

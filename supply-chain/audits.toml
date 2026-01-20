@@ -264,6 +264,11 @@ who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
 version = "0.8.0"
 
+[[audits.num-bigint-dig]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+version = "0.8.6"
+
 [[audits.num_enum]]
 who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
@@ -313,6 +318,11 @@ version = "0.12.2"
 who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
 version = "3.0.6"
+
+[[audits.rsa]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+version = "0.9.10"
 
 [[audits.rustls]]
 who = "David Mulder <dmulder@samba.org>"
