@@ -74,7 +74,8 @@ DEBIAN_FRONTEND=noninteractive pam-auth-update
 GDM_PAM="/etc/pam.d/gdm-password"
 if [[ -f "$GDM_PAM" ]]; then
     # If the keyring auth line exists without use_authtok, add it.
-    if grep -Eq '^[[:space:]]*auth[[:space:]]+optional[[:space:]]+pam_gnome_keyring\.so([[:space:]]*)$' "$GDM_PAM"; then
-        sed -i -E 's/^([[:space:]]*auth[[:space:]]+optional[[:space:]]+pam_gnome_keyring\.so)[[:space:]]*$/\1 use_authtok/' "$GDM_PAM" || true
+    if grep -Eq '^[[:space:]]*auth[[:space:]]+optional[[:space:]]+pam_gnome_keyring\.so' "$GDM_PAM" && \
+       ! grep -Eq '^[[:space:]]*auth[[:space:]]+optional[[:space:]]+pam_gnome_keyring\.so.*\buse_authtok\b' "$GDM_PAM"; then
+        sed -i -E '/^[[:space:]]*auth[[:space:]]+optional[[:space:]]+pam_gnome_keyring\.so/ {/use_authtok/! s/$/ use_authtok/;}' "$GDM_PAM" || true
     fi
 fi
