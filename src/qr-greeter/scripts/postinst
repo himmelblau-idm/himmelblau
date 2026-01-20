@@ -7,15 +7,25 @@ if command -v machinectl >/dev/null 2>&1 && getent passwd gdm >/dev/null 2>&1; t
     # Running `machinectl shell gdm@ ...` may trigger PAM (and thus pam_himmelblau),
     # which will try to connect to himmelblaud. During package installation the daemon
     # may not be installed or started yet, causing noisy "socket not found" logs.
-    if [ ! -x /usr/sbin/himmelblaud ] && [ ! -S /run/himmelblaud/socket ] && [ ! -S /var/run/himmelblaud/socket ]; then
-        echo 'Info: himmelblaud not available yet; skipping automatic extension enable.' >&2
-        exit 0
-    fi
-
     # Run the gsettings command inside a non-interactive gdm shell.
-    machinectl --quiet shell gdm@ /bin/bash -lc \
-        "gsettings set org.gnome.shell enabled-extensions \"['qr-greeter@himmelblau-idm.org']\"" \
-        || echo 'Warning: unable to enable QR Greeter extension for gdm user' >&2
+    # We keep this step enabled (it is useful), but we filter the known-harmless
+    # daemon socket noise that can be emitted if pam_himmelblau runs while the
+    # daemon isn't installed/started yet.
+    set +e
+    out="$(
+        machinectl --quiet shell gdm@ /bin/bash -lc \
+            "gsettings set org.gnome.shell enabled-extensions \"['qr-greeter@himmelblau-idm.org']\"" 2>&1
+    )"
+    rc=$?
+    set -e
+
+    filtered="$(printf '%s\n' "$out" | grep -Ev 'Unix socket stream setup error while connecting to /(var/)?run/himmelblaud/socket|Error DaemonClientBlocking::new\(\)' || true)"
+    if [ -n "$filtered" ]; then
+        printf '%s\n' "$filtered" >&2
+    fi
+    if [ $rc -ne 0 ]; then
+        echo 'Warning: unable to enable QR Greeter extension for gdm user' >&2
+    fi
     echo "Himmelblau QR Greeter GNOME Shell extension enabled for GDM user. You must restart for the changes to take effect."
 else
     echo 'Info: machinectl or gdm user not available; skipping automatic extension enable.' >&2
