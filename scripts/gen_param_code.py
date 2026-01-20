@@ -6,11 +6,13 @@ This script parses XML parameter definitions from docs-xml/himmelblauconf/
 and generates:
 1. Rust code (config_gen.rs) with getter functions and constants
 2. Man page (himmelblau.conf.5) in troff format
+3. NixOS module options (himmelblau-options.nix) with typed settings
 
 Usage:
     gen_param_code.py --gen-rust --rust-output <path>
     gen_param_code.py --gen-man --man-output <path>
-    gen_param_code.py --gen-rust --gen-man --rust-output <path> --man-output <path>
+    gen_param_code.py --gen-nix --nix-output <path>
+    gen_param_code.py --gen-rust --gen-man --gen-nix --rust-output <path> --man-output <path> --nix-output <path>
 
 This mirrors Samba's approach of generating code from XML parameter definitions.
 """
@@ -574,31 +576,381 @@ def generate_man_page(params: List[Parameter], sections: Dict[str, Section]) -> 
     return '\n'.join(lines)
 
 
+def clean_troff_description(text: str) -> str:
+    """Clean troff formatting from description text for use in Nix.
+
+    Converts troff macros and escape sequences to markdown-style formatting
+    suitable for Nix descriptions.
+    """
+    import re
+
+    # Handle inline font escapes FIRST (before line-based macros)
+    # \fB...\fR or \fB...\fP -> **...** (bold)
+    # r'\\fB' = raw string with 2 backslashes = regex \fB matching literal backslash+fB
+    text = re.sub(r'\\fB([^\\]*)\\f[RP]', r'**\1**', text)
+    # \fI...\fR or \fI...\fP -> *...* (italic)
+    text = re.sub(r'\\fI([^\\]*)\\f[RP]', r'*\1*', text)
+
+    # Handle troff special character escapes
+    # Use [ \t]* instead of \s* to avoid consuming newlines
+    text = re.sub(r'\\?\(bu[ \t]*\d*', '- ', text)  # Bullet character (e.g., \(bu 2)
+    text = re.sub(r'\\?\(en[ \t]*', '- ', text)  # En dash (often used as list item intro)
+    text = re.sub(r'\\?\(em', '--', text)  # Em dash
+    text = re.sub(r'\\-', '-', text)  # Troff hyphen/minus
+    text = re.sub(r'\\&', '', text)  # Zero-width space (used before periods)
+
+    # Handle line-based macros (order matters - process .IP with args before plain .IP)
+    # Use [ \t] instead of \s to avoid matching across newlines
+    text = re.sub(r'^\.PP[ \t]*\n?', '\n\n', text, flags=re.MULTILINE)  # Paragraph break
+    text = re.sub(r'^\.P[ \t]*\n?', '\n\n', text, flags=re.MULTILINE)  # Paragraph break
+    text = re.sub(r'^\.B[ \t]+(.+)$', r'**\1**', text, flags=re.MULTILINE)  # Bold line
+    text = re.sub(r'^\.I[ \t]+(.+)$', r'*\1*', text, flags=re.MULTILINE)  # Italic line
+    text = re.sub(r'^\.RS[ \t]*\d*[ \t]*\n?', '', text, flags=re.MULTILINE)  # Right shift start (with optional indent)
+    text = re.sub(r'^\.RE[ \t]*\n?', '', text, flags=re.MULTILINE)  # Right shift end
+    text = re.sub(r'^\.IP[ \t]+.*$', '\n- ', text, flags=re.MULTILINE)  # .IP with args (bullet)
+    text = re.sub(r'^\.IP[ \t]*$', '\n- ', text, flags=re.MULTILINE)  # Plain .IP
+    text = re.sub(r'^\.br\s*\n?', '\n', text, flags=re.MULTILINE)  # Line break
+    text = re.sub(r'^\.BR\s+(\S+)\s*\((\d+)\)', r'\1(\2)', text, flags=re.MULTILINE)  # Man page refs
+    text = re.sub(r'^\.nf\s*\n?', '', text, flags=re.MULTILINE)  # No-fill start
+    text = re.sub(r'^\.fi\s*\n?', '', text, flags=re.MULTILINE)  # No-fill end
+
+    # Clean up empty bold/italic markers (only whitespace between them)
+    text = re.sub(r'\*\*\s+\*\*', '', text)  # Empty bold: ** **
+    text = re.sub(r'\*\s+\*', '', text)  # Empty italic: * *
+
+    # Clean up multiple newlines and whitespace
+    text = re.sub(r'\n{3,}', '\n\n', text)
+    text = re.sub(r'[ \t]+\n', '\n', text)  # Trailing whitespace
+
+    # Hacky fix: clean up redundant/orphaned list markers
+    # 1. Replace double dashes with whitespace between: "- \n- foo" -> "- foo"
+    text = re.sub(r'-[ \t]*\n+[ \t]*-[ \t]+', '- ', text)
+    # 2. Combine lone dash on a line with the following line: "-\n foo" -> "- foo"
+    text = re.sub(r'^-[ \t]*\n+', '- ', text, flags=re.MULTILINE)
+
+    text = text.strip()
+
+    return text
+
+
+def xml_type_to_nix_type(param: Parameter) -> tuple[str, bool]:
+    """Convert XML parameter type to NixOS types expression.
+
+    Returns a tuple of (nix_type, is_already_optional).
+    If is_already_optional is True, the caller should not wrap in nullOr.
+    """
+    param_type = param.param_type
+    rust_type = param.rust_type
+
+    if param_type == 'bool':
+        return 'types.bool', False
+
+    elif param_type in ('u64', 'u32', 'usize'):
+        return 'types.ints.unsigned', False
+
+    elif param_type == 'string':
+        # Check if it's a list type based on rust_type
+        if 'Vec<' in rust_type:
+            return 'types.listOf types.str', False
+        elif 'Option<' in rust_type:
+            # Already optional in Rust, return str without extra nullOr
+            return 'types.str', False
+        else:
+            return 'types.str', False
+
+    elif param_type == 'string_list':
+        return 'types.listOf types.str', False
+
+    elif param_type == 'enum':
+        # Generate types.enum with the valid values
+        values = [f'"{ev.config_value}"' for ev in param.enum_values]
+        return f'types.enum [ {" ".join(values)} ]', False
+
+    elif param_type == 'range':
+        # Range is specified as "min-max" string
+        return 'types.str', False
+
+    elif param_type == 'ttl':
+        # TTL can have suffixes like "2h", "1d", so keep as string
+        return 'types.str', False
+
+    else:
+        # Default to string for unknown types
+        return 'types.str', False
+
+
+def format_nix_default(param: Parameter) -> Optional[str]:
+    """Format the default value for Nix.
+
+    Returns None if there's no sensible default, or the Nix expression for the default.
+    """
+    if not param.default:
+        return None
+
+    param_type = param.param_type
+    rust_type = param.rust_type
+    default = param.default
+
+    # Skip defaults that are descriptive text rather than actual values
+    descriptive_defaults = [
+        'Extracted from',
+        'All users permitted',
+        'Not set',
+        'None',
+    ]
+    for desc in descriptive_defaults:
+        if desc.lower() in default.lower():
+            return None
+
+    if param_type == 'bool':
+        return 'true' if default.lower() == 'true' else 'false'
+
+    elif param_type in ('u64', 'u32', 'usize'):
+        try:
+            return str(int(default))
+        except ValueError:
+            return None
+
+    elif param_type == 'string':
+        if 'Vec<' in rust_type:
+            # List type - return as Nix list
+            return f'[ "{default}" ]'
+        elif 'Option<' in rust_type:
+            return 'null'
+        else:
+            return f'"{default}"'
+
+    elif param_type == 'string_list':
+        return '[ ]'
+
+    elif param_type == 'enum':
+        return f'"{default}"'
+
+    elif param_type == 'range':
+        return f'"{default}"'
+
+    elif param_type == 'ttl':
+        return f'"{default}"'
+
+    else:
+        return f'"{default}"'
+
+
+def format_nix_example(param: Parameter) -> Optional[str]:
+    """Format the example value for Nix."""
+    if not param.example:
+        return None
+
+    param_type = param.param_type
+    rust_type = param.rust_type
+
+    # Extract value from "key = value" format
+    example = param.example
+
+    # Clean up any troff formatting first
+    example = example.replace('.br', '\n').strip()
+
+    # Handle multi-line examples - skip if it looks like a full config block
+    if example.startswith('['):
+        return None
+
+    if ' = ' in example:
+        # Take first line with an assignment
+        for line in example.split('\n'):
+            line = line.strip()
+            if ' = ' in line and not line.startswith('#') and not line.startswith('['):
+                example = line.split(' = ', 1)[1].strip()
+                break
+        else:
+            # No valid assignment found
+            return None
+
+    if param_type == 'bool':
+        return 'true' if example.lower() == 'true' else 'false'
+
+    elif param_type in ('u64', 'u32', 'usize'):
+        try:
+            return str(int(example))
+        except ValueError:
+            return None
+
+    elif param_type == 'string':
+        if 'Vec<' in rust_type:
+            # Parse comma-separated list
+            items = [item.strip() for item in example.split(',')]
+            items_str = ' '.join(f'"{item}"' for item in items)
+            return f'[ {items_str} ]'
+        else:
+            return f'"{example}"'
+
+    elif param_type == 'string_list':
+        # Parse comma-separated list
+        items = [item.strip() for item in example.split(',')]
+        items_str = ' '.join(f'"{item}"' for item in items)
+        return f'[ {items_str} ]'
+
+    elif param_type == 'enum':
+        # Handle <option1|option2> format
+        if example.startswith('<') and example.endswith('>'):
+            # Take first option as example
+            first_option = example[1:-1].split('|')[0]
+            return f'"{first_option}"'
+        return f'"{example}"'
+
+    elif param_type == 'range':
+        return f'"{example}"'
+
+    elif param_type == 'ttl':
+        return f'"{example}"'
+
+    else:
+        return f'"{example}"'
+
+
+def generate_nix_options(params: List[Parameter], sections: Dict[str, Section]) -> str:
+    """Generate NixOS module options from parameters."""
+    lines = []
+
+    # Header
+    lines.append('# Auto-generated by gen_param_code.py - DO NOT EDIT')
+    lines.append('# Generated from XML parameter definitions in docs-xml/himmelblauconf/')
+    lines.append('#')
+    lines.append('# This file provides typed NixOS options for himmelblau.conf settings.')
+    lines.append('# Import this file and use the options under services.himmelblau.settings')
+    lines.append('')
+    lines.append('{ lib, ... }:')
+    lines.append('')
+    lines.append('let')
+    lines.append('  inherit (lib) mkOption types;')
+    lines.append('in')
+    lines.append('{')
+    lines.append('  options.services.himmelblau.settings = {')
+    lines.append('')
+
+    # Group parameters by section
+    params_by_section: Dict[str, List[Parameter]] = {}
+    for param in params:
+        if not param.documented:
+            continue
+        section = param.section
+        if section not in params_by_section:
+            params_by_section[section] = []
+        params_by_section[section].append(param)
+
+    # Generate global section options first
+    if 'global' in params_by_section:
+        lines.append('    # [global] section options')
+        global_params = sorted(params_by_section['global'], key=lambda p: p.order)
+
+        for param in global_params:
+            lines.extend(_generate_nix_option(param, indent=4))
+            lines.append('')
+
+    # Generate other sections as nested attrsets
+    for section_name, section_params in sorted(params_by_section.items()):
+        if section_name == 'global':
+            continue
+
+        # Get section info if available
+        section_info = sections.get(section_name)
+
+        lines.append(f'    # [{section_name}] section options')
+        if section_info and section_info.preamble:
+            clean_preamble = clean_troff_description(section_info.preamble)
+            # Add as a comment
+            for preamble_line in clean_preamble.split('\n')[:3]:  # First 3 lines
+                if preamble_line.strip():
+                    lines.append(f'    # {preamble_line.strip()}')
+
+        lines.append(f'    {section_name} = {{')
+
+        sorted_params = sorted(section_params, key=lambda p: p.order)
+        for param in sorted_params:
+            lines.extend(_generate_nix_option(param, indent=6))
+            lines.append('')
+
+        lines.append('    };')
+        lines.append('')
+
+    lines.append('  };')
+    lines.append('}')
+
+    return '\n'.join(lines)
+
+
+def _generate_nix_option(param: Parameter, indent: int = 4) -> List[str]:
+    """Generate a single NixOS option definition."""
+    lines = []
+    ind = ' ' * indent
+
+    # Option name
+    lines.append(f'{ind}{param.name} = mkOption {{')
+
+    # Type - wrap in nullOr to make all options optional (user can set to null to unset)
+    nix_type, _ = xml_type_to_nix_type(param)
+    lines.append(f'{ind}  type = types.nullOr ({nix_type});')
+
+    # Default - use actual default value if available, otherwise null
+    nix_default = format_nix_default(param)
+    if nix_default is not None:
+        lines.append(f'{ind}  default = {nix_default};')
+    else:
+        lines.append(f'{ind}  default = null;')
+
+    # Description
+    if param.description:
+        clean_desc = clean_troff_description(param.description)
+        # Escape special characters for Nix
+        clean_desc = clean_desc.replace("''", "'''")
+        clean_desc = clean_desc.replace('${', "\\${")
+
+        lines.append(f"{ind}  description = ''")
+        for desc_line in clean_desc.split('\n'):
+            lines.append(f'{ind}    {desc_line}')
+        lines.append(f"{ind}  '';")
+
+    # Example
+    example = format_nix_example(param)
+    if example:
+        lines.append(f'{ind}  example = {example};')
+
+    lines.append(f'{ind}}};')
+
+    return lines
+
+
 def main():
     parser = argparse.ArgumentParser(
-        description='Generate Rust code and man page from XML parameter definitions'
+        description='Generate Rust code, man page, and NixOS options from XML parameter definitions'
     )
     parser.add_argument('--gen-rust', action='store_true',
                         help='Generate Rust code')
     parser.add_argument('--gen-man', action='store_true',
                         help='Generate man page')
+    parser.add_argument('--gen-nix', action='store_true',
+                        help='Generate NixOS module options')
     parser.add_argument('--rust-output', type=str,
                         help='Output path for generated Rust code')
     parser.add_argument('--man-output', type=str,
                         help='Output path for generated man page')
+    parser.add_argument('--nix-output', type=str,
+                        help='Output path for generated NixOS options')
     parser.add_argument('--xml-dir', type=str,
                         help='Directory containing XML parameter files')
 
     args = parser.parse_args()
 
-    if not args.gen_rust and not args.gen_man:
-        parser.error('At least one of --gen-rust or --gen-man must be specified')
+    if not args.gen_rust and not args.gen_man and not args.gen_nix:
+        parser.error('At least one of --gen-rust, --gen-man, or --gen-nix must be specified')
 
     if args.gen_rust and not args.rust_output:
         parser.error('--rust-output is required when --gen-rust is specified')
 
     if args.gen_man and not args.man_output:
         parser.error('--man-output is required when --gen-man is specified')
+
+    if args.gen_nix and not args.nix_output:
+        parser.error('--nix-output is required when --gen-nix is specified')
 
     # Determine XML directory
     if args.xml_dir:
@@ -633,6 +985,14 @@ def main():
         with open(args.man_output, 'w') as f:
             f.write(man_page)
         print('Man page generated successfully', file=sys.stderr)
+
+    if args.gen_nix:
+        print(f'Generating NixOS options to {args.nix_output}...', file=sys.stderr)
+        nix_options = generate_nix_options(params, sections)
+        Path(args.nix_output).parent.mkdir(parents=True, exist_ok=True)
+        with open(args.nix_output, 'w') as f:
+            f.write(nix_options)
+        print('NixOS options generated successfully', file=sys.stderr)
 
 
 if __name__ == '__main__':

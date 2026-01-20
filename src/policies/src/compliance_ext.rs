@@ -162,7 +162,15 @@ impl ComplianceCSE {
                     details.actual_value = system_distro.clone();
                 }
                 "linux_distribution_alloweddistros_item_minimumversion" => {
-                    let min_semver = Version::parse(&normalize_version(&details.expected_value))
+                    // Skip check if no minimum version is specified
+                    if details.expected_value.is_empty() {
+                        details.new_compliance_state = "Compliant".to_string();
+                        details.actual_value = os_release.version_id.clone();
+                        debug!("Minimum version compliance skipped: no minimum specified");
+                    } else {
+                        let min_semver = Version::parse(&normalize_version(
+                            &details.expected_value,
+                        ))
                         .map_err(|e| {
                             anyhow!(
                                 "Failed to parse minimum version '{}' as semver: {}",
@@ -170,22 +178,31 @@ impl ComplianceCSE {
                                 e
                             )
                         })?;
-                    if system_version < min_semver {
-                        errors.push(format!(
+                        if system_version < min_semver {
+                            errors.push(format!(
                                 "Version compliance failed: system version '{}' is less than minimum '{}'",
                                 system_version, min_semver
                             ));
-                    } else {
-                        details.new_compliance_state = "Compliant".to_string();
-                        debug!(
-                            "Minimum version compliance passed: {}",
-                            os_release.version_id
-                        );
+                        } else {
+                            details.new_compliance_state = "Compliant".to_string();
+                            debug!(
+                                "Minimum version compliance passed: {}",
+                                os_release.version_id
+                            );
+                        }
+                        details.actual_value = os_release.version_id.clone();
                     }
-                    details.actual_value = os_release.version_id.clone();
                 }
                 "linux_distribution_alloweddistros_item_maximumversion" => {
-                    let max_semver = Version::parse(&normalize_version(&details.expected_value))
+                    // Skip check if no maximum version is specified
+                    if details.expected_value.is_empty() {
+                        details.new_compliance_state = "Compliant".to_string();
+                        details.actual_value = os_release.version_id.clone();
+                        debug!("Maximum version compliance skipped: no maximum specified");
+                    } else {
+                        let max_semver = Version::parse(&normalize_version(
+                            &details.expected_value,
+                        ))
                         .map_err(|e| {
                             anyhow!(
                                 "Failed to parse maximum version '{}' as semver: {}",
@@ -193,19 +210,20 @@ impl ComplianceCSE {
                                 e
                             )
                         })?;
-                    if system_version > max_semver {
-                        errors.push(format!(
+                        if system_version > max_semver {
+                            errors.push(format!(
                                 "Version compliance failed: system version '{}' is greater than maximum '{}'",
                                 system_version, max_semver
                             ));
-                    } else {
-                        details.new_compliance_state = "Compliant".to_string();
-                        debug!(
-                            "Maximum version compliance passed: {}",
-                            os_release.version_id
-                        );
+                        } else {
+                            details.new_compliance_state = "Compliant".to_string();
+                            debug!(
+                                "Maximum version compliance passed: {}",
+                                os_release.version_id
+                            );
+                        }
+                        details.actual_value = os_release.version_id.clone();
                     }
-                    details.actual_value = os_release.version_id.clone();
                 }
                 "linux_deviceencryption_required" => {
                     let is_disk_encrypted = is_disk_encrypted().await;
