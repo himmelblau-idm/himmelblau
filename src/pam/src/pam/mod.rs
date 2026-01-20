@@ -940,6 +940,19 @@ mod tests {
     use super::*;
 
     #[test]
+    fn test_should_capture_keyring_secret_pin_prompts() {
+        // capture
+        assert!(should_capture_keyring_secret("PIN: "));
+        assert!(should_capture_keyring_secret(" New PIN: "));
+        assert!(should_capture_keyring_secret("Fido PIN: "));
+        assert!(should_capture_keyring_secret("   pIn   "));
+
+        // do not capture confirmations
+        assert!(!should_capture_keyring_secret("Confirm PIN: "));
+        assert!(!should_capture_keyring_secret("confirm new pin: "));
+    }
+
+    #[test]
     fn test_is_loopback_address_empty() {
         assert!(!is_loopback_address(""));
     }
