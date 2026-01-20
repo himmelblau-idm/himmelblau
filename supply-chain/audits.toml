@@ -152,7 +152,17 @@ version = "1.2.41"
 [[audits.cc]]
 who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
+version = "1.2.52"
+
+[[audits.cc]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
 delta = "1.2.41 -> 1.2.44"
+
+[[audits.chrono]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+version = "0.4.43"
 
 [[audits.console-api]]
 who = "David Mulder <dmulder@samba.org>"
@@ -203,6 +213,11 @@ version = "0.8.0-rc.6"
 who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
 version = "0.1.2"
+
+[[audits.find-msvc-tools]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+version = "0.1.7"
 
 [[audits.foldhash]]
 who = "David Mulder <dmulder@samba.org>"
@@ -424,6 +439,21 @@ who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
 version = "0.3.44"
 
+[[audits.time]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+version = "0.3.45"
+
+[[audits.time-core]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+version = "0.1.7"
+
+[[audits.time-macros]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+version = "0.2.25"
+
 [[audits.tonic]]
 who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
@@ -454,15 +484,45 @@ who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
 version = "5.12.0"
 
+[[audits.zbus]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+version = "5.13.1"
+
 [[audits.zbus_macros]]
 who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
 version = "5.12.0"
 
+[[audits.zbus_macros]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+version = "5.13.1"
+
+[[audits.zbus_names]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+version = "4.3.1"
+
 [[audits.zeroize]]
 who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
 version = "1.8.2"
+
+[[audits.zvariant]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+version = "5.9.1"
+
+[[audits.zvariant_derive]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+version = "5.9.1"
+
+[[audits.zvariant_utils]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+version = "3.3.0"
 
 [[trusted.aho-corasick]]
 criteria = "safe-to-deploy"
