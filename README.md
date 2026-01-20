@@ -100,17 +100,55 @@ $ nix profile install 'nixpkgs#cachix'
 $ cachix use himmelblau
 ```
 
-#### Nixos configurations + NPINS
+#### Nixos configurations with NPINS
+
+If you use a sources manager like `npins` (or `lon`) you can add the himmelblau by executing:
+`npins add github himmelblau-idm himmelblau -b main`
+
+```nix
+{
+  lib,
+  sources ? (import ./npins),
+  config,
+  ...
+}:
+let
+  himmelblau = import sources.himmelblau { inherit pkgs; };
+in {
+    imports = [ himmelblau.nixosModules.himmelblau ];
+
+    # To execute `aad-tool` you may want to add `himmelblau` to your system path
+    environment.systemPackages = [
+      config.services.himmelblau.package
+    ];
+
+    services.himmelblau.enable = true;
+    #services.himmelblau.package = himmelblau.packages.himmelblau-desktop; # <-- if you want the o365 suite with `teams-for-linux` use the desktop variant
+    services.himmelblau.settings = {
+        domain = "my.domain.net";
+        pam_allow_groups = [ "ENTRA-GROUP-GUID-HERE" ];
+        local_groups = [ "wheel" "docker" ];
+    };
+}
+```
+
+#### Nixos configurations
 
 Classic NixOS configurations can use the `builtins.getFlake` function if they have enabled `flakes` compatability.
 
 ```nix
-{lib, ...}:
+{lib, config, ...}:
 let himmelblau = builtins.getFlake "github:himmelblau-idm/himmelblau/0.9.0";
 in {
     imports = [ himmelblau.nixosModules.himmelblau ];
 
+    # To execute `aad-tool` you may want to add `himmelblau` to your system path
+    environment.systemPackages = [
+      config.services.himmelblau.package
+    ];
+
     services.himmelblau.enable = true;
+    #services.himmelblau.package = himmelblau.packages.himmelblau-desktop; # <-- if you want the o365 suite with `teams-for-linux` use the desktop variant
     services.himmelblau.settings = {
         domain = "my.domain.net";
         pam_allow_groups = [ "ENTRA-GROUP-GUID-HERE" ];
@@ -135,6 +173,7 @@ Flake based configurations add this repository to their inputs, enable the servi
             imports = [ himmelblau.nixosModules.himmelblau ];
             services.himmelblau = {
                 enable = true;
+                #package = himmelblau.packages.himmelblau-desktop; # <-- if you want the o365 suite with `teams-for-linux` use the desktop variant
                 settings = {
                     domain = "my.domain.net";
                     pam_allow_groups = [ "ENTRA-GROUP-GUID-HERE" ];
