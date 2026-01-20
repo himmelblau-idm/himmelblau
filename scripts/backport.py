@@ -1230,6 +1230,7 @@ Examples:
   %(prog)s --ai-provider gemini     # Use Gemini AI instead of Claude
   %(prog)s --dry-run                # Analyze only, don't create PRs
   %(prog)s --interactive            # Interactive mode - confirm each backport
+  %(prog)s --branch my-backport-branch --target 2.x  # Continue backporting to existing branch
         """,
     )
     parser.add_argument(
@@ -1280,6 +1281,15 @@ Examples:
         "--skip-dependabot",
         action="store_true",
         help="Skip cherry-picking open dependabot PRs",
+    )
+    parser.add_argument(
+        "--branch",
+        type=str,
+        default=None,
+        metavar="BRANCH_NAME",
+        help="Use an existing branch for backporting instead of creating a new one. "
+             "Best used with --target to specify a single version. "
+             "Example: --branch stable-2.x_fixes_and_backports --target 2.x",
     )
     parser.add_argument(
         "--no-cache",
@@ -1372,6 +1382,23 @@ Examples:
             sys.exit(1)
         versions = filtered_versions
         print_color(f"\nFiltered to target version(s): {', '.join(v.version for v in versions)}", "blue")
+
+    # Validate --branch usage
+    if args.branch:
+        if len(versions) > 1:
+            print_color(f"Error: --branch can only be used with a single target version.", "red")
+            print("Use --target to specify which version you're backporting to.")
+            print(f"Currently targeting: {', '.join(v.version for v in versions)}")
+            sys.exit(1)
+        # Check if the branch exists (local or remote)
+        if git.branch_exists(args.branch, remote=False):
+            print_color(f"\nUsing existing local branch: {args.branch}", "green")
+        elif git.branch_exists(args.branch, remote=True):
+            print_color(f"\nUsing existing remote branch: origin/{args.branch}", "green")
+        else:
+            print_color(f"Error: Branch '{args.branch}' does not exist locally or on remote.", "red")
+            print("Create the branch first or omit --branch to create a new one.")
+            sys.exit(1)
 
     # Determine the 'since' ref
     if args.since:
@@ -1513,30 +1540,52 @@ Examples:
         print_color(f"Processing backports to {version_str}", "bold")
         print_color(f"{'=' * 70}", "cyan")
 
-        # Create a single branch for all commits to this version
-        branch_name = f"backport/batch-to-{version_str}"
-        timestamp = subprocess.run(
-            ["date", "+%Y%m%d%H%M%S"],
-            capture_output=True, text=True
-        ).stdout.strip()
-        branch_name = f"{branch_name}-{timestamp}"
-
-        print_color(f"\nCreating branch {branch_name}...", "blue")
-
-        # Fetch and create branch
+        # Create a single branch for all commits to this version, or use existing branch
         git.fetch()
-        try:
-            git.checkout(branch_name, create=True, from_ref=f"origin/{target.branch}")
-        except subprocess.CalledProcessError as e:
-            error_detail = e.stderr if hasattr(e, 'stderr') and e.stderr else str(e)
-            print_color(f"Failed to create branch: {error_detail}", "red")
-            try:
-                git.checkout(original_branch)
-            except subprocess.CalledProcessError:
-                pass  # Already on original branch or can't switch
-            continue
 
-        # Update libhimmelblau first
+        if args.branch:
+            # Use the existing branch specified by the user
+            branch_name = args.branch
+            print_color(f"\nUsing existing branch {branch_name}...", "blue")
+
+            try:
+                # Try to checkout the local branch first
+                if git.branch_exists(branch_name, remote=False):
+                    git.checkout(branch_name)
+                else:
+                    # Branch exists on remote but not locally - create local tracking branch
+                    git.checkout(branch_name, create=True, from_ref=f"origin/{branch_name}")
+            except subprocess.CalledProcessError as e:
+                error_detail = e.stderr if hasattr(e, 'stderr') and e.stderr else str(e)
+                print_color(f"Failed to checkout branch: {error_detail}", "red")
+                try:
+                    git.checkout(original_branch)
+                except subprocess.CalledProcessError:
+                    pass  # Already on original branch or can't switch
+                continue
+        else:
+            # Create a new branch with timestamp
+            branch_name = f"backport/batch-to-{version_str}"
+            timestamp = subprocess.run(
+                ["date", "+%Y%m%d%H%M%S"],
+                capture_output=True, text=True
+            ).stdout.strip()
+            branch_name = f"{branch_name}-{timestamp}"
+
+            print_color(f"\nCreating branch {branch_name}...", "blue")
+
+            try:
+                git.checkout(branch_name, create=True, from_ref=f"origin/{target.branch}")
+            except subprocess.CalledProcessError as e:
+                error_detail = e.stderr if hasattr(e, 'stderr') and e.stderr else str(e)
+                print_color(f"Failed to create branch: {error_detail}", "red")
+                try:
+                    git.checkout(original_branch)
+                except subprocess.CalledProcessError:
+                    pass  # Already on original branch or can't switch
+                continue
+
+        # Update libhimmelblau
         manager.update_libhimmelblau()
 
         # Fetch and cherry-pick open dependabot PRs for this branch
