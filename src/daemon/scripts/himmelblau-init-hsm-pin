@@ -1,0 +1,58 @@
+#!/bin/sh
+# Himmelblau HSM PIN Initialization Script
+# This script is executed by himmelblau-hsm-pin-init.service at boot time
+# to generate or migrate the HSM PIN credential.
+
+set -e
+
+LEGACY=/var/lib/private/himmelblaud/hsm-pin
+CRED=/var/lib/private/himmelblaud/hsm-pin.enc
+
+gen_pin_hex() {
+    if command -v openssl >/dev/null 2>&1; then
+        openssl rand -hex 24 | tr -d '\n'
+    else
+        head -c 24 /dev/urandom | od -An -t x1 | tr -d ' \n'
+    fi
+}
+
+# Ensure the directory exists
+mkdir -p /var/lib/private/himmelblaud
+chmod 700 /var/lib/private/himmelblaud
+
+# If the encrypted credential already exists, nothing to do
+if [ -f "$CRED" ]; then
+    # Check if there's also a legacy file that needs cleanup
+    if [ -f "$LEGACY" ]; then
+        echo "Encrypted credential exists, removing legacy hsm-pin file"
+        rm -f "$LEGACY"
+    fi
+    echo "HSM PIN credential already exists, skipping initialization"
+    exit 0
+fi
+
+# Check if systemd-creds is available
+if ! command -v systemd-creds >/dev/null 2>&1; then
+    echo "ERROR: systemd-creds not available, cannot create encrypted credential"
+    exit 1
+fi
+
+# Generate a new PIN if one doesn't exist, otherwise migrate the existing one
+if [ -f "$LEGACY" ]; then
+    echo "Migrating existing HSM-PIN to encrypted credential"
+    HSM_PIN=$(cat "$LEGACY")
+else
+    echo "Generating new HSM-PIN"
+    HSM_PIN=$(gen_pin_hex)
+fi
+
+# Encrypt the PIN
+if printf '%s' "$HSM_PIN" | systemd-creds encrypt --name=hsm-pin --with-key=auto --tpm2-device=auto - "$CRED"; then
+    echo "HSM PIN credential created successfully"
+    # Remove legacy file if it exists
+    rm -f "$LEGACY" 2>/dev/null || true
+    exit 0
+else
+    echo "ERROR: Failed to create HSM PIN credential"
+    exit 1
+fi
