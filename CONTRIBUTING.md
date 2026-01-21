@@ -66,15 +66,21 @@ sudo make uninstall
 
 ## Git Hooks
 
-The repository includes a pre-commit hook that automatically regenerates generated files
-when you modify the XML parameter definitions or the generator script. To enable:
+The repository includes a pre-commit hook that runs automatic checks and regenerates
+generated files. To enable:
 
 ```bash
 make setup-hooks
 ```
 
-This configures git to use `.githooks/pre-commit`, which regenerates the following files
-from `docs-xml/himmelblauconf/` whenever those definitions are committed:
+This configures git to use `.githooks/pre-commit`, which handles:
+
+**SELinux Policy Tests:** When SELinux policy files (`src/selinux/src/himmelblaud.te` or
+`.fc`) are modified, the hook runs `make test-selinux` to verify the policy builds
+correctly across all supported distros.
+
+**NixOS Options and Man Page Regeneration:** When XML parameter definitions in
+`docs-xml/himmelblauconf/` or the generator script are modified, the hook regenerates:
 
 * `nix/modules/himmelblau-options.nix` - Typed NixOS module options
 * `man/man5/himmelblau.conf.5` - Man page documentation

@@ -36,12 +36,17 @@ test: dockerfiles ## Run cargo tests in a container
 		-v $(CURDIR)/target/test:/himmelblau/target \
                 himmelblau-test-build
 
+test-selinux: ## Test the SELinux policy to ensure it builds
+	./scripts/test_selinux_policy.py --fix -v --distros rocky8,rocky9,rocky10,fedora42,fedora43,tumbleweed,sle16
+
 clean: ## Remove cargo build artifacts
 	cargo clean
 
-setup-hooks: ## Configure git to use project hooks (auto-regenerates NixOS options)
+setup-hooks: ## Configure git to use project hooks (SELinux tests + NixOS options regen)
 	git config core.hooksPath .githooks
-	@echo "Git hooks configured. Pre-commit hook will auto-regenerate nix/modules/himmelblau-options.nix"
+	@echo "Git hooks configured. Pre-commit hook will:"
+	@echo "  - Run 'make test-selinux' when SELinux policy files are changed"
+	@echo "  - Auto-regenerate nix/modules/himmelblau-options.nix when XML definitions change"
 
 PLATFORM := $(shell grep '^ID=' /etc/os-release | awk -F= '{ print $$2 }' | tr -d '"')
 
