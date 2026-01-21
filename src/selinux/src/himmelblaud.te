@@ -5,17 +5,39 @@ policy_module(himmelblaud, 1.0)
 
 # himmelblaud
 type himmelblaud_t;
-type himmelblaud_exec_t; files_type(himmelblaud_exec_t)
+type himmelblaud_exec_t;
+# files_type macro may not exist on all distros (e.g., Rocky 8) - provide fallback
+ifdef(`files_type',`files_type(himmelblaud_exec_t)',
+      `require { attribute file_type; }
+       typeattribute himmelblaud_exec_t file_type;')
+# Use init_nnp_daemon_domain if available (newer distros), fall back to
+# init_daemon_domain (older distros), domain_type, or primitive typeattribute (Rocky 8)
 ifdef(`init_nnp_daemon_domain',
       `init_nnp_daemon_domain(himmelblaud_t, himmelblaud_exec_t)',
-      `init_daemon_domain(himmelblaud_t, himmelblaud_exec_t)')
+      `ifdef(`init_daemon_domain',
+            `init_daemon_domain(himmelblaud_t, himmelblaud_exec_t)',
+            `ifdef(`domain_type',
+                  `domain_type(himmelblaud_t)',
+                  `require { attribute domain; }
+typeattribute himmelblaud_t domain;')')')
 
 # himmelblaud_tasks
 type himmelblaud_tasks_t;
-type himmelblaud_tasks_exec_t; files_type(himmelblaud_tasks_exec_t)
+type himmelblaud_tasks_exec_t;
+# files_type macro may not exist on all distros (e.g., Rocky 8) - provide fallback
+ifdef(`files_type',`files_type(himmelblaud_tasks_exec_t)',
+      `require { attribute file_type; }
+       typeattribute himmelblaud_tasks_exec_t file_type;')
+# Use init_nnp_daemon_domain if available (newer distros), fall back to
+# init_daemon_domain (older distros), domain_type, or primitive typeattribute (Rocky 8)
 ifdef(`init_nnp_daemon_domain',
       `init_nnp_daemon_domain(himmelblaud_tasks_t, himmelblaud_tasks_exec_t)',
-      `init_daemon_domain(himmelblaud_tasks_t, himmelblaud_tasks_exec_t)')
+      `ifdef(`init_daemon_domain',
+            `init_daemon_domain(himmelblaud_tasks_t, himmelblaud_tasks_exec_t)',
+            `ifdef(`domain_type',
+                  `domain_type(himmelblaud_tasks_t)',
+                  `require { attribute domain; }
+typeattribute himmelblaud_tasks_t domain;')')')
 
 # Let these be valid process domains under system_r
 role system_r types himmelblaud_t;
@@ -25,210 +47,431 @@ role system_r types himmelblaud_tasks_t;
 # App-specific types
 
 type himmelblau_etc_t;
-files_config_file(himmelblau_etc_t)
+# files_config_file macro may not exist on all distros - provide fallback
+ifdef(`files_config_file',`files_config_file(himmelblau_etc_t)',
+      `require { attribute file_type; }
+       typeattribute himmelblau_etc_t file_type;')
 
 type himmelblau_var_run_t;
-files_pid_file(himmelblau_var_run_t)
+# files_pid_file macro may not exist on all distros - provide fallback
+ifdef(`files_pid_file',`files_pid_file(himmelblau_var_run_t)',
+      `require { attribute file_type; }
+       typeattribute himmelblau_var_run_t file_type;')
 
 type himmelblau_var_cache_t;
-files_type(himmelblau_var_cache_t)
+# files_type macro may not exist on all distros - provide fallback
+ifdef(`files_type',`files_type(himmelblau_var_cache_t)',
+      `require { attribute file_type; }
+       typeattribute himmelblau_var_cache_t file_type;')
 
 type himmelblau_nss_cache_t;
-files_type(himmelblau_nss_cache_t)
+# files_type macro may not exist on all distros - provide fallback
+ifdef(`files_type',`files_type(himmelblau_nss_cache_t)',
+      `require { attribute file_type; }
+       typeattribute himmelblau_nss_cache_t file_type;')
 
 type himmelblau_var_lib_t;
-files_type(himmelblau_var_lib_t)
+# files_type macro may not exist on all distros - provide fallback
+ifdef(`files_type',`files_type(himmelblau_var_lib_t)',
+      `require { attribute file_type; }
+       typeattribute himmelblau_var_lib_t file_type;')
 
 ############################
-# himmelblaud
+# Filesystem association rules
+# Required for custom types to exist on filesystems (especially on openSUSE)
+# These are normally granted via file_type attribute, but some distros need explicit rules
 
 require {
-	type himmelblau_var_cache_t;
-	type himmelblau_var_lib_t;
-	type himmelblau_nss_cache_t;
-	type groupadd_t;
-	type init_t;
-	class dir { add_name remove_name };
-	class file { create lock open read setattr unlink write };
-	class lnk_file read;
+	type fs_t;
+	type tmpfs_t;
+	class filesystem associate;
 }
 
-#============= groupadd_t ==============
-init_nnp_daemon_domain(groupadd_t)
+# Allow our types to associate with the root filesystem (fs_t)
+allow himmelblau_etc_t fs_t:filesystem associate;
+allow himmelblau_var_cache_t fs_t:filesystem associate;
+allow himmelblau_nss_cache_t fs_t:filesystem associate;
+allow himmelblau_var_lib_t fs_t:filesystem associate;
+allow himmelblaud_exec_t fs_t:filesystem associate;
+allow himmelblaud_tasks_exec_t fs_t:filesystem associate;
 
-#============= init_t ==============
-allow init_t himmelblau_nss_cache_t:dir { add_name remove_name };
-allow init_t himmelblau_nss_cache_t:file { create lock open read setattr unlink write };
-allow init_t himmelblau_var_cache_t:dir { add_name remove_name };
+# Allow our types to associate with tmpfs (for /run, /var/cache/private, etc.)
+allow himmelblau_var_run_t tmpfs_t:filesystem associate;
+allow himmelblau_var_cache_t tmpfs_t:filesystem associate;
+allow himmelblau_nss_cache_t tmpfs_t:filesystem associate;
+allow himmelblau_var_lib_t tmpfs_t:filesystem associate;
+
+############################
+# Rules for init_t (core system type - exists on all distros)
+
+require {
+	type init_t;
+	class dir { add_name create getattr mounton open read remove_name rmdir search setattr };
+	class file { create getattr lock map open read setattr unlink write };
+	class lnk_file read;
+	class sock_file write;
+}
+
+allow init_t himmelblau_etc_t:dir { getattr open read search };
+allow init_t himmelblau_etc_t:file { getattr open read };
+allow init_t himmelblau_nss_cache_t:dir { add_name getattr mounton open read remove_name search setattr write };
+allow init_t himmelblau_nss_cache_t:file { create getattr lock open read setattr unlink write };
+allow init_t himmelblau_var_cache_t:dir { add_name create getattr open read remove_name rmdir search setattr write };
 allow init_t himmelblau_var_cache_t:file { create lock open read unlink write };
 allow init_t himmelblau_var_cache_t:lnk_file read;
-allow init_t himmelblau_var_lib_t:dir add_name;
-allow init_t himmelblau_var_lib_t:file { create open write };
-accountsd_manage_lib_files(init_t)
-corenet_tcp_connect_http_port(init_t)
-files_search_home(init_t)
-userdom_manage_user_home_content(init_t)
+allow init_t himmelblau_var_lib_t:dir { add_name getattr open read setattr };
+allow init_t himmelblau_var_lib_t:file { create open read setattr write };
+allow init_t himmelblau_var_lib_t:lnk_file read;
+allow init_t himmelblau_var_run_t:dir { add_name create getattr mounton open read remove_name rmdir search setattr write };
+allow init_t himmelblau_var_run_t:sock_file { create getattr setattr write unlink };
+allow init_t himmelblaud_exec_t:file { execute execute_no_trans map open read };
+allow init_t himmelblaud_tasks_exec_t:file { execute execute_no_trans map open read };
 
-############################
-# himmelblaud-tasks
-
+# init_t needs to modify /etc/subuid and /etc/subgid for user namespace subordinate IDs
+# These files have etc_t type
 require {
-	type himmelblau_var_cache_t;
-	type groupadd_t;
-	type himmelblau_nss_cache_t;
-	type init_t;
-	class lnk_file read;
-	class dir { add_name remove_name };
-	class file { create lock open read setattr unlink write };
+	type etc_t;
+}
+allow init_t etc_t:file { append getattr open read write };
+
+# Optional: init_t access to cron spool (may not exist on all systems)
+optional {
+	require {
+		type system_cron_spool_t;
+	}
+	allow init_t system_cron_spool_t:dir { add_name create getattr open read remove_name search write };
+	allow init_t system_cron_spool_t:file { create getattr open read setattr unlink write };
 }
 
-#============= groupadd_t ==============
-init_nnp_daemon_domain(groupadd_t)
+# init_t needs to execute temp files (for himmelblaud_tasks scripts)
+optional {
+	require {
+		type init_tmp_t;
+	}
+	allow init_t init_tmp_t:file { execute execute_no_trans getattr map open read };
+}
 
-#============= init_t ==============
-allow init_t himmelblau_nss_cache_t:dir { add_name remove_name };
-allow init_t himmelblau_nss_cache_t:file { create lock open read setattr unlink write };
-allow init_t himmelblau_var_cache_t:lnk_file read;
-accountsd_manage_lib_files(init_t)
-corenet_tcp_connect_http_port(init_t)
-files_search_home(init_t)
-userdom_manage_user_home_content(init_t)
+# Network access for init_t (himmelblaud needs to connect to Azure/Entra ID)
+# Use macro if available, otherwise add explicit rules
+ifdef(`corenet_tcp_connect_http_port',`corenet_tcp_connect_http_port(init_t)',
+      `require {
+              type http_port_t;
+              class tcp_socket name_connect;
+       }
+       allow init_t http_port_t:tcp_socket name_connect;')
+
+# Optional macros that may not exist on all distros
+ifdef(`files_search_home',`files_search_home(init_t)')
+ifdef(`userdom_manage_user_home_content',`userdom_manage_user_home_content(init_t)')
+
+# init_t needs to create user account data and home directories (for himmelblaud_tasks)
+optional {
+	require {
+		type accountsd_var_lib_t;
+	}
+	allow init_t accountsd_var_lib_t:dir { add_name create getattr open read remove_name search write setattr };
+	allow init_t accountsd_var_lib_t:file { create getattr open read write setattr unlink };
+}
+
+optional {
+	require {
+		type home_root_t;
+	}
+	allow init_t home_root_t:dir { add_name create getattr open read search write setattr };
+	allow init_t home_root_t:lnk_file { create getattr read unlink };
+}
 
 ############################
-# Additional discovered via audit2allow
+# Optional rules for external types
+# These are wrapped in optional blocks for cross-distro compatibility
+# (types may not exist on all distributions)
 
-require {
-        type accountsd_t;
-        type xdm_t;
-        type policykit_t;
-        type init_t;
-        type postfix_pickup_t;
-        type postfix_qmgr_t;
-        type avahi_t;
-        type system_cron_spool_t;
-        type sshd_session_t;
-        type systemd_logind_t;
-        type systemd_user_runtimedir_t;
-        class file { execute getattr open read };
-        class lnk_file read;
-        class sock_file write;
-        class dir search;
+#============= groupadd_t ==============
+# groupadd_t may not exist on all distributions
+# init_nnp_daemon_domain macro may also not exist on some distros
+optional {
+	require {
+		type groupadd_t;
+	}
+	ifdef(`init_nnp_daemon_domain',
+	      `init_nnp_daemon_domain(groupadd_t)')
 }
 
 #============= accountsd_t ==============
-allow accountsd_t himmelblau_var_cache_t:lnk_file read;
+# accountsd_t is for GNOME AccountsService, may not be installed
+optional {
+	require {
+		type accountsd_t;
+	}
+	allow accountsd_t himmelblau_etc_t:dir { getattr open read search };
+	allow accountsd_t himmelblau_etc_t:file { getattr open read };
+	allow accountsd_t himmelblau_nss_cache_t:dir { getattr search };
+	allow accountsd_t himmelblau_nss_cache_t:file { getattr lock open read write };
+	allow accountsd_t himmelblau_var_cache_t:dir { getattr open read search };
+	allow accountsd_t himmelblau_var_cache_t:file { getattr open read };
+	allow accountsd_t himmelblau_var_cache_t:lnk_file read;
+	allow accountsd_t himmelblau_var_run_t:dir search;
+	allow accountsd_t himmelblau_var_run_t:sock_file write;
+}
+
+# Optional: accountsd_manage_lib_files macro may not exist
+ifdef(`accountsd_manage_lib_files',`accountsd_manage_lib_files(init_t)')
 
 #============= avahi_t ==============
-allow avahi_t himmelblau_var_cache_t:lnk_file read;
+# avahi_t is for mDNS/DNS-SD daemon, may not be installed
+optional {
+	require {
+		type avahi_t;
+	}
+	allow avahi_t himmelblau_var_cache_t:lnk_file read;
+}
 
-#============= init_t ==============
+#============= chkpwd_t ==============
+# chkpwd_t is for password checking utilities, may not exist on all distros
+optional {
+	require {
+		type chkpwd_t;
+	}
+	allow chkpwd_t himmelblau_etc_t:file { getattr open read };
+	allow chkpwd_t himmelblau_nss_cache_t:dir { add_name remove_name };
+	allow chkpwd_t himmelblau_nss_cache_t:file { create getattr lock open read setattr unlink write };
+	allow chkpwd_t himmelblau_var_cache_t:file { getattr open read };
+	allow chkpwd_t himmelblau_var_cache_t:lnk_file read;
+	allow chkpwd_t himmelblau_var_run_t:sock_file write;
+}
 
-allow init_t himmelblau_var_lib_t:file read;
-allow init_t himmelblaud_exec_t:file { execute execute_no_trans open read };
-allow init_t himmelblaud_tasks_exec_t:file { execute execute_no_trans open read };
-allow init_t system_cron_spool_t:file { open write };
+#============= colord_t ==============
+# colord_t is for color management daemon, may not be installed
+optional {
+	require {
+		type colord_t;
+	}
+	allow colord_t himmelblau_etc_t:dir { getattr open read search };
+	allow colord_t himmelblau_etc_t:file { getattr open read };
+	allow colord_t himmelblau_nss_cache_t:dir { getattr search };
+	allow colord_t himmelblau_nss_cache_t:file { getattr open read };
+	allow colord_t himmelblau_var_cache_t:lnk_file read;
+	allow colord_t himmelblau_var_run_t:dir search;
+	allow colord_t himmelblau_var_run_t:sock_file write;
+}
 
-#============= policykit_t ==============
-allow policykit_t himmelblau_etc_t:file { getattr open read };
-allow policykit_t himmelblau_var_cache_t:lnk_file read;
-allow policykit_t himmelblau_var_run_t:sock_file write;
-
-#============= postfix_pickup_t ==============
-allow postfix_pickup_t himmelblau_etc_t:dir search;
-allow postfix_pickup_t himmelblau_var_cache_t:lnk_file read;
-
-#============= postfix_qmgr_t ==============
-allow postfix_qmgr_t himmelblau_etc_t:dir search;
-allow postfix_qmgr_t himmelblau_var_cache_t:lnk_file read;
-
-#============= sshd_session_t ==============
-allow sshd_session_t himmelblau_var_cache_t:dir search;
-allow sshd_session_t himmelblau_var_cache_t:file { getattr open read };
-allow sshd_session_t himmelblau_var_cache_t:lnk_file read;
-allow sshd_session_t himmelblau_nss_cache_t:dir { add_name getattr open read remove_name search };
-allow sshd_session_t himmelblau_nss_cache_t:file { create getattr lock open read setattr unlink write };
-allow sshd_session_t himmelblau_var_run_t:sock_file write;
-
-#============= systemd_logind_t ==============
-allow systemd_logind_t himmelblau_etc_t:dir search;
-allow systemd_logind_t himmelblau_etc_t:file { getattr open read };
-allow systemd_logind_t himmelblau_nss_cache_t:dir { getattr search };
-allow systemd_logind_t himmelblau_nss_cache_t:file { getattr lock open read write };
-allow systemd_logind_t himmelblau_var_cache_t:dir search;
-allow systemd_logind_t himmelblau_var_cache_t:file { getattr open read };
-allow systemd_logind_t himmelblau_var_cache_t:lnk_file read;
-allow systemd_logind_t himmelblau_var_run_t:sock_file write;
-
-#============= systemd_user_runtimedir_t ==============
-allow systemd_user_runtimedir_t himmelblau_etc_t:file { getattr open read };
-allow systemd_user_runtimedir_t himmelblau_nss_cache_t:dir add_name;
-allow systemd_user_runtimedir_t himmelblau_nss_cache_t:file { create getattr lock open read setattr write };
-allow systemd_user_runtimedir_t himmelblau_var_cache_t:file { getattr open read };
-allow systemd_user_runtimedir_t himmelblau_var_cache_t:lnk_file read;
-allow systemd_user_runtimedir_t himmelblau_var_run_t:sock_file write;
-
-#============= xdm_t ==============
-allow xdm_t himmelblau_var_cache_t:lnk_file read;
-
-require {
-	type policykit_t;
-	type home_root_t;
-	type himmelblau_etc_t;
-	type himmelblau_var_run_t;
-	type colord_t;
-	type NetworkManager_t;
-	type cupsd_t;
-	type accountsd_t;
-	type himmelblau_var_cache_t;
-	type xdm_t;
-	type himmelblau_nss_cache_t;
-	class sock_file write;
-	class file { create getattr lock open read setattr unlink write };
-	class dir { add_name create getattr open read remove_name search };
-	class lnk_file read;
+#============= cupsd_t ==============
+# cupsd_t is for CUPS printing daemon, may not be installed
+optional {
+	require {
+		type cupsd_t;
+	}
+	allow cupsd_t himmelblau_etc_t:dir search;
+	allow cupsd_t himmelblau_etc_t:file { getattr open read };
+	allow cupsd_t himmelblau_nss_cache_t:dir { add_name getattr open read remove_name search };
+	allow cupsd_t himmelblau_nss_cache_t:file { create getattr lock open read setattr unlink write };
+	allow cupsd_t himmelblau_var_cache_t:dir search;
+	allow cupsd_t himmelblau_var_cache_t:file { getattr open read };
+	allow cupsd_t himmelblau_var_cache_t:lnk_file read;
+	allow cupsd_t himmelblau_var_run_t:dir search;
+	allow cupsd_t himmelblau_var_run_t:sock_file write;
 }
 
 #============= NetworkManager_t ==============
-allow NetworkManager_t himmelblau_etc_t:file { getattr open read };
-allow NetworkManager_t himmelblau_nss_cache_t:dir { add_name read remove_name };
-allow NetworkManager_t himmelblau_nss_cache_t:file { create getattr lock open read setattr unlink write };
-allow NetworkManager_t himmelblau_var_cache_t:file { getattr open read };
-allow NetworkManager_t himmelblau_var_cache_t:lnk_file read;
-allow NetworkManager_t himmelblau_var_run_t:sock_file write;
-
-#============= accountsd_t ==============
-allow accountsd_t himmelblau_etc_t:file { getattr open read };
-allow accountsd_t himmelblau_nss_cache_t:file { getattr lock open read write };
-allow accountsd_t himmelblau_var_cache_t:file { getattr open read };
-allow accountsd_t himmelblau_var_run_t:sock_file write;
-
-#============= colord_t ==============
-allow colord_t himmelblau_etc_t:file { getattr open read };
-allow colord_t himmelblau_nss_cache_t:file { getattr open read };
-allow colord_t himmelblau_var_cache_t:lnk_file read;
-allow colord_t himmelblau_var_run_t:sock_file write;
-
-#============= cupsd_t ==============
-allow cupsd_t himmelblau_etc_t:dir search;
-allow cupsd_t himmelblau_etc_t:file { getattr open read };
-allow cupsd_t himmelblau_nss_cache_t:dir { add_name getattr open read remove_name search };
-allow cupsd_t himmelblau_nss_cache_t:file { create getattr lock open read setattr unlink write };
-allow cupsd_t himmelblau_var_cache_t:dir search;
-allow cupsd_t himmelblau_var_cache_t:file { getattr open read };
-allow cupsd_t himmelblau_var_cache_t:lnk_file read;
-allow cupsd_t himmelblau_var_run_t:sock_file write;
+# NetworkManager_t may not be installed on all systems
+optional {
+	require {
+		type NetworkManager_t;
+	}
+	allow NetworkManager_t himmelblau_etc_t:dir { getattr open read search };
+	allow NetworkManager_t himmelblau_etc_t:file { getattr open read };
+	allow NetworkManager_t himmelblau_nss_cache_t:dir { add_name getattr open read remove_name search };
+	allow NetworkManager_t himmelblau_nss_cache_t:file { create getattr lock open read setattr unlink write };
+	allow NetworkManager_t himmelblau_var_cache_t:dir { getattr open read search };
+	allow NetworkManager_t himmelblau_var_cache_t:file { getattr open read };
+	allow NetworkManager_t himmelblau_var_cache_t:lnk_file read;
+	allow NetworkManager_t himmelblau_var_run_t:dir search;
+	allow NetworkManager_t himmelblau_var_run_t:sock_file write;
+}
 
 #============= policykit_t ==============
-allow policykit_t himmelblau_nss_cache_t:file { getattr open read };
+# policykit_t is for PolicyKit daemon, may not be installed
+optional {
+	require {
+		type policykit_t;
+	}
+	allow policykit_t himmelblau_etc_t:dir { getattr open read search };
+	allow policykit_t himmelblau_etc_t:file { getattr open read };
+	allow policykit_t himmelblau_nss_cache_t:dir { getattr search };
+	allow policykit_t himmelblau_nss_cache_t:file { getattr lock open read };
+	allow policykit_t himmelblau_var_cache_t:lnk_file read;
+	allow policykit_t himmelblau_var_run_t:dir search;
+	allow policykit_t himmelblau_var_run_t:sock_file write;
+}
+
+#============= policykit_auth_t ==============
+# policykit_auth_t is for PolicyKit authentication agent, may not exist on all distros
+optional {
+	require {
+		type policykit_auth_t;
+	}
+	allow policykit_auth_t himmelblau_etc_t:file { getattr open read };
+	allow policykit_auth_t himmelblau_var_cache_t:lnk_file read;
+	allow policykit_auth_t himmelblau_var_run_t:sock_file write;
+}
+
+#============= postfix_pickup_t ==============
+# postfix_pickup_t is for Postfix mail server, may not be installed
+optional {
+	require {
+		type postfix_pickup_t;
+	}
+	allow postfix_pickup_t himmelblau_etc_t:dir search;
+	allow postfix_pickup_t himmelblau_var_cache_t:lnk_file read;
+}
+
+#============= postfix_qmgr_t ==============
+# postfix_qmgr_t is for Postfix queue manager, may not be installed
+optional {
+	require {
+		type postfix_qmgr_t;
+	}
+	allow postfix_qmgr_t himmelblau_etc_t:dir search;
+	allow postfix_qmgr_t himmelblau_var_cache_t:lnk_file read;
+}
+
+#============= sshd_session_t ==============
+# sshd_session_t is for SSH sessions, may not exist on all distros
+optional {
+	require {
+		type sshd_session_t;
+	}
+	allow sshd_session_t himmelblau_etc_t:dir { getattr open read search };
+	allow sshd_session_t himmelblau_etc_t:file { getattr open read };
+	allow sshd_session_t himmelblau_var_cache_t:dir search;
+	allow sshd_session_t himmelblau_var_cache_t:file { getattr open read };
+	allow sshd_session_t himmelblau_var_cache_t:lnk_file read;
+	allow sshd_session_t himmelblau_nss_cache_t:dir { add_name getattr open read remove_name search };
+	allow sshd_session_t himmelblau_nss_cache_t:file { create getattr lock open read setattr unlink write };
+	allow sshd_session_t himmelblau_var_run_t:dir search;
+	allow sshd_session_t himmelblau_var_run_t:sock_file write;
+}
+
+#============= systemd_logind_t ==============
+# systemd_logind_t is for systemd-logind, may not exist on non-systemd systems
+optional {
+	require {
+		type systemd_logind_t;
+	}
+	allow systemd_logind_t himmelblau_etc_t:dir search;
+	allow systemd_logind_t himmelblau_etc_t:file { getattr open read };
+	allow systemd_logind_t himmelblau_nss_cache_t:dir { getattr search };
+	allow systemd_logind_t himmelblau_nss_cache_t:file { getattr lock open read write };
+	allow systemd_logind_t himmelblau_var_cache_t:dir search;
+	allow systemd_logind_t himmelblau_var_cache_t:file { getattr open read };
+	allow systemd_logind_t himmelblau_var_cache_t:lnk_file read;
+	allow systemd_logind_t himmelblau_var_run_t:dir search;
+	allow systemd_logind_t himmelblau_var_run_t:sock_file write;
+}
+
+#============= systemd_user_runtimedir_t ==============
+# systemd_user_runtimedir_t is for systemd user runtime dirs, may not exist on non-systemd systems
+optional {
+	require {
+		type systemd_user_runtimedir_t;
+	}
+	allow systemd_user_runtimedir_t himmelblau_etc_t:file { getattr open read };
+	allow systemd_user_runtimedir_t himmelblau_nss_cache_t:dir { add_name getattr open read remove_name search };
+	allow systemd_user_runtimedir_t himmelblau_nss_cache_t:file { create getattr lock open read setattr unlink write };
+	allow systemd_user_runtimedir_t himmelblau_var_cache_t:file { getattr open read };
+	allow systemd_user_runtimedir_t himmelblau_var_cache_t:lnk_file read;
+	allow systemd_user_runtimedir_t himmelblau_var_run_t:dir search;
+	allow systemd_user_runtimedir_t himmelblau_var_run_t:sock_file write;
+}
 
 #============= xdm_t ==============
-allow xdm_t himmelblau_nss_cache_t:dir { add_name remove_name };
-allow xdm_t himmelblau_nss_cache_t:file { create getattr lock open read setattr unlink write };
-allow xdm_t himmelblau_var_cache_t:file { getattr open read };
-allow xdm_t himmelblau_var_run_t:sock_file write;
-allow xdm_t home_root_t:dir add_name;
-allow xdm_t home_root_t:dir create;
+# xdm_t is for display managers (GDM, SDDM, etc.), may not be installed
+optional {
+	require {
+		type xdm_t;
+		type home_root_t;
+	}
+	allow xdm_t himmelblau_etc_t:dir { getattr open read search };
+	allow xdm_t himmelblau_etc_t:file { getattr open read };
+	allow xdm_t himmelblau_nss_cache_t:dir { add_name getattr open read remove_name search };
+	allow xdm_t himmelblau_nss_cache_t:file { create getattr lock open read setattr unlink write };
+	allow xdm_t himmelblau_var_cache_t:dir { getattr open read search };
+	allow xdm_t himmelblau_var_cache_t:file { getattr open read };
+	allow xdm_t himmelblau_var_cache_t:lnk_file read;
+	allow xdm_t himmelblau_var_run_t:dir search;
+	allow xdm_t himmelblau_var_run_t:sock_file write;
+	allow xdm_t himmelblaud_exec_t:file getattr;
+	allow xdm_t himmelblaud_tasks_exec_t:file getattr;
+	allow xdm_t home_root_t:dir { add_name create };
+}
 
+#============= systemd_tmpfiles_t ==============
+# systemd_tmpfiles_t is for systemd-tmpfiles, may not exist on non-systemd systems
+optional {
+	require {
+		type systemd_tmpfiles_t;
+	}
+	allow systemd_tmpfiles_t himmelblau_nss_cache_t:dir getattr;
+	allow systemd_tmpfiles_t himmelblau_var_lib_t:dir getattr;
+}
+
+#============= unconfined_service_t ==============
+# unconfined_service_t is for unconfined services, may not exist on all distros
+optional {
+	require {
+		type unconfined_service_t;
+	}
+	allow unconfined_service_t himmelblau_nss_cache_t:dir search;
+	allow unconfined_service_t himmelblau_var_lib_t:dir search;
+	allow unconfined_service_t himmelblau_var_run_t:dir { add_name search };
+	allow unconfined_service_t himmelblau_var_run_t:sock_file { create write };
+}
+
+#============= unconfined_t ==============
+# unconfined_t is for unconfined processes, may not exist on all distros
+optional {
+	require {
+		type unconfined_t;
+	}
+	allow unconfined_t himmelblau_nss_cache_t:dir { add_name getattr open read relabelto remove_name search };
+	allow unconfined_t himmelblau_nss_cache_t:file { create getattr open read setattr unlink write };
+	allow unconfined_t himmelblau_var_lib_t:dir relabelto;
+	allow unconfined_t himmelblau_var_run_t:dir search;
+	allow unconfined_t himmelblau_var_run_t:sock_file write;
+
+	allow unconfined_t himmelblau_etc_t:dir { add_name create getattr open read remove_name search write setattr relabelto relabelfrom };
+	allow unconfined_t himmelblau_etc_t:file { append create getattr open read rename setattr unlink write relabelto relabelfrom };
+}
+
+#============= snapperd_t ==============
+# snapperd_t is for openSUSE snapper snapshot tool, may not exist on other distros
+optional {
+	require {
+		type snapperd_t;
+	}
+	allow snapperd_t himmelblau_etc_t:dir { getattr open read search };
+	allow snapperd_t himmelblau_etc_t:file { getattr open read };
+	allow snapperd_t himmelblau_var_cache_t:dir { getattr open read search };
+	allow snapperd_t himmelblau_var_cache_t:file { getattr open read };
+	allow snapperd_t himmelblau_var_cache_t:lnk_file read;
+	allow snapperd_t himmelblau_var_lib_t:dir { getattr open read search };
+	allow snapperd_t himmelblau_var_lib_t:file { getattr open read };
+	allow snapperd_t himmelblau_nss_cache_t:dir { getattr open read search };
+	allow snapperd_t himmelblau_nss_cache_t:file { getattr open read };
+}
+
+#============= xserver_t ==============
+# xserver_t is for X server, may not be installed on all systems
+optional {
+	require {
+		type xserver_t;
+	}
+	allow xserver_t himmelblau_nss_cache_t:dir { getattr search };
+	allow xserver_t himmelblau_var_run_t:dir search;
+	allow xserver_t himmelblau_var_run_t:sock_file write;
+}
+
+############################
 # Temporarily run Himmelblau domains permissive (still logs AVCs)
 permissive himmelblaud_t;
 permissive himmelblaud_tasks_t;
