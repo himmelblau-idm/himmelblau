@@ -396,6 +396,10 @@ fn create_ccache_dir(ccache_dir: &Path, uid: uid_t, gid: uid_t) -> io::Result<()
 }
 
 fn store_tgt(tgt: &KerberosCredentials, uid: uid_t, gid: uid_t) -> Result<(), String> {
+    // Usually default_ccache_name in /etc/krb5.conf contains a %{uid} substitution,
+    // which will be '0' (root) for the tasks daemon because it runs as root. Force
+    // the ccache name.
+    // TODO: Add a new himmelblau.conf option to define the ccache name
     let ccname = Some(format!("KEYRING:persistent:{}", uid));
 
     debug!(?ccname, "Storing kerberos ticket in credential cache");
