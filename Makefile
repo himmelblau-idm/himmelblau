@@ -39,6 +39,13 @@ test: dockerfiles ## Run cargo tests in a container
 test-selinux: ## Test the SELinux policy to ensure it builds
 	./scripts/test_selinux_policy.py --fix -v --distros rocky8,rocky9,rocky10,fedora42,fedora43,tumbleweed,sle16
 
+install-hooks: ## Install git hooks for development
+	@echo "Installing git hooks..."
+	@cp scripts/hooks/pre-commit .git/hooks/pre-commit
+	@chmod +x .git/hooks/pre-commit
+	@echo "Git hooks installed successfully."
+	@echo "The pre-commit hook will run 'make test-selinux' when SELinux policy files are changed."
+
 clean: ## Remove cargo build artifacts
 	cargo clean
 
