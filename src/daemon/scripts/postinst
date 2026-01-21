@@ -1,6 +1,18 @@
 #!/bin/sh
 set -e
 
+# Detect if running on a Live system where service start should be skipped
+is_live_system() {
+    # Check common Live system indicators
+    grep -q 'boot=live' /proc/cmdline 2>/dev/null && return 0
+    grep -q 'rd.live' /proc/cmdline 2>/dev/null && return 0
+    [ -d /run/live ] && return 0
+    [ -f /.live-installer ] && return 0
+    # Check if running in a container (dracut/systemd-nspawn)
+    systemd-detect-virt -c -q 2>/dev/null && return 0
+    return 1
+}
+
 # Ensure cache directory is created with correct permissions
 systemd-tmpfiles --create /usr/lib/tmpfiles.d/himmelblau-policies.conf 2>/dev/null || true
 
@@ -25,62 +37,21 @@ if command -v systemctl >/dev/null 2>&1; then
     systemctl daemon-reload || true
 fi
 
-gen_pin_hex() {
-    if command -v openssl >/dev/null 2>&1; then
-        openssl rand -hex 24 | tr -d '\n'
-    else
-        head -c 24 /dev/urandom | od -An -t x1 | tr -d ' \n'
-    fi
-}
-
-if command -v systemd-creds >/dev/null 2>&1; then
-    # Migrate the hsm-pin to a TPM bound cred (where a TPM is available)
-    LEGACY=/var/lib/private/himmelblaud/hsm-pin
-    CRED=/var/lib/private/himmelblaud/hsm-pin.enc
-
-    if [ -f $LEGACY ] && [ -f $CRED ]; then
-        # Both files exist - this can happen if a previous upgrade failed due to
-        # missing LoadCredentialEncrypted in the service file (issue #987).
-        # The daemon would have generated a new plaintext hsm-pin which is now
-        # the active PIN matching the machine key. Try starting the daemon first
-        # to see if it works, and only re-encrypt if we get an HSM pin error.
-        echo "Both hsm-pin and hsm-pin.enc exist, checking if recovery is needed..."
-        if command -v systemctl >/dev/null 2>&1; then
-            # Try to restart the daemon and capture the result
-            systemctl restart himmelblaud.service 2>/dev/null || true
-            sleep 2
-            # Check if the daemon failed with an HSM pin error
-            if ! systemctl is-active --quiet himmelblaud.service; then
-                DAEMON_LOG=$(journalctl -u himmelblaud.service -n 50 --no-pager 2>/dev/null || true)
-                if echo "$DAEMON_LOG" | grep -q "Unable to load machine root key"; then
-                    echo "Re-encrypting HSM-PIN (recovering from failed upgrade)"
-                    HSM_PIN=$(cat $LEGACY)
-                    printf '%s' "$HSM_PIN" | systemd-creds encrypt --name=hsm-pin --with-key=auto --tpm2-device=auto - "$CRED" && rm -f $LEGACY
-                fi
-            else
-                # Daemon is running fine, just clean up the legacy file
-                echo "Daemon running successfully, removing legacy hsm-pin file"
-                rm -f $LEGACY
-            fi
-        fi
-    elif [ ! -f $CRED ]; then
-        # Generate a new PIN if one doesn't exist, otherwise use the existing one
-        if [ ! -f $LEGACY ]; then
-            HSM_PIN=$(gen_pin_hex)
-        else
-            echo "Migrating existing HSM-PIN to encrypted credential"
-            HSM_PIN=$(cat $LEGACY)
-        fi
-
-        # Encrypt the PIN
-        printf '%s' "$HSM_PIN" | systemd-creds encrypt --name=hsm-pin --with-key=auto --tpm2-device=auto - "$CRED" && (rm -f $LEGACY || true)
-    fi
-fi
-
 # Enable and start Himmelblau daemons if systemd is available
+# On Live systems, skip service start - the HSM PIN will be generated at first boot
+# via the himmelblau-hsm-pin-init.service oneshot when deployed to real hardware.
 if command -v systemctl >/dev/null 2>&1; then
-    echo "Enabling and starting Himmelblau services..."
-    systemctl daemon-reload || true
-    systemctl enable himmelblaud.service himmelblaud-tasks.service || true
-    systemctl restart himmelblaud.service himmelblaud-tasks.service || true
+    if is_live_system; then
+        echo "Live system detected - skipping service start (HSM PIN will be initialized at first boot)"
+        # Only enable services so they start on first real boot
+        systemctl enable himmelblaud.service himmelblaud-tasks.service 2>/dev/null || true
+        # Enable HSM PIN init service separately (may not exist on older systemd)
+        systemctl enable himmelblau-hsm-pin-init.service 2>/dev/null || true
+    else
+        echo "Enabling and starting Himmelblau services..."
+        systemctl enable himmelblaud.service himmelblaud-tasks.service 2>/dev/null || true
+        # Enable HSM PIN init service separately (may not exist on older systemd)
+        systemctl enable himmelblau-hsm-pin-init.service 2>/dev/null || true
+        systemctl restart himmelblaud.service himmelblaud-tasks.service 2>/dev/null || true
+    fi
 fi
