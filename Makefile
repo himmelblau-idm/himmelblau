@@ -33,6 +33,9 @@ test: dockerfiles ## Run cargo tests in a container
 		-v $(CURDIR)/target/test:/himmelblau/target \
                 himmelblau-test-build
 
+test-selinux: ## Test the SELinux policy to ensure it builds
+	./scripts/test_selinux_policy.py --fix -v --distros rocky8,rocky9,rocky10,fedora42,fedora43,tumbleweed,sle16
+
 clean: ## Remove cargo build artifacts
 	cargo clean
 
