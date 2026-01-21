@@ -114,7 +114,7 @@ require {
 
 allow init_t himmelblau_etc_t:dir { getattr open read search };
 allow init_t himmelblau_etc_t:file { getattr open read };
-allow init_t himmelblau_nss_cache_t:dir { add_name getattr mounton open read remove_name search };
+allow init_t himmelblau_nss_cache_t:dir { add_name getattr mounton open read remove_name search setattr write };
 allow init_t himmelblau_nss_cache_t:file { create getattr lock open read setattr unlink write };
 allow init_t himmelblau_var_cache_t:dir { add_name create getattr open read remove_name rmdir search setattr write };
 allow init_t himmelblau_var_cache_t:file { create lock open read unlink write };
@@ -127,12 +127,28 @@ allow init_t himmelblau_var_run_t:sock_file { create getattr setattr write unlin
 allow init_t himmelblaud_exec_t:file { execute execute_no_trans map open read };
 allow init_t himmelblaud_tasks_exec_t:file { execute execute_no_trans map open read };
 
+# init_t needs to modify /etc/subuid and /etc/subgid for user namespace subordinate IDs
+# These files have etc_t type
+require {
+	type etc_t;
+}
+allow init_t etc_t:file { append getattr open read write };
+
 # Optional: init_t access to cron spool (may not exist on all systems)
 optional {
 	require {
 		type system_cron_spool_t;
 	}
-	allow init_t system_cron_spool_t:file { open write };
+	allow init_t system_cron_spool_t:dir { add_name create getattr open read remove_name search write };
+	allow init_t system_cron_spool_t:file { create getattr open read setattr unlink write };
+}
+
+# init_t needs to execute temp files (for himmelblaud_tasks scripts)
+optional {
+	require {
+		type init_tmp_t;
+	}
+	allow init_t init_tmp_t:file { execute execute_no_trans getattr map open read };
 }
 
 # Network access for init_t (himmelblaud needs to connect to Azure/Entra ID)
