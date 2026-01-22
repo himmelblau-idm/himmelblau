@@ -43,6 +43,7 @@ maintainer = "David Mulder <dmulder@suse.com>"
 assets = [
   { source = "target/release/libpam_himmelblau.so", dest = "/usr/lib64/security/pam_himmelblau.so", mode = "755" },
   { source = "platform/el/authselect/*", dest = "/usr/share/authselect/vendor/himmelblau/", mode = "755" },
+  { source = "platform/opensuse/pam-config", dest = "/usr/lib/pam-config.d/himmelblau.conf", mode = "644" },
 ]
 post_install_script = '''
 # Only create a symlink if it doesn't already exist
@@ -50,10 +51,86 @@ if [ ! -e /lib64/security/pam_himmelblau.so ]; then
     mkdir -p /lib64/security
     ln -s /usr/lib64/security/pam_himmelblau.so /lib64/security/pam_himmelblau.so
 fi
+
+# 1) authselect first (if available)
 if command -v authselect >/dev/null 2>&1; then
     feats="$(authselect current 2>/dev/null | awk '"'"'/Enabled features:/{f=1;next} f && /^-/{print $2}'"'"')"
     authselect select himmelblau $feats --force >/dev/null 2>&1 || :
     authselect apply-changes >/dev/null 2>&1 || :
+fi
+
+# Helper: validate/fix pam-config account line for pam_himmelblau
+fix_pam_config_account_line() {
+    local pc="/etc/pam.d/common-account-pc"
+    local plain="/etc/pam.d/common-account"
+
+    [ -f "$pc" ] || return 1
+
+    # Detect the known-bad pam-config output:
+    #   account required pam_himmelblau.so ignore_unknown_user
+    if ! grep -Eq '^[[:space:]]*account[[:space:]]+required[[:space:]]+pam_himmelblau\.so([[:space:]]+|$).*ignore_unknown_user' "$pc"; then
+        return 0
+    fi
+
+    # Ensure we have a self-managed common-account
+    if [ ! -f "$plain" ]; then
+        sed '/^[[:space:]]*#/d' "$pc" >"$plain" || return 1
+        chmod --reference="$pc" "$plain" || :
+    fi
+
+    # Fix required -> sufficient in the self-managed file
+    sed -i -E \
+        's/^([[:space:]]*account[[:space:]]+)required([[:space:]]+pam_himmelblau\.so([[:space:]]+|$).*ignore_unknown_user)/\1sufficient\2/' \
+        "$plain" || return 1
+
+    return 0
+}
+
+# 2) pam-config second (if available)
+pam_config_ok=0
+if command -v pam-config >/dev/null 2>&1; then
+    # Attempt to add himmelblau via pam-config. Older pam-config may not recognize --himmelblau at all.
+    if pam-config --add --himmelblau >/dev/null 2>&1; then
+        pam_config_ok=1
+
+        # Validate/fix the known-bad older behavior (account required)
+        fix_pam_config_account_line >/dev/null 2>&1 || :
+    fi
+fi
+
+pamconfig_optout_self_managed_common() {
+    # Convert pam-config-generated common-*-pc into self-managed common-*
+    # per pam-config’s own header instructions.
+    local i pc plain
+
+    for i in account auth password session; do
+        pc="/etc/pam.d/common-${i}-pc"
+        plain="/etc/pam.d/common-${i}"
+
+        [ -f "$pc" ] || continue
+
+        # Only create/refresh common-* if it doesn't exist yet.
+        # (If it already exists, assume admin/system is already self-managed.)
+        if [ ! -f "$plain" ]; then
+            # Strip comment lines (pam-config’s suggestion)
+            sed '/^[[:space:]]*#/d' "$pc" >"$plain" || return 1
+            chmod --reference="$pc" "$plain" 2>/dev/null || :
+        fi
+    done
+
+    return 0
+}
+
+# 3) Final fallback: aad-tool configure-pam --really
+# Only do this if pam-config wasn't used successfully.
+if [ "$pam_config_ok" -ne 1 ]; then
+    if command -v aad-tool >/dev/null 2>&1; then
+        # Opt out of pam-config-managed common-*-pc so future pam-config runs
+        # don’t overwrite the configuration we’re about to install.
+        pamconfig_optout_self_managed_common >/dev/null 2>&1 || :
+
+        aad-tool configure-pam --really >/dev/null 2>&1 || :
+    fi
 fi
 '''
 post_uninstall_script = '''

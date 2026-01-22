@@ -1,0 +1,17 @@
+[pam_himmelblau.so]
+
+# Authentication stack
+Auth: auth     sufficient    pam_himmelblau.so    ignore_unknown_user
+Auth-Priority: 800
+
+# Account stack
+Account: account        sufficient      pam_himmelblau.so    ignore_unknown_user
+Account-Priority: 300
+
+# Password stack
+Password: password     sufficient    pam_himmelblau.so     ignore_unknown_user
+Password-Priority: 100
+
+# Session stack
+Session: session       optional      pam_himmelblau.so
+Session-Priority: 2300

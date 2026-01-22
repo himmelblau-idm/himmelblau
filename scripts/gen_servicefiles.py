@@ -90,7 +90,7 @@ def main():
 
     # systemd version
     if args.assume_version is not None:
-        ver = args.assume-version
+        ver = args.assume_version
     else:
         ver = detect_systemd_version()
     if ver is None:
@@ -185,6 +185,13 @@ def main():
     if not args.disable_upholds and supported("Upholds"):
         upholds_line = "Upholds=himmelblaud-tasks.service"
 
+    # HSM PIN init service dependency (only if LoadCredentialEncrypted is supported)
+    hsm_pin_init_after = ""
+    hsm_pin_init_wants = ""
+    if supported("LoadCredentialEncrypted"):
+        hsm_pin_init_after = "himmelblau-hsm-pin-init.service"
+        hsm_pin_init_wants = "Wants=himmelblau-hsm-pin-init.service"
+
     # ---- Compose himmelblaud.service ----
     daemon_private_devices = "PrivateDevices=false" if supported("PrivateDevices") else ""
     daemon_hardening = [h for h in hardening if h != "ProtectSystem=strict"] + ["ProtectSystem=strict"] if supported("ProtectSystemStrict") else [h for h in hardening if h != "ProtectSystem=strict"]
@@ -206,9 +213,10 @@ def main():
 
 [Unit]
 Description=Himmelblau Authentication Daemon
-After={' '.join(base_after)}
+After={' '.join(base_after)}{' ' + hsm_pin_init_after if hsm_pin_init_after else ''}
 Before={' '.join(base_before)}
 Wants={' '.join(base_wants)}
+{hsm_pin_init_wants}
 # While it seems confusing, we need to be after nscd.service so that the
 # Conflicts will trigger and then automatically stop it.
 Conflicts=nscd.service
@@ -285,6 +293,29 @@ CapabilityBoundingSet=CAP_CHOWN CAP_FOWNER CAP_DAC_OVERRIDE CAP_DAC_READ_SEARCH
 WantedBy=multi-user.target
 """.rstrip() + "\n"
 
+    # ---- Compose himmelblau-hsm-pin-init.service (only if LoadCredentialEncrypted supported) ----
+    hsm_pin_init_unit = None
+    if supported("LoadCredentialEncrypted"):
+        hsm_pin_init_unit = """\
+# You should not need to edit this file. Instead, use a drop-in file:
+#   systemctl edit himmelblau-hsm-pin-init.service
+
+[Unit]
+Description=Himmelblau HSM PIN Initialization
+Before=himmelblaud.service
+DefaultDependencies=no
+After=local-fs.target
+ConditionPathExists=!/var/lib/private/himmelblaud/hsm-pin.enc
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/libexec/himmelblau-init-hsm-pin
+
+[Install]
+WantedBy=himmelblaud.service
+"""
+
     # Clean extra blank lines from optional inserts
     def squeeze_blank_lines(s: str) -> str:
         s = re.sub(r"\n{3,}", "\n\n", s)
@@ -294,13 +325,19 @@ WantedBy=multi-user.target
 
     daemon_unit = squeeze_blank_lines(daemon_unit)
     tasks_unit  = squeeze_blank_lines(tasks_unit)
+    if hsm_pin_init_unit:
+        hsm_pin_init_unit = squeeze_blank_lines(hsm_pin_init_unit)
 
     (out_dir / "himmelblaud.service").write_text(daemon_unit)
     (out_dir / "himmelblaud-tasks.service").write_text(tasks_unit)
+    if hsm_pin_init_unit:
+        (out_dir / "himmelblau-hsm-pin-init.service").write_text(hsm_pin_init_unit)
 
     print(f"[gen-systemd] systemd version detected/assumed: {ver}")
     print(f"[gen-systemd] Wrote: {out_dir/'himmelblaud.service'}")
     print(f"[gen-systemd] Wrote: {out_dir/'himmelblaud-tasks.service'}")
+    if hsm_pin_init_unit:
+        print(f"[gen-systemd] Wrote: {out_dir/'himmelblau-hsm-pin-init.service'}")
 
 if __name__ == "__main__":
     main()

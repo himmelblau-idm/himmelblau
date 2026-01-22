@@ -148,10 +148,6 @@ criteria = "safe-to-deploy"
 version = "0.29.0"
 criteria = "safe-to-deploy"
 
-[[exemptions.chrono]]
-version = "0.4.42"
-criteria = "safe-to-deploy"
-
 [[exemptions.clang-sys]]
 version = "1.8.1"
 criteria = "safe-to-deploy"
@@ -476,10 +472,6 @@ criteria = "safe-to-deploy"
 version = "0.8.8"
 criteria = "safe-to-deploy"
 
-[[exemptions.nix]]
-version = "0.15.0"
-criteria = "safe-to-deploy"
-
 [[exemptions.notify]]
 version = "8.0.0"
 criteria = "safe-to-deploy"
@@ -490,10 +482,6 @@ criteria = "safe-to-deploy"
 
 [[exemptions.notify-types]]
 version = "2.0.0"
-criteria = "safe-to-deploy"
-
-[[exemptions.num-bigint-dig]]
-version = "0.8.4"
 criteria = "safe-to-deploy"
 
 [[exemptions.num_enum]]
@@ -513,7 +501,7 @@ version = "1.12.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.opentelemetry]]
-version = "0.31.0"
+version = "0.27.1"
 criteria = "safe-to-deploy"
 
 [[exemptions.opentelemetry-http]]
@@ -521,19 +509,19 @@ version = "0.27.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.opentelemetry-otlp]]
-version = "0.31.0"
+version = "0.27.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.opentelemetry-proto]]
-version = "0.31.0"
+version = "0.27.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.opentelemetry-semantic-conventions]]
-version = "0.31.0"
+version = "0.27.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.opentelemetry_sdk]]
-version = "0.31.0"
+version = "0.27.1"
 criteria = "safe-to-deploy"
 
 [[exemptions.ordered-stream]]
@@ -688,10 +676,6 @@ criteria = "safe-to-deploy"
 version = "7.4.0"
 criteria = "safe-to-deploy"
 
-[[exemptions.rsa]]
-version = "0.9.8"
-criteria = "safe-to-deploy"
-
 [[exemptions.rtoolbox]]
 version = "0.0.3"
 criteria = "safe-to-deploy"
@@ -792,14 +776,6 @@ criteria = "safe-to-deploy"
 version = "0.4.3"
 criteria = "safe-to-deploy"
 
-[[exemptions.time-core]]
-version = "0.1.6"
-criteria = "safe-to-deploy"
-
-[[exemptions.time-macros]]
-version = "0.2.24"
-criteria = "safe-to-deploy"
-
 [[exemptions.tls_codec]]
 version = "0.4.2"
 criteria = "safe-to-deploy"
@@ -816,6 +792,10 @@ criteria = "safe-to-deploy"
 version = "0.12.3"
 criteria = "safe-to-deploy"
 
+[[exemptions.tower]]
+version = "0.4.13"
+criteria = "safe-to-deploy"
+
 [[exemptions.tower-layer]]
 version = "0.3.2"
 criteria = "safe-to-deploy"
@@ -826,10 +806,6 @@ criteria = "safe-to-deploy"
 
 [[exemptions.tracing-forest]]
 version = "0.2.0"
-criteria = "safe-to-deploy"
-
-[[exemptions.tracing-opentelemetry]]
-version = "0.32.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.tss-esapi]]
@@ -904,26 +880,10 @@ criteria = "safe-to-deploy"
 version = "0.2.5"
 criteria = "safe-to-deploy"
 
-[[exemptions.zbus_names]]
-version = "4.2.0"
-criteria = "safe-to-deploy"
-
 [[exemptions.zerocopy]]
 version = "0.8.25"
 criteria = "safe-to-deploy"
 
 [[exemptions.zerocopy-derive]]
 version = "0.8.25"
-criteria = "safe-to-deploy"
-
-[[exemptions.zvariant]]
-version = "5.5.3"
-criteria = "safe-to-deploy"
-
-[[exemptions.zvariant_derive]]
-version = "5.5.3"
-criteria = "safe-to-deploy"
-
-[[exemptions.zvariant_utils]]
-version = "3.2.0"
 criteria = "safe-to-deploy"

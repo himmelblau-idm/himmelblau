@@ -351,6 +351,13 @@ user-login = "dmulder"
 user-name = "David Mulder"
 
 [[publisher.indexmap]]
+version = "1.9.3"
+when = "2023-03-24"
+user-id = 539
+user-login = "cuviper"
+user-name = "Josh Stone"
+
+[[publisher.indexmap]]
 version = "2.12.1"
 when = "2025-11-20"
 user-id = 539
@@ -385,11 +392,11 @@ user-login = "Firstyear"
 user-name = "Firstyear"
 
 [[publisher.kanidm_build_profiles]]
-version = "1.8.1"
-when = "2025-11-19"
-user-id = 31100
-user-login = "Firstyear"
-user-name = "Firstyear"
+version = "1.7.4"
+when = "2025-10-13"
+user-id = 127515
+user-login = "yaleman"
+user-name = "James Hodgkinson"
 
 [[publisher.kanidm_lib_crypto]]
 version = "1.8.5"
@@ -399,18 +406,18 @@ user-login = "Firstyear"
 user-name = "Firstyear"
 
 [[publisher.kanidm_lib_file_permissions]]
-version = "1.8.5"
-when = "2025-12-13"
-user-id = 31100
-user-login = "Firstyear"
-user-name = "Firstyear"
+version = "1.7.4"
+when = "2025-10-13"
+user-id = 127515
+user-login = "yaleman"
+user-name = "James Hodgkinson"
 
 [[publisher.kanidm_utils_users]]
-version = "1.8.5"
-when = "2025-12-13"
-user-id = 31100
-user-login = "Firstyear"
-user-name = "Firstyear"
+version = "1.7.4"
+when = "2025-10-13"
+user-id = 127515
+user-login = "yaleman"
+user-name = "James Hodgkinson"
 
 [[publisher.libc]]
 version = "0.2.180"
@@ -426,8 +433,8 @@ user-login = "fitzgen"
 user-name = "Nick Fitzgerald"
 
 [[publisher.libhimmelblau]]
-version = "0.8.6"
-when = "2026-01-09"
+version = "0.8.7"
+when = "2026-01-15"
 user-id = 247655
 user-login = "dmulder"
 user-name = "David Mulder"
@@ -684,11 +691,11 @@ user-login = "tarcieri"
 user-name = "Tony Arcieri"
 
 [[publisher.sketching]]
-version = "1.8.5"
-when = "2025-12-13"
-user-id = 31100
-user-login = "Firstyear"
-user-name = "Firstyear"
+version = "1.7.4"
+when = "2025-10-13"
+user-id = 127515
+user-login = "yaleman"
+user-name = "James Hodgkinson"
 
 [[publisher.slab]]
 version = "0.4.9"
@@ -836,6 +843,13 @@ when = "2025-06-03"
 user-id = 359
 user-login = "seanmonstar"
 user-name = "Sean McArthur"
+
+[[publisher.tracing-opentelemetry]]
+version = "0.28.0"
+when = "2024-11-13"
+user-id = 4556
+user-login = "djc"
+user-name = "Dirkjan Ochtman"
 
 [[publisher.unicode-width]]
 version = "0.2.1"
@@ -1580,12 +1594,6 @@ notes = "Only minor `unsafe` code blocks which look valid and otherwise does wha
 who = "Pat Hickey <pat@moreproductive.org>"
 criteria = "safe-to-deploy"
 delta = "0.9.4 -> 0.9.8"
-
-[[audits.bytecode-alliance.audits.static_assertions]]
-who = "Andrew Brown <andrew.brown@intel.com>"
-criteria = "safe-to-deploy"
-version = "1.1.0"
-notes = "No dependencies and completely a compile-time crate as advertised. Uses `unsafe` in one module as a compile-time check only: `mem::transmute` and `ptr::write` are wrapped in an impossible-to-run closure."
 
 [[audits.bytecode-alliance.audits.thread_local]]
 who = "Pat Hickey <phickey@fastly.com>"
@@ -3319,6 +3327,13 @@ reasonable.
 """
 aggregated-from = "https://hg.mozilla.org/mozilla-central/raw-file/tip/supply-chain/audits.toml"
 
+[[audits.mozilla.audits.hashbrown]]
+who = "Mike Hommey <mh+mozilla@glandium.org>"
+criteria = "safe-to-deploy"
+version = "0.12.3"
+notes = "This version is used in rust's libstd, so effectively we're already trusting it"
+aggregated-from = "https://hg.mozilla.org/mozilla-central/raw-file/tip/supply-chain/audits.toml"
+
 [[audits.mozilla.audits.hashlink]]
 who = "Mike Hommey <mh+mozilla@glandium.org>"
 criteria = "safe-to-deploy"
@@ -3518,54 +3533,6 @@ aggregated-from = "https://raw.githubusercontent.com/mozilla/glean/main/supply-c
 who = "Gabriele Svelto <gsvelto@mozilla.com>"
 criteria = "safe-to-deploy"
 delta = "0.6.5 -> 0.7.1"
-aggregated-from = "https://hg.mozilla.org/mozilla-central/raw-file/tip/supply-chain/audits.toml"
-
-[[audits.mozilla.audits.nix]]
-who = "Gabriele Svelto <gsvelto@mozilla.com>"
-criteria = "safe-to-deploy"
-delta = "0.15.0 -> 0.25.0"
-notes = "Plenty of new bindings but also several important bug fixes (including buffer overflows). New unsafe sections are restricted to wrappers and are no more dangerous than calling the C functions."
-aggregated-from = "https://hg.mozilla.org/mozilla-central/raw-file/tip/supply-chain/audits.toml"
-
-[[audits.mozilla.audits.nix]]
-who = "Mike Hommey <mh+mozilla@glandium.org>"
-criteria = "safe-to-deploy"
-delta = "0.25.0 -> 0.25.1"
-aggregated-from = "https://hg.mozilla.org/mozilla-central/raw-file/tip/supply-chain/audits.toml"
-
-[[audits.mozilla.audits.nix]]
-who = "Mike Hommey <mh+mozilla@glandium.org>"
-criteria = "safe-to-deploy"
-delta = "0.25.1 -> 0.26.2"
-aggregated-from = "https://hg.mozilla.org/mozilla-central/raw-file/tip/supply-chain/audits.toml"
-
-[[audits.mozilla.audits.nix]]
-who = "Gabriele Svelto <gsvelto@mozilla.com>"
-criteria = "safe-to-deploy"
-delta = "0.26.2 -> 0.27.1"
-aggregated-from = "https://hg.mozilla.org/mozilla-central/raw-file/tip/supply-chain/audits.toml"
-
-[[audits.mozilla.audits.nix]]
-who = "Alex Franchuk <afranchuk@mozilla.com>"
-criteria = "safe-to-deploy"
-delta = "0.27.1 -> 0.28.0"
-notes = """
-Many new features and bugfixes. Obviously there's a lot of unsafe code calling
-libc, but the usage looks correct.
-"""
-aggregated-from = "https://hg.mozilla.org/mozilla-central/raw-file/tip/supply-chain/audits.toml"
-
-[[audits.mozilla.audits.nix]]
-who = "Alex Franchuk <afranchuk@mozilla.com>"
-criteria = "safe-to-deploy"
-delta = "0.28.0 -> 0.29.0"
-aggregated-from = "https://hg.mozilla.org/mozilla-central/raw-file/tip/supply-chain/audits.toml"
-
-[[audits.mozilla.audits.nix]]
-who = "Gabriele Svelto <gsvelto@mozilla.com>"
-criteria = "safe-to-deploy"
-delta = "0.29.0 -> 0.30.1"
-notes = "Some new wrappers, support for minor platforms and lots of work around type safety that reduces the unsafe surafce."
 aggregated-from = "https://hg.mozilla.org/mozilla-central/raw-file/tip/supply-chain/audits.toml"
 
 [[audits.mozilla.audits.num-conv]]
