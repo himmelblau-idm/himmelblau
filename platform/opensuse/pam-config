@@ -1,7 +1,7 @@
 [pam_himmelblau.so]
 
 # Authentication stack
-Auth: auth     sufficient    pam_himmelblau.so    ignore_unknown_user
+Auth: auth     sufficient    pam_himmelblau.so    ignore_unknown_user set_authtok
 Auth-Priority: 800
 
 # Account stack

@@ -205,12 +205,15 @@ impl PamHandle {
     ///
     /// See `pam_set_item` in
     /// <http://www.linux-pam.org/Linux-PAM-html/mwg-expected-by-module-item.html>
-    pub fn set_item_str<T: PamItem>(&mut self, item: &str) -> PamResult<()> {
+    pub fn set_item_str<T: PamItem>(&self, item: &str) -> PamResult<()> {
         let c_item = CString::new(item).unwrap();
 
         let res = unsafe {
             pam_set_item(
-                self,
+                // pam_set_item requires a mutable handle pointer, but the PAM handle is an
+                // opaque pointer managed by libpam. We avoid creating an invalid &mut
+                // reference by passing a raw mutable pointer instead.
+                self as *const PamHandle as *mut PamHandle,
                 T::item_type(),
                 // unwrapping is okay here, as c_item will not be a NULL
                 // pointer

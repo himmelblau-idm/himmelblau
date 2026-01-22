@@ -3,7 +3,7 @@ Default: yes
 Priority: 2048
 Auth-Type: Primary
 Auth:
-	[success=end default=ignore]    pam_himmelblau.so ignore_unknown_user
+	[success=end default=ignore]    pam_himmelblau.so ignore_unknown_user set_authtok
 Account-Type: Primary
 Account:
 	[success=end default=ignore]    pam_himmelblau.so ignore_unknown_user

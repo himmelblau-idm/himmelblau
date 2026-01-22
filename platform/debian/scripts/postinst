@@ -34,20 +34,26 @@ EOF
 
 # Check if the file /etc/apparmor.d/unix-chkpwd exists
 if [[ -f /etc/apparmor.d/unix-chkpwd ]]; then
-	# Apply the patch using the patch command
-	echo "$UNIX_CHKPWD_PATCH" | patch --fuzz 2 --silent --forward -p0 /etc/apparmor.d/unix-chkpwd || echo "apparmor unix-chkpwd patch failed"
-
-	# Reload the AppArmor profile to apply the changes
-	apparmor_parser -r /etc/apparmor.d/unix-chkpwd || echo "apparmor reload failed"
+    # Idempotent, non-interactive: only patch if needed
+    if ! grep -q 'flags=(attach_disconnected)' /etc/apparmor.d/unix-chkpwd; then
+        if echo "$UNIX_CHKPWD_PATCH" | patch --batch --fuzz 2 --silent --forward -p0 /etc/apparmor.d/unix-chkpwd >/dev/null 2>&1; then
+            apparmor_parser -r /etc/apparmor.d/unix-chkpwd >/dev/null 2>&1 || echo "apparmor reload failed"
+        else
+            echo "apparmor unix-chkpwd patch failed" >&2
+        fi
+    fi
 fi
 
 # Check if the file /etc/apparmor.d/usr.lib.libreoffice.program.soffice.bin exists
 if [[ -f /etc/apparmor.d/usr.lib.libreoffice.program.soffice.bin ]]; then
-	# Apply the patch using the patch command
-	echo "$LIBREOFFICE_PATCH" | patch --fuzz 2 --silent --forward -p0 /etc/apparmor.d/usr.lib.libreoffice.program.soffice.bin || echo "apparmor libreoffice patch failed"
-
-	# Reload the AppArmor profile to apply the changes
-	apparmor_parser -r /etc/apparmor.d/usr.lib.libreoffice.program.soffice.bin || echo "apparmor reload failed"
+    # Idempotent, non-interactive: only patch if needed
+    if ! grep -q 'attach_disconnected' /etc/apparmor.d/usr.lib.libreoffice.program.soffice.bin; then
+        if echo "$LIBREOFFICE_PATCH" | patch --batch --fuzz 2 --silent --forward -p0 /etc/apparmor.d/usr.lib.libreoffice.program.soffice.bin >/dev/null 2>&1; then
+            apparmor_parser -r /etc/apparmor.d/usr.lib.libreoffice.program.soffice.bin >/dev/null 2>&1 || echo "apparmor reload failed"
+        else
+            echo "apparmor libreoffice patch failed" >&2
+        fi
+    fi
 fi
 
 # Ensure `includedir /etc/krb5.conf.d` is present in /etc/krb5.conf
@@ -62,3 +68,14 @@ if [[ -f "$KRB5_CONF" ]]; then
 fi
 
 DEBIAN_FRONTEND=noninteractive pam-auth-update
+
+# Ensure GNOME keyring consumes the auth token (Hello PIN) so the keyring unlocks
+# like a normal password login.
+GDM_PAM="/etc/pam.d/gdm-password"
+if [[ -f "$GDM_PAM" ]]; then
+    # If the keyring auth line exists without use_authtok, add it.
+    if grep -Eq '^[[:space:]]*auth[[:space:]]+optional[[:space:]]+pam_gnome_keyring\.so' "$GDM_PAM" && \
+       ! grep -Eq '^[[:space:]]*auth[[:space:]]+optional[[:space:]]+pam_gnome_keyring\.so.*\buse_authtok\b' "$GDM_PAM"; then
+        sed -i -E '/^[[:space:]]*auth[[:space:]]+optional[[:space:]]+pam_gnome_keyring\.so/ {/use_authtok/! s/$/ use_authtok/;}' "$GDM_PAM" || true
+    fi
+fi

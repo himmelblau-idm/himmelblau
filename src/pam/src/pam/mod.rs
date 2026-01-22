@@ -76,6 +76,7 @@ use std::thread::sleep;
 
 use crate::pam::constants::*;
 use crate::pam::conv::PamConv;
+use crate::pam::items::PamAuthTok;
 use crate::pam::module::{PamHandle, PamHooks};
 use crate::pam_hooks;
 use constants::PamResultCode;
@@ -186,6 +187,48 @@ impl MessagePrinter for PamConvMessagePrinter {
                 .ok()
                 .flatten()
         })
+    }
+}
+
+fn should_capture_keyring_secret(prompt: &str) -> bool {
+    let prompt = prompt.trim().to_lowercase();
+    if prompt.contains("confirm") {
+        return false;
+    }
+
+    prompt.contains("pin")
+}
+
+pub struct KeyringCaptureMessagePrinter {
+    inner: Arc<dyn MessagePrinter>,
+    captured: Arc<Mutex<Option<String>>>,
+}
+
+impl KeyringCaptureMessagePrinter {
+    pub fn new(inner: Arc<dyn MessagePrinter>, captured: Arc<Mutex<Option<String>>>) -> Self {
+        Self { inner, captured }
+    }
+}
+
+impl MessagePrinter for KeyringCaptureMessagePrinter {
+    fn print_text(&self, msg: &str) {
+        self.inner.print_text(msg);
+    }
+
+    fn print_error(&self, msg: &str) {
+        self.inner.print_error(msg);
+    }
+
+    fn prompt_echo_off(&self, prompt: &str) -> Option<String> {
+        let result = self.inner.prompt_echo_off(prompt);
+        if let Some(ref cred) = result {
+            if should_capture_keyring_secret(prompt) {
+                if let Ok(mut captured) = self.captured.lock() {
+                    *captured = Some(cred.clone());
+                }
+            }
+        }
+        result
     }
 }
 
@@ -354,14 +397,40 @@ impl PamHooks for PamKanidm {
             }
         };
 
-        authenticate(
+        let set_authtok = opts.set_authtok;
+        let keyring_secret = Arc::new(Mutex::new(authtok.clone()));
+        let base_printer: Arc<dyn MessagePrinter> = Arc::new(PamConvMessagePrinter::new(conv));
+        let msg_printer: Arc<dyn MessagePrinter> = if set_authtok {
+            Arc::new(KeyringCaptureMessagePrinter::new(
+                base_printer.clone(),
+                keyring_secret.clone(),
+            ))
+        } else {
+            base_printer
+        };
+
+        let result = authenticate(
             authtok,
             &cfg,
             &account_id,
             &service,
             opts,
-            Arc::new(PamConvMessagePrinter::new(conv)),
-        )
+            msg_printer,
+        );
+
+        if set_authtok && result == PamResultCode::PAM_SUCCESS {
+            if let Ok(Some(secret)) = keyring_secret.lock().map(|s| s.clone()) {
+                if let Err(err) = pamh.set_item_str::<PamAuthTok>(&secret) {
+                    error!(?err, "Failed to set PAM_AUTHTOK for keyring");
+                } else {
+                    debug!("Set PAM_AUTHTOK for keyring unlock");
+                }
+            } else {
+                debug!("No keyring secret captured; PAM_AUTHTOK not set");
+            }
+        }
+
+        result
     }
 
     #[instrument(skip(pamh, args, flags))]
@@ -869,6 +938,19 @@ impl PamHooks for PamKanidm {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_should_capture_keyring_secret_pin_prompts() {
+        // capture
+        assert!(should_capture_keyring_secret("PIN: "));
+        assert!(should_capture_keyring_secret(" New PIN: "));
+        assert!(should_capture_keyring_secret("Fido PIN: "));
+        assert!(should_capture_keyring_secret("   pIn   "));
+
+        // do not capture confirmations
+        assert!(!should_capture_keyring_secret("Confirm PIN: "));
+        assert!(!should_capture_keyring_secret("confirm new pin: "));
+    }
 
     #[test]
     fn test_is_loopback_address_empty() {
