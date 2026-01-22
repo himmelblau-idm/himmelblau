@@ -117,7 +117,7 @@ allow init_t himmelblau_etc_t:file { getattr open read };
 allow init_t himmelblau_nss_cache_t:dir { add_name getattr mounton open read remove_name search setattr write };
 allow init_t himmelblau_nss_cache_t:file { create getattr lock open read setattr unlink write };
 allow init_t himmelblau_var_cache_t:dir { add_name create getattr open read remove_name rmdir search setattr write };
-allow init_t himmelblau_var_cache_t:file { create lock open read unlink write };
+allow init_t himmelblau_var_cache_t:file { create getattr lock open read setattr unlink write };
 allow init_t himmelblau_var_cache_t:lnk_file read;
 allow init_t himmelblau_var_lib_t:dir { add_name getattr open read setattr };
 allow init_t himmelblau_var_lib_t:file { create open read setattr write };
@@ -197,6 +197,40 @@ optional {
 	      `init_nnp_daemon_domain(groupadd_t)')
 }
 
+#============= useradd_t ==============
+# useradd_t is for useradd/userdel commands, needs NSS cache access for user lookups
+optional {
+	require {
+		type useradd_t;
+	}
+	allow useradd_t himmelblau_etc_t:dir { getattr open read search };
+	allow useradd_t himmelblau_etc_t:file { getattr open read };
+	allow useradd_t himmelblau_nss_cache_t:dir { getattr open read search setattr };
+	allow useradd_t himmelblau_nss_cache_t:file { getattr lock open read };
+	allow useradd_t himmelblau_var_cache_t:dir { getattr open read search };
+	allow useradd_t himmelblau_var_cache_t:file { getattr open read };
+	allow useradd_t himmelblau_var_cache_t:lnk_file read;
+	allow useradd_t himmelblau_var_run_t:dir search;
+	allow useradd_t himmelblau_var_run_t:sock_file write;
+}
+
+#============= local_login_t ==============
+# local_login_t is for local login (console/tty), needs cache access for authentication
+optional {
+	require {
+		type local_login_t;
+	}
+	allow local_login_t himmelblau_etc_t:dir { getattr open read search };
+	allow local_login_t himmelblau_etc_t:file { getattr open read };
+	allow local_login_t himmelblau_nss_cache_t:dir { add_name getattr open read remove_name search setattr write };
+	allow local_login_t himmelblau_nss_cache_t:file { create getattr lock open read setattr unlink write };
+	allow local_login_t himmelblau_var_cache_t:dir { getattr open read search };
+	allow local_login_t himmelblau_var_cache_t:file { getattr open read };
+	allow local_login_t himmelblau_var_cache_t:lnk_file read;
+	allow local_login_t himmelblau_var_run_t:dir search;
+	allow local_login_t himmelblau_var_run_t:sock_file write;
+}
+
 #============= accountsd_t ==============
 # accountsd_t is for GNOME AccountsService, may not be installed
 optional {
@@ -231,13 +265,18 @@ optional {
 optional {
 	require {
 		type chkpwd_t;
+		type init_t;
+		class unix_stream_socket connectto;
 	}
 	allow chkpwd_t himmelblau_etc_t:file { getattr open read };
 	allow chkpwd_t himmelblau_nss_cache_t:dir { add_name remove_name };
 	allow chkpwd_t himmelblau_nss_cache_t:file { create getattr lock open read setattr unlink write };
 	allow chkpwd_t himmelblau_var_cache_t:file { getattr open read };
 	allow chkpwd_t himmelblau_var_cache_t:lnk_file read;
+	allow chkpwd_t himmelblau_var_run_t:dir search;
 	allow chkpwd_t himmelblau_var_run_t:sock_file write;
+	# Allow connecting to himmelblaud socket (running as init_t)
+	allow chkpwd_t init_t:unix_stream_socket connectto;
 }
 
 #============= colord_t ==============

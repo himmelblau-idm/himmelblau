@@ -7,8 +7,9 @@
 # Config
 /etc/himmelblau(/.*)?                    gen_context(system_u:object_r:himmelblau_etc_t,s0)
 
-# Runtime
+# Runtime (both paths for compatibility - /var/run may be symlink or separate on older systems)
 /run/himmelblaud(/.*)?                   gen_context(system_u:object_r:himmelblau_var_run_t,s0)
+/var/run/himmelblaud(/.*)?               gen_context(system_u:object_r:himmelblau_var_run_t,s0)
 
 # daemon cache (private)
 /var/cache/private/himmelblaud(/.*)?    gen_context(system_u:object_r:himmelblau_var_cache_t,s0)
