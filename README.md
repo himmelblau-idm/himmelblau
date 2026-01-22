@@ -169,8 +169,11 @@ Flake based configurations add this repository to their inputs, enable the servi
         himmelblau.inputs.nixpkgs.follows = "nixpkgs";
     };
     outputs = { self, nixpkgs, himmelblau }: {
-        nixosModules.azureEntraId = {
+        nixosModules.azureEntraId = { config, pkgs, lib, ... }: {
             imports = [ himmelblau.nixosModules.himmelblau ];
+            environment.systemPackages = [
+                config.services.himmelblau.package
+            ];
             services.himmelblau = {
                 enable = true;
                 #package = himmelblau.packages.himmelblau-desktop; # <-- if you want the o365 suite with `teams-for-linux` use the desktop variant
