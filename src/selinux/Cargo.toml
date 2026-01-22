@@ -12,9 +12,8 @@ repository.workspace = true
 [package.metadata.generate-rpm]
 name = "himmelblau-selinux"
 assets = [
-  { source = "src/selinux/src/himmelblaud.te", dest = "/usr/share/selinux/packages/himmelblaud/himmelblaud.te", mode = "0644" },
-  { source = "src/selinux/src/himmelblaud.fc", dest = "/usr/share/selinux/packages/himmelblaud/himmelblaud.fc", mode = "0644" },
-  { source = "src/selinux/src/himmelblaud.if", dest = "/usr/share/selinux/packages/himmelblaud/himmelblaud.if", mode = "0644" }
+  { source = "src/himmelblaud.te", dest = "/usr/share/selinux/packages/himmelblaud/himmelblaud.te", mode = "0644" },
+  { source = "src/himmelblaud.fc", dest = "/usr/share/selinux/packages/himmelblaud/himmelblaud.fc", mode = "0644" },
 ]
 post_trans_script = "scripts/postinst"
 post_uninstall_script = "scripts/postrm"
@@ -28,8 +27,7 @@ make = "*"
 name = "himmelblau-selinux"
 depends = "selinux-policy-default, selinux-policy-dev, policycoreutils, selinux-utils, make"
 assets = [
-  ["src/selinux/src/himmelblaud.te", "usr/share/selinux/packages/himmelblaud/", "0644"],
-  ["src/selinux/src/himmelblaud.fc", "usr/share/selinux/packages/himmelblaud/", "0644"],
-  ["src/selinux/src/himmelblaud.if", "usr/share/selinux/packages/himmelblaud/", "0644"]
+  ["src/himmelblaud.te", "usr/share/selinux/packages/himmelblaud/", "0644"],
+  ["src/himmelblaud.fc", "usr/share/selinux/packages/himmelblaud/", "0644"],
 ]
 maintainer-scripts = "scripts"
