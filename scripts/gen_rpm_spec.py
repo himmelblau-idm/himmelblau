@@ -405,7 +405,7 @@ def generate_install_section(metadata):
     # SELinux is only available on newer SUSE versions
     if selinux:
         lines.append("%if 0%{?suse_version} > 1600 || 0%{?sle_version} >= 160000")
-        lines.append("install -D -d -m 0755 %{buildroot}/%{_selinux_pkgdir}")
+        lines.append("install -D -d -m 0755 %{buildroot}/%{_selinux_pkgdir}/himmelblaud")
         lines.append("install -D -d -m 0755 %{buildroot}/%{_selinux_docdir}")
         for asset in assets:
             if 'selinux' in asset["source"] or 'selinux' in asset["dest"]:
@@ -475,6 +475,9 @@ def generate_files_section(metadata, name=None, dirs=[], extras=[]):
         for _dir in dirs:
             if 'selinux' in _dir:
                 lines.append(f"%dir {_dir}")
+        # Always add the SELinux package directories when selinux files are present
+        lines.append("%dir %{_selinux_pkgdir}")
+        lines.append("%dir %{_selinux_pkgdir}/himmelblaud")
         for asset in assets:
             if 'selinux' in asset["source"] or 'selinux' in asset["dest"]:
                 lines.append(file_line(asset, FILE_REPLACE))
@@ -756,6 +759,7 @@ patchelf --set-soname libnss_himmelblau.so.2 target/release/libnss_himmelblau.so
 
 # PAM
 install -D -d -m 0755 %{{buildroot}}/%{{_pam_moduledir}}
+install -D -d -m 0755 %{{buildroot}}/usr/lib/pam-config.d
 strip --strip-unneeded target/release/libpam_himmelblau.so
 {generate_install_section(pam_metadata)}
 
@@ -774,6 +778,7 @@ install -D -d -m 0755 %{{buildroot}}/%{{_tmpfilesdir}}/
 install -D -d -m 0755 %{{buildroot}}%{{_mandir}}/man1
 install -D -d -m 0755 %{{buildroot}}%{{_mandir}}/man5
 install -D -d -m 0755 %{{buildroot}}%{{_mandir}}/man8
+install -D -d -m 0755 %{{buildroot}}%{{_libexecdir}}
 strip --strip-unneeded target/release/himmelblaud
 strip --strip-unneeded target/release/himmelblaud_tasks
 strip --strip-unneeded target/release/broker
@@ -823,7 +828,7 @@ install -D -d -m 0755 %{{buildroot}}%{{_datarootdir}}/gnome-shell/extensions/qr-
 
 {generate_files_section(nss_metadata, name="libnss_himmelblau2", dirs=["%{_tmpfilesdir}"], extras=["%ghost %attr(0755,root,root) /var/cache/nss-himmelblau"])}
 
-{generate_files_section(pam_metadata, name="pam-himmelblau", dirs=["%{_datadir}/authselect", "%{_datadir}/authselect/vendor", "%{_datadir}/authselect/vendor/himmelblau"])}
+{generate_files_section(pam_metadata, name="pam-himmelblau", dirs=["/usr/lib/pam-config.d", "%{_datadir}/authselect", "%{_datadir}/authselect/vendor", "%{_datadir}/authselect/vendor/himmelblau"])}
 
 {generate_files_section(sshd_metadata, name="himmelblau-sshd-config", extras=["%if 0%{?sle_version} <= 150500\n%dir %{_sysconfdir}/ssh/sshd_config.d\n%endif"])}
 
