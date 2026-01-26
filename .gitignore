@@ -25,7 +25,6 @@ packaging/
 # VM image for nixos testing
 *.qcow2
 
-src/selinux/src/himmelblaud.if
 src/selinux/src/himmelblaud.pp
 src/selinux/src/tmp/
 
