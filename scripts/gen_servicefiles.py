@@ -293,10 +293,10 @@ CapabilityBoundingSet=CAP_CHOWN CAP_FOWNER CAP_DAC_OVERRIDE CAP_DAC_READ_SEARCH
 WantedBy=multi-user.target
 """.rstrip() + "\n"
 
-    # ---- Compose himmelblau-hsm-pin-init.service (only if LoadCredentialEncrypted supported) ----
-    hsm_pin_init_unit = None
-    if supported("LoadCredentialEncrypted"):
-        hsm_pin_init_unit = """\
+    # ---- Compose himmelblau-hsm-pin-init.service ----
+    # Always generate this file so cargo-deb can find it. On older systemd without
+    # LoadCredentialEncrypted support, the service won't be started by himmelblaud.service.
+    hsm_pin_init_unit = """\
 # You should not need to edit this file. Instead, use a drop-in file:
 #   systemctl edit himmelblau-hsm-pin-init.service
 
@@ -325,19 +325,16 @@ WantedBy=himmelblaud.service
 
     daemon_unit = squeeze_blank_lines(daemon_unit)
     tasks_unit  = squeeze_blank_lines(tasks_unit)
-    if hsm_pin_init_unit:
-        hsm_pin_init_unit = squeeze_blank_lines(hsm_pin_init_unit)
+    hsm_pin_init_unit = squeeze_blank_lines(hsm_pin_init_unit)
 
     (out_dir / "himmelblaud.service").write_text(daemon_unit)
     (out_dir / "himmelblaud-tasks.service").write_text(tasks_unit)
-    if hsm_pin_init_unit:
-        (out_dir / "himmelblau-hsm-pin-init.service").write_text(hsm_pin_init_unit)
+    (out_dir / "himmelblau-hsm-pin-init.service").write_text(hsm_pin_init_unit)
 
     print(f"[gen-systemd] systemd version detected/assumed: {ver}")
     print(f"[gen-systemd] Wrote: {out_dir/'himmelblaud.service'}")
     print(f"[gen-systemd] Wrote: {out_dir/'himmelblaud-tasks.service'}")
-    if hsm_pin_init_unit:
-        print(f"[gen-systemd] Wrote: {out_dir/'himmelblau-hsm-pin-init.service'}")
+    print(f"[gen-systemd] Wrote: {out_dir/'himmelblau-hsm-pin-init.service'}")
 
 if __name__ == "__main__":
     main()
