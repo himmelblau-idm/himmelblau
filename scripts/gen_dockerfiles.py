@@ -202,7 +202,9 @@ DISTS = {
         "family": "rpm",
         "image": "rockylinux/rockylinux:8",
         "extra_prep": [
-            "RUN dnf -y install 'dnf-command(config-manager)' && dnf config-manager --set-enabled powertools"
+            "RUN dnf -y install 'dnf-command(config-manager)' && dnf config-manager --set-enabled powertools",
+            # Python 3.6 doesn't have dataclasses; install python39 and use it
+            "RUN dnf -y install python39 && alternatives --set python3 /usr/bin/python3.9",
         ],
         "replace": {
             "build-essential": '"@Development Tools"',
@@ -246,6 +248,10 @@ DISTS = {
         "image": "registry.suse.com/suse/sle15:15.6",
         "scc": True,
         "scc_vers": "15.6",
+        "post_bootstrap": [
+            # Python 3.6 doesn't have dataclasses; install python311 and symlink as python3
+            "RUN zypper --non-interactive install python311 && ln -sf /usr/bin/python3.11 /usr/bin/python3",
+        ],
         "replace": {
             "build-essential": "",
             "@development-tools": "",
@@ -262,6 +268,10 @@ DISTS = {
         "image": "registry.suse.com/suse/sle15:15.7",
         "scc": True,
         "scc_vers": "15.7",
+        "post_bootstrap": [
+            # Python 3.6 doesn't have dataclasses; install python311 and symlink as python3
+            "RUN zypper --non-interactive install python311 && ln -sf /usr/bin/python3.11 /usr/bin/python3",
+        ],
         "replace": {
             "build-essential": "",
             "@development-tools": "",
@@ -323,7 +333,7 @@ DOCKERFILE_TPL = """\
 {sle_connect}
 # Install essential build dependencies
 {bootstrap}
-
+{post_bootstrap}
 # Set environment for Rust
 ENV PATH="/root/.cargo/bin:${{PATH}}"
 
@@ -370,6 +380,9 @@ def build_pkg_list(dist_cfg, selinux):
         q = rep.get(p, p)
         if q:
             out.append(q)
+    # Add any distro-specific extra packages
+    extra = dist_cfg.get("extra_pkgs", [])
+    out.extend(extra)
     out = sorted(set(out))
     sep = " \\\n        "
     return sep.join(out)
@@ -402,11 +415,18 @@ def render(dist_name, dist_cfg):
         blocks.extend(dist_cfg["extra_prep"])
     extra = "\n".join(blocks) + ("\n" if blocks else "")
 
+    # Post-bootstrap commands (run after main package install)
+    post_blocks = []
+    if dist_cfg.get("post_bootstrap"):
+        post_blocks.extend(dist_cfg["post_bootstrap"])
+    post_bootstrap = "\n".join(post_blocks) + ("\n" if post_blocks else "")
+
     df = DOCKERFILE_TPL.format(
         GENERATED_MARKER=GENERATED_MARKER,
         base_image=dist_cfg["image"],
         env=env,
         bootstrap=(extra + bootstrap),
+        post_bootstrap=post_bootstrap,
         sle_connect=("\n" + sle_connect + "\n" if sle_connect else ""),
         selinux_enabled=("ENV HIMMELBLAU_ALLOW_MISSING_SELINUX=1" if not selinux else ""),
         final_cmd=final_cmd,
