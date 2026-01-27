@@ -2729,8 +2729,7 @@ dependencies = [
 [[package]]
 name = "libhimmelblau"
 version = "0.8.7"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ecd332ccee0753ff81fd56bad8fb5e8833057f8095fd364be63919e15c4cfab5"
+source = "git+https://gitlab.com/samba-team/libhimmelblau.git?branch=dmulder/revert_password_only_login#2631ccf9b4d68b432090910a0f889f55b4d39bdd"
 dependencies = [
  "base64 0.22.1",
  "cbindgen",
