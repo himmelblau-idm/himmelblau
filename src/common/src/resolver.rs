@@ -1100,7 +1100,6 @@ where
                 .unix_user_online_auth_init(
                     account_id,
                     token.as_ref(),
-                    service,
                     no_hello_pin,
                     &mut dbtxn,
                     hsm_lock.deref_mut(),

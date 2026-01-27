@@ -602,7 +602,7 @@ fn mfa_poll(
 ) -> PamResultCode {
     // Suggest users connect mobile devices to the internet, except when
     // polling a DAG.
-    let msg = if !msg.contains("https://microsoft.com/devicelogin") && !msg.trim().is_empty() {
+    let msg = if !msg.contains("https://microsoft.com/devicelogin") {
         format!(
             "{}\nNo push? Check your mobile device's internet connection.",
             msg
@@ -610,9 +610,7 @@ fn mfa_poll(
     } else {
         msg.to_string()
     };
-    if !msg.trim().is_empty() {
-        msg_printer.print_text(&msg);
-    }
+    msg_printer.print_text(&msg);
 
     // Necessary because of OpenSSH bug
     // https://bugzilla.mindrot.org/show_bug.cgi?id=2876 -

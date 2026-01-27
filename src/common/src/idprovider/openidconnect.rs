@@ -964,7 +964,6 @@ impl IdProvider for OidcProvider {
         &self,
         account_id: &str,
         _token: Option<&UserToken>,
-        _service: &str,
         no_hello_pin: bool,
         keystore: &mut D,
         tpm: &mut tpm::provider::BoxedDynTpm,

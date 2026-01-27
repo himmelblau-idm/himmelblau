@@ -443,8 +443,6 @@ pub enum HimmelblauUnixOpt {
     ///
     /// The `--client-id` parameter is optional and must refer to a registered
     /// Entra ID application with `User.Read.All` and `Group.Read.All` permissions.
-    /// If omitted, the command will authenticate using the app_id set in your
-    /// himmelblau.conf file.
     ///
     /// The `--name` parameter specifies the Entra ID user on whose behalf the token
     /// is requested, enabling delegated access through the specified client application.
