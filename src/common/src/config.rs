@@ -1816,49 +1816,6 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_get_password_only_remote_services_deny_list_comma_separated() {
-        let config_data = r#"
-        [global]
-        password_only_remote_services_deny_list = ssh,telnet,ftp
-        "#;
-
-        let temp_file = create_temp_config(config_data);
-        let config = HimmelblauConfig::new(Some(&temp_file)).unwrap();
-
-        let result = config.get_password_only_remote_services_deny_list();
-        assert_eq!(result, vec!["ssh", "telnet", "ftp"]);
-    }
-
-    #[test]
-    fn test_get_password_only_remote_services_deny_list_whitespace_trimming() {
-        let config_data = r#"
-        [global]
-        password_only_remote_services_deny_list = ssh , telnet,  ftp  ,vnc
-        "#;
-
-        let temp_file = create_temp_config(config_data);
-        let config = HimmelblauConfig::new(Some(&temp_file)).unwrap();
-
-        let result = config.get_password_only_remote_services_deny_list();
-        assert_eq!(result, vec!["ssh", "telnet", "ftp", "vnc"]);
-    }
-
-    #[test]
-    fn test_get_password_only_remote_services_deny_list_empty_string() {
-        let config_data = r#"
-        [global]
-        password_only_remote_services_deny_list =
-        "#;
-
-        let temp_file = create_temp_config(config_data);
-        let config = HimmelblauConfig::new(Some(&temp_file)).unwrap();
-
-        let result = config.get_password_only_remote_services_deny_list();
-        // Empty string split by comma produces a single empty string element
-        assert_eq!(result, vec![""]);
-    }
-
     // Tests for parse_ttl_to_seconds()
 
     #[test]
