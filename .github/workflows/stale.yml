@@ -1,13 +1,15 @@
 name: Stale Checker
 permissions:
+  actions: write
   issues: write
+  pull-requests: write
 
 on:
-  issues:
-    types: [opened]
+  schedule:
+    - cron: '30 2 * * *'
 
 jobs:
-  append-footer:
+  stale:
     runs-on: ubuntu-latest
     steps:
       - name: Harden the runner (Audit all outbound calls)
@@ -28,5 +30,4 @@ jobs:
           exempt-draft-pr: true
           only-issue-types: 'Bug'
           exempt-issue-labels: 'stale exempt'
-          mark-issue-as-stale: true
-          close-issue: true
+          exempt-pr-labels: 'stale exempt'
