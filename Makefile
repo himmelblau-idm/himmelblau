@@ -12,6 +12,7 @@ all: .packaging dockerfiles ## Auto-detect host distro and build packages just f
 	    case "$$VER" in \
 	      22.04*) TARGET="ubuntu22.04" ;; \
 	      24.04*) TARGET="ubuntu24.04" ;; \
+	      25.10*) TARGET="ubuntu25.10" ;; \
 	    esac ;; \
 	  linuxmint) \
 	    case "$$VER" in \
@@ -116,7 +117,7 @@ nix: .packaging ## Build Nix packages into ./packaging/
 		$(NIX) --extra-experimental-features 'nix-command flakes' build ".#$$v" --out-link ./packaging/nix-$$v-result; \
 	done
 
-DEB_TARGETS := ubuntu22.04 ubuntu24.04 debian12 debian13
+DEB_TARGETS := ubuntu22.04 ubuntu24.04 ubuntu25.10 debian12 debian13
 RPM_TARGETS := rocky8 rocky9 rocky10 tumbleweed rawhide fedora42 fedora43
 SLE_TARGETS := sle15sp6 sle15sp7 sle16
 GENTOO_TARGETS := gentoo
