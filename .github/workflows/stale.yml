@@ -1,6 +1,5 @@
 name: Stale Checker
 permissions:
-  actions: write
   issues: write
   pull-requests: write
 
@@ -27,7 +26,9 @@ jobs:
           stale-pr-label: 'stale'
           days-before-stale: 60
           days-before-close: 7
+          operations-per-run: 100
           exempt-draft-pr: true
           only-issue-types: 'Bug'
           exempt-issue-labels: 'stale exempt'
           exempt-pr-labels: 'stale exempt'
+          exempt-all-pr-assignees: true
