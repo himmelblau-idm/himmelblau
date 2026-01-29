@@ -3,7 +3,7 @@ SHELL := $(shell command -v bash)
 all: .packaging dockerfiles ## Auto-detect host distro and build packages just for this host
 	@set -euo pipefail; \
 	. /etc/os-release; \
-	ID="$$ID"; VER="$$VERSION_ID"; LIKE="${ID_LIKE:-}"; \
+	ID="$$ID"; VER="$$VERSION_ID"; LIKE="$${ID_LIKE:-}"; \
 	TARGET=""; \
 	echo "Detecting host distro: ID=$$ID VERSION_ID=$$VER ID_LIKE=$$LIKE"; \
 	\
