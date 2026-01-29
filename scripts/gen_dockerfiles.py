@@ -61,6 +61,7 @@ PKG_PAIRS = [
     # GTK4 and WebKit6 for himmelblau-greeter
     ("libgtk-4-dev", "gtk4-devel"),
     ("libwebkitgtk-6.0-dev", "webkitgtk6.0-devel"),
+    ("libgraphene-1.0-dev", "graphene-devel"),
 ]
 
 SELINUX_PKGS = ["policycoreutils-devel", "selinux-policy-targeted"]
