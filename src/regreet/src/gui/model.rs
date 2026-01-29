@@ -282,7 +282,7 @@ impl Greeter {
             .create_session(&username)
             .await
             .unwrap_or_else(|err| {
-                panic!("Failed to create session for username '{username}': {err}",)
+                panic!("Failed to create session for user: {err}",)
             });
 
         self.handle_greetd_response(sender, response).await;
