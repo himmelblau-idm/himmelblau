@@ -183,9 +183,9 @@ impl WidgetTemplate for Ui {
             /// DAG browser container (for browser-based authentication)
             #[name = "dag_browser_frame"]
             add_overlay = &gtk::Frame {
-                set_halign: gtk::Align::End,
+                set_halign: gtk::Align::Start,
                 set_valign: gtk::Align::Center,
-                set_margin_end: 50,
+                set_margin_start: 50,
                 add_css_class: "background",
                 set_visible: false,
 

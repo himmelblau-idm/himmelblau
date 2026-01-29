@@ -33,6 +33,26 @@ echo "Creating himmelblau-greeter directories..."
 mkdir -p "$LOG_DIR" "$STATE_DIR"
 chown greeter:greeter "$LOG_DIR" "$STATE_DIR" 2>/dev/null || true
 
+# Create XDG config directory for greeter to disable portal backends
+# This prevents 120-second timeouts from xdg-desktop-portal
+GREETER_CONFIG_DIR="$STATE_DIR/.config/xdg-desktop-portal"
+mkdir -p "$GREETER_CONFIG_DIR"
+cat > "$GREETER_CONFIG_DIR/portals.conf" << 'EOF'
+# Disable ALL portal backends for greeter - prevents timeout delays
+# The greeter runs in a minimal kiosk environment without a desktop session
+[preferred]
+default=none
+org.freedesktop.impl.portal.FileChooser=none
+org.freedesktop.impl.portal.Settings=none
+org.freedesktop.impl.portal.Notification=none
+org.freedesktop.impl.portal.Screenshot=none
+org.freedesktop.impl.portal.AppChooser=none
+org.freedesktop.impl.portal.Access=none
+org.freedesktop.impl.portal.Inhibit=none
+org.freedesktop.impl.portal.Secret=none
+EOF
+chown -R greeter:greeter "$STATE_DIR/.config" 2>/dev/null || true
+
 # Create runtime directory for Wayland/cage (needed for XDG_RUNTIME_DIR)
 # This is also handled by tmpfiles.d on boot, but we create it now for immediate use
 RUNTIME_DIR="/run/greeter"
@@ -79,12 +99,13 @@ if [ -f "$GREETD_CONFIG" ]; then
         fi
         # Create new greetd config - use cage to provide Wayland compositor
         # Environment variables help with VM compatibility and GTK portal timeouts
+        # DBUS_SESSION_BUS_ADDRESS=disabled: prevents portal connections entirely
         cat > "$GREETD_CONFIG" << 'EOF'
 [terminal]
 vt = 1
 
 [default_session]
-command = "env XDG_RUNTIME_DIR=/run/greeter GTK_USE_PORTAL=0 GDK_DEBUG=no-portals GTK_A11Y=none NO_AT_BRIDGE=1 WLR_RENDERER=pixman cage -s -- himmelblau-greeter"
+command = "env XDG_RUNTIME_DIR=/run/greeter XDG_CONFIG_HOME=/var/lib/himmelblau-greeter/.config XDG_CURRENT_DESKTOP=none GTK_USE_PORTAL=0 GDK_DEBUG=no-portals GTK_A11Y=none NO_AT_BRIDGE=1 WLR_RENDERER=pixman WEBKIT_DISABLE_DMABUF_RENDERER=1 WEBKIT_DISABLE_COMPOSITING_MODE=1 WEBKIT_USE_PORTAL=0 cage -s -- himmelblau-greeter"
 user = "greeter"
 EOF
         echo "greetd configured to use himmelblau-greeter."
@@ -98,7 +119,7 @@ else
 vt = 1
 
 [default_session]
-command = "env XDG_RUNTIME_DIR=/run/greeter GTK_USE_PORTAL=0 GDK_DEBUG=no-portals GTK_A11Y=none NO_AT_BRIDGE=1 WLR_RENDERER=pixman cage -s -- himmelblau-greeter"
+command = "env XDG_RUNTIME_DIR=/run/greeter XDG_CONFIG_HOME=/var/lib/himmelblau-greeter/.config XDG_CURRENT_DESKTOP=none GTK_USE_PORTAL=0 GDK_DEBUG=no-portals GTK_A11Y=none NO_AT_BRIDGE=1 WLR_RENDERER=pixman WEBKIT_DISABLE_DMABUF_RENDERER=1 WEBKIT_DISABLE_COMPOSITING_MODE=1 WEBKIT_USE_PORTAL=0 cage -s -- himmelblau-greeter"
 user = "greeter"
 EOF
 fi
