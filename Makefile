@@ -1,4 +1,4 @@
-SHELL := /usr/bin/env bash
+SHELL := $(shell command -v bash)
 
 all: .packaging dockerfiles ## Auto-detect host distro and build packages just for this host
 	@set -euo pipefail; \
@@ -52,13 +52,11 @@ all: .packaging dockerfiles ## Auto-detect host distro and build packages just f
 	  gentoo) TARGET="gentoo" ;; \
 	esac; \
 	\
-	# Abort if distro is unsupported
 	if [ -z "$$TARGET" ]; then \
 	  echo "Error: unsupported or unmapped distro: $$ID $$VER"; \
 	  exit 2; \
 	fi; \
 	\
-	# Check if target has a packaging rule
 	all_targets="$$(ALL_PACKAGE_TARGETS)"; \
 	case " $${all_targets} " in \
 	  *" $$TARGET "*) ;; \
