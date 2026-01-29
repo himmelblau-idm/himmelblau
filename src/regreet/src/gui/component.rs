@@ -74,10 +74,36 @@ fn setup_users_sessions(model: &Greeter, widgets: &GreeterWidgets) {
         widgets.ui.usernames_box.append(Some(username), user);
     }
 
-    // Populate the sessions combo box.
-    for session in model.sys_util.get_sessions().keys() {
+    // Populate the sessions combo box and find a default session.
+    // Prefer Wayland sessions over X11 sessions.
+    let mut default_session: Option<String> = None;
+    let mut first_session: Option<String> = None;
+
+    for (session, info) in model.sys_util.get_sessions() {
         debug!("Found session: {session}");
         widgets.ui.sessions_box.append(Some(session), session);
+
+        // Track first session as fallback
+        if first_session.is_none() {
+            first_session = Some(session.clone());
+        }
+
+        // Prefer Wayland sessions
+        if default_session.is_none()
+            && matches!(info.sess_type, crate::sysutil::SessionType::Wayland)
+        {
+            default_session = Some(session.clone());
+        }
+    }
+
+    // Set default session (prefer Wayland, fall back to first available)
+    let initial_session = default_session.or(first_session);
+    if let Some(session) = &initial_session {
+        if !widgets.ui.sessions_box.set_active_id(Some(session)) {
+            warn!("Couldn't set default session: {session}");
+        } else {
+            info!("Set default session to: {session}");
+        }
     }
 
     // If the last user is known, show their login initially.
@@ -247,6 +273,12 @@ impl AsyncComponent for Greeter {
                             ),
                         })
                     }
+                },
+                #[template_child]
+                user_copy {
+                    #[track(model.updates.changed(Updates::input_mode()))]
+                    set_sensitive: !model.updates.is_input(),
+                    connect_clicked => Self::Input::CopyUsername,
                 },
                 #[template_child]
                 user_toggle {
@@ -462,6 +494,24 @@ impl AsyncComponent for Greeter {
                             let clipboard = display.clipboard();
                             clipboard.set_text(code);
                             info!("Copied DAG device code to clipboard");
+                        }
+                    }
+                }
+            }
+            Self::Input::CopyUsername => {
+                if let Some(info) = &self.sess_info {
+                    // Get username from either manual entry or dropdown selection
+                    let username = if self.updates.manual_user_mode {
+                        Some(info.user_text.to_string())
+                    } else {
+                        info.user_id.as_ref().map(|s| s.to_string())
+                    };
+
+                    if let Some(username) = username {
+                        if let Some(display) = gdk::Display::default() {
+                            let clipboard = display.clipboard();
+                            clipboard.set_text(&username);
+                            info!("Copied username to clipboard: {}", username);
                         }
                     }
                 }

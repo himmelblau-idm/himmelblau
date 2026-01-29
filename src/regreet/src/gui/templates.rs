@@ -115,11 +115,22 @@ impl WidgetTemplate for Ui {
                     #[name = "visible_entry"]
                     attach[1, 2, 1, 1] = &gtk::Entry,
 
-                    /// Button to toggle manual user entry
-                    #[name = "user_toggle"]
-                    attach[2, 1, 1, 1] = &gtk::ToggleButton {
-                        set_icon_name: "document-edit-symbolic",
-                        set_tooltip_text: Some("Manually enter username"),
+                    /// Buttons for username: copy and toggle manual entry
+                    attach[2, 1, 1, 1] = &gtk::Box {
+                        set_orientation: gtk::Orientation::Horizontal,
+                        set_spacing: 5,
+
+                        #[name = "user_copy"]
+                        gtk::Button {
+                            set_icon_name: "edit-copy-symbolic",
+                            set_tooltip_text: Some("Copy username to clipboard"),
+                        },
+
+                        #[name = "user_toggle"]
+                        gtk::ToggleButton {
+                            set_icon_name: "document-edit-symbolic",
+                            set_tooltip_text: Some("Manually enter username"),
+                        },
                     },
 
                     /// Button to toggle manual session entry

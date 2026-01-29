@@ -60,6 +60,8 @@ pub enum InputMsg {
     PowerOff,
     /// Copy the DAG device code to clipboard
     CopyDagCode,
+    /// Copy the username to clipboard
+    CopyUsername,
 }
 
 #[derive(Debug)]
