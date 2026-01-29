@@ -15,11 +15,13 @@ fn main() {
     // Set up rerun-if-changed for the script and XML files
     println!("cargo:rerun-if-changed={}", script_path.display());
 
-    // Watch all XML files in the parameter directories
+    // Watch the XML directory itself so new files trigger a rebuild
+    println!("cargo:rerun-if-changed={}", xml_dir.display());
+
+    // Watch all XML files and subdirectories in the parameter directories
     for entry in walkdir(&xml_dir) {
-        if entry.extension().map_or(false, |e| e == "xml") {
-            println!("cargo:rerun-if-changed={}", entry.display());
-        }
+        // Watch directories too, so new files in them trigger rebuilds
+        println!("cargo:rerun-if-changed={}", entry.display());
     }
 
     // Call the Python script to generate Rust code
@@ -48,18 +50,19 @@ fn main() {
     }
 }
 
-/// Simple directory walker that returns all file paths
+/// Simple directory walker that returns all file and directory paths
 fn walkdir(dir: &Path) -> Vec<std::path::PathBuf> {
-    let mut files = Vec::new();
+    let mut paths = Vec::new();
     if let Ok(entries) = std::fs::read_dir(dir) {
         for entry in entries.filter_map(|e| e.ok()) {
             let path = entry.path();
             if path.is_dir() {
-                files.extend(walkdir(&path));
+                paths.push(path.clone());
+                paths.extend(walkdir(&path));
             } else {
-                files.push(path);
+                paths.push(path);
             }
         }
     }
-    files
+    paths
 }
