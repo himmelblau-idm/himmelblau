@@ -21,8 +21,9 @@ assets = [
   ["src/o365.sh", "usr/bin/o365", "755"],
   ["src/o365-multi.sh", "usr/bin/o365-multi", "755"],
   ["src/o365-url-handler.sh", "usr/bin/o365-url-handler", "755"],
-  ["generated/*.desktop", "/usr/share/applications/", "644"],
+  ["generated/*.desktop", "usr/share/applications/", "644"],
   ["src/*.png", "usr/share/icons/hicolor/256x256/apps/", "644"],
+  ["../../platform/debian/apparmor.fusermount3.local", "etc/apparmor/local/fusermount3", "644"]
 ]
 maintainer-scripts = "scripts"
 
