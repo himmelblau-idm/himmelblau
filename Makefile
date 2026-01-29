@@ -59,7 +59,7 @@ all: .packaging dockerfiles ## Auto-detect host distro and build packages just f
 	\
 	case " $(ALL_PACKAGE_TARGETS) " in \
 	  *" $$TARGET "*) ;; \
-	  *) echo "Error: no packaging rule for '$$TARGET' (supported: $${all_targets})"; exit 3 ;; \
+	  *) echo "Error: no packaging rule for '$$TARGET' (supported: $(ALL_PACKAGE_TARGETS))"; exit 3 ;; \
 	esac; \
 	\
 	echo "Building packages for target '$$TARGET'…"; \
