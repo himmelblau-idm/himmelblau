@@ -21,6 +21,7 @@ path = "src/lib.rs"
 name = "himmelblau-qr-greeter"
 depends = ["gnome-shell", "himmelblau"]
 recommends = ["systemd-container"]
+conflicts = "himmelblau-greeter"
 assets = [
   ["target/release/qr-greeter-build/qr-greeter@himmelblau-idm.org/extension.js", "usr/share/gnome-shell/extensions/qr-greeter@himmelblau-idm.org/extension.js", "644"],
   ["target/release/qr-greeter-build/qr-greeter@himmelblau-idm.org/qrcodegen.js", "usr/share/gnome-shell/extensions/qr-greeter@himmelblau-idm.org/qrcodegen.js", "644"],
@@ -49,3 +50,6 @@ himmelblau = "*"
 
 [package.metadata.generate-rpm.recommends]
 systemd-container = "*"
+
+[package.metadata.generate-rpm.conflicts]
+himmelblau-greeter = "*"

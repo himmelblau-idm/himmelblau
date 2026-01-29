@@ -1,0 +1,145 @@
+#!/bin/sh
+set -e
+
+# Post-installation script for himmelblau-greeter
+# This script configures greetd to use himmelblau-greeter as the display manager greeter.
+
+GREETER_BIN="/usr/bin/himmelblau-greeter"
+GREETD_CONFIG="/etc/greetd/config.toml"
+GREETER_CONFIG="/etc/greetd/himmelblau-greeter.toml"
+LOG_DIR="/var/log/himmelblau-greeter"
+STATE_DIR="/var/lib/himmelblau-greeter"
+
+# Create greeter user if it doesn't exist
+# This user runs the greeter process for security isolation
+if ! getent passwd greeter >/dev/null 2>&1; then
+    echo "Creating 'greeter' system user..."
+    useradd --system --user-group --home-dir /var/lib/himmelblau-greeter --shell /sbin/nologin greeter 2>/dev/null || true
+fi
+
+# Add greeter to required groups for Wayland/DRM access
+# video: GPU/DRM device access
+# render: GPU render nodes (some systems)
+# input: input device access for cage
+echo "Adding greeter user to required groups..."
+for grp in video render input; do
+    if getent group "$grp" >/dev/null 2>&1; then
+        usermod -a -G "$grp" greeter 2>/dev/null || true
+    fi
+done
+
+# Create log and state directories
+echo "Creating himmelblau-greeter directories..."
+mkdir -p "$LOG_DIR" "$STATE_DIR"
+chown greeter:greeter "$LOG_DIR" "$STATE_DIR" 2>/dev/null || true
+
+# Create runtime directory for Wayland/cage (needed for XDG_RUNTIME_DIR)
+# This is also handled by tmpfiles.d on boot, but we create it now for immediate use
+RUNTIME_DIR="/run/greeter"
+mkdir -p "$RUNTIME_DIR"
+chown greeter:greeter "$RUNTIME_DIR"
+chmod 0700 "$RUNTIME_DIR"
+
+# Apply tmpfiles configuration if systemd-tmpfiles is available
+if command -v systemd-tmpfiles >/dev/null 2>&1; then
+    systemd-tmpfiles --create /usr/lib/tmpfiles.d/himmelblau-greeter.conf 2>/dev/null || true
+fi
+
+# Load AppArmor profile if AppArmor is available
+# This allows WebKitGTK's bubblewrap sandbox to create user namespaces
+APPARMOR_PROFILE="/etc/apparmor.d/himmelblau-greeter"
+if [ -f "$APPARMOR_PROFILE" ] && command -v apparmor_parser >/dev/null 2>&1; then
+    echo "Loading AppArmor profile for himmelblau-greeter..."
+    apparmor_parser -r "$APPARMOR_PROFILE" 2>/dev/null || echo "Warning: Could not load AppArmor profile" >&2
+fi
+
+# Check if greetd is installed
+if ! command -v greetd >/dev/null 2>&1; then
+    echo "Info: greetd is not installed. Install greetd to use himmelblau-greeter." >&2
+    exit 0
+fi
+
+# Install default greeter config if not exists
+if [ ! -f "$GREETER_CONFIG" ] && [ -f "${GREETER_CONFIG}.sample" ]; then
+    echo "Installing default himmelblau-greeter configuration..."
+    cp "${GREETER_CONFIG}.sample" "$GREETER_CONFIG"
+fi
+
+# Configure greetd to use himmelblau-greeter
+# GTK4 apps require a display server, so we wrap the greeter in cage (Wayland kiosk compositor)
+if [ -f "$GREETD_CONFIG" ]; then
+    # Check if greetd is already configured to use himmelblau-greeter
+    if grep -q "himmelblau-greeter" "$GREETD_CONFIG" 2>/dev/null; then
+        echo "greetd is already configured to use himmelblau-greeter."
+    else
+        echo "Configuring greetd to use himmelblau-greeter..."
+        # Backup existing config
+        if [ -f "$GREETD_CONFIG" ]; then
+            cp "$GREETD_CONFIG" "${GREETD_CONFIG}.bak.$(date +%s)"
+        fi
+        # Create new greetd config - use cage to provide Wayland compositor
+        # Environment variables help with VM compatibility and GTK portal timeouts
+        cat > "$GREETD_CONFIG" << 'EOF'
+[terminal]
+vt = 1
+
+[default_session]
+command = "env XDG_RUNTIME_DIR=/run/greeter GTK_USE_PORTAL=0 GDK_DEBUG=no-portals GTK_A11Y=none NO_AT_BRIDGE=1 WLR_RENDERER=pixman cage -s -- himmelblau-greeter"
+user = "greeter"
+EOF
+        echo "greetd configured to use himmelblau-greeter."
+    fi
+else
+    # Create greetd config directory and file
+    echo "Creating greetd configuration for himmelblau-greeter..."
+    mkdir -p /etc/greetd
+    cat > "$GREETD_CONFIG" << 'EOF'
+[terminal]
+vt = 1
+
+[default_session]
+command = "env XDG_RUNTIME_DIR=/run/greeter GTK_USE_PORTAL=0 GDK_DEBUG=no-portals GTK_A11Y=none NO_AT_BRIDGE=1 WLR_RENDERER=pixman cage -s -- himmelblau-greeter"
+user = "greeter"
+EOF
+fi
+
+# Enable greetd service if systemd is available
+if command -v systemctl >/dev/null 2>&1; then
+    DM_SERVICE_LINK="/etc/systemd/system/display-manager.service"
+
+    # Remove any existing display-manager.service symlink (stale or pointing to other DM)
+    if [ -L "$DM_SERVICE_LINK" ] || [ -e "$DM_SERVICE_LINK" ]; then
+        CURRENT_DM=$(readlink "$DM_SERVICE_LINK" 2>/dev/null || true)
+        if [ -n "$CURRENT_DM" ] && ! echo "$CURRENT_DM" | grep -q "greetd"; then
+            CURRENT_DM_NAME=$(basename "$CURRENT_DM")
+            echo "Disabling current display manager ($CURRENT_DM_NAME) to switch to greetd..."
+            systemctl disable "$CURRENT_DM_NAME" 2>/dev/null || true
+        fi
+        # Remove the symlink to ensure clean state
+        rm -f "$DM_SERVICE_LINK"
+    fi
+
+    echo "Enabling greetd service..."
+    systemctl enable greetd.service || echo "Warning: Could not enable greetd.service" >&2
+
+    # Ensure display-manager.service symlink exists pointing to greetd
+    # This allows 'systemctl restart display-manager' to work
+    if [ ! -L "$DM_SERVICE_LINK" ]; then
+        echo "Creating display-manager.service symlink..."
+        ln -sf /lib/systemd/system/greetd.service "$DM_SERVICE_LINK"
+    fi
+
+    # Reload systemd to pick up the symlink
+    systemctl daemon-reload
+
+    # Start greetd if not already running (and we're not in a chroot/container)
+    if [ -d /run/systemd/system ]; then
+        if ! systemctl is-active --quiet greetd.service; then
+            echo "Starting greetd service..."
+            systemctl start greetd.service || echo "Note: Could not start greetd. A reboot may be required." >&2
+        fi
+    fi
+fi
+
+echo "himmelblau-greeter installation complete."
+echo "greetd is now your display manager."

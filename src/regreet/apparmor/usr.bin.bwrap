@@ -1,0 +1,18 @@
+# AppArmor profile for bubblewrap when used by himmelblau-greeter
+# This allows WebKitGTK's sandbox to function in the greeter environment
+
+abi <abi/4.0>,
+
+include <tunables/global>
+
+profile bwrap-greeter /usr/bin/bwrap flags=(unconfined) {
+  userns,
+
+  # Allow capabilities needed for sandboxing
+  capability setpcap,
+  capability sys_admin,
+  capability sys_chroot,
+  capability setuid,
+  capability setgid,
+  capability net_admin,
+}

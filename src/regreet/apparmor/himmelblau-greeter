@@ -1,0 +1,10 @@
+# AppArmor profile for himmelblau-greeter
+# Allows the greeter and WebKitGTK's bubblewrap sandbox to use user namespaces
+
+abi <abi/4.0>,
+
+include <tunables/global>
+
+/usr/bin/himmelblau-greeter flags=(unconfined) {
+  userns,
+}
