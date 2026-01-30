@@ -1,0 +1,82 @@
+# SPDX-FileCopyrightText: 2022 Harish Rajagopal <harish.rajagopals@gmail.com>
+# SPDX-FileCopyrightText: 2025 David Mulder <dmulder@suse.com>
+#
+# SPDX-License-Identifier: CC0-1.0
+
+[package]
+name = "himmelblau-greeter"
+description = "Himmelblau greeter for greetd with browser-based authentication"
+version.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+edition.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[dependencies]
+clap = { version = "4.5", features = ["derive"] }
+const_format = { version = "0.2.33", features = ["rust_1_64"] }
+educe = "0.6"
+file-rotate = "0.7"
+glob = "0.3"
+greetd_ipc = { version = "0.10", features = ["tokio-codec"] }
+gtk4 = "0.10"
+humantime-serde = "1.1.1"
+jiff = "0.1.14"
+lazy_static.workspace = true
+lru.workspace = true
+pwd = "1.4.0"
+regex = "1.10"
+relm4 = "0.10"
+serde = { version = "1.0", features = ["derive"] }
+shlex = "1.3"
+thiserror = "2.0"
+tokio = { version = "1.43", features = ["net", "time"] }
+toml = "0.8"
+tracing.workspace = true
+tracing-appender = "0.2"
+tracing-subscriber = { version = "0.3", features = ["local-time"] }
+tracker = "0.2"
+webkit6 = "0.5"
+
+[features]
+gtk4_10 = ["gtk4/v4_10"]
+
+[dev-dependencies]
+test-case = "3.3.1"
+
+[package.metadata.deb]
+name = "himmelblau-greeter"
+depends = "greetd, cage"
+recommends = "himmelblau"
+conflicts = "himmelblau-qr-greeter, gdm3"
+section = "admin"
+assets = [
+    ["target/release/himmelblau-greeter", "usr/bin/", "755"],
+    ["himmelblau-greeter.sample.toml", "etc/greetd/himmelblau-greeter.toml.sample", "644"],
+    ["himmelblau-greeter.tmpfiles.conf", "usr/lib/tmpfiles.d/himmelblau-greeter.conf", "644"],
+    ["apparmor/himmelblau-greeter", "etc/apparmor.d/himmelblau-greeter", "644"],
+]
+maintainer-scripts = "scripts"
+
+[package.metadata.generate-rpm]
+name = "himmelblau-greeter"
+assets = [
+    { source = "target/release/himmelblau-greeter", dest = "/usr/bin/himmelblau-greeter", mode = "755" },
+    { source = "himmelblau-greeter.sample.toml", dest = "/etc/greetd/himmelblau-greeter.toml.sample", mode = "644" },
+    { source = "himmelblau-greeter.tmpfiles.conf", dest = "/usr/lib/tmpfiles.d/himmelblau-greeter.conf", mode = "644" },
+    { source = "apparmor/himmelblau-greeter", dest = "/etc/apparmor.d/himmelblau-greeter", mode = "644" },
+]
+post_install_script = "scripts/postinst"
+
+[package.metadata.generate-rpm.requires]
+greetd = "*"
+cage = "*"
+
+[package.metadata.generate-rpm.recommends]
+himmelblau = "*"
+
+[package.metadata.generate-rpm.conflicts]
+himmelblau-qr-greeter = "*"
+gdm = "*"

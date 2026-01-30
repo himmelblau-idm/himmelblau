@@ -58,6 +58,10 @@ PKG_PAIRS = [
     ("libpcre2-dev", "pcre2-devel"),
     ("libsqlite3-dev", "sqlite-devel"),
     ("libunistring-dev", "libunistring-devel"),
+    # GTK4 and WebKit6 for himmelblau-greeter
+    ("libgtk-4-dev", "gtk4-devel"),
+    ("libwebkitgtk-6.0-dev", "webkitgtk6.0-devel"),
+    ("libgraphene-1.0-dev", "graphene-devel"),
 ]
 
 SELINUX_PKGS = ["policycoreutils-devel", "selinux-policy-targeted"]
@@ -113,6 +117,7 @@ PACKAGES = [
     ("sshd-config", "src/sshd-config", False),
     ("sso", "src/sso", True),
     ("qr-greeter", "src/qr-greeter", False),
+    ("himmelblau-greeter", "src/regreet", False),
     ("selinux", "src/selinux", False),
     ("o365", "src/o365", False),
 ]
