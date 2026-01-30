@@ -88,6 +88,69 @@ macro_rules! extract_base_url {
     }};
 }
 
+/// Convert an MsalError to a short, user-friendly message for PAM display.
+/// This intentionally ignores the internal string contents of error variants
+/// to avoid leaking verbose or sensitive information to the user.
+fn msal_error_to_user_message(e: &MsalError) -> String {
+    match e {
+        MsalError::InvalidJson(_)
+        | MsalError::InvalidBase64(_)
+        | MsalError::InvalidParse(_)
+        | MsalError::InvalidRegex(_)
+        | MsalError::FormatError(_) => {
+            "Authentication failed: Invalid server response.".to_string()
+        }
+        MsalError::AcquireTokenFailed(error_response) => {
+            // This case is typically handled separately with error_description,
+            // but provide a fallback if it reaches this function.
+            error_response.error_description.to_string()
+        }
+        MsalError::RequestFailed(_) => {
+            "Authentication failed: Unable to reach authentication server.".to_string()
+        }
+        MsalError::AuthTypeUnsupported => {
+            "Authentication failed: Authentication method not supported.".to_string()
+        }
+        MsalError::TPMFail(_) => "Authentication failed: Security hardware error.".to_string(),
+        MsalError::URLFormatFailed(_) => "Authentication failed: Configuration error.".to_string(),
+        MsalError::DeviceEnrollmentFail(_) => {
+            "Device enrollment failed. Please contact your administrator.".to_string()
+        }
+        MsalError::CryptoFail(_) => "Authentication failed: Cryptographic error.".to_string(),
+        MsalError::ConfigError(_) => "Authentication failed: Configuration error.".to_string(),
+        MsalError::MFAPollContinue => {
+            // This is an internal state, should not reach the user.
+            "Authentication in progress.".to_string()
+        }
+        MsalError::AADSTSError(aadsts_err) => {
+            // AADSTSError has a useful description from Azure AD
+            aadsts_err.to_string()
+        }
+        MsalError::Missing(_) => "Authentication failed: Missing required data.".to_string(),
+        MsalError::ChangePassword => {
+            // Internal state, should not bubble up to user.
+            "Password change required. Please contact your administrator.".to_string()
+        }
+        MsalError::PasswordRequired => {
+            // Internal state, should not bubble up to user.
+            "Password entry required.".to_string()
+        }
+        MsalError::ConsentRequested(_) => {
+            // Internal state, should not bubble up to user.
+            "Consent required. Please contact your administrator.".to_string()
+        }
+        MsalError::AuthCodeReceived(_) => {
+            // Internal state, should not bubble up to user.
+            "Authentication in progress.".to_string()
+        }
+        MsalError::MFARequired => {
+            // Internal state, should not bubble up to user.
+            "Multi-factor authentication required.".to_string()
+        }
+        _ => "Authentication failed. Please contact your administrator.".to_string(),
+    }
+}
+
 pub struct HimmelblauMultiProvider {
     config: Arc<RwLock<HimmelblauConfig>>,
     providers: Arc<RwLock<HashMap<String, HimmelblauProvider>>>,
@@ -1481,12 +1544,18 @@ impl IdProvider for HimmelblauProvider {
                         config.set(&self.domain, "intune_device_id", &intune_device_id);
                         if let Err(e) = config.write_server_config() {
                             error!(?e, "Failed to write Intune join configuration.");
-                            return Err(IdpError::BadRequest);
+                            return Ok((
+                                AuthResult::Denied("Failed to save device configuration. Please contact your administrator.".to_string()),
+                                AuthCacheAction::None,
+                            ));
                         }
                         let intune_tag = self.fetch_intune_key_tag();
                         if let Err(e) = keystore.insert_tagged_hsm_key(&intune_tag, &intune_key) {
                             error!(?e, "Failed inserting the intune key into the keystore.");
-                            return Err(IdpError::BadRequest);
+                            return Ok((
+                                AuthResult::Denied("Failed to store device credentials. Please contact your administrator.".to_string()),
+                                AuthCacheAction::None,
+                            ));
                         }
                     }
                     Err(IdpError::NotFound { .. }) => {}
@@ -1500,12 +1569,13 @@ impl IdProvider for HimmelblauProvider {
             ($token:ident) => {{
                 if !self.is_domain_joined(keystore).await {
                     debug!("Device is not enrolled. Enrolling now.");
-                    self.join_domain(tpm, &$token, keystore, machine_key)
-                        .await
-                        .map_err(|e| {
-                            error!("Failed to join domain: {:?}", e);
-                            IdpError::BadRequest
-                        })?;
+                    if let Err(e) = self.join_domain(tpm, &$token, keystore, machine_key).await {
+                        error!("Failed to join domain: {:?}", e);
+                        return Ok((
+                            AuthResult::Denied("Failed to join domain. Please contact your administrator.".to_string()),
+                            AuthCacheAction::None,
+                        ));
+                    }
                 } else if !self.is_intune_enrolled(keystore).await {
                     intune_enroll!($token);
                 }
@@ -1562,8 +1632,10 @@ impl IdProvider for HimmelblauProvider {
                                         Ok(token) => token,
                                         Err(e) => {
                                             error!("{:?}", e);
-                                            return Err(IdpError::NotFound {
-                                                what: "token".to_string(), where_: "refresh".to_string() });
+                                            return Ok((
+                                                AuthResult::Denied(msal_error_to_user_message(&e)),
+                                                AuthCacheAction::None,
+                                            ));
                                         }
                                     )
                                 } else if err_resp.error_codes.contains(&CONSENT_REQUIRED) {
@@ -1575,12 +1647,20 @@ impl IdProvider for HimmelblauProvider {
                                            Group names will not be resolved.");
                                     $token.clone()
                                 } else {
-                                    return Err(IdpError::NotFound {
-                                        what: "DEVICE_AUTH_FAIL".to_string(), where_: "acq_token".to_string() });
+                                    // Return the AAD error description to the user
+                                    return Ok((
+                                        AuthResult::Denied(err_resp.error_description.clone()),
+                                        AuthCacheAction::None,
+                                    ));
                                 }
                             }
-                            _ => return Err(IdpError::NotFound {
-                                what: "AcquireTokenFailed".to_string(), where_: "acq_token".to_string() }),
+                            _ => {
+                                // Return a user-friendly error message
+                                return Ok((
+                                    AuthResult::Denied(msal_error_to_user_message(&e)),
+                                    AuthCacheAction::None,
+                                ));
+                            }
                         }
                     }
                 )
@@ -1888,7 +1968,10 @@ impl IdProvider for HimmelblauProvider {
                                                 }
                                                 Err(e) => {
                                                     error!("Failed to exchange PRT (retry): {:?}", e);
-                                                    return Err(IdpError::BadRequest);
+                                                    return Ok((
+                                                        AuthResult::Denied("Authentication failed. Please try signing in again.".to_string()),
+                                                        AuthCacheAction::None,
+                                                    ));
                                                 }
                                             }
                                     } else {
@@ -1971,7 +2054,10 @@ impl IdProvider for HimmelblauProvider {
                      * continue from a Pin auth. */
                     Ok(AuthResult::Next(_)) => {
                         debug!("Invalid additional authentication requested with Hello auth.");
-                        Err(IdpError::BadRequest)
+                        Ok((
+                            AuthResult::Denied("Unexpected authentication step. Please try signing in again.".to_string()),
+                            AuthCacheAction::None,
+                        ))
                     }
                     Ok(auth_result) => {
                         debug!("Hello auth failed.");
@@ -2223,11 +2309,27 @@ impl IdProvider for HimmelblauProvider {
                     resp,
                     // FIDO
                     {
-                        let fido_challenge =
-                            resp.fido_challenge.clone().ok_or(IdpError::BadRequest)?;
+                        let fido_challenge = match resp.fido_challenge.clone() {
+                            Some(challenge) => challenge,
+                            None => {
+                                debug!("FIDO challenge missing in MFA response");
+                                return Ok((
+                                    AuthResult::Denied("FIDO authentication not available. Please try a different authentication method.".to_string()),
+                                    AuthCacheAction::None,
+                                ));
+                            }
+                        };
 
-                        let fido_allow_list =
-                            resp.fido_allow_list.clone().ok_or(IdpError::BadRequest)?;
+                        let fido_allow_list = match resp.fido_allow_list.clone() {
+                            Some(list) => list,
+                            None => {
+                                debug!("FIDO allow list missing in MFA response");
+                                return Ok((
+                                    AuthResult::Denied("FIDO authentication not available. Please try a different authentication method.".to_string()),
+                                    AuthCacheAction::None,
+                                ));
+                            }
+                        };
                         *cred_handler = AuthCredHandler::MFA {
                             flow: resp,
                             password: Some(cred.clone()),
@@ -2378,7 +2480,12 @@ impl IdProvider for HimmelblauProvider {
                 let max_poll_attempts = flow.max_poll_attempts.unwrap_or(180);
                 if poll_attempt > max_poll_attempts {
                     error!("MFA polling timed out");
-                    return Err(IdpError::BadRequest);
+                    return Ok((
+                        AuthResult::Denied(
+                            "Authentication timed out. Please try again.".to_string(),
+                        ),
+                        AuthCacheAction::None,
+                    ));
                 }
                 let token = net_down_check!(
                     self.client
