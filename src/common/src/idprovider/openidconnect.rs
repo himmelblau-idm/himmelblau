@@ -638,10 +638,11 @@ impl OidcApplication {
         };
 
         let account_id = userinfo
-            .email()
-            .map(|email| email.to_string())
+            .preferred_username()
+            .map(|username| username.to_string())
+            .or_else(|| userinfo.email().map(|email| email.to_string()))
             .ok_or_else(|| {
-                error!("Missing email claim in userinfo");
+                error!("Missing preferred_username and email claims in userinfo");
                 IdpError::BadRequest
             })?;
 
