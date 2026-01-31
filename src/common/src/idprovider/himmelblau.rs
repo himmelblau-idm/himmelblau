@@ -2557,6 +2557,237 @@ impl IdProvider for HimmelblauProvider {
                     opts.push(AuthOption::NoDAGFallback);
                 }
 
+                // Sign-in frequency optimization: For local console logins (not remote),
+                // check if MFA can be skipped due to Azure's sign-in frequency policy.
+                // This allows password-only auth when the user has already satisfied
+                // MFA within the configured sign-in frequency window.
+                let console_password_only =
+                    self.config.read().await.get_allow_console_password_only();
+                if console_password_only && !is_remote_service {
+                    debug!(
+                        "Console password-only mode: trying ROPC for '{}' before MFA flow",
+                        account_id
+                    );
+                    // First, validate the password via ROPC (Resource Owner Password Credentials)
+                    let ropc_result = self
+                        .client
+                        .read()
+                        .await
+                        .acquire_token_by_username_password(
+                            account_id,
+                            &cred,
+                            vec![],
+                            Some("https://graph.microsoft.com".to_string()),
+                            None,
+                            tpm,
+                            machine_key,
+                        )
+                        .await;
+
+                    match ropc_result {
+                        Ok(token) => {
+                            // Password validated and no MFA required - return success
+                            debug!("ROPC succeeded for '{}' - no MFA required", account_id);
+                            let token2 = enroll_and_obtain_enrolled_token!(token);
+                            return match self.token_validate(account_id, &token2, None).await {
+                                Ok(AuthResult::Success { token }) => Ok((
+                                    AuthResult::Success { token },
+                                    AuthCacheAction::PasswordHashUpdate { cred },
+                                )),
+                                Ok(auth_result) => Ok((auth_result, AuthCacheAction::None)),
+                                Err(e) => Err(e),
+                            };
+                        }
+                        Err(MsalError::AADSTSError(ref aadsts_err))
+                            if [50072, 50074, 50076].contains(&aadsts_err.code) =>
+                        {
+                            // Password is valid but MFA is required by policy.
+                            // Check if sign-in frequency is satisfied via PRT exchange.
+                            debug!(
+                                "Password valid for '{}' but MFA required (AADSTS{}). Checking sign-in frequency via PRT.",
+                                account_id, aadsts_err.code
+                            );
+                            if let Ok(RefreshCacheEntry::Prt(prt)) =
+                                self.refresh_cache.refresh_token(account_id).await
+                            {
+                                let prt_result = self
+                                    .client
+                                    .read()
+                                    .await
+                                    .exchange_prt_for_access_token(
+                                        &prt,
+                                        vec!["openid", "profile"],
+                                        None,
+                                        None,
+                                        tpm,
+                                        machine_key,
+                                    )
+                                    .await;
+
+                                match prt_result {
+                                    Ok(mut msal_token) => {
+                                        // Sign-in frequency satisfied - no MFA needed
+                                        info!(
+                                            "Sign-in frequency satisfied for '{}' via PRT - skipping MFA",
+                                            account_id
+                                        );
+                                        // Request a new PRT to attach to the token (for cache refresh).
+                                        // Don't use enroll_and_obtain_enrolled_token! here because
+                                        // the refresh_token from PRT exchange is not valid for that flow.
+                                        if let Ok(new_prt) = self
+                                            .client
+                                            .read()
+                                            .await
+                                            .exchange_prt_for_prt(&prt, tpm, machine_key, true)
+                                            .await
+                                        {
+                                            msal_token.prt = Some(new_prt.clone());
+                                            self.refresh_cache
+                                                .add(account_id, &RefreshCacheEntry::Prt(new_prt))
+                                                .await;
+                                        }
+                                        return match self
+                                            .token_validate(account_id, &msal_token, None)
+                                            .await
+                                        {
+                                            Ok(AuthResult::Success { token }) => Ok((
+                                                AuthResult::Success { token },
+                                                AuthCacheAction::PasswordHashUpdate { cred },
+                                            )),
+                                            Ok(auth_result) => {
+                                                Ok((auth_result, AuthCacheAction::None))
+                                            }
+                                            Err(e) => Err(e),
+                                        };
+                                    }
+                                    Err(MsalError::MFARequired) => {
+                                        debug!(
+                                            "PRT exchange requires MFA for '{}' - proceeding with MFA flow",
+                                            account_id
+                                        );
+                                        // Fall through to MFA flow
+                                    }
+                                    Err(e) => {
+                                        debug!(
+                                            "PRT exchange failed for '{}': {:?} - proceeding with MFA flow",
+                                            account_id, e
+                                        );
+                                        // Fall through to MFA flow
+                                    }
+                                }
+                            } else {
+                                debug!(
+                                    "No PRT cached for '{}' - proceeding with MFA flow",
+                                    account_id
+                                );
+                                // Fall through to MFA flow
+                            }
+                        }
+                        Err(MsalError::MFARequired) => {
+                            // Password is valid but MFA is required (ConvergedTFA response).
+                            // Check if sign-in frequency is satisfied via PRT exchange.
+                            debug!(
+                                "Password valid for '{}' but MFA required (ConvergedTFA). Checking sign-in frequency via PRT.",
+                                account_id
+                            );
+                            if let Ok(RefreshCacheEntry::Prt(prt)) =
+                                self.refresh_cache.refresh_token(account_id).await
+                            {
+                                let prt_result = self
+                                    .client
+                                    .read()
+                                    .await
+                                    .exchange_prt_for_access_token(
+                                        &prt,
+                                        vec!["openid", "profile"],
+                                        None,
+                                        None,
+                                        tpm,
+                                        machine_key,
+                                    )
+                                    .await;
+
+                                match prt_result {
+                                    Ok(mut msal_token) => {
+                                        // Sign-in frequency satisfied - no MFA needed
+                                        info!(
+                                            "Sign-in frequency satisfied for '{}' via PRT - skipping MFA",
+                                            account_id
+                                        );
+                                        // Request a new PRT to attach to the token (for cache refresh).
+                                        if let Ok(new_prt) = self
+                                            .client
+                                            .read()
+                                            .await
+                                            .exchange_prt_for_prt(&prt, tpm, machine_key, true)
+                                            .await
+                                        {
+                                            msal_token.prt = Some(new_prt.clone());
+                                            self.refresh_cache
+                                                .add(account_id, &RefreshCacheEntry::Prt(new_prt))
+                                                .await;
+                                        }
+                                        return match self
+                                            .token_validate(account_id, &msal_token, None)
+                                            .await
+                                        {
+                                            Ok(AuthResult::Success { token }) => Ok((
+                                                AuthResult::Success { token },
+                                                AuthCacheAction::PasswordHashUpdate { cred },
+                                            )),
+                                            Ok(auth_result) => {
+                                                Ok((auth_result, AuthCacheAction::None))
+                                            }
+                                            Err(e) => Err(e),
+                                        };
+                                    }
+                                    Err(MsalError::MFARequired) => {
+                                        debug!(
+                                            "PRT exchange requires MFA for '{}' - proceeding with MFA flow",
+                                            account_id
+                                        );
+                                        // Fall through to MFA flow
+                                    }
+                                    Err(e) => {
+                                        debug!(
+                                            "PRT exchange failed for '{}': {:?} - proceeding with MFA flow",
+                                            account_id, e
+                                        );
+                                        // Fall through to MFA flow
+                                    }
+                                }
+                            } else {
+                                debug!(
+                                    "No PRT cached for '{}' - proceeding with MFA flow",
+                                    account_id
+                                );
+                                // Fall through to MFA flow
+                            }
+                        }
+                        Err(MsalError::ChangePassword) => {
+                            // The user needs to set a new password.
+                            *cred_handler = AuthCredHandler::ChangePassword { old_cred: cred };
+                            return Ok((
+                                AuthResult::Next(AuthRequest::ChangePassword {
+                                    msg: "Update your password\n\
+                                         You need to update your password because this is\n\
+                                         the first time you are signing in, or because your\n\
+                                         password has expired."
+                                        .to_string(),
+                                }),
+                                AuthCacheAction::None,
+                            ));
+                        }
+                        Err(e) => {
+                            debug!(
+                                "ROPC failed for '{}': {:?} - proceeding with MFA flow",
+                                account_id, e
+                            );
+                            // Fall through to MFA flow
+                        }
+                    }
+                }
+
                 // Call the appropriate method based on whether mfa_method is configured
                 let mresp = self
                     .client
