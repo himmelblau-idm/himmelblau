@@ -355,6 +355,19 @@ DISTS = {
         "tpm": True,
         "selinux": False,
     },
+    # ---- Amazon Linux family ----
+    "amzn2023": {
+        "family": "rpm",
+        "image": "amazonlinux:2023",
+        "extra_prep": [],
+        "replace": {
+            "build-essential": '"@Development Tools"',
+            "@development-tools": "",
+            "curl": "",  # avoid the curl/curl-minimal install conflict
+        },
+        "tpm": True,
+        "selinux": True,
+    },
 }
 
 DOCKERFILE_TPL = """\
