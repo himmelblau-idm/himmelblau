@@ -28,9 +28,22 @@ updates:
     commit-message:
       prefix: "deps(rust)"
     ignore:
-      - dependency-name: "libhimmelblau"
+      # Keep kanidm deps at 1.7.x for Rust 1.88 compatibility
+      - dependency-name: "kanidm_proto"
         versions:
-          - ">=0.8.0"
+          - ">=1.8.0"
+      - dependency-name: "kanidm_lib_crypto"
+        versions:
+          - ">=1.8.0"
+      - dependency-name: "kanidm_lib_file_permissions"
+        versions:
+          - ">=1.8.0"
+      - dependency-name: "kanidm_utils_users"
+        versions:
+          - ">=1.8.0"
+      - dependency-name: "sketching"
+        versions:
+          - ">=1.8.0"
     groups:
       all-cargo-updates:
         patterns:
