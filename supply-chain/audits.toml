@@ -157,6 +157,11 @@ version = "1.2.52"
 [[audits.cc]]
 who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
+version = "1.2.53"
+
+[[audits.cc]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
 delta = "1.2.41 -> 1.2.44"
 
 [[audits.chrono]]
@@ -218,6 +223,11 @@ version = "0.1.2"
 who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
 version = "0.1.7"
+
+[[audits.find-msvc-tools]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+version = "0.1.8"
 
 [[audits.foldhash]]
 who = "David Mulder <dmulder@samba.org>"
@@ -309,10 +319,35 @@ who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
 delta = "0.9.110 -> 0.9.111"
 
+[[audits.opentelemetry]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+version = "0.31.0"
+
 [[audits.opentelemetry-http]]
 who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
 delta = "0.27.0 -> 0.31.0"
+
+[[audits.opentelemetry-otlp]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+version = "0.31.0"
+
+[[audits.opentelemetry-proto]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+version = "0.31.0"
+
+[[audits.opentelemetry-semantic-conventions]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+version = "0.31.0"
+
+[[audits.opentelemetry_sdk]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+version = "0.31.0"
 
 [[audits.owo-colors]]
 who = "David Mulder <dmulder@samba.org>"
@@ -467,7 +502,17 @@ version = "0.14.2"
 [[audits.tracing-forest]]
 who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
+version = "0.3.1"
+
+[[audits.tracing-forest]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
 delta = "0.2.0 -> 0.3.0"
+
+[[audits.tracing-opentelemetry]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+version = "0.32.1"
 
 [[audits.uninit]]
 who = "David Mulder <dmulder@samba.org>"
@@ -489,6 +534,11 @@ who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
 version = "5.13.1"
 
+[[audits.zbus]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+version = "5.13.2"
+
 [[audits.zbus_macros]]
 who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
@@ -498,6 +548,11 @@ version = "5.12.0"
 who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
 version = "5.13.1"
+
+[[audits.zbus_macros]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+version = "5.13.2"
 
 [[audits.zbus_names]]
 who = "David Mulder <dmulder@samba.org>"
@@ -514,10 +569,20 @@ who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
 version = "5.9.1"
 
+[[audits.zvariant]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+version = "5.9.2"
+
 [[audits.zvariant_derive]]
 who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
 version = "5.9.1"
+
+[[audits.zvariant_derive]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+version = "5.9.2"
 
 [[audits.zvariant_utils]]
 who = "David Mulder <dmulder@samba.org>"
@@ -1342,7 +1407,7 @@ end = "2026-09-11"
 
 [[trusted.rustls]]
 criteria = "safe-to-deploy"
-user-id = 4556 # Dirkjan Ochtman (djc)
+user-id = 4556
 start = "2022-05-18"
 end = "2026-11-20"
 
@@ -1546,7 +1611,7 @@ end = "2026-09-11"
 
 [[trusted.tracing-opentelemetry]]
 criteria = "safe-to-deploy"
-user-id = 4556 # Dirkjan Ochtman (djc)
+user-id = 4556
 start = "2024-05-29"
 end = "2027-01-20"
 
