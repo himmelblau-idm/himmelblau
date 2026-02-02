@@ -500,28 +500,8 @@ criteria = "safe-to-deploy"
 version = "1.12.0"
 criteria = "safe-to-deploy"
 
-[[exemptions.opentelemetry]]
-version = "0.27.1"
-criteria = "safe-to-deploy"
-
 [[exemptions.opentelemetry-http]]
 version = "0.27.0"
-criteria = "safe-to-deploy"
-
-[[exemptions.opentelemetry-otlp]]
-version = "0.27.0"
-criteria = "safe-to-deploy"
-
-[[exemptions.opentelemetry-proto]]
-version = "0.27.0"
-criteria = "safe-to-deploy"
-
-[[exemptions.opentelemetry-semantic-conventions]]
-version = "0.27.0"
-criteria = "safe-to-deploy"
-
-[[exemptions.opentelemetry_sdk]]
-version = "0.27.1"
 criteria = "safe-to-deploy"
 
 [[exemptions.ordered-stream]]
@@ -792,20 +772,12 @@ criteria = "safe-to-deploy"
 version = "0.12.3"
 criteria = "safe-to-deploy"
 
-[[exemptions.tower]]
-version = "0.4.13"
-criteria = "safe-to-deploy"
-
 [[exemptions.tower-layer]]
 version = "0.3.2"
 criteria = "safe-to-deploy"
 
 [[exemptions.tower-service]]
 version = "0.3.2"
-criteria = "safe-to-deploy"
-
-[[exemptions.tracing-forest]]
-version = "0.2.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.tss-esapi]]
