@@ -31,6 +31,7 @@ use crate::idmap_cache::StaticIdCache;
 use crate::idprovider::common::KeyType;
 use crate::idprovider::common::RefreshCacheEntry;
 use crate::idprovider::common::TotpEnrollmentRecord;
+use crate::idprovider::common::{cache_idmap_result, run_idmap_script};
 use crate::idprovider::common::{BadPinCounter, RefreshCache};
 use crate::idprovider::interface::{tpm, UserTokenState};
 use crate::idprovider::openidconnect::OidcProvider;
@@ -3816,7 +3817,6 @@ impl HimmelblauProvider {
                 (pwd.pw_uid as u32, pwd.pw_gid as u32)
             }
             None => {
-                let idmap = self.idmap.read().await;
                 let idmap_cache = StaticIdCache::new(ID_MAP_CACHE, false).map_err(|e| {
                     error!("Failed reading from the idmap cache: {:?}", e);
                     IdpError::BadRequest
@@ -3824,72 +3824,111 @@ impl HimmelblauProvider {
                 match idmap_cache.get_user_by_name(&spn) {
                     Some(user) => (user.uid, user.gid),
                     None => {
-                        let uidnumber = match config.get_id_attr_map() {
-                            IdAttr::Uuid => idmap
-                                .object_id_to_unix_id(
-                                    &self.graph.tenant_id().await.map_err(|e| {
-                                        error!("{:?}", e);
-                                        IdpError::BadRequest
-                                    })?,
-                                    &AadSid::from_object_id(&uuid).map_err(|e| {
-                                        error!("Failed parsing object id: {:?}", e);
-                                        IdpError::BadRequest
-                                    })?,
-                                )
-                                .map_err(|e| {
-                                    error!("{:?}", e);
+                        let script_result = match config.get_idmap_script() {
+                            Some(script) => {
+                                let access_token_env = access_token.clone().unwrap_or_default();
+                                let tenant_id = self.graph.tenant_id().await.map_err(|e| {
+                                    error!("Failed fetching tenant id for idmap script: {:?}", e);
                                     IdpError::BadRequest
-                                })?,
-                            IdAttr::Name => idmap
-                                .gen_to_unix(
-                                    &self.graph.tenant_id().await.map_err(|e| {
-                                        error!("{:?}", e);
-                                        IdpError::BadRequest
-                                    })?,
+                                })?;
+                                let domain = split_username(&spn).map(|(_, domain)| domain);
+                                run_idmap_script(
+                                    &script,
                                     &spn,
+                                    &access_token_env,
+                                    &uuid.to_string(),
+                                    &tenant_id,
+                                    domain,
                                 )
-                                .map_err(|e| {
-                                    error!("{:?}", e);
-                                    IdpError::BadRequest
-                                })?,
-                            IdAttr::Rfc2307 => match posix_attrs.get("uidNumber") {
-                                Some(uid_number) => uid_number.parse::<u32>().map_err(|e| {
-                                    error!(
-                                        "Invalid uidNumber ('{}') synced from on-prem AD: {:?}",
-                                        uid_number, e
-                                    );
-                                    IdpError::BadRequest
-                                })?,
-                                None => {
-                                    error!(
-                                        "User {} has no uidNumber defined in the directory!",
-                                        uuid
-                                    );
-                                    return Err(IdpError::BadRequest);
-                                }
-                            },
+                                ?
+                            }
+                            None => None,
                         };
 
-                        // Utilize the existing primary group if set
-                        let gidnumber = if let Some(gid_number) = posix_attrs.get("gidNumber") {
-                            gid_number.parse::<u32>().map_err(|e| {
-                                error!(
-                                    "Invalid gidNumber ('{}') synced from on-prem AD: {:?}",
-                                    gid_number, e
-                                );
-                                IdpError::BadRequest
-                            })?
+                        if let Some(result) = script_result {
+                            cache_idmap_result(&spn, &result);
+                            if !posix_attrs.contains_key("gidNumber")
+                                && groups.iter().all(|group| group.gidnumber != result.gid)
+                            {
+                                // Match the idmap fallback: cache a primary group when gidNumber
+                                // is missing so gid lookups succeed.
+                                groups.push(GroupToken {
+                                    name: spn.clone(),
+                                    spn: spn.clone(),
+                                    uuid,
+                                    gidnumber: result.gid,
+                                });
+                            }
+                            (result.uid, result.gid)
                         } else {
-                            // Otherwise add a fake primary group
-                            groups.push(GroupToken {
-                                name: spn.clone(),
-                                spn: spn.clone(),
-                                uuid,
-                                gidnumber: uidnumber,
-                            });
-                            uidnumber
-                        };
-                        (uidnumber, gidnumber)
+                            let idmap = self.idmap.read().await;
+                            let uidnumber = match config.get_id_attr_map() {
+                                IdAttr::Uuid => idmap
+                                    .object_id_to_unix_id(
+                                        &self.graph.tenant_id().await.map_err(|e| {
+                                            error!("{:?}", e);
+                                            IdpError::BadRequest
+                                        })?,
+                                        &AadSid::from_object_id(&uuid).map_err(|e| {
+                                            error!("Failed parsing object id: {:?}", e);
+                                            IdpError::BadRequest
+                                        })?,
+                                    )
+                                    .map_err(|e| {
+                                        error!("{:?}", e);
+                                        IdpError::BadRequest
+                                    })?,
+                                IdAttr::Name => idmap
+                                    .gen_to_unix(
+                                        &self.graph.tenant_id().await.map_err(|e| {
+                                            error!("{:?}", e);
+                                            IdpError::BadRequest
+                                        })?,
+                                        &spn,
+                                    )
+                                    .map_err(|e| {
+                                        error!("{:?}", e);
+                                        IdpError::BadRequest
+                                    })?,
+                                IdAttr::Rfc2307 => match posix_attrs.get("uidNumber") {
+                                    Some(uid_number) => uid_number.parse::<u32>().map_err(|e| {
+                                        error!(
+                                            "Invalid uidNumber ('{}') synced from on-prem AD: {:?}",
+                                            uid_number, e
+                                        );
+                                        IdpError::BadRequest
+                                    })?,
+                                    None => {
+                                        error!(
+                                            "User {} has no uidNumber defined in the directory!",
+                                            uuid
+                                        );
+                                        return Err(IdpError::BadRequest);
+                                    }
+                                },
+                            };
+
+                            // Utilize the existing primary group if set
+                            let gidnumber = if let Some(gid_number) = posix_attrs.get("gidNumber") {
+                                gid_number.parse::<u32>().map_err(|e| {
+                                    error!(
+                                        "Invalid gidNumber ('{}') synced from on-prem AD: {:?}",
+                                        gid_number, e
+                                    );
+                                    IdpError::BadRequest
+                                })?
+                            } else {
+                                // Otherwise add a fake primary group
+                                groups.push(GroupToken {
+                                    name: spn.clone(),
+                                    spn: spn.clone(),
+                                    uuid,
+                                    gidnumber: uidnumber,
+                                });
+                                uidnumber
+                            };
+                            (uidnumber, gidnumber)
+                        }
                     }
                 }
             }

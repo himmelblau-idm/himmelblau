@@ -16,13 +16,15 @@
    along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
 
-use crate::config::HimmelblauConfig;
+use crate::config::{split_username, HimmelblauConfig};
 use crate::constants::ID_MAP_CACHE;
 use crate::db::KeyStoreTxn;
 use crate::idmap_cache::StaticIdCache;
 use crate::idprovider::common::KeyType;
 use crate::idprovider::common::TotpEnrollmentRecord;
-use crate::idprovider::common::{BadPinCounter, RefreshCache, RefreshCacheEntry};
+use crate::idprovider::common::{
+    cache_idmap_result, run_idmap_script, BadPinCounter, RefreshCache, RefreshCacheEntry,
+};
 use crate::idprovider::interface::{
     tpm, AuthCacheAction, AuthCredHandler, AuthRequest, AuthResult, CacheState, GroupToken, Id,
     IdProvider, IdpError, UserToken, UserTokenState,
@@ -654,17 +656,38 @@ impl OidcApplication {
             IdpError::BadRequest
         })?;
 
-        let (uid, gid) = match idmap_cache.get_user_by_name(&account_id) {
-            Some(user) => (user.uid, user.gid),
-            None => {
-                let gid = idmap
-                    .gen_to_unix(&tenant_id.to_string(), &account_id)
-                    .map_err(|e| {
-                        error!("{:?}", e);
-                        IdpError::BadRequest
-                    })?;
-                (gid, gid)
+        let cached_user = idmap_cache.get_user_by_name(&account_id);
+
+        let script_result = match config.get_idmap_script() {
+            Some(script) if cached_user.is_none() => {
+                // Only run script if user is not already cached
+                let domain = split_username(&account_id).map(|(_, domain)| domain);
+                run_idmap_script(
+                    &script,
+                    &account_id,
+                    access_token.secret(),
+                    &object_id.to_string(),
+                    &tenant_id.to_string(),
+                    domain,
+                )
+                ?
             }
+            _ => None,
+        };
+
+        let (uid, gid) = if let Some(result) = script_result {
+            cache_idmap_result(&account_id, &result);
+            (result.uid, result.gid)
+        } else if let Some(user) = cached_user {
+            (user.uid, user.gid)
+        } else {
+            let gid = idmap
+                .gen_to_unix(&tenant_id.to_string(), &account_id)
+                .map_err(|e| {
+                    error!("{:?}", e);
+                    IdpError::BadRequest
+                })?;
+            (gid, gid)
         };
 
         Ok(UserToken {

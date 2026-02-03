@@ -15,15 +15,23 @@
    You should have received a copy of the GNU General Public License
    along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
+use crate::config::HimmelblauConfig;
+use crate::constants::{DEFAULT_CONFIG_PATH, ID_MAP_CACHE};
+use crate::idmap_cache::{StaticIdCache, StaticUser};
 use crate::idprovider::interface::IdpError;
+use crate::unix_proto::{IdmapScriptTaskInfo, TaskRequest, TaskResponse};
 use kanidm_hsm_crypto::structures::SealedData;
 use serde::{Deserialize, Serialize};
+use std::io::{ErrorKind, Read, Write};
+use std::os::unix::net::UnixStream;
 use std::thread::sleep;
 use std::{
     collections::HashMap,
+    process::Command,
     time::{Duration, SystemTime},
 };
 use tokio::sync::RwLock;
+use tracing::error;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TotpEnrollmentRecord {
@@ -33,6 +41,226 @@ pub struct TotpEnrollmentRecord {
     pub step: u64,
     pub issuer: String,
     pub account_name: String,
+}
+
+#[derive(Debug)]
+pub struct IdmapScriptResult {
+    pub uid: u32,
+    pub gid: u32,
+}
+
+pub fn execute_idmap_script(
+    script: &str,
+    username: &str,
+    access_token: &str,
+    object_id: &str,
+    tenant_id: &str,
+    domain: Option<&str>,
+) -> Result<Option<IdmapScriptResult>, IdpError> {
+    let output = match Command::new(script)
+        .env("USERNAME", username)
+        .env("ACCESS_TOKEN", access_token)
+        .env("OBJECT_ID", object_id)
+        .env("TENANT_ID", tenant_id)
+        .env("DOMAIN", domain.unwrap_or(""))
+        .output()
+    {
+        Ok(output) => output,
+        Err(e) => {
+            error!("Execution of idmap script failed: {:?}", e);
+            return Err(IdpError::BadRequest);
+        }
+    };
+
+    if !output.status.success() {
+        error!("Execution of idmap script failed");
+        return Err(IdpError::BadRequest);
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let lines: Vec<&str> = stdout
+        .lines()
+        .map(|line| line.trim())
+        .filter(|line| !line.is_empty())
+        .collect();
+
+    if lines.is_empty() {
+        return Ok(None);
+    }
+
+    if lines.len() != 1 {
+        error!("Execution of idmap script failed");
+        return Err(IdpError::BadRequest);
+    }
+
+    let mut uid_opt: Option<u32> = None;
+    let mut gid_opt: Option<u32> = None;
+
+    for pair in lines[0].split(',') {
+        if let Some((key, value)) = pair.trim().split_once('=') {
+            match key.trim() {
+                "uid" => {
+                    if uid_opt.is_some() {
+                        error!("Execution of idmap script failed");
+                        return Err(IdpError::BadRequest);
+                    }
+                    uid_opt = value.trim().parse::<u32>().ok();
+                }
+                "gid" => {
+                    if gid_opt.is_some() {
+                        error!("Execution of idmap script failed");
+                        return Err(IdpError::BadRequest);
+                    }
+                    gid_opt = value.trim().parse::<u32>().ok();
+                }
+                _ => {}
+            }
+        }
+    }
+
+    let (uid, gid) = match (uid_opt, gid_opt) {
+        (Some(uid), Some(gid)) if uid != 0 && gid != 0 => (uid, gid),
+        _ => {
+            error!("Execution of idmap script failed");
+            return Err(IdpError::BadRequest);
+        }
+    };
+
+    Ok(Some(IdmapScriptResult { uid, gid }))
+}
+
+pub(crate) fn run_idmap_script(
+    script: &str,
+    username: &str,
+    access_token: &str,
+    object_id: &str,
+    tenant_id: &str,
+    domain: Option<&str>,
+) -> Result<Option<IdmapScriptResult>, IdpError> {
+    let cfg = HimmelblauConfig::new(Some(DEFAULT_CONFIG_PATH)).map_err(|_| {
+        error!("Failed to read configuration for idmap task");
+        IdpError::BadRequest
+    })?;
+    let task_socket_path = cfg.get_task_socket_path();
+
+    let mut stream = UnixStream::connect(task_socket_path).map_err(|_| {
+        error!("Failed to connect to tasks daemon");
+        IdpError::BadRequest
+    })?;
+    stream
+        .set_read_timeout(Some(Duration::from_secs(60)))
+        .map_err(|_| {
+            error!("Failed to configure tasks daemon read timeout");
+            IdpError::BadRequest
+        })?;
+    stream
+        .set_write_timeout(Some(Duration::from_secs(60)))
+        .map_err(|_| {
+            error!("Failed to configure tasks daemon write timeout");
+            IdpError::BadRequest
+        })?;
+
+    let req = TaskRequest::IdmapScript(IdmapScriptTaskInfo {
+        script: script.to_string(),
+        username: username.to_string(),
+        access_token: access_token.to_string(),
+        object_id: object_id.to_string(),
+        tenant_id: tenant_id.to_string(),
+        domain: domain.map(ToString::to_string),
+    });
+    let data = serde_json::to_vec(&req).map_err(|_| {
+        error!("Failed to encode idmap task request");
+        IdpError::BadRequest
+    })?;
+    stream.write_all(data.as_slice()).map_err(|_| {
+        error!("Failed to send idmap task request");
+        IdpError::BadRequest
+    })?;
+    stream.flush().map_err(|_| {
+        error!("Failed to flush idmap task request");
+        IdpError::BadRequest
+    })?;
+
+    let mut response_data = Vec::with_capacity(1024);
+    let mut read_started = false;
+    loop {
+        let mut buffer = [0_u8; 1024];
+        match stream.read(&mut buffer) {
+            Ok(0) => {
+                if read_started {
+                    break;
+                }
+            }
+            Ok(count) => {
+                response_data.extend_from_slice(&buffer[..count]);
+                read_started = true;
+                if count < buffer.len() {
+                    break;
+                }
+            }
+            Err(e)
+                if e.kind() == ErrorKind::WouldBlock || e.kind() == ErrorKind::TimedOut =>
+            {
+                error!("Timed out while waiting for idmap task response");
+                return Err(IdpError::BadRequest);
+            }
+            Err(_) => {
+                error!("Failed to read idmap task response");
+                return Err(IdpError::BadRequest);
+            }
+        }
+    }
+
+    let response = serde_json::from_slice::<TaskResponse>(response_data.as_slice()).map_err(|_| {
+        error!("Failed to decode idmap task response");
+        IdpError::BadRequest
+    })?;
+
+    match response {
+        TaskResponse::Success(0) => {
+            let idmap_cache = StaticIdCache::new(ID_MAP_CACHE, false).map_err(|_| {
+                error!("Failed to read idmap cache after script execution");
+                IdpError::BadRequest
+            })?;
+            let user = idmap_cache.get_user_by_name(username).ok_or_else(|| {
+                error!("Idmap script task reported success without cached result");
+                IdpError::BadRequest
+            })?;
+            Ok(Some(IdmapScriptResult {
+                uid: user.uid,
+                gid: user.gid,
+            }))
+        }
+        TaskResponse::Success(1) => Ok(None),
+        TaskResponse::Success(_) => {
+            error!("Idmap script task returned a failure status");
+            Err(IdpError::BadRequest)
+        }
+        TaskResponse::Error(_) => {
+            error!("Idmap script task failed");
+            Err(IdpError::BadRequest)
+        }
+    }
+}
+
+pub fn cache_idmap_result(username: &str, result: &IdmapScriptResult) {
+    match StaticIdCache::new(ID_MAP_CACHE, true) {
+        Ok(idmap_cache) => {
+            if idmap_cache
+                .insert_user(&StaticUser {
+                    name: username.to_string(),
+                    uid: result.uid,
+                    gid: result.gid,
+                })
+                .is_err()
+            {
+                error!("Failed to cache idmap script result");
+            }
+        }
+        Err(_) => {
+            error!("Failed to open idmap cache");
+        }
+    }
 }
 
 #[macro_export]
