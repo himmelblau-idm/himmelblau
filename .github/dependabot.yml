@@ -28,6 +28,9 @@ updates:
     commit-message:
       prefix: "deps(rust)"
     ignore:
+      - dependency-name: "sha2"
+        versions:
+          - ">0.11.0-rc.3"
       # Keep kanidm deps at 1.7.x for Rust 1.88 compatibility
       - dependency-name: "kanidm_proto"
         versions:
