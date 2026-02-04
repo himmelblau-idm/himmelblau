@@ -3562,6 +3562,13 @@ impl HimmelblauProvider {
             Err(MsalError::MFARequired) => Some(Err(
                 "PRT exchange requires MFA - sign-in frequency expired".to_string(),
             )),
+            Err(MsalError::RequestFailed(msg)) => {
+                let url = extract_base_url!(msg);
+                info!(?url, "Network down detected");
+                let mut state = self.state.lock().await;
+                *state = CacheState::OfflineNextCheck(SystemTime::now() + OFFLINE_NEXT_CHECK);
+                None
+            }
             Err(e) => Some(Err(format!("PRT exchange failed: {:?}", e))),
         }
     }
