@@ -11,7 +11,7 @@
 use crate::db::KeyStoreTxn;
 use crate::unix_proto::{PamAuthRequest, PamAuthResponse};
 use async_trait::async_trait;
-use himmelblau::{MFAAuthContinue, UserToken as UnixUserToken};
+use himmelblau::{AuthOption, MFAAuthContinue, UserToken as UnixUserToken};
 use kanidm_hsm_crypto::structures::SealedData;
 use serde::{Deserialize, Serialize};
 use std::fmt;
@@ -111,6 +111,17 @@ pub enum AuthCredHandler {
     ChangePassword {
         old_cred: String,
     },
+    /// Password-first authentication for console_password_only mode.
+    /// When this handler is active, we first validate the password via ROPC,
+    /// then check if sign-in frequency is satisfied via PRT exchange before
+    /// prompting for MFA. This allows skipping MFA when Azure's sign-in
+    /// frequency policy is already satisfied.
+    PasswordFirst {
+        /// Auth options to pass if we need to initiate MFA flow
+        auth_options: Vec<AuthOption>,
+        /// Whether the user is domain joined (affects resource URL in MFA flow)
+        is_domain_joined: bool,
+    },
     None,
 }
 
@@ -121,6 +132,7 @@ impl fmt::Debug for AuthCredHandler {
             AuthCredHandler::SetupPin { .. } => f.write_str("SetupPin { .. }"),
             AuthCredHandler::HelloTOTP { .. } => f.write_str("HelloTOTP { .. }"),
             AuthCredHandler::ChangePassword { .. } => f.write_str("ChangePassword { .. }"),
+            AuthCredHandler::PasswordFirst { .. } => f.write_str("PasswordFirst { .. }"),
             AuthCredHandler::None => f.write_str("None"),
         }
     }

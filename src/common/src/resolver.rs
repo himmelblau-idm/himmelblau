@@ -1350,6 +1350,11 @@ where
                         // AuthCredHandler::None is invalid with Fido
                         return Err(());
                     }
+                    (AuthCredHandler::PasswordFirst { .. }, _) => {
+                        // AuthCredHandler::PasswordFirst is invalid for offline auth
+                        // (it requires online ROPC validation)
+                        return Err(());
+                    }
                 }
             }
             (&mut AuthSession::InProgress { token: None, .. }, state) => {
