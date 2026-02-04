@@ -2804,21 +2804,18 @@ impl IdProvider for HimmelblauProvider {
                         return Ok((AuthResult::Denied(e.to_string()), AuthCacheAction::None));
                     }
                     None => {
-                        // Device not enrolled - skip ROPC and proceed to MFA flow
-                        // Password will be validated during MFA flow
+                        // Device not enrolled - skip ROPC and start enrollment auth flow.
+                        // The enrollment flow may be MFA or password-only depending on MS policy.
                         debug!(
-                            "Skipping ROPC for '{}' (device not enrolled) - proceeding to MFA flow",
+                            "Skipping ROPC for '{}' (device not enrolled) - starting enrollment auth flow",
                             account_id
                         );
                     }
                 }
 
-                // If we reach here, MFA is required and PRT check didn't satisfy sign-in frequency.
-                // Initiate the MFA flow now.
-                debug!(
-                    "Initiating MFA flow for '{}' after password validation",
-                    account_id
-                );
+                // If we reach here, PRT check didn't satisfy sign-in frequency.
+                // Initiate the enrollment auth flow now.
+                debug!("Initiating enrollment auth flow for '{}'", account_id);
 
                 let mut flow = net_down_check!(
                     self.client
