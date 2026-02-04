@@ -2848,7 +2848,7 @@ impl IdProvider for HimmelblauProvider {
                     },
                     Err(e) => {
                         error!("MFA flow initiation failed: {:?}", e);
-                        return Ok((AuthResult::Denied(e.to_string()), AuthCacheAction::None));
+                        return Ok((AuthResult::Denied(msal_error_to_user_message(&e)), AuthCacheAction::None));
                     }
                 );
 
