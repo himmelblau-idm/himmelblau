@@ -2466,6 +2466,102 @@ impl IdProvider for HimmelblauProvider {
                 }
             }};
         }
+        macro_rules! nested_auth_handle_mfa_resp {
+            ($resp:ident, $cred:ident) => {
+                auth_handle_mfa_resp!(
+                    $resp,
+                    // FIDO
+                    {
+                        let fido_challenge = match $resp.fido_challenge.clone() {
+                            Some(challenge) => challenge,
+                            None => {
+                                debug!("FIDO challenge missing in MFA response");
+                                return Ok((
+                                    AuthResult::Denied("FIDO authentication not available. Please try a different authentication method.".to_string()),
+                                    AuthCacheAction::None,
+                                ));
+                            }
+                        };
+
+                        let fido_allow_list = match $resp.fido_allow_list.clone() {
+                            Some(list) => list,
+                            None => {
+                                debug!("FIDO allow list missing in MFA response");
+                                return Ok((
+                                    AuthResult::Denied("FIDO authentication not available. Please try a different authentication method.".to_string()),
+                                    AuthCacheAction::None,
+                                ));
+                            }
+                        };
+                        *cred_handler = AuthCredHandler::MFA {
+                            flow: $resp,
+                            password: Some($cred.clone()),
+                            extra_data: None,
+                        };
+                        let action = if self.config.read().await.get_offline_breakglass_enabled() {
+                            AuthCacheAction::PasswordHashUpdate { $cred }
+                        } else {
+                            AuthCacheAction::None
+                        };
+                        return Ok((
+                            AuthResult::Next(AuthRequest::Fido {
+                                fido_allow_list,
+                                fido_challenge,
+                            }),
+                            /* Cache the offline password hash for breakglass
+                             * conditions, if enabled. */
+                            action,
+                        ));
+                    },
+                    // PROMPT
+                    {
+                        let msg = $resp.msg.clone();
+                        *cred_handler = AuthCredHandler::MFA {
+                            flow: $resp,
+                            password: Some($cred.clone()),
+                            extra_data: None,
+                        };
+                        let action = if self.config.read().await.get_offline_breakglass_enabled() {
+                            AuthCacheAction::PasswordHashUpdate { $cred }
+                        } else {
+                            AuthCacheAction::None
+                        };
+                        return Ok((
+                            AuthResult::Next(AuthRequest::MFACode { msg }),
+                            /* Cache the offline password hash for breakglass
+                             * conditions, if enabled. */
+                            action,
+                        ));
+                    },
+                    // POLL
+                    {
+                        let msg = $resp.msg.clone();
+                        let polling_interval = $resp.polling_interval.unwrap_or(5000);
+                        *cred_handler = AuthCredHandler::MFA {
+                            flow: $resp,
+                            password: Some($cred.clone()),
+                            extra_data: None,
+                        };
+                        let action = if self.config.read().await.get_offline_breakglass_enabled() {
+                            AuthCacheAction::PasswordHashUpdate { $cred }
+                        } else {
+                            AuthCacheAction::None
+                        };
+                        return Ok((
+                            AuthResult::Next(AuthRequest::MFAPoll {
+                                msg,
+                                // Kanidm pam expects a polling_interval in
+                                // seconds, not milliseconds.
+                                polling_interval: polling_interval / 1000,
+                            }),
+                            /* Cache the offline password hash for breakglass
+                             * conditions, if enabled. */
+                            action,
+                        ));
+                    }
+                )
+            };
+        }
 
         match (&mut *cred_handler, pam_next_req) {
             (AuthCredHandler::SetupPin { token }, PamAuthRequest::SetupPin { pin }) => {
@@ -2759,94 +2855,7 @@ impl IdProvider for HimmelblauProvider {
                     flow.resource = Some("https://enrollment.manage.microsoft.com".to_string());
                 }
 
-                // Handle the MFA response using the existing macro
-                auth_handle_mfa_resp!(
-                    flow,
-                    // FIDO
-                    {
-                        let fido_challenge = match flow.fido_challenge.clone() {
-                            Some(challenge) => challenge,
-                            None => {
-                                debug!("FIDO challenge missing in MFA response");
-                                return Ok((
-                                    AuthResult::Denied(
-                                        "FIDO authentication not available. Please try a different authentication method.".to_string(),
-                                    ),
-                                    AuthCacheAction::None,
-                                ));
-                            }
-                        };
-                        let fido_allow_list = match flow.fido_allow_list.clone() {
-                            Some(list) => list,
-                            None => {
-                                debug!("FIDO allow list missing in MFA response");
-                                return Ok((
-                                    AuthResult::Denied(
-                                        "FIDO authentication not available. Please try a different authentication method.".to_string(),
-                                    ),
-                                    AuthCacheAction::None,
-                                ));
-                            }
-                        };
-                        *cred_handler = AuthCredHandler::MFA {
-                            flow,
-                            password: Some(cred.clone()),
-                            extra_data: None,
-                        };
-                        let action = if self.config.read().await.get_offline_breakglass_enabled() {
-                            AuthCacheAction::PasswordHashUpdate { cred }
-                        } else {
-                            AuthCacheAction::None
-                        };
-                        return Ok((
-                            AuthResult::Next(AuthRequest::Fido {
-                                fido_allow_list,
-                                fido_challenge,
-                            }),
-                            action,
-                        ));
-                    },
-                    // PROMPT
-                    {
-                        let msg = flow.msg.clone();
-                        *cred_handler = AuthCredHandler::MFA {
-                            flow,
-                            password: Some(cred.clone()),
-                            extra_data: None,
-                        };
-                        let action = if self.config.read().await.get_offline_breakglass_enabled() {
-                            AuthCacheAction::PasswordHashUpdate { cred }
-                        } else {
-                            AuthCacheAction::None
-                        };
-                        return Ok((
-                            AuthResult::Next(AuthRequest::MFACode { msg }),
-                            action,
-                        ));
-                    },
-                    // POLL
-                    {
-                        let msg = flow.msg.clone();
-                        let polling_interval = flow.polling_interval.unwrap_or(5000);
-                        *cred_handler = AuthCredHandler::MFA {
-                            flow,
-                            password: Some(cred.clone()),
-                            extra_data: None,
-                        };
-                        let action = if self.config.read().await.get_offline_breakglass_enabled() {
-                            AuthCacheAction::PasswordHashUpdate { cred }
-                        } else {
-                            AuthCacheAction::None
-                        };
-                        return Ok((
-                            AuthResult::Next(AuthRequest::MFAPoll {
-                                msg,
-                                polling_interval: polling_interval / 1000,
-                            }),
-                            action,
-                        ));
-                    }
-                )
+                nested_auth_handle_mfa_resp!(flow, cred)
             }
             (change_password, PamAuthRequest::Password { mut cred }) => {
                 if let AuthCredHandler::ChangePassword { old_cred } = change_password {
@@ -3011,98 +3020,7 @@ impl IdProvider for HimmelblauProvider {
                         };
                     }
                 );
-                auth_handle_mfa_resp!(
-                    resp,
-                    // FIDO
-                    {
-                        let fido_challenge = match resp.fido_challenge.clone() {
-                            Some(challenge) => challenge,
-                            None => {
-                                debug!("FIDO challenge missing in MFA response");
-                                return Ok((
-                                    AuthResult::Denied("FIDO authentication not available. Please try a different authentication method.".to_string()),
-                                    AuthCacheAction::None,
-                                ));
-                            }
-                        };
-
-                        let fido_allow_list = match resp.fido_allow_list.clone() {
-                            Some(list) => list,
-                            None => {
-                                debug!("FIDO allow list missing in MFA response");
-                                return Ok((
-                                    AuthResult::Denied("FIDO authentication not available. Please try a different authentication method.".to_string()),
-                                    AuthCacheAction::None,
-                                ));
-                            }
-                        };
-                        *cred_handler = AuthCredHandler::MFA {
-                            flow: resp,
-                            password: Some(cred.clone()),
-                            extra_data: None,
-                        };
-                        let action = if self.config.read().await.get_offline_breakglass_enabled() {
-                            AuthCacheAction::PasswordHashUpdate { cred }
-                        } else {
-                            AuthCacheAction::None
-                        };
-                        return Ok((
-                            AuthResult::Next(AuthRequest::Fido {
-                                fido_allow_list,
-                                fido_challenge,
-                            }),
-                            /* Cache the offline password hash for breakglass
-                             * conditions, if enabled. */
-                            action,
-                        ));
-                    },
-                    // PROMPT
-                    {
-                        let msg = resp.msg.clone();
-                        *cred_handler = AuthCredHandler::MFA {
-                            flow: resp,
-                            password: Some(cred.clone()),
-                            extra_data: None,
-                        };
-                        let action = if self.config.read().await.get_offline_breakglass_enabled() {
-                            AuthCacheAction::PasswordHashUpdate { cred }
-                        } else {
-                            AuthCacheAction::None
-                        };
-                        return Ok((
-                            AuthResult::Next(AuthRequest::MFACode { msg }),
-                            /* Cache the offline password hash for breakglass
-                             * conditions, if enabled. */
-                            action,
-                        ));
-                    },
-                    // POLL
-                    {
-                        let msg = resp.msg.clone();
-                        let polling_interval = resp.polling_interval.unwrap_or(5000);
-                        *cred_handler = AuthCredHandler::MFA {
-                            flow: resp,
-                            password: Some(cred.clone()),
-                            extra_data: None,
-                        };
-                        let action = if self.config.read().await.get_offline_breakglass_enabled() {
-                            AuthCacheAction::PasswordHashUpdate { cred }
-                        } else {
-                            AuthCacheAction::None
-                        };
-                        return Ok((
-                            AuthResult::Next(AuthRequest::MFAPoll {
-                                msg,
-                                // Kanidm pam expects a polling_interval in
-                                // seconds, not milliseconds.
-                                polling_interval: polling_interval / 1000,
-                            }),
-                            /* Cache the offline password hash for breakglass
-                             * conditions, if enabled. */
-                            action,
-                        ));
-                    }
-                )
+                nested_auth_handle_mfa_resp!(resp, cred)
             }
             (
                 AuthCredHandler::MFA {
