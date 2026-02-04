@@ -2801,10 +2801,7 @@ impl IdProvider for HimmelblauProvider {
                             "ROPC failed for '{}': {:?} - authentication denied",
                             account_id, e
                         );
-                        return Ok((
-                            AuthResult::Denied(e.to_string()),
-                            AuthCacheAction::None,
-                        ));
+                        return Ok((AuthResult::Denied(e.to_string()), AuthCacheAction::None));
                     }
                     None => {
                         // Device not enrolled - skip ROPC and proceed to MFA flow
@@ -3565,9 +3562,9 @@ impl HimmelblauProvider {
                 }
                 Some(Ok(msal_token))
             }
-            Err(MsalError::MFARequired) => {
-                Some(Err("PRT exchange requires MFA - sign-in frequency expired".to_string()))
-            }
+            Err(MsalError::MFARequired) => Some(Err(
+                "PRT exchange requires MFA - sign-in frequency expired".to_string(),
+            )),
             Err(e) => Some(Err(format!("PRT exchange failed: {:?}", e))),
         }
     }
