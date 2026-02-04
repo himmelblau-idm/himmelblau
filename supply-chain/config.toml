@@ -790,10 +790,6 @@ version = "0.1.27"
 criteria = "safe-to-deploy"
 
 [[exemptions.schemars]]
-version = "0.9.0"
-criteria = "safe-to-deploy"
-
-[[exemptions.schemars]]
 version = "1.0.4"
 criteria = "safe-to-deploy"
 
