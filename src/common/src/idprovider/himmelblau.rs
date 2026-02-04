@@ -1502,8 +1502,7 @@ impl IdProvider for HimmelblauProvider {
                 // potentially skipping MFA (if the frequency is satisfied).
                 if console_password_only && !is_remote_service {
                     debug!(
-                        "Console password-only mode for '{}': requesting password first to check sign-in frequency",
-                        account_id
+                        "Console password-only mode: requesting password first to check sign-in frequency",
                     );
                     // Check if the network is up before prompting for password
                     if !self.attempt_online(tpm, SystemTime::now()).await {
@@ -2605,14 +2604,8 @@ impl IdProvider for HimmelblauProvider {
                     match prt_result {
                         Ok(msal_token) => {
                             // Sign-in frequency satisfied - no MFA needed!
-                            info!(
-                                "Sign-in frequency satisfied for '{}' via PRT - skipping MFA",
-                                account_id
-                            );
-                            return match self
-                                .token_validate(account_id, &msal_token, None)
-                                .await
-                            {
+                            info!("Sign-in frequency satisfied for user via PRT - skipping MFA",);
+                            return match self.token_validate(account_id, &msal_token, None).await {
                                 Ok(AuthResult::Success { token }) => Ok((
                                     AuthResult::Success { token },
                                     AuthCacheAction::PasswordHashUpdate { $cred },
@@ -2623,17 +2616,14 @@ impl IdProvider for HimmelblauProvider {
                         }
                         Err(reason) => {
                             debug!(
-                                "PRT sign-in frequency check failed for '{}': {} - proceeding with MFA flow",
-                                account_id, reason
+                                "PRT sign-in frequency check failed: {} - proceeding with MFA flow",
+                                reason
                             );
                             // Fall through to initiate MFA
                         }
                     }
                 } else {
-                    debug!(
-                        "No PRT cached for '{}' - proceeding with MFA flow",
-                        account_id
-                    );
+                    debug!("No PRT cached - proceeding with MFA flow",);
                     // Fall through to initiate MFA
                 }
             };
@@ -2715,10 +2705,7 @@ impl IdProvider for HimmelblauProvider {
                 },
                 PamAuthRequest::Password { cred },
             ) => {
-                debug!(
-                    "Console password-only mode: trying ROPC for '{}' before MFA flow",
-                    account_id
-                );
+                debug!("Console password-only mode: trying ROPC before MFA flow");
 
                 // The broker's ROPC method requires device enrollment (cert_key).
                 // If the device isn't enrolled, skip ROPC and go directly to MFA flow.
@@ -2740,17 +2727,14 @@ impl IdProvider for HimmelblauProvider {
                             .await,
                     )
                 } else {
-                    debug!(
-                        "Device not enrolled - skipping ROPC for '{}', proceeding to MFA flow",
-                        account_id
-                    );
+                    debug!("Device not enrolled - skipping ROPC, proceeding to MFA flow");
                     None
                 };
 
                 match ropc_result {
                     Some(Ok(token)) => {
                         // Password validated and no MFA required - return success
-                        debug!("ROPC succeeded for '{}' - no MFA required", account_id);
+                        debug!("ROPC succeeded - no MFA required");
                         let token2 = enroll_and_obtain_enrolled_token!(token);
                         return match self.token_validate(account_id, &token2, None).await {
                             Ok(AuthResult::Success { token }) => Ok((
@@ -2767,8 +2751,8 @@ impl IdProvider for HimmelblauProvider {
                         // Password is valid but MFA is required by policy (AADSTS error).
                         // Check if sign-in frequency is satisfied via PRT exchange.
                         debug!(
-                            "Password valid for '{}' but MFA required (AADSTS{}). Checking sign-in frequency via PRT.",
-                            account_id, aadsts_err.code
+                            "Password valid but MFA required (AADSTS{}). Checking sign-in frequency via PRT.",
+                            aadsts_err.code
                         );
 
                         prt_signin_frequency_check!(cred)
@@ -2777,8 +2761,7 @@ impl IdProvider for HimmelblauProvider {
                         // Password is valid but MFA is required (ConvergedTFA response).
                         // Check if sign-in frequency is satisfied via PRT exchange.
                         debug!(
-                            "Password valid for '{}' but MFA required (ConvergedTFA). Checking sign-in frequency via PRT.",
-                            account_id
+                            "Password valid but MFA required (ConvergedTFA). Checking sign-in frequency via PRT."
                         );
 
                         prt_signin_frequency_check!(cred)
@@ -2799,25 +2782,21 @@ impl IdProvider for HimmelblauProvider {
                     }
                     Some(Err(e)) => {
                         // ROPC failed - this could be a bad password or other error
-                        debug!(
-                            "ROPC failed for '{}': {:?} - authentication denied",
-                            account_id, e
-                        );
+                        debug!("ROPC failed: {:?} - authentication denied", e);
                         return Ok((AuthResult::Denied(e.to_string()), AuthCacheAction::None));
                     }
                     None => {
                         // Device not enrolled - skip ROPC and start enrollment auth flow.
                         // The enrollment flow may be MFA or password-only depending on MS policy.
                         debug!(
-                            "Skipping ROPC for '{}' (device not enrolled) - starting enrollment auth flow",
-                            account_id
+                            "Skipping ROPC (device not enrolled) - starting enrollment auth flow"
                         );
                     }
                 }
 
                 // If we reach here, PRT check didn't satisfy sign-in frequency.
                 // Initiate the enrollment auth flow now.
-                debug!("Initiating enrollment auth flow for '{}'", account_id);
+                debug!("Initiating enrollment auth flow");
 
                 let mut flow = net_down_check!(
                     self.client
@@ -3519,11 +3498,11 @@ impl HimmelblauProvider {
         let prt = match self.refresh_cache.refresh_token(account_id).await {
             Ok(RefreshCacheEntry::Prt(prt)) => prt,
             Ok(_) => {
-                debug!("Cached refresh token is not a PRT for '{}'", account_id);
+                debug!("Cached refresh token is not a PRT");
                 return None;
             }
             Err(_) => {
-                debug!("No refresh token cached for '{}'", account_id);
+                debug!("No refresh token cached");
                 return None;
             }
         };
@@ -3599,7 +3578,6 @@ impl HimmelblauProvider {
                     Err(err) => {
                         error!(
                             ?err,
-                            account_id,
                             "PRT refresh failed after successful PRT access token exchange; keeping cached PRT"
                         );
                     }
@@ -3906,7 +3884,10 @@ impl HimmelblauProvider {
 
         if posix_attrs.contains_key("unixHomeDirectory") {
             // TODO: Implement homedir mapping
-            warn!("Himmelblau did not map unixHomeDirectory from Azure Entra Connector sync for user {}", spn);
+            warn!(
+                "Himmelblau did not map unixHomeDirectory from Azure Entra Connector sync for user {}",
+                uuid
+            );
         }
 
         Ok(UserToken {
