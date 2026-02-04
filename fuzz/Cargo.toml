@@ -18,7 +18,7 @@ himmelblau_unix_common = { workspace = true }
 idmap = { workspace = true }
 arbitrary = { version = "1.4.2", features = ["derive"] }
 tempfile = "3.24.0"
-uuid = "1.19.0"
+uuid = "1.20.0"
 
 [[bin]]
 name = "config"

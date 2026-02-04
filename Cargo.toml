@@ -63,7 +63,7 @@ tokio-util = { version = "^0.7.18", features = ["codec"] }
 async-trait = "^0.1.89"
 himmelblau_policies = { path = "src/policies" }
 pem = "^3.0.6"
-chrono = "^0.4.42"
+chrono = "^0.4.43"
 os-release = "^0.1.0"
 jsonwebtoken = "^9.2.0"
 zeroize = "^1.8.2"
@@ -82,10 +82,10 @@ hex = "^0.4.3"
 num_enum = "^0.7.5"
 scim_proto = "^1.6.4"
 serde_with = "3.16.1"
-time = { version = "^0.3.44", features = ["formatting", "local-offset"] }
+time = { version = "^0.3.46", features = ["formatting", "local-offset"] }
 url = "^2.4.0"
 urlencoding = "2.1.3"
-uuid = { version = "^1.19.0", features = ["v4", "v5"] }
+uuid = { version = "^1.20.0", features = ["v4", "v5"] }
 webauthn-rs-proto = "0.5.0"
 kanidm_proto = "1.8.1"
 openssl-sys = "^0.9"
@@ -117,7 +117,7 @@ opentelemetry_sdk = { version = "0.27.0", features = ["rt-tokio"] }
 opentelemetry-semantic-conventions = "0.27.0"
 tracing-opentelemetry = "0.28.0"
 tracing-core = "0.1.34"
-tonic = "0.14.2"
+tonic = "0.14.3"
 compact_jwt = { version = "0.5.3-dev", features = ["msextensions"] }
 kanidm-hsm-crypto = { version = "^0.3.5" }
 whoami = "1.6.1"
@@ -125,5 +125,5 @@ kanidm_lib_file_permissions = "1.8.5"
 md4 = "0.10.2"
 md-5 = "0.10.6"
 sha-crypt = "0.5.0"
-sha2 = "0.11.0-rc"
+sha2 = "0.11.0-rc.5"
 x509-cert = "0.2.5"
