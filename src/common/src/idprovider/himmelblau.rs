@@ -1300,6 +1300,40 @@ impl IdProvider for HimmelblauProvider {
                             }
                         )
                     }
+                    Err(MsalError::AcquireTokenFailed(err_resp))
+                        if err_resp.error_codes.contains(&CONSENT_REQUIRED) =>
+                    {
+                        /* Consent has not been granted for the application
+                         * to access the Graph API. Retry without Graph API
+                         * scopes - authentication can still proceed but group
+                         * names will not be resolved. */
+                        warn!(
+                            "Consent not granted for Graph API access. \
+                               Retrying token exchange without Graph API scopes."
+                        );
+                        match self
+                            .client
+                            .read()
+                            .await
+                            .exchange_prt_for_access_token(
+                                &prt,
+                                vec![],
+                                None,
+                                None,
+                                tpm,
+                                machine_key,
+                            )
+                            .await
+                        {
+                            Ok(val) => val,
+                            Err(e) => {
+                                error!("{:?}", e);
+                                // Never return IdpError::NotFound. This deletes the existing
+                                // user from the cache.
+                                fake_user!()
+                            }
+                        }
+                    }
                     Err(e) => {
                         error!("{:?}", e);
                         // Never return IdpError::NotFound. This deletes the existing
@@ -3554,6 +3588,25 @@ impl HimmelblauProvider {
                     .await
                     .exchange_prt_for_access_token(&prt, scopes, None, client_id, tpm, machine_key)
                     .await
+            }
+            Err(MsalError::AcquireTokenFailed(err_resp)) => {
+                if err_resp.error_codes.contains(&CONSENT_REQUIRED) {
+                    /* Consent has not been granted for the application
+                     * to access the Graph API. Retry without Graph API
+                     * scopes - authentication can still proceed but group
+                     * names will not be resolved. */
+                    warn!(
+                        "Consent not granted for Graph API access. \
+                       Retrying token exchange without Graph API scopes."
+                    );
+                    self.client
+                        .read()
+                        .await
+                        .exchange_prt_for_access_token(&prt, vec![], None, None, tpm, machine_key)
+                        .await
+                } else {
+                    Err(MsalError::AcquireTokenFailed(err_resp))
+                }
             }
             result => result,
         };
