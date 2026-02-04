@@ -3567,17 +3567,26 @@ impl HimmelblauProvider {
             Ok(mut msal_token) => {
                 // PRT exchange succeeded - sign-in frequency is satisfied!
                 // Request a new PRT to refresh the cache
-                if let Ok(new_prt) = self
+                match self
                     .client
                     .read()
                     .await
                     .exchange_prt_for_prt(&prt, tpm, machine_key, true)
                     .await
                 {
-                    msal_token.prt = Some(new_prt.clone());
-                    self.refresh_cache
-                        .add(account_id, &RefreshCacheEntry::Prt(new_prt))
-                        .await;
+                    Ok(new_prt) => {
+                        msal_token.prt = Some(new_prt.clone());
+                        self.refresh_cache
+                            .add(account_id, &RefreshCacheEntry::Prt(new_prt))
+                            .await;
+                    }
+                    Err(err) => {
+                        error!(
+                            ?err,
+                            account_id,
+                            "PRT refresh failed after successful PRT access token exchange; keeping cached PRT"
+                        );
+                    }
                 }
                 Some(Ok(msal_token))
             }
