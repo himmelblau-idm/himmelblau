@@ -3527,18 +3527,20 @@ impl HimmelblauProvider {
         };
 
         // Try PRT exchange to check sign-in frequency
+        let cfg = self.config.read().await;
+        let (client_id, scopes) = if cfg.get_app_id(&self.domain).is_some() {
+            (None, vec!["GroupMember.Read.All"])
+        } else {
+            (
+                Some(EDGE_BROWSER_CLIENT_ID),
+                vec!["https://graph.microsoft.com/.default"],
+            )
+        };
         let prt_result = self
             .client
             .read()
             .await
-            .exchange_prt_for_access_token(
-                &prt,
-                vec!["openid", "profile"],
-                None,
-                None,
-                tpm,
-                machine_key,
-            )
+            .exchange_prt_for_access_token(&prt, scopes.clone(), None, client_id, tpm, machine_key)
             .await;
         let prt_result = match prt_result {
             Err(MsalError::RequestFailed(msg)) => {
@@ -3550,14 +3552,7 @@ impl HimmelblauProvider {
                 self.client
                     .read()
                     .await
-                    .exchange_prt_for_access_token(
-                        &prt,
-                        vec!["openid", "profile"],
-                        None,
-                        None,
-                        tpm,
-                        machine_key,
-                    )
+                    .exchange_prt_for_access_token(&prt, scopes, None, client_id, tpm, machine_key)
                     .await
             }
             result => result,
