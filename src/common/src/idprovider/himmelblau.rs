@@ -1529,6 +1529,7 @@ impl IdProvider for HimmelblauProvider {
                     return Ok((
                         AuthRequest::Password,
                         AuthCredHandler::PasswordFirst {
+                            auth_init,
                             auth_options,
                             is_domain_joined,
                         },
@@ -2715,6 +2716,7 @@ impl IdProvider for HimmelblauProvider {
             // frequency before potentially skipping MFA.
             (
                 AuthCredHandler::PasswordFirst {
+                    auth_init,
                     auth_options,
                     is_domain_joined,
                 },
@@ -2831,7 +2833,7 @@ impl IdProvider for HimmelblauProvider {
                             account_id,
                             Some(&cred),
                             auth_options,
-                            None,
+                            Some(auth_init.clone()),
                             self.config.read().await.get_mfa_method().as_deref()
                         )
                         .await,
