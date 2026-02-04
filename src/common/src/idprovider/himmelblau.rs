@@ -2596,6 +2596,48 @@ impl IdProvider for HimmelblauProvider {
                 )
             };
         }
+        macro_rules! prt_signin_frequency_check {
+            ($cred:ident) => {
+                if let Some(prt_result) = self
+                    .try_prt_signin_frequency_check(account_id, tpm, machine_key)
+                    .await
+                {
+                    match prt_result {
+                        Ok(msal_token) => {
+                            // Sign-in frequency satisfied - no MFA needed!
+                            info!(
+                                "Sign-in frequency satisfied for '{}' via PRT - skipping MFA",
+                                account_id
+                            );
+                            return match self
+                                .token_validate(account_id, &msal_token, None)
+                                .await
+                            {
+                                Ok(AuthResult::Success { token }) => Ok((
+                                    AuthResult::Success { token },
+                                    AuthCacheAction::PasswordHashUpdate { $cred },
+                                )),
+                                Ok(auth_result) => Ok((auth_result, AuthCacheAction::None)),
+                                Err(e) => Err(e),
+                            };
+                        }
+                        Err(reason) => {
+                            debug!(
+                                "PRT sign-in frequency check failed for '{}': {} - proceeding with MFA flow",
+                                account_id, reason
+                            );
+                            // Fall through to initiate MFA
+                        }
+                    }
+                } else {
+                    debug!(
+                        "No PRT cached for '{}' - proceeding with MFA flow",
+                        account_id
+                    );
+                    // Fall through to initiate MFA
+                }
+            };
+        }
 
         match (&mut *cred_handler, pam_next_req) {
             (AuthCredHandler::SetupPin { token }, PamAuthRequest::SetupPin { pin }) => {
@@ -2729,44 +2771,7 @@ impl IdProvider for HimmelblauProvider {
                             account_id, aadsts_err.code
                         );
 
-                        if let Some(prt_result) = self
-                            .try_prt_signin_frequency_check(account_id, tpm, machine_key)
-                            .await
-                        {
-                            match prt_result {
-                                Ok(msal_token) => {
-                                    // Sign-in frequency satisfied - no MFA needed!
-                                    info!(
-                                        "Sign-in frequency satisfied for '{}' via PRT - skipping MFA",
-                                        account_id
-                                    );
-                                    return match self
-                                        .token_validate(account_id, &msal_token, None)
-                                        .await
-                                    {
-                                        Ok(AuthResult::Success { token }) => Ok((
-                                            AuthResult::Success { token },
-                                            AuthCacheAction::PasswordHashUpdate { cred },
-                                        )),
-                                        Ok(auth_result) => Ok((auth_result, AuthCacheAction::None)),
-                                        Err(e) => Err(e),
-                                    };
-                                }
-                                Err(reason) => {
-                                    debug!(
-                                        "PRT sign-in frequency check failed for '{}': {} - proceeding with MFA flow",
-                                        account_id, reason
-                                    );
-                                    // Fall through to initiate MFA
-                                }
-                            }
-                        } else {
-                            debug!(
-                                "No PRT cached for '{}' - proceeding with MFA flow",
-                                account_id
-                            );
-                            // Fall through to initiate MFA
-                        }
+                        prt_signin_frequency_check!(cred)
                     }
                     Some(Err(MsalError::MFARequired)) => {
                         // Password is valid but MFA is required (ConvergedTFA response).
@@ -2776,44 +2781,7 @@ impl IdProvider for HimmelblauProvider {
                             account_id
                         );
 
-                        if let Some(prt_result) = self
-                            .try_prt_signin_frequency_check(account_id, tpm, machine_key)
-                            .await
-                        {
-                            match prt_result {
-                                Ok(msal_token) => {
-                                    // Sign-in frequency satisfied - no MFA needed!
-                                    info!(
-                                        "Sign-in frequency satisfied for '{}' via PRT - skipping MFA",
-                                        account_id
-                                    );
-                                    return match self
-                                        .token_validate(account_id, &msal_token, None)
-                                        .await
-                                    {
-                                        Ok(AuthResult::Success { token }) => Ok((
-                                            AuthResult::Success { token },
-                                            AuthCacheAction::PasswordHashUpdate { cred },
-                                        )),
-                                        Ok(auth_result) => Ok((auth_result, AuthCacheAction::None)),
-                                        Err(e) => Err(e),
-                                    };
-                                }
-                                Err(reason) => {
-                                    debug!(
-                                        "PRT sign-in frequency check failed for '{}': {} - proceeding with MFA flow",
-                                        account_id, reason
-                                    );
-                                    // Fall through to initiate MFA
-                                }
-                            }
-                        } else {
-                            debug!(
-                                "No PRT cached for '{}' - proceeding with MFA flow",
-                                account_id
-                            );
-                            // Fall through to initiate MFA
-                        }
+                        prt_signin_frequency_check!(cred)
                     }
                     Some(Err(MsalError::ChangePassword)) => {
                         // The user needs to set a new password.
