@@ -1681,8 +1681,7 @@ impl IdProvider for HimmelblauProvider {
                     }
                     Err(IdpError::NotFound { .. }) => {}
                     Err(e) => {
-                        error!(?e, "Failed to enroll in Intune");
-                        return Err(e);
+                        error!(?e, "Failed to enroll in Intune, will retry later.");
                     }
                 }
             };
@@ -3645,10 +3644,11 @@ impl HimmelblauProvider {
                     }
                     Err(IdpError::NotFound { .. }) => None,
                     Err(e) => {
-                        return Err(MsalError::GeneralFailure(format!(
-                            "Failed to enroll in Intune: {:?}",
-                            e
-                        )));
+                        error!(
+                            ?e,
+                            "Failed to enroll in Intune during domain join, will retry later."
+                        );
+                        None
                     }
                 };
 
