@@ -1351,8 +1351,8 @@ where
                         return Err(());
                     }
                     (AuthCredHandler::PasswordFirst { .. }, _) => {
-                        // AuthCredHandler::PasswordFirst is invalid for offline auth
-                        // (it requires online ROPC validation)
+                        // AuthCredHandler::PasswordFirst with anything other than
+                        // PamAuthRequest::Password is invalid.
                         return Err(());
                     }
                 }
