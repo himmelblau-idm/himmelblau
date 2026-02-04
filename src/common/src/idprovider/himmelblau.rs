@@ -3540,6 +3540,28 @@ impl HimmelblauProvider {
                 machine_key,
             )
             .await;
+        let prt_result = match prt_result {
+            Err(MsalError::RequestFailed(msg)) => {
+                error!(
+                    "PRT exchange failed, retrying after network error: {:?}",
+                    msg
+                );
+                sleep(Duration::from_millis(500));
+                self.client
+                    .read()
+                    .await
+                    .exchange_prt_for_access_token(
+                        &prt,
+                        vec!["openid", "profile"],
+                        None,
+                        None,
+                        tpm,
+                        machine_key,
+                    )
+                    .await
+            }
+            result => result,
+        };
 
         match prt_result {
             Ok(mut msal_token) => {
