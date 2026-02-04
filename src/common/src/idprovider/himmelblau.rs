@@ -1496,11 +1496,23 @@ impl IdProvider for HimmelblauProvider {
                     auth_options.push(AuthOption::RemoteSession);
                 }
 
+                let auth_init = net_down_check!(
+                    self.client
+                        .read()
+                        .await
+                        .check_user_exists(account_id, &auth_options)
+                        .await,
+                    Err(e) => {
+                        error!("{:?}", e);
+                        return Err(IdpError::BadRequest);
+                    }
+                );
+
                 // Sign-in frequency optimization: For console logins with password_only mode,
                 // request password first and use PasswordFirst handler. This allows us to
                 // validate the password via ROPC and check PRT for sign-in frequency before
                 // potentially skipping MFA (if the frequency is satisfied).
-                if console_password_only && !is_remote_service {
+                if console_password_only && !is_remote_service && !auth_init.passwordless() {
                     debug!(
                         "Console password-only mode: requesting password first to check sign-in frequency",
                     );
@@ -1523,17 +1535,6 @@ impl IdProvider for HimmelblauProvider {
                     ));
                 }
 
-                let auth_init = net_down_check!(
-                    self.client
-                        .read()
-                        .await
-                        .check_user_exists(account_id, &auth_options)
-                        .await,
-                    Err(e) => {
-                        error!("{:?}", e);
-                        return Err(IdpError::BadRequest);
-                    }
-                );
                 if !auth_init.passwordless() {
                     // Check if the network is even up prior to sending a
                     // password prompt.
