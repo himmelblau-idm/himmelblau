@@ -1350,6 +1350,11 @@ where
                         // AuthCredHandler::None is invalid with Fido
                         return Err(());
                     }
+                    (AuthCredHandler::PasswordFirst { .. }, _) => {
+                        // AuthCredHandler::PasswordFirst with anything other than
+                        // PamAuthRequest::Password is invalid.
+                        return Err(());
+                    }
                 }
             }
             (&mut AuthSession::InProgress { token: None, .. }, state) => {
