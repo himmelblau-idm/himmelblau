@@ -2605,12 +2605,26 @@ impl IdProvider for HimmelblauProvider {
                     match prt_result {
                         Ok(msal_token) => {
                             // Sign-in frequency satisfied - no MFA needed!
-                            info!("Sign-in frequency satisfied for user via PRT - skipping MFA",);
+                            info!("Sign-in frequency satisfied for user via PRT - skipping MFA");
                             return match self.token_validate(account_id, &msal_token, None).await {
-                                Ok(AuthResult::Success { token }) => Ok((
-                                    AuthResult::Success { token },
-                                    AuthCacheAction::PasswordHashUpdate { $cred },
-                                )),
+                                Ok(AuthResult::Success { token }) => {
+                                    let action = if self
+                                        .config
+                                        .read()
+                                        .await
+                                        .get_offline_breakglass_enabled()
+                                    {
+                                        AuthCacheAction::PasswordHashUpdate { $cred }
+                                    } else {
+                                        AuthCacheAction::None
+                                    };
+                                    Ok((
+                                        AuthResult::Success { token },
+                                        /* Cache the offline password hash for breakglass
+                                         * conditions, if enabled. */
+                                        action,
+                                    ))
+                                }
                                 Ok(auth_result) => Ok((auth_result, AuthCacheAction::None)),
                                 Err(e) => Err(e),
                             };
@@ -2738,10 +2752,20 @@ impl IdProvider for HimmelblauProvider {
                         debug!("ROPC succeeded - no MFA required");
                         let token2 = enroll_and_obtain_enrolled_token!(token);
                         return match self.token_validate(account_id, &token2, None).await {
-                            Ok(AuthResult::Success { token }) => Ok((
-                                AuthResult::Success { token },
-                                AuthCacheAction::PasswordHashUpdate { cred },
-                            )),
+                            Ok(AuthResult::Success { token }) => {
+                                let action =
+                                    if self.config.read().await.get_offline_breakglass_enabled() {
+                                        AuthCacheAction::PasswordHashUpdate { cred }
+                                    } else {
+                                        AuthCacheAction::None
+                                    };
+                                Ok((
+                                    AuthResult::Success { token },
+                                    /* Cache the offline password hash for breakglass
+                                     * conditions, if enabled. */
+                                    action,
+                                ))
+                            }
                             Ok(auth_result) => Ok((auth_result, AuthCacheAction::None)),
                             Err(e) => Err(e),
                         };
