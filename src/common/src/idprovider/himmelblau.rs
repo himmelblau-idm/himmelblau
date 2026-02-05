@@ -100,6 +100,12 @@ fn msal_error_to_user_message(e: &MsalError) -> String {
             "Authentication failed: Invalid server response.".to_string()
         }
         MsalError::AcquireTokenFailed(error_response) => {
+            if error_response
+                .error_codes
+                .contains(&PASSWORD_RESET_REGISTRATION_REQUIRED)
+            {
+                return "Password reset registration required. Complete setup at https://aka.ms/ssprsetup from another device, then try again.".to_string();
+            }
             // This case is typically handled separately with error_description,
             // but provide a fallback if it reaches this function.
             error_response.error_description.to_string()
@@ -122,6 +128,9 @@ fn msal_error_to_user_message(e: &MsalError) -> String {
             "Authentication in progress.".to_string()
         }
         MsalError::AADSTSError(aadsts_err) => {
+            if aadsts_err.code == PASSWORD_RESET_REGISTRATION_REQUIRED {
+                return "Password reset registration required. Complete setup at https://aka.ms/ssprsetup from another device, then try again.".to_string();
+            }
             // AADSTSError has a useful description from Azure AD
             aadsts_err.to_string()
         }
