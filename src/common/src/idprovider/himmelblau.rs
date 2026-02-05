@@ -2776,6 +2776,27 @@ impl IdProvider for HimmelblauProvider {
                         )
                         .await,
                     Ok(flow) => flow,
+                    Err(MsalError::MFARequired) => {
+                        auth_options.push(AuthOption::ForceMFA);
+                        net_down_check!(
+                            self.client
+                                .read()
+                                .await
+                                .initiate_acquire_token_by_mfa_flow_for_device_enrollment(
+                                    account_id,
+                                    Some(&cred),
+                                    auth_options,
+                                    Some(auth_init.clone()),
+                                    self.config.read().await.get_mfa_method().as_deref()
+                                )
+                                .await,
+                            Ok(flow) => flow,
+                            Err(e) => {
+                                error!("MFA flow initiation failed: {:?}", e);
+                                return Ok((AuthResult::Denied(msal_error_to_user_message(&e)), AuthCacheAction::None));
+                            }
+                        )
+                    },
                     Err(MsalError::PasswordRequired) => {
                         // This shouldn't happen since we already validated the password
                         error!("Unexpected PasswordRequired error after ROPC validation");
