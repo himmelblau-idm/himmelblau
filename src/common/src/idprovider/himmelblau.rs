@@ -2756,15 +2756,12 @@ impl IdProvider for HimmelblauProvider {
                     None => {
                         // Device not enrolled - skip ROPC and start enrollment auth flow.
                         // The enrollment flow may be MFA or password-only depending on MS policy.
-                        debug!(
-                            "Skipping ROPC (device not enrolled) - starting enrollment auth flow"
-                        );
+                        debug!("Skipping ROPC (device not enrolled) - starting MFA auth flow");
                     }
                 }
 
                 // If we reach here, PRT check didn't satisfy sign-in frequency.
-                // Initiate the enrollment auth flow now.
-                debug!("Initiating enrollment auth flow");
+                debug!("Initiating MFA auth flow");
 
                 let mut flow = net_down_check!(
                     self.client
