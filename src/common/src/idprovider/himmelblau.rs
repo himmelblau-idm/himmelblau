@@ -829,22 +829,47 @@ enum TokenOrObj {
 }
 
 macro_rules! check_new_device_enrollment_required {
-    ($aadsts_err:expr, $self:expr, $keystore:expr, $ret_fn:expr, $ret_fail:expr) => {{
+    ($aadsts_err:expr, $self:expr, $keystore:expr) => {{
         if $aadsts_err.error_codes.contains(&(135011 as u32))
             || $aadsts_err.error_codes.contains(&DEVICE_AUTH_FAIL)
         {
             let csr_tag = $self.fetch_cert_key_tag();
             if let Err(e) = $keystore.delete_tagged_hsm_key(&csr_tag) {
-                return $ret_fail(format!("Failed to delete CSR key: {:?}", e));
+                error!("Failed to delete CSR key: {:?}", e);
+                return Ok((
+                    AuthResult::Denied(
+                        msal_error_to_user_message(&MsalError::AcquireTokenFailed($aadsts_err))
+                            + " Failed to delete CSR key",
+                    ),
+                    AuthCacheAction::None,
+                ));
             }
             let intune_tag = $self.fetch_intune_key_tag();
             if let Err(e) = $keystore.delete_tagged_hsm_key(&intune_tag) {
-                return $ret_fail(format!("Failed to delete intune key: {:?}", e));
+                error!("Failed to delete intune key: {:?}", e);
+                return Ok((
+                    AuthResult::Denied(
+                        msal_error_to_user_message(&MsalError::AcquireTokenFailed($aadsts_err))
+                            + " Failed to delete intune key",
+                    ),
+                    AuthCacheAction::None,
+                ));
             }
 
-            return $ret_fn(format!("Device has been removed from the domain."));
+            return Ok((
+                AuthResult::Denied(
+                    "Device has been removed from the domain. ".to_string()
+                        + &msal_error_to_user_message(&MsalError::AcquireTokenFailed($aadsts_err)),
+                ),
+                AuthCacheAction::None,
+            ));
         }
-        return $ret_fail(format!("{:?}", $aadsts_err));
+        return Ok((
+            AuthResult::Denied(msal_error_to_user_message(&MsalError::AcquireTokenFailed(
+                $aadsts_err,
+            ))),
+            AuthCacheAction::None,
+        ));
     }};
 }
 
@@ -1692,15 +1717,7 @@ impl IdProvider for HimmelblauProvider {
                         return Ok((AuthResult::Denied("Network outage detected.".to_string()), AuthCacheAction::None));
                     },
                     Err(MsalError::AcquireTokenFailed(e)) => {
-                        check_new_device_enrollment_required!(e, self, keystore,
-                            |msg: String| {
-                                return Ok((AuthResult::Denied(msg), AuthCacheAction::None))
-                            },
-                            |msg: String| {
-                                error!("{}", msg);
-                                return Ok((AuthResult::Denied(msg), AuthCacheAction::None))
-                            }
-                        )
+                        check_new_device_enrollment_required!(e, self, keystore)
                     },
                     $($pat => $result),*
                 }
@@ -2043,15 +2060,7 @@ impl IdProvider for HimmelblauProvider {
                                     }
                                 }
                             } else {
-                                check_new_device_enrollment_required!(e, self, keystore,
-                                    |msg: String| {
-                                        return Ok((AuthResult::Denied(msg), AuthCacheAction::None))
-                                    },
-                                    |msg: String| {
-                                        error!("{}", msg);
-                                        return Ok((AuthResult::Denied(msg), AuthCacheAction::None))
-                                    }
-                                )
+                                check_new_device_enrollment_required!(e, self, keystore)
                             }
                         }
                         Err(e) => {
@@ -2248,15 +2257,7 @@ impl IdProvider for HimmelblauProvider {
                                                 }
                                             }
                                     } else {
-                                        check_new_device_enrollment_required!(e, self, keystore,
-                                            |msg: String| {
-                                                return Ok((AuthResult::Denied(msg), AuthCacheAction::None))
-                                            },
-                                            |msg: String| {
-                                                error!("{}", msg);
-                                                return Ok((AuthResult::Denied(msg), AuthCacheAction::None))
-                                            }
-                                        )
+                                        check_new_device_enrollment_required!(e, self, keystore)
                                     }
                                 },
                                 Err(_) => {
