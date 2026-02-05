@@ -1675,55 +1675,6 @@ impl IdProvider for HimmelblauProvider {
                 )
             }};
         }
-        macro_rules! request_dag {
-            () => {{
-                let console_password_only = self.config.read().await.get_allow_console_password_only();
-                let remote_services = self
-                    .config
-                    .read()
-                    .await
-                    .get_password_only_remote_services_deny_list();
-                let is_remote_service = service.starts_with("remote:")
-                    || remote_services.iter().any(|s| service.contains(s));
-                let mut auth_options = vec![];
-                if is_remote_service || !console_password_only {
-                    auth_options.push(AuthOption::ForceMFA);
-                }
-                if is_remote_service {
-                    auth_options.push(AuthOption::RemoteSession);
-                }
-                let resp = net_down_check!(
-                    self.client
-                        .read()
-                        .await
-                        .initiate_device_flow_for_device_enrollment(&auth_options)
-                        .await,
-                    Ok(resp) => resp,
-                    Err(e) => {
-                        error!("{:?}", e);
-                        return Err(IdpError::BadRequest);
-                    }
-                );
-                let mut flow: MFAAuthContinue = resp.into();
-                if !self.is_domain_joined(keystore).await {
-                    flow.resource = Some("https://enrollment.manage.microsoft.com".to_string());
-                }
-                let msg = flow.msg.clone();
-                let polling_interval = flow.polling_interval.unwrap_or(5000);
-                *cred_handler = AuthCredHandler::MFA {
-                    flow,
-                    password: None,
-                    extra_data: None,
-                };
-                return Ok((
-                    AuthResult::Next(AuthRequest::MFAPoll {
-                        msg,
-                        polling_interval: polling_interval / 1000,
-                    }),
-                    AuthCacheAction::None,
-                ));
-            }};
-        }
         macro_rules! auth_and_validate_hello_key {
             ($hello_key:ident, $keytype:ident, $cred:ident) => {{
                 // CRITICAL: Validate that we can load the key, otherwise the offline
@@ -1794,12 +1745,6 @@ impl IdProvider for HimmelblauProvider {
                             ));
                         }
                         Err(MsalError::AcquireTokenFailed(e)) => {
-                            if e.error_codes.contains(&PASSWORD_RESET_REGISTRATION_REQUIRED) {
-                                info!(
-                                    "Password reset registration required, initiating device flow"
-                                );
-                                request_dag!();
-                            }
                             if e.error_codes.contains(&CONSENT_REQUIRED) {
                                 /* Consent has not been granted for the application
                                  * to access the Graph API. Retry without Graph API
@@ -1829,8 +1774,9 @@ impl IdProvider for HimmelblauProvider {
                                     }
                                     Err(e) => {
                                         error!("Failed to authenticate with hello key (retry): {:?}", e);
+                                        let err_msg = msal_error_to_user_message(&e);
                                         handle_hello_bad_pin_count!(self, account_id, keystore, |msg: &str| {
-                                            Ok((AuthResult::Denied(msg.to_string()), AuthCacheAction::None))
+                                            Ok((AuthResult::Denied(msg.to_string() + " " + &err_msg), AuthCacheAction::None))
                                         });
                                         return Ok((
                                             AuthResult::Denied(
@@ -1845,17 +1791,10 @@ impl IdProvider for HimmelblauProvider {
                             }
                         }
                         Err(e) => {
-                            if let MsalError::AADSTSError(ref aadsts_err) = e {
-                                if aadsts_err.code == PASSWORD_RESET_REGISTRATION_REQUIRED {
-                                    info!(
-                                        "Password reset registration required, initiating device flow"
-                                    );
-                                    request_dag!();
-                                }
-                            }
                             error!("Failed to authenticate with hello key: {:?}", e);
+                            let err_msg = msal_error_to_user_message(&e);
                             handle_hello_bad_pin_count!(self, account_id, keystore, |msg: &str| {
-                                Ok((AuthResult::Denied(msg.to_string()), AuthCacheAction::None))
+                                Ok((AuthResult::Denied(msg.to_string() + " " + &err_msg), AuthCacheAction::None))
                             });
                             return Ok((
                                 AuthResult::Denied(
@@ -1931,15 +1870,6 @@ impl IdProvider for HimmelblauProvider {
                                     ));
                                 }
                                 Err(MsalError::AcquireTokenFailed(e)) => {
-                                    if e
-                                        .error_codes
-                                        .contains(&PASSWORD_RESET_REGISTRATION_REQUIRED)
-                                    {
-                                        info!(
-                                            "Password reset registration required, initiating device flow"
-                                        );
-                                        request_dag!();
-                                    }
                                     if e.error_codes.contains(&CONSENT_REQUIRED) {
                                         /* Consent has not been granted for the application
                                          * to access the Graph API. Retry without Graph API
@@ -1977,8 +1907,9 @@ impl IdProvider for HimmelblauProvider {
                                                 }
                                                 Err(e) => {
                                                     error!("Failed to exchange PRT (retry): {:?}", e);
+                                                    let err_msg = msal_error_to_user_message(&e);
                                                     return Ok((
-                                                        AuthResult::Denied("Authentication failed. Please try signing in again.".to_string()),
+                                                        AuthResult::Denied("Authentication failed. Please try signing in again. ".to_string() + &err_msg),
                                                         AuthCacheAction::None,
                                                     ));
                                                 }
