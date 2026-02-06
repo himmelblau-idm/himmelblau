@@ -98,6 +98,11 @@ pub enum AuthCredHandler {
         flow: MFAAuthContinue,
         password: Option<String>,
         extra_data: Option<String>,
+        /// When set, this MFA flow was triggered by an expired PRT/refresh token
+        /// while the Hello key and PIN are still valid. Contains the validated
+        /// PIN to reuse for re-sealing the new PRT with the existing Hello key
+        /// after successful re-authentication. (See issue #1051)
+        reauth_hello_pin: Option<String>,
     },
     SetupPin {
         token: Option<UnixUserToken>,

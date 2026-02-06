@@ -1064,6 +1064,7 @@ impl IdProvider for OidcProvider {
                     flow,
                     password: None,
                     extra_data: Some(extra_data),
+                    reauth_hello_pin: None,
                 },
             ))
         } else {
@@ -1402,6 +1403,7 @@ impl IdProvider for OidcProvider {
                     ref mut flow,
                     password: _,
                     extra_data,
+                    reauth_hello_pin: _,
                 },
                 PamAuthRequest::MFAPoll { poll_attempt },
             ) => {
