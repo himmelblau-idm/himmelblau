@@ -5,6 +5,7 @@ import Gio from 'gi://Gio';
 import { Extension } from 'resource:///org/gnome/shell/extensions/extension.js';
 import * as AuthPromptModule from 'resource:///org/gnome/shell/gdm/authPrompt.js';
 import { QrCode, Ecc } from './qrcodegen.js';
+import { selectDeviceFlowUrl, URL_RE as DEVICE_FLOW_URL_RE } from './qr-selection.js';
 
 const GdmAuthPrompt = AuthPromptModule.AuthPrompt;
 
@@ -15,7 +16,7 @@ let activeTotpTempFiles = new Set();
 const TOTP_SETUP_RE = /Enter the setup key '([^']+)'.*Use '([^']+)'.*'([^']+)' as the label\/name\./s;
 
 // Regex to match URLs in messages (excluding known static-QR URLs)
-const URL_RE = /https?:\/\/[^\s<>"')\]]+/g;
+const URL_RE = DEVICE_FLOW_URL_RE;
 
 // Known URLs that have static QR code images
 const STATIC_QR_URLS = {
@@ -250,47 +251,39 @@ export default class QrGreeterExtension extends Extension {
                     if (!qrDisplayed) {
                         // Reset the regex lastIndex to ensure fresh matching
                         URL_RE.lastIndex = 0;
-                        const urlMatches = message.match(URL_RE);
-
-                        if (urlMatches) {
-                            // Filter out known static URLs to find new URLs
-                            const dynamicUrls = urlMatches.filter(url => {
-                                for (const staticUrl of Object.keys(STATIC_QR_URLS)) {
-                                    if (url.startsWith(staticUrl)) {
-                                        return false;
-                                    }
+                        const urlMatches = message.match(URL_RE) || [];
+                        const dynamicUrls = urlMatches.filter(url => {
+                            for (const staticUrl of Object.keys(STATIC_QR_URLS)) {
+                                if (url.startsWith(staticUrl)) {
+                                    return false;
                                 }
-                                return true;
-                            });
+                            }
+                            return true;
+                        });
+                        const selection = selectDeviceFlowUrl('', {
+                            urls: dynamicUrls,
+                            validateUrl,
+                        });
 
-                            if (dynamicUrls.length > 0) {
-                                // Use the first valid URL found
-                                let targetUrl = null;
-                                for (const url of dynamicUrls) {
-                                    const validated = validateUrl(url);
-                                    if (validated) {
-                                        targetUrl = validated;
-                                        break;
-                                    }
+                        if (dynamicUrls.length > 0 && selection.url) {
+                            try {
+                                const qr = QrCode.encodeText(selection.url, Ecc.MEDIUM);
+                                const svgContent = qrCodeToSvg(qr, 2, '#ffffff', '#000000');
+                                const tempFilePath = writeSvgToTempFile(svgContent);
+                                this._totpTempFile = tempFilePath;
+                                activeTotpTempFiles.add(tempFilePath);
+                                const fileUri = `file://${tempFilePath}`;
+                                this._qrContainer.set_style(`background-image: url('${fileUri}'); background-size: contain; background-repeat: no-repeat; background-position: center;`);
+                                this._qrContainer.show();
+                                if (selection.usedComplete) {
+                                    this._qrLabel.set_text("Scan to continue sign-in");
+                                } else {
+                                    this._qrLabel.set_text("Scan with your phone");
                                 }
-
-                                if (targetUrl) {
-                                    try {
-                                        const qr = QrCode.encodeText(targetUrl, Ecc.MEDIUM);
-                                        const svgContent = qrCodeToSvg(qr, 2, '#ffffff', '#000000');
-                                        const tempFilePath = writeSvgToTempFile(svgContent);
-                                        this._totpTempFile = tempFilePath;
-                                        activeTotpTempFiles.add(tempFilePath);
-                                        const fileUri = `file://${tempFilePath}`;
-                                        this._qrContainer.set_style(`background-image: url('${fileUri}'); background-size: contain; background-repeat: no-repeat; background-position: center;`);
-                                        this._qrContainer.show();
-                                        this._qrLabel.set_text("Scan with your phone");
-                                        this._qrLabel.show();
-                                        qrDisplayed = true;
-                                    } catch (e) {
-                                        console.error("Himmelblau QR Greeter: Failed to generate QR code for URL:", e);
-                                    }
-                                }
+                                this._qrLabel.show();
+                                qrDisplayed = true;
+                            } catch (e) {
+                                console.error("Himmelblau QR Greeter: Failed to generate QR code for URL:", e);
                             }
                         }
                     }

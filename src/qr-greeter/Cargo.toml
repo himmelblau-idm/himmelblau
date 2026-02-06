@@ -24,6 +24,7 @@ recommends = ["systemd-container"]
 assets = [
   ["target/release/qr-greeter-build/qr-greeter@himmelblau-idm.org/extension.js", "usr/share/gnome-shell/extensions/qr-greeter@himmelblau-idm.org/extension.js", "644"],
   ["target/release/qr-greeter-build/qr-greeter@himmelblau-idm.org/qrcodegen.js", "usr/share/gnome-shell/extensions/qr-greeter@himmelblau-idm.org/qrcodegen.js", "644"],
+  ["target/release/qr-greeter-build/qr-greeter@himmelblau-idm.org/qr-selection.js", "usr/share/gnome-shell/extensions/qr-greeter@himmelblau-idm.org/qr-selection.js", "644"],
   ["target/release/qr-greeter-build/qr-greeter@himmelblau-idm.org/metadata.json", "usr/share/gnome-shell/extensions/qr-greeter@himmelblau-idm.org/metadata.json", "644"],
   ["target/release/qr-greeter-build/qr-greeter@himmelblau-idm.org/stylesheet.css", "usr/share/gnome-shell/extensions/qr-greeter@himmelblau-idm.org/stylesheet.css", "644"],
   ["target/release/qr-greeter-build/qr-greeter@himmelblau-idm.org/msdag.png", "usr/share/gnome-shell/extensions/qr-greeter@himmelblau-idm.org/msdag.png", "644"],
@@ -36,6 +37,7 @@ name = "himmelblau-qr-greeter"
 assets = [
   { source = "target/release/qr-greeter-build/qr-greeter@himmelblau-idm.org/extension.js", dest = "/usr/share/gnome-shell/extensions/qr-greeter@himmelblau-idm.org/extension.js", mode = "644" },
   { source = "target/release/qr-greeter-build/qr-greeter@himmelblau-idm.org/qrcodegen.js", dest = "/usr/share/gnome-shell/extensions/qr-greeter@himmelblau-idm.org/qrcodegen.js", mode = "644" },
+  { source = "target/release/qr-greeter-build/qr-greeter@himmelblau-idm.org/qr-selection.js", dest = "/usr/share/gnome-shell/extensions/qr-greeter@himmelblau-idm.org/qr-selection.js", mode = "644" },
   { source = "target/release/qr-greeter-build/qr-greeter@himmelblau-idm.org/metadata.json", dest = "/usr/share/gnome-shell/extensions/qr-greeter@himmelblau-idm.org/metadata.json", mode = "644" },
   { source = "target/release/qr-greeter-build/qr-greeter@himmelblau-idm.org/stylesheet.css", dest = "/usr/share/gnome-shell/extensions/qr-greeter@himmelblau-idm.org/stylesheet.css", mode = "644" },
   { source = "target/release/qr-greeter-build/qr-greeter@himmelblau-idm.org/msdag.png", dest = "/usr/share/gnome-shell/extensions/qr-greeter@himmelblau-idm.org/msdag.png", mode = "644" },

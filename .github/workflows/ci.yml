@@ -144,6 +144,7 @@ jobs:
         run: |
           sudo apt-get update && \
           sudo apt-get install -y \
+            nodejs \
             libpam0g-dev \
             libudev-dev \
             libssl-dev \
