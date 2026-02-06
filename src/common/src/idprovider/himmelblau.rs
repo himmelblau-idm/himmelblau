@@ -2850,6 +2850,8 @@ impl IdProvider for HimmelblauProvider {
                 let is_remote_service = service.starts_with("remote:")
                     || remote_services.iter().any(|s| service.contains(s))
                     || service.to_lowercase().contains("ssh");
+                let console_password_only =
+                    self.config.read().await.get_allow_console_password_only();
                 if !is_remote_service {
                     opts.push(AuthOption::Fido);
                     if self
@@ -2860,8 +2862,11 @@ impl IdProvider for HimmelblauProvider {
                     {
                         opts.push(AuthOption::PasswordlessFido);
                     }
-                } else {
+                }
+                if is_remote_service || !console_password_only {
                     opts.push(AuthOption::ForceMFA);
+                }
+                if is_remote_service {
                     opts.push(AuthOption::RemoteSession);
                 }
                 // If SFA is enabled, disable the DAG fallback, otherwise SFA users
