@@ -481,7 +481,13 @@ impl PamHooks for PamKanidm {
             }
         };
 
-        let (_, domain) = split_username(&account_id).expect("UPN already validated above");
+        let (_, domain) = match split_username(&account_id) {
+            Some(resp) => resp,
+            None => {
+                error!(%account_id, "chauthtok: split_username failed unexpectedly");
+                return PamResultCode::PAM_SERVICE_ERR;
+            }
+        };
 
         let conv = match pamh.get_item::<PamConv>() {
             Ok(conv) => conv,
