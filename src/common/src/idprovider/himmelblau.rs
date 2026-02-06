@@ -2786,7 +2786,8 @@ impl IdProvider for HimmelblauProvider {
                                     account_id,
                                     Some(&cred),
                                     auth_options,
-                                    Some(auth_init.clone()),
+                                    None, // This fallback cannot use the previous auth_init,
+                                          // otherwise we don't send the new ForceMFA auth options.
                                     self.config.read().await.get_mfa_method().as_deref()
                                 )
                                 .await,
