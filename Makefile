@@ -49,7 +49,8 @@ all: .packaging dockerfiles ## Auto-detect host distro and build packages just f
 	      15.7*) TARGET="sle15sp7" ;; \
 	    esac ;; \
 	  opensuse-tumbleweed) TARGET="tumbleweed" ;; \
-	  gentoo) TARGET="gentoo" ;; \
+	  gentoo)         TARGET="gentoo" ;; \
+	  amzn)          case "$$VER" in 2023) TARGET="amzn2023" ;; esac ;; \
 	esac; \
 	\
 	if [ -z "$$TARGET" ]; then \
@@ -115,7 +116,7 @@ nix: .packaging ## Build Nix packages into ./packaging/
 	done
 
 DEB_TARGETS := ubuntu22.04 ubuntu24.04 ubuntu25.10 debian12 debian13
-RPM_TARGETS := rocky8 rocky9 rocky10 tumbleweed rawhide fedora42 fedora43
+RPM_TARGETS := rocky8 rocky9 rocky10 tumbleweed rawhide fedora42 fedora43 amzn2023
 SLE_TARGETS := sle15sp6 sle15sp7 sle16
 GENTOO_TARGETS := gentoo
 ALL_PACKAGE_TARGETS := $(DEB_TARGETS) $(RPM_TARGETS) $(SLE_TARGETS) $(GENTOO_TARGETS)

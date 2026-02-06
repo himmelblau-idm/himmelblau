@@ -78,12 +78,19 @@ pub fn mfa_from_oidc_device(
     let polling_interval = details.interval().as_secs() as u32;
     let expires_in = details.expires_in().as_secs() as u32;
 
-    let msg = format!(
-        "Using a browser on another device, visit:\n{}\n\
-             And enter the code:\n{}",
-        details.verification_uri(),
-        details.user_code().secret()
-    );
+    let msg = match details.verification_uri_complete() {
+        Some(complete) => format!(
+            "Scan the QR code to continue sign-in, or open this link on another device:\n{}\nIf you cannot scan, visit:\n{}\nAnd enter the code:\n{}",
+            complete.secret(),
+            details.verification_uri(),
+            details.user_code().secret()
+        ),
+        None => format!(
+            "Using a browser on another device, visit:\n{}\nAnd enter the code:\n{}",
+            details.verification_uri(),
+            details.user_code().secret()
+        ),
+    };
 
     let max_poll_attempts = if polling_interval == 0 {
         0
@@ -103,6 +110,49 @@ pub fn mfa_from_oidc_device(
             IdpError::BadRequest
         })?,
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::mfa_from_oidc_device;
+    use oauth2::DeviceAuthorizationResponse;
+    use serde_json::json;
+
+    #[test]
+    fn mfa_message_prefers_verification_uri_complete() {
+        let payload = json!({
+            "device_code": "device-code",
+            "user_code": "USER-CODE",
+            "verification_uri": "https://login.example/device",
+            "verification_uri_complete": "https://login.example/device?user_code=USER-CODE",
+            "expires_in": 900,
+            "interval": 5
+        });
+        let details: DeviceAuthorizationResponse<_> = serde_json::from_value(payload).unwrap();
+        let (mfa, _) = mfa_from_oidc_device(details).unwrap();
+
+        assert!(mfa
+            .msg
+            .contains("https://login.example/device?user_code=USER-CODE"));
+        assert!(mfa.msg.contains("https://login.example/device"));
+        assert!(mfa.msg.contains("USER-CODE"));
+    }
+
+    #[test]
+    fn mfa_message_falls_back_to_verification_uri() {
+        let payload = json!({
+            "device_code": "device-code",
+            "user_code": "USER-CODE",
+            "verification_uri": "https://login.example/device",
+            "expires_in": 900,
+            "interval": 5
+        });
+        let details: DeviceAuthorizationResponse<_> = serde_json::from_value(payload).unwrap();
+        let (mfa, _) = mfa_from_oidc_device(details).unwrap();
+
+        assert!(mfa.msg.contains("https://login.example/device"));
+        assert!(mfa.msg.contains("USER-CODE"));
+    }
 }
 
 const HIMMELBLAU_OIDC_NAMESPACE: uuid::Uuid = uuid::uuid!("e669513b-1345-4853-96a7-596243184319");

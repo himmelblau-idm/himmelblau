@@ -409,14 +409,7 @@ impl PamHooks for PamKanidm {
             base_printer
         };
 
-        let result = authenticate(
-            authtok,
-            &cfg,
-            &account_id,
-            &service,
-            opts,
-            msg_printer,
-        );
+        let result = authenticate(authtok, &cfg, &account_id, &service, opts, msg_printer);
 
         if set_authtok && result == PamResultCode::PAM_SUCCESS {
             if let Ok(Some(secret)) = keyring_secret.lock().map(|s| s.clone()) {
