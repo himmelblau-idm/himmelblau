@@ -31,6 +31,7 @@ jobs:
         env:
           AZURE_COGNITIVE_SERVICES_RESOURCE_NAME: ${{ secrets.AZURE_COGNITIVE_SERVICES_RESOURCE_NAME }}
           AZURE_COGNITIVE_SERVICES_API_KEY: ${{ secrets.AZURE_COGNITIVE_SERVICES_API_KEY }}
+          AZURE_API_KEY: ${{ secrets.AZURE_API_KEY }}
         with:
           model: azure-cognitive-services/gpt-5.2-codex
           prompt: |
@@ -248,6 +249,7 @@ jobs:
         env:
           AZURE_COGNITIVE_SERVICES_RESOURCE_NAME: ${{ secrets.AZURE_COGNITIVE_SERVICES_RESOURCE_NAME }}
           AZURE_COGNITIVE_SERVICES_API_KEY: ${{ secrets.AZURE_COGNITIVE_SERVICES_API_KEY }}
+          AZURE_API_KEY: ${{ secrets.AZURE_API_KEY }}
         with:
           model: azure-cognitive-services/gpt-5.2-codex
           prompt: |
