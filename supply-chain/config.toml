@@ -821,14 +821,6 @@ criteria = "safe-to-deploy"
 version = "0.4.3"
 criteria = "safe-to-deploy"
 
-[[exemptions.time-core]]
-version = "0.1.6"
-criteria = "safe-to-deploy"
-
-[[exemptions.time-macros]]
-version = "0.2.24"
-criteria = "safe-to-deploy"
-
 [[exemptions.tls_codec]]
 version = "0.4.2"
 criteria = "safe-to-deploy"
