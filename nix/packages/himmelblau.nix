@@ -18,6 +18,7 @@
   dbus,
   udev,
   python3,
+  nodejs,
   # o365
   teams-for-linux,
   gnugrep,
@@ -62,6 +63,7 @@ rustPlatform.buildRustPackage (finalAttrs: {
     rustPlatform.bindgenHook
     makeWrapper
     python3
+    nodejs
   ]
   ++ lib.optionals withSelinux [
     checkpolicy
