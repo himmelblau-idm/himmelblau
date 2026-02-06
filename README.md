@@ -205,6 +205,10 @@ Flake based configurations add this repository to their inputs, enable the servi
 
 [![Azure Entra ID MFA Authentication over SSH: Himmelblau](img/ssh.png)](https://www.youtube.com/watch?v=IAqC8FoYLGc "Azure Entra ID MFA Authentication over SSH: Himmelblau")
 
+## Device Authorization QR Behavior
+
+When a device authorization response includes `verification_uri_complete`, Himmelblau shows that complete URL in the QR code so users can scan and continue sign-in without typing the user code. If the complete URL is not provided, the QR code falls back to `verification_uri` and the user code prompt remains required.
+
 ---
 
 ## Contributing

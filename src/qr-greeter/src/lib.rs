@@ -15,3 +15,24 @@
    You should have received a copy of the GNU General Public License
    along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+    use std::process::Command;
+
+    #[test]
+    fn qr_selection_js_test() {
+        let mut test_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        test_path.push("src");
+        test_path.push("qr-greeter@himmelblau-idm.org");
+        test_path.push("qr-selection.test.js");
+
+        let status = Command::new("node")
+            .arg(test_path)
+            .status()
+            .expect("failed to launch node");
+
+        assert!(status.success(), "qr-selection.test.js failed");
+    }
+}

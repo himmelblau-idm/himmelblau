@@ -1,0 +1,5 @@
+# File: /etc/apparmor.d/local/fusermount3
+/etc/himmelblau/himmelblau.conf r,
+/var/cache/private/himmelblaud/himmelblau.conf r,
+/var/cache/nss-himmelblau/cache.db rk,
+@{run}/himmelblaud/socket wr,
