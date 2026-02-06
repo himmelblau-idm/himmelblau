@@ -240,6 +240,9 @@ jobs:
         with:
           egress-policy: audit
 
+      - name: Checkout repository
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+
       - name: Run opencode (himmelbot)
         uses: anomalyco/opencode/github@288a49165138cbe8071d7f65bdc37a1d627d4d2e
         env:
