@@ -336,6 +336,14 @@ impl PamHooks for PamKanidm {
             None => cfg.map_name_to_upn(&account_id),
         };
 
+        // Local user (no UPN): not a Himmelblau/Entra account. Skip before touching the
+        // daemon so local password changes (e.g. sudo passwd <local_user>) never depend
+        // on himmelblaud and continue to pam_unix.
+        if split_username(&account_id).is_none() {
+            debug!(%account_id, "chauthtok: not a UPN, skipping (local user)");
+            return PamResultCode::PAM_IGNORE;
+        }
+
         let mut daemon_client = match DaemonClientBlocking::new(cfg.get_socket_path().as_str()) {
             Ok(dc) => dc,
             Err(e) => {
