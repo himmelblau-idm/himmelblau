@@ -771,8 +771,8 @@ impl OidcApplication {
             name: account_id.to_string(),
             spn: account_id.to_string(),
             uuid: object_id,
-            real_gidnumber: Some(uid),
-            gidnumber: gid,
+            real_gidnumber: Some(gid),
+            gidnumber: uid,
             displayname,
             shell: Some(config.get_shell(None)),
             groups: vec![GroupToken {
@@ -1049,8 +1049,8 @@ impl IdProvider for OidcProvider {
             name: account_id.to_string(),
             spn: account_id.to_string(),
             uuid: object_id,
-            real_gidnumber: Some(uid),
-            gidnumber: gid,
+            real_gidnumber: Some(gid),
+            gidnumber: uid,
             displayname,
             shell: Some(self.config.read().await.get_shell(None)),
             groups: vec![GroupToken {
