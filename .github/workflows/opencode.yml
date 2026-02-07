@@ -405,7 +405,8 @@ jobs:
             let triggeredCount = 0;
             let hasMorePages = true;
             
-            // Process all issues, but stop if we've triggered on 50 issues to avoid excessive processing
+            // Process all issues, limit triggers to 50 per run to prevent excessive API usage
+            // and ensure job completion within reasonable time (runs every 2h, so 50 is sufficient)
             while (hasMorePages && triggeredCount < 50) {
               const issues = await github.rest.issues.listForRepo({
                 owner,
@@ -414,7 +415,7 @@ jobs:
                 per_page: 100,
                 page,
                 sort: 'created',
-                direction: 'asc'
+                direction: 'asc'  // Oldest issues first
               });
               
               if (issues.data.length === 0) {
@@ -430,8 +431,8 @@ jobs:
                 
                 // Check if issue is old enough
                 if (!isIssueReady(issue.created_at)) {
-                  // Since we sort by creation (asc), newer issues won't be ready either
-                  // But continue checking in case there are older issues later
+                  // Continue checking remaining issues in this page
+                  // (there may be other ready issues that need different conditions)
                   continue;
                 }
                 
@@ -471,9 +472,9 @@ jobs:
                   }
                 } catch (error) {
                   console.error(`Error triggering Copilot for issue #${issue.number}:`, error.message);
-                  // If rate limited, add extra delay
-                  if (error.status === 429 || error.message?.includes('rate limit')) {
-                    console.log('Rate limited, waiting 60 seconds...');
+                  // If rate limited (HTTP 429), add extra delay
+                  if (error.status === 429) {
+                    console.log('Rate limited (HTTP 429), waiting 60 seconds...');
                     await new Promise(resolve => setTimeout(resolve, 60000));
                   }
                 }
