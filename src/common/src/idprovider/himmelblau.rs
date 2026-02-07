@@ -1894,25 +1894,30 @@ impl IdProvider for HimmelblauProvider {
         macro_rules! request_reauth {
             ($reauth_pin:expr) => {{
                 let reauth_pin_value = Zeroizing::new($reauth_pin);
-                let console_password_only = self.config.read().await.get_allow_console_password_only();
-                let remote_services = self
-                    .config
-                    .read()
-                    .await
-                    .get_password_only_remote_services_deny_list();
+                let (
+                    console_password_only,
+                    remote_services,
+                    enable_experimental_mfa,
+                    enable_experimental_passwordless_fido,
+                    mfa_method,
+                ) = {
+                    let cfg = self.config.read().await;
+                    (
+                        cfg.get_allow_console_password_only(),
+                        cfg.get_password_only_remote_services_deny_list(),
+                        cfg.get_enable_experimental_mfa(),
+                        cfg.get_enable_experimental_passwordless_fido(),
+                        cfg.get_mfa_method(),
+                    )
+                };
                 let is_remote_service = service.starts_with("remote:")
                     || remote_services.iter().any(|s| service.contains(s));
 
-                if self.config.read().await.get_enable_experimental_mfa() {
+                if enable_experimental_mfa {
                     // Interactive MFA flow: supports push notifications, FIDO,
                     // and code entry. Better UX than DAG for most users.
                     let mut auth_options = vec![AuthOption::Fido, AuthOption::Passwordless];
-                    if self
-                        .config
-                        .read()
-                        .await
-                        .get_enable_experimental_passwordless_fido()
-                    {
+                    if enable_experimental_passwordless_fido {
                         auth_options.push(AuthOption::PasswordlessFido);
                     }
                     if is_remote_service || !console_password_only {
@@ -1931,7 +1936,7 @@ impl IdProvider for HimmelblauProvider {
                             None, // No password — we only have the PIN
                             &auth_options,
                             None, // No auth_init — user already exists
-                            self.config.read().await.get_mfa_method().as_deref(),
+                            mfa_method.as_deref(),
                         )
                         .await
                     {
