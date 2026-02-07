@@ -299,6 +299,14 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
 
+      - name: Wait 1 hour before triggering Copilot Agent
+        run: |
+          echo "⏰ Waiting 1 hour to allow time for additional context and discussion..."
+          echo "Issue opened at: $(date -u)"
+          echo "Will trigger Copilot Agent at: $(date -u -d '+1 hour')"
+          sleep 3600
+          echo "✓ Wait complete. Proceeding to trigger Copilot Agent."
+
       - name: Trigger Copilot Agent for Issue
         uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7.0.1
         with:
