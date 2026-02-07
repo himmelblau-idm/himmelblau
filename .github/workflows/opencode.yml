@@ -399,12 +399,14 @@ jobs:
               return { proceed: true };
             };
             
-            // Get all open issues
+            // Get all open issues (with complete pagination)
             let page = 1;
             let processedCount = 0;
             let triggeredCount = 0;
+            let hasMorePages = true;
             
-            while (page <= 5) { // Limit to first 5 pages (500 issues max)
+            // Process all issues, but stop if we've triggered on 50 issues to avoid excessive processing
+            while (hasMorePages && triggeredCount < 50) {
               const issues = await github.rest.issues.listForRepo({
                 owner,
                 repo,
@@ -415,7 +417,10 @@ jobs:
                 direction: 'asc'
               });
               
-              if (issues.data.length === 0) break;
+              if (issues.data.length === 0) {
+                hasMorePages = false;
+                break;
+              }
               
               for (const issue of issues.data) {
                 // Skip pull requests
@@ -425,6 +430,8 @@ jobs:
                 
                 // Check if issue is old enough
                 if (!isIssueReady(issue.created_at)) {
+                  // Since we sort by creation (asc), newer issues won't be ready either
+                  // But continue checking in case there are older issues later
                   continue;
                 }
                 
@@ -453,11 +460,28 @@ jobs:
                   triggeredCount++;
                   console.log(`✅ Triggered Copilot Agent for issue #${issue.number}`);
                   
-                  // Add delay to avoid rate limiting
-                  await new Promise(resolve => setTimeout(resolve, 1000));
+                  // Add delay to avoid rate limiting (2 seconds to be safe)
+                  await new Promise(resolve => setTimeout(resolve, 2000));
+                  
+                  // Stop if we've reached our trigger limit
+                  if (triggeredCount >= 50) {
+                    console.log(`Reached trigger limit of 50 issues, stopping for this run`);
+                    hasMorePages = false;
+                    break;
+                  }
                 } catch (error) {
                   console.error(`Error triggering Copilot for issue #${issue.number}:`, error.message);
+                  // If rate limited, add extra delay
+                  if (error.status === 429 || error.message?.includes('rate limit')) {
+                    console.log('Rate limited, waiting 60 seconds...');
+                    await new Promise(resolve => setTimeout(resolve, 60000));
+                  }
                 }
+              }
+              
+              // Check if there are more pages
+              if (issues.data.length < 100) {
+                hasMorePages = false;
               }
               
               page++;
