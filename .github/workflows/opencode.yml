@@ -5,6 +5,7 @@ on:
     types: [opened]
   schedule:
     - cron: "0 */6 * * *"
+    - cron: "0 */2 * * *"  # Check for issues ready for Copilot Agent every 2 hours
   workflow_dispatch:
 
 permissions: {}
@@ -281,9 +282,9 @@ jobs:
             Security sensitivity:
             - Avoid risky changes; prefer clarity and minimal scope.
 
-  copilot_agent_issue_opened:
-    name: Copilot Agent (issue opened)
-    if: github.event_name == 'issues' && github.event.action == 'opened'
+  copilot_agent_scheduled:
+    name: Copilot Agent (scheduled check for ready issues)
+    if: github.event_name == 'schedule'
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -299,168 +300,170 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
 
-      - name: Calculate smart wait time (12 hours or until Monday midday)
-        id: calculate_wait
-        run: |
-          echo "⏰ Calculating smart wait time based on when issue was opened..."
-          
-          # Get issue creation timestamp
-          ISSUE_CREATED="${{ github.event.issue.created_at }}"
-          echo "Issue #${{ github.event.issue.number }} opened at: $ISSUE_CREATED"
-          
-          # Convert to Unix timestamp and get day of week (1=Monday, 2=Tuesday, ..., 7=Sunday)
-          CREATED_EPOCH=$(date -d "$ISSUE_CREATED" +%s 2>/dev/null || date -j -f "%Y-%m-%dT%H:%M:%SZ" "$ISSUE_CREATED" +%s 2>/dev/null)
-          DAY_OF_WEEK=$(date -d "@$CREATED_EPOCH" +%u 2>/dev/null || date -j -f %s "$CREATED_EPOCH" +%u 2>/dev/null)
-          
-          # Day of week: 1=Monday, 2=Tuesday, ..., 6=Saturday, 7=Sunday
-          echo "Day of week: $DAY_OF_WEEK (1=Mon, 7=Sun)"
-          
-          if [ "$DAY_OF_WEEK" -eq 6 ] || [ "$DAY_OF_WEEK" -eq 7 ]; then
-            # Weekend: Calculate wait until Monday 12:00 UTC
-            echo "📅 Issue opened on weekend - will wait until Monday 12:00 UTC"
-            
-            # Calculate next Monday at 12:00 UTC
-            # If Saturday (6): wait until Monday (2 days ahead)
-            # If Sunday (7): wait until Monday (1 day ahead)
-            if [ "$DAY_OF_WEEK" -eq 6 ]; then
-              DAYS_TO_MONDAY=2
-            else
-              DAYS_TO_MONDAY=1
-            fi
-            
-            # Get Monday's date
-            MONDAY_DATE=$(date -d "@$CREATED_EPOCH + $DAYS_TO_MONDAY days" +%Y-%m-%d 2>/dev/null || date -j -v+${DAYS_TO_MONDAY}d -f %s "$CREATED_EPOCH" +%Y-%m-%d 2>/dev/null)
-            MONDAY_NOON_EPOCH=$(date -d "${MONDAY_DATE} 12:00:00 UTC" +%s 2>/dev/null || date -j -f "%Y-%m-%d %H:%M:%S" "${MONDAY_DATE} 12:00:00" +%s 2>/dev/null)
-            
-            # Current time
-            NOW_EPOCH=$(date +%s)
-            
-            # Calculate wait time in seconds
-            WAIT_SECONDS=$((MONDAY_NOON_EPOCH - NOW_EPOCH))
-            
-            # Ensure we don't have negative wait time
-            if [ $WAIT_SECONDS -lt 0 ]; then
-              WAIT_SECONDS=43200  # Fallback to 12 hours
-            fi
-            
-            WAIT_HOURS=$((WAIT_SECONDS / 3600))
-            echo "Will wait approximately $WAIT_HOURS hours until Monday 12:00 UTC"
-            echo "Target time: ${MONDAY_DATE} 12:00:00 UTC"
-            echo "wait_seconds=$WAIT_SECONDS" >> $GITHUB_OUTPUT
-          else
-            # Weekday: Wait 12 hours
-            echo "📅 Issue opened on weekday - will wait 12 hours"
-            WAIT_SECONDS=43200
-            echo "Will wait 12 hours (43200 seconds)"
-            echo "wait_seconds=$WAIT_SECONDS" >> $GITHUB_OUTPUT
-          fi
-
-      - name: Wait for calculated time period
-        run: |
-          WAIT_SECONDS="${{ steps.calculate_wait.outputs.wait_seconds }}"
-          echo "⏰ Waiting for $WAIT_SECONDS seconds to allow time for human interaction..."
-          sleep "$WAIT_SECONDS"
-          echo "✓ Wait complete. Proceeding to check issue status."
-
-      - name: Check issue status and decide if Copilot should proceed
-        id: check_issue
+      - name: Find and process issues ready for Copilot Agent
         uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7.0.1
         with:
           script: |
-            const issueNumber = context.issue.number;
             const { owner, repo } = context.repo;
+            const now = Date.now();
+            const TWELVE_HOURS_MS = 12 * 60 * 60 * 1000;
             
-            // Fetch current issue state
-            const issue = await github.rest.issues.get({
-              owner,
-              repo,
-              issue_number: issueNumber
-            });
+            // Helper function to check if issue is ready based on creation time
+            const isIssueReady = (createdAt) => {
+              const created = new Date(createdAt);
+              const createdEpoch = created.getTime();
+              const dayOfWeek = created.getUTCDay(); // 0=Sunday, 6=Saturday
+              
+              // For weekend issues (Saturday=6, Sunday=0)
+              if (dayOfWeek === 0 || dayOfWeek === 6) {
+                // Calculate next Monday 12:00 UTC
+                const daysUntilMonday = dayOfWeek === 0 ? 1 : 2;
+                const targetDate = new Date(created);
+                targetDate.setUTCDate(targetDate.getUTCDate() + daysUntilMonday);
+                targetDate.setUTCHours(12, 0, 0, 0);
+                
+                return now >= targetDate.getTime();
+              } else {
+                // Weekday: wait 12 hours
+                return now >= createdEpoch + TWELVE_HOURS_MS;
+              }
+            };
             
-            console.log(`Issue #${issueNumber} status: ${issue.data.state}`);
-            console.log(`Issue labels: ${issue.data.labels.map(l => l.name).join(', ') || 'none'}`);
-            
-            // Check if issue is closed
-            if (issue.data.state === 'closed') {
-              console.log('❌ Issue is closed. Skipping Copilot trigger.');
-              return { should_proceed: false, reason: 'Issue is closed' };
-            }
-            
-            // Check for labels that indicate we should skip
-            const skipLabels = ['wontfix', 'invalid', 'duplicate', 'question', 'not a bug', 'working as intended'];
-            const issueLabels = issue.data.labels.map(l => l.name.toLowerCase());
-            const hasSkipLabel = skipLabels.some(label => 
-              issueLabels.some(issueLabel => issueLabel.includes(label))
-            );
-            
-            if (hasSkipLabel) {
-              const matchedLabel = issueLabels.find(il => skipLabels.some(sl => il.includes(sl)));
-              console.log(`❌ Issue has skip label: ${matchedLabel}. Skipping Copilot trigger.`);
-              return { should_proceed: false, reason: `Issue labeled as: ${matchedLabel}` };
-            }
-            
-            // Check comments for indicators that no action is needed
-            if (issue.data.comments > 0) {
+            // Helper function to check if Copilot was already triggered
+            const wasAlreadyTriggered = async (issueNumber) => {
               const comments = await github.rest.issues.listComments({
                 owner,
                 repo,
-                issue_number: issueNumber
+                issue_number: issueNumber,
+                per_page: 100
               });
               
-              const skipPhrases = [
-                'not a bug',
-                'working as intended',
-                'this is expected',
-                'by design',
-                'wont fix',
-                'closing this',
-                'invalid issue',
-                'duplicate of',
-                'already fixed',
-                'user error',
-                'misconfiguration'
-              ];
+              return comments.data.some(comment => 
+                comment.body && 
+                comment.body.includes('@copilot') &&
+                comment.body.includes("I'm himmelbot") &&
+                comment.user?.login === 'github-actions[bot]'
+              );
+            };
+            
+            // Helper function to check issue status (same as before)
+            const shouldProceed = async (issue) => {
+              console.log(`Checking issue #${issue.number}: ${issue.title}`);
               
-              for (const comment of comments.data) {
-                const commentBody = comment.body?.toLowerCase() || '';
-                const hasSkipPhrase = skipPhrases.some(phrase => commentBody.includes(phrase));
+              // Check if issue is closed
+              if (issue.state === 'closed') {
+                console.log('  ❌ Issue is closed');
+                return { proceed: false, reason: 'closed' };
+              }
+              
+              // Check for skip labels
+              const skipLabels = ['wontfix', 'invalid', 'duplicate', 'question', 'not a bug', 'working as intended'];
+              const issueLabels = issue.labels.map(l => l.name.toLowerCase());
+              const hasSkipLabel = skipLabels.some(label => 
+                issueLabels.some(issueLabel => issueLabel.includes(label))
+              );
+              
+              if (hasSkipLabel) {
+                const matchedLabel = issueLabels.find(il => skipLabels.some(sl => il.includes(sl)));
+                console.log(`  ❌ Has skip label: ${matchedLabel}`);
+                return { proceed: false, reason: `labeled as ${matchedLabel}` };
+              }
+              
+              // Check comments for skip phrases
+              if (issue.comments > 0) {
+                const comments = await github.rest.issues.listComments({
+                  owner,
+                  repo,
+                  issue_number: issue.number
+                });
                 
-                if (hasSkipPhrase) {
-                  const matchedPhrase = skipPhrases.find(phrase => commentBody.includes(phrase));
-                  console.log(`❌ Found comment indicating no action needed: "${matchedPhrase}"`);
-                  console.log(`   Comment by: ${comment.user?.login}`);
-                  return { should_proceed: false, reason: `Comment indicates: ${matchedPhrase}` };
+                const skipPhrases = [
+                  'not a bug', 'working as intended', 'this is expected',
+                  'by design', 'wont fix', 'closing this', 'invalid issue',
+                  'duplicate of', 'already fixed', 'user error', 'misconfiguration'
+                ];
+                
+                for (const comment of comments.data) {
+                  const commentBody = comment.body?.toLowerCase() || '';
+                  const hasSkipPhrase = skipPhrases.some(phrase => commentBody.includes(phrase));
+                  
+                  if (hasSkipPhrase) {
+                    const matchedPhrase = skipPhrases.find(phrase => commentBody.includes(phrase));
+                    console.log(`  ❌ Comment contains skip phrase: "${matchedPhrase}"`);
+                    return { proceed: false, reason: `comment indicates: ${matchedPhrase}` };
+                  }
                 }
               }
               
-              console.log(`✓ Reviewed ${comments.data.length} comment(s), no skip indicators found.`);
+              console.log('  ✅ Issue is valid and ready');
+              return { proceed: true };
+            };
+            
+            // Get all open issues
+            let page = 1;
+            let processedCount = 0;
+            let triggeredCount = 0;
+            
+            while (page <= 5) { // Limit to first 5 pages (500 issues max)
+              const issues = await github.rest.issues.listForRepo({
+                owner,
+                repo,
+                state: 'open',
+                per_page: 100,
+                page,
+                sort: 'created',
+                direction: 'asc'
+              });
+              
+              if (issues.data.length === 0) break;
+              
+              for (const issue of issues.data) {
+                // Skip pull requests
+                if (issue.pull_request) continue;
+                
+                processedCount++;
+                
+                // Check if issue is old enough
+                if (!isIssueReady(issue.created_at)) {
+                  continue;
+                }
+                
+                // Check if already triggered
+                if (await wasAlreadyTriggered(issue.number)) {
+                  console.log(`Issue #${issue.number}: Already triggered, skipping`);
+                  continue;
+                }
+                
+                // Check if should proceed
+                const check = await shouldProceed(issue);
+                if (!check.proceed) {
+                  console.log(`Issue #${issue.number}: Skipping (${check.reason})`);
+                  continue;
+                }
+                
+                // Trigger Copilot Agent
+                try {
+                  await github.rest.issues.createComment({
+                    owner,
+                    repo,
+                    issue_number: issue.number,
+                    body: `👋 Hi! I'm himmelbot, the Himmelblau GitHub assistant.\n\n@copilot Please analyze this issue and create a plan to implement or fix it. When ready, create a pull request with the necessary changes.`
+                  });
+                  
+                  triggeredCount++;
+                  console.log(`✅ Triggered Copilot Agent for issue #${issue.number}`);
+                  
+                  // Add delay to avoid rate limiting
+                  await new Promise(resolve => setTimeout(resolve, 1000));
+                } catch (error) {
+                  console.error(`Error triggering Copilot for issue #${issue.number}:`, error.message);
+                }
+              }
+              
+              page++;
             }
             
-            console.log('✅ Issue still needs attention. Proceeding to trigger Copilot Agent.');
-            return { should_proceed: true, reason: 'Issue is valid and open' };
-
-      - name: Trigger Copilot Agent for Issue
-        if: fromJSON(steps.check_issue.outputs.result).should_proceed
-        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7.0.1
-        with:
-          script: |
-            const issueNumber = context.issue.number;
-            const { owner, repo } = context.repo;
-            
-            // Add a comment to the issue to trigger Copilot
-            await github.rest.issues.createComment({
-              owner,
-              repo,
-              issue_number: issueNumber,
-              body: `👋 Hi! I'm himmelbot, the Himmelblau GitHub assistant.\n\n@copilot Please analyze this issue and create a plan to implement or fix it. When ready, create a pull request with the necessary changes.`
-            });
-            
-            console.log(`Triggered Copilot Agent for issue #${issueNumber}`);
-
-      - name: Log skip reason
-        if: "!fromJSON(steps.check_issue.outputs.result).should_proceed"
-        run: |
-          echo "ℹ️ Copilot Agent not triggered. Reason: ${{ fromJSON(steps.check_issue.outputs.result).reason }}"
+            console.log(`\nSummary: Processed ${processedCount} issues, triggered Copilot on ${triggeredCount} issues`);
 
   copilot_agent_manual:
     name: Copilot Agent (manual - all open issues)
