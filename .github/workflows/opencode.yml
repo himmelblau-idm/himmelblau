@@ -306,9 +306,87 @@ jobs:
           # Note: date -d syntax requires GNU date (available on Ubuntu runners)
           echo "Will trigger Copilot Agent at: $(date -u -d '+1 hour' 2>/dev/null || date -u -v+1H 2>/dev/null || echo 'in 1 hour')"
           sleep 3600
-          echo "✓ Wait complete. Proceeding to trigger Copilot Agent."
+          echo "✓ Wait complete. Proceeding to check issue status."
+
+      - name: Check issue status and decide if Copilot should proceed
+        id: check_issue
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7.0.1
+        with:
+          script: |
+            const issueNumber = context.issue.number;
+            const { owner, repo } = context.repo;
+            
+            // Fetch current issue state
+            const issue = await github.rest.issues.get({
+              owner,
+              repo,
+              issue_number: issueNumber
+            });
+            
+            console.log(`Issue #${issueNumber} status: ${issue.data.state}`);
+            console.log(`Issue labels: ${issue.data.labels.map(l => l.name).join(', ') || 'none'}`);
+            
+            // Check if issue is closed
+            if (issue.data.state === 'closed') {
+              console.log('❌ Issue is closed. Skipping Copilot trigger.');
+              return { should_proceed: false, reason: 'Issue is closed' };
+            }
+            
+            // Check for labels that indicate we should skip
+            const skipLabels = ['wontfix', 'invalid', 'duplicate', 'question', 'not a bug', 'working as intended'];
+            const issueLabels = issue.data.labels.map(l => l.name.toLowerCase());
+            const hasSkipLabel = skipLabels.some(label => 
+              issueLabels.some(issueLabel => issueLabel.includes(label))
+            );
+            
+            if (hasSkipLabel) {
+              const matchedLabel = issueLabels.find(il => skipLabels.some(sl => il.includes(sl)));
+              console.log(`❌ Issue has skip label: ${matchedLabel}. Skipping Copilot trigger.`);
+              return { should_proceed: false, reason: `Issue labeled as: ${matchedLabel}` };
+            }
+            
+            // Check comments for indicators that no action is needed
+            if (issue.data.comments > 0) {
+              const comments = await github.rest.issues.listComments({
+                owner,
+                repo,
+                issue_number: issueNumber
+              });
+              
+              const skipPhrases = [
+                'not a bug',
+                'working as intended',
+                'this is expected',
+                'by design',
+                'won\'t fix',
+                'closing this',
+                'invalid issue',
+                'duplicate of',
+                'already fixed',
+                'user error',
+                'misconfiguration'
+              ];
+              
+              for (const comment of comments.data) {
+                const commentBody = comment.body?.toLowerCase() || '';
+                const hasSkipPhrase = skipPhrases.some(phrase => commentBody.includes(phrase));
+                
+                if (hasSkipPhrase) {
+                  const matchedPhrase = skipPhrases.find(phrase => commentBody.includes(phrase));
+                  console.log(`❌ Found comment indicating no action needed: "${matchedPhrase}"`);
+                  console.log(`   Comment by: ${comment.user?.login}`);
+                  return { should_proceed: false, reason: `Comment indicates: ${matchedPhrase}` };
+                }
+              }
+              
+              console.log(`✓ Reviewed ${comments.data.length} comment(s), no skip indicators found.`);
+            }
+            
+            console.log('✅ Issue still needs attention. Proceeding to trigger Copilot Agent.');
+            return { should_proceed: true, reason: 'Issue is valid and open' };
 
       - name: Trigger Copilot Agent for Issue
+        if: fromJSON(steps.check_issue.outputs.result).should_proceed
         uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7.0.1
         with:
           script: |
@@ -324,6 +402,11 @@ jobs:
             });
             
             console.log(`Triggered Copilot Agent for issue #${issueNumber}`);
+
+      - name: Log skip reason
+        if: "!fromJSON(steps.check_issue.outputs.result).should_proceed"
+        run: |
+          echo "ℹ️ Copilot Agent not triggered. Reason: ${{ fromJSON(steps.check_issue.outputs.result).reason }}"
 
   copilot_agent_manual:
     name: Copilot Agent (manual - all open issues)
