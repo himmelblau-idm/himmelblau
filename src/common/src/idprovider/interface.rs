@@ -13,6 +13,7 @@ use crate::unix_proto::{PamAuthRequest, PamAuthResponse};
 use async_trait::async_trait;
 use himmelblau::{AuthInit, AuthOption, MFAAuthContinue, UserToken as UnixUserToken};
 use kanidm_hsm_crypto::structures::SealedData;
+use zeroize::Zeroizing;
 use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::time::SystemTime;
@@ -102,7 +103,7 @@ pub enum AuthCredHandler {
         /// while the Hello key and PIN are still valid. Contains the validated
         /// PIN to reuse for re-sealing the new PRT with the existing Hello key
         /// after successful re-authentication. (See issue #1051)
-        reauth_hello_pin: Option<String>,
+        reauth_hello_pin: Option<Zeroizing<String>>,
     },
     SetupPin {
         token: Option<UnixUserToken>,

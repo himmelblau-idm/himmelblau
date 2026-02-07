@@ -1893,7 +1893,7 @@ impl IdProvider for HimmelblauProvider {
         // authenticate via browser on another device.
         macro_rules! request_reauth {
             ($reauth_pin:expr) => {{
-                let reauth_pin_value = $reauth_pin;
+                let reauth_pin_value = Zeroizing::new($reauth_pin);
                 let console_password_only = self.config.read().await.get_allow_console_password_only();
                 let remote_services = self
                     .config
