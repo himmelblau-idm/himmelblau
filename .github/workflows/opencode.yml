@@ -303,7 +303,8 @@ jobs:
         run: |
           echo "⏰ Waiting 1 hour to allow time for additional context and discussion..."
           echo "Issue opened at: $(date -u)"
-          echo "Will trigger Copilot Agent at: $(date -u -d '+1 hour')"
+          # Note: date -d syntax requires GNU date (available on Ubuntu runners)
+          echo "Will trigger Copilot Agent at: $(date -u -d '+1 hour' 2>/dev/null || date -u -v+1H 2>/dev/null || echo 'in 1 hour')"
           sleep 3600
           echo "✓ Wait complete. Proceeding to trigger Copilot Agent."
 
