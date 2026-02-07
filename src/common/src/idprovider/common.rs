@@ -15,15 +15,19 @@
    You should have received a copy of the GNU General Public License
    along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
+use crate::constants::ID_MAP_CACHE;
+use crate::idmap_cache::{StaticIdCache, StaticUser};
 use crate::idprovider::interface::IdpError;
 use kanidm_hsm_crypto::structures::SealedData;
 use serde::{Deserialize, Serialize};
 use std::thread::sleep;
 use std::{
     collections::HashMap,
+    process::Command,
     time::{Duration, SystemTime},
 };
 use tokio::sync::RwLock;
+use tracing::error;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TotpEnrollmentRecord {
@@ -33,6 +37,181 @@ pub struct TotpEnrollmentRecord {
     pub step: u64,
     pub issuer: String,
     pub account_name: String,
+}
+
+#[derive(Debug)]
+pub struct IdmapScriptResult {
+    pub uid: u32,
+    pub gid: u32,
+}
+
+pub(crate) async fn run_idmap_script(
+    script: &str,
+    username: &str,
+    access_token: &str,
+    object_id: &str,
+    tenant_id: &str,
+    domain: Option<&str>,
+) -> Result<Option<IdmapScriptResult>, IdpError> {
+    let output = match Command::new("sh")
+        .arg("-c")
+        .arg(script)
+        .env("USERNAME", username)
+        .env("ACCESS_TOKEN", access_token)
+        .env("OBJECT_ID", object_id)
+        .env("TENANT_ID", tenant_id)
+        .env("DOMAIN", domain.unwrap_or(""))
+        .output()
+    {
+        Ok(output) => output,
+        Err(_) => {
+            error!("Execution of idmap script failed");
+            return Err(IdpError::BadRequest);
+        }
+    };
+
+    if !output.status.success() {
+        error!("Execution of idmap script failed");
+        return Err(IdpError::BadRequest);
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let lines: Vec<&str> = stdout
+        .lines()
+        .map(|line| line.trim())
+        .filter(|line| !line.is_empty())
+        .collect();
+
+    if lines.is_empty() {
+        return Ok(None);
+    }
+
+    if lines.len() != 1 {
+        error!("Execution of idmap script failed");
+        return Err(IdpError::BadRequest);
+    }
+
+    let line = lines[0];
+
+    // Parse key-value pairs: uid=123,gid=456
+    let mut uid_opt: Option<u32> = None;
+    let mut gid_opt: Option<u32> = None;
+
+    for pair in line.split(',') {
+        let pair = pair.trim();
+        if let Some((key, value)) = pair.split_once('=') {
+            let key = key.trim();
+            let value = value.trim();
+            match key {
+                "uid" => {
+                    uid_opt = value.parse::<u32>().ok();
+                }
+                "gid" => {
+                    gid_opt = value.parse::<u32>().ok();
+                }
+                _ => {
+                    // Ignore unknown keys for future extensibility
+                }
+            }
+        }
+    }
+
+    let (uid, gid) = match (uid_opt, gid_opt) {
+        (Some(uid), Some(gid)) => (uid, gid),
+        _ => {
+            error!("Execution of idmap script failed");
+            return Err(IdpError::BadRequest);
+        }
+    };
+
+    // Validate UID is not reserved
+    if uid == 0 {
+        error!("Execution of idmap script failed");
+        return Err(IdpError::BadRequest);
+    }
+
+    // Validate GID is not reserved
+    if gid == 0 {
+        error!("Execution of idmap script failed");
+        return Err(IdpError::BadRequest);
+    }
+
+    Ok(Some(IdmapScriptResult { uid, gid }))
+}
+
+pub fn cache_idmap_result(username: &str, result: &IdmapScriptResult) {
+    if let Ok(idmap_cache) = StaticIdCache::new(ID_MAP_CACHE, true) {
+        let _ = idmap_cache.insert_user(&StaticUser {
+            name: username.to_string(),
+            uid: result.uid,
+            gid: result.gid,
+        });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs::{self, File};
+    use std::io::Write;
+    use std::os::unix::fs::PermissionsExt;
+    use uuid::Uuid;
+
+    #[tokio::test]
+    async fn test_run_idmap_script() {
+        // Create a unique temporary script file in current directory
+        let mut temp_path = std::env::current_dir().unwrap();
+        let filename = format!("test_idmap_script_{}.sh", Uuid::new_v4());
+        temp_path.push(filename);
+
+        let script_content = r#"#!/bin/sh
+if [ "$USERNAME" = "testuser" ]; then
+    echo "uid=500,gid=500"
+else
+    exit 1
+fi
+"#;
+
+        let mut file = File::create(&temp_path).unwrap();
+        write!(file, "{}", script_content).unwrap();
+        drop(file);
+
+        // Make it executable
+        let mut perms = fs::metadata(&temp_path).unwrap().permissions();
+        perms.set_mode(0o755);
+        fs::set_permissions(&temp_path, perms).unwrap();
+
+        let username = "testuser";
+        let access_token = "token";
+        let object_id = "oid";
+        let tenant_id = "tid";
+        let domain = Some("example.com");
+
+        let result = run_idmap_script(
+            temp_path.to_str().unwrap(),
+            username,
+            access_token,
+            object_id,
+            tenant_id,
+            domain,
+        )
+        .await;
+
+        // Cleanup
+        let _ = fs::remove_file(&temp_path);
+
+        assert!(
+            result.is_ok(),
+            "Result was {:?}, path was {}",
+            result,
+            temp_path.display()
+        );
+        let idmap_result = result.unwrap();
+        assert!(idmap_result.is_some());
+        let idmap_result = idmap_result.unwrap();
+        assert_eq!(idmap_result.uid, 500);
+        assert_eq!(idmap_result.gid, 500);
+    }
 }
 
 #[macro_export]
