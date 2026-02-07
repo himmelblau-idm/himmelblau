@@ -375,21 +375,35 @@ jobs:
             for (const issue of issuesToProcess) {
               try {
                 // Check if Copilot has already been triggered recently
-                const comments = await github.rest.issues.listComments({
+                // Fetch the most recent comments by getting the last page
+                const allCommentsResponse = await github.rest.issues.listComments({
                   owner,
                   repo,
                   issue_number: issue.number,
-                  per_page: 10
+                  per_page: 1
                 });
                 
-                // Check if there's a recent Copilot trigger comment
-                const recentCopilotTrigger = comments.data
-                  .slice(-10)
-                  .some(comment => 
+                const totalComments = allCommentsResponse.data.length > 0 ? issue.comments : 0;
+                
+                // Fetch last 10 comments if there are any
+                let recentCopilotTrigger = false;
+                if (totalComments > 0) {
+                  const page = Math.ceil(totalComments / 10);
+                  const recentComments = await github.rest.issues.listComments({
+                    owner,
+                    repo,
+                    issue_number: issue.number,
+                    per_page: 10,
+                    page: page
+                  });
+                  
+                  // Check if there's a recent Copilot trigger comment
+                  recentCopilotTrigger = recentComments.data.some(comment => 
                     comment.body && 
                     comment.body.includes('@copilot') &&
                     comment.user?.login === 'github-actions[bot]'
                   );
+                }
                 
                 if (recentCopilotTrigger) {
                   console.log(`Skipping issue #${issue.number} - Copilot already triggered recently`);
