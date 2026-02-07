@@ -280,3 +280,137 @@ jobs:
 
             Security sensitivity:
             - Avoid risky changes; prefer clarity and minimal scope.
+
+  copilot_agent_issue_opened:
+    name: Copilot Agent (issue opened)
+    if: github.event_name == 'issues' && github.event.action == 'opened'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      issues: write
+      pull-requests: write
+      id-token: write
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@20cf305ff2072d973412fa9b1e3a4f227bda3c76 # v2.14.0
+        with:
+          egress-policy: audit
+
+      - name: Checkout repository
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+
+      - name: Trigger Copilot Agent for Issue
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7.0.1
+        with:
+          script: |
+            const issueNumber = context.issue.number;
+            const { owner, repo } = context.repo;
+            
+            // Add a comment to the issue to trigger Copilot
+            await github.rest.issues.createComment({
+              owner,
+              repo,
+              issue_number: issueNumber,
+              body: `@copilot Please analyze this issue and create a plan to implement or fix it. When ready, create a pull request with the necessary changes.`
+            });
+            
+            console.log(`Triggered Copilot Agent for issue #${issueNumber}`);
+
+  copilot_agent_manual:
+    name: Copilot Agent (manual - all open issues)
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      issues: write
+      pull-requests: write
+      id-token: write
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@20cf305ff2072d973412fa9b1e3a4f227bda3c76 # v2.14.0
+        with:
+          egress-policy: audit
+
+      - name: Checkout repository
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+
+      - name: Get Open Issues and Trigger Copilot Agent
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7.0.1
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            let issuesToProcess = [];
+            
+            // Get all open issues (paginate to handle more than 100 issues)
+            let page = 1;
+            let hasMore = true;
+            
+            while (hasMore) {
+              const issues = await github.rest.issues.listForRepo({
+                owner,
+                repo,
+                state: 'open',
+                per_page: 100,
+                page
+              });
+              
+              if (issues.data.length === 0) {
+                hasMore = false;
+              } else {
+                // Filter out pull requests and add to the list
+                const openIssues = issues.data.filter(issue => !issue.pull_request);
+                issuesToProcess.push(...openIssues);
+                
+                // Stop after 200 issues to avoid excessive processing
+                if (issuesToProcess.length >= 200 || issues.data.length < 100) {
+                  hasMore = false;
+                }
+                page++;
+              }
+            }
+            
+            console.log(`Found ${issuesToProcess.length} open issues to process`);
+            
+            // Process each issue
+            for (const issue of issuesToProcess) {
+              try {
+                // Check if Copilot has already been triggered recently
+                const comments = await github.rest.issues.listComments({
+                  owner,
+                  repo,
+                  issue_number: issue.number,
+                  per_page: 10
+                });
+                
+                // Check if there's a recent Copilot trigger comment
+                const recentCopilotTrigger = comments.data
+                  .slice(-10)
+                  .some(comment => 
+                    comment.body && 
+                    comment.body.includes('@copilot') &&
+                    comment.user?.login === 'github-actions[bot]'
+                  );
+                
+                if (recentCopilotTrigger) {
+                  console.log(`Skipping issue #${issue.number} - Copilot already triggered recently`);
+                  continue;
+                }
+                
+                // Trigger Copilot Agent
+                await github.rest.issues.createComment({
+                  owner,
+                  repo,
+                  issue_number: issue.number,
+                  body: `@copilot Please analyze this issue and create a plan to implement or fix it. When ready, create a pull request with the necessary changes.`
+                });
+                
+                console.log(`Triggered Copilot Agent for issue #${issue.number}: ${issue.title}`);
+                
+                // Add a small delay to avoid rate limiting
+                await new Promise(resolve => setTimeout(resolve, 1000));
+              } catch (error) {
+                console.error(`Error processing issue #${issue.number}:`, error.message);
+              }
+            }
+            
+            console.log(`Completed processing ${issuesToProcess.length} issues`);
