@@ -299,13 +299,13 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
 
-      - name: Wait 1 hour before triggering Copilot Agent
+      - name: Wait 6 hours before triggering Copilot Agent
         run: |
-          echo "⏰ Waiting 1 hour to allow time for additional context and discussion..."
+          echo "⏰ Waiting 6 hours to allow time for additional context and discussion..."
           echo "Issue opened at: $(date -u)"
           # Note: date -d syntax requires GNU date (available on Ubuntu runners)
-          echo "Will trigger Copilot Agent at: $(date -u -d '+1 hour' 2>/dev/null || date -u -v+1H 2>/dev/null || echo 'in 1 hour')"
-          sleep 3600
+          echo "Will trigger Copilot Agent at: $(date -u -d '+6 hours' 2>/dev/null || date -u -v+6H 2>/dev/null || echo 'in 6 hours')"
+          sleep 21600
           echo "✓ Wait complete. Proceeding to check issue status."
 
       - name: Check issue status and decide if Copilot should proceed
