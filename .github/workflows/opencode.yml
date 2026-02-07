@@ -311,7 +311,7 @@ jobs:
               owner,
               repo,
               issue_number: issueNumber,
-              body: `@copilot Please analyze this issue and create a plan to implement or fix it. When ready, create a pull request with the necessary changes.`
+              body: `👋 Hi! I'm himmelbot, the Himmelblau GitHub assistant.\n\n@copilot Please analyze this issue and create a plan to implement or fix it. When ready, create a pull request with the necessary changes.`
             });
             
             console.log(`Triggered Copilot Agent for issue #${issueNumber}`);
@@ -408,7 +408,7 @@ jobs:
                   owner,
                   repo,
                   issue_number: issue.number,
-                  body: `@copilot Please analyze this issue and create a plan to implement or fix it. When ready, create a pull request with the necessary changes.`
+                  body: `👋 Hi! I'm himmelbot, the Himmelblau GitHub assistant.\n\n@copilot Please analyze this issue and create a plan to implement or fix it. When ready, create a pull request with the necessary changes.`
                 });
                 
                 console.log(`Triggered Copilot Agent for issue #${issue.number}: ${issue.title}`);
