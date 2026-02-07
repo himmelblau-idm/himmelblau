@@ -302,9 +302,9 @@ jobs:
       - name: Wait 6 hours before triggering Copilot Agent
         run: |
           echo "⏰ Waiting 6 hours to allow time for additional context and discussion..."
-          echo "Issue opened at: $(date -u)"
+          echo "Issue #${{ github.event.issue.number }} opened at: ${{ github.event.issue.created_at }}"
           # Note: date -d syntax requires GNU date (available on Ubuntu runners)
-          echo "Will trigger Copilot Agent at: $(date -u -d '+6 hours' 2>/dev/null || date -u -v+6H 2>/dev/null || echo 'in 6 hours')"
+          echo "Will trigger Copilot Agent at approximately: $(date -u -d '+6 hours' 2>/dev/null || date -u -v+6H 2>/dev/null || echo '6 hours from now')"
           sleep 21600
           echo "✓ Wait complete. Proceeding to check issue status."
 
@@ -358,7 +358,7 @@ jobs:
                 'working as intended',
                 'this is expected',
                 'by design',
-                'won\'t fix',
+                'wont fix',
                 'closing this',
                 'invalid issue',
                 'duplicate of',
