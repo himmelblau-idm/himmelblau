@@ -299,13 +299,67 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
 
-      - name: Wait 6 hours before triggering Copilot Agent
+      - name: Calculate smart wait time (12 hours or until Monday midday)
+        id: calculate_wait
         run: |
-          echo "⏰ Waiting 6 hours to allow time for additional context and discussion..."
-          echo "Issue #${{ github.event.issue.number }} opened at: ${{ github.event.issue.created_at }}"
-          # Note: date -d syntax requires GNU date (available on Ubuntu runners)
-          echo "Will trigger Copilot Agent at approximately: $(date -u -d '+6 hours' 2>/dev/null || date -u -v+6H 2>/dev/null || echo '6 hours from now')"
-          sleep 21600
+          echo "⏰ Calculating smart wait time based on when issue was opened..."
+          
+          # Get issue creation timestamp
+          ISSUE_CREATED="${{ github.event.issue.created_at }}"
+          echo "Issue #${{ github.event.issue.number }} opened at: $ISSUE_CREATED"
+          
+          # Convert to Unix timestamp and get day of week (0=Sunday, 1=Monday, ..., 6=Saturday)
+          CREATED_EPOCH=$(date -d "$ISSUE_CREATED" +%s 2>/dev/null || date -j -f "%Y-%m-%dT%H:%M:%SZ" "$ISSUE_CREATED" +%s 2>/dev/null)
+          DAY_OF_WEEK=$(date -d "@$CREATED_EPOCH" +%u 2>/dev/null || date -j -f %s "$CREATED_EPOCH" +%u 2>/dev/null)
+          
+          # Day of week: 1=Monday, 2=Tuesday, ..., 6=Saturday, 7=Sunday
+          echo "Day of week: $DAY_OF_WEEK (1=Mon, 7=Sun)"
+          
+          if [ "$DAY_OF_WEEK" -eq 6 ] || [ "$DAY_OF_WEEK" -eq 7 ]; then
+            # Weekend: Calculate wait until Monday 12:00 UTC
+            echo "📅 Issue opened on weekend - will wait until Monday 12:00 UTC"
+            
+            # Calculate next Monday at 12:00 UTC
+            # If Saturday (6): wait until Monday (2 days ahead)
+            # If Sunday (7): wait until Monday (1 day ahead)
+            if [ "$DAY_OF_WEEK" -eq 6 ]; then
+              DAYS_TO_MONDAY=2
+            else
+              DAYS_TO_MONDAY=1
+            fi
+            
+            # Get Monday's date
+            MONDAY_DATE=$(date -d "@$CREATED_EPOCH +$DAYS_TO_MONDAY days" +%Y-%m-%d 2>/dev/null || date -j -v+${DAYS_TO_MONDAY}d -f %s "$CREATED_EPOCH" +%Y-%m-%d 2>/dev/null)
+            MONDAY_NOON_EPOCH=$(date -d "${MONDAY_DATE} 12:00:00 UTC" +%s 2>/dev/null || date -j -f "%Y-%m-%d %H:%M:%S" "${MONDAY_DATE} 12:00:00" +%s 2>/dev/null)
+            
+            # Current time
+            NOW_EPOCH=$(date +%s)
+            
+            # Calculate wait time in seconds
+            WAIT_SECONDS=$((MONDAY_NOON_EPOCH - NOW_EPOCH))
+            
+            # Ensure we don't have negative wait time
+            if [ $WAIT_SECONDS -lt 0 ]; then
+              WAIT_SECONDS=43200  # Fallback to 12 hours
+            fi
+            
+            WAIT_HOURS=$((WAIT_SECONDS / 3600))
+            echo "Will wait approximately $WAIT_HOURS hours until Monday 12:00 UTC"
+            echo "Target time: ${MONDAY_DATE} 12:00:00 UTC"
+            echo "wait_seconds=$WAIT_SECONDS" >> $GITHUB_OUTPUT
+          else
+            # Weekday: Wait 12 hours
+            echo "📅 Issue opened on weekday - will wait 12 hours"
+            WAIT_SECONDS=43200
+            echo "Will wait 12 hours (43200 seconds)"
+            echo "wait_seconds=$WAIT_SECONDS" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Wait for calculated time period
+        run: |
+          WAIT_SECONDS="${{ steps.calculate_wait.outputs.wait_seconds }}"
+          echo "⏰ Waiting for $WAIT_SECONDS seconds to allow time for human interaction..."
+          sleep "$WAIT_SECONDS"
           echo "✓ Wait complete. Proceeding to check issue status."
 
       - name: Check issue status and decide if Copilot should proceed
