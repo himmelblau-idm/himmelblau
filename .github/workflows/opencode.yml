@@ -376,19 +376,12 @@ jobs:
               try {
                 // Check if Copilot has already been triggered recently
                 // Fetch the most recent comments by getting the last page
-                const allCommentsResponse = await github.rest.issues.listComments({
-                  owner,
-                  repo,
-                  issue_number: issue.number,
-                  per_page: 1
-                });
-                
-                const totalComments = allCommentsResponse.data.length > 0 ? issue.comments : 0;
+                const totalComments = issue.comments || 0;
                 
                 // Fetch last 10 comments if there are any
                 let recentCopilotTrigger = false;
                 if (totalComments > 0) {
-                  const page = Math.ceil(totalComments / 10);
+                  const page = Math.max(1, Math.ceil(totalComments / 10));
                   const recentComments = await github.rest.issues.listComments({
                     owner,
                     repo,
