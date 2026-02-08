@@ -2761,8 +2761,24 @@ impl IdProvider for HimmelblauProvider {
                 }
 
                 // If we reach here, PRT check didn't satisfy sign-in frequency.
-                debug!("Initiating MFA auth flow");
+                // Since password was validated and MFA is required, we must force
+                // interactive MFA to get a session with MFA claims. Without ForceMFA,
+                // Azure may return an auth code directly (password-only session) which
+                // will fail later when exchanging the PRT for a Graph access token.
+                if !auth_options.contains(&AuthOption::ForceMFA) {
+                    auth_options.push(AuthOption::ForceMFA);
+                }
+                debug!("Initiating MFA auth flow with ForceMFA (sign-in frequency not satisfied)");
 
+                // IMPORTANT: We pass `None` for auth_init (not `Some(auth_init.clone())`)
+                // because the cached auth_init was obtained from check_user_exists()
+                // WITHOUT ForceMFA. The auth_config inside auth_init was fetched without
+                // `amr_values=ngcmfa` in the /oauth2/authorize request. Reusing it would
+                // cause Azure to return an auth code directly (password-only session)
+                // instead of requiring interactive MFA, resulting in a PRT without MFA
+                // claims that fails when exchanging for a Graph access token.
+                // Passing `None` forces a fresh request_auth_config_internal() call with
+                // force_mfa=true, which sends `amr_values=ngcmfa` to Azure.
                 let mut flow = net_down_check!(
                     self.client
                         .read()
@@ -2771,13 +2787,14 @@ impl IdProvider for HimmelblauProvider {
                             account_id,
                             Some(&cred),
                             auth_options,
-                            Some(auth_init.clone()),
+                            None,
                             self.config.read().await.get_mfa_method().as_deref()
                         )
                         .await,
                     Ok(flow) => flow,
                     Err(MsalError::MFARequired) => {
-                        auth_options.push(AuthOption::ForceMFA);
+                        // If somehow we still get MFARequired, retry
+                        // with ForceMFA (already in auth_options) and no cached auth_init.
                         net_down_check!(
                             self.client
                                 .read()
@@ -2786,8 +2803,7 @@ impl IdProvider for HimmelblauProvider {
                                     account_id,
                                     Some(&cred),
                                     auth_options,
-                                    None, // This fallback cannot use the previous auth_init,
-                                          // otherwise we don't send the new ForceMFA auth options.
+                                    None,
                                     self.config.read().await.get_mfa_method().as_deref()
                                 )
                                 .await,
@@ -3111,6 +3127,16 @@ impl IdProvider for HimmelblauProvider {
                         MsalError::MFAPollContinue => {
                             return Ok((
                                 AuthResult::Next(AuthRequest::MFAPollWait),
+                                AuthCacheAction::None,
+                            ));
+                        }
+                        MsalError::MFARequired => {
+                            error!("MFA required but session lacks MFA claims. \
+                                    This may indicate the MFA flow was initiated without ForceMFA.");
+                            return Ok((
+                                AuthResult::Denied(
+                                    "Multi-factor authentication required. Please try signing in again.".to_string(),
+                                ),
                                 AuthCacheAction::None,
                             ));
                         }
