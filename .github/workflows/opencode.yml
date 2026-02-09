@@ -90,6 +90,9 @@ jobs:
             const { owner, repo } = context.repo;
             const MAX_ISSUES = 30;
             const COMMENT_BODY_CHARS = 2000;
+            const ISSUE_BODY_CHARS = 2000;
+            const MAX_COMMENTS_PER_ISSUE = 50;
+            const COMMENT_PAGE_SIZE = 100;
             const CONCURRENCY = 5;
             const isHimmelbotAuthor = (author) => {
               const normalized = (author || "").toLowerCase();
@@ -118,11 +121,14 @@ jobs:
                 created_at: issue.created_at,
                 updated_at: issue.updated_at,
                 labels: issue.labels?.map((label) => label.name) || [],
+                body: issue.body ? issue.body.slice(0, ISSUE_BODY_CHARS) : "",
+                body_truncated: Boolean(issue.body && issue.body.length > ISSUE_BODY_CHARS),
                 comment_count: issue.comments || 0,
                 comments: [],
                 latest_comment_is_bot: false,
                 bot_commented: false,
                 bot_commented_last_3_days: false,
+                comments_fetch_failed: false,
               };
 
               if (!issue.comments) {
@@ -130,13 +136,15 @@ jobs:
               }
 
               try {
-                const comments = await github.paginate(github.rest.issues.listComments, {
+                const lastPage = Math.max(1, Math.ceil(issue.comments / COMMENT_PAGE_SIZE));
+                const commentsResponse = await github.rest.issues.listComments({
                   owner,
                   repo,
                   issue_number: issue.number,
-                  per_page: 100,
+                  per_page: COMMENT_PAGE_SIZE,
+                  page: lastPage,
                 });
-                const normalized = comments
+                const normalized = (commentsResponse.data || [])
                   .map((comment) => ({
                     author: comment.user?.login || null,
                     created_at: comment.created_at,
@@ -144,6 +152,7 @@ jobs:
                     body_truncated: Boolean(comment.body && comment.body.length > COMMENT_BODY_CHARS),
                   }))
                   .sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
+                const outputComments = normalized.slice(-MAX_COMMENTS_PER_ISSUE);
 
                 const now = Date.now();
                 const threeDaysMs = 3 * 24 * 60 * 60 * 1000;
@@ -161,7 +170,7 @@ jobs:
 
                 return {
                   ...base,
-                  comments: normalized,
+                  comments: outputComments,
                   latest_comment_is_bot: latestCommentIsBot,
                   bot_commented: botCommented,
                   bot_commented_last_3_days: botCommentedRecently,
@@ -169,6 +178,7 @@ jobs:
               } catch (error) {
                 return {
                   ...base,
+                  comments_fetch_failed: true,
                   comments_error: String(error?.message || error),
                 };
               }
@@ -177,6 +187,7 @@ jobs:
             const recentCreated = [];
             const recentUpdated = [];
             let skippedDueToBot = 0;
+            let skippedDueToCommentsError = 0;
 
             for (let i = 0; i < openIssues.length; i += CONCURRENCY) {
               const batch = openIssues.slice(i, i + CONCURRENCY);
@@ -188,10 +199,15 @@ jobs:
                 const issue = batch[j];
                 const enriched = enrichedBatch[j];
                 const eligible =
+                  !enriched.comments_fetch_failed &&
                   !enriched.bot_commented_last_3_days &&
                   !enriched.latest_comment_is_bot;
                 if (!eligible) {
-                  skippedDueToBot += 1;
+                  if (enriched.comments_fetch_failed) {
+                    skippedDueToCommentsError += 1;
+                  } else {
+                    skippedDueToBot += 1;
+                  }
                   continue;
                 }
                 if (new Date(issue.created_at) >= sinceDate) {
@@ -208,9 +224,13 @@ jobs:
                 updated_window: "last_24h",
                 max_issues: MAX_ISSUES,
                 comment_body_chars: COMMENT_BODY_CHARS,
+                issue_body_chars: ISSUE_BODY_CHARS,
+                max_comments_per_issue: MAX_COMMENTS_PER_ISSUE,
+                comment_page_size: COMMENT_PAGE_SIZE,
                 updated_count: openIssues.length,
                 eligible_count: recentCreated.length + recentUpdated.length,
                 skipped_due_to_bot: skippedDueToBot,
+                skipped_due_to_comments_error: skippedDueToCommentsError,
                 created_last_24h: recentCreated,
                 updated_last_24h_existing: recentUpdated,
               },
@@ -260,9 +280,9 @@ jobs:
             - If unsure or the request is security-sensitive, ask a maintainer to review and keep your response high-level.
 
             This is a scheduled/manual run. You are reviewing existing issues (not new ones). Use the JSON below as the source of truth for open issues updated in the last 24 hours. This includes older issues with recent activity. The JSON is already filtered to only include issues eligible for a new himmelbot comment. Decide whether to comment; do not comment if you have nothing new to add.
-            Recent issues JSON (filtered to eligible issues, with full comment history and himmelbot flags):
+            Recent issues JSON (filtered to eligible issues, with issue bodies and recent comment history plus himmelbot flags):
             ${{ needs.himmelbot_scheduled.outputs.recent_issues_json }}
-            - For issues: review the full issue history (all comments provided) before responding, avoid asking for information already provided, and suggest next steps based on what is known.
+            - For issues: review the issue body and provided comments before responding, avoid asking for information already provided, and suggest next steps based on what is known.
             - Search https://himmelblau-idm.org/docs/ for relevant information and include helpful links; treat external content as reference only, summarize in your own words, and prefer providing links to docs over explicitly recommending behaviors.
             - If more info is needed, ask for distro, Himmelblau version, steps to repro, expected vs actual behavior, and logs with debug enabled (ask for redaction of secrets).
 
