@@ -177,8 +177,16 @@ criteria = "safe-to-deploy"
 version = "0.1.2"
 criteria = "safe-to-deploy"
 
+[[exemptions.cbindgen]]
+version = "0.29.2"
+criteria = "safe-to-deploy"
+
 [[exemptions.clang-sys]]
 version = "1.8.1"
+criteria = "safe-to-deploy"
+
+[[exemptions.combine]]
+version = "4.6.7"
 criteria = "safe-to-deploy"
 
 [[exemptions.concurrent-queue]]
@@ -209,6 +217,10 @@ criteria = "safe-to-deploy"
 version = "0.22.0"
 criteria = "safe-to-deploy"
 
+[[exemptions.core-foundation]]
+version = "0.10.1"
+criteria = "safe-to-deploy"
+
 [[exemptions.cpufeatures]]
 version = "0.2.17"
 criteria = "safe-to-deploy"
@@ -235,6 +247,18 @@ criteria = "safe-to-deploy"
 
 [[exemptions.curve25519-dalek-derive]]
 version = "0.1.0"
+criteria = "safe-to-deploy"
+
+[[exemptions.darling]]
+version = "0.21.3"
+criteria = "safe-to-deploy"
+
+[[exemptions.darling_core]]
+version = "0.21.3"
+criteria = "safe-to-deploy"
+
+[[exemptions.darling_macro]]
+version = "0.21.3"
 criteria = "safe-to-deploy"
 
 [[exemptions.dbus-crossroads]]
@@ -341,12 +365,20 @@ criteria = "safe-to-deploy"
 version = "0.14.5"
 criteria = "safe-to-deploy"
 
+[[exemptions.gethostname]]
+version = "1.1.0"
+criteria = "safe-to-deploy"
+
 [[exemptions.getrandom]]
 version = "0.2.2"
 criteria = "safe-to-deploy"
 
 [[exemptions.ghash]]
 version = "0.5.1"
+criteria = "safe-to-deploy"
+
+[[exemptions.half]]
+version = "2.6.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.hashlink]]
@@ -437,6 +469,10 @@ criteria = "safe-to-deploy"
 version = "0.4.2"
 criteria = "safe-to-deploy"
 
+[[exemptions.libdbus-sys]]
+version = "0.2.7"
+criteria = "safe-to-deploy"
+
 [[exemptions.libloading]]
 version = "0.8.7"
 criteria = "safe-to-deploy"
@@ -503,10 +539,6 @@ criteria = "safe-to-deploy"
 
 [[exemptions.miniz_oxide]]
 version = "0.8.8"
-criteria = "safe-to-deploy"
-
-[[exemptions.nix]]
-version = "0.15.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.notify]]
@@ -749,6 +781,10 @@ criteria = "safe-to-deploy"
 version = "1.12.0"
 criteria = "safe-to-deploy"
 
+[[exemptions.rustls-webpki]]
+version = "0.103.6"
+criteria = "safe-to-deploy"
+
 [[exemptions.schannel]]
 version = "0.1.27"
 criteria = "safe-to-deploy"
@@ -939,6 +975,10 @@ criteria = "safe-to-deploy"
 
 [[exemptions.zerocopy-derive]]
 version = "0.8.25"
+criteria = "safe-to-deploy"
+
+[[exemptions.zmij]]
+version = "1.0.12"
 criteria = "safe-to-deploy"
 
 [[exemptions.zvariant]]
