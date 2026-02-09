@@ -11,7 +11,7 @@
 use crate::db::KeyStoreTxn;
 use crate::unix_proto::{PamAuthRequest, PamAuthResponse};
 use async_trait::async_trait;
-use himmelblau::{AuthInit, AuthOption, MFAAuthContinue, UserToken as UnixUserToken};
+use himmelblau::{AuthOption, MFAAuthContinue, UserToken as UnixUserToken};
 use kanidm_hsm_crypto::structures::SealedData;
 use zeroize::Zeroizing;
 use serde::{Deserialize, Serialize};
@@ -123,8 +123,6 @@ pub enum AuthCredHandler {
     /// prompting for MFA. This allows skipping MFA when Azure's sign-in
     /// frequency policy is already satisfied.
     PasswordFirst {
-        /// Previous auth initialization
-        auth_init: AuthInit,
         /// Auth options to pass if we need to initiate MFA flow
         auth_options: Vec<AuthOption>,
         /// Whether the user is domain joined (affects resource URL in MFA flow)

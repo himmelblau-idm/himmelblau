@@ -1563,7 +1563,6 @@ impl IdProvider for HimmelblauProvider {
                     return Ok((
                         AuthRequest::Password,
                         AuthCredHandler::PasswordFirst {
-                            auth_init,
                             auth_options,
                             is_domain_joined,
                         },
@@ -2859,7 +2858,6 @@ impl IdProvider for HimmelblauProvider {
             // frequency before potentially skipping MFA.
             (
                 AuthCredHandler::PasswordFirst {
-                    auth_init,
                     auth_options,
                     is_domain_joined,
                 },
@@ -2890,6 +2888,12 @@ impl IdProvider for HimmelblauProvider {
                     debug!("Device not enrolled - skipping ROPC, proceeding to MFA flow");
                     None
                 };
+
+                // Track whether ROPC was attempted (device enrolled). If ROPC told us
+                // MFA is required and the PRT sign-in frequency check fails, we'll
+                // need ForceMFA. If ROPC was skipped (device not enrolled), the
+                // enrollment flow may be MFA or password-only per MS policy.
+                let mfa_confirmed_required = ropc_result.is_some();
 
                 match ropc_result {
                     Some(Ok(token)) => {
@@ -2962,9 +2966,35 @@ impl IdProvider for HimmelblauProvider {
                     }
                 }
 
-                // If we reach here, PRT check didn't satisfy sign-in frequency.
-                debug!("Initiating MFA auth flow");
+                // For enrolled devices (ropc_result was Some), MFA has been positively
+                // determined as required and the PRT sign-in frequency check didn't
+                // satisfy it. We must force interactive MFA to get a session with MFA
+                // claims. Without ForceMFA, Azure may return an auth code directly
+                // (password-only session) which will fail when exchanging the PRT for
+                // a Graph access token.
+                //
+                // For non-enrolled devices (ropc_result was None), do not force MFA so
+                // that the enrollment flow can be MFA or password-only according to
+                // Microsoft policy and allow_console_password_only behavior.
+                if mfa_confirmed_required {
+                    if !auth_options.contains(&AuthOption::ForceMFA) {
+                        auth_options.push(AuthOption::ForceMFA);
+                    }
+                    debug!(
+                        "Initiating MFA auth flow with ForceMFA (sign-in frequency not satisfied)"
+                    );
+                } else {
+                    debug!(
+                        "Initiating device-enrollment auth flow without ForceMFA (policy may allow password-only)"
+                    );
+                }
 
+                // We pass `None` for auth_init to force a fresh
+                // request_auth_config_internal() call that respects the current
+                // auth_options (including ForceMFA when set). The original auth_init
+                // from check_user_exists() was fetched without ForceMFA, so reusing
+                // it would bypass the amr_values=ngcmfa parameter in the
+                // /oauth2/authorize request.
                 let mut flow = net_down_check!(
                     self.client
                         .read()
@@ -2973,13 +3003,17 @@ impl IdProvider for HimmelblauProvider {
                             account_id,
                             Some(&cred),
                             auth_options,
-                            Some(auth_init.clone()),
+                            None,
                             self.config.read().await.get_mfa_method().as_deref()
                         )
                         .await,
                     Ok(flow) => flow,
                     Err(MsalError::MFARequired) => {
-                        auth_options.push(AuthOption::ForceMFA);
+                        // Azure told us MFA is required. Add ForceMFA (if not
+                        // already set) and retry with a fresh auth config.
+                        if !auth_options.contains(&AuthOption::ForceMFA) {
+                            auth_options.push(AuthOption::ForceMFA);
+                        }
                         net_down_check!(
                             self.client
                                 .read()
@@ -2988,8 +3022,7 @@ impl IdProvider for HimmelblauProvider {
                                     account_id,
                                     Some(&cred),
                                     auth_options,
-                                    None, // This fallback cannot use the previous auth_init,
-                                          // otherwise we don't send the new ForceMFA auth options.
+                                    None,
                                     self.config.read().await.get_mfa_method().as_deref()
                                 )
                                 .await,
@@ -3338,6 +3371,16 @@ impl IdProvider for HimmelblauProvider {
                         MsalError::MFAPollContinue => {
                             return Ok((
                                 AuthResult::Next(AuthRequest::MFAPollWait),
+                                AuthCacheAction::None,
+                            ));
+                        }
+                        MsalError::MFARequired => {
+                            error!("MFA required but session lacks MFA claims. \
+                                    This may indicate the MFA flow was initiated without ForceMFA.");
+                            return Ok((
+                                AuthResult::Denied(
+                                    "Multi-factor authentication required. Please try signing in again.".to_string(),
+                                ),
                                 AuthCacheAction::None,
                             ));
                         }
