@@ -1,4 +1,4 @@
-import { selectDeviceFlowUrl } from './qr-selection.js';
+import { selectDeviceFlowUrl } from './qrselection.js';
 
 function assertEqual(actual, expected, label) {
     if (actual !== expected) {

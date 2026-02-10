@@ -26,13 +26,13 @@ mod tests {
         let mut test_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         test_path.push("src");
         test_path.push("qr-greeter@himmelblau-idm.org");
-        test_path.push("qr-selection.test.js");
+        test_path.push("qrselection.test.js");
 
         let status = Command::new("node")
             .arg(test_path)
             .status()
             .expect("failed to launch node");
 
-        assert!(status.success(), "qr-selection.test.js failed");
+        assert!(status.success(), "qrselection.test.js failed");
     }
 }
