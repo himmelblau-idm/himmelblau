@@ -1016,6 +1016,8 @@ impl<'a> CacheTxn for DbTxn<'a> {
         let group_uuid = grp.uuid.as_hyphenated().to_string();
 
         // Find anything conflicting and purge it.
+        // We use OR because each of name, spn, and gidnumber has a UNIQUE constraint,
+        // so ANY conflict on these fields will cause INSERT to fail.
         self.conn.execute("DELETE FROM group_t WHERE NOT uuid = :uuid AND (name = :name OR spn = :spn OR gidnumber = :gidnumber)",
             named_params!{
                 ":uuid": &group_uuid,
