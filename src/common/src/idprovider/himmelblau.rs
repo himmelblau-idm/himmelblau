@@ -84,6 +84,80 @@ use zeroize::Zeroizing;
 // the Graph API. When this happens, we should gracefully fallback and continue
 // authentication without group name resolution.
 const CONSENT_REQUIRED: u32 = 65002;
+// AADSTS50125: PasswordResetRegistrationRequiredInterrupt
+const PASSWORD_RESET_REGISTRATION_REQUIRED: u32 = 50125;
+
+/// Convert an MsalError to a short, user-friendly message for PAM display.
+/// This intentionally ignores the internal string contents of error variants
+/// to avoid leaking verbose or sensitive information to the user.
+fn msal_error_to_user_message(e: &MsalError) -> String {
+    match e {
+        MsalError::InvalidJson(_)
+        | MsalError::InvalidBase64(_)
+        | MsalError::InvalidParse(_)
+        | MsalError::InvalidRegex(_)
+        | MsalError::FormatError(_) => {
+            "Authentication failed: Invalid server response.".to_string()
+        }
+        MsalError::AcquireTokenFailed(error_response) => {
+            if error_response
+                .error_codes
+                .contains(&PASSWORD_RESET_REGISTRATION_REQUIRED)
+            {
+                return "Password reset registration required. Complete setup at https://aka.ms/ssprsetup from another device, then try again.".to_string();
+            }
+            // This case is typically handled separately with error_description,
+            // but provide a fallback if it reaches this function.
+            error_response.error_description.to_string()
+        }
+        MsalError::RequestFailed(_) => {
+            "Authentication failed: Unable to reach authentication server.".to_string()
+        }
+        MsalError::AuthTypeUnsupported => {
+            "Authentication failed: Authentication method not supported.".to_string()
+        }
+        MsalError::TPMFail(_) => "Authentication failed: Security hardware error.".to_string(),
+        MsalError::URLFormatFailed(_) => "Authentication failed: Configuration error.".to_string(),
+        MsalError::DeviceEnrollmentFail(_) => {
+            "Device enrollment failed. Please contact your administrator.".to_string()
+        }
+        MsalError::CryptoFail(_) => "Authentication failed: Cryptographic error.".to_string(),
+        MsalError::ConfigError(_) => "Authentication failed: Configuration error.".to_string(),
+        MsalError::MFAPollContinue => {
+            // This is an internal state, should not reach the user.
+            "Authentication in progress.".to_string()
+        }
+        MsalError::AADSTSError(aadsts_err) => {
+            if aadsts_err.code == PASSWORD_RESET_REGISTRATION_REQUIRED {
+                return "Password reset registration required. Complete setup at https://aka.ms/ssprsetup from another device, then try again.".to_string();
+            }
+            // AADSTSError has a useful description from Azure AD
+            aadsts_err.to_string()
+        }
+        MsalError::Missing(_) => "Authentication failed: Missing required data.".to_string(),
+        MsalError::ChangePassword => {
+            // Internal state, should not bubble up to user.
+            "Password change required. Please contact your administrator.".to_string()
+        }
+        MsalError::PasswordRequired => {
+            // Internal state, should not bubble up to user.
+            "Password entry required.".to_string()
+        }
+        MsalError::ConsentRequested(_) => {
+            // Internal state, should not bubble up to user.
+            "Consent required. Please contact your administrator.".to_string()
+        }
+        MsalError::AuthCodeReceived(_) => {
+            // Internal state, should not bubble up to user.
+            "Authentication in progress.".to_string()
+        }
+        MsalError::MFARequired => {
+            // Internal state, should not bubble up to user.
+            "Multi-factor authentication required.".to_string()
+        }
+        _ => "Authentication failed. Please contact your administrator.".to_string(),
+    }
+}
 
 #[allow(clippy::large_enum_variant)]
 enum Providers {
@@ -764,22 +838,47 @@ enum TokenOrObj {
 }
 
 macro_rules! check_new_device_enrollment_required {
-    ($aadsts_err:expr, $self:expr, $keystore:expr, $ret_fn:expr, $ret_fail:expr) => {{
+    ($aadsts_err:expr, $self:expr, $keystore:expr) => {{
         if $aadsts_err.error_codes.contains(&(135011 as u32))
             || $aadsts_err.error_codes.contains(&DEVICE_AUTH_FAIL)
         {
             let csr_tag = $self.fetch_cert_key_tag();
             if let Err(e) = $keystore.delete_tagged_hsm_key(&csr_tag) {
-                return $ret_fail(format!("Failed to delete CSR key: {:?}", e));
+                error!("Failed to delete CSR key: {:?}", e);
+                return Ok((
+                    AuthResult::Denied(
+                        msal_error_to_user_message(&MsalError::AcquireTokenFailed($aadsts_err))
+                            + " Failed to delete CSR key",
+                    ),
+                    AuthCacheAction::None,
+                ));
             }
             let intune_tag = $self.fetch_intune_key_tag();
             if let Err(e) = $keystore.delete_tagged_hsm_key(&intune_tag) {
-                return $ret_fail(format!("Failed to delete intune key: {:?}", e));
+                error!("Failed to delete intune key: {:?}", e);
+                return Ok((
+                    AuthResult::Denied(
+                        msal_error_to_user_message(&MsalError::AcquireTokenFailed($aadsts_err))
+                            + " Failed to delete intune key",
+                    ),
+                    AuthCacheAction::None,
+                ));
             }
 
-            return $ret_fn(format!("Device has been removed from the domain."));
+            return Ok((
+                AuthResult::Denied(
+                    "Device has been removed from the domain. ".to_string()
+                        + &msal_error_to_user_message(&MsalError::AcquireTokenFailed($aadsts_err)),
+                ),
+                AuthCacheAction::None,
+            ));
         }
-        return $ret_fail(format!("{:?}", $aadsts_err));
+        return Ok((
+            AuthResult::Denied(msal_error_to_user_message(&MsalError::AcquireTokenFailed(
+                $aadsts_err,
+            ))),
+            AuthCacheAction::None,
+        ));
     }};
 }
 
@@ -1235,6 +1334,40 @@ impl IdProvider for HimmelblauProvider {
                             }
                         )
                     }
+                    Err(MsalError::AcquireTokenFailed(err_resp))
+                        if err_resp.error_codes.contains(&CONSENT_REQUIRED) =>
+                    {
+                        /* Consent has not been granted for the application
+                         * to access the Graph API. Retry without Graph API
+                         * scopes - authentication can still proceed but group
+                         * names will not be resolved. */
+                        warn!(
+                            "Consent not granted for Graph API access. \
+                               Retrying token exchange without Graph API scopes."
+                        );
+                        match self
+                            .client
+                            .read()
+                            .await
+                            .exchange_prt_for_access_token(
+                                &prt,
+                                vec![],
+                                None,
+                                None,
+                                tpm,
+                                machine_key,
+                            )
+                            .await
+                        {
+                            Ok(val) => val,
+                            Err(e) => {
+                                error!("{:?}", e);
+                                // Never return IdpError::NotFound. This deletes the existing
+                                // user from the cache.
+                                fake_user!()
+                            }
+                        }
+                    }
                     Err(e) => {
                         error!("{:?}", e);
                         // Never return IdpError::NotFound. This deletes the existing
@@ -1396,6 +1529,7 @@ impl IdProvider for HimmelblauProvider {
                 if is_remote_service {
                     auth_options.push(AuthOption::RemoteSession);
                 }
+
                 let auth_init = net_down_check!(
                     self.client
                         .read()
@@ -1407,6 +1541,34 @@ impl IdProvider for HimmelblauProvider {
                         return Err(IdpError::BadRequest);
                     }
                 );
+
+                // Sign-in frequency optimization: For console logins with password_only mode,
+                // request password first and use PasswordFirst handler. This allows us to
+                // validate the password via ROPC and check PRT for sign-in frequency before
+                // potentially skipping MFA (if the frequency is satisfied).
+                if console_password_only && !is_remote_service && !auth_init.passwordless() {
+                    debug!(
+                        "Console password-only mode: requesting password first to check sign-in frequency",
+                    );
+                    // Check if the network is up before prompting for password
+                    if !self.attempt_online(tpm, SystemTime::now()).await {
+                        return Ok((
+                            AuthRequest::InitDenied {
+                                msg: "Network outage detected.".to_string(),
+                            },
+                            AuthCredHandler::None,
+                        ));
+                    }
+                    let is_domain_joined = self.is_domain_joined(keystore).await;
+                    return Ok((
+                        AuthRequest::Password,
+                        AuthCredHandler::PasswordFirst {
+                            auth_options,
+                            is_domain_joined,
+                        },
+                    ));
+                }
+
                 if !auth_init.passwordless() {
                     // Check if the network is even up prior to sending a
                     // password prompt.
@@ -1563,15 +1725,7 @@ impl IdProvider for HimmelblauProvider {
                         return Ok((AuthResult::Denied("Network outage detected.".to_string()), AuthCacheAction::None));
                     },
                     Err(MsalError::AcquireTokenFailed(e)) => {
-                        check_new_device_enrollment_required!(e, self, keystore,
-                            |msg: String| {
-                                return Ok((AuthResult::Denied(msg), AuthCacheAction::None))
-                            },
-                            |msg: String| {
-                                error!("{}", msg);
-                                return Err(IdpError::BadRequest)
-                            }
-                        )
+                        check_new_device_enrollment_required!(e, self, keystore)
                     },
                     $($pat => $result),*
                 }
@@ -1602,18 +1756,23 @@ impl IdProvider for HimmelblauProvider {
                         config.set(&self.domain, "intune_device_id", &intune_device_id);
                         if let Err(e) = config.write_server_config() {
                             error!(?e, "Failed to write Intune join configuration.");
-                            return Err(IdpError::BadRequest);
+                            return Ok((
+                                AuthResult::Denied("Failed to save device configuration. Please contact your administrator.".to_string()),
+                                AuthCacheAction::None,
+                            ));
                         }
                         let intune_tag = self.fetch_intune_key_tag();
                         if let Err(e) = keystore.insert_tagged_hsm_key(&intune_tag, &intune_key) {
                             error!(?e, "Failed inserting the intune key into the keystore.");
-                            return Err(IdpError::BadRequest);
+                            return Ok((
+                                AuthResult::Denied("Failed to store device credentials. Please contact your administrator.".to_string()),
+                                AuthCacheAction::None,
+                            ));
                         }
                     }
                     Err(IdpError::NotFound { .. }) => {}
                     Err(e) => {
-                        error!(?e, "Failed to enroll in Intune");
-                        return Err(e);
+                        error!(?e, "Failed to enroll in Intune, will retry later.");
                     }
                 }
             };
@@ -1622,12 +1781,13 @@ impl IdProvider for HimmelblauProvider {
             ($token:ident) => {{
                 if !self.is_domain_joined(keystore).await {
                     debug!("Device is not enrolled. Enrolling now.");
-                    self.join_domain(tpm, &$token, keystore, machine_key)
-                        .await
-                        .map_err(|e| {
-                            error!("Failed to join domain: {:?}", e);
-                            IdpError::BadRequest
-                        })?;
+                    if let Err(e) = self.join_domain(tpm, &$token, keystore, machine_key).await {
+                        error!("Failed to join domain: {:?}", e);
+                        return Ok((
+                            AuthResult::Denied("Failed to join domain. Please contact your administrator.".to_string()),
+                            AuthCacheAction::None,
+                        ));
+                    }
                 } else if !self.is_intune_enrolled(keystore).await {
                     intune_enroll!($token);
                 }
@@ -1684,8 +1844,10 @@ impl IdProvider for HimmelblauProvider {
                                         Ok(token) => token,
                                         Err(e) => {
                                             error!("{:?}", e);
-                                            return Err(IdpError::NotFound {
-                                                what: "token".to_string(), where_: "refresh".to_string() });
+                                            return Ok((
+                                                AuthResult::Denied(msal_error_to_user_message(&e)),
+                                                AuthCacheAction::None,
+                                            ));
                                         }
                                     )
                                 } else if err_resp.error_codes.contains(&CONSENT_REQUIRED) {
@@ -1697,12 +1859,20 @@ impl IdProvider for HimmelblauProvider {
                                            Group names will not be resolved.");
                                     $token.clone()
                                 } else {
-                                    return Err(IdpError::NotFound {
-                                        what: "DEVICE_AUTH_FAIL".to_string(), where_: "acq_token".to_string() });
+                                    // Return the AAD error description to the user
+                                    return Ok((
+                                        AuthResult::Denied(err_resp.error_description.clone()),
+                                        AuthCacheAction::None,
+                                    ));
                                 }
                             }
-                            _ => return Err(IdpError::NotFound {
-                                what: "AcquireTokenFailed".to_string(), where_: "acq_token".to_string() }),
+                            _ => {
+                                // Return a user-friendly error message
+                                return Ok((
+                                    AuthResult::Denied(msal_error_to_user_message(&e)),
+                                    AuthCacheAction::None,
+                                ));
+                            }
                         }
                     }
                 )
@@ -1831,8 +2001,9 @@ impl IdProvider for HimmelblauProvider {
                                     }
                                     Err(e) => {
                                         error!("Failed to authenticate with hello key (retry): {:?}", e);
+                                        let err_msg = msal_error_to_user_message(&e);
                                         handle_hello_bad_pin_count!(self, account_id, keystore, |msg: &str| {
-                                            Ok((AuthResult::Denied(msg.to_string()), AuthCacheAction::None))
+                                            Ok((AuthResult::Denied(msg.to_string() + " " + &err_msg), AuthCacheAction::None))
                                         });
                                         return Ok((
                                             AuthResult::Denied(
@@ -1843,21 +2014,14 @@ impl IdProvider for HimmelblauProvider {
                                     }
                                 }
                             } else {
-                                check_new_device_enrollment_required!(e, self, keystore,
-                                    |msg: String| {
-                                        return Ok((AuthResult::Denied(msg), AuthCacheAction::None))
-                                    },
-                                    |msg: String| {
-                                        error!("{}", msg);
-                                        return Err(IdpError::BadRequest)
-                                    }
-                                )
+                                check_new_device_enrollment_required!(e, self, keystore)
                             }
                         }
                         Err(e) => {
                             error!("Failed to authenticate with hello key: {:?}", e);
+                            let err_msg = msal_error_to_user_message(&e);
                             handle_hello_bad_pin_count!(self, account_id, keystore, |msg: &str| {
-                                Ok((AuthResult::Denied(msg.to_string()), AuthCacheAction::None))
+                                Ok((AuthResult::Denied(msg.to_string() + " " + &err_msg), AuthCacheAction::None))
                             });
                             return Ok((
                                 AuthResult::Denied(
@@ -2024,19 +2188,15 @@ impl IdProvider for HimmelblauProvider {
                                                 }
                                                 Err(e) => {
                                                     error!("Failed to exchange PRT (retry): {:?}", e);
-                                                    return Err(IdpError::BadRequest);
+                                                    let err_msg = msal_error_to_user_message(&e);
+                                                    return Ok((
+                                                        AuthResult::Denied("Authentication failed. Please try signing in again. ".to_string() + &err_msg),
+                                                        AuthCacheAction::None,
+                                                    ));
                                                 }
                                             }
                                     } else {
-                                        check_new_device_enrollment_required!(e, self, keystore,
-                                            |msg: String| {
-                                                return Ok((AuthResult::Denied(msg), AuthCacheAction::None))
-                                            },
-                                            |msg: String| {
-                                                error!("{}", msg);
-                                                return Err(IdpError::BadRequest)
-                                            }
-                                        )
+                                        check_new_device_enrollment_required!(e, self, keystore)
                                     }
                                 },
                                 Err(_) => {
@@ -2058,16 +2218,25 @@ impl IdProvider for HimmelblauProvider {
                                     // It's ok to reset the pin count here, since they must
                                     // online auth at this point and create a new pin.
                                     self.bad_pin_counter.reset_bad_pin_count(account_id).await;
-                                    debug!("Returning BadRequest due to failed PRT exchange.");
-                                    return Err(IdpError::BadRequest);
+                                    debug!("Session expired, requesting re-authentication.");
+                                    return Ok((
+                                        AuthResult::Denied("Your session has expired. Please sign in again.".to_string()),
+                                        AuthCacheAction::None,
+                                    ));
                                 }
                             }
                     } else if let Some(RefreshCacheEntry::RefreshToken(refresh_token)) = refresh_cache_entry {
                         // We have a refresh token, exchange that for an access token
-                        let app = PublicClientApplication::new(BROKER_APP_ID, None).map_err(|e| {
-                            error!("Failed to create PublicClientApplication: {:?}", e);
-                            IdpError::BadRequest
-                        })?;
+                        let app = match PublicClientApplication::new(BROKER_APP_ID, None) {
+                            Ok(app) => app,
+                            Err(e) => {
+                                error!("Failed to create PublicClientApplication: {:?}", e);
+                                return Ok((
+                                    AuthResult::Denied("Authentication service unavailable. Please try again later.".to_string()),
+                                    AuthCacheAction::None,
+                                ));
+                            }
+                        };
                         match app.acquire_token_by_refresh_token(
                             &refresh_token,
                             vec![],
@@ -2135,7 +2304,10 @@ impl IdProvider for HimmelblauProvider {
                                 // It's ok to reset the pin count here, since they must
                                 // online auth at this point and create a new pin.
                                 self.bad_pin_counter.reset_bad_pin_count(account_id).await;
-                                return Err(IdpError::BadRequest);
+                                return Ok((
+                                    AuthResult::Denied("Your session has expired. Please sign in again.".to_string()),
+                                    AuthCacheAction::None,
+                                ));
                             }
                         }
                     } else {
@@ -2253,7 +2425,10 @@ impl IdProvider for HimmelblauProvider {
                      * continue from a Pin auth. */
                     Ok(AuthResult::Next(_)) => {
                         debug!("Invalid additional authentication requested with Hello auth.");
-                        Err(IdpError::BadRequest)
+                        Ok((
+                            AuthResult::Denied("Unexpected authentication step. Please try signing in again.".to_string()),
+                            AuthCacheAction::None,
+                        ))
                     }
                     Ok(auth_result) => {
                         debug!("Hello auth failed.");
@@ -2266,13 +2441,164 @@ impl IdProvider for HimmelblauProvider {
                 }
             }};
         }
+        macro_rules! nested_auth_handle_mfa_resp {
+            ($resp:ident, $cred:ident) => {
+                auth_handle_mfa_resp!(
+                    $resp,
+                    // FIDO
+                    {
+                        let fido_challenge = match $resp.fido_challenge.clone() {
+                            Some(challenge) => challenge,
+                            None => {
+                                debug!("FIDO challenge missing in MFA response");
+                                return Ok((
+                                    AuthResult::Denied("FIDO authentication not available. Please try a different authentication method.".to_string()),
+                                    AuthCacheAction::None,
+                                ));
+                            }
+                        };
+
+                        let fido_allow_list = match $resp.fido_allow_list.clone() {
+                            Some(list) => list,
+                            None => {
+                                debug!("FIDO allow list missing in MFA response");
+                                return Ok((
+                                    AuthResult::Denied("FIDO authentication not available. Please try a different authentication method.".to_string()),
+                                    AuthCacheAction::None,
+                                ));
+                            }
+                        };
+                        *cred_handler = AuthCredHandler::MFA {
+                            flow: $resp,
+                            password: Some($cred.clone()),
+                            extra_data: None,
+                        };
+                        let action = if self.config.read().await.get_offline_breakglass_enabled() {
+                            AuthCacheAction::PasswordHashUpdate { $cred }
+                        } else {
+                            AuthCacheAction::None
+                        };
+                        return Ok((
+                            AuthResult::Next(AuthRequest::Fido {
+                                fido_allow_list,
+                                fido_challenge,
+                            }),
+                            /* Cache the offline password hash for breakglass
+                             * conditions, if enabled. */
+                            action,
+                        ));
+                    },
+                    // PROMPT
+                    {
+                        let msg = $resp.msg.clone();
+                        *cred_handler = AuthCredHandler::MFA {
+                            flow: $resp,
+                            password: Some($cred.clone()),
+                            extra_data: None,
+                        };
+                        let action = if self.config.read().await.get_offline_breakglass_enabled() {
+                            AuthCacheAction::PasswordHashUpdate { $cred }
+                        } else {
+                            AuthCacheAction::None
+                        };
+                        return Ok((
+                            AuthResult::Next(AuthRequest::MFACode { msg }),
+                            /* Cache the offline password hash for breakglass
+                             * conditions, if enabled. */
+                            action,
+                        ));
+                    },
+                    // POLL
+                    {
+                        let msg = $resp.msg.clone();
+                        let polling_interval = $resp.polling_interval.unwrap_or(5000);
+                        *cred_handler = AuthCredHandler::MFA {
+                            flow: $resp,
+                            password: Some($cred.clone()),
+                            extra_data: None,
+                        };
+                        let action = if self.config.read().await.get_offline_breakglass_enabled() {
+                            AuthCacheAction::PasswordHashUpdate { $cred }
+                        } else {
+                            AuthCacheAction::None
+                        };
+                        return Ok((
+                            AuthResult::Next(AuthRequest::MFAPoll {
+                                msg,
+                                // Kanidm pam expects a polling_interval in
+                                // seconds, not milliseconds.
+                                polling_interval: polling_interval / 1000,
+                            }),
+                            /* Cache the offline password hash for breakglass
+                             * conditions, if enabled. */
+                            action,
+                        ));
+                    }
+                )
+            };
+        }
+        macro_rules! prt_signin_frequency_check {
+            ($cred:ident) => {
+                if let Some(prt_result) = self
+                    .try_prt_signin_frequency_check(account_id, tpm, machine_key)
+                    .await
+                {
+                    match prt_result {
+                        Ok(msal_token) => {
+                            // Sign-in frequency satisfied - no MFA needed!
+                            info!("Sign-in frequency satisfied for user via PRT - skipping MFA");
+                            return match self.token_validate(account_id, &msal_token, None).await {
+                                Ok(AuthResult::Success { token }) => {
+                                    let action = if self
+                                        .config
+                                        .read()
+                                        .await
+                                        .get_offline_breakglass_enabled()
+                                    {
+                                        AuthCacheAction::PasswordHashUpdate { $cred }
+                                    } else {
+                                        AuthCacheAction::None
+                                    };
+                                    Ok((
+                                        AuthResult::Success { token },
+                                        /* Cache the offline password hash for breakglass
+                                         * conditions, if enabled. */
+                                        action,
+                                    ))
+                                }
+                                Ok(auth_result) => Ok((auth_result, AuthCacheAction::None)),
+                                Err(e) => Err(e),
+                            };
+                        }
+                        Err(reason) => {
+                            debug!(
+                                "PRT sign-in frequency check failed: {} - proceeding with MFA flow",
+                                reason
+                            );
+                            // Fall through to initiate MFA
+                        }
+                    }
+                } else {
+                    debug!("No PRT cached - proceeding with MFA flow",);
+                    // Fall through to initiate MFA
+                }
+            };
+        }
 
         match (&mut *cred_handler, pam_next_req) {
             (AuthCredHandler::SetupPin { token }, PamAuthRequest::SetupPin { pin }) => {
-                let token = token.clone().ok_or_else(|| {
-                    error!("Missing enrollment token for Hello PIN setup.");
-                    IdpError::BadRequest
-                })?;
+                let token = match token.clone() {
+                    Some(t) => t,
+                    None => {
+                        error!("Missing enrollment token for Hello PIN setup.");
+                        return Ok((
+                            AuthResult::Denied(
+                                "PIN setup failed. Please try signing in again.".to_string(),
+                            ),
+                            AuthCacheAction::None,
+                        ));
+                    }
+                };
                 // Skip Hello enrollment if the token doesn't have the ngcmfa amr
                 let amr_ngcmfa = token.amr_ngcmfa().unwrap_or(false);
                 let hello_tag = self.fetch_hello_key_tag(account_id, amr_ngcmfa);
@@ -2325,6 +2651,207 @@ impl IdProvider for HimmelblauProvider {
 
                 auth_and_validate_hello_key!(hello_key, keytype, cred)
             }
+            // Sign-in frequency optimization: Password-first flow for console logins.
+            // This handler validates password via ROPC, then checks PRT for sign-in
+            // frequency before potentially skipping MFA.
+            (
+                AuthCredHandler::PasswordFirst {
+                    auth_options,
+                    is_domain_joined,
+                },
+                PamAuthRequest::Password { cred },
+            ) => {
+                debug!("Console password-only mode: trying ROPC before MFA flow");
+
+                // The broker's ROPC method requires device enrollment (cert_key).
+                // If the device isn't enrolled, skip ROPC and go directly to MFA flow.
+                let ropc_result = if *is_domain_joined {
+                    // Step 1: Validate password via ROPC (Resource Owner Password Credentials)
+                    Some(
+                        self.client
+                            .read()
+                            .await
+                            .acquire_token_by_username_password(
+                                account_id,
+                                &cred,
+                                vec![],
+                                Some("https://graph.microsoft.com".to_string()),
+                                None,
+                                tpm,
+                                machine_key,
+                            )
+                            .await,
+                    )
+                } else {
+                    debug!("Device not enrolled - skipping ROPC, proceeding to MFA flow");
+                    None
+                };
+
+                // Track whether ROPC was attempted (device enrolled). If ROPC told us
+                // MFA is required and the PRT sign-in frequency check fails, we'll
+                // need ForceMFA. If ROPC was skipped (device not enrolled), the
+                // enrollment flow may be MFA or password-only per MS policy.
+                let mfa_confirmed_required = ropc_result.is_some();
+
+                match ropc_result {
+                    Some(Ok(token)) => {
+                        // Password validated and no MFA required - return success
+                        debug!("ROPC succeeded - no MFA required");
+                        let token2 = enroll_and_obtain_enrolled_token!(token);
+                        return match self.token_validate(account_id, &token2, None).await {
+                            Ok(AuthResult::Success { token }) => {
+                                let action =
+                                    if self.config.read().await.get_offline_breakglass_enabled() {
+                                        AuthCacheAction::PasswordHashUpdate { cred }
+                                    } else {
+                                        AuthCacheAction::None
+                                    };
+                                Ok((
+                                    AuthResult::Success { token },
+                                    /* Cache the offline password hash for breakglass
+                                     * conditions, if enabled. */
+                                    action,
+                                ))
+                            }
+                            Ok(auth_result) => Ok((auth_result, AuthCacheAction::None)),
+                            Err(e) => Err(e),
+                        };
+                    }
+                    Some(Err(MsalError::AADSTSError(ref aadsts_err)))
+                        if [50072, 50074, 50076].contains(&aadsts_err.code) =>
+                    {
+                        // Password is valid but MFA is required by policy (AADSTS error).
+                        // Check if sign-in frequency is satisfied via PRT exchange.
+                        debug!(
+                            "Password valid but MFA required (AADSTS{}). Checking sign-in frequency via PRT.",
+                            aadsts_err.code
+                        );
+
+                        prt_signin_frequency_check!(cred)
+                    }
+                    Some(Err(MsalError::MFARequired)) => {
+                        // Password is valid but MFA is required (ConvergedTFA response).
+                        // Check if sign-in frequency is satisfied via PRT exchange.
+                        debug!(
+                            "Password valid but MFA required (ConvergedTFA). Checking sign-in frequency via PRT."
+                        );
+
+                        prt_signin_frequency_check!(cred)
+                    }
+                    Some(Err(MsalError::ChangePassword)) => {
+                        // The user needs to set a new password.
+                        *cred_handler = AuthCredHandler::ChangePassword { old_cred: cred };
+                        return Ok((
+                            AuthResult::Next(AuthRequest::ChangePassword {
+                                msg: "Update your password\n\
+                                     You need to update your password because this is\n\
+                                     the first time you are signing in, or because your\n\
+                                     password has expired."
+                                    .to_string(),
+                            }),
+                            AuthCacheAction::None,
+                        ));
+                    }
+                    Some(Err(e)) => {
+                        // ROPC failed - this could be a bad password or other error
+                        debug!("ROPC failed: {:?} - authentication denied", e);
+                        return Ok((AuthResult::Denied(e.to_string()), AuthCacheAction::None));
+                    }
+                    None => {
+                        // Device not enrolled - skip ROPC and start enrollment auth flow.
+                        // The enrollment flow may be MFA or password-only depending on MS policy.
+                        debug!("Skipping ROPC (device not enrolled) - starting MFA auth flow");
+                    }
+                }
+
+                // For enrolled devices (ropc_result was Some), MFA has been positively
+                // determined as required and the PRT sign-in frequency check didn't
+                // satisfy it. We must force interactive MFA to get a session with MFA
+                // claims. Without ForceMFA, Azure may return an auth code directly
+                // (password-only session) which will fail when exchanging the PRT for
+                // a Graph access token.
+                //
+                // For non-enrolled devices (ropc_result was None), do not force MFA so
+                // that the enrollment flow can be MFA or password-only according to
+                // Microsoft policy and allow_console_password_only behavior.
+                if mfa_confirmed_required {
+                    if !auth_options.contains(&AuthOption::ForceMFA) {
+                        auth_options.push(AuthOption::ForceMFA);
+                    }
+                    debug!(
+                        "Initiating MFA auth flow with ForceMFA (sign-in frequency not satisfied)"
+                    );
+                } else {
+                    debug!(
+                        "Initiating device-enrollment auth flow without ForceMFA (policy may allow password-only)"
+                    );
+                }
+
+                // We pass `None` for auth_init to force a fresh
+                // request_auth_config_internal() call that respects the current
+                // auth_options (including ForceMFA when set). The original auth_init
+                // from check_user_exists() was fetched without ForceMFA, so reusing
+                // it would bypass the amr_values=ngcmfa parameter in the
+                // /oauth2/authorize request.
+                let mut flow = net_down_check!(
+                    self.client
+                        .read()
+                        .await
+                        .initiate_acquire_token_by_mfa_flow_for_device_enrollment(
+                            account_id,
+                            Some(&cred),
+                            auth_options,
+                            None,
+                            self.config.read().await.get_mfa_method().as_deref()
+                        )
+                        .await,
+                    Ok(flow) => flow,
+                    Err(MsalError::MFARequired) => {
+                        // Azure told us MFA is required. Add ForceMFA (if not
+                        // already set) and retry with a fresh auth config.
+                        if !auth_options.contains(&AuthOption::ForceMFA) {
+                            auth_options.push(AuthOption::ForceMFA);
+                        }
+                        net_down_check!(
+                            self.client
+                                .read()
+                                .await
+                                .initiate_acquire_token_by_mfa_flow_for_device_enrollment(
+                                    account_id,
+                                    Some(&cred),
+                                    auth_options,
+                                    None,
+                                    self.config.read().await.get_mfa_method().as_deref()
+                                )
+                                .await,
+                            Ok(flow) => flow,
+                            Err(e) => {
+                                error!("MFA flow initiation failed: {:?}", e);
+                                return Ok((AuthResult::Denied(msal_error_to_user_message(&e)), AuthCacheAction::None));
+                            }
+                        )
+                    },
+                    Err(MsalError::PasswordRequired) => {
+                        // This shouldn't happen since we already validated the password
+                        error!("Unexpected PasswordRequired error after ROPC validation");
+                        return Ok((
+                            AuthResult::Denied("Authentication failed. Please try again.".to_string()),
+                            AuthCacheAction::None,
+                        ));
+                    },
+                    Err(e) => {
+                        error!("MFA flow initiation failed: {:?}", e);
+                        return Ok((AuthResult::Denied(msal_error_to_user_message(&e)), AuthCacheAction::None));
+                    }
+                );
+
+                // Set resource for non-domain-joined devices
+                if !*is_domain_joined {
+                    flow.resource = Some("https://enrollment.manage.microsoft.com".to_string());
+                }
+
+                nested_auth_handle_mfa_resp!(flow, cred)
+            }
             (change_password, PamAuthRequest::Password { mut cred }) => {
                 if let AuthCredHandler::ChangePassword { old_cred } = change_password {
                     // Report errors, but don't bail out. If the password change fails,
@@ -2357,6 +2884,8 @@ impl IdProvider for HimmelblauProvider {
                 let is_remote_service = service.starts_with("remote:")
                     || remote_services.iter().any(|s| service.contains(s))
                     || service.to_lowercase().contains("ssh");
+                let console_password_only =
+                    self.config.read().await.get_allow_console_password_only();
                 if !is_remote_service {
                     opts.push(AuthOption::Fido);
                     if self
@@ -2367,8 +2896,11 @@ impl IdProvider for HimmelblauProvider {
                     {
                         opts.push(AuthOption::PasswordlessFido);
                     }
-                } else {
+                }
+                if is_remote_service || !console_password_only {
                     opts.push(AuthOption::ForceMFA);
+                }
+                if is_remote_service {
                     opts.push(AuthOption::RemoteSession);
                 }
                 // If SFA is enabled, disable the DAG fallback, otherwise SFA users
@@ -2488,86 +3020,7 @@ impl IdProvider for HimmelblauProvider {
                         };
                     }
                 );
-                auth_handle_mfa_resp!(
-                    resp,
-                    // FIDO
-                    {
-                        let fido_challenge = resp.fido_challenge.clone().ok_or({
-                            debug!("FIDO challenge missing in MFA response");
-                            IdpError::BadRequest
-                        })?;
-
-                        let fido_allow_list = resp.fido_allow_list.clone().ok_or({
-                            debug!("FIDO allow list missing in MFA response");
-                            IdpError::BadRequest
-                        })?;
-                        *cred_handler = AuthCredHandler::MFA {
-                            flow: resp,
-                            password: Some(cred.clone()),
-                            extra_data: None,
-                        };
-                        let action = if self.config.read().await.get_offline_breakglass_enabled() {
-                            AuthCacheAction::PasswordHashUpdate { cred }
-                        } else {
-                            AuthCacheAction::None
-                        };
-                        return Ok((
-                            AuthResult::Next(AuthRequest::Fido {
-                                fido_allow_list,
-                                fido_challenge,
-                            }),
-                            /* Cache the offline password hash for breakglass
-                             * conditions, if enabled. */
-                            action,
-                        ));
-                    },
-                    // PROMPT
-                    {
-                        let msg = resp.msg.clone();
-                        *cred_handler = AuthCredHandler::MFA {
-                            flow: resp,
-                            password: Some(cred.clone()),
-                            extra_data: None,
-                        };
-                        let action = if self.config.read().await.get_offline_breakglass_enabled() {
-                            AuthCacheAction::PasswordHashUpdate { cred }
-                        } else {
-                            AuthCacheAction::None
-                        };
-                        return Ok((
-                            AuthResult::Next(AuthRequest::MFACode { msg }),
-                            /* Cache the offline password hash for breakglass
-                             * conditions, if enabled. */
-                            action,
-                        ));
-                    },
-                    // POLL
-                    {
-                        let msg = resp.msg.clone();
-                        let polling_interval = resp.polling_interval.unwrap_or(5000);
-                        *cred_handler = AuthCredHandler::MFA {
-                            flow: resp,
-                            password: Some(cred.clone()),
-                            extra_data: None,
-                        };
-                        let action = if self.config.read().await.get_offline_breakglass_enabled() {
-                            AuthCacheAction::PasswordHashUpdate { cred }
-                        } else {
-                            AuthCacheAction::None
-                        };
-                        return Ok((
-                            AuthResult::Next(AuthRequest::MFAPoll {
-                                msg,
-                                // Kanidm pam expects a polling_interval in
-                                // seconds, not milliseconds.
-                                polling_interval: polling_interval / 1000,
-                            }),
-                            /* Cache the offline password hash for breakglass
-                             * conditions, if enabled. */
-                            action,
-                        ));
-                    }
-                )
+                nested_auth_handle_mfa_resp!(resp, cred)
             }
             (
                 AuthCredHandler::MFA {
@@ -2652,7 +3105,12 @@ impl IdProvider for HimmelblauProvider {
                 let max_poll_attempts = flow.max_poll_attempts.unwrap_or(180);
                 if poll_attempt > max_poll_attempts {
                     error!("MFA polling timed out");
-                    return Err(IdpError::BadRequest);
+                    return Ok((
+                        AuthResult::Denied(
+                            "Authentication timed out. Please try again.".to_string(),
+                        ),
+                        AuthCacheAction::None,
+                    ));
                 }
                 let token = net_down_check!(
                     self.client
@@ -2686,6 +3144,16 @@ impl IdProvider for HimmelblauProvider {
                         MsalError::MFAPollContinue => {
                             return Ok((
                                 AuthResult::Next(AuthRequest::MFAPollWait),
+                                AuthCacheAction::None,
+                            ));
+                        }
+                        MsalError::MFARequired => {
+                            error!("MFA required but session lacks MFA claims. \
+                                    This may indicate the MFA flow was initiated without ForceMFA.");
+                            return Ok((
+                                AuthResult::Denied(
+                                    "Multi-factor authentication required. Please try signing in again.".to_string(),
+                                ),
                                 AuthCacheAction::None,
                             ));
                         }
@@ -3049,6 +3517,122 @@ impl HimmelblauProvider {
         Ok(loadable_id_key)
     }
 
+    /// Try to check if sign-in frequency is satisfied via PRT exchange.
+    /// Returns:
+    /// - Some(Ok(token)) if PRT exchange succeeded (sign-in frequency satisfied)
+    /// - Some(Err(reason)) if PRT exchange failed (sign-in frequency not satisfied)
+    /// - None if no PRT is cached for this user
+    #[instrument(level = "debug", skip_all)]
+    async fn try_prt_signin_frequency_check(
+        &self,
+        account_id: &str,
+        tpm: &mut tpm::provider::BoxedDynTpm,
+        machine_key: &tpm::structures::StorageKey,
+    ) -> Option<Result<UnixUserToken, String>> {
+        // Check if we have a cached PRT for this user
+        let prt = match self.refresh_cache.refresh_token(account_id).await {
+            Ok(RefreshCacheEntry::Prt(prt)) => prt,
+            Ok(_) => {
+                debug!("Cached refresh token is not a PRT");
+                return None;
+            }
+            Err(_) => {
+                debug!("No refresh token cached");
+                return None;
+            }
+        };
+
+        // Try PRT exchange to check sign-in frequency
+        let cfg = self.config.read().await;
+        let (client_id, scopes) = if cfg.get_app_id(&self.domain).is_some() {
+            (None, vec!["GroupMember.Read.All"])
+        } else {
+            (
+                Some(EDGE_BROWSER_CLIENT_ID),
+                vec!["https://graph.microsoft.com/.default"],
+            )
+        };
+        let prt_result = self
+            .client
+            .read()
+            .await
+            .exchange_prt_for_access_token(&prt, scopes.clone(), None, client_id, tpm, machine_key)
+            .await;
+        let prt_result = match prt_result {
+            Err(MsalError::RequestFailed(msg)) => {
+                error!(
+                    "PRT exchange failed, retrying after network error: {:?}",
+                    msg
+                );
+                sleep(Duration::from_millis(500));
+                self.client
+                    .read()
+                    .await
+                    .exchange_prt_for_access_token(&prt, scopes, None, client_id, tpm, machine_key)
+                    .await
+            }
+            Err(MsalError::AcquireTokenFailed(err_resp)) => {
+                if err_resp.error_codes.contains(&CONSENT_REQUIRED) {
+                    /* Consent has not been granted for the application
+                     * to access the Graph API. Retry without Graph API
+                     * scopes - authentication can still proceed but group
+                     * names will not be resolved. */
+                    warn!(
+                        "Consent not granted for Graph API access. \
+                       Retrying token exchange without Graph API scopes."
+                    );
+                    self.client
+                        .read()
+                        .await
+                        .exchange_prt_for_access_token(&prt, vec![], None, None, tpm, machine_key)
+                        .await
+                } else {
+                    Err(MsalError::AcquireTokenFailed(err_resp))
+                }
+            }
+            result => result,
+        };
+
+        match prt_result {
+            Ok(mut msal_token) => {
+                // PRT exchange succeeded - sign-in frequency is satisfied!
+                // Request a new PRT to refresh the cache
+                match self
+                    .client
+                    .read()
+                    .await
+                    .exchange_prt_for_prt(&prt, tpm, machine_key, true)
+                    .await
+                {
+                    Ok(new_prt) => {
+                        msal_token.prt = Some(new_prt.clone());
+                        self.refresh_cache
+                            .add(account_id, &RefreshCacheEntry::Prt(new_prt))
+                            .await;
+                    }
+                    Err(err) => {
+                        error!(
+                            ?err,
+                            "PRT refresh failed after successful PRT access token exchange; keeping cached PRT"
+                        );
+                    }
+                }
+                Some(Ok(msal_token))
+            }
+            Err(MsalError::MFARequired) => Some(Err(
+                "PRT exchange requires MFA - sign-in frequency expired".to_string(),
+            )),
+            Err(MsalError::RequestFailed(msg)) => {
+                let url = extract_base_url!(msg);
+                info!(?url, "Network down detected");
+                let mut state = self.state.lock().await;
+                *state = CacheState::OfflineNextCheck(SystemTime::now() + OFFLINE_NEXT_CHECK);
+                None
+            }
+            Err(e) => Some(Err(format!("PRT exchange failed: {:?}", e))),
+        }
+    }
+
     #[instrument(level = "debug", skip_all)]
     async fn token_validate(
         &self,
@@ -3335,7 +3919,10 @@ impl HimmelblauProvider {
 
         if posix_attrs.contains_key("unixHomeDirectory") {
             // TODO: Implement homedir mapping
-            warn!("Himmelblau did not map unixHomeDirectory from Azure Entra Connector sync for user {}", spn);
+            warn!(
+                "Himmelblau did not map unixHomeDirectory from Azure Entra Connector sync for user {}",
+                uuid
+            );
         }
 
         Ok(UserToken {
@@ -3522,10 +4109,11 @@ impl HimmelblauProvider {
                     }
                     Err(IdpError::NotFound { .. }) => None,
                     Err(e) => {
-                        return Err(MsalError::GeneralFailure(format!(
-                            "Failed to enroll in Intune: {:?}",
-                            e
-                        )));
+                        error!(
+                            ?e,
+                            "Failed to enroll in Intune during domain join, will retry later."
+                        );
+                        None
                     }
                 };
 

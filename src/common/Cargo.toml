@@ -41,14 +41,14 @@ uuid = { workspace = true }
 async-trait = { workspace = true }
 kanidm_lib_crypto = { workspace = true }
 libc = { workspace = true }
-bytes = "^1.11.0"
+bytes = "^1.11.1"
 futures = "^0.3.28"
 anyhow = { workspace = true }
 kanidm_utils_users = { workspace = true }
 csv = { workspace = true }
 sketching = { workspace = true }
 kanidm_lib_file_permissions.workspace = true
-regex = "1.12.2"
+regex = "1.12.3"
 sha2 = "0.11.0-rc"
 base64.workspace = true
 authenticator = { version = "0.5.0", default-features = false, features = ["crypto_openssl"] }
