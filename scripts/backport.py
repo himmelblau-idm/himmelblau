@@ -1294,6 +1294,26 @@ def parse_ai_analysis(analysis: str) -> dict[str, dict]:
     return results
 
 
+def print_commit_analysis(commit: Commit, analysis: Optional[dict]):
+    """Print AI analysis summary for a commit."""
+    print_color("  AI analysis", "magenta")
+    if not analysis:
+        print("  COMMIT: {sha}".format(sha=commit.short_sha))
+        print("  VERDICT: UNKNOWN")
+        print("  TARGETS: unknown")
+        print("  REASON: No AI analysis available for this commit")
+        return
+
+    verdict = analysis.get("verdict", "UNKNOWN")
+    targets = analysis.get("targets", [])
+    reason = analysis.get("reason", "")
+    targets_display = ", ".join(targets) if targets else "none"
+    print("  COMMIT: {sha}".format(sha=commit.short_sha))
+    print("  VERDICT: {verdict}".format(verdict=verdict))
+    print("  TARGETS: {targets}".format(targets=targets_display))
+    print("  REASON: {reason}".format(reason=reason))
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="AI-powered backport assistant for Himmelblau",
@@ -1549,14 +1569,14 @@ Examples:
                     ]
 
                 for target_ver in target_versions:
-                    backports_to_apply.append((commit, target_ver))
+                    backports_to_apply.append((commit, target_ver, info))
 
     if not backports_to_apply:
         print_color("\nNo commits recommended for backporting.", "green")
         sys.exit(0)
 
     print_color(f"\nBackports to apply ({len(backports_to_apply)}):", "blue")
-    for commit, target in backports_to_apply:
+    for commit, target, _info in backports_to_apply:
         print(f"  {commit.short_sha} -> {target.version}: {commit.subject[:50]}")
 
     if args.dry_run:
@@ -1602,12 +1622,12 @@ Examples:
     dependabot_fetcher = DependabotPRFetcher(args.repo)
 
     # Group backports by target version
-    commits_by_version: dict[str, list[Commit]] = {}
-    for commit, target in backports_to_apply:
+    commits_by_version: dict[str, list[tuple[Commit, dict]]] = {}
+    for commit, target, info in backports_to_apply:
         key = target.version
         if key not in commits_by_version:
             commits_by_version[key] = []
-        commits_by_version[key].append(commit)
+        commits_by_version[key].append((commit, info))
 
     # Apply backports
     successful_branches = []
@@ -1683,7 +1703,7 @@ Examples:
         # Apply each commit
         all_success = True
         skipped_already_present = 0
-        for commit in commits_for_version:
+        for commit, analysis_info in commits_for_version:
             print_color(f"\n  Cherry-picking {commit.short_sha}: {commit.subject[:50]}...", "cyan")
 
             # Check if commit is already in the target branch
@@ -1693,9 +1713,10 @@ Examples:
                 continue
 
             if args.interactive:
+                print_commit_analysis(commit, analysis_info)
                 try:
-                    confirm = input("  Apply this commit? [Y/n]: ").strip().lower()
-                    if confirm == 'n':
+                    confirm = input("  Proceed with this backport? [y/N]: ").strip().lower()
+                    if confirm != 'y':
                         print_color("  Skipped", "yellow")
                         continue
                 except (KeyboardInterrupt, EOFError):
@@ -1749,7 +1770,7 @@ Examples:
             print_color(f"\nBuild failed, attempt {attempt}/{max_fix_attempts} to fix...", "yellow")
 
             # Use AI to fix
-            dummy_commit = commits_for_version[0]  # Use first commit for context
+            dummy_commit = commits_for_version[0][0]  # Use first commit for context
             if not ai.fix_build_interactive(dummy_commit, target.branch, build_error):
                 break
 
@@ -1820,7 +1841,7 @@ Examples:
         print_color(f"{'=' * 70}", "cyan")
 
         for branch_name, target, commits_list, dependabot_prs_list in successful_branches:
-            manager.create_pr(branch_name, target, commits_list, dependabot_prs_list)
+            manager.create_pr(branch_name, target, [c for c, _info in commits_list], dependabot_prs_list)
 
     # Summary
     print()
