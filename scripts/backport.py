@@ -538,6 +538,11 @@ Be conservative - stability is more important than features for stable branches.
 2. Identify what needs to be fixed for the backport to work
 3. Make the necessary changes to fix the build
 
+If the failure involves a cherry-pick conflict, resolve the conflicts and then
+stage ONLY the resolved files you actually changed (for example, `git add path/to/file1 path/to/file2`).
+Do NOT use `git add -A` or `git add .` because the working tree may be dirty and
+unrelated files must not be staged. The backport script checks the index to confirm the fix.
+
 Common issues when backporting:
 - API differences between versions (especially libhimmelblau)
 - Missing dependencies that were added in newer versions
@@ -564,6 +569,11 @@ to get the build working while preserving the intent of the original commit.
 2. Resolve the conflicts by keeping the dependency update while maintaining compatibility
 3. The goal is to update the dependency version as requested by dependabot
 
+After resolving conflicts, stage ONLY the resolved files you actually changed
+(for example, `git add path/to/file1 path/to/file2`). Do NOT use `git add -A` or
+`git add .` because the working tree may be dirty and unrelated files must not be staged.
+The backport script checks the index to confirm the fix.
+
 Common conflict scenarios:
 - Cargo.toml has different formatting or additional dependencies in stable branch
 - Cargo.lock has different dependency trees
@@ -572,7 +582,7 @@ Common conflict scenarios:
 Tips:
 - For Cargo.toml conflicts: Accept the new version from dependabot, but keep any stable-branch-specific dependencies
 - For Cargo.lock conflicts: After resolving Cargo.toml, run `cargo update -p <package>` to regenerate the lock file
-- Make sure to stage resolved files with `git add`
+- Make sure to stage only the files you actually changed with `git add <path>`
 
 Please resolve the conflicts and ensure the dependency update is applied correctly.
 """
