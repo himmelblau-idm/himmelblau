@@ -19,6 +19,7 @@ use crate::client_sync::DaemonClientBlocking;
 use crate::config::HimmelblauConfig;
 use crate::hello_pin_complexity::{is_simple_pin, meets_intune_pin_policy};
 use crate::unix_proto::{ClientRequest, ClientResponse, PamAuthRequest, PamAuthResponse};
+use regex::{Match, Regex};
 use std::sync::Arc;
 
 use tracing::{debug, error};
@@ -293,6 +294,51 @@ macro_rules! pam_fail {
     }};
 }
 
+fn hello_totp_urldecode_match(m: Option<Match>) -> Result<String, String> {
+    match m.map(|c| urlencoding::decode(c.as_str())) {
+        Some(c) => match c {
+            Ok(c) => Ok(c.to_string()),
+            Err(ref e) => {
+                debug!("Failed to decode parameter {:?}: {:?}", c, e);
+                Err("Failed to generate QR code".to_string())
+            }
+        },
+        None => {
+            debug!("Failed to capture parameter from TOTP url");
+            Err("Failed to generate QR code".to_string())
+        }
+    }
+}
+
+fn hello_totp_enroll_fallback_msg(url: &str) -> Result<String, String> {
+    let totp_regex = Regex::new(r"otpauth://([ht]otp)/([a-zA-Z0-9%]+):?([^\?]+)\?secret=([0-9A-Za-z]+)(?:.*(?:<?counter=)([0-9]+))?").map_err(|e| {
+        debug!(?e, "Failed to build regex");
+        format!("Failed to build regex: {}", e)
+    })?;
+
+    match totp_regex.captures(url) {
+        Some(cap) => {
+            let secret = match cap.get(4) {
+                Some(c) => Ok(c.as_str().to_string()),
+                None => {
+                    debug!("Failed to capture secret from TOTP url {}", url);
+                    Err("Failed to generate QR code".to_string())
+                }
+            }?;
+            let issuer = hello_totp_urldecode_match(cap.get(2))?;
+            let acct = hello_totp_urldecode_match(cap.get(3))?;
+            let fallback_msg = format!(
+                "Enter the setup key '{}' to enroll a TOTP Authenticator app. Use '{}' for the code name and '{}' as the label/name.",
+                secret, issuer, acct);
+            Ok(fallback_msg)
+        }
+        None => {
+            debug!("Failed to parse TOTP url {}", url);
+            Err("Failed to generate QR code".to_string())
+        }
+    }
+}
+
 macro_rules! match_sm_auth_client_response {
     ($daemon_client:expr, $req:ident, $authtok:expr, $cfg:ident, $account_id:ident, $service:ident, $msg_printer:ident, $opts:ident, $($pat:pat => $result:expr),*) => {{
         let timeout = $cfg.get_unix_sock_timeout();
@@ -416,7 +462,52 @@ macro_rules! match_sm_auth_client_response {
                 ClientResponse::PamAuthenticateStepResponse(PamAuthResponse::HelloTOTP {
                     msg,
                 }) => {
-                    $msg_printer.print_text(&msg);
+                    // GDM will render its own QR code if qr-greeter is installed.
+                    // Otherwise render with unicode chars.
+                    if msg.starts_with("otpauth://") && $service != "gdm-password" {
+                        match qrcodegen::QrCode::encode_text(&msg, qrcodegen::QrCodeEcc::Low) {
+                            Ok(qr) => {
+                                let mut buf = "Open your authenticator app and scan this QR code to enroll. Then enter the generated code.\n".to_string();
+                                let border: i32 = 4;
+                                let full_block: char = '\u{2588}';
+                                let half_upper_block: char = '\u{2580}';
+                                let half_lower_block: char = '\u{2584}';
+                                let white_block: char = '\u{0020}';
+
+                                for y in (-border .. qr.size() + border).step_by(2) {
+                                    for x in -border .. qr.size() + border {
+                                        let upper = qr.get_module(x, y);
+                                        let lower = qr.get_module(x, y + 1);
+                                        let c = match (upper, lower) {
+                                            (true, true) => full_block,
+                                            (true, false) => half_upper_block,
+                                            (false, true) => half_lower_block,
+                                            (false, false) => white_block,
+                                        };
+                                        buf.push(c);
+                                    }
+                                    buf.push('\n');
+                                }
+                                $msg_printer.print_text(&buf);
+                            },
+                            Err(e) => {
+                                debug!("failed to generate QR code: {:?}", e);
+                                // Fallback to manual setup
+                                match hello_totp_enroll_fallback_msg(&msg) {
+                                    Ok(msg) => $msg_printer.print_text(&msg),
+                                    Err(msg) => {
+                                        pam_fail!(
+                                            $msg_printer,
+                                            msg,
+                                            PamResultCode::PAM_SYSTEM_ERR
+                                        );
+                                    }
+                                }
+                            }
+                        };
+                    } else {
+                      $msg_printer.print_text(&msg);
+                    };
                     let cred = match $msg_printer.prompt_echo_off("TOTP Code: ") {
                         Some(cred) => cred,
                         None => {

@@ -58,3 +58,5 @@ openidconnect = "4.0.1"
 oauth2 = "5.0.0"
 totp-rs = { version = "5.7.0", features = ["gen_secret", "otpauth", "qr", "serde_support", "zeroize"] }
 hostname = "0.4.2"
+qrcodegen = "1.8.0"
+urlencoding = { workspace = true }

@@ -2085,6 +2085,7 @@ dependencies = [
  "openidconnect",
  "os-release",
  "pem",
+ "qrcodegen",
  "regex",
  "reqwest 0.12.24",
  "rpassword",
@@ -2098,6 +2099,7 @@ dependencies = [
  "tokio-util",
  "totp-rs",
  "tracing",
+ "urlencoding",
  "uuid",
  "zeroize",
 ]
