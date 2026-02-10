@@ -56,21 +56,6 @@ updates:
         patterns:
           - "*"
 
-  # Updates for stable-1.x
-  - package-ecosystem: "cargo"
-    directory: "/"
-    target-branch: stable-1.x
-    schedule:
-      interval: "quarterly"
-    commit-message:
-      prefix: "deps(rust)"
-    ignore:
-      - dependency-name: "utoipa"
-    groups:
-      all-cargo-updates:
-        patterns:
-          - "*"
-
   # Updates for stable-0.9.x
   - package-ecosystem: "cargo"
     directory: "/"
