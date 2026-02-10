@@ -12,9 +12,6 @@ const GdmAuthPrompt = AuthPromptModule.AuthPrompt;
 // Track active temp files for cleanup
 let activeTotpTempFiles = new Set();
 
-// Regex to match TOTP setup messages
-const TOTP_SETUP_RE = /Enter the setup key '([^']+)'.*Use '([^']+)'.*'([^']+)' as the label\/name\./s;
-
 // Known URLs that have static QR code images
 const STATIC_QR_URLS = {
     'https://microsoft.com/devicelogin': 'msdag.png',
@@ -126,13 +123,6 @@ function cleanupAllTempFiles() {
     activeTotpTempFiles.clear();
 }
 
-// Build a TOTP URI for authenticator apps
-function buildTotpUri(secret, issuer, label) {
-    const encodedIssuer = encodeURIComponent(issuer);
-    const encodedLabel = encodeURIComponent(label);
-    return `otpauth://totp/${encodedIssuer}:${encodedLabel}?secret=${secret}&issuer=${encodedIssuer}&algorithm=SHA1&digits=6&period=30`;
-}
-
 export default class QrGreeterExtension extends Extension {
     enable() {
         console.log("Himmelblau QR Greeter: enabled...");
@@ -195,19 +185,10 @@ export default class QrGreeterExtension extends Extension {
                 this._totpTempFile = null;
             }
 
-            const totpMatch = message ? TOTP_SETUP_RE.exec(message) : null;
-
+            const totpMatch = message ? message.startsWith("otpauth://") : null;
             if (totpMatch) {
-                // Extract TOTP setup information
-                const secretB32 = totpMatch[1];
-                const issuer = totpMatch[2];
-                const label = totpMatch[3];
-
-                // Build TOTP URI and generate QR code
-                const totpUri = buildTotpUri(secretB32, issuer, label);
-
                 try {
-                    const qr = QrCode.encodeText(totpUri, Ecc.MEDIUM);
+                    const qr = QrCode.encodeText(message, Ecc.MEDIUM);
                     const svgContent = qrCodeToSvg(qr, 2, '#ffffff', '#000000');
                     const tempFilePath = writeSvgToTempFile(svgContent);
                     this._totpTempFile = tempFilePath; // Track for cleanup on this instance
@@ -215,11 +196,11 @@ export default class QrGreeterExtension extends Extension {
                     const fileUri = `file://${tempFilePath}`;
                     this._qrContainer.set_style(`background-image: url('${fileUri}'); background-size: contain; background-repeat: no-repeat; background-position: center;`);
                     this._qrContainer.show();
-                    this._qrLabel.set_text("Scan to set up Hello TOTP");
+                    this._qrLabel.set_text("Scan with your phone to set up Hello TOTP");
                     this._qrLabel.show();
                     // Replace the verbose message with a simple instruction
                     if (this._message) {
-                        this._message.set_text("Open your Authenticator app and scan this QR code to enroll. Then enter the code below.");
+                        this._message.set_text("Open your authenticator app and scan this QR code to enroll. Then enter the generated code.");
                     }
                 } catch (e) {
                     console.error("Himmelblau QR Greeter: Failed to generate TOTP QR code:", e);
