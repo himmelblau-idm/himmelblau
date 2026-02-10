@@ -476,8 +476,8 @@ I need to identify commits from the main branch that should be backported to old
 ## Supported Stable Versions
 {versions}
 
-## Commits to Analyze
-{commits}
+## Commit to Analyze
+{commit}
 
 ## Your Task
 Analyze each commit and determine if it should be backported. Consider:
@@ -602,41 +602,66 @@ Please resolve the conflicts and ensure the dependency update is applied correct
                 display_parts.append(f"REASON: {analysis.get('reason', '(cached)')}")
                 display_parts.append("")
 
-        # Analyze uncached commits with AI
+        # Analyze uncached commits with AI (one request per commit)
         new_results = {}
         if uncached_commits:
-            print_color(f"  Analyzing {len(uncached_commits)} new commit(s) with AI...", "blue")
-
-            versions_str = "\n".join(f"- {v.version} (branch: {v.branch})" for v in versions)
-
-            commits_str = ""
-            for c in uncached_commits:
-                commits_str += f"\n### Commit {c.short_sha}\n"
-                commits_str += f"**Subject**: {c.subject}\n"
-                commits_str += f"**Author**: {c.author}\n"
-                commits_str += f"**Date**: {c.date}\n"
-                commits_str += f"**Files**: {', '.join(c.files_changed[:10])}"
-                if len(c.files_changed) > 10:
-                    commits_str += f" (+{len(c.files_changed) - 10} more)"
-                commits_str += "\n"
-                if c.body:
-                    commits_str += f"**Body**:\n{c.body[:500]}\n"
-
-            prompt = self.ANALYSIS_PROMPT.format(
-                versions=versions_str,
-                commits=commits_str,
+            print_color(
+                f"  Analyzing {len(uncached_commits)} new commit(s) with AI (one request per commit)...",
+                "blue",
             )
 
-            ai_response = self._run_prompt(prompt)
-            if ai_response:
-                display_parts.append("=== NEW ANALYSIS ===")
-                display_parts.append(ai_response)
+            versions_str = "\n".join(f"- {v.version} (branch: {v.branch})" for v in versions)
+            new_analysis_header_added = False
 
-                # Parse and cache new results
-                new_results = parse_ai_analysis(ai_response)
-                for commit in uncached_commits:
-                    if commit.short_sha in new_results:
-                        self.cache.set(commit.sha, new_results[commit.short_sha])
+            for commit in uncached_commits:
+                print_color(f"    Requesting analysis for {commit.short_sha}...", "blue")
+
+                commit_str = f"### Commit {commit.short_sha}\n"
+                commit_str += f"**Subject**: {commit.subject}\n"
+                commit_str += f"**Author**: {commit.author}\n"
+                commit_str += f"**Date**: {commit.date}\n"
+                commit_str += f"**Files**: {', '.join(commit.files_changed[:10])}"
+                if len(commit.files_changed) > 10:
+                    commit_str += f" (+{len(commit.files_changed) - 10} more)"
+                commit_str += "\n"
+                if commit.body:
+                    commit_str += f"**Body**:\n{commit.body[:500]}\n"
+
+                prompt = self.ANALYSIS_PROMPT.format(
+                    versions=versions_str,
+                    commit=commit_str,
+                )
+
+                ai_response = self._run_prompt(prompt)
+                if not ai_response:
+                    print_color(
+                        f"    Warning: AI analysis failed for {commit.short_sha}",
+                        "yellow",
+                    )
+                    continue
+
+                if not new_analysis_header_added:
+                    display_parts.append("=== NEW ANALYSIS ===")
+                    new_analysis_header_added = True
+
+                display_parts.append(ai_response)
+                display_parts.append("")
+
+                parsed = parse_ai_analysis(ai_response)
+                matched_analysis = None
+                for key, analysis in parsed.items():
+                    if commit.sha.startswith(key):
+                        matched_analysis = analysis
+                        break
+
+                if matched_analysis:
+                    new_results[commit.short_sha] = matched_analysis
+                    self.cache.set(commit.sha, matched_analysis)
+                else:
+                    print_color(
+                        f"    Warning: AI response did not include {commit.short_sha}",
+                        "yellow",
+                    )
 
         # Merge results
         all_results = {**cached_results, **new_results}
@@ -714,34 +739,62 @@ Files: {', '.join(commit.files_changed)}
     def _run_prompt(self, prompt: str) -> Optional[str]:
         """Run a prompt through the AI CLI."""
         try:
+            result = None
             if self.provider == 'claude':
+                # Method 1: Use -p flag with prompt
                 result = subprocess.run(
                     [self.cli_path, "-p", prompt, "--output-format", "text"],
                     capture_output=True, text=True, timeout=TIMEOUT_AI_PROMPT_SECONDS,
                 )
-                if result.returncode == 0 and result.stdout.strip():
+                if result.returncode == 0 and result.stdout and len(result.stdout.strip()) > 10:
+                    return result.stdout.strip()
+
+                # Method 2: Pipe prompt via stdin
+                result = subprocess.run(
+                    [self.cli_path, "--output-format", "text"],
+                    input=prompt,
+                    capture_output=True, text=True, timeout=TIMEOUT_AI_PROMPT_SECONDS,
+                )
+                if result.returncode == 0 and result.stdout and len(result.stdout.strip()) > 10:
+                    return result.stdout.strip()
+
+                # Method 3: Use --print flag
+                result = subprocess.run(
+                    [self.cli_path, "--print", prompt],
+                    capture_output=True, text=True, timeout=TIMEOUT_AI_PROMPT_SECONDS,
+                )
+                if result.returncode == 0 and result.stdout and len(result.stdout.strip()) > 10:
                     return result.stdout.strip()
 
             elif self.provider == 'gemini':
+                # Method 1: Use -p flag with prompt
                 result = subprocess.run(
-                    [self.cli_path, "-p", prompt, "--output-format", "text"],
+                    [self.cli_path, "-p", prompt],
                     capture_output=True, text=True, timeout=TIMEOUT_AI_PROMPT_SECONDS,
                 )
-                if result.returncode == 0 and result.stdout.strip():
+                if result.returncode == 0 and result.stdout and len(result.stdout.strip()) > 10:
                     return result.stdout.strip()
 
-            # Fallback: pipe via stdin
-            result = subprocess.run(
-                [self.cli_path],
-                input=prompt,
-                capture_output=True, text=True, timeout=TIMEOUT_AI_PROMPT_SECONDS,
-            )
-            if result.returncode == 0 and result.stdout.strip():
-                return result.stdout.strip()
+                # Method 2: Pipe prompt via stdin
+                result = subprocess.run(
+                    [self.cli_path],
+                    input=prompt,
+                    capture_output=True, text=True, timeout=TIMEOUT_AI_PROMPT_SECONDS,
+                )
+                if result.returncode == 0 and result.stdout and len(result.stdout.strip()) > 10:
+                    return result.stdout.strip()
 
+            # If all methods failed, print debug info
+            print_color(f"Warning: All {self.provider} invocation methods failed", "yellow")
+            if result and result.stderr:
+                print_color(f"Last error: {result.stderr[:300]}", "yellow")
             return None
+
         except subprocess.TimeoutExpired:
             print_color("AI analysis timed out", "yellow")
+            return None
+        except FileNotFoundError:
+            print_color(f"Error: {self.provider} CLI not found at '{self.cli_path}'", "red")
             return None
         except Exception as e:
             print_color(f"Error running AI: {e}", "red")
