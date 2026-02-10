@@ -41,11 +41,11 @@ uuid = { workspace = true }
 async-trait = { workspace = true }
 kanidm_lib_crypto = { workspace = true }
 libc = { workspace = true }
-bytes = "^1.10.1"
+bytes = "^1.11.1"
 futures = "^0.3.28"
 anyhow = { workspace = true }
 kanidm_utils_users = { workspace = true }
 csv = { workspace = true }
 sketching = { workspace = true }
 kanidm_lib_file_permissions.workspace = true
-regex = "1.11.2"
+regex = "1.12.3"
