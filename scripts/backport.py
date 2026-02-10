@@ -35,6 +35,15 @@ CO_AUTHOR_EMAIL = "Claude Opus 4.5 <noreply@anthropic.com>"
 # Git status codes that indicate unresolved conflicts
 CONFLICT_STATUS_CODES = {"UU", "AA", "DD"}
 
+# Dependabot commit subject patterns to skip in backports
+DEPENDABOT_SUBJECT_PATTERNS = [
+    re.compile(r"^bump .+ from .+ to .+", re.IGNORECASE),
+    re.compile(r"^bump .+ in /.+", re.IGNORECASE),
+    re.compile(r"^deps(\([^)]+\))?: bump ", re.IGNORECASE),
+    re.compile(r"^deps: bump ", re.IGNORECASE),
+    re.compile(r"^chore\(deps[^)]*\):", re.IGNORECASE),
+]
+
 
 def has_unresolved_conflicts(status: str) -> bool:
     """Check if git status output contains unresolved conflicts.
@@ -136,7 +145,12 @@ class Commit:
 
     @property
     def is_dependabot(self) -> bool:
-        return "dependabot" in self.subject.lower() or "dependabot" in self.author.lower()
+        subject_lower = self.subject.lower()
+        author_lower = self.author.lower()
+        body_lower = self.body.lower()
+        if "dependabot" in subject_lower or "dependabot" in author_lower or "dependabot" in body_lower:
+            return True
+        return any(pattern.search(self.subject) for pattern in DEPENDABOT_SUBJECT_PATTERNS)
 
     @property
     def is_ci_only(self) -> bool:
