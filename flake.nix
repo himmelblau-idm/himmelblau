@@ -45,6 +45,27 @@
         }
       );
 
+      devShells = eachSystem(system:
+        let
+          default = import ./default.nix { inherit system; };
+          inherit (default.passthru) pkgs;
+        in
+        {
+          default = pkgs.mkShell {
+            packages = with pkgs; [
+              rust-analyzer
+              rustfmt
+              clippy
+            ];
+
+            env = {
+              # For rust-analyzer support
+              RUST_SRC_PATH = "${pkgs.rust.packages.stable.rustPlatform.rustLibSrc}";
+            };
+          };
+        }
+      );
+
       packages = eachSystem (
         system: builtins.removeAttrs himmelblau.${system}.packages [ "recurseForDerivations" ]
       );
