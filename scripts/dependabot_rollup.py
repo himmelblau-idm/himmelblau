@@ -158,19 +158,14 @@ def main() -> int:
 
         status = git.status_porcelain()
         if has_unresolved_conflicts(status):
-            print_color("  Cherry-pick conflict detected", "red")
+            print_color("  Cherry-pick conflict detected", "yellow")
         else:
-            print_color("  Cherry-pick failed", "red")
+            print_color("  Cherry-pick failed", "yellow")
 
-        if args.skip_conflicts:
-            git.abort_cherry_pick()
-            skipped.append(pr)
-            print_color("  Aborted and skipped due to --skip-conflicts", "yellow")
-            continue
-
-        print("Resolve conflicts, then run `git cherry-pick --continue`.")
-        print("After resolving, you can re-run this script to process remaining PRs.")
-        return 1
+        git.abort_cherry_pick()
+        skipped.append(pr)
+        print_color("  Aborted cherry-pick, skipping PR", "yellow")
+        continue
 
     print_color("\nRollup complete", "green")
     print(f"Branch: {branch}")
