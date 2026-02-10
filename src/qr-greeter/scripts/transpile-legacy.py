@@ -211,6 +211,29 @@ def transpile_qrcodegen(source: str) -> str:
     return '\n'.join(output_lines)
 
 
+def transpile_qr_selection(source: str) -> str:
+    """Convert qr-selection.js from ESM exports to legacy format."""
+
+    lines = source.split('\n')
+    output_lines = []
+
+    for line in lines:
+        if line.startswith('export function '):
+            output_lines.append(line.replace('export ', '', 1))
+            continue
+
+        if line.strip().startswith('export {'):
+            continue
+
+        if line.startswith('const URL_RE '):
+            output_lines.append(line.replace('const ', 'var ', 1))
+            continue
+
+        output_lines.append(line)
+
+    return '\n'.join(output_lines)
+
+
 def main():
     script_dir = Path(__file__).parent
     src_dir = script_dir.parent / "src" / "qr-greeter@himmelblau-idm.org"
@@ -245,6 +268,18 @@ def main():
 
     transpiled = transpile_qrcodegen(source)
     with open(qrcodegen_dst, 'w') as f:
+        f.write(transpiled)
+
+    # Transpile qr-selection.js
+    qr_selection_src = src_dir / "qr-selection.js"
+    qr_selection_dst = legacy_dir / "qr-selection.js"
+
+    print(f"Transpiling {qr_selection_src} -> {qr_selection_dst}")
+    with open(qr_selection_src, 'r') as f:
+        source = f.read()
+
+    transpiled = transpile_qr_selection(source)
+    with open(qr_selection_dst, 'w') as f:
         f.write(transpiled)
 
     # Copy stylesheet.css (no changes needed)
