@@ -78,12 +78,19 @@ pub fn mfa_from_oidc_device(
     let polling_interval = details.interval().as_secs() as u32;
     let expires_in = details.expires_in().as_secs() as u32;
 
-    let msg = format!(
-        "Using a browser on another device, visit:\n{}\n\
-             And enter the code:\n{}",
-        details.verification_uri(),
-        details.user_code().secret()
-    );
+    let msg = match details.verification_uri_complete() {
+        Some(complete) => format!(
+            "Scan the QR code to continue sign-in, or open this link on another device:\n{}\nIf you cannot scan, visit:\n{}\nAnd enter the code:\n{}",
+            complete.secret(),
+            details.verification_uri(),
+            details.user_code().secret()
+        ),
+        None => format!(
+            "Using a browser on another device, visit:\n{}\nAnd enter the code:\n{}",
+            details.verification_uri(),
+            details.user_code().secret()
+        ),
+    };
 
     let max_poll_attempts = if polling_interval == 0 {
         0
@@ -103,6 +110,49 @@ pub fn mfa_from_oidc_device(
             IdpError::BadRequest
         })?,
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::mfa_from_oidc_device;
+    use oauth2::DeviceAuthorizationResponse;
+    use serde_json::json;
+
+    #[test]
+    fn mfa_message_prefers_verification_uri_complete() {
+        let payload = json!({
+            "device_code": "device-code",
+            "user_code": "USER-CODE",
+            "verification_uri": "https://login.example/device",
+            "verification_uri_complete": "https://login.example/device?user_code=USER-CODE",
+            "expires_in": 900,
+            "interval": 5
+        });
+        let details: DeviceAuthorizationResponse<_> = serde_json::from_value(payload).unwrap();
+        let (mfa, _) = mfa_from_oidc_device(details).unwrap();
+
+        assert!(mfa
+            .msg
+            .contains("https://login.example/device?user_code=USER-CODE"));
+        assert!(mfa.msg.contains("https://login.example/device"));
+        assert!(mfa.msg.contains("USER-CODE"));
+    }
+
+    #[test]
+    fn mfa_message_falls_back_to_verification_uri() {
+        let payload = json!({
+            "device_code": "device-code",
+            "user_code": "USER-CODE",
+            "verification_uri": "https://login.example/device",
+            "expires_in": 900,
+            "interval": 5
+        });
+        let details: DeviceAuthorizationResponse<_> = serde_json::from_value(payload).unwrap();
+        let (mfa, _) = mfa_from_oidc_device(details).unwrap();
+
+        assert!(mfa.msg.contains("https://login.example/device"));
+        assert!(mfa.msg.contains("USER-CODE"));
+    }
 }
 
 const HIMMELBLAU_OIDC_NAMESPACE: uuid::Uuid = uuid::uuid!("e669513b-1345-4853-96a7-596243184319");
@@ -638,10 +688,11 @@ impl OidcApplication {
         };
 
         let account_id = userinfo
-            .email()
-            .map(|email| email.to_string())
+            .preferred_username()
+            .map(|username| username.to_string())
+            .or_else(|| userinfo.email().map(|email| email.to_string()))
             .ok_or_else(|| {
-                error!("Missing email claim in userinfo");
+                error!("Missing preferred_username and email claims in userinfo");
                 IdpError::BadRequest
             })?;
 
@@ -1102,12 +1153,18 @@ impl IdProvider for OidcProvider {
                                 Ok(RefreshCacheEntry::RefreshToken(refresh_token)) => refresh_token,
                                 Ok(_) => {
                                     error!("Invalid refresh cache entry type");
-                                    return Err(IdpError::BadRequest);
+                                    return Ok((
+                                        AuthResult::Denied("Session data corrupted. Please sign in again.".to_string()),
+                                        AuthCacheAction::None,
+                                    ));
                                 }
                                 Err(e2) => {
                                     error!(?e, "Failed unsealing hello refresh token from TPM");
                                     error!(?e2, "Failed retrieving refresh token from mem cache");
-                                    return Err(IdpError::BadRequest);
+                                    return Ok((
+                                        AuthResult::Denied("Your session has expired. Please sign in again.".to_string()),
+                                        AuthCacheAction::None,
+                                    ));
                                 }
                             },
                         }
@@ -1116,11 +1173,17 @@ impl IdProvider for OidcProvider {
                             Ok(RefreshCacheEntry::RefreshToken(refresh_token)) => refresh_token,
                             Ok(_) => {
                                 error!("Invalid refresh cache entry type");
-                                return Err(IdpError::BadRequest);
+                                return Ok((
+                                    AuthResult::Denied("Session data corrupted. Please sign in again.".to_string()),
+                                    AuthCacheAction::None,
+                                ));
                             }
                             Err(e) => {
                                 error!(?e, "Failed retrieving refresh token from mem cache");
-                                return Err(IdpError::BadRequest);
+                                return Ok((
+                                    AuthResult::Denied("Your session has expired. Please sign in again.".to_string()),
+                                    AuthCacheAction::None,
+                                ));
                             }
                         }
                     };
@@ -1192,7 +1255,10 @@ impl IdProvider for OidcProvider {
                             // It's ok to reset the pin count here, since they must
                             // online auth at this point and create a new pin.
                             self.bad_pin_counter.reset_bad_pin_count(account_id).await;
-                            return Err(IdpError::BadRequest);
+                            return Ok((
+                                AuthResult::Denied("Your session has expired. Please sign in again.".to_string()),
+                                AuthCacheAction::None,
+                            ));
                         }
                     }
                 } else {
@@ -1204,7 +1270,10 @@ impl IdProvider for OidcProvider {
                                 error!("Failed to delete hello key: {:?}", e);
                                 IdpError::Tpm
                             })?;
-                    return Err(IdpError::BadRequest);
+                    return Ok((
+                        AuthResult::Denied("Your session has expired. Please sign in again.".to_string()),
+                        AuthCacheAction::None,
+                    ));
                 };
 
                 // Cache the refresh token to disk for offline auth SSO
@@ -1214,11 +1283,16 @@ impl IdProvider for OidcProvider {
                         error!("Failed loading hello key for refresh token cache: {:?}", e);
                         IdpError::Tpm
                     })?;
-                let refresh_token_zeroizing =
-                    zeroize::Zeroizing::new(token.refresh_token().map(|r| r.secret().to_owned()).ok_or_else(|| {
+                let refresh_token_zeroizing = match token.refresh_token().map(|r| r.secret().to_owned()) {
+                    Some(rt) => zeroize::Zeroizing::new(rt.as_bytes().to_vec()),
+                    None => {
                         error!("Missing refresh token in OIDC response");
-                        IdpError::BadRequest
-                    })?.as_bytes().to_vec());
+                        return Ok((
+                            AuthResult::Denied("Authentication incomplete. Please try again.".to_string()),
+                            AuthCacheAction::None,
+                        ));
+                    }
+                };
                 let token2 = self.client.user_token_from_oidc(
                     &token,
                     &*self.config.read().await,
@@ -1273,7 +1347,10 @@ impl IdProvider for OidcProvider {
                      * continue from a Pin auth. */
                     Ok(AuthResult::Next(_)) => {
                         debug!("Invalid additional authentication requested with Hello auth.");
-                        Err(IdpError::BadRequest)
+                        Ok((
+                            AuthResult::Denied("Unexpected authentication step. Please try signing in again.".to_string()),
+                            AuthCacheAction::None,
+                        ))
                     }
                     Ok(auth_result) => {
                         debug!("Hello auth failed.");
@@ -1331,16 +1408,38 @@ impl IdProvider for OidcProvider {
                 let max_poll_attempts = flow.max_poll_attempts.unwrap_or(180);
                 if poll_attempt > max_poll_attempts {
                     error!("MFA polling timed out");
-                    return Err(IdpError::BadRequest);
+                    return Ok((
+                        AuthResult::Denied(
+                            "Authentication timed out. Please try again.".to_string(),
+                        ),
+                        AuthCacheAction::None,
+                    ));
                 }
-                let dag_json = extra_data.as_ref().ok_or_else(|| {
-                    error!("Missing extra_data in OIDC MFA handler");
-                    IdpError::BadRequest
-                })?;
-                let flow = serde_json::from_str(dag_json).map_err(|e| {
-                    error!(?e, "Failed to deserialize OIDC DAG");
-                    IdpError::BadRequest
-                })?;
+                let dag_json = match extra_data.as_ref() {
+                    Some(data) => data,
+                    None => {
+                        error!("Missing extra_data in OIDC MFA handler");
+                        return Ok((
+                            AuthResult::Denied(
+                                "Authentication session data missing. Please try again."
+                                    .to_string(),
+                            ),
+                            AuthCacheAction::None,
+                        ));
+                    }
+                };
+                let flow = match serde_json::from_str(dag_json) {
+                    Ok(f) => f,
+                    Err(e) => {
+                        error!(?e, "Failed to deserialize OIDC DAG");
+                        return Ok((
+                            AuthResult::Denied(
+                                "Authentication session corrupted. Please try again.".to_string(),
+                            ),
+                            AuthCacheAction::None,
+                        ));
+                    }
+                };
                 match self.client.acquire_token_by_device_flow(&flow).await {
                     Ok(token) => match self.token_validate(account_id, &token).await {
                         Ok(AuthResult::Success { token: token2 }) => {
@@ -1376,7 +1475,10 @@ impl IdProvider for OidcProvider {
                     )),
                     Err(e) => {
                         error!("{:?}", e);
-                        return Err(IdpError::BadRequest);
+                        return Ok((
+                            AuthResult::Denied(format!("Authentication failed: {}", e)),
+                            AuthCacheAction::None,
+                        ));
                     }
                 }
             }
@@ -1402,7 +1504,12 @@ impl IdProvider for OidcProvider {
             }
             _ => {
                 error!("Invalid auth step");
-                Err(IdpError::BadRequest)
+                Ok((
+                    AuthResult::Denied(
+                        "Unexpected authentication step. Please try signing in again.".to_string(),
+                    ),
+                    AuthCacheAction::None,
+                ))
             }
         }
     }

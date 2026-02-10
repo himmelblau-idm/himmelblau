@@ -1,29 +1,68 @@
-SHELL := /bin/bash
+SHELL := $(shell command -v bash)
 
 all: .packaging dockerfiles ## Auto-detect host distro and build packages just for this host
 	@set -euo pipefail; \
 	. /etc/os-release; \
-	ID="$${ID}"; VER="$${VERSION_ID}"; LIKE="$${ID_LIKE:-}"; \
+	ID="$$ID"; VER="$$VERSION_ID"; LIKE="$${ID_LIKE:-}"; \
 	TARGET=""; \
 	echo "Detecting host distro: ID=$$ID VERSION_ID=$$VER ID_LIKE=$$LIKE"; \
+	\
 	case "$$ID" in \
-	  ubuntu)         case "$$VER" in 22.04*) TARGET="ubuntu22.04" ;; 24.04*) TARGET="ubuntu24.04" ;; esac ;; \
-	  linuxmint)      case "$$VER" in 21.*)   TARGET="ubuntu22.04" ;; 22*|23*) TARGET="ubuntu24.04" ;; esac ;; \
-	  debian)         case "$$VER" in 12*|12.*) TARGET="debian12" ;; 13*|13.*) TARGET="debian13" ;; esac ;; \
+	  ubuntu) \
+	    case "$$VER" in \
+	      22.04*) TARGET="ubuntu22.04" ;; \
+	      24.04*) TARGET="ubuntu24.04" ;; \
+	      25.10*) TARGET="ubuntu25.10" ;; \
+	    esac ;; \
+	  linuxmint) \
+	    case "$$VER" in \
+	      21.*) TARGET="ubuntu22.04" ;; \
+	      22*|23*) TARGET="ubuntu24.04" ;; \
+	    esac ;; \
+	  debian) \
+	    case "$$VER" in \
+	      12*|12.*) TARGET="debian12" ;; \
+	      13*|13.*) TARGET="debian13" ;; \
+	    esac ;; \
 	  rocky|almalinux|rhel|ol|oraclelinux|centos|centos_stream|centos-stream) \
-		major=$$(echo "$$VER" | awk -F. '{print $$1}'); \
-		case "$$major" in 8) TARGET="rocky8" ;; 9) TARGET="rocky9" ;; 10) TARGET="rocky10" ;; esac ;; \
-	  fedora)         case "$$VER" in 42*) TARGET="fedora42" ;; 43*) TARGET="fedora43" ;; *) TARGET="rawhide" ;; esac ;; \
+	    major=$$(echo "$$VER" | awk -F. '{print $$1}'); \
+	    case "$$major" in \
+	      8) TARGET="rocky8" ;; \
+	      9) TARGET="rocky9" ;; \
+	      10) TARGET="rocky10" ;; \
+	    esac ;; \
+	  fedora) \
+	    case "$$VER" in \
+	      42*) TARGET="fedora42" ;; \
+	      43*) TARGET="fedora43" ;; \
+	      *) TARGET="rawhide" ;; \
+	    esac ;; \
 	  sles|sled|sle_micro|suse|suse-linux-enterprise) \
-		case "$$VER" in 15.6*|15-SP6*) TARGET="sle15sp6" ;; 15.7*|15-SP7*) TARGET="sle15sp7" ;; 16*|16.*) TARGET="sle16" ;; esac ;; \
-	  opensuse-leap)  case "$$VER" in 15.6*) TARGET="sle15sp6" ;; 15.7*) TARGET="sle15sp7" ;; esac ;; \
+	    case "$$VER" in \
+	      15.6*|15-SP6*) TARGET="sle15sp6" ;; \
+	      15.7*|15-SP7*) TARGET="sle15sp7" ;; \
+	      16*|16.*) TARGET="sle16" ;; \
+	    esac ;; \
+	  opensuse-leap) \
+	    case "$$VER" in \
+	      15.6*) TARGET="sle15sp6" ;; \
+	      15.7*) TARGET="sle15sp7" ;; \
+	    esac ;; \
 	  opensuse-tumbleweed) TARGET="tumbleweed" ;; \
 	  gentoo)         TARGET="gentoo" ;; \
+	  amzn)          case "$$VER" in 2023) TARGET="amzn2023" ;; esac ;; \
 	esac; \
-	if [ -z "$$TARGET" ]; then echo "Error: unsupported or unmapped distro: $$ID $$VER"; exit 2; fi; \
-	all_targets="$(ALL_PACKAGE_TARGETS)"; \
-	case " $${all_targets} " in *" $$TARGET "*) ;; \
-	  *) echo "Error: no packaging rule for '$$TARGET' (supported: $${all_targets})"; exit 3 ;; esac; \
+	\
+	if [ -z "$$TARGET" ]; then \
+	  echo "Error: unsupported or unmapped distro: $$ID $$VER"; \
+	  exit 2; \
+	fi; \
+	\
+	case " $(ALL_PACKAGE_TARGETS) " in \
+	  *" $$TARGET "*) ;; \
+	  *) echo "Error: no packaging rule for '$$TARGET' (supported: $(ALL_PACKAGE_TARGETS))"; exit 3 ;; \
+	esac; \
+	\
 	echo "Building packages for target '$$TARGET'…"; \
 	$(MAKE) $$TARGET; \
 	echo "Packages written to ./packaging/"
@@ -76,8 +115,8 @@ nix: .packaging ## Build Nix packages into ./packaging/
 		$(NIX) --extra-experimental-features 'nix-command flakes' build ".#$$v" --out-link ./packaging/nix-$$v-result; \
 	done
 
-DEB_TARGETS := ubuntu22.04 ubuntu24.04 debian12 debian13
-RPM_TARGETS := rocky8 rocky9 rocky10 tumbleweed rawhide fedora42 fedora43
+DEB_TARGETS := ubuntu22.04 ubuntu24.04 ubuntu25.10 debian12 debian13
+RPM_TARGETS := rocky8 rocky9 rocky10 tumbleweed rawhide fedora42 fedora43 amzn2023
 SLE_TARGETS := sle15sp6 sle15sp7 sle16
 GENTOO_TARGETS := gentoo
 ALL_PACKAGE_TARGETS := $(DEB_TARGETS) $(RPM_TARGETS) $(SLE_TARGETS) $(GENTOO_TARGETS)
