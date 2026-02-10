@@ -5,7 +5,7 @@ import Gio from 'gi://Gio';
 import { Extension } from 'resource:///org/gnome/shell/extensions/extension.js';
 import * as AuthPromptModule from 'resource:///org/gnome/shell/gdm/authPrompt.js';
 import { QrCode, Ecc } from './qrcodegen.js';
-import { selectDeviceFlowUrl, URL_RE as DEVICE_FLOW_URL_RE } from './qr-selection.js';
+import { selectDeviceFlowUrl, URL_RE } from './qrselection.js';
 
 const GdmAuthPrompt = AuthPromptModule.AuthPrompt;
 
@@ -14,9 +14,6 @@ let activeTotpTempFiles = new Set();
 
 // Regex to match TOTP setup messages
 const TOTP_SETUP_RE = /Enter the setup key '([^']+)'.*Use '([^']+)'.*'([^']+)' as the label\/name\./s;
-
-// Regex to match URLs in messages (excluding known static-QR URLs)
-const URL_RE = DEVICE_FLOW_URL_RE;
 
 // Known URLs that have static QR code images
 const STATIC_QR_URLS = {
