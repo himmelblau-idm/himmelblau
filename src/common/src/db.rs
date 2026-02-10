@@ -1013,6 +1013,22 @@ impl<'a> CacheTxn for DbTxn<'a> {
             CacheError::Parse
         })?;
 
+        let group_uuid = grp.uuid.as_hyphenated().to_string();
+
+        // Find anything conflicting and purge it.
+        self.conn.execute("DELETE FROM group_t WHERE NOT uuid = :uuid AND (name = :name OR spn = :spn OR gidnumber = :gidnumber)",
+            named_params!{
+                ":uuid": &group_uuid,
+                ":name": &grp.name,
+                ":spn": &grp.spn,
+                ":gidnumber": &grp.gidnumber,
+            }
+            )
+            .map_err(|e| {
+                self.sqlite_error("delete group_t duplicate", &e)
+            })
+            .map(|_| ())?;
+
         let mut stmt = self.conn
             .prepare("INSERT OR REPLACE INTO group_t (uuid, name, spn, gidnumber, token, expiry) VALUES (:uuid, :name, :spn, :gidnumber, :token, :expiry)")
             .map_err(|e| {
@@ -1021,7 +1037,7 @@ impl<'a> CacheTxn for DbTxn<'a> {
 
         // We have to to-str uuid as the sqlite impl makes it a blob which breaks our selects in get.
         stmt.execute(named_params! {
-            ":uuid": &grp.uuid.as_hyphenated().to_string(),
+            ":uuid": &group_uuid,
             ":name": &grp.name,
             ":spn": &grp.spn,
             ":gidnumber": &grp.gidnumber,
@@ -1316,6 +1332,103 @@ mod tests {
             .unwrap();
         assert!(m1[0].name == "testuser");
         assert!(m2.is_empty());
+
+        assert!(dbtxn.commit().is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_cache_db_group_duplicate_handling() {
+        sketching::test_init();
+        let db = Db::new("").expect("failed to create.");
+        let mut dbtxn = db.write().await;
+        assert!(dbtxn.migrate().is_ok());
+
+        // Create a group with specific name/spn/gidnumber
+        let gt1 = GroupToken {
+            name: "testgroup".to_string(),
+            spn: "testgroup@example.com".to_string(),
+            gidnumber: 3000,
+            uuid: uuid::uuid!("aaaaaaaa-1111-2222-3333-444444444444"),
+        };
+
+        // Add the first group
+        dbtxn.update_group(&gt1, 0).unwrap();
+
+        // Now create a DIFFERENT group with the SAME name/spn/gidnumber but DIFFERENT uuid
+        // This simulates what happens when OIDC providers return updated group info
+        let gt2 = GroupToken {
+            name: "testgroup".to_string(),
+            spn: "testgroup@example.com".to_string(),
+            gidnumber: 3000,
+            uuid: uuid::uuid!("bbbbbbbb-1111-2222-3333-444444444444"),
+        };
+
+        // This should succeed by deleting the old group and inserting the new one
+        dbtxn.update_group(&gt2, 0).unwrap();
+
+        // Verify that only gt2 exists (gt1 should have been deleted)
+        let result = dbtxn
+            .get_group(&Id::Uuid(uuid::uuid!(
+                "aaaaaaaa-1111-2222-3333-444444444444"
+            )))
+            .unwrap();
+        assert!(result.is_none(), "Old group should have been deleted");
+
+        let result = dbtxn
+            .get_group(&Id::Uuid(uuid::uuid!(
+                "bbbbbbbb-1111-2222-3333-444444444444"
+            )))
+            .unwrap();
+        assert!(result.is_some(), "New group should exist");
+        assert_eq!(result.unwrap().name, "testgroup");
+
+        assert!(dbtxn.commit().is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_cache_db_oidc_primary_group_scenario() {
+        sketching::test_init();
+        let db = Db::new("").expect("failed to create.");
+        let mut dbtxn = db.write().await;
+        assert!(dbtxn.migrate().is_ok());
+
+        // Simulate OIDC provider behavior: user with a primary group that has the same UUID
+        let user_uuid = uuid::uuid!("21b96099-542c-4196-85f9-b4b20748fd32");
+        let account_id = "tester@keycloak".to_string();
+        let gidnum = 213105;
+
+        let primary_group = GroupToken {
+            name: account_id.clone(),
+            spn: account_id.clone(),
+            gidnumber: gidnum,
+            uuid: user_uuid,
+        };
+
+        let user = UserToken {
+            name: account_id.clone(),
+            spn: account_id.clone(),
+            displayname: String::new(),
+            real_gidnumber: Some(gidnum),
+            gidnumber: gidnum,
+            uuid: user_uuid,
+            shell: None,
+            groups: vec![primary_group.clone()],
+            tenant_id: Some(uuid::uuid!("8145e8f1-bd0a-5a9a-8dae-05cd8d01958f")),
+            valid: true,
+        };
+
+        // First add the group (as OIDC provider would do)
+        dbtxn.update_group(&primary_group, 0).unwrap();
+
+        // Then add the account (this should not fail even though they share all identifiers)
+        dbtxn.update_account(&user, 0).unwrap();
+
+        // Verify both exist and can be retrieved
+        let retrieved_user = dbtxn.get_account(&Id::Uuid(user_uuid)).unwrap();
+        assert!(retrieved_user.is_some());
+
+        let retrieved_group = dbtxn.get_group(&Id::Uuid(user_uuid)).unwrap();
+        assert!(retrieved_group.is_some());
 
         assert!(dbtxn.commit().is_ok());
     }
