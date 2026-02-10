@@ -64,6 +64,11 @@ user-id = 31100 # Firstyear (Firstyear)
 start = "2024-02-07"
 end = "2026-09-11"
 
+[[audits.aes]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+delta = "0.8.4 -> 0.9.0-rc.1"
+
 [[audits.anyhow]]
 who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
@@ -99,6 +104,11 @@ who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
 delta = "0.4.5 -> 0.5.5"
 
+[[audits.base16ct]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+delta = "0.2.0 -> 1.0.0"
+
 [[audits.binary-stream]]
 who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
@@ -119,6 +129,11 @@ who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
 version = "2.2.5"
 
+[[audits.block-padding]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+delta = "0.3.3 -> 0.4.0-rc.4"
+
 [[audits.bytemuck]]
 who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
@@ -128,6 +143,16 @@ version = "1.24.0"
 who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
 version = "6.0.0"
+
+[[audits.cbc]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+delta = "0.1.2 -> 0.2.0-rc.1"
+
+[[audits.cbindgen]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+delta = "0.29.0 -> 0.29.2"
 
 [[audits.cc]]
 who = "David Mulder <dmulder@samba.org>"
@@ -174,6 +199,11 @@ who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
 version = "0.4.43"
 
+[[audits.combine]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+version = "4.6.7"
+
 [[audits.console-api]]
 who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
@@ -183,6 +213,11 @@ delta = "0.8.1 -> 0.9.0"
 who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
 delta = "0.4.1 -> 0.5.0"
+
+[[audits.core-foundation]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+delta = "0.10.0 -> 0.10.1"
 
 [[audits.crc32fast]]
 who = "David Mulder <dmulder@samba.org>"
@@ -253,6 +288,11 @@ version = "1.1.0"
 who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
 version = "2.6.0"
+
+[[audits.inout]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+delta = "0.1.4 -> 0.2.0-rc.6"
 
 [[audits.keyutils]]
 who = "David Mulder <dmulder@samba.org>"
@@ -404,10 +444,20 @@ who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
 version = "0.12.2"
 
+[[audits.pbkdf2]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+delta = "0.12.2 -> 0.13.0-rc.1"
+
 [[audits.pem]]
 who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
 version = "3.0.6"
+
+[[audits.picky-asn1-x509]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+delta = "0.12.0 -> 0.15.2"
 
 [[audits.rsa]]
 who = "David Mulder <dmulder@samba.org>"
@@ -499,6 +549,16 @@ who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
 delta = "3.15.0 -> 3.15.1"
 
+[[audits.serdect]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+version = "0.4.2"
+
+[[audits.sha1]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+delta = "0.10.6 -> 0.11.0-rc.2"
+
 [[audits.sshkeys]]
 who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
@@ -543,6 +603,11 @@ version = "0.2.25"
 who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
 version = "0.2.26"
+
+[[audits.toml_parser]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+delta = "1.0.2 -> 1.0.7+spec-1.1.0"
 
 [[audits.tonic]]
 who = "David Mulder <dmulder@samba.org>"
@@ -638,6 +703,11 @@ version = "4.3.1"
 who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
 version = "1.8.2"
+
+[[audits.zmij]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+version = "1.0.12"
 
 [[audits.zvariant]]
 who = "David Mulder <dmulder@samba.org>"
