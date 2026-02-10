@@ -1,4 +1,4 @@
-SHELL := $(shell command -v bash)
+SHELL := /bin/sh
 
 all: .packaging dockerfiles ## Auto-detect host distro and build packages just for this host
 	@set -euo pipefail; \
