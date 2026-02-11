@@ -977,15 +977,16 @@ macro_rules! impl_setup_hello_totp {
             error!("Failed setting pin value: {:?}", e);
             IdpError::Tpm
         })?;
-        let (hello_key, _) =
-                    $self.fetch_hello_key($account_id, $keystore).map_err(|e| {
-                        error!("Online authentication failed. Hello key missing.");
-                        e
-                    })?;
-        let (_, win_hello_storage_key) = $tpm.ms_hello_key_load($machine_key, &hello_key, &pin).map_err(|e| {
-            error!("Failed to load hello key: {:?}", e);
-            IdpError::Tpm
+        let (hello_key, _) = $self.fetch_hello_key($account_id, $keystore).map_err(|e| {
+            error!("Online authentication failed. Hello key missing.");
+            e
         })?;
+        let (_, win_hello_storage_key) = $tpm
+            .ms_hello_key_load($machine_key, &hello_key, &pin)
+            .map_err(|e| {
+                error!("Failed to load hello key: {:?}", e);
+                IdpError::Tpm
+            })?;
         let record_json_zeroizing = Zeroizing::new(record_json.as_bytes().to_vec());
         let sealed_totp_secret = $tpm
             .seal_data(&win_hello_storage_key, record_json_zeroizing)
@@ -1000,9 +1001,7 @@ macro_rules! impl_setup_hello_totp {
             pending_sealed_totp: Some(sealed_totp_secret),
         };
         Ok((
-            AuthResult::Next(AuthRequest::HelloTOTP {
-                msg,
-            }),
+            AuthResult::Next(AuthRequest::HelloTOTP { msg }),
             AuthCacheAction::None,
         ))
     }};
