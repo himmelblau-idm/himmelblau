@@ -1015,7 +1015,7 @@ impl IdProvider for OidcProvider {
         &self,
         account_id: &str,
         _token: Option<&UserToken>,
-        _service: &str,
+        service: &str,
         no_hello_pin: bool,
         keystore: &mut D,
         tpm: &mut tpm::provider::BoxedDynTpm,
@@ -1040,11 +1040,24 @@ impl IdProvider for OidcProvider {
             Ok((hello_key, _keytype)) => Some(hello_key),
             Err(_) => None,
         };
+        let remote_services = self
+            .config
+            .read()
+            .await
+            .get_password_only_remote_services_deny_list();
+        // Check if this is a remote service:
+        // - Service starts with "remote:" (set by PAM module when PAM_RHOST is set)
+        // - Service name contains any entry from remote_services_deny_list
+        let is_remote_service =
+            service.starts_with("remote:") || remote_services.iter().any(|s| service.contains(s));
+        let hello_totp_enabled = check_hello_totp_enabled!(self);
+        let allow_remote_hello = self.config.read().await.get_allow_remote_hello();
         // Skip Hello authentication if it is disabled by config
         let hello_enabled = self.config.read().await.get_enable_hello();
         let hello_pin_retry_count = self.config.read().await.get_hello_pin_retry_count();
         if hello_key.is_none()
             || !hello_enabled
+            || (is_remote_service && !hello_totp_enabled && !allow_remote_hello)
             || self.bad_pin_counter.bad_pin_count(account_id).await > hello_pin_retry_count
             || no_hello_pin
         {

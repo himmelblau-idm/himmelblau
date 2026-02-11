@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<parameter name="allow_remote_hello"
+                      section="global"
+                      type="bool"
+                      rust_type="bool"
+                      documented="true"
+                      domain_specific="false"
+                      order="8"
+                     >
+<description>
+Allows Windows Hello PIN authentication for remote services without requiring Hello TOTP. When enabled, remote logins may use Hello PIN alone, restoring the legacy behavior for SSH and similar services.
+
+This weakens remote authentication and is not recommended unless you explicitly accept the risk. Prefer enabling Hello TOTP instead.
+</description>
+<default>false</default>
+<default_const>DEFAULT_ALLOW_REMOTE_HELLO</default_const>
+<example>allow_remote_hello = true</example>
+</parameter>
