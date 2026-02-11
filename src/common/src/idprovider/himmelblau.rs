@@ -1617,7 +1617,7 @@ impl IdProvider for HimmelblauProvider {
                                     fido_allow_list,
                                 },
                                 AuthCredHandler::MFA {
-                                    flow,
+                                    flow: Box::new(flow),
                                     password: None,
                                     extra_data: None,
                                 },
@@ -1634,7 +1634,7 @@ impl IdProvider for HimmelblauProvider {
                             polling_interval: polling_interval / 1000,
                         },
                         AuthCredHandler::MFA {
-                            flow,
+                            flow: Box::new(flow),
                             password: None,
                             extra_data: None,
                         },
@@ -1673,7 +1673,7 @@ impl IdProvider for HimmelblauProvider {
                         polling_interval: polling_interval / 1000,
                     },
                     AuthCredHandler::MFA {
-                        flow,
+                        flow: Box::new(flow),
                         password: None,
                         extra_data: None,
                     },
@@ -2472,7 +2472,7 @@ impl IdProvider for HimmelblauProvider {
                             }
                         };
                         *cred_handler = AuthCredHandler::MFA {
-                            flow: $resp,
+                            flow: Box::new($resp),
                             password: Some($cred.clone()),
                             extra_data: None,
                         };
@@ -2495,7 +2495,7 @@ impl IdProvider for HimmelblauProvider {
                     {
                         let msg = $resp.msg.clone();
                         *cred_handler = AuthCredHandler::MFA {
-                            flow: $resp,
+                            flow: Box::new($resp),
                             password: Some($cred.clone()),
                             extra_data: None,
                         };
@@ -2516,7 +2516,7 @@ impl IdProvider for HimmelblauProvider {
                         let msg = $resp.msg.clone();
                         let polling_interval = $resp.polling_interval.unwrap_or(5000);
                         *cred_handler = AuthCredHandler::MFA {
-                            flow: $resp,
+                            flow: Box::new($resp),
                             password: Some($cred.clone()),
                             extra_data: None,
                         };
@@ -2590,7 +2590,7 @@ impl IdProvider for HimmelblauProvider {
 
         match (&mut *cred_handler, pam_next_req) {
             (AuthCredHandler::SetupPin { token }, PamAuthRequest::SetupPin { pin }) => {
-                let token = match token.clone() {
+                let token = match token.as_ref().clone() {
                     Some(t) => t,
                     None => {
                         error!("Missing enrollment token for Hello PIN setup.");
@@ -3037,7 +3037,7 @@ impl IdProvider for HimmelblauProvider {
                     self.client
                         .read()
                         .await
-                        .acquire_token_by_mfa_flow(account_id, Some(&cred), None, flow)
+                        .acquire_token_by_mfa_flow(account_id, Some(&cred), None, &mut *flow)
                         .await,
                     Ok(token) => token,
                     Err(e) => {
@@ -3081,7 +3081,9 @@ impl IdProvider for HimmelblauProvider {
                         }
 
                         // Setup Windows Hello
-                        *cred_handler = AuthCredHandler::SetupPin { token: Some(token) };
+                        *cred_handler = AuthCredHandler::SetupPin {
+                            token: Box::new(Some(token)),
+                        };
                         return Ok((
                             AuthResult::Next(AuthRequest::SetupPin {
                                 msg: format!(
@@ -3119,7 +3121,7 @@ impl IdProvider for HimmelblauProvider {
                     self.client
                         .read()
                         .await
-                        .acquire_token_by_mfa_flow(account_id, None, Some(poll_attempt), flow)
+                        .acquire_token_by_mfa_flow(account_id, None, Some(poll_attempt), &mut *flow)
                         .await,
                     Ok(token) => token,
                     Err(e) => match e {
@@ -3194,7 +3196,9 @@ impl IdProvider for HimmelblauProvider {
                         }
 
                         // Setup Windows Hello
-                        *cred_handler = AuthCredHandler::SetupPin { token: Some(token) };
+                        *cred_handler = AuthCredHandler::SetupPin {
+                            token: Box::new(Some(token)),
+                        };
                         return Ok((
                             AuthResult::Next(AuthRequest::SetupPin {
                                 msg: format!(
@@ -3222,7 +3226,7 @@ impl IdProvider for HimmelblauProvider {
                     self.client
                         .read()
                         .await
-                        .acquire_token_by_mfa_flow(account_id, Some(&assertion), None, flow)
+                        .acquire_token_by_mfa_flow(account_id, Some(&assertion), None, &mut *flow)
                         .await,
                     Ok(token) => token,
                     Err(e) => {
@@ -3266,7 +3270,9 @@ impl IdProvider for HimmelblauProvider {
                         }
 
                         // Setup Windows Hello
-                        *cred_handler = AuthCredHandler::SetupPin { token: Some(token) };
+                        *cred_handler = AuthCredHandler::SetupPin {
+                            token: Box::new(Some(token)),
+                        };
                         return Ok((
                             AuthResult::Next(AuthRequest::SetupPin {
                                 msg: format!(

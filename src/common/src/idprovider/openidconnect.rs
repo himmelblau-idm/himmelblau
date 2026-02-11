@@ -73,7 +73,7 @@ use zeroize::Zeroizing;
 
 #[instrument(level = "debug", skip_all)]
 pub fn mfa_from_oidc_device(
-    details: OauthDeviceAuthResponse<EmptyExtraDeviceAuthorizationFields>,
+    details: &OauthDeviceAuthResponse<EmptyExtraDeviceAuthorizationFields>,
 ) -> Result<(MFAAuthContinue, String), IdpError> {
     let polling_interval = details.interval().as_secs() as u32;
     let expires_in = details.expires_in().as_secs() as u32;
@@ -129,7 +129,7 @@ mod tests {
             "interval": 5
         });
         let details: DeviceAuthorizationResponse<_> = serde_json::from_value(payload).unwrap();
-        let (mfa, _) = mfa_from_oidc_device(details).unwrap();
+        let (mfa, _) = mfa_from_oidc_device(&details).unwrap();
 
         assert!(mfa
             .msg
@@ -148,7 +148,7 @@ mod tests {
             "interval": 5
         });
         let details: DeviceAuthorizationResponse<_> = serde_json::from_value(payload).unwrap();
-        let (mfa, _) = mfa_from_oidc_device(details).unwrap();
+        let (mfa, _) = mfa_from_oidc_device(&details).unwrap();
 
         assert!(mfa.msg.contains("https://login.example/device"));
         assert!(mfa.msg.contains("USER-CODE"));
@@ -741,6 +741,12 @@ impl OidcApplication {
     }
 }
 
+impl Default for OidcApplication {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 pub struct OidcProvider {
     config: Arc<RwLock<HimmelblauConfig>>,
     idmap: Arc<RwLock<Idmap>>,
@@ -1062,7 +1068,7 @@ impl IdProvider for OidcProvider {
             || no_hello_pin
         {
             let (flow, extra_data) =
-                mfa_from_oidc_device(self.client.initiate_device_flow().await.map_err(|e| {
+                mfa_from_oidc_device(&self.client.initiate_device_flow().await.map_err(|e| {
                     error!(?e, "Failed to initiate device flow");
                     IdpError::BadRequest
                 })?)?;
@@ -1074,7 +1080,7 @@ impl IdProvider for OidcProvider {
                     polling_interval: polling_interval / 1000,
                 },
                 AuthCredHandler::MFA {
-                    flow,
+                    flow: Box::new(flow),
                     password: None,
                     extra_data: Some(extra_data),
                 },
@@ -1467,7 +1473,9 @@ impl IdProvider for OidcProvider {
                             }
 
                             // Setup Windows Hello
-                            *cred_handler = AuthCredHandler::SetupPin { token: None };
+                            *cred_handler = AuthCredHandler::SetupPin {
+                                token: Box::new(None),
+                            };
                             return Ok((
                                 AuthResult::Next(AuthRequest::SetupPin {
                                     msg: format!(
