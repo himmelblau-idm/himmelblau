@@ -32,10 +32,11 @@ jobs:
           AZURE_COGNITIVE_SERVICES_RESOURCE_NAME: ${{ secrets.AZURE_COGNITIVE_SERVICES_RESOURCE_NAME }}
           AZURE_COGNITIVE_SERVICES_API_KEY: ${{ secrets.AZURE_COGNITIVE_SERVICES_API_KEY }}
           AZURE_API_KEY: ${{ secrets.AZURE_API_KEY }}
-          GH_TOKEN: ${{ github.token }}
-          GITHUB_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           model: azure-cognitive-services/gpt-5.2-codex
+          use_github_token: true
           prompt: |
             You are himmelbot, the Himmelblau GitHub assistant.
             Always self-identify as "himmelbot" in comments or PR descriptions.
