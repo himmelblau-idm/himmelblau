@@ -95,12 +95,12 @@ pub struct UserToken {
 
 pub enum AuthCredHandler {
     MFA {
-        flow: MFAAuthContinue,
+        flow: Box<MFAAuthContinue>,
         password: Option<String>,
         extra_data: Option<String>,
     },
     SetupPin {
-        token: Option<UnixUserToken>,
+        token: Box<Option<UnixUserToken>>,
     },
     HelloTOTP {
         cred: String,
