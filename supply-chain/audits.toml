@@ -569,6 +569,11 @@ who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
 version = "3.23.0"
 
+[[audits.tempfile]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+delta = "3.24.0 -> 3.25.0"
+
 [[audits.time]]
 who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
