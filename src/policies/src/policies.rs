@@ -21,7 +21,7 @@ use crate::custom_compliance_ext::CustomComplianceCSE;
 use crate::scripts_ext::ScriptsCSE;
 use anyhow::{anyhow, Result};
 use himmelblau::graph::Graph;
-use himmelblau::intune::{IntuneForLinux, IntuneStatus};
+use himmelblau::intune::{fetch_intune_portal_versions, IntuneForLinux, IntuneStatus};
 use himmelblau::{ClientInfo, EnrollAttrs, IdToken, UserToken};
 use himmelblau_unix_common::config::{split_username, HimmelblauConfig};
 use std::sync::Arc;
@@ -63,7 +63,16 @@ pub async fn apply_intune_policy(
         .map_err(|e| anyhow!(e))?;
     debug!("Discovered Intune service endpoints");
 
-    let intune = IntuneForLinux::new(endpoints).map_err(|e| anyhow!(e))?;
+    let mut vers = fetch_intune_portal_versions(Some(
+        "https://packages.microsoft.com/ubuntu/22.04/prod/pool/main/i/intune-portal/",
+    ))
+    .await
+    .unwrap_or(vec!["1.2511.11".to_string()]);
+    if vers.is_empty() {
+        vers = vec!["1.2511.11".to_string()];
+    }
+    let intune =
+        IntuneForLinux::new(endpoints, Some(&vers[vers.len() - 1])).map_err(|e| anyhow!(e))?;
 
     let token = UserToken {
         token_type: String::new(),
