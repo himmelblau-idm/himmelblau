@@ -23,6 +23,7 @@ use crate::idmap_cache::StaticIdCache;
 use crate::idprovider::common::KeyType;
 use crate::idprovider::common::TotpEnrollmentRecord;
 use crate::idprovider::common::{BadPinCounter, RefreshCache, RefreshCacheEntry};
+use crate::idprovider::common::flip_displayname_comma;
 use crate::idprovider::interface::{
     tpm, AuthCacheAction, AuthCredHandler, AuthRequest, AuthResult, CacheState, GroupToken, Id,
     IdProvider, IdpError, UserToken, UserTokenState,
@@ -717,17 +718,21 @@ impl OidcApplication {
             }
         };
 
+        let displayname = userinfo
+                .name()
+                .and_then(|n| n.get(None))
+                .map(|n| n.to_string())
+                .unwrap_or_default();
+
+        let displayname = flip_displayname_comma(&displayname);
+
         Ok(UserToken {
             name: account_id.to_string(),
             spn: account_id.to_string(),
             uuid: object_id,
             real_gidnumber: Some(uid),
             gidnumber: gid,
-            displayname: userinfo
-                .name()
-                .and_then(|n| n.get(None))
-                .map(|n| n.to_string())
-                .unwrap_or_default(),
+            displayname: displayname,
             shell: Some(config.get_shell(None)),
             groups: vec![GroupToken {
                 name: account_id.to_string(),
