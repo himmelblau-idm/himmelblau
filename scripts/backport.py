@@ -234,6 +234,7 @@ class SecurityMdParser:
 
     def __init__(self, repo_root: Path):
         self.repo_root = repo_root
+        self._branch_subject_cache: dict[str, set[str]] = {}
 
     def parse(self) -> list[SupportedVersion]:
         """Parse supported versions from SECURITY.md."""
@@ -259,8 +260,11 @@ class SecurityMdParser:
 class GitClient:
     """Git operations."""
 
+    _branch_subject_cache: dict[str, set[str]]
+
     def __init__(self, repo_root: Path):
         self.repo_root = repo_root
+        self._branch_subject_cache = {}
 
     def run(self, *args, capture=True, check=True) -> subprocess.CompletedProcess:
         """Run a git command."""
@@ -316,6 +320,19 @@ class GitClient:
 
         return commits
 
+    def get_branch_subjects(self, branch: str) -> set[str]:
+        """Get commit subjects (first line) for a branch.
+
+        Uses an in-memory cache to avoid repeated git log calls.
+        """
+        if branch in self._branch_subject_cache:
+            return self._branch_subject_cache[branch]
+
+        result = self.run("log", branch, "--format=%s")
+        subjects = {line.strip() for line in result.stdout.splitlines() if line.strip()}
+        self._branch_subject_cache[branch] = subjects
+        return subjects
+
     def branch_exists(self, branch: str, remote: bool = True) -> bool:
         """Check if a branch exists."""
         try:
@@ -369,13 +386,17 @@ class GitClient:
         """Check if a commit has already been cherry-picked to a branch.
 
         Checks by:
-        1. Looking for "(cherry picked from commit <sha>)" in commit messages
-        2. Looking for the same commit subject in the branch history
+        1. Looking for "(cherry picked from commit <sha>)" or "(cherry-picked from <sha>)" in commit messages
+        2. Looking for the same commit subject (first line) in the branch history
         """
         # Method 1: Check if any commit references this SHA in cherry-pick message
         try:
             result = self.run(
-                "log", branch, "--grep", f"cherry picked from commit {commit_sha[:12]}",
+                "log", branch,
+                "--grep", f"cherry picked from commit {commit_sha}",
+                "--grep", f"cherry picked from commit {commit_sha[:12]}",
+                "--grep", f"cherry-picked from {commit_sha}",
+                "--grep", f"cherry-picked from {commit_sha[:12]}",
                 "--oneline", "-n", "1",
                 check=False
             )
@@ -387,31 +408,14 @@ class GitClient:
 
         # Method 2: Check if commit subject exists in branch (exact match)
         if commit_subject:
-            try:
-                # Escape special regex characters in subject
-                escaped_subject = re.escape(commit_subject)
-                result = self.run(
-                    "log", branch, f"--grep=^{escaped_subject}$",
-                    "--oneline", "-n", "1", "--fixed-strings",
-                    check=False
-                )
-                if result.returncode == 0 and result.stdout.strip():
-                    return True
-            except subprocess.CalledProcessError:
-                # Regex grep failed; try simpler method below
-                pass
-
-            # Method 3: Simpler grep without regex anchors
-            try:
-                result = self.run(
-                    "log", branch, "--oneline", "-n", "100",
-                    check=False
-                )
-                if result.returncode == 0 and commit_subject in result.stdout:
-                    return True
-            except subprocess.CalledProcessError:
-                # All detection methods failed; commit not found in branch
-                pass
+            subject_line = commit_subject.splitlines()[0].strip()
+            if subject_line:
+                try:
+                    if subject_line in self.get_branch_subjects(branch):
+                        return True
+                except subprocess.CalledProcessError:
+                    # Git command failed; commit not found in branch
+                    pass
 
         return False
 
