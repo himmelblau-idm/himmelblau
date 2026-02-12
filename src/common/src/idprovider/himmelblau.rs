@@ -28,13 +28,13 @@ use crate::constants::EDGE_BROWSER_CLIENT_ID;
 use crate::constants::ID_MAP_CACHE;
 use crate::db::KeyStoreTxn;
 use crate::idmap_cache::StaticIdCache;
+use crate::idprovider::common::flip_displayname_comma;
 use crate::idprovider::common::KeyType;
 use crate::idprovider::common::RefreshCacheEntry;
 use crate::idprovider::common::TotpEnrollmentRecord;
 use crate::idprovider::common::{BadPinCounter, RefreshCache};
 use crate::idprovider::interface::{tpm, UserTokenState};
 use crate::idprovider::openidconnect::OidcProvider;
-use crate::idprovider::common::flip_displayname_comma;
 use crate::tpm::confidential_client_creds;
 use crate::unix_proto::PamAuthRequest;
 use crate::user_map::UserMap;
@@ -45,7 +45,7 @@ use crate::{
     impl_handle_hello_pin_totp_auth, impl_himmelblau_hello_key_helpers,
     impl_himmelblau_offline_auth_init, impl_himmelblau_offline_auth_step, impl_offline_break_glass,
     impl_provision_hello_key, impl_provision_or_create_hello_key, impl_setup_hello_totp,
-    impl_unix_user_access, load_cached_prt,
+    impl_unix_user_access, load_cached_prt, seal_prt_with_existing_hello_key,
 };
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
@@ -3283,8 +3283,14 @@ impl IdProvider for HimmelblauProvider {
                                 self.fetch_hello_key(account_id, keystore)
                             {
                                 seal_prt_with_existing_hello_key!(
-                                    self, account_id, &token2, &hello_key, pin,
-                                    keystore, tpm, machine_key
+                                    self,
+                                    account_id,
+                                    &token2,
+                                    &hello_key,
+                                    pin,
+                                    keystore,
+                                    tpm,
+                                    machine_key
                                 );
                                 self.bad_pin_counter.reset_bad_pin_count(account_id).await;
                                 info!("Re-sealed PRT with existing Hello key after reauth");
@@ -3421,8 +3427,14 @@ impl IdProvider for HimmelblauProvider {
                                 self.fetch_hello_key(account_id, keystore)
                             {
                                 seal_prt_with_existing_hello_key!(
-                                    self, account_id, &token2, &hello_key, pin,
-                                    keystore, tpm, machine_key
+                                    self,
+                                    account_id,
+                                    &token2,
+                                    &hello_key,
+                                    pin,
+                                    keystore,
+                                    tpm,
+                                    machine_key
                                 );
                                 self.bad_pin_counter.reset_bad_pin_count(account_id).await;
                                 info!("Re-sealed PRT with existing Hello key after reauth");
@@ -3518,8 +3530,14 @@ impl IdProvider for HimmelblauProvider {
                                 self.fetch_hello_key(account_id, keystore)
                             {
                                 seal_prt_with_existing_hello_key!(
-                                    self, account_id, &token2, &hello_key, pin,
-                                    keystore, tpm, machine_key
+                                    self,
+                                    account_id,
+                                    &token2,
+                                    &hello_key,
+                                    pin,
+                                    keystore,
+                                    tpm,
+                                    machine_key
                                 );
                                 self.bad_pin_counter.reset_bad_pin_count(account_id).await;
                                 info!("Re-sealed PRT with existing Hello key after reauth");
@@ -4193,7 +4211,7 @@ impl HimmelblauProvider {
             //value.id_token.name.clone(),
         };
 
-        let displayname = flip_displayname_comma(&displayname); 
+        let displayname = flip_displayname_comma(&displayname);
 
         let shell = match posix_attrs.get("loginShell") {
             Some(login_shell) => login_shell.clone(),

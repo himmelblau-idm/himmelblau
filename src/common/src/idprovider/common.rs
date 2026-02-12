@@ -747,12 +747,13 @@ macro_rules! seal_prt_with_existing_hello_key {
     ($self:expr, $account_id:expr, $token:expr, $hello_key:expr, $pin:expr, $keystore:expr, $tpm:expr, $machine_key:expr) => {{
         // Seal the PRT with the existing Hello key
         if let Some(prt) = &$token.prt {
-            match $self
-                .client
-                .read()
-                .await
-                .seal_user_prt_with_hello_key(prt, $hello_key, $pin, $tpm, $machine_key)
-            {
+            match $self.client.read().await.seal_user_prt_with_hello_key(
+                prt,
+                $hello_key,
+                $pin,
+                $tpm,
+                $machine_key,
+            ) {
                 Ok(hello_prt) => {
                     let hello_prt_tag = $self.fetch_hello_prt_key_tag($account_id);
                     if let Err(e) = $keystore.insert_tagged_hsm_key(&hello_prt_tag, &hello_prt) {
@@ -783,11 +784,8 @@ macro_rules! seal_prt_with_existing_hello_key {
                     if let Ok(sealed_rt) =
                         $tpm.seal_data(&win_hello_storage_key, refresh_token_zeroizing)
                     {
-                        let hello_rt_tag =
-                            $self.fetch_hello_refresh_token_key_tag($account_id);
-                        if let Err(e) =
-                            $keystore.insert_tagged_hsm_key(&hello_rt_tag, &sealed_rt)
-                        {
+                        let hello_rt_tag = $self.fetch_hello_refresh_token_key_tag($account_id);
+                        if let Err(e) = $keystore.insert_tagged_hsm_key(&hello_rt_tag, &sealed_rt) {
                             error!(
                                 "Failed to cache hello refresh token after reauth for {}: {:?}",
                                 $account_id, e

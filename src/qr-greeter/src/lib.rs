@@ -29,6 +29,9 @@ mod tests {
         test_path.push("qr-selection.test.js");
 
         let status = Command::new("node")
+            // The test sources use ES module syntax (`import`), but `.js` files
+            // default to CommonJS in Node without an explicit module type.
+            .arg("--experimental-default-type=module")
             .arg(test_path)
             .status()
             .expect("failed to launch node");
