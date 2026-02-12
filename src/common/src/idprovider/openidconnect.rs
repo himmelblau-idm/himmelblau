@@ -37,6 +37,8 @@ use crate::{
     oidc_refresh_token_token_fetch,
 };
 use async_trait::async_trait;
+use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+use base64::Engine;
 use himmelblau::{error::MsalError, MFAAuthContinue, UserToken as UnixUserToken};
 use himmelblau::{ClientInfo, IdToken};
 use idmap::Idmap;
@@ -63,7 +65,6 @@ use openidconnect::{
 use regex::Regex;
 use reqwest::Url;
 use serde::{Deserialize, Serialize};
-use std::str::FromStr;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 use tokio::sync::{broadcast, Mutex, RwLock};
@@ -204,6 +205,16 @@ pub trait OidcTokenResponseExt {
     fn into_unix_user_token(self) -> Result<UnixUserToken, MsalError>;
 }
 
+#[derive(Deserialize)]
+struct OidcIdTokenPayload {
+    name: Option<String>,
+    oid: Option<String>,
+    preferred_username: Option<String>,
+    puid: Option<String>,
+    tenant_region_scope: Option<String>,
+    tid: Option<String>,
+}
+
 impl OidcTokenResponseExt for OidcTokenResponse {
     fn into_unix_user_token(self) -> Result<UnixUserToken, MsalError> {
         let refresh_token = self
@@ -243,9 +254,36 @@ impl OidcTokenResponseExt for OidcTokenResponse {
                 .ok_or_else(|| MsalError::InvalidParse("Missing id_token".to_string()))?
                 .to_string();
 
-            IdToken::from_str(&raw).map_err(|e| {
-                MsalError::InvalidParse(format!("Failed to parse id_token: {:?}", e))
-            })?
+            let mut siter = raw.splitn(3, '.');
+            siter.next();
+            let payload_str = match siter.next() {
+                Some(payload_str) => URL_SAFE_NO_PAD
+                    .decode(payload_str)
+                    .map_err(|e| MsalError::InvalidParse(format!("Failed parsing id_token: {}", e)))
+                    .and_then(|bytes| {
+                        String::from_utf8(bytes).map_err(|e| {
+                            MsalError::InvalidParse(format!("Failed parsing id_token: {}", e))
+                        })
+                    })?,
+                None => {
+                    return Err(MsalError::InvalidParse(
+                        "Failed parsing id_token payload".to_string(),
+                    ));
+                }
+            };
+
+            let payload: OidcIdTokenPayload = serde_json::from_str(&payload_str).map_err(|e| {
+                MsalError::InvalidParse(format!("Failed parsing id_token from json: {}", e))
+            })?;
+            IdToken {
+                name: payload.name.unwrap_or_default(),
+                oid: payload.oid.unwrap_or_default(),
+                preferred_username: payload.preferred_username,
+                puid: payload.puid,
+                tenant_region_scope: payload.tenant_region_scope,
+                tid: payload.tid.unwrap_or_default(),
+                raw: Some(raw),
+            }
         };
 
         Ok(UnixUserToken {
