@@ -506,14 +506,12 @@ Analyze each commit and determine if it should be backported. Consider:
 
 For each commit, provide:
 - **Verdict**: BACKPORT, SKIP, or MAYBE
-- **Target versions**: Which stable versions it applies to
 - **Reason**: Brief explanation
 
 Format your response as:
 ```
 COMMIT: <short_sha>
 VERDICT: BACKPORT|SKIP|MAYBE
-TARGETS: <version1>, <version2> (or "all" for all supported)
 REASON: <explanation>
 ```
 
@@ -621,8 +619,6 @@ Please resolve the conflicts and ensure the dependency update is applied correct
             for short_sha, analysis in cached_results.items():
                 display_parts.append(f"COMMIT: {short_sha}")
                 display_parts.append(f"VERDICT: {analysis.get('verdict', 'SKIP')}")
-                targets = analysis.get('targets', [])
-                display_parts.append(f"TARGETS: {', '.join(targets) if targets else 'none'}")
                 display_parts.append(f"REASON: {analysis.get('reason', '(cached)')}")
                 display_parts.append("")
 
@@ -1273,21 +1269,9 @@ def parse_ai_analysis(analysis: str) -> dict[str, dict]:
         line = line.strip()
         if line.startswith('COMMIT:'):
             current_commit = line.split(':', 1)[1].strip()
-            results[current_commit] = {'verdict': 'SKIP', 'targets': [], 'reason': ''}
+            results[current_commit] = {'verdict': 'SKIP', 'reason': ''}
         elif line.startswith('VERDICT:') and current_commit:
             results[current_commit]['verdict'] = line.split(':', 1)[1].strip().upper()
-        elif line.startswith('TARGETS:') and current_commit:
-            targets_str = line.split(':', 1)[1].strip()
-            if targets_str.lower() == 'all':
-                results[current_commit]['targets'] = ['all']
-            else:
-                # Parse and normalize each target
-                targets = []
-                for t in targets_str.split(','):
-                    normalized = normalize_version_target(t)
-                    if normalized:  # Skip empty (none) targets
-                        targets.append(normalized)
-                results[current_commit]['targets'] = targets
         elif line.startswith('REASON:') and current_commit:
             results[current_commit]['reason'] = line.split(':', 1)[1].strip()
 
@@ -1300,17 +1284,13 @@ def print_commit_analysis(commit: Commit, analysis: Optional[dict]):
     if not analysis:
         print("  COMMIT: {sha}".format(sha=commit.short_sha))
         print("  VERDICT: UNKNOWN")
-        print("  TARGETS: unknown")
         print("  REASON: No AI analysis available for this commit")
         return
 
     verdict = analysis.get("verdict", "UNKNOWN")
-    targets = analysis.get("targets", [])
     reason = analysis.get("reason", "")
-    targets_display = ", ".join(targets) if targets else "none"
     print("  COMMIT: {sha}".format(sha=commit.short_sha))
     print("  VERDICT: {verdict}".format(verdict=verdict))
-    print("  TARGETS: {targets}".format(targets=targets_display))
     print("  REASON: {reason}".format(reason=reason))
 
 
@@ -1554,21 +1534,7 @@ Examples:
         if commit.short_sha in parsed:
             info = parsed[commit.short_sha]
             if info['verdict'] == 'BACKPORT':
-                targets = info['targets']
-                if not targets:
-                    # No targets specified but verdict is BACKPORT - skip
-                    continue
-                if 'all' in targets:
-                    target_versions = versions
-                else:
-                    # Match targets against versions (both are normalized now)
-                    # e.g., target '2.x' should match version '2.x'
-                    target_versions = [
-                        v for v in versions
-                        if any(t == v.version.lower() or t in v.version.lower() for t in targets)
-                    ]
-
-                for target_ver in target_versions:
+                for target_ver in versions:
                     backports_to_apply.append((commit, target_ver, info))
 
     if not backports_to_apply:
