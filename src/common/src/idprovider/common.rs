@@ -25,6 +25,14 @@ use std::{
 };
 use tokio::sync::RwLock;
 
+pub fn flip_displayname_comma(name: &str) -> String {
+    if let Some((left, right)) = name.split_once(',') {
+        format!("{} {}", right.trim(), left.trim())
+    } else {
+        name.to_string()
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TotpEnrollmentRecord {
     pub secret_b32: String,
