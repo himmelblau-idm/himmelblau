@@ -1980,7 +1980,7 @@ impl IdProvider for HimmelblauProvider {
                                     let msg = flow.msg.clone();
                                     let polling_interval = flow.polling_interval.unwrap_or(5000);
                                     *cred_handler = AuthCredHandler::MFA {
-                                        flow,
+                                        flow: Box::new(flow),
                                         password: None,
                                         extra_data: None,
                                         reauth_hello_pin: Some(reauth_pin_value.clone()),
@@ -2023,7 +2023,7 @@ impl IdProvider for HimmelblauProvider {
                             (flow.fido_challenge.clone(), flow.fido_allow_list.clone())
                         {
                             *cred_handler = AuthCredHandler::MFA {
-                                flow,
+                                flow: Box::new(flow),
                                 password: None,
                                 extra_data: None,
                                 reauth_hello_pin: Some(reauth_pin_value.clone()),
@@ -2042,7 +2042,7 @@ impl IdProvider for HimmelblauProvider {
                     let msg = flow.msg.clone();
                     let polling_interval = flow.polling_interval.unwrap_or(5000);
                     *cred_handler = AuthCredHandler::MFA {
-                        flow,
+                        flow: Box::new(flow),
                         password: None,
                         extra_data: None,
                         reauth_hello_pin: Some(reauth_pin_value.clone()),
@@ -2101,7 +2101,7 @@ impl IdProvider for HimmelblauProvider {
                     let msg = flow.msg.clone();
                     let polling_interval = flow.polling_interval.unwrap_or(5000);
                     *cred_handler = AuthCredHandler::MFA {
-                        flow,
+                        flow: Box::new(flow),
                         password: None,
                         extra_data: None,
                         reauth_hello_pin: Some(reauth_pin_value),
