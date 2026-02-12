@@ -1499,6 +1499,9 @@ Examples:
     original_count = len(commits)
     commits = [c for c in commits if not c.is_merge and not c.is_dependabot and not c.is_ci_only]
 
+    # Proactively filter out commits we know are already backported
+    commits = [c for c in commits if not any([git.is_commit_in_branch(c.sha, f"origin/{v.branch}", c.subject) for v in versions])]
+
     # Reverse to apply oldest commits first (git log returns newest first)
     commits = list(reversed(commits))
 
@@ -1675,12 +1678,6 @@ Examples:
         skipped_already_present = 0
         for commit, analysis_info in commits_for_version:
             print_color(f"\n  Cherry-picking {commit.short_sha}: {commit.subject[:50]}...", "cyan")
-
-            # Check if commit is already in the target branch
-            if git.is_commit_in_branch(commit.sha, f"origin/{target.branch}", commit.subject):
-                print_color("    Already present in target branch, skipping", "yellow")
-                skipped_already_present += 1
-                continue
 
             if args.interactive:
                 print_commit_analysis(commit, analysis_info)
