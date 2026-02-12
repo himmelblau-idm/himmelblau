@@ -34,6 +34,7 @@ use crate::idprovider::common::TotpEnrollmentRecord;
 use crate::idprovider::common::{BadPinCounter, RefreshCache};
 use crate::idprovider::interface::{tpm, UserTokenState};
 use crate::idprovider::openidconnect::OidcProvider;
+use crate::idprovider::common::flip_displayname_comma;
 use crate::tpm::confidential_client_creds;
 use crate::unix_proto::PamAuthRequest;
 use crate::user_map::UserMap;
@@ -3920,6 +3921,8 @@ impl HimmelblauProvider {
             },
             //value.id_token.name.clone(),
         };
+
+        let displayname = flip_displayname_comma(&displayname); 
 
         let shell = match posix_attrs.get("loginShell") {
             Some(login_shell) => login_shell.clone(),
