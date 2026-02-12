@@ -1655,9 +1655,6 @@ Examples:
                     pass  # Already on original branch or can't switch
                 continue
 
-        # Update libhimmelblau
-        manager.update_libhimmelblau()
-
         # Fetch and cherry-pick open dependabot PRs for this branch
         cherry_picked_dependabot_prs = []
         if not args.skip_dependabot:
@@ -1672,6 +1669,9 @@ Examples:
                 print_color("  No open dependabot PRs found", "green")
         else:
             print_color("\nSkipping dependabot PRs (--skip-dependabot)", "yellow")
+
+        # Update libhimmelblau
+        manager.update_libhimmelblau()
 
         # Apply each commit
         all_success = True
