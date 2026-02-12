@@ -1012,6 +1012,8 @@ impl IdProvider for OidcProvider {
             None => "".to_string(),
         };
 
+        let displayname = flip_displayname_comma(&displayname);
+
         let tenant_id = self.tenant_id().await?;
         let object_id = match token {
             Some(tok) => tok.uuid,
