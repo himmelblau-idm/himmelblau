@@ -4,3 +4,4 @@ capability dac_override,
 /var/cache/private/himmelblaud/himmelblau.conf r,
 /run/himmelblaud/socket rw,
 /var/cache/nss-himmelblau/mapping.cache.db rw,
+/var/cache/nss-himmelblau/cache.db rk
