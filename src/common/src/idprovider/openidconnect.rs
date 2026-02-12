@@ -23,6 +23,7 @@ use crate::idmap_cache::StaticIdCache;
 use crate::idprovider::common::KeyType;
 use crate::idprovider::common::TotpEnrollmentRecord;
 use crate::idprovider::common::{BadPinCounter, RefreshCache, RefreshCacheEntry};
+use crate::idprovider::common::flip_displayname_comma;
 use crate::idprovider::interface::{
     tpm, AuthCacheAction, AuthCredHandler, AuthRequest, AuthResult, CacheState, GroupToken, Id,
     IdProvider, IdpError, UserToken, UserTokenState,
@@ -37,6 +38,8 @@ use crate::{
     oidc_refresh_token_token_fetch,
 };
 use async_trait::async_trait;
+use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+use base64::Engine;
 use himmelblau::{error::MsalError, MFAAuthContinue, UserToken as UnixUserToken};
 use himmelblau::{ClientInfo, IdToken};
 use idmap::Idmap;
@@ -63,7 +66,6 @@ use openidconnect::{
 use regex::Regex;
 use reqwest::Url;
 use serde::{Deserialize, Serialize};
-use std::str::FromStr;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 use tokio::sync::{broadcast, Mutex, RwLock};
@@ -73,7 +75,7 @@ use zeroize::Zeroizing;
 
 #[instrument(level = "debug", skip_all)]
 pub fn mfa_from_oidc_device(
-    details: OauthDeviceAuthResponse<EmptyExtraDeviceAuthorizationFields>,
+    details: &OauthDeviceAuthResponse<EmptyExtraDeviceAuthorizationFields>,
 ) -> Result<(MFAAuthContinue, String), IdpError> {
     let polling_interval = details.interval().as_secs() as u32;
     let expires_in = details.expires_in().as_secs() as u32;
@@ -129,7 +131,7 @@ mod tests {
             "interval": 5
         });
         let details: DeviceAuthorizationResponse<_> = serde_json::from_value(payload).unwrap();
-        let (mfa, _) = mfa_from_oidc_device(details).unwrap();
+        let (mfa, _) = mfa_from_oidc_device(&details).unwrap();
 
         assert!(mfa
             .msg
@@ -148,7 +150,7 @@ mod tests {
             "interval": 5
         });
         let details: DeviceAuthorizationResponse<_> = serde_json::from_value(payload).unwrap();
-        let (mfa, _) = mfa_from_oidc_device(details).unwrap();
+        let (mfa, _) = mfa_from_oidc_device(&details).unwrap();
 
         assert!(mfa.msg.contains("https://login.example/device"));
         assert!(mfa.msg.contains("USER-CODE"));
@@ -204,6 +206,16 @@ pub trait OidcTokenResponseExt {
     fn into_unix_user_token(self) -> Result<UnixUserToken, MsalError>;
 }
 
+#[derive(Deserialize)]
+struct OidcIdTokenPayload {
+    name: Option<String>,
+    oid: Option<String>,
+    preferred_username: Option<String>,
+    puid: Option<String>,
+    tenant_region_scope: Option<String>,
+    tid: Option<String>,
+}
+
 impl OidcTokenResponseExt for OidcTokenResponse {
     fn into_unix_user_token(self) -> Result<UnixUserToken, MsalError> {
         let refresh_token = self
@@ -243,9 +255,36 @@ impl OidcTokenResponseExt for OidcTokenResponse {
                 .ok_or_else(|| MsalError::InvalidParse("Missing id_token".to_string()))?
                 .to_string();
 
-            IdToken::from_str(&raw).map_err(|e| {
-                MsalError::InvalidParse(format!("Failed to parse id_token: {:?}", e))
-            })?
+            let mut siter = raw.splitn(3, '.');
+            siter.next();
+            let payload_str = match siter.next() {
+                Some(payload_str) => URL_SAFE_NO_PAD
+                    .decode(payload_str)
+                    .map_err(|e| MsalError::InvalidParse(format!("Failed parsing id_token: {}", e)))
+                    .and_then(|bytes| {
+                        String::from_utf8(bytes).map_err(|e| {
+                            MsalError::InvalidParse(format!("Failed parsing id_token: {}", e))
+                        })
+                    })?,
+                None => {
+                    return Err(MsalError::InvalidParse(
+                        "Failed parsing id_token payload".to_string(),
+                    ));
+                }
+            };
+
+            let payload: OidcIdTokenPayload = serde_json::from_str(&payload_str).map_err(|e| {
+                MsalError::InvalidParse(format!("Failed parsing id_token from json: {}", e))
+            })?;
+            IdToken {
+                name: payload.name.unwrap_or_default(),
+                oid: payload.oid.unwrap_or_default(),
+                preferred_username: payload.preferred_username,
+                puid: payload.puid,
+                tenant_region_scope: payload.tenant_region_scope,
+                tid: payload.tid.unwrap_or_default(),
+                raw: Some(raw),
+            }
         };
 
         Ok(UnixUserToken {
@@ -717,17 +756,21 @@ impl OidcApplication {
             }
         };
 
+        let displayname = userinfo
+                .name()
+                .and_then(|n| n.get(None))
+                .map(|n| n.to_string())
+                .unwrap_or_default();
+
+        let displayname = flip_displayname_comma(&displayname);
+
         Ok(UserToken {
             name: account_id.to_string(),
             spn: account_id.to_string(),
             uuid: object_id,
             real_gidnumber: Some(uid),
             gidnumber: gid,
-            displayname: userinfo
-                .name()
-                .and_then(|n| n.get(None))
-                .map(|n| n.to_string())
-                .unwrap_or_default(),
+            displayname: displayname,
             shell: Some(config.get_shell(None)),
             groups: vec![GroupToken {
                 name: account_id.to_string(),
@@ -738,6 +781,12 @@ impl OidcApplication {
             tenant_id: Some(*tenant_id),
             valid: true,
         })
+    }
+}
+
+impl Default for OidcApplication {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -1015,7 +1064,7 @@ impl IdProvider for OidcProvider {
         &self,
         account_id: &str,
         _token: Option<&UserToken>,
-        _service: &str,
+        service: &str,
         no_hello_pin: bool,
         keystore: &mut D,
         tpm: &mut tpm::provider::BoxedDynTpm,
@@ -1040,16 +1089,29 @@ impl IdProvider for OidcProvider {
             Ok((hello_key, _keytype)) => Some(hello_key),
             Err(_) => None,
         };
+        let remote_services = self
+            .config
+            .read()
+            .await
+            .get_password_only_remote_services_deny_list();
+        // Check if this is a remote service:
+        // - Service starts with "remote:" (set by PAM module when PAM_RHOST is set)
+        // - Service name contains any entry from remote_services_deny_list
+        let is_remote_service =
+            service.starts_with("remote:") || remote_services.iter().any(|s| service.contains(s));
+        let hello_totp_enabled = check_hello_totp_enabled!(self);
+        let allow_remote_hello = self.config.read().await.get_allow_remote_hello();
         // Skip Hello authentication if it is disabled by config
         let hello_enabled = self.config.read().await.get_enable_hello();
         let hello_pin_retry_count = self.config.read().await.get_hello_pin_retry_count();
         if hello_key.is_none()
             || !hello_enabled
+            || (is_remote_service && !hello_totp_enabled && !allow_remote_hello)
             || self.bad_pin_counter.bad_pin_count(account_id).await > hello_pin_retry_count
             || no_hello_pin
         {
             let (flow, extra_data) =
-                mfa_from_oidc_device(self.client.initiate_device_flow().await.map_err(|e| {
+                mfa_from_oidc_device(&self.client.initiate_device_flow().await.map_err(|e| {
                     error!(?e, "Failed to initiate device flow");
                     IdpError::BadRequest
                 })?)?;
@@ -1061,7 +1123,7 @@ impl IdProvider for OidcProvider {
                     polling_interval: polling_interval / 1000,
                 },
                 AuthCredHandler::MFA {
-                    flow,
+                    flow: Box::new(flow),
                     password: None,
                     extra_data: Some(extra_data),
                     reauth_hello_pin: None,
@@ -1456,7 +1518,9 @@ impl IdProvider for OidcProvider {
                             }
 
                             // Setup Windows Hello
-                            *cred_handler = AuthCredHandler::SetupPin { token: None };
+                            *cred_handler = AuthCredHandler::SetupPin {
+                                token: Box::new(None),
+                            };
                             return Ok((
                                 AuthResult::Next(AuthRequest::SetupPin {
                                     msg: format!(

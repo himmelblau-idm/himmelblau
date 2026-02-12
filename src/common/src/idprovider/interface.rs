@@ -96,7 +96,7 @@ pub struct UserToken {
 
 pub enum AuthCredHandler {
     MFA {
-        flow: MFAAuthContinue,
+        flow: Box<MFAAuthContinue>,
         password: Option<String>,
         extra_data: Option<String>,
         /// When set, this MFA flow was triggered by an expired PRT/refresh token
@@ -106,7 +106,7 @@ pub enum AuthCredHandler {
         reauth_hello_pin: Option<Zeroizing<String>>,
     },
     SetupPin {
-        token: Option<UnixUserToken>,
+        token: Box<Option<UnixUserToken>>,
     },
     HelloTOTP {
         cred: String,

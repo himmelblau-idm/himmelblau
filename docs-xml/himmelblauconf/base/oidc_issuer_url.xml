@@ -15,6 +15,14 @@ This option enables generic OIDC authentication support and allows Himmelblau
 to authenticate against any standards-compliant OIDC provider, rather than
 using the built-in Microsoft Entra ID defaults.
 
+.PP
+If
+.B enable_hello
+is set to true (the default), the client application must allow refresh tokens
+and include the
+.B offline_access
+scope for Hello enrollment to function with OIDC providers.
+
 When this option is set, the following option is
 .B REQUIRED
 and must be configured consistently:

@@ -9,6 +9,13 @@
                      >
 <description>
 Enables or disables user enrollment in Windows Hello authentication. If disabled, users will need to provide MFA for each login.
+
+.PP
+For OIDC providers (when
+.B oidc_issuer_url
+is set), Hello enrollment requires the client application to allow refresh tokens and include the
+.B offline_access
+scope.
 </description>
 <default>true</default>
 <default_const>DEFAULT_HELLO_ENABLED</default_const>
