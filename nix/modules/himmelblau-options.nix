@@ -39,6 +39,13 @@ in
         to authenticate against any standards-compliant OIDC provider, rather than
         using the built-in Microsoft Entra ID defaults.
         
+        If
+        **enable_hello**
+        is set to true (the default), the client application must allow refresh tokens
+        and include the
+        **offline_access**
+        scope for Hello enrollment to function with OIDC providers.
+        
         When this option is set, the following option is
         **REQUIRED**
         and must be configured consistently:
@@ -115,6 +122,12 @@ in
       default = true;
       description = ''
         Enables or disables user enrollment in Windows Hello authentication. If disabled, users will need to provide MFA for each login.
+        
+        For OIDC providers (when
+        **oidc_issuer_url**
+        is set), Hello enrollment requires the client application to allow refresh tokens and include the
+        **offline_access**
+        scope.
       '';
       example = false;
     };
