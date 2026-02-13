@@ -21,7 +21,7 @@ import sys
 import urllib.request
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Set
 
 # Configuration constants
 CACHE_DIR = Path.home() / ".cache" / "himmelblau-backport"
@@ -85,26 +85,71 @@ class AnalysisCache:
         """Get the cache file path for a commit."""
         return self.cache_dir / f"{commit_sha}.json"
 
-    def get(self, commit_sha: str) -> Optional[dict]:
-        """Get cached analysis for a commit, or None if not cached."""
-        if not self.enabled:
-            return None
+    def _load_cache(self, commit_sha: str) -> dict:
+        """Load raw cache data for a commit."""
         cache_file = self._cache_path(commit_sha)
         if cache_file.exists():
             try:
                 data = json.loads(cache_file.read_text())
-                return data.get("analysis")
-            except (json.JSONDecodeError, KeyError):
-                return None
-        return None
+                if isinstance(data, dict):
+                    return data
+            except json.JSONDecodeError:
+                return {}
+        return {}
+
+    def get(self, commit_sha: str) -> Optional[dict]:
+        """Get cached analysis for a commit, or None if not cached."""
+        if not self.enabled:
+            return None
+        data = self._load_cache(commit_sha)
+        analysis = data.get("analysis")
+        return analysis if isinstance(analysis, dict) else None
 
     def set(self, commit_sha: str, analysis: dict):
         """Cache analysis result for a commit."""
+        data = self._load_cache(commit_sha)
         cache_file = self._cache_path(commit_sha)
-        data = {
-            "commit_sha": commit_sha,
-            "analysis": analysis,
-        }
+        data["commit_sha"] = commit_sha
+        data["analysis"] = analysis
+        cache_file.write_text(json.dumps(data, indent=2))
+
+    def get_declined_targets(self, commit_sha: str) -> Set[str]:
+        """Get cached declined targets for a commit."""
+        if not self.enabled:
+            return set()
+        data = self._load_cache(commit_sha)
+        declined = data.get("declined_targets", [])
+        if not isinstance(declined, list):
+            return set()
+        return {str(target) for target in declined if str(target).strip()}
+
+    def is_declined(self, commit_sha: str, target_branch: str, target_version: Optional[str] = None) -> bool:
+        """Check if a commit was declined for a target branch/version."""
+        declined = self.get_declined_targets(commit_sha)
+        if not declined:
+            return False
+        candidates = {target_branch}
+        if target_version:
+            candidates.add(target_version)
+            if not target_version.startswith("stable-"):
+                candidates.add(f"stable-{target_version}")
+        return any(candidate in declined for candidate in candidates)
+
+    def mark_declined(self, commit_sha: str, *targets: str):
+        """Record a declined backport target for a commit."""
+        data = self._load_cache(commit_sha)
+        declined = set()
+        raw_declined = data.get("declined_targets", [])
+        if isinstance(raw_declined, list):
+            declined.update(str(target) for target in raw_declined if str(target).strip())
+        for target in targets:
+            if target:
+                declined.add(str(target))
+        if not declined:
+            return
+        data["commit_sha"] = commit_sha
+        data["declined_targets"] = sorted(declined)
+        cache_file = self._cache_path(commit_sha)
         cache_file.write_text(json.dumps(data, indent=2))
 
     def get_cached_commits(self, commits: list["Commit"]) -> tuple[dict[str, dict], list["Commit"]]:
@@ -1537,11 +1582,15 @@ Examples:
 
     # Identify backports to apply
     backports_to_apply = []
+    declined_total = 0
     for commit in commits:
         if commit.short_sha in parsed:
             info = parsed[commit.short_sha]
             if info['verdict'] == 'BACKPORT':
                 for target_ver in versions:
+                    if cache.is_declined(commit.sha, target_ver.branch, target_ver.version):
+                        declined_total += 1
+                        continue
                     backports_to_apply.append((commit, target_ver, info))
 
     if not backports_to_apply:
@@ -1551,6 +1600,8 @@ Examples:
     print_color(f"\nBackports to apply ({len(backports_to_apply)}):", "blue")
     for commit, target, _info in backports_to_apply:
         print(f"  {commit.short_sha} -> {target.version}: {commit.subject[:50]}")
+    if declined_total > 0:
+        print_color(f"  Skipped {declined_total} previously declined backport(s) from cache", "yellow")
 
     if args.dry_run:
         print_color("\n(dry-run mode - no changes will be made)", "yellow")
@@ -1684,6 +1735,7 @@ Examples:
                 try:
                     confirm = input("  Proceed with this backport? [y/N]: ").strip().lower()
                     if confirm != 'y':
+                        cache.mark_declined(commit.sha, target.branch, target.version)
                         print_color("  Skipped", "yellow")
                         continue
                 except (KeyboardInterrupt, EOFError):
