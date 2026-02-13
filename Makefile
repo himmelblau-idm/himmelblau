@@ -128,7 +128,7 @@ check-licenses: ## Validate dependant licenses comply with GPLv3
 vet: ## Interactive dependency review with AI analysis
 	cargo vet -V >/dev/null || (echo "cargo-vet required" && cargo install cargo-vet)
 	cargo vet regenerate imports
-	@python3 scripts/cargo_vet_review.py
+	@python3 scripts/cargo_vet_review.py --ai-provider claude
 
 sbom: .packaging ## Generate a Software Bill of Materials
 	cargo sbom -V >/dev/null || (echo "cargo-sbom required" && cargo install cargo-sbom)
