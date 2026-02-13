@@ -534,6 +534,8 @@ class DiffFetcher:
 
     def fetch_local(self, crate: str, old_ver: Optional[str], new_ver: str, verbose: bool = False) -> Optional[str]:
         """Fetch diff using cargo vet's local mode."""
+        timeout = 60
+        cmd: list[str] = []
         try:
             if old_ver:
                 cmd = ["cargo", "vet", "diff", crate, old_ver, new_ver, "--mode=local"]
@@ -563,6 +565,8 @@ class DiffFetcher:
                 input="\nexit\n",  # ENTER to proceed, then exit the shell
                 capture_output=True,
                 text=True,
+                encoding="utf-8",
+                errors="replace",
                 timeout=timeout,
             )
 
@@ -763,6 +767,7 @@ Keep your response focused and actionable.
         verbose: bool = False,
     ) -> Optional[str]:
         """Ask an AI to analyze the diff for security concerns."""
+        result = None
         if not self.is_available():
             if verbose:
                 print(f"    Debug: {self.provider.capitalize()} CLI not found at '{self.cli_path}'")
@@ -852,7 +857,7 @@ Keep your response focused and actionable.
 
             # If all methods failed, print debug info
             print(f"    Warning: All {self.provider} invocation methods failed")
-            if 'result' in locals() and result.stderr:
+            if result and result.stderr:
                 print(f"    Last error: {result.stderr[:300]}")
 
             return None
@@ -954,10 +959,13 @@ def run_cargo_vet() -> str:
         sys.exit(1)
 
 
-def certify_crate(crate: str, version: str, notes: str = "") -> bool:
-    """Run cargo vet certify for a crate."""
+def certify_crate(crate: str, old_version: Optional[str], new_version: str, notes: str = "") -> bool:
+    """Run cargo vet certify for a crate or version diff."""
     try:
-        cmd = ["cargo", "vet", "certify", crate, version]
+        if old_version:
+            cmd = ["cargo", "vet", "certify", crate, old_version, new_version]
+        else:
+            cmd = ["cargo", "vet", "certify", crate, new_version]
         if notes:
             cmd.extend(["--notes", notes])
 
@@ -1081,7 +1089,7 @@ Examples:
     analyses = []
 
     # Check AI availability
-    use_ai = ai_analyzer and ai_analyzer.is_available()
+    use_ai = ai_analyzer is not None and ai_analyzer.is_available()
     if not args.no_ai:
         provider_name = args.ai_provider.capitalize()
         if use_ai:
@@ -1152,6 +1160,7 @@ Examples:
 
         # AI analysis
         if use_ai:
+            assert ai_analyzer is not None
             print(f"    Requesting {args.ai_provider.capitalize()} AI analysis (this may take a moment)...")
             ai_result = ai_analyzer.analyze_diff(
                 diff_content=diff_content,
@@ -1238,7 +1247,7 @@ Examples:
 
                 if choice == 'c':
                     print("    Opening cargo vet certify...")
-                    certify_crate(item.crate_name, item.new_version)
+                    certify_crate(item.crate_name, item.old_version, item.new_version)
                     break
                 elif choice == 'v':
                     # Show diff in pager
@@ -1276,7 +1285,7 @@ Examples:
                 elif choice == 't' and item.trust_note:
                     subprocess.run(["cargo", "vet", "trust", item.crate_name, item.trust_note])
                     break
-                elif choice == 'a' and use_ai:
+                elif choice == 'a' and use_ai and ai_analyzer is not None:
                     print("    Re-running AI analysis...")
                     ai_result = ai_analyzer.analyze_diff(
                         diff_content=diff_content,
@@ -1366,6 +1375,12 @@ Examples:
     for a in analyses:
         risk_counts[a.risk_score] += 1
 
+    risk_colors = {
+        RiskLevel.LOW: 'green',
+        RiskLevel.MEDIUM: 'yellow',
+        RiskLevel.HIGH: 'red',
+        RiskLevel.CRITICAL: 'magenta',
+    }
     print("\n  Risk distribution:")
     for risk in [RiskLevel.CRITICAL, RiskLevel.HIGH, RiskLevel.MEDIUM, RiskLevel.LOW]:
         count = risk_counts[risk]

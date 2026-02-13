@@ -25,6 +25,14 @@ use std::{
 };
 use tokio::sync::RwLock;
 
+pub fn flip_displayname_comma(name: &str) -> String {
+    if let Some((left, right)) = name.split_once(',') {
+        format!("{} {}", right.trim(), left.trim())
+    } else {
+        name.to_string()
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TotpEnrollmentRecord {
     pub secret_b32: String,
@@ -673,12 +681,16 @@ macro_rules! entra_id_refresh_token_token_fetch {
 
 #[macro_export]
 macro_rules! oidc_refresh_token_token_fetch {
-    ($self:ident, $refresh_token:ident, $scopes:ident) => {
+    ($self:ident, $refresh_token:ident, $scopes:ident) => {{
+        let scopes: Vec<String> = $scopes
+            .into_iter()
+            .filter(|s| s != "https://graph.microsoft.com/.default")
+            .collect();
         match $self
             .client
             .acquire_token_by_refresh_token(
                 &$refresh_token,
-                $scopes.iter().map(|s| s.as_ref()).collect(),
+                scopes.iter().map(|s| s.as_ref()).collect(),
             )
             .await
         {
@@ -691,7 +703,7 @@ macro_rules! oidc_refresh_token_token_fetch {
                 return Err(IdpError::BadRequest);
             }
         }
-    };
+    }};
 }
 
 #[macro_export]

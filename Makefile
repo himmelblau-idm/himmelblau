@@ -1,4 +1,4 @@
-SHELL := $(shell command -v bash)
+SHELL := /usr/bin/env bash
 
 all: .packaging dockerfiles ## Auto-detect host distro and build packages just for this host
 	@set -euo pipefail; \
@@ -177,7 +177,7 @@ rpm-servicefiles:
 authselect:
 	python3 ./scripts/gen_authselect.py --root=./ --aad-tool=./target/release/aad-tool --output-dir=./platform/el/authselect/
 
-.PHONY: package deb rpm $(DEB_TARGETS) $(RPM_TARGETS) ${SLE_TARGETS} $(GENTOO_TARGETS) dockerfiles deb-servicefiles rpm-servicefiles authselect install uninstall help sbom
+.PHONY: package deb rpm $(DEB_TARGETS) $(RPM_TARGETS) ${SLE_TARGETS} $(GENTOO_TARGETS) dockerfiles deb-servicefiles rpm-servicefiles authselect install uninstall help sbom man
 
 check-licenses: ## Validate dependant licenses comply with GPLv3
 	cargo deny -V >/dev/null || (echo "cargo-deny required" && cargo install cargo-deny)
@@ -186,7 +186,7 @@ check-licenses: ## Validate dependant licenses comply with GPLv3
 vet: ## Interactive dependency review with AI analysis
 	cargo vet -V >/dev/null || (echo "cargo-vet required" && cargo install cargo-vet)
 	cargo vet regenerate imports
-	@python3 scripts/cargo_vet_review.py
+	@python3 scripts/cargo_vet_review.py --ai-provider claude
 
 sbom: .packaging ## Generate a Software Bill of Materials
 	cargo sbom -V >/dev/null || (echo "cargo-sbom required" && cargo install cargo-sbom)
@@ -194,6 +194,9 @@ sbom: .packaging ## Generate a Software Bill of Materials
 
 package: deb rpm sbom ## Build packages for all supported distros (DEB+RPM)
 	ls ./packaging/
+
+man: ## Generate the himmelblau.conf man page
+	python3 scripts/gen_param_code.py --gen-man --man-output man/man5/himmelblau.conf.5
 
 # ---- failure tracking (used by deb/rpm/package) ----
 FAIL_DIR := $(CURDIR)/target/fail

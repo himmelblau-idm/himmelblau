@@ -4,14 +4,12 @@
 # - On first run (no cached AppImage), it attempts a download; if that fails, you'll see an error.
 # - With --profile=<slug>, map to teams-for-linux's supported flags:
 #     --user-data-dir=<abs path> and --class=<name> so multiple apps can run at once.
-#
-# MODIFIED: Uses GitHub redirect instead of rate-limited API to fetch latest version.
 
 set -Eeuo pipefail
 
 ########## configurable bits (edit in-place) ##########
 GITHUB_REPO="IsmaelMartinez/teams-for-linux"
-PINNED_VERSION=""
+PINNED_VERSION="2.6.19"
 SYSTEM_INSTALL_DIR="/opt/teams-for-linux"
 : "${TEAMSL_APP_DIR:=}"
 : "${GITHUB_TOKEN:=}"
@@ -225,7 +223,7 @@ maybe_update_then_run() {
   fi
 
   # Build extra flags (if any)
-  EXTRA_ELECTRON_ARGS=()
+  EXTRA_ELECTRON_ARGS=( --ozone-platform=x11 )
   if [[ -n "$PROFILE_SLUG" ]]; then
     while IFS= read -r f; do
       [[ -n "$f" ]] && EXTRA_ELECTRON_ARGS+=( "$f" )
