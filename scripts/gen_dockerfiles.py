@@ -118,7 +118,7 @@ PACKAGES = [
 ]
 
 CMD_TAB = "     "
-CMD_SEP = f" && \ \n{CMD_TAB}"
+CMD_SEP = f" && \\ \n{CMD_TAB}"
 
 
 GEN_MANPAGE = "python3 scripts/gen_param_code.py --gen-man --man-output man/man5/himmelblau.conf.5"
