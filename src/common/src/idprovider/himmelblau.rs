@@ -2754,6 +2754,38 @@ impl IdProvider for HimmelblauProvider {
                 }
             };
         }
+        macro_rules! reseal_prt_with_existing_hello_key_on_success {
+            ($token:expr, $reauth_hello_pin:expr, $success_token:expr) => {{
+                // Issue #1051: If this MFA flow was triggered by an expired
+                // PRT/refresh token, re-seal the new PRT with the existing
+                // Hello key instead of forcing PIN re-enrollment.
+                if let Some(ref pin) = $reauth_hello_pin {
+                    if let Ok((hello_key, _keytype)) = self.fetch_hello_key(account_id, keystore) {
+                        seal_prt_with_existing_hello_key!(
+                            self,
+                            account_id,
+                            $token,
+                            &hello_key,
+                            pin,
+                            keystore,
+                            tpm,
+                            machine_key
+                        );
+                        self.bad_pin_counter.reset_bad_pin_count(account_id).await;
+                        info!("Re-sealed PRT with existing Hello key after reauth");
+                        return Ok((
+                            AuthResult::Success {
+                                token: $success_token,
+                            },
+                            AuthCacheAction::None,
+                        ));
+                    }
+                    warn!(
+                        "Existing Hello key not found after reauth; falling through to PIN setup"
+                    );
+                }
+            }};
+        }
 
         match (&mut *cred_handler, pam_next_req) {
             (AuthCredHandler::SetupPin { token }, PamAuthRequest::SetupPin { pin }) => {
@@ -3253,32 +3285,11 @@ impl IdProvider for HimmelblauProvider {
                 let token2 = enroll_and_obtain_enrolled_token!(token);
                 match self.token_validate(account_id, &token2, None).await {
                     Ok(AuthResult::Success { token: token3 }) => {
-                        // Issue #1051: If this MFA flow was triggered by an expired
-                        // PRT/refresh token, re-seal the new PRT with the existing
-                        // Hello key instead of forcing PIN re-enrollment.
-                        if let Some(ref pin) = reauth_hello_pin {
-                            if let Ok((hello_key, _keytype)) =
-                                self.fetch_hello_key(account_id, keystore)
-                            {
-                                seal_prt_with_existing_hello_key!(
-                                    self,
-                                    account_id,
-                                    &token2,
-                                    &hello_key,
-                                    pin,
-                                    keystore,
-                                    tpm,
-                                    machine_key
-                                );
-                                self.bad_pin_counter.reset_bad_pin_count(account_id).await;
-                                info!("Re-sealed PRT with existing Hello key after reauth");
-                                return Ok((
-                                    AuthResult::Success { token: token3 },
-                                    AuthCacheAction::None,
-                                ));
-                            }
-                            warn!("Existing Hello key not found after reauth; falling through to PIN setup");
-                        }
+                        reseal_prt_with_existing_hello_key_on_success!(
+                            &token2,
+                            reauth_hello_pin,
+                            token3
+                        );
 
                         // Skip Hello enrollment if it is disabled by config
                         let hello_enabled = self.config.read().await.get_enable_hello();
@@ -3397,32 +3408,11 @@ impl IdProvider for HimmelblauProvider {
                 };
                 match self.token_validate(account_id, &token2, None).await {
                     Ok(AuthResult::Success { token: token3 }) => {
-                        // Issue #1051: If this MFA flow was triggered by an expired
-                        // PRT/refresh token, re-seal the new PRT with the existing
-                        // Hello key instead of forcing PIN re-enrollment.
-                        if let Some(ref pin) = reauth_hello_pin {
-                            if let Ok((hello_key, _keytype)) =
-                                self.fetch_hello_key(account_id, keystore)
-                            {
-                                seal_prt_with_existing_hello_key!(
-                                    self,
-                                    account_id,
-                                    &token2,
-                                    &hello_key,
-                                    pin,
-                                    keystore,
-                                    tpm,
-                                    machine_key
-                                );
-                                self.bad_pin_counter.reset_bad_pin_count(account_id).await;
-                                info!("Re-sealed PRT with existing Hello key after reauth");
-                                return Ok((
-                                    AuthResult::Success { token: token3 },
-                                    AuthCacheAction::None,
-                                ));
-                            }
-                            warn!("Existing Hello key not found after reauth; falling through to PIN setup");
-                        }
+                        reseal_prt_with_existing_hello_key_on_success!(
+                            &token2,
+                            reauth_hello_pin,
+                            token3
+                        );
 
                         // Skip Hello enrollment if it is disabled by config
                         let hello_enabled = self.config.read().await.get_enable_hello();
@@ -3500,32 +3490,11 @@ impl IdProvider for HimmelblauProvider {
                 let token2 = enroll_and_obtain_enrolled_token!(token);
                 match self.token_validate(account_id, &token2, None).await {
                     Ok(AuthResult::Success { token: token3 }) => {
-                        // Issue #1051: If this MFA flow was triggered by an expired
-                        // PRT/refresh token, re-seal the new PRT with the existing
-                        // Hello key instead of forcing PIN re-enrollment.
-                        if let Some(ref pin) = reauth_hello_pin {
-                            if let Ok((hello_key, _keytype)) =
-                                self.fetch_hello_key(account_id, keystore)
-                            {
-                                seal_prt_with_existing_hello_key!(
-                                    self,
-                                    account_id,
-                                    &token2,
-                                    &hello_key,
-                                    pin,
-                                    keystore,
-                                    tpm,
-                                    machine_key
-                                );
-                                self.bad_pin_counter.reset_bad_pin_count(account_id).await;
-                                info!("Re-sealed PRT with existing Hello key after reauth");
-                                return Ok((
-                                    AuthResult::Success { token: token3 },
-                                    AuthCacheAction::None,
-                                ));
-                            }
-                            warn!("Existing Hello key not found after reauth; falling through to PIN setup");
-                        }
+                        reseal_prt_with_existing_hello_key_on_success!(
+                            &token2,
+                            reauth_hello_pin,
+                            token3
+                        );
 
                         // Skip Hello enrollment if it is disabled by config
                         let hello_enabled = self.config.read().await.get_enable_hello();
