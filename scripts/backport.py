@@ -21,7 +21,7 @@ import sys
 import urllib.request
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Set
 
 # Configuration constants
 CACHE_DIR = Path.home() / ".cache" / "himmelblau-backport"
@@ -85,26 +85,71 @@ class AnalysisCache:
         """Get the cache file path for a commit."""
         return self.cache_dir / f"{commit_sha}.json"
 
-    def get(self, commit_sha: str) -> Optional[dict]:
-        """Get cached analysis for a commit, or None if not cached."""
-        if not self.enabled:
-            return None
+    def _load_cache(self, commit_sha: str) -> dict:
+        """Load raw cache data for a commit."""
         cache_file = self._cache_path(commit_sha)
         if cache_file.exists():
             try:
                 data = json.loads(cache_file.read_text())
-                return data.get("analysis")
-            except (json.JSONDecodeError, KeyError):
-                return None
-        return None
+                if isinstance(data, dict):
+                    return data
+            except json.JSONDecodeError:
+                return {}
+        return {}
+
+    def get(self, commit_sha: str) -> Optional[dict]:
+        """Get cached analysis for a commit, or None if not cached."""
+        if not self.enabled:
+            return None
+        data = self._load_cache(commit_sha)
+        analysis = data.get("analysis")
+        return analysis if isinstance(analysis, dict) else None
 
     def set(self, commit_sha: str, analysis: dict):
         """Cache analysis result for a commit."""
+        data = self._load_cache(commit_sha)
         cache_file = self._cache_path(commit_sha)
-        data = {
-            "commit_sha": commit_sha,
-            "analysis": analysis,
-        }
+        data["commit_sha"] = commit_sha
+        data["analysis"] = analysis
+        cache_file.write_text(json.dumps(data, indent=2))
+
+    def get_declined_targets(self, commit_sha: str) -> Set[str]:
+        """Get cached declined targets for a commit."""
+        if not self.enabled:
+            return set()
+        data = self._load_cache(commit_sha)
+        declined = data.get("declined_targets", [])
+        if not isinstance(declined, list):
+            return set()
+        return {str(target) for target in declined if str(target).strip()}
+
+    def is_declined(self, commit_sha: str, target_branch: str, target_version: Optional[str] = None) -> bool:
+        """Check if a commit was declined for a target branch/version."""
+        declined = self.get_declined_targets(commit_sha)
+        if not declined:
+            return False
+        candidates = {target_branch}
+        if target_version:
+            candidates.add(target_version)
+            if not target_version.startswith("stable-"):
+                candidates.add(f"stable-{target_version}")
+        return any(candidate in declined for candidate in candidates)
+
+    def mark_declined(self, commit_sha: str, *targets: str):
+        """Record a declined backport target for a commit."""
+        data = self._load_cache(commit_sha)
+        declined = set()
+        raw_declined = data.get("declined_targets", [])
+        if isinstance(raw_declined, list):
+            declined.update(str(target) for target in raw_declined if str(target).strip())
+        for target in targets:
+            if target:
+                declined.add(str(target))
+        if not declined:
+            return
+        data["commit_sha"] = commit_sha
+        data["declined_targets"] = sorted(declined)
+        cache_file = self._cache_path(commit_sha)
         cache_file.write_text(json.dumps(data, indent=2))
 
     def get_cached_commits(self, commits: list["Commit"]) -> tuple[dict[str, dict], list["Commit"]]:
@@ -234,6 +279,7 @@ class SecurityMdParser:
 
     def __init__(self, repo_root: Path):
         self.repo_root = repo_root
+        self._branch_subject_cache: dict[str, set[str]] = {}
 
     def parse(self) -> list[SupportedVersion]:
         """Parse supported versions from SECURITY.md."""
@@ -259,8 +305,11 @@ class SecurityMdParser:
 class GitClient:
     """Git operations."""
 
+    _branch_subject_cache: dict[str, set[str]]
+
     def __init__(self, repo_root: Path):
         self.repo_root = repo_root
+        self._branch_subject_cache = {}
 
     def run(self, *args, capture=True, check=True) -> subprocess.CompletedProcess:
         """Run a git command."""
@@ -316,6 +365,19 @@ class GitClient:
 
         return commits
 
+    def get_branch_subjects(self, branch: str) -> set[str]:
+        """Get commit subjects (first line) for a branch.
+
+        Uses an in-memory cache to avoid repeated git log calls.
+        """
+        if branch in self._branch_subject_cache:
+            return self._branch_subject_cache[branch]
+
+        result = self.run("log", branch, "--format=%s")
+        subjects = {line.strip() for line in result.stdout.splitlines() if line.strip()}
+        self._branch_subject_cache[branch] = subjects
+        return subjects
+
     def branch_exists(self, branch: str, remote: bool = True) -> bool:
         """Check if a branch exists."""
         try:
@@ -369,13 +431,17 @@ class GitClient:
         """Check if a commit has already been cherry-picked to a branch.
 
         Checks by:
-        1. Looking for "(cherry picked from commit <sha>)" in commit messages
-        2. Looking for the same commit subject in the branch history
+        1. Looking for "(cherry picked from commit <sha>)" or "(cherry-picked from <sha>)" in commit messages
+        2. Looking for the same commit subject (first line) in the branch history
         """
         # Method 1: Check if any commit references this SHA in cherry-pick message
         try:
             result = self.run(
-                "log", branch, "--grep", f"cherry picked from commit {commit_sha[:12]}",
+                "log", branch,
+                "--grep", f"cherry picked from commit {commit_sha}",
+                "--grep", f"cherry picked from commit {commit_sha[:12]}",
+                "--grep", f"cherry-picked from {commit_sha}",
+                "--grep", f"cherry-picked from {commit_sha[:12]}",
                 "--oneline", "-n", "1",
                 check=False
             )
@@ -387,31 +453,14 @@ class GitClient:
 
         # Method 2: Check if commit subject exists in branch (exact match)
         if commit_subject:
-            try:
-                # Escape special regex characters in subject
-                escaped_subject = re.escape(commit_subject)
-                result = self.run(
-                    "log", branch, f"--grep=^{escaped_subject}$",
-                    "--oneline", "-n", "1", "--fixed-strings",
-                    check=False
-                )
-                if result.returncode == 0 and result.stdout.strip():
-                    return True
-            except subprocess.CalledProcessError:
-                # Regex grep failed; try simpler method below
-                pass
-
-            # Method 3: Simpler grep without regex anchors
-            try:
-                result = self.run(
-                    "log", branch, "--oneline", "-n", "100",
-                    check=False
-                )
-                if result.returncode == 0 and commit_subject in result.stdout:
-                    return True
-            except subprocess.CalledProcessError:
-                # All detection methods failed; commit not found in branch
-                pass
+            subject_line = commit_subject.splitlines()[0].strip()
+            if subject_line:
+                try:
+                    if subject_line in self.get_branch_subjects(branch):
+                        return True
+                except subprocess.CalledProcessError:
+                    # Git command failed; commit not found in branch
+                    pass
 
         return False
 
@@ -506,14 +555,12 @@ Analyze each commit and determine if it should be backported. Consider:
 
 For each commit, provide:
 - **Verdict**: BACKPORT, SKIP, or MAYBE
-- **Target versions**: Which stable versions it applies to
 - **Reason**: Brief explanation
 
 Format your response as:
 ```
 COMMIT: <short_sha>
 VERDICT: BACKPORT|SKIP|MAYBE
-TARGETS: <version1>, <version2> (or "all" for all supported)
 REASON: <explanation>
 ```
 
@@ -621,8 +668,6 @@ Please resolve the conflicts and ensure the dependency update is applied correct
             for short_sha, analysis in cached_results.items():
                 display_parts.append(f"COMMIT: {short_sha}")
                 display_parts.append(f"VERDICT: {analysis.get('verdict', 'SKIP')}")
-                targets = analysis.get('targets', [])
-                display_parts.append(f"TARGETS: {', '.join(targets) if targets else 'none'}")
                 display_parts.append(f"REASON: {analysis.get('reason', '(cached)')}")
                 display_parts.append("")
 
@@ -1273,21 +1318,9 @@ def parse_ai_analysis(analysis: str) -> dict[str, dict]:
         line = line.strip()
         if line.startswith('COMMIT:'):
             current_commit = line.split(':', 1)[1].strip()
-            results[current_commit] = {'verdict': 'SKIP', 'targets': [], 'reason': ''}
+            results[current_commit] = {'verdict': 'SKIP', 'reason': ''}
         elif line.startswith('VERDICT:') and current_commit:
             results[current_commit]['verdict'] = line.split(':', 1)[1].strip().upper()
-        elif line.startswith('TARGETS:') and current_commit:
-            targets_str = line.split(':', 1)[1].strip()
-            if targets_str.lower() == 'all':
-                results[current_commit]['targets'] = ['all']
-            else:
-                # Parse and normalize each target
-                targets = []
-                for t in targets_str.split(','):
-                    normalized = normalize_version_target(t)
-                    if normalized:  # Skip empty (none) targets
-                        targets.append(normalized)
-                results[current_commit]['targets'] = targets
         elif line.startswith('REASON:') and current_commit:
             results[current_commit]['reason'] = line.split(':', 1)[1].strip()
 
@@ -1300,17 +1333,13 @@ def print_commit_analysis(commit: Commit, analysis: Optional[dict]):
     if not analysis:
         print("  COMMIT: {sha}".format(sha=commit.short_sha))
         print("  VERDICT: UNKNOWN")
-        print("  TARGETS: unknown")
         print("  REASON: No AI analysis available for this commit")
         return
 
     verdict = analysis.get("verdict", "UNKNOWN")
-    targets = analysis.get("targets", [])
     reason = analysis.get("reason", "")
-    targets_display = ", ".join(targets) if targets else "none"
     print("  COMMIT: {sha}".format(sha=commit.short_sha))
     print("  VERDICT: {verdict}".format(verdict=verdict))
-    print("  TARGETS: {targets}".format(targets=targets_display))
     print("  REASON: {reason}".format(reason=reason))
 
 
@@ -1515,6 +1544,9 @@ Examples:
     original_count = len(commits)
     commits = [c for c in commits if not c.is_merge and not c.is_dependabot and not c.is_ci_only]
 
+    # Proactively filter out commits we know are already backported
+    commits = [c for c in commits if not any([git.is_commit_in_branch(c.sha, f"origin/{v.branch}", c.subject) for v in versions])]
+
     # Reverse to apply oldest commits first (git log returns newest first)
     commits = list(reversed(commits))
 
@@ -1550,25 +1582,15 @@ Examples:
 
     # Identify backports to apply
     backports_to_apply = []
+    declined_total = 0
     for commit in commits:
         if commit.short_sha in parsed:
             info = parsed[commit.short_sha]
             if info['verdict'] == 'BACKPORT':
-                targets = info['targets']
-                if not targets:
-                    # No targets specified but verdict is BACKPORT - skip
-                    continue
-                if 'all' in targets:
-                    target_versions = versions
-                else:
-                    # Match targets against versions (both are normalized now)
-                    # e.g., target '2.x' should match version '2.x'
-                    target_versions = [
-                        v for v in versions
-                        if any(t == v.version.lower() or t in v.version.lower() for t in targets)
-                    ]
-
-                for target_ver in target_versions:
+                for target_ver in versions:
+                    if cache.is_declined(commit.sha, target_ver.branch, target_ver.version):
+                        declined_total += 1
+                        continue
                     backports_to_apply.append((commit, target_ver, info))
 
     if not backports_to_apply:
@@ -1578,6 +1600,8 @@ Examples:
     print_color(f"\nBackports to apply ({len(backports_to_apply)}):", "blue")
     for commit, target, _info in backports_to_apply:
         print(f"  {commit.short_sha} -> {target.version}: {commit.subject[:50]}")
+    if declined_total > 0:
+        print_color(f"  Skipped {declined_total} previously declined backport(s) from cache", "yellow")
 
     if args.dry_run:
         print_color("\n(dry-run mode - no changes will be made)", "yellow")
@@ -1682,9 +1706,6 @@ Examples:
                     pass  # Already on original branch or can't switch
                 continue
 
-        # Update libhimmelblau
-        manager.update_libhimmelblau()
-
         # Fetch and cherry-pick open dependabot PRs for this branch
         cherry_picked_dependabot_prs = []
         if not args.skip_dependabot:
@@ -1700,23 +1721,21 @@ Examples:
         else:
             print_color("\nSkipping dependabot PRs (--skip-dependabot)", "yellow")
 
+        # Update libhimmelblau
+        manager.update_libhimmelblau()
+
         # Apply each commit
         all_success = True
         skipped_already_present = 0
         for commit, analysis_info in commits_for_version:
             print_color(f"\n  Cherry-picking {commit.short_sha}: {commit.subject[:50]}...", "cyan")
 
-            # Check if commit is already in the target branch
-            if git.is_commit_in_branch(commit.sha, f"origin/{target.branch}", commit.subject):
-                print_color("    Already present in target branch, skipping", "yellow")
-                skipped_already_present += 1
-                continue
-
             if args.interactive:
                 print_commit_analysis(commit, analysis_info)
                 try:
                     confirm = input("  Proceed with this backport? [y/N]: ").strip().lower()
                     if confirm != 'y':
+                        cache.mark_declined(commit.sha, target.branch, target.version)
                         print_color("  Skipped", "yellow")
                         continue
                 except (KeyboardInterrupt, EOFError):
