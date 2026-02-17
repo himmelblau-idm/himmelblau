@@ -447,7 +447,10 @@ RUN dpkg --add-architecture arm64
 {bootstrap}
 {post_bootstrap}
 # Install aarch64 cross-compiler and arm64 dev libraries
-RUN apt-get update && apt-get install -y \\
+# --force-overwrite: transitive deps (e.g. libcurl4-openssl-dev) may ship
+# arch-independent files like /usr/bin/curl-config that conflict with the
+# amd64 version already installed in the bootstrap step.
+RUN apt-get update && apt-get install -y -o Dpkg::Options::="--force-overwrite" \\
     gcc-aarch64-linux-gnu g++-aarch64-linux-gnu \\
     libssl-dev:arm64 \\
     libdbus-1-dev:arm64 \\
