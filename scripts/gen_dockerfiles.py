@@ -442,6 +442,7 @@ ARG CARGO_PATCH_ARG=""
 # Add arm64 architecture for multiarch cross-compilation
 RUN dpkg --add-architecture arm64
 
+{multiarch_sources}
 # Install essential build dependencies (amd64 toolchain + arm64 libraries)
 {bootstrap}
 {post_bootstrap}
@@ -513,6 +514,70 @@ ENV CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc
 RUN cargo install --target aarch64-unknown-linux-gnu cargo-deb cargo-generate-rpm
 
 """
+
+# Ubuntu codename mapping (used for multiarch apt sources)
+UBUNTU_CODENAMES = {
+    "ubuntu:22.04": "jammy",
+    "ubuntu:24.04": "noble",
+    "ubuntu:25.10": "plucky",
+}
+
+# Ubuntu 24.04+ uses DEB822 format (.sources files)
+UBUNTU_DEB822_VERSIONS = {"ubuntu:24.04", "ubuntu:25.10"}
+
+
+def build_multiarch_sources(dist_cfg):
+    """Generate apt source reconfiguration for Ubuntu arm64 cross-compilation.
+
+    Ubuntu serves arm64 packages from ports.ubuntu.com, not archive.ubuntu.com.
+    Debian serves all architectures from the same mirrors, so no reconfiguration needed.
+    """
+    image = dist_cfg["image"]
+
+    # Debian: no reconfiguration needed — deb.debian.org serves arm64 natively
+    if not image.startswith("ubuntu:"):
+        return ""
+
+    codename = UBUNTU_CODENAMES.get(image)
+    if not codename:
+        return ""
+
+    if image in UBUNTU_DEB822_VERSIONS:
+        # DEB822 format (Ubuntu 24.04+):
+        # Pin existing sources to amd64, create separate arm64 sources file
+        return f"""\
+# Configure apt sources for arm64 cross-compilation
+# Ubuntu serves arm64 packages from ports.ubuntu.com, not archive.ubuntu.com
+RUN sed -i '/^Types: deb$/a Architectures: amd64' /etc/apt/sources.list.d/ubuntu.sources
+RUN cat <<'EOF' > /etc/apt/sources.list.d/ubuntu-arm64.sources
+Types: deb
+URIs: http://ports.ubuntu.com/ubuntu-ports/
+Suites: {codename} {codename}-updates {codename}-backports
+Components: main restricted universe multiverse
+Architectures: arm64
+Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
+
+Types: deb
+URIs: http://ports.ubuntu.com/ubuntu-ports/
+Suites: {codename}-security
+Components: main restricted universe multiverse
+Architectures: arm64
+Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
+EOF
+"""
+    else:
+        # Traditional sources.list format (Ubuntu 22.04):
+        # Pin existing entries to [arch=amd64], append arm64 entries for ports.ubuntu.com
+        return f"""\
+# Configure apt sources for arm64 cross-compilation
+# Ubuntu serves arm64 packages from ports.ubuntu.com, not archive.ubuntu.com
+RUN sed -i 's/^deb http/deb [arch=amd64] http/' /etc/apt/sources.list && \\
+    echo "deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports/ {codename} main restricted universe multiverse" >> /etc/apt/sources.list && \\
+    echo "deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports/ {codename}-updates main restricted universe multiverse" >> /etc/apt/sources.list && \\
+    echo "deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports/ {codename}-backports main restricted universe multiverse" >> /etc/apt/sources.list && \\
+    echo "deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports/ {codename}-security main restricted universe multiverse" >> /etc/apt/sources.list
+"""
+
 
 SLE_CONNECT_TPL = """\
 # Install SUSEConnect and dependencies for registration
@@ -597,10 +662,12 @@ def render(dist_name, dist_cfg, patch_libhimmelblau, arch="amd64"):
 
     # DEB arm64: use cross-compilation template (no QEMU emulation)
     if arch != "amd64" and dist_cfg["family"] == "deb":
+        multiarch_sources = build_multiarch_sources(dist_cfg)
         df = DOCKERFILE_CROSS_DEB_TPL.format(
             GENERATED_MARKER=GENERATED_MARKER,
             base_image=dist_cfg["image"],
             env=env,
+            multiarch_sources=multiarch_sources,
             bootstrap=(extra + bootstrap),
             post_bootstrap=post_bootstrap,
             selinux_enabled=("ENV HIMMELBLAU_ALLOW_MISSING_SELINUX=1" if not selinux else ""),
