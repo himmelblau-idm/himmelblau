@@ -1957,54 +1957,14 @@ impl IdProvider for HimmelblauProvider {
                             ));
                         }
                         Err(MsalError::PasswordRequired) => {
-                            // Azure requires a password for this flow — fall
-                            // through to the DAG path below.
-                            debug!("MFA flow requires password; falling back to DAG reauth.");
-                            // Use a block to scope the fallback cleanly
-                            let mut dag_auth_options = vec![];
-                            if is_remote_service || !console_password_only {
-                                dag_auth_options.push(AuthOption::ForceMFA);
-                            }
-                            if is_remote_service {
-                                dag_auth_options.push(AuthOption::RemoteSession);
-                            }
-                            match self
-                                .client
-                                .read()
-                                .await
-                                .initiate_device_flow_for_device_enrollment(&dag_auth_options)
-                                .await
-                            {
-                                Ok(resp) => {
-                                    let flow: MFAAuthContinue = resp.into();
-                                    let msg = flow.msg.clone();
-                                    let polling_interval = flow.polling_interval.unwrap_or(5000);
-                                    *cred_handler = AuthCredHandler::MFA {
-                                        flow: Box::new(flow),
-                                        password: None,
-                                        extra_data: None,
-                                        reauth_hello_pin: Some(reauth_pin_value.clone()),
-                                    };
-                                    debug!("Session expired, initiating DAG re-authentication (MFA password fallback).");
-                                    return Ok((
-                                        AuthResult::Next(AuthRequest::MFAPoll {
-                                            msg,
-                                            polling_interval: polling_interval / 1000,
-                                        }),
-                                        AuthCacheAction::None,
-                                    ));
-                                }
-                                Err(e) => {
-                                    error!("Failed to initiate DAG fallback: {:?}", e);
-                                    return Ok((
-                                        AuthResult::Denied(
-                                            "Your session has expired. Please sign in again."
-                                                .to_string(),
-                                        ),
-                                        AuthCacheAction::None,
-                                    ));
-                                }
-                            }
+                            // Azure requires a password for this flow. Prompt for
+                            // password and continue with the regular password+MFA
+                            // path so we can avoid DAG when possible.
+                            debug!("MFA flow requires password; prompting password reauth.");
+                            *cred_handler = AuthCredHandler::ReauthPassword {
+                                reauth_hello_pin: reauth_pin_value,
+                            };
+                            return Ok((AuthResult::Next(AuthRequest::Password), AuthCacheAction::None));
                         }
                         Err(e) => {
                             error!("Failed to initiate reauth MFA flow: {:?}", e);
@@ -2646,6 +2606,10 @@ impl IdProvider for HimmelblauProvider {
         }
         macro_rules! nested_auth_handle_mfa_resp {
             ($resp:ident, $cred:ident) => {
+                nested_auth_handle_mfa_resp!($resp, $cred, None)
+            };
+            ($resp:ident, $cred:ident, $reauth_hello_pin:expr) => {{
+                let reauth_hello_pin: Option<Zeroizing<String>> = $reauth_hello_pin;
                 auth_handle_mfa_resp!(
                     $resp,
                     // FIDO
@@ -2675,7 +2639,7 @@ impl IdProvider for HimmelblauProvider {
                             flow: Box::new($resp),
                             password: Some($cred.clone()),
                             extra_data: None,
-                            reauth_hello_pin: None,
+                            reauth_hello_pin: reauth_hello_pin.clone(),
                         };
                         let action = if self.config.read().await.get_offline_breakglass_enabled() {
                             AuthCacheAction::PasswordHashUpdate { $cred }
@@ -2699,7 +2663,7 @@ impl IdProvider for HimmelblauProvider {
                             flow: Box::new($resp),
                             password: Some($cred.clone()),
                             extra_data: None,
-                            reauth_hello_pin: None,
+                            reauth_hello_pin: reauth_hello_pin.clone(),
                         };
                         let action = if self.config.read().await.get_offline_breakglass_enabled() {
                             AuthCacheAction::PasswordHashUpdate { $cred }
@@ -2721,7 +2685,7 @@ impl IdProvider for HimmelblauProvider {
                             flow: Box::new($resp),
                             password: Some($cred.clone()),
                             extra_data: None,
-                            reauth_hello_pin: None,
+                            reauth_hello_pin: reauth_hello_pin.clone(),
                         };
                         let action = if self.config.read().await.get_offline_breakglass_enabled() {
                             AuthCacheAction::PasswordHashUpdate { $cred }
@@ -2741,7 +2705,7 @@ impl IdProvider for HimmelblauProvider {
                         ));
                     }
                 )
-            };
+            }};
         }
         macro_rules! prt_signin_frequency_check {
             ($cred:ident) => {
@@ -3059,6 +3023,14 @@ impl IdProvider for HimmelblauProvider {
                 nested_auth_handle_mfa_resp!(flow, cred)
             }
             (change_password, PamAuthRequest::Password { mut cred }) => {
+                let mut reauth_hello_pin: Option<Zeroizing<String>> = None;
+                if let AuthCredHandler::ReauthPassword {
+                    reauth_hello_pin: pin,
+                } = change_password
+                {
+                    reauth_hello_pin = Some(pin.clone());
+                }
+
                 if let AuthCredHandler::ChangePassword { old_cred } = change_password {
                     // Report errors, but don't bail out. If the password change fails,
                     // we'll make another run at it in a moment.
@@ -3109,9 +3081,15 @@ impl IdProvider for HimmelblauProvider {
                 if is_remote_service {
                     opts.push(AuthOption::RemoteSession);
                 }
-                // If SFA is enabled, disable the DAG fallback, otherwise SFA users
-                // will always be prompted for DAG.
-                let sfa_enabled = self.config.read().await.get_enable_sfa_fallback();
+                // Do not use SFA fallback during Hello re-auth because we need
+                // an MFA-capable result to preserve/re-seal the existing Hello
+                // credentials.
+                let sfa_enabled = if reauth_hello_pin.is_some() {
+                    debug!("Hello reauth password flow: disabling SFA fallback.");
+                    false
+                } else {
+                    self.config.read().await.get_enable_sfa_fallback()
+                };
                 if sfa_enabled {
                     opts.push(AuthOption::NoDAGFallback);
                 }
@@ -3226,7 +3204,7 @@ impl IdProvider for HimmelblauProvider {
                         };
                     }
                 );
-                nested_auth_handle_mfa_resp!(resp, cred)
+                nested_auth_handle_mfa_resp!(resp, cred, reauth_hello_pin)
             }
             (
                 AuthCredHandler::MFA {
