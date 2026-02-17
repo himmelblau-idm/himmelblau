@@ -1517,14 +1517,17 @@ impl IdProvider for HimmelblauProvider {
                 service, is_remote_service, console_password_only
             );
             if self.config.read().await.get_enable_experimental_mfa() {
-                let mut auth_options = vec![AuthOption::Fido, AuthOption::Passwordless];
-                if self
-                    .config
-                    .read()
-                    .await
-                    .get_enable_experimental_passwordless_fido()
-                {
-                    auth_options.push(AuthOption::PasswordlessFido);
+                let mut auth_options = vec![AuthOption::Passwordless];
+                if !is_remote_service {
+                    auth_options.push(AuthOption::Fido);
+                    if self
+                        .config
+                        .read()
+                        .await
+                        .get_enable_experimental_passwordless_fido()
+                    {
+                        auth_options.push(AuthOption::PasswordlessFido);
+                    }
                 }
 
                 if is_remote_service || !console_password_only {
@@ -1919,9 +1922,12 @@ impl IdProvider for HimmelblauProvider {
                 if enable_experimental_mfa {
                     // Interactive MFA flow: supports push notifications, FIDO,
                     // and code entry. Better UX than DAG for most users.
-                    let mut auth_options = vec![AuthOption::Fido, AuthOption::Passwordless];
-                    if enable_experimental_passwordless_fido {
-                        auth_options.push(AuthOption::PasswordlessFido);
+                    let mut auth_options = vec![AuthOption::Passwordless];
+                    if !is_remote_service {
+                        auth_options.push(AuthOption::Fido);
+                        if enable_experimental_passwordless_fido {
+                            auth_options.push(AuthOption::PasswordlessFido);
+                        }
                     }
                     if is_remote_service || !console_password_only {
                         auth_options.push(AuthOption::ForceMFA);
