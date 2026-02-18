@@ -260,15 +260,6 @@ pub trait IdProvider {
         _machine_key: &tpm::structures::StorageKey,
     ) -> Result<UnixUserToken, IdpError>;
 
-    async fn unix_user_ccaches<D: KeyStoreTxn + Send>(
-        &self,
-        _id: &Id,
-        _old_token: Option<&UserToken>,
-        _keystore: &mut D,
-        _tpm: &mut tpm::provider::BoxedDynTpm,
-        _machine_key: &tpm::structures::StorageKey,
-    ) -> (Vec<u8>, Vec<u8>);
-
     async fn unix_user_tgts<D: KeyStoreTxn + Send>(
         &self,
         _id: &Id,
