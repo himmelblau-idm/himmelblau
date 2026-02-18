@@ -157,7 +157,7 @@ def collect_all_assets(repo_root: Path, crate_names: list) -> list:
 
 def generate_install_commands(repo_root: Path) -> str:
     """Generate src_install() commands for ebuild based on Cargo.toml assets."""
-    crate_names = ["himmelblaud", "nss_himmelblau", "pam_himmelblau", "sshd-config", "sso", "qr-greeter", "o365"]
+    crate_names = ["himmelblaud", "nss_himmelblau", "pam_himmelblau", "sshd-config", "sso", "sso-policies", "qr-greeter", "o365"]
 
     try:
         assets = collect_all_assets(repo_root, crate_names)
@@ -244,9 +244,22 @@ def generate_install_commands(repo_root: Path) -> str:
     if configs:
         lines.append("\n\t# Install configuration files")
         for src, dest in configs:
-            dest_dir = os.path.dirname(dest)
-            lines.append(f'\tinsinto "{dest_dir}"')
-            lines.append(f'\tdoins "${{S}}/{src}"')
+            # Handle directory destinations (ending with /)
+            if dest.endswith('/'):
+                dest_dir = dest.rstrip('/')
+                src_name = os.path.basename(src)
+                lines.append(f'\tinsinto "{dest_dir}"')
+                lines.append(f'\tdoins "${{S}}/{src}"')
+            else:
+                dest_dir = os.path.dirname(dest)
+                dest_name = os.path.basename(dest)
+                src_name = os.path.basename(src)
+                lines.append(f'\tinsinto "{dest_dir}"')
+                if dest_name != src_name:
+                    # Use newins to rename the file during installation
+                    lines.append(f'\tnewins "${{S}}/{src}" "{dest_name}"')
+                else:
+                    lines.append(f'\tdoins "${{S}}/{src}"')
 
     if man_pages:
         lines.append("\n\t# Install man pages")
@@ -256,9 +269,22 @@ def generate_install_commands(repo_root: Path) -> str:
     if other:
         lines.append("\n\t# Install other files")
         for src, dest in other:
-            dest_dir = os.path.dirname(dest)
-            lines.append(f'\tinsinto "{dest_dir}"')
-            lines.append(f'\tdoins "${{S}}/{src}"')
+            # Handle directory destinations (ending with /)
+            if dest.endswith('/'):
+                dest_dir = dest.rstrip('/')
+                src_name = os.path.basename(src)
+                lines.append(f'\tinsinto "{dest_dir}"')
+                lines.append(f'\tdoins "${{S}}/{src}"')
+            else:
+                dest_dir = os.path.dirname(dest)
+                dest_name = os.path.basename(dest)
+                src_name = os.path.basename(src)
+                lines.append(f'\tinsinto "{dest_dir}"')
+                if dest_name != src_name:
+                    # Use newins to rename the file during installation
+                    lines.append(f'\tnewins "${{S}}/{src}" "{dest_name}"')
+                else:
+                    lines.append(f'\tdoins "${{S}}/{src}"')
 
     return "\n".join(lines)
 
