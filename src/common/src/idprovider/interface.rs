@@ -18,6 +18,7 @@ use std::fmt;
 use std::time::SystemTime;
 use tokio::sync::broadcast;
 use uuid::Uuid;
+use zeroize::Zeroizing;
 
 pub use kanidm_hsm_crypto as tpm;
 
@@ -98,6 +99,17 @@ pub enum AuthCredHandler {
         flow: Box<MFAAuthContinue>,
         password: Option<String>,
         extra_data: Option<String>,
+        /// When set, this MFA flow was triggered by an expired PRT/refresh token
+        /// while the Hello key and PIN are still valid. Contains the validated
+        /// PIN to reuse for re-sealing the new PRT with the existing Hello key
+        /// after successful re-authentication. (See issue #1051)
+        reauth_hello_pin: Option<Zeroizing<String>>,
+    },
+    /// Password prompt for Hello re-authentication when Azure requires a
+    /// password before continuing MFA. Carries the validated Hello PIN so we
+    /// can re-seal tokens with the existing Hello key after MFA succeeds.
+    ReauthPassword {
+        reauth_hello_pin: Zeroizing<String>,
     },
     SetupPin {
         token: Box<Option<UnixUserToken>>,
@@ -129,6 +141,7 @@ impl fmt::Debug for AuthCredHandler {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             AuthCredHandler::MFA { .. } => f.write_str("MFA { .. }"),
+            AuthCredHandler::ReauthPassword { .. } => f.write_str("ReauthPassword { .. }"),
             AuthCredHandler::SetupPin { .. } => f.write_str("SetupPin { .. }"),
             AuthCredHandler::HelloTOTP { .. } => f.write_str("HelloTOTP { .. }"),
             AuthCredHandler::ChangePassword { .. } => f.write_str("ChangePassword { .. }"),

@@ -20,10 +20,10 @@ use crate::config::HimmelblauConfig;
 use crate::constants::ID_MAP_CACHE;
 use crate::db::KeyStoreTxn;
 use crate::idmap_cache::StaticIdCache;
+use crate::idprovider::common::flip_displayname_comma;
 use crate::idprovider::common::KeyType;
 use crate::idprovider::common::TotpEnrollmentRecord;
 use crate::idprovider::common::{BadPinCounter, RefreshCache, RefreshCacheEntry};
-use crate::idprovider::common::flip_displayname_comma;
 use crate::idprovider::interface::{
     tpm, AuthCacheAction, AuthCredHandler, AuthRequest, AuthResult, CacheState, GroupToken, Id,
     IdProvider, IdpError, UserToken, UserTokenState,
@@ -757,10 +757,10 @@ impl OidcApplication {
         };
 
         let displayname = userinfo
-                .name()
-                .and_then(|n| n.get(None))
-                .map(|n| n.to_string())
-                .unwrap_or_default();
+            .name()
+            .and_then(|n| n.get(None))
+            .map(|n| n.to_string())
+            .unwrap_or_default();
 
         let displayname = flip_displayname_comma(&displayname);
 
@@ -1128,6 +1128,7 @@ impl IdProvider for OidcProvider {
                     flow: Box::new(flow),
                     password: None,
                     extra_data: Some(extra_data),
+                    reauth_hello_pin: None,
                 },
             ))
         } else {
@@ -1466,6 +1467,7 @@ impl IdProvider for OidcProvider {
                     ref mut flow,
                     password: _,
                     extra_data,
+                    reauth_hello_pin: _,
                 },
                 PamAuthRequest::MFAPoll { poll_attempt },
             ) => {

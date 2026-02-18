@@ -315,7 +315,13 @@ pub fn gen_subid_start(username: &str, subid_range: (u32, u32)) -> u32 {
 
     // Use MurmurHash3 to hash the username (same algorithm as SSSD idmap)
     let input = username.to_lowercase();
-    let hash = unsafe { ffi::murmurhash3(input.as_ptr() as *const std::os::raw::c_char, input.len() as i32, SEED) };
+    let hash = unsafe {
+        ffi::murmurhash3(
+            input.as_ptr() as *const std::os::raw::c_char,
+            input.len() as i32,
+            SEED,
+        )
+    };
 
     // Map hash to a slot number and calculate the start ID
     let slot = hash % num_slots;
