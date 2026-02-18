@@ -1,0 +1,31 @@
+[package]
+name = "sso-policies"
+description = "Browser policy files for Himmelblau SSO (Chrome/Chromium)"
+version.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+edition.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[dependencies]
+
+[package.metadata.deb]
+name = "himmelblau-sso-policies"
+depends = []
+recommends = ["himmelblau-sso"]
+assets = [
+  ["src/chrome/policies.json", "etc/opt/chrome/policies/managed/himmelblau.json", "644"],
+  ["src/chrome/policies.json", "etc/chromium/policies/managed/himmelblau.json", "644"],
+]
+
+[package.metadata.generate-rpm]
+name = "himmelblau-sso-policies"
+assets = [
+  { source = "src/chrome/policies.json", dest = "/etc/opt/chrome/policies/managed/himmelblau.json", mode = "644" },
+  { source = "src/chrome/policies.json", dest = "/etc/chromium/policies/managed/himmelblau.json", mode = "644" },
+]
+
+[package.metadata.generate-rpm.recommends]
+himmelblau-sso = "*"
