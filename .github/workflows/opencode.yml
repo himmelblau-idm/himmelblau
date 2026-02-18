@@ -15,7 +15,6 @@ jobs:
     permissions:
       issues: read
     outputs:
-      recent_issues_json: ${{ steps.fetch_recent_issues.outputs.result }}
       eligible_issues_json: ${{ steps.fetch_recent_issues.outputs.eligible_issues_json }}
     steps:
       - name: Harden the runner (Audit all outbound calls)
