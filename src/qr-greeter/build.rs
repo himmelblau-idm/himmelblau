@@ -380,9 +380,19 @@ fn main() {
 
     // Target directory for build output (used by cargo-deb and cargo-generate-rpm)
     // Place under target/release/ to avoid cargo-deb warnings about non-release paths
+    // When cross-compiling (e.g. --target=aarch64-unknown-linux-gnu), cargo-deb remaps
+    // target/release/ to target/<target-triple>/release/, so we must output files there.
     let workspace_root = manifest_path.parent().unwrap().parent().unwrap();
-    let build_output_dir =
-        workspace_root.join("target/release/qr-greeter-build/qr-greeter@himmelblau-idm.org");
+    let target = env::var("TARGET").unwrap_or_default();
+    let host = env::var("HOST").unwrap_or_default();
+    let target_prefix = if !target.is_empty() && target != host {
+        format!("target/{}/release", target)
+    } else {
+        "target/release".to_string()
+    };
+    let build_output_dir = workspace_root
+        .join(&target_prefix)
+        .join("qr-greeter-build/qr-greeter@himmelblau-idm.org");
 
     // Clean and create the output directory
     if build_output_dir.exists() {
