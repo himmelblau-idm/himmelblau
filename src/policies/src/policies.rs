@@ -43,8 +43,7 @@ pub async fn apply_intune_policy(
     let domain = split_username(account_id)
         .map(|(_, domain)| domain)
         .ok_or(anyhow!(
-            "Failed to parse domain name from account id '{}'",
-            account_id
+            "Failed to parse domain name from account id",
         ))?;
 
     debug!(
