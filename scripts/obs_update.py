@@ -101,7 +101,7 @@ Key files:
 ## Useful Commands
 - `osc diff` - Show what changes have been made to the package
 - `osc status` - Show file status (modified, added, deleted)
-- `osc build openSUSE_Tumbleweed x86_64` - Rebuild locally
+- `osc build openSUSE_Tumbleweed {arch}` - Rebuild locally
 
 ## Your Task
 1. Run `osc diff` to understand what changes were made
@@ -186,6 +186,7 @@ When done, use /exit to return to the script.
         source_branch: str,
         build_error: str,
         work_dir: Path,
+        arch: str = "x86_64",
     ) -> bool:
         """Launch AI CLI to fix build issues interactively."""
         prompt = self.FIX_BUILD_PROMPT.format(
@@ -195,6 +196,7 @@ When done, use /exit to return to the script.
             source_branch=source_branch,
             build_error=build_error,
             work_dir=work_dir,
+            arch=arch,
         )
 
         print_color(f"\nLaunching {self.provider} CLI to fix build...", "green")
@@ -265,6 +267,7 @@ class OBSManager:
         repo_root: Path,
         ai: AIRunner,
         dry_run: bool = False,
+        arch: str = "x86_64",
     ):
         self.obs_project = obs_project
         self.obs_package = obs_package
@@ -273,6 +276,7 @@ class OBSManager:
         self.repo_root = repo_root
         self.ai = ai
         self.dry_run = dry_run
+        self.arch = arch
         self.work_dir: Optional[Path] = None
         self.branch_project: Optional[str] = None
         self.original_spec_content: Optional[str] = None  # Track original generated spec
@@ -698,7 +702,7 @@ class OBSManager:
 
             # Run build with real-time output (not captured)
             # Use Popen to stream output while also capturing for error context
-            cmd = ["osc", "build", "--no-verify", repo, "x86_64"]
+            cmd = ["osc", "build", "--no-verify", repo, self.arch]
             print_color(f"  Running: {' '.join(cmd)}", "blue")
             print_color("-" * 60, "cyan")
 
@@ -906,6 +910,7 @@ def main():
 Examples:
   %(prog)s                              # Update from stable-2.x to network:idm
   %(prog)s --branch stable-2.x          # Specify branch explicitly
+  %(prog)s --arch aarch64               # Test build for ARM64
   %(prog)s --dry-run                    # Show what would be done
   %(prog)s --ai-provider gemini         # Use Gemini for build fixes
   %(prog)s --no-submit                  # Don't submit merge request
@@ -959,6 +964,13 @@ Examples:
         help="Don't submit merge request after building",
     )
     parser.add_argument(
+        "--arch",
+        type=str,
+        default="x86_64",
+        choices=["x86_64", "aarch64"],
+        help="Architecture for local test builds (default: x86_64)",
+    )
+    parser.add_argument(
         "--work-dir",
         type=Path,
         default=None,
@@ -1001,6 +1013,7 @@ Examples:
         repo_root=repo_root,
         ai=ai,
         dry_run=args.dry_run,
+        arch=args.arch,
     )
 
     # Check prerequisites
@@ -1076,6 +1089,7 @@ Examples:
                     args.branch,
                     build_error,
                     manager.work_dir,
+                    arch=args.arch,
                 ):
                     print_color("AI fix session ended", "yellow")
 
@@ -1086,7 +1100,7 @@ Examples:
             print_color(f"Working directory preserved at: {work_base}", "yellow")
             print_color("You can manually fix and run:", "yellow")
             print(f"  cd {manager.work_dir}")
-            print("  osc build openSUSE_Tumbleweed x86_64")
+            print(f"  osc build openSUSE_Tumbleweed {args.arch}")
             cleanup_work_dir = False
             sys.exit(1)
 

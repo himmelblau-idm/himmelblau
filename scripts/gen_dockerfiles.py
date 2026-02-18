@@ -3,7 +3,7 @@
 Himmelblau Dockerfile generator
 
 Usage:
-  python gen_dockerfiles.py [--out ./dockerfiles] [--only debian12,ubuntu22.04]
+  python gen_dockerfiles.py [--out ./dockerfiles] [--only debian12,ubuntu22.04] [--arch amd64|arm64]
 
 This follows a config-driven pattern inspired by Samba's bootstrap/config.py:
 - deb family => cargo deb chain with per-package feature flags and --deb-revision=<distro>
@@ -14,6 +14,12 @@ This follows a config-driven pattern inspired by Samba's bootstrap/config.py:
 import argparse
 import os
 from pathlib import Path
+
+# Architecture mapping
+ARCH_MAP = {
+    "amd64": {"docker_platform": "linux/amd64", "rpm_arch": "x86_64", "deb_arch": "amd64", "rust_target": "x86_64-unknown-linux-gnu"},
+    "arm64": {"docker_platform": "linux/arm64", "rpm_arch": "aarch64", "deb_arch": "arm64", "rust_target": "aarch64-unknown-linux-gnu"},
+}
 
 GENERATED_MARKER = """\
 #
@@ -118,13 +124,14 @@ PACKAGES = [
 ]
 
 CMD_TAB = "     "
-CMD_SEP = f" && \ \n{CMD_TAB}"
+CMD_SEP = f" && \\ \n{CMD_TAB}"
 
 
 GEN_MANPAGE = "python3 scripts/gen_param_code.py --gen-man --man-output man/man5/himmelblau.conf.5"
 
 
-def build_deb_final_cmd(features: list, distro_slug: str) -> str:
+def build_deb_final_cmd(features: list, distro_slug: str, cross_target: str = "") -> str:
+    target_arg = f" --target={cross_target}" if cross_target else ""
     parts = []
     for pkg, _, needs_tpm in PACKAGES:
         if pkg == "selinux":  # Debian doesn't use selinux
@@ -134,7 +141,7 @@ def build_deb_final_cmd(features: list, distro_slug: str) -> str:
         feat_str = f" --features {','.join(features)}" if features else ""
         if "pam" in pkg or "nss" in pkg:
             feat_str += " --multiarch=same"
-        parts.append(f"cargo deb ${{CARGO_PATCH_ARG}}{feat_str} --deb-revision={distro_slug} -p {pkg}")
+        parts.append(f"cargo deb ${{CARGO_PATCH_ARG}}{target_arg}{feat_str} --deb-revision={distro_slug} -p {pkg}")
     gen_servicefiles = "make deb-servicefiles"
     return f'CMD ["/bin/sh", "-c", \\\n{CMD_TAB}"{GEN_MANPAGE} && {gen_servicefiles} && {CMD_SEP.join(parts)} "]'
 
@@ -238,6 +245,7 @@ DISTS = {
         },
         "tpm": False,
         "selinux": True,
+        "arm64": False,  # Rocky 8 is EOL, no aarch64 builds
     },
     "rocky9": {
         "family": "rpm",
@@ -317,7 +325,7 @@ DISTS = {
         "scc_vers": "16.0",
         "extra_prep": [
             # Temporary patch for broken SLE libudev1 version in the base image
-            "RUN zypper in -y --oldpackage libudev1-257.7-160000.2.2.x86_64",
+            "RUN zypper in -y --oldpackage libudev1-257.7-160000.2.2.$(uname -m)",
             # Temporary authselect build, since it hasn't landed in PackageHub yet
             "RUN zypper ar -e https://download.opensuse.org/repositories/home:/dmulder:/branches:/authselect/16.0/home:dmulder:branches:authselect.repo",
             "RUN zypper --non-interactive --gpg-auto-import-keys refresh home_dmulder_branches_authselect"
@@ -377,7 +385,7 @@ DISTS = {
 }
 
 DOCKERFILE_TPL = """\
-{GENERATED_MARKER}FROM {base_image}
+{GENERATED_MARKER}{tooling_stage}FROM {base_image}
 
 {env}
 {sle_connect}
@@ -398,9 +406,8 @@ VOLUME /himmelblau
 WORKDIR /himmelblau
 
 
-# Install Rust (latest stable)
-RUN --mount=type=cache,target=/root/.cargo/registry curl https://sh.rustup.rs -sSf | sh -s -- -y && \\
-    cargo install cargo-deb cargo-generate-rpm
+# Install Rust (latest stable) and packaging tools
+{rust_install}
 
 {patch_libhimmelblau}
 
@@ -423,6 +430,163 @@ WORKDIR /himmelblau
 {final_cmd}
 """
 
+# DEB cross-compilation Dockerfile template (amd64 host → aarch64 target)
+# Uses Debian multiarch to install arm64 dev libraries alongside amd64 toolchain
+DOCKERFILE_CROSS_DEB_TPL = """\
+{GENERATED_MARKER}FROM {base_image}
+
+{env}
+
+# Build argument for optional Cargo patch configuration
+ARG CARGO_PATCH_ARG=""
+
+# Add arm64 architecture for multiarch cross-compilation
+RUN dpkg --add-architecture arm64
+
+{multiarch_sources}
+# Install essential build dependencies (amd64 toolchain + arm64 libraries)
+{bootstrap}
+{post_bootstrap}
+# Install aarch64 cross-compiler and arm64 dev libraries
+# --force-overwrite: transitive deps (e.g. libcurl4-openssl-dev) may ship
+# arch-independent files like /usr/bin/curl-config that conflict with the
+# amd64 version already installed in the bootstrap step.
+RUN apt-get update && apt-get install -y -o Dpkg::Options::="--force-overwrite" \\
+    gcc-aarch64-linux-gnu g++-aarch64-linux-gnu \\
+    libssl-dev:arm64 \\
+    libdbus-1-dev:arm64 \\
+    libkrb5-dev:arm64 \\
+    libpam0g-dev:arm64 \\
+    libcap-dev:arm64 \\
+    libudev-dev:arm64 \\
+    libtss2-dev:arm64 \\
+    libsqlite3-dev:arm64 \\
+    libpcre2-dev:arm64 \\
+    libunistring-dev:arm64 \\
+    && rm -rf /var/lib/apt/lists/*
+
+# Set environment for Rust
+ENV PATH="/root/.cargo/bin:${{PATH}}"
+
+# Project layout
+VOLUME /himmelblau
+
+# Change directory to the repository
+WORKDIR /himmelblau
+
+# Install Rust + aarch64 target + packaging tools (native amd64)
+RUN --mount=type=cache,target=/root/.cargo/registry curl https://sh.rustup.rs -sSf | sh -s -- -y && \\
+    rustup target add aarch64-unknown-linux-gnu && \\
+    cargo install cargo-deb cargo-generate-rpm
+
+# Configure cross-compilation
+ENV CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc \\
+    CC_aarch64_unknown_linux_gnu=aarch64-linux-gnu-gcc \\
+    CXX_aarch64_unknown_linux_gnu=aarch64-linux-gnu-g++ \\
+    AR_aarch64_unknown_linux_gnu=aarch64-linux-gnu-ar \\
+    PKG_CONFIG_PATH_aarch64_unknown_linux_gnu=/usr/lib/aarch64-linux-gnu/pkgconfig \\
+    PKG_CONFIG_SYSROOT_DIR_aarch64_unknown_linux_gnu=/ \\
+    PKG_CONFIG_ALLOW_CROSS=1
+
+{patch_libhimmelblau}
+
+{selinux_enabled}
+# Build the project and create the packages
+{final_cmd}
+"""
+
+# Rust install: native (amd64) — compile cargo-deb/cargo-generate-rpm from source
+RUST_INSTALL_NATIVE = """\
+RUN --mount=type=cache,target=/root/.cargo/registry curl https://sh.rustup.rs -sSf | sh -s -- -y && \\
+    cargo install cargo-deb cargo-generate-rpm"""
+
+# Rust install: emulated (arm64) — only install Rust itself, skip packaging tools
+# cargo-deb and cargo-generate-rpm are cross-compiled in a separate amd64 stage
+# CFLAGS=-O2: prevent gcc segfaults under QEMU emulation (gcc -O3 triggers QEMU bugs)
+RUST_INSTALL_EMULATED = """\
+ENV CFLAGS="-O2" CXXFLAGS="-O2"
+RUN --mount=type=cache,target=/root/.cargo/registry curl https://sh.rustup.rs -sSf | sh -s -- -y
+COPY --from=tooling /usr/local/cargo/bin/cargo-deb /root/.cargo/bin/cargo-deb
+COPY --from=tooling /usr/local/cargo/bin/cargo-generate-rpm /root/.cargo/bin/cargo-generate-rpm"""
+
+# Cross-compilation stage: build cargo-deb and cargo-generate-rpm for aarch64 on amd64
+TOOLING_STAGE_TPL = """\
+FROM --platform=linux/amd64 rust:latest AS tooling
+RUN apt-get update && apt-get install -y gcc-aarch64-linux-gnu && rm -rf /var/lib/apt/lists/*
+RUN rustup target add aarch64-unknown-linux-gnu
+ENV CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc
+RUN cargo install --target aarch64-unknown-linux-gnu cargo-deb cargo-generate-rpm
+
+"""
+
+# Ubuntu codename mapping (used for multiarch apt sources)
+UBUNTU_CODENAMES = {
+    "ubuntu:22.04": "jammy",
+    "ubuntu:24.04": "noble",
+    "ubuntu:25.10": "plucky",
+}
+
+# Ubuntu 24.04+ uses DEB822 format (.sources files)
+UBUNTU_DEB822_VERSIONS = {"ubuntu:24.04", "ubuntu:25.10"}
+
+
+def build_multiarch_sources(dist_cfg):
+    """Generate apt source reconfiguration for Ubuntu arm64 cross-compilation.
+
+    Ubuntu serves arm64 packages from ports.ubuntu.com, not archive.ubuntu.com.
+    Debian serves all architectures from the same mirrors, so no reconfiguration needed.
+    """
+    image = dist_cfg["image"]
+
+    # Debian: no reconfiguration needed — deb.debian.org serves arm64 natively
+    if not image.startswith("ubuntu:"):
+        return ""
+
+    codename = UBUNTU_CODENAMES.get(image)
+    if not codename:
+        # If a new Ubuntu version is added to DISTS but not to UBUNTU_CODENAMES,
+        # warn loudly so the build fails visibly rather than silently skipping
+        # multiarch configuration (which would cause cryptic apt 404 errors).
+        print(f"[WARNING] No codename in UBUNTU_CODENAMES for {image} — arm64 apt sources not configured!")
+        return ""
+
+    if image in UBUNTU_DEB822_VERSIONS:
+        # DEB822 format (Ubuntu 24.04+):
+        # Pin existing sources to amd64, create separate arm64 sources file
+        return f"""\
+# Configure apt sources for arm64 cross-compilation
+# Ubuntu serves arm64 packages from ports.ubuntu.com, not archive.ubuntu.com
+RUN sed -i '/^Types: deb$/a Architectures: amd64' /etc/apt/sources.list.d/ubuntu.sources
+RUN cat <<'EOF' > /etc/apt/sources.list.d/ubuntu-arm64.sources
+Types: deb
+URIs: http://ports.ubuntu.com/ubuntu-ports/
+Suites: {codename} {codename}-updates {codename}-backports
+Components: main restricted universe multiverse
+Architectures: arm64
+Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
+
+Types: deb
+URIs: http://ports.ubuntu.com/ubuntu-ports/
+Suites: {codename}-security
+Components: main restricted universe multiverse
+Architectures: arm64
+Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
+EOF
+"""
+    else:
+        # Traditional sources.list format (Ubuntu 22.04):
+        # Pin existing entries to [arch=amd64], append arm64 entries for ports.ubuntu.com
+        return f"""\
+# Configure apt sources for arm64 cross-compilation
+# Ubuntu serves arm64 packages from ports.ubuntu.com, not archive.ubuntu.com
+RUN sed -i 's/^deb http/deb [arch=amd64] http/' /etc/apt/sources.list && \\
+    echo "deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports/ {codename} main restricted universe multiverse" >> /etc/apt/sources.list && \\
+    echo "deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports/ {codename}-updates main restricted universe multiverse" >> /etc/apt/sources.list && \\
+    echo "deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports/ {codename}-backports main restricted universe multiverse" >> /etc/apt/sources.list && \\
+    echo "deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports/ {codename}-security main restricted universe multiverse" >> /etc/apt/sources.list
+"""
+
+
 SLE_CONNECT_TPL = """\
 # Install SUSEConnect and dependencies for registration
 RUN zypper --non-interactive refresh && \\
@@ -436,7 +600,7 @@ RUN --mount=type=secret,id=scc_regcode,dst=/run/secrets/scc_regcode \\
     set -e && \\
     source /run/secrets/scc_regcode && \\
     SUSEConnect --email "$email" --regcode "$regcode" && \\
-    SUSEConnect -p PackageHub/%s/x86_64
+    SUSEConnect -p PackageHub/{scc_vers}/$(uname -m)
 """
 
 
@@ -459,7 +623,7 @@ def build_pkg_list(dist_cfg, selinux):
     return sep.join(out)
 
 
-def render(dist_name, dist_cfg, patch_libhimmelblau):
+def render(dist_name, dist_cfg, patch_libhimmelblau, arch="amd64"):
     fam = FAMILIES[dist_cfg["family"]]
     selinux = bool(dist_cfg.get("selinux", False))
     pkgs = build_pkg_list(dist_cfg, selinux)
@@ -469,7 +633,7 @@ def render(dist_name, dist_cfg, patch_libhimmelblau):
     else:
         bootstrap = fam["bootstrap"].rstrip()
     env = fam["env"] or ""
-    sle_connect = SLE_CONNECT_TPL % dist_cfg.get("scc_vers") if dist_cfg.get("scc") else ""
+    sle_connect = SLE_CONNECT_TPL.format(scc_vers=dist_cfg.get("scc_vers")) if dist_cfg.get("scc") else ""
 
     # Features
     tpm = bool(dist_cfg.get("tpm", False))
@@ -477,9 +641,13 @@ def render(dist_name, dist_cfg, patch_libhimmelblau):
     if tpm:
         features.append("tpm")
 
+    # Determine cross-compilation target for arm64 DEB builds
+    arch_info = ARCH_MAP.get(arch, ARCH_MAP["amd64"])
+    cross_target = arch_info["rust_target"] if arch != "amd64" else ""
+
     final_cmd = ""
     if dist_cfg["family"] == "deb" and dist_name != "test":
-        final_cmd = build_deb_final_cmd(features, dist_name)
+        final_cmd = build_deb_final_cmd(features, dist_name, cross_target=cross_target)
     elif dist_name == "test":
         final_cmd = "CMD cargo test"
     elif dist_cfg["family"] == "ebuild":
@@ -500,6 +668,32 @@ def render(dist_name, dist_cfg, patch_libhimmelblau):
         post_blocks.extend(dist_cfg["post_bootstrap"])
     post_bootstrap = "\n".join(post_blocks) + ("\n" if post_blocks else "")
 
+    # DEB arm64: use cross-compilation template (no QEMU emulation)
+    if arch != "amd64" and dist_cfg["family"] == "deb":
+        multiarch_sources = build_multiarch_sources(dist_cfg)
+        df = DOCKERFILE_CROSS_DEB_TPL.format(
+            GENERATED_MARKER=GENERATED_MARKER,
+            base_image=dist_cfg["image"],
+            env=env,
+            multiarch_sources=multiarch_sources,
+            bootstrap=(extra + bootstrap),
+            post_bootstrap=post_bootstrap,
+            selinux_enabled=("ENV HIMMELBLAU_ALLOW_MISSING_SELINUX=1" if not selinux else ""),
+            patch_libhimmelblau="COPY ./scripts/cargo-patch-config.toml /root/.cargo/config.toml" if patch_libhimmelblau else "",
+            final_cmd=final_cmd,
+        )
+        return df
+
+    # Select Rust install method and tooling stage based on architecture
+    if arch != "amd64":
+        # arm64 RPM/zypper: cross-compile packaging tools on amd64, copy into arm64 stage
+        rust_install = RUST_INSTALL_EMULATED
+        tooling_stage = TOOLING_STAGE_TPL
+    else:
+        # amd64: compile packaging tools natively
+        rust_install = RUST_INSTALL_NATIVE
+        tooling_stage = ""
+
     # Use minimal template for ebuild generation
     if dist_cfg["family"] == "ebuild":
         df = DOCKERFILE_EBUILD_TPL.format(
@@ -510,11 +704,13 @@ def render(dist_name, dist_cfg, patch_libhimmelblau):
     else:
         df = DOCKERFILE_TPL.format(
             GENERATED_MARKER=GENERATED_MARKER,
+            tooling_stage=tooling_stage,
             base_image=dist_cfg["image"],
             env=env,
             bootstrap=(extra + bootstrap),
             post_bootstrap=post_bootstrap,
             sle_connect=("\n" + sle_connect + "\n" if sle_connect else ""),
+            rust_install=rust_install,
             selinux_enabled=("ENV HIMMELBLAU_ALLOW_MISSING_SELINUX=1" if not selinux else ""),
             patch_libhimmelblau="COPY ./scripts/cargo-patch-config.toml /root/.cargo/config.toml" if patch_libhimmelblau else "",
             final_cmd=final_cmd,
@@ -526,6 +722,11 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", default="./dockerfiles", help="Output directory")
     ap.add_argument("--only", default="", help="Comma-separated list of dists to render")
+    ap.add_argument(
+        "--arch", default="amd64",
+        choices=sorted(ARCH_MAP.keys()),
+        help="Target architecture (default: amd64)",
+    )
     ap.add_argument(
         "--patch-libhimmelblau",
         dest="patch_libhimmelblau",
@@ -548,20 +749,30 @@ def main():
 
     os.makedirs(args.out, exist_ok=True)
 
+    # For non-default arch, use arch-suffixed Dockerfile names
+    arch_suffix = f".{args.arch}" if args.arch != "amd64" else ""
+
     written = []
+    skipped = []
     for name in sorted(want):
         if name not in DISTS:
             print(f"[skip] unknown dist: {name}")
             continue
-        df = render(name, DISTS[name], args.patch_libhimmelblau)
-        path = os.path.join(args.out, f"Dockerfile.{name}")
+        # Check if this distro supports the requested architecture
+        if args.arch != "amd64" and not DISTS[name].get(args.arch, True):
+            skipped.append(name)
+            continue
+        df = render(name, DISTS[name], args.patch_libhimmelblau, arch=args.arch)
+        path = os.path.join(args.out, f"Dockerfile.{name}{arch_suffix}")
         with open(path, "w", encoding="utf-8") as f:
             f.write(df)
         written.append(path)
 
-    print(f"Wrote {len(written)} Dockerfiles:")
+    print(f"Wrote {len(written)} Dockerfiles (arch={args.arch}):")
     for p in written:
         print("  -", p)
+    if skipped:
+        print(f"Skipped {len(skipped)} distros (no {args.arch} support): {', '.join(skipped)}")
 
 
 if __name__ == "__main__":
