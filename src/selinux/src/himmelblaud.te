@@ -68,6 +68,117 @@ allow init_t himmelblaud_tasks_exec_t:file { execute getattr map open read };
 type_transition init_t himmelblaud_tasks_exec_t:process himmelblaud_tasks_t;
 
 ############################
+# Permissions for himmelblaud_t and himmelblaud_tasks_t
+# Now that daemons run in their own domains, they need access to their data files.
+# These were previously granted to init_t as a workaround.
+
+# Basic file access permissions
+require {
+	class dir { add_name create getattr mounton open read remove_name rmdir search setattr write };
+	class file { append create getattr lock map open read setattr unlink write };
+	class lnk_file { create read unlink };
+	class sock_file { create getattr setattr write unlink };
+}
+
+# himmelblaud_t (main daemon) permissions
+allow himmelblaud_t himmelblau_etc_t:dir { getattr open read search };
+allow himmelblaud_t himmelblau_etc_t:file { getattr open read };
+allow himmelblaud_t himmelblau_nss_cache_t:dir { add_name getattr mounton open read remove_name search setattr write };
+allow himmelblaud_t himmelblau_nss_cache_t:file { create getattr lock open read setattr unlink write };
+allow himmelblaud_t himmelblau_var_cache_t:dir { add_name create getattr open read remove_name rmdir search setattr write };
+allow himmelblaud_t himmelblau_var_cache_t:file { create getattr lock open read setattr unlink write };
+allow himmelblaud_t himmelblau_var_cache_t:lnk_file read;
+allow himmelblaud_t himmelblau_var_lib_t:dir { add_name getattr open read setattr write };
+allow himmelblaud_t himmelblau_var_lib_t:file { create open read setattr write };
+allow himmelblaud_t himmelblau_var_lib_t:lnk_file read;
+allow himmelblaud_t himmelblau_var_run_t:dir { add_name create getattr mounton open read remove_name rmdir search setattr write };
+allow himmelblaud_t himmelblau_var_run_t:sock_file { create getattr setattr write unlink };
+
+# himmelblaud_tasks_t (tasks daemon) permissions
+allow himmelblaud_tasks_t himmelblau_etc_t:dir { getattr open read search };
+allow himmelblaud_tasks_t himmelblau_etc_t:file { getattr open read };
+allow himmelblaud_tasks_t himmelblau_var_cache_t:dir { add_name create getattr open read remove_name rmdir search setattr write };
+allow himmelblaud_tasks_t himmelblau_var_cache_t:file { create getattr lock open read setattr unlink write };
+allow himmelblaud_tasks_t himmelblau_var_cache_t:lnk_file read;
+allow himmelblaud_tasks_t himmelblau_var_lib_t:dir { add_name getattr open read setattr write };
+allow himmelblaud_tasks_t himmelblau_var_lib_t:file { create open read setattr write };
+allow himmelblaud_tasks_t himmelblau_var_lib_t:lnk_file read;
+allow himmelblaud_tasks_t himmelblau_var_run_t:dir { getattr open read search };
+allow himmelblaud_tasks_t himmelblau_var_run_t:sock_file write;
+
+# Both daemons need access to /etc/subuid and /etc/subgid for user namespace management
+require {
+	type etc_t;
+}
+allow himmelblaud_t etc_t:file { append getattr open read write };
+allow himmelblaud_tasks_t etc_t:file { append getattr open read write };
+
+# himmelblaud_tasks needs to manage user home directory symlinks (for profile setup)
+optional {
+	require {
+		type user_home_dir_t;
+	}
+	allow himmelblaud_tasks_t user_home_dir_t:lnk_file { create read unlink };
+}
+
+# Network access for himmelblaud_t (needs to connect to Azure/Entra ID)
+ifdef(`corenet_tcp_connect_http_port',`corenet_tcp_connect_http_port(himmelblaud_t)',
+      `require {
+              type http_port_t;
+              class tcp_socket name_connect;
+       }
+       allow himmelblaud_t http_port_t:tcp_socket name_connect;')
+
+# Standard daemon macros for basic functionality
+# These provide common permissions needed by system daemons
+ifdef(`logging_send_syslog_msg',`
+	logging_send_syslog_msg(himmelblaud_t)
+	logging_send_syslog_msg(himmelblaud_tasks_t)
+')
+ifdef(`miscfiles_read_localization',`
+	miscfiles_read_localization(himmelblaud_t)
+	miscfiles_read_localization(himmelblaud_tasks_t)
+')
+ifdef(`libs_use_ld_so',`
+	libs_use_ld_so(himmelblaud_t)
+	libs_use_ld_so(himmelblaud_tasks_t)
+')
+ifdef(`libs_use_shared_libs',`
+	libs_use_shared_libs(himmelblaud_t)
+	libs_use_shared_libs(himmelblaud_tasks_t)
+')
+ifdef(`files_read_etc_files',`
+	files_read_etc_files(himmelblaud_t)
+	files_read_etc_files(himmelblaud_tasks_t)
+')
+ifdef(`files_read_usr_files',`
+	files_read_usr_files(himmelblaud_t)
+	files_read_usr_files(himmelblaud_tasks_t)
+')
+
+# himmelblaud_tasks needs to manage user home content
+ifdef(`userdom_manage_user_home_content',`userdom_manage_user_home_content(himmelblaud_tasks_t)')
+ifdef(`files_search_home',`files_search_home(himmelblaud_tasks_t)')
+
+# himmelblaud_tasks needs to create user account data (for accountsd integration)
+optional {
+	require {
+		type accountsd_var_lib_t;
+	}
+	allow himmelblaud_tasks_t accountsd_var_lib_t:dir { add_name create getattr open read remove_name search write setattr };
+	allow himmelblaud_tasks_t accountsd_var_lib_t:file { create getattr open read write setattr unlink };
+}
+
+# himmelblaud_tasks needs to manage home directories
+optional {
+	require {
+		type home_root_t;
+	}
+	allow himmelblaud_tasks_t home_root_t:dir { add_name create getattr open read search write setattr };
+	allow himmelblaud_tasks_t home_root_t:lnk_file { create getattr read unlink };
+}
+
+############################
 # App-specific types
 
 type himmelblau_etc_t;
