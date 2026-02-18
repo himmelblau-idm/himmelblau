@@ -20,7 +20,7 @@ path = "src/lib.rs"
 [package.metadata.deb]
 name = "himmelblau-qr-greeter"
 depends = ["gnome-shell", "himmelblau"]
-recommends = ["systemd-container"]
+recommends = ["dconf"]
 assets = [
   ["target/release/qr-greeter-build/qr-greeter@himmelblau-idm.org/extension.js", "usr/share/gnome-shell/extensions/qr-greeter@himmelblau-idm.org/extension.js", "644"],
   ["target/release/qr-greeter-build/qr-greeter@himmelblau-idm.org/qrcodegen.js", "usr/share/gnome-shell/extensions/qr-greeter@himmelblau-idm.org/qrcodegen.js", "644"],
@@ -50,4 +50,4 @@ gnome-shell = "*"
 himmelblau = "*"
 
 [package.metadata.generate-rpm.recommends]
-systemd-container = "*"
+dconf = "*"

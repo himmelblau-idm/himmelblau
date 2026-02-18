@@ -1,32 +1,36 @@
 #!/bin/sh
 set -e
 
-if command -v machinectl >/dev/null 2>&1 && getent passwd gdm >/dev/null 2>&1; then
+if command -v dconf >/dev/null 2>&1 && getent passwd gdm >/dev/null 2>&1; then
     echo "Enabling Himmelblau QR Greeter GNOME Shell extension for GDM user..."
 
-    # Running `machinectl shell gdm@ ...` may trigger PAM (and thus pam_himmelblau),
-    # which will try to connect to himmelblaud. During package installation the daemon
-    # may not be installed or started yet, causing noisy "socket not found" logs.
-    # Run the gsettings command inside a non-interactive gdm shell.
-    # We keep this step enabled (it is useful), but we filter the known-harmless
-    # daemon socket noise that can be emitted if pam_himmelblau runs while the
-    # daemon isn't installed/started yet.
-    set +e
-    out="$(
-        machinectl --quiet shell gdm@ /bin/bash -lc \
-            "gsettings set org.gnome.shell enabled-extensions \"['qr-greeter@himmelblau-idm.org']\"" 2>&1
-    )"
-    rc=$?
-    set -e
+    # Create /etc/dconf/profile/gdm if it doesn't exist
+    if [ ! -f /etc/dconf/profile/gdm ]; then
+        mkdir -p /etc/dconf/profile
+        cat > /etc/dconf/profile/gdm << 'EOF'
+user-db:user
+system-db:gdm
+file-db:/usr/share/gdm/greeter-dconf-defaults
+EOF
+        echo "Created /etc/dconf/profile/gdm"
+    fi
 
-    filtered="$(printf '%s\n' "$out" | grep -Ev 'Unix socket stream setup error while connecting to /(var/)?run/himmelblaud/socket|Error DaemonClientBlocking::new\(\)' || true)"
-    if [ -n "$filtered" ]; then
-        printf '%s\n' "$filtered" >&2
+    # Create dconf database directory if it doesn't exist
+    mkdir -p /etc/dconf/db/gdm.d
+
+    # Create the extension enablement configuration
+    cat > /etc/dconf/db/gdm.d/01-himmelblau-qr-greeter << 'EOF'
+[org/gnome/shell]
+enabled-extensions=['qr-greeter@himmelblau-idm.org']
+EOF
+    echo "Created /etc/dconf/db/gdm.d/01-himmelblau-qr-greeter"
+
+    # Update dconf database
+    if dconf update; then
+        echo "Himmelblau QR Greeter GNOME Shell extension enabled for GDM user. You must restart GDM for the changes to take effect."
+    else
+        echo 'Warning: dconf update failed' >&2
     fi
-    if [ $rc -ne 0 ]; then
-        echo 'Warning: unable to enable QR Greeter extension for gdm user' >&2
-    fi
-    echo "Himmelblau QR Greeter GNOME Shell extension enabled for GDM user. You must restart for the changes to take effect."
 else
-    echo 'Info: machinectl or gdm user not available; skipping automatic extension enable.' >&2
+    echo 'Info: dconf or gdm user not available; skipping automatic extension enable.' >&2
 fi
