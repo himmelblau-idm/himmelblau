@@ -598,7 +598,7 @@ async fn handle_tasks(stream: UnixStream, cfg: &HimmelblauConfig) {
                 }
             }
             Some(Ok(TaskRequest::KerberosTGTs(uid, gid, tgt_cloud, tgt_ad))) => {
-                debug!("Received task -> KerberosCCache({}, {}, ...)", uid, gid);
+                debug!("Received task -> KerberosTGTs({}, {}, ...)", uid, gid);
 
                 let cloud_ret = if let Some(tgt_cloud) = tgt_cloud {
                     store_tgt(tgt_cloud.as_ref(), uid, gid)
