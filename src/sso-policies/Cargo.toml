@@ -1,0 +1,37 @@
+[package]
+name = "sso-policies"
+description = "Browser policy files for Himmelblau SSO"
+version.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+edition.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[dependencies]
+
+[package.metadata.deb]
+name = "himmelblau-sso-policies"
+depends = []
+recommends = ["himmelblau-sso", "jq"]
+assets = [
+  ["src/chrome/policies.json", "etc/opt/chrome/policies/managed/himmelblau.json", "644"],
+  ["src/chrome/policies.json", "etc/chromium/policies/managed/himmelblau.json", "644"],
+  ["src/firefox/policies.json", "usr/share/doc/himmelblau-sso-policies/firefox-policies.json.example", "644"],
+]
+maintainer-scripts = "scripts"
+
+[package.metadata.generate-rpm]
+name = "himmelblau-sso-policies"
+assets = [
+  { source = "src/chrome/policies.json", dest = "/etc/opt/chrome/policies/managed/himmelblau.json", mode = "644" },
+  { source = "src/chrome/policies.json", dest = "/etc/chromium/policies/managed/himmelblau.json", mode = "644" },
+  { source = "src/firefox/policies.json", dest = "/usr/share/doc/himmelblau-sso-policies/firefox-policies.json.example", mode = "644", doc = true },
+]
+post_install_script = "scripts/postinst"
+post_uninstall_script = "scripts/postrm"
+
+[package.metadata.generate-rpm.recommends]
+himmelblau-sso = "*"
+jq = "*"
