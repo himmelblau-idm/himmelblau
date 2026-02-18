@@ -4,6 +4,6 @@
   "description": "Adds a QR code to authentication prompts when a URL is detected.",
   "version": 1,
   "shell-version": ["45", "46", "47", "48"],
-  "session-modes": ["gdm"],
+  "session-modes": ["gdm", "unlock-dialog"],
   "donations": { "opencollective" : "himmelblau" }
 }
