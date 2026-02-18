@@ -44,6 +44,30 @@ role system_r types himmelblaud_t;
 role system_r types himmelblaud_tasks_t;
 
 ############################
+# Domain transitions from init
+# The init_daemon_domain/init_nnp_daemon_domain macros above should create these,
+# but we add explicit rules as a safety net for distros where macros may not expand properly.
+# These rules ensure systemd (running as init_t) can start our daemons in their own domains.
+
+require {
+	type init_t;
+	class process { transition };
+	class file { entrypoint execute getattr map open read };
+}
+
+# Allow init_t to transition to himmelblaud_t when executing himmelblaud_exec_t
+allow init_t himmelblaud_t:process transition;
+allow himmelblaud_t himmelblaud_exec_t:file entrypoint;
+allow init_t himmelblaud_exec_t:file { execute getattr map open read };
+type_transition init_t himmelblaud_exec_t:process himmelblaud_t;
+
+# Allow init_t to transition to himmelblaud_tasks_t when executing himmelblaud_tasks_exec_t
+allow init_t himmelblaud_tasks_t:process transition;
+allow himmelblaud_tasks_t himmelblaud_tasks_exec_t:file entrypoint;
+allow init_t himmelblaud_tasks_exec_t:file { execute getattr map open read };
+type_transition init_t himmelblaud_tasks_exec_t:process himmelblaud_tasks_t;
+
+############################
 # App-specific types
 
 type himmelblau_etc_t;
@@ -124,8 +148,6 @@ allow init_t himmelblau_var_lib_t:file { create open read setattr write };
 allow init_t himmelblau_var_lib_t:lnk_file read;
 allow init_t himmelblau_var_run_t:dir { add_name create getattr mounton open read remove_name rmdir search setattr write };
 allow init_t himmelblau_var_run_t:sock_file { create getattr setattr write unlink };
-allow init_t himmelblaud_exec_t:file { execute execute_no_trans map open read };
-allow init_t himmelblaud_tasks_exec_t:file { execute execute_no_trans map open read };
 
 # init_t needs to modify /etc/subuid and /etc/subgid for user namespace subordinate IDs
 # These files have etc_t type
