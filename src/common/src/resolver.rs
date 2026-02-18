@@ -1355,6 +1355,10 @@ where
                         // PamAuthRequest::Password is invalid.
                         return Err(());
                     }
+                    (AuthCredHandler::ReauthPassword { .. }, _) => {
+                        // AuthCredHandler::ReauthPassword is invalid for offline auth.
+                        return Err(());
+                    }
                 }
             }
             (&mut AuthSession::InProgress { token: None, .. }, state) => {

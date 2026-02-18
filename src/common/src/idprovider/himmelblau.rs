@@ -28,6 +28,7 @@ use crate::constants::EDGE_BROWSER_CLIENT_ID;
 use crate::constants::ID_MAP_CACHE;
 use crate::db::KeyStoreTxn;
 use crate::idmap_cache::StaticIdCache;
+use crate::idprovider::common::flip_displayname_comma;
 use crate::idprovider::common::KeyType;
 use crate::idprovider::common::RefreshCacheEntry;
 use crate::idprovider::common::TotpEnrollmentRecord;
@@ -45,7 +46,7 @@ use crate::{
     impl_handle_hello_pin_totp_auth, impl_himmelblau_hello_key_helpers,
     impl_himmelblau_offline_auth_init, impl_himmelblau_offline_auth_step, impl_offline_break_glass,
     impl_provision_hello_key, impl_provision_or_create_hello_key, impl_setup_hello_totp,
-    impl_unix_user_access, load_cached_prt,
+    impl_unix_user_access, load_cached_prt, seal_prt_with_existing_hello_key,
 };
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
@@ -56,7 +57,7 @@ use himmelblau::discovery::EnrollAttrs;
 use himmelblau::error::{MsalError, DEVICE_AUTH_FAIL};
 use himmelblau::graph::UserObject;
 use himmelblau::graph::{DirectoryObject, Graph};
-use himmelblau::intune::IntuneForLinux;
+use himmelblau::intune::{fetch_intune_portal_versions, IntuneForLinux};
 use himmelblau::{AuthOption, MFAAuthContinue};
 use himmelblau::{ClientToken, ConfidentialClientApplication};
 use idmap::{AadSid, Idmap};
@@ -101,6 +102,12 @@ fn msal_error_to_user_message(e: &MsalError) -> String {
             "Authentication failed: Invalid server response.".to_string()
         }
         MsalError::AcquireTokenFailed(error_response) => {
+            if error_response
+                .error_codes
+                .contains(&PASSWORD_RESET_REGISTRATION_REQUIRED)
+            {
+                return "Password reset registration required. Complete setup at https://aka.ms/ssprsetup from another device, then try again.".to_string();
+            }
             // This case is typically handled separately with error_description,
             // but provide a fallback if it reaches this function.
             error_response.error_description.to_string()
@@ -123,6 +130,9 @@ fn msal_error_to_user_message(e: &MsalError) -> String {
             "Authentication in progress.".to_string()
         }
         MsalError::AADSTSError(aadsts_err) => {
+            if aadsts_err.code == PASSWORD_RESET_REGISTRATION_REQUIRED {
+                return "Password reset registration required. Complete setup at https://aka.ms/ssprsetup from another device, then try again.".to_string();
+            }
             // AADSTSError has a useful description from Azure AD
             aadsts_err.to_string()
         }
@@ -830,22 +840,47 @@ enum TokenOrObj {
 }
 
 macro_rules! check_new_device_enrollment_required {
-    ($aadsts_err:expr, $self:expr, $keystore:expr, $ret_fn:expr, $ret_fail:expr) => {{
+    ($aadsts_err:expr, $self:expr, $keystore:expr) => {{
         if $aadsts_err.error_codes.contains(&(135011 as u32))
             || $aadsts_err.error_codes.contains(&DEVICE_AUTH_FAIL)
         {
             let csr_tag = $self.fetch_cert_key_tag();
             if let Err(e) = $keystore.delete_tagged_hsm_key(&csr_tag) {
-                return $ret_fail(format!("Failed to delete CSR key: {:?}", e));
+                error!("Failed to delete CSR key: {:?}", e);
+                return Ok((
+                    AuthResult::Denied(
+                        msal_error_to_user_message(&MsalError::AcquireTokenFailed($aadsts_err))
+                            + " Failed to delete CSR key",
+                    ),
+                    AuthCacheAction::None,
+                ));
             }
             let intune_tag = $self.fetch_intune_key_tag();
             if let Err(e) = $keystore.delete_tagged_hsm_key(&intune_tag) {
-                return $ret_fail(format!("Failed to delete intune key: {:?}", e));
+                error!("Failed to delete intune key: {:?}", e);
+                return Ok((
+                    AuthResult::Denied(
+                        msal_error_to_user_message(&MsalError::AcquireTokenFailed($aadsts_err))
+                            + " Failed to delete intune key",
+                    ),
+                    AuthCacheAction::None,
+                ));
             }
 
-            return $ret_fn(format!("Device has been removed from the domain."));
+            return Ok((
+                AuthResult::Denied(
+                    "Device has been removed from the domain. ".to_string()
+                        + &msal_error_to_user_message(&MsalError::AcquireTokenFailed($aadsts_err)),
+                ),
+                AuthCacheAction::None,
+            ));
         }
-        return $ret_fail(format!("{:?}", $aadsts_err));
+        return Ok((
+            AuthResult::Denied(msal_error_to_user_message(&MsalError::AcquireTokenFailed(
+                $aadsts_err,
+            ))),
+            AuthCacheAction::None,
+        ));
     }};
 }
 
@@ -1435,6 +1470,18 @@ impl IdProvider for HimmelblauProvider {
             Ok((hello_key, _keytype)) => Some(hello_key),
             Err(_) => None,
         };
+        let remote_services = self
+            .config
+            .read()
+            .await
+            .get_password_only_remote_services_deny_list();
+        // Check if this is a remote service:
+        // - Service starts with "remote:" (set by PAM module when PAM_RHOST is set)
+        // - Service name contains any entry from remote_services_deny_list
+        let is_remote_service =
+            service.starts_with("remote:") || remote_services.iter().any(|s| service.contains(s));
+        let hello_totp_enabled = check_hello_totp_enabled!(self);
+        let allow_remote_hello = self.config.read().await.get_allow_remote_hello();
         // Skip Hello authentication if it is disabled by config
         let hello_enabled = self.config.read().await.get_enable_hello();
         let hello_pin_retry_count = self.config.read().await.get_hello_pin_retry_count();
@@ -1443,6 +1490,7 @@ impl IdProvider for HimmelblauProvider {
         if !self.is_domain_joined(keystore).await
             || hello_key.is_none()
             || !hello_enabled
+            || (is_remote_service && !hello_totp_enabled && !allow_remote_hello)
             || self.bad_pin_counter.bad_pin_count(account_id).await > hello_pin_retry_count
             || intune_enrollment_required
             || no_hello_pin
@@ -1465,29 +1513,22 @@ impl IdProvider for HimmelblauProvider {
             // to allow natural passwordless flow without prematurely triggering
             // MFA notifications.
             let console_password_only = self.config.read().await.get_allow_console_password_only();
-            let remote_services = self
-                .config
-                .read()
-                .await
-                .get_password_only_remote_services_deny_list();
-            // Check if this is a remote service:
-            // - Service starts with "remote:" (set by PAM module when PAM_RHOST is set)
-            // - Service name contains any entry from remote_services_deny_list
-            let is_remote_service = service.starts_with("remote:")
-                || remote_services.iter().any(|s| service.contains(s));
             debug!(
                 "Service '{}' remote_service={} console_password_only={}",
                 service, is_remote_service, console_password_only
             );
             if self.config.read().await.get_enable_experimental_mfa() {
-                let mut auth_options = vec![AuthOption::Fido, AuthOption::Passwordless];
-                if self
-                    .config
-                    .read()
-                    .await
-                    .get_enable_experimental_passwordless_fido()
-                {
-                    auth_options.push(AuthOption::PasswordlessFido);
+                let mut auth_options = vec![AuthOption::Passwordless];
+                if !is_remote_service {
+                    auth_options.push(AuthOption::Fido);
+                    if self
+                        .config
+                        .read()
+                        .await
+                        .get_enable_experimental_passwordless_fido()
+                    {
+                        auth_options.push(AuthOption::PasswordlessFido);
+                    }
                 }
 
                 if is_remote_service || !console_password_only {
@@ -1530,7 +1571,6 @@ impl IdProvider for HimmelblauProvider {
                     return Ok((
                         AuthRequest::Password,
                         AuthCredHandler::PasswordFirst {
-                            auth_init,
                             auth_options,
                             is_domain_joined,
                         },
@@ -1582,9 +1622,10 @@ impl IdProvider for HimmelblauProvider {
                                     fido_allow_list,
                                 },
                                 AuthCredHandler::MFA {
-                                    flow,
+                                    flow: Box::new(flow),
                                     password: None,
                                     extra_data: None,
+                                    reauth_hello_pin: None,
                                 },
                             ));
                         }
@@ -1599,9 +1640,10 @@ impl IdProvider for HimmelblauProvider {
                             polling_interval: polling_interval / 1000,
                         },
                         AuthCredHandler::MFA {
-                            flow,
+                            flow: Box::new(flow),
                             password: None,
                             extra_data: None,
+                            reauth_hello_pin: None,
                         },
                     ))
                 }
@@ -1638,9 +1680,10 @@ impl IdProvider for HimmelblauProvider {
                         polling_interval: polling_interval / 1000,
                     },
                     AuthCredHandler::MFA {
-                        flow,
+                        flow: Box::new(flow),
                         password: None,
                         extra_data: None,
+                        reauth_hello_pin: None,
                     },
                 ))
             }
@@ -1693,15 +1736,7 @@ impl IdProvider for HimmelblauProvider {
                         return Ok((AuthResult::Denied("Network outage detected.".to_string()), AuthCacheAction::None));
                     },
                     Err(MsalError::AcquireTokenFailed(e)) => {
-                        check_new_device_enrollment_required!(e, self, keystore,
-                            |msg: String| {
-                                return Ok((AuthResult::Denied(msg), AuthCacheAction::None))
-                            },
-                            |msg: String| {
-                                error!("{}", msg);
-                                return Ok((AuthResult::Denied(msg), AuthCacheAction::None))
-                            }
-                        )
+                        check_new_device_enrollment_required!(e, self, keystore)
                     },
                     $($pat => $result),*
                 }
@@ -1854,53 +1889,201 @@ impl IdProvider for HimmelblauProvider {
                 )
             }};
         }
-        macro_rules! request_dag {
-            () => {{
-                let console_password_only = self.config.read().await.get_allow_console_password_only();
-                let remote_services = self
-                    .config
-                    .read()
-                    .await
-                    .get_password_only_remote_services_deny_list();
+        // Issue #1051: Initiate online re-authentication when the cached
+        // PRT/refresh token has expired but the Hello key and PIN are still valid.
+        // The validated PIN is carried through so the new PRT can be sealed with
+        // the existing Hello key after successful re-authentication.
+        //
+        // When experimental_mfa is enabled, uses the interactive MFA flow (push
+        // notification, FIDO, code entry) for a smoother UX. Otherwise falls
+        // back to Device Authorization Grant (DAG) which requires the user to
+        // authenticate via browser on another device.
+        macro_rules! request_reauth {
+            ($reauth_pin:expr) => {{
+                let reauth_pin_value = Zeroizing::new($reauth_pin);
+                let (
+                    console_password_only,
+                    remote_services,
+                    enable_experimental_mfa,
+                    enable_experimental_passwordless_fido,
+                    mfa_method,
+                ) = {
+                    let cfg = self.config.read().await;
+                    (
+                        cfg.get_allow_console_password_only(),
+                        cfg.get_password_only_remote_services_deny_list(),
+                        cfg.get_enable_experimental_mfa(),
+                        cfg.get_enable_experimental_passwordless_fido(),
+                        cfg.get_mfa_method(),
+                    )
+                };
                 let is_remote_service = service.starts_with("remote:")
                     || remote_services.iter().any(|s| service.contains(s));
-                let mut auth_options = vec![];
-                if is_remote_service || !console_password_only {
-                    auth_options.push(AuthOption::ForceMFA);
-                }
-                if is_remote_service {
-                    auth_options.push(AuthOption::RemoteSession);
-                }
-                let resp = net_down_check!(
-                    self.client
+
+                if enable_experimental_mfa {
+                    // Interactive MFA flow: supports push notifications, FIDO,
+                    // and code entry. Better UX than DAG for most users.
+                    let mut auth_options = vec![AuthOption::Passwordless];
+                    if !is_remote_service {
+                        auth_options.push(AuthOption::Fido);
+                        if enable_experimental_passwordless_fido {
+                            auth_options.push(AuthOption::PasswordlessFido);
+                        }
+                    }
+                    if is_remote_service || !console_password_only {
+                        auth_options.push(AuthOption::ForceMFA);
+                    }
+                    if is_remote_service {
+                        auth_options.push(AuthOption::RemoteSession);
+                    }
+
+                    let flow = match self
+                        .client
+                        .read()
+                        .await
+                        .initiate_acquire_token_by_mfa_flow_for_device_enrollment(
+                            account_id,
+                            None, // No password — we only have the PIN
+                            &auth_options,
+                            None, // No auth_init — user already exists
+                            mfa_method.as_deref(),
+                        )
+                        .await
+                    {
+                        Ok(flow) => flow,
+                        Err(MsalError::RequestFailed(msg)) => {
+                            let url = extract_base_url!(msg);
+                            info!(?url, "Network down detected during reauth MFA initiation");
+                            let mut state = self.state.lock().await;
+                            *state = CacheState::OfflineNextCheck(
+                                SystemTime::now() + OFFLINE_NEXT_CHECK,
+                            );
+                            return Ok((
+                                AuthResult::Denied("Network outage detected.".to_string()),
+                                AuthCacheAction::None,
+                            ));
+                        }
+                        Err(MsalError::PasswordRequired) => {
+                            // Azure requires a password for this flow. Prompt for
+                            // password and continue with the regular password+MFA
+                            // path so we can avoid DAG when possible.
+                            debug!("MFA flow requires password; prompting password reauth.");
+                            *cred_handler = AuthCredHandler::ReauthPassword {
+                                reauth_hello_pin: reauth_pin_value,
+                            };
+                            return Ok((AuthResult::Next(AuthRequest::Password), AuthCacheAction::None));
+                        }
+                        Err(e) => {
+                            error!("Failed to initiate reauth MFA flow: {:?}", e);
+                            return Ok((
+                                AuthResult::Denied(
+                                    "Your session has expired. Please sign in again.".to_string(),
+                                ),
+                                AuthCacheAction::None,
+                            ));
+                        }
+                    };
+
+                    // Check if Azure provided FIDO credentials
+                    if !flow.fido_is_passkey {
+                        if let (Some(fido_challenge), Some(fido_allow_list)) =
+                            (flow.fido_challenge.clone(), flow.fido_allow_list.clone())
+                        {
+                            *cred_handler = AuthCredHandler::MFA {
+                                flow: Box::new(flow),
+                                password: None,
+                                extra_data: None,
+                                reauth_hello_pin: Some(reauth_pin_value.clone()),
+                            };
+                            debug!("Session expired, initiating FIDO re-authentication with existing Hello key.");
+                            return Ok((
+                                AuthResult::Next(AuthRequest::Fido {
+                                    fido_challenge,
+                                    fido_allow_list,
+                                }),
+                                AuthCacheAction::None,
+                            ));
+                        }
+                    }
+
+                    let msg = flow.msg.clone();
+                    let polling_interval = flow.polling_interval.unwrap_or(5000);
+                    *cred_handler = AuthCredHandler::MFA {
+                        flow: Box::new(flow),
+                        password: None,
+                        extra_data: None,
+                        reauth_hello_pin: Some(reauth_pin_value.clone()),
+                    };
+                    debug!("Session expired, initiating MFA re-authentication with existing Hello key.");
+                    return Ok((
+                        AuthResult::Next(AuthRequest::MFAPoll {
+                            msg,
+                            // Kanidm pam expects a polling_interval in
+                            // seconds, not milliseconds.
+                            polling_interval: polling_interval / 1000,
+                        }),
+                        AuthCacheAction::None,
+                    ));
+                } else {
+                    // DAG fallback: works in all configurations but requires
+                    // the user to authenticate via browser on another device.
+                    let mut auth_options = vec![];
+                    if is_remote_service || !console_password_only {
+                        auth_options.push(AuthOption::ForceMFA);
+                    }
+                    if is_remote_service {
+                        auth_options.push(AuthOption::RemoteSession);
+                    }
+                    let resp = match self
+                        .client
                         .read()
                         .await
                         .initiate_device_flow_for_device_enrollment(&auth_options)
-                        .await,
-                    Ok(resp) => resp,
-                    Err(e) => {
-                        error!("{:?}", e);
-                        return Err(IdpError::BadRequest);
-                    }
-                );
-                let mut flow: MFAAuthContinue = resp.into();
-                if !self.is_domain_joined(keystore).await {
-                    flow.resource = Some("https://enrollment.manage.microsoft.com".to_string());
+                        .await
+                    {
+                        Ok(resp) => resp,
+                        Err(MsalError::RequestFailed(msg)) => {
+                            let url = extract_base_url!(msg);
+                            info!(?url, "Network down detected during reauth DAG initiation");
+                            let mut state = self.state.lock().await;
+                            *state = CacheState::OfflineNextCheck(
+                                SystemTime::now() + OFFLINE_NEXT_CHECK,
+                            );
+                            return Ok((
+                                AuthResult::Denied("Network outage detected.".to_string()),
+                                AuthCacheAction::None,
+                            ));
+                        }
+                        Err(e) => {
+                            error!("Failed to initiate reauth device flow: {:?}", e);
+                            return Ok((
+                                AuthResult::Denied(
+                                    "Your session has expired. Please sign in again.".to_string(),
+                                ),
+                                AuthCacheAction::None,
+                            ));
+                        }
+                    };
+                    let flow: MFAAuthContinue = resp.into();
+                    let msg = flow.msg.clone();
+                    let polling_interval = flow.polling_interval.unwrap_or(5000);
+                    *cred_handler = AuthCredHandler::MFA {
+                        flow: Box::new(flow),
+                        password: None,
+                        extra_data: None,
+                        reauth_hello_pin: Some(reauth_pin_value),
+                    };
+                    debug!("Session expired, initiating DAG re-authentication with existing Hello key.");
+                    return Ok((
+                        AuthResult::Next(AuthRequest::MFAPoll {
+                            msg,
+                            // Kanidm pam expects a polling_interval in
+                            // seconds, not milliseconds.
+                            polling_interval: polling_interval / 1000,
+                        }),
+                        AuthCacheAction::None,
+                    ));
                 }
-                let msg = flow.msg.clone();
-                let polling_interval = flow.polling_interval.unwrap_or(5000);
-                *cred_handler = AuthCredHandler::MFA {
-                    flow,
-                    password: None,
-                    extra_data: None,
-                };
-                return Ok((
-                    AuthResult::Next(AuthRequest::MFAPoll {
-                        msg,
-                        polling_interval: polling_interval / 1000,
-                    }),
-                    AuthCacheAction::None,
-                ));
             }};
         }
         macro_rules! auth_and_validate_hello_key {
@@ -1997,12 +2180,6 @@ impl IdProvider for HimmelblauProvider {
                             }
                         }
                         Err(MsalError::AcquireTokenFailed(e)) => {
-                            if e.error_codes.contains(&PASSWORD_RESET_REGISTRATION_REQUIRED) {
-                                info!(
-                                    "Password reset registration required, initiating device flow"
-                                );
-                                request_dag!();
-                            }
                             if e.error_codes.contains(&CONSENT_REQUIRED) {
                                 /* Consent has not been granted for the application
                                  * to access the Graph API. Retry without Graph API
@@ -2032,8 +2209,9 @@ impl IdProvider for HimmelblauProvider {
                                     }
                                     Err(e) => {
                                         error!("Failed to authenticate with hello key (retry): {:?}", e);
+                                        let err_msg = msal_error_to_user_message(&e);
                                         handle_hello_bad_pin_count!(self, account_id, keystore, |msg: &str| {
-                                            Ok((AuthResult::Denied(msg.to_string()), AuthCacheAction::None))
+                                            Ok((AuthResult::Denied(msg.to_string() + " " + &err_msg), AuthCacheAction::None))
                                         });
                                         return Ok((
                                             AuthResult::Denied(
@@ -2044,29 +2222,14 @@ impl IdProvider for HimmelblauProvider {
                                     }
                                 }
                             } else {
-                                check_new_device_enrollment_required!(e, self, keystore,
-                                    |msg: String| {
-                                        return Ok((AuthResult::Denied(msg), AuthCacheAction::None))
-                                    },
-                                    |msg: String| {
-                                        error!("{}", msg);
-                                        return Ok((AuthResult::Denied(msg), AuthCacheAction::None))
-                                    }
-                                )
+                                check_new_device_enrollment_required!(e, self, keystore)
                             }
                         }
                         Err(e) => {
-                            if let MsalError::AADSTSError(ref aadsts_err) = e {
-                                if aadsts_err.code == PASSWORD_RESET_REGISTRATION_REQUIRED {
-                                    info!(
-                                        "Password reset registration required, initiating device flow"
-                                    );
-                                    request_dag!();
-                                }
-                            }
                             error!("Failed to authenticate with hello key: {:?}", e);
+                            let err_msg = msal_error_to_user_message(&e);
                             handle_hello_bad_pin_count!(self, account_id, keystore, |msg: &str| {
-                                Ok((AuthResult::Denied(msg.to_string()), AuthCacheAction::None))
+                                Ok((AuthResult::Denied(msg.to_string() + " " + &err_msg), AuthCacheAction::None))
                             });
                             return Ok((
                                 AuthResult::Denied(
@@ -2196,15 +2359,6 @@ impl IdProvider for HimmelblauProvider {
                                     }
                                 }
                                 Err(MsalError::AcquireTokenFailed(e)) => {
-                                    if e
-                                        .error_codes
-                                        .contains(&PASSWORD_RESET_REGISTRATION_REQUIRED)
-                                    {
-                                        info!(
-                                            "Password reset registration required, initiating device flow"
-                                        );
-                                        request_dag!();
-                                    }
                                     if e.error_codes.contains(&CONSENT_REQUIRED) {
                                         /* Consent has not been granted for the application
                                          * to access the Graph API. Retry without Graph API
@@ -2242,48 +2396,29 @@ impl IdProvider for HimmelblauProvider {
                                                 }
                                                 Err(e) => {
                                                     error!("Failed to exchange PRT (retry): {:?}", e);
+                                                    let err_msg = msal_error_to_user_message(&e);
                                                     return Ok((
-                                                        AuthResult::Denied("Authentication failed. Please try signing in again.".to_string()),
+                                                        AuthResult::Denied("Authentication failed. Please try signing in again. ".to_string() + &err_msg),
                                                         AuthCacheAction::None,
                                                     ));
                                                 }
                                             }
                                     } else {
-                                        check_new_device_enrollment_required!(e, self, keystore,
-                                            |msg: String| {
-                                                return Ok((AuthResult::Denied(msg), AuthCacheAction::None))
-                                            },
-                                            |msg: String| {
-                                                error!("{}", msg);
-                                                return Ok((AuthResult::Denied(msg), AuthCacheAction::None))
-                                            }
-                                        )
+                                        check_new_device_enrollment_required!(e, self, keystore)
                                     }
                                 },
                                 Err(_) => {
-                                    // Access token request for this PRT failed. Delete the
-                                    // PRT and hello key, then demand a new auth.
+                                    // Issue #1051: Access token request for this PRT failed.
+                                    // Delete the expired PRT but KEEP the Hello key so the
+                                    // user can reuse their existing PIN after re-authenticating.
                                     keystore
                                         .delete_tagged_hsm_key(&hello_prt_tag)
                                         .map_err(|e| {
                                             error!("Failed to delete hello prt: {:?}", e);
                                             IdpError::Tpm
                                         })?;
-                                    let hello_key_tag = self.fetch_hello_key_tag(account_id, false);
-                                    keystore
-                                        .delete_tagged_hsm_key(&hello_key_tag)
-                                        .map_err(|e| {
-                                            error!("Failed to delete hello key: {:?}", e);
-                                            IdpError::Tpm
-                                        })?;
-                                    // It's ok to reset the pin count here, since they must
-                                    // online auth at this point and create a new pin.
                                     self.bad_pin_counter.reset_bad_pin_count(account_id).await;
-                                    debug!("Session expired, requesting re-authentication.");
-                                    return Ok((
-                                        AuthResult::Denied("Your session has expired. Please sign in again.".to_string()),
-                                        AuthCacheAction::None,
-                                    ));
+                                    request_reauth!($cred.clone());
                                 }
                             }
                     } else if let Some(RefreshCacheEntry::RefreshToken(refresh_token)) = refresh_cache_entry {
@@ -2347,51 +2482,25 @@ impl IdProvider for HimmelblauProvider {
                             }
                             Err(e) => {
                                 error!("Failed to exchange refresh token for access token: {:?}", e);
-                                // Access token request for this refresh token failed. Delete the
-                                // refresh token and hello key, then demand a new auth.
+                                // Issue #1051: Delete the expired refresh token but KEEP the
+                                // Hello key so the user can reuse their existing PIN after
+                                // re-authenticating online.
                                 keystore
                                     .delete_tagged_hsm_key(&hello_refresh_token_tag)
                                     .map_err(|e| {
                                         error!("Failed to delete hello refresh token: {:?}", e);
                                         IdpError::Tpm
                                     })?;
-                                let hello_key_tag = self.fetch_hello_key_tag(account_id, false);
-                                keystore
-                                    .delete_tagged_hsm_key(&hello_key_tag)
-                                    .map_err(|e| {
-                                        error!("Failed to delete hello key: {:?}", e);
-                                        IdpError::Tpm
-                                    })?;
-                                // It's ok to reset the pin count here, since they must
-                                // online auth at this point and create a new pin.
                                 self.bad_pin_counter.reset_bad_pin_count(account_id).await;
-                                return Ok((
-                                    AuthResult::Denied("Your session has expired. Please sign in again.".to_string()),
-                                    AuthCacheAction::None,
-                                ));
+                                request_reauth!($cred.clone());
                             }
                         }
                     } else {
-                        error!("Failed fetching hello prt from cache");
-                        // We don't have access to a PRT, and can't proceed. Delete
-                        // the decoupled hello key.
-                        let hello_key_tag = self.fetch_hello_key_tag(account_id, false);
-                            keystore
-                                .delete_tagged_hsm_key(&hello_key_tag)
-                                .map_err(|e| {
-                                    error!("Failed to delete hello key: {:?}", e);
-                                    IdpError::Tpm
-                                })?;
-                        // Don't hard-fail PAM here. Treat this like an auth denial so the
-                        // front-end restarts the auth flow cleanly (user will re-auth and
-                        // re-enroll Hello PIN if needed).
-                        return Ok((
-                            AuthResult::Denied(
-                                "Hello PIN bootstrap data was not found. Please authenticate again to enroll a new Linux Hello PIN."
-                                    .to_string(),
-                            ),
-                            AuthCacheAction::None,
-                        ));
+                        // Issue #1051: No cached PRT or refresh token found, but the
+                        // Hello key is still valid. Keep the key and initiate online
+                        // re-authentication so the user can reuse their existing PIN.
+                        debug!("No cached PRT/refresh token found; initiating reauth with existing Hello key.");
+                        request_reauth!($cred.clone());
                     }
                 };
 
@@ -2504,6 +2613,10 @@ impl IdProvider for HimmelblauProvider {
         }
         macro_rules! nested_auth_handle_mfa_resp {
             ($resp:ident, $cred:ident) => {
+                nested_auth_handle_mfa_resp!($resp, $cred, None)
+            };
+            ($resp:ident, $cred:ident, $reauth_hello_pin:expr) => {{
+                let reauth_hello_pin: Option<Zeroizing<String>> = $reauth_hello_pin;
                 auth_handle_mfa_resp!(
                     $resp,
                     // FIDO
@@ -2530,9 +2643,10 @@ impl IdProvider for HimmelblauProvider {
                             }
                         };
                         *cred_handler = AuthCredHandler::MFA {
-                            flow: $resp,
+                            flow: Box::new($resp),
                             password: Some($cred.clone()),
                             extra_data: None,
+                            reauth_hello_pin: reauth_hello_pin.clone(),
                         };
                         let action = if self.config.read().await.get_offline_breakglass_enabled() {
                             AuthCacheAction::PasswordHashUpdate { $cred }
@@ -2553,9 +2667,10 @@ impl IdProvider for HimmelblauProvider {
                     {
                         let msg = $resp.msg.clone();
                         *cred_handler = AuthCredHandler::MFA {
-                            flow: $resp,
+                            flow: Box::new($resp),
                             password: Some($cred.clone()),
                             extra_data: None,
+                            reauth_hello_pin: reauth_hello_pin.clone(),
                         };
                         let action = if self.config.read().await.get_offline_breakglass_enabled() {
                             AuthCacheAction::PasswordHashUpdate { $cred }
@@ -2574,9 +2689,10 @@ impl IdProvider for HimmelblauProvider {
                         let msg = $resp.msg.clone();
                         let polling_interval = $resp.polling_interval.unwrap_or(5000);
                         *cred_handler = AuthCredHandler::MFA {
-                            flow: $resp,
+                            flow: Box::new($resp),
                             password: Some($cred.clone()),
                             extra_data: None,
+                            reauth_hello_pin: reauth_hello_pin.clone(),
                         };
                         let action = if self.config.read().await.get_offline_breakglass_enabled() {
                             AuthCacheAction::PasswordHashUpdate { $cred }
@@ -2596,7 +2712,7 @@ impl IdProvider for HimmelblauProvider {
                         ));
                     }
                 )
-            };
+            }};
         }
         macro_rules! prt_signin_frequency_check {
             ($cred:ident) => {
@@ -2645,10 +2761,42 @@ impl IdProvider for HimmelblauProvider {
                 }
             };
         }
+        macro_rules! reseal_prt_with_existing_hello_key_on_success {
+            ($token:expr, $reauth_hello_pin:expr, $success_token:expr) => {{
+                // Issue #1051: If this MFA flow was triggered by an expired
+                // PRT/refresh token, re-seal the new PRT with the existing
+                // Hello key instead of forcing PIN re-enrollment.
+                if let Some(ref pin) = $reauth_hello_pin {
+                    if let Ok((hello_key, _keytype)) = self.fetch_hello_key(account_id, keystore) {
+                        seal_prt_with_existing_hello_key!(
+                            self,
+                            account_id,
+                            $token,
+                            &hello_key,
+                            pin,
+                            keystore,
+                            tpm,
+                            machine_key
+                        );
+                        self.bad_pin_counter.reset_bad_pin_count(account_id).await;
+                        info!("Re-sealed PRT with existing Hello key after reauth");
+                        return Ok((
+                            AuthResult::Success {
+                                token: $success_token,
+                            },
+                            AuthCacheAction::None,
+                        ));
+                    }
+                    warn!(
+                        "Existing Hello key not found after reauth; falling through to PIN setup"
+                    );
+                }
+            }};
+        }
 
         match (&mut *cred_handler, pam_next_req) {
             (AuthCredHandler::SetupPin { token }, PamAuthRequest::SetupPin { pin }) => {
-                let token = match token.clone() {
+                let token = match token.as_ref().clone() {
                     Some(t) => t,
                     None => {
                         error!("Missing enrollment token for Hello PIN setup.");
@@ -2717,7 +2865,6 @@ impl IdProvider for HimmelblauProvider {
             // frequency before potentially skipping MFA.
             (
                 AuthCredHandler::PasswordFirst {
-                    auth_init,
                     auth_options,
                     is_domain_joined,
                 },
@@ -2748,6 +2895,12 @@ impl IdProvider for HimmelblauProvider {
                     debug!("Device not enrolled - skipping ROPC, proceeding to MFA flow");
                     None
                 };
+
+                // Track whether ROPC was attempted (device enrolled). If ROPC told us
+                // MFA is required and the PRT sign-in frequency check fails, we'll
+                // need ForceMFA. If ROPC was skipped (device not enrolled), the
+                // enrollment flow may be MFA or password-only per MS policy.
+                let mfa_confirmed_required = ropc_result.is_some();
 
                 match ropc_result {
                     Some(Ok(token)) => {
@@ -2816,16 +2969,39 @@ impl IdProvider for HimmelblauProvider {
                     None => {
                         // Device not enrolled - skip ROPC and start enrollment auth flow.
                         // The enrollment flow may be MFA or password-only depending on MS policy.
-                        debug!(
-                            "Skipping ROPC (device not enrolled) - starting enrollment auth flow"
-                        );
+                        debug!("Skipping ROPC (device not enrolled) - starting MFA auth flow");
                     }
                 }
 
-                // If we reach here, PRT check didn't satisfy sign-in frequency.
-                // Initiate the enrollment auth flow now.
-                debug!("Initiating enrollment auth flow");
+                // For enrolled devices (ropc_result was Some), MFA has been positively
+                // determined as required and the PRT sign-in frequency check didn't
+                // satisfy it. We must force interactive MFA to get a session with MFA
+                // claims. Without ForceMFA, Azure may return an auth code directly
+                // (password-only session) which will fail when exchanging the PRT for
+                // a Graph access token.
+                //
+                // For non-enrolled devices (ropc_result was None), do not force MFA so
+                // that the enrollment flow can be MFA or password-only according to
+                // Microsoft policy and allow_console_password_only behavior.
+                if mfa_confirmed_required {
+                    if !auth_options.contains(&AuthOption::ForceMFA) {
+                        auth_options.push(AuthOption::ForceMFA);
+                    }
+                    debug!(
+                        "Initiating MFA auth flow with ForceMFA (sign-in frequency not satisfied)"
+                    );
+                } else {
+                    debug!(
+                        "Initiating device-enrollment auth flow without ForceMFA (policy may allow password-only)"
+                    );
+                }
 
+                // We pass `None` for auth_init to force a fresh
+                // request_auth_config_internal() call that respects the current
+                // auth_options (including ForceMFA when set). The original auth_init
+                // from check_user_exists() was fetched without ForceMFA, so reusing
+                // it would bypass the amr_values=ngcmfa parameter in the
+                // /oauth2/authorize request.
                 let mut flow = net_down_check!(
                     self.client
                         .read()
@@ -2834,11 +3010,36 @@ impl IdProvider for HimmelblauProvider {
                             account_id,
                             Some(&cred),
                             auth_options,
-                            Some(auth_init.clone()),
+                            None,
                             self.config.read().await.get_mfa_method().as_deref()
                         )
                         .await,
                     Ok(flow) => flow,
+                    Err(MsalError::MFARequired) => {
+                        // Azure told us MFA is required. Add ForceMFA (if not
+                        // already set) and retry with a fresh auth config.
+                        if !auth_options.contains(&AuthOption::ForceMFA) {
+                            auth_options.push(AuthOption::ForceMFA);
+                        }
+                        net_down_check!(
+                            self.client
+                                .read()
+                                .await
+                                .initiate_acquire_token_by_mfa_flow_for_device_enrollment(
+                                    account_id,
+                                    Some(&cred),
+                                    auth_options,
+                                    None,
+                                    self.config.read().await.get_mfa_method().as_deref()
+                                )
+                                .await,
+                            Ok(flow) => flow,
+                            Err(e) => {
+                                error!("MFA flow initiation failed: {:?}", e);
+                                return Ok((AuthResult::Denied(msal_error_to_user_message(&e)), AuthCacheAction::None));
+                            }
+                        )
+                    },
                     Err(MsalError::PasswordRequired) => {
                         // This shouldn't happen since we already validated the password
                         error!("Unexpected PasswordRequired error after ROPC validation");
@@ -2861,6 +3062,14 @@ impl IdProvider for HimmelblauProvider {
                 nested_auth_handle_mfa_resp!(flow, cred)
             }
             (change_password, PamAuthRequest::Password { mut cred }) => {
+                let mut reauth_hello_pin: Option<Zeroizing<String>> = None;
+                if let AuthCredHandler::ReauthPassword {
+                    reauth_hello_pin: pin,
+                } = change_password
+                {
+                    reauth_hello_pin = Some(pin.clone());
+                }
+
                 if let AuthCredHandler::ChangePassword { old_cred } = change_password {
                     // Report errors, but don't bail out. If the password change fails,
                     // we'll make another run at it in a moment.
@@ -2892,6 +3101,8 @@ impl IdProvider for HimmelblauProvider {
                 let is_remote_service = service.starts_with("remote:")
                     || remote_services.iter().any(|s| service.contains(s))
                     || service.to_lowercase().contains("ssh");
+                let console_password_only =
+                    self.config.read().await.get_allow_console_password_only();
                 if !is_remote_service {
                     opts.push(AuthOption::Fido);
                     if self
@@ -2902,13 +3113,22 @@ impl IdProvider for HimmelblauProvider {
                     {
                         opts.push(AuthOption::PasswordlessFido);
                     }
-                } else {
+                }
+                if is_remote_service || !console_password_only {
                     opts.push(AuthOption::ForceMFA);
+                }
+                if is_remote_service {
                     opts.push(AuthOption::RemoteSession);
                 }
-                // If SFA is enabled, disable the DAG fallback, otherwise SFA users
-                // will always be prompted for DAG.
-                let sfa_enabled = self.config.read().await.get_enable_sfa_fallback();
+                // Do not use SFA fallback during Hello re-auth because we need
+                // an MFA-capable result to preserve/re-seal the existing Hello
+                // credentials.
+                let sfa_enabled = if reauth_hello_pin.is_some() {
+                    debug!("Hello reauth password flow: disabling SFA fallback.");
+                    false
+                } else {
+                    self.config.read().await.get_enable_sfa_fallback()
+                };
                 if sfa_enabled {
                     opts.push(AuthOption::NoDAGFallback);
                 }
@@ -3023,21 +3243,23 @@ impl IdProvider for HimmelblauProvider {
                         };
                     }
                 );
-                nested_auth_handle_mfa_resp!(resp, cred)
+                nested_auth_handle_mfa_resp!(resp, cred, reauth_hello_pin)
             }
             (
                 AuthCredHandler::MFA {
                     ref mut flow,
                     password,
-                    extra_data: _,
+                    ref reauth_hello_pin,
+                    ..
                 },
                 PamAuthRequest::MFACode { cred },
             ) => {
+                let reauth_hello_pin = reauth_hello_pin.clone();
                 let token = net_down_check!(
                     self.client
                         .read()
                         .await
-                        .acquire_token_by_mfa_flow(account_id, Some(&cred), None, flow)
+                        .acquire_token_by_mfa_flow(account_id, Some(&cred), None, &mut *flow)
                         .await,
                     Ok(token) => token,
                     Err(e) => {
@@ -3070,6 +3292,12 @@ impl IdProvider for HimmelblauProvider {
                 let token2 = enroll_and_obtain_enrolled_token!(token);
                 match self.token_validate(account_id, &token2, None).await {
                     Ok(AuthResult::Success { token: token3 }) => {
+                        reseal_prt_with_existing_hello_key_on_success!(
+                            &token2,
+                            reauth_hello_pin,
+                            token3
+                        );
+
                         // Skip Hello enrollment if it is disabled by config
                         let hello_enabled = self.config.read().await.get_enable_hello();
                         if !hello_enabled || no_hello_pin {
@@ -3081,7 +3309,9 @@ impl IdProvider for HimmelblauProvider {
                         }
 
                         // Setup Windows Hello
-                        *cred_handler = AuthCredHandler::SetupPin { token: Some(token) };
+                        *cred_handler = AuthCredHandler::SetupPin {
+                            token: Box::new(Some(token)),
+                        };
                         return Ok((
                             AuthResult::Next(AuthRequest::SetupPin {
                                 msg: format!(
@@ -3101,10 +3331,12 @@ impl IdProvider for HimmelblauProvider {
                 AuthCredHandler::MFA {
                     ref mut flow,
                     password,
-                    extra_data: _,
+                    ref reauth_hello_pin,
+                    ..
                 },
                 PamAuthRequest::MFAPoll { poll_attempt },
             ) => {
+                let reauth_hello_pin = reauth_hello_pin.clone();
                 let max_poll_attempts = flow.max_poll_attempts.unwrap_or(180);
                 if poll_attempt > max_poll_attempts {
                     error!("MFA polling timed out");
@@ -3119,7 +3351,7 @@ impl IdProvider for HimmelblauProvider {
                     self.client
                         .read()
                         .await
-                        .acquire_token_by_mfa_flow(account_id, None, Some(poll_attempt), flow)
+                        .acquire_token_by_mfa_flow(account_id, None, Some(poll_attempt), &mut *flow)
                         .await,
                     Ok(token) => token,
                     Err(e) => match e {
@@ -3150,6 +3382,16 @@ impl IdProvider for HimmelblauProvider {
                                 AuthCacheAction::None,
                             ));
                         }
+                        MsalError::MFARequired => {
+                            error!("MFA required but session lacks MFA claims. \
+                                    This may indicate the MFA flow was initiated without ForceMFA.");
+                            return Ok((
+                                AuthResult::Denied(
+                                    "Multi-factor authentication required. Please try signing in again.".to_string(),
+                                ),
+                                AuthCacheAction::None,
+                            ));
+                        }
                         e => {
                             error!("{:?}", e);
                             return Ok((AuthResult::Denied(e.to_string()), AuthCacheAction::None));
@@ -3173,6 +3415,12 @@ impl IdProvider for HimmelblauProvider {
                 };
                 match self.token_validate(account_id, &token2, None).await {
                     Ok(AuthResult::Success { token: token3 }) => {
+                        reseal_prt_with_existing_hello_key_on_success!(
+                            &token2,
+                            reauth_hello_pin,
+                            token3
+                        );
+
                         // Skip Hello enrollment if it is disabled by config
                         let hello_enabled = self.config.read().await.get_enable_hello();
                         if !hello_enabled || no_hello_pin {
@@ -3184,7 +3432,9 @@ impl IdProvider for HimmelblauProvider {
                         }
 
                         // Setup Windows Hello
-                        *cred_handler = AuthCredHandler::SetupPin { token: Some(token) };
+                        *cred_handler = AuthCredHandler::SetupPin {
+                            token: Box::new(Some(token)),
+                        };
                         return Ok((
                             AuthResult::Next(AuthRequest::SetupPin {
                                 msg: format!(
@@ -3204,15 +3454,17 @@ impl IdProvider for HimmelblauProvider {
                 AuthCredHandler::MFA {
                     ref mut flow,
                     password,
-                    extra_data: _,
+                    ref reauth_hello_pin,
+                    ..
                 },
                 PamAuthRequest::Fido { assertion },
             ) => {
+                let reauth_hello_pin = reauth_hello_pin.clone();
                 let token = net_down_check!(
                     self.client
                         .read()
                         .await
-                        .acquire_token_by_mfa_flow(account_id, Some(&assertion), None, flow)
+                        .acquire_token_by_mfa_flow(account_id, Some(&assertion), None, &mut *flow)
                         .await,
                     Ok(token) => token,
                     Err(e) => {
@@ -3245,6 +3497,12 @@ impl IdProvider for HimmelblauProvider {
                 let token2 = enroll_and_obtain_enrolled_token!(token);
                 match self.token_validate(account_id, &token2, None).await {
                     Ok(AuthResult::Success { token: token3 }) => {
+                        reseal_prt_with_existing_hello_key_on_success!(
+                            &token2,
+                            reauth_hello_pin,
+                            token3
+                        );
+
                         // Skip Hello enrollment if it is disabled by config
                         let hello_enabled = self.config.read().await.get_enable_hello();
                         if !hello_enabled || no_hello_pin {
@@ -3256,7 +3514,9 @@ impl IdProvider for HimmelblauProvider {
                         }
 
                         // Setup Windows Hello
-                        *cred_handler = AuthCredHandler::SetupPin { token: Some(token) };
+                        *cred_handler = AuthCredHandler::SetupPin {
+                            token: Box::new(Some(token)),
+                        };
                         return Ok((
                             AuthResult::Next(AuthRequest::SetupPin {
                                 msg: format!(
@@ -3943,6 +4203,8 @@ impl HimmelblauProvider {
             //value.id_token.name.clone(),
         };
 
+        let displayname = flip_displayname_comma(&displayname);
+
         let shell = match posix_attrs.get("loginShell") {
             Some(login_shell) => login_shell.clone(),
             None => config.get_shell(Some(&self.domain)),
@@ -4244,10 +4506,17 @@ impl HimmelblauProvider {
                 .await
             {
                 Ok(token) => {
-                    let intune = IntuneForLinux::new(endpoints).map_err(|e| {
-                        error!(?e, "Intune device enrollment failed.");
-                        IdpError::BadRequest
-                    })?;
+                    let mut vers = fetch_intune_portal_versions(Some(
+                        "https://packages.microsoft.com/ubuntu/22.04/prod/pool/main/i/intune-portal/"
+                    )).await.unwrap_or(vec!["1.2511.11".to_string()]);
+                    if vers.is_empty() {
+                        vers = vec!["1.2511.11".to_string()];
+                    }
+                    let intune = IntuneForLinux::new(endpoints, Some(&vers[vers.len() - 1]))
+                        .map_err(|e| {
+                            error!(?e, "Intune device enrollment failed.");
+                            IdpError::BadRequest
+                        })?;
                     let device_id = match device_id {
                         Some(v) => v.to_string(),
                         None => config.get(&self.domain, "device_id").ok_or({

@@ -33,6 +33,14 @@ use std::{
 use tokio::sync::RwLock;
 use tracing::error;
 
+pub fn flip_displayname_comma(name: &str) -> String {
+    if let Some((left, right)) = name.split_once(',') {
+        format!("{} {}", right.trim(), left.trim())
+    } else {
+        name.to_string()
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TotpEnrollmentRecord {
     pub secret_b32: String,
@@ -901,12 +909,16 @@ macro_rules! entra_id_refresh_token_token_fetch {
 
 #[macro_export]
 macro_rules! oidc_refresh_token_token_fetch {
-    ($self:ident, $refresh_token:ident, $scopes:ident) => {
+    ($self:ident, $refresh_token:ident, $scopes:ident) => {{
+        let scopes: Vec<String> = $scopes
+            .into_iter()
+            .filter(|s| s != "https://graph.microsoft.com/.default")
+            .collect();
         match $self
             .client
             .acquire_token_by_refresh_token(
                 &$refresh_token,
-                $scopes.iter().map(|s| s.as_ref()).collect(),
+                scopes.iter().map(|s| s.as_ref()).collect(),
             )
             .await
         {
@@ -919,7 +931,7 @@ macro_rules! oidc_refresh_token_token_fetch {
                 return Err(IdpError::BadRequest);
             }
         }
-    };
+    }};
 }
 
 #[macro_export]
@@ -950,6 +962,75 @@ macro_rules! impl_unix_user_access {
             }
             RefreshCacheEntry::RefreshToken(refresh_token) => {
                 $refresh_token_token_refresh!($self, refresh_token, $scopes)
+            }
+        }
+    }};
+}
+
+/// Issue #1051: Seal a PRT (or refresh token) with an existing Hello key
+/// after successful online re-authentication. This is used when the cached
+/// PRT/refresh token expired but the Hello key and PIN are still valid.
+#[macro_export]
+macro_rules! seal_prt_with_existing_hello_key {
+    ($self:expr, $account_id:expr, $token:expr, $hello_key:expr, $pin:expr, $keystore:expr, $tpm:expr, $machine_key:expr) => {{
+        // Seal the PRT with the existing Hello key
+        if let Some(prt) = &$token.prt {
+            match $self.client.read().await.seal_user_prt_with_hello_key(
+                prt,
+                $hello_key,
+                $pin,
+                $tpm,
+                $machine_key,
+            ) {
+                Ok(hello_prt) => {
+                    let hello_prt_tag = $self.fetch_hello_prt_key_tag($account_id);
+                    if let Err(e) = $keystore.insert_tagged_hsm_key(&hello_prt_tag, &hello_prt) {
+                        error!(
+                            "Failed to cache hello prt after reauth for {}: {:?}",
+                            $account_id, e
+                        );
+                    }
+                }
+                Err(e) => {
+                    error!(
+                        "Failed to seal PRT after reauth for {}: {:?}",
+                        $account_id, e
+                    );
+                }
+            }
+        } else {
+            // If there is no PRT, cache the refresh token instead
+            let pin_val = PinValue::new($pin).map_err(|e| {
+                error!("Failed initializing pin value: {:?}", e);
+                IdpError::Tpm
+            });
+            if let Ok(pin_val) = pin_val {
+                let key_result = $tpm.ms_hello_key_load($machine_key, $hello_key, &pin_val);
+                if let Ok((_key, win_hello_storage_key)) = key_result {
+                    let refresh_token_zeroizing =
+                        zeroize::Zeroizing::new($token.refresh_token.as_bytes().to_vec());
+                    if let Ok(sealed_rt) =
+                        $tpm.seal_data(&win_hello_storage_key, refresh_token_zeroizing)
+                    {
+                        let hello_rt_tag = $self.fetch_hello_refresh_token_key_tag($account_id);
+                        if let Err(e) = $keystore.insert_tagged_hsm_key(&hello_rt_tag, &sealed_rt) {
+                            error!(
+                                "Failed to cache hello refresh token after reauth for {}: {:?}",
+                                $account_id, e
+                            );
+                        }
+                    } else {
+                        error!(
+                            "Failed to seal refresh token after reauth for {}",
+                            $account_id
+                        );
+                    }
+                } else {
+                    error!(
+                        "Failed to load hello key for reauth sealing for {}",
+                        $account_id
+                    );
+                }
             }
         }
     }};

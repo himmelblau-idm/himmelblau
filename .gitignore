@@ -35,3 +35,6 @@ platform/debian/himmelblau-hsm-pin-init.service
 platform/opensuse/himmelblaud-tasks.service
 platform/opensuse/himmelblaud.service
 platform/opensuse/himmelblau-hsm-pin-init.service
+
+platform/el/authselect
+scripts/__pycache__

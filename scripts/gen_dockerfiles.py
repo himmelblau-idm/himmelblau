@@ -190,10 +190,16 @@ DISTS = {
         "image": "ubuntu:24.04",
         "tpm": True,
     },
+    "ubuntu25.10": {
+        "family": "deb",
+        "image": "ubuntu:25.10",
+        "tpm": True,
+    },
     "test": {
         "family": "deb",
         "image": "ubuntu:24.04",
         "tpm": False,
+        "extra_pkgs": ["nodejs"],
     },
     # ---- Fedora family ----
     "fedora42": {
