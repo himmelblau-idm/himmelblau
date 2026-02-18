@@ -166,7 +166,6 @@ pub enum TaskRequest {
     HomeDirectory(HomeDirectoryInfo),
     LocalGroups(String, bool),
     LogonScript(String, String),
-    KerberosCCache(uid_t, uid_t, Vec<u8>, Vec<u8>),
     KerberosConfig(Option<String>, Option<String>),
     KerberosTGTs(
         uid_t,
@@ -188,9 +187,6 @@ impl TaskRequest {
             TaskRequest::HomeDirectory(_) => "HomeDirectory(...)".to_string(),
             TaskRequest::LocalGroups(_, _) => "LocalGroups(...)".to_string(),
             TaskRequest::LogonScript(_, _) => "LogonScript(...)".to_string(),
-            TaskRequest::KerberosCCache(uid, gid, _, _) => {
-                format!("KerberosCCache({}, {}, ...)", uid, gid)
-            }
             TaskRequest::KerberosConfig(..) => "KerberosConfig(...)".to_string(),
             TaskRequest::KerberosTGTs(uid, gid, _, _) => {
                 format!("KerberosTGTs({}, {}, ...)", uid, gid)
