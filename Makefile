@@ -494,6 +494,7 @@ help: ## Show this help
 	@printf "  • You can install a development build of Himmelblau on the current host with 'make && sudo make install'\n"
 	@printf "  • Built packages are written to ./packaging/\n"
 	@printf "  • To use local libhimmelblau: LIBHIMMELBLAU_LOCAL=/path/to/libhimmelblau make <target>\n"
-	@printf "  • ARM64 builds use docker buildx with QEMU emulation. Setup:\n"
+	@printf "  • ARM64 DEB builds use cross-compilation (no QEMU needed).\n"
+	@printf "  • ARM64 RPM builds use docker buildx with QEMU emulation. Setup:\n"
 	@printf "      docker run --rm --privileged multiarch/qemu-user-static --reset -p yes\n\n"
 	@printf "If you'd like a new distro added to the supported packages list, contact a maintainer. We're happy to help.\n"

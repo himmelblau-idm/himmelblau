@@ -543,6 +543,10 @@ def build_multiarch_sources(dist_cfg):
 
     codename = UBUNTU_CODENAMES.get(image)
     if not codename:
+        # If a new Ubuntu version is added to DISTS but not to UBUNTU_CODENAMES,
+        # warn loudly so the build fails visibly rather than silently skipping
+        # multiarch configuration (which would cause cryptic apt 404 errors).
+        print(f"[WARNING] No codename in UBUNTU_CODENAMES for {image} — arm64 apt sources not configured!")
         return ""
 
     if image in UBUNTU_DEB822_VERSIONS:
