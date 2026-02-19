@@ -636,6 +636,11 @@ impl PamHooks for PamKanidm {
                 None
             };
 
+            // Initiate MFA flow. If the server signals that a password is
+            // required (PasswordRequired), prompt for the Entra Id password
+            // and retry once — this happens when check_user_exists() reported
+            // the account as passwordless but the MFA flow itself demands a
+            // password (e.g. policy change or conditional access).
             let mut mfa_req = match rt.block_on(async {
                 app.initiate_acquire_token_by_mfa_flow(
                     &account_id,
@@ -649,6 +654,40 @@ impl PamHooks for PamKanidm {
                 .await
             }) {
                 Ok(mfa) => mfa,
+                Err(MsalError::PasswordRequired) => {
+                    // Server requires a password even though check_user_exists
+                    // didn't indicate it. Prompt and retry without auth_init so
+                    // the library starts a fresh MFA flow with the password.
+                    let retry_password = match conv.send(PAM_PROMPT_ECHO_OFF, "Entra Id Password: ") {
+                        Ok(Some(cred)) => cred,
+                        Ok(None) => {
+                            debug!("no password provided");
+                            return PamResultCode::PAM_CRED_INSUFFICIENT;
+                        }
+                        Err(err) => {
+                            debug!("unable to get password");
+                            return err;
+                        }
+                    };
+                    match rt.block_on(async {
+                        app.initiate_acquire_token_by_mfa_flow(
+                            &account_id,
+                            Some(retry_password.as_str()),
+                            vec![],
+                            None,
+                            &auth_options,
+                            None,
+                            cfg.get_mfa_method().as_deref(),
+                        )
+                        .await
+                    }) {
+                        Ok(mfa) => mfa,
+                        Err(e) => {
+                            error!("{:?}", e);
+                            return PamResultCode::PAM_AUTH_ERR;
+                        }
+                    }
+                }
                 Err(e) => {
                     error!("{:?}", e);
                     return PamResultCode::PAM_AUTH_ERR;
