@@ -22,13 +22,42 @@ systemd-tmpfiles --create /usr/lib/tmpfiles.d/himmelblaud.conf 2>/dev/null || tr
 # Remove old service files from /etc/systemd/system/ that were installed by v1.4.x
 # These take precedence over the new files in /usr/lib/systemd/system/ and lack
 # the LoadCredentialEncrypted directive needed for HSM pin handling.
+# In order to avoid removing user overrides, check against the hashes of known old
+# files shipped by the package.
 for OLD_FILE in \
     "/etc/systemd/system/himmelblaud.service" \
     "/etc/systemd/system/himmelblaud-tasks.service" \
     "/etc/systemd/system/gdm3.service.d/override.conf"; do
     if [ -f "$OLD_FILE" ]; then
-        echo "Removing old service file: $OLD_FILE"
-        rm -f "$OLD_FILE"
+        hash="$(md5sum "$OLD_FILE" 2>/dev/null | awk '{print $1}')"
+        for KNOWN_HASH in \
+            "e3b66fe76769d64610a353adf3dbc595" \
+            "7b0f82a49b6be1c285de8549e611ab66" \
+            "ed238618354f885a2b0c697278ea33e8" \
+            "65b026cc5d5f0f4d600184b6190b8cb3" \
+            "a40d5ca8aedba32f9399acc7e5fdd03d" \
+            "7473a7bee9c4ebde099a658522f21203" \
+            "5e0b319ec558849d4cd08e2d5eaf90e3" \
+            "60ad28a9039e527aa709137fe1f3db00" \
+            "95c442df9bd7c7d94d94292cdda14513" \
+            "73b676e55c6979c601b6c2d93257410f" \
+            "85ab21f2ac8b5c4b60451fa6540771db" \
+            "15501a8e5db36b92eac8a965d544bae8" \
+            "73fa66e462ff429076107e346d5ddbe8" \
+            "f794aaa11243213f8de06f1416f16682" \
+            "bde93199f6dc7b28d5e4e1d67504601b" \
+            "d7e2800688c23d570230296e17b0e6c2" \
+            "db8132b5813a3413b4647529cf7ea8f3" \
+            "8cffb12270663febb99c61e5d013926f" \
+            "ca442221291feb739fb0b078e036f6c9" \
+            "b18d0e9861fc161aa3a4c093f140bdf1" \
+            "337e41fad21375f4ee614caf3b07a2de" \
+            ; do
+            if [ "$hash" = "$KNOWN_HASH" ]; then
+                echo "Removing old service file: $OLD_FILE"
+                rm -f "$OLD_FILE"
+            fi
+        done
     fi
 done
 
