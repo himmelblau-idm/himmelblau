@@ -120,6 +120,7 @@ authd-msentraid = ""
 
 [package.metadata.generate-rpm.suggests]
 himmelblau-sso = ""
+"tpm2.0-tools" = "" # openSUSE/SLE equivalent of tpm2-tools (Recommends above covers Fedora/Rocky/Amazon)
 
 [package.metadata.generate-rpm.requires]
 man = ""
