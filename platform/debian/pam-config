@@ -9,7 +9,7 @@ Account:
 	[success=end default=ignore]    pam_himmelblau.so ignore_unknown_user
 Password-Type: Primary
 Password:
-	[success=end default=ignore]    pam_himmelblau.so ignore_unknown_user
+	[success=end default=ignore]    pam_himmelblau.so ignore_unknown_user set_authtok
 Session-Type: Additional
 Session:
 	optional	pam_himmelblau.so
