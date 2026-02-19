@@ -59,20 +59,12 @@ pub mod module;
 use std::convert::TryFrom;
 use std::ffi::CStr;
 
-use himmelblau::error::MsalError;
-use himmelblau::{AuthOption, PublicClientApplication};
 use himmelblau_unix_common::client_sync::DaemonClientBlocking;
 use himmelblau_unix_common::config::{split_username, HimmelblauConfig};
-use himmelblau_unix_common::constants::BROKER_APP_ID;
 use himmelblau_unix_common::constants::DEFAULT_CONFIG_PATH;
 use himmelblau_unix_common::hello_pin_complexity::is_simple_pin;
-use himmelblau_unix_common::idprovider::openidconnect::{
-    mfa_from_oidc_device, OidcApplication, OidcTokenResponseExt,
-};
 use himmelblau_unix_common::unix_proto::{ClientRequest, ClientResponse};
 use himmelblau_unix_common::user_map::UserMap;
-use himmelblau_unix_common::{auth_handle_mfa_resp, pam_fail};
-use std::thread::sleep;
 
 use crate::pam::constants::*;
 use crate::pam::conv::PamConv;
@@ -93,7 +85,6 @@ use std::time::Duration;
 use himmelblau_unix_common::auth::{authenticate, fido_auth, MessagePrinter};
 use himmelblau_unix_common::pam::Options;
 use std::sync::{Arc, Mutex};
-use tokio::runtime::Runtime;
 
 pub fn get_cfg() -> Result<HimmelblauConfig, PamResultCode> {
     HimmelblauConfig::new(Some(DEFAULT_CONFIG_PATH)).map_err(|_| PamResultCode::PAM_SERVICE_ERR)
@@ -504,9 +495,24 @@ impl PamHooks for PamKanidm {
             }
         }
 
-        let mut pin;
+        // Prompt for the current PIN to verify identity locally — no Entra
+        // re-authentication required. The daemon re-keys the Hello key blob
+        // directly using the old PIN, so this works offline too.
+        let old_pin = match conv.send(PAM_PROMPT_ECHO_OFF, "Current PIN: ") {
+            Ok(Some(cred)) => cred,
+            Ok(None) => {
+                debug!("no current pin");
+                return PamResultCode::PAM_CRED_INSUFFICIENT;
+            }
+            Err(err) => {
+                debug!("unable to get current pin");
+                return err;
+            }
+        };
+
+        let mut new_pin;
         loop {
-            pin = match conv.send(PAM_PROMPT_ECHO_OFF, "New PIN: ") {
+            new_pin = match conv.send(PAM_PROMPT_ECHO_OFF, "New PIN: ") {
                 Ok(password) => match password {
                     Some(cred) => {
                         if cred.len() < cfg.get_hello_pin_min_length() {
@@ -568,7 +574,7 @@ impl PamHooks for PamKanidm {
                 }
             };
 
-            if pin == confirm {
+            if new_pin == confirm {
                 break;
             } else {
                 match conv.send(PAM_TEXT_INFO, "Inputs did not match. Try again.") {
@@ -583,305 +589,30 @@ impl PamHooks for PamKanidm {
             }
         }
 
-        let rt = match Runtime::new() {
-            Ok(rt) => rt,
-            Err(e) => {
-                error!("{:?}", e);
-                return PamResultCode::PAM_AUTH_ERR;
-            }
-        };
-
-        let tenant_id = match cfg.get_tenant_id(domain) {
-            Some(tenant_id) => tenant_id,
-            None => "common".to_string(),
-        };
-        let authority = format!("https://{}/{}", cfg.get_authority_host(domain), tenant_id);
-        let app = match PublicClientApplication::new(BROKER_APP_ID, Some(&authority)) {
-            Ok(app) => app,
-            Err(e) => {
-                error!(err = ?e, "PublicClientApplication");
-                return PamResultCode::PAM_AUTH_ERR;
-            }
-        };
-
-        let oidc_client = cfg.get_oidc_issuer_url().is_some();
-        let token = if !oidc_client {
-            let auth_options = vec![AuthOption::Fido, AuthOption::Passwordless];
-            let auth_init = match rt.block_on(async {
-                app.check_user_exists(&account_id, None, &auth_options)
-                    .await
-            }) {
-                Ok(auth_init) => auth_init,
-                Err(e) => {
-                    error!("{:?}", e);
-                    return PamResultCode::PAM_AUTH_ERR;
-                }
-            };
-
-            let password = if !auth_init.passwordless() {
-                match conv.send(PAM_PROMPT_ECHO_OFF, "Entra Id Password: ") {
-                    Ok(password) => match password {
-                        Some(cred) => Some(cred),
-                        None => {
-                            debug!("no password");
-                            return PamResultCode::PAM_CRED_INSUFFICIENT;
-                        }
-                    },
-                    Err(err) => {
-                        debug!("unable to get password");
-                        return err;
-                    }
-                }
-            } else {
-                None
-            };
-
-            // Initiate MFA flow. If the server signals that a password is
-            // required (PasswordRequired), prompt for the Entra Id password
-            // and retry once — this happens when check_user_exists() reported
-            // the account as passwordless but the MFA flow itself demands a
-            // password (e.g. policy change or conditional access).
-            let mut mfa_req = match rt.block_on(async {
-                app.initiate_acquire_token_by_mfa_flow(
-                    &account_id,
-                    password.as_deref(),
-                    vec![],
-                    None,
-                    &auth_options,
-                    Some(auth_init),
-                    cfg.get_mfa_method().as_deref(),
-                )
-                .await
-            }) {
-                Ok(mfa) => mfa,
-                Err(MsalError::PasswordRequired) => {
-                    // Server requires a password even though check_user_exists
-                    // didn't indicate it. Prompt and retry without auth_init so
-                    // the library starts a fresh MFA flow with the password.
-                    let retry_password = match conv.send(PAM_PROMPT_ECHO_OFF, "Entra Id Password: ") {
-                        Ok(Some(cred)) => cred,
-                        Ok(None) => {
-                            debug!("no password provided");
-                            return PamResultCode::PAM_CRED_INSUFFICIENT;
-                        }
-                        Err(err) => {
-                            debug!("unable to get password");
-                            return err;
-                        }
-                    };
-                    match rt.block_on(async {
-                        app.initiate_acquire_token_by_mfa_flow(
-                            &account_id,
-                            Some(retry_password.as_str()),
-                            vec![],
-                            None,
-                            &auth_options,
-                            None,
-                            cfg.get_mfa_method().as_deref(),
-                        )
-                        .await
-                    }) {
-                        Ok(mfa) => mfa,
-                        Err(e) => {
-                            error!("{:?}", e);
-                            return PamResultCode::PAM_AUTH_ERR;
-                        }
-                    }
-                }
-                Err(e) => {
-                    error!("{:?}", e);
-                    return PamResultCode::PAM_AUTH_ERR;
-                }
-            };
-
-            auth_handle_mfa_resp!(
-                mfa_req,
-                // FIDO
-                {
-                    let conv = Arc::new(Mutex::new(conv.clone()));
-                    let fido_challenge = match mfa_req.fido_challenge {
-                        Some(ref fido_challenge) => fido_challenge.clone(),
-                        None => {
-                            debug!("no Fido challenge");
-                            return PamResultCode::PAM_CRED_INSUFFICIENT;
-                        }
-                    };
-
-                    let fido_allow_list = match mfa_req.fido_allow_list {
-                        Some(ref fido_allow_list) => fido_allow_list.clone(),
-                        None => {
-                            debug!("no Fido allow list");
-                            return PamResultCode::PAM_CRED_INSUFFICIENT;
-                        }
-                    };
-
-                    let msg_printer = Arc::new(PamConvMessagePrinter::new(conv));
-                    let assertion =
-                        match fido_auth(msg_printer.clone(), fido_challenge, fido_allow_list) {
-                            Ok(assertion) => assertion,
-                            Err(e) => {
-                                pam_fail!(msg_printer, "Entra Id Fido authentication failed.", e);
-                            }
-                        };
-                    match rt.block_on(async {
-                        app.acquire_token_by_mfa_flow(
-                            &account_id,
-                            Some(&assertion),
-                            None,
-                            &mut mfa_req,
-                        )
-                        .await
-                    }) {
-                        Ok(token) => token,
-                        Err(e) => {
-                            error!("MFA FAIL: {:?}", e);
-                            return PamResultCode::PAM_AUTH_ERR;
-                        }
-                    }
-                },
-                // PROMPT
-                {
-                    let input = match conv.send(PAM_PROMPT_ECHO_OFF, &mfa_req.msg) {
-                        Ok(password) => match password {
-                            Some(cred) => cred,
-                            None => {
-                                debug!("no password");
-                                return PamResultCode::PAM_CRED_INSUFFICIENT;
-                            }
-                        },
-                        Err(err) => {
-                            debug!("unable to get password");
-                            return err;
-                        }
-                    };
-                    match rt.block_on(async {
-                        app.acquire_token_by_mfa_flow(&account_id, Some(&input), None, &mut mfa_req)
-                            .await
-                    }) {
-                        Ok(token) => token,
-                        Err(e) => {
-                            error!("MFA FAIL: {:?}", e);
-                            return PamResultCode::PAM_AUTH_ERR;
-                        }
-                    }
-                },
-                // POLL
-                {
-                    match conv.send(PAM_TEXT_INFO, &mfa_req.msg) {
-                        Ok(_) => {}
-                        Err(err) => {
-                            if opts.debug {
-                                println!("Message prompt failed");
-                            }
-                            return err;
-                        }
-                    }
-                    let mut poll_attempt = 1;
-                    let polling_interval = mfa_req.polling_interval.unwrap_or(5000);
-                    loop {
-                        match rt.block_on(async {
-                            app.acquire_token_by_mfa_flow(
-                                &account_id,
-                                None,
-                                Some(poll_attempt),
-                                &mut mfa_req,
-                            )
-                            .await
-                        }) {
-                            Ok(token) => break token,
-                            Err(e) => match e {
-                                MsalError::MFAPollContinue => {
-                                    poll_attempt += 1;
-                                    sleep(Duration::from_millis(polling_interval.into()));
-                                    continue;
-                                }
-                                e => {
-                                    error!("MFA FAIL: {:?}", e);
-                                    return PamResultCode::PAM_AUTH_ERR;
-                                }
-                            },
-                        }
-                    }
-                }
-            )
-        } else {
-            let client = match rt.block_on(async { OidcApplication::with_init(&cfg, domain).await })
-            {
-                Ok(client) => client,
-                Err(e) => {
-                    error!(err = ?e, "OidcApplication::with_init");
-                    return PamResultCode::PAM_AUTH_ERR;
-                }
-            };
-
-            let flow = match rt.block_on(async { client.initiate_device_flow().await }) {
-                Ok(token) => token,
-                Err(e) => {
-                    error!(err = ?e, "acquire_token_by_refresh_token_token_fetch");
-                    return PamResultCode::PAM_AUTH_ERR;
-                }
-            };
-            let (mfa_req, _) = match mfa_from_oidc_device(&flow.clone()) {
-                Ok(mfa_req) => mfa_req,
-                Err(e) => {
-                    error!(err = ?e, "mfa_from_oidc_device");
-                    return PamResultCode::PAM_AUTH_ERR;
-                }
-            };
-
-            match conv.send(PAM_TEXT_INFO, &mfa_req.msg) {
-                Ok(_) => {}
-                Err(err) => {
-                    if opts.debug {
-                        println!("Message prompt failed");
-                    }
-                    return err;
-                }
-            }
-            let polling_interval = mfa_req.polling_interval.unwrap_or(5000);
-            loop {
-                match rt.block_on(async { client.acquire_token_by_device_flow(&flow).await }) {
-                    Ok(token) => {
-                        let token = match token.into_unix_user_token() {
-                            Ok(token) => token,
-                            Err(e) => {
-                                error!(err = ?e, "into_unix_user_token");
-                                return PamResultCode::PAM_AUTH_ERR;
-                            }
-                        };
-                        break token;
-                    }
-                    Err(e) => match e {
-                        MsalError::MFAPollContinue => {
-                            sleep(Duration::from_millis(polling_interval.into()));
-                            continue;
-                        }
-                        e => {
-                            error!("MFA FAIL: {:?}", e);
-                            return PamResultCode::PAM_AUTH_ERR;
-                        }
-                    },
-                }
-            }
-        };
-
-        let req = ClientRequest::PamChangeAuthToken(
-            account_id,
-            match token.access_token.clone() {
-                Some(access_token) => access_token,
-                None => {
-                    error!("Failed fetching access token for pin change");
-                    return PamResultCode::PAM_AUTH_ERR;
-                }
-            },
-            token.refresh_token.clone(),
-            pin,
-        );
+        let req = ClientRequest::PamChangeAuthTokenLocal(account_id, old_pin, new_pin.clone());
 
         match daemon_client.call_and_wait(&req, cfg.get_unix_sock_timeout()) {
             Ok(ClientResponse::Ok) => {
                 debug!("PamResultCode::PAM_SUCCESS");
+                // Publish the new PIN as PAM_AUTHTOK so downstream modules
+                // (e.g. pam_gnome_keyring) can update the keyring password.
+                if opts.set_authtok {
+                    if let Err(err) = pamh.set_item_str::<PamAuthTok>(&new_pin) {
+                        error!(?err, "Failed to set PAM_AUTHTOK after PIN change");
+                    } else {
+                        debug!("Set PAM_AUTHTOK to new PIN for keyring update");
+                    }
+                }
                 PamResultCode::PAM_SUCCESS
+            }
+            Ok(ClientResponse::Error) => {
+                // BadRequest from the daemon means wrong old PIN.
+                debug!("PamResultCode::PAM_AUTH_ERR (wrong PIN or no Hello key)");
+                match conv.send(PAM_TEXT_INFO, "PIN change failed: incorrect current PIN or no Hello key enrolled.") {
+                    Ok(_) => {}
+                    Err(_) => {}
+                }
+                PamResultCode::PAM_AUTH_ERR
             }
             other => {
                 debug!(err = ?other, "PamResultCode::PAM_AUTH_ERR");
