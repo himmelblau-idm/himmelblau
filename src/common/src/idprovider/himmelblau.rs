@@ -531,6 +531,33 @@ impl IdProvider for HimmelblauMultiProvider {
         }
     }
 
+    async fn change_auth_token_local<D: KeyStoreTxn + Send>(
+        &self,
+        account_id: &str,
+        old_pin: &str,
+        new_pin: &str,
+        keystore: &mut D,
+        tpm: &mut tpm::provider::BoxedDynTpm,
+        machine_key: &tpm::structures::StorageKey,
+    ) -> Result<bool, IdpError> {
+        let domain = idp_get_domain_for_account!(self, account_id)?;
+        let mut providers = self.providers.read().await;
+        let provider = find_provider!(self, providers, domain, keystore)?;
+
+        match provider {
+            Providers::Oidc(provider) => {
+                provider
+                    .change_auth_token_local(account_id, old_pin, new_pin, keystore, tpm, machine_key)
+                    .await
+            }
+            Providers::Himmelblau(provider) => {
+                provider
+                    .change_auth_token_local(account_id, old_pin, new_pin, keystore, tpm, machine_key)
+                    .await
+            }
+        }
+    }
+
     async fn unix_user_get<D: KeyStoreTxn + Send>(
         &self,
         id: &Id,
@@ -1044,6 +1071,67 @@ impl IdProvider for HimmelblauProvider {
             })?,
             impl_provision_or_create_hello_key
         )
+    }
+
+    #[instrument(skip_all)]
+    async fn change_auth_token_local<D: KeyStoreTxn + Send>(
+        &self,
+        account_id: &str,
+        old_pin: &str,
+        new_pin: &str,
+        keystore: &mut D,
+        tpm: &mut tpm::provider::BoxedDynTpm,
+        machine_key: &tpm::structures::StorageKey,
+    ) -> Result<bool, IdpError> {
+        use kanidm_hsm_crypto::PinValue;
+
+        // Try both key tags (amr_ngcmfa=false for decoupled, true for provisioned).
+        // Decoupled keys (the common case for `passwd`) don't require network access.
+        // Provisioned (ngcmfa) keys also work — they are re-sealed locally.
+        let (hello_tag, hello_key) = {
+            let tag_decoupled = self.fetch_hello_key_tag(account_id, false);
+            let tag_ngcmfa = self.fetch_hello_key_tag(account_id, true);
+            if let Ok(Some(key)) = keystore.get_tagged_hsm_key(&tag_decoupled) {
+                (tag_decoupled, key)
+            } else if let Ok(Some(key)) = keystore.get_tagged_hsm_key(&tag_ngcmfa) {
+                (tag_ngcmfa, key)
+            } else {
+                error!("No Hello key found for {} during local PIN change", account_id);
+                return Err(IdpError::NotFound {
+                    what: "Hello key".to_string(),
+                    where_: account_id.to_string(),
+                });
+            }
+        };
+
+        // Verify the old PIN by attempting to load the existing key.
+        let old_pin_val = PinValue::new(old_pin).map_err(|e| {
+            error!("Failed to build old PinValue: {:?}", e);
+            IdpError::BadRequest
+        })?;
+        if tpm.ms_hello_key_load(machine_key, &hello_key, &old_pin_val).is_err() {
+            // Wrong PIN — return BadRequest so PAM can surface "incorrect PIN"
+            error!("Old PIN verification failed for {} during local PIN change", account_id);
+            return Err(IdpError::BadRequest);
+        }
+
+        // Create a new Hello key blob sealed under the new PIN.
+        let new_pin_val = PinValue::new(new_pin).map_err(|e| {
+            error!("Failed to build new PinValue: {:?}", e);
+            IdpError::BadRequest
+        })?;
+        let new_hello_key = tpm.ms_hello_key_create(machine_key, &new_pin_val).map_err(|e| {
+            error!("Failed to create new Hello key during local PIN change: {:?}", e);
+            IdpError::Tpm
+        })?;
+
+        // Persist the new key blob under the same tag.
+        keystore.insert_tagged_hsm_key(&hello_tag, &new_hello_key).map_err(|e| {
+            error!("Failed to store new Hello key during local PIN change: {:?}", e);
+            IdpError::Tpm
+        })?;
+
+        Ok(true)
     }
 
     #[instrument(skip_all)]
