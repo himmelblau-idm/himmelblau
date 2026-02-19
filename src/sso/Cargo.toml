@@ -25,6 +25,8 @@ broker-client.workspace = true
 name = "himmelblau-sso"
 depends = ["$auto"]
 recommends = ["himmelblau-sso-policies"]
+conflicts = ["linux-entra-sso", "microsoft-identity-broker"]
+provides = ["linux-entra-sso", "microsoft-identity-broker"]
 assets = [
   ["target/release/linux-entra-sso", "usr/bin/linux-entra-sso", "755"],
   ["src/firefox/linux_entra_sso.json", "usr/lib/mozilla/native-messaging-hosts/", "644"],
