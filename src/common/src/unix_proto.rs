@@ -94,6 +94,10 @@ pub enum ClientRequest {
     PamAccountAllowed(String),
     PamAccountBeginSession(String),
     PamChangeAuthToken(String, String, String, String),
+    /// Change Hello PIN locally: (account_id, old_pin, new_pin).
+    /// No Entra re-authentication required — the old PIN is used to unlock
+    /// the existing Hello key and re-seal it with the new PIN.
+    PamChangeAuthTokenLocal(String, String, String),
     InvalidateCache,
     ClearCache,
     OfflineBreakGlass(Option<u64>),
@@ -123,6 +127,9 @@ impl ClientRequest {
             ClientRequest::PamAccountBeginSession(_) => "PamAccountBeginSession".to_string(),
             ClientRequest::PamChangeAuthToken(id, _, _, _) => {
                 format!("PamChangeAuthToken({}, ...)", id)
+            }
+            ClientRequest::PamChangeAuthTokenLocal(id, _, _) => {
+                format!("PamChangeAuthTokenLocal({}, ...)", id)
             }
             ClientRequest::InvalidateCache => "InvalidateCache".to_string(),
             ClientRequest::ClearCache => "ClearCache".to_string(),
