@@ -16,25 +16,74 @@ gen_pin_hex() {
     fi
 }
 
+# Returns 0 if the TPM2 SRK is provisioned at the standard persistent handle
+# (0x81000001), which is required for systemd-creds to produce a TPM-bound
+# credential. Falls back gracefully when tpm2-tools is not installed.
+srk_is_provisioned() {
+    if ! command -v tpm2_getcap >/dev/null 2>&1; then
+        # Cannot verify; assume provisioned to avoid false negatives on systems
+        # where tpm2-tools is not installed but the SRK was set up by firmware.
+        return 0
+    fi
+    tpm2_getcap handles-persistent 2>/dev/null | grep -q "0x81000001"
+}
+
+# Returns 0 if systemd-creds reports that an existing .enc credential was
+# sealed to the TPM (i.e. its key source includes tpm2).
+cred_is_tpm_bound() {
+    systemd-creds decrypt --name=hsm-pin "$CRED" /dev/null 2>&1 | grep -qi "tpm" && return 0
+    # Fallback: ask systemd-creds to show the credential metadata
+    systemd-creds has-tpm2 2>/dev/null && return 0
+    return 1
+}
+
 # Ensure the directory exists
 mkdir -p /var/lib/private/himmelblaud
 chmod 700 /var/lib/private/himmelblaud
-
-# If the encrypted credential already exists, nothing to do
-if [ -f "$CRED" ]; then
-    # Check if there's also a legacy file that needs cleanup
-    if [ -f "$LEGACY" ]; then
-        echo "Encrypted credential exists, removing legacy hsm-pin file"
-        rm -f "$LEGACY"
-    fi
-    echo "HSM PIN credential already exists, skipping initialization"
-    exit 0
-fi
 
 # Check if systemd-creds is available
 if ! command -v systemd-creds >/dev/null 2>&1; then
     echo "ERROR: systemd-creds not available, cannot create encrypted credential"
     exit 1
+fi
+
+# If the encrypted credential already exists, check if it needs upgrading to
+# TPM-bound encryption. This handles the case where the credential was created
+# during cloud-init or before the SRK was provisioned (Issue 4).
+if [ -f "$CRED" ]; then
+    # Clean up any stale legacy plaintext file
+    if [ -f "$LEGACY" ]; then
+        echo "Encrypted credential exists, removing legacy hsm-pin file"
+        rm -f "$LEGACY"
+    fi
+
+    # Check whether a TPM is present and its SRK is now provisioned.
+    # If so, and the existing credential is NOT TPM-bound, re-encrypt it.
+    if [ -e /dev/tpmrm0 ] || [ -e /dev/tpm0 ]; then
+        if srk_is_provisioned; then
+            # Try to decrypt the existing credential to retrieve the PIN,
+            # then re-encrypt it bound to the TPM.
+            if HSM_PIN=$(systemd-creds decrypt --name=hsm-pin "$CRED" - 2>/dev/null); then
+                CRED_TMP="${CRED}.tmp"
+                if printf '%s' "$HSM_PIN" | systemd-creds encrypt \
+                        --name=hsm-pin --with-key=host+tpm2 --tpm2-device=auto \
+                        - "$CRED_TMP" 2>/dev/null; then
+                    mv -f "$CRED_TMP" "$CRED"
+                    echo "HSM PIN credential upgraded to TPM-bound encryption"
+                else
+                    rm -f "$CRED_TMP" 2>/dev/null || true
+                    echo "WARNING: TPM SRK is present but re-encryption to TPM-bound key failed." \
+                         "Keeping existing credential."
+                fi
+            else
+                echo "WARNING: Could not decrypt existing credential for TPM upgrade." \
+                     "Keeping existing credential."
+            fi
+        fi
+    fi
+
+    echo "HSM PIN credential already exists, skipping initialization"
+    exit 0
 fi
 
 # Generate a new PIN if one doesn't exist, otherwise migrate the existing one
@@ -46,8 +95,28 @@ else
     HSM_PIN=$(gen_pin_hex)
 fi
 
+# Choose the strongest key binding available:
+#   host+tpm2  — bound to both this machine's credential secret AND the TPM SRK
+#   auto       — systemd picks the best available (may silently omit TPM if SRK absent)
+#
+# Warn explicitly when the SRK is missing so admins are not surprised.
+if [ -e /dev/tpmrm0 ] || [ -e /dev/tpm0 ]; then
+    if srk_is_provisioned; then
+        KEY_ARG="--with-key=host+tpm2"
+    else
+        echo "WARNING: TPM device present but SRK not provisioned at 0x81000001."
+        echo "  The HSM PIN will be encrypted with the host key only (not TPM-bound)."
+        echo "  Run 'systemctl start systemd-tpm2-setup.service' to provision the SRK,"
+        echo "  then re-run this script (remove $CRED first) to upgrade."
+        KEY_ARG="--with-key=auto"
+    fi
+else
+    KEY_ARG="--with-key=auto"
+fi
+
 # Encrypt the PIN
-if printf '%s' "$HSM_PIN" | systemd-creds encrypt --name=hsm-pin --with-key=auto --tpm2-device=auto - "$CRED"; then
+if printf '%s' "$HSM_PIN" | systemd-creds encrypt --name=hsm-pin $KEY_ARG \
+        --tpm2-device=auto - "$CRED"; then
     echo "HSM PIN credential created successfully"
     # Remove legacy file if it exists
     rm -f "$LEGACY" 2>/dev/null || true
