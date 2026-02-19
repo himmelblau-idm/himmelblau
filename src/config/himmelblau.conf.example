@@ -61,6 +61,10 @@
 #   Use the Linux Hello PIN for this device.
 # hello_pin_prompt = Enter your device unlock PIN
 #
+# Enable the use of a local Time-based One-Time Password (TOTP) in combination
+# with Windows Hello authentication.
+# enable_hello_totp = true
+#
 # Customizes the prompt text shown when requesting the user’s Entra ID password.
 # If unset, the default prompt is:
 #   Use the password for your Office 365 or Microsoft online login.
