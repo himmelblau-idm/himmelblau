@@ -47,3 +47,5 @@ if [[ -f /etc/apparmor.d/usr.lib.libreoffice.program.soffice.bin ]]; then
         apparmor_parser -r /etc/apparmor.d/usr.lib.libreoffice.program.soffice.bin >/dev/null 2>&1 || true
     fi
 fi
+
+DEBIAN_FRONTEND=noninteractive pam-auth-update
