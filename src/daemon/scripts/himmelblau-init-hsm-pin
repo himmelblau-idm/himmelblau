@@ -23,9 +23,9 @@ gen_pin_hex() {
 # installed.
 srk_is_provisioned() {
     if ! command -v tpm2_getcap >/dev/null 2>&1; then
-        # Cannot verify; assume provisioned to avoid false negatives on systems
-        # where tpm2-tools is not installed but the SRK was set up by firmware.
-        return 0
+        # Cannot verify without tpm2-tools; treat as not provisioned so callers
+        # fall back to --with-key=auto rather than assuming host+tpm2 is safe.
+        return 1
     fi
     tpm2_getcap handles-persistent 2>/dev/null | grep -q "$SRK_HANDLE"
 }

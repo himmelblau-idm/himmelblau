@@ -606,9 +606,8 @@ impl PamHooks for PamKanidm {
                 PamResultCode::PAM_SUCCESS
             }
             Ok(ClientResponse::Error) => {
-                // BadRequest from the daemon means wrong old PIN.
-                debug!("PamResultCode::PAM_AUTH_ERR (wrong PIN or no Hello key)");
-                match conv.send(PAM_TEXT_INFO, "PIN change failed: incorrect current PIN or no Hello key enrolled.") {
+                debug!("PamResultCode::PAM_AUTH_ERR (PIN change denied by daemon)");
+                match conv.send(PAM_TEXT_INFO, "PIN change failed. Check that a Hello PIN is enrolled and the current PIN is correct.") {
                     Ok(_) => {}
                     Err(_) => {}
                 }

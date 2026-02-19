@@ -832,11 +832,13 @@ async fn handle_client(
                 let span = span!(Level::INFO, "sm_chauthtok_local req");
                 async {
                     trace!("sm_chauthtok_local req");
-                    cachelayer
+                    match cachelayer
                         .change_auth_token_local(&account_id, &old_pin, &new_pin)
                         .await
-                        .map(|_| ClientResponse::Ok)
-                        .unwrap_or(ClientResponse::Error)
+                    {
+                        Ok(true) => ClientResponse::Ok,
+                        Ok(false) | Err(_) => ClientResponse::Error,
+                    }
                 }
                 .instrument(span)
                 .await
