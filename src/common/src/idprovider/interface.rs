@@ -287,6 +287,21 @@ pub trait IdProvider {
         _machine_key: &tpm::structures::StorageKey,
     ) -> Result<bool, IdpError>;
 
+    /// Change the Hello PIN without Entra re-authentication.
+    /// Verifies `old_pin` by unlocking the existing Hello key, then
+    /// re-seals it under `new_pin`. Works fully offline for decoupled keys.
+    async fn change_auth_token_local<D: KeyStoreTxn + Send>(
+        &self,
+        _account_id: &str,
+        _old_pin: &str,
+        _new_pin: &str,
+        _keystore: &mut D,
+        _tpm: &mut tpm::provider::BoxedDynTpm,
+        _machine_key: &tpm::structures::StorageKey,
+    ) -> Result<bool, IdpError> {
+        Err(IdpError::BadRequest)
+    }
+
     async fn unix_user_online_auth_init<D: KeyStoreTxn + Send>(
         &self,
         _account_id: &str,
