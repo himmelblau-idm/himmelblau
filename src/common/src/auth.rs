@@ -311,7 +311,7 @@ fn hello_totp_urldecode_match(m: Option<Match>) -> Result<String, String> {
 }
 
 fn hello_totp_enroll_fallback_msg(url: &str) -> Result<String, String> {
-    let totp_regex = Regex::new(r"otpauth://([ht]otp)/([a-zA-Z0-9%]+):?([^\?]+)\?secret=([0-9A-Za-z]+)(?:.*(?:<?counter=)([0-9]+))?").map_err(|e| {
+    let totp_regex = Regex::new(r"otpauth://([ht]otp)/([^:?]+):?([^\?]+)\?secret=([0-9A-Za-z]+)(?:.*(?:<?counter=)([0-9]+))?").map_err(|e| {
         debug!(?e, "Failed to build regex");
         format!("Failed to build regex: {}", e)
     })?;
