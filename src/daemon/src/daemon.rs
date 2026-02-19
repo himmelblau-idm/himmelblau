@@ -827,6 +827,20 @@ async fn handle_client(
                 .instrument(span)
                 .await
             }
+            ClientRequest::PamChangeAuthTokenLocal(account_id, old_pin, new_pin) => {
+                let account_id = account_id.to_lowercase();
+                let span = span!(Level::INFO, "sm_chauthtok_local req");
+                async {
+                    trace!("sm_chauthtok_local req");
+                    cachelayer
+                        .change_auth_token_local(&account_id, &old_pin, &new_pin)
+                        .await
+                        .map(|_| ClientResponse::Ok)
+                        .unwrap_or(ClientResponse::Error)
+                }
+                .instrument(span)
+                .await
+            }
             ClientRequest::InvalidateCache => {
                 trace!("invalidate cache");
                 cachelayer
