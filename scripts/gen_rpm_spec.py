@@ -619,6 +619,7 @@ def main() -> int:
     nss_metadata = merge_metadata(["nss_himmelblau"], metadata, root)
     pam_metadata = merge_metadata(["pam_himmelblau"], metadata, root)
     sso_metadata = merge_metadata(["sso", "o365"], metadata, root)
+    sso_policies_metadata = merge_metadata(["sso-policies"], metadata, root)
     sshd_metadata = merge_metadata(["sshd-config"], metadata, root)
     qr_metadata = merge_metadata(["qr-greeter"], metadata, root)
     desc = """Himmelblau is an interoperability suite for Microsoft Azure Entra Id
@@ -721,6 +722,20 @@ Firefox, Chromium, Google Chrome, and Microsoft Edge (where installed),
 using native messaging and managed browser policies. It also provides
 web apps for common Office 365 applications (Teams, Outlook, etc).
 
+%package -n himmelblau-sso-policies
+Summary:        Browser policy files for Himmelblau SSO
+{dep_gen(sso_policies_metadata)}
+BuildArch:      noarch
+
+%description -n himmelblau-sso-policies
+Browser policy configuration files for Himmelblau SSO. This package
+installs policy files that automatically configure Chrome/Chromium and
+Firefox to install the required browser extension for SSO functionality.
+
+Install this package if you want automatic browser policy configuration.
+If you prefer to manage browser policies manually, you can skip this
+package and configure the extension installation yourself.
+
 %package -n himmelblau-qr-greeter
 Summary:        Azure Entra Id DAG URL QR code GNOME Shell extension
 {dep_gen(qr_metadata)}
@@ -797,16 +812,19 @@ install -D -d -m 0755 %{{buildroot}}%{{_sysconfdir}}/ssh/sshd_config.d
 # Single Sign On
 strip --strip-unneeded target/release/linux-entra-sso
 install -D -d -m 0755 %{{buildroot}}%{{_libdir}}/mozilla/native-messaging-hosts
-install -D -d -m 0755 %{{buildroot}}%{{_sysconfdir}}/firefox/policies
 install -D -d -m 0755 %{{buildroot}}%{{chrome_nm_dir}}
 install -D -d -m 0755 %{{buildroot}}%{{chromium_nm_dir}}
 install -D -d -m 0755 %{{buildroot}}%{{chrome_ext_dir}}
-install -D -d -m 0755 %{{buildroot}}%{{chrome_policy_dir}}
-install -D -d -m 0755 %{{buildroot}}%{{chromium_policy_dir}}
 install -D -d -m 0755 %{{buildroot}}%{{_datadir}}/applications/
 %{{!?_iconsdir:%global _iconsdir %{{_datadir}}/icons}}
 install -D -d -m 0755 %{{buildroot}}%{{_iconsdir}}/hicolor/256x256/apps
 {generate_install_section(sso_metadata)}
+
+# SSO Policies
+install -D -d -m 0755 %{{buildroot}}%{{_sysconfdir}}/firefox/policies
+install -D -d -m 0555 %{{buildroot}}%{{chrome_policy_dir}}
+install -D -d -m 0555 %{{buildroot}}%{{chromium_policy_dir}}
+{generate_install_section(sso_policies_metadata)}
 
 # QR Greeter
 install -D -d -m 0755 %{{buildroot}}%{{_datarootdir}}/gnome-shell/extensions/qr-greeter@himmelblau-idm.org
@@ -822,6 +840,8 @@ install -D -d -m 0755 %{{buildroot}}%{{_datarootdir}}/gnome-shell/extensions/qr-
 
 {generate_script_sections(sso_metadata, name="himmelblau-sso")}
 
+{generate_script_sections(sso_policies_metadata, name="himmelblau-sso-policies")}
+
 {generate_script_sections(qr_metadata, name="himmelblau-qr-greeter")}
 
 {generate_files_section(himmelblau_metadata, name=None, dirs=["%{_sysconfdir}/himmelblau", "%{_localstatedir}/cache/himmelblau-policies", "%{_unitdir}/display-manager.service.d", "%{_datadir}/doc/himmelblau", "%{_docdir}/himmelblau-selinux", "%{_selinux_docdir}"], extras=["%{_sbindir}/rchimmelblaud", "%{_sbindir}/rchimmelblaud_tasks", "%ghost %dir /var/lib/private/himmelblaud"])}
@@ -832,7 +852,9 @@ install -D -d -m 0755 %{{buildroot}}%{{_datarootdir}}/gnome-shell/extensions/qr-
 
 {generate_files_section(sshd_metadata, name="himmelblau-sshd-config", extras=["%if 0%{?sle_version} <= 150500\n%dir %{_sysconfdir}/ssh/sshd_config.d\n%endif"])}
 
-{generate_files_section(sso_metadata, name="himmelblau-sso", dirs=["%{_libdir}/mozilla", "%{_libdir}/mozilla/native-messaging-hosts", "%{_sysconfdir}/firefox", "%{_sysconfdir}/firefox/policies", "/etc/chromium", "/etc/chromium/native-messaging-hosts", "/etc/chromium/policies", "/etc/chromium/policies/managed", "/etc/opt/chrome", "/etc/opt/chrome/native-messaging-hosts", "/etc/opt/chrome/policies", "/etc/opt/chrome/policies/managed", "/usr/share/google-chrome", "%{chrome_nm_dir}", "%{chromium_nm_dir}", "%attr(0555,root,root) %{chrome_policy_dir}", "%attr(0555,root,root) %{chromium_policy_dir}", "%{chrome_ext_dir}", "%{_iconsdir}/hicolor", "%{_iconsdir}/hicolor/256x256", "%{_iconsdir}/hicolor/256x256/apps"], extras=["%{_sbindir}/rcbroker"])}
+{generate_files_section(sso_metadata, name="himmelblau-sso", dirs=["%{_libdir}/mozilla", "%{_libdir}/mozilla/native-messaging-hosts", "/etc/chromium", "/etc/chromium/native-messaging-hosts", "/usr/share/google-chrome", "%{chrome_nm_dir}", "%{chromium_nm_dir}", "%{chrome_ext_dir}", "%{_iconsdir}/hicolor", "%{_iconsdir}/hicolor/256x256", "%{_iconsdir}/hicolor/256x256/apps"], extras=["%{_sbindir}/rcbroker"])}
+
+{generate_files_section(sso_policies_metadata, name="himmelblau-sso-policies", dirs=["/etc/firefox", "/etc/firefox/policies", "/etc/chromium/policies", "/etc/chromium/policies/managed", "/etc/opt/chrome", "/etc/opt/chrome/policies", "/etc/opt/chrome/policies/managed", "%attr(0555,root,root) %{chrome_policy_dir}", "%attr(0555,root,root) %{chromium_policy_dir}"])}
 
 {generate_files_section(qr_metadata, name="himmelblau-qr-greeter", dirs=["%{_datarootdir}/gnome-shell", "%{_datarootdir}/gnome-shell/extensions", "%{_datarootdir}/gnome-shell/extensions/qr-greeter@himmelblau-idm.org"])}
 
