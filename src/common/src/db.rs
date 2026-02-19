@@ -70,6 +70,8 @@ pub trait CacheTxn {
 
     fn clear(&mut self) -> Result<(), CacheError>;
 
+    fn clear_hello_keys(&mut self) -> Result<(), CacheError>;
+
     fn clear_hsm(&mut self) -> Result<(), CacheError>;
 
     fn get_hsm_machine_key(&mut self) -> Result<Option<LoadableMachineKey>, CacheError>;
@@ -540,6 +542,20 @@ impl<'a> CacheTxn for DbTxn<'a> {
         self.conn
             .execute("DELETE FROM account_t", [])
             .map_err(|e| self.sqlite_error("delete group_t", &e))?;
+
+        Ok(())
+    }
+
+    fn clear_hello_keys(&mut self) -> Result<(), CacheError> {
+        self.conn
+            .execute(
+                "DELETE FROM hsm_data_t
+                 WHERE key LIKE '%/hello'
+                    OR key LIKE '%/hello_decoupled'
+                    OR key LIKE '%/hello_prt'",
+                [],
+            )
+            .map_err(|e| self.sqlite_error("delete hello keys", &e))?;
 
         Ok(())
     }

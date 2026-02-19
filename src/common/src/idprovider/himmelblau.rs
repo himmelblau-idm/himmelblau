@@ -1477,8 +1477,10 @@ impl IdProvider for HimmelblauProvider {
         // Check if this is a remote service:
         // - Service starts with "remote:" (set by PAM module when PAM_RHOST is set)
         // - Service name contains any entry from remote_services_deny_list
-        let is_remote_service =
-            service.starts_with("remote:") || remote_services.iter().any(|s| service.contains(s));
+        let is_remote_service = service.starts_with("remote:")
+            || remote_services
+                .iter()
+                .any(|s| !s.is_empty() && service.contains(s));
         let hello_totp_enabled = check_hello_totp_enabled!(self);
         let allow_remote_hello = self.config.read().await.get_allow_remote_hello();
         // Skip Hello authentication if it is disabled by config
@@ -1917,7 +1919,9 @@ impl IdProvider for HimmelblauProvider {
                     )
                 };
                 let is_remote_service = service.starts_with("remote:")
-                    || remote_services.iter().any(|s| service.contains(s));
+                    || remote_services
+                        .iter()
+                        .any(|s| !s.is_empty() && service.contains(s));
 
                 if enable_experimental_mfa {
                     // Interactive MFA flow: supports push notifications, FIDO,
@@ -3098,7 +3102,9 @@ impl IdProvider for HimmelblauProvider {
                 // - Service name contains any entry from remote_services_deny_list
                 // - Service name or TTY contains "ssh" (fallback check)
                 let is_remote_service = service.starts_with("remote:")
-                    || remote_services.iter().any(|s| service.contains(s))
+                    || remote_services
+                        .iter()
+                        .any(|s| !s.is_empty() && service.contains(s))
                     || service.to_lowercase().contains("ssh");
                 let console_password_only =
                     self.config.read().await.get_allow_console_password_only();

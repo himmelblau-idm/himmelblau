@@ -218,7 +218,11 @@ where
         let mut nxcache_txn = self.nxcache.lock().await;
         nxcache_txn.clear();
         let mut dbtxn = self.db.write().await;
-        dbtxn.clear().and_then(|_| dbtxn.commit()).map_err(|_| ())?;
+        dbtxn
+            .clear()
+            .and_then(|_| dbtxn.clear_hello_keys())
+            .and_then(|_| dbtxn.commit())
+            .map_err(|_| ())?;
 
         // Also delete the generated himmelblau.conf. This unjoins the host!
         let path = Path::new(SERVER_CONFIG_PATH);
