@@ -218,7 +218,12 @@ where
         let mut nxcache_txn = self.nxcache.lock().await;
         nxcache_txn.clear();
         let mut dbtxn = self.db.write().await;
-        dbtxn.clear().and_then(|_| dbtxn.commit()).map_err(|_| ())?;
+        // clear_hsm() also clears accounts/groups AND wipes HSM key material
+        // (hsm_int_t: machine key, hsm_data_t: Hello/PRT/cert keys). This is
+        // required so that a Soft→TPM hsm_type transition doesn't leave
+        // SoftTpm-wrapped blobs behind, which would cause TPM_RC_INTEGRITY on
+        // every subsequent key operation.
+        dbtxn.clear_hsm().and_then(|_| dbtxn.commit()).map_err(|_| ())?;
 
         // Also delete the generated himmelblau.conf. This unjoins the host!
         let path = Path::new(SERVER_CONFIG_PATH);
