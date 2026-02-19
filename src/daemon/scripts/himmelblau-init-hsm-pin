@@ -50,8 +50,12 @@ srk_is_provisioned() {
 provision_srk() {
     if ! command -v tpm2_createprimary >/dev/null 2>&1 || \
        ! command -v tpm2_evictcontrol >/dev/null 2>&1; then
+        # Package name varies by distro:
+        #   Debian/Ubuntu/Fedora/Rocky/Amazon: tpm2-tools
+        #   openSUSE/SLE:                      tpm2.0-tools
+        #   Gentoo:                            app-crypt/tpm2-tools
         echo "WARNING: tpm2-tools not fully installed, cannot provision SRK." \
-             "Install tpm2-tools for TPM-bound HSM PIN support."
+             "Install tpm2-tools (or tpm2.0-tools on openSUSE/SLE) for TPM-bound HSM PIN support."
         return 1
     fi
 
