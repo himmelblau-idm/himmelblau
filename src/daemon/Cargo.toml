@@ -110,7 +110,9 @@ pam-himmelblau = "*"
 krb5 = "*"
 cron = "*" # For Intune policy scripts
 system-user-tss = "*"
-tpm2-tools = "*" # For TPM SRK self-provisioning when systemd-tpm2-setup does not run
+# Boolean OR: covers tpm2-tools (Fedora/Rocky/Amazon) and tpm2.0-tools (openSUSE/SLE) in one
+# expression. Requires RPM 4.13+, which ships on all supported RPM targets.
+"(tpm2-tools or tpm2.0-tools)" = "*"
 
 [package.metadata.generate-rpm.provides]
 aad-cli = ""
@@ -120,7 +122,6 @@ authd-msentraid = ""
 
 [package.metadata.generate-rpm.suggests]
 himmelblau-sso = ""
-"tpm2.0-tools" = "" # openSUSE/SLE equivalent of tpm2-tools (Recommends above covers Fedora/Rocky/Amazon)
 
 [package.metadata.generate-rpm.requires]
 man = ""
