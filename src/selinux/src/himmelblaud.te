@@ -7,37 +7,81 @@ policy_module(himmelblaud, 1.0)
 type himmelblaud_t;
 type himmelblaud_exec_t;
 # files_type macro may not exist on all distros (e.g., Rocky 8) - provide fallback
-ifdef(`files_type',`files_type(himmelblaud_exec_t)',
-      `require { attribute file_type; }
-       typeattribute himmelblaud_exec_t file_type;')
+# Keep fallback optional: some minimal policies omit the file_type attribute
+ifdef(`files_type',`optional {
+        # Some policies provide files_type but omit file_type attribute (Rocky 8)
+        require { attribute file_type; }
+        files_type(himmelblaud_exec_t)
+       }',
+      `optional {
+        require { attribute file_type; }
+        typeattribute himmelblaud_exec_t file_type;
+       }')
 # Use init_nnp_daemon_domain if available (newer distros), fall back to
 # init_daemon_domain (older distros), domain_type, or primitive typeattribute (Rocky 8)
 ifdef(`init_nnp_daemon_domain',
-      `init_nnp_daemon_domain(himmelblaud_t, himmelblaud_exec_t)',
+      `optional {
+        # Some older policies expose the macro but miss supporting attributes
+        require { attribute domain; }
+        init_nnp_daemon_domain(himmelblaud_t, himmelblaud_exec_t)
+       }',
       `ifdef(`init_daemon_domain',
-            `init_daemon_domain(himmelblaud_t, himmelblaud_exec_t)',
+            `optional {
+              # Some older policies expose the macro but miss supporting attributes
+              require { attribute domain; }
+              init_daemon_domain(himmelblaud_t, himmelblaud_exec_t)
+             }',
             `ifdef(`domain_type',
-                  `domain_type(himmelblaud_t)',
-                  `require { attribute domain; }
-typeattribute himmelblaud_t domain;')')')
+                  `optional {
+                    # domain_type macro may rely on domain attribute not present (Rocky 8)
+                    require { attribute domain; }
+                    domain_type(himmelblaud_t)
+                   }',
+                  `optional {
+                    # Some minimal policies omit the domain attribute
+                    require { attribute domain; }
+                    typeattribute himmelblaud_t domain;
+                   }')')')
 
 # himmelblaud_tasks
 type himmelblaud_tasks_t;
 type himmelblaud_tasks_exec_t;
 # files_type macro may not exist on all distros (e.g., Rocky 8) - provide fallback
-ifdef(`files_type',`files_type(himmelblaud_tasks_exec_t)',
-      `require { attribute file_type; }
-       typeattribute himmelblaud_tasks_exec_t file_type;')
+# Keep fallback optional: some minimal policies omit the file_type attribute
+ifdef(`files_type',`optional {
+        # Some policies provide files_type but omit file_type attribute (Rocky 8)
+        require { attribute file_type; }
+        files_type(himmelblaud_tasks_exec_t)
+       }',
+      `optional {
+        require { attribute file_type; }
+        typeattribute himmelblaud_tasks_exec_t file_type;
+       }')
 # Use init_nnp_daemon_domain if available (newer distros), fall back to
 # init_daemon_domain (older distros), domain_type, or primitive typeattribute (Rocky 8)
 ifdef(`init_nnp_daemon_domain',
-      `init_nnp_daemon_domain(himmelblaud_tasks_t, himmelblaud_tasks_exec_t)',
+      `optional {
+        # Some older policies expose the macro but miss supporting attributes
+        require { attribute domain; }
+        init_nnp_daemon_domain(himmelblaud_tasks_t, himmelblaud_tasks_exec_t)
+       }',
       `ifdef(`init_daemon_domain',
-            `init_daemon_domain(himmelblaud_tasks_t, himmelblaud_tasks_exec_t)',
+            `optional {
+              # Some older policies expose the macro but miss supporting attributes
+              require { attribute domain; }
+              init_daemon_domain(himmelblaud_tasks_t, himmelblaud_tasks_exec_t)
+             }',
             `ifdef(`domain_type',
-                  `domain_type(himmelblaud_tasks_t)',
-                  `require { attribute domain; }
-typeattribute himmelblaud_tasks_t domain;')')')
+                  `optional {
+                    # domain_type macro may rely on domain attribute not present (Rocky 8)
+                    require { attribute domain; }
+                    domain_type(himmelblaud_tasks_t)
+                   }',
+                  `optional {
+                    # Some minimal policies omit the domain attribute
+                    require { attribute domain; }
+                    typeattribute himmelblaud_tasks_t domain;
+                   }')')')
 
 # Let these be valid process domains under system_r
 role system_r types himmelblaud_t;
@@ -87,24 +131,208 @@ allow himmelblaud_t himmelblau_nss_cache_t:dir { add_name getattr mounton open r
 allow himmelblaud_t himmelblau_nss_cache_t:file { create getattr lock open read setattr unlink write };
 allow himmelblaud_t himmelblau_var_cache_t:dir { add_name create getattr open read remove_name rmdir search setattr write };
 allow himmelblaud_t himmelblau_var_cache_t:file { create getattr lock open read setattr unlink write };
-allow himmelblaud_t himmelblau_var_cache_t:lnk_file read;
+allow himmelblaud_t himmelblau_var_cache_t:lnk_file { getattr read };
 allow himmelblaud_t himmelblau_var_lib_t:dir { add_name getattr open read setattr write };
-allow himmelblaud_t himmelblau_var_lib_t:file { create open read setattr write };
+allow himmelblaud_t himmelblau_var_lib_t:file { create getattr open read setattr write };
 allow himmelblaud_t himmelblau_var_lib_t:lnk_file read;
 allow himmelblaud_t himmelblau_var_run_t:dir { add_name create getattr mounton open read remove_name rmdir search setattr write };
 allow himmelblaud_t himmelblau_var_run_t:sock_file { create getattr setattr write unlink };
+
+optional {
+	# Basic system file/device access needed by the daemon (gate for cross-distro compatibility)
+	require {
+		type passwd_file_t;
+		type cert_t;
+		type init_var_run_t;
+		type systemd_unit_file_t;
+		type root_t;
+		type bin_t;
+		type shell_exec_t;
+		type net_conf_t;
+		type systemd_resolved_var_run_t;
+		type systemd_resolved_t;
+		type sysctl_crypto_t;
+		type tmp_t;
+		type systemd_userdbd_runtime_t;
+		type xdm_var_run_t;
+		type proc_t;
+		type sysfs_t;
+		type sysctl_t;
+		type sysctl_kernel_t;
+		type selinux_config_t;
+		type security_t;
+		type var_lib_t;
+		type null_device_t;
+		type urandom_device_t;
+		class fd use;
+		class dir { add_name create getattr open read remove_name search setattr write };
+		class file { append create getattr lock map open read setattr unlink write execute execute_no_trans ioctl };
+		class lnk_file { getattr read };
+		class chr_file { getattr open read write ioctl };
+		class fifo_file { getattr read ioctl };
+		class filesystem getattr;
+		class capability { dac_read_search dac_override };
+		class process { fork getsched rlimitinh siginh noatsecure };
+		class unix_stream_socket { accept connectto read write };
+		class netlink_route_socket { bind create getattr nlmsg_read read write };
+		class udp_socket { connect create getattr };
+		class tcp_socket { connect create getattr getopt read setopt shutdown write };
+		class sock_file write;
+	}
+	allow himmelblaud_t passwd_file_t:file { getattr open read };
+	allow himmelblaud_t cert_t:dir { getattr open read search };
+	allow himmelblaud_t cert_t:lnk_file read;
+	allow himmelblaud_t cert_t:file { getattr open read };
+	allow himmelblaud_t proc_t:dir search;
+	allow himmelblaud_t proc_t:lnk_file read;
+	allow himmelblaud_t himmelblaud_t:dir search;
+	allow himmelblaud_t himmelblaud_t:file { getattr open read };
+	allow himmelblaud_t self:process { fork getsched };
+	allow himmelblaud_t self:fifo_file { getattr read ioctl };
+	allow himmelblaud_t sysctl_t:dir search;
+	allow himmelblaud_t sysctl_kernel_t:dir search;
+	allow himmelblaud_t sysctl_kernel_t:file { getattr open read };
+	allow himmelblaud_t selinux_config_t:dir search;
+	allow himmelblaud_t sysfs_t:dir search;
+	allow himmelblaud_t sysfs_t:lnk_file read;
+	allow himmelblaud_t sysfs_t:file { getattr open read };
+	allow himmelblaud_t security_t:filesystem getattr;
+	allow himmelblaud_t var_lib_t:dir search;
+	allow himmelblaud_t null_device_t:chr_file { getattr open read write ioctl };
+	allow himmelblaud_t urandom_device_t:chr_file { getattr open read };
+	allow himmelblaud_t init_t:fd use;
+	allow himmelblaud_t init_t:unix_stream_socket { read write connectto };
+	allow himmelblaud_t init_var_run_t:dir search;
+	allow himmelblaud_t systemd_unit_file_t:dir getattr;
+	allow himmelblaud_t init_var_run_t:sock_file write;
+	allow himmelblaud_t init_var_run_t:file { getattr open read };
+	allow himmelblaud_t init_t:process { rlimitinh siginh noatsecure };
+	allow himmelblaud_t root_t:dir search;
+	allow himmelblaud_t root_t:dir getattr;
+	allow himmelblaud_t bin_t:dir search;
+	allow himmelblaud_t bin_t:file { getattr open read execute execute_no_trans map };
+	allow himmelblaud_t himmelblaud_exec_t:file { getattr open read execute map };
+	allow himmelblaud_t himmelblaud_t:unix_stream_socket accept;
+	# Older SELinux policies (e.g., Rocky 8) do not define the file "watch" permission
+	optional {
+		require {
+			type passwd_file_t;
+			class file { watch };
+		}
+		allow himmelblaud_t passwd_file_t:file watch;
+	}
+	allow himmelblaud_t net_conf_t:lnk_file read;
+	allow himmelblaud_t net_conf_t:file { getattr open read };
+	allow himmelblaud_t systemd_resolved_var_run_t:dir search;
+	allow himmelblaud_t systemd_resolved_var_run_t:sock_file write;
+	allow himmelblaud_t systemd_resolved_t:unix_stream_socket connectto;
+	allow himmelblaud_t sysctl_crypto_t:dir search;
+	allow himmelblaud_t sysctl_crypto_t:file { getattr open read };
+	allow himmelblaud_t tmp_t:dir { add_name create getattr open read remove_name search setattr write };
+	allow himmelblaud_t tmp_t:file { create getattr open read setattr unlink write };
+	allow himmelblaud_t self:netlink_route_socket { bind create getattr nlmsg_read read write };
+	allow himmelblaud_t self:udp_socket { connect create getattr };
+	allow himmelblaud_t self:tcp_socket { connect create getattr getopt read setopt shutdown write };
+}
 
 # himmelblaud_tasks_t (tasks daemon) permissions
 allow himmelblaud_tasks_t himmelblau_etc_t:dir { getattr open read search };
 allow himmelblaud_tasks_t himmelblau_etc_t:file { getattr open read };
 allow himmelblaud_tasks_t himmelblau_var_cache_t:dir { add_name create getattr open read remove_name rmdir search setattr write };
 allow himmelblaud_tasks_t himmelblau_var_cache_t:file { create getattr lock open read setattr unlink write };
-allow himmelblaud_tasks_t himmelblau_var_cache_t:lnk_file read;
+allow himmelblaud_tasks_t himmelblau_var_cache_t:lnk_file { getattr read };
 allow himmelblaud_tasks_t himmelblau_var_lib_t:dir { add_name getattr open read setattr write };
-allow himmelblaud_tasks_t himmelblau_var_lib_t:file { create open read setattr write };
+allow himmelblaud_tasks_t himmelblau_var_lib_t:file { create getattr open read setattr write };
 allow himmelblaud_tasks_t himmelblau_var_lib_t:lnk_file read;
 allow himmelblaud_tasks_t himmelblau_var_run_t:dir { getattr open read search };
 allow himmelblaud_tasks_t himmelblau_var_run_t:sock_file write;
+optional {
+	# Additional daemon access (gate for cross-distro compatibility)
+	require {
+		type proc_t;
+		type null_device_t;
+		type init_t;
+		type init_var_run_t;
+		type systemd_unit_file_t;
+		type root_t;
+		type bin_t;
+		type passwd_file_t;
+		type cert_t;
+		type sysctl_t;
+		type sysctl_kernel_t;
+		type net_conf_t;
+		type systemd_resolved_var_run_t;
+		type systemd_resolved_t;
+		type sysctl_crypto_t;
+		type tmp_t;
+		type http_port_t;
+		type systemd_userdbd_runtime_t;
+		type xdm_var_run_t;
+		type sysfs_t;
+		type var_lib_t;
+		class dir { add_name create getattr open read remove_name search setattr write };
+		class file { create getattr open read setattr unlink write execute execute_no_trans map };
+		class lnk_file read;
+		class chr_file { getattr open read write ioctl };
+		class unix_stream_socket { connectto read write };
+		class netlink_route_socket { bind create getattr nlmsg_read read write };
+		class udp_socket { connect create getattr };
+		class tcp_socket { connect create getattr getopt read setopt shutdown write name_connect };
+		class sock_file write;
+		class capability { dac_read_search dac_override chown };
+		class process { fork getsched rlimitinh siginh noatsecure };
+		class fd use;
+	}
+	allow himmelblaud_tasks_t proc_t:dir search;
+	allow himmelblaud_tasks_t proc_t:lnk_file read;
+	allow himmelblaud_tasks_t himmelblaud_tasks_t:dir search;
+	allow himmelblaud_tasks_t himmelblaud_tasks_t:file { getattr open read };
+	allow himmelblaud_tasks_t self:process { fork getsched };
+	allow himmelblaud_tasks_t null_device_t:chr_file { getattr open read write ioctl };
+	allow himmelblaud_tasks_t init_t:fd use;
+	allow himmelblaud_tasks_t init_t:unix_stream_socket { read write connectto };
+	allow himmelblaud_tasks_t init_var_run_t:dir search;
+	allow himmelblaud_tasks_t systemd_unit_file_t:dir getattr;
+	allow himmelblaud_tasks_t init_var_run_t:sock_file write;
+	allow himmelblaud_tasks_t init_t:process { rlimitinh siginh noatsecure };
+	allow himmelblaud_tasks_t root_t:dir search;
+	allow himmelblaud_tasks_t root_t:dir getattr;
+	allow himmelblaud_tasks_t bin_t:dir search;
+	allow himmelblaud_tasks_t himmelblaud_tasks_exec_t:file { getattr open read execute map };
+	allow himmelblaud_tasks_t himmelblaud_t:unix_stream_socket connectto;
+	allow himmelblaud_tasks_t self:capability { dac_read_search dac_override };
+	allow himmelblaud_tasks_t passwd_file_t:file { getattr open read };
+	allow himmelblaud_tasks_t cert_t:dir { getattr open read search };
+	allow himmelblaud_tasks_t cert_t:lnk_file read;
+	allow himmelblaud_tasks_t cert_t:file { getattr open read };
+	allow himmelblaud_tasks_t sysctl_t:dir search;
+	allow himmelblaud_tasks_t sysctl_kernel_t:dir search;
+	allow himmelblaud_tasks_t sysctl_kernel_t:file { getattr open read };
+	allow himmelblaud_tasks_t net_conf_t:lnk_file read;
+	allow himmelblaud_tasks_t net_conf_t:file { getattr open read };
+	allow himmelblaud_tasks_t systemd_resolved_var_run_t:dir search;
+	allow himmelblaud_tasks_t systemd_resolved_var_run_t:sock_file write;
+	allow himmelblaud_tasks_t systemd_resolved_t:unix_stream_socket connectto;
+	allow himmelblaud_tasks_t sysctl_crypto_t:dir search;
+	allow himmelblaud_tasks_t sysctl_crypto_t:file { getattr open read };
+	allow himmelblaud_tasks_t tmp_t:dir { add_name create getattr open read remove_name search setattr write };
+	allow himmelblaud_tasks_t tmp_t:file { create getattr open read setattr unlink write };
+	allow himmelblaud_tasks_t tmp_t:dir { add_name create setattr };
+	allow himmelblaud_tasks_t self:netlink_route_socket { bind create getattr nlmsg_read read write };
+	allow himmelblaud_tasks_t self:udp_socket { connect create getattr };
+	allow himmelblaud_tasks_t self:tcp_socket { connect create getattr getopt read setopt shutdown write };
+	allow himmelblaud_tasks_t http_port_t:tcp_socket name_connect;
+	allow himmelblaud_tasks_t bin_t:file { getattr open read execute execute_no_trans map };
+	allow himmelblaud_tasks_t systemd_userdbd_runtime_t:dir { getattr open read search };
+	allow himmelblaud_tasks_t systemd_userdbd_runtime_t:lnk_file read;
+	allow himmelblaud_tasks_t systemd_userdbd_runtime_t:sock_file write;
+	allow himmelblaud_tasks_t xdm_var_run_t:sock_file write;
+	allow himmelblaud_tasks_t sysfs_t:dir search;
+	allow himmelblaud_tasks_t sysfs_t:lnk_file read;
+	allow himmelblaud_tasks_t sysfs_t:file { getattr open read };
+	allow himmelblaud_tasks_t var_lib_t:dir search;
+	allow himmelblaud_tasks_t self:capability chown;
+}
 
 # Both daemons need access to /etc/subuid and /etc/subgid for user namespace management
 require {
@@ -183,33 +411,68 @@ optional {
 
 type himmelblau_etc_t;
 # files_config_file macro may not exist on all distros - provide fallback
-ifdef(`files_config_file',`files_config_file(himmelblau_etc_t)',
-      `require { attribute file_type; }
-       typeattribute himmelblau_etc_t file_type;')
+# Keep fallback optional: some minimal policies omit the file_type attribute
+ifdef(`files_config_file',`optional {
+        # Some policies provide files_config_file but omit file_type attribute (Rocky 8)
+        require { attribute file_type; }
+        files_config_file(himmelblau_etc_t)
+       }',
+      `optional {
+        require { attribute file_type; }
+        typeattribute himmelblau_etc_t file_type;
+       }')
 
 type himmelblau_var_run_t;
 # files_pid_file macro may not exist on all distros - provide fallback
-ifdef(`files_pid_file',`files_pid_file(himmelblau_var_run_t)',
-      `require { attribute file_type; }
-       typeattribute himmelblau_var_run_t file_type;')
+# Keep fallback optional: some minimal policies omit the file_type attribute
+ifdef(`files_pid_file',`optional {
+        # Some policies provide files_pid_file but omit file_type attribute (Rocky 8)
+        require { attribute file_type; }
+        files_pid_file(himmelblau_var_run_t)
+       }',
+      `optional {
+        require { attribute file_type; }
+        typeattribute himmelblau_var_run_t file_type;
+       }')
 
 type himmelblau_var_cache_t;
 # files_type macro may not exist on all distros - provide fallback
-ifdef(`files_type',`files_type(himmelblau_var_cache_t)',
-      `require { attribute file_type; }
-       typeattribute himmelblau_var_cache_t file_type;')
+# Keep fallback optional: some minimal policies omit the file_type attribute
+ifdef(`files_type',`optional {
+        # Some policies provide files_type but omit file_type attribute (Rocky 8)
+        require { attribute file_type; }
+        files_type(himmelblau_var_cache_t)
+       }',
+      `optional {
+        require { attribute file_type; }
+        typeattribute himmelblau_var_cache_t file_type;
+       }')
 
 type himmelblau_nss_cache_t;
 # files_type macro may not exist on all distros - provide fallback
-ifdef(`files_type',`files_type(himmelblau_nss_cache_t)',
-      `require { attribute file_type; }
-       typeattribute himmelblau_nss_cache_t file_type;')
+# Keep fallback optional: some minimal policies omit the file_type attribute
+ifdef(`files_type',`optional {
+        # Some policies provide files_type but omit file_type attribute (Rocky 8)
+        require { attribute file_type; }
+        files_type(himmelblau_nss_cache_t)
+       }',
+      `optional {
+        require { attribute file_type; }
+        typeattribute himmelblau_nss_cache_t file_type;
+       }')
 
 type himmelblau_var_lib_t;
 # files_type macro may not exist on all distros - provide fallback
-ifdef(`files_type',`files_type(himmelblau_var_lib_t)',
-      `require { attribute file_type; }
-       typeattribute himmelblau_var_lib_t file_type;')
+# Keep fallback optional: some minimal policies omit the file_type attribute
+ifdef(`files_type',`optional {
+        # Some policies provide files_type but omit file_type attribute (Rocky 8)
+        require { attribute file_type; }
+        files_type(himmelblau_var_lib_t)
+       }',
+      `optional {
+        require { attribute file_type; }
+        typeattribute himmelblau_var_lib_t file_type;
+       }')
 
 ############################
 # Filesystem association rules
@@ -255,7 +518,7 @@ allow init_t himmelblau_var_cache_t:dir { add_name create getattr open read remo
 allow init_t himmelblau_var_cache_t:file { create getattr lock open read setattr unlink write };
 allow init_t himmelblau_var_cache_t:lnk_file read;
 allow init_t himmelblau_var_lib_t:dir { add_name getattr open read setattr };
-allow init_t himmelblau_var_lib_t:file { create open read setattr write };
+allow init_t himmelblau_var_lib_t:file { create getattr open read setattr write };
 allow init_t himmelblau_var_lib_t:lnk_file read;
 allow init_t himmelblau_var_run_t:dir { add_name create getattr mounton open read remove_name rmdir search setattr write };
 allow init_t himmelblau_var_run_t:sock_file { create getattr setattr write unlink };
@@ -266,6 +529,12 @@ require {
 	type etc_t;
 }
 allow init_t etc_t:file { append getattr open read write };
+allow init_t himmelblaud_t:dir search;
+allow init_t himmelblaud_tasks_t:dir search;
+allow init_t himmelblaud_t:process { signull signal sigkill };
+allow init_t himmelblaud_tasks_t:process { signull signal sigkill };
+allow init_t himmelblaud_t:file read;
+allow init_t himmelblaud_tasks_t:file read;
 
 # Optional: init_t access to cron spool (may not exist on all systems)
 optional {
@@ -474,6 +743,8 @@ optional {
 	allow policykit_t himmelblau_var_cache_t:lnk_file read;
 	allow policykit_t himmelblau_var_run_t:dir search;
 	allow policykit_t himmelblau_var_run_t:sock_file write;
+	allow policykit_t himmelblaud_t:dir search;
+	allow policykit_t himmelblaud_t:file read;
 }
 
 #============= policykit_auth_t ==============
@@ -610,9 +881,59 @@ optional {
 	allow unconfined_t himmelblau_var_lib_t:dir relabelto;
 	allow unconfined_t himmelblau_var_run_t:dir search;
 	allow unconfined_t himmelblau_var_run_t:sock_file write;
+	allow unconfined_t himmelblaud_t:unix_stream_socket connectto;
+	allow unconfined_t himmelblaud_t:dir { getattr search };
+	allow unconfined_t himmelblaud_tasks_t:dir { getattr search };
 
 	allow unconfined_t himmelblau_etc_t:dir { add_name create getattr open read remove_name search write setattr relabelto relabelfrom };
 	allow unconfined_t himmelblau_etc_t:file { append create getattr open read rename setattr unlink write relabelto relabelfrom };
+}
+
+#============= syslogd_t ==============
+# syslogd_t is for systemd-journald/syslogd, may not exist on all distros
+optional {
+	require {
+		type syslogd_t;
+	}
+	allow syslogd_t himmelblaud_t:dir search;
+	allow syslogd_t himmelblaud_tasks_t:dir search;
+	allow syslogd_t himmelblaud_t:file read;
+	allow syslogd_t himmelblaud_tasks_t:file read;
+	allow syslogd_t himmelblaud_tasks_t:lnk_file read;
+}
+
+#============= systemd_userdbd_t ==============
+# systemd_userdbd_t is for systemd-userdbd, may not exist on all distros
+optional {
+	require {
+		type systemd_userdbd_t;
+	}
+	allow systemd_userdbd_t himmelblau_etc_t:dir search;
+	allow systemd_userdbd_t himmelblau_var_run_t:dir search;
+	allow systemd_userdbd_t himmelblau_var_run_t:sock_file write;
+	allow systemd_userdbd_t himmelblau_nss_cache_t:dir { getattr search };
+	allow systemd_userdbd_t himmelblau_nss_cache_t:file getattr;
+	allow systemd_userdbd_t himmelblau_var_cache_t:dir search;
+	allow systemd_userdbd_t himmelblau_var_cache_t:lnk_file read;
+	allow systemd_userdbd_t himmelblau_etc_t:file { getattr open read };
+}
+
+#============= systemd_machined_t ==============
+# systemd_machined_t may not exist on all distros
+optional {
+	require {
+		type systemd_machined_t;
+	}
+	allow himmelblaud_tasks_t systemd_machined_t:unix_stream_socket connectto;
+}
+
+#============= xdm_t ==============
+# xdm_t may not exist on all distros
+optional {
+	require {
+		type xdm_t;
+	}
+	allow himmelblaud_tasks_t xdm_t:unix_stream_socket connectto;
 }
 
 #============= snapperd_t ==============
