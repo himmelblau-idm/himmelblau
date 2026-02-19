@@ -187,7 +187,7 @@ fn should_capture_keyring_secret(prompt: &str) -> bool {
         return false;
     }
 
-    prompt.contains("pin")
+    prompt.contains("pin") || prompt.contains("password")
 }
 
 pub struct KeyringCaptureMessagePrinter {
