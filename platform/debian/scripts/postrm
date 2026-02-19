@@ -47,3 +47,5 @@ if [[ -f /etc/apparmor.d/usr.lib.libreoffice.program.soffice.bin ]]; then
 	# Reload the AppArmor profile to apply the changes
 	apparmor_parser -r /etc/apparmor.d/usr.lib.libreoffice.program.soffice.bin || echo "apparmor reload failed"
 fi
+
+DEBIAN_FRONTEND=noninteractive pam-auth-update
