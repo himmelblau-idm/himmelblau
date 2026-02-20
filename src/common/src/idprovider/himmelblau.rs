@@ -1202,21 +1202,30 @@ impl IdProvider for HimmelblauProvider {
             }
         }
 
-        // Persist the new Hello key blob. Do this last so that on any earlier
-        // failure the old key is still intact and the user can retry.
+        // Validate the MFA token BEFORE any state mutation — if the token is
+        // invalid or denied we must not re-key the Hello blob or re-seal the PRT.
+        match self.token_validate(account_id, token, None).await {
+            Ok(AuthResult::Success { .. }) => {}
+            Ok(AuthResult::Denied(msg)) => {
+                error!("PIN change denied by token_validate: {}", msg);
+                return Err(IdpError::BadRequest);
+            }
+            Ok(AuthResult::Next(_)) => {
+                error!("PIN change: unexpected Next from token_validate");
+                return Err(IdpError::BadRequest);
+            }
+            Err(e) => {
+                error!("PIN change: token_validate failed: {:?}", e);
+                return Err(e);
+            }
+        }
+
+        // Persist the new Hello key blob. Do this only after the identity check
+        // above passes — old key stays intact until here so retries are safe.
         keystore.insert_tagged_hsm_key(&hello_tag, &new_hello_key).map_err(|e| {
             error!("Failed to store new Hello key during PIN change: {:?}", e);
             IdpError::Tpm
         })?;
-
-        // Use the MFA token to update the cached UserToken so the access/refresh
-        // token in the DB reflects the freshly-authenticated session.
-        self.token_validate(account_id, token, None)
-            .await
-            .map_err(|e| {
-                error!("Failed to update cached token after PIN change: {:?}", e);
-                IdpError::BadRequest
-            })?;
 
         Ok(true)
     }

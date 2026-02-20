@@ -795,11 +795,16 @@ where
             .await;
 
         drop(hsm_lock);
+
+        // Check result BEFORE committing — if the idprovider returned an error
+        // (e.g. token_validate denied, wrong PIN) we must not persist the writes.
+        let ok = res.map_err(|e| {
+            trace!("change_auth_token_pin error -> {:?}", e);
+        })?;
+
         dbtxn.commit().map_err(|_| ())?;
 
-        res.map_err(|e| {
-            trace!("change_auth_token_pin error -> {:?}", e);
-        })
+        Ok(ok)
     }
 
     pub async fn offline_break_glass(&self, ttl: Option<u64>) -> Result<(), ()> {
