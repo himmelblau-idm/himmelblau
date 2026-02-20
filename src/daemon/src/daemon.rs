@@ -827,13 +827,24 @@ async fn handle_client(
                 .instrument(span)
                 .await
             }
-            ClientRequest::PamChangeAuthTokenLocal(account_id, old_pin, new_pin) => {
+            ClientRequest::PamChangeAuthTokenPin(account_id, access_token, refresh_token, old_pin, new_pin) => {
                 let account_id = account_id.to_lowercase();
-                let span = span!(Level::INFO, "sm_chauthtok_local req");
+                let span = span!(Level::INFO, "sm_chauthtok_pin req");
                 async {
-                    trace!("sm_chauthtok_local req");
+                    trace!("sm_chauthtok_pin req");
+                    let token = UnixUserToken {
+                        token_type: "Bearer".to_string(),
+                        scope: None,
+                        expires_in: 0,
+                        ext_expires_in: 0,
+                        access_token: Some(access_token),
+                        refresh_token,
+                        id_token: IdToken::default(),
+                        client_info: ClientInfo::default(),
+                        prt: None,
+                    };
                     match cachelayer
-                        .change_auth_token_local(&account_id, &old_pin, &new_pin)
+                        .change_auth_token_pin(&account_id, &token, &old_pin, &new_pin)
                         .await
                     {
                         Ok(true) => ClientResponse::Ok,
