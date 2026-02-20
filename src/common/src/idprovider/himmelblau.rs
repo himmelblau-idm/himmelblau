@@ -1104,6 +1104,24 @@ impl IdProvider for HimmelblauProvider {
             }
         };
 
+        // Validate the MFA token FIRST — before any TPM operations or keystore
+        // writes. If the token is invalid or denied, bail out immediately.
+        match self.token_validate(account_id, token, None).await {
+            Ok(AuthResult::Success { .. }) => {}
+            Ok(AuthResult::Denied(msg)) => {
+                error!("PIN change denied by token_validate: {}", msg);
+                return Err(IdpError::BadRequest);
+            }
+            Ok(AuthResult::Next(_)) => {
+                error!("PIN change: unexpected Next from token_validate");
+                return Err(IdpError::BadRequest);
+            }
+            Err(e) => {
+                error!("PIN change: token_validate failed: {:?}", e);
+                return Err(e);
+            }
+        }
+
         // Load the existing Hello key with the old PIN to get the old storage key.
         // This also verifies the old PIN is correct.
         let old_pin_val = PinValue::new(old_pin).map_err(|e| {
@@ -1202,26 +1220,8 @@ impl IdProvider for HimmelblauProvider {
             }
         }
 
-        // Validate the MFA token BEFORE any state mutation — if the token is
-        // invalid or denied we must not re-key the Hello blob or re-seal the PRT.
-        match self.token_validate(account_id, token, None).await {
-            Ok(AuthResult::Success { .. }) => {}
-            Ok(AuthResult::Denied(msg)) => {
-                error!("PIN change denied by token_validate: {}", msg);
-                return Err(IdpError::BadRequest);
-            }
-            Ok(AuthResult::Next(_)) => {
-                error!("PIN change: unexpected Next from token_validate");
-                return Err(IdpError::BadRequest);
-            }
-            Err(e) => {
-                error!("PIN change: token_validate failed: {:?}", e);
-                return Err(e);
-            }
-        }
-
-        // Persist the new Hello key blob. Do this only after the identity check
-        // above passes — old key stays intact until here so retries are safe.
+        // Persist the new Hello key blob. Identity was verified at the top of
+        // this function; old key stays intact until here so retries are safe.
         keystore.insert_tagged_hsm_key(&hello_tag, &new_hello_key).map_err(|e| {
             error!("Failed to store new Hello key during PIN change: {:?}", e);
             IdpError::Tpm
