@@ -1603,13 +1603,16 @@ async fn main() -> ExitCode {
 
                 match call_daemon(&cfg.get_socket_path(), req, cfg.get_unix_sock_timeout()).await {
                     Ok(r) => match r {
-                        ClientResponse::Ok => info!("success"),
+                        ClientResponse::Ok => {}
                         _ => {
                             error!("Error: unexpected response -> {:?}", r);
+                            return ExitCode::FAILURE;
                         }
                     },
                     Err(e) => {
                         error!("Error -> {:?}", e);
+                        error!("Is himmelblaud running? Cache was NOT cleared.");
+                        return ExitCode::FAILURE;
                     }
                 };
 
