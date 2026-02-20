@@ -82,9 +82,18 @@ use tracing_subscriber::prelude::*;
 use std::thread;
 use std::time::Duration;
 
-use himmelblau_unix_common::auth::{authenticate, MessagePrinter};
+use himmelblau::error::MsalError;
+use himmelblau::{AuthOption, PublicClientApplication};
+use himmelblau_unix_common::auth::{authenticate, fido_auth, MessagePrinter};
+use himmelblau_unix_common::constants::BROKER_APP_ID;
+use himmelblau_unix_common::idprovider::openidconnect::{
+    mfa_from_oidc_device, OidcApplication, OidcTokenResponseExt,
+};
 use himmelblau_unix_common::pam::Options;
+use himmelblau_unix_common::{auth_handle_mfa_resp, pam_fail};
 use std::sync::{Arc, Mutex};
+use std::thread::sleep;
+use tokio::runtime::Runtime;
 
 pub fn get_cfg() -> Result<HimmelblauConfig, PamResultCode> {
     HimmelblauConfig::new(Some(DEFAULT_CONFIG_PATH)).map_err(|_| PamResultCode::PAM_SERVICE_ERR)
@@ -484,7 +493,7 @@ impl PamHooks for PamKanidm {
         };
         match conv.send(
             PAM_TEXT_INFO,
-            "This command changes your local Hello PIN, NOT your Entra Id password.",
+            "This command changes your Hello PIN. Entra ID MFA is required to verify your identity.",
         ) {
             Ok(_) => {}
             Err(err) => {
@@ -495,9 +504,249 @@ impl PamHooks for PamKanidm {
             }
         }
 
-        // Prompt for the current PIN to verify identity locally — no Entra
-        // re-authentication required. The daemon re-keys the Hello key blob
-        // directly using the old PIN, so this works offline too.
+        let (_, domain) = split_username(&account_id).expect("UPN already validated above");
+
+        let rt = match Runtime::new() {
+            Ok(rt) => rt,
+            Err(e) => {
+                error!("{:?}", e);
+                return PamResultCode::PAM_AUTH_ERR;
+            }
+        };
+
+        let tenant_id = match cfg.get_tenant_id(domain) {
+            Some(tenant_id) => tenant_id,
+            None => "common".to_string(),
+        };
+        let authority = format!("https://{}/{}", cfg.get_authority_host(domain), tenant_id);
+        let app = match PublicClientApplication::new(BROKER_APP_ID, Some(&authority)) {
+            Ok(app) => app,
+            Err(e) => {
+                error!(err = ?e, "PublicClientApplication");
+                return PamResultCode::PAM_AUTH_ERR;
+            }
+        };
+
+        let oidc_client = cfg.get_oidc_issuer_url().is_some();
+        let token = if !oidc_client {
+            let auth_options = vec![AuthOption::Fido, AuthOption::Passwordless];
+            let auth_init = match rt.block_on(async {
+                app.check_user_exists(&account_id, None, &auth_options)
+                    .await
+            }) {
+                Ok(auth_init) => auth_init,
+                Err(e) => {
+                    error!("{:?}", e);
+                    return PamResultCode::PAM_AUTH_ERR;
+                }
+            };
+
+            let password = if !auth_init.passwordless() {
+                match conv.send(PAM_PROMPT_ECHO_OFF, "Entra ID Password: ") {
+                    Ok(password) => match password {
+                        Some(cred) => Some(cred),
+                        None => {
+                            debug!("no password");
+                            return PamResultCode::PAM_CRED_INSUFFICIENT;
+                        }
+                    },
+                    Err(err) => {
+                        debug!("unable to get password");
+                        return err;
+                    }
+                }
+            } else {
+                None
+            };
+
+            let mut mfa_req = match rt.block_on(async {
+                app.initiate_acquire_token_by_mfa_flow(
+                    &account_id,
+                    password.as_deref(),
+                    vec![],
+                    None,
+                    &auth_options,
+                    Some(auth_init),
+                    cfg.get_mfa_method().as_deref(),
+                )
+                .await
+            }) {
+                Ok(mfa) => mfa,
+                Err(e) => {
+                    error!("{:?}", e);
+                    return PamResultCode::PAM_AUTH_ERR;
+                }
+            };
+
+            auth_handle_mfa_resp!(
+                mfa_req,
+                // FIDO
+                {
+                    let conv = Arc::new(Mutex::new(conv.clone()));
+                    let fido_challenge = match mfa_req.fido_challenge {
+                        Some(ref fido_challenge) => fido_challenge.clone(),
+                        None => {
+                            debug!("no Fido challenge");
+                            return PamResultCode::PAM_CRED_INSUFFICIENT;
+                        }
+                    };
+                    let fido_allow_list = match mfa_req.fido_allow_list {
+                        Some(ref fido_allow_list) => fido_allow_list.clone(),
+                        None => {
+                            debug!("no Fido allow list");
+                            return PamResultCode::PAM_CRED_INSUFFICIENT;
+                        }
+                    };
+                    let msg_printer = Arc::new(PamConvMessagePrinter::new(conv));
+                    let assertion =
+                        match fido_auth(msg_printer.clone(), fido_challenge, fido_allow_list) {
+                            Ok(assertion) => assertion,
+                            Err(e) => {
+                                pam_fail!(msg_printer, "Entra Id Fido authentication failed.", e);
+                            }
+                        };
+                    match rt.block_on(async {
+                        app.acquire_token_by_mfa_flow(
+                            &account_id,
+                            Some(&assertion),
+                            None,
+                            &mut mfa_req,
+                        )
+                        .await
+                    }) {
+                        Ok(token) => token,
+                        Err(e) => {
+                            error!("MFA FAIL: {:?}", e);
+                            return PamResultCode::PAM_AUTH_ERR;
+                        }
+                    }
+                },
+                // PROMPT
+                {
+                    let input = match conv.send(PAM_PROMPT_ECHO_OFF, &mfa_req.msg) {
+                        Ok(password) => match password {
+                            Some(cred) => cred,
+                            None => {
+                                debug!("no password");
+                                return PamResultCode::PAM_CRED_INSUFFICIENT;
+                            }
+                        },
+                        Err(err) => {
+                            debug!("unable to get password");
+                            return err;
+                        }
+                    };
+                    match rt.block_on(async {
+                        app.acquire_token_by_mfa_flow(&account_id, Some(&input), None, &mut mfa_req)
+                            .await
+                    }) {
+                        Ok(token) => token,
+                        Err(e) => {
+                            error!("MFA FAIL: {:?}", e);
+                            return PamResultCode::PAM_AUTH_ERR;
+                        }
+                    }
+                },
+                // POLL
+                {
+                    match conv.send(PAM_TEXT_INFO, &mfa_req.msg) {
+                        Ok(_) => {}
+                        Err(err) => {
+                            if opts.debug {
+                                println!("Message prompt failed");
+                            }
+                            return err;
+                        }
+                    }
+                    let mut poll_attempt = 1;
+                    let polling_interval = mfa_req.polling_interval.unwrap_or(5000);
+                    loop {
+                        match rt.block_on(async {
+                            app.acquire_token_by_mfa_flow(
+                                &account_id,
+                                None,
+                                Some(poll_attempt),
+                                &mut mfa_req,
+                            )
+                            .await
+                        }) {
+                            Ok(token) => break token,
+                            Err(e) => match e {
+                                MsalError::MFAPollContinue => {
+                                    poll_attempt += 1;
+                                    sleep(Duration::from_millis(polling_interval.into()));
+                                    continue;
+                                }
+                                e => {
+                                    error!("MFA FAIL: {:?}", e);
+                                    return PamResultCode::PAM_AUTH_ERR;
+                                }
+                            },
+                        }
+                    }
+                }
+            )
+        } else {
+            let client = match rt.block_on(async { OidcApplication::with_init(&cfg, domain).await })
+            {
+                Ok(client) => client,
+                Err(e) => {
+                    error!(err = ?e, "OidcApplication::with_init");
+                    return PamResultCode::PAM_AUTH_ERR;
+                }
+            };
+            let flow = match rt.block_on(async { client.initiate_device_flow().await }) {
+                Ok(token) => token,
+                Err(e) => {
+                    error!(err = ?e, "initiate_device_flow");
+                    return PamResultCode::PAM_AUTH_ERR;
+                }
+            };
+            let (mfa_req, _) = match mfa_from_oidc_device(flow.clone()) {
+                Ok(mfa_req) => mfa_req,
+                Err(e) => {
+                    error!(err = ?e, "mfa_from_oidc_device");
+                    return PamResultCode::PAM_AUTH_ERR;
+                }
+            };
+            match conv.send(PAM_TEXT_INFO, &mfa_req.msg) {
+                Ok(_) => {}
+                Err(err) => {
+                    if opts.debug {
+                        println!("Message prompt failed");
+                    }
+                    return err;
+                }
+            }
+            let polling_interval = mfa_req.polling_interval.unwrap_or(5000);
+            loop {
+                match rt.block_on(async { client.acquire_token_by_device_flow(&flow).await }) {
+                    Ok(token) => {
+                        let token = match token.into_unix_user_token() {
+                            Ok(token) => token,
+                            Err(e) => {
+                                error!(err = ?e, "into_unix_user_token");
+                                return PamResultCode::PAM_AUTH_ERR;
+                            }
+                        };
+                        break token;
+                    }
+                    Err(e) => match e {
+                        MsalError::MFAPollContinue => {
+                            sleep(Duration::from_millis(polling_interval.into()));
+                            continue;
+                        }
+                        e => {
+                            error!("MFA FAIL: {:?}", e);
+                            return PamResultCode::PAM_AUTH_ERR;
+                        }
+                    },
+                }
+            }
+        };
+
+        // MFA passed — now prompt for current PIN (to re-key the Hello blob)
+        // and the new PIN.
         let old_pin = match conv.send(PAM_PROMPT_ECHO_OFF, "Current PIN: ") {
             Ok(Some(cred)) => cred,
             Ok(None) => {
@@ -519,7 +768,7 @@ impl PamHooks for PamKanidm {
                             match conv.send(
                                 PAM_TEXT_INFO,
                                 &format!(
-                                    "Chosen pin is too short! {} chars required.",
+                                    "Chosen PIN is too short! {} chars required.",
                                     cfg.get_hello_pin_min_length()
                                 ),
                             ) {
@@ -533,9 +782,11 @@ impl PamHooks for PamKanidm {
                             }
                             continue;
                         } else if is_simple_pin(&cred) {
-                            match conv
-                                .send(PAM_TEXT_INFO, "PIN must not use repeating or predictable sequences. Avoid patterns like '111111', '123456', or '135791'.")
-                            {
+                            match conv.send(
+                                PAM_TEXT_INFO,
+                                "PIN must not use repeating or predictable sequences. \
+                                 Avoid patterns like '111111', '123456', or '135791'.",
+                            ) {
                                 Ok(_) => {}
                                 Err(err) => {
                                     if opts.debug {
@@ -589,7 +840,13 @@ impl PamHooks for PamKanidm {
             }
         }
 
-        let req = ClientRequest::PamChangeAuthTokenLocal(account_id, old_pin, new_pin.clone());
+        let req = ClientRequest::PamChangeAuthTokenPin(
+            account_id,
+            token.access_token.clone().unwrap_or_default(),
+            token.refresh_token.clone(),
+            old_pin,
+            new_pin.clone(),
+        );
 
         match daemon_client.call_and_wait(&req, cfg.get_unix_sock_timeout()) {
             Ok(ClientResponse::Ok) => {
