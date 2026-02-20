@@ -82,7 +82,7 @@ use tracing_subscriber::prelude::*;
 use std::thread;
 use std::time::Duration;
 
-use himmelblau_unix_common::auth::{authenticate, fido_auth, MessagePrinter};
+use himmelblau_unix_common::auth::{authenticate, MessagePrinter};
 use himmelblau_unix_common::pam::Options;
 use std::sync::{Arc, Mutex};
 
@@ -459,7 +459,7 @@ impl PamHooks for PamKanidm {
         // Local user (no UPN): not a Himmelblau/Entra account. Skip before touching the
         // daemon so local password changes (e.g. sudo passwd <local_user>) never depend
         // on himmelblaud and continue to pam_unix.
-        let (_, domain) = match split_username(&account_id) {
+        let (_, _domain) = match split_username(&account_id) {
             Some(resp) => resp,
             None => {
                 debug!(%account_id, "chauthtok: not a UPN, skipping (local user)");
