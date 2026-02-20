@@ -56,7 +56,7 @@ console-subscriber = { workspace = true, optional = true }
 name = "himmelblau"
 maintainer = "David Mulder <dmulder@suse.com>"
 depends = ["$auto"]
-recommends = ["nss-himmelblau", "pam-himmelblau", "krb5-user", "cron"]
+recommends = ["nss-himmelblau", "pam-himmelblau", "krb5-user", "cron", "tpm2-tools"]
 assets = [
   ["../../platform/debian/himmelblau.conf.example", "etc/himmelblau/himmelblau.conf", "644"],
   ["../../src/config/krb5_himmelblau.conf", "etc/krb5.conf.d/", "644"],
@@ -110,6 +110,9 @@ pam-himmelblau = "*"
 krb5 = "*"
 cron = "*" # For Intune policy scripts
 system-user-tss = "*"
+# Boolean OR: covers tpm2-tools (Fedora/Rocky/Amazon) and tpm2.0-tools (openSUSE/SLE) in one
+# expression. Requires RPM 4.13+, which ships on all supported RPM targets.
+"(tpm2-tools or tpm2.0-tools)" = "*"
 
 [package.metadata.generate-rpm.provides]
 aad-cli = ""

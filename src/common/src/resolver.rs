@@ -766,6 +766,47 @@ where
         })
     }
 
+    pub async fn change_auth_token_pin(
+        &self,
+        account_id: &str,
+        token: &UnixUserToken,
+        old_pin: &str,
+        new_pin: &str,
+    ) -> Result<bool, ()> {
+        // Validate the user isn't in the nxset (aka, it's a local user or group).
+        if self.check_nxset(Some(account_id), None).await {
+            return Ok(false);
+        }
+
+        let mut hsm_lock = self.hsm.lock().await;
+        let mut dbtxn = self.db.write().await;
+
+        let res = self
+            .client
+            .change_auth_token_pin(
+                account_id,
+                token,
+                old_pin,
+                new_pin,
+                &mut dbtxn,
+                hsm_lock.deref_mut(),
+                &self.machine_key,
+            )
+            .await;
+
+        drop(hsm_lock);
+
+        // Check result BEFORE committing — if the idprovider returned an error
+        // (e.g. token_validate denied, wrong PIN) we must not persist the writes.
+        let ok = res.map_err(|e| {
+            trace!("change_auth_token_pin error -> {:?}", e);
+        })?;
+
+        dbtxn.commit().map_err(|_| ())?;
+
+        Ok(ok)
+    }
+
     pub async fn offline_break_glass(&self, ttl: Option<u64>) -> Result<(), ()> {
         let res = self.client.offline_break_glass(ttl).await;
 

@@ -50,7 +50,7 @@ use himmelblau_unix_common::constants::{
 use himmelblau_unix_common::db::{Cache, CacheTxn, Db, KeyStoreTxn};
 use himmelblau_unix_common::idmap_cache::{StaticGroup, StaticIdCache, StaticUser};
 use himmelblau_unix_common::pam::{Options, PamResultCode};
-use himmelblau_unix_common::tpm::confidential_client_creds;
+use himmelblau_unix_common::tpm::{confidential_client_creds, open_tpm};
 use himmelblau_unix_common::tpm_init;
 use himmelblau_unix_common::unix_config::HsmType;
 use himmelblau_unix_common::unix_proto::{ClientRequest, ClientResponse};
@@ -1603,13 +1603,16 @@ async fn main() -> ExitCode {
 
                 match call_daemon(&cfg.get_socket_path(), req, cfg.get_unix_sock_timeout()).await {
                     Ok(r) => match r {
-                        ClientResponse::Ok => info!("success"),
+                        ClientResponse::Ok => {}
                         _ => {
                             error!("Error: unexpected response -> {:?}", r);
+                            return ExitCode::FAILURE;
                         }
                     },
                     Err(e) => {
                         error!("Error -> {:?}", e);
+                        error!("Is himmelblaud running? Cache was NOT cleared.");
+                        return ExitCode::FAILURE;
                     }
                 };
 
@@ -2059,36 +2062,82 @@ async fn main() -> ExitCode {
 
             let tpm_present =
                 fs::metadata("/dev/tpmrm0").is_ok() || fs::metadata("/dev/tpm0").is_ok();
-            if tpm_present {
-                let cfg = match HimmelblauConfig::new(Some(DEFAULT_CONFIG_PATH)) {
-                    Ok(c) => c,
-                    Err(_e) => {
-                        error!("Failed to parse {}", DEFAULT_CONFIG_PATH);
-                        return ExitCode::FAILURE;
-                    }
-                };
-                let unencrypted_pin_present = match PathBuf::from_str(&cfg.get_hsm_pin_path()) {
-                    Ok(path) => path.exists(),
-                    Err(_) => false,
-                };
-                let encrypted_pin_present = match PathBuf::from_str(DEFAULT_HSM_PIN_PATH_ENC) {
-                    Ok(path) => path.exists(),
-                    Err(_) => false,
-                };
-                if encrypted_pin_present && !unencrypted_pin_present {
-                    println!("Himmelblau TPM state: \x1b[32mTPM in use\x1b[0m")
-                } else {
-                    match cfg.get_hsm_type() {
-                        HsmType::Tpm | HsmType::TpmIfPossible => {
-                            println!("Himmelblau TPM state: \x1b[32mTPM in use\x1b[0m");
+
+            if !tpm_present {
+                println!("Himmelblau TPM state: \x1b[31mNo TPM detected\x1b[0m");
+                return ExitCode::SUCCESS;
+            }
+
+            let cfg = match HimmelblauConfig::new(Some(DEFAULT_CONFIG_PATH)) {
+                Ok(c) => c,
+                Err(_e) => {
+                    error!("Failed to parse {}", DEFAULT_CONFIG_PATH);
+                    return ExitCode::FAILURE;
+                }
+            };
+
+            // Check whether the HSM PIN credential is TPM-bound via systemd-creds.
+            // This is reliable evidence of TPM involvement regardless of hsm_type.
+            let unencrypted_pin_present = match PathBuf::from_str(&cfg.get_hsm_pin_path()) {
+                Ok(path) => path.exists(),
+                Err(_) => false,
+            };
+            let encrypted_pin_present = match PathBuf::from_str(DEFAULT_HSM_PIN_PATH_ENC) {
+                Ok(path) => path.exists(),
+                Err(_) => false,
+            };
+            let pin_tpm_bound = encrypted_pin_present && !unencrypted_pin_present;
+
+            // Actually attempt to open the hardware TPM to verify it is reachable
+            // and the compiled binary has the tpm feature enabled. Reading the
+            // config string alone is not sufficient — it may say "tpm" while the
+            // daemon silently fell back to SoftTpm (e.g. after a Soft→TPM migration
+            // without clearing HSM key material, or on a system where the SRK has
+            // not been provisioned).
+            let hw_tpm_opened = open_tpm(&cfg.get_tpm_tcti_name()).is_some();
+
+            match cfg.get_hsm_type() {
+                HsmType::Tpm | HsmType::TpmIfPossible => {
+                    if hw_tpm_opened {
+                        if pin_tpm_bound {
+                            println!(
+                                "Himmelblau TPM state: \x1b[32mTPM in use\x1b[0m \
+                                 (HSM PIN is TPM-bound via systemd-creds)"
+                            );
+                        } else {
+                            println!(
+                                "Himmelblau TPM state: \x1b[33mTPM configured and reachable, \
+                                 but HSM PIN is NOT TPM-bound\x1b[0m"
+                            );
+                            println!(
+                                "  Hint: re-run himmelblau-hsm-pin-init after ensuring \
+                                 systemd-tpm2-setup.service has run, or check dmesg for TPM errors."
+                            );
                         }
-                        HsmType::Soft => {
-                            println!("Himmelblau TPM state: \x1b[31mTPM not in use\x1b[0m");
-                        }
+                    } else {
+                        println!(
+                            "Himmelblau TPM state: \x1b[31mTPM configured but NOT reachable\x1b[0m"
+                        );
+                        println!(
+                            "  hsm_type = {} in config, but opening the TPM device failed.",
+                            cfg.get_hsm_type()
+                        );
+                        println!(
+                            "  The daemon may be running in SoftTpm fallback mode. \
+                             Check that the tpm feature was compiled in and /dev/tpmrm0 is accessible."
+                        );
                     }
                 }
-            } else {
-                println!("Himmelblau TPM state: \x1b[31mNo TPM detected\x1b[0m");
+                HsmType::Soft => {
+                    if pin_tpm_bound {
+                        println!(
+                            "Himmelblau TPM state: \x1b[33mSoft HSM, but HSM PIN is TPM-bound \
+                             via systemd-creds\x1b[0m"
+                        );
+                    } else {
+                        println!("Himmelblau TPM state: \x1b[31mTPM not in use\x1b[0m");
+                    }
+                }
             }
 
             ExitCode::SUCCESS

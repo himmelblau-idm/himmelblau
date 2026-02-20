@@ -7,6 +7,7 @@ set -e
 
 LEGACY=/var/lib/private/himmelblaud/hsm-pin
 CRED=/var/lib/private/himmelblaud/hsm-pin.enc
+SRK_HANDLE=0x81000001
 
 gen_pin_hex() {
     if command -v openssl >/dev/null 2>&1; then
@@ -16,25 +17,146 @@ gen_pin_hex() {
     fi
 }
 
+# Returns 0 if the TPM2 SRK is provisioned at the standard persistent handle
+# (0x81000001), as defined by TCG TPM v2.0 Provisioning Guidance section 7.5.1
+# and used by systemd-tpm2-setup. Falls back gracefully when tpm2-tools is not
+# installed.
+srk_is_provisioned() {
+    if ! command -v tpm2_getcap >/dev/null 2>&1; then
+        # Cannot verify without tpm2-tools; treat as not provisioned so callers
+        # fall back to --with-key=auto rather than assuming host+tpm2 is safe.
+        return 1
+    fi
+    tpm2_getcap handles-persistent 2>/dev/null | grep -q "$SRK_HANDLE"
+}
+
+# Provision the TPM2 Storage Root Key (SRK) at the standard persistent handle
+# 0x81000001 following TCG TPM v2.0 Provisioning Guidance (section 7.5.1).
+#
+# This replicates what systemd-tpm2-setup.service does, but without requiring
+# ConditionSecurity=measured-uki. On Ubuntu 24.04 and other distros that do not
+# boot via a measured UKI (GRUB + separate vmlinuz is the default), systemd
+# never runs that service, so the SRK is never provisioned and systemd-creds
+# silently falls back to host-only key binding.
+#
+# Algorithm preference matches systemd: ECC P-256 first, RSA-2048 fallback.
+# Attributes match the TCG standard:
+#   DECRYPT | FIXEDPARENT | FIXEDTPM | NODA | RESTRICTED |
+#   SENSITIVEDATAORIGIN | USERWITHAUTH
+#
+# Returns 0 on success, 1 on failure (tpm2-tools not installed counts as
+# success — caller already verified srk_is_provisioned returned false via
+# tpm2_getcap, which implies tpm2-tools IS installed if we get here).
+provision_srk() {
+    if ! command -v tpm2_createprimary >/dev/null 2>&1 || \
+       ! command -v tpm2_evictcontrol >/dev/null 2>&1; then
+        # Package name varies by distro:
+        #   Debian/Ubuntu/Fedora/Rocky/Amazon: tpm2-tools
+        #   openSUSE/SLE:                      tpm2.0-tools
+        #   Gentoo:                            app-crypt/tpm2-tools
+        echo "WARNING: tpm2-tools not fully installed, cannot provision SRK." \
+             "Install tpm2-tools (or tpm2.0-tools on openSUSE/SLE) for TPM-bound HSM PIN support."
+        return 1
+    fi
+
+    CTX=$(mktemp /tmp/himmelblau-srk.XXXXXX.ctx)
+    trap 'rm -f "$CTX"' EXIT
+
+    # Try ECC P-256 first (systemd preference, smaller key, same security level)
+    if tpm2_createprimary \
+            -C o \
+            -G ecc256:aes128cfb \
+            -a "DECRYPT|FIXEDPARENT|FIXEDTPM|NODA|RESTRICTED|SENSITIVEDATAORIGIN|USERWITHAUTH" \
+            -c "$CTX" >/dev/null 2>&1; then
+        echo "SRK: created ECC P-256 primary key"
+    # Fall back to RSA-2048 if ECC is not supported by this TPM
+    elif tpm2_createprimary \
+            -C o \
+            -G rsa2048:aes128cfb \
+            -a "DECRYPT|FIXEDPARENT|FIXEDTPM|NODA|RESTRICTED|SENSITIVEDATAORIGIN|USERWITHAUTH" \
+            -c "$CTX" >/dev/null 2>&1; then
+        echo "SRK: ECC not supported, created RSA-2048 primary key"
+    else
+        echo "WARNING: Failed to create TPM2 primary key for SRK provisioning."
+        rm -f "$CTX"
+        trap - EXIT
+        return 1
+    fi
+
+    # Persist the key at the standard SRK handle
+    if tpm2_evictcontrol -C o -c "$CTX" "$SRK_HANDLE" >/dev/null 2>&1; then
+        echo "SRK provisioned at $SRK_HANDLE"
+    else
+        echo "WARNING: Failed to persist SRK at $SRK_HANDLE."
+        rm -f "$CTX"
+        trap - EXIT
+        return 1
+    fi
+
+    rm -f "$CTX"
+    trap - EXIT
+    return 0
+}
+
 # Ensure the directory exists
 mkdir -p /var/lib/private/himmelblaud
 chmod 700 /var/lib/private/himmelblaud
-
-# If the encrypted credential already exists, nothing to do
-if [ -f "$CRED" ]; then
-    # Check if there's also a legacy file that needs cleanup
-    if [ -f "$LEGACY" ]; then
-        echo "Encrypted credential exists, removing legacy hsm-pin file"
-        rm -f "$LEGACY"
-    fi
-    echo "HSM PIN credential already exists, skipping initialization"
-    exit 0
-fi
 
 # Check if systemd-creds is available
 if ! command -v systemd-creds >/dev/null 2>&1; then
     echo "ERROR: systemd-creds not available, cannot create encrypted credential"
     exit 1
+fi
+
+# Attempt to self-provision the SRK if the TPM is present but the SRK is
+# missing. This is the common case on Ubuntu 24.04 (and any distro that boots
+# via GRUB + separate vmlinuz rather than a measured UKI), where
+# systemd-tpm2-setup.service is gated on ConditionSecurity=measured-uki and
+# therefore never runs.
+if [ -e /dev/tpmrm0 ] || [ -e /dev/tpm0 ]; then
+    if ! srk_is_provisioned; then
+        echo "TPM present but SRK not provisioned at $SRK_HANDLE — attempting self-provisioning..."
+        if provision_srk; then
+            echo "SRK self-provisioning succeeded"
+        else
+            echo "WARNING: SRK self-provisioning failed. HSM PIN will not be TPM-bound."
+        fi
+    fi
+fi
+
+# If the encrypted credential already exists, check if it needs upgrading to
+# TPM-bound encryption. This handles the case where the credential was created
+# during cloud-init or before the SRK was provisioned.
+if [ -f "$CRED" ]; then
+    # Clean up any stale legacy plaintext file
+    if [ -f "$LEGACY" ]; then
+        echo "Encrypted credential exists, removing legacy hsm-pin file"
+        rm -f "$LEGACY"
+    fi
+
+    # If a TPM is present and the SRK is now provisioned (including via
+    # self-provisioning above), try to upgrade the credential to TPM-bound.
+    if [ -e /dev/tpmrm0 ] || [ -e /dev/tpm0 ]; then
+        if srk_is_provisioned; then
+            if HSM_PIN=$(systemd-creds decrypt --name=hsm-pin "$CRED" - 2>/dev/null); then
+                CRED_TMP="${CRED}.tmp"
+                if printf '%s' "$HSM_PIN" | systemd-creds encrypt \
+                        --name=hsm-pin --with-key=host+tpm2 --tpm2-device=auto \
+                        - "$CRED_TMP" 2>/dev/null; then
+                    mv -f "$CRED_TMP" "$CRED"
+                    echo "HSM PIN credential upgraded to TPM-bound encryption"
+                else
+                    rm -f "$CRED_TMP" 2>/dev/null || true
+                    echo "WARNING: Re-encryption to TPM-bound key failed. Keeping existing credential."
+                fi
+            else
+                echo "WARNING: Could not decrypt existing credential for TPM upgrade. Keeping existing credential."
+            fi
+        fi
+    fi
+
+    echo "HSM PIN credential already exists, skipping initialization"
+    exit 0
 fi
 
 # Generate a new PIN if one doesn't exist, otherwise migrate the existing one
@@ -46,10 +168,24 @@ else
     HSM_PIN=$(gen_pin_hex)
 fi
 
+# Choose the strongest key binding available:
+#   host+tpm2  — bound to both this machine's credential secret AND the TPM SRK
+#   auto       — systemd picks the best available (may silently omit TPM if SRK absent)
+if [ -e /dev/tpmrm0 ] || [ -e /dev/tpm0 ]; then
+    if srk_is_provisioned; then
+        KEY_ARG="--with-key=host+tpm2"
+    else
+        echo "WARNING: TPM present but SRK provisioning failed. HSM PIN will use host key only."
+        KEY_ARG="--with-key=auto"
+    fi
+else
+    KEY_ARG="--with-key=auto"
+fi
+
 # Encrypt the PIN
-if printf '%s' "$HSM_PIN" | systemd-creds encrypt --name=hsm-pin --with-key=auto --tpm2-device=auto - "$CRED"; then
+if printf '%s' "$HSM_PIN" | systemd-creds encrypt --name=hsm-pin $KEY_ARG \
+        --tpm2-device=auto - "$CRED"; then
     echo "HSM PIN credential created successfully"
-    # Remove legacy file if it exists
     rm -f "$LEGACY" 2>/dev/null || true
     exit 0
 else
