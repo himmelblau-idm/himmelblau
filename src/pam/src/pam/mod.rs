@@ -702,7 +702,7 @@ impl PamHooks for PamKanidm {
                     return PamResultCode::PAM_AUTH_ERR;
                 }
             };
-            let (mfa_req, _) = match mfa_from_oidc_device(flow.clone()) {
+            let (mfa_req, _) = match mfa_from_oidc_device(&flow.clone()) {
                 Ok(mfa_req) => mfa_req,
                 Err(e) => {
                     error!(err = ?e, "mfa_from_oidc_device");
