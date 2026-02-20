@@ -766,9 +766,10 @@ where
         })
     }
 
-    pub async fn change_auth_token_local(
+    pub async fn change_auth_token_pin(
         &self,
         account_id: &str,
+        token: &UnixUserToken,
         old_pin: &str,
         new_pin: &str,
     ) -> Result<bool, ()> {
@@ -782,8 +783,9 @@ where
 
         let res = self
             .client
-            .change_auth_token_local(
+            .change_auth_token_pin(
                 account_id,
+                token,
                 old_pin,
                 new_pin,
                 &mut dbtxn,
@@ -796,7 +798,7 @@ where
         dbtxn.commit().map_err(|_| ())?;
 
         res.map_err(|e| {
-            trace!("change_auth_token_local error -> {:?}", e);
+            trace!("change_auth_token_pin error -> {:?}", e);
         })
     }
 
