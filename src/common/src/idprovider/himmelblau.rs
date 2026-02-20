@@ -531,9 +531,10 @@ impl IdProvider for HimmelblauMultiProvider {
         }
     }
 
-    async fn change_auth_token_local<D: KeyStoreTxn + Send>(
+    async fn change_auth_token_pin<D: KeyStoreTxn + Send>(
         &self,
         account_id: &str,
+        token: &UnixUserToken,
         old_pin: &str,
         new_pin: &str,
         keystore: &mut D,
@@ -547,12 +548,12 @@ impl IdProvider for HimmelblauMultiProvider {
         match provider {
             Providers::Oidc(provider) => {
                 provider
-                    .change_auth_token_local(account_id, old_pin, new_pin, keystore, tpm, machine_key)
+                    .change_auth_token_pin(account_id, token, old_pin, new_pin, keystore, tpm, machine_key)
                     .await
             }
             Providers::Himmelblau(provider) => {
                 provider
-                    .change_auth_token_local(account_id, old_pin, new_pin, keystore, tpm, machine_key)
+                    .change_auth_token_pin(account_id, token, old_pin, new_pin, keystore, tpm, machine_key)
                     .await
             }
         }
@@ -1074,9 +1075,10 @@ impl IdProvider for HimmelblauProvider {
     }
 
     #[instrument(skip_all)]
-    async fn change_auth_token_local<D: KeyStoreTxn + Send>(
+    async fn change_auth_token_pin<D: KeyStoreTxn + Send>(
         &self,
         account_id: &str,
+        token: &UnixUserToken,
         old_pin: &str,
         new_pin: &str,
         keystore: &mut D,
@@ -1085,9 +1087,7 @@ impl IdProvider for HimmelblauProvider {
     ) -> Result<bool, IdpError> {
         use kanidm_hsm_crypto::PinValue;
 
-        // Try both key tags (amr_ngcmfa=false for decoupled, true for provisioned).
-        // Decoupled keys (the common case for `passwd`) don't require network access.
-        // Provisioned (ngcmfa) keys also work — they are re-sealed locally.
+        // Try both key tags (decoupled first, then ngcmfa/provisioned).
         let (hello_tag, hello_key) = {
             let tag_decoupled = self.fetch_hello_key_tag(account_id, false);
             let tag_ngcmfa = self.fetch_hello_key_tag(account_id, true);
@@ -1096,7 +1096,7 @@ impl IdProvider for HimmelblauProvider {
             } else if let Ok(Some(key)) = keystore.get_tagged_hsm_key(&tag_ngcmfa) {
                 (tag_ngcmfa, key)
             } else {
-                error!("No Hello key found for {} during local PIN change", account_id);
+                error!("No Hello key found for {} during PIN change", account_id);
                 return Err(IdpError::NotFound {
                     what: "Hello key".to_string(),
                     where_: account_id.to_string(),
@@ -1104,16 +1104,18 @@ impl IdProvider for HimmelblauProvider {
             }
         };
 
-        // Verify the old PIN by attempting to load the existing key.
+        // Load the existing Hello key with the old PIN to get the old storage key.
+        // This also verifies the old PIN is correct.
         let old_pin_val = PinValue::new(old_pin).map_err(|e| {
             error!("Failed to build old PinValue: {:?}", e);
             IdpError::BadRequest
         })?;
-        if tpm.ms_hello_key_load(machine_key, &hello_key, &old_pin_val).is_err() {
-            // Wrong PIN — return BadRequest so PAM can surface "incorrect PIN"
-            error!("Old PIN verification failed for {} during local PIN change", account_id);
-            return Err(IdpError::BadRequest);
-        }
+        let (_old_hello_key_handle, old_storage_key) = tpm
+            .ms_hello_key_load(machine_key, &hello_key, &old_pin_val)
+            .map_err(|e| {
+                error!("Old PIN verification failed for {}: {:?}", account_id, e);
+                IdpError::BadRequest
+            })?;
 
         // Create a new Hello key blob sealed under the new PIN.
         let new_pin_val = PinValue::new(new_pin).map_err(|e| {
@@ -1121,15 +1123,100 @@ impl IdProvider for HimmelblauProvider {
             IdpError::BadRequest
         })?;
         let new_hello_key = tpm.ms_hello_key_create(machine_key, &new_pin_val).map_err(|e| {
-            error!("Failed to create new Hello key during local PIN change: {:?}", e);
+            error!("Failed to create new Hello key during PIN change: {:?}", e);
             IdpError::Tpm
         })?;
 
-        // Persist the new key blob under the same tag.
+        // Load the new key to get the new storage key handle for re-sealing.
+        let (_new_hello_key_handle, new_storage_key) = tpm
+            .ms_hello_key_load(machine_key, &new_hello_key, &new_pin_val)
+            .map_err(|e| {
+                error!("Failed to load new Hello key for re-sealing: {:?}", e);
+                IdpError::Tpm
+            })?;
+
+        // Re-seal the cached PRT blob under the new Hello key (if present).
+        let hello_prt_tag = self.fetch_hello_prt_key_tag(account_id);
+        if let Ok(Some(sealed_prt)) = keystore.get_tagged_hsm_key(&hello_prt_tag) {
+            match self.client.read().await.unseal_user_prt_with_hello_key(
+                &sealed_prt,
+                &hello_key,
+                old_pin,
+                tpm,
+                machine_key,
+            ) {
+                Ok(prt) => {
+                    match self.client.read().await.seal_user_prt_with_hello_key(
+                        &prt,
+                        &new_hello_key,
+                        new_pin,
+                        tpm,
+                        machine_key,
+                    ) {
+                        Ok(new_sealed_prt) => {
+                            keystore.insert_tagged_hsm_key(&hello_prt_tag, &new_sealed_prt)
+                                .map_err(|e| {
+                                    error!("Failed to store re-sealed PRT: {:?}", e);
+                                    IdpError::Tpm
+                                })?;
+                        }
+                        Err(e) => {
+                            error!("Failed to re-seal PRT with new Hello key: {:?}", e);
+                            // Non-fatal: delete so next login re-fetches from MFA token.
+                            let _ = keystore.delete_tagged_hsm_key(&hello_prt_tag);
+                        }
+                    }
+                }
+                Err(e) => {
+                    error!("Failed to unseal PRT during PIN change (stale?): {:?}", e);
+                    // Non-fatal: delete the stale blob so next login re-fetches.
+                    let _ = keystore.delete_tagged_hsm_key(&hello_prt_tag);
+                }
+            }
+        }
+
+        // Re-seal the cached refresh token blob under the new storage key (if present).
+        let hello_rt_tag = self.fetch_hello_refresh_token_key_tag(account_id);
+        if let Ok(Some(sealed_rt)) = keystore.get_tagged_hsm_key(&hello_rt_tag) {
+            match tpm.unseal_data(&old_storage_key, &sealed_rt) {
+                Ok(rt_bytes) => {
+                    match tpm.seal_data(&new_storage_key, zeroize::Zeroizing::new(rt_bytes.to_vec())) {
+                        Ok(new_sealed_rt) => {
+                            keystore.insert_tagged_hsm_key(&hello_rt_tag, &new_sealed_rt)
+                                .map_err(|e| {
+                                    error!("Failed to store re-sealed refresh token: {:?}", e);
+                                    IdpError::Tpm
+                                })?;
+                        }
+                        Err(e) => {
+                            error!("Failed to re-seal refresh token with new Hello key: {:?}", e);
+                            // Non-fatal: delete so next login re-fetches via MFA token.
+                            let _ = keystore.delete_tagged_hsm_key(&hello_rt_tag);
+                        }
+                    }
+                }
+                Err(e) => {
+                    error!("Failed to unseal refresh token during PIN change: {:?}", e);
+                    let _ = keystore.delete_tagged_hsm_key(&hello_rt_tag);
+                }
+            }
+        }
+
+        // Persist the new Hello key blob. Do this last so that on any earlier
+        // failure the old key is still intact and the user can retry.
         keystore.insert_tagged_hsm_key(&hello_tag, &new_hello_key).map_err(|e| {
-            error!("Failed to store new Hello key during local PIN change: {:?}", e);
+            error!("Failed to store new Hello key during PIN change: {:?}", e);
             IdpError::Tpm
         })?;
+
+        // Use the MFA token to update the cached UserToken so the access/refresh
+        // token in the DB reflects the freshly-authenticated session.
+        self.token_validate(account_id, token, None)
+            .await
+            .map_err(|e| {
+                error!("Failed to update cached token after PIN change: {:?}", e);
+                IdpError::BadRequest
+            })?;
 
         Ok(true)
     }
