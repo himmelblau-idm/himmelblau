@@ -44,8 +44,8 @@ use himmelblau_unix_common::client::call_daemon;
 use himmelblau_unix_common::config::{parse_ttl_to_seconds, split_username, HimmelblauConfig};
 use himmelblau_unix_common::constants::{
     CONFIDENTIAL_CLIENT_CERT_KEY_TAG, CONFIDENTIAL_CLIENT_CERT_TAG, CONFIDENTIAL_CLIENT_SECRET_TAG,
-    DEFAULT_CONFIG_PATH, DEFAULT_HSM_PIN_PATH_ENC, DEFAULT_ODC_PROVIDER, ID_MAP_CACHE,
-    MAPPED_NAME_CACHE, NSS_CACHE,
+    DEFAULT_APP_ID, DEFAULT_CONFIG_PATH, DEFAULT_HSM_PIN_PATH_ENC, DEFAULT_ODC_PROVIDER,
+    EDGE_BROWSER_CLIENT_ID, ID_MAP_CACHE, MAPPED_NAME_CACHE, NSS_CACHE,
 };
 use himmelblau_unix_common::db::{Cache, CacheTxn, Db, KeyStoreTxn};
 use himmelblau_unix_common::idmap_cache::{StaticGroup, StaticIdCache, StaticUser};
@@ -92,7 +92,7 @@ struct Account {
     username: String,
 }
 
-const EDGE_BROWSER_CLIENT_ID: &str = "d7b530a4-7680-4c23-a8bf-c52c121d2e87";
+
 
 #[derive(Debug, Deserialize)]
 struct BrokerTokenResponse {
@@ -831,35 +831,44 @@ async fn main() -> ExitCode {
                 debug!("Attempting SSO Broker auth ...");
                 if let Ok(broker) = BrokerClient::new().await {
                     let session_id = Uuid::new_v4().to_string();
-                    let client_id = $client_id.unwrap_or(EDGE_BROWSER_CLIENT_ID.to_string());
-                    if let Ok(account_val) = broker.get_accounts(
-                        "0.0", &session_id,
-                        &json!({"clientId": client_id.clone(), "redirectUri": session_id.clone()})
-                    ).await {
-                        if let Ok(accounts) = serde_json::from_value::<Accounts>(account_val) {
-                            if let Some(account) = accounts.accounts.into_iter().next() {
-                                if let Ok(Account { username, .. }) = serde_json::from_value::<Account>(account.clone()) {
-                                    if $account_id.is_none() || $account_id.clone().map(|s| s.to_lowercase()).as_ref().unwrap_or(&"".to_string()) == &username.to_lowercase() {
-                                        if let Ok(cfg) = HimmelblauConfig::new(Some(DEFAULT_CONFIG_PATH)) {
-                                            let (graph, _, authority) = init!(cfg, Some(username), None);
-                                            if let Ok(token_val) = broker.acquire_token_silently(
-                                                "0.0", &session_id,
-                                                &json!({
-                                                    "account": account,
-                                                    "authParameters": {
+                    let client_ids_to_try: Vec<String> = match &$client_id {
+                        Some(cid) => vec![cid.clone()],
+                        None => vec![
+                            EDGE_BROWSER_CLIENT_ID.to_string(),
+                            DEFAULT_APP_ID.to_string(),
+                        ],
+                    };
+                    for client_id in client_ids_to_try {
+                        if result.is_some() { break; }
+                        if let Ok(account_val) = broker.get_accounts(
+                            "0.0", &session_id,
+                            &json!({"clientId": client_id.clone(), "redirectUri": session_id.clone()})
+                        ).await {
+                            if let Ok(accounts) = serde_json::from_value::<Accounts>(account_val) {
+                                if let Some(account) = accounts.accounts.into_iter().next() {
+                                    if let Ok(Account { username, .. }) = serde_json::from_value::<Account>(account.clone()) {
+                                        if $account_id.is_none() || $account_id.clone().map(|s| s.to_lowercase()).as_ref().unwrap_or(&"".to_string()) == &username.to_lowercase() {
+                                            if let Ok(cfg) = HimmelblauConfig::new(Some(DEFAULT_CONFIG_PATH)) {
+                                                let (graph, _, authority) = init!(cfg, Some(username), None);
+                                                if let Ok(token_val) = broker.acquire_token_silently(
+                                                    "0.0", &session_id,
+                                                    &json!({
                                                         "account": account,
-                                                        "additionalQueryParametersForAuthorization": {},
-                                                        "authority": authority,
-                                                        "authorizationType": 8,
-                                                        "clientId": client_id,
-                                                        "redirectUri": "https://login.microsoftonline.com/common/oauth2/nativeclient",
-                                                        "requestedScopes": $scopes,
-                                                        "ssoUrl": "https://login.microsoftonline.com/"
+                                                        "authParameters": {
+                                                            "account": account,
+                                                            "additionalQueryParametersForAuthorization": {},
+                                                            "authority": authority,
+                                                            "authorizationType": 8,
+                                                            "clientId": client_id,
+                                                            "redirectUri": "https://login.microsoftonline.com/common/oauth2/nativeclient",
+                                                            "requestedScopes": $scopes,
+                                                            "ssoUrl": "https://login.microsoftonline.com/"
+                                                        }
+                                                    })
+                                                ).await {
+                                                    if let Ok(token) = serde_json::from_value::<Token>(token_val) {
+                                                        result = Some((graph, token.response.access_token));
                                                     }
-                                                })
-                                            ).await {
-                                                if let Ok(token) = serde_json::from_value::<Token>(token_val) {
-                                                    result = Some((graph, token.response.access_token));
                                                 }
                                             }
                                         }
