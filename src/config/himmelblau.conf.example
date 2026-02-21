@@ -114,6 +114,16 @@
 # provides flexibility for environments requiring custom name transformations.
 # name_mapping_script =
 #
+# Dynamic UID/GID mapping script. It runs only when configured and no cached or
+# local mapping exists; a valid mapping is cached for subsequent logins. The
+# following environment variables are set: USERNAME, ACCESS_TOKEN, OBJECT_ID,
+# TENANT_ID, DOMAIN. ACCESS_TOKEN may be empty during offline logon.
+# The script must print a single line to stdout in "uid=<value>,gid=<value>"
+# format. Exit non-zero to fail the login. If the script exits 0 with no output,
+# Himmelblau falls back to default UID/GID resolution (local user map if
+# configured, otherwise internal idmap) and does not cache a result.
+# idmap_script =
+#
 # Whether to apply Intune policies.
 # apply_policy = false ; {true|false}
 #
