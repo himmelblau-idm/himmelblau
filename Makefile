@@ -166,7 +166,7 @@ uninstall: ## Uninstall Himmelblau packages from this host (apt/dnf/yum/zypper a
 	else \
 		echo "Error: no supported package manager found (apt/dnf/yum/zypper)."; exit 2; \
 	fi; \
-	pkgs="himmelblau himmelblau-qr-greeter himmelblau-selinux himmelblau-sshd-config himmelblau-sso himmelblau-sso-policies nss-himmelblau pam-himmelblau"; \
+	pkgs="himmelblau himmelblau-broker himmelblau-qr-greeter himmelblau-selinux himmelblau-sshd-config himmelblau-sso himmelblau-sso-policies nss-himmelblau pam-himmelblau"; \
 	echo "Removing: $$pkgs"; \
 	$$PM $$pkgs; \
 	echo "Uninstall complete."
