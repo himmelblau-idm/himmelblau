@@ -1,5 +1,6 @@
 [package]
 name = "broker"
+description = "Entra ID Himmelblau Identity Broker"
 version.workspace = true
 authors.workspace = true
 rust-version.workspace = true
@@ -14,3 +15,26 @@ himmelblau_unix_common.workspace = true
 identity_dbus_broker.workspace = true
 tokio.workspace = true
 tracing.workspace = true
+
+[package.metadata.deb]
+name = "himmelblau-broker"
+depends = ["$auto"]
+recommends = ["himmelblau-sso | linux-entra-sso"]
+breaks = ["himmelblau-sso (<< 3.0.0~)"]
+replaces = ["microsoft-identity-broker", "himmelblau-sso (<< 3.0.0~)"]
+conflicts = ["microsoft-identity-broker"]
+provides = ["microsoft-identity-broker"]
+assets = [
+  ["target/release/broker", "usr/sbin/", "755"],
+  ["../../platform/debian/com.microsoft.identity.broker1.service", "usr/share/dbus-1/services/", "644"],
+]
+
+[package.metadata.generate-rpm]
+name = "himmelblau-broker"
+assets = [
+  { source = "target/release/broker", dest = "/usr/sbin/", mode = "755" },
+  { source = "../../platform/opensuse/com.microsoft.identity.broker1.service", dest = "/usr/share/dbus-1/services/", mode = "644" },
+]
+
+[package.metadata.generate-rpm.provides]
+microsoft-identity-broker = ""

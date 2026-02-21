@@ -618,6 +618,7 @@ def main() -> int:
     himmelblau_metadata = merge_metadata(["himmelblaud", "selinux"], metadata, root)
     nss_metadata = merge_metadata(["nss_himmelblau"], metadata, root)
     pam_metadata = merge_metadata(["pam_himmelblau"], metadata, root)
+    broker_metadata = merge_metadata(["broker"], metadata, root)
     sso_metadata = merge_metadata(["sso", "o365"], metadata, root)
     sso_policies_metadata = merge_metadata(["sso-policies"], metadata, root)
     sshd_metadata = merge_metadata(["sshd-config"], metadata, root)
@@ -711,6 +712,16 @@ BuildArch:      noarch
 %description -n himmelblau-sshd-config
 {desc}
 
+%package -n himmelblau-broker
+Summary:        Azure Entra Id Browser broker service
+Requires:       %{{name}} = %{{version}}
+{dep_gen(broker_metadata)}
+
+%description -n himmelblau-broker
+Himmelblau Broker provides Azure Entra Id browser broker service functionality.
+It enables communication between the browser and the authentication backend,
+enabling single sign-on and other authentication features.
+
 %package -n himmelblau-sso
 Summary:        Azure Entra Id Browser SSO
 Requires:       %{{name}} = %{{version}}
@@ -783,7 +794,6 @@ install -D -d -m 0755 %{{buildroot}}%{{_sbindir}}
 install -D -d -m 0755 %{{buildroot}}%{{_bindir}}
 install -D -d -m 0755 %{{buildroot}}%{{_unitdir}}
 install -D -d -m 0755 %{{buildroot}}/%{{_sysconfdir}}/himmelblau
-install -D -d -m 0755 %{{buildroot}}%{{_datarootdir}}/dbus-1/services
 install -D -d -m 0755 %{{buildroot}}%{{_sysconfdir}}/ssh/sshd_config.d
 install -D -d -m 0755 %{{buildroot}}%{{_sysconfdir}}/krb5.conf.d
 install -D -d -m 0755 %{{buildroot}}/%{{_unitdir}}/display-manager.service.d/
@@ -796,18 +806,24 @@ install -D -d -m 0755 %{{buildroot}}%{{_mandir}}/man8
 install -D -d -m 0755 %{{buildroot}}%{{_libexecdir}}
 strip --strip-unneeded target/release/himmelblaud
 strip --strip-unneeded target/release/himmelblaud_tasks
-strip --strip-unneeded target/release/broker
 strip --strip-unneeded target/release/aad-tool
 {generate_install_section(himmelblau_metadata)}
 pushd %{{buildroot}}%{{_sbindir}}
 ln -s himmelblaud rchimmelblaud
 ln -s himmelblaud_tasks rchimmelblaud_tasks
-ln -s broker rcbroker
 popd
 
 # SSHD Config
 install -D -d -m 0755 %{{buildroot}}%{{_sysconfdir}}/ssh/sshd_config.d
 {generate_install_section(sshd_metadata)}
+
+# Broker
+install -D -d -m 0755 %{{buildroot}}%{{_datarootdir}}/dbus-1/services
+strip --strip-unneeded target/release/broker
+{generate_install_section(broker_metadata)}
+pushd %{{buildroot}}%{{_sbindir}}
+ln -s broker rcbroker
+popd
 
 # Single Sign On
 strip --strip-unneeded target/release/linux-entra-sso
@@ -852,7 +868,9 @@ install -D -d -m 0755 %{{buildroot}}%{{_datarootdir}}/gnome-shell/extensions/qr-
 
 {generate_files_section(sshd_metadata, name="himmelblau-sshd-config", extras=["%if 0%{?sle_version} <= 150500\n%dir %{_sysconfdir}/ssh/sshd_config.d\n%endif"])}
 
-{generate_files_section(sso_metadata, name="himmelblau-sso", dirs=["%{_libdir}/mozilla", "%{_libdir}/mozilla/native-messaging-hosts", "/etc/chromium", "/etc/chromium/native-messaging-hosts", "/usr/share/google-chrome", "%{chrome_nm_dir}", "%{chromium_nm_dir}", "%{chrome_ext_dir}", "%{_iconsdir}/hicolor", "%{_iconsdir}/hicolor/256x256", "%{_iconsdir}/hicolor/256x256/apps"], extras=["%{_sbindir}/rcbroker"])}
+{generate_files_section(broker_metadata, name="himmelblau-broker", extras=["%{_sbindir}/rcbroker"])}
+
+{generate_files_section(sso_metadata, name="himmelblau-sso", dirs=["%{_libdir}/mozilla", "%{_libdir}/mozilla/native-messaging-hosts", "/etc/chromium", "/etc/chromium/native-messaging-hosts", "/usr/share/google-chrome", "%{chrome_nm_dir}", "%{chromium_nm_dir}", "%{chrome_ext_dir}", "%{_iconsdir}/hicolor", "%{_iconsdir}/hicolor/256x256", "%{_iconsdir}/hicolor/256x256/apps"])}
 
 {generate_files_section(sso_policies_metadata, name="himmelblau-sso-policies", dirs=["/etc/firefox", "/etc/firefox/policies", "/etc/chromium/policies", "/etc/chromium/policies/managed", "/etc/opt/chrome", "/etc/opt/chrome/policies", "/etc/opt/chrome/policies/managed", "%attr(0555,root,root) %{chrome_policy_dir}", "%attr(0555,root,root) %{chromium_policy_dir}"])}
 
