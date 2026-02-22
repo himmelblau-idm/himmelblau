@@ -41,7 +41,7 @@ fn execute_script(script: &str) -> Result<String> {
 
     // Make it executable
     let mut perms: Permissions = file.as_file().metadata()?.permissions();
-    perms.set_mode(0o700);
+    perms.set_mode(0o500);
     file.as_file().set_permissions(perms)?;
 
     // Execute the script
