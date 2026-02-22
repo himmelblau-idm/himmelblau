@@ -1417,7 +1417,7 @@ async fn main() -> ExitCode {
                                     tokio::spawn(async move {
                                         if let Err(e) = handle_client(socket, cachelayer_ref.clone(), &tc_tx, cfg_h).await
                                         {
-                                            error!("handle_client error occurred; error = {:?}", e);
+                                            debug!("handle_client disconnected; error = {:?}", e);
                                         }
                                     });
                                 }
