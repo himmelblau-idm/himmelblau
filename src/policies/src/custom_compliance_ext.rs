@@ -27,6 +27,7 @@ use std::io::Write;
 use std::os::unix::fs::PermissionsExt;
 use std::process::Command;
 use tempfile::NamedTempFile;
+use tracing::error;
 
 fn execute_script(script: &[u8]) -> Result<String> {
     // Check if the content is valid UTF-8 text and, if so, whether it
@@ -76,15 +77,22 @@ fn execute_script(script: &[u8]) -> Result<String> {
     // Manually delete the file in case it wasn’t removed by drop
     let _ = fs::remove_file(&path);
 
-    if !output.status.success() {
-        anyhow::bail!(
-            "Script failed with status {}: {}",
-            output.status,
-            String::from_utf8_lossy(&output.stderr)
-        );
+    // Ignores exit codes as the scripts might be of dubious quality, only check stdout
+    let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
+    let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+    if stdout.is_empty() {
+        if stderr.is_empty() {
+            anyhow::bail!("No output returned from script");
+        } else {
+            anyhow::bail!("Script returned no stdout: {}", stderr);
+        }
     }
 
-    Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+    // Validate that the output is well-formed JSON
+    serde_json::from_str::<serde_json::Map<String, serde_json::Value>>(&stdout)
+        .context("Output is not well-formed json")?;
+
+    Ok(stdout)
 }
 
 pub struct CustomComplianceCSE {}
@@ -104,7 +112,7 @@ impl CSE for CustomComplianceCSE {
                 let id = &detail.setting_definition_item_id;
                 id == "linux_customcompliance_discoveryscript"
             }) {
-                self.apply_compliance(policy).await?;
+                self.apply_compliance(policy).await;
             }
         }
         Ok(true)
@@ -114,19 +122,49 @@ impl CSE for CustomComplianceCSE {
 impl CustomComplianceCSE {
     /// Applies the compliance checks for a given policy.
     ///
-    /// If any check fails, an error is returned with details on the failure.
-    async fn apply_compliance(&self, policy: &mut PolicyStatus) -> Result<()> {
-        for policy_detail in policy.details.iter_mut() {
+    /// Finds the discovery script detail, decodes and executes it, then
+    /// sets the status on that detail. On error, sets an error status
+    /// instead of aborting the entire policy evaluation.
+    async fn apply_compliance(&self, policy: &mut PolicyStatus) {
+        // Find the discovery script detail
+        let script_detail = policy.details.iter_mut().find(|d| {
+            d.setting_definition_item_id == "linux_customcompliance_discoveryscript"
+        });
+
+        let Some(detail) = script_detail else {
+            return;
+        };
+
+        // Decode and execute the script
+        let result = (|| -> Result<String> {
             let decoded = STANDARD
-                .decode(policy_detail.expected_value.clone())
+                .decode(detail.expected_value.clone())
                 .map_err(|e| anyhow!("Failed to decode CSE: {}", e))?;
-            let output = execute_script(&decoded)?;
-            policy_detail.set_status(
-                Some("Unknown".to_string()),
-                Some(output),
-                &ComplianceState::Unknown,
-            );
+            let script = String::from_utf8(decoded)
+                .map_err(|e| anyhow!("Failed to decode CSE: {}", e))?;
+            execute_script(&script)
+        })();
+
+        match result {
+            Ok(output) => {
+                detail.set_status(
+                    Some("Unknown".to_string()),
+                    Some(output),
+                    &ComplianceState::Unknown,
+                );
+            }
+            Err(e) => {
+                error!(
+                    policy_id = %policy.policy_id,
+                    error = %format!("{e:#}"),
+                    "CustomComplianceCSE: script execution failed"
+                );
+                detail.set_status(
+                    Some("Error".to_string()),
+                    Some(format!("{e:#}")),
+                    &ComplianceState::Error,
+                );
+            }
         }
-        Ok(())
     }
 }

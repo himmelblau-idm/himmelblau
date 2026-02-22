@@ -110,8 +110,9 @@ impl CSE for ComplianceCSE {
     }
 
     /// Process a group of policies. For deleted policies, no action is taken.
-    /// For changed policies, run compliance checks and return an error if any check fails.
+    /// For changed policies, run compliance checks and report status.
     async fn process_group_policy(&self, policies: &mut IntuneStatus) -> Result<bool> {
+        let mut errors = vec![];
         for policy in policies.policy_statuses.iter_mut() {
             // Validate this is a compliance policy
             if policy.details.iter().any(|detail| {
@@ -120,10 +121,19 @@ impl CSE for ComplianceCSE {
                     || id.starts_with("linux_deviceencryption_")
                     || id.starts_with("linux_passwordpolicy_")
             }) {
-                self.apply_compliance(policy).await?;
+                if let Err(e) = self.apply_compliance(policy).await {
+                    errors.push(format!(
+                        "Policy {}: {}",
+                        policy.policy_id, e
+                    ));
+                }
             }
         }
-        Ok(true)
+        if errors.is_empty() {
+            Ok(true)
+        } else {
+            Err(anyhow!("Compliance processing errors: {}", errors.join("; ")))
+        }
     }
 }
 
