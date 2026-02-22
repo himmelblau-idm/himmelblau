@@ -18,15 +18,16 @@
 use crate::cse::CSE;
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
-use himmelblau::intune::{IntuneStatus, PolicyStatus};
+use himmelblau::intune::{IntuneStatus, PolicyDetails, PolicyStatus};
 use himmelblau_unix_common::config::HimmelblauConfig;
 use himmelblau_unix_common::constants::POLICY_CACHE;
 use himmelblau_unix_common::policy_cache::{PolicyCache, PolicyValue};
 use os_release::OsRelease;
 use semver::Version;
+use std::collections::HashMap;
 use tokio::fs;
 use tokio::process::Command;
-use tracing::debug;
+use tracing::{debug, warn};
 
 pub async fn is_disk_encrypted() -> bool {
     // Check for LUKS encryption using `lsblk`
@@ -151,10 +152,26 @@ impl CSE for ComplianceCSE {
     }
 }
 
+/// Extract the distro group index from a CSP path.
+///
+/// Expected format: `<provider>/Distribution/AllowedDistros/<index>/<setting>`
+/// e.g., `"com.microsoft.manage.LinuxMdm/Distribution/AllowedDistros/1/$type"` → `"1"`
+fn extract_distro_index(csp_path: &str) -> Option<&str> {
+    let parts: Vec<&str> = csp_path.split('/').collect();
+    if parts.len() >= 5 && parts[1] == "Distribution" && parts[2] == "AllowedDistros" {
+        Some(parts[3])
+    } else {
+        None
+    }
+}
+
 impl ComplianceCSE {
     /// Applies the compliance checks for a given policy.
     ///
-    /// If any check fails, an error is returned with details on the failure.
+    /// Sets actual_value and new_compliance_state for each policy detail.
+    /// NonCompliant findings are NOT errors — they are valid compliance states
+    /// reported back to Intune. Only genuine processing failures (cache errors,
+    /// parse failures) are treated as errors.
     async fn apply_compliance(&self, policy: &mut PolicyStatus) -> Result<()> {
         let mut errors: Vec<String> = Vec::new();
 
@@ -171,99 +188,32 @@ impl ComplianceCSE {
         })?;
         let policy_cache = PolicyCache::new(POLICY_CACHE, true)?;
 
+        // Handle distribution compliance with proper grouping
+        // (groups by CSP path index)
+        Self::apply_distribution_compliance(
+            &mut policy.details,
+            &system_distro,
+            &os_release.version_id,
+            &system_version,
+        );
+
+        // Handle non-distribution compliance settings
         for details in policy.details.iter_mut() {
             match details.setting_definition_item_id.as_str() {
-                "linux_distribution_alloweddistros_item_$type" => {
-                    if details.expected_value != system_distro {
-                        errors.push(format!(
-                            "Distribution compliance failed: system distro '{}' is not '{}'",
-                            system_distro, details.expected_value
-                        ));
-                    } else {
-                        details.new_compliance_state = "Compliant".to_string();
-                        debug!("Distribution compliance passed: {}", system_distro);
-                    }
-                    details.actual_value = system_distro.clone();
-                }
-                "linux_distribution_alloweddistros_item_minimumversion" => {
-                    // Skip check if no minimum version is specified
-                    if details.expected_value.is_empty() {
-                        details.new_compliance_state = "Compliant".to_string();
-                        details.actual_value = os_release.version_id.clone();
-                        debug!("Minimum version compliance skipped: no minimum specified");
-                    } else {
-                        let min_semver = Version::parse(&normalize_version(
-                            &details.expected_value,
-                        ))
-                        .map_err(|e| {
-                            anyhow!(
-                                "Failed to parse minimum version '{}' as semver: {}",
-                                details.expected_value,
-                                e
-                            )
-                        })?;
-                        if system_version < min_semver {
-                            errors.push(format!(
-                                "Version compliance failed: system version '{}' is less than minimum '{}'",
-                                system_version, min_semver
-                            ));
-                        } else {
-                            details.new_compliance_state = "Compliant".to_string();
-                            debug!(
-                                "Minimum version compliance passed: {}",
-                                os_release.version_id
-                            );
-                        }
-                        details.actual_value = os_release.version_id.clone();
-                    }
-                }
-                "linux_distribution_alloweddistros_item_maximumversion" => {
-                    // Skip check if no maximum version is specified
-                    if details.expected_value.is_empty() {
-                        details.new_compliance_state = "Compliant".to_string();
-                        details.actual_value = os_release.version_id.clone();
-                        debug!("Maximum version compliance skipped: no maximum specified");
-                    } else {
-                        let max_semver = Version::parse(&normalize_version(
-                            &details.expected_value,
-                        ))
-                        .map_err(|e| {
-                            anyhow!(
-                                "Failed to parse maximum version '{}' as semver: {}",
-                                details.expected_value,
-                                e
-                            )
-                        })?;
-                        if system_version > max_semver {
-                            errors.push(format!(
-                                "Version compliance failed: system version '{}' is greater than maximum '{}'",
-                                system_version, max_semver
-                            ));
-                        } else {
-                            details.new_compliance_state = "Compliant".to_string();
-                            debug!(
-                                "Maximum version compliance passed: {}",
-                                os_release.version_id
-                            );
-                        }
-                        details.actual_value = os_release.version_id.clone();
-                    }
-                }
+                // Distribution settings are handled above
+                s if s.starts_with("linux_distribution_") => continue,
                 "linux_deviceencryption_required" => {
                     let is_disk_encrypted = is_disk_encrypted().await;
-                    if details.expected_value.to_lowercase() == "true" && !is_disk_encrypted {
-                        errors.push(
-                            "Device encryption compliance failed: encryption likely not enabled"
-                                .to_string(),
-                        );
-                    } else {
+                    details.actual_value = is_disk_encrypted.to_string();
+                    if details.expected_value.to_lowercase() != "true" || is_disk_encrypted {
                         details.new_compliance_state = "Compliant".to_string();
                         debug!(
                             "Device encryption compliance passed, encrypted?: {}",
                             is_disk_encrypted
                         );
+                    } else {
+                        debug!("Device encryption compliance: encryption not enabled");
                     }
-                    details.actual_value = is_disk_encrypted.to_string();
                 }
                 "linux_passwordpolicy_minimumlength" => {
                     if let Ok(min_length) = details.expected_value.parse::<u32>() {
@@ -375,7 +325,7 @@ impl ComplianceCSE {
                                 details.actual_value = details.expected_value.clone();
                                 details.new_compliance_state = "Compliant".to_string();
                                 debug!(
-                                    "Password policy compliance compliance passed, min uppercase: {}",
+                                    "Password policy compliance passed, min uppercase: {}",
                                     min_uppercase
                                 );
                             }
@@ -391,7 +341,7 @@ impl ComplianceCSE {
                     }
                 }
                 unknown => {
-                    errors.push(format!("Unrecognized compliance option '{}'", unknown));
+                    warn!("Unrecognized compliance option '{}'", unknown);
                 }
             }
         }
@@ -400,6 +350,198 @@ impl ComplianceCSE {
             Ok(())
         } else {
             Err(anyhow!("Compliance check failures: {}", errors.join("; ")))
+        }
+    }
+
+    /// Handle distribution compliance with proper grouping by CSP path index. There might be
+    /// multiple distribution groups (e.g., AllowedDistros/1/*, AllowedDistros/2/*) in the same
+    /// policy, and we shouldn't return NonCompliant for settings that don't match the system distro
+    /// if another group does match. The logic is:
+    ///
+    /// This allows enrolling with policy enforcement and CA:
+    /// - Settings are grouped by their CSP path distro index (e.g., AllowedDistros/1/*, AllowedDistros/2/*)
+    /// - If any group matches the system distro, matching groups are evaluated normally
+    ///   and non-matching groups are marked as "not applicable" (Compliant)
+    /// - If no group matches, all $type entries get NonCompliant and version entries
+    ///   get "not applicable" (Compliant)
+    fn apply_distribution_compliance(
+        details: &mut [PolicyDetails],
+        system_distro: &str,
+        version_id: &str,
+        system_version: &Version,
+    ) {
+        // Group distribution settings by CSP path distro index
+        let mut distro_groups: HashMap<String, Vec<usize>> = HashMap::new();
+        for (i, detail) in details.iter().enumerate() {
+            if detail
+                .setting_definition_item_id
+                .starts_with("linux_distribution_")
+            {
+                if let Some(index) = extract_distro_index(&detail.csp_path) {
+                    distro_groups
+                        .entry(index.to_string())
+                        .or_default()
+                        .push(i);
+                }
+            }
+        }
+
+        if distro_groups.is_empty() {
+            return;
+        }
+
+        // Check if any group has a matching distro
+        let has_matching_distro = distro_groups.values().any(|indices| {
+            indices.iter().any(|&i| {
+                details[i].setting_definition_item_id
+                    == "linux_distribution_alloweddistros_item_$type"
+                    && details[i]
+                        .expected_value
+                        .eq_ignore_ascii_case(system_distro)
+            })
+        });
+
+        debug!(
+            num_distro_groups = distro_groups.len(),
+            has_matching_distro, system_distro,
+            "Distribution compliance: grouped settings"
+        );
+
+        // Process each distro group
+        for indices in distro_groups.values() {
+            let group_matches = indices.iter().any(|&i| {
+                details[i].setting_definition_item_id
+                    == "linux_distribution_alloweddistros_item_$type"
+                    && details[i]
+                        .expected_value
+                        .eq_ignore_ascii_case(system_distro)
+            });
+
+            for &i in indices {
+                if group_matches {
+                    // This distro group matches — evaluate normally
+                    Self::evaluate_distro_detail(
+                        &mut details[i],
+                        system_distro,
+                        version_id,
+                        system_version,
+                    );
+                } else if has_matching_distro {
+                    // Not applicable: another distro group matches the system
+                    debug!(
+                        "Distribution rule not applicable: {} = {}",
+                        details[i].setting_definition_item_id, details[i].expected_value
+                    );
+                    details[i].actual_value = "".to_string();
+                    details[i].new_compliance_state = "Compliant".to_string();
+                    details[i].old_compliance_state = "Compliant".to_string();
+                } else {
+                    // Unsupported: no distro group matches at all
+                    if details[i].setting_definition_item_id
+                        == "linux_distribution_alloweddistros_item_$type"
+                    {
+                        // Report the actual distro as NonCompliant
+                        details[i].actual_value = system_distro.to_string();
+                        // Stays as default NonCompliant
+                    } else {
+                        // Version constraints for unsupported distro: not applicable
+                        details[i].actual_value = "".to_string();
+                        details[i].new_compliance_state = "Compliant".to_string();
+                        details[i].old_compliance_state = "Compliant".to_string();
+                    }
+                }
+            }
+        }
+    }
+
+    /// Evaluate a single distribution detail for a matching distro group.
+    fn evaluate_distro_detail(
+        detail: &mut PolicyDetails,
+        system_distro: &str,
+        version_id: &str,
+        system_version: &Version,
+    ) {
+        match detail.setting_definition_item_id.as_str() {
+            "linux_distribution_alloweddistros_item_$type" => {
+                detail.actual_value = system_distro.to_string();
+                if detail.expected_value.eq_ignore_ascii_case(system_distro) {
+                    detail.new_compliance_state = "Compliant".to_string();
+                    debug!("Distribution compliance passed: {}", system_distro);
+                } else {
+                    detail.new_compliance_state = "NonCompliant".to_string();
+                    debug!(
+                        "Distribution compliance: system distro '{}' is not '{}'",
+                        system_distro, detail.expected_value
+                    );
+                }
+            }
+            "linux_distribution_alloweddistros_item_minimumversion" => {
+                detail.actual_value = version_id.to_string();
+                if detail.expected_value.is_empty() {
+                    detail.new_compliance_state = "Compliant".to_string();
+                    debug!("Minimum version compliance skipped: no minimum specified");
+                } else {
+                    match Version::parse(&normalize_version(&detail.expected_value)) {
+                        Ok(min_ver) => {
+                            if system_version >= &min_ver {
+                                detail.new_compliance_state = "Compliant".to_string();
+                                debug!(
+                                    "Minimum version compliance passed: {} >= {}",
+                                    version_id, min_ver
+                                );
+                            } else {
+                                detail.actual_value = system_version.to_string();
+                                detail.new_compliance_state = "NonCompliant".to_string();
+                                debug!(
+                                    "Minimum version compliance failed: {} < {}",
+                                    system_version, min_ver
+                                );
+                            }
+                        }
+                        Err(e) => {
+                            warn!(
+                                "Failed to parse min version '{}': {}",
+                                detail.expected_value, e
+                            );
+                            detail.new_compliance_state = "Error".to_string();
+                        }
+                    }
+                }
+            }
+            "linux_distribution_alloweddistros_item_maximumversion" => {
+                detail.actual_value = version_id.to_string();
+                if detail.expected_value.is_empty() {
+                    detail.new_compliance_state = "Compliant".to_string();
+                    debug!("Maximum version compliance skipped: no maximum specified");
+                } else {
+                    match Version::parse(&normalize_version(&detail.expected_value)) {
+                        Ok(max_ver) => {
+                            if system_version <= &max_ver {
+                                detail.new_compliance_state = "Compliant".to_string();
+                                debug!(
+                                    "Maximum version compliance passed: {} <= {}",
+                                    version_id, max_ver
+                                );
+                            } else {
+                                detail.actual_value = system_version.to_string();
+                                detail.new_compliance_state = "NonCompliant".to_string();
+                                debug!(
+                                    "Maximum version compliance failed: {} > {}",
+                                    system_version, max_ver
+                                );
+                            }
+                        }
+                        Err(e) => {
+                            warn!(
+                                "Failed to parse max version '{}': {}",
+                                detail.expected_value, e
+                            );
+                            detail.new_compliance_state = "Error".to_string();
+                        }
+                    }
+                }
+            }
+            _ => {}
         }
     }
 }
