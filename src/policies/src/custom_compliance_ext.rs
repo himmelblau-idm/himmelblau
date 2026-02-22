@@ -27,7 +27,7 @@ use std::io::Write;
 use std::os::unix::fs::PermissionsExt;
 use std::process::Command;
 use tempfile::NamedTempFile;
-use tracing::error;
+use tracing::{debug, error};
 
 fn execute_script(script: &[u8]) -> Result<String> {
     // Check if the content is valid UTF-8 text and, if so, whether it
@@ -80,6 +80,15 @@ fn execute_script(script: &[u8]) -> Result<String> {
     // Ignores exit codes as the scripts might be of dubious quality, only check stdout
     let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
     let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
+    debug!(
+        exit_code = ?output.status.code(),
+        stdout_len = stdout.len(),
+        stderr_len = stderr.len(),
+        "Custom compliance script execution finished"
+    );
+    if !stderr.is_empty() {
+        debug!(stderr = %stderr, "Custom compliance script stderr");
+    }
     if stdout.is_empty() {
         if stderr.is_empty() {
             anyhow::bail!("No output returned from script");
@@ -106,13 +115,36 @@ impl CSE for CustomComplianceCSE {
     /// Process a group of policies. For deleted policies, no action is taken.
     /// For changed policies, run compliance checks and return an error if any check fails.
     async fn process_group_policy(&self, policies: &mut IntuneStatus) -> Result<bool> {
+        debug!(
+            num_policies = policies.policy_statuses.len(),
+            "CustomComplianceCSE: checking policies for custom compliance"
+        );
         for policy in policies.policy_statuses.iter_mut() {
+            let detail_ids: Vec<&str> = policy
+                .details
+                .iter()
+                .map(|d| d.setting_definition_item_id.as_str())
+                .collect();
+            debug!(
+                policy_id = %policy.policy_id,
+                ?detail_ids,
+                "CustomComplianceCSE: inspecting policy details"
+            );
             // Validate this is a compliance policy
             if policy.details.iter().any(|detail| {
                 let id = &detail.setting_definition_item_id;
                 id == "linux_customcompliance_discoveryscript"
             }) {
+                debug!(
+                    policy_id = %policy.policy_id,
+                    "CustomComplianceCSE: matched custom compliance policy, applying"
+                );
                 self.apply_compliance(policy).await;
+            } else {
+                debug!(
+                    policy_id = %policy.policy_id,
+                    "CustomComplianceCSE: not a custom compliance policy, skipping"
+                );
             }
         }
         Ok(true)
@@ -132,21 +164,47 @@ impl CustomComplianceCSE {
         });
 
         let Some(detail) = script_detail else {
+            debug!(
+                policy_id = %policy.policy_id,
+                "CustomComplianceCSE: no discovery script detail found in policy"
+            );
             return;
         };
+
+        debug!(
+            policy_id = %policy.policy_id,
+            expected_value_len = detail.expected_value.len(),
+            "CustomComplianceCSE: found discovery script, decoding and executing"
+        );
 
         // Decode and execute the script
         let result = (|| -> Result<String> {
             let decoded = STANDARD
                 .decode(detail.expected_value.clone())
                 .map_err(|e| anyhow!("Failed to decode CSE: {}", e))?;
-            let script = String::from_utf8(decoded)
-                .map_err(|e| anyhow!("Failed to decode CSE: {}", e))?;
-            execute_script(&script)
+            if let Ok(script) = std::str::from_utf8(&decoded) {
+                debug!(
+                    policy_id = %policy.policy_id,
+                    script = %script,
+                    "CustomComplianceCSE: decoded discovery CSE content"
+                );
+            } else {
+                debug!(
+                    policy_id = %policy.policy_id,
+                    len = decoded.len(),
+                    "CustomComplianceCSE: decoded binary discovery CSE content"
+                );
+            }
+            execute_script(&decoded)
         })();
 
         match result {
             Ok(output) => {
+                debug!(
+                    policy_id = %policy.policy_id,
+                    output = %output,
+                    "CustomComplianceCSE: script executed successfully"
+                );
                 detail.set_status(
                     Some("Unknown".to_string()),
                     Some(output),

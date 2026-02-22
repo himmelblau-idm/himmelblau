@@ -118,13 +118,32 @@ impl CSE for ScriptsCSE {
 
         // Process and apply the changed policies.
         for policy in policies.policy_statuses.iter_mut() {
+            let detail_ids: Vec<&str> = policy
+                .details
+                .iter()
+                .map(|d| d.setting_definition_item_id.as_str())
+                .collect();
+            debug!(
+                policy_id = %policy.policy_id,
+                ?detail_ids,
+                "ScriptsCSE: inspecting policy details"
+            );
             // Validate this is a scripts policy
             if policy
                 .details
                 .iter()
                 .any(|d| d.setting_definition_item_id == "linux_customconfig_script")
             {
+                debug!(
+                    policy_id = %policy.policy_id,
+                    "ScriptsCSE: matched scripts policy, applying"
+                );
                 self.apply_policy(policy).await?;
+            } else {
+                debug!(
+                    policy_id = %policy.policy_id,
+                    "ScriptsCSE: not a scripts policy, skipping"
+                );
             }
         }
 

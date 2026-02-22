@@ -113,7 +113,21 @@ impl CSE for ComplianceCSE {
     /// For changed policies, run compliance checks and report status.
     async fn process_group_policy(&self, policies: &mut IntuneStatus) -> Result<bool> {
         let mut errors = vec![];
+        debug!(
+            num_policies = policies.policy_statuses.len(),
+            "ComplianceCSE: checking policies for compliance settings"
+        );
         for policy in policies.policy_statuses.iter_mut() {
+            let detail_ids: Vec<&str> = policy
+                .details
+                .iter()
+                .map(|d| d.setting_definition_item_id.as_str())
+                .collect();
+            debug!(
+                policy_id = %policy.policy_id,
+                ?detail_ids,
+                "ComplianceCSE: inspecting policy details"
+            );
             // Validate this is a compliance policy
             if policy.details.iter().any(|detail| {
                 let id = &detail.setting_definition_item_id;
