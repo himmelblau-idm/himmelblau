@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<parameter name="local_account_sso"
+           section="global"
+           type="bool"
+           rust_type="bool"
+           documented="true"
+           domain_specific="false"
+           order="48">
+<description>
+A boolean option that enables browser SSO for local Linux users who did not
+log in via Himmelblau PAM. When enabled, the broker will return cached Entra
+accounts to any local user requesting them, allowing browser extensions such
+as linux-entra-sso to acquire tokens and PRT SSO cookies on behalf of
+enrolled Entra accounts.
+
+.PP
+When disabled (the default), the broker only returns accounts whose UID
+matches the calling process, which requires the user to have logged in
+via Himmelblau PAM/NSS.
+
+.PP
+.B Prerequisite:
+The Entra user must have authenticated via Himmelblau PAM at least once
+since the daemon was started (e.g. by logging in at GDM or via
+.BR su ).
+The
+.B getAccounts
+broker method returns cached accounts immediately, but
+.B acquireTokenSilently
+and
+.B acquirePrtSsoCookie
+require the user\(aqs session credentials to be loaded in memory.
+
+.PP
+.B Security note:
+Enabling this option means any local user on the system can obtain SSO
+tokens for the enrolled Entra account. Only enable this on systems where
+all local users are trusted.
+</description>
+<default>false</default>
+<example>local_account_sso = true</example>
+</parameter>

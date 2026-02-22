@@ -18,6 +18,7 @@
 use async_trait::async_trait;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine;
+use himmelblau_unix_common::config::HimmelblauConfig;
 use himmelblau_unix_common::idprovider::himmelblau::HimmelblauMultiProvider;
 use himmelblau_unix_common::idprovider::interface::Id;
 use himmelblau_unix_common::resolver::Resolver;
@@ -28,8 +29,9 @@ use serde_json::json;
 use std::error::Error;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
+use tracing::debug;
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 struct AccountReq {
     username: String,
 }
@@ -58,6 +60,7 @@ struct SsoCookieReq {
 #[derive(Clone)]
 pub(crate) struct Broker {
     pub(crate) cachelayer: Arc<Resolver<HimmelblauMultiProvider>>,
+    pub(crate) cfg: HimmelblauConfig,
 }
 
 #[async_trait]
@@ -80,23 +83,40 @@ impl HimmelblauBroker for Broker {
         request_json: String,
         uid: uid_t,
     ) -> Result<String, Box<dyn Error>> {
-        // Double check the user is making a request for their own account
-        let user = self
-            .cachelayer
-            .get_usertoken(Id::Gid(uid))
-            .await
-            .map_err(|_| "Unable to load account")?
-            .ok_or("Unable to find account")?;
         let request: TokenReq =
             serde_json::from_str(&request_json).map_err(|e| format!("{:?}", e))?;
         // account can be at root (Firefox, Chrome) or in authParameters (Edge)
         let account = match request.account {
-            Some(x) => x,
-            None => request.auth_parameters.account.ok_or("Missing account")?,
+            Some(ref x) => x.clone(),
+            None => request
+                .auth_parameters
+                .account
+                .as_ref()
+                .ok_or("Missing account")?
+                .clone(),
         };
-        if account.username.to_lowercase() != user.spn.to_lowercase() {
-            return Err("Invalid request for user!".into());
-        }
+        // Try UID-based lookup first
+        let user = match self.cachelayer.get_usertoken(Id::Gid(uid)).await {
+            Ok(Some(token)) => {
+                // Verify the request matches the UID-bound account
+                if account.username.to_lowercase() != token.spn.to_lowercase() {
+                    return Err("Invalid request for user!".into());
+                }
+                token
+            }
+            _ => {
+                // UID lookup failed — fall back to username if local_account_sso enabled
+                if !self.cfg.get_local_account_sso() {
+                    return Err("Unable to find account".into());
+                }
+                debug!("local_account_sso: looking up account by username '{}'", account.username);
+                self.cachelayer
+                    .get_usertoken(Id::Name(account.username.clone()))
+                    .await
+                    .map_err(|_| "Unable to load account")?
+                    .ok_or("Unable to find account")?
+            }
+        };
         let token = self
             .cachelayer
             .get_user_accesstoken(
@@ -132,16 +152,25 @@ impl HimmelblauBroker for Broker {
         _request_json: String,
         uid: uid_t,
     ) -> Result<String, Box<dyn Error>> {
-        // Only return the account for the requesting user
-        let user = self
-            .cachelayer
-            .get_usertoken(Id::Gid(uid))
-            .await
-            .map_err(|_| "Unable to load account")?
-            .ok_or("Unable to find account")?;
-        let res = json!({
-            "accounts": [
-                {
+        // Try UID-based lookup first
+        let users = match self.cachelayer.get_usertoken(Id::Gid(uid)).await {
+            Ok(Some(user)) => vec![user],
+            _ => {
+                // UID lookup failed — return all cached accounts if local_account_sso enabled
+                if !self.cfg.get_local_account_sso() {
+                    return Err("Unable to find account".into());
+                }
+                debug!("local_account_sso: returning all cached accounts for uid {}", uid);
+                self.cachelayer
+                    .get_all_usertokens()
+                    .await
+                    .map_err(|_| "Unable to load accounts")?
+            }
+        };
+        let accounts: Vec<_> = users
+            .iter()
+            .map(|user| {
+                json!({
                     "environment": "login.windows.net",
                     "givenName": user.displayname,
                     "homeAccountId": format!("{}.{}", user.uuid.to_string(), user.tenant_id.map(|uuid| uuid.to_string()).unwrap_or("".to_string())),
@@ -149,9 +178,10 @@ impl HimmelblauBroker for Broker {
                     "name": user.displayname,
                     "realm": user.tenant_id.map(|uuid| uuid.to_string()).unwrap_or("".to_string()),
                     "username": user.spn
-                }
-            ]
-        });
+                })
+            })
+            .collect();
+        let res = json!({ "accounts": accounts });
         Ok(res.to_string())
     }
 
@@ -172,18 +202,29 @@ impl HimmelblauBroker for Broker {
         request_json: String,
         uid: uid_t,
     ) -> Result<String, Box<dyn Error>> {
-        // Double check the user is making a request for their own account
-        let user = self
-            .cachelayer
-            .get_usertoken(Id::Gid(uid))
-            .await
-            .map_err(|_| "Unable to load account")?
-            .ok_or("Unable to find account")?;
         let request: SsoCookieReq =
             serde_json::from_str(&request_json).map_err(|e| format!("{:?}", e))?;
-        if request.account.username.to_lowercase() != user.spn.to_lowercase() {
-            return Err("Invalid request for user!".into());
-        }
+        // Try UID-based lookup first
+        let user = match self.cachelayer.get_usertoken(Id::Gid(uid)).await {
+            Ok(Some(token)) => {
+                if request.account.username.to_lowercase() != token.spn.to_lowercase() {
+                    return Err("Invalid request for user!".into());
+                }
+                token
+            }
+            _ => {
+                // UID lookup failed — fall back to username if local_account_sso enabled
+                if !self.cfg.get_local_account_sso() {
+                    return Err("Unable to find account".into());
+                }
+                debug!("local_account_sso: looking up account by username '{}'", request.account.username);
+                self.cachelayer
+                    .get_usertoken(Id::Name(request.account.username.clone()))
+                    .await
+                    .map_err(|_| "Unable to load account")?
+                    .ok_or("Unable to find account")?
+            }
+        };
         let prt = self
             .cachelayer
             .get_user_prt_cookie(Id::Name(user.spn.clone()))

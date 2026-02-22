@@ -247,6 +247,12 @@ where
         dbtxn.get_accounts().map_err(|_| ())
     }
 
+    /// Return all cached user tokens. Used by the broker to serve
+    /// accounts to local users when `local_account_sso` is enabled.
+    pub async fn get_all_usertokens(&self) -> Result<Vec<UserToken>, ()> {
+        self.get_cached_usertokens().await
+    }
+
     async fn get_cached_grouptokens(&self) -> Result<Vec<GroupToken>, ()> {
         let mut dbtxn = self.db.write().await;
         dbtxn.get_groups().map_err(|_| ())

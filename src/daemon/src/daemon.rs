@@ -1378,7 +1378,7 @@ async fn main() -> ExitCode {
             let dbus_cachelayer = cachelayer.clone();
             let e_broadcast_rx = broadcast_tx.subscribe();
             let task_d = match himmelblau_broker_serve::<Broker>(
-                Broker { cachelayer: dbus_cachelayer },
+                Broker { cachelayer: dbus_cachelayer, cfg: cfg.clone() },
                 &broker_socket_path,
                 e_broadcast_rx
             ).await {
