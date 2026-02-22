@@ -32,8 +32,11 @@ fn execute_script(script: &str) -> Result<String> {
     // Create a temporary file
     let mut file = NamedTempFile::new().context("Failed to create temp file")?;
 
+    // Normalize Windows line endings
+    let normalized = script.replace("\r\n", "\n");
+
     // Write the script contents
-    file.write_all(script.as_bytes())
+    file.write_all(normalized.as_bytes())
         .context("Failed to write script to temp file")?;
 
     // Make it executable
