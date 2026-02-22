@@ -28,15 +28,26 @@ use std::os::unix::fs::PermissionsExt;
 use std::process::Command;
 use tempfile::NamedTempFile;
 
-fn execute_script(script: &str) -> Result<String> {
+fn execute_script(script: &[u8]) -> Result<String> {
+    // Check if the content is valid UTF-8 text and, if so, whether it
+    // starts with a shebang.  When a shebang is present the file is
+    // executed directly (the kernel honours the interpreter line);
+    // otherwise it is run via /bin/sh.
+    let (contents, has_shebang) = match std::str::from_utf8(script) {
+        Ok(text) => {
+            // Normalize Windows line endings for text content
+            let normalized = text.replace("\r\n", "\n");
+            let shebang = normalized.starts_with("#!");
+            (normalized.into_bytes(), shebang)
+        }
+        Err(_) => (script.to_vec(), false),
+    };
+
     // Create a temporary file
     let mut file = NamedTempFile::new().context("Failed to create temp file")?;
 
-    // Normalize Windows line endings
-    let normalized = script.replace("\r\n", "\n");
-
     // Write the script contents
-    file.write_all(normalized.as_bytes())
+    file.write_all(&contents)
         .context("Failed to write script to temp file")?;
 
     // Make it executable
@@ -44,10 +55,17 @@ fn execute_script(script: &str) -> Result<String> {
     perms.set_mode(0o500);
     file.as_file().set_permissions(perms)?;
 
-    // Execute the script
-    let output = Command::new(file.path())
-        .output()
-        .context("Failed to execute script")?;
+    // Execute: directly if it has a shebang, via /bin/sh otherwise
+    let output = if has_shebang {
+        Command::new(file.path())
+            .output()
+            .context("Failed to execute script directly")?
+    } else {
+        Command::new("/bin/sh")
+            .arg(file.path())
+            .output()
+            .context("Failed to execute script via /bin/sh")?
+    };
 
     // Capture the path before dropping
     let path = file.path().to_path_buf();
@@ -99,13 +117,10 @@ impl CustomComplianceCSE {
     /// If any check fails, an error is returned with details on the failure.
     async fn apply_compliance(&self, policy: &mut PolicyStatus) -> Result<()> {
         for policy_detail in policy.details.iter_mut() {
-            let script = String::from_utf8(
-                STANDARD
-                    .decode(policy_detail.expected_value.clone())
-                    .map_err(|e| anyhow!("Failed to decode script: {}", e))?,
-            )
-            .map_err(|e| anyhow!("Failed to decode script: {}", e))?;
-            let output = execute_script(&script)?;
+            let decoded = STANDARD
+                .decode(policy_detail.expected_value.clone())
+                .map_err(|e| anyhow!("Failed to decode CSE: {}", e))?;
+            let output = execute_script(&decoded)?;
             policy_detail.set_status(
                 Some("Unknown".to_string()),
                 Some(output),
