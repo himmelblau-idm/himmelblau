@@ -628,8 +628,8 @@ async fn handle_tasks(stream: UnixStream, cfg: &HimmelblauConfig) {
                 error!("Error -> {:?}", e);
                 return;
             }
-            _ => {
-                error!("Error -> Unexpected response");
+            None => {
+                debug!("Task connection closed");
                 return;
             }
         }
