@@ -147,6 +147,7 @@ impl HimmelblauBroker for Broker {
                     "homeAccountId": format!("{}.{}", user.uuid.to_string(), user.tenant_id.map(|uuid| uuid.to_string()).unwrap_or("".to_string())),
                     "localAccountId": user.uuid.to_string(),
                     "name": user.displayname,
+                    "passwordExpiry": 0,
                     "realm": user.tenant_id.map(|uuid| uuid.to_string()).unwrap_or("".to_string()),
                     "username": user.spn
                 }
