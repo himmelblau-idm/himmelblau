@@ -2730,9 +2730,8 @@ impl IdProvider for HimmelblauProvider {
                     Ok((
                         AuthResult::Next(AuthRequest::SetupPin {
                             msg: format!(
-                                "Set up a PIN\n {}{}",
-                                "A Hello PIN is a fast, secure way to sign",
-                                "in to your device, apps, and services."
+                                "Set up a PIN\n {}",
+                                "A Hello PIN is a fast, secure way to sign in to your device, apps, and services.",
                             ),
                         }),
                         action,
