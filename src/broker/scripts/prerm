@@ -1,0 +1,10 @@
+#!/bin/sh
+set -e
+
+if [ -d /run/systemd/system ]; then
+    if command -v deb-systemd-helper >/dev/null 2>&1; then
+        if [ -z "$DPKG_ROOT" ] && [ "$1" = remove ]; then
+            deb-systemd-invoke stop --user himmelblau-broker.service >/dev/null || true
+        fi
+    fi
+fi

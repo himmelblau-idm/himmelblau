@@ -27,14 +27,20 @@ provides = ["microsoft-identity-broker"]
 assets = [
   ["target/release/broker", "usr/sbin/himmelblau_broker", "755"],
   ["../../platform/debian/com.microsoft.identity.broker1.service", "usr/share/dbus-1/services/", "644"],
+  ["../../platform/debian/himmelblau-broker.service", "usr/lib/systemd/user/", "644"],
 ]
+maintainer-scripts = "scripts"
 
 [package.metadata.generate-rpm]
 name = "himmelblau-broker"
 assets = [
   { source = "target/release/broker", dest = "/usr/sbin/himmelblau_broker", mode = "755" },
   { source = "../../platform/opensuse/com.microsoft.identity.broker1.service", dest = "/usr/share/dbus-1/services/", mode = "644" },
+  { source = "../../platform/debian/himmelblau-broker.service", dest = "/usr/lib/systemd/user/", mode = "644" },
 ]
+post_install_script = "scripts/postinst"
+pre_uninstall_script = "scripts/prerm"
+post_uninstall_script = "scripts/postrm"
 
 [package.metadata.generate-rpm.provides]
 microsoft-identity-broker = ""
