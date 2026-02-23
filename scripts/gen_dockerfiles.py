@@ -117,7 +117,7 @@ PACKAGES = [
     ("nss_himmelblau", "src/nss", True),
     ("pam_himmelblau", "src/pam", True),
     ("sshd-config", "src/sshd-config", False),
-    ("broker", "src/broker", True),
+    ("broker", "src/broker", False),  # broker has no tpm feature
     ("sso", "src/sso", True),
     ("sso-policies", "src/sso-policies", False),
     ("qr-greeter", "src/qr-greeter", False),
