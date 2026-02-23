@@ -291,7 +291,7 @@ fn configure_pam(
     for password_file in &password_files {
         insert_module_line(
             password_file,
-            "password\tsufficient\tpam_himmelblau.so ignore_unknown_user",
+            "password\tsufficient\tpam_himmelblau.so ignore_unknown_user set_authtok",
             None,
             Some(&|l: &str| {
                 (l.contains("pam_unix.so") && l.contains("password"))
