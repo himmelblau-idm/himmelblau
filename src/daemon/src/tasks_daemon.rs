@@ -35,6 +35,7 @@ use himmelblau::graph::Graph;
 use himmelblau_policies::policies::apply_intune_policy;
 use himmelblau_unix_common::config::{split_username, HimmelblauConfig};
 use himmelblau_unix_common::constants::{DEFAULT_CCACHE_DIR, DEFAULT_CONFIG_PATH};
+use himmelblau_unix_common::idprovider::common::{cache_idmap_result, execute_idmap_script};
 use himmelblau_unix_common::unix_proto::{HomeDirectoryInfo, TaskRequest, TaskResponse};
 use kanidm_utils_users::{get_effective_gid, get_effective_uid};
 use libc::{lchown, umask};
@@ -70,7 +71,11 @@ impl Decoder for TaskCodec {
                 src.clear();
                 Ok(Some(msg))
             }
-            _ => Ok(None),
+            Err(e) if e.is_eof() => Ok(None),
+            Err(e) => Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("JSON decode error: {:?}", e),
+            )),
         }
     }
 }
@@ -704,6 +709,42 @@ async fn handle_tasks(stream: UnixStream, cfg: &HimmelblauConfig) {
                 };
 
                 if let Err(e) = reqs.send(resp).await {
+                    error!("Error -> {:?}", e);
+                    return;
+                }
+            }
+            Some(Ok(TaskRequest::IdmapScript(info))) => {
+                debug!("Received task -> IdmapScript(...)");
+                let script_result = match execute_idmap_script(
+                    &info.script,
+                    &info.username,
+                    &info.access_token,
+                    &info.object_id,
+                    &info.tenant_id,
+                    info.domain.as_deref(),
+                ) {
+                    Ok(result) => result,
+                    Err(_) => {
+                        if let Err(e) = reqs
+                            .send(TaskResponse::Error(
+                                "Execution of idmap script failed".to_string(),
+                            ))
+                            .await
+                        {
+                            error!("Error -> {:?}", e);
+                        }
+                        return;
+                    }
+                };
+
+                let status = if let Some(result) = script_result {
+                    cache_idmap_result(&info.username, &result);
+                    0
+                } else {
+                    1
+                };
+
+                if let Err(e) = reqs.send(TaskResponse::Success(status)).await {
                     error!("Error -> {:?}", e);
                     return;
                 }

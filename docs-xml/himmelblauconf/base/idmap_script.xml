@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<parameter name="idmap_script"
+           section="global"
+           type="string"
+           rust_type="Option&lt;String&gt;"
+           documented="true"
+           domain_specific="false"
+           order="28">
+<description>
+Dynamic UID/GID mapping script, which runs when no cached mapping exists. A
+valid mapping is cached and reused for subsequent logins. The following
+environment variables are set: USERNAME, ACCESS_TOKEN, OBJECT_ID, TENANT_ID,
+DOMAIN. ACCESS_TOKEN is empty when offline.
+The script is executed by the himmelblaud_tasks daemon.
+The script must print a single line to stdout in the following format:
+.RS 4
+.nf
+uid=&lt;value&gt;,gid=&lt;value&gt;
+.fi
+.RE
+Returns a non-zero exit code to fail the login.
+If the script exits 0 with no output, Himmelblau falls back to the default
+UID/GID resolution.
+</description>
+<default></default>
+<example>idmap_script = /etc/himmelblau/idmap.sh</example>
+</parameter>

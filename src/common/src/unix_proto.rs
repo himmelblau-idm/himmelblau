@@ -160,6 +160,16 @@ pub struct HomeDirectoryInfo {
     pub aliases: Vec<String>,
 }
 
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct IdmapScriptTaskInfo {
+    pub script: String,
+    pub username: String,
+    pub access_token: String,
+    pub object_id: String,
+    pub tenant_id: String,
+    pub domain: Option<String>,
+}
+
 #[derive(Serialize, Deserialize, Clone)]
 pub enum TaskRequest {
     HomeDirectory(HomeDirectoryInfo),
@@ -171,6 +181,7 @@ pub enum TaskRequest {
     /// Set up subordinate UID/GID mappings for container support (podman, etc.)
     /// Parameters: (username, subid_start, subid_count)
     SubordinateIds(String, u32, u32),
+    IdmapScript(IdmapScriptTaskInfo),
 }
 
 impl TaskRequest {
@@ -190,6 +201,7 @@ impl TaskRequest {
             TaskRequest::SubordinateIds(username, start, count) => {
                 format!("SubordinateIds({}, {}, {})", username, start, count)
             }
+            TaskRequest::IdmapScript(_) => "IdmapScript(...)".to_string(),
         }
     }
 }
