@@ -2717,6 +2717,36 @@ impl IdProvider for HimmelblauProvider {
                 )
             }};
         }
+        macro_rules! maybe_prompt_setup_pin_after_password_only_success {
+            ($enrollment_token:expr, $success_token:expr, $action:expr, $msg:expr) => {{
+                let action = $action;
+                let hello_enabled = self.config.read().await.get_enable_hello();
+                let hello_key_missing = self.fetch_hello_key(account_id, keystore).is_err();
+                if hello_enabled && !no_hello_pin && hello_key_missing {
+                    info!($msg);
+                    *cred_handler = AuthCredHandler::SetupPin {
+                        token: Box::new(Some($enrollment_token)),
+                    };
+                    Ok((
+                        AuthResult::Next(AuthRequest::SetupPin {
+                            msg: format!(
+                                "Set up a PIN\n {}{}",
+                                "A Hello PIN is a fast, secure way to sign",
+                                "in to your device, apps, and services."
+                            ),
+                        }),
+                        action,
+                    ))
+                } else {
+                    Ok((
+                        AuthResult::Success {
+                            token: $success_token,
+                        },
+                        action,
+                    ))
+                }
+            }};
+        }
         macro_rules! prt_signin_frequency_check {
             ($cred:ident) => {
                 if let Some(prt_result) = self
@@ -2739,12 +2769,14 @@ impl IdProvider for HimmelblauProvider {
                                     } else {
                                         AuthCacheAction::None
                                     };
-                                    Ok((
-                                        AuthResult::Success { token },
+                                    maybe_prompt_setup_pin_after_password_only_success!(
+                                        msal_token,
+                                        token,
                                         /* Cache the offline password hash for breakglass
                                          * conditions, if enabled. */
                                         action,
-                                    ))
+                                        "Password-only auth satisfied sign-in frequency without an existing Hello key; requesting PIN setup."
+                                    )
                                 }
                                 Ok(auth_result) => Ok((auth_result, AuthCacheAction::None)),
                                 Err(e) => Err(e),
@@ -2918,12 +2950,14 @@ impl IdProvider for HimmelblauProvider {
                                     } else {
                                         AuthCacheAction::None
                                     };
-                                Ok((
-                                    AuthResult::Success { token },
+                                maybe_prompt_setup_pin_after_password_only_success!(
+                                    token2,
+                                    token,
                                     /* Cache the offline password hash for breakglass
                                      * conditions, if enabled. */
                                     action,
-                                ))
+                                    "Password-only auth succeeded without an existing Hello key; requesting PIN setup."
+                                )
                             }
                             Ok(auth_result) => Ok((auth_result, AuthCacheAction::None)),
                             Err(e) => Err(e),
