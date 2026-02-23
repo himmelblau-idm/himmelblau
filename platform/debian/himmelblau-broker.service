@@ -1,0 +1,10 @@
+[Unit]
+Description=Himmelblau Authentication Broker
+
+[Service]
+Type=dbus
+BusName=com.microsoft.identity.broker1
+ExecStart=/usr/sbin/himmelblau_broker
+Slice=background.slice
+TimeoutStopSec=5
+Restart=on-failure

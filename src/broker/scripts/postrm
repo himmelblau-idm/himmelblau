@@ -1,0 +1,12 @@
+#!/bin/sh
+set -e
+
+if [ -d /run/systemd/system ]; then
+    if command -v deb-systemd-invoke >/dev/null 2>&1; then
+        if [ -z "$DPKG_ROOT" ] && [ "$1" = remove ]; then
+            deb-systemd-invoke daemon-reload --user >/dev/null || true
+        fi
+    elif command -v systemctl >/dev/null 2>&1; then
+        systemctl kill --kill-whom='main' --signal='SIGRTMIN+25' 'user@*.service' || true
+    fi
+fi

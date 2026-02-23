@@ -1,7 +1,5 @@
 #!/bin/bash
 
-set -e
-
 # Define the patch content using cat command
 UNIX_CHKPWD_PATCH=$(cat << 'EOF'
 --- /etc/apparmor.d/unix-chkpwd 2024-10-07 13:41:33.143303700 -0600
@@ -49,3 +47,5 @@ if [[ -f /etc/apparmor.d/usr.lib.libreoffice.program.soffice.bin ]]; then
         apparmor_parser -r /etc/apparmor.d/usr.lib.libreoffice.program.soffice.bin >/dev/null 2>&1 || true
     fi
 fi
+
+DEBIAN_FRONTEND=noninteractive pam-auth-update
