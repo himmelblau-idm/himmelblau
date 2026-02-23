@@ -120,6 +120,20 @@ impl DaemonClientBlocking {
                         break;
                     }
                 }
+                Err(e) if e.kind() == ErrorKind::WouldBlock || e.kind() == ErrorKind::TimedOut => {
+                    // set_read_timeout() causes blocking reads to return
+                    // WouldBlock/TimedOut when no data arrives within the
+                    // timeout window. Check the wall-clock timeout and retry.
+                    let durr = SystemTime::now().duration_since(start).map_err(Box::new)?;
+                    if durr > timeout {
+                        error!("Socket timeout waiting for daemon response");
+                        return Err(Box::new(IoError::new(
+                            ErrorKind::TimedOut,
+                            "socket timeout",
+                        )));
+                    }
+                    continue;
+                }
                 Err(e) => {
                     error!("Stream read failure from {:?} -> {:?}", &self.stream, e);
                     // Failure!
