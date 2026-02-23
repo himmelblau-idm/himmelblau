@@ -1,3 +1,3 @@
 [D-BUS Service]
 Name=com.microsoft.identity.broker1
-Exec=/usr/sbin/broker
+Exec=/usr/sbin/himmelblau_broker

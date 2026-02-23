@@ -25,14 +25,14 @@ replaces = ["microsoft-identity-broker", "himmelblau-sso (<< 3.0.0~)"]
 conflicts = ["microsoft-identity-broker"]
 provides = ["microsoft-identity-broker"]
 assets = [
-  ["target/release/broker", "usr/sbin/", "755"],
+  ["target/release/broker", "usr/sbin/himmelblau_broker", "755"],
   ["../../platform/debian/com.microsoft.identity.broker1.service", "usr/share/dbus-1/services/", "644"],
 ]
 
 [package.metadata.generate-rpm]
 name = "himmelblau-broker"
 assets = [
-  { source = "target/release/broker", dest = "/usr/sbin/", mode = "755" },
+  { source = "target/release/broker", dest = "/usr/sbin/himmelblau_broker", mode = "755" },
   { source = "../../platform/opensuse/com.microsoft.identity.broker1.service", dest = "/usr/share/dbus-1/services/", mode = "644" },
 ]
 
