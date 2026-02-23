@@ -22,11 +22,11 @@ use base64::engine::general_purpose::STANDARD;
 use base64::Engine;
 use himmelblau::intune::{ComplianceState, IntuneStatus, PolicyStatus};
 use himmelblau_unix_common::config::HimmelblauConfig;
-use std::fs::{self, Permissions};
+use std::fs::Permissions;
 use std::io::Write;
 use std::os::unix::fs::PermissionsExt;
 use std::process::Command;
-use tempfile::NamedTempFile;
+use tempfile::{NamedTempFile, TempPath};
 use tracing::{debug, error};
 
 fn execute_script(script: &[u8]) -> Result<String> {
@@ -50,32 +50,31 @@ fn execute_script(script: &[u8]) -> Result<String> {
     // Write the script contents
     file.write_all(&contents)
         .context("Failed to write script to temp file")?;
+    file.flush().context("Failed to flush script to disk")?;
 
     // Make it executable
     let mut perms: Permissions = file.as_file().metadata()?.permissions();
     perms.set_mode(0o500);
     file.as_file().set_permissions(perms)?;
 
+    // Close the file handle but keep the path so it can be executed.
+    // Executing a file that is still open for writing can return ETXTBSY.
+    let temp_path: TempPath = file.into_temp_path();
+
     // Execute: directly if it has a shebang, via /bin/sh otherwise
     let output = if has_shebang {
-        Command::new(file.path())
+        Command::new(&temp_path)
             .output()
             .context("Failed to execute script directly")?
     } else {
         Command::new("/bin/sh")
-            .arg(file.path())
+            .arg(&temp_path)
             .output()
             .context("Failed to execute script via /bin/sh")?
     };
 
-    // Capture the path before dropping
-    let path = file.path().to_path_buf();
-
-    // Close and remove the file
-    drop(file);
-
-    // Manually delete the file in case it wasn’t removed by drop
-    let _ = fs::remove_file(&path);
+    // Remove the temp file (best-effort)
+    let _ = temp_path.close();
 
     // Ignores exit codes as the scripts might be of dubious quality, only check stdout
     let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
