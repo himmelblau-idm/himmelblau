@@ -25,10 +25,20 @@ impl DaemonClientBlocking {
 
         let stream = UnixStream::connect(path)
             .map_err(|e| {
-                error!(
-                    "Unix socket stream setup error while connecting to {} -> {:?}",
-                    path, e
-                );
+                // ENOENT means the daemon isn't running — expected during boot,
+                // daemon-reload, or when himmelblau is not configured. Log at
+                // debug to avoid distracting users with spurious error output.
+                if e.kind() == ErrorKind::NotFound {
+                    debug!(
+                        "himmelblaud socket not found at {} (daemon not running?)",
+                        path
+                    );
+                } else {
+                    error!(
+                        "Unix socket stream setup error while connecting to {} -> {:?}",
+                        path, e
+                    );
+                }
                 e
             })
             .map_err(Box::new)?;

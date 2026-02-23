@@ -189,8 +189,8 @@ impl PamHooks for PamKanidm {
         let mut daemon_client = match DaemonClientBlocking::new(cfg.get_socket_path().as_str()) {
             Ok(dc) => dc,
             Err(e) => {
-                error!(err = ?e, "Error DaemonClientBlocking::new()");
-                return PamResultCode::PAM_SERVICE_ERR;
+                debug!(err = ?e, "himmelblaud not available, ignoring");
+                return PamResultCode::PAM_IGNORE;
             }
         };
 
@@ -350,8 +350,8 @@ impl PamHooks for PamKanidm {
         let mut daemon_client = match DaemonClientBlocking::new(cfg.get_socket_path().as_str()) {
             Ok(dc) => dc,
             Err(e) => {
-                error!(err = ?e, "Error DaemonClientBlocking::new()");
-                return PamResultCode::PAM_SERVICE_ERR;
+                debug!(err = ?e, "himmelblaud not available, ignoring");
+                return PamResultCode::PAM_IGNORE;
             }
         };
 
@@ -746,8 +746,8 @@ impl PamHooks for PamKanidm {
         let mut daemon_client = match DaemonClientBlocking::new(cfg.get_socket_path().as_str()) {
             Ok(dc) => dc,
             Err(e) => {
-                error!(err = ?e, "Error DaemonClientBlocking::new()");
-                return PamResultCode::PAM_SERVICE_ERR;
+                debug!(err = ?e, "himmelblaud not available, ignoring");
+                return PamResultCode::PAM_IGNORE;
             }
         };
 
