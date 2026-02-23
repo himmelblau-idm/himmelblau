@@ -61,15 +61,36 @@ for OLD_FILE in \
     fi
 done
 
-# Reload systemd to pick up the new service files from /usr/lib/systemd/system/
-if command -v systemctl >/dev/null 2>&1; then
-    systemctl daemon-reload || true
-fi
+if command -v deb-systemd-helper >/dev/null 2>&1; then
+    if [ "$1" != "configure" ]; then
+        exit 0
+    fi
 
-# Enable and start Himmelblau daemons if systemd is available
-# On Live systems, skip service start - the HSM PIN will be generated at first boot
-# via the himmelblau-hsm-pin-init.service oneshot when deployed to real hardware.
-if command -v systemctl >/dev/null 2>&1; then
+    # The following line should be removed in trixie or trixie+1
+    deb-systemd-helper unmask himmelblaud.service himmelblaud-tasks.service himmelblau-hsm-pin-init.service >/dev/null || true
+
+    # was-enabled defaults to true, so new installations run enable.
+    if deb-systemd-helper --quiet was-enabled himmelblaud.service himmelblaud-tasks.service himmelblau-hsm-pin-init.service; then
+        # Enables the unit on first installation, creates new
+        # symlinks on upgrades if the unit file has changed.
+        deb-systemd-helper enable himmelblaud.service himmelblaud-tasks.service himmelblau-hsm-pin-init.service >/dev/null || true
+    else
+        # Update the statefile to add new symlinks (if any), which need to be
+        # cleaned up on purge. Also remove old symlinks.
+        deb-systemd-helper update-state himmelblaud.service himmelblaud-tasks.service himmelblau-hsm-pin-init.service >/dev/null || true
+    fi
+
+    if [ -z "$DPKG_ROOT" ] && [ -d /run/systemd/system ] && ! is_live_system; then
+        deb-systemd-invoke daemon-reload --system >/dev/null || true
+        deb-systemd-invoke restart himmelblaud.service himmelblaud-tasks.service >/dev/null || true
+    fi
+elif command -v systemctl >/dev/null 2>&1; then
+    # Reload systemd to pick up the new service files from /usr/lib/systemd/system/
+    systemctl daemon-reload || true
+
+    # Enable and start Himmelblau daemons if systemd is available
+    # On Live systems, skip service start - the HSM PIN will be generated at first boot
+    # via the himmelblau-hsm-pin-init.service oneshot when deployed to real hardware.
     if is_live_system; then
         echo "Live system detected - skipping service start (HSM PIN will be initialized at first boot)"
         # Only enable services so they start on first real boot
