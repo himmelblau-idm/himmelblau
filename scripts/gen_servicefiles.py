@@ -315,7 +315,6 @@ ConditionPathExists=!/var/lib/private/himmelblaud/hsm-pin.enc
 
 [Service]
 Type=oneshot
-RemainAfterExit=yes
 ExecStart=/usr/libexec/himmelblau-init-hsm-pin
 
 [Install]
