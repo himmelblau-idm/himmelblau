@@ -61,7 +61,7 @@ use std::ffi::CStr;
 
 use himmelblau_unix_common::client_sync::DaemonClientBlocking;
 use himmelblau_unix_common::config::{split_username, HimmelblauConfig};
-use himmelblau_unix_common::constants::DEFAULT_CONFIG_PATH;
+use himmelblau_unix_common::constants::{DEFAULT_CONFIG_PATH, DEFAULT_TPM_SOCK_TIMEOUT};
 use himmelblau_unix_common::hello_pin_complexity::is_simple_pin;
 use himmelblau_unix_common::unix_proto::{ClientRequest, ClientResponse};
 use himmelblau_unix_common::user_map::UserMap;
@@ -848,7 +848,9 @@ impl PamHooks for PamKanidm {
             new_pin.clone(),
         );
 
-        match daemon_client.call_and_wait(&req, cfg.get_unix_sock_timeout()) {
+        // TPM key generation during PIN enrollment can take several minutes on
+        // slow or virtualised hardware. Use a dedicated larger timeout here.
+        match daemon_client.call_and_wait(&req, DEFAULT_TPM_SOCK_TIMEOUT) {
             Ok(ClientResponse::Ok) => {
                 debug!("PamResultCode::PAM_SUCCESS");
                 // Publish the new PIN as PAM_AUTHTOK so downstream modules

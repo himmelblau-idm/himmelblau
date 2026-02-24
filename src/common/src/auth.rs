@@ -17,6 +17,7 @@
 */
 use crate::client_sync::DaemonClientBlocking;
 use crate::config::HimmelblauConfig;
+use crate::constants::DEFAULT_TPM_SOCK_TIMEOUT;
 use crate::hello_pin_complexity::{is_simple_pin, meets_intune_pin_policy};
 use crate::unix_proto::{ClientRequest, ClientResponse, PamAuthRequest, PamAuthResponse};
 use regex::{Match, Regex};
@@ -341,8 +342,10 @@ fn hello_totp_enroll_fallback_msg(url: &str) -> Result<String, String> {
 
 macro_rules! match_sm_auth_client_response {
     ($daemon_client:expr, $req:ident, $authtok:expr, $cfg:ident, $account_id:ident, $service:ident, $msg_printer:ident, $opts:ident, $($pat:pat => $result:expr),*) => {{
-        let timeout = $cfg.get_unix_sock_timeout();
-        match $daemon_client.call_and_wait(&$req, timeout) {
+        // TPM operations (Hello PIN verify, key generation) can take several
+        // minutes on slow/virtualised hardware. Use the TPM timeout here
+        // rather than the shorter connection timeout.
+        match $daemon_client.call_and_wait(&$req, DEFAULT_TPM_SOCK_TIMEOUT) {
             Ok(r) => match r {
                 $($pat => $result),*
                 ClientResponse::PamAuthenticateStepResponse(PamAuthResponse::Success) => {
