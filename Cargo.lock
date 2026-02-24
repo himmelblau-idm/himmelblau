@@ -2085,6 +2085,7 @@ dependencies = [
  "openidconnect",
  "os-release",
  "pem",
+ "qrcodegen",
  "regex",
  "reqwest 0.12.24",
  "rpassword",
@@ -2098,6 +2099,7 @@ dependencies = [
  "tokio-util",
  "totp-rs",
  "tracing",
+ "urlencoding",
  "uuid",
  "zeroize",
 ]
@@ -2850,9 +2852,9 @@ dependencies = [
 
 [[package]]
 name = "libhimmelblau"
-version = "0.8.9"
+version = "0.8.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e78a4454e0ba5f897057a643ed1f516dede26fd96c7fa614e1a2d614a3a2d8e7"
+checksum = "a91a96aea72f6ac88f86e7e605f49fe0c3df8ded6e61261ce54f3e8fa468d45f"
 dependencies = [
  "base64 0.22.1",
  "cbindgen",

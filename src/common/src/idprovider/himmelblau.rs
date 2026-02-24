@@ -1369,6 +1369,73 @@ impl IdProvider for HimmelblauProvider {
                             }
                         }
                     }
+                    Err(MsalError::AcquireTokenFailed(err_resp))
+                        if client_id == Some(EDGE_BROWSER_CLIENT_ID) =>
+                    {
+                        /* Authentication failed with Edge Browser client ID.
+                         * Fall back to default app ID - group names may not
+                         * be resolved but authentication can proceed. */
+                        info!(
+                            "Token acquisition failed with Edge Browser app ({}). \
+                             Retrying with default app ID.",
+                            err_resp.error_description
+                        );
+                        match self
+                            .client
+                            .read()
+                            .await
+                            .exchange_prt_for_access_token(
+                                &prt,
+                                scopes,
+                                None,
+                                Some(DEFAULT_APP_ID),
+                                tpm,
+                                machine_key,
+                            )
+                            .await
+                        {
+                            Ok(val) => val,
+                            Err(e) => {
+                                error!("{:?}", e);
+                                // Never return IdpError::NotFound. This deletes the existing
+                                // user from the cache.
+                                fake_user!()
+                            }
+                        }
+                    }
+                    Err(MsalError::AADSTSError(_))
+                        if client_id == Some(EDGE_BROWSER_CLIENT_ID) =>
+                    {
+                        /* AADSTS error with Edge Browser client ID (e.g. CA
+                         * policy requiring device compliance). Fall back to
+                         * default app ID. */
+                        info!(
+                            "AADSTS error with Edge Browser app. \
+                             Retrying with default app ID."
+                        );
+                        match self
+                            .client
+                            .read()
+                            .await
+                            .exchange_prt_for_access_token(
+                                &prt,
+                                scopes,
+                                None,
+                                Some(DEFAULT_APP_ID),
+                                tpm,
+                                machine_key,
+                            )
+                            .await
+                        {
+                            Ok(val) => val,
+                            Err(e) => {
+                                error!("{:?}", e);
+                                // Never return IdpError::NotFound. This deletes the existing
+                                // user from the cache.
+                                fake_user!()
+                            }
+                        }
+                    }
                     Err(e) => {
                         error!("{:?}", e);
                         // Never return IdpError::NotFound. This deletes the existing
@@ -1667,10 +1734,7 @@ impl IdProvider for HimmelblauProvider {
                         return Err(IdpError::BadRequest);
                     }
                 );
-                let mut flow: MFAAuthContinue = resp.into();
-                if !self.is_domain_joined(keystore).await {
-                    flow.resource = Some("https://enrollment.manage.microsoft.com".to_string());
-                }
+                let flow: MFAAuthContinue = resp.into();
                 let msg = flow.msg.clone();
                 let polling_interval = flow.polling_interval.unwrap_or(5000);
                 Ok((
@@ -1870,12 +1934,75 @@ impl IdProvider for HimmelblauProvider {
                                     warn!("Consent not granted for Graph API access. \
                                            Group names will not be resolved.");
                                     $token.clone()
+                                } else if client_id == Some(EDGE_BROWSER_CLIENT_ID) {
+                                    /* Authentication failed with Edge Browser client ID.
+                                     * Fall back to default app ID - group names may not
+                                     * be resolved but authentication can proceed. */
+                                    info!(
+                                        "Token acquisition failed with Edge Browser app ({}). \
+                                         Retrying with default app ID.",
+                                        err_resp.error_description
+                                    );
+                                    match self.client
+                                        .read()
+                                        .await
+                                        .acquire_token_by_refresh_token(
+                                            &$token.refresh_token,
+                                            scopes,
+                                            None,
+                                            Some(DEFAULT_APP_ID),
+                                            tpm,
+                                            machine_key,
+                                        )
+                                        .await
+                                    {
+                                        Ok(token) => token,
+                                        Err(e) => {
+                                            error!("{:?}", e);
+                                            return Ok((
+                                                AuthResult::Denied(msal_error_to_user_message(&e)),
+                                                AuthCacheAction::None,
+                                            ));
+                                        }
+                                    }
                                 } else {
                                     // Return the AAD error description to the user
                                     return Ok((
                                         AuthResult::Denied(err_resp.error_description.clone()),
                                         AuthCacheAction::None,
                                     ));
+                                }
+                            }
+                            MsalError::AADSTSError(_)
+                                if client_id == Some(EDGE_BROWSER_CLIENT_ID) =>
+                            {
+                                /* AADSTS error with Edge Browser client ID
+                                 * (e.g. CA policy). Fall back to default app ID. */
+                                info!(
+                                    "AADSTS error with Edge Browser app. \
+                                     Retrying with default app ID."
+                                );
+                                match self.client
+                                    .read()
+                                    .await
+                                    .acquire_token_by_refresh_token(
+                                        &$token.refresh_token,
+                                        scopes,
+                                        None,
+                                        Some(DEFAULT_APP_ID),
+                                        tpm,
+                                        machine_key,
+                                    )
+                                    .await
+                                {
+                                    Ok(token) => token,
+                                    Err(e) => {
+                                        error!("{:?}", e);
+                                        return Ok((
+                                            AuthResult::Denied(msal_error_to_user_message(&e)),
+                                            AuthCacheAction::None,
+                                        ));
+                                    }
                                 }
                             }
                             _ => {
@@ -2224,8 +2351,95 @@ impl IdProvider for HimmelblauProvider {
                                         ));
                                     }
                                 }
+                            } else if client_id == Some(EDGE_BROWSER_CLIENT_ID) {
+                                /* Authentication failed with Edge Browser client ID.
+                                 * Fall back to default app ID - group names may not
+                                 * be resolved but authentication can proceed. */
+                                info!(
+                                    "Token acquisition failed with Edge Browser app ({}). \
+                                     Retrying with default app ID.",
+                                    e.error_description
+                                );
+                                match self
+                                    .client
+                                    .read()
+                                    .await
+                                    .acquire_token_by_hello_for_business_key(
+                                        account_id,
+                                        &$hello_key,
+                                        vec!["https://graph.microsoft.com/.default"],
+                                        None,
+                                        Some(DEFAULT_APP_ID),
+                                        tpm,
+                                        machine_key,
+                                        &$cred,
+                                    )
+                                    .await
+                                {
+                                    Ok(token) => {
+                                        self.bad_pin_counter.reset_bad_pin_count(account_id).await;
+                                        token
+                                    }
+                                    Err(e) => {
+                                        error!("Failed to authenticate with hello key (fallback): {:?}", e);
+                                        let err_msg = msal_error_to_user_message(&e);
+                                        handle_hello_bad_pin_count!(self, account_id, keystore, |msg: &str| {
+                                            Ok((AuthResult::Denied(msg.to_string() + " " + &err_msg), AuthCacheAction::None))
+                                        });
+                                        return Ok((
+                                            AuthResult::Denied(
+                                                "Failed to authenticate with Hello PIN.".to_string(),
+                                            ),
+                                            AuthCacheAction::None,
+                                        ));
+                                    }
+                                }
                             } else {
                                 check_new_device_enrollment_required!(e, self, keystore)
+                            }
+                        }
+                        Err(MsalError::AADSTSError(_))
+                            if client_id == Some(EDGE_BROWSER_CLIENT_ID) =>
+                        {
+                            /* AADSTS error with Edge Browser client ID
+                             * (e.g. CA policy). Fall back to default app ID. */
+                            info!(
+                                "AADSTS error with Edge Browser app. \
+                                 Retrying with default app ID."
+                            );
+                            match self
+                                .client
+                                .read()
+                                .await
+                                .acquire_token_by_hello_for_business_key(
+                                    account_id,
+                                    &$hello_key,
+                                    vec!["https://graph.microsoft.com/.default"],
+                                    None,
+                                    Some(DEFAULT_APP_ID),
+                                    tpm,
+                                    machine_key,
+                                    &$cred,
+                                )
+                                .await
+                            {
+                                Ok(token) => {
+                                    self.bad_pin_counter.reset_bad_pin_count(account_id).await;
+                                    token
+                                }
+                                Err(e) => {
+                                    error!("Failed to authenticate with hello key (AADSTS fallback): {:?}", e);
+                                    let err_msg = msal_error_to_user_message(&e);
+                                    handle_hello_bad_pin_count!(self, account_id, keystore, |msg: &str| {
+                                        Ok((AuthResult::Denied(msg.to_string() + " " + &err_msg), AuthCacheAction::None))
+                                    });
+                                    return Ok((
+                                        AuthResult::Denied(
+                                            "Failed to authenticate with Hello PIN.".to_string(),
+                                        ),
+                                        AuthCacheAction::None,
+                                    ));
+                                }
                             }
                         }
                         Err(e) => {
@@ -2717,6 +2931,35 @@ impl IdProvider for HimmelblauProvider {
                 )
             }};
         }
+        macro_rules! maybe_prompt_setup_pin_after_password_only_success {
+            ($enrollment_token:expr, $success_token:expr, $action:expr, $msg:expr) => {{
+                let action = $action;
+                let hello_enabled = self.config.read().await.get_enable_hello();
+                let hello_key_missing = self.fetch_hello_key(account_id, keystore).is_err();
+                if hello_enabled && !no_hello_pin && hello_key_missing {
+                    info!($msg);
+                    *cred_handler = AuthCredHandler::SetupPin {
+                        token: Box::new(Some($enrollment_token)),
+                    };
+                    Ok((
+                        AuthResult::Next(AuthRequest::SetupPin {
+                            msg: format!(
+                                "Set up a PIN\n {}",
+                                "A Hello PIN is a fast, secure way to sign in to your device, apps, and services.",
+                            ),
+                        }),
+                        action,
+                    ))
+                } else {
+                    Ok((
+                        AuthResult::Success {
+                            token: $success_token,
+                        },
+                        action,
+                    ))
+                }
+            }};
+        }
         macro_rules! prt_signin_frequency_check {
             ($cred:ident) => {
                 if let Some(prt_result) = self
@@ -2739,12 +2982,14 @@ impl IdProvider for HimmelblauProvider {
                                     } else {
                                         AuthCacheAction::None
                                     };
-                                    Ok((
-                                        AuthResult::Success { token },
+                                    maybe_prompt_setup_pin_after_password_only_success!(
+                                        msal_token,
+                                        token,
                                         /* Cache the offline password hash for breakglass
                                          * conditions, if enabled. */
                                         action,
-                                    ))
+                                        "Password-only auth satisfied sign-in frequency without an existing Hello key; requesting PIN setup."
+                                    )
                                 }
                                 Ok(auth_result) => Ok((auth_result, AuthCacheAction::None)),
                                 Err(e) => Err(e),
@@ -2918,12 +3163,14 @@ impl IdProvider for HimmelblauProvider {
                                     } else {
                                         AuthCacheAction::None
                                     };
-                                Ok((
-                                    AuthResult::Success { token },
+                                maybe_prompt_setup_pin_after_password_only_success!(
+                                    token2,
+                                    token,
                                     /* Cache the offline password hash for breakglass
                                      * conditions, if enabled. */
                                     action,
-                                ))
+                                    "Password-only auth succeeded without an existing Hello key; requesting PIN setup."
+                                )
                             }
                             Ok(auth_result) => Ok((auth_result, AuthCacheAction::None)),
                             Err(e) => Err(e),
@@ -3005,7 +3252,7 @@ impl IdProvider for HimmelblauProvider {
                 // from check_user_exists() was fetched without ForceMFA, so reusing
                 // it would bypass the amr_values=ngcmfa parameter in the
                 // /oauth2/authorize request.
-                let mut flow = net_down_check!(
+                let flow = net_down_check!(
                     self.client
                         .read()
                         .await
@@ -3056,11 +3303,6 @@ impl IdProvider for HimmelblauProvider {
                         return Ok((AuthResult::Denied(msal_error_to_user_message(&e)), AuthCacheAction::None));
                     }
                 );
-
-                // Set resource for non-domain-joined devices
-                if !*is_domain_joined {
-                    flow.resource = Some("https://enrollment.manage.microsoft.com".to_string());
-                }
 
                 nested_auth_handle_mfa_resp!(flow, cred)
             }
@@ -3844,9 +4086,53 @@ impl HimmelblauProvider {
                         .await
                         .exchange_prt_for_access_token(&prt, vec![], None, None, tpm, machine_key)
                         .await
+                } else if client_id == Some(EDGE_BROWSER_CLIENT_ID) {
+                    /* Authentication failed with Edge Browser client ID.
+                     * Fall back to default app ID - group names may not
+                     * be resolved but authentication can proceed. */
+                    info!(
+                        "Token acquisition failed with Edge Browser app ({}). \
+                         Retrying with default app ID.",
+                        err_resp.error_description
+                    );
+                    self.client
+                        .read()
+                        .await
+                        .exchange_prt_for_access_token(
+                            &prt,
+                            scopes.clone(),
+                            None,
+                            Some(DEFAULT_APP_ID),
+                            tpm,
+                            machine_key,
+                        )
+                        .await
                 } else {
                     Err(MsalError::AcquireTokenFailed(err_resp))
                 }
+            }
+            Err(MsalError::AADSTSError(_))
+                if client_id == Some(EDGE_BROWSER_CLIENT_ID) =>
+            {
+                /* AADSTS error with Edge Browser client ID (e.g. CA
+                 * policy requiring device compliance). Fall back to
+                 * default app ID. */
+                info!(
+                    "AADSTS error with Edge Browser app. \
+                     Retrying with default app ID."
+                );
+                self.client
+                    .read()
+                    .await
+                    .exchange_prt_for_access_token(
+                        &prt,
+                        scopes,
+                        None,
+                        Some(DEFAULT_APP_ID),
+                        tpm,
+                        machine_key,
+                    )
+                    .await
             }
             result => result,
         };
