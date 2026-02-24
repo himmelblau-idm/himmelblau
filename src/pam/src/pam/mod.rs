@@ -529,34 +529,28 @@ impl PamHooks for PamKanidm {
 
         let oidc_client = cfg.get_oidc_issuer_url().is_some();
         let token = if !oidc_client {
-            let auth_options = vec![AuthOption::Fido, AuthOption::Passwordless];
-            let auth_init = match rt.block_on(async {
-                app.check_user_exists(&account_id, None, &auth_options)
-                    .await
-            }) {
-                Ok(auth_init) => auth_init,
-                Err(e) => {
-                    error!("{:?}", e);
-                    return PamResultCode::PAM_AUTH_ERR;
-                }
-            };
+            // Use ForceMFA so Entra does not skip the second factor even if
+            // the account has a recent sign-in. Passwordless is included so
+            // that accounts without a password (phone sign-in, FIDO2) can
+            // still change their Hello PIN — passwordless IS MFA.
+            let auth_options = vec![
+                AuthOption::Passwordless,
+                AuthOption::Fido,
+                AuthOption::ForceMFA,
+            ];
 
-            let password = if !auth_init.passwordless() {
-                match conv.send(PAM_PROMPT_ECHO_OFF, "Entra ID Password: ") {
-                    Ok(password) => match password {
-                        Some(cred) => Some(cred),
-                        None => {
-                            debug!("no password");
-                            return PamResultCode::PAM_CRED_INSUFFICIENT;
-                        }
-                    },
-                    Err(err) => {
-                        debug!("unable to get password");
-                        return err;
-                    }
+            // For password-based accounts, prompt for the Entra password.
+            // For passwordless accounts, pass None — the MFA flow will use
+            // the appropriate method (phone sign-in, FIDO2, etc.).
+            let password = match conv.send(PAM_PROMPT_ECHO_OFF, "Entra ID Password (leave blank for passwordless): ") {
+                Ok(password) => match password {
+                    Some(cred) if !cred.is_empty() => Some(cred),
+                    _ => None,
+                },
+                Err(err) => {
+                    debug!("unable to get password");
+                    return err;
                 }
-            } else {
-                None
             };
 
             let mut mfa_req = match rt.block_on(async {
@@ -566,7 +560,7 @@ impl PamHooks for PamKanidm {
                     vec![],
                     None,
                     &auth_options,
-                    Some(auth_init),
+                    None,
                     cfg.get_mfa_method().as_deref(),
                 )
                 .await
