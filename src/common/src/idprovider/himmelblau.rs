@@ -4204,10 +4204,12 @@ impl HimmelblauProvider {
         token: &UnixUserToken,
         old_token: Option<&UserToken>,
     ) -> Result<AuthResult, IdpError> {
-        let uuid = token.uuid().map_err(|e| {
-            error!("Failed fetching user uuid: {:?}", e);
-            IdpError::BadRequest
-        })?;
+        // UUID is only used for logging; tolerate tokens where the oid claim is
+        // absent or empty (e.g. device-flow tokens that lack the oid claim).
+        let uuid = token
+            .uuid()
+            .map(|u| u.to_string())
+            .unwrap_or_else(|_| account_id.to_string());
         match &token.access_token {
             Some(_) => {
                 /* Fixes bug#37: MFA can respond with different user than requested.
