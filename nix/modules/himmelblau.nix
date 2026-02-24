@@ -8,20 +8,25 @@ let
   cfg = config.services.himmelblau;
 
   # Convert a value to INI format string
-  toIniValue = v:
-    if v == null then null
-    else if lib.isBool v then (if v then "true" else "false")
-    else if lib.isList v then lib.concatStringsSep "," v
-    else toString v;
+  toIniValue =
+    v:
+    if v == null then
+      null
+    else if lib.isBool v then
+      (if v then "true" else "false")
+    else if lib.isList v then
+      lib.concatStringsSep "," v
+    else
+      toString v;
 
   # Filter out null values from an attrset
-  filterNulls = attrs:
-    lib.filterAttrs (n: v: v != null) attrs;
+  filterNulls = attrs: lib.filterAttrs (n: v: v != null) attrs;
 
   # Convert typed settings to INI-compatible attrset
   # The settings structure has global options at the top level and
   # subsections (like offline_breakglass) as nested attrsets
-  toIniSettings = settings:
+  toIniSettings =
+    settings:
     let
       # Separate top-level (global) options from subsections
       isSubsection = n: v: lib.isAttrs v && !(lib.isList v);
@@ -33,13 +38,12 @@ let
       globalSection = lib.mapAttrs (n: v: toIniValue v) (filterNulls globalOpts);
 
       # Convert each subsection
-      convertedSubsections = lib.mapAttrs (sectionName: sectionOpts:
-        lib.mapAttrs (n: v: toIniValue v) (filterNulls sectionOpts)
+      convertedSubsections = lib.mapAttrs (
+        sectionName: sectionOpts: lib.mapAttrs (n: v: toIniValue v) (filterNulls sectionOpts)
       ) subsections;
     in
     # Only include global section if it has values
-    (if globalSection != {} then { global = globalSection; } else {})
-    // convertedSubsections;
+    (if globalSection != { } then { global = globalSection; } else { }) // convertedSubsections;
 
   ini = pkgs.formats.ini { };
   configFile = ini.generate "himmelblau.conf" (toIniSettings cfg.settings);
@@ -157,6 +161,18 @@ in
           ++ lib.optional config.services.sshd.enable "sshd";
       in
       lib.genAttrs services genServiceCfg;
+
+    systemd.user.services.himmelblau-broker = {
+      description = "Himmelblau Authentication Broker";
+      serviceConfig = {
+        Type = "dbus";
+        BusName = "com.microsoft.identity.broker1";
+        ExecStart = "${cfg.package}/bin/himmelblau_broker";
+        Slice = "background.slice";
+        TimeoutStopSec = 5;
+        Restart = "on-failure";
+      };
+    };
 
     systemd.services =
       let

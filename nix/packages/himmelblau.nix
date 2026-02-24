@@ -94,6 +94,7 @@ rustPlatform.buildRustPackage (finalAttrs: {
 
   postInstall = ''
     ln -s $out/lib/libnss_himmelblau.so $out/lib/libnss_himmelblau.so.2
+    mv $out/bin/broker $out/bin/himmelblau_broker
 
     mkdir -p $out/share/dbus-1/services
     mkdir -p $out/lib/mozilla/native-messaging-hosts
