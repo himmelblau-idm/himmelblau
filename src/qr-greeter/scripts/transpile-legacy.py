@@ -189,6 +189,24 @@ def transpile_extension(source: str) -> str:
 
     return '\n'.join(result)
 
+def transpile_qrselection(source: str) -> str:
+    """Convert qrselection.js from ESM exports to legacy format."""
+
+    lines = source.split('\n')
+    output_lines = []
+
+    for line in lines:
+        # Remove ESM export lines
+        if line.startswith('export {'):
+            continue
+        if line.startswith('export function'):
+            line = line.replace('export function', 'function')
+        if line.startswith('const'):
+            line = line.replace('const', 'var')
+        output_lines.append(line)
+
+    return '\n'.join(output_lines)
+
 
 def transpile_qrcodegen(source: str) -> str:
     """Convert qrcodegen.js from ESM exports to legacy format."""
@@ -258,6 +276,16 @@ def main():
     with open(extension_dst, 'w') as f:
         f.write(transpiled)
 
+    # Transpile qrselection.js
+    qrselection_src = src_dir / "qrselection.js"
+    qrselection_dst = legacy_dir / "qrselection.js"
+    print(f"Transpiling {qrselection_src} -> {qrselection_dst}")
+    with open(qrselection_src, 'r') as f:
+        source = f.read()
+    transpiled = transpile_qrselection(source)
+    with open(qrselection_dst, 'w') as f:
+        f.write(transpiled)
+
     # Transpile qrcodegen.js
     qrcodegen_src = src_dir / "qrcodegen.js"
     qrcodegen_dst = legacy_dir / "qrcodegen.js"
@@ -271,8 +299,8 @@ def main():
         f.write(transpiled)
 
     # Transpile qr-selection.js
-    qr_selection_src = src_dir / "qr-selection.js"
-    qr_selection_dst = legacy_dir / "qr-selection.js"
+    qr_selection_src = src_dir / "qrselection.js"
+    qr_selection_dst = legacy_dir / "qrselection.js"
 
     print(f"Transpiling {qr_selection_src} -> {qr_selection_dst}")
     with open(qr_selection_src, 'r') as f:
