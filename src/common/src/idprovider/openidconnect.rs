@@ -1099,8 +1099,10 @@ impl IdProvider for OidcProvider {
         // Check if this is a remote service:
         // - Service starts with "remote:" (set by PAM module when PAM_RHOST is set)
         // - Service name contains any entry from remote_services_deny_list
-        let is_remote_service =
-            service.starts_with("remote:") || remote_services.iter().any(|s| service.contains(s));
+        let is_remote_service = service.starts_with("remote:")
+            || remote_services
+                .iter()
+                .any(|s| !s.is_empty() && service.contains(s));
         let hello_totp_enabled = check_hello_totp_enabled!(self);
         let allow_remote_hello = self.config.read().await.get_allow_remote_hello();
         // Skip Hello authentication if it is disabled by config

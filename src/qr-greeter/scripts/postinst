@@ -1,36 +1,64 @@
 #!/bin/sh
 set -e
 
-if command -v dconf >/dev/null 2>&1 && getent passwd gdm >/dev/null 2>&1; then
-    echo "Enabling Himmelblau QR Greeter GNOME Shell extension for GDM user..."
+if command -v dconf >/dev/null 2>&1; then
+    # Enable extension for GDM user (login screen)
+    if getent passwd gdm >/dev/null 2>&1; then
+        echo "Enabling Himmelblau QR Greeter GNOME Shell extension for GDM user..."
 
-    # Create /etc/dconf/profile/gdm if it doesn't exist
-    if [ ! -f /etc/dconf/profile/gdm ]; then
-        mkdir -p /etc/dconf/profile
-        cat > /etc/dconf/profile/gdm << 'EOF'
+        # Create /etc/dconf/profile/gdm if it doesn't exist
+        if [ ! -f /etc/dconf/profile/gdm ]; then
+            mkdir -p /etc/dconf/profile
+            cat > /etc/dconf/profile/gdm << 'EOF'
 user-db:user
 system-db:gdm
 file-db:/usr/share/gdm/greeter-dconf-defaults
 EOF
-        echo "Created /etc/dconf/profile/gdm"
-    fi
+            echo "Created /etc/dconf/profile/gdm"
+        fi
 
-    # Create dconf database directory if it doesn't exist
-    mkdir -p /etc/dconf/db/gdm.d
+        # Create dconf database directory if it doesn't exist
+        mkdir -p /etc/dconf/db/gdm.d
 
-    # Create the extension enablement configuration
-    cat > /etc/dconf/db/gdm.d/01-himmelblau-qr-greeter << 'EOF'
+        # Create the extension enablement configuration
+        cat > /etc/dconf/db/gdm.d/01-himmelblau-qr-greeter << 'EOF'
 [org/gnome/shell]
 enabled-extensions=['qr-greeter@himmelblau-idm.org']
 EOF
-    echo "Created /etc/dconf/db/gdm.d/01-himmelblau-qr-greeter"
+        echo "Created /etc/dconf/db/gdm.d/01-himmelblau-qr-greeter"
+    else
+        echo 'Info: gdm user not available; skipping GDM extension enable.' >&2
+    fi
+
+    # Enable extension for regular users (lockscreen)
+    echo "Enabling Himmelblau QR Greeter GNOME Shell extension for regular users..."
+
+    # Create /etc/dconf/profile/user if it doesn't exist
+    if [ ! -f /etc/dconf/profile/user ]; then
+        mkdir -p /etc/dconf/profile
+        cat > /etc/dconf/profile/user << 'EOF'
+user-db:user
+system-db:local
+EOF
+        echo "Created /etc/dconf/profile/user"
+    fi
+
+    # Create dconf database directory if it doesn't exist
+    mkdir -p /etc/dconf/db/local.d
+
+    # Create the extension enablement configuration for regular users
+    cat > /etc/dconf/db/local.d/01-himmelblau-qr-greeter << 'EOF'
+[org/gnome/shell]
+enabled-extensions=['qr-greeter@himmelblau-idm.org']
+EOF
+    echo "Created /etc/dconf/db/local.d/01-himmelblau-qr-greeter"
 
     # Update dconf database
     if dconf update; then
-        echo "Himmelblau QR Greeter GNOME Shell extension enabled for GDM user. You must restart GDM for the changes to take effect."
+        echo "Himmelblau QR Greeter GNOME Shell extension enabled for all users. You must restart GDM or log out and log in for the changes to take effect."
     else
         echo 'Warning: dconf update failed' >&2
     fi
 else
-    echo 'Info: dconf or gdm user not available; skipping automatic extension enable.' >&2
+    echo 'Info: dconf not available; skipping automatic extension enable.' >&2
 fi

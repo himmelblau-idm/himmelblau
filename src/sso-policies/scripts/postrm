@@ -1,7 +1,7 @@
 #!/bin/sh
 set -e
 
-# Himmelblau SSO postrm script
+# Himmelblau SSO policies postrm script
 # Removes Firefox extension configuration that was merged during install
 # (Chrome/Chromium policy files are handled by package manager directly)
 

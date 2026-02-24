@@ -1,0 +1,15 @@
+#!/bin/sh
+set -e
+
+if command -v deb-systemd-invoke >/dev/null 2>&1; then
+    if [ "$1" != "configure" ]; then
+        exit 0
+    fi
+
+    if [ -z "$DPKG_ROOT" ] && [ -d /run/systemd/system ]; then
+        deb-systemd-invoke daemon-reload --user >/dev/null || true
+        deb-systemd-invoke restart --user himmelblau-broker.service >/dev/null || true
+    fi
+elif command -v systemctl >/dev/null 2>&1; then
+    systemctl kill --kill-whom='main' --signal='SIGRTMIN+25' 'user@*.service' || true
+fi

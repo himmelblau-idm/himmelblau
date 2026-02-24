@@ -574,10 +574,15 @@ impl HimmelblauConfig {
             .config
             .get("global", "password_only_remote_services_deny_list")
         {
-            Some(val) => val.split(',').map(|s| s.trim().to_string()).collect(),
+            Some(val) => val
+                .split(',')
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect(),
             None => DEFAULT_PASSWORD_ONLY_REMOTE_SERVICES_DENY_LIST
                 .split(',')
                 .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
                 .collect(),
         }
     }
@@ -1870,8 +1875,8 @@ mod tests {
         let config = HimmelblauConfig::new(Some(&temp_file)).unwrap();
 
         let result = config.get_password_only_remote_services_deny_list();
-        // Empty string split by comma produces a single empty string element
-        assert_eq!(result, vec![""]);
+        // Empty string should be filtered out to prevent matching all services
+        assert_eq!(result, Vec::<String>::new());
     }
 
     #[test]
@@ -1888,6 +1893,7 @@ mod tests {
         let expected: Vec<String> = DEFAULT_PASSWORD_ONLY_REMOTE_SERVICES_DENY_LIST
             .split(',')
             .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
             .collect();
         assert_eq!(result, expected);
         // Verify default contains expected services
