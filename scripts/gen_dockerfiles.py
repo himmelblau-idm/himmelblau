@@ -95,11 +95,14 @@ FAMILIES = {
 
 PACKAGES = [
     # (crate name, crate source, needs_tpm_feature)
+    # Only himmelblaud (src/daemon) and src/common define a tpm feature.
+    # All other crates have no [features] section — passing --features tpm
+    # to them causes a build error.
     ("himmelblaud", "src/daemon", True),
-    ("nss_himmelblau", "src/nss", True),
-    ("pam_himmelblau", "src/pam", True),
+    ("nss_himmelblau", "src/nss", False),
+    ("pam_himmelblau", "src/pam", False),
     ("sshd-config", "src/sshd-config", False),
-    ("sso", "src/sso", True),
+    ("sso", "src/sso", False),
     ("qr-greeter", "src/qr-greeter", False),
     ("selinux", "src/selinux", False),
     ("o365", "src/o365", False),
