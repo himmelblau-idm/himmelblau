@@ -33,7 +33,7 @@ bytes = "^1.11.1"
 uuid = { workspace = true }
 serde = { workspace = true }
 serde_json.workspace = true
-futures = "^0.3.28"
+futures = "^0.3.32"
 systemd-journal-logger = "^2.2.2"
 himmelblau_policies = { workspace = true }
 uzers = "^0.12.2"
