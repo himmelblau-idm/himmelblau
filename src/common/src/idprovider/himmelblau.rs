@@ -3552,6 +3552,14 @@ impl IdProvider for HimmelblauProvider {
                                 AuthCacheAction::None,
                             ));
                         }
+                        let hello_key_missing = self.fetch_hello_key(account_id, keystore).is_err();
+                        if !hello_key_missing {
+                            debug!("Skipping Hello enrollment because Hello is already configured");
+                            return Ok((
+                                AuthResult::Success { token: token3 },
+                                AuthCacheAction::None,
+                            ));
+                        }
 
                         // Setup Windows Hello
                         *cred_handler = AuthCredHandler::SetupPin {
@@ -3675,6 +3683,14 @@ impl IdProvider for HimmelblauProvider {
                                 AuthCacheAction::None,
                             ));
                         }
+                        let hello_key_missing = self.fetch_hello_key(account_id, keystore).is_err();
+                        if !hello_key_missing {
+                            debug!("Skipping Hello enrollment because Hello is already configured");
+                            return Ok((
+                                AuthResult::Success { token: token3 },
+                                AuthCacheAction::None,
+                            ));
+                        }
 
                         // Setup Windows Hello
                         *cred_handler = AuthCredHandler::SetupPin {
@@ -3752,6 +3768,14 @@ impl IdProvider for HimmelblauProvider {
                         let hello_enabled = self.config.read().await.get_enable_hello();
                         if !hello_enabled || no_hello_pin {
                             info!("Skipping Hello enrollment because it is disabled");
+                            return Ok((
+                                AuthResult::Success { token: token3 },
+                                AuthCacheAction::None,
+                            ));
+                        }
+                        let hello_key_missing = self.fetch_hello_key(account_id, keystore).is_err();
+                        if !hello_key_missing {
+                            debug!("Skipping Hello enrollment because Hello is already configured");
                             return Ok((
                                 AuthResult::Success { token: token3 },
                                 AuthCacheAction::None,
