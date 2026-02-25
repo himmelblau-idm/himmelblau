@@ -857,60 +857,6 @@ macro_rules! impl_provision_or_create_hello_key {
 }
 
 #[macro_export]
-macro_rules! impl_change_auth_token {
-    ($self:ident, $account_id:ident, $token:ident, $cred:ident, $keystore:ident, $tpm:ident, $machine_key:ident, $amr_ngcmfa:expr, $create_hello_key:ident) => {{
-        if ($self.delayed_init().await).is_err() {
-            // We can't change the Hello PIN when initialization hasn't
-            // completed. This only happens when we're offline during first
-            // startup.
-            return Err(IdpError::BadRequest);
-        }
-
-        if !$self.check_online($tpm, SystemTime::now()).await {
-            // We can't change the Hello PIN when offline
-            return Err(IdpError::BadRequest);
-        }
-
-        #[allow(unused_variables)]
-        let amr_ngcmfa = $amr_ngcmfa;
-
-        let hello_tag = $self.fetch_hello_key_tag($account_id, $amr_ngcmfa);
-
-        // Ensure the user is setting the token for the account it has authenticated to
-        if $account_id.to_string().to_lowercase()
-            != $token
-                .spn()
-                .map_err(|e| {
-                    error!("Failed checking the spn on the user token: {:?}", e);
-                    IdpError::BadRequest
-                })?
-                .to_lowercase()
-        {
-            error!("A hello key may only be set by the authenticated user!");
-            return Err(IdpError::BadRequest);
-        }
-
-        // Set the hello pin
-        let hello_key = $create_hello_key!(
-            $self,
-            $token,
-            amr_ngcmfa,
-            $tpm,
-            $machine_key,
-            $cred,
-            IdpError::Tpm
-        );
-        $keystore
-            .insert_tagged_hsm_key(&hello_tag, &hello_key)
-            .map_err(|e| {
-                error!("Failed to provision hello key: {:?}", e);
-                IdpError::Tpm
-            })?;
-        Ok(true)
-    }};
-}
-
-#[macro_export]
 macro_rules! impl_check_online {
     ($self:ident, $tpm:ident, $now:expr) => {{
         let state = $self.state.lock().await.clone();

@@ -41,7 +41,7 @@ use crate::user_map::UserMap;
 use crate::{
     check_hello_totp_enabled, check_hello_totp_setup, entra_id_prt_token_fetch,
     entra_id_refresh_token_token_fetch, extract_base_url, handle_hello_bad_pin_count,
-    impl_change_auth_token, impl_check_online, impl_create_decoupled_hello_key,
+    impl_check_online, impl_create_decoupled_hello_key,
     impl_handle_hello_pin_totp_auth, impl_himmelblau_hello_key_helpers,
     impl_himmelblau_offline_auth_init, impl_himmelblau_offline_auth_step, impl_offline_break_glass,
     impl_provision_hello_key, impl_provision_or_create_hello_key, impl_setup_hello_totp,
@@ -499,33 +499,6 @@ impl IdProvider for HimmelblauMultiProvider {
             Providers::Himmelblau(provider) => {
                 provider
                     .unix_user_prt_cookie(id, old_token, keystore, tpm, machine_key)
-                    .await
-            }
-        }
-    }
-
-    async fn change_auth_token<D: KeyStoreTxn + Send>(
-        &self,
-        account_id: &str,
-        token: &UnixUserToken,
-        new_tok: &str,
-        keystore: &mut D,
-        tpm: &mut tpm::provider::BoxedDynTpm,
-        machine_key: &tpm::structures::StorageKey,
-    ) -> Result<bool, IdpError> {
-        let domain = idp_get_domain_for_account!(self, account_id)?;
-        let mut providers = self.providers.read().await;
-        let provider = find_provider!(self, providers, domain, keystore)?;
-
-        match provider {
-            Providers::Oidc(provider) => {
-                provider
-                    .change_auth_token(account_id, token, new_tok, keystore, tpm, machine_key)
-                    .await
-            }
-            Providers::Himmelblau(provider) => {
-                provider
-                    .change_auth_token(account_id, token, new_tok, keystore, tpm, machine_key)
                     .await
             }
         }
@@ -1043,35 +1016,6 @@ impl IdProvider for HimmelblauProvider {
                 error!("Failed to request prt cookie: {:?}", e);
                 IdpError::BadRequest
             })
-    }
-
-    #[instrument(skip_all)]
-    async fn change_auth_token<D: KeyStoreTxn + Send>(
-        &self,
-        account_id: &str,
-        token: &UnixUserToken,
-        new_tok: &str,
-        keystore: &mut D,
-        tpm: &mut tpm::provider::BoxedDynTpm,
-        machine_key: &tpm::structures::StorageKey,
-    ) -> Result<bool, IdpError> {
-        impl_change_auth_token!(
-            self,
-            account_id,
-            token,
-            new_tok,
-            keystore,
-            tpm,
-            machine_key,
-            token.amr_ngcmfa().map_err(|e| {
-                error!("{:?}", e);
-                IdpError::NotFound {
-                    what: "NGC MFA authorization in UnixUserToken".to_string(),
-                    where_: format!("access token ({})", token.token_type),
-                }
-            })?,
-            impl_provision_or_create_hello_key
-        )
     }
 
     #[instrument(skip_all)]

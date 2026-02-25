@@ -732,40 +732,6 @@ where
         }
     }
 
-    pub async fn change_auth_token(
-        &self,
-        account_id: &str,
-        token: &UnixUserToken,
-        new_tok: &str,
-    ) -> Result<bool, ()> {
-        // Validate the user isn't in the nxset (aka, it's a local user or group).
-        if self.check_nxset(Some(account_id), None).await {
-            return Ok(false);
-        }
-
-        let mut hsm_lock = self.hsm.lock().await;
-        let mut dbtxn = self.db.write().await;
-
-        let res = self
-            .client
-            .change_auth_token(
-                account_id,
-                token,
-                new_tok,
-                &mut dbtxn,
-                hsm_lock.deref_mut(),
-                &self.machine_key,
-            )
-            .await;
-
-        drop(hsm_lock);
-        dbtxn.commit().map_err(|_| ())?;
-
-        res.map_err(|e| {
-            trace!("change_auth_token error -> {:?}", e);
-        })
-    }
-
     pub async fn change_auth_token_pin(
         &self,
         account_id: &str,
