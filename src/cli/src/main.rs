@@ -92,8 +92,6 @@ struct Account {
     username: String,
 }
 
-
-
 #[derive(Debug, Deserialize)]
 struct BrokerTokenResponse {
     #[serde(rename = "accessToken")]

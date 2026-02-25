@@ -42,9 +42,7 @@ pub async fn apply_intune_policy(
 
     let domain = split_username(account_id)
         .map(|(_, domain)| domain)
-        .ok_or(anyhow!(
-            "Failed to parse domain name from account id",
-        ))?;
+        .ok_or(anyhow!("Failed to parse domain name from account id",))?;
 
     debug!(
         ?account_id,
@@ -99,7 +97,10 @@ pub async fn apply_intune_policy(
         .policies(&token, intune_device_id)
         .await
         .map_err(|e| anyhow!(e))?;
-    debug!(num_policies = policies.len(), "Received policy enforcement actions");
+    debug!(
+        num_policies = policies.len(),
+        "Received policy enforcement actions"
+    );
     debug!("Policy details:\n{:#?}", policies);
     let mut statuses: IntuneStatus = policies.into();
     statuses.set_device_id(intune_device_id.to_string());
