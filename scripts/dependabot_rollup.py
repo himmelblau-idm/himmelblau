@@ -111,7 +111,7 @@ def main() -> int:
         for pr in prs:
             print(f"PR #{pr.number}: {pr.title}")
             try:
-                git.run("fetch", "origin", f"pull/{pr.number}/head:{pr.head_ref}")
+                git.run("fetch", "origin", f"+pull/{pr.number}/head:{pr.head_ref}")
                 commit_range, commits = get_commit_range(git, base_ref, pr.head_ref)
                 print(f"  {commit_range} ({len(commits)} commit(s))")
             except Exception as exc:
@@ -137,7 +137,7 @@ def main() -> int:
         print(f"\nPR #{pr.number}: {pr.title}")
 
         try:
-            git.run("fetch", "origin", f"pull/{pr.number}/head:{pr.head_ref}")
+            git.run("fetch", "origin", f"+pull/{pr.number}/head:{pr.head_ref}")
         except Exception as exc:
             print_color(f"  Failed to fetch PR #{pr.number}: {exc}", "yellow")
             skipped.append(pr)
