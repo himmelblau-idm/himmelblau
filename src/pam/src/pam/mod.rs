@@ -834,7 +834,7 @@ impl PamHooks for PamKanidm {
             }
         }
 
-        let req = ClientRequest::PamChangeAuthTokenPin(
+        let req = ClientRequest::PamChangeAuthToken(
             account_id,
             token.access_token.clone().unwrap_or_default(),
             token.refresh_token.clone(),

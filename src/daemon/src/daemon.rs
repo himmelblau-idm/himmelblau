@@ -808,36 +808,11 @@ async fn handle_client(
                 .instrument(span)
                 .await
             }
-            ClientRequest::PamChangeAuthToken(account_id, access_token, refresh_token, new_pin) => {
+            ClientRequest::PamChangeAuthToken(account_id, access_token, refresh_token, old_pin, new_pin) => {
                 let account_id = account_id.to_lowercase();
                 let span = span!(Level::INFO, "sm_chauthtok req");
                 async {
                     trace!("sm_chauthtok req");
-                    let token = UnixUserToken {
-                        token_type: "Bearer".to_string(),
-                        scope: None,
-                        expires_in: 0,
-                        ext_expires_in: 0,
-                        access_token: Some(access_token),
-                        refresh_token,
-                        id_token: IdToken::default(),
-                        client_info: ClientInfo::default(),
-                        prt: None,
-                    };
-                    cachelayer
-                        .change_auth_token(&account_id, &token, &new_pin)
-                        .await
-                        .map(|_| ClientResponse::Ok)
-                        .unwrap_or(ClientResponse::Error)
-                }
-                .instrument(span)
-                .await
-            }
-            ClientRequest::PamChangeAuthTokenPin(account_id, access_token, refresh_token, old_pin, new_pin) => {
-                let account_id = account_id.to_lowercase();
-                let span = span!(Level::INFO, "sm_chauthtok_pin req");
-                async {
-                    trace!("sm_chauthtok_pin req");
                     let token = UnixUserToken {
                         token_type: "Bearer".to_string(),
                         scope: None,
