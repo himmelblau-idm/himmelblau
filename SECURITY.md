@@ -6,10 +6,8 @@ We maintain security updates for the following Himmelblau releases:
 
 | Version        | Supported |
 |----------------|-----------|
-| 2.x            | ✅ Yes     |
-| 0.9.x          | ✅ Yes     |
-| 0.7.x          | ✅ Yes     |
-| < 0.7.x, 0.8.x, 1.x | ❌ No      |
+| 2.x            | ✅ Yes    |
+| < 2.x          | ❌ No     |
 
 Security support is aligned with SUSE Linux Enterprise lifecycles and the latest stable release of Himmelblau.  
 We strongly recommend using the most recent supported version for security and feature updates.
