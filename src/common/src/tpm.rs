@@ -272,8 +272,8 @@ pub fn confidential_client_creds<D: crate::db::KeyStoreTxn + Send>(
         CONFIDENTIAL_CLIENT_SECRET_TAG,
     };
     use crate::idprovider::interface::IdpError;
-    use der::asn1::Utf8StringRef;
-    use der::Decode;
+    use kanidm_lib_crypto::x509_cert::der::asn1::Utf8StringRef;
+    use kanidm_lib_crypto::x509_cert::der::Decode;
     use serde_json::Value;
 
     let secret_tag = format!("{}/{}", domain, CONFIDENTIAL_CLIENT_SECRET_TAG);

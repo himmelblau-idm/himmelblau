@@ -9,7 +9,7 @@ Account: account        sufficient      pam_himmelblau.so    ignore_unknown_user
 Account-Priority: 300
 
 # Password stack
-Password: password     sufficient    pam_himmelblau.so     ignore_unknown_user
+Password: password     sufficient    pam_himmelblau.so     ignore_unknown_user set_authtok
 Password-Priority: 100
 
 # Session stack

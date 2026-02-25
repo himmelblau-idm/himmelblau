@@ -158,9 +158,10 @@ impl CustomComplianceCSE {
     /// instead of aborting the entire policy evaluation.
     async fn apply_compliance(&self, policy: &mut PolicyStatus) {
         // Find the discovery script detail
-        let script_detail = policy.details.iter_mut().find(|d| {
-            d.setting_definition_item_id == "linux_customcompliance_discoveryscript"
-        });
+        let script_detail = policy
+            .details
+            .iter_mut()
+            .find(|d| d.setting_definition_item_id == "linux_customcompliance_discoveryscript");
 
         let Some(detail) = script_detail else {
             debug!(

@@ -1403,9 +1403,7 @@ impl IdProvider for HimmelblauProvider {
                             }
                         }
                     }
-                    Err(MsalError::AADSTSError(_))
-                        if client_id == Some(EDGE_BROWSER_CLIENT_ID) =>
-                    {
+                    Err(MsalError::AADSTSError(_)) if client_id == Some(EDGE_BROWSER_CLIENT_ID) => {
                         /* AADSTS error with Edge Browser client ID (e.g. CA
                          * policy requiring device compliance). Fall back to
                          * default app ID. */
@@ -4111,9 +4109,7 @@ impl HimmelblauProvider {
                     Err(MsalError::AcquireTokenFailed(err_resp))
                 }
             }
-            Err(MsalError::AADSTSError(_))
-                if client_id == Some(EDGE_BROWSER_CLIENT_ID) =>
-            {
+            Err(MsalError::AADSTSError(_)) if client_id == Some(EDGE_BROWSER_CLIENT_ID) => {
                 /* AADSTS error with Edge Browser client ID (e.g. CA
                  * policy requiring device compliance). Fall back to
                  * default app ID. */

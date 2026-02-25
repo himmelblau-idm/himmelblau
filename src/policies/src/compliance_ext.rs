@@ -137,17 +137,17 @@ impl CSE for ComplianceCSE {
                     || id.starts_with("linux_passwordpolicy_")
             }) {
                 if let Err(e) = self.apply_compliance(policy).await {
-                    errors.push(format!(
-                        "Policy {}: {}",
-                        policy.policy_id, e
-                    ));
+                    errors.push(format!("Policy {}: {}", policy.policy_id, e));
                 }
             }
         }
         if errors.is_empty() {
             Ok(true)
         } else {
-            Err(anyhow!("Compliance processing errors: {}", errors.join("; ")))
+            Err(anyhow!(
+                "Compliance processing errors: {}",
+                errors.join("; ")
+            ))
         }
     }
 }
@@ -378,10 +378,7 @@ impl ComplianceCSE {
                 .starts_with("linux_distribution_")
             {
                 if let Some(index) = extract_distro_index(&detail.csp_path) {
-                    distro_groups
-                        .entry(index.to_string())
-                        .or_default()
-                        .push(i);
+                    distro_groups.entry(index.to_string()).or_default().push(i);
                 }
             }
         }
@@ -403,8 +400,7 @@ impl ComplianceCSE {
 
         debug!(
             num_distro_groups = distro_groups.len(),
-            has_matching_distro, system_distro,
-            "Distribution compliance: grouped settings"
+            has_matching_distro, system_distro, "Distribution compliance: grouped settings"
         );
 
         // Process each distro group

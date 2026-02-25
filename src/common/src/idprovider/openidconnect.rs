@@ -94,6 +94,9 @@ pub fn mfa_from_oidc_device(
         ),
     };
 
+    /* Allowing this pattern, since the clippy recommendation makes this
+     * construct far _less_ clear. */
+    #[allow(clippy::manual_checked_ops)]
     let max_poll_attempts = if polling_interval == 0 {
         0
     } else {
@@ -770,7 +773,7 @@ impl OidcApplication {
             uuid: object_id,
             real_gidnumber: Some(uid),
             gidnumber: gid,
-            displayname: displayname,
+            displayname,
             shell: Some(config.get_shell(None)),
             groups: vec![GroupToken {
                 name: account_id.to_string(),

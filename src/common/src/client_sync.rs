@@ -25,10 +25,20 @@ impl DaemonClientBlocking {
 
         let stream = UnixStream::connect(path)
             .map_err(|e| {
-                error!(
-                    "Unix socket stream setup error while connecting to {} -> {:?}",
-                    path, e
-                );
+                // ENOENT means the daemon isn't running — expected during boot,
+                // daemon-reload, or when himmelblau is not configured. Log at
+                // debug to avoid distracting users with spurious error output.
+                if e.kind() == ErrorKind::NotFound {
+                    debug!(
+                        "himmelblaud socket not found at {} (daemon not running?)",
+                        path
+                    );
+                } else {
+                    error!(
+                        "Unix socket stream setup error while connecting to {} -> {:?}",
+                        path, e
+                    );
+                }
                 e
             })
             .map_err(Box::new)?;
@@ -42,13 +52,18 @@ impl DaemonClientBlocking {
         timeout: u64,
     ) -> Result<ClientResponse, Box<dyn Error>> {
         let timeout = Duration::from_secs(timeout);
+        // Use a short per-read timeout so we can poll without blocking the
+        // entire wall-clock budget in a single read() call. This is critical
+        // for long-running daemon operations like MFA device flow polling
+        // which can take well over 60 seconds.
+        let read_poll = Duration::from_secs(1);
 
         let data = serde_json::to_vec(&req).map_err(|e| {
             error!("socket encoding error -> {:?}", e);
             Box::new(IoError::new(ErrorKind::Other, "JSON encode error"))
         })?;
 
-        match self.stream.set_read_timeout(Some(timeout)) {
+        match self.stream.set_read_timeout(Some(read_poll)) {
             Ok(()) => {}
             Err(e) => {
                 error!(
@@ -119,6 +134,20 @@ impl DaemonClientBlocking {
                         // We have a partial read, so we are complete.
                         break;
                     }
+                }
+                Err(e) if e.kind() == ErrorKind::WouldBlock || e.kind() == ErrorKind::TimedOut => {
+                    // set_read_timeout() causes blocking reads to return
+                    // WouldBlock/TimedOut when no data arrives within the
+                    // timeout window. Check the wall-clock timeout and retry.
+                    let durr = SystemTime::now().duration_since(start).map_err(Box::new)?;
+                    if durr > timeout {
+                        error!("Socket timeout waiting for daemon response");
+                        return Err(Box::new(IoError::new(
+                            ErrorKind::TimedOut,
+                            "socket timeout",
+                        )));
+                    }
+                    continue;
                 }
                 Err(e) => {
                     error!("Stream read failure from {:?} -> {:?}", &self.stream, e);
