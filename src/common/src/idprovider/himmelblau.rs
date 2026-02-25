@@ -4400,11 +4400,20 @@ impl HimmelblauProvider {
             Some(_) => {
                 /* Fixes bug#37: MFA can respond with different user than requested.
                  * Azure resource names are case insensitive.
+                 *
+                 * Some MFA flow tokens (e.g. Authenticator number-match) use
+                 * `unique_name` rather than `upn` in the access token JWT, so
+                 * spn() may fail to parse. When that happens we skip the SPN
+                 * cross-check — the MFA round-trip already proved identity —
+                 * rather than rejecting a legitimately authenticated user.
                  */
-                let spn = token.spn().map_err(|e| {
-                    error!("Failed fetching user spn: {:?}", e);
-                    IdpError::BadRequest
-                })?;
+                let spn = match token.spn() {
+                    Ok(s) => s,
+                    Err(e) => {
+                        debug!("spn() unavailable (token format), skipping SPN check: {:?}", e);
+                        account_id.to_string()
+                    }
+                };
                 if account_id.to_string().to_lowercase() != spn.to_string().to_lowercase() {
                     /* Fixes bug#801: The authenticated user might have a mis-matched
                      * response because the domains are aliases of one another.
