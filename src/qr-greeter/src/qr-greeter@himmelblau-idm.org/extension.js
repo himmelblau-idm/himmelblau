@@ -47,11 +47,29 @@ function validateUrl(urlString) {
     }
 }
 
-// Generate SVG content from a QR code
-function qrCodeToSvg(qr, border, lightColor, darkColor) {
-    const size = qr.size + border * 2;
+// Extract user_code from a device flow message (e.g. "ABCD-EFGH").
+// Returns null if not found.
+function extractUserCode(message) {
+    if (!message) return null;
+    // Match user_code parameter in URL query string
+    const urlMatch = message.match(/[?&]user_code=([A-Z0-9-]+)/i);
+    if (urlMatch) return urlMatch[1].toUpperCase();
+    // Match standalone hyphenated code pattern in message text (e.g. "ABCD-EFGH")
+    const codeMatch = message.match(/\b([A-Z0-9]{4,5}-[A-Z0-9]{4,5})\b/);
+    if (codeMatch) return codeMatch[1].toUpperCase();
+    return null;
+}
+
+// Generate SVG content from a QR code, with an optional user code overlay
+// rendered as a dark strip below the QR modules. The strip sits entirely
+// within the bottom quiet-zone so it does not interfere with scanning.
+function qrCodeToSvg(qr, border, lightColor, darkColor, userCode = null) {
+    const qrSize = qr.size + border * 2;
+    // Extra rows at the bottom for the user code label (only when needed)
+    const labelRows = userCode ? 4 : 0;
+    const totalHeight = qrSize + labelRows;
     let svg = `<?xml version="1.0" encoding="UTF-8"?>\n`;
-    svg += `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${size} ${size}" width="${size * 4}" height="${size * 4}">`;
+    svg += `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${qrSize} ${totalHeight}" width="${qrSize * 4}" height="${totalHeight * 4}">`;
     svg += `<rect width="100%" height="100%" fill="${lightColor}"/>`;
     svg += `<path d="`;
     for (let y = 0; y < qr.size; y++) {
@@ -62,6 +80,19 @@ function qrCodeToSvg(qr, border, lightColor, darkColor) {
         }
     }
     svg += `" fill="${darkColor}"/>`;
+    if (userCode) {
+        const stripY = qrSize;
+        const stripH = labelRows;
+        // Dark background strip below the QR modules
+        svg += `<rect x="0" y="${stripY}" width="${qrSize}" height="${stripH}" fill="${darkColor}"/>`;
+        // Centered white monospace text
+        const fontSize = stripH * 0.65;
+        svg += `<text x="${qrSize / 2}" y="${stripY + stripH * 0.72}" `;
+        svg += `font-family="monospace" font-size="${fontSize}" font-weight="bold" `;
+        svg += `fill="${lightColor}" text-anchor="middle">`;
+        svg += userCode;
+        svg += `</text>`;
+    }
     svg += `</svg>`;
     return svg;
 }
@@ -245,8 +276,9 @@ export default class QrGreeterExtension extends Extension {
 
                         if (dynamicUrls.length > 0 && selection.url) {
                             try {
+                                const userCode = extractUserCode(message);
                                 const qr = QrCode.encodeText(selection.url, Ecc.MEDIUM);
-                                const svgContent = qrCodeToSvg(qr, 2, '#ffffff', '#000000');
+                                const svgContent = qrCodeToSvg(qr, 2, '#ffffff', '#000000', userCode);
                                 const tempFilePath = writeSvgToTempFile(svgContent);
                                 this._totpTempFile = tempFilePath;
                                 activeTotpTempFiles.add(tempFilePath);
