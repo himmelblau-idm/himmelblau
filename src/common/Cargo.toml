@@ -42,7 +42,7 @@ async-trait = { workspace = true }
 kanidm_lib_crypto = { workspace = true }
 libc = { workspace = true }
 bytes = "^1.11.0"
-futures = "^0.3.28"
+futures = "^0.3.32"
 anyhow = { workspace = true }
 kanidm_utils_users = { workspace = true }
 csv = { workspace = true }
