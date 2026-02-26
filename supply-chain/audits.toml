@@ -254,6 +254,11 @@ who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
 version = "0.8.0-rc.6"
 
+[[audits.der_derive]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+delta = "0.8.0-rc.6 -> 0.8.0"
+
 [[audits.find-msvc-tools]]
 who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
