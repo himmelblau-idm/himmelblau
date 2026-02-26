@@ -13,6 +13,34 @@ is_live_system() {
     return 1
 }
 
+# Determine if SELinux policy for himmelblaud is loaded.
+# Returns success if SELinux is disabled or the policy is already loaded.
+selinux_policy_loaded() {
+    if ! command -v selinuxenabled >/dev/null 2>&1; then
+        return 0
+    fi
+
+    if ! selinuxenabled; then
+        return 0
+    fi
+
+    # If the policy sources are not installed, don't block service start.
+    if [ ! -d /usr/share/selinux/packages/himmelblaud ]; then
+        return 0
+    fi
+
+    if ! command -v semodule >/dev/null 2>&1; then
+        return 1
+    fi
+
+    semodule -l 2>/dev/null | awk '{print $1}' | grep -qx himmelblaud
+}
+
+skip_start=0
+if ! selinux_policy_loaded; then
+    skip_start=1
+fi
+
 # Ensure cache directory is created with correct permissions
 systemd-tmpfiles --create /usr/lib/tmpfiles.d/himmelblau-policies.conf 2>/dev/null || true
 
@@ -82,7 +110,11 @@ if command -v deb-systemd-helper >/dev/null 2>&1; then
 
     if [ -z "$DPKG_ROOT" ] && [ -d /run/systemd/system ] && ! is_live_system; then
         deb-systemd-invoke daemon-reload --system >/dev/null || true
-        deb-systemd-invoke restart himmelblaud.service himmelblaud-tasks.service >/dev/null || true
+        if [ "$skip_start" -eq 1 ]; then
+            echo "SELinux enabled but himmelblaud policy not loaded yet; deferring service start"
+        else
+            deb-systemd-invoke restart himmelblaud.service himmelblaud-tasks.service >/dev/null || true
+        fi
     fi
 elif command -v systemctl >/dev/null 2>&1; then
     # Reload systemd to pick up the new service files from /usr/lib/systemd/system/
@@ -102,6 +134,10 @@ elif command -v systemctl >/dev/null 2>&1; then
         systemctl enable himmelblaud.service himmelblaud-tasks.service 2>/dev/null || true
         # Enable HSM PIN init service separately (may not exist on older systemd)
         systemctl enable himmelblau-hsm-pin-init.service 2>/dev/null || true
-        systemctl restart himmelblaud.service himmelblaud-tasks.service 2>/dev/null || true
+        if [ "$skip_start" -eq 1 ]; then
+            echo "SELinux enabled but himmelblaud policy not loaded yet; deferring service start"
+        else
+            systemctl restart himmelblaud.service himmelblaud-tasks.service 2>/dev/null || true
+        fi
     fi
 fi
