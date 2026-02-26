@@ -508,6 +508,7 @@ require {
 	class file { create getattr lock map open read setattr unlink write };
 	class lnk_file read;
 	class sock_file write;
+	class unix_stream_socket { connectto };
 }
 
 allow init_t himmelblau_etc_t:dir { getattr open read search };
@@ -535,6 +536,7 @@ allow init_t himmelblaud_t:process { signull signal sigkill };
 allow init_t himmelblaud_tasks_t:process { signull signal sigkill };
 allow init_t himmelblaud_t:file read;
 allow init_t himmelblaud_tasks_t:file read;
+allow init_t himmelblaud_t:unix_stream_socket connectto;
 
 # Optional: init_t access to cron spool (may not exist on all systems)
 optional {
@@ -581,6 +583,9 @@ optional {
 	}
 	allow init_t home_root_t:dir { add_name create getattr open read search write setattr };
 	allow init_t home_root_t:lnk_file { create getattr read unlink };
+	# Narrowed to create path seen in AVC logs (.bash_logout during homedir population).
+	# Expand with { append open setattr write } if further denials are observed.
+	allow init_t home_root_t:file { create };
 }
 
 ############################
@@ -648,6 +653,7 @@ optional {
 	allow accountsd_t himmelblau_var_cache_t:lnk_file read;
 	allow accountsd_t himmelblau_var_run_t:dir search;
 	allow accountsd_t himmelblau_var_run_t:sock_file write;
+	allow accountsd_t himmelblaud_t:unix_stream_socket connectto;
 }
 
 # Optional: accountsd_manage_lib_files macro may not exist
@@ -677,7 +683,8 @@ optional {
 	allow chkpwd_t himmelblau_var_cache_t:lnk_file read;
 	allow chkpwd_t himmelblau_var_run_t:dir search;
 	allow chkpwd_t himmelblau_var_run_t:sock_file write;
-	# Allow connecting to himmelblaud socket (running as init_t)
+	# Allow connecting to himmelblaud socket (now running as himmelblaud_t; keep init_t for fallback)
+	allow chkpwd_t himmelblaud_t:unix_stream_socket connectto;
 	allow chkpwd_t init_t:unix_stream_socket connectto;
 }
 
@@ -745,6 +752,7 @@ optional {
 	allow policykit_t himmelblau_var_run_t:sock_file write;
 	allow policykit_t himmelblaud_t:dir search;
 	allow policykit_t himmelblaud_t:file read;
+	allow policykit_t himmelblaud_t:unix_stream_socket connectto;
 }
 
 #============= policykit_auth_t ==============
@@ -753,9 +761,24 @@ optional {
 	require {
 		type policykit_auth_t;
 	}
+	allow policykit_auth_t himmelblau_etc_t:dir { search getattr };
 	allow policykit_auth_t himmelblau_etc_t:file { getattr open read };
+	allow policykit_auth_t himmelblau_nss_cache_t:dir { search getattr };
+	allow policykit_auth_t himmelblau_nss_cache_t:file { getattr open read lock };
 	allow policykit_auth_t himmelblau_var_cache_t:lnk_file read;
 	allow policykit_auth_t himmelblau_var_run_t:sock_file write;
+	allow policykit_auth_t himmelblaud_t:unix_stream_socket connectto;
+}
+
+#============= policykit_t + policykit_auth_t ==============
+# pkla helper transition: policykit spawns policykit_auth as a helper and needs
+# to pass credentials (noatsecure/rlimitinh/siginh).
+optional {
+	require {
+		type policykit_t;
+		type policykit_auth_t;
+	}
+	allow policykit_t policykit_auth_t:process { noatsecure rlimitinh siginh };
 }
 
 #============= postfix_pickup_t ==============
@@ -846,6 +869,7 @@ optional {
 	allow xdm_t himmelblaud_exec_t:file getattr;
 	allow xdm_t himmelblaud_tasks_exec_t:file getattr;
 	allow xdm_t home_root_t:dir { add_name create };
+	allow xdm_t himmelblaud_t:unix_stream_socket connectto;
 }
 
 #============= systemd_tmpfiles_t ==============
@@ -912,10 +936,12 @@ optional {
 	allow systemd_userdbd_t himmelblau_var_run_t:dir search;
 	allow systemd_userdbd_t himmelblau_var_run_t:sock_file write;
 	allow systemd_userdbd_t himmelblau_nss_cache_t:dir { getattr search };
-	allow systemd_userdbd_t himmelblau_nss_cache_t:file getattr;
+	allow systemd_userdbd_t himmelblau_nss_cache_t:file { getattr open read write lock append };
 	allow systemd_userdbd_t himmelblau_var_cache_t:dir search;
+	allow systemd_userdbd_t himmelblau_var_cache_t:file { getattr open read };
 	allow systemd_userdbd_t himmelblau_var_cache_t:lnk_file read;
 	allow systemd_userdbd_t himmelblau_etc_t:file { getattr open read };
+	allow systemd_userdbd_t himmelblaud_t:unix_stream_socket connectto;
 }
 
 #============= systemd_machined_t ==============
@@ -962,6 +988,26 @@ optional {
 	allow xserver_t himmelblau_nss_cache_t:dir { getattr search };
 	allow xserver_t himmelblau_var_run_t:dir search;
 	allow xserver_t himmelblau_var_run_t:sock_file write;
+}
+
+#============= oddjob_mkhomedir_t ==============
+# oddjob_mkhomedir_t is for oddjob home directory creation helper, may not be installed
+optional {
+	require {
+		type oddjob_mkhomedir_t;
+	}
+	allow oddjob_mkhomedir_t himmelblau_var_cache_t:lnk_file { read getattr };
+	# open and getattr observed as needed in AVC logs for oddjob socket access
+	allow oddjob_mkhomedir_t himmelblau_var_run_t:sock_file { write open getattr };
+}
+
+#============= unconfined_dbusd_t ==============
+# unconfined_dbusd_t is for the D-Bus daemon, may not exist on all distros
+optional {
+	require {
+		type unconfined_dbusd_t;
+	}
+	allow unconfined_dbusd_t himmelblaud_t:unix_stream_socket connectto;
 }
 
 ############################
