@@ -44,7 +44,7 @@ use crate::{
     impl_check_online, impl_create_decoupled_hello_key,
     impl_handle_hello_pin_totp_auth, impl_himmelblau_hello_key_helpers,
     impl_himmelblau_offline_auth_init, impl_himmelblau_offline_auth_step, impl_offline_break_glass,
-    impl_provision_hello_key, impl_provision_or_create_hello_key, impl_setup_hello_totp,
+    impl_provision_hello_key, impl_setup_hello_totp,
     impl_unix_user_access, load_cached_prt, seal_prt_with_existing_hello_key,
 };
 use anyhow::{anyhow, Result};
