@@ -272,6 +272,14 @@ optional {
 
 optional {
 	require {
+		type cpu_online_t;
+		class file { getattr open read };
+	}
+	allow himmelblaud_t cpu_online_t:file { getattr open read };
+}
+
+optional {
+	require {
 		type tpm_device_t;
 		class chr_file { open read write };
 	}
@@ -797,10 +805,11 @@ optional {
 	allow colord_t himmelblau_etc_t:dir { getattr open read search };
 	allow colord_t himmelblau_etc_t:file { getattr open read };
 	allow colord_t himmelblau_nss_cache_t:dir { getattr search };
-	allow colord_t himmelblau_nss_cache_t:file { getattr open read };
+	allow colord_t himmelblau_nss_cache_t:file { getattr lock open read };
 	allow colord_t himmelblau_var_cache_t:lnk_file read;
 	allow colord_t himmelblau_var_run_t:dir search;
 	allow colord_t himmelblau_var_run_t:sock_file write;
+	allow colord_t himmelblaud_t:unix_stream_socket connectto;
 }
 
 #============= cupsd_t ==============
@@ -835,6 +844,7 @@ optional {
 	allow NetworkManager_t himmelblau_var_cache_t:lnk_file read;
 	allow NetworkManager_t himmelblau_var_run_t:dir search;
 	allow NetworkManager_t himmelblau_var_run_t:sock_file write;
+	allow NetworkManager_t himmelblaud_t:unix_stream_socket connectto;
 }
 
 #============= policykit_t ==============
@@ -1010,6 +1020,8 @@ optional {
 	allow unconfined_t himmelblaud_t:unix_stream_socket connectto;
 	allow unconfined_t himmelblaud_t:dir { getattr search };
 	allow unconfined_t himmelblaud_tasks_t:dir { getattr search };
+	allow unconfined_t himmelblaud_t:file { getattr open read };
+	allow unconfined_t himmelblaud_tasks_t:file { getattr open read };
 
 	allow unconfined_t himmelblau_etc_t:dir { add_name create getattr open read remove_name search write setattr relabelto relabelfrom };
 	allow unconfined_t himmelblau_etc_t:file { append create getattr open read rename setattr unlink write relabelto relabelfrom };
@@ -1093,6 +1105,16 @@ optional {
 	allow xserver_t himmelblau_nss_cache_t:dir { getattr search };
 	allow xserver_t himmelblau_var_run_t:dir search;
 	allow xserver_t himmelblau_var_run_t:sock_file write;
+	allow xserver_t himmelblaud_t:unix_stream_socket connectto;
+}
+
+#============= devicekit_disk_t ==============
+# devicekit_disk_t is for udisks/devicekit helpers, may not be installed
+optional {
+	require {
+		type devicekit_disk_t;
+	}
+	allow devicekit_disk_t himmelblaud_t:unix_stream_socket connectto;
 }
 
 #============= oddjob_mkhomedir_t ==============
