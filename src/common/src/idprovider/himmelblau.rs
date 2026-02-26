@@ -4430,10 +4430,16 @@ impl HimmelblauProvider {
                 error!("Failed fetching user uuid: {:?}", e);
                 IdpError::BadRequest
             })?,
-            TokenOrObj::UserToken(value) => value.uuid().map_err(|e| {
-                error!("Failed fetching user uuid: {:?}", e);
-                IdpError::BadRequest
-            })?,
+            TokenOrObj::UserToken(value) => value.uuid().unwrap_or_else(|e| {
+                // Some token types (e.g. Authenticator number-match) lack the
+                // oid claim so uuid() fails. Fall back to the old_token uuid
+                // if available, otherwise use a nil UUID — groups will be
+                // fetched by spn fallback path below.
+                debug!("uuid() unavailable in user_token_from_unix_user_token: {:?}", e);
+                old_token
+                    .and_then(|t| t.uuid.to_string().parse().ok())
+                    .unwrap_or(Uuid::nil())
+            }),
         };
         let access_token = match &value {
             TokenOrObj::UserObj((token, _)) => Some(token.access_token.clone()),
