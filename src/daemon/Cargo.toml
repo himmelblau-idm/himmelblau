@@ -108,6 +108,7 @@ post_uninstall_script = "scripts/postrm"
 [package.metadata.generate-rpm.recommends]
 nss-himmelblau = "*"
 pam-himmelblau = "*"
+himmelblau-selinux = "*"
 krb5 = "*"
 cron = "*" # For Intune policy scripts
 system-user-tss = "*"
