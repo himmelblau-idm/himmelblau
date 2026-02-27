@@ -22,6 +22,7 @@ use crate::unix_proto::{ClientRequest, ClientResponse, PamAuthRequest, PamAuthRe
 use regex::{Match, Regex};
 use std::sync::Arc;
 
+use lazy_static::lazy_static;
 use tracing::{debug, error};
 
 use std::thread;
@@ -351,6 +352,26 @@ fn handle_pam_auth_response_mfapoll(
             "{}\nNo push? Check your mobile device's internet connection.",
             msg
         )
+    } else if state.service != "gdm-password" {
+        lazy_static! {
+            // Avoid compiling a new Regex every time with a lazy_static ref
+            static ref RE: Option<Regex> =
+                Regex::new(r#"(?i)\bhttps?://[^\s<>"']+[^\s<>"'\]\[)\(\}\{.,;:!?]"#).ok();
+        }
+        // In case of any failure matching for URLs or generating the QR the
+        // plain message will be returned
+        if let Some(qr) = RE
+            .as_ref()
+            .and_then(|re| {
+                re.captures(msg)
+                    .and_then(|cap| cap.get(0).map(|x| x.as_str()))
+            })
+            .and_then(|url| generate_unicode_qr(url).ok())
+        {
+            format!("{}\n{}", msg, qr)
+        } else {
+            msg.to_string()
+        }
     } else {
         msg.to_string()
     };

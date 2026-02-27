@@ -2109,6 +2109,7 @@ dependencies = [
  "kanidm_lib_crypto",
  "kanidm_lib_file_permissions",
  "kanidm_utils_users",
+ "lazy_static",
  "libc",
  "libhimmelblau",
  "lru",
