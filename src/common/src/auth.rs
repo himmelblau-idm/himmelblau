@@ -750,7 +750,7 @@ fn authenticate_request_response(
             error!(?err, "PAM_IGNORE");
             pam_fail!(
                 state.msg_printer,
-                "An unexpected error occured.",
+                "An unexpected error occurred.",
                 PamResultCode::PAM_IGNORE
             );
         }
