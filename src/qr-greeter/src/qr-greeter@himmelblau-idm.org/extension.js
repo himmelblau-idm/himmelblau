@@ -47,16 +47,25 @@ function validateUrl(urlString) {
     }
 }
 
-// Extract user_code from a device flow message (e.g. "ABCD-EFGH").
+// Extract user_code from a device flow message.
+// Handles: bare 9-char codes (e.g. "E9Y6JX8J7"), hyphenated codes (e.g. "ABCD-EFGH"),
+// and URL query params (?user_code=...).
 // Returns null if not found.
 function extractUserCode(message) {
     if (!message) return null;
     // Match user_code parameter in URL query string
     const urlMatch = message.match(/[?&]user_code=([A-Z0-9-]+)/i);
     if (urlMatch) return urlMatch[1].toUpperCase();
-    // Match standalone hyphenated code pattern in message text (e.g. "ABCD-EFGH")
-    const codeMatch = message.match(/\b([A-Z0-9]{4,5}-[A-Z0-9]{4,5})\b/);
-    if (codeMatch) return codeMatch[1].toUpperCase();
+    // Match "enter the code XXXXXXXXX" sentence format (Microsoft sends 9-char codes
+    // with no hyphen, e.g. "enter the code E9Y6JX8J7 to authenticate")
+    const sentenceMatch = message.match(/enter the code\s+([A-Z0-9-]{6,12})/i);
+    if (sentenceMatch) return sentenceMatch[1].toUpperCase();
+    // Match hyphenated code pattern (e.g. "ABCD-EFGH") — other providers
+    const hyphenMatch = message.match(/\b([A-Z0-9]{4,5}-[A-Z0-9]{4,5})\b/);
+    if (hyphenMatch) return hyphenMatch[1].toUpperCase();
+    // Fallback: bare 8–9 char alphanumeric word
+    const bareMatch = message.match(/\b([A-Z0-9]{8,9})\b/);
+    if (bareMatch) return bareMatch[1].toUpperCase();
     return null;
 }
 
