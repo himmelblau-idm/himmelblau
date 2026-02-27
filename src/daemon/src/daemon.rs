@@ -199,6 +199,12 @@ async fn handle_task_client(
                 // Ignore if it fails.
                 let _ = v.1.send(status);
             }
+            Some(Ok(TaskResponse::Error(msg))) => {
+                warn!("Task returned an error: {}", msg);
+                // Send a failure status back via the one-shot so the
+                // caller knows, but don't kill the task connection.
+                let _ = v.1.send(1);
+            }
             other => {
                 error!("Error -> {:?}", other);
                 return Err(Box::new(IoError::new(ErrorKind::Other, "oh no!")));
@@ -1346,7 +1352,7 @@ async fn main() -> ExitCode {
                                     tokio::spawn(async move {
                                         if let Err(e) = handle_client(socket, cachelayer_ref.clone(), &tc_tx, cfg_h).await
                                         {
-                                            error!("handle_client error occurred; error = {:?}", e);
+                                            debug!("handle_client disconnected; error = {:?}", e);
                                         }
                                     });
                                 }

@@ -1,0 +1,37 @@
+#!/bin/sh
+set -e
+
+if [ -d /run/systemd/system ]; then
+    if command -v deb-systemd-invoke >/dev/null 2>&1; then
+        if [ -z "$DPKG_ROOT" ] && [ "$1" = remove ]; then
+            deb-systemd-invoke daemon-reload --system >/dev/null || true
+        fi
+    elif command -v systemctl >/dev/null 2>&1; then
+        systemctl daemon-reload --system >/dev/null || true
+    fi
+fi
+
+if command -v deb-systemd-helper >/dev/null 2>&1 && [ -z "$DPKG_ROOT" ] && [ "$1" = "purge" ]; then
+    deb-systemd-helper purge himmelblaud.service himmelblaud-tasks.service himmelblau-hsm-pin-init.service >/dev/null || true
+elif command -v systemctl >/dev/null 2>&1; then
+    systemctl disable himmelblaud.service himmelblaud-tasks.service himmelblau-hsm-pin-init.service >/dev/null || true
+fi
+
+# On full uninstall (purge on Debian, $1=0 on RPM): remove all runtime data,
+# caches, and AccountsService entries for Entra users so GDM stops listing them.
+_is_full_remove=0
+if [ "${1:-}" = "purge" ]; then _is_full_remove=1; fi   # Debian purge
+if [ "${1:-1}" = "0" ]; then _is_full_remove=1; fi       # RPM full remove
+
+if [ "$_is_full_remove" = "1" ]; then
+    rm -rf /var/cache/himmelblaud/
+    rm -rf /var/cache/nss-himmelblau/
+    rm -rf /var/cache/himmelblau-policies/
+    rm -rf /var/lib/himmelblaud/
+
+    # Remove AccountsService entries for Entra users (UPN contains @)
+    # so GDM stops showing them on the login screen.
+    if [ -d /var/lib/AccountsService/users ]; then
+        find /var/lib/AccountsService/users -maxdepth 1 -type f -name '*@*' -delete || true
+    fi
+fi

@@ -43,8 +43,7 @@ pub async fn apply_intune_policy(
     let domain = split_username(account_id)
         .map(|(_, domain)| domain)
         .ok_or(anyhow!(
-            "Failed to parse domain name from account id '{}'",
-            account_id
+            "Failed to parse domain name from account id",
         ))?;
 
     debug!(
@@ -100,24 +99,39 @@ pub async fn apply_intune_policy(
         .policies(&token, intune_device_id)
         .await
         .map_err(|e| anyhow!(e))?;
-    debug!("Received policy enforcement actions:\n{:#?}", policies);
+    debug!(num_policies = policies.len(), "Received policy enforcement actions");
+    debug!("Policy details:\n{:#?}", policies);
     let mut statuses: IntuneStatus = policies.into();
     statuses.set_device_id(intune_device_id.to_string());
-
-    let mut gp_extensions: Vec<Arc<dyn CSE>> = vec![
-        Arc::new(ScriptsCSE::new(config, account_id)),
-        Arc::new(ComplianceCSE::new(config, account_id)),
-    ];
-
-    if config.get_enable_experimental_intune_custom_compliance() {
-        gp_extensions.push(Arc::new(CustomComplianceCSE::new(config, account_id)));
+    debug!(
+        num_statuses = statuses.policy_statuses.len(),
+        "Converted policies to status entries"
+    );
+    for status in &statuses.policy_statuses {
+        debug!(
+            policy_id = %status.policy_id,
+            num_details = status.details.len(),
+            detail_ids = ?status.details.iter().map(|d| d.setting_definition_item_id.as_str()).collect::<Vec<_>>(),
+            "Policy status entry"
+        );
     }
 
+    let gp_extensions: Vec<Arc<dyn CSE>> = vec![
+        Arc::new(ScriptsCSE::new(config, account_id)),
+        Arc::new(ComplianceCSE::new(config, account_id)),
+        Arc::new(CustomComplianceCSE::new(config, account_id)),
+    ];
+
     let mut errors = vec![];
-    for ext in gp_extensions {
+    let ext_names = ["ScriptsCSE", "ComplianceCSE", "CustomComplianceCSE"];
+    for (ext, name) in gp_extensions.iter().zip(ext_names.iter()) {
+        debug!(cse = name, "Running CSE");
         match ext.process_group_policy(&mut statuses).await {
-            Ok(_) => {}
+            Ok(_) => {
+                debug!(cse = name, "CSE completed successfully");
+            }
             Err(e) => {
+                error!(cse = name, error = %e, "CSE failed");
                 errors.push(e);
             }
         }
@@ -125,7 +139,22 @@ pub async fn apply_intune_policy(
     debug!("Enforced Intune policy");
 
     // Report policy status
-    debug!("Reporting Intune policy status:\n{:#?}", statuses);
+    debug!("Reporting Intune policy status");
+    for status in &statuses.policy_statuses {
+        for detail in &status.details {
+            debug!(
+                policy_id = %status.policy_id,
+                rule_id = %detail.rule_id,
+                setting_id = %detail.setting_definition_item_id,
+                expected = %detail.expected_value,
+                actual_len = detail.actual_value.len(),
+                new_state = %detail.new_compliance_state,
+                old_state = %detail.old_compliance_state,
+                "Status detail being reported"
+            );
+        }
+    }
+    debug!("Full status report:\n{:#?}", statuses);
     intune
         .status(&token, statuses)
         .await

@@ -282,6 +282,7 @@ ExecStart=/usr/sbin/himmelblaud_tasks
 Restart=on-failure
 RestartSec=1s
 
+CacheDirectory=nss-himmelblau
 CapabilityBoundingSet=CAP_CHOWN CAP_FOWNER CAP_DAC_OVERRIDE CAP_DAC_READ_SEARCH
 # SystemCallFilter=@aio @basic-io @chown @file-system @io-event @network-io @sync
 { 'ProtectSystem=strict' if supported('ProtectSystemStrict') else '' }
@@ -304,7 +305,12 @@ WantedBy=multi-user.target
 Description=Himmelblau HSM PIN Initialization
 Before=himmelblaud.service
 DefaultDependencies=no
-After=local-fs.target
+# systemd-tpm2-setup.service provisions the TPM Storage Root Key (SRK) at
+# 0x81000001. Without it, systemd-creds encrypt --tpm2-device=auto silently
+# falls back to a non-TPM-bound host key, so the HSM PIN is not TPM-protected.
+# Wants= (not Requires=) so we degrade gracefully on TPM-less systems.
+After=local-fs.target systemd-tpm2-setup.service
+Wants=systemd-tpm2-setup.service
 ConditionPathExists=!/var/lib/private/himmelblaud/hsm-pin.enc
 
 [Service]

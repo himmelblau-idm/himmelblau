@@ -401,7 +401,7 @@ async fn handle_tasks(stream: UnixStream, cfg: &HimmelblauConfig) {
         let _ = span.enter();
         match next_req {
             Some(Ok(TaskRequest::HomeDirectory(info))) => {
-                debug!("Received task -> HomeDirectory({:?})", info);
+                debug!("Received task -> HomeDirectory(...)");
                 let domain = split_username(&info.name).map(|(_, domain)| domain);
 
                 let resp = match create_home_directory(
@@ -628,8 +628,8 @@ async fn handle_tasks(stream: UnixStream, cfg: &HimmelblauConfig) {
                 error!("Error -> {:?}", e);
                 return;
             }
-            _ => {
-                error!("Error -> Unexpected response");
+            None => {
+                debug!("Task connection closed");
                 return;
             }
         }

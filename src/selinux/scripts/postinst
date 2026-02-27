@@ -1,6 +1,18 @@
 #!/bin/sh
 set -e
 
+# Detect if running on a Live system where service start should be skipped
+is_live_system() {
+  # Check common Live system indicators
+  grep -q 'boot=live' /proc/cmdline 2>/dev/null && return 0
+  grep -q 'rd.live' /proc/cmdline 2>/dev/null && return 0
+  [ -d /run/live ] && return 0
+  [ -f /.live-installer ] && return 0
+  # Check if running in a container (dracut/systemd-nspawn)
+  systemd-detect-virt -c -q 2>/dev/null && return 0
+  return 1
+}
+
 SELINUX_SRC_DIR="/usr/share/selinux/packages/himmelblaud"
 SELINUX_MAKEFILE="/usr/share/selinux/devel/Makefile"
 
@@ -35,6 +47,12 @@ if command -v selinuxenabled >/dev/null 2>&1 && selinuxenabled; then
         [ -d /var/cache/nss-himmelblau ]      && restorecon -RFv /var/cache/nss-himmelblau || :
         [ -d /var/lib/private/himmelblaud ]   && restorecon -RFv /var/lib/private/himmelblaud || :
         [ -d /var/lib/himmelblaud ]           && restorecon -RFv /var/lib/himmelblaud || :
+
+        # Restart daemons now that the policy is loaded (if present)
+        if [ -z "$DPKG_ROOT" ] && [ -d /run/systemd/system ] && ! is_live_system; then
+          systemctl daemon-reload >/dev/null 2>&1 || :
+          systemctl restart himmelblaud.service himmelblaud-tasks.service >/dev/null 2>&1 || :
+        fi
 
         echo "SELinux policy module installed successfully"
       else
