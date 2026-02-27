@@ -290,7 +290,7 @@ macro_rules! pam_fail {
 
         thread::sleep(Duration::from_secs(2));
         // Abort the auth attempt, and don't continue executing the stack
-        return PamResultCode::PAM_ABORT;
+        return PamWhatNext::Finish(PamResultCode::PAM_ABORT);
     }};
 }
 
@@ -339,358 +339,11 @@ fn hello_totp_enroll_fallback_msg(url: &str) -> Result<String, String> {
     }
 }
 
-macro_rules! match_sm_auth_client_response {
-    ($daemon_client:expr, $req:ident, $authtok:expr, $cfg:ident, $account_id:ident, $service:ident, $msg_printer:ident, $opts:ident, $($pat:pat => $result:expr),*) => {{
-        let timeout = $cfg.get_unix_sock_timeout();
-        match $daemon_client.call_and_wait(&$req, timeout) {
-            Ok(r) => match r {
-                $($pat => $result),*
-                ClientResponse::PamAuthenticateStepResponse(PamAuthResponse::Success) => {
-                    return PamResultCode::PAM_SUCCESS;
-                }
-                ClientResponse::PamAuthenticateStepResponse(PamAuthResponse::Denied(msg)) => {
-                    $msg_printer.print_text(&msg);
-                    thread::sleep(Duration::from_secs(2));
-                    $req = ClientRequest::PamAuthenticateInit($account_id.to_string(), $service.to_string(), $opts.no_hello_pin);
-                    continue;
-                }
-                ClientResponse::PamAuthenticateStepResponse(PamAuthResponse::InitDenied {
-                    msg,
-                }) => {
-                    pam_fail!($msg_printer, msg, PamResultCode::PAM_ABORT)
-                }
-                ClientResponse::PamAuthenticateStepResponse(PamAuthResponse::Unknown) => {
-                    if $opts.ignore_unknown_user {
-                        return PamResultCode::PAM_IGNORE;
-                    } else {
-                        return PamResultCode::PAM_USER_UNKNOWN;
-                    }
-                }
-                ClientResponse::PamAuthenticateStepResponse(PamAuthResponse::SetupPin {
-                    msg,
-                }) => {
-                    let msg = format!("{}\nThe minimum PIN length is {} characters.", msg, $cfg.get_hello_pin_min_length());
-
-                    let mut pin;
-                    let mut confirm;
-                    loop {
-                        $msg_printer.print_text(&msg);
-                        pin = match $msg_printer.prompt_echo_off("New PIN: ") {
-                            Some(cred) => {
-                                if cred.len() < $cfg.get_hello_pin_min_length() {
-                                    $msg_printer.print_text(&format!("Chosen pin is too short! {} chars required.", $cfg.get_hello_pin_min_length()));
-                                    thread::sleep(Duration::from_secs(2));
-                                    continue;
-                                } else if is_simple_pin(&cred) {
-                                    $msg_printer.print_text("PIN must not use repeating or predictable sequences. Avoid patterns like '111111', '123456', or '135791'.");
-                                    thread::sleep(Duration::from_secs(2));
-                                    continue;
-                                } else if let Err(msg) = meets_intune_pin_policy(&cred) {
-                                    $msg_printer.print_text(&msg);
-                                    thread::sleep(Duration::from_secs(2));
-                                    continue;
-                                }
-                                cred
-                            },
-                            None => {
-                                debug!("no pin");
-                                pam_fail!(
-                                    $msg_printer,
-                                    "No Entra Id Hello PIN was supplied.",
-                                    PamResultCode::PAM_CRED_INSUFFICIENT
-                                );
-                            }
-                        };
-
-                        $msg_printer.print_text(&msg);
-
-                        confirm = match $msg_printer.prompt_echo_off("Confirm PIN: ") {
-                            Some(cred) => cred,
-                            None => {
-                                debug!("no confirmation pin");
-                                pam_fail!(
-                                    $msg_printer,
-                                    "No Entra Id Hello confirmation PIN was supplied.",
-                                    PamResultCode::PAM_CRED_INSUFFICIENT
-                                );
-                            }
-                        };
-
-                        if pin == confirm {
-                            break;
-                        } else {
-                            $msg_printer.print_text("Inputs did not match. Try again.");
-                            thread::sleep(Duration::from_secs(2));
-                        }
-                    }
-
-                    $msg_printer.print_text("Enrolling the Hello PIN. Please wait...");
-
-                    // Now setup the request for the next loop.
-                    $req = ClientRequest::PamAuthenticateStep(PamAuthRequest::SetupPin {
-                        pin,
-                    });
-                    continue;
-                },
-                ClientResponse::PamAuthenticateStepResponse(PamAuthResponse::Pin) => {
-                    let mut consume_authtok = None;
-                    // Swap the authtok out with a None, so it can only be consumed once.
-                    // If it's already been swapped, we are just swapping two null pointers
-                    // here effectively.
-                    std::mem::swap(&mut $authtok, &mut consume_authtok);
-                    let cred = if let Some(cred) = consume_authtok {
-                        cred
-                    } else {
-                        $msg_printer.print_text(&$cfg.get_hello_pin_prompt());
-                        match $msg_printer.prompt_echo_off("PIN: ") {
-                            Some(cred) => cred,
-                            None => {
-                                debug!("no pin");
-                                pam_fail!(
-                                    $msg_printer,
-                                    "No Entra Id Hello PIN was supplied.",
-                                    PamResultCode::PAM_CRED_INSUFFICIENT
-                                );
-                            }
-                        }
-                    };
-
-                    // Now setup the request for the next loop.
-                    $req = ClientRequest::PamAuthenticateStep(PamAuthRequest::Pin { cred });
-                    continue;
-                }
-                ClientResponse::PamAuthenticateStepResponse(PamAuthResponse::HelloTOTP {
-                    msg,
-                }) => {
-                    // GDM will render its own QR code if qr-greeter is installed.
-                    // Otherwise render with unicode chars.
-                    if msg.starts_with("otpauth://") && $service != "gdm-password" {
-                        match qrcodegen::QrCode::encode_text(&msg, qrcodegen::QrCodeEcc::Low) {
-                            Ok(qr) => {
-                                let mut buf = "Open your authenticator app and scan this QR code to enroll. Then enter the generated code.\n".to_string();
-                                let border: i32 = 4;
-                                let full_block: char = '\u{2588}';
-                                let half_upper_block: char = '\u{2580}';
-                                let half_lower_block: char = '\u{2584}';
-                                let white_block: char = '\u{0020}';
-
-                                for y in (-border .. qr.size() + border).step_by(2) {
-                                    for x in -border .. qr.size() + border {
-                                        let upper = qr.get_module(x, y);
-                                        let lower = qr.get_module(x, y + 1);
-                                        let c = match (upper, lower) {
-                                            (true, true) => full_block,
-                                            (true, false) => half_upper_block,
-                                            (false, true) => half_lower_block,
-                                            (false, false) => white_block,
-                                        };
-                                        buf.push(c);
-                                    }
-                                    buf.push('\n');
-                                }
-                                $msg_printer.print_text(&buf);
-                            },
-                            Err(e) => {
-                                debug!("failed to generate QR code: {:?}", e);
-                                // Fallback to manual setup
-                                match hello_totp_enroll_fallback_msg(&msg) {
-                                    Ok(msg) => $msg_printer.print_text(&msg),
-                                    Err(msg) => {
-                                        pam_fail!(
-                                            $msg_printer,
-                                            msg,
-                                            PamResultCode::PAM_SYSTEM_ERR
-                                        );
-                                    }
-                                }
-                            }
-                        };
-                    } else {
-                      $msg_printer.print_text(&msg);
-                    };
-                    let cred = match $msg_printer.prompt_echo_off("TOTP Code: ") {
-                        Some(cred) => cred,
-                        None => {
-                            debug!("no hello totp code");
-                            pam_fail!(
-                                $msg_printer,
-                                "No Hello TOTP code was supplied.",
-                                PamResultCode::PAM_CRED_INSUFFICIENT
-                            );
-                        }
-                    };
-
-                    // Now setup the request for the next loop.
-                    $req = ClientRequest::PamAuthenticateStep(PamAuthRequest::HelloTOTP {
-                        cred,
-                    });
-                    continue;
-                },
-                ClientResponse::PamAuthenticateStepResponse(PamAuthResponse::Fido {
-                    fido_challenge,
-                    fido_allow_list,
-                }) => {
-                    let result = match fido_auth($msg_printer.clone(), fido_challenge, fido_allow_list) {
-                        Ok(assertion) => assertion,
-                        Err(e) => {
-                            pam_fail!(
-                                $msg_printer,
-                                "Entra Id Fido authentication failed.",
-                                e
-                            );
-                        },
-                    };
-
-                    // Now setup the request for the next loop.
-                    $req = ClientRequest::PamAuthenticateStep(PamAuthRequest::Fido { assertion: result });
-                    continue;
-                }
-                ClientResponse::PamAuthenticateStepResponse(PamAuthResponse::ChangePassword {
-                    msg,
-                }) => {
-                    let mut password;
-                    let mut confirm;
-                    loop {
-                        $msg_printer.print_text(&msg);
-                        password = match $msg_printer.prompt_echo_off("New password: ") {
-                            Some(cred) => {
-                                // Entra Id requires a minimum password length of 8 characters
-                                if cred.len() < 8 {
-                                    $msg_printer.print_text("Chosen password is too short! 8 chars required.");
-                                    continue;
-                                }
-                                cred
-                            },
-                            None => {
-                                debug!("no password");
-                                pam_fail!(
-                                    $msg_printer,
-                                    "No Entra Id password was supplied.",
-                                    PamResultCode::PAM_CRED_INSUFFICIENT
-                                );
-                            }
-                        };
-
-                        $msg_printer.print_text(&msg);
-
-                        confirm = match $msg_printer.prompt_echo_off("Confirm password: ") {
-                            Some(cred) => cred,
-                            None => {
-                                debug!("no confirmation password");
-                                pam_fail!(
-                                    $msg_printer,
-                                    "No Entra Id confirmation password was supplied.",
-                                    PamResultCode::PAM_CRED_INSUFFICIENT
-                                );
-                            }
-                        };
-
-                        if password == confirm {
-                            break;
-                        } else {
-                            $msg_printer.print_text("Inputs did not match. Try again.");
-                            thread::sleep(Duration::from_secs(2));
-                        }
-                    }
-
-                    $msg_printer.print_text("Changing the password. Please wait...");
-
-                    // Now setup the request for the next loop.
-                    $req = ClientRequest::PamAuthenticateStep(PamAuthRequest::Password {
-                        cred: password,
-                    });
-                    continue;
-                },
-                ClientResponse::PamAuthenticateStepResponse(PamAuthResponse::Password) => {
-                    let mut consume_authtok = None;
-                    // Swap the authtok out with a None, so it can only be consumed once.
-                    // If it's already been swapped, we are just swapping two null pointers
-                    // here effectively.
-                    std::mem::swap(&mut $authtok, &mut consume_authtok);
-                    let cred = if let Some(cred) = consume_authtok {
-                        cred
-                    } else {
-                        $msg_printer.print_text(&$cfg.get_entra_id_password_prompt());
-                        match $msg_printer.prompt_echo_off("Entra Id Password: ") {
-                            Some(cred) => cred,
-                            None => {
-                                debug!("no password");
-                                pam_fail!(
-                                    $msg_printer,
-                                    "No Entra Id password was supplied.",
-                                    PamResultCode::PAM_CRED_INSUFFICIENT
-                                );
-                            }
-                        }
-                    };
-
-                    // Now setup the request for the next loop.
-                    $req = ClientRequest::PamAuthenticateStep(PamAuthRequest::Password { cred });
-                    continue;
-                },
-                ClientResponse::PamAuthenticateStepResponse(PamAuthResponse::MFACode {
-                    msg,
-                }) => {
-                    $msg_printer.print_text(&msg);
-                    let cred = match $msg_printer.prompt_echo_off("Code: ") {
-                        Some(cred) => cred,
-                        None => {
-                            debug!("no mfa code");
-                            pam_fail!(
-                                $msg_printer,
-                                "No Entra Id auth code was supplied.",
-                                PamResultCode::PAM_CRED_INSUFFICIENT
-                            );
-                        }
-                    };
-
-                    // Now setup the request for the next loop.
-                    $req = ClientRequest::PamAuthenticateStep(PamAuthRequest::MFACode {
-                        cred,
-                    });
-                    continue;
-                },
-                ClientResponse::PamAuthenticateStepResponse(PamAuthResponse::MFAPoll {
-                    msg,
-                    polling_interval,
-                }) => {
-                    return mfa_poll($daemon_client, $authtok, $msg_printer, $opts, $cfg, &$account_id, &$service, &msg, polling_interval);
-                }
-                _ => {
-                    // unexpected response.
-                    error!(err = ?r, "PAM_IGNORE, unexpected resolver response");
-                    pam_fail!(
-                        $msg_printer,
-                        "An unexpected error occurred.",
-                        PamResultCode::PAM_IGNORE
-                    );
-                }
-            },
-            Err(err) => {
-                error!(?err, "PAM_IGNORE");
-                pam_fail!(
-                    $msg_printer,
-                    "An unexpected error occured.",
-                    PamResultCode::PAM_IGNORE
-                );
-            }
-        }
-    }}
-}
-
-/// This function exists to prevent infinite build-time recursion to the
-/// match_sm_auth_client_response macro. Instead we have run-time recursion.
-fn mfa_poll(
-    mut daemon_client: DaemonClientBlocking,
-    mut authtok: Option<String>,
-    msg_printer: Arc<dyn MessagePrinter>,
-    opts: Options,
-    cfg: &HimmelblauConfig,
-    account_id: &str,
-    service: &str,
+fn handle_pam_auth_response_mfapoll(
+    state: &mut AuthenticateState,
     msg: &str,
     polling_interval: u32,
-) -> PamResultCode {
+) -> PamWhatNext {
     // Suggest users connect mobile devices to the internet, except when
     // polling a DAG.
     let msg = if !msg.contains("https://microsoft.com/devicelogin") && !msg.trim().is_empty() {
@@ -702,7 +355,7 @@ fn mfa_poll(
         msg.to_string()
     };
     if !msg.trim().is_empty() {
-        msg_printer.print_text(&msg);
+        state.msg_printer.print_text(&msg);
     }
 
     // Necessary because of OpenSSH bug
@@ -710,44 +363,458 @@ fn mfa_poll(
     // PAM_TEXT_INFO and PAM_ERROR_MSG conversation not
     // honoured during PAM authentication. Only prompt if
     // this is the ssh service and a message was sent.
-    if opts.mfa_poll_prompt && service.contains("ssh") && !msg.trim().is_empty() {
-        msg_printer.prompt_echo_off("Press enter to continue");
+    if state.opts.mfa_poll_prompt && state.service.contains("ssh") && !msg.trim().is_empty() {
+        state.msg_printer.prompt_echo_off("Press enter to continue");
     }
 
-    let mut poll_attempt = 0;
-    let mut req = ClientRequest::PamAuthenticateStep(PamAuthRequest::MFAPoll { poll_attempt });
-    loop {
-        thread::sleep(Duration::from_secs(polling_interval.into()));
-
-        // Counter intuitive, but we don't need a max poll attempts here because
-        // if the resolver goes away, then this will error on the sock and
-        // will shutdown. This allows the resolver to dynamically extend the
-        // timeout if needed, and removes logic from the front end.
-        match_sm_auth_client_response!(
-            daemon_client, req, authtok, cfg, account_id, service, msg_printer, opts,
-            ClientResponse::PamAuthenticateStepResponse(
-                    PamAuthResponse::MFAPollWait,
-            ) => {
-                // Continue polling if the daemon says to wait
-                poll_attempt += 1;
-                req = ClientRequest::PamAuthenticateStep(
-                    PamAuthRequest::MFAPoll { poll_attempt }
-                );
-                continue;
-            }
+    // Do not allow concurrent MFA polling
+    if state.poll_attempt >= 0 {
+        error!("MFA poll already in progress");
+        pam_fail!(
+            state.msg_printer,
+            "Unexpected error occurred.",
+            PamResultCode::PAM_SYSTEM_ERR
         );
+    }
+    state.poll_attempt = 0;
+
+    // Daemon tell us the polling_interval
+    state.polling_interval = polling_interval;
+    thread::sleep(Duration::from_secs(state.polling_interval.into()));
+
+    // Counter intuitive, but we don't need a max poll attempts here because
+    // if the resolver goes away, then this will error on the sock and
+    // will shutdown. This allows the resolver to dynamically extend the
+    // timeout if needed, and removes logic from the front end.
+    let next = ClientRequest::PamAuthenticateStep(PamAuthRequest::MFAPoll {
+        poll_attempt: state.poll_attempt as u32,
+    });
+    PamWhatNext::Next(next)
+}
+
+fn handle_pam_auth_response_mfapollwait(state: &mut AuthenticateState) -> PamWhatNext {
+    if state.poll_attempt < 0 {
+        // No MFA poll was initiated yet.
+        error!("MFAPollWait before MFAPoll");
+        pam_fail!(
+            state.msg_printer,
+            "An unexpected error occurred.",
+            PamResultCode::PAM_IGNORE
+        );
+    }
+
+    // Continue polling if the daemon says to wait
+    thread::sleep(Duration::from_secs(state.polling_interval.into()));
+
+    state.poll_attempt += 1;
+    let req = ClientRequest::PamAuthenticateStep(PamAuthRequest::MFAPoll {
+        poll_attempt: state.poll_attempt as u32,
+    });
+    PamWhatNext::Next(req)
+}
+
+enum PamWhatNext {
+    Next(ClientRequest),
+    Finish(PamResultCode),
+}
+
+fn handle_pam_auth_response_unknown(state: &AuthenticateState) -> PamWhatNext {
+    let code = if state.opts.ignore_unknown_user {
+        PamResultCode::PAM_IGNORE
+    } else {
+        PamResultCode::PAM_USER_UNKNOWN
+    };
+    PamWhatNext::Finish(code)
+}
+
+fn handle_pam_auth_response_success() -> PamWhatNext {
+    let code = PamResultCode::PAM_SUCCESS;
+    PamWhatNext::Finish(code)
+}
+
+fn handle_pam_auth_response_denied(state: &AuthenticateState, msg: &str) -> PamWhatNext {
+    state.msg_printer.print_text(msg);
+    thread::sleep(Duration::from_secs(2));
+    let req = ClientRequest::PamAuthenticateInit(
+        state.account_id.to_string(),
+        state.service.to_string(),
+        state.opts.no_hello_pin,
+    );
+    PamWhatNext::Next(req)
+}
+
+fn handle_pam_auth_response_password(state: &mut AuthenticateState) -> PamWhatNext {
+    let mut consume_authtok = None;
+    // Swap the authtok out with a None, so it can only be consumed once.
+    // If it's already been swapped, we are just swapping two null pointers
+    // here effectively.
+    std::mem::swap(&mut state.authtok, &mut consume_authtok);
+    let cred = if let Some(cred) = consume_authtok {
+        cred
+    } else {
+        state
+            .msg_printer
+            .print_text(&state.cfg.get_entra_id_password_prompt());
+        match state.msg_printer.prompt_echo_off("Entra Id Password: ") {
+            Some(cred) => cred,
+            None => {
+                debug!("no password");
+                pam_fail!(
+                    state.msg_printer,
+                    "No Entra Id password was supplied.",
+                    PamResultCode::PAM_CRED_INSUFFICIENT
+                );
+            }
+        }
+    };
+
+    // Now setup the request for the next loop.
+    let req = ClientRequest::PamAuthenticateStep(PamAuthRequest::Password { cred });
+    PamWhatNext::Next(req)
+}
+
+fn handle_pam_auth_response_mfacode(state: &AuthenticateState, msg: &str) -> PamWhatNext {
+    state.msg_printer.print_text(msg);
+    let cred = match state.msg_printer.prompt_echo_off("Code: ") {
+        Some(cred) => cred,
+        None => {
+            debug!("no mfa code");
+            pam_fail!(
+                state.msg_printer,
+                "No Entra Id auth code was supplied.",
+                PamResultCode::PAM_CRED_INSUFFICIENT
+            );
+        }
+    };
+
+    // Now setup the request for the next loop.
+    let req = ClientRequest::PamAuthenticateStep(PamAuthRequest::MFACode { cred });
+    PamWhatNext::Next(req)
+}
+
+fn handle_pam_auth_response_hellototp(state: &AuthenticateState, msg: &str) -> PamWhatNext {
+    // GDM will render its own QR code if qr-greeter is installed.
+    // Otherwise render with unicode chars.
+    if msg.starts_with("otpauth://") && state.service != "gdm-password" {
+        match qrcodegen::QrCode::encode_text(msg, qrcodegen::QrCodeEcc::Low) {
+            Ok(qr) => {
+                let mut buf = "Open your authenticator app and scan this QR code to enroll. Then enter the generated code.\n".to_string();
+                let border: i32 = 4;
+                let full_block: char = '\u{2588}';
+                let half_upper_block: char = '\u{2580}';
+                let half_lower_block: char = '\u{2584}';
+                let white_block: char = '\u{0020}';
+
+                for y in (-border..qr.size() + border).step_by(2) {
+                    for x in -border..qr.size() + border {
+                        let upper = qr.get_module(x, y);
+                        let lower = qr.get_module(x, y + 1);
+                        let c = match (upper, lower) {
+                            (true, true) => full_block,
+                            (true, false) => half_upper_block,
+                            (false, true) => half_lower_block,
+                            (false, false) => white_block,
+                        };
+                        buf.push(c);
+                    }
+                    buf.push('\n');
+                }
+                state.msg_printer.print_text(&buf);
+            }
+            Err(e) => {
+                debug!("failed to generate QR code: {:?}", e);
+                // Fallback to manual setup
+                match hello_totp_enroll_fallback_msg(msg) {
+                    Ok(msg) => state.msg_printer.print_text(&msg),
+                    Err(msg) => {
+                        pam_fail!(state.msg_printer, msg, PamResultCode::PAM_SYSTEM_ERR);
+                    }
+                }
+            }
+        };
+    } else {
+        state.msg_printer.print_text(msg);
+    };
+
+    let cred = match state.msg_printer.prompt_echo_off("TOTP Code: ") {
+        Some(cred) => cred,
+        None => {
+            debug!("no hello totp code");
+            pam_fail!(
+                state.msg_printer,
+                "No Hello TOTP code was supplied.",
+                PamResultCode::PAM_CRED_INSUFFICIENT
+            );
+        }
+    };
+
+    // Now setup the request for the next loop.
+    let req = ClientRequest::PamAuthenticateStep(PamAuthRequest::HelloTOTP { cred });
+    PamWhatNext::Next(req)
+}
+
+fn handle_pam_auth_response_setup_pin(state: &AuthenticateState, msg: &str) -> PamWhatNext {
+    let msg = format!(
+        "{}\nThe minimum PIN length is {} characters.",
+        msg,
+        state.cfg.get_hello_pin_min_length()
+    );
+
+    let mut pin;
+    let mut confirm;
+    loop {
+        state.msg_printer.print_text(&msg);
+        pin = match state.msg_printer.prompt_echo_off("New PIN: ") {
+            Some(cred) => {
+                if cred.len() < state.cfg.get_hello_pin_min_length() {
+                    state.msg_printer.print_text(&format!(
+                        "Chosen pin is too short! {} chars required.",
+                        state.cfg.get_hello_pin_min_length()
+                    ));
+                    thread::sleep(Duration::from_secs(2));
+                    continue;
+                } else if is_simple_pin(&cred) {
+                    state.msg_printer.print_text("PIN must not use repeating or predictable sequences. Avoid patterns like '111111', '123456', or '135791'.");
+                    thread::sleep(Duration::from_secs(2));
+                    continue;
+                } else if let Err(msg) = meets_intune_pin_policy(&cred) {
+                    state.msg_printer.print_text(&msg);
+                    thread::sleep(Duration::from_secs(2));
+                    continue;
+                }
+                cred
+            }
+            None => {
+                debug!("no pin");
+                pam_fail!(
+                    state.msg_printer,
+                    "No Entra Id Hello PIN was supplied.",
+                    PamResultCode::PAM_CRED_INSUFFICIENT
+                );
+            }
+        };
+
+        state.msg_printer.print_text(&msg);
+
+        confirm = match state.msg_printer.prompt_echo_off("Confirm PIN: ") {
+            Some(cred) => cred,
+            None => {
+                debug!("no confirmation pin");
+                pam_fail!(
+                    state.msg_printer,
+                    "No Entra Id Hello confirmation PIN was supplied.",
+                    PamResultCode::PAM_CRED_INSUFFICIENT
+                );
+            }
+        };
+
+        if pin == confirm {
+            break;
+        } else {
+            state
+                .msg_printer
+                .print_text("Inputs did not match. Try again.");
+            thread::sleep(Duration::from_secs(2));
+        }
+    }
+
+    state
+        .msg_printer
+        .print_text("Enrolling the Hello PIN. Please wait...");
+
+    // Now setup the request for the next loop.
+    let req = ClientRequest::PamAuthenticateStep(PamAuthRequest::SetupPin { pin });
+    PamWhatNext::Next(req)
+}
+
+fn handle_pam_auth_response_pin(state: &mut AuthenticateState) -> PamWhatNext {
+    let mut consume_authtok = None;
+    // Swap the authtok out with a None, so it can only be consumed once.
+    // If it's already been swapped, we are just swapping two null pointers
+    // here effectively.
+    std::mem::swap(&mut state.authtok, &mut consume_authtok);
+    let cred = if let Some(cred) = consume_authtok {
+        cred
+    } else {
+        state
+            .msg_printer
+            .print_text(&state.cfg.get_hello_pin_prompt());
+        match state.msg_printer.prompt_echo_off("PIN: ") {
+            Some(cred) => cred,
+            None => {
+                debug!("no pin");
+                pam_fail!(
+                    state.msg_printer,
+                    "No Entra Id Hello PIN was supplied.",
+                    PamResultCode::PAM_CRED_INSUFFICIENT
+                );
+            }
+        }
+    };
+
+    // Now setup the request for the next loop.
+    let req = ClientRequest::PamAuthenticateStep(PamAuthRequest::Pin { cred });
+    PamWhatNext::Next(req)
+}
+
+fn handle_pam_auth_response_fido(
+    state: &AuthenticateState,
+    fido_challenge: String,
+    fido_allow_list: Vec<String>,
+) -> PamWhatNext {
+    let result = match fido_auth(state.msg_printer.clone(), fido_challenge, fido_allow_list) {
+        Ok(assertion) => assertion,
+        Err(e) => {
+            pam_fail!(state.msg_printer, "Entra Id Fido authentication failed.", e);
+        }
+    };
+
+    // Now setup the request for the next loop.
+    let req = ClientRequest::PamAuthenticateStep(PamAuthRequest::Fido { assertion: result });
+    PamWhatNext::Next(req)
+}
+
+fn handle_pam_auth_response_change_password(state: &AuthenticateState, msg: &str) -> PamWhatNext {
+    let mut password;
+    let mut confirm;
+    loop {
+        state.msg_printer.print_text(msg);
+        password = match state.msg_printer.prompt_echo_off("New password: ") {
+            Some(cred) => {
+                // Entra Id requires a minimum password length of 8 characters
+                if cred.len() < 8 {
+                    state
+                        .msg_printer
+                        .print_text("Chosen password is too short! 8 chars required.");
+                    continue;
+                }
+                cred
+            }
+            None => {
+                debug!("no password");
+                pam_fail!(
+                    state.msg_printer,
+                    "No Entra Id password was supplied.",
+                    PamResultCode::PAM_CRED_INSUFFICIENT
+                );
+            }
+        };
+
+        state.msg_printer.print_text(msg);
+
+        confirm = match state.msg_printer.prompt_echo_off("Confirm password: ") {
+            Some(cred) => cred,
+            None => {
+                debug!("no confirmation password");
+                pam_fail!(
+                    state.msg_printer,
+                    "No Entra Id confirmation password was supplied.",
+                    PamResultCode::PAM_CRED_INSUFFICIENT
+                );
+            }
+        };
+
+        if password == confirm {
+            break;
+        } else {
+            state
+                .msg_printer
+                .print_text("Inputs did not match. Try again.");
+            thread::sleep(Duration::from_secs(2));
+        }
+    }
+
+    state
+        .msg_printer
+        .print_text("Changing the password. Please wait...");
+
+    // Now setup the request for the next loop.
+    let next = ClientRequest::PamAuthenticateStep(PamAuthRequest::Password { cred: password });
+    PamWhatNext::Next(next)
+}
+
+fn handle_pam_auth_init_denied(state: &AuthenticateState, msg: &str) -> PamWhatNext {
+    pam_fail!(state.msg_printer, msg, PamResultCode::PAM_ABORT)
+}
+
+fn authenticate_request_response(
+    state: &mut AuthenticateState,
+    req: &ClientRequest,
+) -> PamWhatNext {
+    let cli_res = match state
+        .daemon_client
+        .call_and_wait(req, state.cfg.get_unix_sock_timeout())
+    {
+        Ok(res) => res,
+        Err(err) => {
+            error!(?err, "PAM_IGNORE");
+            pam_fail!(
+                state.msg_printer,
+                "An unexpected error occured.",
+                PamResultCode::PAM_IGNORE
+            );
+        }
+    };
+
+    let response = match cli_res {
+        ClientResponse::PamAuthenticateStepResponse(res) => res,
+        _ => {
+            // unexpected response.
+            error!(err = ?cli_res, "PAM_IGNORE, unexpected resolver response");
+            pam_fail!(
+                state.msg_printer,
+                "An unexpected error occurred.",
+                PamResultCode::PAM_IGNORE
+            );
+        }
+    };
+
+    match response {
+        PamAuthResponse::Unknown => handle_pam_auth_response_unknown(state),
+        PamAuthResponse::Success => handle_pam_auth_response_success(),
+        PamAuthResponse::Denied(msg) => handle_pam_auth_response_denied(state, &msg),
+        PamAuthResponse::InitDenied { msg } => handle_pam_auth_init_denied(state, &msg),
+        PamAuthResponse::Password => handle_pam_auth_response_password(state),
+        PamAuthResponse::MFACode { msg } => handle_pam_auth_response_mfacode(state, &msg),
+        PamAuthResponse::HelloTOTP { msg } => handle_pam_auth_response_hellototp(state, &msg),
+        PamAuthResponse::MFAPoll {
+            msg,
+            polling_interval,
+        } => handle_pam_auth_response_mfapoll(state, &msg, polling_interval),
+        PamAuthResponse::MFAPollWait => handle_pam_auth_response_mfapollwait(state),
+        PamAuthResponse::SetupPin { msg } => handle_pam_auth_response_setup_pin(state, &msg),
+        PamAuthResponse::Pin => handle_pam_auth_response_pin(state),
+        PamAuthResponse::Fido {
+            fido_challenge,
+            fido_allow_list,
+        } => handle_pam_auth_response_fido(state, fido_challenge, fido_allow_list),
+        PamAuthResponse::ChangePassword { msg } => {
+            handle_pam_auth_response_change_password(state, &msg)
+        }
     }
 }
 
+struct AuthenticateState {
+    daemon_client: DaemonClientBlocking,
+    authtok: Option<String>,
+    cfg: HimmelblauConfig,
+    account_id: String,
+    service: String,
+    opts: Options,
+    msg_printer: Arc<dyn MessagePrinter>,
+    poll_attempt: i32,
+    polling_interval: u32,
+}
+
 pub fn authenticate(
-    mut authtok: Option<String>,
-    cfg: &HimmelblauConfig,
+    authtok: Option<String>,
+    cfg: HimmelblauConfig,
     account_id: &str,
     service: &str,
     opts: Options,
     msg_printer: Arc<dyn MessagePrinter>,
 ) -> PamResultCode {
-    let mut daemon_client = match DaemonClientBlocking::new(cfg.get_socket_path().as_str()) {
+    let daemon_client = match DaemonClientBlocking::new(cfg.get_socket_path().as_str()) {
         Ok(dc) => dc,
         Err(e) => {
             debug!(err = ?e, "himmelblaud not available, ignoring");
@@ -755,23 +822,31 @@ pub fn authenticate(
         }
     };
 
+    let mut state = AuthenticateState {
+        daemon_client,
+        authtok,
+        cfg,
+        account_id: account_id.to_owned(),
+        service: service.to_owned(),
+        opts,
+        msg_printer,
+        poll_attempt: -1,
+        polling_interval: 2,
+    };
+
+    // This is the initial request to the daemon
     let mut req = ClientRequest::PamAuthenticateInit(
-        account_id.to_string(),
-        service.to_string(),
-        opts.no_hello_pin,
+        state.account_id.to_owned(),
+        state.service.to_owned(),
+        state.opts.no_hello_pin,
     );
 
     loop {
-        match_sm_auth_client_response!(
-            daemon_client,
-            req,
-            authtok,
-            cfg,
-            account_id,
-            service,
-            msg_printer,
-            opts,
-        );
+        let res = authenticate_request_response(&mut state, &req);
+        match res {
+            PamWhatNext::Next(next_request) => req = next_request,
+            PamWhatNext::Finish(pam_result_code) => return pam_result_code,
+        }
     }
 }
 
@@ -784,7 +859,7 @@ pub async fn authenticate_async(
     msg_printer: Arc<dyn MessagePrinter>,
 ) -> PamResultCode {
     match tokio::task::spawn_blocking(move || {
-        authenticate(authtok, &cfg, &account_id, &service, opts, msg_printer)
+        authenticate(authtok, cfg, &account_id, &service, opts, msg_printer)
     })
     .await
     {
