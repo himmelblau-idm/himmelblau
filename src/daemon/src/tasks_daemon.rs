@@ -585,9 +585,8 @@ async fn handle_tasks(stream: UnixStream, cfg: &HimmelblauConfig) {
                     // Validate account_id to prevent path traversal and
                     // cross-user aliasing. Reject rather than strip to avoid
                     // collisions (e.g. "a/lice" and "alice" mapping to the same file).
-                    let safe_id = &account_id;
-                    if safe_id.is_empty()
-                        || !safe_id
+                    if account_id.is_empty()
+                        || !account_id
                             .chars()
                             .all(|c| c.is_ascii_alphanumeric() || matches!(c, '@' | '.' | '_' | '-'))
                     {
@@ -596,7 +595,7 @@ async fn handle_tasks(stream: UnixStream, cfg: &HimmelblauConfig) {
                         );
                     // Set the profile picture
                     } else if let Some(domain) = domain {
-                        let filename = format!("{}{}", icons_dir, safe_id);
+                        let filename = format!("{}{}", icons_dir, account_id);
                         match OpenOptions::new()
                             .write(true)
                             .create(true)
@@ -628,7 +627,7 @@ async fn handle_tasks(stream: UnixStream, cfg: &HimmelblauConfig) {
                                 error!("Failed creating file for user profile photo: {:?}", e)
                             }
                         }
-                        let user_file = format!("{}{}", users_dir, safe_id);
+                        let user_file = format!("{}{}", users_dir, account_id);
                         match OpenOptions::new()
                             .write(true)
                             .create(true)
