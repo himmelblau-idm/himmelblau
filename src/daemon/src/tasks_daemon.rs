@@ -579,7 +579,7 @@ async fn handle_tasks(stream: UnixStream, cfg: &HimmelblauConfig) {
                     if safe_id.is_empty()
                         || !safe_id
                             .chars()
-                            .all(|c| c.is_alphanumeric() || matches!(c, '@' | '.' | '_' | '-'))
+                            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '@' | '.' | '_' | '-'))
                     {
                         error!(
                             "Invalid account_id for profile photo - disallowed characters, rejecting"
