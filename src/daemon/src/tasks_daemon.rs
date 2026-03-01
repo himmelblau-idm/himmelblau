@@ -45,7 +45,6 @@ use sketching::tracing_forest::traits::*;
 use sketching::tracing_forest::util::*;
 use sketching::tracing_forest::{self};
 use std::fs::OpenOptions;
-use std::fs::{File};
 use std::io::Write;
 use std::process::Command;
 use tokio::net::UnixStream;
