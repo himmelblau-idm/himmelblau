@@ -1006,9 +1006,6 @@ async fn main() -> ExitCode {
             )
         })
         .on(async {
-            let span = span!(Level::INFO, "initialisation");
-            let _enter = span.enter();
-
             if clap_args.get_flag("skip-root-check") {
                 warn!("Skipping root user check, if you're running this for testing, ensure you clean up temporary files.")
                 // TODO: this wording is not great m'kay.
@@ -1445,8 +1442,6 @@ async fn main() -> ExitCode {
                     let _ = sd_notify::notify(true, &[NotifyState::Ready, monotonic_usec]);
                 }
             }
-
-            drop(_enter);
 
             loop {
                 tokio::select! {
