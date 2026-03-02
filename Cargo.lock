@@ -2013,7 +2013,7 @@ dependencies = [
  "compact_jwt",
  "configparser",
  "csv",
- "der 0.7.10",
+ "der 0.8.0",
  "futures",
  "hashbrown 0.16.1",
  "idmap",
