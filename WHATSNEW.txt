@@ -1,0 +1,14 @@
+Himmelblau 3.x - What's New
+
+- Added first-class OpenID Connect (OIDC) support, including provider configuration via oidc_issuer_url, OIDC breakglass support, password/PIN flows, and domainless OIDC logins.
+- Introduced Linux Hello TOTP authentication, with QR-based enrollment flows available in both the GNOME QR greeter and terminal experiences.
+- Expanded QR greeter capabilities for modern desktop login UX: support for OIDC DAG and Microsoft consumer DAG flows, lockscreen and regular-user login entry points, and GNOME 49 compatibility.
+- Added personal Microsoft account authentication support.
+- Added password-only local authentication mode for environments that do not use passwordless methods.
+- Improved reauthentication UX by reusing an existing Hello PIN when online reauth is required.
+- Added sign-in frequency optimization for console logins.
+- Added broader compliance and policy execution support, including default custom compliance processing.
+- Introduced dedicated packaging for browser SSO policy deployment (himmelblau-sso-policies) and split out a standalone broker package/service (himmelblau-broker).
+- Improved out-of-box deployment behavior with configuration-less daemon startup, automatic daemon startup on install/upgrade, and single-domain autoconfiguration support.
+- Expanded platform/build coverage with Amazon Linux 2023 and Gentoo support, plus ARM64/aarch64 package build infrastructure across supported distributions.
+- Enhanced Nix/NixOS integration with a modern flake shell, split himmelblau/himmelblau-desktop module structure, and typed NixOS options generated from XML configuration definitions.
