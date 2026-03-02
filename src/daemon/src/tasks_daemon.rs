@@ -44,7 +44,7 @@ use sketching::tracing_forest::traits::*;
 use sketching::tracing_forest::util::*;
 use sketching::tracing_forest::{self};
 use std::fs::OpenOptions;
-use std::fs::{DirBuilder, File};
+use std::fs::DirBuilder;
 use std::io::Write;
 use std::process::Command;
 use tokio::net::UnixStream;
@@ -574,16 +574,35 @@ async fn handle_tasks(stream: UnixStream, cfg: &HimmelblauConfig) {
             Some(Ok(TaskRequest::LoadProfilePhoto(mut account_id, access_token))) => {
                 debug!("Received task -> LoadProfilePhoto(...)");
                 let icons_dir = "/var/lib/AccountsService/icons/";
+                let users_dir = "/var/lib/AccountsService/users/";
                 if !Path::new(icons_dir).exists() {
                     info!("Profile photo directory '{}' doesn't exist.", icons_dir);
                 } else {
                     let upn = account_id.clone();
                     let domain = split_username(&upn).map(|(_, domain)| domain);
                     account_id = cfg.map_upn_to_name(&account_id);
+
+                    // Validate account_id to prevent path traversal and
+                    // cross-user aliasing. Reject rather than strip to avoid
+                    // collisions (e.g. "a/lice" and "alice" mapping to the same file).
+                    if account_id.is_empty()
+                        || !account_id
+                            .chars()
+                            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '@' | '.' | '_' | '-'))
+                    {
+                        error!(
+                            "Invalid account_id for profile photo - disallowed characters, rejecting"
+                        );
                     // Set the profile picture
-                    if let Some(domain) = domain {
-                        let filename = format!("/var/lib/AccountsService/icons/{}", account_id);
-                        match File::create(&filename) {
+                    } else if let Some(domain) = domain {
+                        let filename = format!("{}{}", icons_dir, account_id);
+                        match OpenOptions::new()
+                            .write(true)
+                            .create(true)
+                            .truncate(true)
+                            .custom_flags(libc::O_NOFOLLOW)
+                            .open(&filename)
+                        {
                             Ok(file) => {
                                 let authority_host = cfg.get_authority_host(domain);
                                 let tenant_id = cfg.get_tenant_id(domain);
@@ -608,8 +627,14 @@ async fn handle_tasks(stream: UnixStream, cfg: &HimmelblauConfig) {
                                 error!("Failed creating file for user profile photo: {:?}", e)
                             }
                         }
-                        let user_file = format!("/var/lib/AccountsService/users/{}", account_id);
-                        match File::create(&user_file) {
+                        let user_file = format!("{}{}", users_dir, account_id);
+                        match OpenOptions::new()
+                            .write(true)
+                            .create(true)
+                            .truncate(true)
+                            .custom_flags(libc::O_NOFOLLOW)
+                            .open(&user_file)
+                        {
                             Ok(mut file) => {
                                 let contents =
                                     format!("[User]\nIcon={}\nSystemAccount=false\n", filename);
