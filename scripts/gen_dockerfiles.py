@@ -37,7 +37,7 @@ COMMON = [
     "checkpolicy",
     "policycoreutils",
     "python3",
-    "systemd-devel",
+    "systemd",
 ]
 
 PKG_PAIRS = [
