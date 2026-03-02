@@ -95,11 +95,14 @@ FAMILIES = {
 
 PACKAGES = [
     # (crate name, crate source, needs_tpm_feature)
+    # Only himmelblaud (src/daemon) and src/common define a tpm feature.
+    # All other crates have no [features] section — passing --features tpm
+    # to them causes a build error.
     ("himmelblaud", "src/daemon", True),
-    ("nss_himmelblau", "src/nss", True),
-    ("pam_himmelblau", "src/pam", True),
+    ("nss_himmelblau", "src/nss", False),
+    ("pam_himmelblau", "src/pam", False),
     ("sshd-config", "src/sshd-config", False),
-    ("sso", "src/sso", True),
+    ("sso", "src/sso", False),
     ("qr-greeter", "src/qr-greeter", False),
     ("selinux", "src/selinux", False),
     ("o365", "src/o365", False),
@@ -114,9 +117,15 @@ def build_deb_final_cmd(features: list, distro_slug: str) -> str:
     for pkg, _, needs_tpm in PACKAGES:
         if pkg == "selinux":  # Debian doesn't use selinux
             continue
-        if not needs_tpm and "tpm" in features:
-            features.remove("tpm")
-        feat_str = f" --features {','.join(features)}" if features else ""
+        # Copy the feature list per-package so that stripping "tpm" for a
+        # package that doesn't need it (e.g. sshd-config) does not mutate the
+        # shared list and accidentally drop the feature for subsequent packages
+        # that DO need it (e.g. sso). Previously this was features.remove()
+        # which permanently modified the caller's list mid-loop.
+        pkg_features = list(features)
+        if not needs_tpm:
+            pkg_features = [f for f in pkg_features if f != "tpm"]
+        feat_str = f" --features {','.join(pkg_features)}" if pkg_features else ""
         if "pam" in pkg or "nss" in pkg:
             feat_str += " --multiarch=same"
         parts.append(f"cargo deb{feat_str} --deb-revision={distro_slug} -p {pkg}")
