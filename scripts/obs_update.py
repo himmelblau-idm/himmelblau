@@ -23,7 +23,7 @@ from typing import Optional
 # Configuration
 DEFAULT_OBS_PROJECT = "network:idm"
 DEFAULT_OBS_PACKAGE = "himmelblau"
-DEFAULT_STABLE_BRANCH = "stable-2.x"
+DEFAULT_STABLE_BRANCH = "stable-3.x"
 DEFAULT_TARGET = "tumbleweed"
 
 TIMEOUT_OSC_SECONDS = 300  # 5 minutes for osc operations
