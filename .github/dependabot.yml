@@ -19,6 +19,19 @@ updates:
         patterns:
           - "*"
 
+  # Updates for stable-3.x
+  - package-ecosystem: "cargo"
+    directory: "/"
+    target-branch: stable-3.x
+    schedule:
+      interval: "monthly"
+    commit-message:
+      prefix: "deps(rust)"
+    groups:
+      all-cargo-updates:
+        patterns:
+          - "*"
+
   # Updates for stable-2.x
   - package-ecosystem: "cargo"
     directory: "/"
