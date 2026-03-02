@@ -187,7 +187,7 @@ optional {
 	allow himmelblaud_t proc_t:filesystem getattr;
 	allow himmelblaud_t proc_t:lnk_file read;
 	allow himmelblaud_t himmelblaud_t:dir search;
-	allow himmelblaud_t himmelblaud_t:file { getattr open read };
+	allow himmelblaud_t himmelblaud_t:file { getattr ioctl open read };
 	allow himmelblaud_t self:process { fork getsched };
 	allow himmelblaud_t self:fifo_file { getattr read ioctl };
 	allow himmelblaud_t sysctl_t:dir search;
@@ -199,6 +199,7 @@ optional {
 	allow himmelblaud_t sysfs_t:file { getattr open read };
 	allow himmelblaud_t security_t:filesystem getattr;
 	allow himmelblaud_t var_lib_t:dir { getattr search };
+	allow himmelblaud_t var_lib_t:lnk_file { getattr read };
 	allow himmelblaud_t null_device_t:chr_file { getattr open read write ioctl };
 	allow himmelblaud_t urandom_device_t:chr_file { getattr open read };
 	allow himmelblaud_t init_t:fd use;
@@ -289,7 +290,7 @@ optional {
 # himmelblaud_tasks_t (tasks daemon) permissions
 allow himmelblaud_tasks_t himmelblau_etc_t:dir { getattr open read search };
 allow himmelblaud_tasks_t himmelblau_etc_t:file { getattr open read };
-allow himmelblaud_tasks_t himmelblau_nss_cache_t:dir { add_name remove_name search write };
+allow himmelblaud_tasks_t himmelblau_nss_cache_t:dir { add_name getattr open read remove_name search write };
 allow himmelblaud_tasks_t himmelblau_nss_cache_t:file { create getattr lock open read setattr unlink write };
 allow himmelblaud_tasks_t himmelblau_var_cache_t:dir { add_name create getattr open read remove_name rmdir search setattr write };
 allow himmelblaud_tasks_t himmelblau_var_cache_t:file { create getattr lock open read setattr unlink write };
@@ -323,11 +324,16 @@ optional {
 		type xdm_var_run_t;
 		type sysfs_t;
 		type var_lib_t;
+		type selinux_config_t;
+		type security_t;
+		type urandom_device_t;
 		class dir { add_name create getattr open read remove_name search setattr write };
 		class file { create getattr open read setattr unlink write execute execute_no_trans map };
 		class lnk_file read;
 		class chr_file { getattr open read write ioctl };
+		class filesystem getattr;
 		class unix_stream_socket { connectto read write };
+		class netlink_audit_socket { create nlmsg_relay read write };
 		class netlink_route_socket { bind create getattr nlmsg_read read write };
 		class udp_socket { connect create getattr read setopt write };
 		class fifo_file { getattr read ioctl };
@@ -338,6 +344,7 @@ optional {
 		class fd use;
 	}
 	allow himmelblaud_tasks_t proc_t:dir search;
+	allow himmelblaud_tasks_t proc_t:filesystem getattr;
 	allow himmelblaud_tasks_t proc_t:lnk_file read;
 	allow himmelblaud_tasks_t himmelblaud_tasks_t:dir search;
 	allow himmelblaud_tasks_t himmelblaud_tasks_t:file { getattr open read write };
@@ -364,6 +371,9 @@ optional {
 	allow himmelblaud_tasks_t sysctl_t:dir search;
 	allow himmelblaud_tasks_t sysctl_kernel_t:dir search;
 	allow himmelblaud_tasks_t sysctl_kernel_t:file { getattr open read };
+	allow himmelblaud_tasks_t selinux_config_t:dir search;
+	allow himmelblaud_tasks_t selinux_config_t:file { getattr open read };
+	allow himmelblaud_tasks_t security_t:filesystem getattr;
 	allow himmelblaud_tasks_t net_conf_t:lnk_file read;
 	allow himmelblaud_tasks_t net_conf_t:file { getattr open read };
 	allow himmelblaud_tasks_t systemd_resolved_var_run_t:dir search;
@@ -387,6 +397,8 @@ optional {
 	allow himmelblaud_tasks_t sysfs_t:lnk_file read;
 	allow himmelblaud_tasks_t sysfs_t:file { getattr open read };
 	allow himmelblaud_tasks_t var_lib_t:dir search;
+	allow himmelblaud_tasks_t urandom_device_t:chr_file { getattr open read };
+	allow himmelblaud_tasks_t self:netlink_audit_socket { create nlmsg_relay read write };
 	allow himmelblaud_tasks_t self:capability chown;
 }
 
@@ -642,8 +654,10 @@ allow init_t himmelblaud_t:dir search;
 allow init_t himmelblaud_tasks_t:dir search;
 allow init_t himmelblaud_t:process { signull signal sigkill };
 allow init_t himmelblaud_tasks_t:process { signull signal sigkill };
-allow init_t himmelblaud_t:file read;
-allow init_t himmelblaud_tasks_t:file read;
+allow init_t himmelblaud_t:process { noatsecure rlimitinh siginh };
+allow init_t himmelblaud_tasks_t:process { noatsecure rlimitinh siginh };
+allow init_t himmelblaud_t:file { getattr open read };
+allow init_t himmelblaud_tasks_t:file { getattr open read };
 allow init_t himmelblaud_t:unix_stream_socket connectto;
 
 # Optional: init_t access to cron spool (may not exist on all systems)
@@ -827,6 +841,7 @@ optional {
 	allow cupsd_t himmelblau_var_cache_t:lnk_file read;
 	allow cupsd_t himmelblau_var_run_t:dir search;
 	allow cupsd_t himmelblau_var_run_t:sock_file write;
+	allow cupsd_t himmelblaud_t:unix_stream_socket connectto;
 }
 
 #============= NetworkManager_t ==============
@@ -861,7 +876,7 @@ optional {
 	allow policykit_t himmelblau_var_run_t:dir search;
 	allow policykit_t himmelblau_var_run_t:sock_file write;
 	allow policykit_t himmelblaud_t:dir search;
-	allow policykit_t himmelblaud_t:file read;
+	allow policykit_t himmelblaud_t:file { getattr open read };
 	allow policykit_t himmelblaud_t:unix_stream_socket connectto;
 }
 
@@ -926,6 +941,7 @@ optional {
 	allow sshd_session_t himmelblau_nss_cache_t:file { create getattr lock open read setattr unlink write };
 	allow sshd_session_t himmelblau_var_run_t:dir search;
 	allow sshd_session_t himmelblau_var_run_t:sock_file write;
+	allow sshd_session_t himmelblaud_t:unix_stream_socket connectto;
 }
 
 #============= systemd_logind_t ==============
@@ -1020,8 +1036,8 @@ optional {
 	allow unconfined_t himmelblaud_t:unix_stream_socket connectto;
 	allow unconfined_t himmelblaud_t:dir { getattr search };
 	allow unconfined_t himmelblaud_tasks_t:dir { getattr search };
-	allow unconfined_t himmelblaud_t:file { getattr open read };
-	allow unconfined_t himmelblaud_tasks_t:file { getattr open read };
+	allow unconfined_t himmelblaud_t:file { getattr ioctl open read };
+	allow unconfined_t himmelblaud_tasks_t:file { getattr ioctl open read };
 
 	allow unconfined_t himmelblau_etc_t:dir { add_name create getattr open read remove_name search write setattr relabelto relabelfrom };
 	allow unconfined_t himmelblau_etc_t:file { append create getattr open read rename setattr unlink write relabelto relabelfrom };
@@ -1043,6 +1059,23 @@ optional {
 	allow syslogd_t himmelblaud_tasks_t:lnk_file read;
 }
 
+#============= auditd_t ==============
+# auditd inspects daemon metadata and writes to our runtime socket when plugin hooks run
+optional {
+	require {
+		type auditd_t;
+	}
+	allow auditd_t himmelblau_etc_t:dir search;
+	allow auditd_t himmelblau_etc_t:file { getattr open read };
+	allow auditd_t himmelblau_var_cache_t:dir search;
+	allow auditd_t himmelblau_var_cache_t:lnk_file read;
+	allow auditd_t himmelblau_nss_cache_t:dir { getattr search setattr };
+	allow auditd_t himmelblau_nss_cache_t:file getattr;
+	allow auditd_t himmelblau_var_run_t:dir search;
+	allow auditd_t himmelblau_var_run_t:sock_file write;
+	allow auditd_t himmelblaud_t:unix_stream_socket connectto;
+}
+
 #============= systemd_userdbd_t ==============
 # systemd_userdbd_t is for systemd-userdbd, may not exist on all distros
 optional {
@@ -1059,6 +1092,7 @@ optional {
 	allow systemd_userdbd_t himmelblau_var_cache_t:lnk_file read;
 	allow systemd_userdbd_t himmelblau_etc_t:file { getattr open read };
 	allow systemd_userdbd_t himmelblaud_t:unix_stream_socket connectto;
+	allow himmelblaud_tasks_t systemd_userdbd_t:unix_stream_socket connectto;
 }
 
 #============= systemd_machined_t ==============
