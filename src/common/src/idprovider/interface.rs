@@ -278,15 +278,22 @@ pub trait IdProvider {
         _machine_key: &tpm::structures::StorageKey,
     ) -> Result<String, IdpError>;
 
-    async fn change_auth_token<D: KeyStoreTxn + Send>(
+    /// Change the Hello PIN after MFA verification.
+    /// Re-keys the Hello key blob under `new_pin` and re-seals any cached
+    /// PRT/refresh-token under the new Hello storage key so that subsequent
+    /// PIN logins work without further Entra re-authentication.
+    async fn change_auth_token_pin<D: KeyStoreTxn + Send>(
         &self,
         _account_id: &str,
         _token: &UnixUserToken,
-        _new_tok: &str,
+        _old_pin: &str,
+        _new_pin: &str,
         _keystore: &mut D,
         _tpm: &mut tpm::provider::BoxedDynTpm,
         _machine_key: &tpm::structures::StorageKey,
-    ) -> Result<bool, IdpError>;
+    ) -> Result<bool, IdpError> {
+        Err(IdpError::BadRequest)
+    }
 
     async fn unix_user_online_auth_init<D: KeyStoreTxn + Send>(
         &self,
