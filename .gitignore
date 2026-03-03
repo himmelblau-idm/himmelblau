@@ -8,6 +8,7 @@ target/
 result
 result-man
 result-doc
+result-lib
 
 # direnv state
 .direnv/
