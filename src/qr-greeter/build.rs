@@ -374,9 +374,8 @@ fn main() {
     let manifest_dir = env::var("CARGO_MANIFEST_DIR").unwrap();
     let manifest_path = Path::new(&manifest_dir);
 
-    // Source directories
+    // Source directory
     let src_ext_dir = manifest_path.join("src/qr-greeter@himmelblau-idm.org");
-    let src_assets_dir = manifest_path.join("src");
 
     // Target directory for build output (used by cargo-deb and cargo-generate-rpm)
     // Place under target/release/ to avoid cargo-deb warnings about non-release paths
