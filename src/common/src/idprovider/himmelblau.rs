@@ -478,7 +478,6 @@ impl IdProvider for HimmelblauMultiProvider {
         &self,
         id: &Id,
         old_token: Option<&UserToken>,
-        sso_nonce: Option<&str>,
         keystore: &mut D,
         tpm: &mut tpm::provider::BoxedDynTpm,
         machine_key: &tpm::structures::StorageKey,
@@ -1055,7 +1054,6 @@ impl IdProvider for HimmelblauProvider {
         &self,
         id: &Id,
         old_token: Option<&UserToken>,
-        sso_nonce: Option<&str>,
         _keystore: &mut D,
         tpm: &mut tpm::provider::BoxedDynTpm,
         machine_key: &tpm::structures::StorageKey,
@@ -1089,7 +1087,7 @@ impl IdProvider for HimmelblauProvider {
         self.client
             .read()
             .await
-            .acquire_prt_sso_cookie_with_nonce(&prt, sso_nonce, tpm, machine_key)
+            .acquire_prt_sso_cookie(&prt, tpm, machine_key)
             .await
             .map_err(|e| {
                 error!("Failed to request prt cookie: {:?}", e);
