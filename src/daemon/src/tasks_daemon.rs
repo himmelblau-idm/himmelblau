@@ -22,8 +22,8 @@
 
 use std::ffi::CString;
 use std::os::unix::ffi::OsStrExt;
-use std::os::unix::fs::{symlink, DirBuilderExt, OpenOptionsExt};
-use std::path::Path;
+use std::os::unix::fs::{symlink, OpenOptionsExt};
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::str;
 use std::time::Duration;
@@ -34,17 +34,17 @@ use futures::{SinkExt, StreamExt};
 use himmelblau::graph::Graph;
 use himmelblau_policies::policies::apply_intune_policy;
 use himmelblau_unix_common::config::{split_username, HimmelblauConfig};
-use himmelblau_unix_common::constants::{DEFAULT_CCACHE_DIR, DEFAULT_CONFIG_PATH};
+use himmelblau_unix_common::constants::{DEFAULT_CONFIG_PATH, DEFAULT_KERBEROS_CONF_DIR};
 use himmelblau_unix_common::unix_proto::{HomeDirectoryInfo, TaskRequest, TaskResponse};
 use kanidm_utils_users::{get_effective_gid, get_effective_uid};
+use libc::uid_t;
 use libc::{lchown, umask};
-use libc::{mode_t, uid_t};
+use libkrimes::proto::KerberosCredentials;
 use sd_notify::NotifyState;
 use sketching::tracing_forest::traits::*;
 use sketching::tracing_forest::util::*;
 use sketching::tracing_forest::{self};
 use std::fs::OpenOptions;
-use std::fs::DirBuilder;
 use std::io::Write;
 use std::process::Command;
 use tokio::net::UnixStream;
@@ -345,29 +345,6 @@ fn execute_user_script(account_id: &str, script: &str, access_token: &str) -> i3
     }
 }
 
-fn write_bytes_to_file(bytes: &[u8], filename: &Path, uid: uid_t, gid: uid_t, mode: mode_t) -> i32 {
-    let mut file = match OpenOptions::new()
-        .create(true)
-        .truncate(true)
-        .write(true)
-        .mode(mode)
-        .open(filename)
-    {
-        Ok(file) => file,
-        Err(_) => return 1,
-    };
-
-    if chown(filename, uid, gid).is_err() {
-        return 3;
-    }
-
-    if file.write_all(bytes).is_err() {
-        return 2;
-    }
-
-    0
-}
-
 /// Check if a user already has an entry in the given subid file
 fn user_has_subid_entry(username: &str, subid_file: &Path) -> bool {
     if let Ok(contents) = fs::read_to_string(subid_file) {
@@ -433,28 +410,105 @@ fn setup_subordinate_ids(username: &str, start: u32, count: u32) -> Result<(), S
     Ok(())
 }
 
-fn create_ccache_dir(ccache_dir: &Path, uid: uid_t, gid: uid_t) -> io::Result<()> {
-    DirBuilder::new()
-        .recursive(true)
-        .mode(0o700)
-        .create(ccache_dir)
-        .map_err(|e| {
-            error!(
-                "Failed to create the krb5 ccache directory '{}': {:?}",
-                ccache_dir.display(),
-                e
-            );
-            e
-        })?;
+fn store_tgt(tgt: &KerberosCredentials, uid: uid_t, gid: uid_t) -> Result<(), String> {
+    // Usually default_ccache_name in /etc/krb5.conf contains a %{uid} substitution,
+    // which will be '0' (root) for the tasks daemon because it runs as root. Force
+    // the ccache name.
+    // TODO: Add a new himmelblau.conf option to define the ccache name
+    let ccname = Some(format!("KEYRING:persistent:{}", uid));
 
-    std::os::unix::fs::chown(ccache_dir, Some(uid), Some(gid)).map_err(|e| {
-        error!(
-            "Failed to set the krb5 ccache directory '{}' owner and group: {:?}",
-            ccache_dir.display(),
-            e
-        );
-        e
-    })
+    debug!(?ccname, "Storing kerberos ticket in credential cache");
+
+    let guard = uzers::switch::switch_user_group(uid, gid)
+        .map_err(|e| format!("Failed to switch user/group: {}", e))?;
+
+    let mut ccache = match libkrimes::ccache::resolve(ccname.as_deref()) {
+        Ok(ccache) => ccache,
+        Err(e) => {
+            drop(guard);
+            let msg = format!("Failed to resolve credential cache {:?}: {:?}", ccname, e);
+            return Err(msg);
+        }
+    };
+
+    match ccache.init(tgt.name(), None) {
+        Ok(_) => (),
+        Err(e) => {
+            drop(guard);
+            let msg = format!("Failed to init credential cache {:?}: {:?}", ccname, e);
+            return Err(msg);
+        }
+    }
+
+    match ccache.store(tgt) {
+        Ok(_) => (),
+        Err(e) => {
+            drop(guard);
+            let msg = format!("Failed to store TGT in credential cache: {:?}", e);
+            return Err(msg);
+        }
+    }
+
+    drop(guard);
+
+    Ok(())
+}
+
+fn write_kerberos_config_snippet(
+    top_level_names: Option<String>,
+    tenant_id: String,
+) -> Result<(), String> {
+    if tenant_id.chars().count() <= 0 {
+        return Err("Failed to write Kerberos config snippet, empty tenant_id".to_string());
+    }
+
+    let krb_conf_dir = PathBuf::from(DEFAULT_KERBEROS_CONF_DIR);
+
+    trace!(?krb_conf_dir, "Check kerberos config dir exists");
+    match std::fs::exists(&krb_conf_dir) {
+        Ok(true) => match &krb_conf_dir.is_dir() {
+            false => Err(format!("Path {krb_conf_dir:?} is not a directory")),
+            true => Ok(()),
+        },
+        Ok(false) => Err(format!("Path {krb_conf_dir:?} does not exist")),
+        Err(e) => Err(format!("Failed to check if {krb_conf_dir:?} exists: {e}")),
+    }?;
+
+    let krb_snippet = krb_conf_dir.join(format!("himmelblau_{tenant_id}.conf"));
+    let mut file = match OpenOptions::new()
+        .create(true)
+        .truncate(true)
+        .write(true)
+        .mode(0o644)
+        .open(&krb_snippet)
+    {
+        Ok(file) => file,
+        Err(e) => return Err(format!("Failed to open {krb_snippet:?}: {e}")),
+    };
+
+    let libdefs = "[libdefaults]\n\tdns_canonicalize_hostname = false\n";
+    file.write(libdefs.as_bytes())
+        .map_err(|e| format!("Failed to write to {krb_snippet:?}: {e}"))?;
+
+    let realms = format!(
+        "[realms]\n\tKERBEROS.MICROSOFTONLINE.COM = {{\n\t\tkdc = https://login.microsoftonline.com/{tenant_id}/kerberos\n\t}}\n"
+    );
+    file.write(realms.as_bytes())
+        .map_err(|e| format!("Failed to write to {krb_snippet:?}: {e}"))?;
+
+    let domain_realms: Vec<String> = match top_level_names {
+        Some(s) => s
+            .split(",")
+            .filter(|e| !e.contains(":"))
+            .map(|x| format!("\t{x} = KERBEROS.MICROSOFTONLINE.COM"))
+            .collect(),
+        None => vec![],
+    };
+    let domain_realms = format!("[domain_realm]\n{}\n", domain_realms.join("\n"));
+    file.write(domain_realms.as_bytes())
+        .map_err(|e| format!("Failed to write to {krb_snippet:?}: {e}"))?;
+
+    Ok(())
 }
 
 async fn handle_tasks(stream: UnixStream, cfg: &HimmelblauConfig) {
@@ -525,47 +579,43 @@ async fn handle_tasks(stream: UnixStream, cfg: &HimmelblauConfig) {
                     return;
                 }
             }
-            Some(Ok(TaskRequest::KerberosCCache(uid, gid, cloud_ccache, ad_ccache))) => {
-                debug!("Received task -> KerberosCCache({}, ...)", uid);
-                let ccache_dir_str = format!("{}{}", DEFAULT_CCACHE_DIR, uid);
-                let ccache_dir = Path::new(&ccache_dir_str);
+            Some(Ok(TaskRequest::KerberosConfig(top_level_names, tenant_id))) => {
+                debug!("Received task -> KerberosConfig(...)");
 
-                let response = match create_ccache_dir(ccache_dir, uid, gid) {
-                    Ok(()) => {
-                        let primary_name = ccache_dir.join("primary");
-                        write_bytes_to_file(b"tkt\n", &primary_name, uid, gid, 0o600);
-
-                        let cloud_ret = if !cloud_ccache.is_empty() {
-                            // The cloud_tkt is the primary only if the on-prem isn't
-                            // present.
-                            let name = if !ad_ccache.is_empty() {
-                                "cloud_tkt"
-                            } else {
-                                "tkt"
-                            };
-                            let cloud_ccache_name = ccache_dir.join(name);
-                            write_bytes_to_file(&cloud_ccache, &cloud_ccache_name, uid, gid, 0o600)
-                                * 10
-                        } else {
-                            0
-                        };
-
-                        let ad_ret = if !ad_ccache.is_empty() {
-                            // If the on-prem ad_tkt exists, it overrides the primary
-                            let name = "tkt";
-                            let ad_ccache_name = ccache_dir.join(name);
-                            write_bytes_to_file(&ad_ccache, &ad_ccache_name, uid, gid, 0o600) * 100
-                        } else {
-                            0
-                        };
-                        TaskResponse::Success(cloud_ret + ad_ret)
-                    }
-                    Err(_) => TaskResponse::Error(
-                        "Failed to create credential cache directory".to_string(),
+                let response = match tenant_id {
+                    Some(t) => match write_kerberos_config_snippet(top_level_names, t) {
+                        Ok(_) => TaskResponse::Success(0),
+                        Err(msg) => TaskResponse::Error(msg),
+                    },
+                    None => TaskResponse::Error(
+                        "Failed to write Kerberos config snippet, no tenant_id".to_string(),
                     ),
                 };
 
-                // Indicate the status response
+                if let Err(e) = reqs.send(response).await {
+                    error!("Error -> {:?}", e);
+                    return;
+                }
+            }
+            Some(Ok(TaskRequest::KerberosTGTs(uid, gid, tgt_cloud, tgt_ad))) => {
+                debug!("Received task -> KerberosTGTs({}, {}, ...)", uid, gid);
+
+                let cloud_ret = if let Some(tgt_cloud) = tgt_cloud {
+                    store_tgt(tgt_cloud.as_ref(), uid, gid)
+                } else {
+                    Ok(())
+                };
+
+                let ad_ret = if let Some(tgt_ad) = tgt_ad {
+                    store_tgt(tgt_ad.as_ref(), uid, gid)
+                } else {
+                    Ok(())
+                };
+
+                let response = match cloud_ret.and(ad_ret) {
+                    Ok(_) => TaskResponse::Success(0),
+                    Err(msg) => TaskResponse::Error(msg),
+                };
                 if let Err(e) = reqs.send(response).await {
                     error!("Error -> {:?}", e);
                     return;
@@ -586,9 +636,9 @@ async fn handle_tasks(stream: UnixStream, cfg: &HimmelblauConfig) {
                     // cross-user aliasing. Reject rather than strip to avoid
                     // collisions (e.g. "a/lice" and "alice" mapping to the same file).
                     if account_id.is_empty()
-                        || !account_id
-                            .chars()
-                            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '@' | '.' | '_' | '-'))
+                        || !account_id.chars().all(|c| {
+                            c.is_ascii_alphanumeric() || matches!(c, '@' | '.' | '_' | '-')
+                        })
                     {
                         error!(
                             "Invalid account_id for profile photo - disallowed characters, rejecting"

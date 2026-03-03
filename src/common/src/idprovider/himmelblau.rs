@@ -66,6 +66,7 @@ use kanidm_hsm_crypto::{
     structures::LoadableMsOapxbcRsaKey, PinValue,
 };
 use libc::getpwnam;
+use libkrimes::proto::KerberosCredentials;
 use regex::Regex;
 use reqwest;
 use reqwest::Url;
@@ -438,19 +439,24 @@ impl IdProvider for HimmelblauMultiProvider {
         }
     }
 
-    async fn unix_user_ccaches<D: KeyStoreTxn + Send>(
+    async fn unix_user_tgts<D: KeyStoreTxn + Send>(
         &self,
         id: &Id,
         old_token: Option<&UserToken>,
         keystore: &mut D,
         tpm: &mut tpm::provider::BoxedDynTpm,
         machine_key: &tpm::structures::StorageKey,
-    ) -> (Vec<u8>, Vec<u8>) {
+    ) -> (
+        Option<Box<KerberosCredentials>>,
+        Option<Box<KerberosCredentials>>,
+        Option<String>,
+        Option<String>,
+    ) {
         let account_id = match old_token {
             Some(token) => token.spn.clone(),
             None => id.to_string().clone(),
         };
-        let empty = (vec![], vec![]);
+        let empty = (None, None, None, None);
         let Ok(domain) = idp_get_domain_for_account!(self, &account_id) else {
             return empty;
         };
@@ -463,12 +469,12 @@ impl IdProvider for HimmelblauMultiProvider {
         match provider {
             Providers::Oidc(provider) => {
                 provider
-                    .unix_user_ccaches(id, old_token, keystore, tpm, machine_key)
+                    .unix_user_tgts(id, old_token, keystore, tpm, machine_key)
                     .await
             }
             Providers::Himmelblau(provider) => {
                 provider
-                    .unix_user_ccaches(id, old_token, keystore, tpm, machine_key)
+                    .unix_user_tgts(id, old_token, keystore, tpm, machine_key)
                     .await
             }
         }
@@ -919,24 +925,29 @@ impl IdProvider for HimmelblauProvider {
     }
 
     #[instrument(skip_all)]
-    async fn unix_user_ccaches<D: KeyStoreTxn + Send>(
+    async fn unix_user_tgts<D: KeyStoreTxn + Send>(
         &self,
         id: &Id,
         old_token: Option<&UserToken>,
         _keystore: &mut D,
         tpm: &mut tpm::provider::BoxedDynTpm,
         machine_key: &tpm::structures::StorageKey,
-    ) -> (Vec<u8>, Vec<u8>) {
+    ) -> (
+        Option<Box<KerberosCredentials>>,
+        Option<Box<KerberosCredentials>>,
+        Option<String>,
+        Option<String>,
+    ) {
         if (self.delayed_init().await).is_err() {
             // We can't fetch krb5 tgts when initialization hasn't
             // completed. This only happens when we're offline during first
             // startup. This should never happen!
-            return (vec![], vec![]);
+            return (None, None, None, None);
         }
 
         if !self.check_online(tpm, SystemTime::now()).await {
             // We can't fetch krb5 tgts when offline
-            return (vec![], vec![]);
+            return (None, None, None, None);
         }
 
         let account_id = match old_token {
@@ -950,29 +961,43 @@ impl IdProvider for HimmelblauProvider {
                     "Failed fetching refresh cache entry for Kerberos CCache: {:?}",
                     e
                 );
-                return (vec![], vec![]);
+                return (None, None, None, None);
             }
         };
         let prt = match refresh_cache_entry {
             RefreshCacheEntry::Prt(prt) => prt,
             RefreshCacheEntry::RefreshToken(_) => {
                 // We need a PRT to fetch Kerberos CCaches
-                return (vec![], vec![]);
+                return (None, None, None, None);
             }
         };
         let cloud_ccache = self
             .client
             .read()
             .await
-            .fetch_cloud_ccache(&prt, tpm, machine_key)
-            .unwrap_or(vec![]);
+            .fetch_cloud_tgt(&prt, tpm, machine_key)
+            .ok();
         let ad_ccache = self
             .client
             .read()
             .await
-            .fetch_ad_ccache(&prt, tpm, machine_key)
-            .unwrap_or(vec![]);
-        (cloud_ccache, ad_ccache)
+            .fetch_ad_tgt(&prt, tpm, machine_key)
+            .ok();
+        let top_level_names = self
+            .client
+            .read()
+            .await
+            .unseal_prt_kerberos_top_level_names(&prt, tpm, machine_key)
+            .ok();
+        let tenant_id = match old_token {
+            Some(t) => t.tenant_id.map(|u| u.to_string()),
+            None => match self.config.read().await.get_tenant_id(&self.domain) {
+                Some(t) => Some(t),
+                None => self.graph.tenant_id().await.ok(),
+            },
+        };
+
+        (cloud_ccache, ad_ccache, top_level_names, tenant_id)
     }
 
     #[instrument(skip_all)]

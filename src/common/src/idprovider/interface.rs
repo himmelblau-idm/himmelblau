@@ -13,6 +13,7 @@ use crate::unix_proto::{PamAuthRequest, PamAuthResponse};
 use async_trait::async_trait;
 use himmelblau::{AuthOption, MFAAuthContinue, UserToken as UnixUserToken};
 use kanidm_hsm_crypto::structures::SealedData;
+use libkrimes::proto::KerberosCredentials;
 use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::time::SystemTime;
@@ -259,14 +260,19 @@ pub trait IdProvider {
         _machine_key: &tpm::structures::StorageKey,
     ) -> Result<UnixUserToken, IdpError>;
 
-    async fn unix_user_ccaches<D: KeyStoreTxn + Send>(
+    async fn unix_user_tgts<D: KeyStoreTxn + Send>(
         &self,
         _id: &Id,
         _old_token: Option<&UserToken>,
         _keystore: &mut D,
         _tpm: &mut tpm::provider::BoxedDynTpm,
         _machine_key: &tpm::structures::StorageKey,
-    ) -> (Vec<u8>, Vec<u8>);
+    ) -> (
+        Option<Box<KerberosCredentials>>,
+        Option<Box<KerberosCredentials>>,
+        Option<String>,
+        Option<String>,
+    );
 
     async fn unix_user_prt_cookie<D: KeyStoreTxn + Send>(
         &self,

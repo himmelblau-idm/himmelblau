@@ -11,6 +11,7 @@
 // use async_trait::async_trait;
 use hashbrown::HashSet;
 use libc::uid_t;
+use libkrimes::proto::KerberosCredentials;
 use std::collections::BTreeSet;
 use std::fmt::Display;
 use std::fs;
@@ -636,10 +637,17 @@ where
         }
     }
 
-    pub async fn get_user_ccaches(
+    pub async fn get_user_tgts(
         &self,
         account_id: Id,
-    ) -> Option<(uid_t, uid_t, Vec<u8>, Vec<u8>)> {
+    ) -> Option<(
+        uid_t,
+        uid_t,
+        Option<Box<KerberosCredentials>>,
+        Option<Box<KerberosCredentials>>,
+        Option<String>,
+        Option<String>,
+    )> {
         // Validate the user isn't in the nxset (aka, it's a local user or group).
         let (name, idnumber) = match account_id.clone() {
             Id::Name(name) => (Some(name), None),
@@ -660,9 +668,9 @@ where
         let mut hsm_lock = self.hsm.lock().await;
         let mut dbtxn = self.db.write().await;
 
-        let (cloud_ccache, ad_ccache) = self
+        let (cloud_ccache, ad_ccache, top_level_names, tenant_id) = self
             .client
-            .unix_user_ccaches(
+            .unix_user_tgts(
                 &account_id,
                 Some(&token),
                 &mut dbtxn,
@@ -682,6 +690,8 @@ where
             token.real_gidnumber.unwrap_or(token.gidnumber),
             cloud_ccache,
             ad_ccache,
+            top_level_names,
+            tenant_id,
         ))
     }
 

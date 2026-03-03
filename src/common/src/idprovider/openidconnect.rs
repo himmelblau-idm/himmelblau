@@ -1625,16 +1625,20 @@ impl IdProvider for OidcProvider {
         )
     }
 
-    #[instrument(level = "debug", skip_all)]
-    async fn unix_user_ccaches<D: KeyStoreTxn + Send>(
+    async fn unix_user_tgts<D: KeyStoreTxn + Send>(
         &self,
         _id: &Id,
         _old_token: Option<&UserToken>,
         _keystore: &mut D,
         _tpm: &mut tpm::provider::BoxedDynTpm,
         _machine_key: &tpm::structures::StorageKey,
-    ) -> (Vec<u8>, Vec<u8>) {
-        (vec![], vec![])
+    ) -> (
+        Option<Box<libkrimes::proto::KerberosCredentials>>,
+        Option<Box<libkrimes::proto::KerberosCredentials>>,
+        Option<String>,
+        Option<String>,
+    ) {
+        (None, None, None, None)
     }
 
     #[instrument(level = "debug", skip_all)]
