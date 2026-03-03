@@ -28,6 +28,7 @@ use serde_json::json;
 use std::error::Error;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
+use url::Url;
 
 #[derive(Serialize, Deserialize, Debug)]
 struct AccountReq {
@@ -53,6 +54,19 @@ struct TokenReq {
 #[derive(Serialize, Deserialize, Debug)]
 struct SsoCookieReq {
     account: AccountReq,
+    #[serde(rename = "ssoUrl")]
+    sso_url: Option<String>,
+}
+
+/// Extract the `sso_nonce` query parameter from an SSO URL, if present.
+/// Returns `None` when the parameter is missing or empty/whitespace-only.
+fn extract_sso_nonce(sso_url: Option<&str>) -> Option<String> {
+    let url_str = sso_url?;
+    let url = Url::parse(url_str).ok()?;
+    url.query_pairs()
+        .find(|(k, _)| k == "sso_nonce")
+        .map(|(_, v)| v.into_owned())
+        .filter(|v| !v.trim().is_empty())
 }
 
 #[derive(Clone)]
@@ -185,9 +199,18 @@ impl HimmelblauBroker for Broker {
         if request.account.username.to_lowercase() != user.spn.to_lowercase() {
             return Err("Invalid request for user!".into());
         }
+        // Extract sso_nonce from the ssoUrl query parameter if present.
+        // When no sso_nonce is provided (proactive SSO flow, e.g. the linux-entra-sso
+        // extension setting a static header), the cookie will be generated
+        // with an iat claim instead of a server nonce, giving it a longer
+        // validity window.
+        let sso_nonce = extract_sso_nonce(request.sso_url.as_deref());
         let prt = self
             .cachelayer
-            .get_user_prt_cookie(Id::Name(user.spn.clone()))
+            .get_user_prt_cookie(
+                Id::Name(user.spn.clone()),
+                sso_nonce.as_deref(),
+            )
             .await
             .ok_or("Failed to fetch prt sso cookie")?;
         let res = json!({
