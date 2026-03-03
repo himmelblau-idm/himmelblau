@@ -299,16 +299,6 @@ impl PamHooks for PamKanidm {
 
     #[instrument(skip(pamh, args, flags))]
     fn sm_chauthtok(pamh: &PamHandle, args: Vec<&CStr>, flags: PamFlag) -> PamResultCode {
-        if flags & PAM_PRELIM_CHECK != 0 {
-            return PamResultCode::PAM_SUCCESS;
-        }
-
-        if flags & PAM_UPDATE_AUTHTOK == 0 {
-            // If this isn't a PAM_PRELIM_CHECK, and not a PAM_UPDATE_AUTHTOK,
-            // what is it?
-            return PamResultCode::PAM_SERVICE_ERR;
-        }
-
         let opts = match Options::try_from(&args) {
             Ok(o) => o,
             Err(_) => return PamResultCode::PAM_SERVICE_ERR,
@@ -336,9 +326,11 @@ impl PamHooks for PamKanidm {
             None => cfg.map_name_to_upn(&account_id),
         };
 
-        // Local user (no UPN): not a Himmelblau/Entra account. Skip before touching the
-        // daemon so local password changes (e.g. sudo passwd <local_user>) never depend
-        // on himmelblaud and continue to pam_unix.
+        // Local user (no UPN): not a Himmelblau/Entra account. Return PAM_IGNORE
+        // for BOTH PAM_PRELIM_CHECK and PAM_UPDATE_AUTHTOK so that pam_unix runs
+        // in both phases. Previously PAM_PRELIM_CHECK returned PAM_SUCCESS
+        // unconditionally, which with [success=end ...] skipped pam_unix's prelim
+        // check and left it unable to handle the UPDATE_AUTHTOK phase.
         let (_, domain) = match split_username(&account_id) {
             Some(resp) => resp,
             None => {
@@ -346,6 +338,16 @@ impl PamHooks for PamKanidm {
                 return PamResultCode::PAM_IGNORE;
             }
         };
+
+        if flags & PAM_PRELIM_CHECK != 0 {
+            return PamResultCode::PAM_SUCCESS;
+        }
+
+        if flags & PAM_UPDATE_AUTHTOK == 0 {
+            // If this isn't a PAM_PRELIM_CHECK, and not a PAM_UPDATE_AUTHTOK,
+            // what is it?
+            return PamResultCode::PAM_SERVICE_ERR;
+        }
 
         let mut daemon_client = match DaemonClientBlocking::new(cfg.get_socket_path().as_str()) {
             Ok(dc) => dc,
