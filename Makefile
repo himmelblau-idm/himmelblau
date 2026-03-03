@@ -205,7 +205,7 @@ package: deb rpm sbom ## Build packages for all supported distros (DEB+RPM)
 	ls ./packaging/
 
 man: ## Generate the himmelblau.conf man page
-	python3 scripts/gen_param_code.py --gen-man --man-output man/man5/himmelblau.conf.5
+	python3 src/common/scripts/gen_param_code.py --gen-man --man-output man/man5/himmelblau.conf.5
 
 # ---- failure tracking (used by deb/rpm/package) ----
 FAIL_DIR := $(CURDIR)/target/fail

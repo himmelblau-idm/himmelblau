@@ -55,13 +55,13 @@ fi
 # Files/directories that trigger regeneration
 WATCHED_PATHS=(
     "docs-xml/himmelblauconf/"
-    "scripts/gen_param_code.py"
+    "src/common/scripts/gen_param_code.py"
 )
 
 # Output files that get regenerated
 NIX_OUTPUT="nix/modules/himmelblau-options.nix"
 MAN_OUTPUT="man/man5/himmelblau.conf.5"
-GENERATOR_SCRIPT="scripts/gen_param_code.py"
+GENERATOR_SCRIPT="src/common/scripts/gen_param_code.py"
 
 # Check if any watched paths have staged changes
 needs_regeneration() {

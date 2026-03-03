@@ -4,4 +4,4 @@ all: himmelblau.conf
 
 # Generate himmelblau.conf(5) man page from XML parameter definitions
 himmelblau.conf:
-	python3 ../scripts/gen_param_code.py --gen-man --man-output man5/himmelblau.conf.5
+	python3 ../src/common/scripts/gen_param_code.py --gen-man --man-output man5/himmelblau.conf.5

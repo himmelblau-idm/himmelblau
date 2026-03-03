@@ -87,7 +87,7 @@ in
       };
 
       # Note: settings options are now defined in himmelblau-options.nix
-      # which is auto-generated from docs-xml/ by scripts/gen_param_code.py
+      # which is auto-generated from docs-xml/ by src/common/scripts/gen_param_code.py
     };
   };
 
