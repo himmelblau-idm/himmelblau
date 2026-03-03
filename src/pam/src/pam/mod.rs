@@ -493,7 +493,7 @@ impl PamHooks for PamKanidm {
         };
         match conv.send(
             PAM_TEXT_INFO,
-            "This command changes your local Hello PIN, NOT your Entra Id password.",
+            "This command changes your Hello PIN. Entra ID MFA is required to verify your identity.",
         ) {
             Ok(_) => {}
             Err(err) => {
@@ -504,84 +504,7 @@ impl PamHooks for PamKanidm {
             }
         }
 
-        let mut pin;
-        loop {
-            pin = match conv.send(PAM_PROMPT_ECHO_OFF, "New PIN: ") {
-                Ok(password) => match password {
-                    Some(cred) => {
-                        if cred.len() < cfg.get_hello_pin_min_length() {
-                            match conv.send(
-                                PAM_TEXT_INFO,
-                                &format!(
-                                    "Chosen pin is too short! {} chars required.",
-                                    cfg.get_hello_pin_min_length()
-                                ),
-                            ) {
-                                Ok(_) => {}
-                                Err(err) => {
-                                    if opts.debug {
-                                        println!("Message prompt failed");
-                                    }
-                                    return err;
-                                }
-                            }
-                            continue;
-                        } else if is_simple_pin(&cred) {
-                            match conv
-                                .send(PAM_TEXT_INFO, "PIN must not use repeating or predictable sequences. Avoid patterns like '111111', '123456', or '135791'.")
-                            {
-                                Ok(_) => {}
-                                Err(err) => {
-                                    if opts.debug {
-                                        println!("Message prompt failed");
-                                    }
-                                    return err;
-                                }
-                            }
-                            thread::sleep(Duration::from_secs(2));
-                            continue;
-                        }
-                        cred
-                    }
-                    None => {
-                        debug!("no pin");
-                        return PamResultCode::PAM_CRED_INSUFFICIENT;
-                    }
-                },
-                Err(err) => {
-                    debug!("unable to get pin");
-                    return err;
-                }
-            };
-
-            let confirm = match conv.send(PAM_PROMPT_ECHO_OFF, "Confirm PIN: ") {
-                Ok(password) => match password {
-                    Some(cred) => cred,
-                    None => {
-                        debug!("no confirmation pin");
-                        return PamResultCode::PAM_CRED_INSUFFICIENT;
-                    }
-                },
-                Err(err) => {
-                    debug!("unable to get confirmation pin");
-                    return err;
-                }
-            };
-
-            if pin == confirm {
-                break;
-            } else {
-                match conv.send(PAM_TEXT_INFO, "Inputs did not match. Try again.") {
-                    Ok(_) => {}
-                    Err(err) => {
-                        if opts.debug {
-                            println!("Message prompt failed");
-                        }
-                        return err;
-                    }
-                }
-            }
-        }
+        // `domain` was already computed from `split_username(&account_id)` earlier; reuse it here.
 
         let rt = match Runtime::new() {
             Ok(rt) => rt,
@@ -606,44 +529,29 @@ impl PamHooks for PamKanidm {
 
         let oidc_client = cfg.get_oidc_issuer_url().is_some();
         let token = if !oidc_client {
-            let mut auth_options = vec![AuthOption::Fido];
+            // Use ForceMFA so Entra does not skip the second factor even if
+            // the account has a recent sign-in. Passwordless is included so
+            // that accounts without a password (phone sign-in, FIDO2) can
+            // still change their Hello PIN — passwordless IS MFA.
+            let mut auth_options = vec![AuthOption::Fido, AuthOption::ForceMFA];
             if cfg.get_enable_passwordless() {
                 auth_options.push(AuthOption::Passwordless);
             }
-            let auth_init = match rt.block_on(async {
-                app.check_user_exists(&account_id, None, &auth_options)
-                    .await
-            }) {
-                Ok(auth_init) => auth_init,
-                Err(e) => {
-                    error!("{:?}", e);
-                    return PamResultCode::PAM_AUTH_ERR;
+
+            // For password-based accounts, prompt for the Entra password.
+            // For passwordless accounts, pass None — the MFA flow will use
+            // the appropriate method (phone sign-in, FIDO2, etc.).
+            let password = match conv.send(PAM_PROMPT_ECHO_OFF, "Entra ID Password (leave blank for passwordless): ") {
+                Ok(password) => match password {
+                    Some(cred) if !cred.is_empty() => Some(cred),
+                    _ => None,
+                },
+                Err(err) => {
+                    debug!("unable to get password");
+                    return err;
                 }
             };
 
-            let password = if !auth_init.passwordless() {
-                match conv.send(PAM_PROMPT_ECHO_OFF, "Entra Id Password: ") {
-                    Ok(password) => match password {
-                        Some(cred) => Some(cred),
-                        None => {
-                            debug!("no password");
-                            return PamResultCode::PAM_CRED_INSUFFICIENT;
-                        }
-                    },
-                    Err(err) => {
-                        debug!("unable to get password");
-                        return err;
-                    }
-                }
-            } else {
-                None
-            };
-
-            // Initiate MFA flow. If the server signals that a password is
-            // required (PasswordRequired), prompt for the Entra Id password
-            // and retry once — this happens when check_user_exists() reported
-            // the account as passwordless but the MFA flow itself demands a
-            // password (e.g. policy change or conditional access).
             let mut mfa_req = match rt.block_on(async {
                 app.initiate_acquire_token_by_mfa_flow(
                     &account_id,
@@ -651,47 +559,12 @@ impl PamHooks for PamKanidm {
                     vec![],
                     None,
                     &auth_options,
-                    Some(auth_init),
+                    None,
                     cfg.get_mfa_method().as_deref(),
                 )
                 .await
             }) {
                 Ok(mfa) => mfa,
-                Err(MsalError::PasswordRequired) => {
-                    // Server requires a password even though check_user_exists
-                    // didn't indicate it. Prompt and retry without auth_init so
-                    // the library starts a fresh MFA flow with the password.
-                    let retry_password = match conv.send(PAM_PROMPT_ECHO_OFF, "Entra Id Password: ")
-                    {
-                        Ok(Some(cred)) => cred,
-                        Ok(None) => {
-                            debug!("no password provided");
-                            return PamResultCode::PAM_CRED_INSUFFICIENT;
-                        }
-                        Err(err) => {
-                            debug!("unable to get password");
-                            return err;
-                        }
-                    };
-                    match rt.block_on(async {
-                        app.initiate_acquire_token_by_mfa_flow(
-                            &account_id,
-                            Some(retry_password.as_str()),
-                            vec![],
-                            None,
-                            &auth_options,
-                            None,
-                            cfg.get_mfa_method().as_deref(),
-                        )
-                        .await
-                    }) {
-                        Ok(mfa) => mfa,
-                        Err(e) => {
-                            error!("{:?}", e);
-                            return PamResultCode::PAM_AUTH_ERR;
-                        }
-                    }
-                }
                 Err(e) => {
                     error!("{:?}", e);
                     return PamResultCode::PAM_AUTH_ERR;
@@ -710,7 +583,6 @@ impl PamHooks for PamKanidm {
                             return PamResultCode::PAM_CRED_INSUFFICIENT;
                         }
                     };
-
                     let fido_allow_list = match mfa_req.fido_allow_list {
                         Some(ref fido_allow_list) => fido_allow_list.clone(),
                         None => {
@@ -831,11 +703,10 @@ impl PamHooks for PamKanidm {
                     return PamResultCode::PAM_AUTH_ERR;
                 }
             };
-
             let flow = match rt.block_on(async { client.initiate_device_flow().await }) {
                 Ok(token) => token,
                 Err(e) => {
-                    error!(err = ?e, "acquire_token_by_refresh_token_token_fetch");
+                    error!(err = ?e, "initiate_device_flow");
                     return PamResultCode::PAM_AUTH_ERR;
                 }
             };
@@ -846,7 +717,6 @@ impl PamHooks for PamKanidm {
                     return PamResultCode::PAM_AUTH_ERR;
                 }
             };
-
             match conv.send(PAM_TEXT_INFO, &mfa_req.msg) {
                 Ok(_) => {}
                 Err(err) => {
@@ -883,23 +753,141 @@ impl PamHooks for PamKanidm {
             }
         };
 
+        // MFA passed — now prompt for current PIN (to re-key the Hello blob)
+        // and the new PIN.
+        let old_pin = match conv.send(PAM_PROMPT_ECHO_OFF, "Current PIN: ") {
+            Ok(Some(cred)) => cred,
+            Ok(None) => {
+                debug!("no current pin");
+                return PamResultCode::PAM_CRED_INSUFFICIENT;
+            }
+            Err(err) => {
+                debug!("unable to get current pin");
+                return err;
+            }
+        };
+
+        let mut new_pin;
+        loop {
+            new_pin = match conv.send(PAM_PROMPT_ECHO_OFF, "New PIN: ") {
+                Ok(password) => match password {
+                    Some(cred) => {
+                        if cred.len() < cfg.get_hello_pin_min_length() {
+                            match conv.send(
+                                PAM_TEXT_INFO,
+                                &format!(
+                                    "Chosen PIN is too short! {} chars required.",
+                                    cfg.get_hello_pin_min_length()
+                                ),
+                            ) {
+                                Ok(_) => {}
+                                Err(err) => {
+                                    if opts.debug {
+                                        println!("Message prompt failed");
+                                    }
+                                    return err;
+                                }
+                            }
+                            continue;
+                        } else if is_simple_pin(&cred) {
+                            match conv.send(
+                                PAM_TEXT_INFO,
+                                "PIN must not use repeating or predictable sequences. \
+                                 Avoid patterns like '111111', '123456', or '135791'.",
+                            ) {
+                                Ok(_) => {}
+                                Err(err) => {
+                                    if opts.debug {
+                                        println!("Message prompt failed");
+                                    }
+                                    return err;
+                                }
+                            }
+                            thread::sleep(Duration::from_secs(2));
+                            continue;
+                        }
+                        cred
+                    }
+                    None => {
+                        debug!("no pin");
+                        return PamResultCode::PAM_CRED_INSUFFICIENT;
+                    }
+                },
+                Err(err) => {
+                    debug!("unable to get pin");
+                    return err;
+                }
+            };
+
+            let confirm = match conv.send(PAM_PROMPT_ECHO_OFF, "Confirm PIN: ") {
+                Ok(password) => match password {
+                    Some(cred) => cred,
+                    None => {
+                        debug!("no confirmation pin");
+                        return PamResultCode::PAM_CRED_INSUFFICIENT;
+                    }
+                },
+                Err(err) => {
+                    debug!("unable to get confirmation pin");
+                    return err;
+                }
+            };
+
+            if new_pin == confirm {
+                break;
+            } else {
+                match conv.send(PAM_TEXT_INFO, "Inputs did not match. Try again.") {
+                    Ok(_) => {}
+                    Err(err) => {
+                        if opts.debug {
+                            println!("Message prompt failed");
+                        }
+                        return err;
+                    }
+                }
+            }
+        }
+
+        let access_token = match token.access_token.clone() {
+            Some(at) => at,
+            None => {
+                error!("MFA flow completed but access_token is missing");
+                return PamResultCode::PAM_AUTH_ERR;
+            }
+        };
+
         let req = ClientRequest::PamChangeAuthToken(
             account_id,
-            match token.access_token.clone() {
-                Some(access_token) => access_token,
-                None => {
-                    error!("Failed fetching access token for pin change");
-                    return PamResultCode::PAM_AUTH_ERR;
-                }
-            },
+            access_token,
             token.refresh_token.clone(),
-            pin,
+            old_pin,
+            new_pin.clone(),
         );
 
-        match daemon_client.call_and_wait(&req, cfg.get_unix_sock_timeout()) {
+        // TPM key generation during PIN enrollment can take several minutes on
+        // slow or virtualised hardware. Use a dedicated larger timeout here.
+        match daemon_client.call_and_wait(&req, DEFAULT_TPM_SOCK_TIMEOUT) {
             Ok(ClientResponse::Ok) => {
                 debug!("PamResultCode::PAM_SUCCESS");
+                // Publish the new PIN as PAM_AUTHTOK so downstream modules
+                // (e.g. pam_gnome_keyring) can update the keyring password.
+                if opts.set_authtok {
+                    if let Err(err) = pamh.set_item_str::<PamAuthTok>(&new_pin) {
+                        error!(?err, "Failed to set PAM_AUTHTOK after PIN change");
+                    } else {
+                        debug!("Set PAM_AUTHTOK to new PIN for keyring update");
+                    }
+                }
                 PamResultCode::PAM_SUCCESS
+            }
+            Ok(ClientResponse::Error) => {
+                // BadRequest from the daemon means wrong old PIN.
+                debug!("PamResultCode::PAM_AUTH_ERR (wrong PIN or no Hello key)");
+                match conv.send(PAM_TEXT_INFO, "PIN change failed: incorrect current PIN or no Hello key enrolled.") {
+                    Ok(_) => {}
+                    Err(_) => {}
+                }
+                PamResultCode::PAM_AUTH_ERR
             }
             other => {
                 debug!(err = ?other, "PamResultCode::PAM_AUTH_ERR");
