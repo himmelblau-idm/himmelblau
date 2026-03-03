@@ -17,6 +17,7 @@
 */
 use crate::client_sync::DaemonClientBlocking;
 use crate::config::HimmelblauConfig;
+use crate::constants::DEFAULT_TPM_SOCK_TIMEOUT;
 use crate::hello_pin_complexity::{is_simple_pin, meets_intune_pin_policy};
 use crate::unix_proto::{ClientRequest, ClientResponse, PamAuthRequest, PamAuthResponse};
 use regex::{Match, Regex};
@@ -792,10 +793,15 @@ fn authenticate_request_response(
     state: &mut AuthenticateState,
     req: &ClientRequest,
 ) -> PamWhatNext {
-    let cli_res = match state
-        .daemon_client
-        .call_and_wait(req, state.cfg.get_unix_sock_timeout())
-    {
+    // TPM key generation can take several minutes on slow/virtual hardware.
+    // Use an extended timeout for SetupPin; normal timeout for everything else.
+    let timeout = match req {
+        ClientRequest::PamAuthenticateStep(PamAuthRequest::SetupPin { .. }) => {
+            DEFAULT_TPM_SOCK_TIMEOUT
+        }
+        _ => state.cfg.get_unix_sock_timeout(),
+    };
+    let cli_res = match state.daemon_client.call_and_wait(req, timeout) {
         Ok(res) => res,
         Err(err) => {
             error!(?err, "PAM_IGNORE");
