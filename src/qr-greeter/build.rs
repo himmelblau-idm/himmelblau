@@ -442,14 +442,5 @@ fn main() {
         // Copy the modern extension files
         copy_dir_recursive(&src_ext_dir, &build_output_dir)
             .expect("Failed to copy modern extension files");
-
-        // Copy PNG assets
-        for png in ["msdag.png", "ms-consumer-dag.png"] {
-            let src = src_assets_dir.join(png);
-            let dst = build_output_dir.join(png);
-            if src.exists() {
-                fs::copy(&src, &dst).expect("Failed to copy PNG asset");
-            }
-        }
     }
 }
