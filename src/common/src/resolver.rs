@@ -753,11 +753,12 @@ where
         }
     }
 
-    pub async fn change_auth_token(
+    pub async fn change_auth_token_pin(
         &self,
         account_id: &str,
         token: &UnixUserToken,
-        new_tok: &str,
+        old_pin: &str,
+        new_pin: &str,
     ) -> Result<bool, ()> {
         // Validate the user isn't in the nxset (aka, it's a local user or group).
         if self.check_nxset(Some(account_id), None).await {
@@ -769,10 +770,11 @@ where
 
         let res = self
             .client
-            .change_auth_token(
+            .change_auth_token_pin(
                 account_id,
                 token,
-                new_tok,
+                old_pin,
+                new_pin,
                 &mut dbtxn,
                 hsm_lock.deref_mut(),
                 &self.machine_key,
