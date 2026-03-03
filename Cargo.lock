@@ -2165,6 +2165,7 @@ dependencies = [
  "tokio-util",
  "tracing",
  "tracing-subscriber",
+ "url",
  "uuid",
  "uzers",
  "walkdir",
@@ -2897,9 +2898,9 @@ dependencies = [
 
 [[package]]
 name = "libhimmelblau"
-version = "0.8.12"
+version = "0.8.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7d3cae0a95f6b7f4033c587439dc9dac9722978b78616f9157c2dee539e677b1"
+checksum = "5f334d66cd0dae52a74d30dccbfd178e5ecac59f17cca8bc5d9915bdc1186039"
 dependencies = [
  "base64 0.22.1",
  "cbindgen",
