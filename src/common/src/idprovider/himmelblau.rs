@@ -443,6 +443,7 @@ impl IdProvider for HimmelblauMultiProvider {
         &self,
         id: &Id,
         old_token: Option<&UserToken>,
+        sso_nonce: Option<&str>,
         tpm: &mut tpm::provider::BoxedDynTpm,
         machine_key: &tpm::structures::StorageKey,
     ) -> Result<String, IdpError> {
@@ -455,7 +456,7 @@ impl IdProvider for HimmelblauMultiProvider {
         let provider = find_provider!(self, providers, domain)?;
 
         provider
-            .unix_user_prt_cookie(id, old_token, tpm, machine_key)
+            .unix_user_prt_cookie(id, old_token, sso_nonce, tpm, machine_key)
             .await
     }
 
@@ -929,6 +930,7 @@ impl IdProvider for HimmelblauProvider {
         &self,
         id: &Id,
         old_token: Option<&UserToken>,
+        sso_nonce: Option<&str>,
         tpm: &mut tpm::provider::BoxedDynTpm,
         machine_key: &tpm::structures::StorageKey,
     ) -> Result<String, IdpError> {
@@ -949,7 +951,7 @@ impl IdProvider for HimmelblauProvider {
         self.client
             .read()
             .await
-            .acquire_prt_sso_cookie(&prt, tpm, machine_key)
+            .acquire_prt_sso_cookie_with_nonce(&prt, sso_nonce, tpm, machine_key)
             .await
             .map_err(|e| {
                 error!("Failed to request prt cookie: {:?}", e);
