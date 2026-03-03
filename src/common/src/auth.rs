@@ -22,6 +22,7 @@ use crate::unix_proto::{ClientRequest, ClientResponse, PamAuthRequest, PamAuthRe
 use regex::{Match, Regex};
 use std::sync::Arc;
 
+use lazy_static::lazy_static;
 use tracing::{debug, error};
 
 use std::thread;
@@ -351,6 +352,26 @@ fn handle_pam_auth_response_mfapoll(
             "{}\nNo push? Check your mobile device's internet connection.",
             msg
         )
+    } else if state.service != "gdm-password" {
+        lazy_static! {
+            // Avoid compiling a new Regex every time with a lazy_static ref
+            static ref RE: Option<Regex> =
+                Regex::new(r#"(?i)\bhttps?://[^\s<>"']+[^\s<>"'\]\[)\(\}\{.,;:!?]"#).ok();
+        }
+        // In case of any failure matching for URLs or generating the QR the
+        // plain message will be returned
+        if let Some(qr) = RE
+            .as_ref()
+            .and_then(|re| {
+                re.captures(msg)
+                    .and_then(|cap| cap.get(0).map(|x| x.as_str()))
+            })
+            .and_then(|url| generate_unicode_qr(url).ok())
+        {
+            format!("{}\n{}", msg, qr)
+        } else {
+            msg.to_string()
+        }
     } else {
         msg.to_string()
     };
@@ -492,34 +513,44 @@ fn handle_pam_auth_response_mfacode(state: &AuthenticateState, msg: &str) -> Pam
     PamWhatNext::Next(req)
 }
 
+fn generate_unicode_qr(content: &str) -> Result<String, String> {
+    match qrcodegen::QrCode::encode_text(content, qrcodegen::QrCodeEcc::Low) {
+        Ok(qr) => {
+            let mut buf = String::new();
+            let border: i32 = 4;
+            let full_block: char = '\u{2588}';
+            let half_upper_block: char = '\u{2580}';
+            let half_lower_block: char = '\u{2584}';
+            let white_block: char = '\u{0020}';
+
+            for y in (-border..qr.size() + border).step_by(2) {
+                for x in -border..qr.size() + border {
+                    let upper = qr.get_module(x, y);
+                    let lower = qr.get_module(x, y + 1);
+                    let c = match (upper, lower) {
+                        (true, true) => full_block,
+                        (true, false) => half_upper_block,
+                        (false, true) => half_lower_block,
+                        (false, false) => white_block,
+                    };
+                    buf.push(c);
+                }
+                buf.push('\n');
+            }
+            Ok(buf)
+        }
+        Err(e) => Err(e.to_string()),
+    }
+}
+
 fn handle_pam_auth_response_hellototp(state: &AuthenticateState, msg: &str) -> PamWhatNext {
     // GDM will render its own QR code if qr-greeter is installed.
     // Otherwise render with unicode chars.
     if msg.starts_with("otpauth://") && state.service != "gdm-password" {
-        match qrcodegen::QrCode::encode_text(msg, qrcodegen::QrCodeEcc::Low) {
+        match generate_unicode_qr(msg) {
             Ok(qr) => {
-                let mut buf = "Open your authenticator app and scan this QR code to enroll. Then enter the generated code.\n".to_string();
-                let border: i32 = 4;
-                let full_block: char = '\u{2588}';
-                let half_upper_block: char = '\u{2580}';
-                let half_lower_block: char = '\u{2584}';
-                let white_block: char = '\u{0020}';
-
-                for y in (-border..qr.size() + border).step_by(2) {
-                    for x in -border..qr.size() + border {
-                        let upper = qr.get_module(x, y);
-                        let lower = qr.get_module(x, y + 1);
-                        let c = match (upper, lower) {
-                            (true, true) => full_block,
-                            (true, false) => half_upper_block,
-                            (false, true) => half_lower_block,
-                            (false, false) => white_block,
-                        };
-                        buf.push(c);
-                    }
-                    buf.push('\n');
-                }
-                state.msg_printer.print_text(&buf);
+                let msg = format!("Open your authenticator app and scan this QR code to enroll. Then enter the generated code.\n{}", &qr);
+                state.msg_printer.print_text(&msg);
             }
             Err(e) => {
                 debug!("failed to generate QR code: {:?}", e);
