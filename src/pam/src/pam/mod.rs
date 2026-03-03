@@ -59,20 +59,12 @@ pub mod module;
 use std::convert::TryFrom;
 use std::ffi::CStr;
 
-use himmelblau::error::MsalError;
-use himmelblau::{AuthOption, PublicClientApplication};
-use himmelblau_unix_common::auth_handle_mfa_resp;
 use himmelblau_unix_common::client_sync::DaemonClientBlocking;
 use himmelblau_unix_common::config::{split_username, HimmelblauConfig};
-use himmelblau_unix_common::constants::BROKER_APP_ID;
-use himmelblau_unix_common::constants::DEFAULT_CONFIG_PATH;
+use himmelblau_unix_common::constants::{DEFAULT_CONFIG_PATH, DEFAULT_TPM_SOCK_TIMEOUT};
 use himmelblau_unix_common::hello_pin_complexity::is_simple_pin;
-use himmelblau_unix_common::idprovider::openidconnect::{
-    mfa_from_oidc_device, OidcApplication, OidcTokenResponseExt,
-};
 use himmelblau_unix_common::unix_proto::{ClientRequest, ClientResponse};
 use himmelblau_unix_common::user_map::UserMap;
-use std::thread::sleep;
 
 use crate::pam::constants::*;
 use crate::pam::conv::PamConv;
@@ -90,9 +82,17 @@ use tracing_subscriber::prelude::*;
 use std::thread;
 use std::time::Duration;
 
+use himmelblau::error::MsalError;
+use himmelblau::{AuthOption, PublicClientApplication};
 use himmelblau_unix_common::auth::{authenticate, fido_auth, MessagePrinter};
+use himmelblau_unix_common::constants::BROKER_APP_ID;
+use himmelblau_unix_common::idprovider::openidconnect::{
+    mfa_from_oidc_device, OidcApplication, OidcTokenResponseExt,
+};
 use himmelblau_unix_common::pam::Options;
+use himmelblau_unix_common::{auth_handle_mfa_resp, pam_fail};
 use std::sync::{Arc, Mutex};
+use std::thread::sleep;
 use tokio::runtime::Runtime;
 
 pub fn get_cfg() -> Result<HimmelblauConfig, PamResultCode> {
@@ -717,24 +717,14 @@ impl PamHooks for PamKanidm {
                             return PamResultCode::PAM_CRED_INSUFFICIENT;
                         }
                     };
-
                     let msg_printer = Arc::new(PamConvMessagePrinter::new(conv));
-                    let assertion = match fido_auth(
-                        msg_printer.clone(),
-                        fido_challenge,
-                        fido_allow_list,
-                    ) {
-                        Ok(assertion) => assertion,
-                        Err(e) => {
-                            msg_printer.print_text(&format!("{:?}: {}\n{}",
-                                e,
-                                "Entra Id Fido authentication failed.",
-                                "If you are now prompted for a password from pam_unix, please disregard the prompt, go back and try again."));
-                            thread::sleep(Duration::from_secs(2));
-                            // Abort the auth attempt, and don't continue executing the stack
-                            return PamResultCode::PAM_ABORT;
-                        }
-                    };
+                    let assertion =
+                        match fido_auth(msg_printer.clone(), fido_challenge, fido_allow_list) {
+                            Ok(assertion) => assertion,
+                            Err(e) => {
+                                pam_fail!(msg_printer, "Entra Id Fido authentication failed.", e);
+                            }
+                        };
                     match rt.block_on(async {
                         app.acquire_token_by_mfa_flow(
                             &account_id,
