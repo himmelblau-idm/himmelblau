@@ -681,7 +681,11 @@ where
         ))
     }
 
-    pub async fn get_user_prt_cookie(&self, account_id: Id) -> Option<String> {
+    pub async fn get_user_prt_cookie(
+        &self,
+        account_id: Id,
+        sso_nonce: Option<&str>,
+    ) -> Option<String> {
         // Validate the user isn't in the nxset (aka, it's a local user or group).
         let (name, idnumber) = match account_id.clone() {
             Id::Name(name) => (Some(name), None),
@@ -706,6 +710,7 @@ where
             .unix_user_prt_cookie(
                 &account_id,
                 Some(&token),
+                sso_nonce,
                 hsm_lock.deref_mut(),
                 &self.machine_key,
             )
