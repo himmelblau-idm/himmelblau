@@ -317,15 +317,6 @@ def main():
     print(f"Copying {css_src} -> {css_dst}")
     shutil.copy(css_src, css_dst)
 
-    # Copy PNG assets from the src directory (sibling to extension dir)
-    png_src_dir = src_dir.parent
-    for png_file in ["msdag.png", "ms-consumer-dag.png"]:
-        png_src = png_src_dir / png_file
-        png_dst = legacy_dir / png_file
-        if png_src.exists():
-            print(f"Copying {png_src} -> {png_dst}")
-            shutil.copy(png_src, png_dst)
-
     # Create legacy metadata.json
     metadata_dst = legacy_dir / "metadata.json"
     print(f"Creating {metadata_dst}")
