@@ -59,20 +59,12 @@ pub mod module;
 use std::convert::TryFrom;
 use std::ffi::CStr;
 
-use himmelblau::error::MsalError;
-use himmelblau::{AuthOption, PublicClientApplication};
-use himmelblau_unix_common::auth_handle_mfa_resp;
 use himmelblau_unix_common::client_sync::DaemonClientBlocking;
 use himmelblau_unix_common::config::{split_username, HimmelblauConfig};
-use himmelblau_unix_common::constants::BROKER_APP_ID;
-use himmelblau_unix_common::constants::DEFAULT_CONFIG_PATH;
+use himmelblau_unix_common::constants::{DEFAULT_CONFIG_PATH, DEFAULT_TPM_SOCK_TIMEOUT};
 use himmelblau_unix_common::hello_pin_complexity::is_simple_pin;
-use himmelblau_unix_common::idprovider::openidconnect::{
-    mfa_from_oidc_device, OidcApplication, OidcTokenResponseExt,
-};
 use himmelblau_unix_common::unix_proto::{ClientRequest, ClientResponse};
 use himmelblau_unix_common::user_map::UserMap;
-use std::thread::sleep;
 
 use crate::pam::constants::*;
 use crate::pam::conv::PamConv;
@@ -90,9 +82,17 @@ use tracing_subscriber::prelude::*;
 use std::thread;
 use std::time::Duration;
 
+use himmelblau::error::MsalError;
+use himmelblau::{AuthOption, PublicClientApplication};
 use himmelblau_unix_common::auth::{authenticate, fido_auth, MessagePrinter};
+use himmelblau_unix_common::constants::BROKER_APP_ID;
+use himmelblau_unix_common::idprovider::openidconnect::{
+    mfa_from_oidc_device, OidcApplication, OidcTokenResponseExt,
+};
 use himmelblau_unix_common::pam::Options;
+use himmelblau_unix_common::{auth_handle_mfa_resp, pam_fail};
 use std::sync::{Arc, Mutex};
+use std::thread::sleep;
 use tokio::runtime::Runtime;
 
 pub fn get_cfg() -> Result<HimmelblauConfig, PamResultCode> {
@@ -720,7 +720,6 @@ impl PamHooks for PamKanidm {
                             return PamResultCode::PAM_CRED_INSUFFICIENT;
                         }
                     };
-
                     let msg_printer = Arc::new(PamConvMessagePrinter::new(conv));
                     let fido_timeout_ms = cfg.get_fido_timeout().saturating_mul(1000);
                     let fido_prompt = cfg.get_fido_prompt();
