@@ -2012,7 +2012,7 @@ dependencies = [
  "compact_jwt",
  "configparser",
  "csv",
- "der 0.7.10",
+ "der 0.8.0",
  "futures",
  "hashbrown 0.16.1",
  "idmap",
@@ -2782,9 +2782,9 @@ dependencies = [
 
 [[package]]
 name = "libhimmelblau"
-version = "0.8.12"
+version = "0.8.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7d3cae0a95f6b7f4033c587439dc9dac9722978b78616f9157c2dee539e677b1"
+checksum = "5f334d66cd0dae52a74d30dccbfd178e5ecac59f17cca8bc5d9915bdc1186039"
 dependencies = [
  "base64 0.22.1",
  "cbindgen",
@@ -2862,7 +2862,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6a793df0d7afeac54f95b471d3af7f0d4fb975699f972341a4b76988d49cdf0c"
 dependencies = [
  "cfg-if",
- "windows-targets 0.52.6",
+ "windows-targets 0.53.0",
 ]
 
 [[package]]
@@ -5167,9 +5167,9 @@ dependencies = [
 
 [[package]]
 name = "tokio"
-version = "1.49.0"
+version = "1.50.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "72a2903cd7736441aac9df9d7688bd0ce48edccaadf181c3b90be801e81d3d86"
+checksum = "27ad5e34374e03cfffefc301becb44e9dc3c17584f414349ebe29ed26661822d"
 dependencies = [
  "bytes",
  "libc",
