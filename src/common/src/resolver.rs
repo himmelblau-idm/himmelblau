@@ -715,6 +715,7 @@ where
             .unix_user_prt_cookie(
                 &account_id,
                 Some(&token),
+                sso_nonce,
                 &mut dbtxn,
                 hsm_lock.deref_mut(),
                 &self.machine_key,

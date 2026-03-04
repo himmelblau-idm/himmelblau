@@ -494,12 +494,12 @@ impl IdProvider for HimmelblauMultiProvider {
         match provider {
             Providers::Oidc(provider) => {
                 provider
-                    .unix_user_prt_cookie(id, old_token, keystore, tpm, machine_key)
+                    .unix_user_prt_cookie(id, old_token, sso_nonce, keystore, tpm, machine_key)
                     .await
             }
             Providers::Himmelblau(provider) => {
                 provider
-                    .unix_user_prt_cookie(id, old_token, keystore, tpm, machine_key)
+                    .unix_user_prt_cookie(id, old_token, sso_nonce, keystore, tpm, machine_key)
                     .await
             }
         }
