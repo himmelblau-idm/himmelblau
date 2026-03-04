@@ -1313,6 +1313,23 @@ mod tests {
     }
 
     #[test]
+    fn test_get_enable_passwordless() {
+        let config_data = r#"
+        [global]
+        enable_passwordless = false
+        "#;
+
+        let temp_file = create_temp_config(config_data);
+        let config = HimmelblauConfig::new(Some(&temp_file)).unwrap();
+
+        assert_eq!(config.get_enable_passwordless(), false);
+
+        // Test that default is true (backward compat)
+        let config_empty = create_empty_config();
+        assert_eq!(config_empty.get_enable_passwordless(), true);
+    }
+
+    #[test]
     fn test_get_enable_experimental_mfa() {
         let config_data = r#"
         [global]
