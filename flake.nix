@@ -37,15 +37,22 @@
             ./nix/modules/himmelblau.nix
           ];
 
-          services.himmelblau.package =
+          services.himmelblau =
             let
               system = pkgs.stdenv.hostPlatform.system;
             in
-            self.packages.${system}.himmelblau;
+            {
+              daemonPackage = pkgs.lib.mkDefault self.packages.${system}.daemon;
+              ssoPackage = pkgs.lib.mkDefault self.packages.${system}.sso;
+              brokerPackage = pkgs.lib.mkDefault self.packages.${system}.broker;
+              pamPackage = pkgs.lib.mkDefault self.packages.${system}.pam;
+              nssPackage = pkgs.lib.mkDefault self.packages.${system}.nss;
+            };
         }
       );
 
-      devShells = eachSystem(system:
+      devShells = eachSystem (
+        system:
         let
           default = import ./default.nix { inherit system; };
           inherit (default.passthru) pkgs;

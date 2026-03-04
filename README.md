@@ -84,11 +84,23 @@ sudo apt install ./himmelblau_<version>.deb ./himmelblau-sshd-config_<version>.d
 
 ### NixOS
 
-Himmelblau provides 2 packages and a module:
+Himmelblau provides multiple packages and a module:
 
-- `himmelblau.packages.<arch>.himmelblau`: The core authentication daemon intended for server deployments. (default package)
-- `himmelblau.packages.<arch>.himmelblau-desktop`: The daemon and O365 Suite including integration with `linux_entra_sso`.
-- `himmelblau.modules.himmelblau`: A NixOS Module that provides the most common options and service definitions.
+These are automatically installed if you use the module:
+
+- `himmelblau.packages.<arch>.daemon`: The core authentication daemon intended for server deployments.
+- `himmelblau.packages.<arch>.pam`: Required for the pam integration to work - your daemon is a bit useless without it.
+- `himmelblau.packages.<arch>.nss`: Required for the nss integration to work - your daemon is a bit useless without it.
+- `himmelblau.packages.<arch>.broker`: This one is a userspace daemon that responds to calls from the `sso` package.
+
+You may want to install this one extra if you use a browser other than firefox / chrome:
+
+- `himmelblau.packages.<arch>.sso`: Used to facilitate the communication to the broker
+
+These two are optional and need to be installed by you:
+
+- `himmelblau.packages.<arch>.aad-tool`: The cli to interact with your daemon - you probably want to install it.
+- `himmelblau.packages.<arch>.o365`: Installs `teams-for-linux` with shortcuts to the o365 suite
 
 #### Enabling the himmelblau cachix cache
 
@@ -117,13 +129,14 @@ let
 in {
     imports = [ himmelblau.nixosModules.himmelblau ];
 
-    # To execute `aad-tool` you may want to add `himmelblau` to your system path
+    # To execute `aad-tool` you may want to add it to your system path
     environment.systemPackages = [
-      config.services.himmelblau.package
+      himmelblau.packages.aad-tool
+      # himmelblau.packages.o365 # <-- if you want the o365 suite with `teams-for-linux`
+      # himmelblau.packages.sso # <-- if you use an other browser than firefox / chrome
     ];
 
     services.himmelblau.enable = true;
-    #services.himmelblau.package = himmelblau.packages.himmelblau-desktop; # <-- if you want the o365 suite with `teams-for-linux` use the desktop variant
     services.himmelblau.settings = {
         domain = "my.domain.net";
         pam_allow_groups = [ "ENTRA-GROUP-GUID-HERE" ];
@@ -138,17 +151,18 @@ Classic NixOS configurations can use the `builtins.getFlake` function if they ha
 
 ```nix
 {lib, config, ...}:
-let himmelblau = builtins.getFlake "github:himmelblau-idm/himmelblau/0.9.0";
+let himmelblau = builtins.getFlake "github:himmelblau-idm/himmelblau";
 in {
     imports = [ himmelblau.nixosModules.himmelblau ];
 
     # To execute `aad-tool` you may want to add `himmelblau` to your system path
     environment.systemPackages = [
-      config.services.himmelblau.package
+      himmelblau.packages.aad-tool
+      # himmelblau.packages.o365 # <-- if you want the o365 suite with `teams-for-linux`
+      # himmelblau.packages.sso # <-- if you use an other browser than firefox / chrome
     ];
 
     services.himmelblau.enable = true;
-    #services.himmelblau.package = himmelblau.packages.himmelblau-desktop; # <-- if you want the o365 suite with `teams-for-linux` use the desktop variant
     services.himmelblau.settings = {
         domain = "my.domain.net";
         pam_allow_groups = [ "ENTRA-GROUP-GUID-HERE" ];
@@ -164,7 +178,7 @@ Flake based configurations add this repository to their inputs, enable the servi
 ```nix
 {
     inputs = {
-        nixpkgs.url = "github:nixos/nixpkgs/nixos-24.11";
+        nixpkgs.url = "github:nixos/nixpkgs/nixos-unstable";
         himmelblau.url = "github:himmelblau-idm/himmelblau/main";
         himmelblau.inputs.nixpkgs.follows = "nixpkgs";
     };
@@ -172,11 +186,12 @@ Flake based configurations add this repository to their inputs, enable the servi
         nixosModules.azureEntraId = { config, pkgs, lib, ... }: {
             imports = [ himmelblau.nixosModules.himmelblau ];
             environment.systemPackages = [
-                config.services.himmelblau.package
+              himmelblau.packages."x86_64-linux".aad-tool
+              # himmelblau.packages."x86_64-linux".o365 # <-- if you want the o365 suite with `teams-for-linux`
+              # himmelblau.packages.sso # <-- if you use an other browser than firefox / chrome
             ];
             services.himmelblau = {
                 enable = true;
-                #package = himmelblau.packages.himmelblau-desktop; # <-- if you want the o365 suite with `teams-for-linux` use the desktop variant
                 settings = {
                     domain = "my.domain.net";
                     pam_allow_groups = [ "ENTRA-GROUP-GUID-HERE" ];

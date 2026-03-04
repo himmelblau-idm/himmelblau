@@ -56,9 +56,29 @@ in
     services.himmelblau = {
       enable = lib.mkEnableOption "Himmelblau";
 
-      package = lib.mkOption {
+      daemonPackage = lib.mkOption {
         type = lib.types.path;
-        description = "Package to use for Himmelblau service.";
+        description = "Package of the himmelblau daemon";
+      };
+
+      ssoPackage = lib.mkOption {
+        type = lib.types.path;
+        description = "Package of the linux-entra-sso native messaging host";
+      };
+
+      brokerPackage = lib.mkOption {
+        type = lib.types.path;
+        description = "Package himmelblau_broker - used for sso";
+      };
+
+      pamPackage = lib.mkOption {
+        type = lib.types.path;
+        description = "Library for the pam module";
+      };
+
+      nssPackage = lib.mkOption {
+        type = lib.types.path;
+        description = "Library for the nss lookup";
       };
 
       mfaSshWorkaroundFlag = lib.mkOption {
@@ -105,20 +125,20 @@ in
           "https://github.com/siemens/linux-entra-sso/releases/download/v1.7.1/linux_entra_sso-1.7.1.xpi"
         ];
       };
-      nativeMessagingHosts.packages = [ cfg.package ];
+      nativeMessagingHosts.packages = [ cfg.ssoPackage ];
     };
 
     programs.chromium.extensions = [
       "jlnfnnolkbjieggibinobhkjdfbpcohn"
     ];
     environment.etc."chromium/native-messaging-hosts/linux_entra_sso.json".source =
-      "${cfg.package}/lib/chromium/native-messaging-hosts/linux_entra_sso.json";
+      "${cfg.ssoPackage}/lib/chromium/native-messaging-hosts/linux_entra_sso.json";
     environment.etc."opt/chrome/native-messaging-hosts/linux_entra_sso.json".source =
-      "${cfg.package}/lib/chromium/native-messaging-hosts/linux_entra_sso.json";
-    services.dbus.packages = [ cfg.package ];
+      "${cfg.ssoPackage}/lib/chromium/native-messaging-hosts/linux_entra_sso.json";
+    services.dbus.packages = [ cfg.brokerPackage ];
 
     # Add himmelblau to the list of name services to lookup users/groups
-    system.nssModules = [ cfg.package ];
+    system.nssModules = [ cfg.nssPackage ];
     system.nssDatabases.passwd = lib.mkOrder 1501 [ "himmelblau" ]; # will be merged with entries from other modules
     system.nssDatabases.group = lib.mkOrder 1501 [ "himmelblau" ]; # will be merged with entries from other modules
     system.nssDatabases.shadow = lib.mkOrder 1501 [ "himmelblau" ]; # will be merged with entries from other modules
@@ -135,21 +155,21 @@ in
               account.himmelblau = {
                 order = super.account.unix.order - 10;
                 control = "sufficient";
-                modulePath = "${cfg.package}/lib/libpam_himmelblau.so";
+                modulePath = "${cfg.pamPackage.lib}/lib/libpam_himmelblau.so";
                 settings.ignore_unknown_user = true;
                 settings.debug = cfg.debugFlag;
               };
               auth.himmelblau = {
                 order = super.auth.unix.order - 10;
                 control = "sufficient";
-                modulePath = "${cfg.package}/lib/libpam_himmelblau.so";
+                modulePath = "${cfg.pamPackage.lib}/lib/libpam_himmelblau.so";
                 settings.mfa_poll_prompt = cfg.mfaSshWorkaroundFlag && service == "sshd";
                 settings.debug = cfg.debugFlag;
               };
               session.himmelblau = {
                 order = super.session.unix.order - 10;
                 control = "optional";
-                modulePath = "${cfg.package}/lib/libpam_himmelblau.so";
+                modulePath = "${cfg.pamPackage.lib}/lib/libpam_himmelblau.so";
                 settings.debug = cfg.debugFlag;
               };
             };
@@ -167,7 +187,7 @@ in
       serviceConfig = {
         Type = "dbus";
         BusName = "com.microsoft.identity.broker1";
-        ExecStart = "${cfg.package}/bin/himmelblau_broker";
+        ExecStart = "${cfg.brokerPackage}/bin/himmelblau_broker";
         Slice = "background.slice";
         TimeoutStopSec = 5;
         Restart = "on-failure";
@@ -209,7 +229,8 @@ in
           upholds = [ "himmelblaud-tasks.service" ];
           serviceConfig = commonServiceConfig // {
             ExecStart =
-              "${cfg.package}/bin/himmelblaud --config ${configFile}" + lib.optionalString cfg.debugFlag " -d";
+              "${cfg.daemonPackage}/bin/himmelblaud --config ${configFile}"
+              + lib.optionalString cfg.debugFlag " -d";
             Restart = "on-failure";
             DynamicUser = "yes";
             CacheDirectory = "himmelblaud"; # /var/cache/himmelblaud
@@ -233,7 +254,7 @@ in
             ConditionPathExists = "/var/run/himmelblaud/task_sock";
           };
           serviceConfig = commonServiceConfig // {
-            ExecStart = "${cfg.package}/bin/himmelblaud_tasks";
+            ExecStart = "${cfg.daemonPackage}/bin/himmelblaud_tasks";
             Restart = "on-failure";
             User = "root";
             ProtectSystem = "strict";
