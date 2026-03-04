@@ -159,6 +159,41 @@ impl RefreshCache {
             }
         }
     }
+
+    /// Export all PRT entries from the in-memory cache as a JSON blob.
+    /// This is used to persist them to a sealed memfd for systemd's
+    /// FileDescriptorStore so they survive daemon restarts.
+    /// Each entry includes the original insertion timestamp (seconds
+    /// since UNIX epoch) so that cache retention is not extended by
+    /// daemon restarts.
+    pub async fn export_broker_prts(&self) -> Result<Vec<u8>, serde_json::Error> {
+        let refresh_cache = self.refresh_cache.read().await;
+        let entries: HashMap<String, (SealedData, u64)> = refresh_cache
+            .iter()
+            .map(|(k, (v, iat))| {
+                let epoch_secs = iat
+                    .duration_since(SystemTime::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs();
+                (k.clone(), (v.clone(), epoch_secs))
+            })
+            .collect();
+        serde_json::to_vec(&entries)
+    }
+
+    /// Import PRT entries from a JSON blob (previously exported via
+    /// `export_broker_prts`). Entries are added to the in-memory cache
+    /// without touching the keystore. The original insertion timestamp
+    /// is preserved so that the 24 h purge window is not reset.
+    pub async fn import_broker_prts(&self, data: &[u8]) -> Result<(), serde_json::Error> {
+        let mut refresh_cache = self.refresh_cache.write().await;
+        let entries: HashMap<String, (SealedData, u64)> = serde_json::from_slice(data)?;
+        for (account_id, (prt, epoch_secs)) in entries {
+            let iat = SystemTime::UNIX_EPOCH + Duration::from_secs(epoch_secs);
+            refresh_cache.insert(account_id, (prt, iat));
+        }
+        Ok(())
+    }
 }
 
 pub struct BadPinCounter {

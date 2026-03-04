@@ -37,7 +37,7 @@ use himmelblau_unix_common::config::{split_username, HimmelblauConfig};
 use himmelblau_unix_common::constants::{DEFAULT_APP_ID, DEFAULT_CONFIG_PATH};
 use himmelblau_unix_common::db::{Cache, CacheTxn, Db};
 use himmelblau_unix_common::idprovider::himmelblau::HimmelblauMultiProvider;
-use himmelblau_unix_common::idprovider::interface::Id;
+use himmelblau_unix_common::idprovider::interface::{Id, IdProvider};
 use himmelblau_unix_common::resolver::{AuthSession, Resolver};
 use himmelblau_unix_common::unix_config::UidAttr;
 use himmelblau_unix_common::unix_passwd::{parse_etc_group, parse_etc_passwd};
@@ -72,6 +72,8 @@ use notify_debouncer_full::{new_debouncer, notify::RecursiveMode};
 mod broker;
 use broker::Broker;
 use identity_dbus_broker::himmelblau_broker_serve;
+
+mod prt_memfd;
 
 //=== the codec
 
@@ -1228,6 +1230,23 @@ async fn main() -> ExitCode {
                 return ExitCode::FAILURE
             }
 
+            // Restore broker PRTs from systemd FileDescriptorStore
+            match prt_memfd::restore_prts_from_fdstore() {
+                Ok(Some(data)) => {
+                    if let Err(e) = idprovider.import_broker_prts(&data).await {
+                        error!("Failed to import PRTs from FD store: {:?}", e);
+                    } else {
+                        info!("Restored broker PRTs from FileDescriptorStore");
+                    }
+                }
+                Ok(None) => {
+                    debug!("No broker PRTs in FileDescriptorStore (fresh boot or first start)");
+                }
+                Err(e) => {
+                    error!("Error reading FD store: {:?}", e);
+                }
+            }
+
             // Setup the tasks socket first.
             let (task_channel_tx, mut task_channel_rx) = channel(16);
             let task_channel_tx = Arc::new(task_channel_tx);
@@ -1404,6 +1423,9 @@ async fn main() -> ExitCode {
             // Undo umask changes.
             let _ = unsafe { umask(before) };
 
+            // Keep a reference for PRT FD store persistence on service shutdown.
+            let shutdown_cachelayer = cachelayer.clone();
+
             let task_a = tokio::spawn(async move {
                 loop {
                     let tc_tx = task_channel_tx_cln.clone();
@@ -1487,6 +1509,30 @@ async fn main() -> ExitCode {
             }
 
             info!("Signal received, sending down signal to tasks");
+
+            // Persist broker PRTs to systemd FileDescriptorStore so they
+            // survive a daemon restart.  Always remove any previously stored
+            // FD first so stale credentials are never kept around.
+            if systemd_booted {
+                prt_memfd::remove_prts_from_fdstore();
+
+                match shutdown_cachelayer.export_broker_prts().await {
+                    Ok(data) if !data.is_empty() && data != b"{}".as_slice() => {
+                        if let Err(e) = prt_memfd::store_prts_to_fdstore(&data) {
+                            error!("Failed to store PRTs in FD store: {:?}", e);
+                        } else {
+                            info!("Saved broker PRTs to FileDescriptorStore");
+                        }
+                    }
+                    Ok(_) => {
+                        debug!("No broker PRTs to persist to FD store");
+                    }
+                    Err(e) => {
+                        error!("Failed to export PRTs: {:?}", e);
+                    }
+                }
+            }
+
             if systemd_booted {
                 if let Ok(monotonic_usec) = sd_notify::NotifyState::monotonic_usec_now() {
                     let _ = sd_notify::notify(false, &[NotifyState::Stopping, monotonic_usec]);

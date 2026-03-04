@@ -61,10 +61,9 @@ use himmelblau::intune::{fetch_intune_portal_versions, IntuneForLinux};
 use himmelblau::{AuthOption, MFAAuthContinue};
 use himmelblau::{ClientToken, ConfidentialClientApplication};
 use idmap::{AadSid, Idmap};
-use kanidm_hsm_crypto::structures::SealedData;
 use kanidm_hsm_crypto::{
     structures::LoadableMsDeviceEnrolmentKey, structures::LoadableMsHelloKey,
-    structures::LoadableMsOapxbcRsaKey, PinValue,
+    structures::LoadableMsOapxbcRsaKey, structures::SealedData, PinValue,
 };
 use libc::getpwnam;
 use regex::Regex;
@@ -796,6 +795,31 @@ impl IdProvider for HimmelblauMultiProvider {
         }
         CacheState::Online
     }
+
+    async fn export_broker_prts(&self) -> Result<Vec<u8>, serde_json::Error> {
+        let providers = self.providers.read().await;
+        let mut all: HashMap<String, Vec<u8>> = HashMap::new();
+        for (domain, provider) in providers.iter() {
+            if let Providers::Himmelblau(p) = provider {
+                let data = p.export_broker_prts().await?;
+                all.insert(domain.clone(), data);
+            }
+        }
+        serde_json::to_vec(&all)
+    }
+
+    async fn import_broker_prts(&self, data: &[u8]) -> Result<(), serde_json::Error> {
+        let all: HashMap<String, Vec<u8>> = serde_json::from_slice(data)?;
+        let providers = self.providers.read().await;
+        for (domain, blob) in &all {
+            if let Some(Providers::Himmelblau(p)) = providers.get(domain) {
+                if let Err(e) = p.import_broker_prts(blob).await {
+                    tracing::warn!("Failed to import PRTs for domain {}: {:?}", domain, e);
+                }
+            }
+        }
+        Ok(())
+    }
 }
 
 // If the provider is offline, we need to backoff and wait a bit.
@@ -832,6 +856,16 @@ impl HimmelblauProvider {
             init: RwLock::new(false),
             bad_pin_counter: BadPinCounter::new(),
         })
+    }
+
+    /// Export PRT entries for FD store persistence.
+    pub async fn export_broker_prts(&self) -> Result<Vec<u8>, serde_json::Error> {
+        self.refresh_cache.export_broker_prts().await
+    }
+
+    /// Import PRT entries from FD store data.
+    pub async fn import_broker_prts(&self, data: &[u8]) -> Result<(), serde_json::Error> {
+        self.refresh_cache.import_broker_prts(data).await
     }
 }
 
@@ -1039,15 +1073,19 @@ impl IdProvider for HimmelblauProvider {
             Some(token) => token.spn.clone(),
             None => id.to_string().clone(),
         };
-        let refresh_cache_entry = self.refresh_cache.refresh_token(&account_id).await?;
-        let prt = match refresh_cache_entry {
-            RefreshCacheEntry::Prt(prt) => prt,
-            RefreshCacheEntry::RefreshToken(_) => {
-                // We need a PRT to fetch a PRT cookie
+
+        // PRTs are persisted via memfd/FileDescriptorStore.
+        let prt = match self.refresh_cache.refresh_token(&account_id).await {
+            Ok(RefreshCacheEntry::Prt(prt)) => prt,
+            _ => {
                 debug!("No PRT available in refresh cache");
-                return Err(IdpError::BadRequest);
+                return Err(IdpError::NotFound {
+                    what: "account_id".to_string(),
+                    where_: "refresh_cache".to_string(),
+                });
             }
         };
+
         self.client
             .read()
             .await

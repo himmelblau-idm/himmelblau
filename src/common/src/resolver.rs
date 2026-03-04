@@ -202,6 +202,17 @@ where
         })
     }
 
+    /// Export broker PRTs from the identity provider for fdstore
+    /// persistence across daemon restarts.
+    pub async fn export_broker_prts(&self) -> Result<Vec<u8>, serde_json::Error> {
+        self.client.export_broker_prts().await
+    }
+
+    /// Import broker PRTs previously exported by [`Self::export_broker_prts`].
+    pub async fn import_broker_prts(&self, data: &[u8]) -> Result<(), serde_json::Error> {
+        self.client.import_broker_prts(data).await
+    }
+
     async fn get_cachestate(&self, account_id: Option<&str>) -> CacheState {
         let mut dbtxn = self.db.write().await;
         let res = self.client.get_cachestate(account_id, &mut dbtxn).await;
