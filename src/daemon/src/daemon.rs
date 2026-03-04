@@ -1406,7 +1406,7 @@ async fn main() -> ExitCode {
 
             if systemd_booted {
                 if let Ok(monotonic_usec) = sd_notify::NotifyState::monotonic_usec_now() {
-                    let _ = sd_notify::notify(true, &[NotifyState::Ready, monotonic_usec]);
+                    let _ = sd_notify::notify(false, &[NotifyState::Ready, monotonic_usec]);
                 }
             }
 
@@ -1456,7 +1456,7 @@ async fn main() -> ExitCode {
             info!("Signal received, sending down signal to tasks");
             if systemd_booted {
                 if let Ok(monotonic_usec) = sd_notify::NotifyState::monotonic_usec_now() {
-                    let _ = sd_notify::notify(true, &[NotifyState::Stopping, monotonic_usec]);
+                    let _ = sd_notify::notify(false, &[NotifyState::Stopping, monotonic_usec]);
                 }
             }
 
