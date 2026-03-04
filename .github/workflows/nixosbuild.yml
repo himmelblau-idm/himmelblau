@@ -3,9 +3,9 @@ name: NixOS
 permissions:
   contents: read
 
-# Trigger the workflow on push or pull request
+# Trigger the workflow only on push
 on:
-  pull_request:
+  push:
     branches:
       - stable-2.x
       - stable-3.x
