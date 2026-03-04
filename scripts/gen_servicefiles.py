@@ -24,6 +24,7 @@ MINVER = {
     # Unit section
     "Upholds": 249,
     # Service section
+    "FileDescriptorStorePreserve": 254,
     "TypeNotifyReload": 253,   # Use Type=notify-reload when >= this; else Type=notify
     "DynamicUser": 235,
     "ProtectSystemStrict": 214,
@@ -42,6 +43,7 @@ MINVER = {
     "CacheRuntimeStateDirs": 235,  # CacheDirectory/RuntimeDirectory/StateDirectory
     "ConditionPathExists": 12,
     "LoadCredentialEncrypted": 250,
+    "FileDescriptorStoreMax": 234,
     "StartLimitIntervalSec": 229,
     "StartLimitBurst": 229,
 }
@@ -237,6 +239,8 @@ Conflicts=nscd.service
 ExecStart=/usr/sbin/himmelblaud
 Restart=on-failure
 RestartSec=500ms
+{'FileDescriptorStoreMax=1' if supported('FileDescriptorStoreMax') else ''}
+{'FileDescriptorStorePreserve=yes' if supported('FileDescriptorStorePreserve') else ''}
 
 {daemon_rw_paths_comment}
 
