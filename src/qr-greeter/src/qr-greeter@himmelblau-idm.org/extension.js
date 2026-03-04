@@ -12,12 +12,6 @@ const GdmAuthPrompt = AuthPromptModule.AuthPrompt;
 // Track active temp files for cleanup
 let activeTotpTempFiles = new Set();
 
-// Known URLs that have static QR code images
-const STATIC_QR_URLS = {
-    'https://microsoft.com/devicelogin': 'msdag.png',
-    'https://www.microsoft.com/link': 'ms-consumer-dag.png',
-};
-
 // Maximum URL length for QR code generation (longer URLs create denser, harder to scan codes)
 const MAX_URL_LENGTH = 500;
 
@@ -47,11 +41,42 @@ function validateUrl(urlString) {
     }
 }
 
-// Generate SVG content from a QR code
-function qrCodeToSvg(qr, border, lightColor, darkColor) {
-    const size = qr.size + border * 2;
+// Extract user_code from a device flow message.
+// Handles: bare 9-char codes (e.g. "E9Y6JX8J7"), hyphenated codes (e.g. "ABCD-EFGH"),
+// and URL query params (?user_code=...).
+// Returns null if not found.
+function extractUserCode(message) {
+    if (!message) return null;
+    // Match user_code parameter in URL query string
+    const urlMatch = message.match(/[?&]user_code=([A-Z0-9-]+)/i);
+    if (urlMatch) return urlMatch[1].toUpperCase();
+    // Match "enter the code XXXXXXXXX" sentence format (Microsoft typically sends
+    // 9-char codes with no hyphen, e.g. "enter the code E9Y6JX8J7 to authenticate";
+    // range 6-12 is intentionally broader for forward compatibility)
+    const sentenceMatch = message.match(/enter the code\s+([A-Z0-9-]{6,12})/i);
+    if (sentenceMatch) return sentenceMatch[1].toUpperCase();
+    // Match hyphenated code pattern (e.g. "ABCD-EFGH") - other providers
+    const hyphenMatch = message.match(/\b([A-Z0-9]{4,5}-[A-Z0-9]{4,5})\b/i);
+    if (hyphenMatch) return hyphenMatch[1].toUpperCase();
+    // Fallback: bare 8-9 char alphanumeric word
+    // userCode only contains [A-Z0-9-] so it is safe to embed directly in SVG
+    // text nodes (no XML special characters can appear from this regex)
+    const bareMatch = message.match(/\b([A-Z0-9]{8,9})\b/i);
+    if (bareMatch) return bareMatch[1].toUpperCase();
+    return null;
+}
+
+// Generate SVG content from a QR code, with an optional user code overlay
+// rendered as a dark strip appended below the QR code (including its border /
+// quiet-zone), so the QR modules and their quiet-zone remain unchanged for scanning.
+function qrCodeToSvg(qr, border, lightColor, darkColor, userCode = null) {
+    const qrSize = qr.size + border * 2;
+    // 6 extra SVG units give ~15 rendered px at typical scale - comfortably readable.
+    // 0 when no user code is needed (TOTP enrollment QR).
+    const labelRows = userCode ? 6 : 0;
+    const totalHeight = qrSize + labelRows;
     let svg = `<?xml version="1.0" encoding="UTF-8"?>\n`;
-    svg += `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${size} ${size}" width="${size * 4}" height="${size * 4}">`;
+    svg += `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${qrSize} ${totalHeight}" width="${qrSize * 4}" height="${totalHeight * 4}">`;
     svg += `<rect width="100%" height="100%" fill="${lightColor}"/>`;
     svg += `<path d="`;
     for (let y = 0; y < qr.size; y++) {
@@ -62,6 +87,23 @@ function qrCodeToSvg(qr, border, lightColor, darkColor) {
         }
     }
     svg += `" fill="${darkColor}"/>`;
+    if (userCode) {
+        const stripY = qrSize;
+        const stripH = labelRows;
+        // Dark background strip appended below the QR code
+        svg += `<rect x="0" y="${stripY}" width="${qrSize}" height="${stripH}" fill="${darkColor}"/>`;
+        // Centered white monospace text.
+        // 0.65: font-size as fraction of strip height - fills ~65% leaving breathing room.
+        // 0.72: text baseline position within the strip - visually centered with descender space.
+        const fontSize = stripH * 0.65;
+        svg += `<text x="${qrSize / 2}" y="${stripY + stripH * 0.72}" `;
+        svg += `font-family="monospace" font-size="${fontSize}" font-weight="bold" `;
+        svg += `fill="${lightColor}" text-anchor="middle">`;
+        // userCode only contains [A-Z0-9-] (guaranteed by extractUserCode regex),
+        // so no XML entity escaping is needed here.
+        svg += userCode;
+        svg += `</text>`;
+    }
     svg += `</svg>`;
     return svg;
 }
@@ -212,57 +254,34 @@ export default class QrGreeterExtension extends Extension {
                 let qrDisplayed = false;
 
                 if (message) {
-                    // First check for known URLs with static QR codes
-                    for (const [url, pngFile] of Object.entries(STATIC_QR_URLS)) {
-                        if (message.includes(url)) {
-                            const fileUri = `file:///usr/share/gnome-shell/extensions/qr-greeter@himmelblau-idm.org/${pngFile}`;
-                            this._qrContainer.set_style(`background-image: url('${fileUri}');`);
+                    // Reset the regex lastIndex to ensure fresh matching
+                    URL_RE.lastIndex = 0;
+                    const urls = message.match(URL_RE) || [];
+                    const selection = selectDeviceFlowUrl('', {
+                        urls,
+                        validateUrl,
+                    });
+
+                    if (urls.length > 0 && selection.url) {
+                        try {
+                            const userCode = extractUserCode(message);
+                            const qr = QrCode.encodeText(selection.url, Ecc.MEDIUM);
+                            const svgContent = qrCodeToSvg(qr, 2, '#ffffff', '#000000', userCode);
+                            const tempFilePath = writeSvgToTempFile(svgContent);
+                            this._totpTempFile = tempFilePath;
+                            activeTotpTempFiles.add(tempFilePath);
+                            const fileUri = `file://${tempFilePath}`;
+                            this._qrContainer.set_style(`background-image: url('${fileUri}'); background-size: contain; background-repeat: no-repeat; background-position: center;`);
                             this._qrContainer.show();
-                            this._qrLabel.set_text("Scan with your phone");
+                            if (selection.usedComplete) {
+                                this._qrLabel.set_text("Scan to continue sign-in");
+                            } else {
+                                this._qrLabel.set_text("Scan with your phone");
+                            }
                             this._qrLabel.show();
                             qrDisplayed = true;
-                            break;
-                        }
-                    }
-
-                    // If no static QR was displayed, check for any other URLs
-                    if (!qrDisplayed) {
-                        // Reset the regex lastIndex to ensure fresh matching
-                        URL_RE.lastIndex = 0;
-                        const urlMatches = message.match(URL_RE) || [];
-                        const dynamicUrls = urlMatches.filter(url => {
-                            for (const staticUrl of Object.keys(STATIC_QR_URLS)) {
-                                if (url.startsWith(staticUrl)) {
-                                    return false;
-                                }
-                            }
-                            return true;
-                        });
-                        const selection = selectDeviceFlowUrl('', {
-                            urls: dynamicUrls,
-                            validateUrl,
-                        });
-
-                        if (dynamicUrls.length > 0 && selection.url) {
-                            try {
-                                const qr = QrCode.encodeText(selection.url, Ecc.MEDIUM);
-                                const svgContent = qrCodeToSvg(qr, 2, '#ffffff', '#000000');
-                                const tempFilePath = writeSvgToTempFile(svgContent);
-                                this._totpTempFile = tempFilePath;
-                                activeTotpTempFiles.add(tempFilePath);
-                                const fileUri = `file://${tempFilePath}`;
-                                this._qrContainer.set_style(`background-image: url('${fileUri}'); background-size: contain; background-repeat: no-repeat; background-position: center;`);
-                                this._qrContainer.show();
-                                if (selection.usedComplete) {
-                                    this._qrLabel.set_text("Scan to continue sign-in");
-                                } else {
-                                    this._qrLabel.set_text("Scan with your phone");
-                                }
-                                this._qrLabel.show();
-                                qrDisplayed = true;
-                            } catch (e) {
-                                console.error("Himmelblau QR Greeter: Failed to generate QR code for URL:", e);
-                            }
+                        } catch (e) {
+                            console.error("Himmelblau QR Greeter: Failed to generate QR code for URL:", e);
                         }
                     }
                 }
