@@ -69,6 +69,11 @@ who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
 delta = "0.4.1 -> 0.5.0"
 
+[[audits.aws-lc-rs]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+delta = "1.14.0 -> 1.16.1"
+
 [[audits.axum]]
 who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
