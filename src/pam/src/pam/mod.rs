@@ -608,7 +608,10 @@ impl PamHooks for PamKanidm {
 
         let oidc_client = cfg.get_oidc_issuer_url().is_some();
         let token = if !oidc_client {
-            let auth_options = vec![AuthOption::Fido, AuthOption::Passwordless];
+            let mut auth_options = vec![AuthOption::Fido];
+            if cfg.get_enable_passwordless() {
+                auth_options.push(AuthOption::Passwordless);
+            }
             let auth_init = match rt.block_on(async {
                 app.check_user_exists(&account_id, None, &auth_options)
                     .await
