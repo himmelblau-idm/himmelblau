@@ -1647,6 +1647,7 @@ impl IdProvider for OidcProvider {
         &self,
         _id: &Id,
         _token: Option<&UserToken>,
+        _sso_nonce: Option<&str>,
         _keystore: &mut D,
         _tpm: &mut tpm::provider::BoxedDynTpm,
         _machine_key: &tpm::structures::StorageKey,
