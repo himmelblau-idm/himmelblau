@@ -218,10 +218,13 @@ jobs:
           AZURE_COGNITIVE_SERVICES_RESOURCE_NAME: ${{ secrets.AZURE_COGNITIVE_SERVICES_RESOURCE_NAME }}
           AZURE_COGNITIVE_SERVICES_API_KEY: ${{ secrets.AZURE_COGNITIVE_SERVICES_API_KEY }}
           AZURE_API_KEY: ${{ secrets.AZURE_API_KEY }}
-          GH_TOKEN: ${{ github.token }}
+          TOKEN: ${{ github.token }}
           GITHUB_TOKEN: ${{ github.token }}
+          MOCK_EVENT: >-
+            {"eventName":"issue_comment","repo":{"owner":"${{ github.repository_owner }}","repo":"${{ github.event.repository.name }}"},"actor":"${{ github.actor }}","payload":{"issue":{"number":${{ matrix.issue.number }}},"comment":{"id":1,"body":"/opencode review this issue and comment if you can add new value"}}}
         with:
           model: azure-cognitive-services/gpt-5.2-codex
+          use_github_token: true
           prompt: |
             You are himmelbot, the Himmelblau GitHub assistant.
             Always self-identify as "himmelbot" in comments or PR descriptions.
