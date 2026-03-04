@@ -1586,7 +1586,10 @@ impl IdProvider for HimmelblauProvider {
                 service, is_remote_service, console_password_only
             );
             if self.config.read().await.get_enable_experimental_mfa() {
-                let mut auth_options = vec![AuthOption::Passwordless];
+                let mut auth_options = vec![];
+                if self.config.read().await.get_enable_passwordless() {
+                    auth_options.push(AuthOption::Passwordless);
+                }
                 if !is_remote_service {
                     auth_options.push(AuthOption::Fido);
                     if self
@@ -2034,6 +2037,7 @@ impl IdProvider for HimmelblauProvider {
                     remote_services,
                     enable_experimental_mfa,
                     enable_experimental_passwordless_fido,
+                    enable_passwordless,
                     mfa_method,
                 ) = {
                     let cfg = self.config.read().await;
@@ -2042,6 +2046,7 @@ impl IdProvider for HimmelblauProvider {
                         cfg.get_password_only_remote_services_deny_list(),
                         cfg.get_enable_experimental_mfa(),
                         cfg.get_enable_experimental_passwordless_fido(),
+                        cfg.get_enable_passwordless(),
                         cfg.get_mfa_method(),
                     )
                 };
@@ -2053,7 +2058,10 @@ impl IdProvider for HimmelblauProvider {
                 if enable_experimental_mfa {
                     // Interactive MFA flow: supports push notifications, FIDO,
                     // and code entry. Better UX than DAG for most users.
-                    let mut auth_options = vec![AuthOption::Passwordless];
+                    let mut auth_options = vec![];
+                    if enable_passwordless {
+                        auth_options.push(AuthOption::Passwordless);
+                    }
                     if !is_remote_service {
                         auth_options.push(AuthOption::Fido);
                         if enable_experimental_passwordless_fido {
