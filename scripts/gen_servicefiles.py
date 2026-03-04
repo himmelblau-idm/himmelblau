@@ -221,7 +221,7 @@ Wants={' '.join(base_wants)}
 # Conflicts will trigger and then automatically stop it.
 Conflicts=nscd.service
 # `Upholds` like a `Wants` directive ensures that himmelblaud-tasks is started but also
-# ensures it's kept running. This allows for a repeatable & fast way of starting 
+# ensures it's kept running. This allows for a repeatable & fast way of starting
 # himmelblaud-tasks at the right time.
 {upholds_line if upholds_line else ''}
 {'StartLimitIntervalSec=30s' if supported('StartLimitIntervalSec') else ''}
