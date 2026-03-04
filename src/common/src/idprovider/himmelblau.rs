@@ -1012,7 +1012,7 @@ impl IdProvider for HimmelblauProvider {
         self.client
             .read()
             .await
-            .acquire_prt_sso_cookie(&prt, tpm, machine_key)
+            .acquire_prt_sso_cookie_with_nonce(&prt, sso_nonce, tpm, machine_key)
             .await
             .map_err(|e| {
                 error!("Failed to request prt cookie: {:?}", e);
