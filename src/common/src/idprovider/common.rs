@@ -109,7 +109,7 @@ impl RefreshCache {
         let mut refresh_cache = self.refresh_cache.write().await;
         let mut remove_list = vec![];
         for (k, (_, iat)) in refresh_cache.iter() {
-            if *iat > SystemTime::now() + Duration::from_secs(86400) {
+            if *iat + Duration::from_secs(86400) < SystemTime::now() {
                 remove_list.push(k.clone());
             }
         }
@@ -119,7 +119,7 @@ impl RefreshCache {
         let mut refresh_token_cache = self.refresh_token_cache.write().await;
         let mut remove_list = vec![];
         for (k, (_, iat)) in refresh_token_cache.iter() {
-            if *iat > SystemTime::now() + Duration::from_secs(86400) {
+            if *iat + Duration::from_secs(86400) < SystemTime::now() {
                 remove_list.push(k.clone());
             }
         }
