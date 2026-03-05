@@ -596,7 +596,12 @@ impl PamHooks for PamKanidm {
                         match fido_auth(msg_printer.clone(), fido_challenge, fido_allow_list) {
                             Ok(assertion) => assertion,
                             Err(e) => {
-                                pam_fail!(msg_printer, "Entra Id Fido authentication failed.", e);
+                                msg_printer.print_text(&format!("{:?}: {}\n{}",
+                                    e,
+                                    "Entra Id Fido authentication failed.",
+                                    "If you are now prompted for a password from pam_unix, please disregard the prompt, go back and try again."));
+                                thread::sleep(Duration::from_secs(2));
+                                return PamResultCode::PAM_ABORT;
                             }
                         };
                     match rt.block_on(async {
