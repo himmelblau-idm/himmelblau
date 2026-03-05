@@ -6,7 +6,7 @@
 
 # SYNOPSIS
 
-**pam_himmelblau.so** [debug] [use_first_pass] [ignore_unknown_user] [mfa_poll_prompt] [no_hello_pin]
+**pam_himmelblau.so** [debug] [use_first_pass] [ignore_unknown_user] [mfa_poll_prompt] [no_hello_pin] [try_unseal]
 
 # DESCRIPTION
 
@@ -28,6 +28,9 @@
 
 - **no_hello_pin**  
   Disables Linux Hello PIN login for this service (e.g., for `sudo` or `ssh`), even if Hello is configured globally.
+
+- **try_unseal**  
+  Silently attempt to unseal the Hello secret using the password from a previous PAM module (similar to how `pam_gnome_keyring.so` unlocks the GNOME keyring at login). Implies `use_first_pass` and `ignore_unknown_user`. Will never fail and never block, as it simply sends a request via IPC to himmelblaud. Intended for use with `user_map_file` setups where a local user logs in via `pam_unix` or another local auth flow, so that the Hello secret will be unsealed automatically, without requiring a manual `aad-tool` invocation. Requires the local user password to be identical to the himmelblau PIN.
 
 # PAM CONFIGURATION
 

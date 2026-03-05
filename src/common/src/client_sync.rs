@@ -168,4 +168,29 @@ impl DaemonClientBlocking {
 
         Ok(cr)
     }
+
+    /// This writes the request to the existing socket and returns immediately,
+    /// without waiting for a response.
+    pub fn call_and_forget(&mut self, req: &ClientRequest) -> Result<(), Box<dyn Error>> {
+        let data = serde_json::to_vec(req).map_err(|e| {
+            warn!("socket encoding error -> {:?}", e);
+            Box::new(IoError::new(ErrorKind::Other, "JSON encode error"))
+        })?;
+
+        let timeout = Duration::from_secs(2);
+        self.stream.set_write_timeout(Some(timeout)).map_err(|e| {
+            warn!("set_write_timeout error -> {:?}", e);
+            Box::new(e)
+        })?;
+
+        self.stream
+            .write_all(data.as_slice())
+            .and_then(|_| self.stream.flush())
+            .map_err(|e| {
+                warn!("stream write error -> {:?}", e);
+                Box::new(e)
+            })?;
+
+        Ok(())
+    }
 }
