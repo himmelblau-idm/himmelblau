@@ -213,7 +213,7 @@ jobs:
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
       - name: Run opencode (himmelbot)
-        uses: anomalyco/opencode/github@22a4c5a77e466c6a81f7c461a58a7e63cd91be45
+        uses: anomalyco/opencode/github@9507b0eace17522f518963f7d9f651fd6e541137
         env:
           AZURE_COGNITIVE_SERVICES_RESOURCE_NAME: ${{ secrets.AZURE_COGNITIVE_SERVICES_RESOURCE_NAME }}
           AZURE_COGNITIVE_SERVICES_API_KEY: ${{ secrets.AZURE_COGNITIVE_SERVICES_API_KEY }}
