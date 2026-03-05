@@ -33,6 +33,7 @@ use crate::idprovider::common::KeyType;
 use crate::idprovider::common::RefreshCacheEntry;
 use crate::idprovider::common::TotpEnrollmentRecord;
 use crate::idprovider::common::{BadPinCounter, RefreshCache};
+use crate::idprovider::common::PRT_REFRESH_AGE;
 use crate::idprovider::interface::{tpm, UserTokenState};
 use crate::idprovider::openidconnect::OidcProvider;
 use crate::tpm::confidential_client_creds;
@@ -869,6 +870,45 @@ impl IdProvider for HimmelblauProvider {
         tpm: &mut tpm::provider::BoxedDynTpm,
         machine_key: &tpm::structures::StorageKey,
     ) -> Result<UnixUserToken, IdpError> {
+        // Opportunistic PRT renewal: if the cached PRT is older than 4 hours,
+        // attempt to refresh it before using it for access-token acquisition.
+        // Renewal failure is non-fatal, as the existing (stale but still valid)
+        // PRT will be used.
+        let account_id = match old_token {
+            Some(token) => token.spn.clone(),
+            None => id.to_string().clone(),
+        };
+        if let Some(age) = self.refresh_cache.prt_age(&account_id).await {
+            if age >= PRT_REFRESH_AGE {
+                debug!("PRT for {} is {:?} old (>= {:?}), attempting renewal",
+                       account_id, age, PRT_REFRESH_AGE);
+                if let Ok(RefreshCacheEntry::Prt(old_prt)) =
+                    self.refresh_cache.refresh_token(&account_id).await
+                {
+                    match self
+                        .client
+                        .read()
+                        .await
+                        .exchange_prt_for_prt(&old_prt, tpm, machine_key, true)
+                        .await
+                    {
+                        Ok(new_prt) => {
+                            self.refresh_cache
+                                .add(&account_id, &RefreshCacheEntry::Prt(new_prt))
+                                .await;
+                            info!("Opportunistic PRT renewal succeeded for {}", account_id);
+                        }
+                        Err(e) => {
+                            warn!(
+                                "Opportunistic PRT renewal failed for {} (will use existing PRT): {:?}",
+                                account_id, e
+                            );
+                        }
+                    }
+                }
+            }
+        }
+
         impl_unix_user_access!(
             self,
             old_token,
