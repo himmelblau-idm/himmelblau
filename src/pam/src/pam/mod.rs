@@ -90,7 +90,7 @@ use himmelblau_unix_common::idprovider::openidconnect::{
     mfa_from_oidc_device, OidcApplication, OidcTokenResponseExt,
 };
 use himmelblau_unix_common::pam::Options;
-use himmelblau_unix_common::{auth_handle_mfa_resp, pam_fail};
+use himmelblau_unix_common::auth_handle_mfa_resp;
 use std::sync::{Arc, Mutex};
 use std::thread::sleep;
 use tokio::runtime::Runtime;
