@@ -74,6 +74,7 @@ pub struct Options {
     pub mfa_poll_prompt: bool,
     pub no_hello_pin: bool,
     pub set_authtok: bool,
+    pub try_unseal: bool,
 }
 
 impl TryFrom<&Vec<&CStr>> for Options {
@@ -89,13 +90,15 @@ impl TryFrom<&Vec<&CStr>> for Options {
             }
         };
 
+        let try_unseal = gopts.contains("try_unseal");
         Ok(Options {
             debug: gopts.contains("debug"),
-            use_first_pass: gopts.contains("use_first_pass"),
-            ignore_unknown_user: gopts.contains("ignore_unknown_user"),
+            use_first_pass: gopts.contains("use_first_pass") || try_unseal,
+            ignore_unknown_user: gopts.contains("ignore_unknown_user") || try_unseal,
             mfa_poll_prompt: gopts.contains("mfa_poll_prompt"),
             no_hello_pin: gopts.contains("no_hello_pin"),
             set_authtok: gopts.contains("set_authtok") || gopts.contains("keyring_authtok"),
+            try_unseal,
         })
     }
 }

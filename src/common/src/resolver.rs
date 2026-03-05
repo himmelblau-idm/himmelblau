@@ -1447,6 +1447,56 @@ where
         }
     }
 
+    /// One-shot PIN-based unseal: runs auth init and, if the daemon
+    /// requests a PIN, immediately submits it. Returns Ok(true) on
+    /// success, Ok(false) on auth failure, Err(()) on internal error.
+    pub async fn pam_try_unseal(
+        &self,
+        account_id: &str,
+        cred: &str,
+    ) -> Result<bool, ()> {
+        let (shutdown_tx, _) = broadcast::channel(1);
+
+        let (mut auth_session, init_resp) = self
+            .pam_account_authenticate_init(
+                account_id,
+                "try_unseal",
+                false,
+                shutdown_tx.subscribe(),
+            )
+            .await?;
+
+        // Only proceed if the daemon is asking for a PIN.
+        match init_resp {
+            PamAuthResponse::Pin => {}
+            PamAuthResponse::Success => {
+                debug!("pam_try_unseal: already unsealed");
+                return Ok(true);
+            }
+            _ => {
+                debug!("pam_try_unseal: daemon did not request PIN (got {:?})", init_resp);
+                return Ok(false);
+            }
+        }
+
+        let step_resp = self
+            .pam_account_authenticate_step(
+                &mut auth_session,
+                PamAuthRequest::Pin {
+                    cred: cred.to_string(),
+                },
+            )
+            .await?;
+
+        match step_resp {
+            PamAuthResponse::Success => Ok(true),
+            _ => {
+                debug!("pam_try_unseal: PIN auth failed (got {:?})", step_resp);
+                Ok(false)
+            }
+        }
+    }
+
     pub async fn pam_account_beginsession(
         &self,
         account_id: &str,
