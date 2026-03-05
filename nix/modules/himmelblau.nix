@@ -76,6 +76,16 @@ in
         description = "Whether to pass the debug (-d) flag to the himmelblaud binary.";
       };
 
+      tryUnsealFlag = lib.mkOption {
+        type = lib.types.bool;
+        default = false;
+        description = ''
+          Whether to add a try_unseal auth module to automatically unseal
+          Entra ID secrets (TOTP, refresh tokens) using the login password as PIN,
+          similar to how pam_gnome_keyring unlocks the keyring at login.
+        '';
+      };
+
       pamServices = lib.mkOption {
         type = lib.types.listOf lib.types.str;
         default = [
@@ -149,6 +159,13 @@ in
                 order = super.session.unix.order - 10;
                 control = "optional";
                 modulePath = "${cfg.package}/lib/libpam_himmelblau.so";
+                settings.debug = cfg.debugFlag;
+              };
+              auth.himmelblau-unseal = lib.mkIf cfg.tryUnsealFlag {
+                order = super.auth.unix.order + 1000;
+                control = "optional";
+                modulePath = "${cfg.package}/lib/libpam_himmelblau.so";
+                settings.try_unseal = true;
                 settings.debug = cfg.debugFlag;
               };
             };

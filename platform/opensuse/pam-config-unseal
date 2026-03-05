@@ -1,0 +1,5 @@
+[pam_himmelblau_unseal]
+
+# Authentication stack - try to unseal secrets using login password as PIN
+Auth: auth     optional    pam_himmelblau.so    try_unseal
+Auth-Priority: 0

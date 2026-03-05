@@ -426,6 +426,10 @@ pub enum HimmelblauUnixOpt {
         session_file: Option<String>,
         #[clap(long = "password-file")]
         password_file: Option<String>,
+        /// Only add an optional try_unseal auth line to unseal secrets at login,
+        /// without modifying the standard PAM auth/account/session/password stacks.
+        #[clap(long)]
+        try_unseal: bool,
     },
     /// Manage confidential client credentials for authenticating to Entra ID.
     ///

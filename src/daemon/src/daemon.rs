@@ -915,6 +915,30 @@ async fn handle_client(
                     ClientResponse::Error
                 }
             }
+            ClientRequest::PamTryUnseal(account_id, cred) => {
+                let account_id = account_id.to_lowercase();
+                let span = span!(Level::INFO, "pam try unseal");
+                async {
+                    trace!("pam try unseal");
+                    match cachelayer
+                        .pam_try_unseal(&account_id, &cred)
+                        .await
+                    {
+                        Ok(true) => {
+                            debug!("pam_try_unseal: succeeded for {}", account_id);
+                        }
+                        Ok(false) => {
+                            debug!("pam_try_unseal: failed for {}", account_id);
+                        }
+                        Err(()) => {
+                            error!("pam_try_unseal: error for {}", account_id);
+                        }
+                    }
+                    ClientResponse::Ok
+                }
+                .instrument(span)
+                .await
+            }
         };
         reqs.send(resp).await?;
         reqs.flush().await?;

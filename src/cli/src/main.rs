@@ -115,10 +115,28 @@ fn insert_module_line(
     let original = std::fs::read_to_string(pam_file)?;
     let mut lines: Vec<String> = original.lines().map(|l| l.to_string()).collect();
 
+    // Extract the options that follow "pam_himmelblau.so" in the desired module_line.
+    let desired_opts: std::collections::HashSet<&str> = module_line
+        .split("pam_himmelblau.so")
+        .nth(1)
+        .unwrap_or("")
+        .split_whitespace()
+        .collect();
+    let stack_type = module_line.split_whitespace().next().unwrap_or("");
+
     if lines.iter().any(|l| {
-        l.contains("pam_himmelblau.so")
-            && l.trim_start()
-                .starts_with(module_line.split_whitespace().next().unwrap_or(""))
+        if !l.contains("pam_himmelblau.so")
+            || !l.trim_start().starts_with(stack_type)
+        {
+            return false;
+        }
+        let existing_opts: std::collections::HashSet<&str> = l
+            .split("pam_himmelblau.so")
+            .nth(1)
+            .unwrap_or("")
+            .split_whitespace()
+            .collect();
+        existing_opts == desired_opts
     }) {
         debug!("{} already contains pam_himmelblau; skipping", pam_file);
         return Ok(());
@@ -203,6 +221,7 @@ fn configure_pam(
     account_file: Option<&str>,
     session_file: Option<&str>,
     password_file: Option<&str>,
+    try_unseal: bool,
 ) -> anyhow::Result<()> {
     let auth_files = detect_pam_files(
         auth_file,
@@ -250,16 +269,31 @@ fn configure_pam(
 
     // AUTH
     for auth_file in &auth_files {
-        insert_module_line(
-            auth_file,
-            // Set PAM_AUTHTOK from Hello PIN so downstream modules (e.g. gnome-keyring)
-            // can unlock using use_authtok.
-            "auth\tsufficient\tpam_himmelblau.so ignore_unknown_user set_authtok",
-            None,
-            // pam_himmelblau should always come first on the auth stack
-            Some(&|_: &str| true),
-            dry_run,
-        )?;
+        if try_unseal {
+            // --try-unseal: only add the optional try_unseal line, nothing else
+            insert_module_line(
+                auth_file,
+                "auth\toptional\tpam_himmelblau.so try_unseal",
+                None,
+                None,
+                dry_run,
+            )?;
+        } else {
+            insert_module_line(
+                auth_file,
+                // Set PAM_AUTHTOK from Hello PIN so downstream modules (e.g. gnome-keyring)
+                // can unlock using use_authtok.
+                "auth\tsufficient\tpam_himmelblau.so ignore_unknown_user set_authtok",
+                None,
+                // pam_himmelblau should always come first on the auth stack
+                Some(&|_: &str| true),
+                dry_run,
+            )?;
+        }
+    }
+
+    if try_unseal {
+        return Ok(());
     }
 
     // ACCOUNT
@@ -631,6 +665,7 @@ async fn main() -> ExitCode {
             account_file: _,
             session_file: _,
             password_file: _,
+            try_unseal: _,
         } => debug,
         HimmelblauUnixOpt::Enumerate {
             debug,
@@ -1671,6 +1706,7 @@ async fn main() -> ExitCode {
             account_file,
             session_file,
             password_file,
+            try_unseal,
         } => {
             trace!("Configuring pam_himmelblau ...");
             if really && unsafe { libc::geteuid() } != 0 {
@@ -1688,6 +1724,7 @@ async fn main() -> ExitCode {
                 account_file.as_deref(),
                 session_file.as_deref(),
                 password_file.as_deref(),
+                try_unseal,
             ) {
                 Ok(_) => ExitCode::SUCCESS,
                 _ => ExitCode::FAILURE,

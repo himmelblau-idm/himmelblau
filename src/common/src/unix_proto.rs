@@ -95,6 +95,7 @@ pub enum ClientRequest {
     PamAccountAllowed(String),
     PamAccountBeginSession(String),
     PamChangeAuthToken(String, String, String, String),
+    PamTryUnseal(String, String),
     InvalidateCache,
     ClearCache,
     OfflineBreakGlass(Option<u64>),
@@ -124,6 +125,9 @@ impl ClientRequest {
             ClientRequest::PamAccountBeginSession(_) => "PamAccountBeginSession".to_string(),
             ClientRequest::PamChangeAuthToken(id, _, _, _) => {
                 format!("PamChangeAuthToken({}, ...)", id)
+            }
+            ClientRequest::PamTryUnseal(id, _) => {
+                format!("PamTryUnseal({})", id)
             }
             ClientRequest::InvalidateCache => "InvalidateCache".to_string(),
             ClientRequest::ClearCache => "ClearCache".to_string(),
@@ -213,5 +217,16 @@ fn test_clientrequest_as_safe_string() {
     assert_eq!(
         ClientRequest::NssAccounts.as_safe_string(),
         "NssAccounts".to_string()
+    );
+
+    let safe = ClientRequest::PamTryUnseal(
+        "user@example.com".to_string(),
+        "s3cret-pin".to_string(),
+    )
+    .as_safe_string();
+    assert!(
+        !safe.contains("s3cret-pin"),
+        "as_safe_string() must not leak credentials: {}",
+        safe
     );
 }
