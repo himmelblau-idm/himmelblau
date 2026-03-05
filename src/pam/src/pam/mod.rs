@@ -92,6 +92,7 @@ use std::time::Duration;
 
 use himmelblau_unix_common::auth::{authenticate, fido_auth, MessagePrinter};
 use himmelblau_unix_common::pam::Options;
+use himmelblau_unix_common::auth_handle_mfa_resp;
 use std::sync::{Arc, Mutex};
 use tokio::runtime::Runtime;
 
