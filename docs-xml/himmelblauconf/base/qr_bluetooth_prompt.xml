@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<parameter name="qr_bluetooth_prompt"
+           section="global"
+           type="string"
+           rust_type="String"
+           documented="true"
+           domain_specific="false"
+           order="32">
+<description>
+The message displayed to the user when QR/Bluetooth (caBLE) authentication is initiated
+and they need to scan the QR code with their phone.
+</description>
+<default>Scan with your authenticator app</default>
+<example>qr_bluetooth_prompt = Mit der Authenticator-App scannen</example>
+</parameter>
