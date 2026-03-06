@@ -396,11 +396,29 @@ in
       example = false;
     };
 
+    enable_passwordless_security_key = mkOption {
+      type = types.nullOr (types.bool);
+      default = false;
+      description = ''
+        A boolean option that enables the passwordless physical USB security key flow for Azure Entra ID authentication. When enabled, Himmelblau will attempt to authenticate with Entra ID using a physical FIDO2 security key without requiring a password.
+      '';
+      example = true;
+    };
+
     enable_experimental_passwordless_fido = mkOption {
       type = types.nullOr (types.bool);
       default = false;
       description = ''
         A boolean option that enables the experimental passwordless FIDO flow for Azure Entra ID authentication. When enabled, Himmelblau will attempt to authenticate with Entra ID using a FIDO2 security key without requiring a password.
+      '';
+      example = true;
+    };
+
+    enable_passwordless_qr_bluetooth = mkOption {
+      type = types.nullOr (types.bool);
+      default = false;
+      description = ''
+        A boolean option that enables the passwordless QR code and Bluetooth (caBLE hybrid transport) flow for Azure Entra ID authentication. When enabled, users with a cross-device passkey (e.g. Microsoft Authenticator) can authenticate by scanning a QR code on their phone, which communicates with the device over Bluetooth. Requires Bluetooth hardware on the device.
       '';
       example = true;
     };
@@ -433,6 +451,16 @@ in
         user presence (touching the security key).
       '';
       example = "Bitte den Sicherheitsschlüssel berühren.";
+    };
+
+    qr_bluetooth_prompt = mkOption {
+      type = types.nullOr (types.str);
+      default = "Scan with your authenticator app";
+      description = ''
+        The message displayed to the user when QR/Bluetooth (caBLE) authentication is initiated
+        and they need to scan the QR code with their phone.
+      '';
+      example = "Mit der Authenticator-App scannen";
     };
 
     name_mapping_script = mkOption {
@@ -572,6 +600,15 @@ in
       example = "/tmp/broker.sock";
     };
 
+    enable_passwordless = mkOption {
+      type = types.nullOr (types.bool);
+      default = true;
+      description = ''
+        A boolean option that controls whether passwordless authentication (Microsoft Authenticator app approval without a password) is offered during Azure Entra ID authentication. When enabled, Himmelblau will include the passwordless option in authentication requests, allowing Entra ID to offer a passwordless flow. When disabled, users will be prompted for a password followed by MFA instead.
+      '';
+      example = false;
+    };
+
     home_prefix = mkOption {
       type = types.nullOr (types.str);
       default = "/home/";
@@ -609,15 +646,6 @@ in
         - CN
       '';
       example = "SPN";
-    };
-
-    enable_passwordless = mkOption {
-      type = types.nullOr (types.bool);
-      default = true;
-      description = ''
-        A boolean option that controls whether passwordless authentication (Microsoft Authenticator app approval without a password) is offered during Azure Entra ID authentication. When enabled, Himmelblau will include the passwordless option in authentication requests, allowing Entra ID to offer a passwordless flow. When disabled, users will be prompted for a password followed by MFA instead.
-      '';
-      example = false;
     };
 
     shell = mkOption {

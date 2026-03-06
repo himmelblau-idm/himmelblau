@@ -5,7 +5,7 @@
            rust_type="String"
            documented="true"
            domain_specific="false"
-           order="38">
+           order="41">
 <description>
 The path to the socket file for communication with the task daemon. If this is changed, also add a drop-in to override ListenStream= in the himmelblaud-tasks.socket unit to keep the paths in sync.
 </description>
