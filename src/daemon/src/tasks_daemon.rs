@@ -901,6 +901,16 @@ async fn main() -> ExitCode {
                 }
             }
 
+            // Ping the systemd watchdog at half the configured WatchdogSec interval.
+            let mut watchdog_interval = if systemd_booted {
+                std::env::var("WATCHDOG_USEC")
+                    .ok()
+                    .and_then(|v| v.parse::<u64>().ok())
+                    .map(|usec| time::interval(Duration::from_micros(usec / 2)))
+            } else {
+                None
+            };
+
             loop {
                 tokio::select! {
                     Ok(()) = tokio::signal::ctrl_c() => {
@@ -941,6 +951,14 @@ async fn main() -> ExitCode {
                         tokio::signal::unix::signal(sigterm).unwrap().recv().await
                     } => {
                         // Ignore
+                    }
+                    _ = async {
+                        match watchdog_interval.as_mut() {
+                            Some(interval) => interval.tick().await,
+                            None => std::future::pending().await,
+                        }
+                    } => {
+                        let _ = sd_notify::notify(false, &[NotifyState::Watchdog]);
                     }
                 }
             }
