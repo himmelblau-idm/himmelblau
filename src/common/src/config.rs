@@ -800,10 +800,7 @@ impl HimmelblauConfig {
     }
 
     pub fn get_sudo_groups(&self) -> Vec<String> {
-        let mut sudo_groups = match self.config.get("global", "sudo_groups") {
-            Some(val) => val.split(',').map(|s| s.trim().to_string()).collect(),
-            None => vec![],
-        };
+        let mut sudo_groups: Vec<String> = vec![];
         for section in self.config.sections() {
             sudo_groups.extend(match self.config.get(&section, "sudo_groups") {
                 Some(val) => val.split(',').map(|s| s.trim().to_string()).collect(),
@@ -1743,6 +1740,53 @@ mod tests {
         let account_id = "user";
 
         assert_eq!(config.map_name_to_upn(account_id), account_id.to_string());
+    }
+
+    #[test]
+    fn test_get_local_sudo_group() {
+        let config_data = r#"
+        [global]
+        local_sudo_group = wheel
+        "#;
+
+        let temp_file = create_temp_config(config_data);
+        let config = HimmelblauConfig::new(Some(&temp_file)).unwrap();
+
+        let group = config.get_local_sudo_group();
+
+        assert_eq!(group, "wheel");
+
+        let empty_config = create_empty_config();
+
+        let default_group = empty_config.get_local_sudo_group();
+
+        assert_eq!(default_group, "sudo")
+    }
+
+    #[test]
+    fn test_get_sudo_groups() {
+        let config_data = r#"
+        [example.com]
+        sudo_groups = 2eb4e6a2-f55d-4cf4-8e62-978f9f4a828d,f791d7c2-66cd-4f67-a195-72c6faf3c3b5
+
+        [global]
+        sudo_groups = 825d1f7e-c4cd-4fc2-aeeb-1f92357f8da6,0149b437-fbaa-4419-bf46-f9a9f9a3438c
+        "#;
+
+        let temp_file = create_temp_config(config_data);
+        let config = HimmelblauConfig::new(Some(&temp_file)).unwrap();
+
+        let mut groups = config.get_sudo_groups();
+        groups.sort();
+        let mut expected_groups: Vec<String> = vec![
+            "825d1f7e-c4cd-4fc2-aeeb-1f92357f8da6".to_string(),
+            "0149b437-fbaa-4419-bf46-f9a9f9a3438c".to_string(),
+            "2eb4e6a2-f55d-4cf4-8e62-978f9f4a828d".to_string(),
+            "f791d7c2-66cd-4f67-a195-72c6faf3c3b5".to_string(),
+        ];
+        expected_groups.sort();
+
+        assert_eq!(groups, expected_groups);
     }
 
     #[test]
