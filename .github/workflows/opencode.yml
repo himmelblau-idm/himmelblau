@@ -48,7 +48,7 @@ jobs:
         with:
           persist-credentials: false
 
-      - uses: anomalyco/opencode/github@22a4c5a77e466c6a81f7c461a58a7e63cd91be45
+      - uses: anomalyco/opencode/github@a2634337b84643c08df5337243e8f82399c85615
         if: steps.check.outputs.result == 'true'
         env:
           AZURE_COGNITIVE_SERVICES_RESOURCE_NAME: ${{ secrets.AZURE_COGNITIVE_SERVICES_RESOURCE_NAME }}
