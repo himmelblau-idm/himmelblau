@@ -32,8 +32,8 @@ use crate::idprovider::common::flip_displayname_comma;
 use crate::idprovider::common::KeyType;
 use crate::idprovider::common::RefreshCacheEntry;
 use crate::idprovider::common::TotpEnrollmentRecord;
-use crate::idprovider::common::{BadPinCounter, RefreshCache};
 use crate::idprovider::common::PRT_REFRESH_AGE;
+use crate::idprovider::common::{BadPinCounter, RefreshCache};
 use crate::idprovider::interface::{tpm, UserTokenState};
 use crate::idprovider::openidconnect::OidcProvider;
 use crate::tpm::confidential_client_creds;
@@ -946,8 +946,10 @@ impl IdProvider for HimmelblauProvider {
         };
         if let Some(age) = self.refresh_cache.prt_age(&account_id).await {
             if age >= PRT_REFRESH_AGE {
-                debug!("PRT for {} is {:?} old (>= {:?}), attempting renewal",
-                       account_id, age, PRT_REFRESH_AGE);
+                debug!(
+                    "PRT for {} is {:?} old (>= {:?}), attempting renewal",
+                    account_id, age, PRT_REFRESH_AGE
+                );
                 if let Ok(RefreshCacheEntry::Prt(old_prt)) =
                     self.refresh_cache.refresh_token(&account_id).await
                 {
@@ -1695,13 +1697,15 @@ impl IdProvider for HimmelblauProvider {
                 }
                 if !is_remote_service {
                     auth_options.push(AuthOption::Fido);
-                    if self
-                        .config
-                        .lock()
-                        .await
-                        .get_enable_experimental_passwordless_fido()
-                    {
+                    let cfg = self.config.lock().await;
+                    if cfg.get_enable_experimental_passwordless_fido() {
                         auth_options.push(AuthOption::PasswordlessFido);
+                    }
+                    if cfg.get_enable_passwordless_security_key() {
+                        auth_options.push(AuthOption::PasswordlessSecurityKey);
+                    }
+                    if cfg.get_enable_passwordless_qr_bluetooth() {
+                        auth_options.push(AuthOption::PasswordlessQrBluetooth);
                     }
                 }
 
@@ -1785,24 +1789,25 @@ impl IdProvider for HimmelblauProvider {
                         }
                     );
                     // Check if Azure provided FIDO credentials (passwordless FIDO)
-                    // Skip if this is a passkey - we don't support passkey auth
-                    if !flow.skip_fido_for_mfa {
-                        if let (Some(fido_challenge), Some(fido_allow_list)) =
-                            (flow.fido_challenge.clone(), flow.fido_allow_list.clone())
-                        {
-                            return Ok((
-                                AuthRequest::Fido {
-                                    fido_challenge,
-                                    fido_allow_list,
-                                },
-                                AuthCredHandler::MFA {
-                                    flow: Box::new(flow),
-                                    password: None,
-                                    extra_data: None,
-                                    reauth_hello_pin: None,
-                                },
-                            ));
-                        }
+                    if let (Some(fido_challenge), Some(fido_allow_list)) =
+                        (flow.fido_challenge.clone(), flow.fido_allow_list.clone())
+                    {
+                        let has_physical_security_key = flow.has_physical_security_key;
+                        let has_cross_device = flow.has_cross_device_passkey;
+                        return Ok((
+                            AuthRequest::Fido {
+                                fido_challenge,
+                                fido_allow_list,
+                                has_physical_security_key,
+                                has_cross_device,
+                            },
+                            AuthCredHandler::MFA {
+                                flow: Box::new(flow),
+                                password: None,
+                                extra_data: None,
+                                reauth_hello_pin: None,
+                            },
+                        ));
                     }
                     let msg = flow.msg.clone();
                     let polling_interval = flow.polling_interval.unwrap_or(5000);
@@ -2141,6 +2146,8 @@ impl IdProvider for HimmelblauProvider {
                     remote_services,
                     enable_experimental_mfa,
                     enable_experimental_passwordless_fido,
+                    enable_passwordless_security_key,
+                    enable_passwordless_qr_bluetooth,
                     enable_passwordless,
                     mfa_method,
                 ) = {
@@ -2150,6 +2157,8 @@ impl IdProvider for HimmelblauProvider {
                         cfg.get_password_only_remote_services_deny_list(),
                         cfg.get_enable_experimental_mfa(),
                         cfg.get_enable_experimental_passwordless_fido(),
+                        cfg.get_enable_passwordless_security_key(),
+                        cfg.get_enable_passwordless_qr_bluetooth(),
                         cfg.get_enable_passwordless(),
                         cfg.get_mfa_method(),
                     )
@@ -2171,6 +2180,12 @@ impl IdProvider for HimmelblauProvider {
                         if enable_experimental_passwordless_fido {
                             auth_options.push(AuthOption::PasswordlessFido);
                         }
+                        if enable_passwordless_security_key {
+                            auth_options.push(AuthOption::PasswordlessSecurityKey);
+                        }
+                        if enable_passwordless_qr_bluetooth {
+                            auth_options.push(AuthOption::PasswordlessQrBluetooth);
+                        }
                     }
                     if is_remote_service || !console_password_only {
                         auth_options.push(AuthOption::ForceMFA);
@@ -2188,7 +2203,7 @@ impl IdProvider for HimmelblauProvider {
                             None, // No password — we only have the PIN
                             &auth_options,
                             None, // No auth_init — user already exists
-                            mfa_method.as_deref(),
+                            mfa_method.as_deref()
                         )
                         .await
                     {
@@ -2227,25 +2242,27 @@ impl IdProvider for HimmelblauProvider {
                     };
 
                     // Check if Azure provided FIDO credentials
-                    if !flow.skip_fido_for_mfa {
-                        if let (Some(fido_challenge), Some(fido_allow_list)) =
-                            (flow.fido_challenge.clone(), flow.fido_allow_list.clone())
-                        {
-                            *cred_handler = AuthCredHandler::MFA {
-                                flow: Box::new(flow),
-                                password: None,
-                                extra_data: None,
-                                reauth_hello_pin: Some(reauth_pin_value.clone()),
-                            };
-                            debug!("Session expired, initiating FIDO re-authentication with existing Hello key.");
-                            return Ok((
-                                AuthResult::Next(AuthRequest::Fido {
-                                    fido_challenge,
-                                    fido_allow_list,
-                                }),
-                                AuthCacheAction::None,
-                            ));
-                        }
+                    if let (Some(fido_challenge), Some(fido_allow_list)) =
+                        (flow.fido_challenge.clone(), flow.fido_allow_list.clone())
+                    {
+                        let has_physical_security_key = flow.has_physical_security_key;
+                        let has_cross_device = flow.has_cross_device_passkey;
+                        *cred_handler = AuthCredHandler::MFA {
+                            flow: Box::new(flow),
+                            password: None,
+                            extra_data: None,
+                            reauth_hello_pin: Some(reauth_pin_value.clone()),
+                        };
+                        debug!("Session expired, initiating FIDO re-authentication with existing Hello key.");
+                        return Ok((
+                            AuthResult::Next(AuthRequest::Fido {
+                                fido_challenge,
+                                fido_allow_list,
+                                has_physical_security_key,
+                                has_cross_device,
+                            }),
+                            AuthCacheAction::None,
+                        ));
                     }
 
                     let msg = flow.msg.clone();
@@ -3060,6 +3077,8 @@ impl IdProvider for HimmelblauProvider {
                             AuthResult::Next(AuthRequest::Fido {
                                 fido_allow_list,
                                 fido_challenge,
+                                has_physical_security_key: false,
+                                has_cross_device: false,
                             }),
                             /* Cache the offline password hash for breakglass
                              * conditions, if enabled. */
@@ -3400,7 +3419,10 @@ impl IdProvider for HimmelblauProvider {
                     Some(Err(e)) => {
                         // ROPC failed - this could be a bad password or other error
                         debug!("ROPC failed: {:?} - authentication denied", e);
-                        return Ok((AuthResult::Denied(e.to_string()), AuthCacheAction::None));
+                        return Ok((
+                            AuthResult::Denied(msal_error_to_user_message(&e)),
+                            AuthCacheAction::None,
+                        ));
                     }
                     None => {
                         // Device not enrolled - skip ROPC and start enrollment auth flow.
@@ -3538,13 +3560,15 @@ impl IdProvider for HimmelblauProvider {
                     self.config.lock().await.get_allow_console_password_only();
                 if !is_remote_service {
                     opts.push(AuthOption::Fido);
-                    if self
-                        .config
-                        .lock()
-                        .await
-                        .get_enable_experimental_passwordless_fido()
-                    {
+                    let cfg = self.config.lock().await;
+                    if cfg.get_enable_experimental_passwordless_fido() {
                         opts.push(AuthOption::PasswordlessFido);
+                    }
+                    if cfg.get_enable_passwordless_security_key() {
+                        opts.push(AuthOption::PasswordlessSecurityKey);
+                    }
+                    if cfg.get_enable_passwordless_qr_bluetooth() {
+                        opts.push(AuthOption::PasswordlessQrBluetooth);
                     }
                 }
                 if is_remote_service || !console_password_only {
@@ -3601,7 +3625,7 @@ impl IdProvider for HimmelblauProvider {
                                         "Skipping SFA fallback because authentication failed: {:?}",
                                         e
                                     );
-                                    return Ok((AuthResult::Denied(e.to_string()), AuthCacheAction::None));
+                                    return Ok((AuthResult::Denied(format!("Authentication failed (AADSTS{})", e.code)), AuthCacheAction::None));
                                 }
                             }
                             // We can only do a password auth for an enrolled device
@@ -3647,17 +3671,17 @@ impl IdProvider for HimmelblauProvider {
                                 )
                             } else {
                                 error!("Single factor authentication is only permitted on an enrolled host: {:?}", e);
-                                return Ok((AuthResult::Denied(e.to_string()), AuthCacheAction::None));
+                                return Ok((AuthResult::Denied(msal_error_to_user_message(&e)), AuthCacheAction::None));
                             }
                         } else {
                             error!("{:?}", e);
-                            return Ok((AuthResult::Denied(e.to_string()), AuthCacheAction::None));
+                            return Ok((AuthResult::Denied(msal_error_to_user_message(&e)), AuthCacheAction::None));
                         };
                         let token = match mtoken {
                             Ok(token) => token,
                             Err(e) => {
                                 error!("{:?}", e);
-                                return Ok((AuthResult::Denied(e.to_string()), AuthCacheAction::None));
+                                return Ok((AuthResult::Denied(msal_error_to_user_message(&e)), AuthCacheAction::None));
                             }
                         };
                         let token2 = enroll_and_obtain_enrolled_token!(token);
@@ -3714,11 +3738,11 @@ impl IdProvider for HimmelblauProvider {
                                 ));
                             } else {
                                 error!("{:?}", e);
-                                return Ok((AuthResult::Denied(e.to_string()), AuthCacheAction::None));
+                                return Ok((AuthResult::Denied(msal_error_to_user_message(&e)), AuthCacheAction::None));
                             }
                         } else {
                             error!("{:?}", e);
-                            return Ok((AuthResult::Denied(e.to_string()), AuthCacheAction::None));
+                            return Ok((AuthResult::Denied(msal_error_to_user_message(&e)), AuthCacheAction::None));
                         }
                     }
                 );
@@ -3814,7 +3838,7 @@ impl IdProvider for HimmelblauProvider {
                                 ));
                             } else {
                                 error!("{:?}", e);
-                                return Ok((AuthResult::Denied(e.to_string()), AuthCacheAction::None));
+                                return Ok((AuthResult::Denied(msal_error_to_user_message(&e)), AuthCacheAction::None));
                             }
                         }
                         MsalError::MFAPollContinue => {
@@ -3835,7 +3859,7 @@ impl IdProvider for HimmelblauProvider {
                         }
                         e => {
                             error!("{:?}", e);
-                            return Ok((AuthResult::Denied(e.to_string()), AuthCacheAction::None));
+                            return Ok((AuthResult::Denied(msal_error_to_user_message(&e)), AuthCacheAction::None));
                         }
                     }
                 );
@@ -3899,6 +3923,14 @@ impl IdProvider for HimmelblauProvider {
                     Err(e) => Err(e),
                 }
             }
+            (AuthCredHandler::MFA { .. }, PamAuthRequest::FidoUnavailable) => {
+                debug!("FIDO hardware unavailable on client, falling back to password");
+                *cred_handler = AuthCredHandler::None;
+                Ok((
+                    AuthResult::Next(AuthRequest::Password),
+                    AuthCacheAction::None,
+                ))
+            }
             (
                 AuthCredHandler::MFA {
                     ref mut flow,
@@ -3935,11 +3967,11 @@ impl IdProvider for HimmelblauProvider {
                                 ));
                             } else {
                                 error!("{:?}", e);
-                                return Ok((AuthResult::Denied(e.to_string()), AuthCacheAction::None));
+                                return Ok((AuthResult::Denied(msal_error_to_user_message(&e)), AuthCacheAction::None));
                             }
                         } else {
                             error!("{:?}", e);
-                            return Ok((AuthResult::Denied(e.to_string()), AuthCacheAction::None));
+                            return Ok((AuthResult::Denied(msal_error_to_user_message(&e)), AuthCacheAction::None));
                         }
                     }
                 );
