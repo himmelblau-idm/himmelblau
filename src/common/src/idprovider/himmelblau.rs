@@ -32,8 +32,8 @@ use crate::idprovider::common::flip_displayname_comma;
 use crate::idprovider::common::KeyType;
 use crate::idprovider::common::RefreshCacheEntry;
 use crate::idprovider::common::TotpEnrollmentRecord;
-use crate::idprovider::common::{BadPinCounter, RefreshCache};
 use crate::idprovider::common::PRT_REFRESH_AGE;
+use crate::idprovider::common::{BadPinCounter, RefreshCache};
 use crate::idprovider::interface::{tpm, UserTokenState};
 use crate::idprovider::openidconnect::OidcProvider;
 use crate::tpm::confidential_client_creds;
@@ -914,8 +914,10 @@ impl IdProvider for HimmelblauProvider {
         };
         if let Some(age) = self.refresh_cache.prt_age(&account_id).await {
             if age >= PRT_REFRESH_AGE {
-                debug!("PRT for {} is {:?} old (>= {:?}), attempting renewal",
-                       account_id, age, PRT_REFRESH_AGE);
+                debug!(
+                    "PRT for {} is {:?} old (>= {:?}), attempting renewal",
+                    account_id, age, PRT_REFRESH_AGE
+                );
                 if let Ok(RefreshCacheEntry::Prt(old_prt)) =
                     self.refresh_cache.refresh_token(&account_id).await
                 {
@@ -1739,24 +1741,21 @@ impl IdProvider for HimmelblauProvider {
                         }
                     );
                     // Check if Azure provided FIDO credentials (passwordless FIDO)
-                    // Skip if this is a passkey - we don't support passkey auth
-                    if !flow.fido_is_passkey {
-                        if let (Some(fido_challenge), Some(fido_allow_list)) =
-                            (flow.fido_challenge.clone(), flow.fido_allow_list.clone())
-                        {
-                            return Ok((
-                                AuthRequest::Fido {
-                                    fido_challenge,
-                                    fido_allow_list,
-                                },
-                                AuthCredHandler::MFA {
-                                    flow: Box::new(flow),
-                                    password: None,
-                                    extra_data: None,
-                                    reauth_hello_pin: None,
-                                },
-                            ));
-                        }
+                    if let (Some(fido_challenge), Some(fido_allow_list)) =
+                        (flow.fido_challenge.clone(), flow.fido_allow_list.clone())
+                    {
+                        return Ok((
+                            AuthRequest::Fido {
+                                fido_challenge,
+                                fido_allow_list,
+                            },
+                            AuthCredHandler::MFA {
+                                flow: Box::new(flow),
+                                password: None,
+                                extra_data: None,
+                                reauth_hello_pin: None,
+                            },
+                        ));
                     }
                     let msg = flow.msg.clone();
                     let polling_interval = flow.polling_interval.unwrap_or(5000);
@@ -2175,25 +2174,23 @@ impl IdProvider for HimmelblauProvider {
                     };
 
                     // Check if Azure provided FIDO credentials
-                    if !flow.fido_is_passkey {
-                        if let (Some(fido_challenge), Some(fido_allow_list)) =
-                            (flow.fido_challenge.clone(), flow.fido_allow_list.clone())
-                        {
-                            *cred_handler = AuthCredHandler::MFA {
-                                flow: Box::new(flow),
-                                password: None,
-                                extra_data: None,
-                                reauth_hello_pin: Some(reauth_pin_value.clone()),
-                            };
-                            debug!("Session expired, initiating FIDO re-authentication with existing Hello key.");
-                            return Ok((
-                                AuthResult::Next(AuthRequest::Fido {
-                                    fido_challenge,
-                                    fido_allow_list,
-                                }),
-                                AuthCacheAction::None,
-                            ));
-                        }
+                    if let (Some(fido_challenge), Some(fido_allow_list)) =
+                        (flow.fido_challenge.clone(), flow.fido_allow_list.clone())
+                    {
+                        *cred_handler = AuthCredHandler::MFA {
+                            flow: Box::new(flow),
+                            password: None,
+                            extra_data: None,
+                            reauth_hello_pin: Some(reauth_pin_value.clone()),
+                        };
+                        debug!("Session expired, initiating FIDO re-authentication with existing Hello key.");
+                        return Ok((
+                            AuthResult::Next(AuthRequest::Fido {
+                                fido_challenge,
+                                fido_allow_list,
+                            }),
+                            AuthCacheAction::None,
+                        ));
                     }
 
                     let msg = flow.msg.clone();
