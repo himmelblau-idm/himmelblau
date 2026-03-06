@@ -17,9 +17,12 @@
 */
 use himmelblau_unix_common::config::HimmelblauConfig;
 use identity_dbus_broker::{himmelblau_session_broker_serve, LogLevelCallbacks};
+use sd_notify::NotifyState;
 use std::process::ExitCode;
 use std::fmt;
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
+use tokio::time;
 use tracing::error;
 use tracing::level_filters::LevelFilter;
 use tracing_subscriber::prelude::*;
@@ -158,13 +161,49 @@ async fn main() -> ExitCode {
     let sock_path = cfg.get_broker_socket_path();
     let timeout = cfg.get_connection_timeout();
 
-    match himmelblau_session_broker_serve(&sock_path, timeout, log_callbacks)
-        .await
-    {
-        Ok(_) => return ExitCode::SUCCESS,
-        Err(e) => {
-            error!("Broker service failed: {}", e);
-            return ExitCode::FAILURE;
+    let systemd_booted = sd_notify::booted().unwrap_or(false);
+
+    let mut broker_handle = tokio::spawn(async move {
+        himmelblau_session_broker_serve(&sock_path, timeout, log_callbacks).await
+    });
+
+    if systemd_booted {
+        let _ = sd_notify::notify(false, &[NotifyState::Ready]);
+    }
+
+    // Ping the systemd watchdog at half the configured WatchdogSec interval.
+    let mut watchdog_interval = if systemd_booted {
+        std::env::var("WATCHDOG_USEC")
+            .ok()
+            .and_then(|v| v.parse::<u64>().ok())
+            .map(|usec| time::interval(Duration::from_micros(usec / 2)))
+    } else {
+        None
+    };
+
+    loop {
+        tokio::select! {
+            result = &mut broker_handle => {
+                match result {
+                    Ok(Ok(_)) => return ExitCode::SUCCESS,
+                    Ok(Err(e)) => {
+                        error!("Broker service failed: {}", e);
+                        return ExitCode::FAILURE;
+                    }
+                    Err(e) => {
+                        error!("Broker task panicked: {}", e);
+                        return ExitCode::FAILURE;
+                    }
+                }
+            }
+            _ = async {
+                match watchdog_interval.as_mut() {
+                    Some(interval) => interval.tick().await,
+                    None => std::future::pending().await,
+                }
+            } => {
+                let _ = sd_notify::notify(false, &[NotifyState::Watchdog]);
+            }
         }
     }
 }
