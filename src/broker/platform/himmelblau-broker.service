@@ -8,3 +8,4 @@ ExecStart=/usr/sbin/himmelblau_broker
 Slice=background.slice
 TimeoutStopSec=5
 Restart=on-failure
+WatchdogSec=120s
