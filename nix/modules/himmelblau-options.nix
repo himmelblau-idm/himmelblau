@@ -579,6 +579,15 @@ in
       example = "SPN";
     };
 
+    enable_passwordless = mkOption {
+      type = types.nullOr (types.bool);
+      default = true;
+      description = ''
+        A boolean option that controls whether passwordless authentication (Microsoft Authenticator app approval without a password) is offered during Azure Entra ID authentication. When enabled, Himmelblau will include the passwordless option in authentication requests, allowing Entra ID to offer a passwordless flow. When disabled, users will be prompted for a password followed by MFA instead.
+      '';
+      example = false;
+    };
+
     shell = mkOption {
       type = types.nullOr (types.str);
       default = "/bin/bash";
