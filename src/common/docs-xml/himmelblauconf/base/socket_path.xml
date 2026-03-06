@@ -5,7 +5,7 @@
            rust_type="String"
            documented="true"
            domain_specific="false"
-           order="37">
+           order="40">
 <description>
 The path to the socket file for communication between the pam and nss modules and the Himmelblau daemon.
 </description>

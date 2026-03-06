@@ -60,6 +60,8 @@ pub enum PamAuthResponse {
     Fido {
         fido_challenge: String,
         fido_allow_list: Vec<String>,
+        has_physical_security_key: bool,
+        has_cross_device: bool,
     },
     /// PAM must prompt for a new password and confirm that password input
     ChangePassword {
@@ -80,6 +82,9 @@ pub enum PamAuthRequest {
     SetupPin { pin: String },
     Pin { cred: String },
     Fido { assertion: String },
+    /// FIDO hardware is unavailable (no USB key, no Bluetooth for cross-device).
+    /// The daemon should fall back to password authentication.
+    FidoUnavailable,
 }
 
 #[derive(Serialize, Deserialize, Debug)]

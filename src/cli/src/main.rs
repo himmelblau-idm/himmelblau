@@ -348,7 +348,10 @@ async fn auth(app: &BrokerClientApplication, account_id: &str) -> Option<UserTok
             None
         }
     };
-    let enable_passwordless = config.as_ref().map(|c| c.get_enable_passwordless()).unwrap_or(true);
+    let enable_passwordless = config
+        .as_ref()
+        .map(|c| c.get_enable_passwordless())
+        .unwrap_or(true);
     let auth_options = if enable_passwordless {
         vec![AuthOption::Passwordless]
     } else {

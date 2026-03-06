@@ -16,6 +16,9 @@ let activeTotpTempFiles = new Set();
 // Must match the prefixes used in src/common/src/auth.rs fido_auth() / fido_status_check()
 const FIDO_INSERT_PREFIX = "[FIDO_INSERT] ";
 const FIDO_TOUCH_PREFIX = "[FIDO_TOUCH] ";
+// Must match the prefixes used in src/common/src/auth.rs qr_bluetooth_fido_auth()
+const QR_BT_PREFIX = "[QR_BT] ";
+const QR_BT_LABEL_PREFIX = "[QR_BT_LABEL] ";
 
 // Maximum URL length for QR code generation (longer URLs create denser, harder to scan codes)
 const MAX_URL_LENGTH = 500;
@@ -184,11 +187,35 @@ export default class QrGreeterExtension extends Extension {
         const extensionPath = this.path;
 
         GdmAuthPrompt.prototype.setMessage = function(message, styleClass) {
+            // Messages may be batched with \n to avoid GDM per-message delay.
+            if (message && message.includes("\n")) {
+                for (const line of message.split("\n")) {
+                    if (line.length > 0)
+                        this.setMessage(line, styleClass);
+                }
+                return;
+            }
+
+            const t0 = GLib.get_monotonic_time();
             let displayMessage = message;
-            if (message && message.startsWith(FIDO_INSERT_PREFIX))
+            const isQrBtLabel = message && message.startsWith(QR_BT_LABEL_PREFIX);
+            const isQrBt = message && message.startsWith(QR_BT_PREFIX);
+            if (isQrBtLabel) {
+                console.error(`[TIMING] setMessage QR_BT_LABEL received at ${t0}µs`);
+                this._qrBtLabel = message.substring(QR_BT_LABEL_PREFIX.length);
+                return;
+            } else if (isQrBt) {
+                // Don't overwrite the FIDO prompt in the main message area;
+                // the QR code and its label are rendered separately below.
+                displayMessage = this._lastFidoMessage || "";
+            } else if (message && message.startsWith(FIDO_INSERT_PREFIX)) {
+                console.error(`[TIMING] setMessage FIDO_INSERT received at ${t0}µs`);
                 displayMessage = message.substring(FIDO_INSERT_PREFIX.length);
-            else if (message && message.startsWith(FIDO_TOUCH_PREFIX))
+                this._lastFidoMessage = displayMessage;
+            } else if (message && message.startsWith(FIDO_TOUCH_PREFIX)) {
                 displayMessage = message.substring(FIDO_TOUCH_PREFIX.length);
+                this._lastFidoMessage = displayMessage;
+            }
             origSetMessage.call(this, displayMessage, styleClass);
 
             if (this._message) {
@@ -237,6 +264,29 @@ export default class QrGreeterExtension extends Extension {
             if (this._totpTempFile) {
                 deleteTempFile(this._totpTempFile);
                 this._totpTempFile = null;
+            }
+
+            if (isQrBt) {
+                console.error(`[TIMING] setMessage QR_BT received at ${t0}µs`);
+                const qrBtUrl = message.substring(QR_BT_PREFIX.length).trim();
+                try {
+                    const qr = QrCode.encodeText(qrBtUrl, Ecc.LOW);
+                    const svgContent = qrCodeToSvg(qr, 2, '#ffffff', '#000000');
+                    const tempFilePath = writeSvgToTempFile(svgContent);
+                    this._totpTempFile = tempFilePath;
+                    activeTotpTempFiles.add(tempFilePath);
+                    const fileUri = `file://${tempFilePath}`;
+                    this._qrContainer.set_style(`background-image: url('${fileUri}'); background-size: contain; background-repeat: no-repeat; background-position: center;`);
+                    this._qrContainer.show();
+                    this._qrLabel.set_text(this._qrBtLabel || "Scan with your authenticator app");
+                    this._qrLabel.show();
+                } catch (e) {
+                    console.error("Himmelblau QR Greeter: Failed to generate QR code:", e);
+                    if (this._qrContainer) this._qrContainer.hide();
+                    if (this._qrLabel) this._qrLabel.hide();
+                }
+                this._qrBtActive = true;
+                return;
             }
 
             const isFidoInsert = message && message.startsWith(FIDO_INSERT_PREFIX);
@@ -301,11 +351,14 @@ export default class QrGreeterExtension extends Extension {
                     });
                 }
                 this._fidoIcon.show();
-                if (this._qrContainer) this._qrContainer.hide();
-                if (this._qrLabel) this._qrLabel.hide();
+                if (!this._qrBtActive) {
+                    if (this._qrContainer) this._qrContainer.hide();
+                    if (this._qrLabel) this._qrLabel.hide();
+                }
                 return;
             }
 
+            this._qrBtActive = false;
             if (this._fidoIcon) {
                 this._fidoIcon.hide();
                 if (this._fidoPulseTimer) {
@@ -387,6 +440,13 @@ export default class QrGreeterExtension extends Extension {
         console.log("Himmelblau QR Greeter: disabled...");
         // Clean up any remaining temp files
         cleanupAllTempFiles();
+        if (this._fidoPulseTimer) {
+            GLib.source_remove(this._fidoPulseTimer);
+            this._fidoPulseTimer = null;
+        }
+        this._fidoIcon = null;
+        this._fidoTouchLayer = null;
+        this._qrBtActive = false;
         if (GdmAuthPrompt && this._originalSetMessage) {
             GdmAuthPrompt.prototype.setMessage = this._originalSetMessage;
         }

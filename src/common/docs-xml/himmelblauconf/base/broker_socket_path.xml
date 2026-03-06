@@ -5,7 +5,7 @@
            rust_type="String"
            documented="true"
            domain_specific="false"
-           order="39">
+           order="42">
 <description>
 The path to the socket file for communication with the broker DBus service.
 </description>

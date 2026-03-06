@@ -5,7 +5,7 @@
            rust_type="String"
            documented="true"
            domain_specific="false"
-           order="35">
+           order="38">
 <description>
 Specifies the TCTI (Trusted Computing Technology Interface) to use when communicating with a Trusted Platform Module (TPM) for secure key operations. This setting is only relevant when
 .B hsm_type

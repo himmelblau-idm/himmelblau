@@ -5,7 +5,7 @@
            rust_type="JoinType"
            documented="true"
            domain_specific="false"
-           order="49">
+           order="52">
 <description>
 Specifies whether the system should join or register with Microsoft Entra ID.
 </description>
