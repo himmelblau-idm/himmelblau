@@ -630,6 +630,7 @@ dependencies = [
  "identity_dbus_broker",
  "tokio",
  "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]
