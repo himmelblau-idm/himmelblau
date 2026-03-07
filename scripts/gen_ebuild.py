@@ -201,8 +201,8 @@ def generate_install_commands(repo_root: Path) -> str:
             pam_modules.append((src, dest))
         elif dest.endswith(".so") or dest.endswith(".so.2"):
             libraries.append((src, dest))
-        elif "/systemd/system/" in dest and src_basename.endswith(".service"):
-            # Only actual .service files, not drop-in configs
+        elif "/systemd/system/" in dest and (src_basename.endswith(".service") or src_basename.endswith(".socket")):
+            # Only actual .service/.socket files, not drop-in configs
             systemd_units.append((src, dest))
         elif dest.startswith("/etc/"):
             configs.append((src, dest))

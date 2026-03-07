@@ -7,7 +7,7 @@
            domain_specific="false"
            order="37">
 <description>
-The path to the socket file for communication between the pam and nss modules and the Himmelblau daemon.
+The path to the socket file for communication between the pam and nss modules and the Himmelblau daemon. If this is changed, also add a drop-in to override ListenStream= in the himmelblaud.socket unit to keep the paths in sync.
 </description>
 <default>/var/run/himmelblaud/socket</default>
 <default_const>DEFAULT_SOCK_PATH</default_const>
