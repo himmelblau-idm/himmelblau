@@ -628,6 +628,7 @@ dependencies = [
  "dbus",
  "himmelblau_unix_common",
  "identity_dbus_broker",
+ "sd-notify",
  "tokio",
  "tracing",
  "tracing-subscriber",
