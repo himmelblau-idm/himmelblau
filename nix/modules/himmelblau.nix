@@ -173,6 +173,46 @@ in
       };
     };
 
+    systemd.sockets.himmelblaud = {
+      description = "Himmelblau Authentication Daemon Socket";
+      wantedBy = [ "sockets.target" ];
+      socketConfig = {
+        ListenStream = "/run/himmelblaud/socket";
+        FileDescriptorName = "himmelblaud";
+        SocketMode = "0666";
+        Accept = false;
+        RemoveOnStop = true;
+      };
+    };
+
+    systemd.sockets.himmelblaud-tasks = {
+      description = "Himmelblau Daemon Task Socket";
+      wantedBy = [ "sockets.target" ];
+      socketConfig = {
+        ListenStream = "/run/himmelblaud/task_sock";
+        FileDescriptorName = "himmelblaud-task";
+        Service = "himmelblaud.service";
+        SocketMode = "0600";
+        SocketUser = "root";
+        SocketGroup = "root";
+        Accept = false;
+        RemoveOnStop = true;
+      };
+    };
+
+    systemd.sockets.himmelblaud-broker = {
+      description = "Himmelblau Daemon Broker Socket";
+      wantedBy = [ "sockets.target" ];
+      socketConfig = {
+        ListenStream = "/run/himmelblaud/broker_sock";
+        FileDescriptorName = "himmelblaud-broker";
+        Service = "himmelblaud.service";
+        SocketMode = "0666";
+        Accept = false;
+        RemoveOnStop = true;
+      };
+    };
+
     systemd.services =
       let
         commonServiceConfig = {
@@ -212,7 +252,6 @@ in
             Restart = "on-failure";
             DynamicUser = "yes";
             CacheDirectory = "himmelblaud"; # /var/cache/himmelblaud
-            RuntimeDirectory = "himmelblaud"; # /var/run/himmelblaud
             StateDirectory = "himmelblaud"; # /var/lib/himmelblaud
             PrivateTmp = true;
             # We have to disable this to allow tpmrm0 access for tpm binding.
@@ -228,9 +267,6 @@ in
             pkgs.shadow
             pkgs.bash
           ];
-          unitConfig = {
-            ConditionPathExists = "/var/run/himmelblaud/task_sock";
-          };
           serviceConfig = commonServiceConfig // {
             ExecStart = "${cfg.package}/bin/himmelblaud_tasks";
             Restart = "on-failure";

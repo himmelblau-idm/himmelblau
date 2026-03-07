@@ -25,6 +25,84 @@ use tracing::{debug, warn};
 /// The FDNAME we use when storing/retrieving the PRT memfd.
 const PRT_FDNAME: &str = "broker-prt";
 
+/// Well-known FileDescriptorName values for socket-activated sockets.
+pub const FDNAME_MAIN_SOCKET: &str = "himmelblaud";
+pub const FDNAME_TASK_SOCKET: &str = "himmelblaud-task";
+pub const FDNAME_BROKER_SOCKET: &str = "himmelblaud-broker";
+
+/// File descriptors passed by systemd at startup.
+///
+/// Collected once via `listen_fds_with_names(true)` so that both socket
+/// activation and FD-store restoration share one call.
+pub struct SystemdFds {
+    /// The main daemon socket (PAM/NSS/CLI), if passed via socket activation.
+    pub main_socket: Option<RawFd>,
+    /// The task socket (root-only IPC), if passed via socket activation.
+    pub task_socket: Option<RawFd>,
+    /// The broker socket, if passed via socket activation.
+    pub broker_socket: Option<RawFd>,
+    /// PRT data restored from the FileDescriptorStore, if any.
+    pub prt_data: Option<Vec<u8>>,
+}
+
+/// Collect all file descriptors passed by systemd and classify them.
+///
+/// Must be called exactly once, early in daemon startup.  Returns
+/// socket-activation FDs (by well-known name) and PRT memfd data.
+pub fn collect_systemd_fds() -> SystemdFds {
+    let fds = match sd_notify::listen_fds_with_names(true) {
+        Ok(fds) => fds,
+        Err(e) => {
+            debug!(
+                "listen_fds_with_names returned error (not under systemd?): {}",
+                e
+            );
+            return SystemdFds {
+                main_socket: None,
+                task_socket: None,
+                broker_socket: None,
+                prt_data: None,
+            };
+        }
+    };
+
+    let mut result = SystemdFds {
+        main_socket: None,
+        task_socket: None,
+        broker_socket: None,
+        prt_data: None,
+    };
+
+    for (fd, name) in fds {
+        match name.as_str() {
+            FDNAME_MAIN_SOCKET => {
+                debug!("Received main socket fd={} from systemd", fd);
+                result.main_socket = Some(fd);
+            }
+            FDNAME_TASK_SOCKET => {
+                debug!("Received task socket fd={} from systemd", fd);
+                result.task_socket = Some(fd);
+            }
+            FDNAME_BROKER_SOCKET => {
+                debug!("Received broker socket fd={} from systemd", fd);
+                result.broker_socket = Some(fd);
+            }
+            PRT_FDNAME => {
+                debug!("Found PRT memfd (fd={}) in FileDescriptorStore", fd);
+                match read_fd_contents(fd) {
+                    Ok(data) => result.prt_data = Some(data),
+                    Err(e) => warn!("Failed to read PRT memfd: {}", e),
+                }
+            }
+            _ => {
+                debug!("Ignoring unknown systemd fd={} name={}", fd, name);
+            }
+        }
+    }
+
+    result
+}
+
 /// Create a sealed memfd containing `data` and store it in systemd's
 /// FileDescriptorStore.
 ///
@@ -72,33 +150,12 @@ pub fn store_prts_to_fdstore(data: &[u8]) -> io::Result<()> {
     Ok(())
 }
 
-/// Retrieve PRT data from systemd's FileDescriptorStore.
+/// Retrieve PRT data from a pre-collected `SystemdFds`.
 ///
-/// On daemon restart systemd passes back the stored fds via the
-/// `LISTEN_FDS` / `LISTEN_FDNAMES` protocol.  We look for our
-/// well-known name and read the contents.
-pub fn restore_prts_from_fdstore() -> io::Result<Option<Vec<u8>>> {
-    let fds = match sd_notify::listen_fds_with_names(true) {
-        Ok(fds) => fds,
-        Err(e) => {
-            // Not an error, may not be running under systemd or no fds passed.
-            debug!(
-                "listen_fds_with_names returned error (not under systemd?): {}",
-                e
-            );
-            return Ok(None);
-        }
-    };
-
-    for (fd, name) in fds {
-        if name == PRT_FDNAME {
-            debug!("Found PRT memfd (fd={}) in FileDescriptorStore", fd);
-            return read_fd_contents(fd).map(Some);
-        }
-    }
-
-    debug!("No PRT memfd found in FileDescriptorStore");
-    Ok(None)
+/// This is a convenience wrapper; the actual collection happens in
+/// `collect_systemd_fds()`.
+pub fn restore_prts(fds: &mut SystemdFds) -> Option<Vec<u8>> {
+    fds.prt_data.take()
 }
 
 /// Read the full contents of a file descriptor into a `Vec<u8>`.

@@ -1,0 +1,17 @@
+# You should not need to edit this file. Instead, use a drop-in file:
+#   systemctl edit himmelblaud-tasks.socket
+
+[Unit]
+Description=Himmelblau Daemon Task Socket
+
+[Socket]
+ListenStream=/run/himmelblaud/task_sock
+FileDescriptorName=himmelblaud-task
+Service=himmelblaud.service
+SocketMode=0600
+SocketUser=root
+SocketGroup=root
+Accept=no
+
+[Install]
+WantedBy=sockets.target
