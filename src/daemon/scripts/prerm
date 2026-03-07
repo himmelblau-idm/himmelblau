@@ -4,9 +4,9 @@ set -e
 if [ -d /run/systemd/system ]; then
     if command -v deb-systemd-helper >/dev/null 2>&1; then
         if [ -z "$DPKG_ROOT" ] && [ "$1" = remove ]; then
-            deb-systemd-invoke stop himmelblaud.service himmelblaud-tasks.service himmelblau-hsm-pin-init.service >/dev/null || true
+            deb-systemd-invoke stop himmelblaud.service himmelblaud-tasks.service himmelblau-hsm-pin-init.service himmelblaud.socket himmelblaud-tasks.socket himmelblaud-broker.socket >/dev/null || true
         fi
     elif command -v systemctl >/dev/null 2>&1; then
-        systemctl stop himmelblaud.service himmelblaud-tasks.service himmelblau-hsm-pin-init.service >/dev/null || true
+        systemctl stop himmelblaud.service himmelblaud-tasks.service himmelblau-hsm-pin-init.service himmelblaud.socket himmelblaud-tasks.socket himmelblaud-broker.socket >/dev/null || true
     fi
 fi

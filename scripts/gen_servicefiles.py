@@ -138,7 +138,6 @@ def main():
         dirs_block.extend([
             "UMask=0027",
             "CacheDirectory=himmelblaud",
-            "RuntimeDirectory=himmelblaud",
             "StateDirectory=himmelblaud",
         ])
 
@@ -269,14 +268,10 @@ WantedBy=multi-user.target
 
 [Unit]
 Description=Himmelblau Local Tasks
-After={' '.join(tasks_after)} himmelblaud.service
-Requires=himmelblaud.service
+After={' '.join(tasks_after)}
+After=himmelblaud-tasks.socket
+Wants=himmelblaud-tasks.socket
 
-# This prevents starting himmelblaud-tasks before himmelblaud is running and
-# has created the socket necessary for communication.
-# We need the check so that fs namespacing used by `ReadWritePaths` has a
-# strict enough target to namespace. Without the check it fails in a more confusing way.
-{'ConditionPathExists=/run/himmelblaud/task_sock' if supported('ConditionPathExists') else ''}
 {'StartLimitIntervalSec=30s' if supported('StartLimitIntervalSec') else ''}
 {'StartLimitBurst=8' if supported('StartLimitBurst') else ''}
 
