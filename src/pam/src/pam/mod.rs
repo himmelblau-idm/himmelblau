@@ -719,10 +719,16 @@ impl PamHooks for PamKanidm {
                     };
 
                     let msg_printer = Arc::new(PamConvMessagePrinter::new(conv));
+                    let fido_timeout_ms = cfg.get_fido_timeout().saturating_mul(1000);
+                    let fido_prompt = cfg.get_fido_prompt();
+                    let fido_presence_prompt = cfg.get_fido_presence_prompt();
                     let assertion = match fido_auth(
                         msg_printer.clone(),
                         fido_challenge,
                         fido_allow_list,
+                        fido_timeout_ms,
+                        &fido_prompt,
+                        &fido_presence_prompt,
                     ) {
                         Ok(assertion) => assertion,
                         Err(e) => {
