@@ -53,6 +53,7 @@ memfd = ">=0.6"
 libhimmelblau.workspace = true
 url.workspace = true
 console-subscriber = { workspace = true, optional = true }
+libkrimes = { workspace = true }
 
 [package.metadata.deb]
 name = "himmelblau"
