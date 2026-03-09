@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<parameter name="fido_timeout"
+           section="global"
+           type="u64"
+           rust_type="u64"
+           documented="true"
+           domain_specific="false"
+           order="43">
+<description>
+The timeout in seconds for FIDO/passkey authentication. This is how long
+the system waits for the user to insert and activate their security key.
+</description>
+<default>25</default>
+<default_const>DEFAULT_FIDO_TIMEOUT</default_const>
+<example>fido_timeout = 60</example>
+</parameter>

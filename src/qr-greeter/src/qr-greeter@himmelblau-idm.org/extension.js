@@ -12,6 +12,8 @@ const GdmAuthPrompt = AuthPromptModule.AuthPrompt;
 // Track active temp files for cleanup
 let activeTotpTempFiles = new Set();
 
+const FIDO_MESSAGE_PREFIX = "[FIDO] ";
+
 // Maximum URL length for QR code generation (longer URLs create denser, harder to scan codes)
 const MAX_URL_LENGTH = 500;
 
@@ -176,13 +178,15 @@ export default class QrGreeterExtension extends Extension {
 
         this._originalSetMessage = GdmAuthPrompt.prototype.setMessage;
         const origSetMessage = this._originalSetMessage;
+        const extensionPath = this.path;
 
         GdmAuthPrompt.prototype.setMessage = function(message, styleClass) {
             origSetMessage.call(this, message, styleClass);
 
             if (this._message) {
                 this._message.clutter_text.line_wrap = true;
-                this._message.set_width(350);
+                this._message.clutter_text.set_line_alignment(1);
+                this._message.set_width(500);
                 this._message.set_x_expand(false);
                 this._message.set_x_align(Clutter.ActorAlign.CENTER);
             }
@@ -225,6 +229,75 @@ export default class QrGreeterExtension extends Extension {
             if (this._totpTempFile) {
                 deleteTempFile(this._totpTempFile);
                 this._totpTempFile = null;
+            }
+
+            if (message && message.startsWith(FIDO_MESSAGE_PREFIX)) {
+                if (this._message) {
+                    this._message.set_text(message.substring(FIDO_MESSAGE_PREFIX.length));
+                    this._message.set_width(-1);
+                    this._message.set_x_expand(true);
+                    this._message.set_x_align(Clutter.ActorAlign.CENTER);
+                }
+                if (!this._fidoIcon) {
+                    const svgPath = GLib.build_filenamev([extensionPath, 'security-key.svg']);
+                    const touchSvgPath = GLib.build_filenamev([extensionPath, 'security-key-touch.svg']);
+
+                    const container = new St.Widget({
+                        width: 160,
+                        height: 80,
+                        x_align: Clutter.ActorAlign.CENTER,
+                    });
+
+                    const baseLayer = new St.Widget({
+                        width: 160,
+                        height: 80,
+                        style: `background-image: url('file://${svgPath}'); background-size: contain; background-repeat: no-repeat; background-position: center;`,
+                    });
+
+                    const touchLayer = new St.Widget({
+                        width: 160,
+                        height: 80,
+                        opacity: 0,
+                        style: `background-image: url('file://${touchSvgPath}'); background-size: contain; background-repeat: no-repeat; background-position: center;`,
+                    });
+
+                    container.add_child(baseLayer);
+                    container.add_child(touchLayer);
+                    this._fidoIcon = container;
+                    this._fidoTouchLayer = touchLayer;
+                    this._qrVBox.insert_child_below(this._fidoIcon, this._message);
+
+                }
+                if (this._fidoPulseTimer) {
+                    GLib.source_remove(this._fidoPulseTimer);
+                    this._fidoPulseTimer = null;
+                }
+                this._fidoTouchLayer.opacity = 0;
+                this._fidoPulseUp = true;
+                this._fidoPulseTimer = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 30, () => {
+                    if (!this._fidoTouchLayer) return GLib.SOURCE_REMOVE;
+                    const current = this._fidoTouchLayer.opacity;
+                    if (this._fidoPulseUp) {
+                        this._fidoTouchLayer.opacity = Math.min(current + 6, 255);
+                        if (this._fidoTouchLayer.opacity >= 255) this._fidoPulseUp = false;
+                    } else {
+                        this._fidoTouchLayer.opacity = Math.max(current - 6, 0);
+                        if (this._fidoTouchLayer.opacity <= 0) this._fidoPulseUp = true;
+                    }
+                    return GLib.SOURCE_CONTINUE;
+                });
+                this._fidoIcon.show();
+                if (this._qrContainer) this._qrContainer.hide();
+                if (this._qrLabel) this._qrLabel.hide();
+                return;
+            }
+
+            if (this._fidoIcon) {
+                this._fidoIcon.hide();
+                if (this._fidoPulseTimer) {
+                    GLib.source_remove(this._fidoPulseTimer);
+                    this._fidoPulseTimer = null;
+                }
             }
 
             const totpMatch = message ? message.startsWith("otpauth://") : null;
