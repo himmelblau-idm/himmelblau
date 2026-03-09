@@ -48,6 +48,7 @@ use kanidm_hsm_crypto::{
     structures::LoadableMsOapxbcRsaKey, structures::SealedData, PinValue,
 };
 use libc::getpwnam;
+use libkrimes::proto::KerberosCredentials;
 use regex::Regex;
 use reqwest;
 use reqwest::Url;
@@ -429,6 +430,36 @@ impl IdProvider for HimmelblauMultiProvider {
 
         provider
             .unix_user_ccaches(id, old_token, tpm, machine_key)
+            .await
+    }
+
+    async fn unix_user_tgts<D: KeyStoreTxn + Send>(
+        &self,
+        id: &Id,
+        old_token: Option<&UserToken>,
+        keystore: &mut D,
+        tpm: &mut tpm::provider::BoxedDynTpm,
+        machine_key: &tpm::structures::StorageKey,
+    ) -> (
+        Option<Box<KerberosCredentials>>,
+        Option<Box<KerberosCredentials>>,
+    ) {
+        let account_id = match old_token {
+            Some(token) => token.spn.clone(),
+            None => id.to_string().clone(),
+        };
+        let empty = (None, None);
+        let Ok(domain) = idp_get_domain_for_account(&account_id) else {
+            return empty;
+        };
+
+        let providers = self.providers.read().await;
+        let Ok(provider) = find_provider!(self, providers, domain) else {
+            return empty;
+        };
+
+        provider
+            .unix_user_tgts(id, old_token, keystore, tpm, machine_key)
             .await
     }
 
@@ -890,6 +921,59 @@ impl IdProvider for HimmelblauProvider {
             .await
             .fetch_ad_ccache(&prt, tpm, machine_key)
             .unwrap_or(vec![]);
+        (cloud_ccache, ad_ccache)
+    }
+
+    #[instrument(skip_all)]
+    async fn unix_user_tgts<D: KeyStoreTxn + Send>(
+        &self,
+        id: &Id,
+        old_token: Option<&UserToken>,
+        _keystore: &mut D,
+        tpm: &mut tpm::provider::BoxedDynTpm,
+        machine_key: &tpm::structures::StorageKey,
+    ) -> (
+        Option<Box<KerberosCredentials>>,
+        Option<Box<KerberosCredentials>>,
+    ) {
+        if (self.delayed_init().await).is_err() {
+            // We can't fetch krb5 tgts when initialization hasn't
+            // completed. This only happens when we're offline during first
+            // startup. This should never happen!
+            return (None, None);
+        }
+
+        if !self.check_online(tpm, SystemTime::now()).await {
+            // We can't fetch krb5 tgts when offline
+            return (None, None);
+        }
+
+        let account_id = match old_token {
+            Some(token) => token.spn.clone(),
+            None => id.to_string().clone(),
+        };
+        let prt = match self.refresh_cache.refresh_token(&account_id).await {
+            Ok(prt) => prt,
+            Err(e) => {
+                error!(
+                    "Failed fetching refresh cache entry for Kerberos CCache: {:?}",
+                    e
+                );
+                return (None, None);
+            }
+        };
+        let cloud_ccache = self
+            .client
+            .read()
+            .await
+            .fetch_cloud_tgt(&prt, tpm, machine_key)
+            .ok();
+        let ad_ccache = self
+            .client
+            .read()
+            .await
+            .fetch_ad_tgt(&prt, tpm, machine_key)
+            .ok();
         (cloud_ccache, ad_ccache)
     }
 
