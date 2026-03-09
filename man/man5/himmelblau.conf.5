@@ -793,6 +793,30 @@ Default: 300
 Example: cache_timeout = 10
 
 .TP
+.B fido_timeout
+.RE
+The timeout in seconds for FIDO/passkey authentication. This is how long
+the system waits for the user to insert and activate their security key.
+
+.P
+Default: 25
+
+.P
+Example: fido_timeout = 60
+
+.TP
+.B fido_prompt
+.RE
+The message displayed to the user when FIDO/passkey authentication is initiated
+and they need to insert their security key.
+
+.P
+Default: Please insert your security key.
+
+.P
+Example: fido_prompt = Bitte den Sicherheitsschlüssel einstecken.
+
+.TP
 .B use_etc_skel
 .RE
 If set to
@@ -804,6 +828,18 @@ Default: false
 
 .P
 Example: use_etc_skel = true
+
+.TP
+.B fido_presence_prompt
+.RE
+The message displayed to the user when FIDO/passkey authentication requires
+user presence (touching the security key).
+
+.P
+Default: Please touch your security key.
+
+.P
+Example: fido_presence_prompt = Bitte den Sicherheitsschlüssel berühren.
 
 .TP
 .B selinux

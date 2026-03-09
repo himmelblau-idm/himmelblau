@@ -235,6 +235,9 @@ export default class QrGreeterExtension extends Extension {
             if (message && message.startsWith(FIDO_TOUCH_PREFIX)) {
                 if (this._message) {
                     this._message.set_text(message.substring(FIDO_TOUCH_PREFIX.length));
+                    this._message.set_width(-1);
+                    this._message.set_x_expand(true);
+                    this._message.set_x_align(Clutter.ActorAlign.CENTER);
                 }
                 if (!this._fidoIcon) {
                     const svgPath = GLib.build_filenamev([extensionPath, 'security-key.svg']);
