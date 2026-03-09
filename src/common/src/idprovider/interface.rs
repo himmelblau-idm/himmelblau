@@ -367,4 +367,15 @@ pub trait IdProvider {
     ) -> CacheState;
 
     async fn offline_break_glass(&self, _ttl: Option<u64>) -> Result<(), IdpError>;
+
+    /// Export broker PRTs as a serialised blob (for fdstore persistence).
+    /// Providers that don't hold broker PRTs return an empty JSON object.
+    async fn export_broker_prts(&self) -> Result<Vec<u8>, serde_json::Error> {
+        Ok(b"{}".to_vec())
+    }
+
+    /// Import broker PRTs previously exported by [`Self::export_broker_prts`].
+    async fn import_broker_prts(&self, _data: &[u8]) -> Result<(), serde_json::Error> {
+        Ok(())
+    }
 }

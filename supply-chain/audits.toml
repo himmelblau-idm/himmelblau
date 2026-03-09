@@ -484,6 +484,11 @@ who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
 delta = "1.0.26 -> 1.0.27"
 
+[[audits.sendfd]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+version = "0.4.4"
+
 [[audits.serde]]
 who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
