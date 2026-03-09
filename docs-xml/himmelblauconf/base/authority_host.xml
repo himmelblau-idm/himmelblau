@@ -5,7 +5,7 @@
            rust_type="String"
            documented="true"
            domain_specific="true"
-           order="29">
+           order="32">
 <description>
 Specifies the hostname for Microsoft authentication.
 </description>

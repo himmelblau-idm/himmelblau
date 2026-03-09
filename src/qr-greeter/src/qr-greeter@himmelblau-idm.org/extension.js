@@ -12,7 +12,8 @@ const GdmAuthPrompt = AuthPromptModule.AuthPrompt;
 // Track active temp files for cleanup
 let activeTotpTempFiles = new Set();
 
-const FIDO_MESSAGE_PREFIX = "[FIDO] ";
+// Must match the prefix used in src/common/src/auth.rs fido_status_check()
+const FIDO_TOUCH_PREFIX = "[FIDO_TOUCH] ";
 
 // Maximum URL length for QR code generation (longer URLs create denser, harder to scan codes)
 const MAX_URL_LENGTH = 500;
@@ -231,12 +232,9 @@ export default class QrGreeterExtension extends Extension {
                 this._totpTempFile = null;
             }
 
-            if (message && message.startsWith(FIDO_MESSAGE_PREFIX)) {
+            if (message && message.startsWith(FIDO_TOUCH_PREFIX)) {
                 if (this._message) {
-                    this._message.set_text(message.substring(FIDO_MESSAGE_PREFIX.length));
-                    this._message.set_width(-1);
-                    this._message.set_x_expand(true);
-                    this._message.set_x_align(Clutter.ActorAlign.CENTER);
+                    this._message.set_text(message.substring(FIDO_TOUCH_PREFIX.length));
                 }
                 if (!this._fidoIcon) {
                     const svgPath = GLib.build_filenamev([extensionPath, 'security-key.svg']);
@@ -274,14 +272,14 @@ export default class QrGreeterExtension extends Extension {
                 }
                 this._fidoTouchLayer.opacity = 0;
                 this._fidoPulseUp = true;
-                this._fidoPulseTimer = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 30, () => {
+                this._fidoPulseTimer = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 300, () => {
                     if (!this._fidoTouchLayer) return GLib.SOURCE_REMOVE;
                     const current = this._fidoTouchLayer.opacity;
                     if (this._fidoPulseUp) {
-                        this._fidoTouchLayer.opacity = Math.min(current + 6, 255);
+                        this._fidoTouchLayer.opacity = Math.min(current + 32, 255);
                         if (this._fidoTouchLayer.opacity >= 255) this._fidoPulseUp = false;
                     } else {
-                        this._fidoTouchLayer.opacity = Math.max(current - 6, 0);
+                        this._fidoTouchLayer.opacity = Math.max(current - 32, 0);
                         if (this._fidoTouchLayer.opacity <= 0) this._fidoPulseUp = true;
                     }
                     return GLib.SOURCE_CONTINUE;
@@ -373,6 +371,12 @@ export default class QrGreeterExtension extends Extension {
         console.log("Himmelblau QR Greeter: disabled...");
         // Clean up any remaining temp files
         cleanupAllTempFiles();
+        if (this._fidoPulseTimer) {
+            GLib.source_remove(this._fidoPulseTimer);
+            this._fidoPulseTimer = null;
+        }
+        this._fidoIcon = null;
+        this._fidoTouchLayer = null;
         if (GdmAuthPrompt && this._originalSetMessage) {
             GdmAuthPrompt.prototype.setMessage = this._originalSetMessage;
         }

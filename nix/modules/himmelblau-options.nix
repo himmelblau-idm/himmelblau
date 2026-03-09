@@ -405,6 +405,36 @@ in
       example = true;
     };
 
+    fido_timeout = mkOption {
+      type = types.nullOr (types.ints.unsigned);
+      default = 25;
+      description = ''
+        The timeout in seconds for FIDO/passkey authentication. This is how long
+        the system waits for the user to insert and activate their security key.
+      '';
+      example = 60;
+    };
+
+    fido_prompt = mkOption {
+      type = types.nullOr (types.str);
+      default = "Please insert your security key.";
+      description = ''
+        The message displayed to the user when FIDO/passkey authentication is initiated
+        and they need to insert their security key.
+      '';
+      example = "Bitte den Sicherheitsschlüssel einstecken.";
+    };
+
+    fido_presence_prompt = mkOption {
+      type = types.nullOr (types.str);
+      default = "Please touch your security key.";
+      description = ''
+        The message displayed to the user when FIDO/passkey authentication requires
+        user presence (touching the security key).
+      '';
+      example = "Bitte den Sicherheitsschlüssel berühren.";
+    };
+
     name_mapping_script = mkOption {
       type = types.nullOr (types.str);
       default = null;
@@ -647,26 +677,6 @@ in
       example = 10;
     };
 
-    fido_timeout = mkOption {
-      type = types.nullOr (types.ints.unsigned);
-      default = 25;
-      description = ''
-        The timeout in seconds for FIDO/passkey authentication. This is how long
-        the system waits for the user to insert and activate their security key.
-      '';
-      example = 60;
-    };
-
-    fido_prompt = mkOption {
-      type = types.nullOr (types.str);
-      default = "Please insert your security key.";
-      description = ''
-        The message displayed to the user when FIDO/passkey authentication is initiated
-        and they need to insert their security key.
-      '';
-      example = "Bitte den Sicherheitsschlüssel einstecken.";
-    };
-
     use_etc_skel = mkOption {
       type = types.nullOr (types.bool);
       default = false;
@@ -676,16 +686,6 @@ in
         Himmelblau will use the contents of /etc/skel when creating new user directories.
       '';
       example = true;
-    };
-
-    fido_presence_prompt = mkOption {
-      type = types.nullOr (types.str);
-      default = "Please touch your security key.";
-      description = ''
-        The message displayed to the user when FIDO/passkey authentication requires
-        user presence (touching the security key).
-      '';
-      example = "Bitte den Sicherheitsschlüssel berühren.";
     };
 
     selinux = mkOption {

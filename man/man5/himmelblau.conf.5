@@ -479,6 +479,42 @@ Default: false
 Example: enable_experimental_passwordless_fido = true
 
 .TP
+.B fido_timeout
+.RE
+The timeout in seconds for FIDO/passkey authentication. This is how long
+the system waits for the user to insert and activate their security key.
+
+.P
+Default: 25
+
+.P
+Example: fido_timeout = 60
+
+.TP
+.B fido_prompt
+.RE
+The message displayed to the user when FIDO/passkey authentication is initiated
+and they need to insert their security key.
+
+.P
+Default: Please insert your security key.
+
+.P
+Example: fido_prompt = Bitte den Sicherheitsschlüssel einstecken.
+
+.TP
+.B fido_presence_prompt
+.RE
+The message displayed to the user when FIDO/passkey authentication requires
+user presence (touching the security key).
+
+.P
+Default: Please touch your security key.
+
+.P
+Example: fido_presence_prompt = Bitte den Sicherheitsschlüssel berühren.
+
+.TP
 .B name_mapping_script
 .RE
 Specifies the path to an executable script used for mapping custom names to UPN names. The script MUST accept a single argument, which will always be a mapped name. The script MUST print the corresponding UPN (User Principal Name) to stdout. If the script does not recognize the input name, it MUST simply return the input name unchanged. This option is particularly useful in environments where direct UPN-to-CN mappings are impractical or where custom transformations are required.
@@ -770,30 +806,6 @@ Default: 300
 Example: cache_timeout = 10
 
 .TP
-.B fido_timeout
-.RE
-The timeout in seconds for FIDO/passkey authentication. This is how long
-the system waits for the user to insert and activate their security key.
-
-.P
-Default: 25
-
-.P
-Example: fido_timeout = 60
-
-.TP
-.B fido_prompt
-.RE
-The message displayed to the user when FIDO/passkey authentication is initiated
-and they need to insert their security key.
-
-.P
-Default: Please insert your security key.
-
-.P
-Example: fido_prompt = Bitte den Sicherheitsschlüssel einstecken.
-
-.TP
 .B use_etc_skel
 .RE
 If set to
@@ -805,18 +817,6 @@ Default: false
 
 .P
 Example: use_etc_skel = true
-
-.TP
-.B fido_presence_prompt
-.RE
-The message displayed to the user when FIDO/passkey authentication requires
-user presence (touching the security key).
-
-.P
-Default: Please touch your security key.
-
-.P
-Example: fido_presence_prompt = Bitte den Sicherheitsschlüssel berühren.
 
 .TP
 .B selinux
