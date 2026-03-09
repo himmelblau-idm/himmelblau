@@ -51,6 +51,7 @@ async-trait.workspace = true
 sd-notify = "0.4.5"
 libhimmelblau.workspace = true
 console-subscriber = { workspace = true, optional = true }
+libkrimes = { workspace = true }
 
 [package.metadata.deb]
 name = "himmelblau"
