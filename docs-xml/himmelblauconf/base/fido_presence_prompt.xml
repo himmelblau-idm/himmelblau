@@ -5,7 +5,7 @@
            rust_type="String"
            documented="true"
            domain_specific="false"
-           order="45">
+           order="29">
 <description>
 The message displayed to the user when FIDO/passkey authentication requires
 user presence (touching the security key).
