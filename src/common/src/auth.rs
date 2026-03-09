@@ -99,7 +99,8 @@ async fn fido_status_check(
                 msg_printer.print_text("Please select a device by touching one of them.");
             }
             Ok(StatusUpdate::PresenceRequired) => {
-                msg_printer.print_text(&format!("[FIDO] {}", presence_prompt));
+                // "[FIDO_TOUCH] " prefix must match FIDO_TOUCH_PREFIX in qr-greeter extension.js
+                msg_printer.print_text(&format!("[FIDO_TOUCH] {}", presence_prompt));
             }
             Ok(StatusUpdate::PinUvError(StatusPinUv::PinRequired(sender))) => {
                 match msg_printer.prompt_echo_off("Fido PIN: ") {
@@ -181,7 +182,7 @@ pub fn fido_auth(
     prompt: &str,
     presence_prompt: &str,
 ) -> Result<String, PamResultCode> {
-    msg_printer.print_text(&format!("[FIDO] {}", prompt));
+    msg_printer.print_text(prompt);
 
     let mut manager = AuthenticatorService::new().map_err(|e| {
         error!("{:?}", e);

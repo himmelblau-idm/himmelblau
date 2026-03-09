@@ -5,7 +5,7 @@
            rust_type="u64"
            documented="true"
            domain_specific="false"
-           order="43">
+           order="46">
 <description>
 The timeout in seconds for caching authentication data.
 </description>
