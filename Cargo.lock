@@ -2517,9 +2517,9 @@ checksum = "b9e0384b61958566e926dc50660321d12159025e767c18e043daf26b70104c39"
 
 [[package]]
 name = "identity_dbus_broker"
-version = "0.1.4"
+version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a6f43966f9a9e03e8c5c106c309f1e0dd836da9830f075849f70252b154a7d46"
+checksum = "73ac8eea503ae6c19597351e1d4c13fb185d95772105893ec021c048b9f6a4d9"
 dependencies = [
  "async-trait",
  "bytes",
@@ -2981,7 +2981,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6a793df0d7afeac54f95b471d3af7f0d4fb975699f972341a4b76988d49cdf0c"
 dependencies = [
  "cfg-if",
- "windows-targets 0.52.6",
+ "windows-targets 0.53.0",
 ]
 
 [[package]]
