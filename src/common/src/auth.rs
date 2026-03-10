@@ -182,7 +182,8 @@ pub fn fido_auth(
     prompt: &str,
     presence_prompt: &str,
 ) -> Result<String, PamResultCode> {
-    msg_printer.print_text(prompt);
+    // "[FIDO_INSERT] " prefix must match FIDO_INSERT_PREFIX in qr-greeter extension.js
+    msg_printer.print_text(&format!("[FIDO_INSERT] {}", prompt));
 
     let mut manager = AuthenticatorService::new().map_err(|e| {
         error!("{:?}", e);
