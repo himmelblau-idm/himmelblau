@@ -292,7 +292,7 @@ AmbientCapabilities=CAP_SETUID CAP_SETGID
 # SystemCallFilter=@aio @basic-io @chown @file-system @io-event @network-io @sync
 { 'ProtectSystem=strict' if supported('ProtectSystemStrict') else '' }
 {rw_line}
-{os.linesep.join([h for h in tasks_hardening if not h.startswith('ProtectSystem=') and not h.startswith('PrivateTmp=')])}
+{os.linesep.join([h for h in tasks_hardening if not h.startswith('ProtectSystem=')])}
 {tasks_private_devices}
 
 [Install]
