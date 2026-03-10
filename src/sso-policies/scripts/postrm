@@ -5,7 +5,7 @@ set -e
 # Removes Firefox extension configuration that was merged during install
 # (Chrome/Chromium policy files are handled by package manager directly)
 
-FIREFOX_EXTENSION_URL="https://github.com/siemens/linux-entra-sso/releases/download/v1.3.1/linux_entra_sso-1.3.1.xpi"
+FIREFOX_EXTENSION_URL="https://github.com/siemens/linux-entra-sso/releases/download/v1.8.0/linux_entra_sso-1.8.0.xpi"
 
 # Function to remove Firefox extension from policies.json
 remove_firefox_policy() {
