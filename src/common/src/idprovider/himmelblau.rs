@@ -170,81 +170,9 @@ enum Providers {
 pub struct HimmelblauMultiProvider {
     config: Arc<RwLock<HimmelblauConfig>>,
     providers: Arc<RwLock<HashMap<String, Providers>>>,
-    permit_new_providers: Arc<Mutex<bool>>,
-    idmap: Arc<RwLock<Idmap>>,
 }
 
 impl HimmelblauMultiProvider {
-    async fn add_tenant<D: KeyStoreTxn + Send>(
-        &self,
-        domain: &str,
-        cfg: &HimmelblauConfig,
-        keystore: &mut D,
-    ) -> Result<(), IdpError> {
-        if !*self.permit_new_providers.lock().await {
-            return Err(IdpError::NotFound {
-                what: "domain".to_string(),
-                where_: domain.to_string(),
-            });
-        }
-        debug!("Adding provider for domain {}", domain);
-        let authority_host = cfg.get_authority_host(domain);
-        let tenant_id = cfg.get_tenant_id(domain);
-        let graph_url = cfg.get_graph_url(domain);
-        let graph = match Graph::new(
-            &cfg.get_odc_provider(domain),
-            domain,
-            Some(&authority_host),
-            tenant_id.as_deref(),
-            graph_url.as_deref(),
-        )
-        .await
-        {
-            Ok(graph) => graph,
-            Err(e) => {
-                error!("Failed initializing provider: {:?}", e);
-                return Err(IdpError::BadRequest);
-            }
-        };
-        let app_id = cfg.get_app_id(domain);
-        let app =
-            BrokerClientApplication::new(None, app_id.as_deref(), None, None).map_err(|e| {
-                error!("Failed initializing provider: {:?}", e);
-                IdpError::BadRequest
-            })?;
-        let provider = HimmelblauProvider::new(app, &self.config, domain, graph, &self.idmap)
-            .map_err(|e| {
-                error!("Failed to initialize the provider: {:?}", e);
-                IdpError::BadRequest
-            })?;
-        {
-            // A client write lock is required here.
-            let mut client = provider.client.write().await;
-            if let Ok(transport_key) = provider.fetch_loadable_transport_key_from_keystore(keystore)
-            {
-                client.set_transport_key(transport_key);
-            }
-            if let Ok(cert_key) = provider.fetch_loadable_cert_key_from_keystore(keystore) {
-                client.set_cert_key(cert_key);
-            }
-        }
-        self.providers
-            .write()
-            .await
-            .insert(domain.to_string(), Providers::Himmelblau(provider));
-        Ok(())
-    }
-
-    async fn add_oidc_tenant(&self) -> Result<(), IdpError> {
-        let provider = OidcProvider::new(&self.config, "oidc", &self.idmap)?;
-
-        self.providers
-            .write()
-            .await
-            .insert("oidc".to_string(), Providers::Oidc(provider));
-        Ok(())
-    }
-
     pub async fn new<D: KeyStoreTxn + Send>(
         config_filename: &str,
         keystore: &mut D,
@@ -262,36 +190,80 @@ impl HimmelblauMultiProvider {
         let cfg = config.read().await;
         let domains = cfg.get_configured_domains();
         if domains.is_empty() {
-            warn!("No domains configured in himmelblau.conf. All tenants will be allowed!");
+            warn!("No domains configured in himmelblau.conf.");
         }
 
         let providers = HimmelblauMultiProvider {
             config: config.clone(),
             providers: Arc::new(RwLock::new(providers)),
-            idmap,
-            permit_new_providers: Arc::new(Mutex::new(true)),
         };
 
-        let mut permit_new_providers = true;
         if cfg.get_oidc_issuer_url().is_none() {
             for domain in domains {
+                debug!("Adding provider for domain {}", domain);
+                let authority_host = cfg.get_authority_host(&domain);
+                let tenant_id = cfg.get_tenant_id(&domain);
+                let graph_url = cfg.get_graph_url(&domain);
+                let graph = match Graph::new(
+                    &cfg.get_odc_provider(&domain),
+                    &domain,
+                    Some(&authority_host),
+                    tenant_id.as_deref(),
+                    graph_url.as_deref(),
+                )
+                .await
+                {
+                    Ok(graph) => graph,
+                    Err(e) => {
+                        error!("Failed initializing provider: {:?}", e);
+                        continue;
+                    }
+                };
+                let app_id = cfg.get_app_id(&domain);
+                let app = BrokerClientApplication::new(None, app_id.as_deref(), None, None)
+                    .map_err(|e| {
+                        error!("Failed initializing provider: {:?}", e);
+                        anyhow!("{:?}", e)
+                    })?;
+                let provider = HimmelblauProvider::new(app, &config, &domain, graph, &idmap)
+                    .map_err(|e| {
+                        error!("Failed to initialize the provider: {:?}", e);
+                        anyhow!("Failed to initialize the provider")
+                    })?;
+                {
+                    // A client write lock is required here.
+                    let mut client = provider.client.write().await;
+                    if let Ok(transport_key) =
+                        provider.fetch_loadable_transport_key_from_keystore(keystore)
+                    {
+                        client.set_transport_key(transport_key);
+                    }
+                    if let Ok(cert_key) = provider.fetch_loadable_cert_key_from_keystore(keystore) {
+                        client.set_cert_key(cert_key);
+                    }
+                }
                 providers
-                    .add_tenant(&domain, &cfg, keystore)
+                    .providers
+                    .write()
                     .await
-                    .map_err(|e| anyhow!("{:?}", e))?;
-                // If a provide is already configured (or multiple providers), do
-                // not permit new providers.
-                permit_new_providers = false;
+                    .insert(domain.to_string(), Providers::Himmelblau(provider));
             }
         } else {
             // Add the oidc provider, if present
+            let provider = OidcProvider::new(&config, "oidc", &idmap).map_err(|e| {
+                error!("Failed initializing OIDC provider: {:?}", e);
+                anyhow!("{:?}", e)
+            })?;
+
             providers
-                .add_oidc_tenant()
+                .providers
+                .write()
                 .await
-                .map_err(|e| anyhow!("{:?}", e))?;
-            permit_new_providers = false;
+                .insert("oidc".to_string(), Providers::Oidc(provider));
         }
-        *providers.permit_new_providers.lock().await = permit_new_providers;
+        if providers.providers.read().await.len() == 0 {
+            return Err(anyhow!("No provider was configured!"));
+        }
 
         // Spawn periodic cookie clearing loop (Fixes bugs #591 and #491)
         let providers_ref = providers.providers.clone();
@@ -324,23 +296,8 @@ macro_rules! find_provider {
                 let mut cfg = $hmp.config.write().await;
                 match cfg.get_primary_domain_from_alias($domain).await {
                     Some(domain) => $providers.get(&domain),
-                    None => {
-                        if cfg.get_configured_domains().len() == 0 {
-                            // We have to drop $providers here, since
-                            // `add_tenant` is about to take a write lock on
-                            // it. We re-open the readlock to get the new
-                            // provider after adding the tenant.
-                            drop($providers);
-                            let _ = $hmp.add_tenant($domain, &cfg, $keystore).await;
-                            $providers = $hmp.providers.read().await;
-                            match $providers.get($domain) {
-                                Some(provider) => Some(provider),
-                                None => None,
-                            }
-                        } else {
-                            None
-                        }
-                    }
+                    /* NEVER introduce a new tenant here: Advisory GHSA-q746-m2wv-qh4v */
+                    None => None,
                 }
             }
         }
@@ -422,7 +379,7 @@ impl IdProvider for HimmelblauMultiProvider {
             None => id.to_string().clone(),
         };
         let domain = idp_get_domain_for_account!(self, &account_id)?;
-        let mut providers = self.providers.read().await;
+        let providers = self.providers.read().await;
         let provider = find_provider!(self, providers, domain, keystore)?;
 
         match provider {
@@ -461,7 +418,7 @@ impl IdProvider for HimmelblauMultiProvider {
             return empty;
         };
 
-        let mut providers = self.providers.read().await;
+        let providers = self.providers.read().await;
         let Ok(provider) = find_provider!(self, providers, domain, keystore) else {
             return empty;
         };
@@ -494,7 +451,7 @@ impl IdProvider for HimmelblauMultiProvider {
             None => id.to_string().clone(),
         };
         let domain = idp_get_domain_for_account!(self, &account_id)?;
-        let mut providers = self.providers.read().await;
+        let providers = self.providers.read().await;
         let provider = find_provider!(self, providers, domain, keystore)?;
 
         match provider {
@@ -521,7 +478,7 @@ impl IdProvider for HimmelblauMultiProvider {
         machine_key: &tpm::structures::StorageKey,
     ) -> Result<bool, IdpError> {
         let domain = idp_get_domain_for_account!(self, account_id)?;
-        let mut providers = self.providers.read().await;
+        let providers = self.providers.read().await;
         let provider = find_provider!(self, providers, domain, keystore)?;
 
         match provider {
@@ -552,7 +509,7 @@ impl IdProvider for HimmelblauMultiProvider {
             None => id.to_string().clone(),
         };
         let domain = idp_get_domain_for_account!(self, &account_id)?;
-        let mut providers = self.providers.read().await;
+        let providers = self.providers.read().await;
         let provider = find_provider!(self, providers, domain, keystore)?;
 
         match provider {
@@ -581,7 +538,7 @@ impl IdProvider for HimmelblauMultiProvider {
         shutdown_rx: &broadcast::Receiver<()>,
     ) -> Result<(AuthRequest, AuthCredHandler), IdpError> {
         let domain = idp_get_domain_for_account!(self, account_id)?;
-        let mut providers = self.providers.read().await;
+        let providers = self.providers.read().await;
         let provider = find_provider!(self, providers, domain, keystore)?;
 
         match provider {
@@ -630,7 +587,7 @@ impl IdProvider for HimmelblauMultiProvider {
         shutdown_rx: &broadcast::Receiver<()>,
     ) -> Result<(AuthResult, AuthCacheAction), IdpError> {
         let domain = idp_get_domain_for_account!(self, account_id)?;
-        let mut providers = self.providers.read().await;
+        let providers = self.providers.read().await;
         let provider = find_provider!(self, providers, domain, keystore)?;
 
         match provider {
@@ -677,7 +634,7 @@ impl IdProvider for HimmelblauMultiProvider {
         keystore: &mut D,
     ) -> Result<(AuthRequest, AuthCredHandler), IdpError> {
         let domain = idp_get_domain_for_account!(self, account_id)?;
-        let mut providers = self.providers.read().await;
+        let providers = self.providers.read().await;
         let provider = find_provider!(self, providers, domain, keystore)?;
 
         match provider {
@@ -706,7 +663,7 @@ impl IdProvider for HimmelblauMultiProvider {
         online_at_init: bool,
     ) -> Result<AuthResult, IdpError> {
         let domain = idp_get_domain_for_account!(self, account_id)?;
-        let mut providers = self.providers.read().await;
+        let providers = self.providers.read().await;
         let provider = find_provider!(self, providers, domain, keystore)?;
 
         match provider {
@@ -759,7 +716,7 @@ impl IdProvider for HimmelblauMultiProvider {
         match account_id {
             Some(account_id) => match idp_get_domain_for_account!(self, account_id) {
                 Ok(domain) => {
-                    let mut providers = self.providers.read().await;
+                    let providers = self.providers.read().await;
                     match find_provider!(self, providers, domain, keystore) {
                         Ok(provider) => match provider {
                             Providers::Oidc(provider) => {
