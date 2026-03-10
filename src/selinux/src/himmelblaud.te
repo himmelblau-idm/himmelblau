@@ -268,7 +268,7 @@ optional {
 		type tmpfs_t;
 		class file { getattr open read };
 	}
-	allow himmelblaud_t tmpfs_t:file { getattr open read };
+	allow himmelblaud_t tmpfs_t:file { getattr open read write map };
 }
 
 optional {
@@ -400,6 +400,8 @@ optional {
 	allow himmelblaud_tasks_t urandom_device_t:chr_file { getattr open read };
 	allow himmelblaud_tasks_t self:netlink_audit_socket { create nlmsg_relay read write };
 	allow himmelblaud_tasks_t self:capability chown;
+	allow himmelblaud_tasks_t self:key { read view search write create link setattr };
+	allow himmelblaud_tasks_t self:capability { setuid setgid };
 }
 
 optional {
@@ -656,9 +658,10 @@ allow init_t himmelblaud_t:process { signull signal sigkill };
 allow init_t himmelblaud_tasks_t:process { signull signal sigkill };
 allow init_t himmelblaud_t:process { noatsecure rlimitinh siginh };
 allow init_t himmelblaud_tasks_t:process { noatsecure rlimitinh siginh };
-allow init_t himmelblaud_t:file { getattr open read };
-allow init_t himmelblaud_tasks_t:file { getattr open read };
+allow init_t himmelblaud_t:file { getattr open read ioctl };
+allow init_t himmelblaud_tasks_t:file { getattr open read ioctl };
 allow init_t himmelblaud_t:unix_stream_socket connectto;
+allow init_t himmelblaud_t:fd use;
 
 # Optional: init_t access to cron spool (may not exist on all systems)
 optional {
@@ -876,8 +879,9 @@ optional {
 	allow policykit_t himmelblau_var_run_t:dir search;
 	allow policykit_t himmelblau_var_run_t:sock_file write;
 	allow policykit_t himmelblaud_t:dir search;
-	allow policykit_t himmelblaud_t:file { getattr open read };
+	allow policykit_t himmelblaud_t:file { getattr open read ioctl };
 	allow policykit_t himmelblaud_t:unix_stream_socket connectto;
+	allow policykit_t himmelblaud_tasks_t:file ioctl;
 }
 
 #============= policykit_auth_t ==============
@@ -1037,10 +1041,15 @@ optional {
 	allow unconfined_t himmelblaud_t:dir { getattr search };
 	allow unconfined_t himmelblaud_tasks_t:dir { getattr search };
 	allow unconfined_t himmelblaud_t:file { getattr ioctl open read };
+	allow unconfined_t himmelblaud_t:lnk_file read;
+	allow unconfined_t himmelblaud_t:process getattr;
 	allow unconfined_t himmelblaud_tasks_t:file { getattr ioctl open read };
+	allow unconfined_t himmelblaud_tasks_t:lnk_file read;
+	allow unconfined_t himmelblaud_tasks_t:process getattr;
 
 	allow unconfined_t himmelblau_etc_t:dir { add_name create getattr open read remove_name search write setattr relabelto relabelfrom };
 	allow unconfined_t himmelblau_etc_t:file { append create getattr open read rename setattr unlink write relabelto relabelfrom };
+	allow unconfined_t himmelblaud_tasks_t:key { link read search view };
 }
 
 #============= syslogd_t ==============
@@ -1169,6 +1178,13 @@ optional {
 		type unconfined_dbusd_t;
 	}
 	allow unconfined_dbusd_t himmelblaud_t:unix_stream_socket connectto;
+}
+
+optional {
+	require {
+		type plymouthd_t;
+	}
+	allow plymouthd_t self:capability dac_override;
 }
 
 ############################
