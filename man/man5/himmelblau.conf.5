@@ -1,4 +1,4 @@
-.TH HIMMELBLAU.CONF "5" "February 2026" "Himmelblau Configuration" "File Formats"
+.TH HIMMELBLAU.CONF "5" "March 2026" "Himmelblau Configuration" "File Formats"
 .SH NAME
 himmelblau.conf \- Configuration file for Himmelblau, enabling Azure Entra ID authentication on Linux.
 
@@ -504,13 +504,15 @@ Example: name_mapping_script = /path/to/mapping_script.sh
 .TP
 .B apply_policy
 .RE
-A boolean option that enables the application and enforcement of Intune policies to the authenticated user.
+A boolean option that enables the application and enforcement of Intune device compliance policies during non-OIDC authentication.
+When enabled (the default), non-compliant devices may be denied authentication in accordance with the configured policies.
+This setting does not affect OIDC-based authentication flows.
 
 .P
-Default: false
+Default: true
 
 .P
-Example: apply_policy = true
+Example: apply_policy = false
 
 .TP
 .B authority_host
