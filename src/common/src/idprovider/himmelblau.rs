@@ -775,6 +775,16 @@ macro_rules! check_new_device_enrollment_required {
     }};
 }
 
+fn is_sspr_required(e: &MsalError) -> bool {
+    match e {
+        MsalError::AcquireTokenFailed(resp) => resp
+            .error_codes
+            .contains(&PASSWORD_RESET_REGISTRATION_REQUIRED),
+        MsalError::AADSTSError(err) => err.code == PASSWORD_RESET_REGISTRATION_REQUIRED,
+        _ => false,
+    }
+}
+
 #[async_trait]
 impl IdProvider for HimmelblauProvider {
     async fn offline_break_glass(&self, ttl: Option<u64>) -> Result<(), IdpError> {
@@ -1737,6 +1747,24 @@ impl IdProvider for HimmelblauProvider {
                 )
             }};
         }
+        macro_rules! sspr_demand_hello_fallback {
+            ($cred:ident) => {{
+                // Hello authentication already succeeded,
+                // but SSPR demand was sent. Proceed and permit
+                // this authentication so the user has the opportunity
+                // to fix this (SSO will fail until this is fixed).
+                warn!(
+                    "AADSTS{} (SSPR required) encountered; permitting auth via local Hello Pin",
+                    PASSWORD_RESET_REGISTRATION_REQUIRED
+                );
+                return Ok((
+                    AuthResult::Success {
+                        token: old_token.clone(),
+                    },
+                    AuthCacheAction::None,
+                ));
+            }};
+        }
         macro_rules! auth_and_validate_hello_key {
             ($hello_key:ident, $keytype:ident, $cred:ident) => {{
                 // CRITICAL: Validate that we can load the key, otherwise the offline
@@ -1805,6 +1833,9 @@ impl IdProvider for HimmelblauProvider {
                                 },
                                 AuthCacheAction::None,
                             ));
+                        }
+                        Err(ref e) if is_sspr_required(e) => {
+                            sspr_demand_hello_fallback!($cred)
                         }
                         Err(MsalError::AcquireTokenFailed(e)) => {
                             if e.error_codes.contains(&CONSENT_REQUIRED) {
@@ -1930,6 +1961,9 @@ impl IdProvider for HimmelblauProvider {
                                         },
                                         AuthCacheAction::None,
                                     ));
+                                }
+                                Err(ref e) if is_sspr_required(e) => {
+                                    sspr_demand_hello_fallback!($cred)
                                 }
                                 Err(MsalError::AcquireTokenFailed(e)) => {
                                     if e.error_codes.contains(&CONSENT_REQUIRED) {
