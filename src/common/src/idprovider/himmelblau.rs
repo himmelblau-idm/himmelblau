@@ -846,6 +846,16 @@ macro_rules! check_new_device_enrollment_required {
     }};
 }
 
+fn is_sspr_required(e: &MsalError) -> bool {
+    match e {
+        MsalError::AcquireTokenFailed(resp) => resp
+            .error_codes
+            .contains(&PASSWORD_RESET_REGISTRATION_REQUIRED),
+        MsalError::AADSTSError(err) => err.code == PASSWORD_RESET_REGISTRATION_REQUIRED,
+        _ => false,
+    }
+}
+
 #[async_trait]
 impl IdProvider for HimmelblauProvider {
     async fn offline_break_glass(&self, ttl: Option<u64>) -> Result<(), IdpError> {
@@ -2196,6 +2206,51 @@ impl IdProvider for HimmelblauProvider {
                 }
             }};
         }
+        macro_rules! sspr_demand_hello_fallback {
+            ($cred:ident) => {{
+                // Hello authentication already succeeded,
+                // but SSPR demand was sent. Proceed and permit
+                // this authentication so the user has the opportunity
+                // to fix this (SSO will fail until this is fixed).
+                warn!(
+                    "AADSTS{} (SSPR required) encountered; permitting auth via local Hello Pin",
+                    PASSWORD_RESET_REGISTRATION_REQUIRED
+                );
+                if check_hello_totp_enabled!(self) {
+                    if !check_hello_totp_setup!(self, account_id, keystore) {
+                        return impl_setup_hello_totp!(
+                            self,
+                            account_id,
+                            keystore,
+                            old_token,
+                            $cred,
+                            tpm,
+                            machine_key,
+                            cred_handler
+                        );
+                    } else {
+                        *cred_handler = AuthCredHandler::HelloTOTP {
+                            cred: $cred.clone(),
+                            pending_sealed_totp: None,
+                        };
+                        return Ok((
+                            AuthResult::Next(AuthRequest::HelloTOTP {
+                                msg: "Please enter your Hello TOTP code from your Authenticator: "
+                                    .to_string(),
+                            }),
+                            AuthCacheAction::None,
+                        ));
+                    }
+                } else {
+                    return Ok((
+                        AuthResult::Success {
+                            token: old_token.clone(),
+                        },
+                        AuthCacheAction::None,
+                    ));
+                }
+            }};
+        }
         macro_rules! auth_and_validate_hello_key {
             ($hello_key:ident, $keytype:ident, $cred:ident) => {{
                 // CRITICAL: Validate that we can load the key, otherwise the offline
@@ -2288,6 +2343,9 @@ impl IdProvider for HimmelblauProvider {
                                     AuthCacheAction::None,
                                 ));
                             }
+                        }
+                        Err(ref e) if is_sspr_required(e) => {
+                            sspr_demand_hello_fallback!($cred)
                         }
                         Err(MsalError::AcquireTokenFailed(e)) => {
                             if e.error_codes.contains(&CONSENT_REQUIRED) {
@@ -2555,6 +2613,9 @@ impl IdProvider for HimmelblauProvider {
                                         ));
                                     }
                                 }
+                                Err(ref e) if is_sspr_required(e) => {
+                                    sspr_demand_hello_fallback!($cred)
+                                }
                                 Err(MsalError::AcquireTokenFailed(e)) => {
                                     if e.error_codes.contains(&CONSENT_REQUIRED) {
                                         /* Consent has not been granted for the application
@@ -2604,7 +2665,8 @@ impl IdProvider for HimmelblauProvider {
                                         check_new_device_enrollment_required!(e, self, keystore)
                                     }
                                 },
-                                Err(_) => {
+                                Err(e) => {
+                                    error!("Failed to exchange PRT for access token: {:?}", e);
                                     // Issue #1051: Access token request for this PRT failed.
                                     // Delete the expired PRT but KEEP the Hello key so the
                                     // user can reuse their existing PIN after re-authenticating.
@@ -2676,6 +2738,9 @@ impl IdProvider for HimmelblauProvider {
                                         AuthCacheAction::None,
                                     ));
                                 }
+                            }
+                            Err(ref e) if is_sspr_required(e) => {
+                                sspr_demand_hello_fallback!($cred)
                             }
                             Err(e) => {
                                 error!("Failed to exchange refresh token for access token: {:?}", e);
