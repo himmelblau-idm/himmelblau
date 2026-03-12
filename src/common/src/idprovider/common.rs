@@ -25,6 +25,10 @@ use std::{
 };
 use tokio::sync::RwLock;
 
+/// When a cached PRT is older than 4h, opportunistically issue an
+/// `exchange_prt_for_prt` before using it for access-token acquisition.
+pub const PRT_REFRESH_AGE: Duration = Duration::from_secs(4 * 3600);
+
 pub fn flip_displayname_comma(name: &str) -> String {
     if let Some((left, right)) = name.split_once(',') {
         format!("{} {}", right.trim(), left.trim())
@@ -105,11 +109,20 @@ impl RefreshCache {
         }
     }
 
+    /// Returns how long ago the PRT for `account_id` was cached (or None if
+    /// there is no PRT entry for that account).
+    pub(crate) async fn prt_age(&self, account_id: &str) -> Option<Duration> {
+        let refresh_cache = self.refresh_cache.read().await;
+        refresh_cache
+            .get(account_id.to_lowercase().as_str())
+            .and_then(|(_, iat)| iat.elapsed().ok())
+    }
+
     pub(crate) async fn purge(&self) {
         let mut refresh_cache = self.refresh_cache.write().await;
         let mut remove_list = vec![];
         for (k, (_, iat)) in refresh_cache.iter() {
-            if *iat > SystemTime::now() + Duration::from_secs(86400) {
+            if *iat + Duration::from_secs(86400) < SystemTime::now() {
                 remove_list.push(k.clone());
             }
         }
@@ -119,7 +132,7 @@ impl RefreshCache {
         let mut refresh_token_cache = self.refresh_token_cache.write().await;
         let mut remove_list = vec![];
         for (k, (_, iat)) in refresh_token_cache.iter() {
-            if *iat > SystemTime::now() + Duration::from_secs(86400) {
+            if *iat + Duration::from_secs(86400) < SystemTime::now() {
                 remove_list.push(k.clone());
             }
         }
