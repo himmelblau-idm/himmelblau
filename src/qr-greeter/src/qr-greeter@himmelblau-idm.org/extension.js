@@ -1,6 +1,7 @@
 import St from 'gi://St';
 import Clutter from 'gi://Clutter';
 import GLib from 'gi://GLib';
+import Pango from 'gi://Pango';
 import Gio from 'gi://Gio';
 import { Extension } from 'resource:///org/gnome/shell/extensions/extension.js';
 import * as AuthPromptModule from 'resource:///org/gnome/shell/gdm/authPrompt.js';
@@ -192,7 +193,7 @@ export default class QrGreeterExtension extends Extension {
 
             if (this._message) {
                 this._message.clutter_text.line_wrap = true;
-                this._message.clutter_text.set_line_alignment(1);
+                this._message.clutter_text.set_line_alignment(Pango.Alignment.CENTER);
                 this._message.set_width(-1);
                 this._message.set_x_expand(false);
                 this._message.set_x_align(Clutter.ActorAlign.CENTER);
@@ -378,12 +379,6 @@ export default class QrGreeterExtension extends Extension {
         console.log("Himmelblau QR Greeter: disabled...");
         // Clean up any remaining temp files
         cleanupAllTempFiles();
-        if (this._fidoPulseTimer) {
-            GLib.source_remove(this._fidoPulseTimer);
-            this._fidoPulseTimer = null;
-        }
-        this._fidoIcon = null;
-        this._fidoTouchLayer = null;
         if (GdmAuthPrompt && this._originalSetMessage) {
             GdmAuthPrompt.prototype.setMessage = this._originalSetMessage;
         }
