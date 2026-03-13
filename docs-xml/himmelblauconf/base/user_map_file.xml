@@ -10,9 +10,9 @@
 Specifies the path to a user-mapping file used to map local user accounts to Azure Entra ID user accounts, allowing them to authenticate using Entra ID credentials.
 
 Each line of the file must contain a single mapping entry in the format:
-.IP
+.EX
 local_username:name@domain
-.PP
+.EE
 Blank lines and lines beginning with '#' are ignored.
 
 Example user-map file entries:

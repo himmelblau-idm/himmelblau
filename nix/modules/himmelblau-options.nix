@@ -327,7 +327,7 @@ in
       type = types.nullOr (types.str);
       default = null;
       description = ''
-        A script that will execute every time a user logs on. Two environment variables are set: USERNAME, and ACCESS_TOKEN. The ACCESS_TOKEN environment variable is an access token for the MS Graph. The token scope config option sets the comma-separated scopes that should be requested for the ACCESS_TOKEN. ACCESS_TOKEN will be empty during offline logon. The return code of the script determines how authentication proceeds. 0 is success, 1 is a soft failure and authentication will proceed, while 2 is a hard failure causing authentication to fail.
+        A script that will execute every time a user logs on. Two environment variables are set: **USERNAME**, and **ACCESS_TOKEN**. The **ACCESS_TOKEN** environment variable is an access token for the MS Graph. The token scope config option sets the comma-separated scopes that should be requested for the **ACCESS_TOKEN**. **ACCESS_TOKEN** will be empty during offline logon. The return code of the script determines how authentication proceeds. 0 is success, 1 is a soft failure and authentication will proceed, while 2 is a hard failure causing authentication to fail.
       '';
       example = "/etc/himmelblau/logon.sh";
     };
@@ -597,9 +597,7 @@ in
         When this option is modified, you
         **SHOULD**
         run:
-        
-        - sudo aad-tool cache-clear --full
-        
+        sudo aad-tool cache-clear --full
         To ensure that old cached ID mappings are cleared, preventing potential UID overlaps caused by stale cache data. Afterwards, restart himmelblaud.
       '';
       example = "10000000-10999999";
@@ -674,9 +672,7 @@ in
         Specifies the path to a user-mapping file used to map local user accounts to Azure Entra ID user accounts, allowing them to authenticate using Entra ID credentials.
         
         Each line of the file must contain a single mapping entry in the format:
-        
-        - local_username:name@domain
-        
+        local_username:name@domain
         Blank lines and lines beginning with '#' are ignored.
         
         Example user-map file entries:

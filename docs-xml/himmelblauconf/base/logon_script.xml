@@ -7,7 +7,7 @@
            domain_specific="false"
            order="21">
 <description>
-A script that will execute every time a user logs on. Two environment variables are set: USERNAME, and ACCESS_TOKEN. The ACCESS_TOKEN environment variable is an access token for the MS Graph. The token scope config option sets the comma-separated scopes that should be requested for the ACCESS_TOKEN. ACCESS_TOKEN will be empty during offline logon. The return code of the script determines how authentication proceeds. 0 is success, 1 is a soft failure and authentication will proceed, while 2 is a hard failure causing authentication to fail.
+A script that will execute every time a user logs on. Two environment variables are set: \fBUSERNAME\fR, and \fBACCESS_TOKEN\fR. The \fBACCESS_TOKEN\fR environment variable is an access token for the MS Graph. The token scope config option sets the comma-separated scopes that should be requested for the \fBACCESS_TOKEN\fR. \fBACCESS_TOKEN\fR will be empty during offline logon. The return code of the script determines how authentication proceeds. 0 is success, 1 is a soft failure and authentication will proceed, while 2 is a hard failure causing authentication to fail.
 </description>
 <default></default>
 <example>logon_script = /etc/himmelblau/logon.sh</example>

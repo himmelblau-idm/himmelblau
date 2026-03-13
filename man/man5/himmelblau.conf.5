@@ -1,4 +1,4 @@
-.TH HIMMELBLAU.CONF "5" "February 2026" "Himmelblau Configuration" "File Formats"
+.TH HIMMELBLAU.CONF "5" "March 2026" "Himmelblau Configuration" "File Formats"
 .SH NAME
 himmelblau.conf \- Configuration file for Himmelblau, enabling Azure Entra ID authentication on Linux.
 
@@ -397,7 +397,7 @@ Default: sudo
 .TP
 .B logon_script
 .RE
-A script that will execute every time a user logs on. Two environment variables are set: USERNAME, and ACCESS_TOKEN. The ACCESS_TOKEN environment variable is an access token for the MS Graph. The token scope config option sets the comma-separated scopes that should be requested for the ACCESS_TOKEN. ACCESS_TOKEN will be empty during offline logon. The return code of the script determines how authentication proceeds. 0 is success, 1 is a soft failure and authentication will proceed, while 2 is a hard failure causing authentication to fail.
+A script that will execute every time a user logs on. Two environment variables are set: \fBUSERNAME\fR, and \fBACCESS_TOKEN\fR. The \fBACCESS_TOKEN\fR environment variable is an access token for the MS Graph. The token scope config option sets the comma-separated scopes that should be requested for the \fBACCESS_TOKEN\fR. \fBACCESS_TOKEN\fR will be empty during offline logon. The return code of the script determines how authentication proceeds. 0 is success, 1 is a soft failure and authentication will proceed, while 2 is a hard failure causing authentication to fail.
 
 .P
 Example: logon_script = /etc/himmelblau/logon.sh
@@ -552,7 +552,7 @@ The available options are:
 \(bu
 .B tpm_if_possible
 \(en Attempt to use a hardware TPM if available; if not, fall back to the software HSM. If the TPM has previously been used for key storage, the system will not fall back to the software HSM.
-
+.PP
 This setting is important for protecting sensitive cryptographic keys in a secure environment, reducing the risk of compromise if the system is breached.
 
 Note that the old
@@ -706,10 +706,9 @@ Specifies the range of IDs to be used for the user and group mappings.
 When this option is modified, you
 .B SHOULD
 run:
-.RS
-.IP
+.EX
 sudo aad-tool cache-clear --full
-.RE
+.EE
 
 To ensure that old cached ID mappings are cleared, preventing potential UID overlaps caused by stale cache data. Afterwards, restart himmelblaud.
 
@@ -799,9 +798,9 @@ Example: join_type = register
 Specifies the path to a user-mapping file used to map local user accounts to Azure Entra ID user accounts, allowing them to authenticate using Entra ID credentials.
 
 Each line of the file must contain a single mapping entry in the format:
-.IP
+.EX
 local_username:name@domain
-.PP
+.EE
 Blank lines and lines beginning with '#' are ignored.
 
 Example user-map file entries:
