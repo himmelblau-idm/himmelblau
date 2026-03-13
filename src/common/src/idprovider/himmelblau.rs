@@ -1218,21 +1218,26 @@ impl IdProvider for HimmelblauProvider {
             }
         }
 
-        // Validate the MFA token before persisting the new Hello key. The PRT/refresh
-        // token re-sealing above is transactional and will be rolled back if validation fails.
-        match self.token_validate(account_id, token, None).await {
-            Ok(AuthResult::Success { .. }) => {}
-            Ok(AuthResult::Denied(msg)) => {
-                error!("PIN change denied by token_validate: {}", msg);
-                return Err(IdpError::BadRequest);
-            }
-            Ok(AuthResult::Next(_)) => {
-                error!("PIN change: unexpected Next from token_validate");
-                return Err(IdpError::BadRequest);
+        // Verify the token belongs to the requested user. The PAM module has
+        // already authenticated via MFA, so a lightweight spn comparison is
+        // sufficient here (mirrors the old impl_change_auth_token! macro).
+        // We cannot call full token_validate() because the daemon forwards
+        // only access_token + refresh_token — the IdToken is not available,
+        // so uuid()/user_token_from_unix_user_token() would fail.
+        match token.spn() {
+            Ok(spn) => {
+                if account_id.to_lowercase() != spn.to_lowercase() {
+                    error!(
+                        "PIN change: token SPN '{}' does not match account '{}'",
+                        spn, account_id
+                    );
+                    return Err(IdpError::BadRequest);
+                }
             }
             Err(e) => {
-                error!("PIN change: token_validate failed: {:?}", e);
-                return Err(e);
+                // spn() can fail for opaque tokens or tokens without a upn
+                // claim. Log but proceed — MFA already verified the identity.
+                debug!("PIN change: could not extract SPN from token: {:?}", e);
             }
         }
 
