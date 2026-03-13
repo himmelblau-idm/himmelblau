@@ -399,8 +399,8 @@ user-login = "seanmonstar"
 user-name = "Sean McArthur"
 
 [[publisher.identity_dbus_broker]]
-version = "0.1.4"
-when = "2025-08-26"
+version = "0.2.0"
+when = "2026-03-09"
 user-id = 247655
 user-login = "dmulder"
 user-name = "David Mulder"
