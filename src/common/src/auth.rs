@@ -40,6 +40,10 @@ use authenticator::{
 };
 use base64::engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD};
 use base64::Engine;
+use libwebauthn::ops::webauthn::{GetAssertionRequest, UserVerificationRequirement as CableUvReq};
+use libwebauthn::transport::cable::qr_code_device::{CableQrCodeDevice, QrCodeOperationHint};
+use libwebauthn::transport::Device;
+use libwebauthn::webauthn::WebAuthn;
 use rpassword::prompt_password;
 use serde_json::{json, to_string as json_to_string};
 use sha2::{Digest, Sha256};
@@ -84,7 +88,10 @@ impl MessagePrinter for SimpleMessagePrinter {
 }
 
 #[allow(clippy::expect_used)]
-async fn fido_status_check(msg_printer: Arc<dyn MessagePrinter>) -> Sender<StatusUpdate> {
+async fn fido_status_check(
+    msg_printer: Arc<dyn MessagePrinter>,
+    presence_prompt: String,
+) -> Sender<StatusUpdate> {
     let (status_tx, status_rx) = channel::<StatusUpdate>();
     thread::spawn(move || loop {
         match status_rx.recv() {
@@ -96,7 +103,8 @@ async fn fido_status_check(msg_printer: Arc<dyn MessagePrinter>) -> Sender<Statu
                 msg_printer.print_text("Please select a device by touching one of them.");
             }
             Ok(StatusUpdate::PresenceRequired) => {
-                msg_printer.print_text("Waiting for user presence");
+                // "[FIDO_TOUCH] " prefix must match FIDO_TOUCH_PREFIX in qr-greeter extension.js
+                msg_printer.print_text(&format!("[FIDO_TOUCH] {}", presence_prompt));
             }
             Ok(StatusUpdate::PinUvError(StatusPinUv::PinRequired(sender))) => {
                 match msg_printer.prompt_echo_off("Fido PIN: ") {
@@ -174,8 +182,13 @@ pub fn fido_auth(
     msg_printer: Arc<dyn MessagePrinter>,
     fido_challenge: String,
     fido_allow_list: Vec<String>,
+    timeout_ms: u64,
+    prompt: &str,
+    presence_prompt: &str,
 ) -> Result<String, PamResultCode> {
-    // Initialize AuthenticatorService
+    // "[FIDO_INSERT] " prefix must match FIDO_INSERT_PREFIX in qr-greeter extension.js
+    msg_printer.print_text(&format!("[FIDO_INSERT] {}", prompt));
+
     let mut manager = AuthenticatorService::new().map_err(|e| {
         error!("{:?}", e);
         PamResultCode::PAM_CRED_INSUFFICIENT
@@ -197,7 +210,8 @@ pub fn fido_auth(
         error!("{:?}", e);
         PamResultCode::PAM_AUTH_ERR
     })?;
-    let status_tx = rt.block_on(async { fido_status_check(msg_printer).await });
+    let status_tx =
+        rt.block_on(async { fido_status_check(msg_printer, presence_prompt.to_string()).await });
 
     let allow_list: Vec<PublicKeyCredentialDescriptor> = fido_allow_list
         .into_iter()
@@ -234,7 +248,7 @@ pub fn fido_auth(
     }));
 
     manager
-        .sign(25000, ctap_args, status_tx.clone(), callback)
+        .sign(timeout_ms, ctap_args, status_tx.clone(), callback)
         .map_err(|e| {
             error!("{:?}", e);
             PamResultCode::PAM_CRED_INSUFFICIENT
@@ -274,9 +288,181 @@ pub fn fido_auth(
     });
 
     // Convert the JSON response to a string
-    json_to_string(&json_response).map_err(|e| {
+    let result_str = json_to_string(&json_response).map_err(|e| {
         error!("{:?}", e);
         PamResultCode::PAM_CRED_INSUFFICIENT
+    })?;
+    Ok(result_str)
+}
+
+fn has_bluetooth_adapter() -> bool {
+    // Check D-Bus for BlueZ adapters (works across distros)
+    match std::process::Command::new("busctl")
+        .args(["tree", "--no-pager", "org.bluez"])
+        .output()
+    {
+        Ok(output) => {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            stdout.contains("/org/bluez/hci")
+        }
+        Err(_) => {
+            // Fallback: check sysfs
+            std::fs::read_dir("/sys/class/bluetooth")
+                .map(|mut entries| entries.next().is_some())
+                .unwrap_or(false)
+        }
+    }
+}
+
+async fn cable_fido_auth(
+    msg_printer: Arc<dyn MessagePrinter>,
+    fido_challenge: String,
+    _fido_allow_list: Vec<String>,
+) -> Result<String, PamResultCode> {
+    let has_bt = has_bluetooth_adapter();
+    if !has_bt {
+        debug!("No Bluetooth adapter found, caBLE unavailable");
+        return Err(PamResultCode::PAM_CRED_INSUFFICIENT);
+    }
+
+    let mut device = CableQrCodeDevice::new_transient(QrCodeOperationHint::GetAssertionRequest);
+    let qr_url = device.qr_code.to_string();
+
+    // "[CABLE_QR] " prefix must match CABLE_QR_PREFIX in qr-greeter extension.js
+    msg_printer.print_text(&format!("[CABLE_QR] {}", qr_url));
+
+    let mut channel = device.channel().await.map_err(|e| {
+        error!("caBLE channel establishment failed: {:?}", e);
+        PamResultCode::PAM_CRED_INSUFFICIENT
+    })?;
+
+    let challenge_str = json_to_string(&json!({
+        "type": "webauthn.get",
+        "challenge": URL_SAFE_NO_PAD.encode(&fido_challenge),
+        "origin": "https://login.microsoft.com"
+    }))
+    .map_err(|e| {
+        error!("{:?}", e);
+        PamResultCode::PAM_CRED_INSUFFICIENT
+    })?;
+
+    let chall_bytes = Sha256::digest(challenge_str.clone()).to_vec();
+
+    // Use empty allowList for caBLE so the phone returns a discoverable
+    // credential with userHandle (required by Entra to identify the user).
+    let request = GetAssertionRequest {
+        relying_party_id: "login.microsoft.com".to_string(),
+        hash: chall_bytes,
+        allow: vec![],
+        extensions: None,
+        user_verification: CableUvReq::Preferred,
+        timeout: Duration::from_secs(120),
+    };
+
+    let response = channel.webauthn_get_assertion(&request).await.map_err(|e| {
+        error!("caBLE assertion failed: {:?}", e);
+        PamResultCode::PAM_CRED_INSUFFICIENT
+    })?;
+
+    let assertion = response
+        .assertions
+        .first()
+        .ok_or(PamResultCode::PAM_CRED_INSUFFICIENT)?;
+
+    let credential_id = assertion
+        .credential_id
+        .as_ref()
+        .map(|c| c.id.to_vec())
+        .unwrap_or_default();
+    let auth_data = assertion.authenticator_data.to_response_bytes().map_err(|e| {
+        error!("Failed to serialize authenticator data: {:?}", e);
+        PamResultCode::PAM_CRED_INSUFFICIENT
+    })?;
+    let signature = &assertion.signature;
+    let user_handle = assertion
+        .user
+        .as_ref()
+        .map(|u| u.id.to_vec())
+        .unwrap_or_default();
+
+    let json_response = json!({
+        "id": URL_SAFE_NO_PAD.encode(&credential_id),
+        "clientDataJSON": URL_SAFE_NO_PAD.encode(&challenge_str),
+        "authenticatorData": URL_SAFE_NO_PAD.encode(&auth_data),
+        "signature": URL_SAFE_NO_PAD.encode(signature),
+        "userHandle": URL_SAFE_NO_PAD.encode(&user_handle),
+    });
+
+    let result_str = json_to_string(&json_response).map_err(|e| {
+        error!("{:?}", e);
+        PamResultCode::PAM_CRED_INSUFFICIENT
+    })?;
+    Ok(result_str)
+}
+
+pub fn fido_auth_with_cable(
+    msg_printer: Arc<dyn MessagePrinter>,
+    fido_challenge: String,
+    fido_allow_list: Vec<String>,
+    timeout_ms: u64,
+    prompt: &str,
+    presence_prompt: &str,
+) -> Result<String, PamResultCode> {
+    let rt = Runtime::new().map_err(|e| {
+        error!("{:?}", e);
+        PamResultCode::PAM_AUTH_ERR
+    })?;
+
+    rt.block_on(async {
+        let usb_challenge = fido_challenge.clone();
+        let usb_allow = fido_allow_list.clone();
+        let usb_printer = msg_printer.clone();
+        let usb_prompt = prompt.to_string();
+        let usb_presence = presence_prompt.to_string();
+
+        let mut usb_handle = tokio::task::spawn_blocking(move || {
+            fido_auth(
+                usb_printer,
+                usb_challenge,
+                usb_allow,
+                timeout_ms,
+                &usb_prompt,
+                &usb_presence,
+            )
+        });
+
+        let cable_handle = cable_fido_auth(msg_printer.clone(), fido_challenge, fido_allow_list);
+
+        tokio::pin!(cable_handle);
+
+        // Race both paths; if one fails, fall back to the other
+        tokio::select! {
+            usb_result = &mut usb_handle => {
+                match usb_result {
+                    Ok(Ok(assertion)) => Ok(assertion),
+                    Ok(Err(e)) => {
+                        debug!("USB FIDO failed ({:?}), waiting for caBLE...", e);
+                        cable_handle.await.or(Err(e))
+                    }
+                    Err(_) => {
+                        cable_handle.await.or(Err(PamResultCode::PAM_AUTH_ERR))
+                    }
+                }
+            }
+            cable_result = &mut cable_handle => {
+                match cable_result {
+                    Ok(assertion) => Ok(assertion),
+                    Err(ref e) => {
+                        debug!("caBLE failed ({:?}), waiting for USB...", e);
+                        match usb_handle.await {
+                            Ok(Ok(assertion)) => Ok(assertion),
+                            Ok(Err(e)) => Err(e),
+                            Err(_) => Err(PamResultCode::PAM_AUTH_ERR),
+                        }
+                    }
+                }
+            }
+        }
     })
 }
 
@@ -692,11 +878,42 @@ fn handle_pam_auth_response_fido(
     state: &AuthenticateState,
     fido_challenge: String,
     fido_allow_list: Vec<String>,
+    has_cross_device: bool,
 ) -> PamWhatNext {
-    let result = match fido_auth(state.msg_printer.clone(), fido_challenge, fido_allow_list) {
-        Ok(assertion) => assertion,
-        Err(e) => {
-            pam_fail!(state.msg_printer, "Entra Id Fido authentication failed.", e);
+    let timeout_ms = state.cfg.get_fido_timeout().saturating_mul(1000);
+    let fido_prompt = state.cfg.get_fido_prompt();
+    let fido_presence_prompt = state.cfg.get_fido_presence_prompt();
+    let is_graphical = state.service.contains("gdm")
+        || state.service.contains("lightdm")
+        || state.service.contains("sddm")
+        || state.service.contains("login");
+    let result = if has_cross_device && is_graphical {
+        match fido_auth_with_cable(
+            state.msg_printer.clone(),
+            fido_challenge,
+            fido_allow_list,
+            timeout_ms,
+            &fido_prompt,
+            &fido_presence_prompt,
+        ) {
+            Ok(assertion) => assertion,
+            Err(e) => {
+                pam_fail!(state.msg_printer, "Entra Id Fido authentication failed.", e);
+            }
+        }
+    } else {
+        match fido_auth(
+            state.msg_printer.clone(),
+            fido_challenge,
+            fido_allow_list,
+            timeout_ms,
+            &fido_prompt,
+            &fido_presence_prompt,
+        ) {
+            Ok(assertion) => assertion,
+            Err(e) => {
+                pam_fail!(state.msg_printer, "Entra Id Fido authentication failed.", e);
+            }
         }
     };
 
@@ -818,7 +1035,8 @@ fn authenticate_request_response(
         PamAuthResponse::Fido {
             fido_challenge,
             fido_allow_list,
-        } => handle_pam_auth_response_fido(state, fido_challenge, fido_allow_list),
+            has_cross_device,
+        } => handle_pam_auth_response_fido(state, fido_challenge, fido_allow_list, has_cross_device),
         PamAuthResponse::ChangePassword { msg } => {
             handle_pam_auth_response_change_password(state, &msg)
         }

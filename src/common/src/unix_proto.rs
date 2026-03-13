@@ -60,6 +60,7 @@ pub enum PamAuthResponse {
     Fido {
         fido_challenge: String,
         fido_allow_list: Vec<String>,
+        has_cross_device: bool,
     },
     /// PAM must prompt for a new password and confirm that password input
     ChangePassword {

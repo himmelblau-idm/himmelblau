@@ -12,6 +12,12 @@ const GdmAuthPrompt = AuthPromptModule.AuthPrompt;
 // Track active temp files for cleanup
 let activeTotpTempFiles = new Set();
 
+// Must match the prefixes used in src/common/src/auth.rs fido_auth() / fido_status_check()
+const FIDO_INSERT_PREFIX = "[FIDO_INSERT] ";
+const FIDO_TOUCH_PREFIX = "[FIDO_TOUCH] ";
+// Must match the prefix used in src/common/src/auth.rs cable_fido_auth()
+const CABLE_QR_PREFIX = "[CABLE_QR] ";
+
 // Maximum URL length for QR code generation (longer URLs create denser, harder to scan codes)
 const MAX_URL_LENGTH = 500;
 
@@ -176,13 +182,23 @@ export default class QrGreeterExtension extends Extension {
 
         this._originalSetMessage = GdmAuthPrompt.prototype.setMessage;
         const origSetMessage = this._originalSetMessage;
+        const extensionPath = this.path;
 
         GdmAuthPrompt.prototype.setMessage = function(message, styleClass) {
-            origSetMessage.call(this, message, styleClass);
+            let displayMessage = message;
+            const isCableQr = message && message.startsWith(CABLE_QR_PREFIX);
+            if (isCableQr)
+                displayMessage = "Scan with your phone or touch your security key";
+            else if (message && message.startsWith(FIDO_INSERT_PREFIX))
+                displayMessage = message.substring(FIDO_INSERT_PREFIX.length);
+            else if (message && message.startsWith(FIDO_TOUCH_PREFIX))
+                displayMessage = message.substring(FIDO_TOUCH_PREFIX.length);
+            origSetMessage.call(this, displayMessage, styleClass);
 
             if (this._message) {
                 this._message.clutter_text.line_wrap = true;
-                this._message.set_width(350);
+                this._message.clutter_text.set_line_alignment(1);
+                this._message.set_width(-1);
                 this._message.set_x_expand(false);
                 this._message.set_x_align(Clutter.ActorAlign.CENTER);
             }
@@ -225,6 +241,98 @@ export default class QrGreeterExtension extends Extension {
             if (this._totpTempFile) {
                 deleteTempFile(this._totpTempFile);
                 this._totpTempFile = null;
+            }
+
+            if (isCableQr) {
+                const cableUrl = message.substring(CABLE_QR_PREFIX.length).trim();
+                try {
+                    const qr = QrCode.encodeText(cableUrl, Ecc.LOW);
+                    const svgContent = qrCodeToSvg(qr, 2, '#ffffff', '#000000');
+                    const tempFilePath = writeSvgToTempFile(svgContent);
+                    this._totpTempFile = tempFilePath;
+                    activeTotpTempFiles.add(tempFilePath);
+                    const fileUri = `file://${tempFilePath}`;
+                    this._qrContainer.set_style(`background-image: url('${fileUri}'); background-size: contain; background-repeat: no-repeat; background-position: center;`);
+                    this._qrContainer.show();
+                    this._qrLabel.set_text("Scan with Microsoft Authenticator");
+                    this._qrLabel.show();
+                } catch (e) {
+                    console.error("Himmelblau QR Greeter: Failed to generate caBLE QR code:", e);
+                    if (this._qrContainer) this._qrContainer.hide();
+                    if (this._qrLabel) this._qrLabel.hide();
+                }
+                this._cableQrActive = true;
+                return;
+            }
+
+            const isFidoInsert = message && message.startsWith(FIDO_INSERT_PREFIX);
+            const isFidoTouch = message && message.startsWith(FIDO_TOUCH_PREFIX);
+            if (isFidoInsert || isFidoTouch) {
+                if (!this._fidoIcon) {
+                    const svgPath = GLib.build_filenamev([extensionPath, 'security-key.svg']);
+                    const touchSvgPath = GLib.build_filenamev([extensionPath, 'security-key-touch.svg']);
+
+                    const container = new St.Widget({
+                        width: 160,
+                        height: 80,
+                        x_align: Clutter.ActorAlign.CENTER,
+                    });
+
+                    const baseLayer = new St.Widget({
+                        width: 160,
+                        height: 80,
+                        style: `background-image: url('file://${svgPath}'); background-size: contain; background-repeat: no-repeat; background-position: center;`,
+                    });
+
+                    const touchLayer = new St.Widget({
+                        width: 160,
+                        height: 80,
+                        opacity: 0,
+                        style: `background-image: url('file://${touchSvgPath}'); background-size: contain; background-repeat: no-repeat; background-position: center;`,
+                    });
+
+                    container.add_child(baseLayer);
+                    container.add_child(touchLayer);
+                    this._fidoIcon = container;
+                    this._fidoTouchLayer = touchLayer;
+                    this._qrVBox.insert_child_below(this._fidoIcon, this._message);
+
+                }
+                if (this._fidoPulseTimer) {
+                    GLib.source_remove(this._fidoPulseTimer);
+                    this._fidoPulseTimer = null;
+                }
+                this._fidoTouchLayer.opacity = 0;
+                if (isFidoTouch) {
+                    this._fidoPulseUp = true;
+                    this._fidoPulseTimer = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 300, () => {
+                        if (!this._fidoTouchLayer) return GLib.SOURCE_REMOVE;
+                        const current = this._fidoTouchLayer.opacity;
+                        if (this._fidoPulseUp) {
+                            this._fidoTouchLayer.opacity = Math.min(current + 32, 255);
+                            if (this._fidoTouchLayer.opacity >= 255) this._fidoPulseUp = false;
+                        } else {
+                            this._fidoTouchLayer.opacity = Math.max(current - 32, 0);
+                            if (this._fidoTouchLayer.opacity <= 0) this._fidoPulseUp = true;
+                        }
+                        return GLib.SOURCE_CONTINUE;
+                    });
+                }
+                this._fidoIcon.show();
+                if (!this._cableQrActive) {
+                    if (this._qrContainer) this._qrContainer.hide();
+                    if (this._qrLabel) this._qrLabel.hide();
+                }
+                return;
+            }
+
+            this._cableQrActive = false;
+            if (this._fidoIcon) {
+                this._fidoIcon.hide();
+                if (this._fidoPulseTimer) {
+                    GLib.source_remove(this._fidoPulseTimer);
+                    this._fidoPulseTimer = null;
+                }
             }
 
             const totpMatch = message ? message.startsWith("otpauth://") : null;
@@ -300,6 +408,13 @@ export default class QrGreeterExtension extends Extension {
         console.log("Himmelblau QR Greeter: disabled...");
         // Clean up any remaining temp files
         cleanupAllTempFiles();
+        if (this._fidoPulseTimer) {
+            GLib.source_remove(this._fidoPulseTimer);
+            this._fidoPulseTimer = null;
+        }
+        this._fidoIcon = null;
+        this._fidoTouchLayer = null;
+        this._cableQrActive = false;
         if (GdmAuthPrompt && this._originalSetMessage) {
             GdmAuthPrompt.prototype.setMessage = this._originalSetMessage;
         }

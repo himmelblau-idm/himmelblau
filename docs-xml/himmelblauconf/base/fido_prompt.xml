@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<parameter name="fido_prompt"
+           section="global"
+           type="string"
+           rust_type="String"
+           documented="true"
+           domain_specific="false"
+           order="28">
+<description>
+The message displayed to the user when FIDO/passkey authentication is initiated
+and they need to insert their security key.
+</description>
+<default>Please insert your security key.</default>
+<example>fido_prompt = Bitte den Sicherheitsschlüssel einstecken.</example>
+</parameter>
