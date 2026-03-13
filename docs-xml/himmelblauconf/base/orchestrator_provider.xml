@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<parameter name="orchestrator_provider"
+           section="global"
+           type="string"
+           rust_type="Option&lt;String&gt;"
+           documented="true"
+           domain_specific="false"
+           order="54">
+<description>
+Optional explicit provider key passed to himmelblaud-orchestrator when starting
+an OIDC browser flow.
+
+If unset, the orchestrator auto-detects the provider from issuer URL, domain,
+or embedded provider match rules.
+</description>
+<default></default>
+<example>orchestrator_provider = entra</example>
+</parameter>

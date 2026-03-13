@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<parameter name="orchestrator_timeout_secs"
+           section="global"
+           type="u64"
+           rust_type="u64"
+           documented="true"
+           domain_specific="false"
+           order="55">
+<description>
+Timeout in seconds for a single request/response exchange with
+himmelblaud-orchestrator.
+
+This timeout applies to connect, send, and receive operations on the
+orchestrator Unix socket.
+</description>
+<default>30</default>
+<default_const>DEFAULT_CONN_TIMEOUT</default_const>
+<example>orchestrator_timeout_secs = 10</example>
+</parameter>
