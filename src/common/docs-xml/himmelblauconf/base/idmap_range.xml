@@ -12,10 +12,9 @@ Specifies the range of IDs to be used for the user and group mappings.
 When this option is modified, you
 .B SHOULD
 run:
-.RS
-.IP
+.EX
 sudo aad-tool cache-clear --full
-.RE
+.EE
 
 To ensure that old cached ID mappings are cleared, preventing potential UID overlaps caused by stale cache data. Afterwards, restart himmelblaud.
 </description>

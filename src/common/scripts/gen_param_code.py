@@ -613,6 +613,8 @@ def clean_troff_description(text: str) -> str:
     text = re.sub(r'^\.BR\s+(\S+)\s*\((\d+)\)', r'\1(\2)', text, flags=re.MULTILINE)  # Man page refs
     text = re.sub(r'^\.nf\s*\n?', '', text, flags=re.MULTILINE)  # No-fill start
     text = re.sub(r'^\.fi\s*\n?', '', text, flags=re.MULTILINE)  # No-fill end
+    text = re.sub(r'^\.EX\s*\n?', '', text, flags=re.MULTILINE)  # Example start
+    text = re.sub(r'^\.EE\s*\n?', '', text, flags=re.MULTILINE)  # Example end
 
     # Clean up empty bold/italic markers (only whitespace between them)
     text = re.sub(r'\*\*\s+\*\*', '', text)  # Empty bold: ** **
