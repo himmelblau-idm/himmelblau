@@ -1,0 +1,44 @@
+# crate2nix action
+#
+# Check if the Cargo.nix is up-to-date and if not register the new one as artifact so contributors do not have to install nix
+name: "crate2nix: Cargo.nix check"
+on: [pull_request]
+
+permissions:
+  contents: read
+
+jobs:
+  crate2nix:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@a90bcbc6539c36a85cdfeb73f7e2f433735f215b # v2.15.0
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - uses: cachix/install-nix-action@19effe9fe722874e6d46dd7182e4b8b7a43c4a99 # v31.10.0
+        with:
+          extra_nix_config: experimental-features = nix-command flakes
+      - uses: DeterminateSystems/magic-nix-cache-action@cec65ff6f104850203b152861d3f9e5f1747885d
+
+      - name: Generate Cargo.nix
+        run: nix run nixpkgs#crate2nix -- generate
+
+      - name: Check for modifications
+        id: check
+        run: git diff --quiet Cargo.nix || echo "modified=true" >> "$GITHUB_OUTPUT"
+
+      - name: Upload updated Cargo.nix
+        if: steps.check.outputs.modified == 'true'
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        with:
+          path: Cargo.nix
+          archive: false
+
+      - name: Fail if modified
+        if: steps.check.outputs.modified == 'true'
+        run: |
+          echo "::error file=Cargo.nix::Cargo.nix is out of date. Please download the 'Cargo.nix' artifact from this run summary (or run 'crate2nix generate' locally) and commit the changes."
+          exit 1
