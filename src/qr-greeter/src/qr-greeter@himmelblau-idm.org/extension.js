@@ -271,6 +271,14 @@ export default class QrGreeterExtension extends Extension {
                     this._fidoTouchLayer = touchLayer;
                     this._qrVBox.insert_child_below(this._fidoIcon, this._message);
 
+                    this.connect('destroy', () => {
+                        if (this._fidoPulseTimer) {
+                            GLib.source_remove(this._fidoPulseTimer);
+                            this._fidoPulseTimer = null;
+                        }
+                        this._fidoTouchLayer = null;
+                        this._fidoIcon = null;
+                    });
                 }
                 if (this._fidoPulseTimer) {
                     GLib.source_remove(this._fidoPulseTimer);
