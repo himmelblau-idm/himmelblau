@@ -88,6 +88,11 @@
 # when groups are removed from this list. You must remove them manually.
 # local_groups =
 #
+# Automatically grant sudo access to the first Entra ID user who logs in to
+# each domain (the "device owner"). Subsequent users do not receive sudo via
+# this mechanism. Use `aad-tool owner-reset` to clear ownership.
+# auto_sudo_owner = false
+#
 # Logon user script. This script will execute every time a user logs on. Two
 # environment variables are set: USERNAME, and ACCESS_TOKEN. The ACCESS_TOKEN
 # environment variable is an access token for the MS graph. The token scope

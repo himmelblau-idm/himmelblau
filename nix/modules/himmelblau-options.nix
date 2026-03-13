@@ -332,6 +332,32 @@ in
       example = "/etc/himmelblau/logon.sh";
     };
 
+    auto_sudo_owner = mkOption {
+      type = types.nullOr (types.bool);
+      default = false;
+      description = ''
+        When set to
+        **true**
+        , the first Entra ID user to log in to each domain on this device is automatically
+        granted sudo access via the local sudo group (see
+        **local_sudo_group**
+        ). This user is considered the device owner. Subsequent users are not granted sudo
+        by this mechanism, though they may still receive it via
+        **sudo_groups**
+        or
+        **local_groups**
+        configuration.
+        
+        Ownership state is stored persistently under
+        */var/lib/himmelblaud/*
+        and is not affected by cache clearing. To reset device ownership, delete the
+        ownership state file or use
+        **aad-tool owner-reset**
+        .
+      '';
+      example = true;
+    };
+
     logon_token_scopes = mkOption {
       type = types.nullOr (types.listOf types.str);
       default = null;
@@ -572,6 +598,15 @@ in
       example = "/tmp/broker.sock";
     };
 
+    enable_passwordless = mkOption {
+      type = types.nullOr (types.bool);
+      default = true;
+      description = ''
+        A boolean option that controls whether passwordless authentication (Microsoft Authenticator app approval without a password) is offered during Azure Entra ID authentication. When enabled, Himmelblau will include the passwordless option in authentication requests, allowing Entra ID to offer a passwordless flow. When disabled, users will be prompted for a password followed by MFA instead.
+      '';
+      example = false;
+    };
+
     home_prefix = mkOption {
       type = types.nullOr (types.str);
       default = "/home/";
@@ -609,15 +644,6 @@ in
         - CN
       '';
       example = "SPN";
-    };
-
-    enable_passwordless = mkOption {
-      type = types.nullOr (types.bool);
-      default = true;
-      description = ''
-        A boolean option that controls whether passwordless authentication (Microsoft Authenticator app approval without a password) is offered during Azure Entra ID authentication. When enabled, Himmelblau will include the passwordless option in authentication requests, allowing Entra ID to offer a passwordless flow. When disabled, users will be prompted for a password followed by MFA instead.
-      '';
-      example = false;
     };
 
     shell = mkOption {

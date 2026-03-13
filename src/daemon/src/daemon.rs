@@ -20,6 +20,7 @@
 #![deny(clippy::trivially_copy_pass_by_ref)]
 
 use std::error::Error;
+use std::fs;
 use std::fs::metadata;
 use std::io;
 use std::io::{Error as IoError, ErrorKind};
@@ -162,6 +163,32 @@ fn rm_if_exist(p: &str) {
     } else {
         debug!("Path {:?} doesn't exist, not attempting to remove.", p);
     }
+}
+
+/// Returns the path to the device-owner state file for a given domain.
+fn owner_state_path(domain: &str) -> PathBuf {
+    PathBuf::from("/var/lib/himmelblaud").join(format!("owner.{}", domain))
+}
+
+/// Get the current device owner for a domain, if one has been established.
+fn get_device_owner(domain: &str) -> Option<String> {
+    fs::read_to_string(owner_state_path(domain))
+        .ok()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+}
+
+/// Claim device ownership for a domain. Uses create_new to ensure
+/// only the first writer wins in a race.
+fn set_device_owner(domain: &str, account_id: &str) -> Result<(), io::Error> {
+    use std::io::Write;
+    let path = owner_state_path(domain);
+    let mut file = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&path)?;
+    file.write_all(account_id.as_bytes())?;
+    Ok(())
 }
 
 async fn handle_task_client(
@@ -750,6 +777,27 @@ async fn handle_client(
                                 let members = cachelayer.get_groupmembers(sudo_group_uuid).await;
                                 if members.contains(&account_id) {
                                     is_sudoer = true;
+                                }
+                            }
+
+                            // Auto-sudo for the device owner (first user to log in).
+                            if let Some((_user, domain)) = split_username(&account_id) {
+                                if cfg.get_auto_sudo_owner(Some(domain)) {
+                                    match get_device_owner(domain) {
+                                        Some(owner) => {
+                                            if owner.to_lowercase() == account_id.to_lowercase() {
+                                                debug!("User {} is the device owner for domain {}", account_id, domain);
+                                                is_sudoer = true;
+                                            }
+                                        }
+                                        None => {
+                                            info!("Setting device owner for domain {} to {}", domain, account_id);
+                                            match set_device_owner(domain, &account_id) {
+                                                Ok(()) => is_sudoer = true,
+                                                Err(e) => error!("Failed to persist device owner: {}", e),
+                                            }
+                                        }
+                                    }
                                 }
                             }
 

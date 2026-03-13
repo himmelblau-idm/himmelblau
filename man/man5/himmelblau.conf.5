@@ -403,6 +403,34 @@ A script that will execute every time a user logs on. Two environment variables 
 Example: logon_script = /etc/himmelblau/logon.sh
 
 .TP
+.B auto_sudo_owner
+.RE
+When set to
+.B true
+, the first Entra ID user to log in to each domain on this device is automatically
+granted sudo access via the local sudo group (see
+.B local_sudo_group
+). This user is considered the device owner. Subsequent users are not granted sudo
+by this mechanism, though they may still receive it via
+.B sudo_groups
+or
+.B local_groups
+configuration.
+.PP
+Ownership state is stored persistently under
+.I /var/lib/himmelblaud/
+and is not affected by cache clearing. To reset device ownership, delete the
+ownership state file or use
+.B aad-tool owner-reset
+.
+
+.P
+Default: false
+
+.P
+Example: auto_sudo_owner = true
+
+.TP
 .B logon_token_scopes
 .RE
 A comma-separated list of the scopes to be requested for the ACCESS_TOKEN during logon. These scopes
@@ -677,6 +705,17 @@ Default: /var/run/himmelblaud/broker_sock
 Example: broker_socket_path = /tmp/broker.sock
 
 .TP
+.B enable_passwordless
+.RE
+A boolean option that controls whether passwordless authentication (Microsoft Authenticator app approval without a password) is offered during Azure Entra ID authentication. When enabled, Himmelblau will include the passwordless option in authentication requests, allowing Entra ID to offer a passwordless flow. When disabled, users will be prompted for a password followed by MFA instead.
+
+.P
+Default: true
+
+.P
+Example: enable_passwordless = false
+
+.TP
 .B home_prefix
 .RE
 The prefix to use for user home directories.
@@ -724,17 +763,6 @@ Default: spn
 
 .P
 Example: home_alias = SPN
-
-.TP
-.B enable_passwordless
-.RE
-A boolean option that controls whether passwordless authentication (Microsoft Authenticator app approval without a password) is offered during Azure Entra ID authentication. When enabled, Himmelblau will include the passwordless option in authentication requests, allowing Entra ID to offer a passwordless flow. When disabled, users will be prompted for a password followed by MFA instead.
-
-.P
-Default: true
-
-.P
-Example: enable_passwordless = false
 
 .TP
 .B shell
