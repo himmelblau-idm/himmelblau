@@ -93,16 +93,6 @@ def postprocess_troff(text):
         flags=re.MULTILINE,
     )
 
-    # Wrap inline example commands in .EX/.EE blocks.
-    # Matches lines like "Example: aad-tool ..." where the command runs
-    # together with the "Example:" label on the same line.
-    text = re.sub(
-        r'^(Example:)\s+(aad[-\\]tool\s)',
-        r'\1\n.EX\n\2',
-        text,
-        flags=re.MULTILINE,
-    )
-
     return text
 
 
