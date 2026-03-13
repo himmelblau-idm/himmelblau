@@ -2076,6 +2076,57 @@ mod tests {
     }
 
     #[test]
+    fn test_get_fido_timeout() {
+        let config_data = r#"
+        [global]
+        fido_timeout = 60
+        "#;
+
+        let temp_file = create_temp_config(config_data);
+        let config = HimmelblauConfig::new(Some(&temp_file)).unwrap();
+
+        assert_eq!(config.get_fido_timeout(), 60);
+        let config_empty = create_empty_config();
+        assert_eq!(config_empty.get_fido_timeout(), 25);
+    }
+
+    #[test]
+    fn test_get_fido_prompt() {
+        let config_data = r#"
+        [global]
+        fido_prompt = Insert key now.
+        "#;
+
+        let temp_file = create_temp_config(config_data);
+        let config = HimmelblauConfig::new(Some(&temp_file)).unwrap();
+
+        assert_eq!(config.get_fido_prompt(), "Insert key now.");
+        let config_empty = create_empty_config();
+        assert_eq!(
+            config_empty.get_fido_prompt(),
+            "Please insert your security key."
+        );
+    }
+
+    #[test]
+    fn test_get_fido_presence_prompt() {
+        let config_data = r#"
+        [global]
+        fido_presence_prompt = Touch key now.
+        "#;
+
+        let temp_file = create_temp_config(config_data);
+        let config = HimmelblauConfig::new(Some(&temp_file)).unwrap();
+
+        assert_eq!(config.get_fido_presence_prompt(), "Touch key now.");
+        let config_empty = create_empty_config();
+        assert_eq!(
+            config_empty.get_fido_presence_prompt(),
+            "Please touch your security key."
+        );
+    }
+
+    #[test]
     fn test_split_username_edge_cases() {
         // Empty parts are still valid splits
         assert_eq!(split_username("@domain"), Some(("", "domain")));
