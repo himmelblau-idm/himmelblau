@@ -2090,6 +2090,78 @@ impl IdProvider for HimmelblauProvider {
                 )
             }};
         }
+            macro_rules! offline_auth_defensive_revalidation {
+                ($reauth_pin_value:expr) => {{
+                    let mut state = self.state.lock().await;
+                    *state = CacheState::OfflineNextCheck(
+                        SystemTime::now() + OFFLINE_NEXT_CHECK,
+                    );
+                    // Defensive re-validation: only allow offline fallback
+                    // if the Hello key can still be loaded with this PIN.
+                    let (hello_key, _keytype) = match self.fetch_hello_key(account_id, keystore) {
+                        Ok(v) => v,
+                        Err(e) => {
+                            error!(?e, "Reauth fallback failed. Hello key missing.");
+                            return Ok((
+                                AuthResult::Denied(
+                                    "Failed to authenticate with Hello PIN.".to_string(),
+                                ),
+                                AuthCacheAction::None,
+                            ));
+                        }
+                    };
+                    let pin = PinValue::new($reauth_pin_value.as_str()).map_err(|e| {
+                        error!(?e, "Failed setting pin value during reauth fallback");
+                        IdpError::Tpm
+                    })?;
+                    if let Err(e) = tpm.ms_hello_key_load(machine_key, &hello_key, &pin) {
+                        error!(?e, "Reauth fallback failed. Invalid Hello PIN.");
+                        return Ok((
+                            AuthResult::Denied(
+                                "Failed to authenticate with Hello PIN.".to_string(),
+                            ),
+                            AuthCacheAction::None,
+                        ));
+                    }
+                    // If we validated the Hello PIN but cannot start online
+                    // re-auth due to a network outage, fall back to offline
+                    // unlock using the existing cached token.
+                    if check_hello_totp_enabled!(self) {
+                        let reauth_pin = $reauth_pin_value.to_string();
+                        if !check_hello_totp_setup!(self, account_id, keystore) {
+                            return impl_setup_hello_totp!(
+                                self,
+                                account_id,
+                                keystore,
+                                old_token,
+                                reauth_pin,
+                                tpm,
+                                machine_key,
+                                cred_handler
+                            );
+                        } else {
+                            *cred_handler = AuthCredHandler::HelloTOTP {
+                                cred: reauth_pin,
+                                pending_sealed_totp: None,
+                            };
+                            return Ok((
+                                AuthResult::Next(AuthRequest::HelloTOTP {
+                                    msg: "Please enter your Hello TOTP code from your Authenticator: "
+                                    .to_string(),
+                            }),
+                            AuthCacheAction::None,
+                        ));
+                    }
+                }
+
+                return Ok((
+                    AuthResult::Success {
+                        token: old_token.clone(),
+                    },
+                    AuthCacheAction::None,
+                ));
+            }}
+        }
         // Issue #1051: Initiate online re-authentication when the cached
         // PRT/refresh token has expired but the Hello key and PIN are still valid.
         // The validated PIN is carried through so the new PRT can be sealed with
@@ -2162,14 +2234,7 @@ impl IdProvider for HimmelblauProvider {
                         Err(MsalError::RequestFailed(msg)) => {
                             let url = extract_base_url!(msg);
                             info!(?url, "Network down detected during reauth MFA initiation");
-                            let mut state = self.state.lock().await;
-                            *state = CacheState::OfflineNextCheck(
-                                SystemTime::now() + OFFLINE_NEXT_CHECK,
-                            );
-                            return Ok((
-                                AuthResult::Denied("Network outage detected.".to_string()),
-                                AuthCacheAction::None,
-                            ));
+                            offline_auth_defensive_revalidation!(reauth_pin_value)
                         }
                         Err(MsalError::PasswordRequired) => {
                             // Azure requires a password for this flow. Prompt for
@@ -2253,14 +2318,7 @@ impl IdProvider for HimmelblauProvider {
                         Err(MsalError::RequestFailed(msg)) => {
                             let url = extract_base_url!(msg);
                             info!(?url, "Network down detected during reauth DAG initiation");
-                            let mut state = self.state.lock().await;
-                            *state = CacheState::OfflineNextCheck(
-                                SystemTime::now() + OFFLINE_NEXT_CHECK,
-                            );
-                            return Ok((
-                                AuthResult::Denied("Network outage detected.".to_string()),
-                                AuthCacheAction::None,
-                            ));
+                            offline_auth_defensive_revalidation!(reauth_pin_value)
                         }
                         Err(e) => {
                             error!("Failed to initiate reauth device flow: {:?}", e);
