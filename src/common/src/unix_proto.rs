@@ -94,7 +94,12 @@ pub enum ClientRequest {
     PamAuthenticateStep(PamAuthRequest),
     PamAccountAllowed(String),
     PamAccountBeginSession(String),
-    PamChangeAuthToken(String, String, String, String),
+    /// Change Hello PIN after MFA verification:
+    /// (account_id, access_token, refresh_token, old_pin, new_pin).
+    /// MFA is performed in the PAM module; the daemon re-keys the Hello key
+    /// blob under new_pin and re-seals the cached PRT/refresh-token under
+    /// the new Hello storage key so subsequent PIN logins work immediately.
+    PamChangeAuthToken(String, String, String, String, String),
     InvalidateCache,
     ClearCache,
     OfflineBreakGlass(Option<u64>),
@@ -122,7 +127,7 @@ impl ClientRequest {
                 format!("PamAccountAllowed({})", id)
             }
             ClientRequest::PamAccountBeginSession(_) => "PamAccountBeginSession".to_string(),
-            ClientRequest::PamChangeAuthToken(id, _, _, _) => {
+            ClientRequest::PamChangeAuthToken(id, _, _, _, _) => {
                 format!("PamChangeAuthToken({}, ...)", id)
             }
             ClientRequest::InvalidateCache => "InvalidateCache".to_string(),

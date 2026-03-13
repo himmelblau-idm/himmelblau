@@ -31,7 +31,7 @@ use crate::idprovider::interface::{
 use crate::unix_proto::PamAuthRequest;
 use crate::{
     check_hello_totp_enabled, check_hello_totp_setup, extract_base_url, handle_hello_bad_pin_count,
-    impl_change_auth_token, impl_check_online, impl_create_decoupled_hello_key,
+    impl_check_online, impl_create_decoupled_hello_key,
     impl_handle_hello_pin_totp_auth, impl_himmelblau_hello_key_helpers,
     impl_himmelblau_offline_auth_init, impl_himmelblau_offline_auth_step, impl_offline_break_glass,
     impl_setup_hello_totp, impl_unix_user_access, load_cached_prt_no_op, no_op_prt_token_fetch,
@@ -1653,29 +1653,6 @@ impl IdProvider for OidcProvider {
         _machine_key: &tpm::structures::StorageKey,
     ) -> Result<String, IdpError> {
         Err(IdpError::BadRequest)
-    }
-
-    #[instrument(level = "debug", skip_all)]
-    async fn change_auth_token<D: KeyStoreTxn + Send>(
-        &self,
-        account_id: &str,
-        token: &UnixUserToken,
-        new_tok: &str,
-        keystore: &mut D,
-        tpm: &mut tpm::provider::BoxedDynTpm,
-        machine_key: &tpm::structures::StorageKey,
-    ) -> Result<bool, IdpError> {
-        impl_change_auth_token!(
-            self,
-            account_id,
-            token,
-            new_tok,
-            keystore,
-            tpm,
-            machine_key,
-            false,
-            impl_create_decoupled_hello_key
-        )
     }
 
     #[instrument(level = "debug", skip_all)]
