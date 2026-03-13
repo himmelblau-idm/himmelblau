@@ -608,7 +608,10 @@ impl PamHooks for PamKanidm {
 
         let oidc_client = cfg.get_oidc_issuer_url().is_some();
         let token = if !oidc_client {
-            let auth_options = vec![AuthOption::Fido, AuthOption::Passwordless];
+            let mut auth_options = vec![AuthOption::Fido];
+            if cfg.get_enable_passwordless() {
+                auth_options.push(AuthOption::Passwordless);
+            }
             let auth_init = match rt.block_on(async {
                 app.check_user_exists(&account_id, None, &auth_options)
                     .await
@@ -719,10 +722,16 @@ impl PamHooks for PamKanidm {
                     };
 
                     let msg_printer = Arc::new(PamConvMessagePrinter::new(conv));
+                    let fido_timeout_ms = cfg.get_fido_timeout().saturating_mul(1000);
+                    let fido_prompt = cfg.get_fido_prompt();
+                    let fido_presence_prompt = cfg.get_fido_presence_prompt();
                     let assertion = match fido_auth(
                         msg_printer.clone(),
                         fido_challenge,
                         fido_allow_list,
+                        fido_timeout_ms,
+                        &fido_prompt,
+                        &fido_presence_prompt,
                     ) {
                         Ok(assertion) => assertion,
                         Err(e) => {

@@ -307,7 +307,19 @@ fn configure_pam(
 
 #[instrument(skip(app, account_id))]
 async fn auth(app: &BrokerClientApplication, account_id: &str) -> Option<UserToken> {
-    let auth_options = vec![AuthOption::Passwordless];
+    let config = match HimmelblauConfig::new(Some(DEFAULT_CONFIG_PATH)) {
+        Ok(cfg) => Some(cfg),
+        Err(e) => {
+            warn!(?e, "Failed to read config, using defaults");
+            None
+        }
+    };
+    let enable_passwordless = config.as_ref().map(|c| c.get_enable_passwordless()).unwrap_or(true);
+    let auth_options = if enable_passwordless {
+        vec![AuthOption::Passwordless]
+    } else {
+        vec![]
+    };
     let auth_init = match app.check_user_exists(account_id, &auth_options).await {
         Ok(auth_init) => auth_init,
         Err(e) => {
@@ -335,11 +347,7 @@ async fn auth(app: &BrokerClientApplication, account_id: &str) -> Option<UserTok
         None
     };
 
-    let mfa_method = if let Ok(cfg) = HimmelblauConfig::new(Some(DEFAULT_CONFIG_PATH)) {
-        cfg.get_mfa_method()
-    } else {
-        None
-    };
+    let mfa_method = config.as_ref().and_then(|c| c.get_mfa_method());
 
     let mut mfa_req = match app
         .initiate_acquire_token_by_mfa_flow_for_device_enrollment(

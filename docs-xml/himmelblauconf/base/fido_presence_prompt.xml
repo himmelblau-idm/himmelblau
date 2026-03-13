@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<parameter name="fido_presence_prompt"
+           section="global"
+           type="string"
+           rust_type="String"
+           documented="true"
+           domain_specific="false"
+           order="29">
+<description>
+The message displayed to the user when FIDO/passkey authentication requires
+user presence (touching the security key).
+</description>
+<default>Please touch your security key.</default>
+<example>fido_presence_prompt = Bitte den Sicherheitsschlüssel berühren.</example>
+</parameter>
