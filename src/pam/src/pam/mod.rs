@@ -377,6 +377,10 @@ impl PamHooks for PamKanidm {
         let authtok = match pamh.get_authtok() {
             Ok(Some(v)) => Some(v),
             Ok(None) => {
+                if opts.try_unseal {
+                    debug!("try_unseal: no authtok available, returning PAM_IGNORE");
+                    return PamResultCode::PAM_IGNORE;
+                }
                 if opts.use_first_pass {
                     debug!("Don't have an authtok, returning PAM_AUTH_ERR");
                     return PamResultCode::PAM_AUTH_ERR;
@@ -384,10 +388,35 @@ impl PamHooks for PamKanidm {
                 None
             }
             Err(e) => {
+                if opts.try_unseal {
+                    debug!(err = ?e, "try_unseal: get_authtok failed, returning PAM_IGNORE");
+                    return PamResultCode::PAM_IGNORE;
+                }
                 error!(err = ?e, "get_authtok");
                 return e;
             }
         };
+
+        // try_unseal: send a single fire-and-forget message to the daemon
+        // and return PAM_IGNORE immediately. The unseal request is sent
+        // asynchronously. This never blocks, so callers like polkit or
+        // short-lived helpers are unaffected.
+        if opts.try_unseal {
+            if let Some(authtok) = authtok {
+                match DaemonClientBlocking::new(cfg.get_socket_path().as_str()) {
+                    Ok(mut dc) => {
+                        let req = ClientRequest::PamTryUnseal(account_id, authtok);
+                        if let Err(e) = dc.call_and_forget(&req) {
+                            debug!(err = ?e, "try_unseal: failed to send request");
+                        }
+                    }
+                    Err(e) => {
+                        debug!(err = ?e, "try_unseal: daemon not available");
+                    }
+                }
+            }
+            return PamResultCode::PAM_IGNORE;
+        }
 
         let conv = match pamh.get_item::<PamConv>() {
             Ok(conv) => Arc::new(Mutex::new(conv.clone())),

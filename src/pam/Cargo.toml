@@ -32,6 +32,7 @@ maintainer = "David Mulder <dmulder@suse.com>"
 assets = [
   ["target/release/libpam_himmelblau.so", "usr/lib/security/pam_himmelblau.so", "755"],
   ["../../platform/debian/pam-config", "usr/share/pam-configs/himmelblau", "644"],
+  ["../../platform/debian/pam-config-unseal", "usr/share/pam-configs/himmelblau-unseal", "644"],
   ["../../platform/debian/apparmor.unix-chkpwd.local", "etc/apparmor.d/local/unix-chkpwd", "644"],
 ]
 recommends = ["patch"]
@@ -44,6 +45,7 @@ assets = [
   { source = "target/release/libpam_himmelblau.so", dest = "/usr/lib64/security/pam_himmelblau.so", mode = "755" },
   { source = "platform/el/authselect/*", dest = "/usr/share/authselect/vendor/himmelblau/", mode = "755" },
   { source = "platform/opensuse/pam-config", dest = "/usr/lib/pam-config.d/himmelblau.conf", mode = "644" },
+  { source = "platform/opensuse/pam-config-unseal", dest = "/usr/lib/pam-config.d/himmelblau-unseal.conf", mode = "644" },
 ]
 post_install_script = '''
 # Only create a symlink if it doesn't already exist

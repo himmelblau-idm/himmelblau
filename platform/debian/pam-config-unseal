@@ -1,0 +1,6 @@
+Name: Azure Entra Id unlock
+Default: no
+Priority: 0
+Auth-Type: Additional
+Auth:
+	optional	pam_himmelblau.so try_unseal
