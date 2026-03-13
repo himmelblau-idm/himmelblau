@@ -1,4 +1,5 @@
 #!/usr/bin/python3
+import re
 from pathlib import Path
 from datetime import date
 
@@ -56,6 +57,8 @@ for file in man_files:
                 line = line.replace('.SH DESCRIPTION', '.SS DESCRIPTION')
             if line.startswith('.SH OPTIONS'):
                 line = line.replace('.SH OPTIONS', '.SS OPTIONS')
+            if line.startswith('.SH EXAMPLES'):
+                line = line.replace('.SH EXAMPLES', '.SS EXAMPLES')
             if not in_skip:
                 combined_lines.append(line.rstrip())
 
@@ -76,7 +79,28 @@ combined_lines.extend([
     "<dmulder@samba.org>",
 ])
 
+def postprocess_troff(text):
+    """Post-process combined troff for cleaner pandoc conversion.
+
+    Converts numbered paragraphs to .IP list items and wraps
+    inline example commands in .EX/.EE blocks.
+    """
+    # Convert numbered paragraphs (.PP followed by "N. ...") to .IP "N." items
+    text = re.sub(
+        r'^\.PP\n(\d+)\. ',
+        r'.IP "\1." 4\n',
+        text,
+        flags=re.MULTILINE,
+    )
+
+    return text
+
+
 # Write combined man page
-output_path.write_text("\n".join(combined_lines).replace('aad-tool\n\\fI\\,', 'aad-tool \\fI\\,').replace('.SH\n.B', '.SH SUBCOMMAND\n.B') + "\n")
+text = "\n".join(combined_lines)
+text = text.replace('aad-tool\n\\fI\\,', 'aad-tool \\fI\\,')
+text = text.replace('.SH\n.B', '.SH SUBCOMMAND\n.B')
+text = postprocess_troff(text)
+output_path.write_text(text + "\n")
 
 output_path.name
