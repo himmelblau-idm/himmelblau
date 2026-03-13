@@ -15,6 +15,8 @@ let activeTotpTempFiles = new Set();
 // Must match the prefixes used in src/common/src/auth.rs fido_auth() / fido_status_check()
 const FIDO_INSERT_PREFIX = "[FIDO_INSERT] ";
 const FIDO_TOUCH_PREFIX = "[FIDO_TOUCH] ";
+// Must match the prefix used in src/common/src/auth.rs cable_fido_auth()
+const CABLE_QR_PREFIX = "[CABLE_QR] ";
 
 // Maximum URL length for QR code generation (longer URLs create denser, harder to scan codes)
 const MAX_URL_LENGTH = 500;
@@ -184,7 +186,10 @@ export default class QrGreeterExtension extends Extension {
 
         GdmAuthPrompt.prototype.setMessage = function(message, styleClass) {
             let displayMessage = message;
-            if (message && message.startsWith(FIDO_INSERT_PREFIX))
+            const isCableQr = message && message.startsWith(CABLE_QR_PREFIX);
+            if (isCableQr)
+                displayMessage = "Scan with your phone or touch your security key";
+            else if (message && message.startsWith(FIDO_INSERT_PREFIX))
                 displayMessage = message.substring(FIDO_INSERT_PREFIX.length);
             else if (message && message.startsWith(FIDO_TOUCH_PREFIX))
                 displayMessage = message.substring(FIDO_TOUCH_PREFIX.length);
@@ -236,6 +241,28 @@ export default class QrGreeterExtension extends Extension {
             if (this._totpTempFile) {
                 deleteTempFile(this._totpTempFile);
                 this._totpTempFile = null;
+            }
+
+            if (isCableQr) {
+                const cableUrl = message.substring(CABLE_QR_PREFIX.length).trim();
+                try {
+                    const qr = QrCode.encodeText(cableUrl, Ecc.LOW);
+                    const svgContent = qrCodeToSvg(qr, 2, '#ffffff', '#000000');
+                    const tempFilePath = writeSvgToTempFile(svgContent);
+                    this._totpTempFile = tempFilePath;
+                    activeTotpTempFiles.add(tempFilePath);
+                    const fileUri = `file://${tempFilePath}`;
+                    this._qrContainer.set_style(`background-image: url('${fileUri}'); background-size: contain; background-repeat: no-repeat; background-position: center;`);
+                    this._qrContainer.show();
+                    this._qrLabel.set_text("Scan with Microsoft Authenticator");
+                    this._qrLabel.show();
+                } catch (e) {
+                    console.error("Himmelblau QR Greeter: Failed to generate caBLE QR code:", e);
+                    if (this._qrContainer) this._qrContainer.hide();
+                    if (this._qrLabel) this._qrLabel.hide();
+                }
+                this._cableQrActive = true;
+                return;
             }
 
             const isFidoInsert = message && message.startsWith(FIDO_INSERT_PREFIX);
@@ -292,11 +319,14 @@ export default class QrGreeterExtension extends Extension {
                     });
                 }
                 this._fidoIcon.show();
-                if (this._qrContainer) this._qrContainer.hide();
-                if (this._qrLabel) this._qrLabel.hide();
+                if (!this._cableQrActive) {
+                    if (this._qrContainer) this._qrContainer.hide();
+                    if (this._qrLabel) this._qrLabel.hide();
+                }
                 return;
             }
 
+            this._cableQrActive = false;
             if (this._fidoIcon) {
                 this._fidoIcon.hide();
                 if (this._fidoPulseTimer) {
@@ -384,6 +414,7 @@ export default class QrGreeterExtension extends Extension {
         }
         this._fidoIcon = null;
         this._fidoTouchLayer = null;
+        this._cableQrActive = false;
         if (GdmAuthPrompt && this._originalSetMessage) {
             GdmAuthPrompt.prototype.setMessage = this._originalSetMessage;
         }

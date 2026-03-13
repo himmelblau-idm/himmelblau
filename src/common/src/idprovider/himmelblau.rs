@@ -1744,10 +1744,12 @@ impl IdProvider for HimmelblauProvider {
                     if let (Some(fido_challenge), Some(fido_allow_list)) =
                         (flow.fido_challenge.clone(), flow.fido_allow_list.clone())
                     {
+                        let has_cross_device = flow.has_cross_device_passkey;
                         return Ok((
                             AuthRequest::Fido {
                                 fido_challenge,
                                 fido_allow_list,
+                                has_cross_device,
                             },
                             AuthCredHandler::MFA {
                                 flow: Box::new(flow),
@@ -2177,6 +2179,7 @@ impl IdProvider for HimmelblauProvider {
                     if let (Some(fido_challenge), Some(fido_allow_list)) =
                         (flow.fido_challenge.clone(), flow.fido_allow_list.clone())
                     {
+                        let has_cross_device = flow.has_cross_device_passkey;
                         *cred_handler = AuthCredHandler::MFA {
                             flow: Box::new(flow),
                             password: None,
@@ -2188,6 +2191,7 @@ impl IdProvider for HimmelblauProvider {
                             AuthResult::Next(AuthRequest::Fido {
                                 fido_challenge,
                                 fido_allow_list,
+                                has_cross_device,
                             }),
                             AuthCacheAction::None,
                         ));
@@ -2931,6 +2935,7 @@ impl IdProvider for HimmelblauProvider {
                             AuthResult::Next(AuthRequest::Fido {
                                 fido_allow_list,
                                 fido_challenge,
+                                has_cross_device: false,
                             }),
                             /* Cache the offline password hash for breakglass
                              * conditions, if enabled. */
