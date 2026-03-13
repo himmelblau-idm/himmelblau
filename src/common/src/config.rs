@@ -25,7 +25,10 @@ use std::io::Error;
 use std::io::Read;
 use std::path::PathBuf;
 use std::process::Command;
-use tracing::{debug, error};
+use std::collections::HashMap;
+use std::sync::Arc;
+use tokio::sync::RwLock;
+use tracing::{debug, error, info};
 
 use crate::constants::{
     CN_NAME_MAPPING, DEFAULT_ALLOW_REMOTE_HELLO, DEFAULT_AUTHORITY_HOST, DEFAULT_BROKER_SOCK_PATH,
@@ -615,88 +618,7 @@ impl HimmelblauConfig {
         None
     }
 
-    pub async fn domains_are_aliases(&mut self, domain1: &str, domain2: &str) -> bool {
-        if let Some(primary) = self.get_primary_domain_from_alias(domain1).await {
-            domain2 == primary
-        } else if let Some(primary) = self.get_primary_domain_from_alias(domain2).await {
-            domain1 == primary
-        } else {
-            false
-        }
-    }
 
-    pub async fn get_primary_domain_from_alias(&mut self, alias: &str) -> Option<String> {
-        // Short-circuit the request if this is an OIDC provider domain.
-        if self.get_oidc_issuer_url().is_some() {
-            return None;
-        }
-
-        // Attempt to short-circut the request by checking if the alias is
-        // already configured.
-        if let Some(primary) = self.get_primary_domain_from_alias_simple(alias) {
-            return Some(primary);
-        }
-
-        let domains = self.get_configured_domains();
-        if domains.is_empty() {
-            info!("No domains are configured.");
-            return None;
-        }
-
-        let mut modified_config = false;
-
-        // We don't recognize this alias, so now we need to search for it the
-        // hard way by checking for matching tenant id's.
-        let (_, alias_tenant_id, _) =
-            match request_federation_provider(DEFAULT_ODC_PROVIDER, alias).await {
-                Ok(resp) => resp,
-                Err(e) => {
-                    error!(
-                        "Failed matching alias '{}' to a configured tenant: {:?}",
-                        alias, e
-                    );
-                    return None;
-                }
-            };
-        for domain in domains {
-            let tenant_id = match self.get_tenant_id(&domain) {
-                Some(tenant_id) => tenant_id,
-                None => {
-                    let (authority_host, tenant_id, graph_url) =
-                        match request_federation_provider(&self.get_odc_provider(&domain), &domain)
-                            .await
-                        {
-                            Ok(resp) => resp,
-                            Err(e) => {
-                                error!("Failed sending federation provider request: {:?}", e);
-                                continue;
-                            }
-                        };
-                    self.set(&domain, "authority_host", &authority_host);
-                    self.set(&domain, "tenant_id", &tenant_id);
-                    self.set(&domain, "graph_url", &graph_url);
-                    modified_config = true;
-                    tenant_id
-                }
-            };
-            if tenant_id == alias_tenant_id {
-                let mut domain_aliases = match self.config.get(&domain, "domain_aliases") {
-                    Some(aliases) => aliases.split(",").map(|s| s.to_string()).collect(),
-                    None => vec![],
-                };
-                domain_aliases.push(alias.to_string());
-                self.set(&domain, "domain_aliases", &domain_aliases.join(","));
-                let _ = self.write_server_config();
-                return Some(domain);
-            }
-        }
-
-        error!("Failed matching alias '{}' to a configured tenant", alias);
-        if modified_config {
-            let _ = self.write_server_config();
-        }
-        None
-    }
 
     /// This function attempts to convert a username to a valid UPN. On failure it
     /// will leave the name as-is, and respond with the original input. Himmelblau
@@ -841,6 +763,150 @@ include!(concat!(env!("OUT_DIR"), "/config_gen.rs"));
 impl fmt::Debug for HimmelblauConfig {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "{:?}", self.config)
+    }
+}
+
+/// Resolve `alias` to its primary configured domain without holding any config
+/// lock across async network I/O.
+///
+/// The previous implementation held a write lock on `Arc<RwLock<HimmelblauConfig>>`
+/// for the entire duration of the ODC HTTP requests, which caused the daemon to
+/// deadlock (hang) whenever an unknown domain alias triggered a network lookup.
+/// This standalone function acquires only the narrowest locks needed:
+///   1. A read lock to collect the data required for the ODC requests.
+///   2. No lock during the actual network I/O.
+///   3. A write lock only to persist the resolved alias back into the config.
+pub async fn get_primary_domain_from_alias(
+    config: &Arc<RwLock<HimmelblauConfig>>,
+    alias: &str,
+) -> Option<String> {
+    // --- Phase 1: cheap checks under a read lock (no network I/O) ----------
+    {
+        let cfg = config.read().await;
+        // Short-circuit for OIDC providers.
+        if cfg.get_oidc_issuer_url().is_some() {
+            return None;
+        }
+        // If the alias is already known return immediately.
+        if let Some(primary) = cfg.get_primary_domain_from_alias_simple(alias) {
+            return Some(primary);
+        }
+    }
+
+    // --- Phase 2: collect config data under a read lock -------------------
+    // We need the domain list plus any already-cached tenant IDs so that we
+    // can do all network calls without holding any lock.
+    let (domains, domain_tenant_ids, domain_odc_providers) = {
+        let cfg = config.read().await;
+        let domains = cfg.get_configured_domains();
+        if domains.is_empty() {
+            info!("No domains are configured.");
+            return None;
+        }
+        let domain_tenant_ids: HashMap<String, Option<String>> = domains
+            .iter()
+            .map(|d| (d.clone(), cfg.get_tenant_id(d)))
+            .collect();
+        let domain_odc_providers: HashMap<String, String> = domains
+            .iter()
+            .map(|d| (d.clone(), cfg.get_odc_provider(d)))
+            .collect();
+        (domains, domain_tenant_ids, domain_odc_providers)
+    }; // read lock released here
+
+    // --- Phase 3: all network I/O — no lock held --------------------------
+    let (_, alias_tenant_id, _) =
+        match request_federation_provider(DEFAULT_ODC_PROVIDER, alias).await {
+            Ok(resp) => resp,
+            Err(e) => {
+                error!(
+                    "Failed matching alias '{}' to a configured tenant: {:?}",
+                    alias, e
+                );
+                return None;
+            }
+        };
+
+    // For any domain whose tenant ID isn't cached yet, fetch it now.
+    let mut domain_network_results: HashMap<String, (String, String, String)> = HashMap::new();
+    for domain in &domains {
+        if domain_tenant_ids[domain].is_none() {
+            match request_federation_provider(&domain_odc_providers[domain], domain).await {
+                Ok(resp) => {
+                    domain_network_results.insert(domain.clone(), resp);
+                }
+                Err(e) => {
+                    error!("Failed sending federation provider request: {:?}", e);
+                }
+            }
+        }
+    }
+
+    // --- Phase 4: update config under a write lock — no network I/O -------
+    let mut cfg = config.write().await;
+
+    // Re-check in case another task resolved this alias while we were doing
+    // I/O (avoids a redundant write_server_config call).
+    if let Some(primary) = cfg.get_primary_domain_from_alias_simple(alias) {
+        return Some(primary);
+    }
+
+    let mut found_domain: Option<String> = None;
+    let mut modified_config = false;
+
+    for domain in &domains {
+        let tenant_id = match &domain_tenant_ids[domain] {
+            Some(tid) => tid.clone(),
+            None => match domain_network_results.get(domain) {
+                Some((authority_host, tenant_id, graph_url)) => {
+                    cfg.set(domain, "authority_host", authority_host);
+                    cfg.set(domain, "tenant_id", tenant_id);
+                    cfg.set(domain, "graph_url", graph_url);
+                    modified_config = true;
+                    tenant_id.clone()
+                }
+                None => continue,
+            },
+        };
+
+        if tenant_id == alias_tenant_id {
+            let mut domain_aliases = match cfg.config.get(domain, "domain_aliases") {
+                Some(aliases) => aliases.split(',').map(|s| s.to_string()).collect::<Vec<_>>(),
+                None => vec![],
+            };
+            domain_aliases.push(alias.to_string());
+            cfg.set(domain, "domain_aliases", &domain_aliases.join(","));
+            let _ = cfg.write_server_config();
+            found_domain = Some(domain.clone());
+            break;
+        }
+    }
+
+    if found_domain.is_none() {
+        error!("Failed matching alias '{}' to a configured tenant", alias);
+        if modified_config {
+            let _ = cfg.write_server_config();
+        }
+    }
+
+    found_domain
+}
+
+/// Check whether `domain1` and `domain2` refer to the same Entra ID tenant.
+///
+/// Like [`get_primary_domain_from_alias`], this function does **not** hold any
+/// config lock across network I/O.
+pub async fn domains_are_aliases(
+    config: &Arc<RwLock<HimmelblauConfig>>,
+    domain1: &str,
+    domain2: &str,
+) -> bool {
+    if let Some(primary) = get_primary_domain_from_alias(config, domain1).await {
+        domain2 == primary
+    } else if let Some(primary) = get_primary_domain_from_alias(config, domain2).await {
+        domain1 == primary
+    } else {
+        false
     }
 }
 
