@@ -457,11 +457,13 @@ in
 
     apply_policy = mkOption {
       type = types.nullOr (types.bool);
-      default = false;
+      default = true;
       description = ''
-        A boolean option that enables the application and enforcement of Intune policies to the authenticated user.
+        A boolean option that enables the application and enforcement of Intune device compliance policies during non-OIDC authentication.
+        When enabled (the default), non-compliant devices may be denied authentication in accordance with the configured policies.
+        This setting does not affect OIDC-based authentication flows.
       '';
-      example = true;
+      example = false;
     };
 
     authority_host = mkOption {
