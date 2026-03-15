@@ -600,6 +600,7 @@ where
         account_id: Id,
         scopes: Vec<String>,
         client_id: Option<String>,
+        redirect_uri: Option<String>,
     ) -> Option<UnixUserToken> {
         // Validate the user isn't in the nxset (aka, it's a local user or group).
         let (name, idnumber) = match account_id.clone() {
@@ -628,6 +629,7 @@ where
                 scopes,
                 Some(&token),
                 client_id,
+                redirect_uri,
                 &mut dbtxn,
                 hsm_lock.deref_mut(),
                 &self.machine_key,

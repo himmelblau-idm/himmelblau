@@ -41,6 +41,8 @@ struct AuthParametersReq {
     requested_scopes: Vec<String>,
     #[serde(rename = "clientId")]
     client_id: Option<String>,
+    #[serde(rename = "redirectUri")]
+    redirect_uri: Option<String>,
     account: Option<AccountReq>,
 }
 
@@ -111,12 +113,30 @@ impl HimmelblauBroker for Broker {
         if account.username.to_lowercase() != user.spn.to_lowercase() {
             return Err("Invalid request for user!".into());
         }
+        // Normalize and validate the redirect URI: treat empty/whitespace as
+        // None, and reject values that are not valid URIs or that contain fragments.
+        let redirect_uri = match request.auth_parameters.redirect_uri {
+            Some(ref uri) => {
+                let trimmed = uri.trim();
+                if trimmed.is_empty() {
+                    None
+                } else {
+                    let parsed = Url::parse(trimmed).map_err(|_| "Invalid redirectUri")?;
+                    if parsed.fragment().is_some() {
+                        return Err("Invalid redirectUri: fragment not allowed".into());
+                    }
+                    Some(trimmed.to_string())
+                }
+            }
+            None => None,
+        };
         let token = self
             .cachelayer
             .get_user_accesstoken(
                 Id::Name(user.spn.clone()),
                 request.auth_parameters.requested_scopes,
                 request.auth_parameters.client_id,
+                redirect_uri,
             )
             .await
             .ok_or("Failed to authenticate user")?;
