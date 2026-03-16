@@ -504,8 +504,6 @@ impl PamHooks for PamKanidm {
             }
         }
 
-        // `domain` was already computed from `split_username(&account_id)` earlier; reuse it here.
-
         let rt = match Runtime::new() {
             Ok(rt) => rt,
             Err(e) => {
