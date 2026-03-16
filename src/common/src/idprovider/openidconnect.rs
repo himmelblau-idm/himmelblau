@@ -983,6 +983,22 @@ impl IdProvider for OidcProvider {
         impl_check_online!(self, tpm, now)
     }
 
+    // Hello PIN change is not supported for generic OIDC providers.
+    // Only Entra ID (HimmelblauProvider) provisions Hello PIN keys.
+    async fn change_auth_token_pin<D: KeyStoreTxn + Send>(
+        &self,
+        _account_id: &str,
+        _token: &UnixUserToken,
+        _old_pin: &str,
+        _new_pin: &str,
+        _keystore: &mut D,
+        _tpm: &mut tpm::provider::BoxedDynTpm,
+        _machine_key: &tpm::structures::StorageKey,
+    ) -> Result<bool, IdpError> {
+        error!("Hello PIN change is not supported for OIDC providers");
+        Err(IdpError::BadRequest)
+    }
+
     #[instrument(level = "debug", skip_all)]
     async fn unix_user_get<D: KeyStoreTxn + Send>(
         &self,
