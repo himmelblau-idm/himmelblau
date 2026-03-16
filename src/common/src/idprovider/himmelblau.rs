@@ -1219,10 +1219,9 @@ impl IdProvider for HimmelblauProvider {
             Ok(Some(sealed_rt)) => {
                 match tpm.unseal_data(&old_storage_key, &sealed_rt) {
                     Ok(rt_bytes) => {
-                        // Wrap in Zeroizing so plaintext refresh token is wiped
-                        // after re-sealing, consistent with other sealing paths.
-                        let rt_zeroized = Zeroizing::new(rt_bytes);
-                        match tpm.seal_data(&new_storage_key, rt_zeroized.to_vec()) {
+                        // rt_bytes is already Zeroizing<Vec<u8>> from unseal_data,
+                        // so plaintext is wiped on drop automatically.
+                        match tpm.seal_data(&new_storage_key, rt_bytes) {
                             Ok(new_sealed_rt) => {
                                 keystore.insert_tagged_hsm_key(&hello_rt_tag, &new_sealed_rt)
                                     .map_err(|e| {
