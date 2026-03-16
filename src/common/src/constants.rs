@@ -41,6 +41,10 @@ pub const DEFAULT_GRAPH: &str = "https://graph.microsoft.com";
 pub const DEFAULT_APP_ID: &str = "b743a22d-6705-4147-8670-d92fa515ee2b";
 pub const DRS_APP_ID: &str = "01cb2876-7ebd-4aa4-9cc9-d28bd4d359a9";
 pub const DEFAULT_CONN_TIMEOUT: u64 = 5;
+// Unix socket timeout for PAM-daemon communication.
+// Must be long enough for MFA approval + daemon background tasks
+// (Kerberos, profile photo, Intune policy application).
+pub const DEFAULT_UNIX_SOCK_TIMEOUT: u64 = 90;
 pub const DEFAULT_CACHE_TIMEOUT: u64 = 300;
 pub const DEFAULT_SELINUX: bool = true;
 pub const DEFAULT_HSM_PIN_PATH: &str = "/var/lib/himmelblaud/hsm-pin";
