@@ -1101,6 +1101,18 @@ impl IdProvider for HimmelblauProvider {
         tpm: &mut tpm::provider::BoxedDynTpm,
         machine_key: &tpm::structures::StorageKey,
     ) -> Result<bool, IdpError> {
+        // Ensure the provider is initialized and online. PIN change re-seals
+        // local TPM blobs so it does not strictly need the network, but
+        // delayed_init must have run at least once for graph/client state.
+        if (self.delayed_init().await).is_err() {
+            error!("PIN change: provider not initialized (offline since startup?)");
+            return Err(IdpError::BadRequest);
+        }
+        if !self.check_online(tpm, SystemTime::now()).await {
+            error!("PIN change: provider is offline");
+            return Err(IdpError::BadRequest);
+        }
+
         // Try both key tags (decoupled first, then ngcmfa/provisioned).
         let (hello_tag, hello_key) = {
             let tag_decoupled = self.fetch_hello_key_tag(account_id, false);
