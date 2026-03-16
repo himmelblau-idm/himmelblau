@@ -1162,69 +1162,92 @@ impl IdProvider for HimmelblauProvider {
             })?;
 
         // Re-seal the cached PRT blob under the new Hello key (if present).
+        // On error the txn is not committed by the caller (resolver.rs), so
+        // any delete_tagged_hsm_key calls here are rolled back automatically
+        // and the old blobs survive, which is the correct behavior.
         let hello_prt_tag = self.fetch_hello_prt_key_tag(account_id);
-        if let Ok(Some(sealed_prt)) = keystore.get_tagged_hsm_key(&hello_prt_tag) {
-            match self.client.read().await.unseal_user_prt_with_hello_key(
-                &sealed_prt,
-                &hello_key,
-                old_pin,
-                tpm,
-                machine_key,
-            ) {
-                Ok(prt) => {
-                    match self.client.read().await.seal_user_prt_with_hello_key(
-                        &prt,
-                        &new_hello_key,
-                        new_pin,
-                        tpm,
-                        machine_key,
-                    ) {
-                        Ok(new_sealed_prt) => {
-                            keystore.insert_tagged_hsm_key(&hello_prt_tag, &new_sealed_prt)
-                                .map_err(|e| {
-                                    error!("Failed to store re-sealed PRT: {:?}", e);
-                                    IdpError::Tpm
-                                })?;
-                        }
-                        Err(e) => {
-                            error!("Failed to re-seal PRT with new Hello key: {:?}", e);
-                            // Non-fatal: delete so next login re-fetches from MFA token.
-                            let _ = keystore.delete_tagged_hsm_key(&hello_prt_tag);
+        match keystore.get_tagged_hsm_key(&hello_prt_tag) {
+            Ok(Some(sealed_prt)) => {
+                match self.client.read().await.unseal_user_prt_with_hello_key(
+                    &sealed_prt,
+                    &hello_key,
+                    old_pin,
+                    tpm,
+                    machine_key,
+                ) {
+                    Ok(prt) => {
+                        match self.client.read().await.seal_user_prt_with_hello_key(
+                            &prt,
+                            &new_hello_key,
+                            new_pin,
+                            tpm,
+                            machine_key,
+                        ) {
+                            Ok(new_sealed_prt) => {
+                                keystore.insert_tagged_hsm_key(&hello_prt_tag, &new_sealed_prt)
+                                    .map_err(|e| {
+                                        error!("Failed to store re-sealed PRT: {:?}", e);
+                                        IdpError::Tpm
+                                    })?;
+                            }
+                            Err(e) => {
+                                error!("Failed to re-seal PRT with new Hello key: {:?}", e);
+                                // Non-fatal: clear stale blob so next login re-fetches.
+                                let _ = keystore.delete_tagged_hsm_key(&hello_prt_tag);
+                            }
                         }
                     }
+                    Err(e) => {
+                        error!("Failed to unseal PRT during PIN change (stale?): {:?}", e);
+                        // Non-fatal: clear stale blob so next login re-fetches.
+                        let _ = keystore.delete_tagged_hsm_key(&hello_prt_tag);
+                    }
                 }
-                Err(e) => {
-                    error!("Failed to unseal PRT during PIN change (stale?): {:?}", e);
-                    // Non-fatal: delete the stale blob so next login re-fetches.
-                    let _ = keystore.delete_tagged_hsm_key(&hello_prt_tag);
-                }
+            }
+            Ok(None) => {
+                debug!("No cached PRT blob for {}, nothing to re-seal", account_id);
+            }
+            Err(e) => {
+                error!("Failed to read PRT blob from keystore: {:?}", e);
             }
         }
 
         // Re-seal the cached refresh token blob under the new storage key (if present).
+        // Same txn semantics as the PRT block above.
         let hello_rt_tag = self.fetch_hello_refresh_token_key_tag(account_id);
-        if let Ok(Some(sealed_rt)) = keystore.get_tagged_hsm_key(&hello_rt_tag) {
-            match tpm.unseal_data(&old_storage_key, &sealed_rt) {
-                Ok(rt_bytes) => {
-                    match tpm.seal_data(&new_storage_key, rt_bytes) {
-                        Ok(new_sealed_rt) => {
-                            keystore.insert_tagged_hsm_key(&hello_rt_tag, &new_sealed_rt)
-                                .map_err(|e| {
-                                    error!("Failed to store re-sealed refresh token: {:?}", e);
-                                    IdpError::Tpm
-                                })?;
-                        }
-                        Err(e) => {
-                            error!("Failed to re-seal refresh token with new Hello key: {:?}", e);
-                            // Non-fatal: delete so next login re-fetches via MFA token.
-                            let _ = keystore.delete_tagged_hsm_key(&hello_rt_tag);
+        match keystore.get_tagged_hsm_key(&hello_rt_tag) {
+            Ok(Some(sealed_rt)) => {
+                match tpm.unseal_data(&old_storage_key, &sealed_rt) {
+                    Ok(rt_bytes) => {
+                        // Wrap in Zeroizing so plaintext refresh token is wiped
+                        // after re-sealing, consistent with other sealing paths.
+                        let rt_zeroized = Zeroizing::new(rt_bytes);
+                        match tpm.seal_data(&new_storage_key, rt_zeroized.to_vec()) {
+                            Ok(new_sealed_rt) => {
+                                keystore.insert_tagged_hsm_key(&hello_rt_tag, &new_sealed_rt)
+                                    .map_err(|e| {
+                                        error!("Failed to store re-sealed refresh token: {:?}", e);
+                                        IdpError::Tpm
+                                    })?;
+                            }
+                            Err(e) => {
+                                error!("Failed to re-seal refresh token with new Hello key: {:?}", e);
+                                // Non-fatal: clear stale blob so next login re-fetches.
+                                let _ = keystore.delete_tagged_hsm_key(&hello_rt_tag);
+                            }
                         }
                     }
+                    Err(e) => {
+                        error!("Failed to unseal refresh token during PIN change: {:?}", e);
+                        let _ = keystore.delete_tagged_hsm_key(&hello_rt_tag);
+                    }
                 }
-                Err(e) => {
-                    error!("Failed to unseal refresh token during PIN change: {:?}", e);
-                    let _ = keystore.delete_tagged_hsm_key(&hello_rt_tag);
-                }
+            }
+            Ok(None) => {
+                debug!("No cached refresh token blob for {}, nothing to re-seal", account_id);
+            }
+            Err(e) => {
+                error!("Failed to read refresh token blob from keystore: {:?}", e);
             }
         }
 
