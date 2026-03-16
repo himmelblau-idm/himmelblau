@@ -1101,8 +1101,6 @@ impl IdProvider for HimmelblauProvider {
         tpm: &mut tpm::provider::BoxedDynTpm,
         machine_key: &tpm::structures::StorageKey,
     ) -> Result<bool, IdpError> {
-        use kanidm_hsm_crypto::PinValue;
-
         // Try both key tags (decoupled first, then ngcmfa/provisioned).
         let (hello_tag, hello_key) = {
             let tag_decoupled = self.fetch_hello_key_tag(account_id, false);
