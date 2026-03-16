@@ -429,6 +429,11 @@ impl PamHooks for PamKanidm {
 
     #[instrument(skip(pamh, args, flags))]
     fn sm_chauthtok(pamh: &PamHandle, args: Vec<&CStr>, flags: PamFlag) -> PamResultCode {
+        // PAM_PRELIM_CHECK (phase 1 of passwd): skip because our MFA
+        // verification happens in the PAM_UPDATE_AUTHTOK phase below.
+        // This is safe for local users: the split_username() check further
+        // down returns PAM_IGNORE for non-UPN accounts, so local passwd
+        // falls through to pam_unix before reaching any Himmelblau logic.
         if flags & PAM_PRELIM_CHECK != 0 {
             return PamResultCode::PAM_SUCCESS;
         }
