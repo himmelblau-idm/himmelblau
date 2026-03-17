@@ -21,10 +21,11 @@ configuration.
 .PP
 Ownership state is stored persistently under
 .I /var/lib/himmelblaud/
-and is not affected by cache clearing. To reset device ownership, delete the
-ownership state file or use
+and is not affected by cache clearing. Use
+.B aad-tool owner-show
+to display the current owner, or
 .B aad-tool owner-reset
-.
+to reset ownership.
 </description>
 <default>false</default>
 <example>auto_sudo_owner = true</example>

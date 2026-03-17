@@ -424,6 +424,19 @@ pub enum HimmelblauUnixOpt {
         #[clap(long)]
         domain: Option<String>,
     },
+    /// Show the current device owner for a domain, or all domains.
+    ///
+    /// This command reads the ownership state stored under /var/lib/himmelblaud/
+    /// and displays the account ID of the device owner for each domain.
+    ///
+    /// This command must be run as root.
+    OwnerShow {
+        #[clap(short, long)]
+        debug: bool,
+        /// The domain to show ownership for. If omitted, shows all domains.
+        #[clap(long)]
+        domain: Option<String>,
+    },
     /// Configure PAM to use pam_himmelblau
     ConfigurePam {
         #[clap(short, long)]
