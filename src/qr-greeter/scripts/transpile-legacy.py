@@ -310,12 +310,17 @@ def main():
     with open(qr_selection_dst, 'w') as f:
         f.write(transpiled)
 
-    # Copy stylesheet.css (no changes needed)
+    # Copy static assets (no changes needed)
     import shutil
     css_src = src_dir / "stylesheet.css"
     css_dst = legacy_dir / "stylesheet.css"
     print(f"Copying {css_src} -> {css_dst}")
     shutil.copy(css_src, css_dst)
+
+    for svg in src_dir.glob("*.svg"):
+        svg_dst = legacy_dir / svg.name
+        print(f"Copying {svg} -> {svg_dst}")
+        shutil.copy(svg, svg_dst)
 
     # Create legacy metadata.json
     metadata_dst = legacy_dir / "metadata.json"

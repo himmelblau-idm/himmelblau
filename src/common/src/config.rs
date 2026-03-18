@@ -30,7 +30,7 @@ use tracing::{debug, error};
 use crate::constants::{
     CN_NAME_MAPPING, DEFAULT_ALLOW_REMOTE_HELLO, DEFAULT_AUTHORITY_HOST, DEFAULT_BROKER_SOCK_PATH,
     DEFAULT_CACHE_TIMEOUT, DEFAULT_CONFIG_PATH, DEFAULT_CONN_TIMEOUT,
-    DEFAULT_CONSOLE_PASSWORD_ONLY, DEFAULT_DB_PATH, DEFAULT_HELLO_ENABLED,
+    DEFAULT_CONSOLE_PASSWORD_ONLY, DEFAULT_DB_PATH, DEFAULT_FIDO_TIMEOUT, DEFAULT_HELLO_ENABLED,
     DEFAULT_HELLO_PIN_MIN_LEN, DEFAULT_HELLO_PIN_RETRY_COUNT, DEFAULT_HOME_ALIAS,
     DEFAULT_HOME_ATTR, DEFAULT_HOME_PREFIX, DEFAULT_HSM_PIN_PATH, DEFAULT_ID_ATTR_MAP,
     DEFAULT_JOIN_TYPE, DEFAULT_ODC_PROVIDER, DEFAULT_OFFLINE_BREAKGLASS_TTL,
@@ -1042,15 +1042,15 @@ mod tests {
     fn test_get_apply_policy() {
         let config_data = r#"
         [global]
-        apply_policy = true
+        apply_policy = false
         "#;
 
         let temp_file = create_temp_config(config_data);
         let config = HimmelblauConfig::new(Some(&temp_file)).unwrap();
 
-        assert_eq!(config.get_apply_policy(), true);
+        assert_eq!(config.get_apply_policy(), false);
         let config_empty = create_empty_config();
-        assert_eq!(config_empty.get_apply_policy(), false);
+        assert_eq!(config_empty.get_apply_policy(), true);
     }
 
     #[test]
@@ -1310,6 +1310,23 @@ mod tests {
         assert_eq!(config.get_enable_hello(), false);
         let config_empty = create_empty_config();
         assert_eq!(config_empty.get_enable_hello(), DEFAULT_HELLO_ENABLED);
+    }
+
+    #[test]
+    fn test_get_enable_passwordless() {
+        let config_data = r#"
+        [global]
+        enable_passwordless = false
+        "#;
+
+        let temp_file = create_temp_config(config_data);
+        let config = HimmelblauConfig::new(Some(&temp_file)).unwrap();
+
+        assert_eq!(config.get_enable_passwordless(), false);
+
+        // Test that default is true (backward compat)
+        let config_empty = create_empty_config();
+        assert_eq!(config_empty.get_enable_passwordless(), true);
     }
 
     #[test]
@@ -2056,6 +2073,57 @@ mod tests {
     fn test_split_username_multiple_at() {
         // More than one @ returns None (len != 2)
         assert_eq!(split_username("user@domain@extra"), None);
+    }
+
+    #[test]
+    fn test_get_fido_timeout() {
+        let config_data = r#"
+        [global]
+        fido_timeout = 60
+        "#;
+
+        let temp_file = create_temp_config(config_data);
+        let config = HimmelblauConfig::new(Some(&temp_file)).unwrap();
+
+        assert_eq!(config.get_fido_timeout(), 60);
+        let config_empty = create_empty_config();
+        assert_eq!(config_empty.get_fido_timeout(), 25);
+    }
+
+    #[test]
+    fn test_get_fido_prompt() {
+        let config_data = r#"
+        [global]
+        fido_prompt = Insert key now.
+        "#;
+
+        let temp_file = create_temp_config(config_data);
+        let config = HimmelblauConfig::new(Some(&temp_file)).unwrap();
+
+        assert_eq!(config.get_fido_prompt(), "Insert key now.");
+        let config_empty = create_empty_config();
+        assert_eq!(
+            config_empty.get_fido_prompt(),
+            "Please insert your security key."
+        );
+    }
+
+    #[test]
+    fn test_get_fido_presence_prompt() {
+        let config_data = r#"
+        [global]
+        fido_presence_prompt = Touch key now.
+        "#;
+
+        let temp_file = create_temp_config(config_data);
+        let config = HimmelblauConfig::new(Some(&temp_file)).unwrap();
+
+        assert_eq!(config.get_fido_presence_prompt(), "Touch key now.");
+        let config_empty = create_empty_config();
+        assert_eq!(
+            config_empty.get_fido_presence_prompt(),
+            "Please touch your security key."
+        );
     }
 
     #[test]
