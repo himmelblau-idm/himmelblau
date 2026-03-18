@@ -14,6 +14,7 @@ This timeout applies to connect, send, and receive operations on the
 orchestrator Unix socket.
 </description>
 <default>30</default>
+<conf_description>Timeout in seconds for a single request/response exchange with himmelblaud-orchestrator.</conf_description>
 <default_const>DEFAULT_CONN_TIMEOUT</default_const>
 <example>orchestrator_timeout_secs = 10</example>
 </parameter>

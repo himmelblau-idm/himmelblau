@@ -13,5 +13,6 @@ This value controls how frequently PAM should poll the orchestrator for
 progress while waiting for external approvals (for example push MFA).
 </description>
 <default>2</default>
+<conf_description>Polling interval in seconds used for orchestrator-driven MFA wait prompts.</conf_description>
 <example>orchestrator_poll_secs = 3</example>
 </parameter>

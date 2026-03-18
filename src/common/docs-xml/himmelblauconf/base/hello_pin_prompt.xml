@@ -10,6 +10,7 @@
 <description>
 Customizes the prompt text shown when requesting the user's Linux Hello PIN.
 </description>
+<conf_description>Prompt text shown for Hello PIN entry.</conf_description>
 <default>Use the Linux Hello PIN for this device.</default>
 <example>hello_pin_prompt = Enter your device unlock PIN</example>
 </parameter>

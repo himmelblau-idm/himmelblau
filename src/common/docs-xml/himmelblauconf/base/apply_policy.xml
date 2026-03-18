@@ -11,6 +11,7 @@ A boolean option that enables the application and enforcement of Intune device c
 When enabled (the default), non-compliant devices may be denied authentication in accordance with the configured policies.
 This setting does not affect OIDC-based authentication flows.
 </description>
+<conf_description>Apply Intune policies for authenticated users.</conf_description>
 <default>true</default>
 <example>apply_policy = false</example>
 </parameter>

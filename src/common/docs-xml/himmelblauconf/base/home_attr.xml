@@ -17,6 +17,7 @@ The attribute used to create a home directory for a user. Available options incl
 \- CN
 .RE
 </description>
+<conf_description>Attribute used for primary home directory naming.</conf_description>
 <default>uuid</default>
 <default_const>DEFAULT_HOME_ATTR</default_const>
 <example>home_attr = UUID</example>

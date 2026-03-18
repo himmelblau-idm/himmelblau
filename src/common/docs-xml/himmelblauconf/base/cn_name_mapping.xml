@@ -9,6 +9,7 @@
 <description>
 Allows users to enter the short form of their username (e.g., 'dave') instead of the full UPN.
 </description>
+<conf_description>Map short usernames to UPNs in the primary domain.</conf_description>
 <default>true</default>
 <default_const>CN_NAME_MAPPING</default_const>
 <example>cn_name_mapping = false</example>

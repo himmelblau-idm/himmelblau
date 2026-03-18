@@ -11,6 +11,7 @@ If set to
 .B true,
 Himmelblau will use the contents of /etc/skel when creating new user directories.
 </description>
+<conf_description>Populate new home directories from /etc/skel.</conf_description>
 <default>false</default>
 <default_const>DEFAULT_USE_ETC_SKEL</default_const>
 <example>use_etc_skel = true</example>

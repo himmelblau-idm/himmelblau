@@ -30,6 +30,7 @@ TwoWayVoiceOffice - Phone call to office
 ConsolidatedTelephony - Call or text message
 .RE
 </description>
+<conf_description>Preferred MFA method to request during sign-in.</conf_description>
 <default></default>
 <example>mfa_method = TwoWayVoiceMobile</example>
 </parameter>

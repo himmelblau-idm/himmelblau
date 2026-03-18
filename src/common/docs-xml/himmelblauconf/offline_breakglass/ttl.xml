@@ -19,6 +19,7 @@ If no suffix is provided, the value is interpreted as seconds.
 After the specified period, offline breakglass mode automatically expires
 and normal authentication resumes.
 </description>
+<conf_description>Offline breakglass duration (seconds, or m/h/d suffix).</conf_description>
 <default>7200</default>
 <default_const>DEFAULT_OFFLINE_BREAKGLASS_TTL</default_const>
 <example>[offline_breakglass]

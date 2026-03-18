@@ -12,6 +12,7 @@ A boolean option that enables debug-level logging. When set to
 .B true,
 debug messages are output to the system journal.
 </description>
+<conf_description>Enable debug logging to the system journal.</conf_description>
 <default>false</default>
 <example>debug = true</example>
 </parameter>

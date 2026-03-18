@@ -15,6 +15,7 @@ orchestrator over a Unix socket. If the orchestrator is unavailable or returns
 an error, Himmelblau falls back to the built-in device authorization grant
 (DAG) flow.
 </description>
+<conf_description>Enable optional browser-driven OIDC login orchestration via himmelblaud-orchestrator.</conf_description>
 <default>false</default>
 <example>orchestrator_enabled = true</example>
 </parameter>

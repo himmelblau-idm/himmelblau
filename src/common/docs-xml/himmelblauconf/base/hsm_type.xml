@@ -34,6 +34,7 @@ will be automatically migrated to
 
 To validate whether Himmelblau is utilizing the hardware TPM, run the command `sudo aad-tool tpm` for a status report.
 </description>
+<conf_description>HSM mode: tpm_bound_soft_if_possible, tpm, or tpm_if_possible.</conf_description>
 <default>tpm_bound_soft_if_possible</default>
 <default_const>HsmType::Soft</default_const>
 <example>hsm_type = tpm</example>

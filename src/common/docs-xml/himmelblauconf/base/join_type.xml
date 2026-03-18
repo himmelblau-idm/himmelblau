@@ -9,6 +9,7 @@
 <description>
 Specifies whether the system should join or register with Microsoft Entra ID.
 </description>
+<conf_description>Join behavior: join or register.</conf_description>
 <default>join</default>
 <default_const>DEFAULT_JOIN_TYPE</default_const>
 <example>join_type = register</example>

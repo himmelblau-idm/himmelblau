@@ -9,6 +9,7 @@
 <description>
 The default shell for users. This will be assigned when the user logs in.
 </description>
+<conf_description>Default shell assigned to Entra users.</conf_description>
 <default>/bin/bash</default>
 <default_const>DEFAULT_SHELL</default_const>
 <example>shell = /bin/zsh</example>
