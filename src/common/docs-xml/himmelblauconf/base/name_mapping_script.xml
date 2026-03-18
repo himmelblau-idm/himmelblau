@@ -24,6 +24,7 @@ fi
 .fi
 .RE
 </description>
+<conf_description>Executable that maps custom names to UPNs.</conf_description>
 <default></default>
 <example>name_mapping_script = /path/to/mapping_script.sh</example>
 </parameter>

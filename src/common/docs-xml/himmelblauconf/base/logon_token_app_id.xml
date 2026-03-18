@@ -22,6 +22,7 @@ This option allows using a separate application registration that carries the sp
 is enabled under "Mobile and desktop applications" in the Authentication section.
 This is required for Himmelblau to obtain tokens via the public client flow.
 </description>
+<conf_description>Optional alternate app ID for logon token requests.</conf_description>
 <default></default>
 <example>logon_token_app_id = 544e695f-5d78-442e-b14e-e114e95e640c</example>
 <handler>get_logon_token_app_id</handler>

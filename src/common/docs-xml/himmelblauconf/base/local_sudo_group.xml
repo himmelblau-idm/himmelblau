@@ -11,6 +11,7 @@ The local group that should be given to users in any of the groups specified in 
 Only has an effect if sudo_groups is set.
 Removes group from user if they are no longer a member of the specified entra group.
 </description>
+<conf_description>Local group assigned for members of sudo_groups.</conf_description>
 <default>sudo</default>
 <example></example>
 </parameter>

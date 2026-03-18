@@ -22,6 +22,7 @@ defined in the directory, this setting determines the fallback method for mappin
 .B gidNumber
 will not be available to NSS.
 </description>
+<conf_description>Fallback group mapping when gidNumber is missing.</conf_description>
 <default></default>
 <example>rfc2307_group_fallback_map = &lt;name|uuid&gt;</example>
 <enum_values>

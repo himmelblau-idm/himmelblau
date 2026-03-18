@@ -15,6 +15,7 @@ In most cases, this will be the primary domain of your Azure Entra ID tenant. If
 
 If not specified, the domain is extracted from the UPN of the first user to authenticate and looked up in Entra ID.
 </description>
+<conf_description>Primary Entra ID domain used for user sign-in.</conf_description>
 <default>Extracted from first user's UPN</default>
 <example>domain = example.com</example>
 <required>true</required>

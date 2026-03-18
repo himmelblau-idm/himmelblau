@@ -13,6 +13,7 @@ himmelblaud-orchestrator.
 This path must match the orchestrator service configuration.
 </description>
 <default>/var/run/himmelblaud/orchestrator.sock</default>
+<conf_description>Unix socket path used by himmelblaud to communicate with himmelblaud-orchestrator.</conf_description>
 <default_const>DEFAULT_ORCHESTRATOR_SOCK_PATH</default_const>
 <example>orchestrator_socket = /run/himmelblaud/orchestrator.sock</example>
 </parameter>

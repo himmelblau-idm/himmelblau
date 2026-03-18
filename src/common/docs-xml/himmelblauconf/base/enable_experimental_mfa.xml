@@ -9,6 +9,7 @@
 <description>
 A boolean option that enables the experimental multi-factor authentication (MFA) flow, which permits Hello authentication. This experimental flow may encounter failures in certain edge cases. If disabled, the system enforces the Device Authorization Grant (DAG) flow for MFA, which is more robust but does not support Hello authentication.
 </description>
+<conf_description>Use experimental MFA flow (enables Hello with MFA).</conf_description>
 <default>true</default>
 <example>enable_experimental_mfa = false</example>
 </parameter>

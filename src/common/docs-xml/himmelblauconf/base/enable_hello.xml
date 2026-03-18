@@ -17,6 +17,7 @@ is set), Hello enrollment requires the client application to allow refresh token
 .B offline_access
 scope.
 </description>
+<conf_description>Enable Windows Hello enrollment and PIN auth.</conf_description>
 <default>true</default>
 <default_const>DEFAULT_HELLO_ENABLED</default_const>
 <example>enable_hello = false</example>

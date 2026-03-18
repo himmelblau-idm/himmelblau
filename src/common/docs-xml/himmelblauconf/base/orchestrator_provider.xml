@@ -14,5 +14,6 @@ If unset, the orchestrator auto-detects the provider from issuer URL, domain,
 or embedded provider match rules.
 </description>
 <default></default>
+<conf_description>Optional provider key for OIDC orchestrator.</conf_description>
 <example>orchestrator_provider = keycloak</example>
 </parameter>

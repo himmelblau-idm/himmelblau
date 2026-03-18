@@ -9,6 +9,7 @@
 <description>
 The location of the cache database. This file is used to store cached authentication data and device state.
 </description>
+<conf_description>Path to the Himmelblau cache database.</conf_description>
 <default>/var/cache/himmelblaud/himmelblau.cache.db</default>
 <default_const>DEFAULT_DB_PATH</default_const>
 <example>db_path = /var/cache/himmelblau/himmelblau.cache.db</example>

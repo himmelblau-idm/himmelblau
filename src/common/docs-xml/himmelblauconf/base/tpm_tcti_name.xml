@@ -22,6 +22,7 @@ Common values include:
 
 Other TCTI strings may be required depending on your system's TPM driver or configuration. This option allows advanced control over how Himmelblau connects to the TPM for performing cryptographic operations.
 </description>
+<conf_description>TPM TCTI string used when communicating with TPM hardware.</conf_description>
 <default>device:/dev/tpmrm0</default>
 <default_const>DEFAULT_TPM_TCTI_NAME</default_const>
 <example>tpm_tcti_name = device:/dev/tpm0</example>

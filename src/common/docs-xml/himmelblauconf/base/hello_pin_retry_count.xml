@@ -10,6 +10,7 @@
 <description>
 The number of invalid Hello PIN attempts allowed before the user is required to perform MFA. After successful MFA, the user will be prompted to set a new PIN. The value must be a non-negative integer.
 </description>
+<conf_description>Failed PIN attempts before MFA reset is required.</conf_description>
 <default>3</default>
 <default_const>DEFAULT_HELLO_PIN_RETRY_COUNT</default_const>
 <example>hello_pin_retry_count = 5</example>
