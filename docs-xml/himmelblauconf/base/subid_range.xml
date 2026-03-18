@@ -13,6 +13,7 @@ Himmelblau will automatically add entries to /etc/subuid and /etc/subgid for eac
 
 This feature is enabled by default with the default range shown below.
 </description>
+<conf_description>subuid/subgid allocation range for container runtimes.</conf_description>
 <default>2100000000-4200000000</default>
 <default_const>DEFAULT_SUBID_RANGE</default_const>
 <example>subid_range = 2100000000-4200000000</example>

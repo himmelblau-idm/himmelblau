@@ -10,6 +10,7 @@
 <description>
 The minimum length of the PIN for Windows Hello authentication. The value must be between 6 and 32 characters.
 </description>
+<conf_description>Minimum length for Hello PIN.</conf_description>
 <default>6</default>
 <default_const>DEFAULT_HELLO_PIN_MIN_LEN</default_const>
 <example>hello_pin_min_length = 8</example>

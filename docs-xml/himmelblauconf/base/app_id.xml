@@ -22,6 +22,7 @@ is not set, this application ID is also used when requesting access tokens for t
 is enabled under "Mobile and desktop applications" in the Authentication section.
 This allows Himmelblau to correctly handle interactive token redirection.
 </description>
+<conf_description>Entra application (client) ID used for daemon operations.</conf_description>
 <default></default>
 <example>app_id = d023f7aa-d214-4b59-911d-6074de623765</example>
 <handler>get_app_id</handler>

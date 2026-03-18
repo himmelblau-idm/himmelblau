@@ -14,6 +14,7 @@ The TOTP secret is enrolled and enforced locally on the host and is independent 
 
 Hello PIN alone is not permitted for remote authentication unless allow_remote_hello is enabled. When Hello TOTP is enabled, Hello + TOTP is accepted for remote services; otherwise remote logins skip Hello and require MFA.
 </description>
+<conf_description>Require TOTP in addition to Hello PIN.</conf_description>
 <default>false</default>
 <default_const>DEFAULT_HELLO_TOTP_ENABLED</default_const>
 <example>enable_hello_totp = true</example>
