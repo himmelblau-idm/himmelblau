@@ -9,6 +9,7 @@
 <description>
 The path to the socket file for communication between the pam and nss modules and the Himmelblau daemon. If this is changed, also add a drop-in to override ListenStream= in the himmelblaud.socket unit to keep the paths in sync.
 </description>
+<conf_description>UNIX socket path used by pam/nss clients.</conf_description>
 <default>/var/run/himmelblaud/socket</default>
 <default_const>DEFAULT_SOCK_PATH</default_const>
 <example>socket_path = /tmp/himmelblaud.sock</example>

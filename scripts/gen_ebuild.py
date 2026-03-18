@@ -312,7 +312,7 @@ def _fallback_install() -> str:
 
 \t# Install configuration
 \tinsinto /etc/himmelblau
-\tdoins src/config/himmelblau.conf.example"""
+\tdoins target/config/himmelblau.conf.example"""
 
 
 EBUILD_TEMPLATE = """\
@@ -359,6 +359,8 @@ src_configure() {{
 src_compile() {{
 \t# Generate service files
 \tpython3 scripts/gen_servicefiles.py --out ./platform/opensuse/ || die
+\t# Generate config examples used by install assets
+\tpython3 src/common/scripts/gen_param_code.py --gen-conf-example --conf-example-output target/config/himmelblau.conf.example --gen-debian-conf-example --debian-conf-example-output target/debian/himmelblau.conf.example || die
 
 \tcargo_src_compile
 }}

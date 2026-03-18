@@ -140,6 +140,64 @@ def build_project(repo_root: Path, features: list = None):
             subprocess.run(["strip", "-s", str(path)], check=False)
 
 
+def generate_conf_examples(repo_root: Path):
+    """Generate config example files used by packaging/install assets."""
+    conf_output = repo_root / "target/config/himmelblau.conf.example"
+    debian_conf_output = repo_root / "target/debian/himmelblau.conf.example"
+    if not conf_examples_need_regeneration(repo_root, conf_output, debian_conf_output):
+        return
+
+    print("Generating himmelblau.conf example files...")
+    subprocess.run(
+        [
+            "python3",
+            "src/common/scripts/gen_param_code.py",
+            "--gen-conf-example",
+            "--conf-example-output",
+            "target/config/himmelblau.conf.example",
+            "--gen-debian-conf-example",
+            "--debian-conf-example-output",
+            "target/debian/himmelblau.conf.example",
+            "--xml-dir",
+            "src/common/docs-xml/himmelblauconf",
+        ],
+        cwd=repo_root,
+        check=True,
+    )
+
+
+def conf_examples_need_regeneration(
+    repo_root: Path,
+    conf_output: Path,
+    debian_conf_output: Path,
+) -> bool:
+    """Return True when generated config examples are missing or stale."""
+    if not conf_output.exists() or not debian_conf_output.exists():
+        return True
+
+    inputs = [repo_root / "src/common/scripts/gen_param_code.py"]
+    xml_dir = repo_root / "src/common/docs-xml/himmelblauconf"
+    if xml_dir.exists():
+        inputs.extend(path for path in xml_dir.rglob("*.xml") if path.is_file())
+
+    try:
+        oldest_output_mtime = min(
+            conf_output.stat().st_mtime,
+            debian_conf_output.stat().st_mtime,
+        )
+    except OSError:
+        return True
+
+    for path in inputs:
+        try:
+            if path.stat().st_mtime > oldest_output_mtime:
+                return True
+        except OSError:
+            return True
+
+    return False
+
+
 def install_assets(repo_root: Path, destdir: Path):
     """Install all assets to destdir."""
     crate_names = ["himmelblaud", "nss_himmelblau", "pam_himmelblau", "sshd-config", "sso", "qr-greeter", "o365"]
@@ -224,7 +282,7 @@ def install_fallback(repo_root: Path, destdir: Path):
         ("src/daemon/src/himmelblaud.socket", "/usr/lib/systemd/system/himmelblaud.socket", "644"),
         ("src/daemon/src/himmelblaud-tasks.socket", "/usr/lib/systemd/system/himmelblaud-tasks.socket", "644"),
         ("src/daemon/src/himmelblaud-broker.socket", "/usr/lib/systemd/system/himmelblaud-broker.socket", "644"),
-        ("src/config/himmelblau.conf.example", "/etc/himmelblau/himmelblau.conf", "644"),
+        ("target/config/himmelblau.conf.example", "/etc/himmelblau/himmelblau.conf", "644"),
     ]
 
     for src, dest, mode in fallback_assets:
@@ -256,6 +314,7 @@ def main():
     if args.build:
         build_project(repo_root, features)
 
+    generate_conf_examples(repo_root)
     install_assets(repo_root, destdir)
 
     print("\nInstall complete.")

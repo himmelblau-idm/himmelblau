@@ -9,6 +9,7 @@
 <description>
 The location where the HSM (Hardware Security Module) PIN will be stored. This PIN is used to protect sensitive cryptographic operations.
 </description>
+<conf_description>Path where the HSM PIN is stored.</conf_description>
 <default>/var/lib/himmelblaud/hsm-pin</default>
 <default_const>DEFAULT_HSM_PIN_PATH</default_const>
 <example>hsm_pin_path = /etc/himmelblau/hsm-pin</example>

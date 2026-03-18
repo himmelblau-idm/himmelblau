@@ -13,6 +13,7 @@ correspond to the API permissions assigned to the Entra Id Application specified
 .B app_id
 option.
 </description>
+<conf_description>Scopes requested for ACCESS_TOKEN used by logon_script.</conf_description>
 <default></default>
 <example>logon_token_scopes = user.read,mail.read</example>
 </parameter>
