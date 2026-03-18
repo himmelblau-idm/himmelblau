@@ -84,7 +84,10 @@ impl MessagePrinter for SimpleMessagePrinter {
 }
 
 #[allow(clippy::expect_used)]
-async fn fido_status_check(msg_printer: Arc<dyn MessagePrinter>) -> Sender<StatusUpdate> {
+async fn fido_status_check(
+    msg_printer: Arc<dyn MessagePrinter>,
+    presence_prompt: String,
+) -> Sender<StatusUpdate> {
     let (status_tx, status_rx) = channel::<StatusUpdate>();
     thread::spawn(move || loop {
         match status_rx.recv() {
@@ -96,7 +99,8 @@ async fn fido_status_check(msg_printer: Arc<dyn MessagePrinter>) -> Sender<Statu
                 msg_printer.print_text("Please select a device by touching one of them.");
             }
             Ok(StatusUpdate::PresenceRequired) => {
-                msg_printer.print_text("Waiting for user presence");
+                // "[FIDO_TOUCH] " prefix must match FIDO_TOUCH_PREFIX in qr-greeter extension.js
+                msg_printer.print_text(&format!("[FIDO_TOUCH] {}", presence_prompt));
             }
             Ok(StatusUpdate::PinUvError(StatusPinUv::PinRequired(sender))) => {
                 match msg_printer.prompt_echo_off("Fido PIN: ") {
@@ -174,8 +178,13 @@ pub fn fido_auth(
     msg_printer: Arc<dyn MessagePrinter>,
     fido_challenge: String,
     fido_allow_list: Vec<String>,
+    timeout_ms: u64,
+    prompt: &str,
+    presence_prompt: &str,
 ) -> Result<String, PamResultCode> {
-    // Initialize AuthenticatorService
+    // "[FIDO_INSERT] " prefix must match FIDO_INSERT_PREFIX in qr-greeter extension.js
+    msg_printer.print_text(&format!("[FIDO_INSERT] {}", prompt));
+
     let mut manager = AuthenticatorService::new().map_err(|e| {
         error!("{:?}", e);
         PamResultCode::PAM_CRED_INSUFFICIENT
@@ -197,7 +206,8 @@ pub fn fido_auth(
         error!("{:?}", e);
         PamResultCode::PAM_AUTH_ERR
     })?;
-    let status_tx = rt.block_on(async { fido_status_check(msg_printer).await });
+    let status_tx =
+        rt.block_on(async { fido_status_check(msg_printer, presence_prompt.to_string()).await });
 
     let allow_list: Vec<PublicKeyCredentialDescriptor> = fido_allow_list
         .into_iter()
@@ -234,7 +244,7 @@ pub fn fido_auth(
     }));
 
     manager
-        .sign(25000, ctap_args, status_tx.clone(), callback)
+        .sign(timeout_ms, ctap_args, status_tx.clone(), callback)
         .map_err(|e| {
             error!("{:?}", e);
             PamResultCode::PAM_CRED_INSUFFICIENT
@@ -693,7 +703,17 @@ fn handle_pam_auth_response_fido(
     fido_challenge: String,
     fido_allow_list: Vec<String>,
 ) -> PamWhatNext {
-    let result = match fido_auth(state.msg_printer.clone(), fido_challenge, fido_allow_list) {
+    let timeout_ms = state.cfg.get_fido_timeout().saturating_mul(1000);
+    let fido_prompt = state.cfg.get_fido_prompt();
+    let fido_presence_prompt = state.cfg.get_fido_presence_prompt();
+    let result = match fido_auth(
+        state.msg_printer.clone(),
+        fido_challenge,
+        fido_allow_list,
+        timeout_ms,
+        &fido_prompt,
+        &fido_presence_prompt,
+    ) {
         Ok(assertion) => assertion,
         Err(e) => {
             pam_fail!(state.msg_printer, "Entra Id Fido authentication failed.", e);

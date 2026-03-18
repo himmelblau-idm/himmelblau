@@ -405,6 +405,36 @@ in
       example = true;
     };
 
+    fido_timeout = mkOption {
+      type = types.nullOr (types.ints.unsigned);
+      default = 25;
+      description = ''
+        The timeout in seconds for FIDO/passkey authentication. This is how long
+        the system waits for the user to insert and activate their security key.
+      '';
+      example = 60;
+    };
+
+    fido_prompt = mkOption {
+      type = types.nullOr (types.str);
+      default = "Please insert your security key.";
+      description = ''
+        The message displayed to the user when FIDO/passkey authentication is initiated
+        and they need to insert their security key.
+      '';
+      example = "Bitte den Sicherheitsschlüssel einstecken.";
+    };
+
+    fido_presence_prompt = mkOption {
+      type = types.nullOr (types.str);
+      default = "Please touch your security key.";
+      description = ''
+        The message displayed to the user when FIDO/passkey authentication requires
+        user presence (touching the security key).
+      '';
+      example = "Bitte den Sicherheitsschlüssel berühren.";
+    };
+
     name_mapping_script = mkOption {
       type = types.nullOr (types.str);
       default = null;
@@ -427,11 +457,13 @@ in
 
     apply_policy = mkOption {
       type = types.nullOr (types.bool);
-      default = false;
+      default = true;
       description = ''
-        A boolean option that enables the application and enforcement of Intune policies to the authenticated user.
+        A boolean option that enables the application and enforcement of Intune device compliance policies during non-OIDC authentication.
+        When enabled (the default), non-compliant devices may be denied authentication in accordance with the configured policies.
+        This setting does not affect OIDC-based authentication flows.
       '';
-      example = true;
+      example = false;
     };
 
     authority_host = mkOption {
@@ -577,6 +609,15 @@ in
         - CN
       '';
       example = "SPN";
+    };
+
+    enable_passwordless = mkOption {
+      type = types.nullOr (types.bool);
+      default = true;
+      description = ''
+        A boolean option that controls whether passwordless authentication (Microsoft Authenticator app approval without a password) is offered during Azure Entra ID authentication. When enabled, Himmelblau will include the passwordless option in authentication requests, allowing Entra ID to offer a passwordless flow. When disabled, users will be prompted for a password followed by MFA instead.
+      '';
+      example = false;
     };
 
     shell = mkOption {
