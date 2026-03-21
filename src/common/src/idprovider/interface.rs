@@ -300,6 +300,7 @@ pub trait IdProvider {
         _token: Option<&UserToken>,
         _service: &str,
         _no_hello_pin: bool,
+        _force_reauth: bool,
         _keystore: &mut D,
         _tpm: &mut tpm::provider::BoxedDynTpm,
         _machine_key: &tpm::structures::StorageKey,

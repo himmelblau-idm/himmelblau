@@ -75,6 +75,8 @@ pub struct Options {
     pub no_hello_pin: bool,
     pub set_authtok: bool,
     pub try_unseal: bool,
+    /// Only set by CLI (aad-tool auth-test --force-reauth), not parsed from PAM module arguments.
+    pub force_reauth: bool,
 }
 
 impl TryFrom<&Vec<&CStr>> for Options {
@@ -99,6 +101,7 @@ impl TryFrom<&Vec<&CStr>> for Options {
             no_hello_pin: gopts.contains("no_hello_pin"),
             set_authtok: gopts.contains("set_authtok") || gopts.contains("keyring_authtok"),
             try_unseal,
+            force_reauth: false,
         })
     }
 }

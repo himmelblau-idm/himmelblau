@@ -194,6 +194,12 @@ Test authentication of a user via the himmelblaud resolver "pam" channel. This d
 \fB\-d\fR, \fB\-\-debug\fR
 .HP
 \fB\-D\fR, \fB\-\-name\fR <ACCOUNT_ID>
+.HP
+\fB\-\-force\-reauth\fR
+.IP
+Force a full re-authentication (MFA/FIDO/password), bypassing the cached Hello key.
+Use this to manually satisfy Entra conditional access sign-in frequency
+requirements (e.g. error 70044).
 .TP
 \fB\-h\fR, \fB\-\-help\fR
 Print help
