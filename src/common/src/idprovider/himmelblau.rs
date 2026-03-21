@@ -532,6 +532,7 @@ impl IdProvider for HimmelblauMultiProvider {
         token: Option<&UserToken>,
         service: &str,
         no_hello_pin: bool,
+        force_reauth: bool,
         keystore: &mut D,
         tpm: &mut tpm::provider::BoxedDynTpm,
         machine_key: &tpm::structures::StorageKey,
@@ -549,6 +550,7 @@ impl IdProvider for HimmelblauMultiProvider {
                         token,
                         service,
                         no_hello_pin,
+                        force_reauth,
                         keystore,
                         tpm,
                         machine_key,
@@ -563,6 +565,7 @@ impl IdProvider for HimmelblauMultiProvider {
                         token,
                         service,
                         no_hello_pin,
+                        force_reauth,
                         keystore,
                         tpm,
                         machine_key,
@@ -1575,6 +1578,7 @@ impl IdProvider for HimmelblauProvider {
         _token: Option<&UserToken>,
         service: &str,
         no_hello_pin: bool,
+        force_reauth: bool,
         keystore: &mut D,
         tpm: &mut tpm::provider::BoxedDynTpm,
         _machine_key: &tpm::structures::StorageKey,
@@ -1632,6 +1636,7 @@ impl IdProvider for HimmelblauProvider {
             || self.bad_pin_counter.bad_pin_count(account_id).await > hello_pin_retry_count
             || intune_enrollment_required
             || no_hello_pin
+            || force_reauth
         {
             if (self.delayed_init().await).is_err() {
                 // Initialization failed. Report that the system is offline. We

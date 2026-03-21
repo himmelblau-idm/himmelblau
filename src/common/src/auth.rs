@@ -470,6 +470,7 @@ fn handle_pam_auth_response_denied(state: &AuthenticateState, msg: &str) -> PamW
         state.account_id.to_string(),
         state.service.to_string(),
         state.opts.no_hello_pin,
+        state.opts.force_reauth,
     );
     PamWhatNext::Next(req)
 }
@@ -890,6 +891,7 @@ pub fn authenticate(
         state.account_id.to_owned(),
         state.service.to_owned(),
         state.opts.no_hello_pin,
+        state.opts.force_reauth,
     );
 
     loop {

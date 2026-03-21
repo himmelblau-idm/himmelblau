@@ -645,6 +645,7 @@ async fn main() -> ExitCode {
         HimmelblauUnixOpt::AuthTest {
             debug,
             account_id: _,
+            force_reauth: _,
         } => debug,
         HimmelblauUnixOpt::CacheClear {
             debug,
@@ -1546,6 +1547,7 @@ async fn main() -> ExitCode {
         HimmelblauUnixOpt::AuthTest {
             debug: _,
             account_id,
+            force_reauth,
         } => {
             debug!("Starting PAM auth tester tool ...");
 
@@ -1560,7 +1562,8 @@ async fn main() -> ExitCode {
             // Map the name
             let account_id = cfg.map_name_to_upn(&account_id);
 
-            let opts = Options::default();
+            let mut opts = Options::default();
+            opts.force_reauth = force_reauth;
             let msg_printer = Arc::new(SimpleMessagePrinter::default());
             match authenticate_async(
                 None,

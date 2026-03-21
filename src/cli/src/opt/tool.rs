@@ -375,6 +375,11 @@ pub enum HimmelblauUnixOpt {
         debug: bool,
         #[clap(short = 'D', long = "name")]
         account_id: String,
+        /// Force a full re-authentication (MFA/FIDO/password), bypassing the cached
+        /// Hello key. Use this to manually satisfy Entra conditional access sign-in
+        /// frequency requirements.
+        #[clap(long)]
+        force_reauth: bool,
     },
     /// Clear or invalidate the himmelblaud resolver cache.
     ///
