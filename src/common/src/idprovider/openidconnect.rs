@@ -16,14 +16,16 @@
    along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
 
-use crate::config::HimmelblauConfig;
+use crate::config::{split_username, HimmelblauConfig};
 use crate::constants::ID_MAP_CACHE;
 use crate::db::KeyStoreTxn;
 use crate::idmap_cache::StaticIdCache;
 use crate::idprovider::common::flip_displayname_comma;
 use crate::idprovider::common::KeyType;
 use crate::idprovider::common::TotpEnrollmentRecord;
-use crate::idprovider::common::{BadPinCounter, RefreshCache, RefreshCacheEntry};
+use crate::idprovider::common::{
+    cache_idmap_result, run_idmap_script, BadPinCounter, RefreshCache, RefreshCacheEntry,
+};
 use crate::idprovider::interface::{
     tpm, AuthCacheAction, AuthCredHandler, AuthRequest, AuthResult, CacheState, GroupToken, Id,
     IdProvider, IdpError, UserToken, UserTokenState,
@@ -746,18 +748,105 @@ impl OidcApplication {
             IdpError::BadRequest
         })?;
 
-        let (uid, gid) = match idmap_cache.get_user_by_name(&account_id) {
-            Some(user) => (user.uid, user.gid),
-            None => {
-                let gid = idmap
-                    .gen_to_unix(&tenant_id.to_string(), &account_id)
-                    .map_err(|e| {
-                        error!("{:?}", e);
-                        IdpError::BadRequest
-                    })?;
-                (gid, gid)
+        let cached_user = idmap_cache.get_user_by_name(&account_id);
+
+        let mut username_override: Option<String> = None;
+
+        let (uid, gid) = if config.get_idmap_script().is_some() {
+            // Always run the script and compare with cache.  On first
+            // login the result is cached; on subsequent logins a
+            // mismatch rejects the login.
+            let script = config.get_idmap_script().unwrap_or_default();
+            let domain = split_username(&account_id).map(|(_, d)| d).unwrap_or("");
+            match run_idmap_script(
+                &script,
+                &account_id,
+                access_token.secret(),
+                &object_id.to_string(),
+                &tenant_id.to_string(),
+                domain,
+            )
+            .await?
+            {
+                Some(result) => {
+                    let default_id = idmap
+                        .gen_to_unix(&tenant_id.to_string(), &account_id)
+                        .map_err(|e| {
+                            error!("{:?}", e);
+                            IdpError::BadRequest
+                        })?;
+                    let uid = result.uid.unwrap_or(default_id);
+                    let gid = result.gid.unwrap_or(uid);
+
+                    if let Some(ref old) = cached_user {
+                        if old.script_ran {
+                            // Compare raw script output against cached
+                            // raw output.  The full tuple (including
+                            // which fields were explicitly set) must
+                            // match.
+                            if old.script_uid != result.uid
+                                || old.script_gid != result.gid
+                                || old.username != result.username
+                            {
+                                error!(
+                                    "idmap script mismatch for {}: \
+                                     cached=(uid={:?},gid={:?},username={:?}) \
+                                     script=(uid={:?},gid={:?},username={:?})",
+                                    account_id,
+                                    old.script_uid,
+                                    old.script_gid,
+                                    old.username,
+                                    result.uid,
+                                    result.gid,
+                                    result.username,
+                                );
+                                return Err(IdpError::BadRequest);
+                            }
+                        } else {
+                            // Legacy cache entry (pre-raw-tracking) —
+                            // accept and re-cache with raw values.
+                            cache_idmap_result(&account_id, Some(&result), uid, gid);
+                        }
+                    } else {
+                        // First login — cache the result.
+                        cache_idmap_result(&account_id, Some(&result), uid, gid);
+                    }
+                    username_override = result.username;
+                    (uid, gid)
+                }
+                None => {
+                    // Script produced no output ("").
+                    if let Some(ref old) = cached_user {
+                        // "" always accepts the cached values.
+                        username_override = old.username.clone();
+                        (old.uid, old.gid)
+                    } else {
+                        // First login with "" — fall back to default
+                        // and cache so future "" logins match.
+                        let gid = idmap
+                            .gen_to_unix(&tenant_id.to_string(), &account_id)
+                            .map_err(|e| {
+                                error!("{:?}", e);
+                                IdpError::BadRequest
+                            })?;
+                        cache_idmap_result(&account_id, None, gid, gid);
+                        (gid, gid)
+                    }
+                }
             }
+        } else if let Some(user) = cached_user {
+            (user.uid, user.gid)
+        } else {
+            let gid = idmap
+                .gen_to_unix(&tenant_id.to_string(), &account_id)
+                .map_err(|e| {
+                    error!("{:?}", e);
+                    IdpError::BadRequest
+                })?;
+            (gid, gid)
         };
+
+        let session_name = username_override.unwrap_or_else(|| account_id.to_string());
 
         let displayname = userinfo
             .name()
@@ -768,7 +857,7 @@ impl OidcApplication {
         let displayname = flip_displayname_comma(&displayname);
 
         Ok(UserToken {
-            name: account_id.to_string(),
+            name: session_name,
             spn: account_id.to_string(),
             uuid: object_id,
             real_gidnumber: Some(gid),

@@ -182,7 +182,15 @@ pub enum TaskRequest {
     /// Set up subordinate UID/GID mappings for container support (podman, etc.)
     /// Parameters: (username, subid_start, subid_count)
     SubordinateIds(String, u32, u32),
+    /// Run the idmap_script to resolve username, uid, and gid for a user.
+    /// On first login the result is cached; on subsequent logins a
+    /// mismatch with the cache rejects the login.
+    /// Parameters: (script, username, access_token, object_id, tenant_id, domain)
+    IdmapScript(String, String, String, String, String, String),
 }
+
+/// Sender half for dispatching task requests from himmelblaud to tasksd.
+pub type TaskSender = tokio::sync::mpsc::Sender<(TaskRequest, tokio::sync::oneshot::Sender<i32>)>;
 
 impl TaskRequest {
     /// Get a safe display version of the request, without credentials.
@@ -201,6 +209,9 @@ impl TaskRequest {
             }
             TaskRequest::SubordinateIds(username, start, count) => {
                 format!("SubordinateIds({}, {}, {})", username, start, count)
+            }
+            TaskRequest::IdmapScript(_, username, _, _, _, _) => {
+                format!("IdmapScript({})", username)
             }
         }
     }

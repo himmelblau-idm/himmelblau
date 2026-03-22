@@ -34,7 +34,11 @@ use futures::{SinkExt, StreamExt};
 use himmelblau::graph::Graph;
 use himmelblau_policies::policies::apply_intune_policy;
 use himmelblau_unix_common::config::{split_username, HimmelblauConfig};
-use himmelblau_unix_common::constants::{DEFAULT_CONFIG_PATH, DEFAULT_KERBEROS_CONF_DIR};
+use himmelblau_unix_common::constants::{
+    DEFAULT_CONFIG_PATH, DEFAULT_KERBEROS_CONF_DIR, ID_MAP_CACHE,
+};
+use himmelblau_unix_common::idmap_cache::StaticIdCache;
+use himmelblau_unix_common::idprovider::common::{cache_idmap_result, run_idmap_script};
 use himmelblau_unix_common::unix_proto::{HomeDirectoryInfo, TaskRequest, TaskResponse};
 use kanidm_utils_users::{get_effective_gid, get_effective_uid};
 use libc::uid_t;
@@ -779,6 +783,103 @@ async fn handle_tasks(stream: UnixStream, cfg: &HimmelblauConfig) {
                     Err(msg) => {
                         error!("Failed to setup subordinate IDs for {}: {}", username, msg);
                         TaskResponse::Error(msg)
+                    }
+                };
+
+                if let Err(e) = reqs.send(resp).await {
+                    error!("Error -> {:?}", e);
+                    return;
+                }
+            }
+            Some(Ok(TaskRequest::IdmapScript(
+                script,
+                username,
+                access_token,
+                object_id,
+                tenant_id,
+                domain,
+            ))) => {
+                debug!("Received task -> IdmapScript({})", username);
+
+                let resp = match run_idmap_script(
+                    &script,
+                    &username,
+                    &access_token,
+                    &object_id,
+                    &tenant_id,
+                    &domain,
+                )
+                .await
+                {
+                    Ok(Some(result)) => {
+                        let uid = result.uid.unwrap_or(0);
+                        let gid = result.gid.unwrap_or(0);
+
+                        // Check for mismatch with cached values.
+                        let idmap_cache = StaticIdCache::new(ID_MAP_CACHE, false).ok();
+                        let cached = idmap_cache
+                            .as_ref()
+                            .and_then(|c| c.get_user_by_name(&username));
+
+                        if let Some(ref old) = cached {
+                            if old.script_ran {
+                                // Compare raw script output against
+                                // cached raw output.
+                                if old.script_uid != result.uid
+                                    || old.script_gid != result.gid
+                                    || old.username != result.username
+                                {
+                                    error!(
+                                        "idmap script mismatch for {}: \
+                                         cached=(uid={:?},gid={:?},username={:?}) \
+                                         script=(uid={:?},gid={:?},username={:?})",
+                                        username,
+                                        old.script_uid,
+                                        old.script_gid,
+                                        old.username,
+                                        result.uid,
+                                        result.gid,
+                                        result.username,
+                                    );
+                                    TaskResponse::Error(
+                                        "idmap script returned different values \
+                                         than cached"
+                                            .to_string(),
+                                    )
+                                } else {
+                                    // Raw values match — nothing to update.
+                                    TaskResponse::Success(0)
+                                }
+                            } else {
+                                // Legacy cache entry — accept and
+                                // re-cache with raw values.
+                                cache_idmap_result(&username, Some(&result), uid, gid);
+                                TaskResponse::Success(0)
+                            }
+                        } else {
+                            // First login — cache the result.
+                            cache_idmap_result(&username, Some(&result), uid, gid);
+                            TaskResponse::Success(0)
+                        }
+                    }
+                    Ok(None) => {
+                        // Script exited 0 with no output ("").
+                        let idmap_cache = StaticIdCache::new(ID_MAP_CACHE, false).ok();
+                        let cached = idmap_cache
+                            .as_ref()
+                            .and_then(|c| c.get_user_by_name(&username));
+                        if cached.is_some() {
+                            // "" always accepts cached values.
+                            TaskResponse::Success(0)
+                        } else {
+                            // First login, no output — tell provider
+                            // to resolve defaults and cache.
+                            TaskResponse::Success(1)
+                        }
+                    }
+                    Err(e) => {
+                        error!("idmap script failed for {}: {:?}", username, e);
+                        TaskResponse::Error(format!("idmap script failed: {:?}", e))
                     }
                 };
 
