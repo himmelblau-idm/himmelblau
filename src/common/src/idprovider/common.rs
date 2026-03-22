@@ -15,15 +15,19 @@
    You should have received a copy of the GNU General Public License
    along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
+use crate::constants::ID_MAP_CACHE;
+use crate::idmap_cache::{StaticIdCache, StaticUser};
 use crate::idprovider::interface::IdpError;
 use kanidm_hsm_crypto::structures::SealedData;
 use serde::{Deserialize, Serialize};
 use std::thread::sleep;
 use std::{
     collections::HashMap,
+    process::Command,
     time::{Duration, SystemTime},
 };
 use tokio::sync::RwLock;
+use tracing::error;
 
 /// When a cached PRT is older than 4h, opportunistically issue an
 /// `exchange_prt_for_prt` before using it for access-token acquisition.
@@ -45,6 +49,287 @@ pub struct TotpEnrollmentRecord {
     pub step: u64,
     pub issuer: String,
     pub account_name: String,
+}
+
+#[derive(Debug, PartialEq)]
+pub struct IdmapScriptResult {
+    pub username: Option<String>,
+    pub uid: Option<u32>,
+    pub gid: Option<u32>,
+}
+
+/// Run the configured idmap_script executable and parse the result.
+///
+/// The script receives environment variables USERNAME, ACCESS_TOKEN,
+/// OBJECT_ID, TENANT_ID, and DOMAIN.  It must print a single line to
+/// stdout with comma-separated key=value pairs.  Recognised keys:
+///
+///   uid=<number>     — mapped UID
+///   gid=<number>     — mapped GID
+///   username=<str>   — optional, overrides the session username
+///
+/// Order does not matter.  Only uid, gid, and username are accepted;
+/// any other key rejects the login.  Exit 0 with no output to fall
+/// back to the default UID/GID resolution.  A non-zero exit code
+/// rejects the login.
+pub async fn run_idmap_script(
+    script: &str,
+    username: &str,
+    access_token: &str,
+    object_id: &str,
+    tenant_id: &str,
+    domain: &str,
+) -> Result<Option<IdmapScriptResult>, IdpError> {
+    let output = match Command::new("sh")
+        .arg("-c")
+        .arg(script)
+        .env("USERNAME", username)
+        .env("ACCESS_TOKEN", access_token)
+        .env("OBJECT_ID", object_id)
+        .env("TENANT_ID", tenant_id)
+        .env("DOMAIN", domain)
+        .output()
+    {
+        Ok(output) => output,
+        Err(e) => {
+            error!("Failed to execute idmap script: {:?}", e);
+            return Err(IdpError::BadRequest);
+        }
+    };
+
+    if !output.status.success() {
+        error!(
+            "idmap script exited with status {}",
+            output.status.code().unwrap_or(-1)
+        );
+        return Err(IdpError::BadRequest);
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let lines: Vec<&str> = stdout
+        .lines()
+        .map(|line| line.trim())
+        .filter(|line| !line.is_empty())
+        .collect();
+
+    if lines.is_empty() {
+        return Ok(None);
+    }
+
+    if lines.len() != 1 {
+        error!("idmap script must print exactly one line");
+        return Err(IdpError::BadRequest);
+    }
+
+    let line = lines[0];
+
+    // Parse key=value pairs: uid=123,gid=456,username=jsmith
+    let mut uid_opt: Option<u32> = None;
+    let mut gid_opt: Option<u32> = None;
+    let mut username_opt: Option<String> = None;
+
+    for pair in line.split(',') {
+        let pair = pair.trim();
+        let Some((key, value)) = pair.split_once('=') else {
+            error!("idmap script: malformed field '{}'", pair);
+            return Err(IdpError::BadRequest);
+        };
+
+        let key = key.trim();
+        let value = value.trim();
+        match key {
+            "uid" => {
+                uid_opt = Some(value.parse::<u32>().map_err(|e| {
+                    error!("idmap script: invalid uid '{}': {:?}", value, e);
+                    IdpError::BadRequest
+                })?);
+            }
+            "gid" => {
+                gid_opt = Some(value.parse::<u32>().map_err(|e| {
+                    error!("idmap script: invalid gid '{}': {:?}", value, e);
+                    IdpError::BadRequest
+                })?);
+            }
+            "username" => {
+                if !value.is_empty() {
+                    username_opt = Some(value.to_string());
+                }
+            }
+            _ => {
+                error!("idmap script: unknown key '{}'", key);
+                return Err(IdpError::BadRequest);
+            }
+        }
+    }
+
+    if uid_opt == Some(0) {
+        error!("idmap script returned reserved uid=0");
+        return Err(IdpError::BadRequest);
+    }
+
+    if gid_opt == Some(0) {
+        error!("idmap script returned reserved gid=0");
+        return Err(IdpError::BadRequest);
+    }
+
+    if uid_opt.is_none() && gid_opt.is_none() && username_opt.is_none() {
+        error!("idmap script output contained no recognised keys: {}", line);
+        return Err(IdpError::BadRequest);
+    }
+
+    Ok(Some(IdmapScriptResult {
+        username: username_opt,
+        uid: uid_opt,
+        gid: gid_opt,
+    }))
+}
+
+/// Cache the result of an idmap_script run.
+///
+/// `script_result` is `Some(&result)` when the script produced output,
+/// or `None` when the script exited 0 with empty stdout ("").
+/// `uid` and `gid` are the **resolved** values (after applying defaults
+/// for any fields the script did not set).
+pub fn cache_idmap_result(
+    spn: &str,
+    script_result: Option<&IdmapScriptResult>,
+    uid: u32,
+    gid: u32,
+) {
+    match StaticIdCache::new(ID_MAP_CACHE, true) {
+        Ok(idmap_cache) => {
+            if let Err(e) = idmap_cache.insert_user(&StaticUser {
+                name: spn.to_string(),
+                username: script_result.and_then(|r| r.username.clone()),
+                uid,
+                gid,
+                script_uid: script_result.and_then(|r| r.uid),
+                script_gid: script_result.and_then(|r| r.gid),
+                script_ran: true,
+            }) {
+                error!("Failed to cache idmap result: {:?}", e);
+            }
+        }
+        Err(e) => {
+            error!("Failed to open idmap cache: {:?}", e);
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs::{self, File};
+    use std::io::Write;
+    use std::os::unix::fs::PermissionsExt;
+    use std::path::PathBuf;
+    use uuid::Uuid;
+
+    fn create_test_script_named(filename: &str, script_content: &str) -> PathBuf {
+        let mut temp_path = std::env::temp_dir();
+        temp_path.push(filename);
+
+        let mut file = File::create(&temp_path).unwrap();
+        write!(file, "{}", script_content).unwrap();
+        drop(file);
+
+        let mut perms = fs::metadata(&temp_path).unwrap().permissions();
+        perms.set_mode(0o755);
+        fs::set_permissions(&temp_path, perms).unwrap();
+
+        temp_path
+    }
+
+    fn create_test_script(script_content: &str) -> PathBuf {
+        create_test_script_named(
+            &format!("test_idmap_script_{}.sh", Uuid::new_v4()),
+            script_content,
+        )
+    }
+
+    #[tokio::test]
+    async fn test_run_idmap_script() {
+        let temp_path = create_test_script(
+            r#"#!/bin/sh
+if [ "$USERNAME" = "testuser" ]; then
+    echo "uid=500,gid=500,username=testlogin"
+else
+    exit 1
+fi
+"#,
+        );
+
+        let result = run_idmap_script(
+            temp_path.to_str().unwrap(),
+            "testuser",
+            "token",
+            "oid",
+            "tid",
+            "example.com",
+        )
+        .await;
+
+        let _ = fs::remove_file(&temp_path);
+
+        assert!(
+            result.is_ok(),
+            "Result was {:?}, path was {}",
+            result,
+            temp_path.display()
+        );
+        let r = result.unwrap();
+        assert!(r.is_some());
+        let r = r.unwrap();
+        assert_eq!(r.username.as_deref(), Some("testlogin"));
+        assert_eq!(r.uid, Some(500));
+        assert_eq!(r.gid, Some(500));
+    }
+
+    #[tokio::test]
+    async fn test_run_idmap_script_rejects_unknown_key() {
+        let temp_path = create_test_script(
+            r#"#!/bin/sh
+echo "uid=500,gid=500,extra=1"
+"#,
+        );
+
+        let result = run_idmap_script(
+            temp_path.to_str().unwrap(),
+            "testuser",
+            "token",
+            "oid",
+            "tid",
+            "example.com",
+        )
+        .await;
+
+        let _ = fs::remove_file(&temp_path);
+
+        assert!(result.is_err(), "Result was {:?}", result);
+    }
+
+    #[tokio::test]
+    async fn test_run_idmap_script_rejects_malformed_field() {
+        let temp_path = create_test_script(
+            r#"#!/bin/sh
+echo "uid=500,gid=500,broken"
+"#,
+        );
+
+        let result = run_idmap_script(
+            temp_path.to_str().unwrap(),
+            "testuser",
+            "token",
+            "oid",
+            "tid",
+            "example.com",
+        )
+        .await;
+
+        let _ = fs::remove_file(&temp_path);
+
+        assert!(result.is_err(), "Result was {:?}", result);
+    }
 }
 
 #[macro_export]
