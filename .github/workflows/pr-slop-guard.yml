@@ -1,0 +1,174 @@
+name: PR Slop Guard
+permissions:
+  contents: read
+  issues: write
+  pull-requests: write
+
+on:
+  schedule:
+    - cron: '15 */2 * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: pr-slop-guard
+  cancel-in-progress: false
+
+jobs:
+  evaluate-open-prs:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@a90bcbc6539c36a85cdfeb73f7e2f433735f215b # v2.15.0
+        with:
+          egress-policy: audit
+
+      - name: Evaluate and close high-complexity external PRs
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7.1.0
+        with:
+          script: |
+            const OWNER = context.repo.owner;
+            const REPO = context.repo.repo;
+            const EXEMPT_LABEL = 'slop-guard-exempt';
+            const EXEMPT_LABEL_NORMALIZED = EXEMPT_LABEL.trim().toLowerCase();
+            const DEPENDABOT_LOGINS = new Set(['dependabot[bot]', 'dependabot-preview[bot]']);
+            const INTERNAL_AUTHOR_ASSOCIATIONS = new Set(['OWNER', 'MEMBER', 'COLLABORATOR']);
+            const CONTRIBUTOR_POLICY_URL = `https://github.com/${OWNER}/${REPO}/blob/main/CONTRIBUTOR_POLICY.md`;
+            const MIN_OPEN_HOURS = 2;
+            const COMMIT_THRESHOLD = 10;
+            const LINE_THRESHOLD = 5000;
+            const HOUR_MS = 60 * 60 * 1000;
+            const nowMs = Date.now();
+
+            const openPrs = await github.paginate(github.rest.pulls.list, {
+              owner: OWNER,
+              repo: REPO,
+              state: 'open',
+              per_page: 100,
+            });
+
+            core.info(`Found ${openPrs.length} open pull request(s).`);
+
+            let closedCount = 0;
+            let failedCount = 0;
+
+            for (const prSummary of openPrs) {
+              const prNumber = prSummary.number;
+
+              try {
+                const authorLogin = prSummary.user?.login;
+
+                if (!authorLogin) {
+                  core.info(`PR #${prNumber}: skip (missing author login).`);
+                  continue;
+                }
+
+                if (DEPENDABOT_LOGINS.has(authorLogin)) {
+                  core.info(`PR #${prNumber}: skip (author ${authorLogin} is dependabot).`);
+                  continue;
+                }
+
+                const authorAssociation = typeof prSummary.author_association === 'string'
+                  ? prSummary.author_association.trim().toUpperCase()
+                  : 'UNKNOWN';
+
+                if (INTERNAL_AUTHOR_ASSOCIATIONS.has(authorAssociation)) {
+                  core.info(`PR #${prNumber}: skip (author ${authorLogin} association is ${authorAssociation}).`);
+                  continue;
+                }
+
+                if (prSummary.draft) {
+                  core.info(`PR #${prNumber}: skip (pull request is draft).`);
+                  continue;
+                }
+
+                const createdAtMs = new Date(prSummary.created_at).getTime();
+                const openDurationMs = nowMs - createdAtMs;
+                const openDurationHours = openDurationMs / HOUR_MS;
+
+                if (openDurationHours <= MIN_OPEN_HOURS) {
+                  core.info(`PR #${prNumber}: skip (open for ${openDurationHours.toFixed(2)}h, threshold ${MIN_OPEN_HOURS}h).`);
+                  continue;
+                }
+
+                const hasExemptLabel = prSummary.labels.some((label) => {
+                  if (!label || !label.name) {
+                    return false;
+                  }
+                  return label.name.trim().toLowerCase() === EXEMPT_LABEL_NORMALIZED;
+                });
+
+                if (hasExemptLabel) {
+                  core.info(`PR #${prNumber}: skip (has '${EXEMPT_LABEL}' label).`);
+                  continue;
+                }
+
+                const pr = (await github.rest.pulls.get({
+                  owner: OWNER,
+                  repo: REPO,
+                  pull_number: prNumber,
+                })).data;
+
+                const commitCount = pr.commits || 0;
+                const changedLines = (pr.additions || 0) + (pr.deletions || 0);
+                const hasManyCommits = commitCount > COMMIT_THRESHOLD;
+                const hasHugeDiff = changedLines > LINE_THRESHOLD;
+
+                if (!hasManyCommits && !hasHugeDiff) {
+                  core.info(`PR #${prNumber}: keep open (commits=${commitCount}, changed lines=${changedLines}).`);
+                  continue;
+                }
+
+                const reasonParts = [];
+                if (hasManyCommits) {
+                  reasonParts.push(`it has ${commitCount} commits (threshold: > ${COMMIT_THRESHOLD})`);
+                }
+                if (hasHugeDiff) {
+                  reasonParts.push(`it changes ${changedLines} lines (threshold: > ${LINE_THRESHOLD})`);
+                }
+
+                const reasonText = reasonParts.join(' and ');
+                const commentBody = [
+                  `Hi @${authorLogin},`,
+                  '',
+                  'Thank you for taking the time to contribute to Himmelblau - we appreciate your effort.',
+                  '',
+                  'We are currently handling a high volume of automated and low-signal pull requests, so we run a simple metric-based review on external PRs. This review does not use AI and does not determine whether your PR is AI-generated.',
+                  '',
+                  `This PR was automatically closed because ${reasonText}.`,
+                  '',
+                  'Outside contributions are welcome, and this decision is not a permanent rejection. If you would like to continue with this change, please discuss it with the team in the Himmelblau Matrix channel: https://matrix.to/#/#himmelblau:matrix.org.',
+                  '',
+                  'For new functionality, the usual process is to open an Enhancement request first so scope and approach can be agreed before a large implementation lands. AI-assisted implementation is not an alternative to that process.',
+                  '',
+                  'After discussion with the team, this PR may be reopened.',
+                  '',
+                  'Thanks again for your interest in improving Himmelblau. ❤️',
+                ].join('\n');
+
+                await github.rest.issues.createComment({
+                  owner: OWNER,
+                  repo: REPO,
+                  issue_number: prNumber,
+                  body: commentBody,
+                });
+
+                await github.rest.pulls.update({
+                  owner: OWNER,
+                  repo: REPO,
+                  pull_number: prNumber,
+                  state: 'closed',
+                });
+
+                closedCount += 1;
+                core.info(`PR #${prNumber}: closed (${reasonText}).`);
+              } catch (error) {
+                failedCount += 1;
+                const message = error instanceof Error
+                  ? (error.stack || error.message)
+                  : String(error);
+                core.warning(`PR #${prNumber}: failed to evaluate or close (${message}).`);
+              }
+            }
+
+            core.info(`Done. Closed ${closedCount} PR(s). Failed ${failedCount} PR(s).`);
