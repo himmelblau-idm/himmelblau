@@ -204,6 +204,8 @@ jobs:
                   '',
                   `This PR was automatically closed because ${reasonText}.`,
                   '',
+                  `Please review the contributor policy before resubmitting or requesting reopen: ${CONTRIBUTOR_POLICY_URL}`,
+                  '',
                   'Outside contributions are welcome, and this decision is not a permanent rejection. If you would like to continue with this change, please discuss it with the team in the Himmelblau Matrix channel: https://matrix.to/#/#himmelblau:matrix.org.',
                   '',
                   'For new functionality, the usual process is to open an Enhancement request first so scope and approach can be agreed before a large implementation lands. AI-assisted implementation is not an alternative to that process.',
