@@ -1,20 +1,87 @@
 name: PR Slop Guard
-permissions:
-  contents: read
-  issues: write
-  pull-requests: write
 
 on:
+  pull_request_target:
+    types:
+      - opened
+      - reopened
   schedule:
     - cron: '15 */2 * * *'
   workflow_dispatch:
+
+permissions: {}
 
 concurrency:
   group: pr-slop-guard
   cancel-in-progress: false
 
 jobs:
+  append-required-pr-checklist:
+    if: github.event_name == 'pull_request_target'
+    permissions:
+      pull-requests: write
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@a90bcbc6539c36a85cdfeb73f7e2f433735f215b # v2.15.0
+        with:
+          egress-policy: audit
+
+      - name: Append required checklist to PR description
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7.1.0
+        with:
+          script: |
+            const OWNER = context.repo.owner;
+            const REPO = context.repo.repo;
+            const pr = context.payload.pull_request;
+
+            if (!pr) {
+              core.setFailed('Missing pull request payload.');
+              return;
+            }
+
+            const CHECKLIST_START = '<!-- himmelblau-review-checklist:start -->';
+            const CHECKLIST_END = '<!-- himmelblau-review-checklist:end -->';
+            const checklistBlock = [
+              CHECKLIST_START,
+              '## Required Before Review',
+              '',
+              'Please complete this checklist. **PRs will be ignored until these steps are completed.**',
+              '',
+              '- [ ] I manually tested this change on a test VM and confirmed it works as intended.',
+              '- [ ] I listed exactly what testing I performed (commands/steps and observed results).',
+              '- [ ] I listed which distro(s) and version(s) I tested on.',
+              '- [ ] I ran relevant automated checks (for example `make test`, distro package build target, and `make test-selinux` when applicable) or explained why a check was not run.',
+              '- [ ] If this change affects system integration (systemd, PAM/NSS/authselect, SELinux/AppArmor, filesystem paths, or credentials), I documented the packaging/runtime impact and any generator/template sources updated.',
+              '- [ ] I linked the related issue/enhancement/discussion and confirmed the PR scope is focused and reviewable.',
+              CHECKLIST_END,
+            ].join('\n');
+
+            const currentBody = pr.body || '';
+            if (currentBody.includes(CHECKLIST_START)) {
+              core.info(`PR #${pr.number}: checklist already present.`);
+              return;
+            }
+
+            const updatedBody = currentBody.trimEnd().length > 0
+              ? `${currentBody.trimEnd()}\n\n${checklistBlock}`
+              : checklistBlock;
+
+            await github.rest.pulls.update({
+              owner: OWNER,
+              repo: REPO,
+              pull_number: pr.number,
+              body: updatedBody,
+            });
+
+            core.info(`PR #${pr.number}: appended required checklist.`);
+
   evaluate-open-prs:
+    if: github.event_name != 'pull_request_target'
+    permissions:
+      issues: write
+      pull-requests: write
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
