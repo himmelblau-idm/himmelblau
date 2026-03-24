@@ -1071,6 +1071,7 @@ impl IdProvider for OidcProvider {
         _token: Option<&UserToken>,
         service: &str,
         no_hello_pin: bool,
+        force_reauth: bool,
         keystore: &mut D,
         tpm: &mut tpm::provider::BoxedDynTpm,
         _machine_key: &tpm::structures::StorageKey,
@@ -1116,6 +1117,7 @@ impl IdProvider for OidcProvider {
             || (is_remote_service && !hello_totp_enabled && !allow_remote_hello)
             || self.bad_pin_counter.bad_pin_count(account_id).await > hello_pin_retry_count
             || no_hello_pin
+            || force_reauth
         {
             let (flow, extra_data) =
                 mfa_from_oidc_device(&self.client.initiate_device_flow().await.map_err(|e| {

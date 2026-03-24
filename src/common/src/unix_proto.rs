@@ -90,7 +90,7 @@ pub enum ClientRequest {
     NssGroups,
     NssGroupByGid(u32),
     NssGroupByName(String),
-    PamAuthenticateInit(String, String, bool),
+    PamAuthenticateInit(String, String, bool, bool),
     PamAuthenticateStep(PamAuthRequest),
     PamAccountAllowed(String),
     PamAccountBeginSession(String),
@@ -112,10 +112,10 @@ impl ClientRequest {
             ClientRequest::NssGroups => "NssGroups".to_string(),
             ClientRequest::NssGroupByGid(id) => format!("NssGroupByGid({})", id),
             ClientRequest::NssGroupByName(id) => format!("NssGroupByName({})", id),
-            ClientRequest::PamAuthenticateInit(id, service, no_hello_pin) => {
+            ClientRequest::PamAuthenticateInit(id, service, no_hello_pin, force_reauth) => {
                 format!(
-                    "PamAuthenticateInit({}, {}, no_hello_pin: {})",
-                    id, service, no_hello_pin
+                    "PamAuthenticateInit({}, {}, no_hello_pin: {}, force_reauth: {})",
+                    id, service, no_hello_pin, force_reauth
                 )
             }
             ClientRequest::PamAuthenticateStep(_) => "PamAuthenticateStep".to_string(),

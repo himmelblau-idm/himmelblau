@@ -68,6 +68,7 @@ pub enum AuthSession {
         /// when they need to stop.
         shutdown_rx: broadcast::Receiver<()>,
         no_hello_pin: bool,
+        force_reauth: bool,
     },
     Success(String),
     Denied,
@@ -1090,6 +1091,7 @@ where
         account_id: &str,
         service: &str,
         no_hello_pin: bool,
+        force_reauth: bool,
         shutdown_rx: broadcast::Receiver<()>,
     ) -> Result<(AuthSession, PamAuthResponse), ()> {
         // Setup an auth session. If possible bring the resolver online.
@@ -1132,6 +1134,7 @@ where
                     token.as_ref(),
                     service,
                     no_hello_pin,
+                    force_reauth,
                     &mut dbtxn,
                     hsm_lock.deref_mut(),
                     &self.machine_key,
@@ -1141,23 +1144,39 @@ where
             {
                 Ok(res) => Ok(res),
                 Err(e) => {
-                    // Check if the failure is because we went offline
-                    match self.get_cachestate(Some(account_id)).await {
-                        CacheState::Offline | CacheState::OfflineNextCheck(_) => {
-                            // Attempt to proceed offline
-                            self.client
-                                .unix_user_offline_auth_init(
-                                    account_id,
-                                    token.as_ref(),
-                                    no_hello_pin,
-                                    &mut dbtxn,
-                                )
-                                .await
+                    if force_reauth {
+                        // force_reauth requires online auth, do not fall back
+                        // to offline, as that cannot satisfy Entra sign-in
+                        // frequency policy.
+                        Err(e)
+                    } else {
+                        // Check if the failure is because we went offline
+                        match self.get_cachestate(Some(account_id)).await {
+                            CacheState::Offline | CacheState::OfflineNextCheck(_) => {
+                                // Attempt to proceed offline
+                                self.client
+                                    .unix_user_offline_auth_init(
+                                        account_id,
+                                        token.as_ref(),
+                                        no_hello_pin,
+                                        &mut dbtxn,
+                                    )
+                                    .await
+                            }
+                            _ => Err(e),
                         }
-                        _ => Err(e),
                     }
                 }
             }
+        } else if force_reauth {
+            // force_reauth requires online connectivity, so refuse to proceed
+            // offline since cached auth cannot satisfy Entra sign-in frequency.
+            return Ok((
+                AuthSession::Denied,
+                PamAuthResponse::InitDenied {
+                    msg: "Re-authentication requires network connectivity.".to_string(),
+                },
+            ));
         } else {
             let mut dbtxn = self.db.write().await;
 
@@ -1178,6 +1197,7 @@ where
                     cred_handler,
                     shutdown_rx,
                     no_hello_pin,
+                    force_reauth,
                 };
 
                 // Now identify what credentials are needed next. The auth session tells
@@ -1211,6 +1231,7 @@ where
                 cred_handler: _,
                 shutdown_rx: _,
                 no_hello_pin: _,
+                force_reauth: _,
             } => self.get_cachestate(Some(account_id)).await,
             _ => self.get_cachestate(None).await,
         };
@@ -1226,6 +1247,7 @@ where
                     ref mut cred_handler,
                     ref shutdown_rx,
                     no_hello_pin,
+                    force_reauth: _,
                 },
                 CacheState::Online,
             ) => {
@@ -1301,9 +1323,17 @@ where
                     // Only need in online auth.
                     shutdown_rx: _,
                     no_hello_pin: _,
+                    force_reauth,
                 },
                 _,
             ) => {
+                // force_reauth requires online auth, refuse offline fallback.
+                if force_reauth {
+                    return Ok(PamAuthResponse::Denied(
+                        "Re-authentication requires network connectivity.".to_string(),
+                    ));
+                }
+
                 // We are offline, continue. Remember, authsession should have
                 // *everything you need* to proceed here!
                 //
@@ -1461,6 +1491,7 @@ where
             .pam_account_authenticate_init(
                 account_id,
                 "try_unseal",
+                false,
                 false,
                 shutdown_tx.subscribe(),
             )
