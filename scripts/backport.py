@@ -313,7 +313,10 @@ class GitClient:
 
     def run(self, *args, capture=True, check=True) -> subprocess.CompletedProcess:
         """Run a git command."""
-        cmd = ["git", "-C", str(self.repo_root)] + list(args)
+        # Force-disable commit signature display in git output so parsing of
+        # formatted log output remains stable even when users enable
+        # `log.showSignature` globally.
+        cmd = ["git", "-c", "log.showSignature=false", "-C", str(self.repo_root)] + list(args)
         if capture:
             return subprocess.run(cmd, capture_output=True, text=True, check=check)
         else:
@@ -341,13 +344,23 @@ class GitClient:
             if len(lines) < 5:
                 continue
 
-            sha = lines[0]
-            short_sha = lines[1]
-            subject = lines[2]
+            # Be resilient to optional git signature noise in log output.
+            # Find the first full SHA line and parse from there.
+            sha_idx = next((i for i, line in enumerate(lines) if re.fullmatch(r"[0-9a-f]{40}", line.strip())), -1)
+            if sha_idx == -1:
+                continue
+
+            lines = lines[sha_idx:]
+            if len(lines) < 5:
+                continue
+
+            sha = lines[0].strip()
+            short_sha = lines[1].strip()
+            subject = lines[2].strip()
             # Body is everything between subject and author (last 2 lines)
-            body = "\n".join(lines[3:-2]) if len(lines) > 5 else ""
-            author = lines[-2]
-            date = lines[-1]
+            body = "\n".join(lines[3:-2]).strip() if len(lines) > 5 else ""
+            author = lines[-2].strip()
+            date = lines[-1].strip()
 
             # Get files changed
             files_result = self.run("diff-tree", "--no-commit-id", "--name-only", "-r", sha)
