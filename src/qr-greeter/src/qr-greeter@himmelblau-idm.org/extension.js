@@ -196,12 +196,10 @@ export default class QrGreeterExtension extends Extension {
                 return;
             }
 
-            const t0 = GLib.get_monotonic_time();
             let displayMessage = message;
             const isQrBtLabel = message && message.startsWith(QR_BT_LABEL_PREFIX);
             const isQrBt = message && message.startsWith(QR_BT_PREFIX);
             if (isQrBtLabel) {
-                console.error(`[TIMING] setMessage QR_BT_LABEL received at ${t0}µs`);
                 this._qrBtLabel = message.substring(QR_BT_LABEL_PREFIX.length);
                 return;
             } else if (isQrBt) {
@@ -209,7 +207,6 @@ export default class QrGreeterExtension extends Extension {
                 // the QR code and its label are rendered separately below.
                 displayMessage = this._lastFidoMessage || "";
             } else if (message && message.startsWith(FIDO_INSERT_PREFIX)) {
-                console.error(`[TIMING] setMessage FIDO_INSERT received at ${t0}µs`);
                 displayMessage = message.substring(FIDO_INSERT_PREFIX.length);
                 this._lastFidoMessage = displayMessage;
             } else if (message && message.startsWith(FIDO_TOUCH_PREFIX)) {
@@ -267,7 +264,6 @@ export default class QrGreeterExtension extends Extension {
             }
 
             if (isQrBt) {
-                console.error(`[TIMING] setMessage QR_BT received at ${t0}µs`);
                 const qrBtUrl = message.substring(QR_BT_PREFIX.length).trim();
                 try {
                     const qr = QrCode.encodeText(qrBtUrl, Ecc.LOW);
