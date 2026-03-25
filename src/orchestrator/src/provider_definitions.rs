@@ -8,7 +8,9 @@ use std::sync::Arc;
 use tokio::fs;
 use url::Url;
 
-const BUILTIN_PROVIDER_KEYS: [&str; 4] = ["entra", "okta", "google", "keycloak"];
+//const BUILTIN_PROVIDER_KEYS: [&str; 4] = ["entra", "okta", "google", "keycloak"];
+const BUILTIN_PROVIDER_KEYS: [&str; 1] = ["keycloak"];
+const BUILTIN_KEYCLOAK_PROVIDER: &str = include_str!("providers/keycloak.json");
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProviderMatchers {
@@ -142,6 +144,8 @@ impl ProviderRegistry {
         let mut definitions = Vec::new();
 
         if let Some(path) = override_path {
+            // Append the provider override file
+
             let raw = fs::read_to_string(path).await.with_context(|| {
                 format!("failed to read provider override file: {}", path.display())
             })?;
@@ -153,6 +157,15 @@ impl ProviderRegistry {
         for definition in definitions {
             validate_provider_definition(&definition)?;
             by_name.insert(definition.provider.clone(), Arc::new(definition));
+        }
+
+        // Append the default providers, if not overridden
+
+        // Keycloak
+        if let Some(keycloak) = parse_provider_override(BUILTIN_KEYCLOAK_PROVIDER)?.first() {
+            if !by_name.contains_key(&keycloak.provider) {
+                by_name.insert(keycloak.provider.clone(), Arc::new(keycloak.clone()));
+            }
         }
 
         Ok(Self { by_name })
