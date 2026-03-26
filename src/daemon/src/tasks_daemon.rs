@@ -468,11 +468,9 @@ fn write_kerberos_config_snippet(
     let krb_conf_dir = PathBuf::from(DEFAULT_KERBEROS_CONF_DIR);
 
     trace!(?krb_conf_dir, "Check kerberos config dir exists");
-    match std::fs::exists(&krb_conf_dir) {
-        Ok(true) => match &krb_conf_dir.is_dir() {
-            false => Err(format!("Path {krb_conf_dir:?} is not a directory")),
-            true => Ok(()),
-        },
+    match krb_conf_dir.try_exists() {
+        Ok(true) if krb_conf_dir.is_dir() => Ok(()),
+        Ok(true) => Err(format!("Path {krb_conf_dir:?} is not a directory")),
         Ok(false) => Err(format!("Path {krb_conf_dir:?} does not exist")),
         Err(e) => Err(format!("Failed to check if {krb_conf_dir:?} exists: {e}")),
     }?;

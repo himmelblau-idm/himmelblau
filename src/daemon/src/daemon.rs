@@ -926,10 +926,7 @@ async fn handle_client(
                 let span = span!(Level::INFO, "pam try unseal");
                 async {
                     trace!("pam try unseal");
-                    match cachelayer
-                        .pam_try_unseal(&account_id, &cred)
-                        .await
-                    {
+                    match cachelayer.pam_try_unseal(&account_id, &cred).await {
                         Ok(true) => {
                             debug!("pam_try_unseal: succeeded for {}", account_id);
                         }
