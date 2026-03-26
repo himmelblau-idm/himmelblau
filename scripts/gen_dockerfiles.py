@@ -126,6 +126,7 @@ PACKAGES = [
     ("qr-greeter", "src/qr-greeter", False),
     ("selinux", "src/selinux", False),
     ("o365", "src/o365", False),
+    ("himmelblaud-orchestrator", "src/orchestrator", False),
 ]
 
 CMD_TAB = "     "
@@ -135,7 +136,11 @@ CMD_SEP = f" && \\ \n{CMD_TAB}"
 GEN_MANPAGE = "python3 scripts/gen_param_code.py --gen-man --man-output man/man5/himmelblau.conf.5"
 
 
-def build_deb_final_cmd(features: list, distro_slug: str, cross_target: str = "") -> str:
+def build_deb_final_cmd(
+    features: list,
+    distro_slug: str,
+    cross_target: str = "",
+) -> str:
     target_arg = f" --target={cross_target}" if cross_target else ""
     parts = []
     for pkg, _, needs_tpm in PACKAGES:
@@ -152,7 +157,9 @@ def build_deb_final_cmd(features: list, distro_slug: str, cross_target: str = ""
         feat_str = f" --features {','.join(pkg_features)}" if pkg_features else ""
         if "pam" in pkg or "nss" in pkg:
             feat_str += " --multiarch=same"
-        parts.append(f"cargo deb ${{CARGO_PATCH_ARG}}{target_arg}{feat_str} --deb-revision={distro_slug} -p {pkg}")
+        parts.append(
+            f"cargo deb ${{CARGO_PATCH_ARG}}{target_arg}{feat_str} --deb-revision={distro_slug} -p {pkg}"
+        )
     gen_servicefiles = "make deb-servicefiles"
     return f'CMD ["/bin/sh", "-c", \\\n{CMD_TAB}"{GEN_MANPAGE} && {gen_servicefiles} && {CMD_SEP.join(parts)} "]'
 
@@ -161,13 +168,16 @@ def build_rpm_final_cmd(features: list, selinux: bool) -> str:
     feat_str = f" --features {','.join(features)}" if features else ""
     build = f"cargo build ${{CARGO_PATCH_ARG}} --release{feat_str} && \\ \n{CMD_TAB}"
     strip = CMD_SEP.join(
-        ["strip -s target/release/%s" % s for s in ["*.so", "aad-tool", "himmelblaud", "himmelblaud_tasks", "broker"]]
+        ["strip -s target/release/%s" % s for s in ["*.so", "aad-tool", "himmelblaud", "himmelblaud_tasks", "broker", "himmelblaud-orchestrator"]]
     )
     if selinux:
         pkgs = PACKAGES
     else:
         pkgs = [pkg for pkg in PACKAGES if pkg[0] != "selinux"]
-    rpms = CMD_SEP.join([f"cargo generate-rpm -p {s}" for _, s, _ in pkgs])
+    rpm_cmds = []
+    for _, s, _ in pkgs:
+        rpm_cmds.append(f"cargo generate-rpm -p {s}")
+    rpms = CMD_SEP.join(rpm_cmds)
     gen_servicefiles = "make rpm-servicefiles"
     gen_authselect = "(authselect select minimal --force || authselect select local --force) && make authselect"
     return f'CMD ["/bin/sh", "-c", \\\n{CMD_TAB}"{GEN_MANPAGE} && {gen_servicefiles} && {build}{strip} && {gen_authselect} && \\\n{CMD_TAB}{rpms}"]'
@@ -634,7 +644,12 @@ def build_pkg_list(dist_cfg, selinux):
     return sep.join(out)
 
 
-def render(dist_name, dist_cfg, patch_libhimmelblau, arch="amd64"):
+def render(
+    dist_name,
+    dist_cfg,
+    patch_libhimmelblau,
+    arch="amd64",
+):
     fam = FAMILIES[dist_cfg["family"]]
     selinux = bool(dist_cfg.get("selinux", False))
     pkgs = build_pkg_list(dist_cfg, selinux)
@@ -658,7 +673,11 @@ def render(dist_name, dist_cfg, patch_libhimmelblau, arch="amd64"):
 
     final_cmd = ""
     if dist_cfg["family"] == "deb" and dist_name != "test":
-        final_cmd = build_deb_final_cmd(features, dist_name, cross_target=cross_target)
+        final_cmd = build_deb_final_cmd(
+            features,
+            dist_name,
+            cross_target=cross_target,
+        )
     elif dist_name == "test":
         final_cmd = "CMD cargo test"
     elif dist_cfg["family"] == "ebuild":
@@ -773,7 +792,12 @@ def main():
         if args.arch != "amd64" and not DISTS[name].get(args.arch, True):
             skipped.append(name)
             continue
-        df = render(name, DISTS[name], args.patch_libhimmelblau, arch=args.arch)
+        df = render(
+            name,
+            DISTS[name],
+            args.patch_libhimmelblau,
+            arch=args.arch,
+        )
         path = os.path.join(args.out, f"Dockerfile.{name}{arch_suffix}")
         with open(path, "w", encoding="utf-8") as f:
             f.write(df)
