@@ -5,7 +5,7 @@
            rust_type="Option&lt;HomeAttr&gt;"
            documented="true"
            domain_specific="true"
-           order="45">
+           order="47">
 <description>
 The symlinked alias for the user's home directory. Available options include:
 .RS

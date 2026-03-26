@@ -125,9 +125,7 @@ fn insert_module_line(
     let stack_type = module_line.split_whitespace().next().unwrap_or("");
 
     if lines.iter().any(|l| {
-        if !l.contains("pam_himmelblau.so")
-            || !l.trim_start().starts_with(stack_type)
-        {
+        if !l.contains("pam_himmelblau.so") || !l.trim_start().starts_with(stack_type) {
             return false;
         }
         let existing_opts: std::collections::HashSet<&str> = l

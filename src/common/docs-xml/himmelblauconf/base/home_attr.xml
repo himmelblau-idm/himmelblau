@@ -5,7 +5,7 @@
            rust_type="HomeAttr"
            documented="true"
            domain_specific="true"
-           order="44">
+           order="46">
 <description>
 The attribute used to create a home directory for a user. Available options include:
 .RS

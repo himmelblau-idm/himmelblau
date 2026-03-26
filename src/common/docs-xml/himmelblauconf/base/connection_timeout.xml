@@ -5,7 +5,7 @@
            rust_type="u64"
            documented="true"
            domain_specific="false"
-           order="48">
+           order="50">
 <description>
 The timeout in seconds for connections to the authentication server.
 </description>
