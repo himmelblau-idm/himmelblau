@@ -5,7 +5,7 @@
            rust_type="(u32, u32)"
            documented="true"
            domain_specific="false"
-           order="48">
+           order="51">
 <description>
 Specifies the range of subordinate IDs (subuid/subgid) to be allocated for container support (podman, rootless containers, etc.).
 

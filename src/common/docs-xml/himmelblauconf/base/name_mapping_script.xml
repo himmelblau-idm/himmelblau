@@ -5,7 +5,7 @@
            rust_type="Option&lt;String&gt;"
            documented="true"
            domain_specific="false"
-           order="33">
+           order="35">
 <description>
 Specifies the path to an executable script used for mapping custom names to UPN names. The script MUST accept a single argument, which will always be a mapped name. The script MUST print the corresponding UPN (User Principal Name) to stdout. If the script does not recognize the input name, it MUST simply return the input name unchanged. This option is particularly useful in environments where direct UPN-to-CN mappings are impractical or where custom transformations are required.
 

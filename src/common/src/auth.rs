@@ -1028,10 +1028,7 @@ fn handle_pam_auth_response_fido(
     let fido_prompt = state.cfg.get_fido_prompt();
     let fido_presence_prompt = state.cfg.get_fido_presence_prompt();
     let qr_prompt = state.cfg.get_qr_bluetooth_prompt();
-    let is_graphical = state.service.contains("gdm")
-        || state.service.contains("lightdm")
-        || state.service.contains("sddm")
-        || state.service.contains("login");
+    let is_graphical = state.service.contains("gdm");
     let bt_state = check_bluetooth();
     let has_bt = matches!(bt_state, BluetoothState::PoweredOn);
     let bt_off = matches!(bt_state, BluetoothState::PoweredOff);

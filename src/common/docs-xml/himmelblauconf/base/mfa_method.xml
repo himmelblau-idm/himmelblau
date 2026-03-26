@@ -5,7 +5,7 @@
                       rust_type="Option&lt;String&gt;"
                       documented="true"
                       domain_specific="false"
-                      order="16"
+                      order="17"
                      >
 <description>
 Specifies a preferred MFA (Multi-Factor Authentication) method to use during authentication. When set, Himmelblau will attempt to use this specific MFA method instead of the default method configured in the user's Entra ID profile. If not set or if the specified method is not available for the user, the default MFA method will be used.

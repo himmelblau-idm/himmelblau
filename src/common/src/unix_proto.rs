@@ -75,13 +75,27 @@ pub enum PamAuthResponse {
 
 #[derive(Serialize, Deserialize, Debug)]
 pub enum PamAuthRequest {
-    Password { cred: String },
-    MFACode { cred: String },
-    HelloTOTP { cred: String },
-    MFAPoll { poll_attempt: u32 },
-    SetupPin { pin: String },
-    Pin { cred: String },
-    Fido { assertion: String },
+    Password {
+        cred: String,
+    },
+    MFACode {
+        cred: String,
+    },
+    HelloTOTP {
+        cred: String,
+    },
+    MFAPoll {
+        poll_attempt: u32,
+    },
+    SetupPin {
+        pin: String,
+    },
+    Pin {
+        cred: String,
+    },
+    Fido {
+        assertion: String,
+    },
     /// FIDO hardware is unavailable (no USB key, no Bluetooth for cross-device).
     /// The daemon should fall back to password authentication.
     FidoUnavailable,
@@ -224,11 +238,9 @@ fn test_clientrequest_as_safe_string() {
         "NssAccounts".to_string()
     );
 
-    let safe = ClientRequest::PamTryUnseal(
-        "user@example.com".to_string(),
-        "s3cret-pin".to_string(),
-    )
-    .as_safe_string();
+    let safe =
+        ClientRequest::PamTryUnseal("user@example.com".to_string(), "s3cret-pin".to_string())
+            .as_safe_string();
     assert!(
         !safe.contains("s3cret-pin"),
         "as_safe_string() must not leak credentials: {}",
