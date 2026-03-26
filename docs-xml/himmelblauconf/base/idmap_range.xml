@@ -5,7 +5,7 @@
            rust_type="(u32, u32)"
            documented="true"
            domain_specific="true"
-           order="47">
+           order="49">
 <description>
 Specifies the range of IDs to be used for the user and group mappings.
 

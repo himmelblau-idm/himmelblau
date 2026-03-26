@@ -5,7 +5,7 @@
            rust_type="bool"
            documented="true"
            domain_specific="false"
-           order="17">
+           order="18">
 <description>
 Allows users to enter the short form of their username (e.g., 'dave') instead of the full UPN.
 </description>

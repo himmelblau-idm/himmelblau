@@ -5,7 +5,7 @@
            rust_type="HsmType"
            documented="true"
            domain_specific="false"
-           order="37">
+           order="39">
 <description>
 Specifies how Himmelblau should handle secure key storage. This option determines whether to use a TPM (Trusted Platform Module) bound software-based HSM, a TPM, or a hybrid approach.
 

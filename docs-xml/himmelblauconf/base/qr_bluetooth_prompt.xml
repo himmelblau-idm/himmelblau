@@ -5,7 +5,7 @@
            rust_type="String"
            documented="true"
            domain_specific="false"
-           order="32">
+           order="34">
 <description>
 The message displayed to the user when QR/Bluetooth (caBLE) authentication is initiated
 and they need to scan the QR code with their phone.
