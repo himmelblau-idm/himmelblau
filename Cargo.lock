@@ -2341,6 +2341,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "himmelblau-orchestrator"
+version = "4.0.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "futures",
+ "himmelblau_unix_common",
+ "libc",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "tracing-subscriber",
+ "url",
+ "zeroize",
+]
+
+[[package]]
 name = "himmelblau_policies"
 version = "4.0.0"
 dependencies = [
