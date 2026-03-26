@@ -16,6 +16,7 @@ members = [
 	"src/selinux",
 	"src/o365",
 	"fuzz",
+	"src/orchestrator",
 ]
 resolver = "2"
 

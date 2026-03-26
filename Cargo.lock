@@ -2440,6 +2440,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "himmelblaud-orchestrator"
+version = "4.0.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "futures",
+ "himmelblau_unix_common",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "tracing-subscriber",
+ "url",
+ "zeroize",
+]
+
+[[package]]
 name = "hkdf"
 version = "0.12.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
