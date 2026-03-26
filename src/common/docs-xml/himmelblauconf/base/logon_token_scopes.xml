@@ -5,7 +5,7 @@
            rust_type="Vec&lt;String&gt;"
            documented="true"
            domain_specific="false"
-           order="22">
+           order="23">
 <description>
 A comma-separated list of the scopes to be requested for the ACCESS_TOKEN during logon. These scopes
 .B MUST

@@ -468,6 +468,17 @@ Default: true
 Example: enable_experimental_mfa = false
 
 .TP
+.B enable_passwordless
+.RE
+A boolean option that controls whether passwordless authentication (Microsoft Authenticator app approval without a password) is offered during Azure Entra ID authentication. When enabled, Himmelblau will include the passwordless option in authentication requests, allowing Entra ID to offer a passwordless flow. When disabled, users will be prompted for a password followed by MFA instead.
+
+.P
+Default: true
+
+.P
+Example: enable_passwordless = false
+
+.TP
 .B enable_passwordless_security_key
 .RE
 A boolean option that enables the passwordless physical USB security key flow for Azure Entra ID authentication. When enabled, Himmelblau will attempt to authenticate with Entra ID using a physical FIDO2 security key without requiring a password.
@@ -709,17 +720,6 @@ Default: /var/run/himmelblaud/broker_sock
 
 .P
 Example: broker_socket_path = /tmp/broker.sock
-
-.TP
-.B enable_passwordless
-.RE
-A boolean option that controls whether passwordless authentication (Microsoft Authenticator app approval without a password) is offered during Azure Entra ID authentication. When enabled, Himmelblau will include the passwordless option in authentication requests, allowing Entra ID to offer a passwordless flow. When disabled, users will be prompted for a password followed by MFA instead.
-
-.P
-Default: true
-
-.P
-Example: enable_passwordless = false
 
 .TP
 .B home_prefix
