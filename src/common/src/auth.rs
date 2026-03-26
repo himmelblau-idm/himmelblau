@@ -327,67 +327,54 @@ enum BluetoothState {
 }
 
 fn check_bluetooth() -> BluetoothState {
-    let tree_output = match std::process::Command::new("timeout")
-        .args(["1", "busctl", "tree", "--no-pager", "org.bluez"])
-        .output()
-    {
-        Ok(output) if output.status.success() => {
-            String::from_utf8_lossy(&output.stdout).to_string()
-        }
-        Ok(output) => {
-            debug!(
-                "busctl tree failed (exit: {:?}), no Bluetooth available",
-                output.status.code()
-            );
-            return BluetoothState::NoAdapter;
-        }
+    let conn = match zbus::blocking::Connection::system() {
+        Ok(c) => c,
         Err(e) => {
-            debug!("busctl failed to launch: {:?}", e);
+            debug!("D-Bus system connection failed: {:?}", e);
             return BluetoothState::NoAdapter;
         }
     };
 
-    let adapters: Vec<String> = tree_output
-        .lines()
-        .filter_map(|line| {
-            // busctl tree output has tree-drawing chars before the path;
-            // extract the path starting from the first '/'.
-            let path = line.find('/').map(|i| line[i..].trim())?;
-            if path.starts_with("/org/bluez/hci") && !path["/org/bluez/hci".len()..].contains('/') {
-                Some(path.to_string())
-            } else {
-                None
-            }
-        })
-        .collect();
+    let proxy = match zbus::blocking::fdo::ObjectManagerProxy::builder(&conn)
+        .destination("org.bluez")
+        .and_then(|b| b.path("/"))
+        .and_then(|b| b.build())
+    {
+        Ok(p) => p,
+        Err(e) => {
+            debug!("BlueZ not available on D-Bus: {:?}", e);
+            return BluetoothState::NoAdapter;
+        }
+    };
 
-    if adapters.is_empty() {
-        debug!("No Bluetooth adapters found");
-        return BluetoothState::NoAdapter;
-    }
+    let objects = match proxy.get_managed_objects() {
+        Ok(o) => o,
+        Err(e) => {
+            debug!("BlueZ GetManagedObjects failed: {:?}", e);
+            return BluetoothState::NoAdapter;
+        }
+    };
 
-    for adapter in &adapters {
-        if let Ok(output) = std::process::Command::new("timeout")
-            .args([
-                "1",
-                "busctl",
-                "get-property",
-                "org.bluez",
-                adapter,
-                "org.bluez.Adapter1",
-                "Powered",
-            ])
-            .output()
-        {
-            if output.status.success() && String::from_utf8_lossy(&output.stdout).contains("true") {
-                debug!("Bluetooth adapter {} is powered on", adapter);
-                return BluetoothState::PoweredOn;
+    let mut has_adapter = false;
+    for (path, interfaces) in &objects {
+        if let Some(props) = interfaces.get("org.bluez.Adapter1") {
+            has_adapter = true;
+            if let Some(powered) = props.get("Powered") {
+                if bool::try_from(powered) == Ok(true) {
+                    debug!("Bluetooth adapter {} is powered on", path);
+                    return BluetoothState::PoweredOn;
+                }
             }
         }
     }
 
-    debug!("All Bluetooth adapters are powered off");
-    BluetoothState::PoweredOff
+    if has_adapter {
+        debug!("All Bluetooth adapters are powered off");
+        BluetoothState::PoweredOff
+    } else {
+        debug!("No Bluetooth adapters found");
+        BluetoothState::NoAdapter
+    }
 }
 
 /// Caller must verify Bluetooth is powered on before calling this.
