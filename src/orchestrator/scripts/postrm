@@ -1,0 +1,18 @@
+#!/bin/sh
+set -e
+
+if [ -d /run/systemd/system ]; then
+    if command -v deb-systemd-invoke >/dev/null 2>&1; then
+        if [ -z "$DPKG_ROOT" ] && [ "$1" = remove ]; then
+            deb-systemd-invoke daemon-reload --system >/dev/null || true
+        fi
+    elif command -v systemctl >/dev/null 2>&1; then
+        systemctl daemon-reload --system >/dev/null || true
+    fi
+fi
+
+if command -v deb-systemd-helper >/dev/null 2>&1 && [ -z "$DPKG_ROOT" ] && [ "$1" = "purge" ]; then
+    deb-systemd-helper purge himmelblaud-orchestrator.service >/dev/null || true
+elif command -v systemctl >/dev/null 2>&1; then
+    systemctl disable himmelblaud-orchestrator.service >/dev/null || true
+fi

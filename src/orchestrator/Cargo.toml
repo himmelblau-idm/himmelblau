@@ -1,0 +1,51 @@
+[package]
+name = "himmelblaud-orchestrator"
+description = "Optional browser-flow orchestration backend for himmelblaud"
+version.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+edition.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[features]
+default = []
+
+[dependencies]
+anyhow = { workspace = true }
+clap = { workspace = true }
+futures = "^0.3.32"
+himmelblau_unix_common = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true, features = ["process", "fs"] }
+tokio-util = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+url = { workspace = true }
+
+[package.metadata.deb]
+name = "himmelblaud-orchestrator"
+depends = ["$auto", "podman", "himmelblau"]
+assets = [
+  ["target/release/himmelblaud-orchestrator", "usr/sbin/", "755"],
+  ["../../platform/debian/himmelblaud-orchestrator.service", "usr/lib/systemd/system/", "644"],
+  ["src/himmelblaud-orchestrator.tmpfiles.conf", "usr/lib/tmpfiles.d/himmelblaud-orchestrator.conf", "644"],
+]
+maintainer-scripts = "scripts"
+
+[package.metadata.generate-rpm]
+name = "himmelblaud-orchestrator"
+assets = [
+  { source = "target/release/himmelblaud-orchestrator", dest = "/usr/sbin/", mode = "755" },
+  { source = "../../platform/opensuse/himmelblaud-orchestrator.service", dest = "/usr/lib/systemd/system/", mode = "644" },
+  { source = "src/himmelblaud-orchestrator.tmpfiles.conf", dest = "/usr/lib/tmpfiles.d/himmelblaud-orchestrator.conf", mode = "644" },
+]
+post_install_script = "scripts/postinst"
+pre_uninstall_script = "scripts/prerm"
+post_uninstall_script = "scripts/postrm"
+
+[package.metadata.generate-rpm.requires]
+podman = "*"
+himmelblau = "*"

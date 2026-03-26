@@ -21,7 +21,7 @@ members = [
 	"src/paste",
 	"src/sshkey-attest",
 	"src/kanidm_build_profiles",
-	"src/picky-krb",
+	"src/picky-krb", "src/orchestrator",
 ]
 resolver = "2"
 
