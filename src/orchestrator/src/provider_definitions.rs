@@ -8,7 +8,9 @@ use std::sync::Arc;
 use tokio::fs;
 use url::Url;
 
-const BUILTIN_PROVIDER_KEYS: [&str; 4] = ["entra", "okta", "google", "keycloak"];
+//const BUILTIN_PROVIDER_KEYS: [&str; 4] = ["entra", "okta", "google", "keycloak"];
+const BUILTIN_PROVIDER_KEYS: [&str; 1] = ["keycloak"];
+const BUILTIN_KEYCLOAK_PROVIDER: &str = include_str!("providers/keycloak.json");
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProviderMatchers {
@@ -142,6 +144,8 @@ impl ProviderRegistry {
         let mut definitions = Vec::new();
 
         if let Some(path) = override_path {
+            // Append the provider override file
+
             let raw = fs::read_to_string(path).await.with_context(|| {
                 format!("failed to read provider override file: {}", path.display())
             })?;
@@ -153,6 +157,16 @@ impl ProviderRegistry {
         for definition in definitions {
             validate_provider_definition(&definition)?;
             by_name.insert(definition.provider.clone(), Arc::new(definition));
+        }
+
+        // Append the default providers, if not overridden
+
+        // Keycloak
+        for definition in parse_provider_override(BUILTIN_KEYCLOAK_PROVIDER)? {
+            validate_provider_definition(&definition)?;
+            if !by_name.contains_key(&definition.provider) {
+                by_name.insert(definition.provider.clone(), Arc::new(definition));
+            }
         }
 
         Ok(Self { by_name })
@@ -228,25 +242,24 @@ impl ProviderRegistry {
         }
 
         if let Some(provider) = detect_builtin_provider(username, issuer_url) {
-            return provider;
+            if self.by_name.contains_key(&provider) {
+                return provider;
+            }
         }
 
-        infer_provider_from_context(username, issuer_url).unwrap_or_else(|| "unknown".to_string())
+        if let Some(provider) = infer_provider_from_context(username, issuer_url) {
+            if self.by_name.contains_key(&provider) {
+                return provider;
+            }
+        }
+
+        "unknown".to_string()
     }
 }
 
 fn detect_builtin_provider(username: Option<&str>, issuer_url: Option<&str>) -> Option<String> {
     if let Some(issuer_url) = issuer_url {
         let issuer = issuer_url.to_lowercase();
-        if issuer.contains("login.microsoftonline.com") || issuer.contains("microsoftonline") {
-            return Some("entra".to_string());
-        }
-        if issuer.contains("accounts.google.com") {
-            return Some("google".to_string());
-        }
-        if issuer.contains("okta.com") {
-            return Some("okta".to_string());
-        }
         if issuer.contains("keycloak")
             || issuer.contains("/realms/")
             || issuer.contains("/protocol/openid-connect")
@@ -255,17 +268,7 @@ fn detect_builtin_provider(username: Option<&str>, issuer_url: Option<&str>) -> 
         }
     }
 
-    if let Some(username) = username {
-        if let Some((_, domain)) = split_username(username) {
-            let domain = domain.to_lowercase();
-            if domain == "gmail.com" || domain == "googlemail.com" {
-                return Some("google".to_string());
-            }
-            if domain.ends_with(".okta.com") || domain == "okta.com" {
-                return Some("okta".to_string());
-            }
-        }
-    }
+    let _ = username;
 
     None
 }

@@ -113,6 +113,16 @@ rec {
       # File a bug if you depend on any for non-debug work!
       debug = internal.debugCrate { inherit packageId; };
     };
+    "himmelblaud-orchestrator" = rec {
+      packageId = "himmelblaud-orchestrator";
+      build = internal.buildRustCrateWithFeatures {
+        packageId = "himmelblaud-orchestrator";
+      };
+
+      # Debug support which might change between releases.
+      # File a bug if you depend on any for non-debug work!
+      debug = internal.debugCrate { inherit packageId; };
+    };
     "idmap" = rec {
       packageId = "idmap";
       build = internal.buildRustCrateWithFeatures {
@@ -7508,6 +7518,75 @@ rec {
           "console" = [ "dep:console-subscriber" ];
         };
         resolvedDefaultFeatures = [ "console" ];
+      };
+      "himmelblaud-orchestrator" = rec {
+        crateName = "himmelblaud-orchestrator";
+        version = "4.0.0";
+        edition = "2021";
+        crateBin = [
+          {
+            name = "himmelblaud-orchestrator";
+            path = "src/main.rs";
+            requiredFeatures = [ ];
+          }
+        ];
+        src = lib.cleanSourceWith { filter = sourceFilter;  src = ./src/orchestrator; };
+        authors = [
+          "David Mulder <dmulder@suse.com>"
+        ];
+        dependencies = [
+          {
+            name = "anyhow";
+            packageId = "anyhow";
+          }
+          {
+            name = "clap";
+            packageId = "clap";
+            features = [ "derive" "env" ];
+          }
+          {
+            name = "futures";
+            packageId = "futures";
+          }
+          {
+            name = "himmelblau_unix_common";
+            packageId = "himmelblau_unix_common";
+          }
+          {
+            name = "serde";
+            packageId = "serde";
+            features = [ "derive" ];
+          }
+          {
+            name = "serde_json";
+            packageId = "serde_json";
+          }
+          {
+            name = "tokio";
+            packageId = "tokio";
+            features = [ "rt" "macros" "sync" "time" "net" "io-util" "signal" "rt-multi-thread" "process" "fs" ];
+          }
+          {
+            name = "tokio-util";
+            packageId = "tokio-util";
+            features = [ "codec" ];
+          }
+          {
+            name = "tracing";
+            packageId = "tracing";
+          }
+          {
+            name = "tracing-subscriber";
+            packageId = "tracing-subscriber";
+          }
+          {
+            name = "url";
+            packageId = "url";
+          }
+        ];
+        features = {
+        };
+        resolvedDefaultFeatures = [ "default" ];
       };
       "hkdf" = rec {
         crateName = "hkdf";
