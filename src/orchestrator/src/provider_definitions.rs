@@ -8,7 +8,9 @@ use std::sync::Arc;
 use tokio::fs;
 use url::Url;
 
-const BUILTIN_PROVIDER_KEYS: [&str; 4] = ["entra", "okta", "google", "keycloak"];
+//const BUILTIN_PROVIDER_KEYS: [&str; 4] = ["entra", "okta", "google", "keycloak"];
+const BUILTIN_PROVIDER_KEYS: [&str; 1] = ["keycloak"];
+const BUILTIN_KEYCLOAK_PROVIDER: &str = include_str!("providers/keycloak.json");
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProviderMatchers {
@@ -142,6 +144,8 @@ impl ProviderRegistry {
         let mut definitions = Vec::new();
 
         if let Some(path) = override_path {
+            // Append the provider override file
+
             let raw = fs::read_to_string(path).await.with_context(|| {
                 format!("failed to read provider override file: {}", path.display())
             })?;
@@ -153,6 +157,16 @@ impl ProviderRegistry {
         for definition in definitions {
             validate_provider_definition(&definition)?;
             by_name.insert(definition.provider.clone(), Arc::new(definition));
+        }
+
+        // Append the default providers, if not overridden
+
+        // Keycloak
+        for definition in parse_provider_override(BUILTIN_KEYCLOAK_PROVIDER)? {
+            validate_provider_definition(&definition)?;
+            if !by_name.contains_key(&definition.provider) {
+                by_name.insert(definition.provider.clone(), Arc::new(definition));
+            }
         }
 
         Ok(Self { by_name })
@@ -228,25 +242,24 @@ impl ProviderRegistry {
         }
 
         if let Some(provider) = detect_builtin_provider(username, issuer_url) {
-            return provider;
+            if self.by_name.contains_key(&provider) {
+                return provider;
+            }
         }
 
-        infer_provider_from_context(username, issuer_url).unwrap_or_else(|| "unknown".to_string())
+        if let Some(provider) = infer_provider_from_context(username, issuer_url) {
+            if self.by_name.contains_key(&provider) {
+                return provider;
+            }
+        }
+
+        "unknown".to_string()
     }
 }
 
 fn detect_builtin_provider(username: Option<&str>, issuer_url: Option<&str>) -> Option<String> {
     if let Some(issuer_url) = issuer_url {
         let issuer = issuer_url.to_lowercase();
-        if issuer.contains("login.microsoftonline.com") || issuer.contains("microsoftonline") {
-            return Some("entra".to_string());
-        }
-        if issuer.contains("accounts.google.com") {
-            return Some("google".to_string());
-        }
-        if issuer.contains("okta.com") {
-            return Some("okta".to_string());
-        }
         if issuer.contains("keycloak")
             || issuer.contains("/realms/")
             || issuer.contains("/protocol/openid-connect")
@@ -255,17 +268,7 @@ fn detect_builtin_provider(username: Option<&str>, issuer_url: Option<&str>) -> 
         }
     }
 
-    if let Some(username) = username {
-        if let Some((_, domain)) = split_username(username) {
-            let domain = domain.to_lowercase();
-            if domain == "gmail.com" || domain == "googlemail.com" {
-                return Some("google".to_string());
-            }
-            if domain.ends_with(".okta.com") || domain == "okta.com" {
-                return Some("okta".to_string());
-            }
-        }
-    }
+    let _ = username;
 
     None
 }
@@ -364,6 +367,28 @@ pub fn validate_provider_definition(definition: &ProviderDefinition) -> Result<(
                 _ => {}
             }
         }
+
+        if let Some(wait_for) = &step.wait_for {
+            if let Some(selector) = &wait_for.selector {
+                validate_selector(selector).with_context(|| {
+                    format!(
+                        "provider '{}' step '{}' contains invalid wait_for selector",
+                        definition.provider, step.name
+                    )
+                })?;
+            }
+        }
+
+        if let Some(success) = &step.success {
+            if let Some(selector) = &success.dom_selector {
+                validate_selector(selector).with_context(|| {
+                    format!(
+                        "provider '{}' step '{}' contains invalid success selector",
+                        definition.provider, step.name
+                    )
+                })?;
+            }
+        }
     }
 
     for step in &definition.steps {
@@ -427,4 +452,74 @@ fn parse_provider_override(raw: &str) -> Result<Vec<ProviderDefinition>> {
     Err(anyhow!(
         "provider override file must be a provider object, provider array, or {{\"providers\":[...]}}"
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn minimal_definition() -> ProviderDefinition {
+        ProviderDefinition {
+            provider: "test".to_string(),
+            display_name: "Test".to_string(),
+            matchers: None,
+            start_url: None,
+            steps: vec![ProviderStep {
+                name: "start".to_string(),
+                optional: false,
+                wait_for: None,
+                required_inputs: Vec::new(),
+                actions: Vec::new(),
+                branches: Vec::new(),
+                success: None,
+            }],
+        }
+    }
+
+    #[test]
+    fn validates_wait_for_selector() {
+        let mut definition = minimal_definition();
+        definition.steps[0].wait_for = Some(WaitCondition {
+            selector: Some("input#username\nbutton".to_string()),
+            pattern: None,
+            timeout_ms: None,
+        });
+
+        let error = validate_provider_definition(&definition)
+            .err()
+            .map(|error| error.to_string())
+            .unwrap_or_default();
+
+        assert!(error.contains("invalid wait_for selector"));
+    }
+
+    #[test]
+    fn validates_success_dom_selector() {
+        let mut definition = minimal_definition();
+        definition.steps[0].success = Some(SuccessCondition {
+            url_contains: None,
+            dom_selector: Some(String::new()),
+            token_key: None,
+        });
+
+        let error = validate_provider_definition(&definition)
+            .err()
+            .map(|error| error.to_string())
+            .unwrap_or_default();
+
+        assert!(error.contains("invalid success selector"));
+    }
+
+    #[test]
+    fn validates_builtin_keycloak_provider() {
+        let definitions = parse_provider_override(BUILTIN_KEYCLOAK_PROVIDER);
+        assert!(definitions.is_ok());
+
+        let mut definitions = definitions.unwrap_or_default();
+        assert!(!definitions.is_empty());
+
+        for definition in definitions.drain(..) {
+            assert!(validate_provider_definition(&definition).is_ok());
+        }
+    }
 }

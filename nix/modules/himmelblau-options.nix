@@ -396,15 +396,6 @@ in
       example = false;
     };
 
-    enable_passwordless = mkOption {
-      type = types.nullOr (types.bool);
-      default = true;
-      description = ''
-        A boolean option that controls whether passwordless authentication (Microsoft Authenticator app approval without a password) is offered during Azure Entra ID authentication. When enabled, Himmelblau will include the passwordless option in authentication requests, allowing Entra ID to offer a passwordless flow. When disabled, users will be prompted for a password followed by MFA instead.
-      '';
-      example = false;
-    };
-
     enable_passwordless_security_key = mkOption {
       type = types.nullOr (types.bool);
       default = false;
@@ -586,7 +577,7 @@ in
       type = types.nullOr (types.str);
       default = "/var/run/himmelblaud/socket";
       description = ''
-        The path to the socket file for communication between the pam and nss modules and the Himmelblau daemon. If this is changed, also add a drop-in to override ListenStream= in the himmelblaud.socket unit to keep the paths in sync.
+        The path to the socket file for communication between the pam and nss modules and the Himmelblau daemon.
       '';
       example = "/tmp/himmelblaud.sock";
     };
@@ -595,7 +586,7 @@ in
       type = types.nullOr (types.str);
       default = "/var/run/himmelblaud/task_sock";
       description = ''
-        The path to the socket file for communication with the task daemon. If this is changed, also add a drop-in to override ListenStream= in the himmelblaud-tasks.socket unit to keep the paths in sync.
+        The path to the socket file for communication with the task daemon.
       '';
       example = "/tmp/task.sock";
     };
@@ -604,9 +595,18 @@ in
       type = types.nullOr (types.str);
       default = "/var/run/himmelblaud/broker_sock";
       description = ''
-        The path to the socket file for communication with the broker DBus service. If this is changed, also add a drop-in to override ListenStream= in the himmelblaud-broker.socket unit to keep the paths in sync.
+        The path to the socket file for communication with the broker DBus service.
       '';
       example = "/tmp/broker.sock";
+    };
+
+    enable_passwordless = mkOption {
+      type = types.nullOr (types.bool);
+      default = true;
+      description = ''
+        A boolean option that controls whether passwordless authentication (Microsoft Authenticator app approval without a password) is offered during Azure Entra ID authentication. When enabled, Himmelblau will include the passwordless option in authentication requests, allowing Entra ID to offer a passwordless flow. When disabled, users will be prompted for a password followed by MFA instead.
+      '';
+      example = false;
     };
 
     home_prefix = mkOption {
@@ -674,15 +674,6 @@ in
       example = "10000000-10999999";
     };
 
-    connection_timeout = mkOption {
-      type = types.nullOr (types.ints.unsigned);
-      default = 30;
-      description = ''
-        The timeout in seconds for connections to the authentication server.
-      '';
-      example = 5;
-    };
-
     subid_range = mkOption {
       type = types.nullOr (types.str);
       default = "2100000000-4200000000";
@@ -712,6 +703,15 @@ in
         The timeout in seconds for HTTP requests to authentication servers. This includes DNS resolution, connection attempts across all resolved IP addresses, TLS handshake, and HTTP request/response. Increase this value if authentication fails in environments where DNS returns many IP addresses for the same hostname (e.g., 7+ addresses). Default is 10 seconds to accommodate Happy Eyeballs connection attempts across multiple addresses.
       '';
       example = 15;
+    };
+
+    connection_timeout = mkOption {
+      type = types.nullOr (types.ints.unsigned);
+      default = 30;
+      description = ''
+        The timeout in seconds for local Himmelblau daemon socket operations. This setting controls how long clients wait when communicating with local Himmelblau services; HTTP requests to authentication servers are controlled by request_timeout.
+      '';
+      example = 5;
     };
 
     use_etc_skel = mkOption {
@@ -781,6 +781,71 @@ in
         - both -- allow both IPv4 and IPv6 (default)
       '';
       example = "ipv4-only";
+    };
+
+    orchestrator_enabled = mkOption {
+      type = types.nullOr (types.bool);
+      default = false;
+      description = ''
+        Enable use of the optional himmelblaud-orchestrator backend for browser-driven
+        OIDC authentication flows.
+        
+        When enabled, OIDC interactive authentication can be delegated to the
+        orchestrator over a Unix socket. If the orchestrator is unavailable or returns
+        an error, Himmelblau falls back to the built-in device authorization grant
+        (DAG) flow.
+      '';
+      example = true;
+    };
+
+    orchestrator_socket = mkOption {
+      type = types.nullOr (types.str);
+      default = "/var/run/himmelblaud/orchestrator.sock";
+      description = ''
+        Unix socket path used by himmelblaud to communicate with
+        himmelblaud-orchestrator.
+        
+        This path must match the orchestrator service configuration.
+      '';
+      example = "/run/himmelblaud/orchestrator.sock";
+    };
+
+    orchestrator_provider = mkOption {
+      type = types.nullOr (types.str);
+      default = null;
+      description = ''
+        Optional explicit provider key passed to himmelblaud-orchestrator when starting
+        an OIDC browser flow.
+        
+        If unset, the orchestrator auto-detects the provider from issuer URL, domain,
+        or embedded provider match rules.
+      '';
+      example = "keycloak";
+    };
+
+    orchestrator_timeout_secs = mkOption {
+      type = types.nullOr (types.ints.unsigned);
+      default = 30;
+      description = ''
+        Timeout in seconds for a single request/response exchange with
+        himmelblaud-orchestrator.
+        
+        This timeout applies to connect, send, and receive operations on the
+        orchestrator Unix socket.
+      '';
+      example = 10;
+    };
+
+    orchestrator_poll_secs = mkOption {
+      type = types.nullOr (types.ints.unsigned);
+      default = 2;
+      description = ''
+        Polling interval in seconds used for orchestrator-driven MFA wait prompts.
+        
+        This value controls how frequently PAM should poll the orchestrator for
+        progress while waiting for external approvals (for example push MFA).
+      '';
+      example = 3;
     };
 
     # [offline_breakglass] section options
