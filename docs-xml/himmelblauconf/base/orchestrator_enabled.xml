@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<parameter name="orchestrator_enabled"
+           section="global"
+           type="bool"
+           rust_type="bool"
+           documented="true"
+           domain_specific="false"
+           order="52">
+<description>
+Enable use of the optional himmelblaud-orchestrator backend for browser-driven
+OIDC authentication flows.
+
+When enabled, OIDC interactive authentication can be delegated to the
+orchestrator over a Unix socket. If the orchestrator is unavailable or returns
+an error, Himmelblau falls back to the built-in device authorization grant
+(DAG) flow.
+</description>
+<default>false</default>
+<example>orchestrator_enabled = true</example>
+</parameter>
