@@ -572,6 +572,15 @@ in
       example = "/tmp/broker.sock";
     };
 
+    enable_passwordless = mkOption {
+      type = types.nullOr (types.bool);
+      default = true;
+      description = ''
+        A boolean option that controls whether passwordless authentication (Microsoft Authenticator app approval without a password) is offered during Azure Entra ID authentication. When enabled, Himmelblau will include the passwordless option in authentication requests, allowing Entra ID to offer a passwordless flow. When disabled, users will be prompted for a password followed by MFA instead.
+      '';
+      example = false;
+    };
+
     home_prefix = mkOption {
       type = types.nullOr (types.str);
       default = "/home/";
@@ -609,15 +618,6 @@ in
         - CN
       '';
       example = "SPN";
-    };
-
-    enable_passwordless = mkOption {
-      type = types.nullOr (types.bool);
-      default = true;
-      description = ''
-        A boolean option that controls whether passwordless authentication (Microsoft Authenticator app approval without a password) is offered during Azure Entra ID authentication. When enabled, Himmelblau will include the passwordless option in authentication requests, allowing Entra ID to offer a passwordless flow. When disabled, users will be prompted for a password followed by MFA instead.
-      '';
-      example = false;
     };
 
     shell = mkOption {
@@ -727,6 +727,71 @@ in
         svcuser:service.account@tenant.local
       '';
       example = "/path/to/user_map";
+    };
+
+    orchestrator_enabled = mkOption {
+      type = types.nullOr (types.bool);
+      default = false;
+      description = ''
+        Enable use of the optional himmelblaud-orchestrator backend for browser-driven
+        OIDC authentication flows.
+        
+        When enabled, OIDC interactive authentication can be delegated to the
+        orchestrator over a Unix socket. If the orchestrator is unavailable or returns
+        an error, Himmelblau falls back to the built-in device authorization grant
+        (DAG) flow.
+      '';
+      example = true;
+    };
+
+    orchestrator_socket = mkOption {
+      type = types.nullOr (types.str);
+      default = "/var/run/himmelblaud/orchestrator.sock";
+      description = ''
+        Unix socket path used by himmelblaud to communicate with
+        himmelblaud-orchestrator.
+        
+        This path must match the orchestrator service configuration.
+      '';
+      example = "/run/himmelblaud/orchestrator.sock";
+    };
+
+    orchestrator_provider = mkOption {
+      type = types.nullOr (types.str);
+      default = null;
+      description = ''
+        Optional explicit provider key passed to himmelblaud-orchestrator when starting
+        an OIDC browser flow.
+        
+        If unset, the orchestrator auto-detects the provider from issuer URL, domain,
+        or embedded provider match rules.
+      '';
+      example = "entra";
+    };
+
+    orchestrator_timeout_secs = mkOption {
+      type = types.nullOr (types.ints.unsigned);
+      default = 30;
+      description = ''
+        Timeout in seconds for a single request/response exchange with
+        himmelblaud-orchestrator.
+        
+        This timeout applies to connect, send, and receive operations on the
+        orchestrator Unix socket.
+      '';
+      example = 10;
+    };
+
+    orchestrator_poll_secs = mkOption {
+      type = types.nullOr (types.ints.unsigned);
+      default = 2;
+      description = ''
+        Polling interval in seconds used for orchestrator-driven MFA wait prompts.
+        
+        This value controls how frequently PAM should poll the orchestrator for
+        progress while waiting for external approvals (for example push MFA).
+      '';
+      example = 3;
     };
 
     # [offline_breakglass] section options
