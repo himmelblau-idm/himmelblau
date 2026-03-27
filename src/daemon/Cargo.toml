@@ -59,7 +59,7 @@ libkrimes = { workspace = true }
 name = "himmelblau"
 maintainer = "David Mulder <dmulder@suse.com>"
 depends = ["$auto"]
-recommends = ["nss-himmelblau", "pam-himmelblau", "krb5-user", "cron", "tpm2-tools"]
+recommends = ["nss-himmelblau", "pam-himmelblau", "krb5-user", "cron", "tpm2-tools", "himmelblaud-orchestrator"]
 assets = [
   ["../../platform/debian/himmelblau.conf.example", "etc/himmelblau/himmelblau.conf", "644"],
   ["../../src/config/gdm3_service_override.conf", "usr/lib/systemd/system/gdm3.service.d/himmelblau-override.conf", "644"],
@@ -111,6 +111,7 @@ post_uninstall_script = "scripts/postrm"
 nss-himmelblau = "*"
 pam-himmelblau = "*"
 himmelblau-selinux = "*"
+himmelblaud-orchestrator = "*"
 krb5 = "*"
 cron = "*" # For Intune policy scripts
 system-user-tss = "*"

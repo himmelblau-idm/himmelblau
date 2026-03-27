@@ -1,0 +1,222 @@
+{
+  "provider": "keycloak",
+  "display_name": "Keycloak",
+  "matchers": {
+    "issuer_contains": [
+      "/login-actions/",
+      "/realms/"
+    ],
+    "domains": [],
+    "url_contains": [
+      "/login-actions/",
+      "/realms/"
+    ],
+    "page_title_contains": [
+      "Sign in to"
+    ],
+    "dom_selectors": [
+      "button#kc-login",
+      "form#kc-form-login",
+      "input#password",
+      "input#username"
+    ]
+  },
+  "start_url": "https://{host}/realms/{realm}/account",
+  "steps": [
+    {
+      "name": "login_with_username_password",
+      "wait_for": null,
+      "required_inputs": [
+        {
+          "name": "username",
+          "type": "text",
+          "prompt": null,
+          "optional": false
+        },
+        {
+          "name": "password",
+          "type": "password",
+          "prompt": "Sign in to your account",
+          "optional": false
+        }
+      ],
+      "actions": [
+        {
+          "type": "fill",
+          "selector": "input#username",
+          "input": "username"
+        },
+        {
+          "type": "fill",
+          "selector": "input#password",
+          "input": "password"
+        },
+        {
+          "type": "click",
+          "selector": "button#kc-login"
+        },
+        {
+          "type": "wait",
+          "millis": 10000
+        }
+      ],
+      "branches": [
+        {
+          "condition": {
+            "type": "always"
+          },
+          "goto_step": "setup_totp"
+        }
+      ],
+      "success": {
+        "url_contains": "code=",
+        "dom_selector": null,
+        "token_key": null
+      }
+    },
+    {
+      "name": "setup_totp",
+      "optional": true,
+      "wait_for": {
+        "selector": "form#kc-totp-settings-form input#totp, form#kc-totp-settings-form input[name='totp']",
+        "pattern": null,
+        "timeout_ms": null
+      },
+      "required_inputs": [
+        {
+          "name": "totp_setup_code",
+          "type": "otp",
+          "prompt": "Open your authenticator app and finish TOTP setup using this link:\n{{browser:url}}\nThen enter the generated code.",
+          "optional": false
+        }
+      ],
+      "actions": [
+        {
+          "type": "fill",
+          "selector": "form#kc-totp-settings-form input#totp, form#kc-totp-settings-form input[name='totp']",
+          "input": "totp_setup_code"
+        },
+        {
+          "type": "click",
+          "selector": "form#kc-totp-settings-form input#saveTOTPBtn, form#kc-totp-settings-form button#saveTOTPBtn, form#kc-totp-settings-form button[type='submit']"
+        },
+        {
+          "type": "wait",
+          "millis": 10000
+        }
+      ],
+      "branches": [
+        {
+          "condition": {
+            "type": "always"
+          },
+          "goto_step": "submit_otp"
+        }
+      ],
+      "success": {
+        "url_contains": "code=",
+        "dom_selector": null,
+        "token_key": null
+      }
+    },
+    {
+      "name": "submit_otp",
+      "optional": true,
+      "wait_for": {
+        "selector": "form#kc-otp-login-form input#otp[name='otp'], form#kc-otp-login-form input[name='otp'][autocomplete='one-time-code'], input#otp[name='otp'], input[name='totp']",
+        "pattern": null,
+        "timeout_ms": null
+      },
+      "required_inputs": [
+        {
+          "name": "otp",
+          "type": "otp",
+          "prompt": null,
+          "optional": false
+        }
+      ],
+      "actions": [
+        {
+          "type": "fill",
+          "selector": "form#kc-otp-login-form input#otp[name='otp'], form#kc-otp-login-form input[name='otp'][autocomplete='one-time-code'], input#otp[name='otp'], input[name='totp']",
+          "input": "otp"
+        },
+        {
+          "type": "click",
+          "selector": "form#kc-otp-login-form button#kc-login[name='login'][type='submit'], form#kc-otp-login-form button[type='submit'], button#kc-login"
+        },
+        {
+          "type": "wait",
+          "millis": 10000
+        }
+      ],
+      "branches": [
+        {
+          "condition": {
+            "type": "always"
+          },
+          "goto_step": "grant_device_access_consent"
+        }
+      ],
+      "success": {
+        "url_contains": "code=",
+        "dom_selector": null,
+        "token_key": null
+      }
+    },
+    {
+      "name": "grant_device_access_consent",
+      "optional": true,
+      "wait_for": {
+        "selector": "#kc-oauth form[action*='/login-actions/consent'] button[name='accept']",
+        "pattern": null,
+        "timeout_ms": null
+      },
+      "required_inputs": [],
+      "actions": [
+        {
+          "type": "click",
+          "selector": "#kc-login"
+        },
+        {
+          "type": "wait",
+          "millis": 10000
+        }
+      ],
+      "branches": [
+        {
+          "condition": {
+            "type": "always"
+          },
+          "goto_step": "confirm_device_login_success"
+        }
+      ],
+      "success": {
+        "url_contains": "code=",
+        "dom_selector": null,
+        "token_key": null
+      }
+    },
+    {
+      "name": "confirm_device_login_success",
+      "optional": true,
+      "wait_for": {
+        "selector": "#kc-info-message p.instruction",
+        "pattern": null,
+        "timeout_ms": null
+      },
+      "required_inputs": [],
+      "actions": [
+        {
+          "type": "log",
+          "message": "Checking for Keycloak device-login success page."
+        }
+      ],
+      "success": {
+        "url_contains": null,
+        "dom_selector": "#kc-info-message p.instruction",
+        "token_key": null
+      }
+    }
+  ]
+}

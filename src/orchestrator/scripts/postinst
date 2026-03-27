@@ -1,0 +1,30 @@
+#!/bin/sh
+set -e
+
+if command -v deb-systemd-helper >/dev/null 2>&1; then
+    if [ "$1" != "configure" ]; then
+        exit 0
+    fi
+
+    deb-systemd-helper unmask himmelblaud-orchestrator.service >/dev/null || true
+
+    if deb-systemd-helper --quiet was-enabled himmelblaud-orchestrator.service; then
+        deb-systemd-helper enable himmelblaud-orchestrator.service >/dev/null || true
+    else
+        deb-systemd-helper update-state himmelblaud-orchestrator.service >/dev/null || true
+    fi
+
+    if [ -z "$DPKG_ROOT" ] && [ -d /run/systemd/system ]; then
+        deb-systemd-invoke daemon-reload --system >/dev/null || true
+        deb-systemd-invoke restart himmelblaud-orchestrator.service >/dev/null || true
+    fi
+elif command -v systemctl >/dev/null 2>&1; then
+    if [ -d /run/systemd/system ]; then
+        systemctl daemon-reload >/dev/null || true
+        systemctl enable himmelblaud-orchestrator.service >/dev/null || true
+        systemctl restart himmelblaud-orchestrator.service >/dev/null || true
+    fi
+fi
+
+# Ensure orchestrator cache directories are created immediately after install
+systemd-tmpfiles --create /usr/lib/tmpfiles.d/himmelblaud-orchestrator.conf 2>/dev/null || systemd-tmpfiles --create /usr/lib/x86_64-linux-gnu/tmpfiles.d/himmelblaud-orchestrator.conf 2>/dev/null || true

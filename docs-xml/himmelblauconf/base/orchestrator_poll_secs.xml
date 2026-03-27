@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<parameter name="orchestrator_poll_secs"
+           section="global"
+           type="u32"
+           rust_type="u32"
+           documented="true"
+           domain_specific="false"
+           order="56">
+<description>
+Polling interval in seconds used for orchestrator-driven MFA wait prompts.
+
+This value controls how frequently PAM should poll the orchestrator for
+progress while waiting for external approvals (for example push MFA).
+</description>
+<default>2</default>
+<example>orchestrator_poll_secs = 3</example>
+</parameter>
