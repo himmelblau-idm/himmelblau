@@ -30,7 +30,6 @@ TIMEOUT_CARGO_UPDATE_SECONDS = 120  # 2 minutes for cargo update
 TIMEOUT_BUILD_SECONDS = 600  # 10 minutes for cargo build
 TIMEOUT_MAKE_VET_SECONDS = 600  # 10 minutes for make vet
 MAX_BUILD_FIX_ATTEMPTS = 3
-CO_AUTHOR_EMAIL = "Claude Opus 4.5 <noreply@anthropic.com>"
 
 # Git status codes that indicate unresolved conflicts
 CONFLICT_STATUS_CODES = {"UU", "AA", "DD"}
@@ -983,7 +982,7 @@ class BackportManager:
 
             if files_to_stage and self.git.has_staged_changes(*files_to_stage):
                 self.git.commit(
-                    f"Update make vet from main branch\n\nCo-Authored-By: {CO_AUTHOR_EMAIL}",
+                    f"Update make vet from main branch",
                     signoff=True
                 )
                 print_color("  Committed vet updates", "green")
@@ -1055,7 +1054,7 @@ class BackportManager:
                 if "Cargo.lock" in status:
                     self.git.add("Cargo.lock")
                     self.git.commit(
-                        f"Update libhimmelblau to latest version\n\nCo-Authored-By: {CO_AUTHOR_EMAIL}",
+                        f"Update libhimmelblau to latest version",
                         signoff=True
                     )
                     print_color("  Updated libhimmelblau", "green")
@@ -1124,7 +1123,7 @@ class BackportManager:
                     status = self.git.status_porcelain()
                     if status:
                         self.git.commit(
-                            f"{pr.title}\n\n(cherry-picked from dependabot PR #{pr.number})\n\nCo-Authored-By: {CO_AUTHOR_EMAIL}",
+                            f"{pr.title}\n\n(cherry-picked from dependabot PR #{pr.number})",
                             signoff=True
                         )
                     print_color(f"      Conflict resolved, cherry-pick complete", "green")
@@ -1193,7 +1192,7 @@ class BackportManager:
                 self.git.add("-A")
                 try:
                     self.git.commit(
-                        f"{commit.subject}\n\n(cherry-picked from {commit.sha})\n\nCo-Authored-By: {CO_AUTHOR_EMAIL}",
+                        f"{commit.subject}\n\n(cherry-picked from {commit.sha})",
                         signoff=True
                     )
                 except subprocess.CalledProcessError:
@@ -1216,7 +1215,7 @@ class BackportManager:
             if status:
                 self.git.add("-A")
                 self.git.commit(
-                    f"Fix build for backport of {commit.short_sha}\n\nCo-Authored-By: {CO_AUTHOR_EMAIL}",
+                    f"Fix build for backport of {commit.short_sha}",
                     signoff=True
                 )
 
@@ -1787,7 +1786,7 @@ Examples:
                 git.add("-A")
                 try:
                     git.commit(
-                        f"{commit.subject}\n\n(cherry-picked from {commit.sha})\n\nCo-Authored-By: {CO_AUTHOR_EMAIL}",
+                        f"{commit.subject}\n\n(cherry-picked from {commit.sha})",
                         signoff=True
                     )
                 except subprocess.CalledProcessError:
@@ -1820,7 +1819,7 @@ Examples:
             if status:
                 git.add("-A")
                 git.commit(
-                    f"Fix build for backport batch\n\nCo-Authored-By: {CO_AUTHOR_EMAIL}",
+                    f"Fix build for backport batch",
                     signoff=True
                 )
 
@@ -1854,7 +1853,7 @@ Examples:
             git.add("supply-chain/")
             try:
                 git.commit(
-                    f"Update cargo vet audits for backport\n\nCo-Authored-By: {CO_AUTHOR_EMAIL}",
+                    f"Update cargo vet audits for backport",
                     signoff=True
                 )
                 print_color("  Committed supply-chain updates", "green")
