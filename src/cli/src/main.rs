@@ -659,6 +659,14 @@ async fn main() -> ExitCode {
             mapped: _,
             full: _,
         } => debug,
+        HimmelblauUnixOpt::OwnerReset {
+            debug,
+            domain: _,
+        } => debug,
+        HimmelblauUnixOpt::OwnerShow {
+            debug,
+            domain: _,
+        } => debug,
         HimmelblauUnixOpt::ConfigurePam {
             debug,
             really: _,
@@ -1701,6 +1709,102 @@ async fn main() -> ExitCode {
                 println!("success");
                 ExitCode::SUCCESS
             }
+        }
+        HimmelblauUnixOpt::OwnerReset { debug: _, domain } => {
+            if unsafe { libc::geteuid() } != 0 {
+                error!("This command must be run as root.");
+                return ExitCode::FAILURE;
+            }
+
+            let owner_dir = Path::new("/var/lib/himmelblaud");
+            match domain {
+                Some(domain) => {
+                    let path = owner_dir.join(format!("owner.{}", domain));
+                    if path.exists() {
+                        if let Err(e) = fs::remove_file(&path) {
+                            error!("Failed to remove owner file {:?}: {}", path, e);
+                            return ExitCode::FAILURE;
+                        }
+                        println!("Device owner for domain '{}' has been reset.", domain);
+                    } else {
+                        println!("No device owner set for domain '{}'.", domain);
+                    }
+                }
+                None => {
+                    let mut found = false;
+                    if let Ok(entries) = fs::read_dir(owner_dir) {
+                        for entry in entries.flatten() {
+                            if let Some(name) = entry.file_name().to_str() {
+                                if name.starts_with("owner.") {
+                                    if let Err(e) = fs::remove_file(entry.path()) {
+                                        error!("Failed to remove {:?}: {}", entry.path(), e);
+                                        return ExitCode::FAILURE;
+                                    }
+                                    let domain_name = &name["owner.".len()..];
+                                    println!("Reset device owner for domain '{}'.", domain_name);
+                                    found = true;
+                                }
+                            }
+                        }
+                    }
+                    if !found {
+                        println!("No device owners set.");
+                    }
+                }
+            }
+            ExitCode::SUCCESS
+        }
+        HimmelblauUnixOpt::OwnerShow { debug: _, domain } => {
+            if unsafe { libc::geteuid() } != 0 {
+                error!("This command must be run as root.");
+                return ExitCode::FAILURE;
+            }
+
+            let owner_dir = Path::new("/var/lib/himmelblaud");
+            match domain {
+                Some(domain) => {
+                    let path = owner_dir.join(format!("owner.{}", domain));
+                    match fs::read_to_string(&path) {
+                        Ok(owner) => {
+                            let owner = owner.trim();
+                            if owner.is_empty() {
+                                println!("No device owner set for domain '{}'.", domain);
+                            } else {
+                                println!("{}: {}", domain, owner);
+                            }
+                        }
+                        Err(_) => {
+                            println!("No device owner set for domain '{}'.", domain);
+                        }
+                    }
+                }
+                None => {
+                    let mut found = false;
+                    if let Ok(entries) = fs::read_dir(owner_dir) {
+                        for entry in entries.flatten() {
+                            if let Some(name) = entry.file_name().to_str() {
+                                if name.starts_with("owner.") {
+                                    let domain_name = &name["owner.".len()..];
+                                    match fs::read_to_string(entry.path()) {
+                                        Ok(owner) => {
+                                            let owner = owner.trim();
+                                            if !owner.is_empty() {
+                                                println!("{}: {}", domain_name, owner);
+                                                found = true;
+                                            }
+                                        }
+                                        Err(_) => {}
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    if !found {
+                        println!("No device owners set.");
+                    }
+                }
+            }
+            ExitCode::SUCCESS
         }
         HimmelblauUnixOpt::ConfigurePam {
             debug: _,

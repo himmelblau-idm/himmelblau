@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<parameter name="auto_sudo_owner"
+           section="global"
+           type="bool"
+           rust_type="bool"
+           documented="true"
+           domain_specific="true"
+           order="22">
+<description>
+When set to
+.B true
+, the first Entra ID user to log in to each domain on this device is automatically
+granted sudo access via the local sudo group (see
+.B local_sudo_group
+). This user is considered the device owner. Subsequent users are not granted sudo
+by this mechanism, though they may still receive it via
+.B sudo_groups
+or
+.B local_groups
+configuration.
+.PP
+Ownership state is stored persistently under
+.I /var/lib/himmelblaud/
+and is not affected by cache clearing. Use
+.B aad-tool owner-show
+to display the current owner, or
+.B aad-tool owner-reset
+to reset ownership.
+</description>
+<default>false</default>
+<example>auto_sudo_owner = true</example>
+</parameter>

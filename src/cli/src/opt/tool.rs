@@ -417,6 +417,31 @@ pub enum HimmelblauUnixOpt {
         #[clap(long)]
         full: bool,
     },
+    /// Reset the device owner for a domain. After resetting, the next user
+    /// to log in (when auto_sudo_owner is enabled) will become the new
+    /// device owner and receive sudo access.
+    ///
+    /// This command must be run as root.
+    OwnerReset {
+        #[clap(short, long)]
+        debug: bool,
+        /// The domain to reset ownership for. If omitted, resets all domains.
+        #[clap(long)]
+        domain: Option<String>,
+    },
+    /// Show the current device owner for a domain, or all domains.
+    ///
+    /// This command reads the ownership state stored under /var/lib/himmelblaud/
+    /// and displays the account ID of the device owner for each domain.
+    ///
+    /// This command must be run as root.
+    OwnerShow {
+        #[clap(short, long)]
+        debug: bool,
+        /// The domain to show ownership for. If omitted, shows all domains.
+        #[clap(long)]
+        domain: Option<String>,
+    },
     /// Configure PAM to use pam_himmelblau
     ConfigurePam {
         #[clap(short, long)]
