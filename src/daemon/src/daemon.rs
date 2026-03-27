@@ -24,6 +24,7 @@ use std::fs::metadata;
 use std::io;
 use std::io::{Error as IoError, ErrorKind};
 use std::os::unix::fs::MetadataExt;
+use std::os::unix::io::FromRawFd;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::sync::Arc;
@@ -1146,10 +1147,22 @@ async fn main() -> ExitCode {
             let task_socket_path = cfg.get_task_socket_path();
             let broker_socket_path = cfg.get_broker_socket_path();
 
-            debug!("🧹 Cleaning up sockets from previous invocations");
-            rm_if_exist(&socket_path);
-            rm_if_exist(&task_socket_path);
-            rm_if_exist(&broker_socket_path);
+            // Collect all file descriptors passed by systemd (socket
+            // activation + FD store) in one shot, before anything
+            // else consumes the LISTEN_* environment variables.
+            let mut systemd_fds = prt_memfd::collect_systemd_fds();
+
+            // Only clean up sockets that were NOT passed via socket
+            // activation — those are owned by systemd.
+            if systemd_fds.main_socket.is_none() {
+                rm_if_exist(&socket_path);
+            }
+            if systemd_fds.task_socket.is_none() {
+                rm_if_exist(&task_socket_path);
+            }
+            if systemd_fds.broker_socket.is_none() {
+                rm_if_exist(&broker_socket_path);
+            }
 
 
             // Check the db path will be okay.
@@ -1294,20 +1307,14 @@ async fn main() -> ExitCode {
             }
 
             // Restore broker PRTs from systemd FileDescriptorStore
-            match prt_memfd::restore_prts_from_fdstore() {
-                Ok(Some(data)) => {
-                    if let Err(e) = idprovider.import_broker_prts(&data).await {
-                        error!("Failed to import PRTs from FD store: {:?}", e);
-                    } else {
-                        info!("Restored broker PRTs from FileDescriptorStore");
-                    }
+            if let Some(data) = prt_memfd::restore_prts(&mut systemd_fds) {
+                if let Err(e) = idprovider.import_broker_prts(&data).await {
+                    error!("Failed to import PRTs from FD store: {:?}", e);
+                } else {
+                    info!("Restored broker PRTs from FileDescriptorStore");
                 }
-                Ok(None) => {
-                    debug!("No broker PRTs in FileDescriptorStore (fresh boot or first start)");
-                }
-                Err(e) => {
-                    error!("Error reading FD store: {:?}", e);
-                }
+            } else {
+                debug!("No broker PRTs in FileDescriptorStore (fresh boot or first start)");
             }
 
             // Setup the tasks socket first.
@@ -1343,17 +1350,38 @@ async fn main() -> ExitCode {
 
             let cachelayer = Arc::new(cl_inner);
 
-            // Setup the root-only socket. Take away all other access bits.
-            let before = unsafe { umask(0o0077) };
-            let task_listener = match UnixListener::bind(task_socket_path.clone()) {
-                Ok(l) => l,
-                Err(_e) => {
-                    error!("Failed to bind UNIX socket {}", task_socket_path);
+            // Setup the root-only task socket.
+            // Prefer a socket-activated fd from systemd; fall back to
+            // manual bind.
+            let task_listener = if let Some(fd) = systemd_fds.task_socket.take() {
+                // SAFETY: fd is valid and owned by this process, passed
+                // by systemd via socket activation.
+                let std_listener = unsafe {
+                    std::os::unix::net::UnixListener::from_raw_fd(fd)
+                };
+                if let Err(e) = std_listener.set_nonblocking(true) {
+                    error!("Failed to set task socket non-blocking: {}", e);
                     return ExitCode::FAILURE
                 }
+                match UnixListener::from_std(std_listener) {
+                    Ok(l) => l,
+                    Err(e) => {
+                        error!("Failed to convert task socket: {}", e);
+                        return ExitCode::FAILURE
+                    }
+                }
+            } else {
+                let before = unsafe { umask(0o0077) };
+                let listener = match UnixListener::bind(task_socket_path.clone()) {
+                    Ok(l) => l,
+                    Err(_e) => {
+                        error!("Failed to bind UNIX socket {}", task_socket_path);
+                        return ExitCode::FAILURE
+                    }
+                };
+                let _ = unsafe { umask(before) };
+                listener
             };
-            // Undo umask changes.
-            let _ = unsafe { umask(before) };
 
             // Pre-process /etc/passwd and /etc/group for nxset
             if process_etc_passwd_group(&cachelayer).await.is_err() {
@@ -1459,13 +1487,34 @@ async fn main() -> ExitCode {
                 info!("Stopped inotify watcher");
             });
 
-            // Spawn the himmelblau dbus broker
+            // Spawn the himmelblau dbus broker.
+            // Prefer a socket-activated fd from systemd; fall back to
+            // manual bind inside himmelblau_broker_serve.
+            let broker_listener = if let Some(fd) = systemd_fds.broker_socket.take() {
+                let std_listener = unsafe {
+                    std::os::unix::net::UnixListener::from_raw_fd(fd)
+                };
+                if let Err(e) = std_listener.set_nonblocking(true) {
+                    error!("Failed to set broker socket non-blocking: {}", e);
+                    return ExitCode::FAILURE
+                }
+                match UnixListener::from_std(std_listener) {
+                    Ok(l) => Some(l),
+                    Err(e) => {
+                        error!("Failed to convert broker socket: {}", e);
+                        return ExitCode::FAILURE
+                    }
+                }
+            } else {
+                None
+            };
             let dbus_cachelayer = cachelayer.clone();
             let e_broadcast_rx = broadcast_tx.subscribe();
             let task_d = match himmelblau_broker_serve::<Broker>(
                 Broker { cachelayer: dbus_cachelayer },
                 &broker_socket_path,
-                e_broadcast_rx
+                e_broadcast_rx,
+                broker_listener,
             ).await {
                 Ok(task_d) => task_d,
                 Err(e) => {
@@ -1474,17 +1523,38 @@ async fn main() -> ExitCode {
                 },
             };
 
-            // Set the umask while we open the path for most clients.
-            let before = unsafe { umask(0) };
-            let listener = match UnixListener::bind(socket_path.clone()) {
-                Ok(l) => l,
-                Err(_e) => {
-                    error!("Failed to bind UNIX socket at {}", socket_path);
+            // Setup the main daemon socket.
+            // Prefer a socket-activated fd from systemd; fall back to
+            // manual bind.
+            let listener = if let Some(fd) = systemd_fds.main_socket.take() {
+                // SAFETY: fd is valid and owned by this process, passed
+                // by systemd via socket activation.
+                let std_listener = unsafe {
+                    std::os::unix::net::UnixListener::from_raw_fd(fd)
+                };
+                if let Err(e) = std_listener.set_nonblocking(true) {
+                    error!("Failed to set main socket non-blocking: {}", e);
                     return ExitCode::FAILURE
                 }
+                match UnixListener::from_std(std_listener) {
+                    Ok(l) => l,
+                    Err(e) => {
+                        error!("Failed to convert main socket: {}", e);
+                        return ExitCode::FAILURE
+                    }
+                }
+            } else {
+                let before = unsafe { umask(0) };
+                let listener = match UnixListener::bind(socket_path.clone()) {
+                    Ok(l) => l,
+                    Err(_e) => {
+                        error!("Failed to bind UNIX socket at {}", socket_path);
+                        return ExitCode::FAILURE
+                    }
+                };
+                let _ = unsafe { umask(before) };
+                listener
             };
-            // Undo umask changes.
-            let _ = unsafe { umask(before) };
 
             // Keep a reference for PRT FD store persistence on service shutdown.
             let shutdown_cachelayer = cachelayer.clone();
@@ -1528,6 +1598,16 @@ async fn main() -> ExitCode {
                 }
             }
 
+            // Ping the systemd watchdog at half the configured WatchdogSec interval.
+            let mut watchdog_interval = if systemd_booted {
+                std::env::var("WATCHDOG_USEC")
+                    .ok()
+                    .and_then(|v| v.parse::<u64>().ok())
+                    .map(|usec| time::interval(Duration::from_micros(usec / 2)))
+            } else {
+                None
+            };
+
             loop {
                 tokio::select! {
                     Ok(()) = tokio::signal::ctrl_c() => {
@@ -1567,6 +1647,14 @@ async fn main() -> ExitCode {
                         tokio::signal::unix::signal(sigterm).unwrap().recv().await
                     } => {
                         // Ignore
+                    }
+                    _ = async {
+                        match watchdog_interval.as_mut() {
+                            Some(interval) => interval.tick().await,
+                            None => std::future::pending().await,
+                        }
+                    } => {
+                        let _ = sd_notify::notify(false, &[NotifyState::Watchdog]);
                     }
                 }
             }
