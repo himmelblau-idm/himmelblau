@@ -36,8 +36,8 @@ use crate::constants::{
     DEFAULT_JOIN_TYPE, DEFAULT_ODC_PROVIDER, DEFAULT_OFFLINE_BREAKGLASS_TTL,
     DEFAULT_PASSWORD_ONLY_REMOTE_SERVICES_DENY_LIST, DEFAULT_POLICIES_DB_DIR, DEFAULT_SELINUX,
     DEFAULT_SFA_FALLBACK_ENABLED, DEFAULT_SHELL, DEFAULT_SOCK_PATH, DEFAULT_TASK_SOCK_PATH,
-    DEFAULT_TPM_TCTI_NAME, DEFAULT_USER_MAP_FILE, DEFAULT_USE_ETC_SKEL, MAPPED_NAME_CACHE,
-    SERVER_CONFIG_PATH,
+    DEFAULT_TPM_TCTI_NAME, DEFAULT_UNIX_SOCK_TIMEOUT, DEFAULT_USER_MAP_FILE,
+    DEFAULT_USE_ETC_SKEL, MAPPED_NAME_CACHE, SERVER_CONFIG_PATH,
 };
 use crate::mapping::{MappedNameCache, Mode};
 use crate::unix_config::{HomeAttr, HsmType};
@@ -367,7 +367,11 @@ impl HimmelblauConfig {
     }
 
     pub fn get_unix_sock_timeout(&self) -> u64 {
-        self.get_connection_timeout().saturating_mul(2)
+        // The Unix socket timeout must be long enough for MFA flows
+        // (user approval + daemon background tasks like Kerberos, Intune).
+        // This is independent of the HTTP connection_timeout used for
+        // online detection.
+        DEFAULT_UNIX_SOCK_TIMEOUT
     }
 
     /// Get the subordinate ID range for container support (podman, etc.)
@@ -916,7 +920,7 @@ mod tests {
 
         assert_eq!(config.get_connection_timeout(), 45);
         let config_empty = create_empty_config();
-        assert_eq!(config_empty.get_connection_timeout(), 30);
+        assert_eq!(config_empty.get_connection_timeout(), DEFAULT_CONN_TIMEOUT);
     }
 
     #[test]
@@ -1188,6 +1192,9 @@ mod tests {
 
     #[test]
     fn test_get_unix_sock_timeout() {
+        // The Unix socket timeout is now a fixed constant, independent of
+        // connection_timeout. It must be long enough for MFA approval +
+        // daemon background tasks (Kerberos, profile photo, Intune).
         let config_data = r#"
         [global]
         connection_timeout = 15
@@ -1196,11 +1203,11 @@ mod tests {
         let temp_file = create_temp_config(config_data);
         let config = HimmelblauConfig::new(Some(&temp_file)).unwrap();
 
-        assert_eq!(config.get_unix_sock_timeout(), 30);
+        assert_eq!(config.get_unix_sock_timeout(), DEFAULT_UNIX_SOCK_TIMEOUT);
         let config_empty = create_empty_config();
         assert_eq!(
             config_empty.get_unix_sock_timeout(),
-            DEFAULT_CONN_TIMEOUT * 2
+            DEFAULT_UNIX_SOCK_TIMEOUT
         );
     }
 
