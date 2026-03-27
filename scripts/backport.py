@@ -96,20 +96,52 @@ class AnalysisCache:
                 return {}
         return {}
 
-    def get(self, commit_sha: str) -> Optional[dict]:
-        """Get cached analysis for a commit, or None if not cached."""
+    @staticmethod
+    def _legacy_analysis_is_safe(analysis: dict) -> bool:
+        """Return True when legacy unscoped analysis can be reused safely.
+
+        Legacy cache entries predate target-aware scoping. A cached SKIP/MAYBE
+        from a prior run (for a different target set) can incorrectly suppress
+        valid backports. Reuse only positive BACKPORT decisions from legacy
+        cache; force re-analysis for SKIP/MAYBE.
+        """
+        verdict = str(analysis.get("verdict", "")).upper()
+        return verdict == "BACKPORT"
+
+    def get(self, commit_sha: str, analysis_scope: Optional[str] = None) -> Optional[dict]:
+        """Get cached analysis for a commit and optional target scope."""
         if not self.enabled:
             return None
         data = self._load_cache(commit_sha)
+        if analysis_scope:
+            scoped = data.get("analysis_by_scope")
+            if isinstance(scoped, dict):
+                analysis = scoped.get(analysis_scope)
+                if isinstance(analysis, dict):
+                    return analysis
+
+            # Backward compatibility: reuse legacy unscoped cache only when
+            # safe (BACKPORT). Never reuse legacy SKIP/MAYBE.
+            legacy = data.get("analysis")
+            if isinstance(legacy, dict) and self._legacy_analysis_is_safe(legacy):
+                return legacy
+            return None
         analysis = data.get("analysis")
         return analysis if isinstance(analysis, dict) else None
 
-    def set(self, commit_sha: str, analysis: dict):
-        """Cache analysis result for a commit."""
+    def set(self, commit_sha: str, analysis: dict, analysis_scope: Optional[str] = None):
+        """Cache analysis result for a commit and optional target scope."""
         data = self._load_cache(commit_sha)
         cache_file = self._cache_path(commit_sha)
         data["commit_sha"] = commit_sha
-        data["analysis"] = analysis
+        if analysis_scope:
+            scoped = data.get("analysis_by_scope")
+            if not isinstance(scoped, dict):
+                scoped = {}
+            scoped[analysis_scope] = analysis
+            data["analysis_by_scope"] = scoped
+        else:
+            data["analysis"] = analysis
         cache_file.write_text(json.dumps(data, indent=2))
 
     def get_declined_targets(self, commit_sha: str) -> Set[str]:
@@ -151,7 +183,11 @@ class AnalysisCache:
         cache_file = self._cache_path(commit_sha)
         cache_file.write_text(json.dumps(data, indent=2))
 
-    def get_cached_commits(self, commits: list["Commit"]) -> tuple[dict[str, dict], list["Commit"]]:
+    def get_cached_commits(
+        self,
+        commits: list["Commit"],
+        analysis_scope: Optional[str] = None,
+    ) -> tuple[dict[str, dict], list["Commit"]]:
         """
         Check which commits have cached analysis.
 
@@ -163,7 +199,7 @@ class AnalysisCache:
         uncached = []
 
         for commit in commits:
-            analysis = self.get(commit.sha)
+            analysis = self.get(commit.sha, analysis_scope=analysis_scope)
             if analysis:
                 cached[commit.short_sha] = analysis
             else:
@@ -662,6 +698,12 @@ Please resolve the conflicts and ensure the dependency update is applied correct
         """Check if the AI CLI is available."""
         return shutil.which(self.cli_path) is not None
 
+    @staticmethod
+    def _analysis_scope_for_versions(versions: list[SupportedVersion]) -> str:
+        """Create a stable cache key for the target branches under analysis."""
+        branches = sorted({v.branch for v in versions})
+        return "branches:" + ",".join(branches)
+
     def analyze_commits(
         self, commits: list[Commit], versions: list[SupportedVersion]
     ) -> tuple[str, dict[str, dict]]:
@@ -675,7 +717,11 @@ Please resolve the conflicts and ensure the dependency update is applied correct
             - parsed_results: Dict mapping short_sha to {verdict, targets, reason}
         """
         # Check cache for existing analysis
-        cached_results, uncached_commits = self.cache.get_cached_commits(commits)
+        analysis_scope = self._analysis_scope_for_versions(versions)
+        cached_results, uncached_commits = self.cache.get_cached_commits(
+            commits,
+            analysis_scope=analysis_scope,
+        )
 
         if cached_results:
             print_color(f"  Found {len(cached_results)} cached analysis result(s)", "green")
@@ -744,7 +790,7 @@ Please resolve the conflicts and ensure the dependency update is applied correct
 
                 if matched_analysis:
                     new_results[commit.short_sha] = matched_analysis
-                    self.cache.set(commit.sha, matched_analysis)
+                    self.cache.set(commit.sha, matched_analysis, analysis_scope=analysis_scope)
                 else:
                     print_color(
                         f"    Warning: AI response did not include {commit.short_sha}",
@@ -1566,14 +1612,31 @@ Examples:
     original_count = len(commits)
     commits = [c for c in commits if not c.is_merge and not c.is_dependabot and not c.is_ci_only]
 
-    # Proactively filter out commits we know are already backported
-    commits = [c for c in commits if not any([git.is_commit_in_branch(c.sha, f"origin/{v.branch}", c.subject) for v in versions])]
+    # Check whether each commit already exists per target branch.
+    # Keep commits that are missing from at least one target branch.
+    already_present_by_commit: dict[str, set[str]] = {}
+    commits_needing_analysis: list[Commit] = []
+    for commit in commits:
+        present_targets = {
+            version.branch
+            for version in versions
+            if git.is_commit_in_branch(commit.sha, f"origin/{version.branch}", commit.subject)
+        }
+        if present_targets:
+            already_present_by_commit[commit.sha] = present_targets
+        if len(present_targets) < len(versions):
+            commits_needing_analysis.append(commit)
+
+    commits = commits_needing_analysis
 
     # Reverse to apply oldest commits first (git log returns newest first)
     commits = list(reversed(commits))
 
+    commits_already_in_all_targets = original_count - len(commits)
     print(f"  Found {original_count} commits, {len(commits)} after filtering")
     print(f"  (Filtered out merge commits, dependabot updates, and CI-only changes)")
+    if commits_already_in_all_targets > 0:
+        print(f"  (Skipped {commits_already_in_all_targets} commit(s) already present in all target branches)")
 
     if not commits:
         print_color("\nNo commits to analyze for backporting.", "green")
@@ -1605,11 +1668,15 @@ Examples:
     # Identify backports to apply
     backports_to_apply = []
     declined_total = 0
+    already_present_total = 0
     for commit in commits:
         if commit.short_sha in parsed:
             info = parsed[commit.short_sha]
             if info['verdict'] == 'BACKPORT':
                 for target_ver in versions:
+                    if target_ver.branch in already_present_by_commit.get(commit.sha, set()):
+                        already_present_total += 1
+                        continue
                     if cache.is_declined(commit.sha, target_ver.branch, target_ver.version):
                         declined_total += 1
                         continue
@@ -1622,6 +1689,8 @@ Examples:
     print_color(f"\nBackports to apply ({len(backports_to_apply)}):", "blue")
     for commit, target, _info in backports_to_apply:
         print(f"  {commit.short_sha} -> {target.version}: {commit.subject[:50]}")
+    if already_present_total > 0:
+        print_color(f"  Skipped {already_present_total} target backport(s) already present in branch history", "yellow")
     if declined_total > 0:
         print_color(f"  Skipped {declined_total} previously declined backport(s) from cache", "yellow")
 
@@ -1748,7 +1817,6 @@ Examples:
 
         # Apply each commit
         all_success = True
-        skipped_already_present = 0
         for commit, analysis_info in commits_for_version:
             print_color(f"\n  Cherry-picking {commit.short_sha}: {commit.subject[:50]}...", "cyan")
 
@@ -1794,9 +1862,6 @@ Examples:
                     pass
 
             print_color("  Cherry-pick successful", "green")
-
-        if skipped_already_present > 0:
-            print_color(f"\n  Skipped {skipped_already_present} commit(s) already present in {target.branch}", "yellow")
 
         if not all_success:
             print_color(f"\nSome cherry-picks failed for {version_str}", "yellow")
