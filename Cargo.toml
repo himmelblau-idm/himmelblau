@@ -33,7 +33,7 @@ kanidm_build_profiles = { path = "src/kanidm_build_profiles" }
 picky-krb = { path = "src/picky-krb" }
 
 [workspace.package]
-version = "2.3.8"
+version = "2.3.9"
 authors = [
     "David Mulder <dmulder@suse.com>"
 ]
