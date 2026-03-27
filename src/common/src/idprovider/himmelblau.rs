@@ -28,16 +28,16 @@ use crate::constants::EDGE_BROWSER_CLIENT_ID;
 use crate::constants::ID_MAP_CACHE;
 use crate::db::KeyStoreTxn;
 use crate::idmap_cache::StaticIdCache;
-use crate::idprovider::common::flip_displayname_comma;
 use crate::idprovider::common::KeyType;
 use crate::idprovider::common::RefreshCacheEntry;
 use crate::idprovider::common::TotpEnrollmentRecord;
-use crate::idprovider::common::{BadPinCounter, RefreshCache};
 use crate::idprovider::common::PRT_REFRESH_AGE;
+use crate::idprovider::common::{cache_idmap_result, flip_displayname_comma};
+use crate::idprovider::common::{BadPinCounter, RefreshCache};
 use crate::idprovider::interface::{tpm, UserTokenState};
 use crate::idprovider::openidconnect::OidcProvider;
 use crate::tpm::confidential_client_creds;
-use crate::unix_proto::PamAuthRequest;
+use crate::unix_proto::{PamAuthRequest, TaskRequest, TaskSender};
 use crate::user_map::UserMap;
 use crate::{
     check_hello_totp_enabled, check_hello_totp_setup, entra_id_prt_token_fetch,
@@ -170,6 +170,7 @@ enum Providers {
 pub struct HimmelblauMultiProvider {
     config: Arc<RwLock<HimmelblauConfig>>,
     providers: Arc<RwLock<HashMap<String, Providers>>>,
+    task_tx: Arc<RwLock<Option<TaskSender>>>,
 }
 
 impl HimmelblauMultiProvider {
@@ -193,9 +194,11 @@ impl HimmelblauMultiProvider {
             warn!("No domains configured in himmelblau.conf.");
         }
 
+        let task_tx: Arc<RwLock<Option<TaskSender>>> = Arc::new(RwLock::new(None));
         let providers = HimmelblauMultiProvider {
             config: config.clone(),
             providers: Arc::new(RwLock::new(providers)),
+            task_tx: task_tx.clone(),
         };
 
         if cfg.get_oidc_issuer_url().is_none() {
@@ -225,11 +228,12 @@ impl HimmelblauMultiProvider {
                         error!("Failed initializing provider: {:?}", e);
                         anyhow!("{:?}", e)
                     })?;
-                let provider = HimmelblauProvider::new(app, &config, &domain, graph, &idmap)
-                    .map_err(|e| {
-                        error!("Failed to initialize the provider: {:?}", e);
-                        anyhow!("Failed to initialize the provider")
-                    })?;
+                let provider =
+                    HimmelblauProvider::new(app, &config, &domain, graph, &idmap, &task_tx)
+                        .map_err(|e| {
+                            error!("Failed to initialize the provider: {:?}", e);
+                            anyhow!("Failed to initialize the provider")
+                        })?;
                 {
                     // A client write lock is required here.
                     let mut client = provider.client.write().await;
@@ -284,6 +288,13 @@ impl HimmelblauMultiProvider {
         });
 
         Ok(providers)
+    }
+
+    /// Set the task channel sender so the provider can dispatch work to tasksd.
+    /// Called from the daemon after both the provider and the task channel are
+    /// created.
+    pub async fn set_task_tx(&self, tx: TaskSender) {
+        *self.task_tx.write().await = Some(tx);
     }
 }
 
@@ -801,6 +812,7 @@ pub struct HimmelblauProvider {
     idmap: Arc<RwLock<Idmap>>,
     init: RwLock<bool>,
     bad_pin_counter: BadPinCounter,
+    task_tx: Arc<RwLock<Option<TaskSender>>>,
 }
 
 impl HimmelblauProvider {
@@ -810,6 +822,7 @@ impl HimmelblauProvider {
         domain: &str,
         graph: Graph,
         idmap: &Arc<RwLock<Idmap>>,
+        task_tx: &Arc<RwLock<Option<TaskSender>>>,
     ) -> Result<Self, IdpError> {
         Ok(HimmelblauProvider {
             state: Mutex::new(CacheState::OfflineNextCheck(SystemTime::now())),
@@ -821,7 +834,86 @@ impl HimmelblauProvider {
             idmap: idmap.clone(),
             init: RwLock::new(false),
             bad_pin_counter: BadPinCounter::new(),
+            task_tx: task_tx.clone(),
         })
+    }
+
+    async fn resolve_default_uid_gid(
+        &self,
+        config: &HimmelblauConfig,
+        spn: &str,
+        uuid: Uuid,
+        posix_attrs: &HashMap<String, String>,
+    ) -> Result<(u32, u32), IdpError> {
+        let tenant_id = self.graph.tenant_id().await.map_err(|e| {
+            error!("{:?}", e);
+            IdpError::BadRequest
+        })?;
+        let idmap = self.idmap.read().await;
+
+        let uidnumber = match config.get_id_attr_map() {
+            IdAttr::Uuid => idmap
+                .object_id_to_unix_id(
+                    &tenant_id,
+                    &AadSid::from_object_id(&uuid).map_err(|e| {
+                        error!("Failed parsing object id: {:?}", e);
+                        IdpError::BadRequest
+                    })?,
+                )
+                .map_err(|e| {
+                    error!("{:?}", e);
+                    IdpError::BadRequest
+                })?,
+            IdAttr::Name => idmap.gen_to_unix(&tenant_id, spn).map_err(|e| {
+                error!("{:?}", e);
+                IdpError::BadRequest
+            })?,
+            IdAttr::Rfc2307 => match posix_attrs.get("uidNumber") {
+                Some(uid_number) => uid_number.parse::<u32>().map_err(|e| {
+                    error!(
+                        "Invalid uidNumber ('{}') synced from on-prem AD: {:?}",
+                        uid_number, e
+                    );
+                    IdpError::BadRequest
+                })?,
+                None => {
+                    error!("User {} has no uidNumber defined in the directory!", uuid);
+                    return Err(IdpError::BadRequest);
+                }
+            },
+        };
+
+        let gidnumber = match posix_attrs.get("gidNumber") {
+            Some(gid_number) => gid_number.parse::<u32>().map_err(|e| {
+                error!(
+                    "Invalid gidNumber ('{}') synced from on-prem AD: {:?}",
+                    gid_number, e
+                );
+                IdpError::BadRequest
+            })?,
+            None => uidnumber,
+        };
+
+        Ok((uidnumber, gidnumber))
+    }
+
+    fn ensure_primary_group(
+        groups: &mut Vec<GroupToken>,
+        spn: &str,
+        uuid: Uuid,
+        gidnumber: u32,
+        posix_attrs: &HashMap<String, String>,
+    ) {
+        if !posix_attrs.contains_key("gidNumber")
+            && groups.iter().all(|group| group.gidnumber != gidnumber)
+        {
+            groups.push(GroupToken {
+                name: spn.to_string(),
+                spn: spn.to_string(),
+                uuid,
+                gidnumber,
+            });
+        }
     }
 
     /// Export PRT entries for FD store persistence.
@@ -4512,6 +4604,7 @@ impl HimmelblauProvider {
         };
         let valid = true;
         let user_map = UserMap::new(&config.get_user_map_file());
+        let mut username_override: Option<String> = None;
         let (uidnumber, gidnumber) = match user_map.get_local_from_upn(&spn) {
             Some(user) => {
                 let pwd = unsafe {
@@ -4532,80 +4625,144 @@ impl HimmelblauProvider {
                 (pwd.pw_uid as u32, pwd.pw_gid as u32)
             }
             None => {
-                let idmap = self.idmap.read().await;
                 let idmap_cache = StaticIdCache::new(ID_MAP_CACHE, false).map_err(|e| {
                     error!("Failed reading from the idmap cache: {:?}", e);
                     IdpError::BadRequest
                 })?;
-                match idmap_cache.get_user_by_name(&spn) {
-                    Some(user) => (user.uid, user.gid),
-                    None => {
-                        let uidnumber = match config.get_id_attr_map() {
-                            IdAttr::Uuid => idmap
-                                .object_id_to_unix_id(
-                                    &self.graph.tenant_id().await.map_err(|e| {
-                                        error!("{:?}", e);
-                                        IdpError::BadRequest
-                                    })?,
-                                    &AadSid::from_object_id(&uuid).map_err(|e| {
-                                        error!("Failed parsing object id: {:?}", e);
-                                        IdpError::BadRequest
-                                    })?,
-                                )
-                                .map_err(|e| {
-                                    error!("{:?}", e);
-                                    IdpError::BadRequest
-                                })?,
-                            IdAttr::Name => idmap
-                                .gen_to_unix(
-                                    &self.graph.tenant_id().await.map_err(|e| {
-                                        error!("{:?}", e);
-                                        IdpError::BadRequest
-                                    })?,
-                                    &spn,
-                                )
-                                .map_err(|e| {
-                                    error!("{:?}", e);
-                                    IdpError::BadRequest
-                                })?,
-                            IdAttr::Rfc2307 => match posix_attrs.get("uidNumber") {
-                                Some(uid_number) => uid_number.parse::<u32>().map_err(|e| {
-                                    error!(
-                                        "Invalid uidNumber ('{}') synced from on-prem AD: {:?}",
-                                        uid_number, e
-                                    );
-                                    IdpError::BadRequest
-                                })?,
-                                None => {
-                                    error!(
-                                        "User {} has no uidNumber defined in the directory!",
-                                        uuid
-                                    );
-                                    return Err(IdpError::BadRequest);
-                                }
-                            },
+
+                // When idmap_script is configured, always dispatch the
+                // script to tasksd.  On first login the result is cached;
+                // on subsequent logins tasksd compares the script output
+                // with the cache and rejects the login on mismatch.
+                if config.get_idmap_script().is_some() {
+                    let script = config.get_idmap_script().unwrap_or_default();
+                    let access_token_env = access_token.clone().unwrap_or_default();
+                    let tenant_id = self.graph.tenant_id().await.map_err(|e| {
+                        error!("Failed fetching tenant id for idmap script: {:?}", e);
+                        IdpError::BadRequest
+                    })?;
+                    let domain = split_username(&spn)
+                        .map(|(_, d)| d.to_string())
+                        .unwrap_or_default();
+
+                    let task_tx_guard = self.task_tx.read().await;
+                    let task_tx = task_tx_guard.as_ref().ok_or_else(|| {
+                        error!("idmap_script configured but task channel not available");
+                        IdpError::BadRequest
+                    })?;
+
+                    let (tx, rx) = tokio::sync::oneshot::channel();
+                    task_tx
+                        .send_timeout(
+                            (
+                                TaskRequest::IdmapScript(
+                                    script,
+                                    spn.clone(),
+                                    access_token_env,
+                                    uuid.to_string(),
+                                    tenant_id,
+                                    domain,
+                                ),
+                                tx,
+                            ),
+                            std::time::Duration::from_millis(100),
+                        )
+                        .await
+                        .map_err(|e| {
+                            error!("Failed to dispatch idmap script task: {:?}", e);
+                            IdpError::BadRequest
+                        })?;
+
+                    let script_status =
+                        match tokio::time::timeout(std::time::Duration::from_secs(30), rx).await {
+                            Ok(Ok(status)) => status,
+                            _ => {
+                                error!("idmap script task failed or timed out for {}", spn);
+                                return Err(IdpError::BadRequest);
+                            }
                         };
 
-                        // Utilize the existing primary group if set
-                        let gidnumber = if let Some(gid_number) = posix_attrs.get("gidNumber") {
-                            gid_number.parse::<u32>().map_err(|e| {
-                                error!(
-                                    "Invalid gidNumber ('{}') synced from on-prem AD: {:?}",
-                                    gid_number, e
-                                );
-                                IdpError::BadRequest
-                            })?
+                    if script_status == 0 {
+                        // Script ran successfully — read from cache.
+                        let idmap_cache = StaticIdCache::new(ID_MAP_CACHE, false).map_err(|e| {
+                            error!("Failed reading idmap cache after script: {:?}", e);
+                            IdpError::BadRequest
+                        })?;
+                        let user = idmap_cache.get_user_by_name(&spn).ok_or_else(|| {
+                            error!("idmap cache empty after script for {}", spn);
+                            IdpError::BadRequest
+                        })?;
+
+                        let default_ids = if user.uid == 0 || user.gid == 0 {
+                            Some(
+                                self.resolve_default_uid_gid(&config, &spn, uuid, &posix_attrs)
+                                    .await?,
+                            )
                         } else {
-                            // Otherwise add a fake primary group
-                            groups.push(GroupToken {
-                                name: spn.clone(),
-                                spn: spn.clone(),
-                                uuid,
-                                gidnumber: uidnumber,
-                            });
-                            uidnumber
+                            None
                         };
+                        let uidnumber = if user.uid != 0 {
+                            user.uid
+                        } else {
+                            default_ids
+                                .as_ref()
+                                .expect("default ids must be present when uid is missing")
+                                .0
+                        };
+                        let gidnumber = if user.gid != 0 {
+                            user.gid
+                        } else if user.uid != 0 {
+                            user.uid
+                        } else {
+                            default_ids
+                                .as_ref()
+                                .expect("default ids must be present when gid is missing")
+                                .1
+                        };
+
+                        Self::ensure_primary_group(
+                            &mut groups,
+                            &spn,
+                            uuid,
+                            gidnumber,
+                            &posix_attrs,
+                        );
+                        username_override = user.username;
                         (uidnumber, gidnumber)
+                    } else {
+                        // Script exited 0 with no output ("") and this
+                        // is the first login — resolve defaults and
+                        // cache so future "" logins match.
+                        let (uidnumber, gidnumber) = self
+                            .resolve_default_uid_gid(&config, &spn, uuid, &posix_attrs)
+                            .await?;
+                        cache_idmap_result(&spn, None, uidnumber, gidnumber);
+                        Self::ensure_primary_group(
+                            &mut groups,
+                            &spn,
+                            uuid,
+                            gidnumber,
+                            &posix_attrs,
+                        );
+                        (uidnumber, gidnumber)
+                    }
+                } else {
+                    // No idmap_script — use the existing idmap resolution.
+                    match idmap_cache.get_user_by_name(&spn) {
+                        Some(user) => (user.uid, user.gid),
+                        None => {
+                            let (uidnumber, gidnumber) = self
+                                .resolve_default_uid_gid(&config, &spn, uuid, &posix_attrs)
+                                .await?;
+                            Self::ensure_primary_group(
+                                &mut groups,
+                                &spn,
+                                uuid,
+                                gidnumber,
+                                &posix_attrs,
+                            );
+                            (uidnumber, gidnumber)
+                        }
                     }
                 }
             }
@@ -4635,8 +4792,9 @@ impl HimmelblauProvider {
             );
         }
 
+        let session_name = username_override.unwrap_or_else(|| spn.clone());
         Ok(UserToken {
-            name: spn.clone(),
+            name: session_name,
             spn: spn.clone(),
             uuid,
             real_gidnumber: Some(gidnumber),

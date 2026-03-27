@@ -118,6 +118,19 @@
 # provides flexibility for environments requiring custom name transformations.
 # name_mapping_script =
 #
+# Path to an executable identity-mapping script run on every login.  The
+# first successful result is cached; later runs must match the cache or
+# login is rejected.
+# Env vars: USERNAME, ACCESS_TOKEN, OBJECT_ID, TENANT_ID, DOMAIN.
+# ACCESS_TOKEN may be empty during offline logon.
+# Print one line of comma-separated key=value pairs.  Keys: uid, gid,
+# username.  Any other key is an error.  Examples:
+#   uid=500,gid=500
+#   uid=1000,gid=500,username=jsmith
+# Exit 0 with no output to use the default UID/GID mapping.  Exit non-zero
+# to reject the login.
+# idmap_script =
+#
 # Whether to apply Intune policies.
 # apply_policy = false ; {true|false}
 #

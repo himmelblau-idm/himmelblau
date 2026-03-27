@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<parameter name="idmap_script"
+           section="global"
+           type="string"
+           rust_type="Option&lt;String&gt;"
+           documented="true"
+           domain_specific="false"
+           order="28">
+<description>
+Path to an executable identity-mapping script run on every login.  The first
+successful result is cached; later runs must match the cache or login is
+rejected.  The script receives USERNAME, ACCESS_TOKEN, OBJECT_ID, TENANT_ID,
+and DOMAIN.  ACCESS_TOKEN is empty when offline.  Print one stdout line of
+comma-separated key=value pairs:
+.RS 4
+.nf
+uid=&lt;number&gt;   (mapped UID)
+gid=&lt;number&gt;   (mapped GID)
+username=&lt;string&gt;  (optional — overrides the session username)
+.fi
+.RE
+Only uid, gid, and username are accepted; any other key rejects the login.
+.PP
+Exit 0 with no output to use the default UID/GID mapping.  A non-zero exit
+code rejects the login.
+</description>
+<default></default>
+<example>idmap_script = /etc/himmelblau/idmap.sh</example>
+</parameter>
