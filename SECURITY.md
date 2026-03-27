@@ -6,6 +6,7 @@ We maintain security updates for the following Himmelblau releases:
 
 | Version        | Supported |
 |----------------|-----------|
+| 3.x            | ✅ Yes    |
 | 2.x            | ✅ Yes    |
 | < 2.x          | ❌ No     |
 
