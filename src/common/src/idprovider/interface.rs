@@ -255,6 +255,7 @@ pub trait IdProvider {
         _scopes: Vec<String>,
         _token: Option<&UserToken>,
         _client_id: Option<String>,
+        _redirect_uri: Option<String>,
         _keystore: &mut D,
         _tpm: &mut tpm::provider::BoxedDynTpm,
         _machine_key: &tpm::structures::StorageKey,

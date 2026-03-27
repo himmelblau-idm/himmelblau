@@ -370,6 +370,7 @@ impl IdProvider for HimmelblauMultiProvider {
         scopes: Vec<String>,
         old_token: Option<&UserToken>,
         client_id: Option<String>,
+        redirect_uri: Option<String>,
         keystore: &mut D,
         tpm: &mut tpm::provider::BoxedDynTpm,
         machine_key: &tpm::structures::StorageKey,
@@ -385,12 +386,12 @@ impl IdProvider for HimmelblauMultiProvider {
         match provider {
             Providers::Oidc(provider) => {
                 provider
-                    .unix_user_access(id, scopes, old_token, client_id, keystore, tpm, machine_key)
+                    .unix_user_access(id, scopes, old_token, client_id, redirect_uri, keystore, tpm, machine_key)
                     .await
             }
             Providers::Himmelblau(provider) => {
                 provider
-                    .unix_user_access(id, scopes, old_token, client_id, keystore, tpm, machine_key)
+                    .unix_user_access(id, scopes, old_token, client_id, redirect_uri, keystore, tpm, machine_key)
                     .await
             }
         }
@@ -906,13 +907,14 @@ impl IdProvider for HimmelblauProvider {
         impl_check_online!(self, tpm, now)
     }
 
-    #[instrument(skip(self, id, old_token, _keystore, tpm, machine_key))]
+    #[instrument(skip(self, id, old_token, _keystore, tpm, machine_key, redirect_uri))]
     async fn unix_user_access<D: KeyStoreTxn + Send>(
         &self,
         id: &Id,
         scopes: Vec<String>,
         old_token: Option<&UserToken>,
         client_id: Option<String>,
+        redirect_uri: Option<String>,
         _keystore: &mut D,
         tpm: &mut tpm::provider::BoxedDynTpm,
         machine_key: &tpm::structures::StorageKey,
@@ -961,6 +963,7 @@ impl IdProvider for HimmelblauProvider {
             old_token,
             scopes,
             client_id,
+            redirect_uri,
             id,
             tpm,
             machine_key,
@@ -1389,6 +1392,7 @@ impl IdProvider for HimmelblauProvider {
                         client_id,
                         tpm,
                         machine_key,
+                        None,
                     )
                     .await;
                 match mtoken {
@@ -1400,7 +1404,7 @@ impl IdProvider for HimmelblauProvider {
                             self.client
                                 .read()
                                 .await
-                                .exchange_prt_for_access_token(&prt, scopes, None, client_id, tpm, machine_key)
+                                .exchange_prt_for_access_token(&prt, scopes, None, client_id, tpm, machine_key, None)
                                 .await,
                             Err(e) => {
                                 error!("{:?}", e);
@@ -1432,6 +1436,7 @@ impl IdProvider for HimmelblauProvider {
                                 None,
                                 tpm,
                                 machine_key,
+                                None,
                             )
                             .await
                         {
@@ -1466,6 +1471,7 @@ impl IdProvider for HimmelblauProvider {
                                 Some(DEFAULT_APP_ID),
                                 tpm,
                                 machine_key,
+                                None,
                             )
                             .await
                         {
@@ -1497,6 +1503,7 @@ impl IdProvider for HimmelblauProvider {
                                 Some(DEFAULT_APP_ID),
                                 tpm,
                                 machine_key,
+                                None,
                             )
                             .await
                         {
@@ -2648,6 +2655,7 @@ impl IdProvider for HimmelblauProvider {
                                 client_id,
                                 tpm,
                                 machine_key,
+                                None,
                             ).await {
                                 Ok(mut token) => {
                                     // Request a new PRT to attach to the token (kick
@@ -2728,6 +2736,7 @@ impl IdProvider for HimmelblauProvider {
                                                 None,
                                                 tpm,
                                                 machine_key,
+                                                None,
                                             ).await {
                                                 Ok(mut token) => {
                                                     if let Ok(new_prt) = self
@@ -4218,7 +4227,7 @@ impl HimmelblauProvider {
             .client
             .read()
             .await
-            .exchange_prt_for_access_token(&prt, scopes.clone(), None, client_id, tpm, machine_key)
+            .exchange_prt_for_access_token(&prt, scopes.clone(), None, client_id, tpm, machine_key, None)
             .await;
         let prt_result = match prt_result {
             Err(MsalError::RequestFailed(msg)) => {
@@ -4230,7 +4239,7 @@ impl HimmelblauProvider {
                 self.client
                     .read()
                     .await
-                    .exchange_prt_for_access_token(&prt, scopes, None, client_id, tpm, machine_key)
+                    .exchange_prt_for_access_token(&prt, scopes, None, client_id, tpm, machine_key, None)
                     .await
             }
             Err(MsalError::AcquireTokenFailed(err_resp)) => {
@@ -4246,7 +4255,7 @@ impl HimmelblauProvider {
                     self.client
                         .read()
                         .await
-                        .exchange_prt_for_access_token(&prt, vec![], None, None, tpm, machine_key)
+                        .exchange_prt_for_access_token(&prt, vec![], None, None, tpm, machine_key, None)
                         .await
                 } else if client_id == Some(EDGE_BROWSER_CLIENT_ID) {
                     /* Authentication failed with Edge Browser client ID.
@@ -4267,6 +4276,7 @@ impl HimmelblauProvider {
                             Some(DEFAULT_APP_ID),
                             tpm,
                             machine_key,
+                            None,
                         )
                         .await
                 } else {
@@ -4291,6 +4301,7 @@ impl HimmelblauProvider {
                         Some(DEFAULT_APP_ID),
                         tpm,
                         machine_key,
+                        None,
                     )
                     .await
             }
