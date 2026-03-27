@@ -41,6 +41,7 @@ Incorrect issuer URLs will cause provider discovery to fail.
 If this option is not set, Himmelblau defaults to its native Microsoft Entra ID
 authentication flow.
 </description>
+<conf_description>OIDC issuer URL for non-Entra providers.</conf_description>
 <default></default>
 <example>oidc_issuer_url = https://login.microsoftonline.com/0656e57d-a8fc-4aa4-8366-8045787115ca/v2.0</example>
 <handler>get_oidc_issuer_url</handler>

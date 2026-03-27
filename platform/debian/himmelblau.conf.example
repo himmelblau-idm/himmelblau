@@ -1,8 +1,0 @@
-[global]
-# These default options are required on Debian/Ubuntu. See `man himmelblau.conf`
-# for an explanation of these parameters. `home_attr` and `home_alias` need to
-# match, but don't necessarily need to be set to `CN`.
-local_groups = users
-home_attr = CN
-home_alias = CN
-use_etc_skel = true

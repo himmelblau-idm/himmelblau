@@ -9,6 +9,7 @@
 <description>
 The timeout in seconds for connections to the authentication server.
 </description>
+<conf_description>Timeout (seconds) for network authentication calls.</conf_description>
 <default>30</default>
 <default_const>DEFAULT_CONN_TIMEOUT</default_const>
 <example>connection_timeout = 5</example>

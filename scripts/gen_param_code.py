@@ -7,18 +7,26 @@ and generates:
 1. Rust code (config_gen.rs) with getter functions and constants
 2. Man page (himmelblau.conf.5) in troff format
 3. NixOS module options (himmelblau-options.nix) with typed settings
+4. Generic sample config (target/config/himmelblau.conf.example)
+5. Debian/Ubuntu sample config (target/debian/himmelblau.conf.example)
 
 Usage:
     gen_param_code.py --gen-rust --rust-output <path>
     gen_param_code.py --gen-man --man-output <path>
     gen_param_code.py --gen-nix --nix-output <path>
-    gen_param_code.py --gen-rust --gen-man --gen-nix --rust-output <path> --man-output <path> --nix-output <path>
+    gen_param_code.py --gen-conf-example --conf-example-output <path>
+    gen_param_code.py --gen-debian-conf-example --debian-conf-example-output <path>
+    gen_param_code.py --gen-rust --gen-man --gen-nix --gen-conf-example --gen-debian-conf-example \
+        --rust-output <path> --man-output <path> --nix-output <path> \
+        --conf-example-output <path> --debian-conf-example-output <path>
 
 This mirrors Samba's approach of generating code from XML parameter definitions.
 """
 
 import argparse
+import re
 import sys
+import textwrap
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from typing import Optional, List, Dict
@@ -44,6 +52,7 @@ class Parameter:
     domain_specific: bool
     order: int
     description: str
+    conf_description: str
     default: str
     default_const: Optional[str]
     example: str
@@ -60,6 +69,22 @@ class Section:
     title: str
     preamble: str
     subsection_intro: str
+
+
+DESCRIPTIVE_DEFAULT_MARKERS = [
+    'Extracted from',
+    'All users permitted',
+    'Not set',
+    'None',
+]
+
+
+DEBIAN_REQUIRED_DEFAULTS = {
+    'local_groups': 'users',
+    'home_attr': 'CN',
+    'home_alias': 'CN',
+    'use_etc_skel': 'true',
+}
 
 
 def parse_xml_file(filepath: str) -> tuple[List[Parameter], List[Section]]:
@@ -103,6 +128,7 @@ def parse_xml_file(filepath: str) -> tuple[List[Parameter], List[Section]]:
             domain_specific=param_elem.get('domain_specific', 'false').lower() == 'true',
             order=int(param_elem.get('order', '999')),
             description=param_elem.findtext('description', '').strip(),
+            conf_description=param_elem.findtext('conf_description', '').strip(),
             default=param_elem.findtext('default', ''),
             default_const=param_elem.findtext('default_const'),
             example=param_elem.findtext('example', ''),
@@ -576,14 +602,273 @@ def generate_man_page(params: List[Parameter], sections: Dict[str, Section]) -> 
     return '\n'.join(lines)
 
 
+def _is_descriptive_default(default: str) -> bool:
+    """Return True when default text is descriptive and not a literal value."""
+    if not default:
+        return True
+
+    default_l = default.lower()
+    return any(marker.lower() in default_l for marker in DESCRIPTIVE_DEFAULT_MARKERS)
+
+
+def _extract_example_value(example: str) -> Optional[str]:
+    """Extract the right-hand value from a 'key = value' example string."""
+    if not example:
+        return None
+
+    clean_example = example.replace('.br', '\n').strip()
+    for line in clean_example.splitlines():
+        item = line.strip()
+        if not item or item.startswith('#') or item.startswith('['):
+            continue
+        if ' = ' in item:
+            return item.split(' = ', 1)[1].strip()
+
+    return None
+
+
+def _sample_value_for_param(param: Parameter, debian_mode: bool = False) -> str:
+    """Get a reasonable sample value for a parameter."""
+    if debian_mode and param.name in DEBIAN_REQUIRED_DEFAULTS:
+        return DEBIAN_REQUIRED_DEFAULTS[param.name]
+
+    if param.default and not _is_descriptive_default(param.default):
+        return param.default
+
+    example_value = _extract_example_value(param.example)
+    if example_value:
+        return example_value
+
+    return ''
+
+
+def _clean_description_for_conf_comment(description: str) -> str:
+    """Convert troff-heavy parameter descriptions to plain comment text."""
+    if not description:
+        return ''
+
+    text = clean_troff_description(description)
+
+    # Drop markdown emphasis markers produced by clean_troff_description().
+    text = text.replace('**', '')
+    text = text.replace('*', '')
+    text = text.replace('`', '')
+
+    # Normalize accidental whitespace before punctuation (e.g., "true,").
+    text = re.sub(r'\s+([,.;:])', r'\1', text)
+
+    return text.strip()
+
+
+def _value_hint_for_param(param: Parameter) -> Optional[str]:
+    """Return a compact value hint for config examples."""
+    if param.param_type == 'enum' and param.enum_values:
+        choices = '|'.join(ev.config_value for ev in param.enum_values)
+        return f'<{choices}>'
+
+    if param.param_type == 'bool':
+        return '<true|false>'
+
+    if param.param_type == 'string_list':
+        return '<item1,item2,...>'
+
+    if param.param_type == 'range':
+        return '<min-max>'
+
+    if param.param_type == 'ttl':
+        return '<seconds|Nm|Nh|Nd>'
+
+    return None
+
+
+def _wrap_comment_text(text: str, width: int = 79) -> List[str]:
+    """Wrap text into '# ' comment lines with paragraph normalization."""
+    if not text:
+        return []
+
+    # Normalize line-based formatting into paragraphs and bullets.
+    normalized: List[str] = []
+    current_paragraph: List[str] = []
+
+    for raw_line in text.splitlines():
+        stripped = raw_line.strip()
+
+        if not stripped:
+            if current_paragraph:
+                normalized.append(' '.join(current_paragraph))
+                current_paragraph = []
+            if normalized and normalized[-1] != '':
+                normalized.append('')
+            continue
+
+        if stripped.startswith('- '):
+            if current_paragraph:
+                normalized.append(' '.join(current_paragraph))
+                current_paragraph = []
+            normalized.append(stripped)
+            continue
+
+        current_paragraph.append(stripped)
+
+    if current_paragraph:
+        normalized.append(' '.join(current_paragraph))
+
+    lines: List[str] = []
+    for entry in normalized:
+        stripped = entry.strip()
+
+        if not stripped:
+            if lines and lines[-1] != '#':
+                lines.append('#')
+            continue
+
+        if stripped.startswith('- '):
+            bullet_text = stripped[2:].strip()
+            wrapped = textwrap.wrap(bullet_text, width=max(width - 4, 20))
+            if wrapped:
+                lines.append(f'# - {wrapped[0]}')
+                for cont in wrapped[1:]:
+                    lines.append(f'#   {cont}')
+            continue
+
+        wrapped = textwrap.wrap(stripped, width=max(width - 2, 20))
+        if wrapped:
+            lines.extend(f'# {chunk}' for chunk in wrapped)
+        else:
+            lines.append('#')
+
+    while lines and lines[-1] == '#':
+        lines.pop()
+
+    return lines
+
+
+def _render_parameter_example_block(
+    param: Parameter,
+    *,
+    debian_mode: bool,
+    uncomment_value: bool,
+) -> List[str]:
+    """Render one parameter's description and sample assignment block."""
+    lines: List[str] = []
+
+    if param.conf_description:
+        description = ' '.join(param.conf_description.split())
+    else:
+        description = _clean_description_for_conf_comment(param.description)
+    lines.extend(_wrap_comment_text(description))
+
+    sample_value = _sample_value_for_param(param, debian_mode=debian_mode)
+    if not sample_value:
+        hint = _value_hint_for_param(param)
+        if hint:
+            sample_value = hint
+    assignment = f'{param.name} = {sample_value}' if sample_value else f'{param.name} ='
+
+    if uncomment_value:
+        lines.append(assignment)
+    else:
+        lines.append(f'# {assignment}')
+
+    return lines
+
+
+def _append_domain_override_example(lines: List[str], params: List[Parameter], debian_mode: bool) -> None:
+    """Append a per-domain override example snippet for domain-specific options."""
+    domain_specific = [p for p in params if p.section == 'global' and p.documented and p.domain_specific]
+    domain_specific.sort(key=lambda p: p.order)
+
+    if not domain_specific:
+        return
+
+    lines.append('### Domain-specific values')
+    lines.append('# The following options may be overridden per domain section.')
+    lines.append('#')
+    lines.append('# [example.com]')
+    for param in domain_specific:
+        value = _sample_value_for_param(param, debian_mode=debian_mode)
+        assignment = f'{param.name} = {value}' if value else f'{param.name} ='
+        lines.append(f'# {assignment}')
+    lines.append('')
+
+
+def _append_offline_breakglass_example(
+    lines: List[str],
+    params: List[Parameter],
+    sections: Dict[str, Section],
+    debian_mode: bool,
+) -> None:
+    """Append commented [offline_breakglass] example content."""
+    breakglass_params = [p for p in params if p.section == 'offline_breakglass' and p.documented]
+    breakglass_params.sort(key=lambda p: p.order)
+
+    if not breakglass_params:
+        return
+
+    section = sections.get('offline_breakglass')
+    lines.append('### Offline breakglass section')
+    if section and section.subsection_intro:
+        intro = _clean_description_for_conf_comment(section.subsection_intro)
+        lines.extend(_wrap_comment_text(intro))
+    lines.append('# [offline_breakglass]')
+
+    for idx, param in enumerate(breakglass_params):
+        lines.extend(_render_parameter_example_block(
+            param,
+            debian_mode=debian_mode,
+            uncomment_value=False,
+        ))
+        if idx != len(breakglass_params) - 1:
+            lines.append('#')
+
+
+def generate_conf_example(
+    params: List[Parameter],
+    sections: Dict[str, Section],
+    *,
+    debian_mode: bool,
+) -> str:
+    """Generate a sample himmelblau.conf file from XML definitions."""
+    lines: List[str] = []
+
+    lines.append('# Auto-generated by gen_param_code.py - DO NOT EDIT')
+    lines.append('# Generated from XML parameter definitions in docs-xml/himmelblauconf/')
+    lines.append('# See `man himmelblau.conf` for complete documentation.')
+
+    if debian_mode:
+        lines.append('#')
+        lines.append('# Debian/Ubuntu note: the active defaults below are required on')
+        lines.append('# Debian-family hosts. In particular, home_attr and home_alias')
+        lines.append('# are intentionally set to matching values.')
+
+    lines.append('')
+    lines.append('[global]')
+
+    global_params = [p for p in params if p.section == 'global' and p.documented]
+    global_params.sort(key=lambda p: p.order)
+
+    for param in global_params:
+        lines.append('')
+        uncomment_value = debian_mode and param.name in DEBIAN_REQUIRED_DEFAULTS
+        lines.extend(_render_parameter_example_block(
+            param,
+            debian_mode=debian_mode,
+            uncomment_value=uncomment_value,
+        ))
+
+    lines.append('')
+    _append_domain_override_example(lines, params, debian_mode=debian_mode)
+    _append_offline_breakglass_example(lines, params, sections, debian_mode=debian_mode)
+
+    return '\n'.join(lines).rstrip() + '\n'
+
+
 def clean_troff_description(text: str) -> str:
     """Clean troff formatting from description text for use in Nix.
 
     Converts troff macros and escape sequences to markdown-style formatting
     suitable for Nix descriptions.
     """
-    import re
-
     # Handle inline font escapes FIRST (before line-based macros)
     # \fB...\fR or \fB...\fP -> **...** (bold)
     # r'\\fB' = raw string with 2 backslashes = regex \fB matching literal backslash+fB
@@ -692,13 +977,7 @@ def format_nix_default(param: Parameter) -> Optional[str]:
     default = param.default
 
     # Skip defaults that are descriptive text rather than actual values
-    descriptive_defaults = [
-        'Extracted from',
-        'All users permitted',
-        'Not set',
-        'None',
-    ]
-    for desc in descriptive_defaults:
+    for desc in DESCRIPTIVE_DEFAULT_MARKERS:
         if desc.lower() in default.lower():
             return None
 
@@ -921,7 +1200,7 @@ def _generate_nix_option(param: Parameter, indent: int = 4) -> List[str]:
 
 def main():
     parser = argparse.ArgumentParser(
-        description='Generate Rust code, man page, and NixOS options from XML parameter definitions'
+        description='Generate Rust code, man page, NixOS options, and sample configs from XML parameter definitions'
     )
     parser.add_argument('--gen-rust', action='store_true',
                         help='Generate Rust code')
@@ -929,19 +1208,27 @@ def main():
                         help='Generate man page')
     parser.add_argument('--gen-nix', action='store_true',
                         help='Generate NixOS module options')
+    parser.add_argument('--gen-conf-example', action='store_true',
+                        help='Generate generic sample himmelblau.conf')
+    parser.add_argument('--gen-debian-conf-example', action='store_true',
+                        help='Generate Debian/Ubuntu sample himmelblau.conf')
     parser.add_argument('--rust-output', type=str,
                         help='Output path for generated Rust code')
     parser.add_argument('--man-output', type=str,
                         help='Output path for generated man page')
     parser.add_argument('--nix-output', type=str,
                         help='Output path for generated NixOS options')
+    parser.add_argument('--conf-example-output', type=str,
+                        help='Output path for generated generic sample himmelblau.conf')
+    parser.add_argument('--debian-conf-example-output', type=str,
+                        help='Output path for generated Debian/Ubuntu sample himmelblau.conf')
     parser.add_argument('--xml-dir', type=str,
                         help='Directory containing XML parameter files')
 
     args = parser.parse_args()
 
-    if not args.gen_rust and not args.gen_man and not args.gen_nix:
-        parser.error('At least one of --gen-rust, --gen-man, or --gen-nix must be specified')
+    if not args.gen_rust and not args.gen_man and not args.gen_nix and not args.gen_conf_example and not args.gen_debian_conf_example:
+        parser.error('At least one generation flag must be specified')
 
     if args.gen_rust and not args.rust_output:
         parser.error('--rust-output is required when --gen-rust is specified')
@@ -951,6 +1238,12 @@ def main():
 
     if args.gen_nix and not args.nix_output:
         parser.error('--nix-output is required when --gen-nix is specified')
+
+    if args.gen_conf_example and not args.conf_example_output:
+        parser.error('--conf-example-output is required when --gen-conf-example is specified')
+
+    if args.gen_debian_conf_example and not args.debian_conf_example_output:
+        parser.error('--debian-conf-example-output is required when --gen-debian-conf-example is specified')
 
     # Determine XML directory
     if args.xml_dir:
@@ -993,6 +1286,22 @@ def main():
         with open(args.nix_output, 'w') as f:
             f.write(nix_options)
         print('NixOS options generated successfully', file=sys.stderr)
+
+    if args.gen_conf_example:
+        print(f'Generating generic sample config to {args.conf_example_output}...', file=sys.stderr)
+        conf_example = generate_conf_example(params, sections, debian_mode=False)
+        Path(args.conf_example_output).parent.mkdir(parents=True, exist_ok=True)
+        with open(args.conf_example_output, 'w') as f:
+            f.write(conf_example)
+        print('Generic sample config generated successfully', file=sys.stderr)
+
+    if args.gen_debian_conf_example:
+        print(f'Generating Debian sample config to {args.debian_conf_example_output}...', file=sys.stderr)
+        debian_conf_example = generate_conf_example(params, sections, debian_mode=True)
+        Path(args.debian_conf_example_output).parent.mkdir(parents=True, exist_ok=True)
+        with open(args.debian_conf_example_output, 'w') as f:
+            f.write(debian_conf_example)
+        print('Debian sample config generated successfully', file=sys.stderr)
 
 
 if __name__ == '__main__':
