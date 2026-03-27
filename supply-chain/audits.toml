@@ -679,6 +679,11 @@ who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
 version = "1.20.0"
 
+[[audits.uuid]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+delta = "1.21.0 -> 1.22.0"
+
 [[audits.zbus]]
 who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
