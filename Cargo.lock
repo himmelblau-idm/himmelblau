@@ -4,7 +4,7 @@ version = 3
 
 [[package]]
 name = "aad-tool"
-version = "2.3.8"
+version = "2.3.9"
 dependencies = [
  "anyhow",
  "broker-client",
@@ -386,9 +386,9 @@ checksum = "ace50bade8e6234aa140d9a2f552bbee1db4d353f69b8217bc503490fc1a9f26"
 
 [[package]]
 name = "aws-lc-rs"
-version = "1.16.1"
+version = "1.16.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "94bffc006df10ac2a68c83692d734a465f8ee6c5b384d8545a636f81d858f4bf"
+checksum = "a054912289d18629dc78375ba2c3726a3afe3ff71b4edba9dedfca0e3446d1fc"
 dependencies = [
  "aws-lc-sys",
  "zeroize",
@@ -396,9 +396,9 @@ dependencies = [
 
 [[package]]
 name = "aws-lc-sys"
-version = "0.38.0"
+version = "0.39.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4321e568ed89bb5a7d291a7f37997c2c0df89809d7b6d12062c81ddb54aa782e"
+checksum = "1fa7e52a4c5c547c741610a2c6f123f3881e409b714cd27e6798ef020c514f0a"
 dependencies = [
  "cc",
  "cmake",
@@ -686,7 +686,7 @@ dependencies = [
 
 [[package]]
 name = "broker"
-version = "2.3.8"
+version = "2.3.9"
 dependencies = [
  "dbus",
  "himmelblau_unix_common",
@@ -697,7 +697,7 @@ dependencies = [
 
 [[package]]
 name = "broker-client"
-version = "2.3.8"
+version = "2.3.9"
 dependencies = [
  "serde_json",
  "zbus",
@@ -1968,7 +1968,7 @@ dependencies = [
 
 [[package]]
 name = "himmelblau-fuzz"
-version = "2.3.8"
+version = "2.3.9"
 dependencies = [
  "arbitrary",
  "himmelblau_unix_common",
@@ -1980,7 +1980,7 @@ dependencies = [
 
 [[package]]
 name = "himmelblau_policies"
-version = "2.3.8"
+version = "2.3.9"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2002,7 +2002,7 @@ dependencies = [
 
 [[package]]
 name = "himmelblau_unix_common"
-version = "2.3.8"
+version = "2.3.9"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2044,7 +2044,7 @@ dependencies = [
 
 [[package]]
 name = "himmelblaud"
-version = "2.3.8"
+version = "2.3.9"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -2072,6 +2072,7 @@ dependencies = [
  "tokio-util",
  "tracing",
  "tracing-subscriber",
+ "url",
  "uuid",
  "uzers",
  "walkdir",
@@ -2432,7 +2433,7 @@ dependencies = [
 
 [[package]]
 name = "idmap"
-version = "2.3.8"
+version = "2.3.9"
 dependencies = [
  "bindgen 0.72.1",
  "cc",
@@ -2759,9 +2760,9 @@ checksum = "09edd9e8b54e49e587e4f6295a7d29c3ea94d469cb40ab8ca70b288248a81db2"
 
 [[package]]
 name = "libc"
-version = "0.2.182"
+version = "0.2.183"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6800badb6cb2082ffd7b6a67e6125bb39f18782f793520caee8cb8846be06112"
+checksum = "b5b646652bf6661599e1da8901b3b9522896f01e736bad5f723fe7a3a27f899d"
 
 [[package]]
 name = "libdbus-sys"
@@ -2784,9 +2785,9 @@ dependencies = [
 
 [[package]]
 name = "libhimmelblau"
-version = "0.8.12"
+version = "0.8.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7d3cae0a95f6b7f4033c587439dc9dac9722978b78616f9157c2dee539e677b1"
+checksum = "5f334d66cd0dae52a74d30dccbfd178e5ecac59f17cca8bc5d9915bdc1186039"
 dependencies = [
  "base64 0.22.1",
  "cbindgen",
@@ -2864,7 +2865,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6a793df0d7afeac54f95b471d3af7f0d4fb975699f972341a4b76988d49cdf0c"
 dependencies = [
  "cfg-if",
- "windows-targets 0.52.6",
+ "windows-targets 0.53.0",
 ]
 
 [[package]]
@@ -3178,7 +3179,7 @@ checksum = "5e0826a989adedc2a244799e823aece04662b66609d96af8dff7ac6df9a8925d"
 
 [[package]]
 name = "nss_himmelblau"
-version = "2.3.8"
+version = "2.3.9"
 dependencies = [
  "himmelblau_unix_common",
  "lazy_static",
@@ -3284,7 +3285,7 @@ dependencies = [
 
 [[package]]
 name = "o365"
-version = "2.3.8"
+version = "2.3.9"
 dependencies = [
  "anyhow",
  "reqwest 0.12.24",
@@ -3503,7 +3504,7 @@ dependencies = [
 
 [[package]]
 name = "pam_himmelblau"
-version = "2.3.8"
+version = "2.3.9"
 dependencies = [
  "himmelblau_unix_common",
  "libc",
@@ -3986,7 +3987,7 @@ dependencies = [
 
 [[package]]
 name = "qr-greeter"
-version = "2.3.8"
+version = "2.3.9"
 
 [[package]]
 name = "quinn"
@@ -4447,9 +4448,9 @@ checksum = "f87165f0995f63a9fbeea62b64d10b4d9d8e78ec6d7d51fb2125fda7bb36788f"
 
 [[package]]
 name = "rustls-webpki"
-version = "0.103.6"
+version = "0.103.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8572f3c2cb9934231157b45499fc41e1f58c589fdfb81a844ba873265e80f8eb"
+checksum = "df33b2b81ac578cabaf06b89b0631153a3f416b0a886e8a7a1707fb51abbd1ef"
 dependencies = [
  "aws-lc-rs",
  "ring",
@@ -4588,7 +4589,7 @@ dependencies = [
 
 [[package]]
 name = "selinux"
-version = "2.3.8"
+version = "2.3.9"
 
 [[package]]
 name = "semver"
@@ -4874,7 +4875,7 @@ dependencies = [
 
 [[package]]
 name = "sshd-config"
-version = "2.3.8"
+version = "2.3.9"
 
 [[package]]
 name = "sshkey-attest"
@@ -4885,7 +4886,7 @@ dependencies = [
 
 [[package]]
 name = "sso"
-version = "2.3.8"
+version = "2.3.9"
 dependencies = [
  "broker-client",
  "clap",
@@ -5169,9 +5170,9 @@ dependencies = [
 
 [[package]]
 name = "tokio"
-version = "1.49.0"
+version = "1.50.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "72a2903cd7736441aac9df9d7688bd0ce48edccaadf181c3b90be801e81d3d86"
+checksum = "27ad5e34374e03cfffefc301becb44e9dc3c17584f414349ebe29ed26661822d"
 dependencies = [
  "bytes",
  "libc",
@@ -5665,9 +5666,9 @@ checksum = "06abde3611657adf66d383f00b093d7faecc7fa57071cce2578660c9f1010821"
 
 [[package]]
 name = "uuid"
-version = "1.21.0"
+version = "1.22.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b672338555252d43fd2240c714dc444b8c6fb0a5c5335e65a07bba7742735ddb"
+checksum = "a68d3c8f01c0cfa54a75291d83601161799e4a89a39e0929f4b0354d88757a37"
 dependencies = [
  "getrandom 0.4.1",
  "js-sys",

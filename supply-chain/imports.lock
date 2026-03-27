@@ -427,8 +427,8 @@ user-login = "yaleman"
 user-name = "James Hodgkinson"
 
 [[publisher.libc]]
-version = "0.2.182"
-when = "2026-02-13"
+version = "0.2.183"
+when = "2026-03-08"
 user-id = 55123
 user-login = "rust-lang-owner"
 
@@ -440,8 +440,8 @@ user-login = "fitzgen"
 user-name = "Nick Fitzgerald"
 
 [[publisher.libhimmelblau]]
-version = "0.8.12"
-when = "2026-02-27"
+version = "0.8.13"
+when = "2026-03-03"
 user-id = 247655
 user-login = "dmulder"
 user-name = "David Mulder"
@@ -803,8 +803,8 @@ user-login = "dtolnay"
 user-name = "David Tolnay"
 
 [[publisher.tokio]]
-version = "1.49.0"
-when = "2026-01-03"
+version = "1.50.0"
+when = "2026-03-03"
 user-id = 6741
 user-login = "Darksonn"
 user-name = "Alice Ryhl"
@@ -1436,6 +1436,12 @@ The changes appear to be reasonable updates from Rust's stdlib imported into
 `allocator-api2`'s copy of this code.
 """
 
+[[audits.bytecode-alliance.audits.async-task]]
+who = "Chris Fallin <chris@cfallin.org>"
+criteria = "safe-to-deploy"
+version = "4.7.1"
+notes = "Fairly significant chunk of unsafe code in the async executor core, but seems isolated to well-understood patterns, e.g. a manual vtable and some manual layout code."
+
 [[audits.bytecode-alliance.audits.atomic-waker]]
 who = "Alex Crichton <alex@alexcrichton.com>"
 criteria = "safe-to-deploy"
@@ -1758,7 +1764,7 @@ notes = "one use of unsafe to call windows specific api to get console handle."
 who = "Alex Crichton <alex@alexcrichton.com>"
 criteria = "safe-to-deploy"
 delta = "0.46.0 -> 0.50.1"
-notes = "Lots of stylistic/rust-related chanegs, plus new features, but nothing out of the ordrinary."
+notes = "Lots of stylistic/rust-related changes, plus new features, but nothing out of the ordrinary."
 
 [[audits.bytecode-alliance.audits.num-traits]]
 who = "Andrew Brown <andrew.brown@intel.com>"
@@ -1770,6 +1776,18 @@ notes = "As advertised: a numeric library. The only `unsafe` is from some float-
 who = "Pat Hickey <phickey@fastly.com>"
 criteria = "safe-to-deploy"
 version = "0.1.0"
+
+[[audits.bytecode-alliance.audits.parking]]
+who = "Chris Fallin <chris@cfallin.org>"
+criteria = "safe-to-deploy"
+version = "2.2.1"
+notes = "forbid-unsafe crate with straightforward imports."
+
+[[audits.bytecode-alliance.audits.pastey]]
+who = "Chris Fallin <chris@cfallin.org>"
+criteria = "safe-to-deploy"
+version = "0.2.1"
+notes = "No unsafe code."
 
 [[audits.bytecode-alliance.audits.peeking_take_while]]
 who = "Nick Fitzgerald <fitzgen@gmail.com>"
@@ -3059,11 +3077,6 @@ delta = "0.10.74 -> 0.10.75"
 who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
 version = "0.2.1"
-
-[[audits.himmelblau.audits.pastey]]
-who = "David Mulder <dmulder@samba.org>"
-criteria = "safe-to-deploy"
-delta = "0.2.0 -> 0.2.1"
 
 [[audits.himmelblau.audits.picky-asn1-der]]
 who = "David Mulder <dmulder@samba.org>"

@@ -993,9 +993,6 @@ async fn main() -> ExitCode {
             )
         })
         .on(async {
-            let span = span!(Level::INFO, "initialisation");
-            let _enter = span.enter();
-
             if clap_args.get_flag("skip-root-check") {
                 warn!("Skipping root user check, if you're running this for testing, ensure you clean up temporary files.")
                 // TODO: this wording is not great m'kay.
@@ -1409,11 +1406,9 @@ async fn main() -> ExitCode {
 
             if systemd_booted {
                 if let Ok(monotonic_usec) = sd_notify::NotifyState::monotonic_usec_now() {
-                    let _ = sd_notify::notify(true, &[NotifyState::Ready, monotonic_usec]);
+                    let _ = sd_notify::notify(false, &[NotifyState::Ready, monotonic_usec]);
                 }
             }
-
-            drop(_enter);
 
             loop {
                 tokio::select! {
@@ -1461,7 +1456,7 @@ async fn main() -> ExitCode {
             info!("Signal received, sending down signal to tasks");
             if systemd_booted {
                 if let Ok(monotonic_usec) = sd_notify::NotifyState::monotonic_usec_now() {
-                    let _ = sd_notify::notify(true, &[NotifyState::Stopping, monotonic_usec]);
+                    let _ = sd_notify::notify(false, &[NotifyState::Stopping, monotonic_usec]);
                 }
             }
 

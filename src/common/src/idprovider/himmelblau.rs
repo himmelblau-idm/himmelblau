@@ -193,7 +193,7 @@ impl RefreshCache {
         let mut refresh_cache = self.refresh_cache.write().await;
         let mut remove_list = vec![];
         for (k, (_, iat)) in refresh_cache.iter() {
-            if *iat > SystemTime::now() + Duration::from_secs(86400) {
+            if *iat + Duration::from_secs(86400) < SystemTime::now() {
                 remove_list.push(k.clone());
             }
         }
@@ -443,6 +443,7 @@ impl IdProvider for HimmelblauMultiProvider {
         &self,
         id: &Id,
         old_token: Option<&UserToken>,
+        sso_nonce: Option<&str>,
         tpm: &mut tpm::provider::BoxedDynTpm,
         machine_key: &tpm::structures::StorageKey,
     ) -> Result<String, IdpError> {
@@ -455,7 +456,7 @@ impl IdProvider for HimmelblauMultiProvider {
         let provider = find_provider!(self, providers, domain)?;
 
         provider
-            .unix_user_prt_cookie(id, old_token, tpm, machine_key)
+            .unix_user_prt_cookie(id, old_token, sso_nonce, tpm, machine_key)
             .await
     }
 
@@ -610,6 +611,7 @@ impl IdProvider for HimmelblauMultiProvider {
         _tpm: &mut tpm::provider::BoxedDynTpm,
     ) -> Result<GroupToken, IdpError> {
         /* AAD doesn't permit group listing (must use cache entries from auth) */
+        debug!("Group fetching not supported for HimmelblauMultiProvider");
         Err(IdpError::BadRequest)
     }
 
@@ -773,6 +775,16 @@ macro_rules! check_new_device_enrollment_required {
     }};
 }
 
+fn is_sspr_required(e: &MsalError) -> bool {
+    match e {
+        MsalError::AcquireTokenFailed(resp) => resp
+            .error_codes
+            .contains(&PASSWORD_RESET_REGISTRATION_REQUIRED),
+        MsalError::AADSTSError(err) => err.code == PASSWORD_RESET_REGISTRATION_REQUIRED,
+        _ => false,
+    }
+}
+
 #[async_trait]
 impl IdProvider for HimmelblauProvider {
     async fn offline_break_glass(&self, ttl: Option<u64>) -> Result<(), IdpError> {
@@ -928,6 +940,7 @@ impl IdProvider for HimmelblauProvider {
         &self,
         id: &Id,
         old_token: Option<&UserToken>,
+        sso_nonce: Option<&str>,
         tpm: &mut tpm::provider::BoxedDynTpm,
         machine_key: &tpm::structures::StorageKey,
     ) -> Result<String, IdpError> {
@@ -935,6 +948,7 @@ impl IdProvider for HimmelblauProvider {
             // We can't fetch a PRT cookie when initialization hasn't
             // completed. This only happens when we're offline during first
             // startup. This should never happen!
+            debug!("Provider not initialized");
             return Err(IdpError::BadRequest);
         }
 
@@ -947,7 +961,7 @@ impl IdProvider for HimmelblauProvider {
         self.client
             .read()
             .await
-            .acquire_prt_sso_cookie(&prt, tpm, machine_key)
+            .acquire_prt_sso_cookie_with_nonce(&prt, sso_nonce, tpm, machine_key)
             .await
             .map_err(|e| {
                 error!("Failed to request prt cookie: {:?}", e);
@@ -1304,6 +1318,33 @@ impl IdProvider for HimmelblauProvider {
                     }
                 )
             }
+            Err(MsalError::AcquireTokenFailed(err_resp))
+                if err_resp.error_codes.contains(&CONSENT_REQUIRED) =>
+            {
+                /* Consent has not been granted for the application
+                 * to access the Graph API. Retry without Graph API
+                 * scopes - authentication can still proceed but group
+                 * names will not be resolved. */
+                warn!(
+                    "Consent not granted for Graph API access. \
+                     Retrying token exchange without Graph API scopes."
+                );
+                match self
+                    .client
+                    .read()
+                    .await
+                    .exchange_prt_for_access_token(&prt, vec![], None, None, tpm, machine_key)
+                    .await
+                {
+                    Ok(val) => val,
+                    Err(e) => {
+                        error!("{:?}", e);
+                        // Never return IdpError::NotFound. This deletes the existing
+                        // user from the cache.
+                        fake_user!()
+                    }
+                }
+            }
             Err(e) => {
                 error!("{:?}", e);
                 // Never return IdpError::NotFound. This deletes the existing
@@ -1509,6 +1550,7 @@ impl IdProvider for HimmelblauProvider {
             // otherwise we duplicate the PIN prompt when the network goes down.
             if !self.attempt_online(tpm, SystemTime::now()).await {
                 // We are offline, fail the authentication now
+                debug!("Network down encountered during online auth init");
                 return Err(IdpError::BadRequest);
             }
 
@@ -1705,6 +1747,24 @@ impl IdProvider for HimmelblauProvider {
                 )
             }};
         }
+        macro_rules! sspr_demand_hello_fallback {
+            ($cred:ident) => {{
+                // Hello authentication already succeeded,
+                // but SSPR demand was sent. Proceed and permit
+                // this authentication so the user has the opportunity
+                // to fix this (SSO will fail until this is fixed).
+                warn!(
+                    "AADSTS{} (SSPR required) encountered; permitting auth via local Hello Pin",
+                    PASSWORD_RESET_REGISTRATION_REQUIRED
+                );
+                return Ok((
+                    AuthResult::Success {
+                        token: old_token.clone(),
+                    },
+                    AuthCacheAction::None,
+                ));
+            }};
+        }
         macro_rules! auth_and_validate_hello_key {
             ($hello_key:ident, $keytype:ident, $cred:ident) => {{
                 // CRITICAL: Validate that we can load the key, otherwise the offline
@@ -1773,6 +1833,9 @@ impl IdProvider for HimmelblauProvider {
                                 },
                                 AuthCacheAction::None,
                             ));
+                        }
+                        Err(ref e) if is_sspr_required(e) => {
+                            sspr_demand_hello_fallback!($cred)
                         }
                         Err(MsalError::AcquireTokenFailed(e)) => {
                             if e.error_codes.contains(&CONSENT_REQUIRED) {
@@ -1899,6 +1962,9 @@ impl IdProvider for HimmelblauProvider {
                                         AuthCacheAction::None,
                                     ));
                                 }
+                                Err(ref e) if is_sspr_required(e) => {
+                                    sspr_demand_hello_fallback!($cred)
+                                }
                                 Err(MsalError::AcquireTokenFailed(e)) => {
                                     if e.error_codes.contains(&CONSENT_REQUIRED) {
                                         /* Consent has not been granted for the application
@@ -1967,6 +2033,7 @@ impl IdProvider for HimmelblauProvider {
                                     // It's ok to reset the pin count here, since they must
                                     // online auth at this point and create a new pin.
                                     self.bad_pin_counter.reset_bad_pin_count(account_id).await;
+                                    debug!("Returning BadRequest due to failed PRT exchange.");
                                     return Err(IdpError::BadRequest);
                                 }
                             }
@@ -1981,7 +2048,16 @@ impl IdProvider for HimmelblauProvider {
                                     error!("Failed to delete hello key: {:?}", e);
                                     IdpError::Tpm
                                 })?;
-                        return Err(IdpError::BadRequest);
+                        // Don't hard-fail PAM here. Treat this like an auth denial so the
+                        // front-end restarts the auth flow cleanly (user will re-auth and
+                        // re-enroll Hello PIN if needed).
+                        return Ok((
+                            AuthResult::Denied(
+                                "Hello PIN bootstrap data was not found. Please authenticate again to enroll a new Linux Hello PIN."
+                                    .to_string(),
+                            ),
+                            AuthCacheAction::None,
+                        ));
                     }
                 };
 
@@ -2738,6 +2814,7 @@ impl IdProvider for HimmelblauProvider {
         _tpm: &mut tpm::provider::BoxedDynTpm,
     ) -> Result<GroupToken, IdpError> {
         /* AAD doesn't permit group listing (must use cache entries from auth) */
+        debug!("Group listing not supported in HimmelblauProvider");
         Err(IdpError::BadRequest)
     }
 
@@ -2958,8 +3035,14 @@ impl HimmelblauProvider {
                      * response because the domains are aliases of one another.
                      */
                     let mut cfg = self.config.write().await;
-                    let (_, domain1) = split_username(account_id).ok_or(IdpError::BadRequest)?;
-                    let (_, domain2) = split_username(&spn).ok_or(IdpError::BadRequest)?;
+                    let (_, domain1) = split_username(account_id).ok_or({
+                        error!("Failed splitting account_id username");
+                        IdpError::BadRequest
+                    })?;
+                    let (_, domain2) = split_username(&spn).ok_or({
+                        error!("Failed splitting spn username");
+                        IdpError::BadRequest
+                    })?;
                     if !cfg.domains_are_aliases(domain1, domain2).await {
                         let msg =
                             format!("Authenticated user {} does not match requested user", uuid);
@@ -3506,9 +3589,10 @@ impl HimmelblauProvider {
                         })?;
                     let device_id = match device_id {
                         Some(v) => v.to_string(),
-                        None => config
-                            .get(&self.domain, "device_id")
-                            .ok_or(IdpError::BadRequest)?,
+                        None => config.get(&self.domain, "device_id").ok_or({
+                            error!("Device ID missing for Intune device enrollment.");
+                            IdpError::BadRequest
+                        })?,
                     };
                     let attrs = attrs.cloned().unwrap_or(
                         EnrollAttrs::new(self.domain.clone(), None, None, None, None).map_err(

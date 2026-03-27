@@ -922,10 +922,7 @@ impl HimmelblauConfig {
     }
 
     pub fn get_sudo_groups(&self) -> Vec<String> {
-        let mut sudo_groups = match self.config.get("global", "sudo_groups") {
-            Some(val) => val.split(',').map(|s| s.trim().to_string()).collect(),
-            None => vec![],
-        };
+        let mut sudo_groups: Vec<String> = vec![];
         for section in self.config.sections() {
             sudo_groups.extend(match self.config.get(&section, "sudo_groups") {
                 Some(val) => val.split(',').map(|s| s.trim().to_string()).collect(),
@@ -979,6 +976,12 @@ mod tests {
         file_path
     }
 
+    // Helper function to create an empty config (to test defaults without system config interference)
+    fn create_empty_config() -> HimmelblauConfig {
+        let temp_file = create_temp_config("");
+        HimmelblauConfig::new(Some(&temp_file)).unwrap()
+    }
+
     #[test]
     fn test_get_home_prefix() {
         let config_data = r#"
@@ -994,7 +997,7 @@ mod tests {
 
         assert_eq!(config.get_home_prefix(Some("example.com")), "/home/example");
         assert_eq!(config.get_home_prefix(None), "/home/global");
-        let config_empty = HimmelblauConfig::new(None).unwrap();
+        let config_empty = create_empty_config();
         assert_eq!(
             config_empty.get_home_prefix(Some("unknown.com")),
             DEFAULT_HOME_PREFIX
@@ -1016,7 +1019,7 @@ mod tests {
 
         assert_eq!(config.get_shell(Some("example.com")), "/bin/zsh");
         assert_eq!(config.get_shell(None), "/bin/bash");
-        let config_empty = HimmelblauConfig::new(None).unwrap();
+        let config_empty = create_empty_config();
         assert_eq!(config_empty.get_shell(Some("unknown.com")), DEFAULT_SHELL);
     }
 
@@ -1031,7 +1034,7 @@ mod tests {
         let config = HimmelblauConfig::new(Some(&temp_file)).unwrap();
 
         assert_eq!(config.get_connection_timeout(), 45);
-        let config_empty = HimmelblauConfig::new(None).unwrap();
+        let config_empty = create_empty_config();
         assert_eq!(config_empty.get_connection_timeout(), 30);
     }
 
@@ -1050,7 +1053,7 @@ mod tests {
 
         assert_eq!(config.get_idmap_range("example.com"), (5000, 6000));
         assert_eq!(config.get_idmap_range("unknown.com"), (1000, 2000));
-        let config_empty = HimmelblauConfig::new(None).unwrap();
+        let config_empty = create_empty_config();
         assert_eq!(config_empty.get_idmap_range("any.com"), DEFAULT_IDMAP_RANGE);
     }
 
@@ -1065,7 +1068,7 @@ mod tests {
         let config = HimmelblauConfig::new(Some(&temp_file)).unwrap();
 
         assert_eq!(config.get_broker_socket_path(), "/var/run/broker.sock");
-        let config_empty = HimmelblauConfig::new(None).unwrap();
+        let config_empty = create_empty_config();
         assert_eq!(
             config_empty.get_broker_socket_path(),
             DEFAULT_BROKER_SOCK_PATH
@@ -1108,7 +1111,7 @@ mod tests {
         let temp_file = create_temp_config(config_data);
         let config = HimmelblauConfig::new(Some(&temp_file)).unwrap();
         assert_eq!(config.get_join_type(), JoinType::Register);
-        let config_empty = HimmelblauConfig::new(None).unwrap();
+        let config_empty = create_empty_config();
         assert_eq!(config_empty.get_join_type(), JoinType::Join);
 
         let config_data = r#"
@@ -1148,7 +1151,7 @@ mod tests {
         let config = HimmelblauConfig::new(Some(&temp_file)).unwrap();
 
         assert_eq!(config.get_apply_policy(), true);
-        let config_empty = HimmelblauConfig::new(None).unwrap();
+        let config_empty = create_empty_config();
         assert_eq!(config_empty.get_apply_policy(), false);
     }
 
@@ -1167,7 +1170,7 @@ mod tests {
 
         assert_eq!(config.get_home_attr(None), HomeAttr::Cn);
         assert_eq!(config.get_home_attr(Some("example.com")), HomeAttr::Spn);
-        let config_empty = HimmelblauConfig::new(None).unwrap();
+        let config_empty = create_empty_config();
         assert_eq!(config_empty.get_home_attr(None), HomeAttr::Uuid);
     }
 
@@ -1189,7 +1192,7 @@ mod tests {
             config.get_home_alias(Some("example.com")),
             Some(HomeAttr::Uuid)
         );
-        let config_empty = HimmelblauConfig::new(None).unwrap();
+        let config_empty = create_empty_config();
         assert_eq!(
             config_empty.get_home_alias(Some("unknown.com")),
             Some(HomeAttr::Spn)
@@ -1214,7 +1217,7 @@ mod tests {
             config.get_odc_provider("example.com"),
             "odc.officeapps.live.com"
         );
-        let config_empty = HimmelblauConfig::new(None).unwrap();
+        let config_empty = create_empty_config();
         assert_eq!(
             config_empty.get_odc_provider("unknown.com"),
             DEFAULT_ODC_PROVIDER
@@ -1236,7 +1239,7 @@ mod tests {
             config.get_app_id("example.com"),
             Some("70fee399-7cd8-42f9-a0ea-1e12ea308908".to_string())
         );
-        let config_empty = HimmelblauConfig::new(None).unwrap();
+        let config_empty = create_empty_config();
         assert_eq!(config_empty.get_app_id("example.com"), None);
     }
 
@@ -1251,7 +1254,7 @@ mod tests {
         let config = HimmelblauConfig::new(Some(&temp_file)).unwrap();
 
         assert_eq!(config.get_socket_path(), "/var/run/socket_path.sock");
-        let config_empty = HimmelblauConfig::new(None).unwrap();
+        let config_empty = create_empty_config();
         assert_eq!(config_empty.get_socket_path(), DEFAULT_SOCK_PATH);
     }
 
@@ -1266,7 +1269,7 @@ mod tests {
         let config = HimmelblauConfig::new(Some(&temp_file)).unwrap();
 
         assert_eq!(config.get_task_socket_path(), "/var/run/task_socket.sock");
-        let config_empty = HimmelblauConfig::new(None).unwrap();
+        let config_empty = create_empty_config();
         assert_eq!(config_empty.get_task_socket_path(), DEFAULT_TASK_SOCK_PATH);
     }
 
@@ -1281,7 +1284,7 @@ mod tests {
         let config = HimmelblauConfig::new(Some(&temp_file)).unwrap();
 
         assert_eq!(config.get_cache_timeout(), 120);
-        let config_empty = HimmelblauConfig::new(None).unwrap();
+        let config_empty = create_empty_config();
         assert_eq!(config_empty.get_cache_timeout(), DEFAULT_CACHE_TIMEOUT);
     }
 
@@ -1296,7 +1299,7 @@ mod tests {
         let config = HimmelblauConfig::new(Some(&temp_file)).unwrap();
 
         assert_eq!(config.get_unix_sock_timeout(), 30);
-        let config_empty = HimmelblauConfig::new(None).unwrap();
+        let config_empty = create_empty_config();
         assert_eq!(
             config_empty.get_unix_sock_timeout(),
             DEFAULT_CONN_TIMEOUT * 2
@@ -1341,7 +1344,7 @@ mod tests {
         let temp_file = create_temp_config(config_data);
         let config = HimmelblauConfig::new(Some(&temp_file)).unwrap();
         assert_eq!(config.get_hsm_type(), alt);
-        let config_empty = HimmelblauConfig::new(None).unwrap();
+        let config_empty = create_empty_config();
         assert_eq!(config_empty.get_hsm_type(), default);
     }
 
@@ -1357,7 +1360,7 @@ mod tests {
 
         assert_eq!(config.get_use_etc_skel(), true);
 
-        let config_empty = HimmelblauConfig::new(None).unwrap();
+        let config_empty = create_empty_config();
         assert_eq!(config_empty.get_use_etc_skel(), false);
     }
 
@@ -1407,7 +1410,7 @@ mod tests {
         let config = HimmelblauConfig::new(Some(&temp_file)).unwrap();
 
         assert_eq!(config.get_enable_hello(), false);
-        let config_empty = HimmelblauConfig::new(None).unwrap();
+        let config_empty = create_empty_config();
         assert_eq!(config_empty.get_enable_hello(), DEFAULT_HELLO_ENABLED);
     }
 
@@ -1422,7 +1425,7 @@ mod tests {
         let config = HimmelblauConfig::new(Some(&temp_file)).unwrap();
 
         assert_eq!(config.get_enable_experimental_mfa(), false);
-        let config_empty = HimmelblauConfig::new(None).unwrap();
+        let config_empty = create_empty_config();
         assert_eq!(config_empty.get_enable_experimental_mfa(), true);
     }
 
@@ -1440,7 +1443,7 @@ mod tests {
         assert_eq!(config.get_enable_experimental_passwordless_fido(), true);
 
         // Test fallback default (false) when config is missing
-        let config_empty = HimmelblauConfig::new(None).unwrap();
+        let config_empty = create_empty_config();
         assert_eq!(
             config_empty.get_enable_experimental_passwordless_fido(),
             false
@@ -1458,7 +1461,7 @@ mod tests {
         let config = HimmelblauConfig::new(Some(&temp_file)).unwrap();
 
         assert_eq!(config.get_debug(), true);
-        let config_empty = HimmelblauConfig::new(None).unwrap();
+        let config_empty = create_empty_config();
         assert_eq!(config_empty.get_debug(), false);
     }
 
@@ -1473,7 +1476,7 @@ mod tests {
         let config = HimmelblauConfig::new(Some(&temp_file)).unwrap();
 
         assert_eq!(config.get_cn_name_mapping(), false);
-        let config_empty = HimmelblauConfig::new(None).unwrap();
+        let config_empty = create_empty_config();
         assert_eq!(config_empty.get_cn_name_mapping(), CN_NAME_MAPPING);
     }
 
@@ -1491,7 +1494,7 @@ mod tests {
             config.get_authority_host("example.com"),
             "https://login.suse.com"
         );
-        let config_empty = HimmelblauConfig::new(None).unwrap();
+        let config_empty = create_empty_config();
         assert_eq!(
             config_empty.get_authority_host("example.com"),
             DEFAULT_AUTHORITY_HOST
@@ -1512,7 +1515,7 @@ mod tests {
             config.get_graph_url("example.com"),
             Some("https://graph.suse.com".to_string())
         );
-        let config_empty = HimmelblauConfig::new(None).unwrap();
+        let config_empty = create_empty_config();
         assert_eq!(config_empty.get_graph_url("example.com"), None);
     }
 
@@ -1527,7 +1530,7 @@ mod tests {
         let config = HimmelblauConfig::new(Some(&temp_file)).unwrap();
 
         assert_eq!(config.get_selinux(), true);
-        let config_empty = HimmelblauConfig::new(None).unwrap();
+        let config_empty = create_empty_config();
         assert_eq!(config_empty.get_selinux(), DEFAULT_SELINUX);
     }
 
@@ -1552,7 +1555,7 @@ mod tests {
         let config_invalid = HimmelblauConfig::new(Some(&temp_file_invalid)).unwrap();
         assert_eq!(config_invalid.get_id_attr_map(), DEFAULT_ID_ATTR_MAP);
 
-        let config_missing = HimmelblauConfig::new(None).unwrap();
+        let config_missing = create_empty_config();
         assert_eq!(config_missing.get_id_attr_map(), DEFAULT_ID_ATTR_MAP);
     }
 
@@ -1577,7 +1580,7 @@ mod tests {
             config_invalid.get_hello_pin_min_length(),
             DEFAULT_HELLO_PIN_MIN_LEN
         );
-        let config_missing = HimmelblauConfig::new(None).unwrap();
+        let config_missing = create_empty_config();
         assert_eq!(
             config_missing.get_hello_pin_min_length(),
             DEFAULT_HELLO_PIN_MIN_LEN
@@ -1599,7 +1602,7 @@ mod tests {
             Some("example-tenant-id".to_string())
         );
         assert_eq!(config.get_tenant_id("nonexistent.com"), None);
-        let config_missing = HimmelblauConfig::new(None).unwrap();
+        let config_missing = create_empty_config();
         assert_eq!(config_missing.get_tenant_id("example.com"), None);
     }
 
@@ -1619,7 +1622,7 @@ mod tests {
             "group3".to_string(),
         ];
         assert_eq!(config.get_local_groups(), expected_groups);
-        let config_empty = HimmelblauConfig::new(None).unwrap();
+        let config_empty = create_empty_config();
         assert_eq!(config_empty.get_local_groups(), Vec::<String>::new());
     }
 
@@ -1637,7 +1640,7 @@ mod tests {
             config.get_logon_script(),
             Some("/path/to/logon/script".to_string())
         );
-        let config_missing = HimmelblauConfig::new(None).unwrap();
+        let config_missing = create_empty_config();
         assert_eq!(config_missing.get_logon_script(), None);
     }
 
@@ -1658,7 +1661,7 @@ mod tests {
 
         // Test missing domain
         assert_eq!(config.get_intune_device_id("missing.com"), None);
-        let config_missing = HimmelblauConfig::new(None).unwrap();
+        let config_missing = create_empty_config();
         assert_eq!(config_missing.get_intune_device_id("example.com"), None);
     }
 
@@ -1678,7 +1681,7 @@ mod tests {
             "scope3".to_string(),
         ];
         assert_eq!(config.get_logon_token_scopes(), expected_scopes);
-        let config_empty = HimmelblauConfig::new(None).unwrap();
+        let config_empty = create_empty_config();
         assert_eq!(config_empty.get_logon_token_scopes(), Vec::<String>::new());
     }
 
@@ -1701,7 +1704,7 @@ mod tests {
         assert_eq!(config.get_logon_token_app_id("missing.com"), None);
 
         // Test empty configuration
-        let config_empty = HimmelblauConfig::new(None).unwrap();
+        let config_empty = create_empty_config();
         assert_eq!(config_empty.get_logon_token_app_id("example.com"), None);
     }
 
@@ -1737,7 +1740,7 @@ mod tests {
             Some("/path/to/name_mapping_script".to_string())
         );
 
-        let config_missing = HimmelblauConfig::new(None).unwrap();
+        let config_missing = create_empty_config();
         assert_eq!(config_missing.get_name_mapping_script(), None);
     }
 
@@ -1809,6 +1812,53 @@ mod tests {
         let account_id = "user";
 
         assert_eq!(config.map_name_to_upn(account_id), account_id.to_string());
+    }
+
+    #[test]
+    fn test_get_local_sudo_group() {
+        let config_data = r#"
+        [global]
+        local_sudo_group = wheel
+        "#;
+
+        let temp_file = create_temp_config(config_data);
+        let config = HimmelblauConfig::new(Some(&temp_file)).unwrap();
+
+        let group = config.get_local_sudo_group();
+
+        assert_eq!(group, "wheel");
+
+        let empty_config = create_empty_config();
+
+        let default_group = empty_config.get_local_sudo_group();
+
+        assert_eq!(default_group, "sudo")
+    }
+
+    #[test]
+    fn test_get_sudo_groups() {
+        let config_data = r#"
+        [example.com]
+        sudo_groups = 2eb4e6a2-f55d-4cf4-8e62-978f9f4a828d,f791d7c2-66cd-4f67-a195-72c6faf3c3b5
+
+        [global]
+        sudo_groups = 825d1f7e-c4cd-4fc2-aeeb-1f92357f8da6,0149b437-fbaa-4419-bf46-f9a9f9a3438c
+        "#;
+
+        let temp_file = create_temp_config(config_data);
+        let config = HimmelblauConfig::new(Some(&temp_file)).unwrap();
+
+        let mut groups = config.get_sudo_groups();
+        groups.sort();
+        let mut expected_groups: Vec<String> = vec![
+            "825d1f7e-c4cd-4fc2-aeeb-1f92357f8da6".to_string(),
+            "0149b437-fbaa-4419-bf46-f9a9f9a3438c".to_string(),
+            "2eb4e6a2-f55d-4cf4-8e62-978f9f4a828d".to_string(),
+            "f791d7c2-66cd-4f67-a195-72c6faf3c3b5".to_string(),
+        ];
+        expected_groups.sort();
+
+        assert_eq!(groups, expected_groups);
     }
 
     #[test]
