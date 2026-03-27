@@ -534,6 +534,13 @@ class GitClient:
         """Get porcelain status."""
         return self.run("status", "--porcelain").stdout
 
+    def has_staged_changes(self, *paths: str) -> bool:
+        """Check if staged changes exist, optionally limited to paths."""
+        args = ["diff", "--cached", "--name-only"]
+        if paths:
+            args.extend(["--", *paths])
+        return bool(self.run(*args).stdout.strip())
+
     def get_merge_base(self, ref1: str, ref2: str) -> str:
         """Get merge base between two refs."""
         result = self.run("merge-base", ref1, ref2)
@@ -965,10 +972,16 @@ class BackportManager:
             except Exception as e:
                 print_color(f"  Warning: Could not update Makefile: {e}", "yellow")
 
-            # 3. Stage and commit changes if any
-            status = self.git.status_porcelain()
-            if status:
-                self.git.add("scripts/cargo_vet_review.py", "Makefile")
+            # 3. Stage and commit only vet-related changes
+            files_to_stage = [
+                path for path in ("scripts/cargo_vet_review.py", "Makefile")
+                if (self.repo_root / path).exists()
+            ]
+
+            if files_to_stage:
+                self.git.add(*files_to_stage)
+
+            if files_to_stage and self.git.has_staged_changes(*files_to_stage):
                 self.git.commit(
                     f"Update make vet from main branch\n\nCo-Authored-By: {CO_AUTHOR_EMAIL}",
                     signoff=True
@@ -990,17 +1003,14 @@ class BackportManager:
             result = subprocess.run(
                 ["make", "vet"],
                 cwd=self.repo_root,
-                capture_output=True,
-                text=True,
                 timeout=TIMEOUT_MAKE_VET_SECONDS,
             )
-            output = result.stdout + result.stderr
             if result.returncode == 0:
                 print_color("  make vet passed", "green")
-                return True, output
+                return True, ""
             else:
                 print_color("  make vet failed", "red")
-                return False, output
+                return False, ""
         except subprocess.TimeoutExpired:
             return False, "make vet timed out"
         except Exception as e:
