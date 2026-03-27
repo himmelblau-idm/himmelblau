@@ -22,7 +22,7 @@ The available options are:
 \(bu
 .B tpm_if_possible
 \(en Attempt to use a hardware TPM if available; if not, fall back to the software HSM. If the TPM has previously been used for key storage, the system will not fall back to the software HSM.
-
+.PP
 This setting is important for protecting sensitive cryptographic keys in a secure environment, reducing the risk of compromise if the system is breached.
 
 Note that the old

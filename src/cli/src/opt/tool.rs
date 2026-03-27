@@ -92,9 +92,13 @@ pub enum ApplicationOpt {
     /// NOTE: If you grant these permissions, it is strongly recommended that you restrict
     /// access to the application to specific administrators or groups:
     ///
-    /// 1. In the Microsoft Entra admin portal, go to Entra ID -> Enterprise applications and find your app's entry.
+    /// 1. In the Microsoft Entra admin portal, go to Entra ID -> Enterprise
+    ///    applications and find your app's entry.
+    ///
     /// 2. Under Properties, set "Assignment required?" to Yes.
-    /// 3. Go to Users and groups, click Add, and assign only the specific users or groups you want to have access.
+    ///
+    /// 3. Go to Users and groups, click Add, and assign only the specific users
+    ///    or groups you want to have access.
     ///
     /// If the `--name` parameter is omitted, the command authenticates as the currently
     /// logged-in user via the Himmelblau SSO broker. If the `--name` parameter is
@@ -102,6 +106,7 @@ pub enum ApplicationOpt {
     /// In this case, the command must be run as `root` to impersonate another user.
     ///
     /// This command must be run from a device that has already been joined to Entra ID.
+    #[command(verbatim_doc_comment)]
     Create {
         #[clap(short, long)]
         debug: bool,
@@ -270,6 +275,7 @@ pub enum CredOpt {
     ///
     /// Example:
     ///     aad-tool cred secret --client-id <CLIENT_ID> --secret <SECRET_VALUE>
+    #[command(verbatim_doc_comment)]
     Secret {
         #[clap(short, long)]
         debug: bool,
@@ -305,6 +311,7 @@ pub enum CredOpt {
     ///
     /// Example:
     ///     aad-tool cred cert --client-id <CLIENT_ID> --valid-days 365 --cert-out /tmp/my-cert.crt
+    #[command(verbatim_doc_comment)]
     Cert {
         #[clap(short, long)]
         debug: bool,
@@ -332,6 +339,7 @@ pub enum CredOpt {
     ///     aad-tool cred delete --domain <DOMAIN>
     ///     aad-tool cred delete --domain <DOMAIN> --secret
     ///     aad-tool cred delete --domain <DOMAIN> --cert
+    #[command(verbatim_doc_comment)]
     Delete {
         #[clap(short, long)]
         debug: bool,
@@ -352,6 +360,7 @@ pub enum CredOpt {
     ///
     /// Example:
     ///     aad-tool cred list --domain <DOMAIN>
+    #[command(verbatim_doc_comment)]
     List {
         #[clap(short, long)]
         debug: bool,
@@ -490,8 +499,8 @@ pub enum HimmelblauUnixOpt {
     /// will have been cached.
     ///
     /// Once activated, Himmelblau will:
-    ///   * Allow cached Entra ID users to log in using their known password.
-    ///   * Automatically exit breakglass mode after the TTL expires or once Entra ID connectivity
+    ///   - Allow cached Entra ID users to log in using their known password.
+    ///   - Automatically exit breakglass mode after the TTL expires or once Entra ID connectivity
     ///     has been restored.
     ///
     /// Use `--ttl` to override the configured duration for this session. The TTL value
@@ -517,6 +526,7 @@ pub enum HimmelblauUnixOpt {
     ///   - Himmelblau will not cache Entra ID password hashes unless offline breakglass has
     ///     been explicitly enabled in advance.
     ///   - This feature should only be used for emergency access during verified outages.
+    #[command(verbatim_doc_comment)]
     OfflineBreakglass {
         #[clap(short, long)]
         debug: bool,
