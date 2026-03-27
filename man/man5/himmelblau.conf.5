@@ -468,6 +468,28 @@ Default: true
 Example: enable_experimental_mfa = false
 
 .TP
+.B enable_passwordless
+.RE
+A boolean option that controls whether passwordless authentication (Microsoft Authenticator app approval without a password) is offered during Azure Entra ID authentication. When enabled, Himmelblau will include the passwordless option in authentication requests, allowing Entra ID to offer a passwordless flow. When disabled, users will be prompted for a password followed by MFA instead.
+
+.P
+Default: true
+
+.P
+Example: enable_passwordless = false
+
+.TP
+.B enable_passwordless_security_key
+.RE
+A boolean option that enables the passwordless physical USB security key flow for Azure Entra ID authentication. When enabled, Himmelblau will attempt to authenticate with Entra ID using a physical FIDO2 security key without requiring a password.
+
+.P
+Default: false
+
+.P
+Example: enable_passwordless_security_key = true
+
+.TP
 .B enable_experimental_passwordless_fido
 .RE
 A boolean option that enables the experimental passwordless FIDO flow for Azure Entra ID authentication. When enabled, Himmelblau will attempt to authenticate with Entra ID using a FIDO2 security key without requiring a password.
@@ -477,6 +499,17 @@ Default: false
 
 .P
 Example: enable_experimental_passwordless_fido = true
+
+.TP
+.B enable_passwordless_qr_bluetooth
+.RE
+A boolean option that enables the passwordless QR code and Bluetooth (caBLE hybrid transport) flow for Azure Entra ID authentication. When enabled, users with a cross-device passkey (e.g. Microsoft Authenticator) can authenticate by scanning a QR code on their phone, which communicates with the device over Bluetooth. Requires Bluetooth hardware on the device.
+
+.P
+Default: false
+
+.P
+Example: enable_passwordless_qr_bluetooth = true
 
 .TP
 .B fido_timeout
@@ -513,6 +546,18 @@ Default: Please touch your security key.
 
 .P
 Example: fido_presence_prompt = Bitte den Sicherheitsschlüssel berühren.
+
+.TP
+.B qr_bluetooth_prompt
+.RE
+The message displayed to the user when QR/Bluetooth (caBLE) authentication is initiated
+and they need to scan the QR code with their phone.
+
+.P
+Default: Scan with your authenticator app
+
+.P
+Example: qr_bluetooth_prompt = Mit der Authenticator-App scannen
 
 .TP
 .B name_mapping_script
@@ -724,17 +769,6 @@ Default: spn
 
 .P
 Example: home_alias = SPN
-
-.TP
-.B enable_passwordless
-.RE
-A boolean option that controls whether passwordless authentication (Microsoft Authenticator app approval without a password) is offered during Azure Entra ID authentication. When enabled, Himmelblau will include the passwordless option in authentication requests, allowing Entra ID to offer a passwordless flow. When disabled, users will be prompted for a password followed by MFA instead.
-
-.P
-Default: true
-
-.P
-Example: enable_passwordless = false
 
 .TP
 .B shell

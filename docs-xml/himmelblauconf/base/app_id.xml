@@ -5,7 +5,7 @@
            rust_type="Option&lt;String&gt;"
            documented="true"
            domain_specific="true"
-           order="23">
+           order="24">
 <description>
 Specifies the Azure Entra ID application (client) ID used by Himmelblau for directory operations such as reading extended attributes (for example,
 the

@@ -5,7 +5,7 @@
            rust_type="Vec&lt;String&gt;"
            documented="true"
            domain_specific="true"
-           order="19">
+           order="20">
 <description>
 A comma-separated list of Azure Entra ID group object IDs whose members should be granted
 .B sudo

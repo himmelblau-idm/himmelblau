@@ -5,7 +5,7 @@
            rust_type="bool"
            documented="true"
            domain_specific="false"
-           order="48">
+           order="54">
 <description>
 Whether SELinux security labels should be applied to users' home directories. Set to
 .B true
