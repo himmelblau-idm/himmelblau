@@ -20,6 +20,8 @@ use super::interface::{
     IdProvider, IdpError, UserToken,
 };
 use crate::auth_handle_mfa_resp;
+use crate::config::domains_are_aliases;
+use crate::config::get_primary_domain_from_alias;
 use crate::config::split_username;
 use crate::config::HimmelblauConfig;
 use crate::config::IdAttr;
@@ -292,9 +294,10 @@ macro_rules! find_provider {
         match $providers.get($domain) {
             Some(provider) => Some(provider),
             None => {
-                // Attempt to match a provider alias
-                let mut cfg = $hmp.config.write().await;
-                match cfg.get_primary_domain_from_alias($domain).await {
+                // Attempt to match a provider alias.
+                // Use the module-level get_primary_domain_from_alias so that no
+                // config lock is held across the async ODC HTTP requests.
+                match get_primary_domain_from_alias(&$hmp.config, $domain).await {
                     Some(domain) => $providers.get(&domain),
                     /* NEVER introduce a new tenant here: Advisory GHSA-q746-m2wv-qh4v */
                     None => None,
@@ -4364,8 +4367,9 @@ impl HimmelblauProvider {
                 if account_id.to_string().to_lowercase() != spn.to_string().to_lowercase() {
                     /* Fixes bug#801: The authenticated user might have a mis-matched
                      * response because the domains are aliases of one another.
+                     * Use the module-level domains_are_aliases so that no config
+                     * write lock is held across async ODC HTTP requests.
                      */
-                    let mut cfg = self.config.write().await;
                     let (_, domain1) = split_username(account_id).ok_or({
                         error!("Failed splitting account_id username");
                         IdpError::BadRequest
@@ -4374,7 +4378,7 @@ impl HimmelblauProvider {
                         error!("Failed splitting spn username");
                         IdpError::BadRequest
                     })?;
-                    if !cfg.domains_are_aliases(domain1, domain2).await {
+                    if !domains_are_aliases(&self.config, domain1, domain2).await {
                         let msg =
                             format!("Authenticated user {} does not match requested user", uuid);
                         error!(msg);
