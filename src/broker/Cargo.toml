@@ -13,7 +13,10 @@ repository.workspace = true
 dbus = "0.9.10"
 himmelblau_unix_common.workspace = true
 identity_dbus_broker.workspace = true
+pinentry = "0.8.0"
 sd-notify = "0.4.5"
+secrecy = "0.10"
+serde_json.workspace = true
 tokio.workspace = true
 tracing.workspace = true
 tracing-subscriber = { workspace = true }
