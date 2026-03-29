@@ -293,6 +293,7 @@ $(DEB_TARGETS): %: .packaging dockerfiles
 	mkdir -p target/$@
 	$(DOCKER) build $(LIBHIMMELBLAU_BUILD_ARG) -t himmelblau-$@-build -f images/Dockerfile.$@ .
 	$(DOCKER) run --rm --security-opt label=disable -it \
+		-e DEB_REVISION_APPEND=$(DEB_REVISION_APPEND) \
 		-v $(CURDIR):/himmelblau \
 		-v $(CURDIR)/target/$@:/himmelblau/target \
 		$(LIBHIMMELBLAU_MOUNT) \
@@ -412,6 +413,7 @@ $(DEB_ARM64_TARGETS): arm64-%: .packaging dockerfiles-arm64
 		-t himmelblau-arm64-$*-build \
 		-f images/Dockerfile.$*.arm64 .
 	$(DOCKER) run --rm --security-opt label=disable \
+		-e DEB_REVISION_APPEND=$(DEB_REVISION_APPEND) \
 		-v $(CURDIR):/himmelblau \
 		-v $(CURDIR)/target/arm64-$*:/himmelblau/target \
 		$(LIBHIMMELBLAU_MOUNT) \
