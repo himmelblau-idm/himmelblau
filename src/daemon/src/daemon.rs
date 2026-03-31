@@ -1316,6 +1316,12 @@ async fn main() -> ExitCode {
 
             let task_channel_tx_cln = task_channel_tx.clone();
 
+            // Make the task channel available to the identity provider so it
+            // can dispatch idmap_script execution to tasksd.
+            idprovider
+                .set_task_tx(task_channel_tx.as_ref().clone())
+                .await;
+
             let user_map = UserMap::new(&cfg.get_user_map_file());
             let cl_inner = match Resolver::new(
                 db,
