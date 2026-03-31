@@ -12,15 +12,38 @@ use himmelblau_unix_common::config::HimmelblauConfig;
 use himmelblau_unix_common::constants::{DEFAULT_CONFIG_PATH, NSS_CACHE};
 use himmelblau_unix_common::idprovider::interface::Id;
 use himmelblau_unix_common::nss_cache::{Mode, NssCache};
+use himmelblau_unix_common::unix_passwd::parse_etc_group;
 use himmelblau_unix_common::unix_proto::{ClientRequest, ClientResponse, NssGroup, NssUser};
 use himmelblau_unix_common::user_map::UserMap;
 use libnss::group::{Group, GroupHooks};
 use libnss::interop::Response;
 use libnss::passwd::{Passwd, PasswdHooks};
+use std::fs::File;
+use std::io::Read;
 use uuid::Uuid;
 
 struct HimmelblauPasswd;
 libnss_passwd_hooks!(himmelblau, HimmelblauPasswd);
+
+fn is_local_group(name: &str) -> bool {
+    let contents = read_etc_group();
+    is_group_name_in_groups(name, &contents)
+}
+
+fn is_group_name_in_groups(name: &str, group_contents: &[u8]) -> bool {
+    parse_etc_group(group_contents)
+        .unwrap_or_default()
+        .iter()
+        .any(|g| g.name == name)
+}
+
+fn read_etc_group() -> Vec<u8> {
+    let mut contents = vec![];
+    if let Ok(mut file) = File::open("/etc/group") {
+        let _ = file.read_to_end(&mut contents);
+    }
+    contents
+}
 
 macro_rules! try_nss_cache {
     () => {
@@ -322,6 +345,10 @@ impl GroupHooks for HimmelblauGroup {
                 return Response::Unavail;
             }
         };
+        // Don't let fake primary groups shadow local groups
+        if is_local_group(&cfg.map_upn_to_name(&name)) {
+            return Response::NotFound;
+        }
         let upn = cfg.map_name_to_upn(&name);
         let mut daemon_client = match DaemonClientBlocking::new(cfg.get_socket_path().as_str()) {
             Ok(dc) => dc,
@@ -415,5 +442,75 @@ fn group_from_nssgroup(ng: NssGroup) -> Group {
         passwd: "x".to_string(),
         gid: ng.gid,
         members: ng.members,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+
+    fn create_temp_config(contents: &str) -> String {
+        let file_path = format!(
+            "/tmp/himmelblau_nss_test_config_{}.ini",
+            uuid::Uuid::new_v4()
+        );
+        fs::write(&file_path, contents).expect("Failed to write temporary config file");
+        file_path
+    }
+
+    fn test_config() -> HimmelblauConfig {
+        let config_data = r#"
+            [global]
+            domains = contoso.com,fabrikam.com
+            cn_name_mapping = true
+        "#;
+
+        let temp_file = create_temp_config(config_data);
+        HimmelblauConfig::new(Some(&temp_file)).expect("Failed to create test config")
+    }
+
+    #[test]
+    fn blocks_short_group_name_collision() {
+        let cfg = test_config();
+        let groups = b"root:x:0:\nsudo:x:27:\nwheel:x:10:\n";
+
+        assert!(is_group_name_in_groups(
+            &cfg.map_upn_to_name("sudo"),
+            groups
+        ));
+    }
+
+    #[test]
+    fn blocks_primary_domain_upn_group_collision() {
+        let cfg = test_config();
+        let groups = b"root:x:0:\nsudo:x:27:\nwheel:x:10:\n";
+
+        assert!(is_group_name_in_groups(
+            &cfg.map_upn_to_name("sudo@contoso.com"),
+            groups
+        ));
+    }
+
+    #[test]
+    fn allows_non_primary_domain_upn_lookup() {
+        let cfg = test_config();
+        let groups = b"root:x:0:\nsudo:x:27:\nwheel:x:10:\n";
+
+        assert!(!is_group_name_in_groups(
+            &cfg.map_upn_to_name("sudo@fabrikam.com"),
+            groups
+        ));
+    }
+
+    #[test]
+    fn allows_non_colliding_group_name() {
+        let cfg = test_config();
+        let groups = b"root:x:0:\nsudo:x:27:\nwheel:x:10:\n";
+
+        assert!(!is_group_name_in_groups(
+            &cfg.map_upn_to_name("engineering"),
+            groups
+        ));
     }
 }
