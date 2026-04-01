@@ -700,8 +700,8 @@ impl OidcApplication {
     async fn user_token_from_oidc(
         &self,
         token: &openidconnect::core::CoreTokenResponse,
-        config: &HimmelblauConfig,
-        idmap: &Idmap,
+        shell: String,
+        idmap: &Mutex<Idmap>,
         tenant_id: &Uuid,
     ) -> Result<UserToken, IdpError> {
         let access_token = token.access_token();
@@ -744,6 +744,7 @@ impl OidcApplication {
         let (uid, gid) = match idmap_cache.get_user_by_name(&account_id) {
             Some(user) => (user.uid, user.gid),
             None => {
+                let idmap = idmap.lock().await;
                 let gid = idmap
                     .gen_to_unix(&tenant_id.to_string(), &account_id)
                     .map_err(|e| {
@@ -769,7 +770,7 @@ impl OidcApplication {
             real_gidnumber: Some(uid),
             gidnumber: gid,
             displayname,
-            shell: Some(config.get_shell(None)),
+            shell: Some(shell),
             groups: vec![GroupToken {
                 name: account_id.to_string(),
                 spn: account_id.to_string(),
@@ -912,10 +913,9 @@ impl OidcProvider {
         // via PAM indicating that the network is down.
         let init = self.client.client.lock().await.is_some();
         if !init {
-            let cfg = self.config.lock().await;
-
             // Initialize the idmap range
             let tenant_id = self.tenant_id().await?.to_string();
+            let cfg = self.config.lock().await;
             let range = cfg.get_idmap_range(&self.domain);
             let mut idmap = self.idmap.lock().await;
             idmap
@@ -938,13 +938,15 @@ impl OidcProvider {
         account_id: &str,
         token: &OidcTokenResponse,
     ) -> Result<AuthResult, IdpError> {
+        let tenant_id = self.tenant_id().await?;
+        let shell = self.config.lock().await.get_shell(None);
         let token2 = self
             .client
             .user_token_from_oidc(
                 token,
-                &*self.config.lock().await,
-                &*self.idmap.lock().await,
-                &self.tenant_id().await?,
+                shell,
+                self.idmap.as_ref(),
+                &tenant_id,
             )
             .await?;
         if account_id.to_string().to_lowercase() != token2.name.to_string().to_lowercase() {
@@ -1360,11 +1362,13 @@ impl IdProvider for OidcProvider {
                         ));
                     }
                 };
+                let tenant_id = self.tenant_id().await?;
+                let shell = self.config.lock().await.get_shell(None);
                 let token2 = self.client.user_token_from_oidc(
                     &token,
-                    &*self.config.lock().await,
-                    &*self.idmap.lock().await,
-                    &self.tenant_id().await?,
+                    shell,
+                    self.idmap.as_ref(),
+                    &tenant_id,
                 ).await?;
                 tpm.seal_data(&win_hello_storage_key, refresh_token_zeroizing)
                     .map_err(|e| {
