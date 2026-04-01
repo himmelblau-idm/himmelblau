@@ -34,11 +34,11 @@ macro_rules! user_token_from_broker_token_resp {
                 .get("grantedScopes")
                 .and_then(|v| v.as_str())
                 .map(String::from),
-            expires_in: ($token
+            expires_in: (($token
                 .get("expiresOn")
                 .and_then(|v| v.as_u64())
                 .unwrap_or(0)
-                - now.as_secs()) as u32,
+                / 1000).saturating_sub(now.as_secs())) as u32,
             ext_expires_in: ($token
                 .get("extendedExpiresOn")
                 .and_then(|v| v.as_u64())
