@@ -335,10 +335,20 @@ macro_rules! find_provider {
         match $providers.get($domain) {
             Some(provider) => Some(provider),
             None => {
-                // Attempt to match a provider alias
-                let mut cfg = $hmp.config.write().await;
-                match cfg.get_primary_domain_from_alias($domain).await {
-                    Some(domain) => $providers.get(&domain),
+                // Attempt to match a provider alias, but do not hold the providers
+                // mutex across the awaited alias lookup.
+                drop($providers);
+                let primary_domain = {
+                    let mut cfg = $hmp.config.write().await;
+                    cfg.get_primary_domain_from_alias($domain).await
+                };
+
+                match primary_domain {
+                    Some(domain) => {
+                        /* NEVER introduce a new tenant here: Advisory GHSA-q746-m2wv-qh4v */
+                        $providers = $hmp.providers.read().await;
+                        $providers.get(&domain)
+                    }
                     None => None,
                 }
             }
@@ -399,7 +409,7 @@ impl IdProvider for HimmelblauMultiProvider {
             None => id.to_string().clone(),
         };
         let domain = idp_get_domain_for_account(&account_id)?;
-        let providers = self.providers.read().await;
+        let mut providers = self.providers.read().await;
         let provider = find_provider!(self, providers, domain)?;
 
         provider
@@ -429,7 +439,7 @@ impl IdProvider for HimmelblauMultiProvider {
             return empty;
         };
 
-        let providers = self.providers.read().await;
+        let mut providers = self.providers.read().await;
         let Ok(provider) = find_provider!(self, providers, domain) else {
             return empty;
         };
@@ -452,7 +462,7 @@ impl IdProvider for HimmelblauMultiProvider {
             None => id.to_string().clone(),
         };
         let domain = idp_get_domain_for_account(&account_id)?;
-        let providers = self.providers.read().await;
+        let mut providers = self.providers.read().await;
         let provider = find_provider!(self, providers, domain)?;
 
         provider
@@ -470,7 +480,7 @@ impl IdProvider for HimmelblauMultiProvider {
         machine_key: &tpm::structures::StorageKey,
     ) -> Result<bool, IdpError> {
         let domain = idp_get_domain_for_account(account_id)?;
-        let providers = self.providers.read().await;
+        let mut providers = self.providers.read().await;
         let provider = find_provider!(self, providers, domain)?;
 
         provider
@@ -492,7 +502,7 @@ impl IdProvider for HimmelblauMultiProvider {
             None => id.to_string().clone(),
         };
         let domain = idp_get_domain_for_account(&account_id)?;
-        let providers = self.providers.read().await;
+        let mut providers = self.providers.read().await;
         let provider = find_provider!(self, providers, domain)?;
 
         provider
@@ -511,7 +521,7 @@ impl IdProvider for HimmelblauMultiProvider {
         shutdown_rx: &broadcast::Receiver<()>,
     ) -> Result<(AuthRequest, AuthCredHandler), IdpError> {
         let domain = idp_get_domain_for_account(account_id)?;
-        let providers = self.providers.read().await;
+        let mut providers = self.providers.read().await;
         let provider = find_provider!(self, providers, domain)?;
 
         provider
@@ -541,7 +551,7 @@ impl IdProvider for HimmelblauMultiProvider {
         shutdown_rx: &broadcast::Receiver<()>,
     ) -> Result<(AuthResult, AuthCacheAction), IdpError> {
         let domain = idp_get_domain_for_account(account_id)?;
-        let providers = self.providers.read().await;
+        let mut providers = self.providers.read().await;
         let provider = find_provider!(self, providers, domain)?;
 
         provider
@@ -568,7 +578,7 @@ impl IdProvider for HimmelblauMultiProvider {
         keystore: &mut D,
     ) -> Result<(AuthRequest, AuthCredHandler), IdpError> {
         let domain = idp_get_domain_for_account(account_id)?;
-        let providers = self.providers.read().await;
+        let mut providers = self.providers.read().await;
         let provider = find_provider!(self, providers, domain)?;
 
         provider
@@ -588,7 +598,7 @@ impl IdProvider for HimmelblauMultiProvider {
         online_at_init: bool,
     ) -> Result<AuthResult, IdpError> {
         let domain = idp_get_domain_for_account(account_id)?;
-        let providers = self.providers.read().await;
+        let mut providers = self.providers.read().await;
         let provider = find_provider!(self, providers, domain)?;
 
         provider
@@ -619,7 +629,7 @@ impl IdProvider for HimmelblauMultiProvider {
         match account_id {
             Some(account_id) => match split_username(account_id) {
                 Some((_sam, domain)) => {
-                    let providers = self.providers.read().await;
+                    let mut providers = self.providers.read().await;
                     match find_provider!(self, providers, domain) {
                         Ok(provider) => return provider.get_cachestate(Some(account_id)).await,
                         Err(..) => return CacheState::Offline,
