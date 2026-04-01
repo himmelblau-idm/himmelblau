@@ -205,7 +205,7 @@ macro_rules! handle_hello_bad_pin_count {
             .increment_bad_pin_count($account_id)
             .await;
 
-        let hello_pin_retry_count = $self.config.read().await.get_hello_pin_retry_count();
+        let hello_pin_retry_count = $self.config.lock().await.get_hello_pin_retry_count();
         let bad_pin_count = $self.bad_pin_counter.bad_pin_count($account_id).await;
 
         if bad_pin_count == hello_pin_retry_count {
@@ -262,7 +262,7 @@ macro_rules! impl_offline_break_glass {
     ($self:ident, $ttl:ident) => {{
         let mut state = $self.state.lock().await;
         let (ttl, enabled) = {
-            let cfg = $self.config.read().await;
+            let cfg = $self.config.lock().await;
             (
                 match $ttl {
                     Some(ttl) => ttl,
@@ -333,7 +333,7 @@ macro_rules! load_cached_prt {
         if let Ok(Some(hello_prt)) = $keystore.get_tagged_hsm_key(&hello_prt_tag) {
             let prt = $self
                 .client
-                .read()
+                .lock()
                 .await
                 .unseal_user_prt_with_hello_key(&hello_prt, &$hello_key, &$cred, $tpm, $machine_key)
                 .map_err(|e| {
@@ -344,7 +344,7 @@ macro_rules! load_cached_prt {
             // This happens after 14 days of no online contact.
             if $self
                 .client
-                .read()
+                .lock()
                 .await
                 .is_prt_expired(&prt, $tpm, $machine_key)
                 .map_err(|e| {
@@ -377,7 +377,7 @@ macro_rules! impl_himmelblau_offline_auth_init {
     ($self:ident, $account_id:expr, $no_hello_pin:ident, $keystore:expr, $password_auth:expr) => {{
         let hello_key = $self.fetch_hello_key($account_id, $keystore).ok();
         let (sfa_enabled, hello_pin_retry_count, breakglass_enabled) = {
-            let cfg = $self.config.read().await;
+            let cfg = $self.config.lock().await;
             (
                 cfg.get_enable_sfa_fallback(),
                 cfg.get_hello_pin_retry_count(),
@@ -525,7 +525,7 @@ macro_rules! check_hello_totp_setup {
 #[macro_export]
 macro_rules! check_hello_totp_enabled {
     ($self:ident) => {{
-        let cfg = $self.config.read().await;
+        let cfg = $self.config.lock().await;
         cfg.get_enable_hello_totp()
     }};
 }
@@ -634,7 +634,7 @@ macro_rules! entra_id_prt_token_fetch {
     ($self:ident, $prt:ident, $scopes:ident, $client_id:ident, $tpm:ident, $machine_key:ident) => {{
         $self
             .client
-            .read()
+            .lock()
             .await
             .exchange_prt_for_access_token(
                 &$prt,
@@ -760,7 +760,7 @@ macro_rules! seal_prt_with_existing_hello_key {
     ($self:expr, $account_id:expr, $token:expr, $hello_key:expr, $pin:expr, $keystore:expr, $tpm:expr, $machine_key:expr) => {{
         // Seal the PRT with the existing Hello key
         if let Some(prt) = &$token.prt {
-            match $self.client.read().await.seal_user_prt_with_hello_key(
+            match $self.client.lock().await.seal_user_prt_with_hello_key(
                 prt,
                 $hello_key,
                 $pin,
@@ -826,7 +826,7 @@ macro_rules! impl_provision_hello_key {
     ($self:ident, $token:ident, $cred:ident, $tpm:ident, $machine_key:ident) => {
         $self
             .client
-            .read()
+            .lock()
             .await
             .provision_hello_for_business_key(&$token, $tpm, $machine_key, &$cred)
             .await
