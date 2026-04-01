@@ -68,7 +68,7 @@ use reqwest::Url;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
-use tokio::sync::{broadcast, Mutex, RwLock};
+use tokio::sync::{broadcast, Mutex};
 use totp_rs::{Algorithm, Secret, TOTP};
 use uuid::Uuid;
 use zeroize::Zeroizing;
@@ -312,14 +312,14 @@ struct OidcDelayedInit {
 }
 
 pub struct OidcApplication {
-    client: RwLock<Option<OidcDelayedInit>>,
+    client: Mutex<Option<OidcDelayedInit>>,
 }
 
 impl OidcApplication {
     #[instrument(level = "debug", skip_all)]
     pub fn new() -> Self {
         Self {
-            client: RwLock::new(None),
+            client: Mutex::new(None),
         }
     }
 
@@ -332,7 +332,7 @@ impl OidcApplication {
 
     #[instrument(level = "debug", skip_all)]
     async fn delayed_init(&self, config: &HimmelblauConfig, domain: &str) -> Result<(), IdpError> {
-        let init = self.client.read().await.is_some();
+        let init = self.client.lock().await.is_some();
         if !init {
             let client_id = ClientId::new(config.get_app_id(domain).ok_or_else(|| {
                 error!(
@@ -388,7 +388,7 @@ impl OidcApplication {
                 .set_auth_type(AuthType::RequestBody);
 
             // Store provider initialization
-            self.client.write().await.replace(OidcDelayedInit {
+            self.client.lock().await.replace(OidcDelayedInit {
                 client,
                 http_client,
                 authorization_endpoint,
@@ -396,11 +396,6 @@ impl OidcApplication {
             });
         }
         Ok(())
-    }
-
-    #[instrument(level = "debug", skip_all)]
-    async fn read(&self) -> tokio::sync::RwLockReadGuard<'_, Option<OidcDelayedInit>> {
-        self.client.read().await
     }
 
     #[instrument(level = "debug", skip_all)]
@@ -413,7 +408,7 @@ impl OidcApplication {
             Scope::new("email".to_string()),
             Scope::new("offline_access".to_string()),
         ];
-        if let Some(delayed_init) = &*self.client.read().await {
+        if let Some(delayed_init) = &*self.client.lock().await {
             let details = delayed_init
                 .client
                 .exchange_device_code()
@@ -444,7 +439,7 @@ impl OidcApplication {
         &self,
         flow: &DeviceAuthorizationResponse<EmptyExtraDeviceAuthorizationFields>,
     ) -> Result<OidcTokenResponse, MsalError> {
-        if let Some(delayed_init) = &*self.client.read().await {
+        if let Some(delayed_init) = &*self.client.lock().await {
             // Try to get the token endpoint URL from the oauth2 Client
             let token_url = delayed_init
                 .client
@@ -574,7 +569,7 @@ impl OidcApplication {
         refresh_token: &str,
         scopes: Vec<&str>,
     ) -> Result<OidcTokenResponse, MsalError> {
-        if let Some(delayed_init) = &*self.client.read().await {
+        if let Some(delayed_init) = &*self.client.lock().await {
             // Token endpoint
             let token_url = delayed_init
                 .client
@@ -710,7 +705,7 @@ impl OidcApplication {
         tenant_id: &Uuid,
     ) -> Result<UserToken, IdpError> {
         let access_token = token.access_token();
-        let userinfo: CoreUserInfoClaims = if let Some(delayed_init) = &*self.client.read().await {
+        let userinfo: CoreUserInfoClaims = if let Some(delayed_init) = &*self.client.lock().await {
             delayed_init
                 .client
                 .user_info(access_token.clone(), None)
@@ -794,8 +789,8 @@ impl Default for OidcApplication {
 }
 
 pub struct OidcProvider {
-    config: Arc<RwLock<HimmelblauConfig>>,
-    idmap: Arc<RwLock<Idmap>>,
+    config: Arc<Mutex<HimmelblauConfig>>,
+    idmap: Arc<Mutex<Idmap>>,
     state: Mutex<CacheState>,
     client: OidcApplication,
     refresh_cache: RefreshCache,
@@ -806,9 +801,9 @@ pub struct OidcProvider {
 impl OidcProvider {
     #[instrument(level = "debug", skip_all)]
     pub fn new(
-        cfg: &Arc<RwLock<HimmelblauConfig>>,
+        cfg: &Arc<Mutex<HimmelblauConfig>>,
         domain: &str,
-        idmap: &Arc<RwLock<Idmap>>,
+        idmap: &Arc<Mutex<Idmap>>,
     ) -> Result<Self, IdpError> {
         Ok(Self {
             config: cfg.clone(),
@@ -823,7 +818,7 @@ impl OidcProvider {
 
     #[instrument(level = "debug", skip_all)]
     async fn tenant_id(&self) -> Result<Uuid, IdpError> {
-        let config = self.config.read().await;
+        let config = self.config.lock().await;
         let issuer = config.get_oidc_issuer_url().ok_or_else(|| {
             error!("Missing OIDC issuer URL in config");
             IdpError::BadRequest
@@ -842,7 +837,7 @@ impl OidcProvider {
             return false;
         }
         let (authorization_endpoint, openid_configuration_url) =
-            match self.client.read().await.as_ref() {
+            match self.client.client.lock().await.as_ref() {
                 Some(init) => (
                     init.authorization_endpoint.clone(),
                     init.openid_configuration_url.clone(),
@@ -915,14 +910,14 @@ impl OidcProvider {
         // possible. This permits the daemon to start, without requiring we be
         // connected to the internet. This way we can send messages to the user
         // via PAM indicating that the network is down.
-        let init = self.client.read().await.is_some();
+        let init = self.client.client.lock().await.is_some();
         if !init {
-            let cfg = self.config.read().await;
+            let cfg = self.config.lock().await;
 
             // Initialize the idmap range
             let tenant_id = self.tenant_id().await?.to_string();
             let range = cfg.get_idmap_range(&self.domain);
-            let mut idmap = self.idmap.write().await;
+            let mut idmap = self.idmap.lock().await;
             idmap
                 .add_gen_domain(&self.domain, &tenant_id, range)
                 .map_err(|e| {
@@ -947,8 +942,8 @@ impl OidcProvider {
             .client
             .user_token_from_oidc(
                 token,
-                &*self.config.read().await,
-                &*self.idmap.read().await,
+                &*self.config.lock().await,
+                &*self.idmap.lock().await,
                 &self.tenant_id().await?,
             )
             .await?;
@@ -1034,7 +1029,7 @@ impl IdProvider for OidcProvider {
         let (uid, gid) = match idmap_cache.get_user_by_name(account_id) {
             Some(user) => (user.uid, user.gid),
             None => {
-                let idmap = self.idmap.read().await;
+                let idmap = self.idmap.lock().await;
                 let gid = idmap
                     .gen_to_unix(&tenant_id.to_string(), account_id)
                     .map_err(|e| {
@@ -1052,7 +1047,7 @@ impl IdProvider for OidcProvider {
             real_gidnumber: Some(uid),
             gidnumber: gid,
             displayname,
-            shell: Some(self.config.read().await.get_shell(None)),
+            shell: Some(self.config.lock().await.get_shell(None)),
             groups: vec![GroupToken {
                 name: account_id.to_string(),
                 spn: account_id.to_string(),
@@ -1097,7 +1092,7 @@ impl IdProvider for OidcProvider {
         };
         let remote_services = self
             .config
-            .read()
+            .lock()
             .await
             .get_password_only_remote_services_deny_list();
         // Check if this is a remote service:
@@ -1108,10 +1103,10 @@ impl IdProvider for OidcProvider {
                 .iter()
                 .any(|s| !s.is_empty() && service.contains(s));
         let hello_totp_enabled = check_hello_totp_enabled!(self);
-        let allow_remote_hello = self.config.read().await.get_allow_remote_hello();
+        let allow_remote_hello = self.config.lock().await.get_allow_remote_hello();
         // Skip Hello authentication if it is disabled by config
-        let hello_enabled = self.config.read().await.get_enable_hello();
-        let hello_pin_retry_count = self.config.read().await.get_hello_pin_retry_count();
+        let hello_enabled = self.config.lock().await.get_enable_hello();
+        let hello_pin_retry_count = self.config.lock().await.get_hello_pin_retry_count();
         if hello_key.is_none()
             || !hello_enabled
             || (is_remote_service && !hello_totp_enabled && !allow_remote_hello)
@@ -1367,8 +1362,8 @@ impl IdProvider for OidcProvider {
                 };
                 let token2 = self.client.user_token_from_oidc(
                     &token,
-                    &*self.config.read().await,
-                    &*self.idmap.read().await,
+                    &*self.config.lock().await,
+                    &*self.idmap.lock().await,
                     &self.tenant_id().await?,
                 ).await?;
                 tpm.seal_data(&win_hello_storage_key, refresh_token_zeroizing)
@@ -1517,7 +1512,7 @@ impl IdProvider for OidcProvider {
                     Ok(token) => match self.token_validate(account_id, &token).await {
                         Ok(AuthResult::Success { token: token2 }) => {
                             // Skip Hello enrollment if it is disabled by config
-                            let hello_enabled = self.config.read().await.get_enable_hello();
+                            let hello_enabled = self.config.lock().await.get_enable_hello();
                             if !hello_enabled || no_hello_pin {
                                 info!("Skipping Hello enrollment because it is disabled");
                                 return Ok((
