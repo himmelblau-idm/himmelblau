@@ -2,7 +2,10 @@
 #
 # Check if the Cargo.nix is up-to-date and if not register the new one as artifact so contributors do not have to install nix
 name: "crate2nix: Cargo.nix check"
-on: [pull_request]
+on:
+  pull_request:
+  push:
+    branches: [main]
 
 permissions:
   contents: read
