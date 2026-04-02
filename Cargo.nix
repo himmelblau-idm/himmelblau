@@ -339,7 +339,7 @@ rec {
           {
             name = "libhimmelblau";
             packageId = "libhimmelblau";
-            features = [ "broker" "changepassword" "on_behalf_of" "mfa_method_selection" "optional_mfa" "intune_portal_vers_selection" ];
+            features = [ "broker" "changepassword" "on_behalf_of" "mfa_method_selection" "optional_mfa" "intune_portal_vers_selection" "redirect_uri" ];
           }
           {
             name = "reqwest";
@@ -6780,7 +6780,7 @@ rec {
           {
             name = "libhimmelblau";
             packageId = "libhimmelblau";
-            features = [ "broker" "changepassword" "on_behalf_of" "mfa_method_selection" "optional_mfa" "intune_portal_vers_selection" ];
+            features = [ "broker" "changepassword" "on_behalf_of" "mfa_method_selection" "optional_mfa" "intune_portal_vers_selection" "redirect_uri" ];
           }
           {
             name = "os-release";
@@ -6921,7 +6921,7 @@ rec {
           {
             name = "libhimmelblau";
             packageId = "libhimmelblau";
-            features = [ "broker" "changepassword" "on_behalf_of" "mfa_method_selection" "optional_mfa" "intune_portal_vers_selection" ];
+            features = [ "broker" "changepassword" "on_behalf_of" "mfa_method_selection" "optional_mfa" "intune_portal_vers_selection" "redirect_uri" ];
           }
           {
             name = "libkrimes";
@@ -7114,7 +7114,7 @@ rec {
           {
             name = "libhimmelblau";
             packageId = "libhimmelblau";
-            features = [ "broker" "changepassword" "on_behalf_of" "mfa_method_selection" "optional_mfa" "intune_portal_vers_selection" ];
+            features = [ "broker" "changepassword" "on_behalf_of" "mfa_method_selection" "optional_mfa" "intune_portal_vers_selection" "redirect_uri" ];
           }
           {
             name = "libkrimes";
@@ -9384,9 +9384,9 @@ rec {
       };
       "libhimmelblau" = rec {
         crateName = "libhimmelblau";
-        version = "0.8.13";
+        version = "0.8.14";
         edition = "2021";
-        sha256 = "0fb0330vs5crbnyaik0pkz2wlplf2zywpp1h9nkm5bhdrmk4scsz";
+        sha256 = "1chrgij7vvnk4rxm6d3gsf38r3cc8cf0z6gf9zgbxsy8m1bg043i";
         libName = "himmelblau";type = [ "rlib" "cdylib" ];
         authors = [
           "David Mulder <dmulder@suse.com>"
@@ -9532,9 +9532,10 @@ rec {
           "interactive" = [ "dep:browser-window" "browser-window/webkitgtk" "browser-window/threadsafe" ];
           "on_behalf_of" = [ "broker" ];
           "pyapi" = [ "broker" "dep:pyo3" ];
+          "redirect_uri" = [ "broker" ];
           "tpm" = [ "broker" "kanidm-hsm-crypto/tpm" ];
         };
-        resolvedDefaultFeatures = [ "broker" "changepassword" "default" "intune_portal_vers_selection" "mfa_method_selection" "on_behalf_of" "optional_mfa" "tpm" ];
+        resolvedDefaultFeatures = [ "broker" "changepassword" "default" "intune_portal_vers_selection" "mfa_method_selection" "on_behalf_of" "optional_mfa" "redirect_uri" "tpm" ];
       };
       "libkrimes" = rec {
         crateName = "libkrimes";
@@ -12074,7 +12075,7 @@ rec {
           {
             name = "libhimmelblau";
             packageId = "libhimmelblau";
-            features = [ "broker" "changepassword" "on_behalf_of" "mfa_method_selection" "optional_mfa" "intune_portal_vers_selection" ];
+            features = [ "broker" "changepassword" "on_behalf_of" "mfa_method_selection" "optional_mfa" "intune_portal_vers_selection" "redirect_uri" ];
           }
           {
             name = "tokio";
