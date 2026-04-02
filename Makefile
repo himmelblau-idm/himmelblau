@@ -220,7 +220,7 @@ deb: .packaging dockerfiles ## Build all DEB targets (continue on failure, summa
 	  if $(MAKE) --no-print-directory $$t; then :; else \
 	    echo "$$t" >> "$(FAIL_FILE)"; echo "FAIL: $$t build failed"; rm -f "$$mark"; continue; \
 	  fi; \
-	  cnt=$$(find ./packaging -type f -newer "$$mark" -name "himmelblau_*-$${t}_amd64.deb" | wc -l); \
+	  cnt=$$(find ./packaging -type f -newer "$$mark" -name "himmelblau_*-$${t}*_amd64.deb" | wc -l); \
 	  if [ "$$cnt" -gt 0 ]; then \
 	    echo "OK: $$t produced .deb(s)"; \
 	  else \
