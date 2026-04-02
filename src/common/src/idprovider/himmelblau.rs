@@ -188,8 +188,7 @@ impl HimmelblauMultiProvider {
         };
 
         let providers = HashMap::new();
-        let cfg = config.lock().await;
-        let domains = cfg.get_configured_domains();
+        let domains = config.lock().await.get_configured_domains();
         if domains.is_empty() {
             warn!("No domains configured in himmelblau.conf.");
         }
@@ -199,14 +198,21 @@ impl HimmelblauMultiProvider {
             providers: Arc::new(Mutex::new(providers)),
         };
 
-        if cfg.get_oidc_issuer_url().is_none() {
+        let oidc_issuer_url = config.lock().await.get_oidc_issuer_url();
+        if oidc_issuer_url.is_none() {
             for domain in domains {
                 debug!("Adding provider for domain {}", domain);
-                let authority_host = cfg.get_authority_host(&domain);
-                let tenant_id = cfg.get_tenant_id(&domain);
-                let graph_url = cfg.get_graph_url(&domain);
+                let (authority_host, tenant_id, graph_url, odc_provider) = {
+                    let cfg = config.lock().await;
+                    (
+                        cfg.get_authority_host(&domain),
+                        cfg.get_tenant_id(&domain),
+                        cfg.get_graph_url(&domain),
+                        cfg.get_odc_provider(&domain),
+                    )
+                };
                 let graph = match Graph::new(
-                    &cfg.get_odc_provider(&domain),
+                    &odc_provider,
                     &domain,
                     Some(&authority_host),
                     tenant_id.as_deref(),
@@ -220,7 +226,7 @@ impl HimmelblauMultiProvider {
                         continue;
                     }
                 };
-                let app_id = cfg.get_app_id(&domain);
+                let app_id = config.lock().await.get_app_id(&domain);
                 let app = BrokerClientApplication::new(None, app_id.as_deref(), None, None)
                     .map_err(|e| {
                         error!("Failed initializing provider: {:?}", e);
@@ -320,8 +326,8 @@ macro_rules! find_provider {
 
 macro_rules! idp_get_domain_for_account {
     ($hmp:ident, $account_id:expr) => {{
-        let cfg = $hmp.config.lock().await;
-        if cfg.get_oidc_issuer_url().is_some() {
+        let oidc_issuer_url = $hmp.config.lock().await.get_oidc_issuer_url();
+        if oidc_issuer_url.is_some() {
             Ok("oidc")
         } else {
             match split_username($account_id) {
@@ -1194,12 +1200,15 @@ impl IdProvider for HimmelblauProvider {
 
         macro_rules! fetch_user_confidential_client {
             ($client_id:expr, $client_credential:expr) => {{
-                let cfg = self.config.lock().await;
-                let authority_host = cfg.get_authority_host(&self.domain);
-                let tenant_id = cfg.get_tenant_id(&self.domain).ok_or_else(|| {
-                    error!("tenant_id not found");
-                    IdpError::BadRequest
-                })?;
+                let (authority_host, tenant_id) = {
+                    let cfg = self.config.lock().await;
+                    let authority_host = cfg.get_authority_host(&self.domain);
+                    let tenant_id = cfg.get_tenant_id(&self.domain).ok_or_else(|| {
+                        error!("tenant_id not found");
+                        IdpError::BadRequest
+                    })?;
+                    (authority_host, tenant_id)
+                };
                 let authority = format!("https://{}/{}", authority_host, tenant_id);
                 let app = ConfidentialClientApplication::new(
                     $client_id,
@@ -1289,12 +1298,12 @@ impl IdProvider for HimmelblauProvider {
                         if auth_init.exists() {
                             // Generate a UserToken, with invalid uuid. We can
                             // only fetch this from an authenticated token.
-                            let config = self.config.lock().await;
+                            let id_attr_map = self.config.lock().await.get_id_attr_map();
                             let (uid, gid) = match idmap_cache.get_user_by_name(&account_id) {
                                 Some(user) => {
                                     (user.uid, user.gid)
                                 },
-                                None => match config.get_id_attr_map() {
+                                None => match id_attr_map {
                                     IdAttr::Uuid => {
                                         // Attempt to map the UPN to an Object Id.
                                         let sidtoname = self.client
@@ -1310,12 +1319,11 @@ impl IdProvider for HimmelblauProvider {
                                                 error!("Failed mapping UPN to Object Id: {:?}", e);
                                                 IdpError::BadRequest
                                             })?;
-                                        let idmap = self.idmap.lock().await;
                                         let sid = AadSid::from_sid_str(&sidtoname.sid).map_err(|e| {
                                             error!("Failed parsing SID: {:?}", e);
                                             IdpError::BadRequest
                                         })?;
-                                        let uid = idmap.object_id_to_unix_id(&self.graph.tenant_id().await.map_err(|e| {
+                                        let uid = self.idmap.lock().await.object_id_to_unix_id(&self.graph.tenant_id().await.map_err(|e| {
                                             error!("Failed fetching tenant id: {:?}", e);
                                             IdpError::BadRequest
                                         })?, &sid).map_err(|e| {
@@ -1325,8 +1333,7 @@ impl IdProvider for HimmelblauProvider {
                                         (uid, uid)
                                     },
                                     IdAttr::Name | IdAttr::Rfc2307 => {
-                                        let idmap = self.idmap.lock().await;
-                                        let gid = idmap.gen_to_unix(&self.graph.tenant_id().await.map_err(|e| {
+                                        let gid = self.idmap.lock().await.gen_to_unix(&self.graph.tenant_id().await.map_err(|e| {
                                             error!("{:?}", e);
                                             IdpError::BadRequest
                                         })?, &account_id).map_err(
@@ -1346,7 +1353,6 @@ impl IdProvider for HimmelblauProvider {
                                 uuid: fake_uuid,
                                 gidnumber: uid,
                             }];
-                            let config = self.config.lock().await;
                             return Ok(UserTokenState::Update(UserToken {
                                 name: account_id.clone(),
                                 spn: account_id.clone(),
@@ -1354,7 +1360,7 @@ impl IdProvider for HimmelblauProvider {
                                 real_gidnumber: Some(gid),
                                 gidnumber: uid,
                                 displayname: "".to_string(),
-                                shell: Some(config.get_shell(Some(&self.domain))),
+                                shell: Some(self.config.lock().await.get_shell(Some(&self.domain))),
                                 groups,
                                 tenant_id: Some(Uuid::parse_str(&self.graph.tenant_id().await.map_err(|e| {
                                         error!("{:?}", e);
@@ -1380,8 +1386,7 @@ impl IdProvider for HimmelblauProvider {
         };
         // If an app_id is defined in the config, the app should have the
         // GroupMember.Read.All API permission.
-        let cfg = self.config.lock().await;
-        let (client_id, scopes) = if cfg.get_app_id(&self.domain).is_some() {
+        let (client_id, scopes) = if self.config.lock().await.get_app_id(&self.domain).is_some() {
             (None, vec!["GroupMember.Read.All"])
         } else {
             (
@@ -1923,14 +1928,16 @@ impl IdProvider for HimmelblauProvider {
                     .await
                 {
                     Ok((intune_key, intune_device_id)) => {
-                        let mut config = self.config.lock().await;
-                        config.set(&self.domain, "intune_device_id", &intune_device_id);
-                        if let Err(e) = config.write_server_config() {
-                            error!(?e, "Failed to write Intune join configuration.");
-                            return Ok((
-                                AuthResult::Denied("Failed to save device configuration. Please contact your administrator.".to_string()),
-                                AuthCacheAction::None,
-                            ));
+                        {
+                            let mut config = self.config.lock().await;
+                            config.set(&self.domain, "intune_device_id", &intune_device_id);
+                            if let Err(e) = config.write_server_config() {
+                                error!(?e, "Failed to write Intune join configuration.");
+                                return Ok((
+                                    AuthResult::Denied("Failed to save device configuration. Please contact your administrator.".to_string()),
+                                    AuthCacheAction::None,
+                                ));
+                            }
                         }
                         let intune_tag = self.fetch_intune_key_tag();
                         if let Err(e) = keystore.insert_tagged_hsm_key(&intune_tag, &intune_key) {
@@ -1964,8 +1971,7 @@ impl IdProvider for HimmelblauProvider {
                 }
                 // If an app_id is defined in the config, the app should have the
                 // GroupMember.Read.All API permission.
-                let cfg = self.config.lock().await;
-                let (client_id, scopes) = if cfg.get_app_id(&self.domain).is_some() {
+                let (client_id, scopes) = if self.config.lock().await.get_app_id(&self.domain).is_some() {
                     (None, vec!["GroupMember.Read.All"])
                 } else {
                     (
@@ -2385,8 +2391,7 @@ impl IdProvider for HimmelblauProvider {
 
                 // If an app_id is defined in the config, the app should have the
                 // GroupMember.Read.All API permission.
-                let cfg = self.config.lock().await;
-                let (client_id, scopes) = if cfg.get_app_id(&self.domain).is_some() {
+                let (client_id, scopes) = if self.config.lock().await.get_app_id(&self.domain).is_some() {
                     (None, vec!["GroupMember.Read.All"])
                 } else {
                     (
@@ -4072,8 +4077,7 @@ impl HimmelblauProvider {
             })?;
 
             // Initialize the idmap range
-            let cfg = self.config.lock().await;
-            let range = cfg.get_idmap_range(&self.domain);
+            let range = self.config.lock().await.get_idmap_range(&self.domain);
             let mut idmap = self.idmap.lock().await;
             idmap
                 .add_gen_domain(&self.domain, &tenant_id, range)
@@ -4081,7 +4085,7 @@ impl HimmelblauProvider {
                     error!("Failed adding the idmap domain: {}", e);
                     IdpError::BadRequest
                 })?;
-            drop(cfg);
+            drop(idmap);
 
             // Set the authority on the app
             let authority_url = format!("https://{}/{}", authority_host, tenant_id);
@@ -4124,12 +4128,11 @@ impl HimmelblauProvider {
 
     #[instrument(level = "debug", skip_all)]
     async fn attempt_online(&self, _tpm: &mut tpm::provider::BoxedDynTpm, now: SystemTime) -> bool {
-        let cfg = self.config.lock().await;
         let authority_host = self
             .graph
             .authority_host()
             .await
-            .unwrap_or(cfg.get_authority_host(&self.domain));
+            .unwrap_or(self.config.lock().await.get_authority_host(&self.domain));
         match reqwest::get(format!("https://{}", authority_host)).await {
             Ok(resp) => {
                 if resp.status().is_success() {
@@ -4224,8 +4227,7 @@ impl HimmelblauProvider {
         };
 
         // Try PRT exchange to check sign-in frequency
-        let cfg = self.config.lock().await;
-        let (client_id, scopes) = if cfg.get_app_id(&self.domain).is_some() {
+        let (client_id, scopes) = if self.config.lock().await.get_app_id(&self.domain).is_some() {
             (None, vec!["GroupMember.Read.All"])
         } else {
             (
@@ -4386,7 +4388,6 @@ impl HimmelblauProvider {
                     /* Fixes bug#801: The authenticated user might have a mis-matched
                      * response because the domains are aliases of one another.
                      */
-                    let mut cfg = self.config.lock().await;
                     let (_, domain1) = split_username(account_id).ok_or({
                         error!("Failed splitting account_id username");
                         IdpError::BadRequest
@@ -4395,7 +4396,13 @@ impl HimmelblauProvider {
                         error!("Failed splitting spn username");
                         IdpError::BadRequest
                     })?;
-                    if !cfg.domains_are_aliases(domain1, domain2).await {
+                    if !self
+                        .config
+                        .lock()
+                        .await
+                        .domains_are_aliases(domain1, domain2)
+                        .await
+                    {
                         let msg =
                             format!("Authenticated user {} does not match requested user", uuid);
                         error!(msg);
@@ -4445,7 +4452,6 @@ impl HimmelblauProvider {
         value: TokenOrObj,
         old_token: Option<&UserToken>,
     ) -> Result<UserToken, IdpError> {
-        let config = self.config.lock().await;
         let mut groups: Vec<GroupToken>;
         let posix_attrs: HashMap<String, String>;
         let spn = spn.to_lowercase();
@@ -4493,7 +4499,7 @@ impl HimmelblauProvider {
                         }
                     }
                 };
-                posix_attrs = if config.get_id_attr_map() == IdAttr::Rfc2307 {
+                posix_attrs = if self.config.lock().await.get_id_attr_map() == IdAttr::Rfc2307 {
                     match self
                         .graph
                         .fetch_user_extension_attributes_by_user_id(
@@ -4532,7 +4538,7 @@ impl HimmelblauProvider {
             }
         };
         let valid = true;
-        let user_map = UserMap::new(&config.get_user_map_file());
+        let user_map = UserMap::new(&self.config.lock().await.get_user_map_file());
         let (uidnumber, gidnumber) = match user_map.get_local_from_upn(&spn) {
             Some(user) => {
                 let pwd = unsafe {
@@ -4553,7 +4559,6 @@ impl HimmelblauProvider {
                 (pwd.pw_uid as u32, pwd.pw_gid as u32)
             }
             None => {
-                let idmap = self.idmap.lock().await;
                 let idmap_cache = StaticIdCache::new(ID_MAP_CACHE, false).map_err(|e| {
                     error!("Failed reading from the idmap cache: {:?}", e);
                     IdpError::BadRequest
@@ -4561,8 +4566,12 @@ impl HimmelblauProvider {
                 match idmap_cache.get_user_by_name(&spn) {
                     Some(user) => (user.uid, user.gid),
                     None => {
-                        let uidnumber = match config.get_id_attr_map() {
-                            IdAttr::Uuid => idmap
+                        let id_attr_map = self.config.lock().await.get_id_attr_map();
+                        let uidnumber = match id_attr_map {
+                            IdAttr::Uuid => self
+                                .idmap
+                                .lock()
+                                .await
                                 .object_id_to_unix_id(
                                     &self.graph.tenant_id().await.map_err(|e| {
                                         error!("{:?}", e);
@@ -4577,7 +4586,10 @@ impl HimmelblauProvider {
                                     error!("{:?}", e);
                                     IdpError::BadRequest
                                 })?,
-                            IdAttr::Name => idmap
+                            IdAttr::Name => self
+                                .idmap
+                                .lock()
+                                .await
                                 .gen_to_unix(
                                     &self.graph.tenant_id().await.map_err(|e| {
                                         error!("{:?}", e);
@@ -4645,7 +4657,7 @@ impl HimmelblauProvider {
 
         let shell = match posix_attrs.get("loginShell") {
             Some(login_shell) => login_shell.clone(),
-            None => config.get_shell(Some(&self.domain)),
+            None => self.config.lock().await.get_shell(Some(&self.domain)),
         };
 
         if posix_attrs.contains_key("unixHomeDirectory") {
@@ -4684,7 +4696,6 @@ impl HimmelblauProvider {
         &self,
         value: DirectoryObject,
     ) -> Result<GroupToken> {
-        let config = self.config.lock().await;
         let name = match value.display_name {
             Some(name) => name,
             None => value.id.clone(),
@@ -4700,14 +4711,18 @@ impl HimmelblauProvider {
         }
         let id =
             Uuid::parse_str(&value.id).map_err(|e| anyhow!("Failed parsing user uuid: {}", e))?;
-        let idmap = self.idmap.lock().await;
         let idmap_cache_entry = StaticIdCache::new(ID_MAP_CACHE, false)
             .ok()
             .and_then(|idmap_cache| idmap_cache.get_group_by_name(&id.to_string()));
+        let id_attr_map = self.config.lock().await.get_id_attr_map();
+        let rfc2307_group_fallback_map = self.config.lock().await.get_rfc2307_group_fallback_map();
         let gidnumber = match idmap_cache_entry {
             Some(group) => group.gid,
-            None => match config.get_id_attr_map() {
-                IdAttr::Uuid => idmap
+            None => match id_attr_map {
+                IdAttr::Uuid => self
+                    .idmap
+                    .lock()
+                    .await
                     .object_id_to_unix_id(
                         &self
                             .graph
@@ -4718,7 +4733,10 @@ impl HimmelblauProvider {
                             .map_err(|e| anyhow!("Failed parsing object id: {:?}", e))?,
                     )
                     .map_err(|e| anyhow!("Failed fetching gid for {}: {:?}", id, e))?,
-                IdAttr::Name => idmap
+                IdAttr::Name => self
+                    .idmap
+                    .lock()
+                    .await
                     .gen_to_unix(
                         &self
                             .graph
@@ -4736,8 +4754,11 @@ impl HimmelblauProvider {
                             e
                         )
                     })?,
-                    None => match config.get_rfc2307_group_fallback_map() {
-                        Some(IdAttr::Uuid) => idmap
+                    None => match rfc2307_group_fallback_map {
+                        Some(IdAttr::Uuid) => self
+                            .idmap
+                            .lock()
+                            .await
                             .object_id_to_unix_id(
                                 &self
                                     .graph
@@ -4748,7 +4769,10 @@ impl HimmelblauProvider {
                                     .map_err(|e| anyhow!("Failed parsing object id: {:?}", e))?,
                             )
                             .map_err(|e| anyhow!("Failed fetching gid for {}: {:?}", id, e))?,
-                        Some(IdAttr::Name) => idmap
+                        Some(IdAttr::Name) => self
+                            .idmap
+                            .lock()
+                            .await
                             .gen_to_unix(
                                 &self
                                     .graph
@@ -4879,8 +4903,8 @@ impl HimmelblauProvider {
         machine_key: &tpm::structures::StorageKey,
     ) -> Result<(LoadableMsDeviceEnrolmentKey, String), IdpError> {
         // Enrolling the device in Intune
-        let config = self.config.lock().await;
-        if config.get_apply_policy() {
+        let apply_policy = self.config.lock().await.get_apply_policy();
+        if apply_policy {
             let graph_token = match self
                 .client
                 .lock()
@@ -4957,10 +4981,15 @@ impl HimmelblauProvider {
                         })?;
                     let device_id = match device_id {
                         Some(v) => v.to_string(),
-                        None => config.get(&self.domain, "device_id").ok_or({
-                            error!("Device ID missing for Intune device enrollment.");
-                            IdpError::BadRequest
-                        })?,
+                        None => self
+                            .config
+                            .lock()
+                            .await
+                            .get(&self.domain, "device_id")
+                            .ok_or({
+                                error!("Device ID missing for Intune device enrollment.");
+                                IdpError::BadRequest
+                            })?,
                     };
                     let attrs = attrs.cloned().unwrap_or(
                         EnrollAttrs::new(self.domain.clone(), None, None, None, None).map_err(
@@ -5002,8 +5031,13 @@ impl HimmelblauProvider {
         }
         /* If we have access to tpm keys, and the domain device_id is
          * configured, we'll assume we are domain joined. */
-        let config = self.config.lock().await;
-        if config.get(&self.domain, "device_id").is_none() {
+        if self
+            .config
+            .lock()
+            .await
+            .get(&self.domain, "device_id")
+            .is_none()
+        {
             return false;
         }
         let transport_key = match self.fetch_loadable_transport_key_from_keystore(keystore) {
@@ -5025,8 +5059,10 @@ impl HimmelblauProvider {
 
     #[instrument(level = "debug", skip_all)]
     async fn is_consumer_tenant(&self) -> bool {
-        let config = self.config.lock().await;
-        let tenant_id = config
+        let tenant_id = self
+            .config
+            .lock()
+            .await
             .get(&self.domain, "tenant_id")
             .unwrap_or("".to_string());
         tenant_id == "9188040d-6c67-4c5b-b112-36a304b66dad"
@@ -5039,8 +5075,13 @@ impl HimmelblauProvider {
             // Pretend we are always enrolled for MSA accounts
             return true;
         }
-        let config = self.config.lock().await;
-        if config.get(&self.domain, "intune_device_id").is_none() {
+        if self
+            .config
+            .lock()
+            .await
+            .get(&self.domain, "intune_device_id")
+            .is_none()
+        {
             return false;
         }
         let intune_tag = self.fetch_intune_key_tag();
