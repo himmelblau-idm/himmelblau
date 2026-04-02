@@ -326,33 +326,39 @@ impl OidcApplication {
     #[instrument(level = "debug", skip_all)]
     pub async fn with_init(config: &HimmelblauConfig, domain: &str) -> Result<Self, IdpError> {
         let app = Self::new();
-        app.delayed_init(config, domain).await?;
+        app.delayed_init(&Mutex::new(config.clone()), domain).await?;
         Ok(app)
     }
 
     #[instrument(level = "debug", skip_all)]
-    async fn delayed_init(&self, config: &HimmelblauConfig, domain: &str) -> Result<(), IdpError> {
+    async fn delayed_init(&self, config: &Mutex<HimmelblauConfig>, domain: &str) -> Result<(), IdpError> {
         let init = self.client.lock().await.is_some();
         if !init {
-            let client_id = ClientId::new(config.get_app_id(domain).ok_or_else(|| {
-                error!(
-                    "Missing OIDC client ID in config: `[global] app_id` required for OIDC auth"
-                );
-                IdpError::BadRequest
-            })?);
+            let client_id = {
+                let config = config.lock().await;
+                ClientId::new(config.get_app_id(domain).ok_or_else(|| {
+                    error!(
+                        "Missing OIDC client ID in config: `[global] app_id` required for OIDC auth"
+                    );
+                    IdpError::BadRequest
+                })?)
+            };
 
-            let issuer_url = IssuerUrl::new(config.get_oidc_issuer_url().ok_or_else(|| {
-                error!("Missing OIDC issuer URL in config");
-                IdpError::BadRequest
-            })?)
-            .map_err(|e| {
-                error!(
-                    ?e,
-                    "Invalid OIDC issuer URL: {:?}",
-                    config.get_oidc_issuer_url()
-                );
-                IdpError::BadRequest
-            })?;
+            let issuer_url = {
+                let config = config.lock().await;
+                IssuerUrl::new(config.get_oidc_issuer_url().ok_or_else(|| {
+                    error!("Missing OIDC issuer URL in config");
+                    IdpError::BadRequest
+                })?)
+                .map_err(|e| {
+                    error!(
+                        ?e,
+                        "Invalid OIDC issuer URL: {:?}",
+                        config.get_oidc_issuer_url()
+                    );
+                    IdpError::BadRequest
+                })?
+            };
 
             let http_client = reqwest::ClientBuilder::new()
                 .redirect(reqwest::redirect::Policy::none())
@@ -819,11 +825,15 @@ impl OidcProvider {
 
     #[instrument(level = "debug", skip_all)]
     async fn tenant_id(&self) -> Result<Uuid, IdpError> {
-        let config = self.config.lock().await;
-        let issuer = config.get_oidc_issuer_url().ok_or_else(|| {
-            error!("Missing OIDC issuer URL in config");
-            IdpError::BadRequest
-        })?;
+        let issuer = self
+            .config
+            .lock()
+            .await
+            .get_oidc_issuer_url()
+            .ok_or_else(|| {
+                error!("Missing OIDC issuer URL in config");
+                IdpError::BadRequest
+            })?;
         Ok(Uuid::new_v5(&HIMMELBLAU_OIDC_NAMESPACE, issuer.as_bytes()))
     }
 
@@ -915,8 +925,7 @@ impl OidcProvider {
         if !init {
             // Initialize the idmap range
             let tenant_id = self.tenant_id().await?.to_string();
-            let cfg = self.config.lock().await;
-            let range = cfg.get_idmap_range(&self.domain);
+            let range = self.config.lock().await.get_idmap_range(&self.domain);
             let mut idmap = self.idmap.lock().await;
             idmap
                 .add_gen_domain(&self.domain, &tenant_id, range)
@@ -924,8 +933,9 @@ impl OidcProvider {
                     error!("Failed adding the idmap domain: {}", e);
                     IdpError::BadRequest
                 })?;
+            drop(idmap);
 
-            self.client.delayed_init(&cfg, &self.domain).await?;
+            self.client.delayed_init(&self.config, &self.domain).await?;
         }
         Ok(())
     }
