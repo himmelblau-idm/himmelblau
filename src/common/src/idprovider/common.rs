@@ -666,7 +666,7 @@ macro_rules! impl_himmelblau_offline_auth_step {
 
 #[macro_export]
 macro_rules! entra_id_prt_token_fetch {
-    ($self:ident, $prt:ident, $scopes:ident, $client_id:ident, $redirect_uri:ident, $tpm:ident, $machine_key:ident) => {{
+    ($self:ident, $prt:ident, $scopes:ident, $client_id:ident, $redirect_uri:ident, $req_cnf:ident, $tpm:ident, $machine_key:ident) => {{
         $self
             .client
             .lock()
@@ -679,6 +679,7 @@ macro_rules! entra_id_prt_token_fetch {
                 $tpm,
                 $machine_key,
                 $redirect_uri.as_deref(),
+                $req_cnf.as_deref(),
             )
             .await
             .map_err(|e| {
@@ -690,7 +691,7 @@ macro_rules! entra_id_prt_token_fetch {
 
 #[macro_export]
 macro_rules! no_op_prt_token_fetch {
-    ($self:ident, $prt:ident, $scopes:ident, $client_id:ident, $redirect_uri:ident, $tpm:ident, $machine_key:ident) => {
+    ($self:ident, $prt:ident, $scopes:ident, $client_id:ident, $redirect_uri:ident, $req_cnf:ident, $tpm:ident, $machine_key:ident) => {
         // openidconnect does not have PRTs
         return Err(IdpError::BadRequest)
     };
@@ -757,7 +758,7 @@ macro_rules! oidc_refresh_token_token_fetch {
 
 #[macro_export]
 macro_rules! impl_unix_user_access {
-    ($self:ident, $old_token:ident, $scopes:ident, $client_id:ident, $redirect_uri:ident, $id:ident, $tpm:ident, $machine_key:ident, $prt_token_refresh:ident, $refresh_token_token_refresh:ident) => {{
+    ($self:ident, $old_token:ident, $scopes:ident, $client_id:ident, $redirect_uri:ident, $req_cnf:ident, $id:ident, $tpm:ident, $machine_key:ident, $prt_token_refresh:ident, $refresh_token_token_refresh:ident) => {{
         if ($self.delayed_init().await).is_err() {
             // We can't fetch an access_token when initialization hasn't
             // completed. This only happens when we're offline during first
@@ -779,7 +780,7 @@ macro_rules! impl_unix_user_access {
         match refresh_cache_entry {
             #![allow(unused_variables)]
             RefreshCacheEntry::Prt(prt) => {
-                $prt_token_refresh!($self, prt, $scopes, $client_id, $redirect_uri, $tpm, $machine_key)
+                $prt_token_refresh!($self, prt, $scopes, $client_id, $redirect_uri, $req_cnf, $tpm, $machine_key)
             }
             RefreshCacheEntry::RefreshToken(refresh_token) => {
                 $refresh_token_token_refresh!($self, refresh_token, $scopes)
