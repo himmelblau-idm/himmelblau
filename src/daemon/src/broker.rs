@@ -36,6 +36,13 @@ struct AccountReq {
 }
 
 #[derive(Serialize, Deserialize, Debug)]
+struct PopParamsReq {
+    #[serde(rename = "authenticationScheme")]
+    authentication_scheme: Option<String>,
+    kid: Option<String>,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
 struct AuthParametersReq {
     #[serde(rename = "requestedScopes")]
     requested_scopes: Vec<String>,
@@ -43,6 +50,8 @@ struct AuthParametersReq {
     client_id: Option<String>,
     #[serde(rename = "redirectUri")]
     redirect_uri: Option<String>,
+    #[serde(rename = "popParams")]
+    pop_params: Option<PopParamsReq>,
     account: Option<AccountReq>,
 }
 
@@ -69,6 +78,24 @@ fn extract_sso_nonce(sso_url: Option<&str>) -> Option<String> {
         .find(|(k, _)| k == "sso_nonce")
         .map(|(_, v)| v.into_owned())
         .filter(|v| !v.trim().is_empty())
+}
+
+/// Build a `req_cnf` value from the broker request's `popParams`.
+/// When `popParams.authenticationScheme` is `"Pop"` and `kid` is set
+/// (e.g. for RDS AAD / Cloud PC), we produce
+/// `base64url({"kid":"<kid>"})` which Entra expects as the `req_cnf`
+/// query / body parameter. Requests without the PoP scheme or without
+/// a kid are treated as bearer token requests (returns None).
+fn build_req_cnf(pop_params: &Option<PopParamsReq>) -> Option<String> {
+    let pp = pop_params.as_ref()?;
+    if !pp.authentication_scheme.as_deref()
+        .is_some_and(|s| s.eq_ignore_ascii_case("pop"))
+    {
+        return None;
+    }
+    let kid = pp.kid.as_deref().map(str::trim).filter(|k| !k.is_empty())?;
+    let json = serde_json::json!({"kid": kid}).to_string();
+    Some(URL_SAFE_NO_PAD.encode(json.as_bytes()))
 }
 
 #[derive(Clone)]
@@ -130,6 +157,7 @@ impl HimmelblauBroker for Broker {
             }
             None => None,
         };
+        let req_cnf = build_req_cnf(&request.auth_parameters.pop_params);
         let token = self
             .cachelayer
             .get_user_accesstoken(
@@ -137,6 +165,7 @@ impl HimmelblauBroker for Broker {
                 request.auth_parameters.requested_scopes,
                 request.auth_parameters.client_id,
                 redirect_uri,
+                req_cnf,
             )
             .await
             .ok_or("Failed to authenticate user")?;

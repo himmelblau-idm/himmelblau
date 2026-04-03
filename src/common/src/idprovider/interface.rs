@@ -256,6 +256,7 @@ pub trait IdProvider {
         _token: Option<&UserToken>,
         _client_id: Option<String>,
         _redirect_uri: Option<String>,
+        _req_cnf: Option<String>,
         _keystore: &mut D,
         _tpm: &mut tpm::provider::BoxedDynTpm,
         _machine_key: &tpm::structures::StorageKey,

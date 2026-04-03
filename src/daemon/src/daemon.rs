@@ -367,6 +367,7 @@ async fn handle_client(
                                                                 scopes,
                                                                 client_id,
                                                                 None,
+                                                                None,
                                                             )
                                                             .await
                                                         {
@@ -518,6 +519,7 @@ async fn handle_client(
                                                             vec![],
                                                             None,
                                                             None,
+                                                            None,
                                                         )
                                                         .await
                                                     {
@@ -580,6 +582,7 @@ async fn handle_client(
                                                                 vec!["00000003-0000-0000-c000-000000000000/.default".to_string()],
                                                                 Some(DEFAULT_APP_ID.to_string()),
                                                                 None,
+                                                                None,
                                                             ).await;
                                                         let intune_token = cachelayer
                                                             .get_user_accesstoken(
@@ -587,12 +590,14 @@ async fn handle_client(
                                                                 vec!["0000000a-0000-0000-c000-000000000000/.default".to_string()],
                                                                 Some(DEFAULT_APP_ID.to_string()),
                                                                 None,
+                                                                None,
                                                             ).await;
                                                         let iwservice_token = cachelayer
                                                             .get_user_accesstoken(
                                                                 Id::Name(account_id.clone()),
                                                                 vec!["b8066b99-6e67-41be-abfa-75db1a2c8809/.default".to_string()],
                                                                 Some(DEFAULT_APP_ID.to_string()),
+                                                                None,
                                                                 None,
                                                             ).await;
 
