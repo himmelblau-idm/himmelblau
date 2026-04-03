@@ -32,8 +32,8 @@ use crate::idprovider::common::flip_displayname_comma;
 use crate::idprovider::common::KeyType;
 use crate::idprovider::common::RefreshCacheEntry;
 use crate::idprovider::common::TotpEnrollmentRecord;
-use crate::idprovider::common::{BadPinCounter, RefreshCache};
 use crate::idprovider::common::PRT_REFRESH_AGE;
+use crate::idprovider::common::{BadPinCounter, RefreshCache};
 use crate::idprovider::interface::{tpm, UserTokenState};
 use crate::idprovider::openidconnect::OidcProvider;
 use crate::tpm::confidential_client_creds;
@@ -261,7 +261,7 @@ impl HimmelblauMultiProvider {
                 .await
                 .insert("oidc".to_string(), Providers::Oidc(provider));
         }
-        if providers.providers.read().await.len() == 0 {
+        if providers.providers.read().await.is_empty() {
             return Err(anyhow!("No provider was configured!"));
         }
 
@@ -929,8 +929,10 @@ impl IdProvider for HimmelblauProvider {
         };
         if let Some(age) = self.refresh_cache.prt_age(&account_id).await {
             if age >= PRT_REFRESH_AGE {
-                debug!("PRT for {} is {:?} old (>= {:?}), attempting renewal",
-                       account_id, age, PRT_REFRESH_AGE);
+                debug!(
+                    "PRT for {} is {:?} old (>= {:?}), attempting renewal",
+                    account_id, age, PRT_REFRESH_AGE
+                );
                 if let Ok(RefreshCacheEntry::Prt(old_prt)) =
                     self.refresh_cache.refresh_token(&account_id).await
                 {

@@ -219,11 +219,9 @@ fn test_clientrequest_as_safe_string() {
         "NssAccounts".to_string()
     );
 
-    let safe = ClientRequest::PamTryUnseal(
-        "user@example.com".to_string(),
-        "s3cret-pin".to_string(),
-    )
-    .as_safe_string();
+    let safe =
+        ClientRequest::PamTryUnseal("user@example.com".to_string(), "s3cret-pin".to_string())
+            .as_safe_string();
     assert!(
         !safe.contains("s3cret-pin"),
         "as_safe_string() must not leak credentials: {}",

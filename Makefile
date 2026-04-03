@@ -91,6 +91,8 @@ PLATFORM := $(shell grep '^ID=' /etc/os-release | awk -F= '{ print $$2 }' | tr -
 
 DOCKER := $(shell command -v podman || command -v docker)
 NIX := $(shell command -v nix)
+ORCHESTRATOR_CONTAINER_IMAGE ?= localhost/himmelblau/playwright-orchestrator:latest
+ORCHESTRATOR_CONTAINER_DOCKERFILE ?= src/orchestrator/container/Dockerfile
 
 # Optional: Mount local libhimmelblau for development testing
 # Usage: LIBHIMMELBLAU_LOCAL=/path/to/libhimmelblau make ubuntu24.04
@@ -166,7 +168,7 @@ uninstall: ## Uninstall Himmelblau packages from this host (apt/dnf/yum/zypper a
 	else \
 		echo "Error: no supported package manager found (apt/dnf/yum/zypper)."; exit 2; \
 	fi; \
-	pkgs="himmelblau himmelblau-broker himmelblau-qr-greeter himmelblau-selinux himmelblau-sshd-config himmelblau-sso himmelblau-sso-policies nss-himmelblau pam-himmelblau"; \
+	pkgs="himmelblau himmelblaud-orchestrator himmelblau-broker himmelblau-qr-greeter himmelblau-selinux himmelblau-sshd-config himmelblau-sso himmelblau-sso-policies nss-himmelblau pam-himmelblau"; \
 	echo "Removing: $$pkgs"; \
 	$$PM $$pkgs; \
 	echo "Uninstall complete."
@@ -177,6 +179,9 @@ dockerfiles:
 dockerfiles-arm64:
 	python3 scripts/gen_dockerfiles.py --out ./images/ --arch arm64 $(PATCH_LIBHIMMELBLAU)
 
+orchestrator-container: ## Build the local orchestrator Playwright container image
+	$(DOCKER) build -t $(ORCHESTRATOR_CONTAINER_IMAGE) -f $(ORCHESTRATOR_CONTAINER_DOCKERFILE) .
+
 deb-servicefiles:
 	python3 ./scripts/gen_servicefiles.py --out ./platform/debian/
 
@@ -186,7 +191,7 @@ rpm-servicefiles:
 authselect:
 	python3 ./scripts/gen_authselect.py --root=./ --aad-tool=./target/release/aad-tool --output-dir=./platform/el/authselect/
 
-.PHONY: package deb rpm $(DEB_TARGETS) $(RPM_TARGETS) ${SLE_TARGETS} $(GENTOO_TARGETS) dockerfiles dockerfiles-arm64 deb-servicefiles rpm-servicefiles authselect install uninstall help sbom man arm64 deb-arm64 rpm-arm64 $(ALL_ARM64_TARGETS)
+.PHONY: package deb rpm $(DEB_TARGETS) $(RPM_TARGETS) ${SLE_TARGETS} $(GENTOO_TARGETS) dockerfiles dockerfiles-arm64 orchestrator-container deb-servicefiles rpm-servicefiles authselect install uninstall help sbom man arm64 deb-arm64 rpm-arm64 $(ALL_ARM64_TARGETS)
 
 check-licenses: ## Validate dependant licenses comply with GPLv3
 	cargo deny -V >/dev/null || (echo "cargo-deny required" && cargo install cargo-deny)
@@ -495,6 +500,8 @@ help: ## Show this help
 	@printf "  • Running plain 'make' invokes the default 'all' target (auto-detects host distro).\n"
 	@printf "  • You can install a development build of Himmelblau on the current host with 'make && sudo make install'\n"
 	@printf "  • Built packages are written to ./packaging/\n"
+	@printf "  • Build local orchestrator container: make orchestrator-container\n"
+	@printf "    (override tag with ORCHESTRATOR_CONTAINER_IMAGE=<registry>/<repo>:<tag>)\n"
 	@printf "  • To use local libhimmelblau: LIBHIMMELBLAU_LOCAL=/path/to/libhimmelblau make <target>\n"
 	@printf "  • ARM64 DEB builds use cross-compilation (no QEMU needed).\n"
 	@printf "  • ARM64 RPM builds use docker buildx with QEMU emulation. Setup:\n"

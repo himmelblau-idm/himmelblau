@@ -83,9 +83,50 @@ ifdef(`init_nnp_daemon_domain',
                     typeattribute himmelblaud_tasks_t domain;
                    }')')')
 
+# himmelblaud-orchestrator
+type himmelblaud_orchestrator_t;
+type himmelblaud_orchestrator_exec_t;
+# files_type macro may not exist on all distros (e.g., Rocky 8) - provide fallback
+# Keep fallback optional: some minimal policies omit the file_type attribute
+ifdef(`files_type',`optional {
+        # Some policies provide files_type but omit file_type attribute (Rocky 8)
+        require { attribute file_type; }
+        files_type(himmelblaud_orchestrator_exec_t)
+       }',
+      `optional {
+        require { attribute file_type; }
+        typeattribute himmelblaud_orchestrator_exec_t file_type;
+       }')
+# Use init_nnp_daemon_domain if available (newer distros), fall back to
+# init_daemon_domain (older distros), domain_type, or primitive typeattribute (Rocky 8)
+ifdef(`init_nnp_daemon_domain',
+      `optional {
+        # Some older policies expose the macro but miss supporting attributes
+        require { attribute domain; }
+        init_nnp_daemon_domain(himmelblaud_orchestrator_t, himmelblaud_orchestrator_exec_t)
+       }',
+      `ifdef(`init_daemon_domain',
+            `optional {
+              # Some older policies expose the macro but miss supporting attributes
+              require { attribute domain; }
+              init_daemon_domain(himmelblaud_orchestrator_t, himmelblaud_orchestrator_exec_t)
+             }',
+            `ifdef(`domain_type',
+                  `optional {
+                    # domain_type macro may rely on domain attribute not present (Rocky 8)
+                    require { attribute domain; }
+                    domain_type(himmelblaud_orchestrator_t)
+                   }',
+                  `optional {
+                    # Some minimal policies omit the domain attribute
+                    require { attribute domain; }
+                    typeattribute himmelblaud_orchestrator_t domain;
+                   }')')')
+
 # Let these be valid process domains under system_r
 role system_r types himmelblaud_t;
 role system_r types himmelblaud_tasks_t;
+role system_r types himmelblaud_orchestrator_t;
 
 ############################
 # Domain transitions from init
@@ -110,6 +151,12 @@ allow init_t himmelblaud_tasks_t:process transition;
 allow himmelblaud_tasks_t himmelblaud_tasks_exec_t:file entrypoint;
 allow init_t himmelblaud_tasks_exec_t:file { execute getattr map open read };
 type_transition init_t himmelblaud_tasks_exec_t:process himmelblaud_tasks_t;
+
+# Allow init_t to transition to himmelblaud_orchestrator_t when executing himmelblaud_orchestrator_exec_t
+allow init_t himmelblaud_orchestrator_t:process transition;
+allow himmelblaud_orchestrator_t himmelblaud_orchestrator_exec_t:file entrypoint;
+allow init_t himmelblaud_orchestrator_exec_t:file { execute getattr map open read };
+type_transition init_t himmelblaud_orchestrator_exec_t:process himmelblaud_orchestrator_t;
 
 ############################
 # Permissions for himmelblaud_t and himmelblaud_tasks_t
@@ -137,6 +184,23 @@ allow himmelblaud_t himmelblau_var_lib_t:file { create getattr open read setattr
 allow himmelblaud_t himmelblau_var_lib_t:lnk_file read;
 allow himmelblaud_t himmelblau_var_run_t:dir { add_name create getattr mounton open read remove_name rmdir search setattr write };
 allow himmelblaud_t himmelblau_var_run_t:sock_file { create getattr setattr write unlink };
+
+# himmelblaud_orchestrator_t permissions
+allow himmelblaud_orchestrator_t himmelblau_etc_t:dir { getattr open read search };
+allow himmelblaud_orchestrator_t himmelblau_etc_t:file { getattr open read };
+allow himmelblaud_orchestrator_t himmelblau_var_cache_t:dir { add_name create getattr open read remove_name rmdir search setattr write };
+allow himmelblaud_orchestrator_t himmelblau_var_cache_t:file { create getattr lock open read setattr unlink write };
+allow himmelblaud_orchestrator_t himmelblau_var_cache_t:lnk_file { getattr read };
+allow himmelblaud_orchestrator_t himmelblau_var_run_t:dir { add_name create getattr mounton open read remove_name rmdir search setattr write };
+allow himmelblaud_orchestrator_t himmelblau_var_run_t:sock_file { create getattr setattr write unlink };
+
+# Network access for orchestrator-driven browser login flows
+ifdef(`corenet_tcp_connect_http_port',`corenet_tcp_connect_http_port(himmelblaud_orchestrator_t)',
+      `require {
+              type http_port_t;
+              class tcp_socket name_connect;
+       }
+       allow himmelblaud_orchestrator_t http_port_t:tcp_socket name_connect;')
 
 optional {
 	# Basic system file/device access needed by the daemon (gate for cross-distro compatibility)
@@ -614,6 +678,7 @@ allow himmelblau_nss_cache_t fs_t:filesystem associate;
 allow himmelblau_var_lib_t fs_t:filesystem associate;
 allow himmelblaud_exec_t fs_t:filesystem associate;
 allow himmelblaud_tasks_exec_t fs_t:filesystem associate;
+allow himmelblaud_orchestrator_exec_t fs_t:filesystem associate;
 
 # Allow our types to associate with tmpfs (for /run, /var/cache/private, etc.)
 allow himmelblau_var_run_t tmpfs_t:filesystem associate;
@@ -654,13 +719,18 @@ require {
 allow init_t etc_t:file { append getattr open read write };
 allow init_t himmelblaud_t:dir search;
 allow init_t himmelblaud_tasks_t:dir search;
+allow init_t himmelblaud_orchestrator_t:dir search;
 allow init_t himmelblaud_t:process { signull signal sigkill };
 allow init_t himmelblaud_tasks_t:process { signull signal sigkill };
+allow init_t himmelblaud_orchestrator_t:process { signull signal sigkill };
 allow init_t himmelblaud_t:process { noatsecure rlimitinh siginh };
 allow init_t himmelblaud_tasks_t:process { noatsecure rlimitinh siginh };
+allow init_t himmelblaud_orchestrator_t:process { noatsecure rlimitinh siginh };
 allow init_t himmelblaud_t:file { getattr open read ioctl };
 allow init_t himmelblaud_tasks_t:file { getattr open read ioctl };
+allow init_t himmelblaud_orchestrator_t:file { getattr open read ioctl };
 allow init_t himmelblaud_t:unix_stream_socket connectto;
+allow init_t himmelblaud_orchestrator_t:unix_stream_socket connectto;
 allow init_t himmelblaud_t:fd use;
 
 # Optional: init_t access to cron spool (may not exist on all systems)
@@ -1191,3 +1261,4 @@ optional {
 # Temporarily run Himmelblau domains permissive (still logs AVCs)
 permissive himmelblaud_t;
 permissive himmelblaud_tasks_t;
+permissive himmelblaud_orchestrator_t;

@@ -326,6 +326,52 @@ ExecStart=/usr/libexec/himmelblau-init-hsm-pin
 WantedBy=himmelblaud.service
 """
 
+    # ---- Compose himmelblaud-orchestrator.service ----
+    orchestrator_hardening = [
+        h
+        for h in hardening
+        if not h.startswith("ProtectSystem=")
+        and h != "ProtectControlGroups=true"
+        and h != "ProtectKernelTunables=true"
+        and h != "ProtectHostname=true"
+        and h != "MemoryDenyWriteExecute=true"
+    ]
+    orchestrator_private_devices = "PrivateDevices=false" if supported("PrivateDevices") else ""
+    orchestrator_rw_line = (
+        "ReadWritePaths=/run/himmelblaud /run/containers /var/lib/containers /run/lock /run/netns -/run/libpod -/run/crun -/run/runc -/var/cache/himmelblaud/orchestrator -/var/cache/private/himmelblaud/orchestrator"
+        if rw_paths_available
+        else ""
+    )
+
+    orchestrator_unit = f"""\
+# You should not need to edit this file. Instead, use a drop-in file:
+#   systemctl edit himmelblaud-orchestrator.service
+
+[Unit]
+Description=Himmelblau Browser Authentication Orchestrator
+After=network-online.target himmelblaud.service
+Wants=network-online.target
+Requires=himmelblaud.service
+PartOf=himmelblaud.service
+
+[Service]
+User=root
+Group=tss
+UMask=0007
+Type=simple
+Delegate=yes
+ExecStart=/usr/sbin/himmelblaud-orchestrator
+Restart=on-failure
+RestartSec=1s
+{ 'ProtectSystem=strict' if supported('ProtectSystemStrict') else '' }
+{orchestrator_rw_line}
+{os.linesep.join(orchestrator_hardening)}
+{orchestrator_private_devices}
+
+[Install]
+WantedBy=multi-user.target
+""".rstrip() + "\n"
+
     # Clean extra blank lines from optional inserts
     def squeeze_blank_lines(s: str) -> str:
         s = re.sub(r"\n{3,}", "\n\n", s)
@@ -336,15 +382,18 @@ WantedBy=himmelblaud.service
     daemon_unit = squeeze_blank_lines(daemon_unit)
     tasks_unit  = squeeze_blank_lines(tasks_unit)
     hsm_pin_init_unit = squeeze_blank_lines(hsm_pin_init_unit)
+    orchestrator_unit = squeeze_blank_lines(orchestrator_unit)
 
     (out_dir / "himmelblaud.service").write_text(daemon_unit)
     (out_dir / "himmelblaud-tasks.service").write_text(tasks_unit)
     (out_dir / "himmelblau-hsm-pin-init.service").write_text(hsm_pin_init_unit)
+    (out_dir / "himmelblaud-orchestrator.service").write_text(orchestrator_unit)
 
     print(f"[gen-systemd] systemd version detected/assumed: {ver}")
     print(f"[gen-systemd] Wrote: {out_dir/'himmelblaud.service'}")
     print(f"[gen-systemd] Wrote: {out_dir/'himmelblaud-tasks.service'}")
     print(f"[gen-systemd] Wrote: {out_dir/'himmelblau-hsm-pin-init.service'}")
+    print(f"[gen-systemd] Wrote: {out_dir/'himmelblaud-orchestrator.service'}")
 
 if __name__ == "__main__":
     main()

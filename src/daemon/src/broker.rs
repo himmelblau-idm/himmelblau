@@ -227,10 +227,7 @@ impl HimmelblauBroker for Broker {
         let sso_nonce = extract_sso_nonce(request.sso_url.as_deref());
         let prt = self
             .cachelayer
-            .get_user_prt_cookie(
-                Id::Name(user.spn.clone()),
-                sso_nonce.as_deref(),
-            )
+            .get_user_prt_cookie(Id::Name(user.spn.clone()), sso_nonce.as_deref())
             .await
             .ok_or("Failed to fetch prt sso cookie")?;
         let res = json!({

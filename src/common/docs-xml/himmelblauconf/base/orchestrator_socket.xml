@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<parameter name="orchestrator_socket"
+           section="global"
+           type="string"
+           rust_type="String"
+           documented="true"
+           domain_specific="false"
+           order="53">
+<description>
+Unix socket path used by himmelblaud to communicate with
+himmelblaud-orchestrator.
+
+This path must match the orchestrator service configuration.
+</description>
+<default>/var/run/himmelblaud/orchestrator.sock</default>
+<default_const>DEFAULT_ORCHESTRATOR_SOCK_PATH</default_const>
+<example>orchestrator_socket = /run/himmelblaud/orchestrator.sock</example>
+</parameter>

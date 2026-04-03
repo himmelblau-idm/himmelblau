@@ -125,9 +125,7 @@ fn insert_module_line(
     let stack_type = module_line.split_whitespace().next().unwrap_or("");
 
     if lines.iter().any(|l| {
-        if !l.contains("pam_himmelblau.so")
-            || !l.trim_start().starts_with(stack_type)
-        {
+        if !l.contains("pam_himmelblau.so") || !l.trim_start().starts_with(stack_type) {
             return false;
         }
         let existing_opts: std::collections::HashSet<&str> = l
@@ -348,7 +346,10 @@ async fn auth(app: &BrokerClientApplication, account_id: &str) -> Option<UserTok
             None
         }
     };
-    let enable_passwordless = config.as_ref().map(|c| c.get_enable_passwordless()).unwrap_or(true);
+    let enable_passwordless = config
+        .as_ref()
+        .map(|c| c.get_enable_passwordless())
+        .unwrap_or(true);
     let auth_options = if enable_passwordless {
         vec![AuthOption::Passwordless]
     } else {
@@ -1562,8 +1563,10 @@ async fn main() -> ExitCode {
             // Map the name
             let account_id = cfg.map_name_to_upn(&account_id);
 
-            let mut opts = Options::default();
-            opts.force_reauth = force_reauth;
+            let opts = Options {
+                force_reauth,
+                ..Default::default()
+            };
             let msg_printer = Arc::new(SimpleMessagePrinter::default());
             match authenticate_async(
                 None,

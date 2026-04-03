@@ -677,6 +677,17 @@ Default: /var/run/himmelblaud/broker_sock
 Example: broker_socket_path = /tmp/broker.sock
 
 .TP
+.B enable_passwordless
+.RE
+A boolean option that controls whether passwordless authentication (Microsoft Authenticator app approval without a password) is offered during Azure Entra ID authentication. When enabled, Himmelblau will include the passwordless option in authentication requests, allowing Entra ID to offer a passwordless flow. When disabled, users will be prompted for a password followed by MFA instead.
+
+.P
+Default: true
+
+.P
+Example: enable_passwordless = false
+
+.TP
 .B home_prefix
 .RE
 The prefix to use for user home directories.
@@ -724,17 +735,6 @@ Default: spn
 
 .P
 Example: home_alias = SPN
-
-.TP
-.B enable_passwordless
-.RE
-A boolean option that controls whether passwordless authentication (Microsoft Authenticator app approval without a password) is offered during Azure Entra ID authentication. When enabled, Himmelblau will include the passwordless option in authentication requests, allowing Entra ID to offer a passwordless flow. When disabled, users will be prompted for a password followed by MFA instead.
-
-.P
-Default: true
-
-.P
-Example: enable_passwordless = false
 
 .TP
 .B shell
@@ -868,6 +868,78 @@ Default: /etc/himmelblau/user-map
 
 .P
 Example: user_map_file = /path/to/user_map
+
+.TP
+.B orchestrator_enabled
+.RE
+Enable use of the optional himmelblaud-orchestrator backend for browser-driven
+OIDC authentication flows.
+
+When enabled, OIDC interactive authentication can be delegated to the
+orchestrator over a Unix socket. If the orchestrator is unavailable or returns
+an error, Himmelblau falls back to the built-in device authorization grant
+(DAG) flow.
+
+.P
+Default: false
+
+.P
+Example: orchestrator_enabled = true
+
+.TP
+.B orchestrator_socket
+.RE
+Unix socket path used by himmelblaud to communicate with
+himmelblaud-orchestrator.
+
+This path must match the orchestrator service configuration.
+
+.P
+Default: /var/run/himmelblaud/orchestrator.sock
+
+.P
+Example: orchestrator_socket = /run/himmelblaud/orchestrator.sock
+
+.TP
+.B orchestrator_provider
+.RE
+Optional explicit provider key passed to himmelblaud-orchestrator when starting
+an OIDC browser flow.
+
+If unset, the orchestrator auto-detects the provider from issuer URL, domain,
+or embedded provider match rules.
+
+.P
+Example: orchestrator_provider = keycloak
+
+.TP
+.B orchestrator_timeout_secs
+.RE
+Timeout in seconds for a single request/response exchange with
+himmelblaud-orchestrator.
+
+This timeout applies to connect, send, and receive operations on the
+orchestrator Unix socket.
+
+.P
+Default: 30
+
+.P
+Example: orchestrator_timeout_secs = 10
+
+.TP
+.B orchestrator_poll_secs
+.RE
+Polling interval in seconds used for orchestrator-driven MFA wait prompts.
+
+This value controls how frequently PAM should poll the orchestrator for
+progress while waiting for external approvals (for example push MFA).
+
+.P
+Default: 2
+
+.P
+Example: orchestrator_poll_secs = 3
 
 .SH OFFLINE BREAKGLASS CONFIGURATION
 The

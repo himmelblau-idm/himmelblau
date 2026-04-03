@@ -295,6 +295,7 @@ pub trait IdProvider {
         _machine_key: &tpm::structures::StorageKey,
     ) -> Result<bool, IdpError>;
 
+    #[allow(clippy::too_many_arguments)]
     async fn unix_user_online_auth_init<D: KeyStoreTxn + Send>(
         &self,
         _account_id: &str,
