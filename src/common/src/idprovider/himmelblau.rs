@@ -73,12 +73,11 @@ use reqwest;
 use reqwest::Url;
 use std::collections::HashMap;
 use std::ffi::CString;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::thread::sleep;
 use std::time::Duration;
 use std::time::SystemTime;
-use tokio::sync::{broadcast, Mutex};
+use tokio::sync::{broadcast, Mutex, OnceCell};
 use totp_rs::{Algorithm, Secret, TOTP};
 use uuid::Uuid;
 use zeroize::Zeroizing;
@@ -788,7 +787,7 @@ pub struct HimmelblauProvider {
     graph: Graph,
     refresh_cache: RefreshCache,
     idmap: Arc<Mutex<Idmap>>,
-    init: AtomicBool,
+    init: OnceCell<()>,
     bad_pin_counter: BadPinCounter,
 }
 
@@ -808,7 +807,7 @@ impl HimmelblauProvider {
             graph,
             refresh_cache: RefreshCache::new(),
             idmap: idmap.clone(),
-            init: AtomicBool::new(false),
+            init: OnceCell::new(),
             bad_pin_counter: BadPinCounter::new(),
         })
     }
@@ -3997,72 +3996,72 @@ impl HimmelblauProvider {
         // possible. This permits the daemon to start, without requiring we be
         // connected to the internet. This way we can send messages to the user
         // via PAM indicating that the network is down.
-        let init = self.init.load(Ordering::Acquire);
-        if !init {
-            // Send the federation provider request, if necessary. If these were
-            // cached previously, then a network connection is not necessary at
-            // this moment. If they were not cached, and supplied to the graph
-            // object, then we require a network connection now.
-            let tenant_id = self.graph.tenant_id().await.map_err(|e| {
-                error!("Failed discovering the tenant_id: {}", e);
-                IdpError::BadRequest
-            })?;
-            let authority_host = self.graph.authority_host().await.map_err(|e| {
-                error!("Failed discovering the authority_host: {}", e);
-                IdpError::BadRequest
-            })?;
-            let graph_url = self.graph.graph_url().await.map_err(|e| {
-                error!("Failed discovering the graph_url: {}", e);
-                IdpError::BadRequest
-            })?;
-
-            // Initialize the idmap range
-            let range = self.config.lock().await.get_idmap_range(&self.domain);
-            let mut idmap = self.idmap.lock().await;
-            idmap
-                .add_gen_domain(&self.domain, &tenant_id, range)
-                .map_err(|e| {
-                    error!("Failed adding the idmap domain: {}", e);
+        self.init
+            .get_or_try_init(|| async {
+                // Send the federation provider request, if necessary. If these were
+                // cached previously, then a network connection is not necessary at
+                // this moment. If they were not cached, and supplied to the graph
+                // object, then we require a network connection now.
+                let tenant_id = self.graph.tenant_id().await.map_err(|e| {
+                    error!("Failed discovering the tenant_id: {}", e);
                     IdpError::BadRequest
                 })?;
-            drop(idmap);
-
-            // Set the authority on the app
-            let authority_url = format!("https://{}/{}", authority_host, tenant_id);
-            // A client write lock is required here.
-            self.client
-                .lock()
-                .await
-                .set_authority(&authority_url)
-                .map_err(|e| {
-                    error!("Failed setting the authority_url: {}", e);
+                let authority_host = self.graph.authority_host().await.map_err(|e| {
+                    error!("Failed discovering the authority_host: {}", e);
+                    IdpError::BadRequest
+                })?;
+                let graph_url = self.graph.graph_url().await.map_err(|e| {
+                    error!("Failed discovering the graph_url: {}", e);
                     IdpError::BadRequest
                 })?;
 
-            // Mark the provider as initialized
-            self.init.store(true, Ordering::Release);
+                // Initialize the idmap range
+                let range = self.config.lock().await.get_idmap_range(&self.domain);
+                let mut idmap = self.idmap.lock().await;
+                idmap
+                    .add_gen_domain(&self.domain, &tenant_id, range)
+                    .map_err(|e| {
+                        error!("Failed adding the idmap domain: {}", e);
+                        IdpError::BadRequest
+                    })?;
+                drop(idmap);
 
-            // Cache the federation provider responses
-            let mut cfg = self.config.lock().await;
-            cfg.set(&self.domain, "tenant_id", &tenant_id);
-            debug!(
-                "Setting domain {} config tenant_id to {}",
-                self.domain, tenant_id
-            );
-            cfg.set(&self.domain, "authority_host", &authority_host);
-            debug!(
-                "Setting domain {} config authority_host to {}",
-                self.domain, authority_host
-            );
-            cfg.set(&self.domain, "graph_url", &graph_url);
-            debug!(
-                "Setting domain {} config graph_url to {}",
-                self.domain, graph_url
-            );
-            if let Err(e) = cfg.write_server_config() {
-                error!("Failed to write federation provider configuration: {:?}", e);
-            }
-        }
+                // Set the authority on the app
+                let authority_url = format!("https://{}/{}", authority_host, tenant_id);
+                // A client write lock is required here.
+                self.client
+                    .lock()
+                    .await
+                    .set_authority(&authority_url)
+                    .map_err(|e| {
+                        error!("Failed setting the authority_url: {}", e);
+                        IdpError::BadRequest
+                    })?;
+
+                // Cache the federation provider responses
+                let mut cfg = self.config.lock().await;
+                cfg.set(&self.domain, "tenant_id", &tenant_id);
+                debug!(
+                    "Setting domain {} config tenant_id to {}",
+                    self.domain, tenant_id
+                );
+                cfg.set(&self.domain, "authority_host", &authority_host);
+                debug!(
+                    "Setting domain {} config authority_host to {}",
+                    self.domain, authority_host
+                );
+                cfg.set(&self.domain, "graph_url", &graph_url);
+                debug!(
+                    "Setting domain {} config graph_url to {}",
+                    self.domain, graph_url
+                );
+                if let Err(e) = cfg.write_server_config() {
+                    error!("Failed to write federation provider configuration: {:?}", e);
+                }
+
+                Ok(())
+            })
+            .await?;
         Ok(())
     }
 
