@@ -1,0 +1,30 @@
+# You should not need to edit this file. Instead, use a drop-in file:
+#   systemctl edit himmelblaud-orchestrator.service
+
+[Unit]
+Description=Himmelblau Browser Authentication Orchestrator
+After=network-online.target himmelblaud.service
+Wants=network-online.target
+Requires=himmelblaud.service
+PartOf=himmelblaud.service
+
+[Service]
+User=root
+Group=tss
+UMask=0007
+Type=simple
+Delegate=yes
+ExecStart=/usr/sbin/himmelblaud-orchestrator
+Restart=on-failure
+RestartSec=1s
+ProtectSystem=strict
+ReadWritePaths=/run/himmelblaud /run/containers /var/lib/containers /run/lock /run/netns -/run/libpod -/run/crun -/run/runc -/var/cache/himmelblaud/orchestrator -/var/cache/private/himmelblaud/orchestrator
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectClock=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+PrivateDevices=false
+
+[Install]
+WantedBy=multi-user.target

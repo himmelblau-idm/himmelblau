@@ -34,6 +34,7 @@ use tokio::time::interval;
 use tracing::{error, info, warn};
 
 const DEFAULT_ORCHESTRATOR_SOCKET_PATH: &str = "/var/run/himmelblaud/orchestrator.sock";
+const DEFAULT_ORCHESTRATOR_RUNTIME_DIR: &str = "/run/himmelblaud/orchestrator";
 const DEFAULT_PROVIDER_OVERRIDE_PATH: &str = "/etc/himmelblau/orchestrator-providers.json";
 const DEFAULT_PLAYWRIGHT_IMAGE: &str = "localhost/himmelblau/playwright-orchestrator:latest";
 const DEFAULT_CONTAINER_NETWORK: &str = "host";
@@ -63,6 +64,13 @@ struct OrchestratorArgs {
 
     #[arg(long, env = "HIMMELBLAU_ORCHESTRATOR_NETWORK", default_value = DEFAULT_CONTAINER_NETWORK)]
     container_network: String,
+
+    #[arg(
+        long,
+        env = "HIMMELBLAU_ORCHESTRATOR_RUNTIME_DIR",
+        default_value = DEFAULT_ORCHESTRATOR_RUNTIME_DIR
+    )]
+    runtime_dir: String,
 
     #[arg(long, env = "HIMMELBLAU_ORCHESTRATOR_IDLE_SECS", default_value_t = 300)]
     idle_timeout_secs: u64,
@@ -130,6 +138,7 @@ async fn main() -> Result<()> {
         args.podman_binary,
         args.container_image,
         Some(args.container_network),
+        PathBuf::from(args.runtime_dir),
         args.action_timeout_secs,
         container_no_new_privileges,
     ));

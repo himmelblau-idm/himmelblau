@@ -72,13 +72,7 @@ impl FlowExecutor {
             .await;
 
         self.podman
-            .execute_flow_action(
-                &session.container.id,
-                &format!(
-                    "{{\"action\":\"navigate\",\"url\":\"{}\"}}",
-                    escape_json(&navigation_url)
-                ),
-            )
+            .navigate(&session.container, &navigation_url)
             .await
             .with_context(|| {
                 format!(
@@ -363,7 +357,7 @@ impl FlowExecutor {
 
         let matched = self
             .podman
-            .check_success_condition(&session.container.id, &probe)
+            .check_success_condition(&session.container, &probe)
             .await
             .with_context(|| {
                 format!(
@@ -566,14 +560,7 @@ impl FlowExecutor {
                     )
                     .await;
                 self.podman
-                    .execute_flow_action(
-                        &session.container.id,
-                        &format!(
-                            "{{\"action\":\"fill\",\"selector\":\"{}\",\"value\":\"{}\"}}",
-                            escape_json(selector),
-                            escape_json(&value)
-                        ),
-                    )
+                    .fill(&session.container, selector, &value)
                     .await
                     .with_context(|| {
                         format!(
@@ -587,13 +574,7 @@ impl FlowExecutor {
                     .log(LogLevel::Debug, format!("Click '{}'", selector))
                     .await;
                 self.podman
-                    .execute_flow_action(
-                        &session.container.id,
-                        &format!(
-                            "{{\"action\":\"click\",\"selector\":\"{}\"}}",
-                            escape_json(selector)
-                        ),
-                    )
+                    .click(&session.container, selector)
                     .await
                     .with_context(|| format!("bridge click failed for selector '{}'", selector))?;
             }
@@ -609,13 +590,7 @@ impl FlowExecutor {
                     .log(LogLevel::Debug, format!("Navigate to '{}'", resolved_url))
                     .await;
                 self.podman
-                    .execute_flow_action(
-                        &session.container.id,
-                        &format!(
-                            "{{\"action\":\"navigate\",\"url\":\"{}\"}}",
-                            escape_json(&resolved_url)
-                        ),
-                    )
+                    .navigate(&session.container, &resolved_url)
                     .await
                     .with_context(|| {
                         format!("bridge navigate failed for url '{}'", resolved_url)
@@ -658,7 +633,7 @@ impl FlowExecutor {
         }
 
         self.podman
-            .capture_artifact(&session.container.id, source)
+            .capture_artifact(&session.container, source)
             .await
     }
 
@@ -715,7 +690,7 @@ impl FlowExecutor {
         if success.dom_selector.is_some() || success.url_contains.is_some() {
             let matched = self
                 .podman
-                .check_success_condition(&session.container.id, success)
+                .check_success_condition(&session.container, success)
                 .await?;
             session
                 .log(
@@ -818,14 +793,6 @@ impl FlowExecutor {
             metadata: runtime.metadata.clone(),
         })
     }
-}
-
-fn escape_json(input: &str) -> String {
-    input
-        .replace('\\', "\\\\")
-        .replace('"', "\\\"")
-        .replace('\n', "\\n")
-        .replace('\r', "\\r")
 }
 
 fn redact_url_parameters(url: &str) -> String {

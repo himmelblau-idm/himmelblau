@@ -197,7 +197,7 @@ impl SessionManager {
             if guard.contains_key(&session_id) {
                 let _ = self
                     .podman
-                    .destroy_session_container(&session.container.id)
+                    .destroy_session_container(&session.container)
                     .await;
                 return Err(anyhow!("session '{}' already exists", session_id));
             }
@@ -232,7 +232,7 @@ impl SessionManager {
             }
             session.log(LogLevel::Info, "Cancelling session").await;
             self.podman
-                .destroy_session_container(&session.container.id)
+                .destroy_session_container(&session.container)
                 .await?;
             return Ok(true);
         }
@@ -260,7 +260,7 @@ impl SessionManager {
             if let Some(session) = session {
                 let _ = self
                     .podman
-                    .destroy_session_container(&session.container.id)
+                    .destroy_session_container(&session.container)
                     .await;
                 cleaned += 1;
             }

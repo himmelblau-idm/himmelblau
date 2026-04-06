@@ -197,7 +197,10 @@ impl CommunicationServer {
             FlowCommand::NextStep {
                 session_id,
                 provided_inputs,
-            } => self.handle_next_step(session_id, provided_inputs, peer_uid).await,
+            } => {
+                self.handle_next_step(session_id, provided_inputs, peer_uid)
+                    .await
+            }
             FlowCommand::CancelSession { session_id } => {
                 self.handle_cancel_session(session_id, peer_uid).await
             }
@@ -320,7 +323,11 @@ impl CommunicationServer {
             .await
     }
 
-    async fn handle_cancel_session(&self, session_id: String, peer_uid: u32) -> Result<FlowResponse> {
+    async fn handle_cancel_session(
+        &self,
+        session_id: String,
+        peer_uid: u32,
+    ) -> Result<FlowResponse> {
         if let Some(session) = self.session_manager.get_session(&session_id).await {
             if !session.owned_by(peer_uid) {
                 return Err(anyhow!(

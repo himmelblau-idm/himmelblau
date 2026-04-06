@@ -327,6 +327,8 @@ async function sendRequest(request) {
 }
 
 async function runServer(sessionId, idleSeconds) {
+  process.umask(0o077);
+
   const target = socketPath();
   fs.mkdirSync(path.dirname(target), { recursive: true });
   try {
@@ -448,7 +450,15 @@ async function runServer(sessionId, idleSeconds) {
 
   await new Promise((resolve, reject) => {
     server.on("error", reject);
-    server.listen(target, () => resolve());
+    server.listen(target, () => {
+      try {
+        fs.chmodSync(target, 0o600);
+      } catch (error) {
+        reject(error);
+        return;
+      }
+      resolve();
+    });
   });
 
   resetIdleTimer();
