@@ -21,7 +21,7 @@ jobs:
 
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
-      - uses: cachix/install-nix-action@19effe9fe722874e6d46dd7182e4b8b7a43c4a99 # v31.10.0
+      - uses: cachix/install-nix-action@96951a368ba55167b55f1c916f7d416bac6505fe # v31.10.3
         with:
           extra_nix_config: experimental-features = nix-command flakes
       - uses: DeterminateSystems/magic-nix-cache-action@cec65ff6f104850203b152861d3f9e5f1747885d
