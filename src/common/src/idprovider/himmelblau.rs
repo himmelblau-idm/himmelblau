@@ -2600,7 +2600,7 @@ impl IdProvider for HimmelblauProvider {
                         },
                     };
                     if let Some(RefreshCacheEntry::Prt(prt)) = refresh_cache_entry {
-                        match self
+                        let prt_exchange_result = self
                             .client
                             .lock()
                             .await
@@ -2611,22 +2611,38 @@ impl IdProvider for HimmelblauProvider {
                                 client_id,
                                 tpm,
                                 machine_key,
-                            ).await {
+                            ).await;
+                        // The MutexGuard from .lock() above is dropped here
+                        // (before the match), so we can re-lock inside the
+                        // match arms without deadlocking.
+                        match prt_exchange_result {
                                 Ok(mut token) => {
                                     // Request a new PRT to attach to the token (kick
-                                    // the can down the road).
-                                    if let Ok(new_prt) = self
-                                        .client
-                                        .lock()
-                                        .await
-                                        .exchange_prt_for_prt(
-                                            &prt,
-                                            tpm,
-                                            machine_key,
-                                            true,
-                                        ).await {
+                                    // the can down the road). Use a timeout so a slow
+                                    // or hanging Entra endpoint does not block auth,
+                                    // as this is an optimization step.
+                                    match tokio::time::timeout(
+                                        Duration::from_secs(10),
+                                        self.client
+                                            .lock()
+                                            .await
+                                            .exchange_prt_for_prt(
+                                                &prt,
+                                                tpm,
+                                                machine_key,
+                                                true,
+                                            ),
+                                    ).await {
+                                        Ok(Ok(new_prt)) => {
                                             token.prt = Some(new_prt);
-                                        };
+                                        }
+                                        Ok(Err(e)) => {
+                                            warn!("PRT renewal failed (non-fatal): {:?}", e);
+                                        }
+                                        Err(_) => {
+                                            warn!("PRT renewal timed out after 10s (non-fatal)");
+                                        }
+                                    }
                                     self.bad_pin_counter.reset_bad_pin_count(account_id).await;
                                     token
                                 }
