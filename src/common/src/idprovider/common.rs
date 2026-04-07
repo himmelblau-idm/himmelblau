@@ -190,7 +190,7 @@ impl RefreshCache {
         let entries: HashMap<String, (SealedData, u64)> = serde_json::from_slice(data)?;
         for (account_id, (prt, epoch_secs)) in entries {
             let iat = SystemTime::UNIX_EPOCH + Duration::from_secs(epoch_secs);
-            refresh_cache.insert(account_id, (prt, iat));
+            refresh_cache.insert(account_id.to_lowercase(), (prt, iat));
         }
         Ok(())
     }
