@@ -138,7 +138,6 @@ def main():
         dirs_block.extend([
             "UMask=0027",
             "CacheDirectory=himmelblaud",
-            "RuntimeDirectory=himmelblaud",
             "StateDirectory=himmelblaud",
         ])
 
@@ -239,6 +238,7 @@ Conflicts=nscd.service
 ExecStart=/usr/sbin/himmelblaud
 Restart=on-failure
 RestartSec=500ms
+WatchdogSec=120s
 {'FileDescriptorStoreMax=1' if supported('FileDescriptorStoreMax') else ''}
 {'FileDescriptorStorePreserve=yes' if supported('FileDescriptorStorePreserve') else ''}
 
@@ -268,14 +268,10 @@ WantedBy=multi-user.target
 
 [Unit]
 Description=Himmelblau Local Tasks
-After={' '.join(tasks_after)} himmelblaud.service
-Requires=himmelblaud.service
+After={' '.join(tasks_after)}
+After=himmelblaud-tasks.socket
+Wants=himmelblaud-tasks.socket
 
-# This prevents starting himmelblaud-tasks before himmelblaud is running and
-# has created the socket necessary for communication.
-# We need the check so that fs namespacing used by `ReadWritePaths` has a
-# strict enough target to namespace. Without the check it fails in a more confusing way.
-{'ConditionPathExists=/run/himmelblaud/task_sock' if supported('ConditionPathExists') else ''}
 {'StartLimitIntervalSec=30s' if supported('StartLimitIntervalSec') else ''}
 {'StartLimitBurst=8' if supported('StartLimitBurst') else ''}
 
@@ -285,6 +281,7 @@ Type=notify
 ExecStart=/usr/sbin/himmelblaud_tasks
 Restart=on-failure
 RestartSec=1s
+WatchdogSec=120s
 
 CacheDirectory=nss-himmelblau
 CapabilityBoundingSet=CAP_CHOWN CAP_FOWNER CAP_DAC_OVERRIDE CAP_DAC_READ_SEARCH CAP_SETUID CAP_SETGID

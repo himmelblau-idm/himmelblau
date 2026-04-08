@@ -7,7 +7,7 @@
            domain_specific="false"
            order="38">
 <description>
-The path to the socket file for communication with the task daemon.
+The path to the socket file for communication with the task daemon. If this is changed, also add a drop-in to override ListenStream= in the himmelblaud-tasks.socket unit to keep the paths in sync.
 </description>
 <default>/var/run/himmelblaud/task_sock</default>
 <default_const>DEFAULT_TASK_SOCK_PATH</default_const>
