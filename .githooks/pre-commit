@@ -5,6 +5,7 @@
 # This hook runs automatically before each commit and handles:
 #   1. SELinux policy tests - when SELinux policy files are changed
 #   2. NixOS options regeneration - when XML definitions are changed
+#   3. Cargo.nix regeneration - when Cargo.lock is changed
 #
 # To install this hook, run from the repository root:
 #   git config core.hooksPath .githooks
@@ -91,6 +92,31 @@ stage_if_changed() {
         echo "  $file: staged"
     fi
 }
+
+# Check if Cargo.lock has staged changes
+cargo_lock_changed() {
+    git diff --cached --name-only --diff-filter=ACMR | grep -qx "Cargo.lock"
+}
+
+###############################################################################
+# Cargo.nix Regeneration
+###############################################################################
+
+if cargo_lock_changed; then
+    echo "Detected staged changes to Cargo.lock."
+    echo "Regenerating Cargo.nix..."
+
+    if nix run nixpkgs#crate2nix -- generate; then
+        echo "Regeneration complete:"
+        stage_if_changed "Cargo.nix"
+    else
+        echo ""
+        echo "ERROR: Failed to regenerate Cargo.nix!"
+        echo ""
+        echo "Please run 'nix run nixpkgs#crate2nix -- generate' and resolve any issues before committing."
+        exit 1
+    fi
+fi
 
 # Main logic for regeneration
 if needs_regeneration; then
