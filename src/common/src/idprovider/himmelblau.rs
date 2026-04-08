@@ -1726,7 +1726,7 @@ impl IdProvider for HimmelblauProvider {
                     );
                     // Check if Azure provided FIDO credentials (passwordless FIDO)
                     // Skip if this is a passkey - we don't support passkey auth
-                    if !flow.fido_is_passkey {
+                    if !flow.skip_fido_for_mfa {
                         if let (Some(fido_challenge), Some(fido_allow_list)) =
                             (flow.fido_challenge.clone(), flow.fido_allow_list.clone())
                         {
@@ -2162,7 +2162,7 @@ impl IdProvider for HimmelblauProvider {
                     };
 
                     // Check if Azure provided FIDO credentials
-                    if !flow.fido_is_passkey {
+                    if !flow.skip_fido_for_mfa {
                         if let (Some(fido_challenge), Some(fido_allow_list)) =
                             (flow.fido_challenge.clone(), flow.fido_allow_list.clone())
                         {
