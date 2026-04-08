@@ -59,7 +59,8 @@ libkrimes = { workspace = true }
 name = "himmelblau"
 maintainer = "David Mulder <dmulder@suse.com>"
 depends = ["$auto"]
-recommends = ["nss-himmelblau", "pam-himmelblau", "krb5-user", "cron", "tpm2-tools"]
+recommends = ["pam-himmelblau", "krb5-user", "cron", "tpm2-tools"]
+suggests = ["nss-himmelblau"]
 assets = [
   ["../../platform/debian/himmelblau.conf.example", "etc/himmelblau/himmelblau.conf", "644"],
   ["../../src/config/gdm3_service_override.conf", "usr/lib/systemd/system/gdm3.service.d/himmelblau-override.conf", "644"],
@@ -108,7 +109,6 @@ pre_uninstall_script = "scripts/prerm"
 post_uninstall_script = "scripts/postrm"
 
 [package.metadata.generate-rpm.recommends]
-nss-himmelblau = "*"
 pam-himmelblau = "*"
 himmelblau-selinux = "*"
 krb5 = "*"
@@ -126,6 +126,7 @@ authd-msentraid = ""
 
 [package.metadata.generate-rpm.suggests]
 himmelblau-sso = ""
+nss-himmelblau = ""
 
 [package.metadata.generate-rpm.requires]
 man = ""
