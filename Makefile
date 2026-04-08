@@ -81,11 +81,12 @@ test-selinux: ## Test the SELinux policy to ensure it builds
 clean: ## Remove cargo build artifacts
 	cargo clean
 
-setup-hooks: ## Configure git to use project hooks (SELinux tests + NixOS options regen)
+setup-hooks: ## Configure git to use project hooks (SELinux, docs-xml, Cargo.nix regen)
 	git config core.hooksPath .githooks
 	@echo "Git hooks configured. Pre-commit hook will:"
 	@echo "  - Run 'make test-selinux' when SELinux policy files are changed"
-	@echo "  - Auto-regenerate nix/modules/himmelblau-options.nix when XML definitions change"
+	@echo "  - Auto-regenerate NixOS options/man page when XML definitions change"
+	@echo "  - Run 'nix run nixpkgs#crate2nix -- generate' when Cargo.lock changes"
 
 PLATFORM := $(shell grep '^ID=' /etc/os-release | awk -F= '{ print $$2 }' | tr -d '"')
 
