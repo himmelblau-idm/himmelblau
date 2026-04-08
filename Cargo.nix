@@ -2232,6 +2232,10 @@ rec {
             packageId = "identity_dbus_broker";
           }
           {
+            name = "sd-notify";
+            packageId = "sd-notify";
+          }
+          {
             name = "tokio";
             packageId = "tokio";
             features = [ "rt" "macros" "sync" "time" "net" "io-util" "signal" "rt-multi-thread" ];
@@ -8341,9 +8345,9 @@ rec {
       };
       "identity_dbus_broker" = rec {
         crateName = "identity_dbus_broker";
-        version = "0.2.0";
+        version = "0.2.1";
         edition = "2021";
-        sha256 = "1nd4yswlih11q0z8j191fyams67v2d61s7imjyaw3risa3m8xb3k";
+        sha256 = "0nnbfbx0ajyisw03k7hfg23qhv191w3qnamahy2qd4gikq7wm4j3";
         authors = [
           "David Mulder <dmulder@suse.com>"
         ];

@@ -628,6 +628,7 @@ dependencies = [
  "dbus",
  "himmelblau_unix_common",
  "identity_dbus_broker",
+ "sd-notify",
  "tokio",
  "tracing",
  "tracing-subscriber",
@@ -2518,9 +2519,9 @@ checksum = "b9e0384b61958566e926dc50660321d12159025e767c18e043daf26b70104c39"
 
 [[package]]
 name = "identity_dbus_broker"
-version = "0.2.0"
+version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "73ac8eea503ae6c19597351e1d4c13fb185d95772105893ec021c048b9f6a4d9"
+checksum = "4392ca0f9ef191868587aa2a8b070f296c8887780e9e3900d7d14b05fa72cb5a"
 dependencies = [
  "async-trait",
  "bytes",
