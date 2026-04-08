@@ -106,14 +106,33 @@ if cargo_lock_changed; then
     echo "Detected staged changes to Cargo.lock."
     echo "Regenerating Cargo.nix..."
 
-    if nix run nixpkgs#crate2nix -- generate; then
-        echo "Regeneration complete:"
-        stage_if_changed "Cargo.nix"
+    if command -v nix >/dev/null; then
+        if nix run nixpkgs#crate2nix -- generate; then
+            echo "Regeneration complete:"
+            stage_if_changed "Cargo.nix"
+        else
+            echo ""
+            echo "ERROR: Failed to regenerate Cargo.nix!"
+            echo ""
+            echo "Please run 'nix run nixpkgs#crate2nix -- generate' and resolve any issues before committing."
+            exit 1
+        fi
+    elif command -v crate2nix >/dev/null; then
+        if crate2nix generate; then
+            echo "Regeneration complete:"
+            stage_if_changed "Cargo.nix"
+        else
+            echo ""
+            echo "ERROR: Failed to regenerate Cargo.nix!"
+            echo ""
+            echo "Please run 'crate2nix generate' and resolve any issues before committing."
+            exit 1
+        fi
     else
         echo ""
         echo "ERROR: Failed to regenerate Cargo.nix!"
         echo ""
-        echo "Please run 'nix run nixpkgs#crate2nix -- generate' and resolve any issues before committing."
+        echo "Please install 'crate2nix', run 'crate2nix generate' and resolve any issues before committing."
         exit 1
     fi
 fi
