@@ -1534,7 +1534,7 @@ async fn main() -> ExitCode {
 
             if systemd_booted {
                 if let Ok(monotonic_usec) = sd_notify::NotifyState::monotonic_usec_now() {
-                    let _ = sd_notify::notify(false, &[NotifyState::Ready, monotonic_usec]);
+                    let _ = sd_notify::notify(&[NotifyState::Ready, monotonic_usec]);
                 }
             }
 
@@ -1608,7 +1608,7 @@ async fn main() -> ExitCode {
 
             if systemd_booted {
                 if let Ok(monotonic_usec) = sd_notify::NotifyState::monotonic_usec_now() {
-                    let _ = sd_notify::notify(false, &[NotifyState::Stopping, monotonic_usec]);
+                    let _ = sd_notify::notify(&[NotifyState::Stopping, monotonic_usec]);
                 }
             }
 
