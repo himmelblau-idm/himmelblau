@@ -213,6 +213,11 @@ DISTS = {
         "image": "ubuntu:25.10",
         "tpm": True,
     },
+    "ubuntu26.04": {
+        "family": "deb",
+        "image": "ubuntu:26.04",
+        "tpm": True,
+    },
     "test": {
         "family": "deb",
         "image": "ubuntu:24.04",
@@ -535,10 +540,11 @@ UBUNTU_CODENAMES = {
     "ubuntu:22.04": "jammy",
     "ubuntu:24.04": "noble",
     "ubuntu:25.10": "plucky",
+    "ubuntu:26.04": "resolute",
 }
 
 # Ubuntu 24.04+ uses DEB822 format (.sources files)
-UBUNTU_DEB822_VERSIONS = {"ubuntu:24.04", "ubuntu:25.10"}
+UBUNTU_DEB822_VERSIONS = {"ubuntu:24.04", "ubuntu:25.10", "ubuntu:26.04"}
 
 
 def build_multiarch_sources(dist_cfg):
