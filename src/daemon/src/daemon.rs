@@ -926,6 +926,138 @@ async fn handle_client(
                     ClientResponse::Error
                 }
             }
+            ClientRequest::ComplianceCheck => {
+                let span = span!(Level::INFO, "compliance check");
+                async {
+                    trace!("compliance check requested");
+
+                    if !cfg.get_apply_policy() {
+                        warn!("compliance check: apply_policy is disabled in config");
+                        return ClientResponse::Error;
+                    }
+
+                    // Resolve the calling user's uid to an account name.
+                    let account_id = match cachelayer
+                        .get_nssaccount_gid(ucred.uid())
+                        .await
+                    {
+                        Ok(Some(nss_user)) => nss_user.name,
+                        _ => {
+                            error!(
+                                "compliance check: could not resolve uid {} to an account",
+                                ucred.uid()
+                            );
+                            return ClientResponse::Error;
+                        }
+                    };
+
+                    let intune_device_id = split_username(&account_id)
+                        .map(|(_, domain)| domain)
+                        .and_then(|domain| {
+                            HimmelblauConfig::new(Some(&cfg.get_config_file())).ok()
+                            .map(|cfg| cfg.get_intune_device_id(domain))
+                        }).flatten();
+
+                    let graph_token = cachelayer
+                        .get_user_accesstoken(
+                            Id::Name(account_id.clone()),
+                            vec!["00000003-0000-0000-c000-000000000000/.default".to_string()],
+                            Some(DEFAULT_APP_ID.to_string()),
+                            None,
+                            None,
+                        ).await;
+                    let intune_token = cachelayer
+                        .get_user_accesstoken(
+                            Id::Name(account_id.clone()),
+                            vec!["0000000a-0000-0000-c000-000000000000/.default".to_string()],
+                            Some(DEFAULT_APP_ID.to_string()),
+                            None,
+                            None,
+                        ).await;
+                    let iwservice_token = cachelayer
+                        .get_user_accesstoken(
+                            Id::Name(account_id.clone()),
+                            vec!["b8066b99-6e67-41be-abfa-75db1a2c8809/.default".to_string()],
+                            Some(DEFAULT_APP_ID.to_string()),
+                            None,
+                            None,
+                        ).await;
+
+                    let (graph_token, intune_token, iwservice_token) =
+                        match (graph_token, intune_token, iwservice_token) {
+                            (Some(g), Some(i), Some(w)) => (g, i, w),
+                            _ => {
+                                error!(
+                                    "compliance check: could not acquire tokens for {} \
+                                     (session not unsealed?)",
+                                    account_id
+                                );
+                                return ClientResponse::NotAuthenticated;
+                            }
+                        };
+
+                    let (tx, rx) = oneshot::channel();
+
+                    match task_channel_tx
+                        .send_timeout(
+                            (
+                                TaskRequest::ApplyPolicy(
+                                    intune_device_id,
+                                    account_id.clone(),
+                                    graph_token
+                                        .access_token
+                                        .clone()
+                                        .unwrap_or("".to_string()),
+                                    intune_token
+                                        .access_token
+                                        .clone()
+                                        .unwrap_or("".to_string()),
+                                    iwservice_token
+                                        .access_token
+                                        .clone()
+                                        .unwrap_or("".to_string()),
+                                ),
+                                tx,
+                            ),
+                            Duration::from_millis(500),
+                        )
+                        .await
+                    {
+                        Ok(()) => {
+                            match time::timeout_at(
+                                time::Instant::now() + Duration::from_secs(300),
+                                rx,
+                            )
+                            .await
+                            {
+                                Ok(Ok(status)) => {
+                                    if status == 0 {
+                                        debug!("compliance check: succeeded for {}", account_id);
+                                        ClientResponse::Ok
+                                    } else {
+                                        warn!("compliance check: policy failure for {}", account_id);
+                                        ClientResponse::Error
+                                    }
+                                }
+                                Ok(Err(e)) => {
+                                    warn!("compliance check: task error: {}", e);
+                                    ClientResponse::Error
+                                }
+                                Err(e) => {
+                                    warn!("compliance check: timeout: {}", e);
+                                    ClientResponse::Error
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            warn!("compliance check: failed to dispatch task: {}", e);
+                            ClientResponse::Error
+                        }
+                    }
+                }
+                .instrument(span)
+                .await
+            }
             ClientRequest::PamTryUnseal(account_id, cred) => {
                 let account_id = account_id.to_lowercase();
                 let span = span!(Level::INFO, "pam try unseal");

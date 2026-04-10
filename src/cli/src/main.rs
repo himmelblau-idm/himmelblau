@@ -659,6 +659,7 @@ async fn main() -> ExitCode {
             mapped: _,
             full: _,
         } => debug,
+        HimmelblauUnixOpt::ComplianceCheck { debug } => debug,
         HimmelblauUnixOpt::ConfigurePam {
             debug,
             really: _,
@@ -2200,6 +2201,41 @@ async fn main() -> ExitCode {
         HimmelblauUnixOpt::Version { debug: _ } => {
             println!("himmelblau {}", env!("CARGO_PKG_VERSION"));
             ExitCode::SUCCESS
+        }
+        HimmelblauUnixOpt::ComplianceCheck { debug: _ } => {
+            trace!("Starting compliance check ...");
+
+            let cfg = match HimmelblauConfig::new(Some(DEFAULT_CONFIG_PATH)) {
+                Ok(c) => c,
+                Err(_e) => {
+                    error!("Failed to parse {}", DEFAULT_CONFIG_PATH);
+                    return ExitCode::FAILURE;
+                }
+            };
+
+            let req = ClientRequest::ComplianceCheck;
+
+            match call_daemon(&cfg.get_socket_path(), req, cfg.get_unix_sock_timeout()).await {
+                Ok(r) => match r {
+                    ClientResponse::Ok => {
+                        println!("compliance check passed");
+                        ExitCode::SUCCESS
+                    }
+                    ClientResponse::NotAuthenticated => {
+                        error!("User session not unsealed — compliance check requires an active session");
+                        ExitCode::FAILURE
+                    }
+                    _ => {
+                        error!("Compliance check failed");
+                        ExitCode::FAILURE
+                    }
+                },
+                Err(e) => {
+                    error!("Error -> {:?}", e);
+                    error!("Is himmelblaud running?");
+                    ExitCode::FAILURE
+                }
+            }
         }
     }
 }

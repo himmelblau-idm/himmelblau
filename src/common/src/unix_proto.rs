@@ -100,6 +100,7 @@ pub enum ClientRequest {
     ClearCache,
     OfflineBreakGlass(Option<u64>),
     Status,
+    ComplianceCheck,
 }
 
 impl ClientRequest {
@@ -133,6 +134,7 @@ impl ClientRequest {
             ClientRequest::ClearCache => "ClearCache".to_string(),
             ClientRequest::OfflineBreakGlass(ttl) => format!("OfflineBreakGlass({:?})", ttl),
             ClientRequest::Status => "Status".to_string(),
+            ClientRequest::ComplianceCheck => "ComplianceCheck".to_string(),
         }
     }
 }
@@ -149,6 +151,7 @@ pub enum ClientResponse {
 
     Ok,
     Error,
+    NotAuthenticated,
 }
 
 impl From<PamAuthResponse> for ClientResponse {

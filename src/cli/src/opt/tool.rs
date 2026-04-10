@@ -417,6 +417,18 @@ pub enum HimmelblauUnixOpt {
         #[clap(long)]
         full: bool,
     },
+    /// Trigger an Intune compliance check for the calling user.
+    ///
+    /// This sends a request to the himmelblaud daemon, which acquires the
+    /// necessary tokens from the user's active session and runs the Intune
+    /// policy check. The user's Hello secret must be unsealed (i.e. the
+    /// user must have logged in) for this to succeed.
+    ///
+    /// Exits with 0 on success, non-zero on failure.
+    ComplianceCheck {
+        #[clap(short, long)]
+        debug: bool,
+    },
     /// Configure PAM to use pam_himmelblau
     ConfigurePam {
         #[clap(short, long)]
