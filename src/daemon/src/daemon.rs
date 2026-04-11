@@ -306,6 +306,18 @@ async fn handle_client(
                         ClientResponse::NssGroup(None)
                     })
             }
+            ClientRequest::NssInitgroups(account_id) => {
+                let account_id = account_id.to_lowercase();
+                trace!("nssinitgroups req");
+                cachelayer
+                    .get_initgroups(account_id.as_str())
+                    .await
+                    .map(ClientResponse::NssInitgroups)
+                    .unwrap_or_else(|_| {
+                        error!("unable to load initgroups.");
+                        ClientResponse::Error
+                    })
+            }
             ClientRequest::PamAuthenticateInit(account_id, service, no_hello_pin) => {
                 let account_id = account_id.to_lowercase();
                 let span = span!(Level::INFO, "pam authenticate init");
