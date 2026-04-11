@@ -62,7 +62,7 @@ use std::ffi::CStr;
 use himmelblau::error::MsalError;
 use himmelblau::{AuthOption, PublicClientApplication};
 use himmelblau_unix_common::auth_handle_mfa_resp;
-use himmelblau_unix_common::client_sync::DaemonClientBlocking;
+use himmelblau_unix_common::client_sync::{should_skip_daemon_call, DaemonClientBlocking};
 use himmelblau_unix_common::config::{split_username, HimmelblauConfig};
 use himmelblau_unix_common::constants::BROKER_APP_ID;
 use himmelblau_unix_common::constants::DEFAULT_CONFIG_PATH;
@@ -235,6 +235,9 @@ impl MessagePrinter for KeyringCaptureMessagePrinter {
 impl PamHooks for PamKanidm {
     #[instrument(skip(pamh, args, _flags))]
     fn acct_mgmt(pamh: &PamHandle, args: Vec<&CStr>, _flags: PamFlag) -> PamResultCode {
+        if should_skip_daemon_call() {
+            return PamResultCode::PAM_IGNORE;
+        }
         let opts = match Options::try_from(&args) {
             Ok(o) => o,
             Err(_) => return PamResultCode::PAM_SERVICE_ERR,
@@ -309,6 +312,9 @@ impl PamHooks for PamKanidm {
 
     #[instrument(skip(pamh, args, _flags))]
     fn sm_authenticate(pamh: &PamHandle, args: Vec<&CStr>, _flags: PamFlag) -> PamResultCode {
+        if should_skip_daemon_call() {
+            return PamResultCode::PAM_IGNORE;
+        }
         let opts = match Options::try_from(&args) {
             Ok(o) => o,
             Err(_) => return PamResultCode::PAM_SERVICE_ERR,
@@ -457,6 +463,9 @@ impl PamHooks for PamKanidm {
 
     #[instrument(skip(pamh, args, flags))]
     fn sm_chauthtok(pamh: &PamHandle, args: Vec<&CStr>, flags: PamFlag) -> PamResultCode {
+        if should_skip_daemon_call() {
+            return PamResultCode::PAM_IGNORE;
+        }
         let opts = match Options::try_from(&args) {
             Ok(o) => o,
             Err(_) => return PamResultCode::PAM_SERVICE_ERR,
@@ -942,6 +951,9 @@ impl PamHooks for PamKanidm {
 
     #[instrument(skip(_pamh, args, _flags))]
     fn sm_close_session(_pamh: &PamHandle, args: Vec<&CStr>, _flags: PamFlag) -> PamResultCode {
+        if should_skip_daemon_call() {
+            return PamResultCode::PAM_IGNORE;
+        }
         let opts = match Options::try_from(&args) {
             Ok(o) => o,
             Err(_) => return PamResultCode::PAM_SERVICE_ERR,
@@ -956,6 +968,9 @@ impl PamHooks for PamKanidm {
 
     #[instrument(skip(pamh, args, _flags))]
     fn sm_open_session(pamh: &PamHandle, args: Vec<&CStr>, _flags: PamFlag) -> PamResultCode {
+        if should_skip_daemon_call() {
+            return PamResultCode::PAM_IGNORE;
+        }
         let opts = match Options::try_from(&args) {
             Ok(o) => o,
             Err(_) => return PamResultCode::PAM_SERVICE_ERR,
@@ -1007,6 +1022,9 @@ impl PamHooks for PamKanidm {
 
     #[instrument(skip(_pamh, args, _flags))]
     fn sm_setcred(_pamh: &PamHandle, args: Vec<&CStr>, _flags: PamFlag) -> PamResultCode {
+        if should_skip_daemon_call() {
+            return PamResultCode::PAM_IGNORE;
+        }
         let opts = match Options::try_from(&args) {
             Ok(o) => o,
             Err(_) => return PamResultCode::PAM_SERVICE_ERR,
