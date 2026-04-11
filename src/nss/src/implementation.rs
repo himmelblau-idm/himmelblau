@@ -7,7 +7,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at https://mozilla.org/MPL/2.0/.
  */
-use himmelblau_unix_common::client_sync::DaemonClientBlocking;
+use himmelblau_unix_common::client_sync::{should_skip_daemon_call, DaemonClientBlocking};
 use himmelblau_unix_common::config::HimmelblauConfig;
 use himmelblau_unix_common::constants::{DEFAULT_CONFIG_PATH, NSS_CACHE};
 use himmelblau_unix_common::idprovider::interface::Id;
@@ -105,6 +105,9 @@ macro_rules! fetch_all_cached_users {
 
 impl PasswdHooks for HimmelblauPasswd {
     fn get_all_entries() -> Response<Vec<Passwd>> {
+        if should_skip_daemon_call() {
+            return Response::Unavail;
+        }
         let cfg = match HimmelblauConfig::new(Some(DEFAULT_CONFIG_PATH)) {
             Ok(c) => c,
             Err(_) => {
@@ -149,6 +152,9 @@ impl PasswdHooks for HimmelblauPasswd {
     }
 
     fn get_entry_by_uid(uid: libc::uid_t) -> Response<Passwd> {
+        if should_skip_daemon_call() {
+            return Response::Unavail;
+        }
         let cfg = match HimmelblauConfig::new(Some(DEFAULT_CONFIG_PATH)) {
             Ok(c) => c,
             Err(_) => {
@@ -187,6 +193,9 @@ impl PasswdHooks for HimmelblauPasswd {
     }
 
     fn get_entry_by_name(name: String) -> Response<Passwd> {
+        if should_skip_daemon_call() {
+            return Response::Unavail;
+        }
         let cfg = match HimmelblauConfig::new(Some(DEFAULT_CONFIG_PATH)) {
             Ok(c) => c,
             Err(_) => {
@@ -267,6 +276,9 @@ libnss_group_hooks!(himmelblau, HimmelblauGroup);
 
 impl GroupHooks for HimmelblauGroup {
     fn get_all_entries() -> Response<Vec<Group>> {
+        if should_skip_daemon_call() {
+            return Response::Unavail;
+        }
         let cfg = match HimmelblauConfig::new(Some(DEFAULT_CONFIG_PATH)) {
             Ok(c) => c,
             Err(_) => {
@@ -304,6 +316,9 @@ impl GroupHooks for HimmelblauGroup {
     }
 
     fn get_entry_by_gid(gid: libc::gid_t) -> Response<Group> {
+        if should_skip_daemon_call() {
+            return Response::Unavail;
+        }
         let cfg = match HimmelblauConfig::new(Some(DEFAULT_CONFIG_PATH)) {
             Ok(c) => c,
             Err(_) => {
@@ -339,6 +354,9 @@ impl GroupHooks for HimmelblauGroup {
     }
 
     fn get_entry_by_name(name: String) -> Response<Group> {
+        if should_skip_daemon_call() {
+            return Response::Unavail;
+        }
         let cfg = match HimmelblauConfig::new(Some(DEFAULT_CONFIG_PATH)) {
             Ok(c) => c,
             Err(_) => {
