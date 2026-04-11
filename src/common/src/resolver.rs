@@ -1038,6 +1038,11 @@ where
         self.get_nssgroup(Id::Gid(gid)).await
     }
 
+    pub async fn get_initgroups(&self, account_id: &str) -> Result<Option<Vec<u32>>, ()> {
+        let token = self.get_usertoken(Id::Name(account_id.to_string())).await?;
+        Ok(token.map(|tok| tok.groups.iter().map(|g| g.gidnumber).collect()))
+    }
+
     pub async fn pam_account_allowed(&self, account_id: &str) -> Result<Option<bool>, ()> {
         let token = self.get_usertoken(Id::Name(account_id.to_string())).await?;
 
