@@ -155,165 +155,6 @@ def collect_all_assets(repo_root: Path, crate_names: list) -> list:
 
 # ---- Ebuild generation -------------------------------------------------------
 
-def generate_install_commands(repo_root: Path) -> str:
-    """Generate src_install() commands for ebuild based on Cargo.toml assets."""
-    crate_names = ["himmelblaud", "nss_himmelblau", "pam_himmelblau", "sshd-config", "sso", "sso-policies", "qr-greeter", "o365"]
-
-    try:
-        assets = collect_all_assets(repo_root, crate_names)
-    except RuntimeError:
-        return _fallback_install()
-
-    if not assets:
-        return _fallback_install()
-
-    lines = []
-
-    # Group assets by type for cleaner output
-    binaries = []
-    sbinaries = []
-    libraries = []
-    pam_modules = []
-    configs = []
-    systemd_units = []
-    man_pages = []
-    other = []
-
-    for asset in assets:
-        src = asset["source"]
-        dest = asset["dest"]
-
-        # Skip selinux assets
-        if "selinux" in src.lower() or "selinux" in dest.lower():
-            continue
-
-        # Skip wildcards for now - handle manually
-        if "*" in src:
-            continue
-
-        # Categorize by destination and source filename
-        src_basename = os.path.basename(src)
-        if dest.startswith("/usr/bin/") or dest.endswith("/usr/bin/"):
-            binaries.append((src, dest))
-        elif dest.startswith("/usr/sbin/") or dest.endswith("/usr/sbin/"):
-            sbinaries.append((src, dest))
-        elif "/security/" in dest and (dest.endswith(".so") or src_basename.endswith(".so")):
-            pam_modules.append((src, dest))
-        elif dest.endswith(".so") or dest.endswith(".so.2"):
-            libraries.append((src, dest))
-        elif "/systemd/system/" in dest and (src_basename.endswith(".service") or src_basename.endswith(".socket")):
-            # Only actual .service/.socket files, not drop-in configs
-            systemd_units.append((src, dest))
-        elif dest.startswith("/etc/"):
-            configs.append((src, dest))
-        elif "/man/" in dest:
-            man_pages.append((src, dest))
-        else:
-            other.append((src, dest))
-
-    # Generate install commands
-    if binaries:
-        lines.append("\t# Install binaries")
-        for src, dest in binaries:
-            lines.append(f'\tdobin "${{S}}/{src}"')
-
-    if sbinaries:
-        lines.append("\n\t# Install system binaries")
-        for src, dest in sbinaries:
-            lines.append(f'\tdosbin "${{S}}/{src}"')
-
-    if libraries:
-        lines.append("\n\t# Install NSS library")
-        for src, dest in libraries:
-            lib_name = os.path.basename(dest)
-            lines.append('\tinto /usr')
-            lines.append(f'\tdolib.so "${{S}}/{src}"')
-            if lib_name != os.path.basename(src):
-                lines.append(f'\tdosym "{os.path.basename(src)}" "/usr/$(get_libdir)/{lib_name}"')
-
-    if pam_modules:
-        lines.append("\n\t# Install PAM module")
-        for src, dest in pam_modules:
-            lines.append(f'\tdopammod "${{S}}/{src}"')
-
-    if systemd_units:
-        lines.append("\n\t# Install systemd units")
-        for src, dest in systemd_units:
-            lines.append(f'\tsystemd_dounit "${{S}}/{src}"')
-
-    if configs:
-        lines.append("\n\t# Install configuration files")
-        for src, dest in configs:
-            # Handle directory destinations (ending with /)
-            if dest.endswith('/'):
-                dest_dir = dest.rstrip('/')
-                src_name = os.path.basename(src)
-                lines.append(f'\tinsinto "{dest_dir}"')
-                lines.append(f'\tdoins "${{S}}/{src}"')
-            else:
-                dest_dir = os.path.dirname(dest)
-                dest_name = os.path.basename(dest)
-                src_name = os.path.basename(src)
-                lines.append(f'\tinsinto "{dest_dir}"')
-                if dest_name != src_name:
-                    # Use newins to rename the file during installation
-                    lines.append(f'\tnewins "${{S}}/{src}" "{dest_name}"')
-                else:
-                    lines.append(f'\tdoins "${{S}}/{src}"')
-
-    if man_pages:
-        lines.append("\n\t# Install man pages")
-        for src, dest in man_pages:
-            lines.append(f'\tdoman "${{S}}/{src}"')
-
-    if other:
-        lines.append("\n\t# Install other files")
-        for src, dest in other:
-            # Handle directory destinations (ending with /)
-            if dest.endswith('/'):
-                dest_dir = dest.rstrip('/')
-                src_name = os.path.basename(src)
-                lines.append(f'\tinsinto "{dest_dir}"')
-                lines.append(f'\tdoins "${{S}}/{src}"')
-            else:
-                dest_dir = os.path.dirname(dest)
-                dest_name = os.path.basename(dest)
-                src_name = os.path.basename(src)
-                lines.append(f'\tinsinto "{dest_dir}"')
-                if dest_name != src_name:
-                    # Use newins to rename the file during installation
-                    lines.append(f'\tnewins "${{S}}/{src}" "{dest_name}"')
-                else:
-                    lines.append(f'\tdoins "${{S}}/{src}"')
-
-    return "\n".join(lines)
-
-
-def _fallback_install() -> str:
-    """Fallback install commands if TOML parsing unavailable."""
-    return """\t# Install binaries
-\tdobin target/release/aad-tool
-\tdosbin target/release/himmelblaud
-\tdosbin target/release/himmelblaud_tasks
-\tdobin target/release/broker
-\tdobin target/release/linux-entra-sso
-
-\t# Install NSS library
-\tinto /usr
-\tdolib.so target/release/libnss_himmelblau.so
-\tdosym libnss_himmelblau.so "/usr/$(get_libdir)/libnss_himmelblau.so.2"
-
-\t# Install PAM module
-\tdopammod target/release/libpam_himmelblau.so
-
-\t# Install systemd units
-\tsystemd_dounit platform/opensuse/himmelblaud.service
-\tsystemd_dounit platform/opensuse/himmelblaud-tasks.service
-
-\t# Install configuration
-\tinsinto /etc/himmelblau
-\tdoins src/config/himmelblau.conf.example"""
-
 
 EBUILD_TEMPLATE = """\
 # Copyright 2024-2025 Gentoo Authors
@@ -321,16 +162,38 @@ EBUILD_TEMPLATE = """\
 
 EAPI=8
 
-inherit cargo pam systemd
+CRATES=""
+
+inherit cargo pam systemd tmpfiles
 
 DESCRIPTION="Entra ID authentication for Linux"
 HOMEPAGE="{homepage}"
-SRC_URI="https://github.com/himmelblau-idm/himmelblau/archive/refs/tags/${{PV}}.tar.gz -> ${{P}}.tar.gz"
+
+RUST_MIN_VER="1.93"
+
+if [[ ${{PV}} != 9999 ]]; then
+\tSRC_URI="https://github.com/himmelblau-idm/himmelblau/archive/refs/tags/${{PV}}.tar.gz -> ${{P}}.tar.gz"
+else
+\tinherit git-r3
+\tEGIT_REPO_URI="https://github.com/himmelblau-idm/himmelblau.git"
+\tEGIT_BRANCH="main"
+
+\tsrc_unpack() {{
+\t\tcargo_src_unpack
+\t\tgit-r3_src_unpack
+\t}}
+fi
+
+SRC_URI+=" ${{CARGO_CRATE_URIS}}"
+SRC_URI+=" https://github.com/siemens/linux-entra-sso/releases/download/v1.8.0/linux_entra_sso-1.8.0.xpi"
 
 LICENSE="{license}"
+# Dependent crate licenses
+LICENSE+="..."
+
 SLOT="0"
 KEYWORDS="~amd64"
-IUSE="+tpm"
+IUSE="tpm"
 
 # Allow network access for cargo to fetch dependencies
 # For inclusion in ::gentoo, CRATES variable should be populated instead
@@ -344,7 +207,7 @@ RDEPEND="${{DEPEND}}
 "
 BDEPEND="
 {bdepend}
-\t>=virtual/rust-{rust_version}
+\t|| ( >=dev-lang/rust-bin-{rust_version} >=dev-lang/rust-{rust_version} )
 "
 
 S="${{WORKDIR}}/${{PN}}-${{PV}}"
@@ -353,7 +216,10 @@ src_configure() {{
 \tlocal myfeatures=(
 \t\t$(usev tpm)
 \t)
+\texport GNOME_VERSION=48
+\texport HIMMELBLAU_ALLOW_MISSING_SELINUX=1
 \tcargo_src_configure
+\tcargo_gen_config
 }}
 
 src_compile() {{
@@ -364,17 +230,35 @@ src_compile() {{
 }}
 
 src_install() {{
-{install_commands}
+\temake DESTDIR="${{D}}" install
+\tdosym libnss_himmelblau.so.2 "/usr/$(get_libdir)/libnss_himmelblau.so"
+
+\tnewsbin "${{S}}/./target/release/broker" "himmelblau_broker"
+\tinsinto "/usr/share/dbus-1/services"
+\tdoins "${{S}}/src/broker/platform/com.microsoft.identity.broker1.service"
+\tsystemd_douserunit "${{S}}/src/broker/platform/himmelblau-broker.service"
+
+\t# Add linux-entra-sso under its Manifest name, then FF will use it
+\t# without additional policy config.
+\tinsinto "/usr/$(get_libdir)/firefox/distribution/extensions"
+\tnewins "${{DISTDIR}}"/linux_entra_sso-1.8.0.xpi "linux-entra-sso@example.com.xpi"
 
 \t# Documentation
 \tdodoc README.md
+\tmv "${{D}}"/usr/share/doc/himmelblau/* "${{D}}/usr/share/doc/himmelblau-${{PVR}}"
+\trmdir "${{D}}"/usr/share/doc/himmelblau
 }}
 
 pkg_postinst() {{
+\ttmpfiles_process "himmelblau-policies.conf" "himmelblaud.conf" "nss-himmelblau.conf"
+
 \tewarn "After installation, you need to:"
 \tewarn "  1. Configure /etc/himmelblau/himmelblau.conf"
-\tewarn "  2. Enable the himmelblaud service: systemctl enable --now himmelblaud"
+\tewarn "  2. Enable the himmelblaud services:"
+\tewarn "    systemctl enable --now himmelblaud.socket himmelblaud-tasks.socket himmelblaud-broker.socket"
+\tewarn "    systemctl enable --now himmelblaud.service himmelblaud-tasks.service himmelblau-hsm-pin-init.service"
 \tewarn "  3. Configure PAM and NSS (see documentation)"
+\tewarn "Finally, relogin with your user"
 }}
 """
 
@@ -400,9 +284,6 @@ def generate_ebuild(repo_root: Path) -> str:
 
     bdepend = "\n".join(f"\t{pkg}" for pkg in sorted(GENTOO_BDEPEND))
 
-    # Generate install commands
-    install_commands = generate_install_commands(repo_root)
-
     return EBUILD_TEMPLATE.format(
         homepage=metadata["homepage"],
         license=ebuild_license,
@@ -410,7 +291,6 @@ def generate_ebuild(repo_root: Path) -> str:
         depend=depend,
         rdepend=rdepend,
         bdepend=bdepend,
-        install_commands=install_commands,
     )
 
 
@@ -436,7 +316,10 @@ def main():
 
     with open(ebuild_path, "w", encoding="utf-8") as f:
         f.write(ebuild_content)
-
+    os.system(f"pycargoebuild -i {ebuild_path} src/daemon src/cli src/common src/pam src/nss "
+              "src/policies src/idmap src/broker src/sshd-config src/sso src/sso-policies "
+              "src/qr-greeter src/broker-client src/selinux src/o365 fuzz src/fxhash "
+              "src/serde_cbor src/paste src/sshkey-attest src/kanidm_build_profiles src/picky-krb")
     print(f"Generated ebuild: {ebuild_path}")
 
 
