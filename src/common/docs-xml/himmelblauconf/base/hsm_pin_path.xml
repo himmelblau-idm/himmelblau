@@ -5,7 +5,7 @@
            rust_type="String"
            documented="true"
            domain_specific="false"
-           order="36">
+           order="41">
 <description>
 The location where the HSM (Hardware Security Module) PIN will be stored. This PIN is used to protect sensitive cryptographic operations.
 </description>

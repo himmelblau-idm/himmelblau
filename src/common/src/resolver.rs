@@ -1414,6 +1414,9 @@ where
                         // AuthCredHandler::None is invalid with Fido
                         return Err(());
                     }
+                    (AuthCredHandler::None, PamAuthRequest::FidoUnavailable) => {
+                        return Err(());
+                    }
                     (AuthCredHandler::PasswordFirst { .. }, _) => {
                         // AuthCredHandler::PasswordFirst with anything other than
                         // PamAuthRequest::Password is invalid.
@@ -1484,11 +1487,7 @@ where
     /// One-shot PIN-based unseal: runs auth init and, if the daemon
     /// requests a PIN, immediately submits it. Returns Ok(true) on
     /// success, Ok(false) on auth failure, Err(()) on internal error.
-    pub async fn pam_try_unseal(
-        &self,
-        account_id: &str,
-        cred: &str,
-    ) -> Result<bool, ()> {
+    pub async fn pam_try_unseal(&self, account_id: &str, cred: &str) -> Result<bool, ()> {
         let (shutdown_tx, _) = broadcast::channel(1);
 
         let (mut auth_session, init_resp) = self
@@ -1509,7 +1508,10 @@ where
                 return Ok(true);
             }
             _ => {
-                debug!("pam_try_unseal: daemon did not request PIN (got {:?})", init_resp);
+                debug!(
+                    "pam_try_unseal: daemon did not request PIN (got {:?})",
+                    init_resp
+                );
                 return Ok(false);
             }
         }

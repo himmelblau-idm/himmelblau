@@ -54,6 +54,7 @@ regex = "1.12.3"
 sha2 = "0.11.0-rc"
 base64.workspace = true
 authenticator = { version = "0.5.0", default-features = false, features = ["crypto_openssl"] }
+libwebauthn = "0.2.2"
 rpassword = "7.4.0"
 der = "0.8.0"
 openidconnect = "4.0.1"
@@ -62,3 +63,4 @@ totp-rs = { version = "5.7.0", features = ["gen_secret", "otpauth", "qr", "serde
 hostname = "0.4.2"
 qrcodegen = "1.8.0"
 urlencoding = { workspace = true }
+zbus = "5.14"

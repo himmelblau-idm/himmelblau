@@ -5,7 +5,7 @@
            rust_type="String"
            documented="true"
            domain_specific="false"
-           order="33">
+           order="38">
 <description>
 The location of the cache database. This file is used to store cached authentication data and device state.
 </description>

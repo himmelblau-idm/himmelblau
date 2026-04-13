@@ -5,7 +5,7 @@
            rust_type="String"
            documented="true"
            domain_specific="false"
-           order="50">
+           order="56">
 <description>
 Specifies the path to a user-mapping file used to map local user accounts to Azure Entra ID user accounts, allowing them to authenticate using Entra ID credentials.
 

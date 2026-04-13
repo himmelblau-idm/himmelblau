@@ -5,7 +5,7 @@
                       rust_type="u32"
                       documented="true"
                       domain_specific="false"
-                      order="10"
+                      order="11"
                      >
 <description>
 The number of invalid Hello PIN attempts allowed before the user is required to perform MFA. After successful MFA, the user will be prompted to set a new PIN. The value must be a non-negative integer.
