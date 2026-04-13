@@ -19,7 +19,7 @@ Intune MDM policies.
 
 ## Sponsorship
 
-[![SUSE](https://www.suse.com/siteassets/layout/suse-white-logo-green.svg)](https://www.suse.com)
+[![SUSE](img/SUSE_founded_logo-green-stacked.png)](https://www.suse.com)
 
 We gratefully acknowledge [SUSE](https://www.suse.com) as the primary sponsor of the Himmelblau project. Their support enables us to develop and maintain this open-source identity management solution.
 
