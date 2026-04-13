@@ -52,11 +52,20 @@ if [ ! -e /lib64/security/pam_himmelblau.so ]; then
     ln -s /usr/lib64/security/pam_himmelblau.so /lib64/security/pam_himmelblau.so
 fi
 
+# Skip PAM configuration on upgrade ($1 >= 2) so admin customizations to
+# /etc/pam.d/*, authselect profiles, or pam-config state aren't reset by
+# a package update. Only the initial install wires PAM up.
+if [ "${1:-1}" -le 1 ]; then
+
 # 1) authselect first (if available)
+authselect_ok=0
 if command -v authselect >/dev/null 2>&1; then
-    feats="$(authselect current 2>/dev/null | awk '"'"'/Enabled features:/{f=1;next} f && /^-/{print $2}'"'"')"
-    authselect select himmelblau $feats --force >/dev/null 2>&1 || :
-    authselect apply-changes >/dev/null 2>&1 || :
+    feats="$(authselect current 2>/dev/null | awk '/Enabled features:/{f=1;next} f && /^-/{print $2}')"
+    if authselect select himmelblau $feats --force >/dev/null 2>&1; then
+        if authselect apply-changes >/dev/null 2>&1; then
+            authselect_ok=1
+        fi
+    fi
 fi
 
 # Helper: validate/fix pam-config account line for pam_himmelblau
@@ -122,16 +131,17 @@ pamconfig_optout_self_managed_common() {
 }
 
 # 3) Final fallback: aad-tool configure-pam --really
-# Only do this if pam-config wasn't used successfully.
-if [ "$pam_config_ok" -ne 1 ]; then
+# Only do this if neither authselect nor pam-config was used successfully.
+if [ "$authselect_ok" -ne 1 ] && [ "$pam_config_ok" -ne 1 ]; then
     if command -v aad-tool >/dev/null 2>&1; then
         # Opt out of pam-config-managed common-*-pc so future pam-config runs
         # don’t overwrite the configuration we’re about to install.
         pamconfig_optout_self_managed_common >/dev/null 2>&1 || :
-
         aad-tool configure-pam --really >/dev/null 2>&1 || :
     fi
 fi
+
+fi  # end upgrade guard
 
 # If GDM is present, ensure keyring consumes the auth token so the keyring unlocks
 # like a normal password login.
@@ -158,7 +168,7 @@ if command -v authselect >/dev/null 2>&1; then
         if   [ -d /usr/share/authselect/default/local   ]; then base=local
         elif [ -d /usr/share/authselect/default/minimal ]; then base=minimal
         else base=sssd; fi
-        feats="$(authselect current 2>/dev/null | awk '"'"'/Enabled features:/{f=1;next} f && /^-/{print $2}'"'"')"
+        feats="$(authselect current 2>/dev/null | awk '/Enabled features:/{f=1;next} f && /^-/{print $2}')"
         authselect select "$base" $feats --force >/dev/null 2>&1 || :
         authselect apply-changes >/dev/null 2>&1 || :
     fi
