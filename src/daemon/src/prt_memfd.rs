@@ -119,7 +119,6 @@ fn read_fd_contents(fd: RawFd) -> io::Result<Vec<u8>> {
 /// Called before storing a new one to avoid accumulating stale entries.
 pub fn remove_prts_from_fdstore() {
     if let Err(e) = sd_notify::notify(
-        false,
         &[
             NotifyState::FdStoreRemove,
             NotifyState::FdName(PRT_FDNAME),
