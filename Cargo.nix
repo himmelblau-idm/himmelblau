@@ -15699,9 +15699,9 @@ rec {
       };
       "rustls-webpki" = rec {
         crateName = "rustls-webpki";
-        version = "0.103.6";
+        version = "0.103.10";
         edition = "2021";
-        sha256 = "1szqh1g2cwx89f21mf6zkxc8rxg187y9jm5law8j6d4rrg1g6wl5";
+        sha256 = "1vyipcdbazvhl6kyi1m8n0bg98sk25iv12bby2xcly653awb4cyz";
         libName = "webpki";
         dependencies = [
           {
