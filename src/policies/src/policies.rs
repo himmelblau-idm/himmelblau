@@ -50,7 +50,8 @@ pub async fn apply_intune_policy(
         "Applying policies for user and device"
     );
 
-    let graph = Graph::new(&config.get_odc_provider(domain), domain, None, None, None)
+    let ip_versions = config.get_ip_versions();
+    let graph = Graph::new(&config.get_odc_provider(domain), domain, None, None, None, &ip_versions)
         .await
         .map_err(|e| anyhow!(e))?;
 
@@ -69,7 +70,7 @@ pub async fn apply_intune_policy(
         vers = vec!["1.2511.11".to_string()];
     }
     let intune =
-        IntuneForLinux::new(endpoints, Some(&vers[vers.len() - 1])).map_err(|e| anyhow!(e))?;
+        IntuneForLinux::new(endpoints, Some(&vers[vers.len() - 1]), &ip_versions).map_err(|e| anyhow!(e))?;
 
     let token = UserToken {
         token_type: String::new(),

@@ -661,12 +661,14 @@ async fn handle_tasks(stream: UnixStream, cfg: &HimmelblauConfig) {
                                 let authority_host = cfg.get_authority_host(domain);
                                 let tenant_id = cfg.get_tenant_id(domain);
                                 let graph_url = cfg.get_graph_url(domain);
+                                let ip_versions = cfg.get_ip_versions();
                                 if let Ok(graph) = Graph::new(
                                     &cfg.get_odc_provider(domain),
                                     domain,
                                     Some(&authority_host),
                                     tenant_id.as_deref(),
                                     graph_url.as_deref(),
+                                    &ip_versions,
                                 )
                                 .await
                                 {
