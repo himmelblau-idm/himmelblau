@@ -5192,6 +5192,22 @@ dependency on the `rustix` crate.
 """
 aggregated-from = "https://raw.githubusercontent.com/zcash/zcash/master/qa/supply-chain/audits.toml"
 
+[[audits.zcash.audits.which]]
+who = "Jack Grigg <jack@electriccoin.co>"
+criteria = "safe-to-deploy"
+delta = "4.4.2 -> 6.0.1"
+notes = """
+Mostly refactoring to newer APIs. New `winsafe` dependency is only used to check
+for extensionless Windows executables.
+"""
+aggregated-from = "https://raw.githubusercontent.com/zcash/zcash/master/qa/supply-chain/audits.toml"
+
+[[audits.zcash.audits.which]]
+who = "Jack Grigg <jack@electriccoin.co>"
+criteria = "safe-to-deploy"
+delta = "6.0.1 -> 6.0.3"
+aggregated-from = "https://raw.githubusercontent.com/zcash/librustzcash/main/supply-chain/audits.toml"
+
 [[audits.zcash.audits.zeroize]]
 who = "Jack Grigg <jack@electriccoin.co>"
 criteria = "safe-to-deploy"
