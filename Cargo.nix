@@ -1840,7 +1840,7 @@ rec {
           }
           {
             name = "which";
-            packageId = "which";
+            packageId = "which 4.4.2";
             optional = true;
             usesDefaultFeatures = false;
           }
@@ -2233,6 +2233,22 @@ rec {
             packageId = "identity_dbus_broker";
           }
           {
+            name = "pinentry";
+            packageId = "pinentry";
+          }
+          {
+            name = "sd-notify";
+            packageId = "sd-notify";
+          }
+          {
+            name = "secrecy";
+            packageId = "secrecy";
+          }
+          {
+            name = "serde_json";
+            packageId = "serde_json";
+          }
+          {
             name = "tokio";
             packageId = "tokio";
             features = [ "rt" "macros" "sync" "time" "net" "io-util" "signal" "rt-multi-thread" ];
@@ -2522,7 +2538,7 @@ rec {
         dependencies = [
           {
             name = "nom";
-            packageId = "nom";
+            packageId = "nom 7.1.3";
             usesDefaultFeatures = false;
             features = [ "std" ];
           }
@@ -4592,7 +4608,7 @@ rec {
           }
           {
             name = "nom";
-            packageId = "nom";
+            packageId = "nom 7.1.3";
             usesDefaultFeatures = false;
             features = [ "std" ];
           }
@@ -6659,7 +6675,7 @@ rec {
           }
           {
             name = "nom";
-            packageId = "nom";
+            packageId = "nom 7.1.3";
             optional = true;
           }
           {
@@ -9275,7 +9291,7 @@ rec {
           }
           {
             name = "nom";
-            packageId = "nom";
+            packageId = "nom 7.1.3";
           }
         ];
 
@@ -9303,7 +9319,7 @@ rec {
           }
           {
             name = "nom";
-            packageId = "nom";
+            packageId = "nom 7.1.3";
           }
           {
             name = "peg";
@@ -10455,7 +10471,7 @@ rec {
         ];
 
       };
-      "nom" = rec {
+      "nom 7.1.3" = rec {
         crateName = "nom";
         version = "7.1.3";
         edition = "2018";
@@ -10480,6 +10496,26 @@ rec {
           "std" = [ "alloc" "memchr/std" "minimal-lexical/std" ];
         };
         resolvedDefaultFeatures = [ "alloc" "default" "std" ];
+      };
+      "nom 8.0.0" = rec {
+        crateName = "nom";
+        version = "8.0.0";
+        edition = "2021";
+        sha256 = "01cl5xng9d0gxf26h39m0l8lprgpa00fcc75ps1yzgbib1vn35yz";
+        authors = [
+          "contact@geoffroycouprie.com"
+        ];
+        dependencies = [
+          {
+            name = "memchr";
+            packageId = "memchr";
+            usesDefaultFeatures = false;
+          }
+        ];
+        features = {
+          "default" = [ "std" ];
+          "std" = [ "alloc" "memchr/std" ];
+        };
       };
       "notify" = rec {
         crateName = "notify";
@@ -12855,6 +12891,47 @@ rec {
         edition = "2018";
         sha256 = "16wzc7z7dfkf9bmjin22f5282783f6mdksnr0nv0j5ym5f9gyg1v";
         libName = "pin_project_lite";
+
+      };
+      "pinentry" = rec {
+        crateName = "pinentry";
+        version = "0.8.0";
+        edition = "2021";
+        sha256 = "0x88fz6vjk3fgh43qhkyvb801bvq6d0jlmipkx8mnw51qi1q0kh1";
+        authors = [
+          "Jack Grigg <thestr4d@gmail.com>"
+        ];
+        dependencies = [
+          {
+            name = "log";
+            packageId = "log";
+          }
+          {
+            name = "nom";
+            packageId = "nom 8.0.0";
+            usesDefaultFeatures = false;
+          }
+          {
+            name = "percent-encoding";
+            packageId = "percent-encoding";
+          }
+          {
+            name = "secrecy";
+            packageId = "secrecy";
+          }
+          {
+            name = "wait-timeout";
+            packageId = "wait-timeout";
+          }
+          {
+            name = "which";
+            packageId = "which 8.0.2";
+          }
+          {
+            name = "zeroize";
+            packageId = "zeroize";
+          }
+        ];
 
       };
       "piper" = rec {
@@ -15989,6 +16066,26 @@ rec {
           "zeroize" = [ "dep:zeroize" "der?/zeroize" ];
         };
         resolvedDefaultFeatures = [ "alloc" "default" "der" "pem" "pkcs8" "point" "std" "subtle" "zeroize" ];
+      };
+      "secrecy" = rec {
+        crateName = "secrecy";
+        version = "0.10.3";
+        edition = "2021";
+        sha256 = "0nmfsf9qm8921v2jliz08bj8zrryqar4gj3d6irqfc3kaj2az4g8";
+        authors = [
+          "Tony Arcieri <tony@iqlusion.io>"
+        ];
+        dependencies = [
+          {
+            name = "zeroize";
+            packageId = "zeroize";
+            usesDefaultFeatures = false;
+            features = [ "alloc" ];
+          }
+        ];
+        features = {
+          "serde" = [ "dep:serde" ];
+        };
       };
       "security-framework 2.11.1" = rec {
         crateName = "security-framework";
@@ -19998,6 +20095,25 @@ rec {
         ];
 
       };
+      "wait-timeout" = rec {
+        crateName = "wait-timeout";
+        version = "0.2.1";
+        edition = "2015";
+        crateBin = [];
+        sha256 = "04azqv9mnfxgvnc8j2wp362xraybakh2dy1nj22gj51rdl93pb09";
+        libName = "wait_timeout";
+        authors = [
+          "Alex Crichton <alex@alexcrichton.com>"
+        ];
+        dependencies = [
+          {
+            name = "libc";
+            packageId = "libc";
+            target = { target, features }: (target."unix" or false);
+          }
+        ];
+
+      };
       "walkdir" = rec {
         crateName = "walkdir";
         version = "2.5.0";
@@ -21027,7 +21143,7 @@ rec {
         ];
 
       };
-      "which" = rec {
+      "which 4.4.2" = rec {
         crateName = "which";
         version = "4.4.2";
         edition = "2021";
@@ -21060,6 +21176,30 @@ rec {
         features = {
           "regex" = [ "dep:regex" ];
         };
+      };
+      "which 8.0.2" = rec {
+        crateName = "which";
+        version = "8.0.2";
+        edition = "2021";
+        sha256 = "0nf4c067qvw5zzk0lr9iadzfnaprr9kkrj0cgmxf8smgmapmz6c1";
+        authors = [
+          "Harry Fei <tiziyuanfang@gmail.com>, Jacob Kiesel <jake@bitcrafters.co>"
+        ];
+        dependencies = [
+          {
+            name = "libc";
+            packageId = "libc";
+            optional = true;
+            target = { target, features }: ((target."unix" or false) || ("wasi" == target."os" or null) || ("redox" == target."os" or null));
+          }
+        ];
+        features = {
+          "default" = [ "real-sys" ];
+          "real-sys" = [ "dep:libc" ];
+          "regex" = [ "dep:regex" ];
+          "tracing" = [ "dep:tracing" ];
+        };
+        resolvedDefaultFeatures = [ "default" "real-sys" ];
       };
       "winapi" = rec {
         crateName = "winapi";
