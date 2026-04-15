@@ -16,66 +16,31 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  append-required-pr-checklist:
+  anti-slop-checks:
     if: github.event_name == 'pull_request_target'
     permissions:
+      contents: read
+      issues: write
       pull-requests: write
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 5
     steps:
       - name: Harden the runner (Audit all outbound calls)
         uses: step-security/harden-runner@6c3c2f2c1c457b00c10c4848d6f5491db3b629df # v2.18.0
         with:
           egress-policy: audit
 
-      - name: Append required checklist to PR description
+      - name: Checkout base branch (trusted code only)
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - name: Run slop checks
         uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7.1.0
         with:
           script: |
-            const OWNER = context.repo.owner;
-            const REPO = context.repo.repo;
-            const pr = context.payload.pull_request;
-
-            if (!pr) {
-              core.setFailed('Missing pull request payload.');
-              return;
-            }
-
-            const CHECKLIST_START = '<!-- himmelblau-review-checklist:start -->';
-            const CHECKLIST_END = '<!-- himmelblau-review-checklist:end -->';
-            const checklistBlock = [
-              CHECKLIST_START,
-              '## Required Before Review',
-              '',
-              'Please complete this checklist. **PRs will be ignored until these steps are completed.**',
-              '',
-              '- [ ] I manually tested this change on a test VM and confirmed it works as intended.',
-              '- [ ] I listed exactly what testing I performed (commands/steps and observed results).',
-              '- [ ] I listed which distro(s) and version(s) I tested on.',
-              '- [ ] I ran relevant automated checks (for example `make test`, distro package build target, and `make test-selinux` when applicable) or explained why a check was not run.',
-              '- [ ] If this change affects system integration (systemd, PAM/NSS/authselect, SELinux/AppArmor, filesystem paths, or credentials), I documented the packaging/runtime impact and any generator/template sources updated.',
-              '- [ ] I linked the related issue/enhancement/discussion and confirmed the PR scope is focused and reviewable.',
-              CHECKLIST_END,
-            ].join('\n');
-
-            const currentBody = pr.body || '';
-            if (currentBody.includes(CHECKLIST_START)) {
-              core.info(`PR #${pr.number}: checklist already present.`);
-              return;
-            }
-
-            const updatedBody = currentBody.trimEnd().length > 0
-              ? `${currentBody.trimEnd()}\n\n${checklistBlock}`
-              : checklistBlock;
-
-            await github.rest.pulls.update({
-              owner: OWNER,
-              repo: REPO,
-              pull_number: pr.number,
-              body: updatedBody,
-            });
-
-            core.info(`PR #${pr.number}: appended required checklist.`);
+            const run = require('./.github/scripts/slop-checks.js');
+            await run({ github, context, core });
 
   evaluate-open-prs:
     if: github.event_name != 'pull_request_target'
@@ -212,7 +177,7 @@ jobs:
                   '',
                   'After discussion with the team, this PR may be reopened.',
                   '',
-                  'Thanks again for your interest in improving Himmelblau. ❤️',
+                  'Thanks again for your interest in improving Himmelblau. :heart:',
                 ].join('\n');
 
                 await github.rest.issues.createComment({
