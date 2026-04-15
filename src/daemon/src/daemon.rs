@@ -564,110 +564,29 @@ async fn handle_client(
                                                     }
 
                                                     // Apply Intune policies
-                                                    if cfg.get_apply_policy()
-                                                    {
-                                                        let intune_device_id = split_username(&account_id)
-                                                            .map(|(_, domain)| domain)
-                                                            .and_then(|domain| {
-                                                                // The intune_device_id may have been written after startup,
-                                                                // so we re-read the config here.
-                                                                HimmelblauConfig::new(Some(&cfg.get_config_file())).ok()
-                                                                .map(|cfg| {
-                                                                    cfg.get_intune_device_id(domain)
-                                                                })
-                                                            }).flatten();
-                                                        let graph_token = cachelayer
-                                                            .get_user_accesstoken(
-                                                                Id::Name(account_id.clone()),
-                                                                vec!["00000003-0000-0000-c000-000000000000/.default".to_string()],
-                                                                Some(DEFAULT_APP_ID.to_string()),
-                                                                None,
-                                                                None,
-                                                            ).await;
-                                                        let intune_token = cachelayer
-                                                            .get_user_accesstoken(
-                                                                Id::Name(account_id.clone()),
-                                                                vec!["0000000a-0000-0000-c000-000000000000/.default".to_string()],
-                                                                Some(DEFAULT_APP_ID.to_string()),
-                                                                None,
-                                                                None,
-                                                            ).await;
-                                                        let iwservice_token = cachelayer
-                                                            .get_user_accesstoken(
-                                                                Id::Name(account_id.clone()),
-                                                                vec!["b8066b99-6e67-41be-abfa-75db1a2c8809/.default".to_string()],
-                                                                Some(DEFAULT_APP_ID.to_string()),
-                                                                None,
-                                                                None,
-                                                            ).await;
-
-                                                        if let Some(graph_token) = graph_token {
-                                                            if let Some(intune_token) = intune_token {
-                                                                if let Some(iwservice_token) = iwservice_token {
-                                                                    let (tx, rx) = oneshot::channel();
-
-                                                                    match task_channel_tx
-                                                                        .send_timeout(
-                                                                            (
-                                                                                TaskRequest::ApplyPolicy(
-                                                                                    intune_device_id,
-                                                                                    account_id.clone(),
-                                                                                    graph_token
-                                                                                        .access_token
-                                                                                        .clone()
-                                                                                        .unwrap_or("".to_string()),
-                                                                                    intune_token
-                                                                                        .access_token
-                                                                                        .clone()
-                                                                                        .unwrap_or("".to_string()),
-                                                                                    iwservice_token
-                                                                                        .access_token
-                                                                                        .clone()
-                                                                                        .unwrap_or("".to_string()),
-                                                                                ),
-                                                                                tx,
-                                                                            ),
-                                                                            Duration::from_millis(500),
-                                                                        )
-                                                                        .await
-                                                                    {
-                                                                        Ok(()) => {
-                                                                            // Now wait for the other end OR timeout.
-                                                                            match time::timeout_at(
-                                                                                /* From the MS specs:
-                                                                                 * Custom compliance discovery scripts for Microsoft Intune
-                                                                                 * Limits:
-                                                                                 * Scripts must have a limited run time:
-                                                                                 *   On Linux, scripts must take five minutes or less to run.
-                                                                                 */
-                                                                                time::Instant::now()
-                                                                                    + Duration::from_secs(
-                                                                                        300,
-                                                                                    ),
-                                                                                rx,
-                                                                            )
-                                                                            .await
-                                                                            {
-                                                                                Ok(Ok(status)) => {
-                                                                                    if status == 0 {
-                                                                                        debug!("Successfully applied Intune policies");
-                                                                                    } else {
-                                                                                        warn!("Intune failure");
-                                                                                    }
-                                                                                }
-                                                                                Ok(Err(e)) => {
-                                                                                    warn!("Intune failure: {}", e);
-                                                                                }
-                                                                                Err(e) => {
-                                                                                    warn!("Intune failure: {}", e);
-                                                                                }
-                                                                            }
-                                                                        }
-                                                                        Err(e) => {
-                                                                            warn!("Intune failure: {}", e);
-                                                                        }
-                                                                    }
-                                                                }
+                                                    if cfg.get_apply_policy() {
+                                                        match apply_intune_policy_for_account(
+                                                            &cachelayer,
+                                                            &cfg,
+                                                            task_channel_tx,
+                                                            &account_id,
+                                                        )
+                                                        .await
+                                                        {
+                                                            Ok(()) => {
+                                                                debug!("Successfully applied Intune policies");
+                                                            }
+                                                            Err(ApplyPolicyError::TokenAcquisitionFailed)
+                                                            | Err(ApplyPolicyError::MissingAccessToken) => {
+                                                                warn!("Intune failure: could not acquire tokens");
+                                                            }
+                                                            Err(ApplyPolicyError::PolicyFailure) => {
+                                                                warn!("Intune failure");
+                                                            }
+                                                            Err(ApplyPolicyError::DispatchFailed(e))
+                                                            | Err(ApplyPolicyError::TaskTimeout(e))
+                                                            | Err(ApplyPolicyError::TaskError(e)) => {
+                                                                warn!("Intune failure: {}", e);
                                                             }
                                                         }
                                                     }
@@ -937,10 +856,7 @@ async fn handle_client(
                     }
 
                     // Resolve the calling user's uid to an account name.
-                    let account_id = match cachelayer
-                        .get_nssaccount_gid(ucred.uid())
-                        .await
-                    {
+                    let account_id = match cachelayer.get_nssaccount_gid(ucred.uid()).await {
                         Ok(Some(nss_user)) => nss_user.name,
                         _ => {
                             error!(
@@ -951,106 +867,41 @@ async fn handle_client(
                         }
                     };
 
-                    let intune_device_id = split_username(&account_id)
-                        .map(|(_, domain)| domain)
-                        .and_then(|domain| {
-                            HimmelblauConfig::new(Some(&cfg.get_config_file())).ok()
-                            .map(|cfg| cfg.get_intune_device_id(domain))
-                        }).flatten();
-
-                    let graph_token = cachelayer
-                        .get_user_accesstoken(
-                            Id::Name(account_id.clone()),
-                            vec!["00000003-0000-0000-c000-000000000000/.default".to_string()],
-                            Some(DEFAULT_APP_ID.to_string()),
-                            None,
-                            None,
-                        ).await;
-                    let intune_token = cachelayer
-                        .get_user_accesstoken(
-                            Id::Name(account_id.clone()),
-                            vec!["0000000a-0000-0000-c000-000000000000/.default".to_string()],
-                            Some(DEFAULT_APP_ID.to_string()),
-                            None,
-                            None,
-                        ).await;
-                    let iwservice_token = cachelayer
-                        .get_user_accesstoken(
-                            Id::Name(account_id.clone()),
-                            vec!["b8066b99-6e67-41be-abfa-75db1a2c8809/.default".to_string()],
-                            Some(DEFAULT_APP_ID.to_string()),
-                            None,
-                            None,
-                        ).await;
-
-                    let (graph_token, intune_token, iwservice_token) =
-                        match (graph_token, intune_token, iwservice_token) {
-                            (Some(g), Some(i), Some(w)) => (g, i, w),
-                            _ => {
-                                error!(
-                                    "compliance check: could not acquire tokens for {} \
-                                     (session not unsealed?)",
-                                    account_id
-                                );
-                                return ClientResponse::NotAuthenticated;
-                            }
-                        };
-
-                    let (tx, rx) = oneshot::channel();
-
-                    match task_channel_tx
-                        .send_timeout(
-                            (
-                                TaskRequest::ApplyPolicy(
-                                    intune_device_id,
-                                    account_id.clone(),
-                                    graph_token
-                                        .access_token
-                                        .clone()
-                                        .unwrap_or("".to_string()),
-                                    intune_token
-                                        .access_token
-                                        .clone()
-                                        .unwrap_or("".to_string()),
-                                    iwservice_token
-                                        .access_token
-                                        .clone()
-                                        .unwrap_or("".to_string()),
-                                ),
-                                tx,
-                            ),
-                            Duration::from_millis(500),
-                        )
-                        .await
+                    match apply_intune_policy_for_account(
+                        &cachelayer,
+                        &cfg,
+                        task_channel_tx,
+                        &account_id,
+                    )
+                    .await
                     {
                         Ok(()) => {
-                            match time::timeout_at(
-                                time::Instant::now() + Duration::from_secs(300),
-                                rx,
-                            )
-                            .await
-                            {
-                                Ok(Ok(status)) => {
-                                    if status == 0 {
-                                        debug!("compliance check: succeeded for {}", account_id);
-                                        ClientResponse::Ok
-                                    } else {
-                                        warn!("compliance check: policy failure for {}", account_id);
-                                        ClientResponse::Error
-                                    }
-                                }
-                                Ok(Err(e)) => {
-                                    warn!("compliance check: task error: {}", e);
-                                    ClientResponse::Error
-                                }
-                                Err(e) => {
-                                    warn!("compliance check: timeout: {}", e);
-                                    ClientResponse::Error
-                                }
-                            }
+                            debug!("compliance check: succeeded for {}", account_id);
+                            ClientResponse::Ok
                         }
-                        Err(e) => {
+                        Err(ApplyPolicyError::TokenAcquisitionFailed)
+                        | Err(ApplyPolicyError::MissingAccessToken) => {
+                            error!(
+                                "compliance check: could not acquire tokens for {} \
+                                 (session not unsealed?)",
+                                account_id
+                            );
+                            ClientResponse::NotAuthenticated
+                        }
+                        Err(ApplyPolicyError::PolicyFailure) => {
+                            warn!("compliance check: policy failure for {}", account_id);
+                            ClientResponse::Error
+                        }
+                        Err(ApplyPolicyError::DispatchFailed(e)) => {
                             warn!("compliance check: failed to dispatch task: {}", e);
+                            ClientResponse::Error
+                        }
+                        Err(ApplyPolicyError::TaskError(e)) => {
+                            warn!("compliance check: task error: {}", e);
+                            ClientResponse::Error
+                        }
+                        Err(ApplyPolicyError::TaskTimeout(e)) => {
+                            warn!("compliance check: timeout: {}", e);
                             ClientResponse::Error
                         }
                     }
@@ -1099,6 +950,107 @@ async fn handle_client(
     // Disconnect them
     trace!("Disconnecting client ...");
     Ok(())
+}
+
+enum ApplyPolicyError {
+    TokenAcquisitionFailed,
+    MissingAccessToken,
+    DispatchFailed(String),
+    TaskTimeout(String),
+    TaskError(String),
+    PolicyFailure,
+}
+
+async fn apply_intune_policy_for_account(
+    cachelayer: &Resolver<HimmelblauMultiProvider>,
+    cfg: &HimmelblauConfig,
+    task_channel_tx: &Sender<AsyncTaskRequest>,
+    account_id: &str,
+) -> Result<(), ApplyPolicyError> {
+    let intune_device_id = split_username(account_id)
+        .map(|(_, domain)| domain)
+        .and_then(|domain| {
+            // The intune_device_id may have been written after startup,
+            // so we re-read the config here.
+            HimmelblauConfig::new(Some(&cfg.get_config_file()))
+                .ok()
+                .map(|cfg| cfg.get_intune_device_id(domain))
+        })
+        .flatten();
+
+    let graph_token = cachelayer
+        .get_user_accesstoken(
+            Id::Name(account_id.to_string()),
+            vec!["00000003-0000-0000-c000-000000000000/.default".to_string()],
+            Some(DEFAULT_APP_ID.to_string()),
+            None,
+            None,
+        )
+        .await;
+    let intune_token = cachelayer
+        .get_user_accesstoken(
+            Id::Name(account_id.to_string()),
+            vec!["0000000a-0000-0000-c000-000000000000/.default".to_string()],
+            Some(DEFAULT_APP_ID.to_string()),
+            None,
+            None,
+        )
+        .await;
+    let iwservice_token = cachelayer
+        .get_user_accesstoken(
+            Id::Name(account_id.to_string()),
+            vec!["b8066b99-6e67-41be-abfa-75db1a2c8809/.default".to_string()],
+            Some(DEFAULT_APP_ID.to_string()),
+            None,
+            None,
+        )
+        .await;
+
+    let (graph_token, intune_token, iwservice_token) =
+        match (graph_token, intune_token, iwservice_token) {
+            (Some(g), Some(i), Some(w)) => (g, i, w),
+            _ => return Err(ApplyPolicyError::TokenAcquisitionFailed),
+        };
+
+    let (graph_at, intune_at, iwservice_at) = match (
+        graph_token.access_token.clone(),
+        intune_token.access_token.clone(),
+        iwservice_token.access_token.clone(),
+    ) {
+        (Some(g), Some(i), Some(w)) => (g, i, w),
+        _ => return Err(ApplyPolicyError::MissingAccessToken),
+    };
+
+    let (tx, rx) = oneshot::channel();
+
+    task_channel_tx
+        .send_timeout(
+            (
+                TaskRequest::ApplyPolicy(
+                    intune_device_id,
+                    account_id.to_string(),
+                    graph_at,
+                    intune_at,
+                    iwservice_at,
+                ),
+                tx,
+            ),
+            Duration::from_millis(500),
+        )
+        .await
+        .map_err(|e| ApplyPolicyError::DispatchFailed(e.to_string()))?;
+
+    // From the MS specs:
+    // Custom compliance discovery scripts for Microsoft Intune
+    // Limits:
+    // Scripts must have a limited run time:
+    //   On Linux, scripts must take five minutes or less to run.
+    match time::timeout_at(time::Instant::now() + Duration::from_secs(300), rx).await {
+        Ok(Ok(0)) => Ok(()),
+        Ok(Ok(_)) => Err(ApplyPolicyError::PolicyFailure),
+        Ok(Err(e)) => Err(ApplyPolicyError::TaskError(e.to_string())),
+        Err(e) => Err(ApplyPolicyError::TaskTimeout(e.to_string())),
+    }
 }
 
 async fn process_etc_passwd_group(
