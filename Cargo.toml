@@ -98,7 +98,7 @@ sketching = "1.9.1"
 tracing-forest = "^0.1.6"
 rusqlite = "^0.37.0"
 hashbrown = { version = "0.17.0", features = ["serde", "inline-more"] }
-lru = "^0.16.4"
+lru = "^0.17.0"
 kanidm_lib_crypto = "1.9.1"
 kanidm_utils_users = "1.8.1"
 walkdir = "2"
