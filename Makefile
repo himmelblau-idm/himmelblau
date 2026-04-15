@@ -89,6 +89,9 @@ setup-hooks: ## Configure git to use project hooks (SELinux, docs-xml, Cargo.nix
 	@echo "  - Auto-regenerate NixOS options/man page when XML definitions change"
 	@echo "  - Run 'nix run nixpkgs#crate2nix -- generate' when Cargo.lock changes"
 
+crate2nix-generate: ## Regenerate Cargo.nix
+	nix run nixpkgs#crate2nix -- generate
+
 PLATFORM := $(shell grep '^ID=' /etc/os-release | awk -F= '{ print $$2 }' | tr -d '"')
 
 DOCKER := $(shell command -v podman || command -v docker)
