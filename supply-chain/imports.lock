@@ -124,8 +124,8 @@ user-login = "epage"
 user-name = "Ed Page"
 
 [[publisher.clap_complete]]
-version = "4.6.0"
-when = "2026-03-12"
+version = "4.6.2"
+when = "2026-04-13"
 user-id = 6743
 user-login = "epage"
 user-name = "Ed Page"
@@ -356,6 +356,12 @@ when = "2025-11-20"
 user-id = 55123
 user-login = "rust-lang-owner"
 
+[[publisher.hashbrown]]
+version = "0.17.0"
+when = "2026-04-09"
+user-id = 55123
+user-login = "rust-lang-owner"
+
 [[publisher.http]]
 version = "1.3.1"
 when = "2025-03-11"
@@ -475,8 +481,8 @@ user-login = "Firstyear"
 user-name = "Firstyear"
 
 [[publisher.libc]]
-version = "0.2.184"
-when = "2026-04-01"
+version = "0.2.185"
+when = "2026-04-13"
 user-id = 55123
 user-login = "rust-lang-owner"
 
@@ -718,8 +724,8 @@ user-login = "sunfishcode"
 user-name = "Dan Gohman"
 
 [[publisher.rustls]]
-version = "0.23.34"
-when = "2025-10-22"
+version = "0.23.38"
+when = "2026-04-12"
 user-id = 4556
 user-login = "djc"
 user-name = "Dirkjan Ochtman"
