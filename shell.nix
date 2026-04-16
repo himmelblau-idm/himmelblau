@@ -16,6 +16,8 @@ pkgs.mkShell {
     libclang
     clang
     stdenv.cc
+    pam
+    sqlite.dev
   ];
 
   env = {
