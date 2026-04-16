@@ -24,7 +24,7 @@ jobs:
       - uses: cachix/install-nix-action@616559265b40713947b9c190a8ff4b507b5df49b # v31.10.4
         with:
           extra_nix_config: experimental-features = nix-command flakes
-      - uses: DeterminateSystems/magic-nix-cache-action@cec65ff6f104850203b152861d3f9e5f1747885d
+      - uses: DeterminateSystems/magic-nix-cache-action@b4a9864e3a8ab8179be30f2e70fd71fe9996bb9d
 
       - name: Generate Cargo.nix
         run: nix run nixpkgs#crate2nix -- generate
