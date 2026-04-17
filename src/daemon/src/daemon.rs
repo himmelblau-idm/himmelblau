@@ -576,19 +576,31 @@ async fn handle_client(
                                                         .await
                                                         {
                                                             Ok(()) => {
-                                                                debug!("Successfully applied Intune policies");
+                                                                debug!(
+                                                                    "Successfully applied Intune policies for account_id={}",
+                                                                    account_id
+                                                                );
                                                             }
                                                             Err(ApplyPolicyError::TokenAcquisitionFailed)
                                                             | Err(ApplyPolicyError::MissingAccessToken) => {
-                                                                warn!("Intune failure: could not acquire tokens");
+                                                                warn!(
+                                                                    "Intune failure for account_id={}: could not acquire tokens",
+                                                                    account_id
+                                                                );
                                                             }
                                                             Err(ApplyPolicyError::PolicyFailure) => {
-                                                                warn!("Intune failure");
+                                                                warn!(
+                                                                    "Intune failure for account_id={}: policy application failed",
+                                                                    account_id
+                                                                );
                                                             }
                                                             Err(ApplyPolicyError::DispatchFailed(e))
                                                             | Err(ApplyPolicyError::TaskTimeout(e))
                                                             | Err(ApplyPolicyError::TaskError(e)) => {
-                                                                warn!("Intune failure: {}", e);
+                                                                warn!(
+                                                                    "Intune failure for account_id={}: {}",
+                                                                    account_id, e
+                                                                );
                                                             }
                                                         }
                                                     }
