@@ -2222,7 +2222,7 @@ async fn main() -> ExitCode {
                         ExitCode::SUCCESS
                     }
                     ClientResponse::NotAuthenticated => {
-                        error!("User session not unsealed — compliance check requires an active session");
+                        error!("User is not authenticated — compliance check requires an active session");
                         ExitCode::FAILURE
                     }
                     _ => {

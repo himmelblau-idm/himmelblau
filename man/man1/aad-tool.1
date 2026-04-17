@@ -1,4 +1,4 @@
-.TH AAD-TOOL "1" "2026-04-10" "aad-tool" "User Commands"
+.TH AAD-TOOL "1" "2026-04-17" "aad-tool" "User Commands"
 .SH NAME
 aad-tool \- Azure Entra ID (AAD) management utility for Himmelblau
 .SH SYNOPSIS
@@ -197,12 +197,9 @@ Test authentication of a user via the himmelblaud resolver "pam" channel. This d
 \fB\-d\fR, \fB\-\-debug\fR
 .HP
 \fB\-D\fR, \fB\-\-name\fR <ACCOUNT_ID>
-.HP
+.TP
 \fB\-\-force\-reauth\fR
-.IP
-Force a full re-authentication (MFA/FIDO/password), bypassing the cached Hello key.
-Use this to manually satisfy Entra conditional access sign-in frequency
-requirements (e.g. error 70044).
+Force a full re\-authentication (MFA/FIDO/password), bypassing the cached Hello key. Use this to manually satisfy Entra conditional access sign\-in frequency requirements
 .TP
 \fB\-h\fR, \fB\-\-help\fR
 Print help
@@ -262,7 +259,7 @@ Print help
 .SS DESCRIPTION
 Trigger an Intune compliance check for the calling user.
 .PP
-This sends a request to the himmelblaud daemon, which acquires the necessary tokens from the user's active session and runs the Intune policy check. The user's Hello secret must be unsealed (i.e. the user must have logged in) for this to succeed.
+This sends a request to the himmelblaud daemon, which acquires the necessary tokens from the user's active session and runs the Intune policy check. The user must have an active, authenticated session (typically by having logged in and unsealed their Hello secret) and the broker/daemon must be reachable for this to succeed.
 .PP
 Exits with 0 on success, non\-zero on failure.
 .SS OPTIONS
@@ -291,6 +288,9 @@ Configure PAM to use pam_himmelblau
 \fB\-\-session\-file\fR <SESSION_FILE>
 .HP
 \fB\-\-password\-file\fR <PASSWORD_FILE>
+.TP
+\fB\-\-try\-unseal\fR
+Only add an optional try_unseal auth line to unseal secrets at login, without modifying the standard PAM auth/account/session/password stacks
 .TP
 \fB\-h\fR, \fB\-\-help\fR
 Print help
@@ -435,7 +435,7 @@ Print help (see a summary with '\-h')
 .SS DESCRIPTION
 Enumerate all users and groups in Entra ID that have `rfc2307` attributes, and cache their values locally. This addresses the issue where UID/GID mappings are needed before authentication can succeed, but are normally only retrievable after login.
 .PP
-The `\-\-client\-id` parameter is optional and must refer to a registered Entra ID application with `User.Read.All` and `Group.Read.All` permissions.
+The `\-\-client\-id` parameter is optional and must refer to a registered Entra ID application with `User.Read.All` and `Group.Read.All` permissions. If omitted, the command will authenticate using the app_id set in your himmelblau.conf file.
 .PP
 The `\-\-name` parameter specifies the Entra ID user on whose behalf the token is requested, enabling delegated access through the specified client application.
 .PP

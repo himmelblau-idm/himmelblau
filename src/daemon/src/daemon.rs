@@ -855,7 +855,10 @@ async fn handle_client(
                         return ClientResponse::Error;
                     }
 
-                    // Resolve the calling user's uid to an account name.
+                    // Resolve the calling user's Unix UID to an account name.
+                    // NOTE: this intentionally uses `get_nssaccount_gid()` even though
+                    // `ucred.uid()` is a UID. In the current NSS mapping, the resolver
+                    // looks up the account via `gidnumber`, which is used as the NSS uid.
                     let account_id = match cachelayer.get_nssaccount_gid(ucred.uid()).await {
                         Ok(Some(nss_user)) => nss_user.name,
                         _ => {
@@ -879,11 +882,17 @@ async fn handle_client(
                             debug!("compliance check: succeeded for {}", account_id);
                             ClientResponse::Ok
                         }
-                        Err(ApplyPolicyError::TokenAcquisitionFailed)
-                        | Err(ApplyPolicyError::MissingAccessToken) => {
+                        Err(ApplyPolicyError::TokenAcquisitionFailed) => {
                             error!(
-                                "compliance check: could not acquire tokens for {} \
-                                 (session not unsealed?)",
+                                "compliance check: could not acquire tokens for {}; \
+                                 ensure the session is unsealed and the broker/daemon is available",
+                                account_id
+                            );
+                            ClientResponse::Error
+                        }
+                        Err(ApplyPolicyError::MissingAccessToken) => {
+                            error!(
+                                "compliance check: missing access token for {}",
                                 account_id
                             );
                             ClientResponse::NotAuthenticated
@@ -953,11 +962,23 @@ async fn handle_client(
 }
 
 enum ApplyPolicyError {
+    /// One of the `get_user_accesstoken` calls returned `None`. This covers a
+    /// range of conditions: broker/transport errors, no cached user token,
+    /// expired refresh material, or a sealed/inactive user session.
     TokenAcquisitionFailed,
+    /// A token was returned, but its `access_token` field was `None` — the
+    /// most specific indicator that the session cannot currently produce a
+    /// usable access token (e.g. sealed Hello secret).
     MissingAccessToken,
+    /// Failed to send the `ApplyPolicy` task to the tasks daemon channel.
     DispatchFailed(String),
+    /// The tasks daemon did not respond within the 5-minute Intune script
+    /// budget.
     TaskTimeout(String),
+    /// The tasks daemon returned an error while running the policy.
     TaskError(String),
+    /// The policy task ran to completion but reported a non-zero status
+    /// (i.e. the device is non-compliant or a policy step failed).
     PolicyFailure,
 }
 
