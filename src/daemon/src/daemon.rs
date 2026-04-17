@@ -34,7 +34,9 @@ use clap::{Arg, ArgAction, Command};
 use futures::{SinkExt, StreamExt};
 use himmelblau::{ClientInfo, IdToken, UserToken as UnixUserToken};
 use himmelblau_unix_common::config::{split_username, HimmelblauConfig};
-use himmelblau_unix_common::constants::{DEFAULT_APP_ID, DEFAULT_CONFIG_PATH};
+use himmelblau_unix_common::constants::{
+    DEFAULT_APP_ID, DEFAULT_CONFIG_PATH, INTUNE_POLICY_TASK_TIMEOUT_SECS,
+};
 use himmelblau_unix_common::db::{Cache, CacheTxn, Db};
 use himmelblau_unix_common::idprovider::himmelblau::HimmelblauMultiProvider;
 use himmelblau_unix_common::idprovider::interface::{Id, IdProvider};
@@ -1066,7 +1068,12 @@ async fn apply_intune_policy_for_account(
     // Limits:
     // Scripts must have a limited run time:
     //   On Linux, scripts must take five minutes or less to run.
-    match time::timeout_at(time::Instant::now() + Duration::from_secs(300), rx).await {
+    match time::timeout_at(
+        time::Instant::now() + Duration::from_secs(INTUNE_POLICY_TASK_TIMEOUT_SECS),
+        rx,
+    )
+    .await
+    {
         Ok(Ok(0)) => Ok(()),
         Ok(Ok(_)) => Err(ApplyPolicyError::PolicyFailure),
         Ok(Err(e)) => Err(ApplyPolicyError::TaskError(e.to_string())),

@@ -45,7 +45,8 @@ use himmelblau_unix_common::config::{parse_ttl_to_seconds, split_username, Himme
 use himmelblau_unix_common::constants::{
     CONFIDENTIAL_CLIENT_CERT_KEY_TAG, CONFIDENTIAL_CLIENT_CERT_TAG, CONFIDENTIAL_CLIENT_SECRET_TAG,
     DEFAULT_APP_ID, DEFAULT_CONFIG_PATH, DEFAULT_HSM_PIN_PATH_ENC, DEFAULT_ODC_PROVIDER,
-    EDGE_BROWSER_CLIENT_ID, ID_MAP_CACHE, MAPPED_NAME_CACHE, NSS_CACHE,
+    EDGE_BROWSER_CLIENT_ID, ID_MAP_CACHE, INTUNE_POLICY_TASK_TIMEOUT_SECS, MAPPED_NAME_CACHE,
+    NSS_CACHE,
 };
 use himmelblau_unix_common::db::{Cache, CacheTxn, Db, KeyStoreTxn};
 use himmelblau_unix_common::idmap_cache::{StaticGroup, StaticIdCache, StaticUser};
@@ -2215,7 +2216,17 @@ async fn main() -> ExitCode {
 
             let req = ClientRequest::ComplianceCheck;
 
-            match call_daemon(&cfg.get_socket_path(), req, cfg.get_unix_sock_timeout()).await {
+            // The daemon-side compliance check can take up to the Intune
+            // policy-apply task budget. Use a client-side timeout that
+            // covers that budget plus a small buffer for the response round
+            // trip, but never shorter than the configured unix socket
+            // timeout.
+            const COMPLIANCE_CHECK_BUFFER_SECS: u64 = 30;
+            let timeout = cfg
+                .get_unix_sock_timeout()
+                .max(INTUNE_POLICY_TASK_TIMEOUT_SECS + COMPLIANCE_CHECK_BUFFER_SECS);
+
+            match call_daemon(&cfg.get_socket_path(), req, timeout).await {
                 Ok(r) => match r {
                     ClientResponse::Ok => {
                         println!("compliance check passed");

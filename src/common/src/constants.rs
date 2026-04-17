@@ -40,6 +40,11 @@ pub const DEFAULT_AUTHORITY_HOST: &str = "login.microsoftonline.com";
 pub const DEFAULT_GRAPH: &str = "https://graph.microsoft.com";
 pub const DEFAULT_APP_ID: &str = "b743a22d-6705-4147-8670-d92fa515ee2b";
 pub const DRS_APP_ID: &str = "01cb2876-7ebd-4aa4-9cc9-d28bd4d359a9";
+/// Wall-clock timeout for an Intune policy-apply task, set to the
+/// five-minute runtime limit Microsoft documents for custom compliance
+/// discovery scripts on Linux. Callers waiting on a compliance result
+/// should use this value (plus a small buffer) as their timeout floor.
+pub const INTUNE_POLICY_TASK_TIMEOUT_SECS: u64 = 300;
 pub const DEFAULT_CONN_TIMEOUT: u64 = 30;
 pub const DEFAULT_CACHE_TIMEOUT: u64 = 300;
 pub const DEFAULT_SELINUX: bool = true;
