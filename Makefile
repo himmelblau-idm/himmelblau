@@ -191,7 +191,7 @@ rpm-servicefiles:
 authselect:
 	python3 ./scripts/gen_authselect.py --root=./ --aad-tool=./target/release/aad-tool --output-dir=./platform/el/authselect/
 
-.PHONY: package deb rpm $(DEB_TARGETS) $(RPM_TARGETS) ${SLE_TARGETS} $(GENTOO_TARGETS) dockerfiles dockerfiles-arm64 deb-servicefiles rpm-servicefiles authselect install uninstall help sbom man arm64 deb-arm64 rpm-arm64 $(ALL_ARM64_TARGETS)
+.PHONY: package deb rpm $(DEB_TARGETS) $(RPM_TARGETS) ${SLE_TARGETS} $(GENTOO_TARGETS) dockerfiles dockerfiles-arm64 deb-servicefiles rpm-servicefiles authselect conf-examples install uninstall help sbom man arm64 deb-arm64 rpm-arm64 $(ALL_ARM64_TARGETS)
 
 check-licenses: ## Validate dependant licenses comply with GPLv3
 	cargo deny -V >/dev/null || (echo "cargo-deny required" && cargo install cargo-deny)
@@ -211,6 +211,11 @@ package: deb rpm sbom ## Build packages for all supported distros (DEB+RPM)
 
 man: ## Generate the himmelblau.conf man page
 	python3 src/common/scripts/gen_param_code.py --gen-man --man-output man/man5/himmelblau.conf.5
+
+conf-examples: ## Generate himmelblau.conf example files
+	python3 src/common/scripts/gen_param_code.py \
+		--gen-conf-example --conf-example-output target/config/himmelblau.conf.example \
+		--gen-debian-conf-example --debian-conf-example-output target/debian/himmelblau.conf.example
 
 # ---- failure tracking (used by deb/rpm/package) ----
 FAIL_DIR := $(CURDIR)/target/fail

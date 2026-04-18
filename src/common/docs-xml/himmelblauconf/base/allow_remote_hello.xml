@@ -12,6 +12,7 @@ Allows Windows Hello PIN authentication for remote services without requiring He
 
 This weakens remote authentication and is not recommended unless you explicitly accept the risk. Prefer enabling Hello TOTP instead.
 </description>
+<conf_description>Allow Hello PIN for remote services without Hello TOTP.</conf_description>
 <default>false</default>
 <default_const>DEFAULT_ALLOW_REMOTE_HELLO</default_const>
 <example>allow_remote_hello = true</example>

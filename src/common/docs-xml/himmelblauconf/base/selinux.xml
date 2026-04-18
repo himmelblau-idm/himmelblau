@@ -11,6 +11,7 @@ Whether SELinux security labels should be applied to users' home directories. Se
 .B true
 to enable.
 </description>
+<conf_description>Apply SELinux labels to user home directories.</conf_description>
 <default>true</default>
 <default_const>DEFAULT_SELINUX</default_const>
 <example>selinux = false</example>

@@ -61,7 +61,7 @@ maintainer = "David Mulder <dmulder@suse.com>"
 depends = ["$auto"]
 recommends = ["nss-himmelblau", "pam-himmelblau", "krb5-user", "cron", "tpm2-tools"]
 assets = [
-  ["../../platform/debian/himmelblau.conf.example", "etc/himmelblau/himmelblau.conf", "644"],
+  ["../../target/debian/himmelblau.conf.example", "etc/himmelblau/himmelblau.conf", "644"],
   ["../../src/config/gdm3_service_override.conf", "usr/lib/systemd/system/gdm3.service.d/himmelblau-override.conf", "644"],
   ["target/release/aad-tool", "usr/bin/", "755"],
   ["../../platform/debian/himmelblaud-tasks.service", "usr/lib/systemd/system/", "644"],
@@ -74,7 +74,7 @@ assets = [
   ["target/release/himmelblaud", "usr/sbin/", "755"],
   ["target/release/himmelblaud_tasks", "usr/sbin/", "755"],
   ["../../README.md", "usr/share/doc/himmelblau/README", "644"],
-  ["../../src/config/himmelblau.conf.example", "usr/share/doc/himmelblau/", "644"],
+  ["../../target/config/himmelblau.conf.example", "usr/share/doc/himmelblau/", "644"],
   ["../../man/man1/aad-tool.1", "usr/share/man/man1/", "644"],
   ["../../man/man5/himmelblau.conf.5", "usr/share/man/man5/", "644"],
   ["../../man/man8/himmelblaud.8", "usr/share/man/man8/", "644"],
@@ -88,7 +88,7 @@ maintainer-scripts = "scripts"
 name = "himmelblau"
 maintainer = "David Mulder <dmulder@suse.com>"
 assets = [
-  { source = "../../src/config/himmelblau.conf.example", dest = "/etc/himmelblau/himmelblau.conf", mode = "644", config = "noreplace" },
+  { source = "../../target/config/himmelblau.conf.example", dest = "/etc/himmelblau/himmelblau.conf", mode = "644", config = "noreplace" },
   { source = "../../src/config/gdm3_service_override.conf", dest = "/usr/lib/systemd/system/display-manager.service.d/override.conf", mode = "644" },
   { source = "target/release/aad-tool", dest = "/usr/bin/", mode = "755" },
   { source = "../../platform/opensuse/himmelblaud-tasks.service", dest = "/usr/lib/systemd/system/", mode = "644" },
@@ -101,7 +101,7 @@ assets = [
   { source = "target/release/himmelblaud", dest = "/usr/sbin/", mode = "755" },
   { source = "target/release/himmelblaud_tasks", dest = "/usr/sbin/", mode = "755" },
   { source = "../../README.md", dest = "/usr/share/doc/himmelblau/README", mode = "644" },
-  { source = "../../src/config/himmelblau.conf.example", dest = "/usr/share/doc/himmelblau/", mode = "644" },
+  { source = "../../target/config/himmelblau.conf.example", dest = "/usr/share/doc/himmelblau/", mode = "644" },
   { source = "../../man/man1/aad-tool.1", dest = "/usr/share/man/man1/", mode = "644" },
   { source = "../../man/man5/himmelblau.conf.5", dest = "/usr/share/man/man5/", mode = "644" },
   { source = "../../man/man8/himmelblaud.8", dest = "/usr/share/man/man8/", mode = "644" },

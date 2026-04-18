@@ -9,6 +9,7 @@
 <description>
 Specifies the hostname for Microsoft authentication.
 </description>
+<conf_description>Microsoft authority host for authentication requests.</conf_description>
 <default>login.microsoftonline.com</default>
 <default_const>DEFAULT_AUTHORITY_HOST</default_const>
 <example>authority_host = login.microsoftonline.us</example>

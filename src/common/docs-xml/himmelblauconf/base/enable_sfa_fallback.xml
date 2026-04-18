@@ -10,6 +10,7 @@
 <description>
 Determines whether password-only (single-factor) authentication is permitted when MFA is unavailable.
 </description>
+<conf_description>Allow password-only auth when MFA is unavailable.</conf_description>
 <default>false</default>
 <default_const>DEFAULT_SFA_FALLBACK_ENABLED</default_const>
 <example>enable_sfa_fallback = true</example>

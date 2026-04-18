@@ -50,6 +50,7 @@ This feature does not apply to passwordless accounts.
 If an MFA user signs in using a passwordless method,
 no password hash exists to cache, and offline breakglass cannot function for that user.
 </description>
+<conf_description>Enable emergency offline password auth for MFA users.</conf_description>
 <default>false</default>
 <example>[offline_breakglass]
 .br
