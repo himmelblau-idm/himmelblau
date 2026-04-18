@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<parameter name="ip_version"
+           section="global"
+           type="enum"
+           rust_type="IpVersionSelection"
+           documented="true"
+           domain_specific="false"
+           order="51">
+<description>
+Controls which IP version family Himmelblau should use for outbound network connections.
+
+Supported values are:
+.RS
+.IP \(bu 2
+ipv4-only \(em use only IPv4 sockets
+.IP \(bu 2
+ipv6-only \(em use only IPv6 sockets
+.IP \(bu 2
+both \(em allow both IPv4 and IPv6 (default)
+.RE
+</description>
+<default>both</default>
+<default_const>IpVersionSelection::Both</default_const>
+<example>ip_version = ipv4-only</example>
+<enum_values>
+  <value rust="IpVersionSelection::Ipv4Only">ipv4-only</value>
+  <value rust="IpVersionSelection::Ipv6Only">ipv6-only</value>
+  <value rust="IpVersionSelection::Both">both</value>
+</enum_values>
+</parameter>

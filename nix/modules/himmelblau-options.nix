@@ -549,7 +549,7 @@ in
       type = types.nullOr (types.str);
       default = "/var/run/himmelblaud/socket";
       description = ''
-        The path to the socket file for communication between the pam and nss modules and the Himmelblau daemon.
+        The path to the socket file for communication between the pam and nss modules and the Himmelblau daemon. If this is changed, also add a drop-in to override ListenStream= in the himmelblaud.socket unit to keep the paths in sync.
       '';
       example = "/tmp/himmelblaud.sock";
     };
@@ -558,7 +558,7 @@ in
       type = types.nullOr (types.str);
       default = "/var/run/himmelblaud/task_sock";
       description = ''
-        The path to the socket file for communication with the task daemon.
+        The path to the socket file for communication with the task daemon. If this is changed, also add a drop-in to override ListenStream= in the himmelblaud-tasks.socket unit to keep the paths in sync.
       '';
       example = "/tmp/task.sock";
     };
@@ -567,9 +567,18 @@ in
       type = types.nullOr (types.str);
       default = "/var/run/himmelblaud/broker_sock";
       description = ''
-        The path to the socket file for communication with the broker DBus service.
+        The path to the socket file for communication with the broker DBus service. If this is changed, also add a drop-in to override ListenStream= in the himmelblaud-broker.socket unit to keep the paths in sync.
       '';
       example = "/tmp/broker.sock";
+    };
+
+    enable_passwordless = mkOption {
+      type = types.nullOr (types.bool);
+      default = true;
+      description = ''
+        A boolean option that controls whether passwordless authentication (Microsoft Authenticator app approval without a password) is offered during Azure Entra ID authentication. When enabled, Himmelblau will include the passwordless option in authentication requests, allowing Entra ID to offer a passwordless flow. When disabled, users will be prompted for a password followed by MFA instead.
+      '';
+      example = false;
     };
 
     home_prefix = mkOption {
@@ -609,15 +618,6 @@ in
         - CN
       '';
       example = "SPN";
-    };
-
-    enable_passwordless = mkOption {
-      type = types.nullOr (types.bool);
-      default = true;
-      description = ''
-        A boolean option that controls whether passwordless authentication (Microsoft Authenticator app approval without a password) is offered during Azure Entra ID authentication. When enabled, Himmelblau will include the passwordless option in authentication requests, allowing Entra ID to offer a passwordless flow. When disabled, users will be prompted for a password followed by MFA instead.
-      '';
-      example = false;
     };
 
     shell = mkOption {
@@ -727,6 +727,23 @@ in
         svcuser:service.account@tenant.local
       '';
       example = "/path/to/user_map";
+    };
+
+    ip_version = mkOption {
+      type = types.nullOr (types.enum [ "ipv4-only" "ipv6-only" "both" ]);
+      default = "both";
+      description = ''
+        Controls which IP version family Himmelblau should use for outbound network connections.
+        
+        Supported values are:
+        
+        - ipv4-only -- use only IPv4 sockets
+        
+        - ipv6-only -- use only IPv6 sockets
+        
+        - both -- allow both IPv4 and IPv6 (default)
+      '';
+      example = "ipv4-only";
     };
 
     # [offline_breakglass] section options
