@@ -861,8 +861,23 @@ impl OidcProvider {
                 }
             };
 
+        let conn_timeout = self.config.read().await.get_connection_timeout();
+        let client = match reqwest::Client::builder()
+            .connect_timeout(Duration::from_secs(conn_timeout))
+            .timeout(Duration::from_secs(conn_timeout))
+            .build()
+        {
+            Ok(c) => c,
+            Err(e) => {
+                error!(?e, "Failed to build HTTP client for online check");
+                let mut state = self.state.lock().await;
+                *state = CacheState::OfflineNextCheck(now + OFFLINE_NEXT_CHECK);
+                return false;
+            }
+        };
+
         // First try the authorization endpoint
-        match reqwest::get(&authorization_endpoint).await {
+        match client.get(&authorization_endpoint).send().await {
             Ok(resp) => {
                 if resp.status().is_success() {
                     debug!("provider is now online");
@@ -888,7 +903,7 @@ impl OidcProvider {
         }
 
         // Fallback: try the .well-known/openid-configuration URL
-        match reqwest::get(&openid_configuration_url).await {
+        match client.get(&openid_configuration_url).send().await {
             Ok(resp) => {
                 if resp.status().is_success() {
                     debug!("provider is now online (via openid-configuration)");

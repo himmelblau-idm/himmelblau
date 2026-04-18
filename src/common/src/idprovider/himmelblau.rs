@@ -1733,7 +1733,7 @@ impl IdProvider for HimmelblauProvider {
                         "Console password-only mode: requesting password first to check sign-in frequency",
                     );
                     // Check if the network is up before prompting for password
-                    if !self.attempt_online(tpm, SystemTime::now()).await {
+                    if !self.check_online(tpm, SystemTime::now()).await {
                         return Ok((
                             AuthRequest::InitDenied {
                                 msg: "Network outage detected.".to_string(),
@@ -1754,7 +1754,7 @@ impl IdProvider for HimmelblauProvider {
                 if !auth_init.passwordless() {
                     // Check if the network is even up prior to sending a
                     // password prompt.
-                    if !self.attempt_online(tpm, SystemTime::now()).await {
+                    if !self.check_online(tpm, SystemTime::now()).await {
                         return Ok((
                             AuthRequest::InitDenied {
                                 msg: "Network outage detected.".to_string(),
@@ -1861,7 +1861,7 @@ impl IdProvider for HimmelblauProvider {
         } else {
             // Check if the network is even up prior to sending a PIN prompt,
             // otherwise we duplicate the PIN prompt when the network goes down.
-            if !self.attempt_online(tpm, SystemTime::now()).await {
+            if !self.check_online(tpm, SystemTime::now()).await {
                 // We are offline, fail the authentication now
                 debug!("Network down encountered during online auth init");
                 return Err(IdpError::BadRequest);
@@ -4152,12 +4152,28 @@ impl HimmelblauProvider {
 
     #[instrument(level = "debug", skip_all)]
     async fn attempt_online(&self, _tpm: &mut tpm::provider::BoxedDynTpm, now: SystemTime) -> bool {
+        let cfg = self.config.lock().await;
+        let conn_timeout = cfg.get_connection_timeout();
         let authority_host = self
             .graph
             .authority_host()
             .await
-            .unwrap_or(self.config.lock().await.get_authority_host(&self.domain));
-        match reqwest::get(format!("https://{}", authority_host)).await {
+            .unwrap_or(cfg.get_authority_host(&self.domain));
+        drop(cfg);
+        let client = match reqwest::Client::builder()
+            .connect_timeout(Duration::from_secs(conn_timeout))
+            .timeout(Duration::from_secs(conn_timeout))
+            .build()
+        {
+            Ok(c) => c,
+            Err(e) => {
+                error!(?e, "Failed to build HTTP client for online check");
+                let mut state = self.state.lock().await;
+                *state = CacheState::OfflineNextCheck(now + OFFLINE_NEXT_CHECK);
+                return false;
+            }
+        };
+        match client.get(format!("https://{}", authority_host)).send().await {
             Ok(resp) => {
                 if resp.status().is_success() {
                     debug!("provider is now online");
