@@ -45,7 +45,8 @@ use himmelblau_unix_common::config::{parse_ttl_to_seconds, split_username, Himme
 use himmelblau_unix_common::constants::{
     CONFIDENTIAL_CLIENT_CERT_KEY_TAG, CONFIDENTIAL_CLIENT_CERT_TAG, CONFIDENTIAL_CLIENT_SECRET_TAG,
     DEFAULT_APP_ID, DEFAULT_CONFIG_PATH, DEFAULT_HSM_PIN_PATH_ENC, DEFAULT_ODC_PROVIDER,
-    EDGE_BROWSER_CLIENT_ID, ID_MAP_CACHE, MAPPED_NAME_CACHE, NSS_CACHE,
+    EDGE_BROWSER_CLIENT_ID, ID_MAP_CACHE, INTUNE_POLICY_TASK_TIMEOUT_SECS, MAPPED_NAME_CACHE,
+    NSS_CACHE,
 };
 use himmelblau_unix_common::db::{Cache, CacheTxn, Db, KeyStoreTxn};
 use himmelblau_unix_common::idmap_cache::{StaticGroup, StaticIdCache, StaticUser};
@@ -659,6 +660,7 @@ async fn main() -> ExitCode {
             mapped: _,
             full: _,
         } => debug,
+        HimmelblauUnixOpt::ComplianceCheck { debug } => debug,
         HimmelblauUnixOpt::ConfigurePam {
             debug,
             really: _,
@@ -2200,6 +2202,51 @@ async fn main() -> ExitCode {
         HimmelblauUnixOpt::Version { debug: _ } => {
             println!("himmelblau {}", env!("CARGO_PKG_VERSION"));
             ExitCode::SUCCESS
+        }
+        HimmelblauUnixOpt::ComplianceCheck { debug: _ } => {
+            trace!("Starting compliance check ...");
+
+            let cfg = match HimmelblauConfig::new(Some(DEFAULT_CONFIG_PATH)) {
+                Ok(c) => c,
+                Err(_e) => {
+                    error!("Failed to parse {}", DEFAULT_CONFIG_PATH);
+                    return ExitCode::FAILURE;
+                }
+            };
+
+            let req = ClientRequest::ComplianceCheck;
+
+            // The daemon-side compliance check can take up to the Intune
+            // policy-apply task budget. Use a client-side timeout that
+            // covers that budget plus a small buffer for the response round
+            // trip, but never shorter than the configured unix socket
+            // timeout.
+            const COMPLIANCE_CHECK_BUFFER_SECS: u64 = 30;
+            let timeout = cfg
+                .get_unix_sock_timeout()
+                .max(INTUNE_POLICY_TASK_TIMEOUT_SECS + COMPLIANCE_CHECK_BUFFER_SECS);
+
+            match call_daemon(&cfg.get_socket_path(), req, timeout).await {
+                Ok(r) => match r {
+                    ClientResponse::Ok => {
+                        println!("compliance check passed");
+                        ExitCode::SUCCESS
+                    }
+                    ClientResponse::NotAuthenticated => {
+                        error!("User is not authenticated — compliance check requires an active session");
+                        ExitCode::FAILURE
+                    }
+                    _ => {
+                        error!("Compliance check failed");
+                        ExitCode::FAILURE
+                    }
+                },
+                Err(e) => {
+                    error!("Error -> {:?}", e);
+                    error!("Is himmelblaud running?");
+                    ExitCode::FAILURE
+                }
+            }
         }
     }
 }
