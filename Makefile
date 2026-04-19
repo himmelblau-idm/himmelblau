@@ -347,16 +347,11 @@ $(SLE_TARGETS): %: .packaging dockerfiles
 			done && mv ./target/generate-rpm/*.rpm ./packaging/'
 
 $(GENTOO_TARGETS): %: .packaging dockerfiles
-	@echo "Generating $@ ebuild"
-	$(DOCKER) build -t himmelblau-$@-build -f images/Dockerfile.$@ .
-	$(DOCKER) run --rm --security-opt label=disable \
-		-v $(CURDIR):/himmelblau \
-		himmelblau-$@-build
 	@echo "Building from local sources..."
-	python3 scripts/gen_servicefiles.py --out ./platform/opensuse/
 	cargo build --release --features tpm
-	strip -s target/release/*.so 2>/dev/null || true
-	strip -s target/release/aad-tool target/release/himmelblaud target/release/himmelblaud_tasks target/release/broker target/release/linux-entra-sso 2>/dev/null || true
+	python3 scripts/gen_servicefiles.py --out ./platform/opensuse/
+	@echo "Generating $@ ebuild"
+	python3 scripts/gen_ebuild.py --out ./packaging/
 
 # ---- ARM64 (aarch64) build targets -------------------------------------------
 # Uses docker buildx with QEMU emulation to build natively for arm64.
