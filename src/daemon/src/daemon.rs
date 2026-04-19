@@ -576,31 +576,19 @@ async fn handle_client(
                                                         .await
                                                         {
                                                             Ok(()) => {
-                                                                debug!(
-                                                                    "Successfully applied Intune policies for account_id={}",
-                                                                    account_id
-                                                                );
+                                                                debug!("Successfully applied Intune policies");
                                                             }
                                                             Err(ApplyPolicyError::TokenAcquisitionFailed)
                                                             | Err(ApplyPolicyError::MissingAccessToken) => {
-                                                                warn!(
-                                                                    "Intune failure for account_id={}: could not acquire tokens",
-                                                                    account_id
-                                                                );
+                                                                warn!("Intune failure: could not acquire tokens");
                                                             }
                                                             Err(ApplyPolicyError::PolicyFailure) => {
-                                                                warn!(
-                                                                    "Intune failure for account_id={}: policy application failed",
-                                                                    account_id
-                                                                );
+                                                                warn!("Intune failure");
                                                             }
                                                             Err(ApplyPolicyError::DispatchFailed(e))
                                                             | Err(ApplyPolicyError::TaskTimeout(e))
                                                             | Err(ApplyPolicyError::TaskError(e)) => {
-                                                                warn!(
-                                                                    "Intune failure for account_id={}: {}",
-                                                                    account_id, e
-                                                                );
+                                                                warn!("Intune failure: {}", e);
                                                             }
                                                         }
                                                     }
@@ -893,26 +881,22 @@ async fn handle_client(
                     .await
                     {
                         Ok(()) => {
-                            debug!("compliance check: succeeded for {}", account_id);
+                            debug!("compliance check: succeeded");
                             ClientResponse::Ok
                         }
                         Err(ApplyPolicyError::TokenAcquisitionFailed) => {
                             error!(
-                                "compliance check: could not acquire tokens for {}; \
-                                 ensure the session is unsealed and the broker/daemon is available",
-                                account_id
+                                "compliance check: could not acquire tokens; \
+                                 ensure the session is unsealed and the broker/daemon is available"
                             );
                             ClientResponse::Error
                         }
                         Err(ApplyPolicyError::MissingAccessToken) => {
-                            error!(
-                                "compliance check: missing access token for {}",
-                                account_id
-                            );
+                            error!("compliance check: missing access token");
                             ClientResponse::NotAuthenticated
                         }
                         Err(ApplyPolicyError::PolicyFailure) => {
-                            warn!("compliance check: policy failure for {}", account_id);
+                            warn!("compliance check: policy failure");
                             ClientResponse::Error
                         }
                         Err(ApplyPolicyError::DispatchFailed(e)) => {
