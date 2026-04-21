@@ -646,7 +646,7 @@ Example: hsm_pin_path = /etc/himmelblau/hsm-pin
 .TP
 .B socket_path
 .RE
-The path to the socket file for communication between the pam and nss modules and the Himmelblau daemon. If this is changed, also add a drop-in to override ListenStream= in the himmelblaud.socket unit to keep the paths in sync.
+The path to the socket file for communication between the pam and nss modules and the Himmelblau daemon.
 
 .P
 Default: /var/run/himmelblaud/socket
@@ -657,7 +657,7 @@ Example: socket_path = /tmp/himmelblaud.sock
 .TP
 .B task_socket_path
 .RE
-The path to the socket file for communication with the task daemon. If this is changed, also add a drop-in to override ListenStream= in the himmelblaud-tasks.socket unit to keep the paths in sync.
+The path to the socket file for communication with the task daemon.
 
 .P
 Default: /var/run/himmelblaud/task_sock
@@ -668,7 +668,7 @@ Example: task_socket_path = /tmp/task.sock
 .TP
 .B broker_socket_path
 .RE
-The path to the socket file for communication with the broker DBus service. If this is changed, also add a drop-in to override ListenStream= in the himmelblaud-broker.socket unit to keep the paths in sync.
+The path to the socket file for communication with the broker DBus service.
 
 .P
 Default: /var/run/himmelblaud/broker_sock
