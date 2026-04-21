@@ -221,9 +221,6 @@ def install_fallback(repo_root: Path, destdir: Path):
         ("target/release/libpam_himmelblau.so", "/usr/lib64/security/pam_himmelblau.so", "755"),
         ("platform/opensuse/himmelblaud.service", "/usr/lib/systemd/system/himmelblaud.service", "644"),
         ("platform/opensuse/himmelblaud-tasks.service", "/usr/lib/systemd/system/himmelblaud-tasks.service", "644"),
-        ("src/daemon/src/himmelblaud.socket", "/usr/lib/systemd/system/himmelblaud.socket", "644"),
-        ("src/daemon/src/himmelblaud-tasks.socket", "/usr/lib/systemd/system/himmelblaud-tasks.socket", "644"),
-        ("src/daemon/src/himmelblaud-broker.socket", "/usr/lib/systemd/system/himmelblaud-broker.socket", "644"),
         ("src/config/himmelblau.conf.example", "/etc/himmelblau/himmelblau.conf", "644"),
     ]
 

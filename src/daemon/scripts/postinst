@@ -95,17 +95,17 @@ if command -v deb-systemd-helper >/dev/null 2>&1; then
     fi
 
     # The following line should be removed in trixie or trixie+1
-    deb-systemd-helper unmask himmelblaud.service himmelblaud-tasks.service himmelblau-hsm-pin-init.service himmelblaud.socket himmelblaud-tasks.socket himmelblaud-broker.socket >/dev/null || true
+    deb-systemd-helper unmask himmelblaud.service himmelblaud-tasks.service himmelblau-hsm-pin-init.service >/dev/null || true
 
     # was-enabled defaults to true, so new installations run enable.
     if deb-systemd-helper --quiet was-enabled himmelblaud.service himmelblaud-tasks.service himmelblau-hsm-pin-init.service; then
         # Enables the unit on first installation, creates new
         # symlinks on upgrades if the unit file has changed.
-        deb-systemd-helper enable himmelblaud.service himmelblaud-tasks.service himmelblau-hsm-pin-init.service himmelblaud.socket himmelblaud-tasks.socket himmelblaud-broker.socket >/dev/null || true
+        deb-systemd-helper enable himmelblaud.service himmelblaud-tasks.service himmelblau-hsm-pin-init.service >/dev/null || true
     else
         # Update the statefile to add new symlinks (if any), which need to be
         # cleaned up on purge. Also remove old symlinks.
-        deb-systemd-helper update-state himmelblaud.service himmelblaud-tasks.service himmelblau-hsm-pin-init.service himmelblaud.socket himmelblaud-tasks.socket himmelblaud-broker.socket >/dev/null || true
+        deb-systemd-helper update-state himmelblaud.service himmelblaud-tasks.service himmelblau-hsm-pin-init.service >/dev/null || true
     fi
 
     if [ -z "$DPKG_ROOT" ] && [ -d /run/systemd/system ] && ! is_live_system; then
@@ -113,9 +113,6 @@ if command -v deb-systemd-helper >/dev/null 2>&1; then
         if [ "$skip_start" -eq 1 ]; then
             echo "SELinux enabled but himmelblaud policy not loaded yet; deferring service start"
         else
-            # Start the sockets first, as they cannot be started if the service is already running.
-            # Do not restart them, as if they are running they are already bound and in use.
-            deb-systemd-invoke start himmelblaud.socket himmelblaud-tasks.socket himmelblaud-broker.socket >/dev/null || true
             deb-systemd-invoke restart himmelblaud.service himmelblaud-tasks.service >/dev/null || true
         fi
     fi
@@ -129,18 +126,17 @@ elif command -v systemctl >/dev/null 2>&1; then
     if is_live_system; then
         echo "Live system detected - skipping service start (HSM PIN will be initialized at first boot)"
         # Only enable services so they start on first real boot
-        systemctl enable himmelblaud.socket himmelblaud-tasks.socket himmelblaud-broker.socket himmelblaud.service himmelblaud-tasks.service 2>/dev/null || true
+        systemctl enable himmelblaud.service himmelblaud-tasks.service 2>/dev/null || true
         # Enable HSM PIN init service separately (may not exist on older systemd)
         systemctl enable himmelblau-hsm-pin-init.service 2>/dev/null || true
     else
         echo "Enabling and starting Himmelblau services..."
-        systemctl enable himmelblaud.socket himmelblaud-tasks.socket himmelblaud-broker.socket himmelblaud.service himmelblaud-tasks.service 2>/dev/null || true
+        systemctl enable himmelblaud.service himmelblaud-tasks.service 2>/dev/null || true
         # Enable HSM PIN init service separately (may not exist on older systemd)
         systemctl enable himmelblau-hsm-pin-init.service 2>/dev/null || true
         if [ "$skip_start" -eq 1 ]; then
             echo "SELinux enabled but himmelblaud policy not loaded yet; deferring service start"
         else
-            systemctl start himmelblaud.socket himmelblaud-tasks.socket himmelblaud-broker.socket 2>/dev/null || true
             systemctl restart himmelblaud.service himmelblaud-tasks.service 2>/dev/null || true
         fi
     fi
