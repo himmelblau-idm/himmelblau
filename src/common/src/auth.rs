@@ -40,6 +40,10 @@ use authenticator::{
 };
 use base64::engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD};
 use base64::Engine;
+use libwebauthn::ops::webauthn::{GetAssertionRequest, UserVerificationRequirement as CableUvReq};
+use libwebauthn::transport::cable::qr_code_device::{CableQrCodeDevice, QrCodeOperationHint};
+use libwebauthn::transport::Device;
+use libwebauthn::webauthn::WebAuthn;
 use rpassword::prompt_password;
 use serde_json::{json, to_string as json_to_string};
 use sha2::{Digest, Sha256};
@@ -182,8 +186,33 @@ pub fn fido_auth(
     prompt: &str,
     presence_prompt: &str,
 ) -> Result<String, PamResultCode> {
-    // "[FIDO_INSERT] " prefix must match FIDO_INSERT_PREFIX in qr-greeter extension.js
-    msg_printer.print_text(&format!("[FIDO_INSERT] {}", prompt));
+    fido_auth_inner(
+        msg_printer,
+        fido_challenge,
+        fido_allow_list,
+        timeout_ms,
+        prompt,
+        presence_prompt,
+        None,
+    )
+}
+
+fn fido_auth_inner(
+    msg_printer: Arc<dyn MessagePrinter>,
+    fido_challenge: String,
+    fido_allow_list: Vec<String>,
+    timeout_ms: u64,
+    prompt: &str,
+    presence_prompt: &str,
+    qr_suffix: Option<&str>,
+) -> Result<String, PamResultCode> {
+    // Send FIDO_INSERT prompt, optionally with QR data appended to avoid
+    // multiple PAM conversation round-trips (GDM adds ~2.5s per call).
+    let msg = match qr_suffix {
+        Some(suffix) => format!("[FIDO_INSERT] {}\n{}", prompt, suffix),
+        None => format!("[FIDO_INSERT] {}", prompt),
+    };
+    msg_printer.print_text(&msg);
 
     let mut manager = AuthenticatorService::new().map_err(|e| {
         error!("{:?}", e);
@@ -284,9 +313,266 @@ pub fn fido_auth(
     });
 
     // Convert the JSON response to a string
-    json_to_string(&json_response).map_err(|e| {
+    let result_str = json_to_string(&json_response).map_err(|e| {
         error!("{:?}", e);
         PamResultCode::PAM_CRED_INSUFFICIENT
+    })?;
+    Ok(result_str)
+}
+
+enum BluetoothState {
+    PoweredOn,
+    PoweredOff,
+    NoAdapter,
+}
+
+fn check_bluetooth() -> BluetoothState {
+    let conn = match zbus::blocking::Connection::system() {
+        Ok(c) => c,
+        Err(e) => {
+            debug!("D-Bus system connection failed: {:?}", e);
+            return BluetoothState::NoAdapter;
+        }
+    };
+
+    let proxy = match zbus::blocking::fdo::ObjectManagerProxy::builder(&conn)
+        .destination("org.bluez")
+        .and_then(|b| b.path("/"))
+        .and_then(|b| b.build())
+    {
+        Ok(p) => p,
+        Err(e) => {
+            debug!("BlueZ not available on D-Bus: {:?}", e);
+            return BluetoothState::NoAdapter;
+        }
+    };
+
+    let objects = match proxy.get_managed_objects() {
+        Ok(o) => o,
+        Err(e) => {
+            debug!("BlueZ GetManagedObjects failed: {:?}", e);
+            return BluetoothState::NoAdapter;
+        }
+    };
+
+    let mut has_adapter = false;
+    for (path, interfaces) in &objects {
+        if let Some(props) = interfaces.get("org.bluez.Adapter1") {
+            has_adapter = true;
+            if let Some(powered) = props.get("Powered") {
+                if bool::try_from(powered) == Ok(true) {
+                    debug!("Bluetooth adapter {} is powered on", path);
+                    return BluetoothState::PoweredOn;
+                }
+            }
+        }
+    }
+
+    if has_adapter {
+        debug!("All Bluetooth adapters are powered off");
+        BluetoothState::PoweredOff
+    } else {
+        debug!("No Bluetooth adapters found");
+        BluetoothState::NoAdapter
+    }
+}
+
+/// Caller must verify Bluetooth is powered on before calling this.
+async fn qr_bluetooth_fido_auth(
+    msg_printer: Arc<dyn MessagePrinter>,
+    fido_challenge: String,
+    _fido_allow_list: Vec<String>,
+    qr_prompt: &str,
+    device: Option<CableQrCodeDevice>,
+) -> Result<String, PamResultCode> {
+    let mut device = match device {
+        Some(d) => d,
+        None => {
+            let d = CableQrCodeDevice::new_transient(QrCodeOperationHint::GetAssertionRequest);
+            let qr_url = d.qr_code.to_string();
+            // Combine into single print_text to avoid GDM per-message delay.
+            msg_printer.print_text(&format!("[QR_BT_LABEL] {}\n[QR_BT] {}", qr_prompt, qr_url));
+            d
+        }
+    };
+
+    // Wait for the phone to scan the QR and establish a BLE tunnel.
+    let mut channel = device.channel().await.map_err(|e| {
+        error!("QR/Bluetooth channel establishment failed: {:?}", e);
+        PamResultCode::PAM_CRED_INSUFFICIENT
+    })?;
+
+    // Build the WebAuthn clientDataJSON and hash it for the assertion request.
+    let challenge_str = json_to_string(&json!({
+        "type": "webauthn.get",
+        "challenge": URL_SAFE_NO_PAD.encode(&fido_challenge),
+        "origin": "https://login.microsoft.com"
+    }))
+    .map_err(|e| {
+        error!("{:?}", e);
+        PamResultCode::PAM_CRED_INSUFFICIENT
+    })?;
+
+    let chall_bytes = Sha256::digest(challenge_str.clone()).to_vec();
+
+    // Empty allowList forces the phone to use a discoverable credential,
+    // which includes userHandle (required by Entra to identify the user).
+    let request = GetAssertionRequest {
+        relying_party_id: "login.microsoft.com".to_string(),
+        hash: chall_bytes,
+        allow: vec![],
+        extensions: None,
+        user_verification: CableUvReq::Preferred,
+        timeout: Duration::from_secs(120),
+    };
+
+    // Send the challenge to the phone over the BLE tunnel; the phone
+    // prompts for biometrics/PIN, signs, and returns the assertion.
+    let response = channel
+        .webauthn_get_assertion(&request)
+        .await
+        .map_err(|e| {
+            error!("QR/Bluetooth assertion failed: {:?}", e);
+            PamResultCode::PAM_CRED_INSUFFICIENT
+        })?;
+
+    let assertion = response
+        .assertions
+        .first()
+        .ok_or(PamResultCode::PAM_CRED_INSUFFICIENT)?;
+
+    // Package the assertion into the same base64url JSON format that
+    // a local USB security key would produce, so Entra can verify it.
+    let credential_id = assertion
+        .credential_id
+        .as_ref()
+        .map(|c| c.id.to_vec())
+        .unwrap_or_default();
+    let auth_data = assertion
+        .authenticator_data
+        .to_response_bytes()
+        .map_err(|e| {
+            error!("Failed to serialize authenticator data: {:?}", e);
+            PamResultCode::PAM_CRED_INSUFFICIENT
+        })?;
+    let signature = &assertion.signature;
+    let user_handle = assertion
+        .user
+        .as_ref()
+        .map(|u| u.id.to_vec())
+        .unwrap_or_default();
+
+    let json_response = json!({
+        "id": URL_SAFE_NO_PAD.encode(&credential_id),
+        "clientDataJSON": URL_SAFE_NO_PAD.encode(&challenge_str),
+        "authenticatorData": URL_SAFE_NO_PAD.encode(&auth_data),
+        "signature": URL_SAFE_NO_PAD.encode(signature),
+        "userHandle": URL_SAFE_NO_PAD.encode(&user_handle),
+    });
+
+    let result_str = json_to_string(&json_response).map_err(|e| {
+        error!("{:?}", e);
+        PamResultCode::PAM_CRED_INSUFFICIENT
+    })?;
+    Ok(result_str)
+}
+
+/// Race USB security key and QR/Bluetooth (caBLE) auth concurrently.
+/// Called from synchronous PAM code — creates a tokio runtime to bridge
+/// into async. First path to succeed wins; the loser is cancelled.
+pub fn fido_auth_with_qr_bluetooth(
+    msg_printer: Arc<dyn MessagePrinter>,
+    fido_challenge: String,
+    fido_allow_list: Vec<String>,
+    timeout_ms: u64,
+    prompt: &str,
+    presence_prompt: &str,
+    qr_prompt: &str,
+) -> Result<String, PamResultCode> {
+    let rt = Runtime::new().map_err(|e| {
+        error!("{:?}", e);
+        PamResultCode::PAM_AUTH_ERR
+    })?;
+
+    // Create caBLE device upfront so we can send all PAM messages
+    // (FIDO_INSERT + QR_BT_LABEL + QR_BT) in a single print_text call
+    // from within fido_auth. This avoids concurrent PAM conversation
+    // calls that block each other for ~2.5s each in GDM.
+    let cable_device = CableQrCodeDevice::new_transient(QrCodeOperationHint::GetAssertionRequest);
+    let qr_url = cable_device.qr_code.to_string();
+    let qr_suffix = format!("[QR_BT_LABEL] {}\n[QR_BT] {}", qr_prompt, qr_url);
+
+    rt.block_on(async {
+        // USB FIDO uses synchronous blocking I/O (HID polling), so run it
+        // on the blocking thread pool to keep the async executor free.
+        let usb_challenge = fido_challenge.clone();
+        let usb_allow = fido_allow_list.clone();
+        let usb_printer = msg_printer.clone();
+        let usb_prompt = prompt.to_string();
+        let usb_presence = presence_prompt.to_string();
+
+        let mut usb_handle = tokio::task::spawn_blocking(move || {
+            fido_auth_inner(
+                usb_printer,
+                usb_challenge,
+                usb_allow,
+                timeout_ms,
+                &usb_prompt,
+                &usb_presence,
+                Some(&qr_suffix),
+            )
+        });
+
+        // QR/Bluetooth — device already created, messages sent via fido_auth_inner.
+        let qr_bt_handle = qr_bluetooth_fido_auth(
+            msg_printer.clone(),
+            fido_challenge,
+            fido_allow_list,
+            "",
+            Some(cable_device),
+        );
+
+        tokio::pin!(qr_bt_handle);
+
+        // Race both paths; whichever completes first wins.
+        // If the winner fails, we fall back to the remaining path.
+        tokio::select! {
+            usb_result = &mut usb_handle => {
+                match usb_result {
+                    // USB succeeded — cancel QR/Bluetooth, return assertion.
+                    Ok(Ok(assertion)) => {
+                        drop(qr_bt_handle);
+                        Ok(assertion)
+                    },
+                    // USB failed — fall back to QR/Bluetooth.
+                    Ok(Err(e)) => {
+                        debug!("USB FIDO failed ({:?}), waiting for QR/Bluetooth...", e);
+                        qr_bt_handle.await.or(Err(e))
+                    }
+                    Err(_) => {
+                        qr_bt_handle.await.or(Err(PamResultCode::PAM_AUTH_ERR))
+                    }
+                }
+            }
+            qr_bt_result = &mut qr_bt_handle => {
+                match qr_bt_result {
+                    // QR/Bluetooth succeeded — abort USB task, return assertion.
+                    Ok(assertion) => {
+                        usb_handle.abort();
+                        Ok(assertion)
+                    },
+                    // QR/Bluetooth failed — fall back to USB.
+                    Err(ref e) => {
+                        debug!("QR/Bluetooth failed ({:?}), waiting for USB...", e);
+                        match usb_handle.await {
+                            Ok(Ok(assertion)) => Ok(assertion),
+                            Ok(Err(e)) => Err(e),
+                            Err(_) => Err(PamResultCode::PAM_AUTH_ERR),
+                        }
+                    }
+                }
+            }
+        }
     })
 }
 
@@ -699,25 +985,113 @@ fn handle_pam_auth_response_pin(state: &mut AuthenticateState) -> PamWhatNext {
     PamWhatNext::Next(req)
 }
 
+fn fido_auth_qr_bluetooth_only(
+    msg_printer: Arc<dyn MessagePrinter>,
+    fido_challenge: String,
+    fido_allow_list: Vec<String>,
+    qr_prompt: &str,
+) -> Result<String, PamResultCode> {
+    let rt = Runtime::new().map_err(|e| {
+        error!("{:?}", e);
+        PamResultCode::PAM_AUTH_ERR
+    })?;
+    rt.block_on(qr_bluetooth_fido_auth(
+        msg_printer,
+        fido_challenge,
+        fido_allow_list,
+        qr_prompt,
+        None,
+    ))
+}
+
 fn handle_pam_auth_response_fido(
     state: &AuthenticateState,
     fido_challenge: String,
     fido_allow_list: Vec<String>,
+    has_physical_security_key: bool,
+    has_cross_device: bool,
 ) -> PamWhatNext {
     let timeout_ms = state.cfg.get_fido_timeout().saturating_mul(1000);
     let fido_prompt = state.cfg.get_fido_prompt();
     let fido_presence_prompt = state.cfg.get_fido_presence_prompt();
-    let result = match fido_auth(
-        state.msg_printer.clone(),
-        fido_challenge,
-        fido_allow_list,
-        timeout_ms,
-        &fido_prompt,
-        &fido_presence_prompt,
-    ) {
-        Ok(assertion) => assertion,
-        Err(e) => {
-            pam_fail!(state.msg_printer, "Entra Id Fido authentication failed.", e);
+    let qr_prompt = state.cfg.get_qr_bluetooth_prompt();
+    let is_graphical = state.service.contains("gdm");
+    let bt_state = check_bluetooth();
+    let has_bt = matches!(bt_state, BluetoothState::PoweredOn);
+    let bt_off = matches!(bt_state, BluetoothState::PoweredOff);
+    let mut can_qr_bluetooth = has_cross_device && has_bt;
+    debug!(
+        "FIDO auth: has_physical_security_key={}, has_cross_device={}, is_graphical={}, has_bluetooth={}",
+        has_physical_security_key, has_cross_device, is_graphical, has_bt
+    );
+
+    if !has_physical_security_key && !can_qr_bluetooth {
+        if has_cross_device && bt_off && is_graphical {
+            state
+                .msg_printer
+                .print_text("Enable Bluetooth to sign in with your phone.");
+            for _ in 0..30 {
+                std::thread::sleep(std::time::Duration::from_secs(1));
+                if matches!(check_bluetooth(), BluetoothState::PoweredOn) {
+                    can_qr_bluetooth = true;
+                    break;
+                }
+            }
+        }
+        if !can_qr_bluetooth {
+            debug!("FIDO auth: no usable FIDO hardware, requesting fallback to password");
+            let req = ClientRequest::PamAuthenticateStep(PamAuthRequest::FidoUnavailable);
+            return PamWhatNext::Next(req);
+        }
+    }
+
+    let result = if has_physical_security_key && can_qr_bluetooth && is_graphical {
+        debug!("FIDO auth: attempting both security key and QR/Bluetooth");
+        match fido_auth_with_qr_bluetooth(
+            state.msg_printer.clone(),
+            fido_challenge,
+            fido_allow_list,
+            timeout_ms,
+            &fido_prompt,
+            &fido_presence_prompt,
+            &qr_prompt,
+        ) {
+            Ok(assertion) => assertion,
+            Err(e) => {
+                pam_fail!(
+                    state.msg_printer,
+                    "Security key and QR/Bluetooth authentication failed.",
+                    e
+                );
+            }
+        }
+    } else if can_qr_bluetooth && is_graphical {
+        debug!("FIDO auth: attempting QR/Bluetooth");
+        match fido_auth_qr_bluetooth_only(
+            state.msg_printer.clone(),
+            fido_challenge,
+            fido_allow_list,
+            &qr_prompt,
+        ) {
+            Ok(assertion) => assertion,
+            Err(e) => {
+                pam_fail!(state.msg_printer, "QR/Bluetooth authentication failed.", e);
+            }
+        }
+    } else {
+        debug!("FIDO auth: attempting security key");
+        match fido_auth(
+            state.msg_printer.clone(),
+            fido_challenge,
+            fido_allow_list,
+            timeout_ms,
+            &fido_prompt,
+            &fido_presence_prompt,
+        ) {
+            Ok(assertion) => assertion,
+            Err(e) => {
+                pam_fail!(state.msg_printer, "Security key authentication failed.", e);
+            }
         }
     };
 
@@ -839,7 +1213,15 @@ fn authenticate_request_response(
         PamAuthResponse::Fido {
             fido_challenge,
             fido_allow_list,
-        } => handle_pam_auth_response_fido(state, fido_challenge, fido_allow_list),
+            has_physical_security_key,
+            has_cross_device,
+        } => handle_pam_auth_response_fido(
+            state,
+            fido_challenge,
+            fido_allow_list,
+            has_physical_security_key,
+            has_cross_device,
+        ),
         PamAuthResponse::ChangePassword { msg } => {
             handle_pam_auth_response_change_password(state, &msg)
         }
