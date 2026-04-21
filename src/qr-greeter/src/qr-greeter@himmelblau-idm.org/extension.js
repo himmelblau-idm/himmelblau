@@ -188,12 +188,26 @@ export default class QrGreeterExtension extends Extension {
 
         GdmAuthPrompt.prototype.setMessage = function(message, styleClass) {
             // Messages may be batched with \n to avoid GDM per-message delay.
+            // Only split when at least one line carries a tagged prefix that
+            // requires per-line routing (FIDO icon, QR/Bluetooth code, etc.).
+            // For untagged multi-line text, pass the whole string through so
+            // every line reaches the label instead of being overwritten by
+            // recursive setMessage calls.
             if (message && message.includes("\n")) {
-                for (const line of message.split("\n")) {
-                    if (line.length > 0)
-                        this.setMessage(line, styleClass);
+                const lines = message.split("\n");
+                const hasTaggedLine = lines.some(line =>
+                    line.startsWith(FIDO_INSERT_PREFIX) ||
+                    line.startsWith(FIDO_TOUCH_PREFIX) ||
+                    line.startsWith(QR_BT_PREFIX) ||
+                    line.startsWith(QR_BT_LABEL_PREFIX)
+                );
+                if (hasTaggedLine) {
+                    for (const line of lines) {
+                        if (line.length > 0)
+                            this.setMessage(line, styleClass);
+                    }
+                    return;
                 }
-                return;
             }
 
             let displayMessage = message;
