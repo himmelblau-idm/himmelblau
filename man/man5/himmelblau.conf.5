@@ -1,4 +1,4 @@
-.TH HIMMELBLAU.CONF "5" "March 2026" "Himmelblau Configuration" "File Formats"
+.TH HIMMELBLAU.CONF "5" "April 2026" "Himmelblau Configuration" "File Formats"
 .SH NAME
 himmelblau.conf \- Configuration file for Himmelblau, enabling Azure Entra ID authentication on Linux.
 
@@ -677,6 +677,17 @@ Default: /var/run/himmelblaud/broker_sock
 Example: broker_socket_path = /tmp/broker.sock
 
 .TP
+.B enable_passwordless
+.RE
+A boolean option that controls whether passwordless authentication (Microsoft Authenticator app approval without a password) is offered during Azure Entra ID authentication. When enabled, Himmelblau will include the passwordless option in authentication requests, allowing Entra ID to offer a passwordless flow. When disabled, users will be prompted for a password followed by MFA instead.
+
+.P
+Default: true
+
+.P
+Example: enable_passwordless = false
+
+.TP
 .B home_prefix
 .RE
 The prefix to use for user home directories.
@@ -724,17 +735,6 @@ Default: spn
 
 .P
 Example: home_alias = SPN
-
-.TP
-.B enable_passwordless
-.RE
-A boolean option that controls whether passwordless authentication (Microsoft Authenticator app approval without a password) is offered during Azure Entra ID authentication. When enabled, Himmelblau will include the passwordless option in authentication requests, allowing Entra ID to offer a passwordless flow. When disabled, users will be prompted for a password followed by MFA instead.
-
-.P
-Default: true
-
-.P
-Example: enable_passwordless = false
 
 .TP
 .B shell
@@ -868,6 +868,27 @@ Default: /etc/himmelblau/user-map
 
 .P
 Example: user_map_file = /path/to/user_map
+
+.TP
+.B ip_version
+.RE
+Controls which IP version family Himmelblau should use for outbound network connections.
+
+Supported values are:
+.RS
+.IP \(bu 2
+ipv4-only \(em use only IPv4 sockets
+.IP \(bu 2
+ipv6-only \(em use only IPv6 sockets
+.IP \(bu 2
+both \(em allow both IPv4 and IPv6 (default)
+.RE
+
+.P
+Default: both
+
+.P
+Example: ip_version = ipv4-only
 
 .SH OFFLINE BREAKGLASS CONFIGURATION
 The

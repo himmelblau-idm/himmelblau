@@ -41,6 +41,7 @@ use crate::constants::{
 };
 use crate::mapping::{MappedNameCache, Mode};
 use crate::unix_config::{HomeAttr, HsmType};
+use himmelblau::auth::IpVersion;
 use himmelblau::error::MsalError;
 use idmap::{DEFAULT_IDMAP_RANGE, DEFAULT_SUBID_RANGE};
 use reqwest::Url;
@@ -58,6 +59,13 @@ pub enum IdAttr {
 pub enum JoinType {
     Join,
     Register,
+}
+
+#[derive(Debug, Copy, Clone, PartialEq)]
+pub enum IpVersionSelection {
+    Both,
+    Ipv4Only,
+    Ipv6Only,
 }
 
 impl From<JoinType> for u32 {
@@ -838,6 +846,16 @@ impl HimmelblauConfig {
 // Generated getter methods from XML parameter definitions.
 include!(concat!(env!("OUT_DIR"), "/config_gen.rs"));
 
+impl HimmelblauConfig {
+    pub fn get_ip_versions(&self) -> Vec<IpVersion> {
+        match self.get_ip_version() {
+            IpVersionSelection::Ipv4Only => vec![IpVersion::V4],
+            IpVersionSelection::Ipv6Only => vec![IpVersion::V6],
+            IpVersionSelection::Both => vec![IpVersion::V4, IpVersion::V6],
+        }
+    }
+}
+
 impl fmt::Debug for HimmelblauConfig {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "{:?}", self.config)
@@ -1019,6 +1037,35 @@ mod tests {
         let temp_file = create_temp_config(config_data);
         let config = HimmelblauConfig::new(Some(&temp_file)).unwrap();
         assert_eq!(config.get_join_type(), JoinType::Join);
+    }
+
+    #[test]
+    fn test_get_ip_version() {
+        let config_data = r#"
+        [global]
+        ip_version = ipv4-only
+        "#;
+
+        let temp_file = create_temp_config(config_data);
+        let config = HimmelblauConfig::new(Some(&temp_file)).unwrap();
+        assert_eq!(config.get_ip_version(), IpVersionSelection::Ipv4Only);
+        assert_eq!(config.get_ip_versions(), vec![IpVersion::V4]);
+
+        let config_data = r#"
+        [global]
+        ip_version = ipv6-only
+        "#;
+        let temp_file = create_temp_config(config_data);
+        let config = HimmelblauConfig::new(Some(&temp_file)).unwrap();
+        assert_eq!(config.get_ip_version(), IpVersionSelection::Ipv6Only);
+        assert_eq!(config.get_ip_versions(), vec![IpVersion::V6]);
+
+        let config_empty = create_empty_config();
+        assert_eq!(config_empty.get_ip_version(), IpVersionSelection::Both);
+        assert_eq!(
+            config_empty.get_ip_versions(),
+            vec![IpVersion::V4, IpVersion::V6]
+        );
     }
 
     #[test]

@@ -201,13 +201,15 @@ impl HimmelblauMultiProvider {
         if oidc_issuer_url.is_none() {
             for domain in domains {
                 debug!("Adding provider for domain {}", domain);
-                let (authority_host, tenant_id, graph_url, odc_provider) = {
+                let (authority_host, tenant_id, graph_url, odc_provider, app_id, ip_versions) = {
                     let cfg = config.lock().await;
                     (
                         cfg.get_authority_host(&domain),
                         cfg.get_tenant_id(&domain),
                         cfg.get_graph_url(&domain),
                         cfg.get_odc_provider(&domain),
+                        cfg.get_app_id(&domain),
+                        cfg.get_ip_versions(),
                     )
                 };
                 let graph = match Graph::new(
@@ -216,6 +218,7 @@ impl HimmelblauMultiProvider {
                     Some(&authority_host),
                     tenant_id.as_deref(),
                     graph_url.as_deref(),
+                    &ip_versions,
                 )
                 .await
                 {
@@ -225,12 +228,17 @@ impl HimmelblauMultiProvider {
                         continue;
                     }
                 };
-                let app_id = config.lock().await.get_app_id(&domain);
-                let app = BrokerClientApplication::new(None, app_id.as_deref(), None, None)
-                    .map_err(|e| {
-                        error!("Failed initializing provider: {:?}", e);
-                        anyhow!("{:?}", e)
-                    })?;
+                let app = BrokerClientApplication::new(
+                    None,
+                    app_id.as_deref(),
+                    None,
+                    None,
+                    &ip_versions,
+                )
+                .map_err(|e| {
+                    error!("Failed initializing provider: {:?}", e);
+                    anyhow!("{:?}", e)
+                })?;
                 let provider = HimmelblauProvider::new(app, &config, &domain, graph, &idmap)
                     .map_err(|e| {
                         error!("Failed to initialize the provider: {:?}", e);
@@ -1202,20 +1210,22 @@ impl IdProvider for HimmelblauProvider {
 
         macro_rules! fetch_user_confidential_client {
             ($client_id:expr, $client_credential:expr) => {{
-                let (authority_host, tenant_id) = {
+                let (authority_host, tenant_id, ip_versions) = {
                     let cfg = self.config.lock().await;
                     let authority_host = cfg.get_authority_host(&self.domain);
                     let tenant_id = cfg.get_tenant_id(&self.domain).ok_or_else(|| {
                         error!("tenant_id not found");
                         IdpError::BadRequest
                     })?;
-                    (authority_host, tenant_id)
+                    let ip_versions = cfg.get_ip_versions();
+                    (authority_host, tenant_id, ip_versions)
                 };
                 let authority = format!("https://{}/{}", authority_host, tenant_id);
                 let app = ConfidentialClientApplication::new(
                     $client_id,
                     Some(&authority),
                     $client_credential,
+                    &ip_versions,
                 )
                 .map_err(|e| {
                     error!(?e, "Failed initializing confidential client");
@@ -1546,10 +1556,13 @@ impl IdProvider for HimmelblauProvider {
                 }
             }
             RefreshCacheEntry::RefreshToken(refresh_token) => {
-                let client = PublicClientApplication::new(BROKER_APP_ID, None).map_err(|e| {
-                    error!("Failed to create public client application: {:?}", e);
-                    IdpError::BadRequest
-                })?;
+                let ip_versions = self.config.lock().await.get_ip_versions();
+                let client =
+                    PublicClientApplication::new(BROKER_APP_ID, None, &ip_versions)
+                        .map_err(|e| {
+                            error!("Failed to create public client application: {:?}", e);
+                            IdpError::BadRequest
+                        })?;
                 let mtoken = client
                     .acquire_token_by_refresh_token(&refresh_token, vec![])
                     .await;
@@ -2823,7 +2836,12 @@ impl IdProvider for HimmelblauProvider {
                             }
                     } else if let Some(RefreshCacheEntry::RefreshToken(refresh_token)) = refresh_cache_entry {
                         // We have a refresh token, exchange that for an access token
-                        let app = match PublicClientApplication::new(BROKER_APP_ID, None) {
+                        let ip_versions = self.config.lock().await.get_ip_versions();
+                        let app = match PublicClientApplication::new(
+                            BROKER_APP_ID,
+                            None,
+                            &ip_versions,
+                        ) {
                             Ok(app) => app,
                             Err(e) => {
                                 error!("Failed to create PublicClientApplication: {:?}", e);
@@ -5000,7 +5018,8 @@ impl HimmelblauProvider {
                     if vers.is_empty() {
                         vers = vec!["1.2511.11".to_string()];
                     }
-                    let intune = IntuneForLinux::new(endpoints, Some(&vers[vers.len() - 1]))
+                    let ip_versions = self.config.lock().await.get_ip_versions();
+                    let intune = IntuneForLinux::new(endpoints, Some(&vers[vers.len() - 1]), &ip_versions)
                         .map_err(|e| {
                             error!(?e, "Intune device enrollment failed.");
                             IdpError::BadRequest
