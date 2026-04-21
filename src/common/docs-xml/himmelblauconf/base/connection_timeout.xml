@@ -9,7 +9,7 @@
 <description>
 The timeout in seconds for connections to the authentication server.
 </description>
-<default>30</default>
+<default>5</default>
 <default_const>DEFAULT_CONN_TIMEOUT</default_const>
 <example>connection_timeout = 5</example>
 </parameter>
