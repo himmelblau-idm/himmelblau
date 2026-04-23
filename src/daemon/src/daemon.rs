@@ -1100,11 +1100,11 @@ async fn apply_intune_policy_for_account(
     // Limits:
     // Scripts must have a limited run time:
     //   On Linux, scripts must take five minutes or less to run.
-    match time::timeout_at(
-        time::Instant::now() + Duration::from_secs(INTUNE_POLICY_TASK_TIMEOUT_SECS),
-        rx,
-    )
-    .await
+    // Add a small buffer on top of the task runtime budget for scheduling
+    // and IPC overhead when receiving the task outcome.
+    let task_timeout =
+        Duration::from_secs(INTUNE_POLICY_TASK_TIMEOUT_SECS) + Duration::from_secs(5);
+    match time::timeout_at(time::Instant::now() + task_timeout, rx).await
     {
         Ok(Ok(TaskOutcome::Status(0))) => Ok(()),
         Ok(Ok(TaskOutcome::Status(_))) => Err(ApplyPolicyError::PolicyFailure),

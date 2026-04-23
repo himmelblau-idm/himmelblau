@@ -27,14 +27,14 @@ use himmelblau::intune::{
 use himmelblau::{ClientInfo, EnrollAttrs, IdToken, UserToken};
 use himmelblau_unix_common::config::{split_username, HimmelblauConfig};
 use std::sync::Arc;
-use std::thread::sleep;
 use std::time::Duration;
+use tokio::time::sleep;
 use tracing::{debug, error, instrument};
 
 #[instrument(skip(config, graph_token, intune_token, iwservice_token))]
 /// Run the Intune policy pipeline and return the list of non-compliant
 /// rules reported by Intune. An empty list means the device is compliant.
-/// Returns `Err` only when the pipeline itself failed to run (CSE error).
+/// Returns `Err` if policy application could not be completed.
 pub async fn apply_intune_policy(
     intune_device_id: &str,
     config: &HimmelblauConfig,
@@ -179,7 +179,7 @@ pub async fn apply_intune_policy(
     };
 
     // Check compliance status
-    sleep(Duration::from_secs(3));
+    sleep(Duration::from_secs(3)).await;
     let device_info = intune
         .get_compliance_info(&iwservice_token, intune_device_id)
         .await

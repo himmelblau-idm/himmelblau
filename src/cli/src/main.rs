@@ -2261,7 +2261,7 @@ async fn main() -> ExitCode {
                     _ => {
                         eprintln!("policy application failed: compliance check could not complete.");
                         eprintln!("For details, see:");
-                        eprintln!("  journalctl --boot -u himmelblaud-tasks.service");
+                        eprintln!("  journalctl --boot -u himmelblaud -u himmelblaud-tasks");
                         ExitCode::FAILURE
                     }
                 },
