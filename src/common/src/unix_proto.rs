@@ -9,6 +9,7 @@
  */
 
 use libc::uid_t;
+use himmelblau::intune::NoncompliantRule;
 use libkrimes::proto::KerberosCredentials;
 use serde::{Deserialize, Serialize};
 
@@ -152,6 +153,8 @@ pub enum ClientResponse {
     Ok,
     Error,
     NotAuthenticated,
+    /// Non-compliant verdict with rule details passed through from Intune.
+    NonCompliant(Vec<NoncompliantRule>),
 }
 
 impl From<PamAuthResponse> for ClientResponse {
@@ -213,6 +216,8 @@ impl TaskRequest {
 pub enum TaskResponse {
     Success(i32),
     Error(String),
+    /// ApplyPolicy completed with a non-compliant verdict from Intune.
+    NonCompliant(Vec<NoncompliantRule>),
 }
 
 #[test]

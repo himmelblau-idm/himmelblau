@@ -21,7 +21,9 @@ use crate::custom_compliance_ext::CustomComplianceCSE;
 use crate::scripts_ext::ScriptsCSE;
 use anyhow::{anyhow, Result};
 use himmelblau::graph::Graph;
-use himmelblau::intune::{fetch_intune_portal_versions, IntuneForLinux, IntuneStatus};
+use himmelblau::intune::{
+    fetch_intune_portal_versions, IntuneForLinux, IntuneStatus, NoncompliantRule,
+};
 use himmelblau::{ClientInfo, EnrollAttrs, IdToken, UserToken};
 use himmelblau_unix_common::config::{split_username, HimmelblauConfig};
 use std::sync::Arc;
@@ -30,6 +32,9 @@ use std::time::Duration;
 use tracing::{debug, error, instrument};
 
 #[instrument(skip(config, graph_token, intune_token, iwservice_token))]
+/// Run the Intune policy pipeline and return the list of non-compliant
+/// rules reported by Intune. An empty list means the device is compliant.
+/// Returns `Err` only when the pipeline itself failed to run (CSE error).
 pub async fn apply_intune_policy(
     intune_device_id: &str,
     config: &HimmelblauConfig,
@@ -37,7 +42,7 @@ pub async fn apply_intune_policy(
     graph_token: &str,
     intune_token: &str,
     iwservice_token: &str,
-) -> Result<bool> {
+) -> Result<Vec<NoncompliantRule>> {
     debug!(?account_id, "Attempting to enforce policies");
 
     let domain = split_username(account_id)
@@ -181,17 +186,25 @@ pub async fn apply_intune_policy(
         .map_err(|e| anyhow!(e))?;
     debug!(?device_info.compliance_state, "Intune compliance status");
     if !device_info.noncompliant_rules.is_empty() {
-        error!(?device_info.noncompliant_rules, "Intune NonCompliant rules report");
+        error!(
+            count = device_info.noncompliant_rules.len(),
+            "Device is non-compliant"
+        );
+        for rule in &device_info.noncompliant_rules {
+            error!(
+                title = rule.title.as_deref().unwrap_or("(no title)"),
+                description = rule.description.as_deref().unwrap_or(""),
+                more_info_uri = rule.more_info_uri.as_deref().unwrap_or(""),
+                source = rule.compliance_source.as_deref().unwrap_or(""),
+                setting_id = %rule.setting_id,
+                "Non-compliant rule"
+            );
+        }
     }
-
-    /* TODO: Right now we ignore the NonCompliant Rules report because Custom
-     * Compliance policy responses are not parsing correctly in Intune. Once
-     * this issue is resolved, we can enforce NonCompliance.
-     */
 
     if !errors.is_empty() {
         Err(anyhow!("Policy enforcement failed: {:?}", errors))
     } else {
-        Ok(true)
+        Ok(device_info.noncompliant_rules)
     }
 }

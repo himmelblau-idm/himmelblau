@@ -32,6 +32,7 @@ use std::time::Duration;
 use bytes::{BufMut, BytesMut};
 use clap::{Arg, ArgAction, Command};
 use futures::{SinkExt, StreamExt};
+use himmelblau::intune::NoncompliantRule;
 use himmelblau::{ClientInfo, IdToken, UserToken as UnixUserToken};
 use himmelblau_unix_common::config::{split_username, HimmelblauConfig};
 use himmelblau_unix_common::constants::{
@@ -79,7 +80,13 @@ mod prt_memfd;
 
 //=== the codec
 
-type AsyncTaskRequest = (TaskRequest, oneshot::Sender<i32>);
+#[derive(Debug)]
+enum TaskOutcome {
+    Status(i32),
+    NonCompliant(Vec<NoncompliantRule>),
+}
+
+type AsyncTaskRequest = (TaskRequest, oneshot::Sender<TaskOutcome>);
 
 #[derive(Default)]
 struct ClientCodec;
@@ -202,13 +209,20 @@ async fn handle_task_client(
                 debug!("Task was acknowledged and completed.");
                 // Send a result back via the one-shot
                 // Ignore if it fails.
-                let _ = v.1.send(status);
+                let _ = v.1.send(TaskOutcome::Status(status));
             }
             Some(Ok(TaskResponse::Error(msg))) => {
                 warn!("Task returned an error: {}", msg);
                 // Send a failure status back via the one-shot so the
                 // caller knows, but don't kill the task connection.
-                let _ = v.1.send(1);
+                let _ = v.1.send(TaskOutcome::Status(1));
+            }
+            Some(Ok(TaskResponse::NonCompliant(rules))) => {
+                debug!(
+                    count = rules.len(),
+                    "Task completed; device reported non-compliant by Intune"
+                );
+                let _ = v.1.send(TaskOutcome::NonCompliant(rules));
             }
             other => {
                 error!("Error -> {:?}", other);
@@ -404,7 +418,7 @@ async fn handle_client(
                                                                 )
                                                                 .await
                                                                 {
-                                                                    Ok(Ok(status)) => {
+                                                                    Ok(Ok(TaskOutcome::Status(status))) => {
                                                                         if status == 2 {
                                                                             let msg = "Authentication was explicitly denied by the logon script";
                                                                             debug!(msg);
@@ -451,10 +465,13 @@ async fn handle_client(
                                                                 )
                                                                 .await
                                                                 {
-                                                                    Ok(Ok(status)) => {
+                                                                    Ok(Ok(TaskOutcome::Status(status))) => {
                                                                         if status != 0 {
                                                                             error!("Kerberos config failed for {}: Status code: {}", account_id, status);
                                                                         }
+                                                                    }
+                                                                    Ok(Ok(TaskOutcome::NonCompliant(_))) => {
+                                                                        error!("Kerberos config: unexpected NonCompliant task outcome");
                                                                     }
                                                                     Ok(Err(e)) => {
                                                                         error!("Kerberos config failed for {}: {:?}", account_id, e);
@@ -495,10 +512,13 @@ async fn handle_client(
                                                                 )
                                                                 .await
                                                                 {
-                                                                    Ok(Ok(status)) => {
+                                                                    Ok(Ok(TaskOutcome::Status(status))) => {
                                                                         if status != 0 {
                                                                             error!("Kerberos credential cache load failed for {}: Status code: {}", account_id, status);
                                                                         }
+                                                                    }
+                                                                    Ok(Ok(TaskOutcome::NonCompliant(_))) => {
+                                                                        error!("Kerberos credential cache load: unexpected NonCompliant task outcome");
                                                                     }
                                                                     Ok(Err(e)) => {
                                                                         error!("Kerberos credential cache load failed for {}: {:?}", account_id, e);
@@ -584,6 +604,12 @@ async fn handle_client(
                                                             }
                                                             Err(ApplyPolicyError::PolicyFailure) => {
                                                                 warn!("Intune failure");
+                                                            }
+                                                            Err(ApplyPolicyError::NonCompliant(rules)) => {
+                                                                warn!(
+                                                                    count = rules.len(),
+                                                                    "Intune reports device is non-compliant"
+                                                                );
                                                             }
                                                             Err(ApplyPolicyError::DispatchFailed(e))
                                                             | Err(ApplyPolicyError::TaskTimeout(e))
@@ -884,6 +910,14 @@ async fn handle_client(
                             debug!("compliance check: succeeded");
                             ClientResponse::Ok
                         }
+                        Err(ApplyPolicyError::NonCompliant(rules)) => {
+                            debug!(
+                                count = rules.len(),
+                                "compliance check: device is non-compliant for {}",
+                                account_id
+                            );
+                            ClientResponse::NonCompliant(rules)
+                        }
                         Err(ApplyPolicyError::TokenAcquisitionFailed) => {
                             error!(
                                 "compliance check: could not acquire tokens; \
@@ -975,9 +1009,11 @@ enum ApplyPolicyError {
     TaskTimeout(String),
     /// The tasks daemon returned an error while running the policy.
     TaskError(String),
-    /// The policy task ran to completion but reported a non-zero status
-    /// (i.e. the device is non-compliant or a policy step failed).
+    /// A CSE errored while applying policy. Distinct from a non-compliant
+    /// verdict: the pipeline itself failed, no verdict was produced.
     PolicyFailure,
+    /// Intune reported the device as non-compliant.
+    NonCompliant(Vec<NoncompliantRule>),
 }
 
 async fn apply_intune_policy_for_account(
@@ -1070,8 +1106,9 @@ async fn apply_intune_policy_for_account(
     )
     .await
     {
-        Ok(Ok(0)) => Ok(()),
-        Ok(Ok(_)) => Err(ApplyPolicyError::PolicyFailure),
+        Ok(Ok(TaskOutcome::Status(0))) => Ok(()),
+        Ok(Ok(TaskOutcome::Status(_))) => Err(ApplyPolicyError::PolicyFailure),
+        Ok(Ok(TaskOutcome::NonCompliant(rules))) => Err(ApplyPolicyError::NonCompliant(rules)),
         Ok(Err(e)) => Err(ApplyPolicyError::TaskError(e.to_string())),
         Err(e) => Err(ApplyPolicyError::TaskTimeout(e.to_string())),
     }

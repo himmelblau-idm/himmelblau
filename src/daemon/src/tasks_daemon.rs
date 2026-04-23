@@ -731,7 +731,7 @@ async fn handle_tasks(stream: UnixStream, cfg: &HimmelblauConfig) {
                         continue;
                     }
                 };
-                let res = match apply_intune_policy(
+                let noncompliant_rules = match apply_intune_policy(
                     &intune_device_id,
                     cfg,
                     &account_id,
@@ -757,13 +757,19 @@ async fn handle_tasks(stream: UnixStream, cfg: &HimmelblauConfig) {
                         continue;
                     }
                 };
-                debug!("tasks: Got response code `{}` while applying policy", res);
 
-                // Indicate the status response
-                if let Err(e) = reqs
-                    .send(TaskResponse::Success(if res { 0 } else { 1 }))
-                    .await
-                {
+                let response = if noncompliant_rules.is_empty() {
+                    debug!("tasks: policy applied, device is compliant");
+                    TaskResponse::Success(0)
+                } else {
+                    debug!(
+                        count = noncompliant_rules.len(),
+                        "tasks: policy applied, device is non-compliant"
+                    );
+                    TaskResponse::NonCompliant(noncompliant_rules)
+                };
+
+                if let Err(e) = reqs.send(response).await {
                     error!("Error -> {:?}", e);
                     return;
                 }

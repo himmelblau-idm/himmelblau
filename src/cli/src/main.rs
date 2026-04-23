@@ -2232,12 +2232,36 @@ async fn main() -> ExitCode {
                         println!("compliance check passed");
                         ExitCode::SUCCESS
                     }
+                    ClientResponse::NonCompliant(rules) => {
+                        eprintln!(
+                            "compliance check failed: device is not compliant with {} rule(s):",
+                            rules.len()
+                        );
+                        eprintln!();
+                        for (i, rule) in rules.iter().enumerate() {
+                            let title = rule
+                                .title
+                                .as_deref()
+                                .unwrap_or(rule.setting_id.as_str());
+                            eprintln!("  {}. {}", i + 1, title);
+                            if let Some(desc) = &rule.description {
+                                eprintln!("     {}", desc);
+                            }
+                            if let Some(uri) = &rule.more_info_uri {
+                                eprintln!("     More info: {}", uri);
+                            }
+                            eprintln!();
+                        }
+                        ExitCode::FAILURE
+                    }
                     ClientResponse::NotAuthenticated => {
                         error!("User is not authenticated — compliance check requires an active session");
                         ExitCode::FAILURE
                     }
                     _ => {
-                        error!("Compliance check failed");
+                        eprintln!("policy application failed: compliance check could not complete.");
+                        eprintln!("For details, see:");
+                        eprintln!("  journalctl --boot -u himmelblaud-tasks.service");
                         ExitCode::FAILURE
                     }
                 },
