@@ -324,6 +324,18 @@ async fn handle_client(
                         ClientResponse::NssGroup(None)
                     })
             }
+            ClientRequest::NssInitgroups(account_id) => {
+                let account_id = account_id.to_lowercase();
+                trace!("nssinitgroups req");
+                cachelayer
+                    .get_initgroups(account_id.as_str())
+                    .await
+                    .map(ClientResponse::NssInitgroups)
+                    .unwrap_or_else(|_| {
+                        error!("unable to load initgroups.");
+                        ClientResponse::Error
+                    })
+            }
             ClientRequest::PamAuthenticateInit(account_id, service, no_hello_pin, force_reauth) => {
                 let account_id = account_id.to_lowercase();
                 let span = span!(Level::INFO, "pam authenticate init");
@@ -1679,9 +1691,19 @@ async fn main() -> ExitCode {
 
             if systemd_booted {
                 if let Ok(monotonic_usec) = sd_notify::NotifyState::monotonic_usec_now() {
-                    let _ = sd_notify::notify(false, &[NotifyState::Ready, monotonic_usec]);
+                    let _ = sd_notify::notify(&[NotifyState::Ready, monotonic_usec]);
                 }
             }
+
+            // Ping the systemd watchdog at half the configured WatchdogSec interval.
+            let mut watchdog_interval = if systemd_booted {
+                std::env::var("WATCHDOG_USEC")
+                    .ok()
+                    .and_then(|v| v.parse::<u64>().ok())
+                    .map(|usec| time::interval(Duration::from_micros(usec / 2)))
+            } else {
+                None
+            };
 
             loop {
                 tokio::select! {
@@ -1723,6 +1745,14 @@ async fn main() -> ExitCode {
                     } => {
                         // Ignore
                     }
+                    _ = async {
+                        match watchdog_interval.as_mut() {
+                            Some(interval) => interval.tick().await,
+                            None => std::future::pending().await,
+                        }
+                    } => {
+                        let _ = sd_notify::notify(&[NotifyState::Watchdog]);
+                    }
                 }
             }
 
@@ -1753,7 +1783,7 @@ async fn main() -> ExitCode {
 
             if systemd_booted {
                 if let Ok(monotonic_usec) = sd_notify::NotifyState::monotonic_usec_now() {
-                    let _ = sd_notify::notify(false, &[NotifyState::Stopping, monotonic_usec]);
+                    let _ = sd_notify::notify(&[NotifyState::Stopping, monotonic_usec]);
                 }
             }
 

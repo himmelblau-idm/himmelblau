@@ -19,7 +19,9 @@ Intune MDM policies.
 
 ## Sponsorship
 
-[![SUSE](https://www.suse.com/siteassets/layout/suse-white-logo-green.svg)](https://www.suse.com)
+<a href="https://www.suse.com">
+  <img src="img/SUSE_founded_logo-green-stacked.png" alt="SUSE" width="220">
+</a>
 
 We gratefully acknowledge [SUSE](https://www.suse.com) as the primary sponsor of the Himmelblau project. Their support enables us to develop and maintain this open-source identity management solution.
 
@@ -259,7 +261,7 @@ Under the hood, `make install` uses your system package manager (`apt`, `dnf`/`y
 You can also target specific distros explicitly.
 Available targets (as of now):
 
-- **DEB:** `ubuntu22.04` `ubuntu24.04` `debian12` `debian13`
+- **DEB:** `ubuntu22.04` `ubuntu24.04` `ubuntu26.04` `debian12` `debian13`
 - **RHEL family:** `rocky8` `rocky9` `rocky10` `fedora41` `fedora42` `fedora43` `rawhide`
 - **SUSE:** `sle15sp6` `sle15sp7` `sle16` `tumbleweed`
 

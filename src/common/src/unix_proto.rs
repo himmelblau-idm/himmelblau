@@ -91,6 +91,7 @@ pub enum ClientRequest {
     NssGroups,
     NssGroupByGid(u32),
     NssGroupByName(String),
+    NssInitgroups(String),
     PamAuthenticateInit(String, String, bool, bool),
     PamAuthenticateStep(PamAuthRequest),
     PamAccountAllowed(String),
@@ -114,6 +115,7 @@ impl ClientRequest {
             ClientRequest::NssGroups => "NssGroups".to_string(),
             ClientRequest::NssGroupByGid(id) => format!("NssGroupByGid({})", id),
             ClientRequest::NssGroupByName(id) => format!("NssGroupByName({})", id),
+            ClientRequest::NssInitgroups(id) => format!("NssInitgroups({})", id),
             ClientRequest::PamAuthenticateInit(id, service, no_hello_pin, force_reauth) => {
                 format!(
                     "PamAuthenticateInit({}, {}, no_hello_pin: {}, force_reauth: {})",
@@ -146,6 +148,7 @@ pub enum ClientResponse {
     NssAccount(Option<NssUser>),
     NssGroups(Vec<NssGroup>),
     NssGroup(Option<NssGroup>),
+    NssInitgroups(Option<Vec<u32>>),
 
     PamStatus(Option<bool>),
     PamAuthenticateStepResponse(PamAuthResponse),

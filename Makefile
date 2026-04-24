@@ -13,6 +13,7 @@ all: .packaging dockerfiles ## Auto-detect host distro and build packages just f
 	      22.04*) TARGET="ubuntu22.04" ;; \
 	      24.04*) TARGET="ubuntu24.04" ;; \
 	      25.10*) TARGET="ubuntu25.10" ;; \
+	      26.04*) TARGET="ubuntu26.04" ;; \
 	    esac ;; \
 	  linuxmint) \
 	    case "$$VER" in \
@@ -88,6 +89,9 @@ setup-hooks: ## Configure git to use project hooks (SELinux, docs-xml, Cargo.nix
 	@echo "  - Auto-regenerate NixOS options/man page when XML definitions change"
 	@echo "  - Run 'nix run nixpkgs#crate2nix -- generate' when Cargo.lock changes"
 
+crate2nix-generate: ## Regenerate Cargo.nix
+	nix run nixpkgs#crate2nix -- generate
+
 PLATFORM := $(shell grep '^ID=' /etc/os-release | awk -F= '{ print $$2 }' | tr -d '"')
 
 DOCKER := $(shell command -v podman || command -v docker)
@@ -116,7 +120,7 @@ nix: .packaging ## Build Nix packages into ./packaging/
 		$(NIX) --extra-experimental-features 'nix-command flakes' build ".#$$v" --out-link ./packaging/nix-$$v-result; \
 	done
 
-DEB_TARGETS := ubuntu22.04 ubuntu24.04 ubuntu25.10 debian12 debian13
+DEB_TARGETS := ubuntu22.04 ubuntu24.04 ubuntu25.10 ubuntu26.04 debian12 debian13
 RPM_TARGETS := rocky8 rocky9 rocky10 tumbleweed rawhide fedora42 fedora43 amzn2023
 SLE_TARGETS := sle15sp6 sle15sp7 sle16
 GENTOO_TARGETS := gentoo

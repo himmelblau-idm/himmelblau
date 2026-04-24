@@ -207,6 +207,7 @@ in
         Slice = "background.slice";
         TimeoutStopSec = 5;
         Restart = "on-failure";
+        WatchdogSec = "120s";
       };
     };
 
@@ -248,6 +249,7 @@ in
               "${cfg.daemonPackage}/bin/himmelblaud --config ${configFile}"
               + lib.optionalString cfg.debugFlag " -d";
             Restart = "on-failure";
+            WatchdogSec = "120s";
             DynamicUser = "yes";
             CacheDirectory = "himmelblaud"; # /var/cache/himmelblaud
             RuntimeDirectory = "himmelblaud"; # /var/run/himmelblaud
@@ -272,6 +274,7 @@ in
           serviceConfig = commonServiceConfig // {
             ExecStart = "${cfg.daemonPackage}/bin/himmelblaud_tasks";
             Restart = "on-failure";
+            WatchdogSec = "120s";
             User = "root";
             ProtectSystem = "strict";
             ReadWritePaths = "/home /var/run/himmelblaud /tmp /etc/krb5.conf.d /etc /var/lib /var/cache/nss-himmelblau";

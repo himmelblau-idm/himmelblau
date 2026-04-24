@@ -59,7 +59,6 @@ pub fn store_prts_to_fdstore(data: &[u8]) -> io::Result<()> {
     // SAFETY: as_raw_fd() borrows from the still-live `mfd`.
     let borrowed = unsafe { BorrowedFd::borrow_raw(mfd.as_raw_fd()) };
     sd_notify::notify_with_fds(
-        false,
         &[NotifyState::FdStore, NotifyState::FdName(PRT_FDNAME)],
         &[borrowed],
     )?;
@@ -78,7 +77,7 @@ pub fn store_prts_to_fdstore(data: &[u8]) -> io::Result<()> {
 /// `LISTEN_FDS` / `LISTEN_FDNAMES` protocol.  We look for our
 /// well-known name and read the contents.
 pub fn restore_prts_from_fdstore() -> io::Result<Option<Vec<u8>>> {
-    let fds = match sd_notify::listen_fds_with_names(true) {
+    let fds = match sd_notify::listen_fds_with_names() {
         Ok(fds) => fds,
         Err(e) => {
             // Not an error, may not be running under systemd or no fds passed.
@@ -120,7 +119,6 @@ fn read_fd_contents(fd: RawFd) -> io::Result<Vec<u8>> {
 /// Called before storing a new one to avoid accumulating stale entries.
 pub fn remove_prts_from_fdstore() {
     if let Err(e) = sd_notify::notify(
-        false,
         &[
             NotifyState::FdStoreRemove,
             NotifyState::FdName(PRT_FDNAME),
