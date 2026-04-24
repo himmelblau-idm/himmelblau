@@ -9,6 +9,7 @@
  */
 
 use libc::uid_t;
+use himmelblau::intune::NoncompliantRule;
 use libkrimes::proto::KerberosCredentials;
 use serde::{Deserialize, Serialize};
 
@@ -101,6 +102,7 @@ pub enum ClientRequest {
     ClearCache,
     OfflineBreakGlass(Option<u64>),
     Status,
+    ComplianceCheck,
 }
 
 impl ClientRequest {
@@ -135,6 +137,7 @@ impl ClientRequest {
             ClientRequest::ClearCache => "ClearCache".to_string(),
             ClientRequest::OfflineBreakGlass(ttl) => format!("OfflineBreakGlass({:?})", ttl),
             ClientRequest::Status => "Status".to_string(),
+            ClientRequest::ComplianceCheck => "ComplianceCheck".to_string(),
         }
     }
 }
@@ -152,6 +155,9 @@ pub enum ClientResponse {
 
     Ok,
     Error,
+    NotAuthenticated,
+    /// Non-compliant verdict with rule details passed through from Intune.
+    NonCompliant(Vec<NoncompliantRule>),
 }
 
 impl From<PamAuthResponse> for ClientResponse {
@@ -213,6 +219,8 @@ impl TaskRequest {
 pub enum TaskResponse {
     Success(i32),
     Error(String),
+    /// ApplyPolicy completed with a non-compliant verdict from Intune.
+    NonCompliant(Vec<NoncompliantRule>),
 }
 
 #[test]
