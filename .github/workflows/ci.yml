@@ -271,3 +271,55 @@ jobs:
       - name: Check for unused dependencies with udeps
         run: cargo +nightly udeps --all-targets
         continue-on-error: true
+
+  barely-used-deps:
+    name: Barely-Used Dependencies
+    runs-on: ubuntu-latest
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@6c3c2f2c1c457b00c10c4848d6f5491db3b629df # v2.18.0
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - uses: dtolnay/rust-toolchain@55d80eb3c5a4228eec5390a083c092095115c6f1 # stable
+
+      - name: Setup sccache
+        uses: mozilla-actions/sccache-action@7d986dd989559c6ecdb630a3fd2557667be217ad # v0.0.9
+        with:
+          version: "v0.10.0"
+
+      - name: Cache Cargo
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - name: Install ripgrep
+        run: cargo install ripgrep --locked
+
+      - name: Install cargo-bloat
+        run: cargo install cargo-bloat --locked
+
+      - name: Install cargo-diet
+        run: cargo install cargo-diet --locked
+
+      - name: Install Python dependencies
+        run: pip install -r .github/requirements.txt --require-hashes
+
+      - name: Analyze barely-used dependencies
+        run: python3 scripts/check_barely_used_deps.py --format=json --output=barely_used_report.json
+        continue-on-error: true
+
+      - name: Upload report
+        uses: actions/upload-artifact@6f51ac03b9356f520e9adb1b1b7802705f340c2b # v4.6.0
+        if: always()
+        with:
+          name: barely-used-deps-report
+          path: barely_used_report.json
