@@ -841,10 +841,6 @@ criteria = "safe-to-deploy"
 version = "0.6.0"
 criteria = "safe-to-deploy"
 
-[[exemptions.systemd-journal-logger]]
-version = "2.2.2"
-criteria = "safe-to-deploy"
-
 [[exemptions.tendril]]
 version = "0.4.3"
 criteria = "safe-to-deploy"

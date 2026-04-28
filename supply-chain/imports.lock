@@ -123,13 +123,6 @@ user-id = 6743
 user-login = "epage"
 user-name = "Ed Page"
 
-[[publisher.clap_complete]]
-version = "4.6.2"
-when = "2026-04-13"
-user-id = 6743
-user-login = "epage"
-user-name = "Ed Page"
-
 [[publisher.clap_derive]]
 version = "4.6.0"
 when = "2026-03-12"
