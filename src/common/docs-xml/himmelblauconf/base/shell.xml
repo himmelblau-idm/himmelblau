@@ -5,7 +5,7 @@
            rust_type="String"
            documented="true"
            domain_specific="true"
-           order="43">
+           order="48">
 <description>
 The default shell for users. This will be assigned when the user logs in.
 </description>

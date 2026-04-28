@@ -175,6 +175,8 @@ pub enum AuthRequest {
     Fido {
         fido_challenge: String,
         fido_allow_list: Vec<String>,
+        has_physical_security_key: bool,
+        has_cross_device: bool,
     },
     ChangePassword {
         /// Message to display to the user.
@@ -206,9 +208,13 @@ impl Into<PamAuthResponse> for AuthRequest {
             AuthRequest::Fido {
                 fido_challenge,
                 fido_allow_list,
+                has_physical_security_key,
+                has_cross_device,
             } => PamAuthResponse::Fido {
                 fido_challenge,
                 fido_allow_list,
+                has_physical_security_key,
+                has_cross_device,
             },
             AuthRequest::ChangePassword { msg } => PamAuthResponse::ChangePassword { msg },
             AuthRequest::InitDenied { msg } => PamAuthResponse::InitDenied { msg },

@@ -5,7 +5,7 @@
            rust_type="String"
            documented="true"
            domain_specific="false"
-           order="28">
+           order="32">
 <description>
 The message displayed to the user when FIDO/passkey authentication is initiated
 and they need to insert their security key.

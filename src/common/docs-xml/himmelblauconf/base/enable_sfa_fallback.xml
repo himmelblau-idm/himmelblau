@@ -5,7 +5,7 @@
                       rust_type="bool"
                       documented="true"
                       domain_specific="false"
-                      order="13"
+                      order="14"
                      >
 <description>
 Determines whether password-only (single-factor) authentication is permitted when MFA is unavailable.

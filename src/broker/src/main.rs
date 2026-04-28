@@ -94,8 +94,7 @@ impl SyslogLevel {
             Self::Info => "info",
             Self::Debug => "debug",
         };
-        EnvFilter::try_new(tracing_level)
-            .map_err(|e| format!("Failed to create filter: {}", e))
+        EnvFilter::try_new(tracing_level).map_err(|e| format!("Failed to create filter: {}", e))
     }
 }
 
@@ -379,9 +378,8 @@ async fn main() -> ExitCode {
         .unwrap_or_else(|_| EnvFilter::new("info,authenticator=warn"));
     let (filter_layer, reload_handle) = reload::Layer::new(initial_filter);
 
-    let initial_syslog_level = SyslogLevel::from_level_filter(
-        filter_layer.max_level_hint().unwrap_or(LevelFilter::INFO),
-    );
+    let initial_syslog_level =
+        SyslogLevel::from_level_filter(filter_layer.max_level_hint().unwrap_or(LevelFilter::INFO));
 
     tracing_subscriber::registry()
         .with(filter_layer)
@@ -395,11 +393,9 @@ async fn main() -> ExitCode {
     let config_handle = reload_handle.clone();
     let config_level = Arc::clone(&syslog_level);
     let log_callbacks = LogLevelCallbacks {
-        get: Arc::new(move || {
-            match get_level.lock() {
-                Ok(level) => level.to_string(),
-                Err(e) => e.into_inner().to_string(),
-            }
+        get: Arc::new(move || match get_level.lock() {
+            Ok(level) => level.to_string(),
+            Err(e) => e.into_inner().to_string(),
         }),
         set: Arc::new(move |level: &str| {
             let parsed = SyslogLevel::parse(level)?;
