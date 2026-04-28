@@ -1,0 +1,2 @@
+[exemptions]
+libhimmelblau = "External core dependency for Azure Entra ID integration"
