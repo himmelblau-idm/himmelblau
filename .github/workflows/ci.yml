@@ -240,6 +240,8 @@ jobs:
 
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
+      - uses: dtolnay/rust-toolchain@55d80eb3c5a4228eec5390a083c092095115c6f1 # nightly
+
       - name: Setup sccache
         uses: mozilla-actions/sccache-action@7d986dd989559c6ecdb630a3fd2557667be217ad # v0.0.9
         with:
@@ -259,6 +261,13 @@ jobs:
       - name: Install cargo-machete
         run: cargo install cargo-machete --locked
 
+      - name: Install cargo-udeps
+        run: cargo install cargo-udeps --locked
+
       - name: Check for unused dependencies
         run: cargo machete --with-metadata
+        continue-on-error: true
+
+      - name: Check for unused dependencies with udeps
+        run: cargo +nightly udeps --all-targets
         continue-on-error: true
