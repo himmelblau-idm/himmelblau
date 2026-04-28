@@ -3043,17 +3043,22 @@ impl HimmelblauProvider {
                 if account_id.to_string().to_lowercase() != spn.to_string().to_lowercase() {
                     /* Fixes bug#801: The authenticated user might have a mis-matched
                      * response because the domains are aliases of one another.
+                     * Both the local part AND the domains must match — otherwise a
+                     * different user authenticating in the same tenant would be
+                     * silently accepted (e.g. user2 unlocking user1's locked screen
+                     * via a passkey QR scan).
                      */
                     let mut cfg = self.config.write().await;
-                    let (_, domain1) = split_username(account_id).ok_or({
+                    let (local1, domain1) = split_username(account_id).ok_or_else(|| {
                         error!("Failed splitting account_id username");
                         IdpError::BadRequest
                     })?;
-                    let (_, domain2) = split_username(&spn).ok_or({
+                    let (local2, domain2) = split_username(&spn).ok_or_else(|| {
                         error!("Failed splitting spn username");
                         IdpError::BadRequest
                     })?;
-                    if !cfg.domains_are_aliases(domain1, domain2).await {
+                    let domains_match = cfg.domains_are_aliases(domain1, domain2).await;
+                    if local1.to_lowercase() != local2.to_lowercase() || !domains_match {
                         let msg =
                             format!("Authenticated user {} does not match requested user", uuid);
                         error!(msg);
