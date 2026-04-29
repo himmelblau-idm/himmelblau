@@ -1,2 +1,6 @@
 [exemptions]
 libhimmelblau = "External core dependency for Azure Entra ID integration"
+
+[shallow-exemptions]
+tokio = "Core async runtime, widely used despite few direct imports"
+serde = "Core serialization, used through derive macros"
