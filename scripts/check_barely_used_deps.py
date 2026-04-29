@@ -134,6 +134,12 @@ class DependencyAnalyzer:
         self.symbol_imports: Dict[str, List[SymbolImport]] = defaultdict(list)
         self.usage_breadth: Dict[str, UsageBreadth] = {}
 
+        # Duplicate version tracking (NEW)
+        self.package_versions: Dict[str, List[Dict]] = defaultdict(list)
+
+        # Replace directive tracking for managed duplicates
+        self.replace_directives: Dict[str, Dict[str, str]] = {}
+
     def check_tool_availability(self) -> bool:
         """Check if required tools are available, install if needed."""
         tools = {
@@ -200,6 +206,68 @@ class DependencyAnalyzer:
         except Exception as e:
             print(f"Error loading exemptions: {e}", file=sys.stderr)
 
+    def parse_replace_section(self) -> None:
+        """Parse [replace] section from root Cargo.toml to identify managed duplicates."""
+        print("Parsing [replace] section from Cargo.toml...", file=sys.stderr)
+
+        cargo_toml_path = self.workspace_root / "Cargo.toml"
+
+        if not cargo_toml_path.exists():
+            print(f"  Warning: Cargo.toml not found at {cargo_toml_path}", file=sys.stderr)
+            return
+
+        try:
+            with open(cargo_toml_path, "rb") as f:
+                data = tomli.load(f)
+                replace_section = data.get("replace", {})
+
+                if not replace_section:
+                    print("  No [replace] section found", file=sys.stderr)
+                    return
+
+                # Parse each replace directive
+                for key, value in replace_section.items():
+                    # Key format: "crate_name:version"
+                    if ':' not in key:
+                        print(f"  Warning: Invalid replace key format: {key}", file=sys.stderr)
+                        continue
+
+                    crate_name, version = key.rsplit(':', 1)
+                    override_path = value.get('path') if isinstance(value, dict) else None
+
+                    if not override_path:
+                        print(f"  Warning: No path specified for {key}", file=sys.stderr)
+                        continue
+
+                    # Store in nested dict
+                    if crate_name not in self.replace_directives:
+                        self.replace_directives[crate_name] = {}
+
+                    self.replace_directives[crate_name][version] = override_path
+
+                print(f"  Found {len(replace_section)} replace directives", file=sys.stderr)
+
+                # Validate that override paths exist
+                self._validate_override_paths()
+
+        except Exception as e:
+            print(f"  Error parsing [replace] section: {e}", file=sys.stderr)
+
+    def _validate_override_paths(self) -> None:
+        """Validate that override paths actually exist."""
+        missing_paths = []
+
+        for crate_name, versions in self.replace_directives.items():
+            for version, path in versions.items():
+                full_path = self.workspace_root / path
+                if not full_path.exists():
+                    missing_paths.append(f"{crate_name}:{version} -> {path}")
+
+        if missing_paths:
+            print("  Warning: Missing override paths:", file=sys.stderr)
+            for missing in missing_paths:
+                print(f"    {missing}", file=sys.stderr)
+
     def collect_all_deps(self) -> None:
         """Collect ALL dependencies in the tree using cargo metadata."""
         print("Building complete dependency graph...", file=sys.stderr)
@@ -226,6 +294,16 @@ class DependencyAnalyzer:
                     continue
 
                 self.all_deps.add(pkg_name)
+
+                # Extract version information for duplicate detection
+                # Package ID format: "registry+https://...#package_name@version"
+                version_match = re.search(r'#([^@]+)@([^"\s]+)', pkg_id)
+                if version_match:
+                    version = version_match.group(2)
+                    self.package_versions[pkg_name].append({
+                        "version": version,
+                        "pkg_id": pkg_id
+                    })
 
                 # Mark workspace-defined deps
                 if pkg_id in workspace_members:
@@ -876,6 +954,70 @@ class DependencyAnalyzer:
         print(f"  Detected {len(results)} shallow usage candidates", file=sys.stderr)
         return results
 
+    def _is_managed_duplicate(self, crate_name: str, version: str) -> bool:
+        """Check if a specific version is managed via [replace] directive."""
+        return (crate_name in self.replace_directives and
+                version in self.replace_directives[crate_name])
+
+    def detect_duplicate_versions(self) -> Tuple[List[Dict], List[Dict]]:
+        """Detect crates with multiple versions, categorized by management status.
+
+        Returns:
+            Tuple of (managed_duplicates, unmanaged_duplicates)
+        """
+        print("Detecting duplicate crate versions...", file=sys.stderr)
+
+        managed = []
+        unmanaged = []
+
+        for crate_name, version_list in self.package_versions.items():
+            if len(version_list) <= 1:
+                continue
+
+            # Sort versions for consistent display
+            versions_sorted = sorted(
+                version_list,
+                key=lambda x: x["version"],
+                reverse=True
+            )
+
+            # Check which versions are managed via [replace]
+            versions_info = [v["version"] for v in versions_sorted]
+            managed_versions = [
+                v for v in versions_info
+                if self._is_managed_duplicate(crate_name, v)
+            ]
+            unmanaged_versions = [
+                v for v in versions_info
+                if not self._is_managed_duplicate(crate_name, v)
+            ]
+
+            # Build duplicate entry
+            duplicate_entry = {
+                "crate": crate_name,
+                "version_count": len(versions_sorted),
+                "versions": versions_info,
+                "managed_versions": managed_versions,
+                "unmanaged_versions": unmanaged_versions,
+            }
+
+            # Categorize based on number of UNMANAGED versions
+            if len(unmanaged_versions) >= 2:
+                # 2+ unmanaged versions = problematic duplicate
+                unmanaged.append(duplicate_entry)
+            else:
+                # 0-1 unmanaged version with managed redirects = intentional deduplication
+                managed.append(duplicate_entry)
+
+        # Sort by number of versions (most duplicates first)
+        managed.sort(key=lambda x: x["version_count"], reverse=True)
+        unmanaged.sort(key=lambda x: x["version_count"], reverse=True)
+
+        print(f"  Detected {len(managed)} managed duplicate sets", file=sys.stderr)
+        print(f"  Detected {len(unmanaged)} unmanaged duplicate sets", file=sys.stderr)
+
+        return managed, unmanaged
+
     def _categorize_shallow_score(self, score: float) -> str:
         """Categorize shallow usage score."""
         if score >= 40:
@@ -989,7 +1131,7 @@ class DependencyAnalyzer:
             ],
         }
 
-    def generate_combined_report(self, high_cost: List[Dict], shallow: List[Dict], mode: str) -> str:
+    def generate_combined_report(self, high_cost: List[Dict], shallow: List[Dict], managed_duplicates: List[Dict], unmanaged_duplicates: List[Dict], mode: str) -> str:
         """Generate combined human-readable report."""
         lines = ["=" * 80, "Dependency Analysis Report", "=" * 80, ""]
 
@@ -1037,6 +1179,41 @@ class DependencyAnalyzer:
                 lines.append(f"  Effort: {repl['effort']}")
                 lines.append("")
 
+        if unmanaged_duplicates:
+            if mode == "both" and (high_cost or shallow):
+                lines.append("")
+            lines.append("### UNMANAGED DUPLICATE CRATE VERSIONS (ACTION REQUIRED)")
+            lines.append("")
+            lines.append("These crates have 2+ unmanaged versions (true duplicates):")
+            lines.append("")
+
+            for r in unmanaged_duplicates:
+                versions_str = ", ".join(r['versions'])
+                lines.append(f"- {r['crate']} ({r['version_count']} versions: {versions_str})")
+                if r['unmanaged_versions']:
+                    unmanaged_str = ", ".join(r['unmanaged_versions'])
+                    lines.append(f"  Unmanaged: {unmanaged_str}")
+
+            lines.append("")
+
+        if managed_duplicates:
+            lines.append("### MANAGED DUPLICATE CRATE VERSIONS (Intentional)")
+            lines.append("")
+            lines.append("These are deduplicated via [replace] to a single target version:")
+            lines.append("")
+
+            for r in managed_duplicates:
+                versions_str = ", ".join(r['versions'])
+                lines.append(f"- {r['crate']} ({r['version_count']} versions: {versions_str})")
+                if r['managed_versions']:
+                    managed_str = ", ".join(r['managed_versions'])
+                    lines.append(f"  Managed via [replace]: {managed_str}")
+                if r['unmanaged_versions']:
+                    target_str = ", ".join(r['unmanaged_versions'])
+                    lines.append(f"  Target version: {target_str}")
+
+            lines.append("")
+
         # Exempted
         if self.exemptions or self.shallow_exemptions:
             lines.append("")
@@ -1055,11 +1232,14 @@ class DependencyAnalyzer:
         if shallow:
             flagged = len([r for r in shallow if r["category"] in ("critical", "high", "medium")])
             lines.append(f"Shallow usage flagged: {flagged}")
+        if managed_duplicates or unmanaged_duplicates:
+            lines.append(f"Managed duplicate versions: {len(managed_duplicates)}")
+            lines.append(f"Unmanaged duplicate versions (ACTION REQUIRED): {len(unmanaged_duplicates)}")
         lines.append("=" * 80)
 
         return "\n".join(lines)
 
-    def generate_combined_json_report(self, high_cost: List[Dict], shallow: List[Dict], mode: str) -> Dict:
+    def generate_combined_json_report(self, high_cost: List[Dict], shallow: List[Dict], managed_duplicates: List[Dict], unmanaged_duplicates: List[Dict], mode: str) -> Dict:
         """Generate combined JSON report."""
         # Group by category
         high_cost_by_cat = defaultdict(list)
@@ -1099,6 +1279,19 @@ class DependencyAnalyzer:
                     "medium": shallow_by_cat.get("medium", []),
                     "low": shallow_by_cat.get("low", []),
                 },
+            }
+
+        if managed_duplicates or unmanaged_duplicates:
+            report["duplicate_versions"] = {
+                "managed": {
+                    "count": len(managed_duplicates),
+                    "crates": managed_duplicates,
+                },
+                "unmanaged": {
+                    "count": len(unmanaged_duplicates),
+                    "crates": unmanaged_duplicates,
+                },
+                "total_count": len(managed_duplicates) + len(unmanaged_duplicates),
             }
 
         report["exempted"] = {
@@ -1155,9 +1348,15 @@ def main():
     # Load exemptions
     analyzer.load_exemptions()
 
+    # Parse [replace] section for managed duplicates
+    analyzer.parse_replace_section()
+
     # Collect common data
     analyzer.collect_all_deps()
     analyzer.calculate_reverse_dep_counts()
+
+    # Detect duplicate versions
+    managed_duplicates, unmanaged_duplicates = analyzer.detect_duplicate_versions()
 
     # Run high-cost analysis
     high_cost_results = []
@@ -1178,7 +1377,7 @@ def main():
     # Generate report
     if args.format == "human":
         report = analyzer.generate_combined_report(
-            high_cost_results, shallow_results, args.mode
+            high_cost_results, shallow_results, managed_duplicates, unmanaged_duplicates, args.mode
         )
         if args.output:
             args.output.write_text(report)
@@ -1186,7 +1385,7 @@ def main():
             print(report)
     else:  # json
         report = analyzer.generate_combined_json_report(
-            high_cost_results, shallow_results, args.mode
+            high_cost_results, shallow_results, managed_duplicates, unmanaged_duplicates, args.mode
         )
         if args.output:
             with open(args.output, "w") as f:
