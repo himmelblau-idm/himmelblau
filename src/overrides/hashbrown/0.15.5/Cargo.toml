@@ -1,0 +1,17 @@
+[package]
+name = "hashbrown"
+version = "0.15.5"
+authors.workspace = true
+rust-version.workspace = true
+edition.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[features]
+default-hasher = ["hashbrown/default-hasher", "foldhash"]
+inline-more = ["hashbrown/inline-more"]
+
+[dependencies]
+hashbrown = { version = "^0.17" }
+foldhash = { version = "0.1.2", optional = true, default-features = false }

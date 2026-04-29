@@ -1,0 +1,18 @@
+[package]
+name = "getrandom"
+version = "0.2.16"
+authors.workspace = true
+rust-version.workspace = true
+edition.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[features]
+std = ["getrandom/std"]
+js = []
+
+[dependencies]
+getrandom = { version = "^0.4.1" }
+js-sys = { version = "^0.3", optional = true, default-features = false }
+wasm-bindgen = { version = "^0.2.62", optional = true, default-features = false }

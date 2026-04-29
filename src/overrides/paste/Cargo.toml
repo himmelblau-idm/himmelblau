@@ -1,0 +1,19 @@
+[package]
+name = "paste"
+version = "1.0.15"
+publish = false
+
+authors.workspace = true
+rust-version.workspace = true
+edition.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+# Note: This shim re-exports from pastey (a proc-macro crate).
+# It cannot be marked as proc-macro = true because proc-macro crates
+# cannot re-export items. The shim works by depending on pastey which
+# is a proc-macro, and re-exporting its macros via pub use.
+
+[dependencies]
+pastey = "0.2.1"

@@ -1,0 +1,12 @@
+[package]
+name = "thiserror"
+version = "1.0.69"
+authors.workspace = true
+rust-version.workspace = true
+edition.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[dependencies]
+thiserror = { version = "^2.0.16" }

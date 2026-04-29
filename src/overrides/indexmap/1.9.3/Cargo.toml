@@ -1,0 +1,18 @@
+[package]
+name = "indexmap"
+version = "1.9.3"
+authors.workspace = true
+rust-version.workspace = true
+edition.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[features]
+std = ["indexmap/std"]
+test_debug = ["indexmap/test_debug"]
+serde-1 = []
+
+[dependencies]
+indexmap = { version = "^2.9.0" }
+rayon = { version = "^1.4.1", optional = true, default-features = false }

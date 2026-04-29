@@ -28,13 +28,88 @@ url = "https://raw.githubusercontent.com/mozilla/supply-chain/main/audits.toml"
 [imports.zcash]
 url = "https://raw.githubusercontent.com/zcash/rust-ecosystem/main/supply-chain/audits.toml"
 
-[policy.kanidm_build_profiles]
+[policy."base64:0.21.7"]
+audit-as-crates-io = true
+
+[policy."const-oid:0.9.6"]
+audit-as-crates-io = true
+
+[policy."core-foundation:0.9.4"]
+audit-as-crates-io = true
+
+[policy."cpufeatures:0.2.17"]
+audit-as-crates-io = true
+
+[policy."foldhash:0.1.5"]
+audit-as-crates-io = true
+
+[policy."getrandom:0.2.16"]
+audit-as-crates-io = true
+
+[policy."getrandom:0.3.3"]
+audit-as-crates-io = true
+
+[policy."hashbrown:0.15.5"]
+audit-as-crates-io = true
+
+[policy."hashbrown:0.16.1"]
+audit-as-crates-io = true
+
+[policy."indexmap:1.9.3"]
+audit-as-crates-io = true
+
+[policy."linux-raw-sys:0.4.15"]
+audit-as-crates-io = true
+
+[policy."memoffset:0.8.0"]
 audit-as-crates-io = true
 
 [policy.paste]
 audit-as-crates-io = true
 
-[policy.sshkey-attest]
+[policy."pastey:0.1.1"]
+audit-as-crates-io = true
+
+[policy."reqwest:0.12.24"]
+audit-as-crates-io = true
+
+[policy."schemars:0.9.0"]
+audit-as-crates-io = true
+
+[policy."socket2:0.5.9"]
+audit-as-crates-io = true
+
+[policy."thiserror:1.0.69"]
+audit-as-crates-io = true
+
+[policy."toml_datetime:0.6.11"]
+audit-as-crates-io = true
+
+[policy."windows-link:0.1.1"]
+audit-as-crates-io = true
+
+[policy."windows-link:0.2.1"]
+audit-as-crates-io = true
+
+[policy."windows-strings:0.3.1"]
+audit-as-crates-io = true
+
+[policy."windows-strings:0.4.2"]
+audit-as-crates-io = true
+
+[policy."windows-sys:0.45.0"]
+audit-as-crates-io = true
+
+[policy."windows-sys:0.52.0"]
+audit-as-crates-io = true
+
+[policy."windows-sys:0.59.0"]
+audit-as-crates-io = true
+
+[policy."windows-targets:0.52.6"]
+audit-as-crates-io = true
+
+[policy."windows-targets:0.53.0"]
 audit-as-crates-io = true
 
 [[exemptions.aead]]
@@ -923,14 +998,6 @@ criteria = "safe-to-deploy"
 
 [[exemptions.web-time]]
 version = "1.1.0"
-criteria = "safe-to-deploy"
-
-[[exemptions.webpki-roots]]
-version = "0.26.11"
-criteria = "safe-to-deploy"
-
-[[exemptions.webpki-roots]]
-version = "1.0.1"
 criteria = "safe-to-deploy"
 
 [[exemptions.which]]
