@@ -19,7 +19,9 @@ import re
 import subprocess
 import sys
 from collections import defaultdict
+from dataclasses import dataclass
 from datetime import datetime
+from enum import Enum
 from pathlib import Path
 from typing import Dict, List, Optional, Set, Tuple
 
@@ -50,6 +52,53 @@ ALTERNATIVES = {
     "log": "Consider tracing (if not already using) or manual logging",
 }
 
+# Standard library replacements for shallow usage analysis
+STDLIB_REPLACEMENTS = {
+    "lazy_static": ("std::sync::OnceLock or LazyLock", "Rust 1.70+"),
+    "once_cell": ("std::sync::OnceLock", "Rust 1.70+"),
+}
+
+
+class ReplacementStrategy(Enum):
+    """Replacement strategy for barely-used dependencies."""
+    STDLIB = "stdlib"
+    VENDOR = "vendor"
+    WRAPPER = "wrapper"
+    ELIMINATE = "eliminate"
+    KEEP = "keep"
+    UNKNOWN = "unknown"
+
+
+@dataclass
+class SymbolImport:
+    """Represents a single symbol import from a dependency."""
+    crate_name: str
+    symbol: str
+    import_type: str  # "macro", "function", "type", "unknown"
+    file_path: str
+    line_number: int
+    is_glob: bool
+
+
+@dataclass
+class UsageBreadth:
+    """Metrics for how much of a dependency's API we use."""
+    unique_symbols: Set[str]
+    import_sites: int
+    usage_sites: int
+    glob_imports: int
+
+
+@dataclass
+class ReplacementSuggestion:
+    """Suggestion for replacing a dependency."""
+    strategy: ReplacementStrategy
+    confidence: str
+    rationale: str
+    alternative: Optional[str]
+    effort: str
+    symbols_to_replace: List[str]
+
 
 class DependencyAnalyzer:
     """Analyzes Rust workspace dependencies for barely-used crates."""
@@ -57,6 +106,7 @@ class DependencyAnalyzer:
     def __init__(self, workspace_root: Path):
         self.workspace_root = workspace_root
         self.exemptions: Dict[str, str] = {}
+        self.shallow_exemptions: Dict[str, str] = {}
 
         # All dependencies in the tree (not just workspace-defined)
         self.all_deps: Set[str] = set()
@@ -79,6 +129,10 @@ class DependencyAnalyzer:
         # Centrality metrics
         self.reverse_dep_counts: Dict[str, int] = {}  # How many crates depend on this
         self.depth_in_tree: Dict[str, int] = {}  # How deep in dependency chain
+
+        # Shallow usage analysis (NEW)
+        self.symbol_imports: Dict[str, List[SymbolImport]] = defaultdict(list)
+        self.usage_breadth: Dict[str, UsageBreadth] = {}
 
     def check_tool_availability(self) -> bool:
         """Check if required tools are available, install if needed."""
@@ -141,7 +195,8 @@ class DependencyAnalyzer:
             with open(exemption_file, "rb") as f:
                 data = tomli.load(f)
                 self.exemptions = data.get("exemptions", {})
-                print(f"Loaded {len(self.exemptions)} exemptions", file=sys.stderr)
+                self.shallow_exemptions = data.get("shallow-exemptions", {})
+                print(f"Loaded {len(self.exemptions)} exemptions, {len(self.shallow_exemptions)} shallow exemptions", file=sys.stderr)
         except Exception as e:
             print(f"Error loading exemptions: {e}", file=sys.stderr)
 
@@ -383,6 +438,299 @@ class DependencyAnalyzer:
             # Features analysis is optional
             pass
 
+    def analyze_symbol_imports(self) -> None:
+        """Analyze which specific symbols are imported from each dependency."""
+        print("Analyzing symbol-level imports...", file=sys.stderr)
+
+        patterns = {
+            # use foo::{Bar, Baz, qux};
+            'grouped': r'^use\s+(\w+)::\{([^}]+)\}',
+
+            # use foo::Bar;
+            'type': r'^use\s+(\w+)::([A-Z]\w+)',
+
+            # use foo::bar;
+            'function': r'^use\s+(\w+)::([a-z_]\w+)',
+
+            # use foo::*;
+            'glob': r'^use\s+(\w+)::\*',
+
+            # use foo::bar as baz;
+            'renamed': r'^use\s+(\w+)::(\w+)\s+as\s+',
+        }
+
+        for pattern_name, pattern in patterns.items():
+            try:
+                result = subprocess.run(
+                    ["rg", pattern, "--only-matching", "--with-filename",
+                     "--line-number", "src/"],
+                    cwd=self.workspace_root,
+                    capture_output=True,
+                    text=True,
+                )
+
+                if result.returncode in (0, 1):  # 0 = found, 1 = not found
+                    self._parse_symbol_imports(result.stdout, pattern_name)
+
+            except subprocess.CalledProcessError as e:
+                print(f"Warning: pattern '{pattern_name}' failed: {e}", file=sys.stderr)
+
+        print(f"  Found {sum(len(v) for v in self.symbol_imports.values())} symbol imports", file=sys.stderr)
+
+    def _parse_symbol_imports(self, rg_output: str, pattern_type: str) -> None:
+        """Parse ripgrep output to extract symbol imports."""
+        for line in rg_output.split("\n"):
+            if not line.strip():
+                continue
+
+            # Parse: "src/path/file.rs:123:use foo::Bar;"
+            match = re.match(r'([^:]+):(\d+):(.*)', line)
+            if not match:
+                continue
+
+            file_path, line_num, import_stmt = match.groups()
+
+            if pattern_type == 'grouped':
+                # Parse: use foo::{Bar, Baz, qux};
+                crate_match = re.search(r'use\s+(\w+)::\{([^}]+)\}', import_stmt)
+                if crate_match:
+                    crate_name = crate_match.group(1)
+                    symbols_str = crate_match.group(2)
+                    symbols = [s.strip().split(' as ')[0] for s in symbols_str.split(',')]
+
+                    for symbol in symbols:
+                        self.symbol_imports[crate_name].append(SymbolImport(
+                            crate_name=crate_name,
+                            symbol=symbol,
+                            import_type=self._infer_symbol_type(symbol),
+                            file_path=file_path,
+                            line_number=int(line_num),
+                            is_glob=False,
+                        ))
+
+            elif pattern_type == 'glob':
+                # Parse: use foo::*;
+                crate_match = re.search(r'use\s+(\w+)::\*', import_stmt)
+                if crate_match:
+                    crate_name = crate_match.group(1)
+                    self.symbol_imports[crate_name].append(SymbolImport(
+                        crate_name=crate_name,
+                        symbol="*",
+                        import_type="glob",
+                        file_path=file_path,
+                        line_number=int(line_num),
+                        is_glob=True,
+                    ))
+
+            elif pattern_type in ('type', 'function', 'renamed'):
+                # Parse: use foo::Bar; or use foo::bar; or use foo::bar as baz;
+                crate_match = re.search(r'use\s+(\w+)::(\w+)', import_stmt)
+                if crate_match:
+                    crate_name = crate_match.group(1)
+                    symbol = crate_match.group(2)
+                    self.symbol_imports[crate_name].append(SymbolImport(
+                        crate_name=crate_name,
+                        symbol=symbol,
+                        import_type=self._infer_symbol_type(symbol),
+                        file_path=file_path,
+                        line_number=int(line_num),
+                        is_glob=False,
+                    ))
+
+    def _infer_symbol_type(self, symbol: str) -> str:
+        """Infer symbol type from naming convention."""
+        if symbol.endswith('!'):
+            return "macro"
+        elif symbol[0].isupper():
+            return "type"
+        elif symbol[0].islower():
+            return "function"
+        else:
+            return "unknown"
+
+    def calculate_usage_breadth(self) -> None:
+        """Calculate how much of each dependency's API we actually use."""
+        print("Calculating usage breadth metrics...", file=sys.stderr)
+
+        for dep_name in self.workspace_deps:
+            symbol_list = self.symbol_imports.get(dep_name, [])
+
+            # Unique symbols (exclude globs)
+            unique_symbols = {s.symbol for s in symbol_list if not s.is_glob}
+
+            # Import sites (unique file:line pairs)
+            import_sites = len({(s.file_path, s.line_number) for s in symbol_list})
+
+            # Usage sites (count actual usage in code)
+            usage_sites = self._count_usage_sites(dep_name, unique_symbols)
+
+            # Glob imports (penalty indicator)
+            glob_imports = sum(1 for s in symbol_list if s.is_glob)
+
+            self.usage_breadth[dep_name] = UsageBreadth(
+                unique_symbols=unique_symbols,
+                import_sites=import_sites,
+                usage_sites=usage_sites,
+                glob_imports=glob_imports,
+            )
+
+        print(f"  Calculated breadth for {len(self.usage_breadth)} dependencies", file=sys.stderr)
+
+    def _count_usage_sites(self, crate_name: str, symbols: Set[str]) -> int:
+        """Count how many times symbols are actually used in code."""
+        if not symbols or '*' in symbols:
+            return 0
+
+        total_count = 0
+        crate_patterns = [crate_name, crate_name.replace("-", "_")]
+
+        for symbol in symbols:
+            # Search for direct symbol usage
+            for pattern in crate_patterns:
+                try:
+                    result = subprocess.run(
+                        ["rg", f"{pattern}::{symbol}", "--count", "src/"],
+                        cwd=self.workspace_root,
+                        capture_output=True,
+                        text=True,
+                    )
+
+                    if result.returncode == 0:
+                        for line in result.stdout.split("\n"):
+                            if ":" in line:
+                                try:
+                                    total_count += int(line.split(":")[-1].strip())
+                                except ValueError:
+                                    # Skip malformed lines from rg --count output
+                                    pass
+                except subprocess.CalledProcessError:
+                    # Pattern not found or grep failed - continue with best-effort counting
+                    pass
+
+            # Also count direct symbol usage (for imported symbols)
+            try:
+                result = subprocess.run(
+                    ["rg", rf"\b{symbol}\b", "--count", "src/"],
+                    cwd=self.workspace_root,
+                    capture_output=True,
+                    text=True,
+                )
+
+                if result.returncode == 0:
+                    for line in result.stdout.split("\n"):
+                        if ":" in line:
+                            try:
+                                total_count += int(line.split(":")[-1].strip())
+                            except ValueError:
+                                # Skip malformed lines from rg --count output
+                                pass
+            except subprocess.CalledProcessError:
+                # Pattern not found or grep failed - continue with best-effort counting
+                pass
+
+        return total_count
+
+    def calculate_shallow_usage_score(self, breadth: UsageBreadth) -> float:
+        """Calculate shallow usage score (higher = shallower usage = better candidate)."""
+        unique_count = len(breadth.unique_symbols)
+
+        # Base score (inverse of unique symbols)
+        if unique_count == 0:
+            return 100.0
+        elif unique_count == 1:
+            base_score = 50.0  # CRITICAL: single symbol
+        elif unique_count <= 3:
+            base_score = 30.0  # HIGH: vendorable
+        elif unique_count <= 5:
+            base_score = 15.0  # MEDIUM
+        elif unique_count <= 10:
+            base_score = 5.0   # LOW
+        else:
+            base_score = 1.0   # Keep (too integrated)
+
+        # Penalties
+        glob_penalty = breadth.glob_imports * 10  # Wildcard = broad usage
+        usage_penalty = min(breadth.usage_sites / 10, 20)  # Many uses = integrated
+
+        return max(base_score - glob_penalty - usage_penalty, 0)
+
+    def suggest_replacement_strategy(
+        self,
+        dep_name: str,
+        breadth: UsageBreadth,
+        shallow_score: float
+    ) -> ReplacementSuggestion:
+        """Determine best replacement strategy for a dependency."""
+        unique_count = len(breadth.unique_symbols)
+        symbols = breadth.unique_symbols
+
+        # Rule 1: Glob imports → keep (too embedded)
+        if breadth.glob_imports > 0:
+            return ReplacementSuggestion(
+                strategy=ReplacementStrategy.KEEP,
+                confidence="high",
+                rationale=f"Uses wildcard imports ({breadth.glob_imports}), indicating broad API usage",
+                alternative=None,
+                effort="n/a",
+                symbols_to_replace=[],
+            )
+
+        # Rule 2: Standard library alternatives
+        if dep_name in STDLIB_REPLACEMENTS:
+            alt, version = STDLIB_REPLACEMENTS[dep_name]
+            return ReplacementSuggestion(
+                strategy=ReplacementStrategy.STDLIB,
+                confidence="high",
+                rationale=f"Standard library provides {alt} (since {version})",
+                alternative=alt,
+                effort="low",
+                symbols_to_replace=list(symbols),
+            )
+
+        # Rule 3: Single function/type → vendor
+        if unique_count == 1:
+            symbol = list(symbols)[0]
+            return ReplacementSuggestion(
+                strategy=ReplacementStrategy.VENDOR,
+                confidence="medium",
+                rationale=f"Only uses single symbol '{symbol}', likely vendorable",
+                alternative=f"Inline implementation of {symbol}",
+                effort="low",
+                symbols_to_replace=[symbol],
+            )
+
+        # Rule 4: 2-3 simple functions → vendor
+        if unique_count <= 3 and all(s[0].islower() for s in symbols if s):
+            return ReplacementSuggestion(
+                strategy=ReplacementStrategy.VENDOR,
+                confidence="medium",
+                rationale=f"Uses {unique_count} functions: {', '.join(sorted(symbols))}",
+                alternative=f"Vendor {unique_count} functions inline",
+                effort="low",
+                symbols_to_replace=list(symbols),
+            )
+
+        # Rule 5: High usage sites despite few symbols → keep
+        if breadth.usage_sites > 20:
+            return ReplacementSuggestion(
+                strategy=ReplacementStrategy.KEEP,
+                confidence="medium",
+                rationale=f"Used in {breadth.usage_sites} locations, likely well-integrated",
+                alternative=None,
+                effort="n/a",
+                symbols_to_replace=[],
+            )
+
+        # Default: needs analysis
+        return ReplacementSuggestion(
+            strategy=ReplacementStrategy.UNKNOWN,
+            confidence="low",
+            rationale="Mixed usage pattern requires manual analysis",
+            alternative="Review usage to determine best approach",
+            effort="unknown",
+            symbols_to_replace=list(symbols),
+        )
+
     def calculate_scores(self) -> List[Dict]:
         """Calculate barely-used scores for all dependencies."""
         print("Calculating scores with full dependency graph analysis...", file=sys.stderr)
@@ -470,6 +818,74 @@ class DependencyAnalyzer:
 
         print(f"  Calculated scores for {len(results)} dependencies", file=sys.stderr)
         return results
+
+    def detect_shallow_usage(self) -> List[Dict]:
+        """Detect dependencies with shallow usage patterns."""
+        print("Detecting shallow usage patterns...", file=sys.stderr)
+
+        results = []
+
+        for dep_name in self.workspace_deps:
+            # Skip if exempted (check both exemption types)
+            if dep_name in self.exemptions or dep_name in self.shallow_exemptions:
+                continue
+
+            # Skip build dependencies
+            if self.dependency_kinds.get(dep_name) == "build":
+                continue
+
+            breadth = self.usage_breadth.get(dep_name)
+            if not breadth:
+                continue
+
+            shallow_score = self.calculate_shallow_usage_score(breadth)
+
+            # Only flag if score is high enough (threshold: 10)
+            if shallow_score < 10:
+                continue
+
+            suggestion = self.suggest_replacement_strategy(dep_name, breadth, shallow_score)
+
+            # Skip "keep" suggestions
+            if suggestion.strategy == ReplacementStrategy.KEEP:
+                continue
+
+            results.append({
+                "crate": dep_name,
+                "shallow_score": round(shallow_score, 1),
+                "category": self._categorize_shallow_score(shallow_score),
+                "symbols": {
+                    "unique": sorted(list(breadth.unique_symbols)),
+                    "count": len(breadth.unique_symbols),
+                    "import_sites": breadth.import_sites,
+                    "usage_sites": breadth.usage_sites,
+                    "glob_imports": breadth.glob_imports,
+                },
+                "replacement": {
+                    "strategy": suggestion.strategy.value,
+                    "confidence": suggestion.confidence,
+                    "rationale": suggestion.rationale,
+                    "alternative": suggestion.alternative,
+                    "effort": suggestion.effort,
+                },
+            })
+
+        # Sort by score (descending)
+        results.sort(key=lambda x: x["shallow_score"], reverse=True)
+
+        print(f"  Detected {len(results)} shallow usage candidates", file=sys.stderr)
+        return results
+
+    def _categorize_shallow_score(self, score: float) -> str:
+        """Categorize shallow usage score."""
+        if score >= 40:
+            return "critical"
+        elif score >= 25:
+            return "high"
+        elif score >= 15:
+            return "medium"
+        else:
+            return "low"
 
     def generate_human_report(self, results: List[Dict]) -> str:
         """Generate human-readable report."""
@@ -573,10 +989,135 @@ class DependencyAnalyzer:
             ],
         }
 
+    def generate_combined_report(self, high_cost: List[Dict], shallow: List[Dict], mode: str) -> str:
+        """Generate combined human-readable report."""
+        lines = ["=" * 80, "Dependency Analysis Report", "=" * 80, ""]
+
+        if mode in ("high-cost", "both") and high_cost:
+            lines.append("### HIGH-COST, LOW-USAGE DEPENDENCIES")
+            lines.append("")
+            lines.append("These dependencies pull in significant transitive baggage:")
+            lines.append("")
+
+            for r in high_cost:
+                if r["category"] not in ("critical", "high"):
+                    continue
+                lines.append(f"- {r['crate']} (score: {r['score']})")
+                lines.append(f"  Usage: {r['usage']['workspace_imports']} imports, {r['usage']['reverse_deps']} reverse deps")
+                lines.append(f"  Cost: {r['cost']['transitive_deps']} transitive deps, {r['cost']['binary_kb']} KB")
+                lines.append(f"  Suggestion: {r['suggestion']}")
+                lines.append("")
+
+        if mode in ("shallow-usage", "both") and shallow:
+            if mode == "both":
+                lines.append("")
+            lines.append("### SHALLOW USAGE DEPENDENCIES")
+            lines.append("")
+            lines.append("These dependencies are used minimally and could be replaced:")
+            lines.append("")
+
+            for r in shallow:
+                if r["category"] not in ("critical", "high", "medium"):
+                    continue
+
+                lines.append(f"- {r['crate']} (shallow score: {r['shallow_score']})")
+
+                symbols = r['symbols']
+                symbol_list = ', '.join(symbols['unique'][:5])
+                if len(symbols['unique']) > 5:
+                    symbol_list += f", ... ({symbols['count']} total)"
+                lines.append(f"  Symbols: {symbol_list}")
+                lines.append(f"  Usage: {symbols['import_sites']} import sites, {symbols['usage_sites']} usage sites")
+
+                repl = r['replacement']
+                lines.append(f"  Strategy: {repl['strategy']} ({repl['confidence']} confidence)")
+                lines.append(f"  Rationale: {repl['rationale']}")
+                if repl['alternative']:
+                    lines.append(f"  Alternative: {repl['alternative']}")
+                lines.append(f"  Effort: {repl['effort']}")
+                lines.append("")
+
+        # Exempted
+        if self.exemptions or self.shallow_exemptions:
+            lines.append("")
+            lines.append("EXEMPTED:")
+            for crate, reason in sorted(self.exemptions.items()):
+                lines.append(f"  - {crate}: {reason}")
+            for crate, reason in sorted(self.shallow_exemptions.items()):
+                lines.append(f"  - {crate} (shallow): {reason}")
+            lines.append("")
+
+        lines.append("=" * 80)
+        lines.append(f"Mode: {mode}")
+        if high_cost:
+            flagged = len([r for r in high_cost if r["category"] in ("critical", "high")])
+            lines.append(f"High-cost flagged: {flagged}")
+        if shallow:
+            flagged = len([r for r in shallow if r["category"] in ("critical", "high", "medium")])
+            lines.append(f"Shallow usage flagged: {flagged}")
+        lines.append("=" * 80)
+
+        return "\n".join(lines)
+
+    def generate_combined_json_report(self, high_cost: List[Dict], shallow: List[Dict], mode: str) -> Dict:
+        """Generate combined JSON report."""
+        # Group by category
+        high_cost_by_cat = defaultdict(list)
+        for result in high_cost:
+            high_cost_by_cat[result["category"]].append(result)
+
+        shallow_by_cat = defaultdict(list)
+        for result in shallow:
+            shallow_by_cat[result["category"]].append(result)
+
+        report = {
+            "timestamp": datetime.utcnow().isoformat() + "Z",
+            "mode": mode,
+            "total_deps_in_tree": len(self.all_deps),
+            "workspace_defined_deps": len(self.workspace_deps),
+        }
+
+        if mode in ("high-cost", "both"):
+            report["high_cost"] = {
+                "analyzed": len(high_cost),
+                "flagged_count": len([r for r in high_cost if r["category"] in ("critical", "high", "medium")]),
+                "categories": {
+                    "critical": high_cost_by_cat.get("critical", []),
+                    "high": high_cost_by_cat.get("high", []),
+                    "medium": high_cost_by_cat.get("medium", []),
+                    "low": high_cost_by_cat.get("low", []),
+                },
+            }
+
+        if mode in ("shallow-usage", "both"):
+            report["shallow_usage"] = {
+                "analyzed": len(shallow),
+                "flagged_count": len([r for r in shallow if r["category"] in ("critical", "high", "medium")]),
+                "categories": {
+                    "critical": shallow_by_cat.get("critical", []),
+                    "high": shallow_by_cat.get("high", []),
+                    "medium": shallow_by_cat.get("medium", []),
+                    "low": shallow_by_cat.get("low", []),
+                },
+            }
+
+        report["exempted"] = {
+            "high_cost": [
+                {"crate": crate, "reason": reason}
+                for crate, reason in sorted(self.exemptions.items())
+            ],
+            "shallow_usage": [
+                {"crate": crate, "reason": reason}
+                for crate, reason in sorted(self.shallow_exemptions.items())
+            ],
+        }
+
+        return report
+
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Detect barely-used Rust dependencies with high transitive cost"
+        description="Detect barely-used Rust dependencies"
     )
     parser.add_argument(
         "--format",
@@ -595,6 +1136,12 @@ def main():
         default=Path.cwd(),
         help="Workspace root directory (default: current directory)",
     )
+    parser.add_argument(
+        "--mode",
+        choices=["high-cost", "shallow-usage", "both"],
+        default="both",
+        help="Analysis mode: high-cost (original), shallow-usage (new), or both (default)",
+    )
 
     args = parser.parse_args()
 
@@ -608,26 +1155,39 @@ def main():
     # Load exemptions
     analyzer.load_exemptions()
 
-    # Collect data - now analyzing the FULL dependency tree
+    # Collect common data
     analyzer.collect_all_deps()
     analyzer.calculate_reverse_dep_counts()
-    analyzer.collect_transitive_deps()
-    analyzer.collect_binary_sizes()
-    analyzer.analyze_source_imports()
-    analyzer.collect_feature_counts()
 
-    # Calculate scores with full graph analysis
-    results = analyzer.calculate_scores()
+    # Run high-cost analysis
+    high_cost_results = []
+    if args.mode in ("high-cost", "both"):
+        analyzer.collect_transitive_deps()
+        analyzer.collect_binary_sizes()
+        analyzer.analyze_source_imports()
+        analyzer.collect_feature_counts()
+        high_cost_results = analyzer.calculate_scores()
+
+    # Run shallow-usage analysis
+    shallow_results = []
+    if args.mode in ("shallow-usage", "both"):
+        analyzer.analyze_symbol_imports()
+        analyzer.calculate_usage_breadth()
+        shallow_results = analyzer.detect_shallow_usage()
 
     # Generate report
     if args.format == "human":
-        report = analyzer.generate_human_report(results)
+        report = analyzer.generate_combined_report(
+            high_cost_results, shallow_results, args.mode
+        )
         if args.output:
             args.output.write_text(report)
         else:
             print(report)
     else:  # json
-        report = analyzer.generate_json_report(results)
+        report = analyzer.generate_combined_json_report(
+            high_cost_results, shallow_results, args.mode
+        )
         if args.output:
             with open(args.output, "w") as f:
                 json.dump(report, f, indent=2)
@@ -635,7 +1195,12 @@ def main():
             print(json.dumps(report, indent=2))
 
     # Exit with code indicating if issues were found
-    flagged = len([r for r in results if r["category"] in ("critical", "high")])
+    flagged = 0
+    if high_cost_results:
+        flagged += len([r for r in high_cost_results if r["category"] in ("critical", "high")])
+    if shallow_results:
+        flagged += len([r for r in shallow_results if r["category"] in ("critical", "high")])
+
     sys.exit(0 if flagged == 0 else 1)
 
 

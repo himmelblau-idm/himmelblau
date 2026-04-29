@@ -314,7 +314,7 @@ jobs:
         run: pip install -r .github/requirements.txt --require-hashes
 
       - name: Analyze barely-used dependencies
-        run: python3 scripts/check_barely_used_deps.py --format=json --output=barely_used_report.json
+        run: python3 scripts/check_barely_used_deps.py --format=json --output=barely_used_report.json --mode=both
         continue-on-error: true
 
       - name: Upload report
