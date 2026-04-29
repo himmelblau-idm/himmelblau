@@ -1,0 +1,16 @@
+[package]
+name = "getrandom"
+version = "0.3.3"
+authors.workspace = true
+rust-version.workspace = true
+edition.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[features]
+std = ["getrandom/std"]
+wasm_js = ["getrandom/wasm_js"]
+
+[dependencies]
+getrandom = { version = "^0.4.1" }

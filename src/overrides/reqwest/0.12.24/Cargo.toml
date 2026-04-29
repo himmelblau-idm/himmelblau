@@ -1,0 +1,28 @@
+[package]
+name = "reqwest"
+version = "0.12.24"
+authors.workspace = true
+rust-version.workspace = true
+edition.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[features]
+__rustls = ["reqwest/__rustls"]
+__tls = ["reqwest/__tls"]
+blocking = ["reqwest/blocking"]
+charset = ["reqwest/charset"]
+cookies = ["reqwest/cookies", "cookie_store"]
+default = ["reqwest/default"]
+hickory-dns = ["reqwest/hickory-dns"]
+multipart = ["reqwest/multipart"]
+socks = ["reqwest/socks"]
+stream = ["reqwest/stream"]
+system-proxy = ["reqwest/system-proxy"]
+json = ["reqwest/json"]
+rustls-tls = ["__rustls"]
+
+[dependencies]
+reqwest = { version = "^0.13.1" }
+cookie_store = { version = "^0.21.0", optional = true, default-features = false }

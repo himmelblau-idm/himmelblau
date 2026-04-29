@@ -16,22 +16,40 @@ members = [
 	"src/selinux",
 	"src/o365",
 	"fuzz",
-	"src/fxhash",
-	"src/serde_cbor",
-	"src/paste",
-	"src/sshkey-attest",
-	"src/kanidm_build_profiles",
-	"src/picky-krb",
 ]
 resolver = "2"
 
-[patch.crates-io]
-fxhash = { path = "src/fxhash" }
-serde_cbor = { path = "src/serde_cbor" }
-paste = { path = "src/paste" }
-sshkey-attest = { path = "src/sshkey-attest" }
-kanidm_build_profiles = { path = "src/kanidm_build_profiles" }
-picky-krb = { path = "src/picky-krb" }
+[replace]
+"base64:0.21.7" = { path = "src/overrides/base64/0.21.7" }
+"const-oid:0.9.6" = { path = "src/overrides/const-oid/0.9.6" }
+"core-foundation:0.9.4" = { path = "src/overrides/core-foundation/0.9.4" }
+"cpufeatures:0.2.17" = { path = "src/overrides/cpufeatures/0.2.17" }
+"foldhash:0.1.5" = { path = "src/overrides/foldhash/0.1.5" }
+"getrandom:0.2.16" = { path = "src/overrides/getrandom/0.2.16" }
+"getrandom:0.3.3" = { path = "src/overrides/getrandom/0.3.3" }
+"hashbrown:0.15.5" = { path = "src/overrides/hashbrown/0.15.5" }
+"hashbrown:0.16.1" = { path = "src/overrides/hashbrown/0.16.1" }
+"indexmap:1.9.3" = { path = "src/overrides/indexmap/1.9.3" }
+"linux-raw-sys:0.4.15" = { path = "src/overrides/linux-raw-sys/0.4.15" }
+"memoffset:0.8.0" = { path = "src/overrides/memoffset/0.8.0" }
+"paste:1.0.15" = { path = "src/overrides/paste" }
+"pastey:0.1.1" = { path = "src/overrides/pastey/0.1.1" }
+"picky-krb:0.12.0" = { path = "src/overrides/picky-krb" }
+"reqwest:0.12.24" = { path = "src/overrides/reqwest/0.12.24" }
+"schemars:0.9.0" = { path = "src/overrides/schemars/0.9.0" }
+"serde_cbor:0.11.2" = { path = "src/overrides/serde_cbor" }
+"socket2:0.5.9" = { path = "src/overrides/socket2/0.5.9" }
+"thiserror:1.0.69" = { path = "src/overrides/thiserror/1.0.69" }
+"toml_datetime:0.6.11" = { path = "src/overrides/toml_datetime/0.6.11" }
+"windows-link:0.1.1" = { path = "src/overrides/windows-link/0.1.1" }
+"windows-link:0.2.1" = { path = "src/overrides/windows-link/0.2.1" }
+"windows-strings:0.3.1" = { path = "src/overrides/windows-strings/0.3.1" }
+"windows-strings:0.4.2" = { path = "src/overrides/windows-strings/0.4.2" }
+"windows-sys:0.45.0" = { path = "src/overrides/windows-sys/0.45.0" }
+"windows-sys:0.52.0" = { path = "src/overrides/windows-sys/0.52.0" }
+"windows-sys:0.59.0" = { path = "src/overrides/windows-sys/0.59.0" }
+"windows-targets:0.52.6" = { path = "src/overrides/windows-targets/0.52.6" }
+"windows-targets:0.53.0" = { path = "src/overrides/windows-targets/0.53.0" }
 
 [workspace.package]
 version = "4.0.0"

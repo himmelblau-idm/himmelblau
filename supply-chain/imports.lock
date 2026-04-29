@@ -1,10 +1,6 @@
 
 # cargo-vet imports lock
 
-[[unpublished.sshkey-attest]]
-version = "0.5.999"
-audited_as = "0.5.4"
-
 [[publisher.aho-corasick]]
 version = "1.1.3"
 when = "2024-03-20"
@@ -383,13 +379,6 @@ user-id = 359
 user-login = "seanmonstar"
 user-name = "Sean McArthur"
 
-[[publisher.hyper-tls]]
-version = "0.6.0"
-when = "2023-11-27"
-user-id = 359
-user-login = "seanmonstar"
-user-name = "Sean McArthur"
-
 [[publisher.hyper-util]]
 version = "0.1.12"
 when = "2025-05-19"
@@ -434,13 +423,6 @@ user-name = "Alex Crichton"
 [[publisher.kanidm-hsm-crypto]]
 version = "0.3.5"
 when = "2025-11-21"
-user-id = 31100
-user-login = "Firstyear"
-user-name = "Firstyear"
-
-[[publisher.kanidm_build_profiles]]
-version = "1.8.1"
-when = "2025-11-19"
 user-id = 31100
 user-login = "Firstyear"
 user-name = "Firstyear"
@@ -561,13 +543,6 @@ when = "2025-05-22"
 user-id = 6743
 user-login = "epage"
 user-name = "Ed Page"
-
-[[publisher.openssl-probe]]
-version = "0.1.6"
-when = "2025-01-23"
-user-id = 1
-user-login = "alexcrichton"
-user-name = "Alex Crichton"
 
 [[publisher.ordered-float]]
 version = "2.10.1"
@@ -849,13 +824,6 @@ user-id = 6025
 user-login = "Thomasdezeeuw"
 user-name = "Thomas de Zeeuw"
 
-[[publisher.sshkey-attest]]
-version = "0.5.4"
-when = "2025-12-11"
-user-id = 31100
-user-login = "Firstyear"
-user-name = "Firstyear"
-
 [[publisher.syn]]
 version = "1.0.109"
 when = "2023-02-24"
@@ -887,13 +855,6 @@ user-name = "David Tolnay"
 [[publisher.thiserror]]
 version = "2.0.16"
 when = "2025-08-20"
-user-id = 3618
-user-login = "dtolnay"
-user-name = "David Tolnay"
-
-[[publisher.thiserror-impl]]
-version = "1.0.69"
-when = "2024-11-10"
 user-id = 3618
 user-login = "dtolnay"
 user-name = "David Tolnay"
@@ -992,13 +953,6 @@ user-name = "Andrew Gallant"
 [[publisher.wasi]]
 version = "0.11.0+wasi-snapshot-preview1"
 when = "2022-01-19"
-user-id = 1
-user-login = "alexcrichton"
-user-name = "Alex Crichton"
-
-[[publisher.wasi]]
-version = "0.14.2+wasi-0.2.4"
-when = "2025-02-28"
 user-id = 1
 user-login = "alexcrichton"
 user-name = "Alex Crichton"
@@ -1160,13 +1114,6 @@ user-login = "kennykerr"
 user-name = "Kenny Kerr"
 
 [[publisher.windows-targets]]
-version = "0.42.2"
-when = "2023-03-13"
-user-id = 64539
-user-login = "kennykerr"
-user-name = "Kenny Kerr"
-
-[[publisher.windows-targets]]
 version = "0.52.6"
 when = "2024-07-03"
 user-id = 64539
@@ -1174,167 +1121,6 @@ user-login = "kennykerr"
 user-name = "Kenny Kerr"
 
 [[publisher.windows-targets]]
-version = "0.53.0"
-when = "2025-01-07"
-user-id = 64539
-user-login = "kennykerr"
-user-name = "Kenny Kerr"
-
-[[publisher.windows_aarch64_gnullvm]]
-version = "0.42.2"
-when = "2023-03-13"
-user-id = 64539
-user-login = "kennykerr"
-user-name = "Kenny Kerr"
-
-[[publisher.windows_aarch64_gnullvm]]
-version = "0.52.6"
-when = "2024-07-03"
-user-id = 64539
-user-login = "kennykerr"
-user-name = "Kenny Kerr"
-
-[[publisher.windows_aarch64_gnullvm]]
-version = "0.53.0"
-when = "2025-01-07"
-user-id = 64539
-user-login = "kennykerr"
-user-name = "Kenny Kerr"
-
-[[publisher.windows_aarch64_msvc]]
-version = "0.42.2"
-when = "2023-03-13"
-user-id = 64539
-user-login = "kennykerr"
-user-name = "Kenny Kerr"
-
-[[publisher.windows_aarch64_msvc]]
-version = "0.52.6"
-when = "2024-07-03"
-user-id = 64539
-user-login = "kennykerr"
-user-name = "Kenny Kerr"
-
-[[publisher.windows_aarch64_msvc]]
-version = "0.53.0"
-when = "2025-01-07"
-user-id = 64539
-user-login = "kennykerr"
-user-name = "Kenny Kerr"
-
-[[publisher.windows_i686_gnu]]
-version = "0.42.2"
-when = "2023-03-13"
-user-id = 64539
-user-login = "kennykerr"
-user-name = "Kenny Kerr"
-
-[[publisher.windows_i686_gnu]]
-version = "0.52.6"
-when = "2024-07-03"
-user-id = 64539
-user-login = "kennykerr"
-user-name = "Kenny Kerr"
-
-[[publisher.windows_i686_gnu]]
-version = "0.53.0"
-when = "2025-01-07"
-user-id = 64539
-user-login = "kennykerr"
-user-name = "Kenny Kerr"
-
-[[publisher.windows_i686_gnullvm]]
-version = "0.52.6"
-when = "2024-07-03"
-user-id = 64539
-user-login = "kennykerr"
-user-name = "Kenny Kerr"
-
-[[publisher.windows_i686_gnullvm]]
-version = "0.53.0"
-when = "2025-01-07"
-user-id = 64539
-user-login = "kennykerr"
-user-name = "Kenny Kerr"
-
-[[publisher.windows_i686_msvc]]
-version = "0.42.2"
-when = "2023-03-13"
-user-id = 64539
-user-login = "kennykerr"
-user-name = "Kenny Kerr"
-
-[[publisher.windows_i686_msvc]]
-version = "0.52.6"
-when = "2024-07-03"
-user-id = 64539
-user-login = "kennykerr"
-user-name = "Kenny Kerr"
-
-[[publisher.windows_i686_msvc]]
-version = "0.53.0"
-when = "2025-01-07"
-user-id = 64539
-user-login = "kennykerr"
-user-name = "Kenny Kerr"
-
-[[publisher.windows_x86_64_gnu]]
-version = "0.42.2"
-when = "2023-03-13"
-user-id = 64539
-user-login = "kennykerr"
-user-name = "Kenny Kerr"
-
-[[publisher.windows_x86_64_gnu]]
-version = "0.52.6"
-when = "2024-07-03"
-user-id = 64539
-user-login = "kennykerr"
-user-name = "Kenny Kerr"
-
-[[publisher.windows_x86_64_gnu]]
-version = "0.53.0"
-when = "2025-01-07"
-user-id = 64539
-user-login = "kennykerr"
-user-name = "Kenny Kerr"
-
-[[publisher.windows_x86_64_gnullvm]]
-version = "0.42.2"
-when = "2023-03-13"
-user-id = 64539
-user-login = "kennykerr"
-user-name = "Kenny Kerr"
-
-[[publisher.windows_x86_64_gnullvm]]
-version = "0.52.6"
-when = "2024-07-03"
-user-id = 64539
-user-login = "kennykerr"
-user-name = "Kenny Kerr"
-
-[[publisher.windows_x86_64_gnullvm]]
-version = "0.53.0"
-when = "2025-01-07"
-user-id = 64539
-user-login = "kennykerr"
-user-name = "Kenny Kerr"
-
-[[publisher.windows_x86_64_msvc]]
-version = "0.42.2"
-when = "2023-03-13"
-user-id = 64539
-user-login = "kennykerr"
-user-name = "Kenny Kerr"
-
-[[publisher.windows_x86_64_msvc]]
-version = "0.52.6"
-when = "2024-07-03"
-user-id = 64539
-user-login = "kennykerr"
-user-name = "Kenny Kerr"
-
-[[publisher.windows_x86_64_msvc]]
 version = "0.53.0"
 when = "2025-01-07"
 user-id = 64539
@@ -1357,12 +1143,6 @@ trusted-publisher = "github:bytecodealliance/wit-bindgen"
 version = "0.51.0"
 when = "2026-01-12"
 trusted-publisher = "github:bytecodealliance/wit-bindgen"
-
-[[publisher.wit-bindgen-rt]]
-version = "0.39.0"
-when = "2025-02-05"
-user-id = 73222
-user-login = "wasmtime-publish"
 
 [[publisher.wit-bindgen-rust]]
 version = "0.51.0"
@@ -1472,18 +1252,6 @@ trusted-publisher = "github:bytecodealliance/wit-bindgen"
 start = "2025-08-13"
 end = "2027-01-08"
 notes = "The Bytecode Alliance is the author of this crate"
-
-[[audits.bytecode-alliance.wildcard-audits.wit-bindgen-rt]]
-who = "Alex Crichton <alex@alexcrichton.com>"
-criteria = "safe-to-deploy"
-user-id = 73222 # wasmtime-publish
-start = "2023-01-01"
-end = "2026-06-03"
-notes = """
-The Bytecode Alliance uses the `wasmtime-publish` crates.io account to automate
-publication of this crate from CI. This repository requires all PRs are reviewed
-by a Bytecode Alliance maintainer and it owned by the Bytecode Alliance itself.
-"""
 
 [[audits.bytecode-alliance.wildcard-audits.wit-bindgen-rust]]
 who = "Alex Crichton <alex@alexcrichton.com>"
@@ -1883,18 +1651,6 @@ criteria = "safe-to-deploy"
 delta = "0.7.1 -> 0.8.0"
 notes = "This was a small update to the crate which has to do with Rust language features and compiler versions, no substantial changes."
 
-[[audits.bytecode-alliance.audits.native-tls]]
-who = "Pat Hickey <phickey@fastly.com>"
-criteria = "safe-to-deploy"
-version = "0.2.11"
-notes = "build is only looking for environment variables to set cfg. only two minor uses of unsafe,on macos, with ffi bindings to digest primitives and libc atexit. otherwise, this is an abstraction over three very complex systems (schannel, security-framework, and openssl) which may end up having subtle differences, but none of those are apparent from the implementation of this crate"
-
-[[audits.bytecode-alliance.audits.native-tls]]
-who = "Alex Crichton <alex@alexcrichton.com>"
-criteria = "safe-to-deploy"
-delta = "0.2.11 -> 0.2.14"
-notes = "Minor changes, mostly around updating some dependencies, directives, etc."
-
 [[audits.bytecode-alliance.audits.nu-ansi-term]]
 who = "Pat Hickey <phickey@fastly.com>"
 criteria = "safe-to-deploy"
@@ -2048,12 +1804,6 @@ This is a trivial crate which only contains a singular macro definition which is
 intended to multiplex across the internal representation of a tinyvec,
 presumably. This trivially doesn't contain anything bad.
 """
-
-[[audits.bytecode-alliance.audits.tokio-native-tls]]
-who = "Pat Hickey <phickey@fastly.com>"
-criteria = "safe-to-deploy"
-version = "0.3.1"
-notes = "unsafety is used for smuggling std::task::Context as a raw pointer. Lifetime and type safety appears to be taken care of correctly."
 
 [[audits.bytecode-alliance.audits.tracing-attributes]]
 who = "Alex Crichton <alex@alexcrichton.com>"
@@ -2242,6 +1992,12 @@ who = "Johan Andersson <opensource@embark-studios.com>"
 criteria = "safe-to-deploy"
 version = "0.8.12"
 notes = "No unsafe usage (forbidden) or ambient capabilities"
+
+[[audits.embark-studios.audits.schemars_derive]]
+who = "Johan Andersson <opensource@embark-studios.com>"
+criteria = "safe-to-deploy"
+version = "0.8.12"
+notes = "Proc macro. No unsafe usage (forbidden) or ambient capabilities"
 
 [[audits.embark-studios.audits.utf8parse]]
 who = "Johan Andersson <opensource@embark-studios.com>"
@@ -3855,13 +3611,6 @@ static/non-owning. Other changes also look reasonable too: some tweaks to
 inlining and a syscall-based linux back-end, whose relevant unsafe code looks
 reasonable.
 """
-aggregated-from = "https://hg.mozilla.org/mozilla-central/raw-file/tip/supply-chain/audits.toml"
-
-[[audits.mozilla.audits.hashbrown]]
-who = "Mike Hommey <mh+mozilla@glandium.org>"
-criteria = "safe-to-deploy"
-version = "0.12.3"
-notes = "This version is used in rust's libstd, so effectively we're already trusting it"
 aggregated-from = "https://hg.mozilla.org/mozilla-central/raw-file/tip/supply-chain/audits.toml"
 
 [[audits.mozilla.audits.hashlink]]

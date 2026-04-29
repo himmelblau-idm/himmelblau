@@ -1,0 +1,17 @@
+[package]
+name = "const-oid"
+version = "0.9.6"
+authors.workspace = true
+rust-version.workspace = true
+edition.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[features]
+db = ["const-oid/db"]
+std = []
+
+[dependencies]
+const-oid = { version = "^0.10.1" }
+arbitrary = { version = "^1.2", optional = true, default-features = false }

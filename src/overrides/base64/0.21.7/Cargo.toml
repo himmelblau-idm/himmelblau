@@ -1,0 +1,17 @@
+[package]
+name = "base64"
+version = "0.21.7"
+authors.workspace = true
+rust-version.workspace = true
+edition.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[features]
+alloc = ["base64/alloc"]
+default = ["base64/default"]
+std = ["base64/std"]
+
+[dependencies]
+base64 = { version = "^0.22.1" }

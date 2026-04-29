@@ -1,0 +1,37 @@
+[package]
+name = "linux-raw-sys"
+version = "0.4.15"
+authors.workspace = true
+rust-version.workspace = true
+edition.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[features]
+bootparam = ["linux-raw-sys/bootparam"]
+btrfs = ["linux-raw-sys/btrfs"]
+default = ["linux-raw-sys/default"]
+elf = ["linux-raw-sys/elf"]
+elf_uapi = ["linux-raw-sys/elf_uapi"]
+errno = ["linux-raw-sys/errno"]
+general = ["linux-raw-sys/general", "linux-raw-sys/auxvec"]
+if_arp = ["linux-raw-sys/if_arp"]
+if_ether = ["linux-raw-sys/if_ether"]
+if_packet = ["linux-raw-sys/if_packet"]
+io_uring = ["linux-raw-sys/io_uring"]
+ioctl = ["linux-raw-sys/ioctl"]
+landlock = ["linux-raw-sys/landlock"]
+loop_device = ["linux-raw-sys/loop_device"]
+mempolicy = ["linux-raw-sys/mempolicy"]
+net = ["linux-raw-sys/net"]
+netlink = ["linux-raw-sys/netlink"]
+no_std = ["linux-raw-sys/no_std"]
+prctl = ["linux-raw-sys/prctl"]
+ptrace = ["linux-raw-sys/ptrace"]
+std = ["linux-raw-sys/std"]
+system = ["linux-raw-sys/system"]
+xdp = ["linux-raw-sys/xdp"]
+
+[dependencies]
+linux-raw-sys = { version = "^0.12.1" }
