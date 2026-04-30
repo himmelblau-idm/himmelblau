@@ -3,13 +3,13 @@
 AI-Powered Backport Assistant
 
 Analyzes patches in the main branch and suggests backports to supported versions.
-Uses AI (Claude or Gemini CLI) to analyze commits, apply cherry-picks, fix build
+Uses AI (Claude, Gemini, or OpenCode CLI) to analyze commits, apply cherry-picks, fix build
 issues, and create PRs.
 
 Supported versions are read from SECURITY.md.
 
 Usage:
-  python scripts/backport.py [--ai-provider gemini|claude] [--since COMMIT] [--dry-run]
+  python scripts/backport.py [--ai-provider gemini|claude|opencode] [--since COMMIT] [--dry-run]
 """
 
 import argparse
@@ -698,6 +698,12 @@ Please resolve the conflicts and ensure the dependency update is applied correct
         """Check if the AI CLI is available."""
         return shutil.which(self.cli_path) is not None
 
+    def _interactive_prompt_command(self, prompt: str) -> list[str]:
+        """Build command used to launch interactive/assistant fixes."""
+        if self.provider == 'opencode':
+            return [self.cli_path, "run", prompt]
+        return [self.cli_path, prompt]
+
     @staticmethod
     def _analysis_scope_for_versions(versions: list[SupportedVersion]) -> str:
         """Create a stable cache key for the target branches under analysis."""
@@ -825,8 +831,7 @@ Files: {', '.join(commit.files_changed)}
         print_color("Use /exit, Ctrl+C, or Ctrl+D to exit when done.\n", "yellow")
 
         try:
-            # Pass prompt as positional argument for interactive mode
-            subprocess.run([self.cli_path, prompt])
+            subprocess.run(self._interactive_prompt_command(prompt))
             return True
         except KeyboardInterrupt:
             print("\n")
@@ -857,8 +862,7 @@ Files: {', '.join(commit.files_changed)}
         print_color("Use /exit, Ctrl+C, or Ctrl+D to exit when done.\n", "yellow")
 
         try:
-            # Pass prompt as positional argument for interactive mode
-            subprocess.run([self.cli_path, prompt])
+            subprocess.run(self._interactive_prompt_command(prompt))
             return True
         except KeyboardInterrupt:
             print("\n")
@@ -912,6 +916,23 @@ Files: {', '.join(commit.files_changed)}
                 # Method 2: Pipe prompt via stdin
                 result = subprocess.run(
                     [self.cli_path],
+                    input=prompt,
+                    capture_output=True, text=True, timeout=TIMEOUT_AI_PROMPT_SECONDS,
+                )
+                if result.returncode == 0 and result.stdout and len(result.stdout.strip()) > 10:
+                    return result.stdout.strip()
+
+            elif self.provider == 'opencode':
+                result = subprocess.run(
+                    [self.cli_path, "run", prompt],
+                    capture_output=True, text=True, timeout=TIMEOUT_AI_PROMPT_SECONDS,
+                )
+                if result.returncode == 0 and result.stdout and len(result.stdout.strip()) > 10:
+                    return result.stdout.strip()
+
+                # Fallback: provide prompt over stdin.
+                result = subprocess.run(
+                    [self.cli_path, "run"],
                     input=prompt,
                     capture_output=True, text=True, timeout=TIMEOUT_AI_PROMPT_SECONDS,
                 )
@@ -1422,6 +1443,7 @@ Examples:
   %(prog)s --target 2.x --target 1.x  # Backport to 2.x and 1.x branches
   %(prog)s --since v2.0.0           # Analyze commits since v2.0.0
   %(prog)s --ai-provider gemini     # Use Gemini AI instead of Claude
+  %(prog)s --ai-provider opencode   # Use OpenCode AI
   %(prog)s --dry-run                # Analyze only, don't create PRs
   %(prog)s --interactive            # Interactive mode - confirm each backport
   %(prog)s --branch my-backport-branch --target 2.x  # Continue backporting to existing branch
@@ -1431,7 +1453,7 @@ Examples:
         "--ai-provider",
         type=str,
         default="claude",
-        choices=["claude", "gemini"],
+        choices=["claude", "gemini", "opencode"],
         help="AI CLI to use (default: claude)",
     )
     parser.add_argument(
@@ -1534,6 +1556,8 @@ Examples:
             print("Install with: npm install -g @anthropic-ai/claude-code")
         elif args.ai_provider == "gemini":
             print("See https://ai.google.dev/gemini-api/docs for Gemini CLI setup.")
+        elif args.ai_provider == "opencode":
+            print("Install OpenCode CLI and ensure `opencode` is in your PATH.")
         sys.exit(1)
 
     print_color(f"Using {args.ai_provider.capitalize()} CLI", "green")
