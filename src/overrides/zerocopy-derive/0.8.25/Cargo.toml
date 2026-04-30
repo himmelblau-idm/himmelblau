@@ -1,0 +1,9 @@
+[package]
+name = "zerocopy-derive"
+version = "0.8.25"
+authors.workspace = true
+rust-version.workspace = true
+edition.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true

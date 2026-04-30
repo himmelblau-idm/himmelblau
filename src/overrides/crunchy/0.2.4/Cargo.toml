@@ -1,0 +1,19 @@
+[package]
+name = "crunchy"
+version = "0.2.4"
+authors.workspace = true
+rust-version.workspace = true
+edition.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[features]
+default = []
+limit_1024 = []
+limit_128 = []
+limit_2048 = []
+limit_256 = []
+limit_512 = []
+limit_64 = []
+std = []

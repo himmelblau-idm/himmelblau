@@ -1,0 +1,21 @@
+[package]
+name = "security-framework"
+version = "3.5.1"
+authors.workspace = true
+rust-version.workspace = true
+edition.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[features]
+OSX_10_12 = []
+OSX_10_13 = []
+OSX_10_14 = []
+OSX_10_15 = []
+alpn = []
+default = []
+job-bless = []
+nightly = []
+session-tickets = []
+sync-keychain = []

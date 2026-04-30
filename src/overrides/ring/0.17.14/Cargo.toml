@@ -1,0 +1,22 @@
+[package]
+name = "ring"
+version = "0.17.14"
+authors.workspace = true
+rust-version.workspace = true
+edition.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[features]
+alloc = []
+default = []
+dev_urandom_fallback = []
+less-safe-getrandom-custom-or-rdrand = []
+less-safe-getrandom-espidf = []
+slow_tests = []
+std = []
+test_logging = []
+unstable-testing-arm-no-hw = []
+unstable-testing-arm-no-neon = []
+wasm32_unknown_unknown_js = []

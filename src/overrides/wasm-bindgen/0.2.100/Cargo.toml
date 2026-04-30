@@ -1,0 +1,20 @@
+[package]
+name = "wasm-bindgen"
+version = "0.2.100"
+authors.workspace = true
+rust-version.workspace = true
+edition.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[features]
+default = []
+enable-interning = []
+gg-alloc = []
+msrv = []
+serde-serialize = []
+spans = []
+std = []
+strict-macro = []
+xxx_debug_only_print_generated_code = []

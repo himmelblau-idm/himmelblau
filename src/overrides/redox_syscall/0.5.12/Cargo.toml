@@ -1,0 +1,15 @@
+[package]
+name = "redox_syscall"
+version = "0.5.12"
+authors.workspace = true
+rust-version.workspace = true
+edition.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[features]
+default = []
+rustc-dep-of-std = []
+std = []
+userspace = []
