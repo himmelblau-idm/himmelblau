@@ -213,6 +213,11 @@ DISTS = {
         "image": "ubuntu:25.10",
         "tpm": True,
     },
+    "ubuntu26.04": {
+        "family": "deb",
+        "image": "ubuntu:26.04",
+        "tpm": True,
+    },
     "test": {
         "family": "deb",
         "image": "ubuntu:24.04",
