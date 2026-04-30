@@ -1,0 +1,13 @@
+[package]
+name = "js-sys"
+version = "0.3.77"
+authors.workspace = true
+rust-version.workspace = true
+edition.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[features]
+default = []
+std = []

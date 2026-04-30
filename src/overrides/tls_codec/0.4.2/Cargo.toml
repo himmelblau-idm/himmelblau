@@ -1,0 +1,18 @@
+[package]
+name = "tls_codec"
+version = "0.4.2"
+authors.workspace = true
+rust-version.workspace = true
+edition.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[features]
+arbitrary = []
+conditional_deserialization = []
+default = []
+derive = []
+mls = []
+serde = []
+std = []

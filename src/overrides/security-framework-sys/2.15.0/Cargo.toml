@@ -1,0 +1,19 @@
+[package]
+name = "security-framework-sys"
+version = "2.15.0"
+authors.workspace = true
+rust-version.workspace = true
+edition.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[features]
+OSX_10_10 = []
+OSX_10_11 = []
+OSX_10_12 = []
+OSX_10_13 = []
+OSX_10_14 = []
+OSX_10_15 = []
+OSX_10_9 = []
+default = []
