@@ -400,8 +400,12 @@ class DependencyAnalyzer:
         except subprocess.CalledProcessError as e:
             print(f"Warning: cargo tree failed: {e.stderr}", file=sys.stderr)
 
-    def collect_binary_sizes(self) -> None:
-        """Collect binary size contributions using cargo bloat."""
+    def collect_binary_sizes(self, timeout: Optional[int] = 600) -> None:
+        """Collect binary size contributions using cargo bloat.
+
+        Args:
+            timeout: Timeout in seconds for build and bloat operations (default: 600s = 10min)
+        """
         print("Analyzing binary sizes (this may take a few minutes)...", file=sys.stderr)
 
         try:
@@ -412,6 +416,7 @@ class DependencyAnalyzer:
                 cwd=self.workspace_root,
                 capture_output=True,
                 check=True,
+                timeout=timeout,
             )
 
             # Run cargo bloat
@@ -421,6 +426,7 @@ class DependencyAnalyzer:
                 capture_output=True,
                 text=True,
                 check=True,
+                timeout=60,  # Bloat itself should be fast once build is done
             )
 
             # Parse output
@@ -441,6 +447,9 @@ class DependencyAnalyzer:
 
             print(f"  Collected size data for {len(self.binary_sizes)} crates", file=sys.stderr)
 
+        except subprocess.TimeoutExpired:
+            print("Warning: Binary size analysis timed out, skipping", file=sys.stderr)
+            print("  Continuing without binary size data...", file=sys.stderr)
         except subprocess.CalledProcessError as e:
             print(f"Warning: cargo bloat failed: {e.stderr}", file=sys.stderr)
             print("  Continuing without binary size data...", file=sys.stderr)
@@ -1335,6 +1344,11 @@ def main():
         default="both",
         help="Analysis mode: high-cost (original), shallow-usage (new), or both (default)",
     )
+    parser.add_argument(
+        "--skip-binary-size",
+        action="store_true",
+        help="Skip binary size analysis (faster, less comprehensive)",
+    )
 
     args = parser.parse_args()
 
@@ -1362,7 +1376,8 @@ def main():
     high_cost_results = []
     if args.mode in ("high-cost", "both"):
         analyzer.collect_transitive_deps()
-        analyzer.collect_binary_sizes()
+        if not args.skip_binary_size:
+            analyzer.collect_binary_sizes()
         analyzer.analyze_source_imports()
         analyzer.collect_feature_counts()
         high_cost_results = analyzer.calculate_scores()

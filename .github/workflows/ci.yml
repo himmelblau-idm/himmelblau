@@ -314,8 +314,8 @@ jobs:
         run: pip install -r .github/requirements.txt --require-hashes
 
       - name: Analyze barely-used dependencies
-        run: python3 scripts/check_barely_used_deps.py --format=json --output=barely_used_report.json --mode=both
-        continue-on-error: true
+        run: python3 scripts/check_barely_used_deps.py --format=json --output=barely_used_report.json --mode=both --skip-binary-size
+        timeout-minutes: 10
 
       - name: Upload report
         uses: actions/upload-artifact@6f51ac03b9356f520e9adb1b1b7802705f340c2b # v4.6.0
