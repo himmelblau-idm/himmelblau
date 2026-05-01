@@ -17,8 +17,8 @@ libfuzzer-sys = "0.4"
 himmelblau_unix_common = { workspace = true }
 idmap = { workspace = true }
 arbitrary = { version = "1.4.2", features = ["derive"] }
-tempfile = "3.26.0"
-uuid = "1.21.0"
+tempfile = "3.27.0"
+uuid = "1.23.1"
 
 [[bin]]
 name = "config"

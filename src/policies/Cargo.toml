@@ -25,8 +25,8 @@ base64.workspace = true
 tokio.workspace = true
 himmelblau_unix_common = { workspace = true }
 os-release = "0.1.0"
-semver = "1.0.27"
+semver = "1.0.28"
 libhimmelblau.workspace = true
 uuid.workspace = true
 libc.workspace = true
-tempfile = "3.26.0"
+tempfile = "3.27.0"
