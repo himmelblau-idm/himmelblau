@@ -45,7 +45,7 @@ homepage = "https://github.com/himmelblau-idm/himmelblau"
 repository = "https://github.com/himmelblau-idm/himmelblau"
 
 [workspace.dependencies]
-libc = "^0.2.185"
+libc = "^0.2.186"
 pkg-config = "^0.3.33"
 lazy_static = "^1.4.0"
 paste = "^1.0.12"
@@ -56,10 +56,10 @@ tracing = "^0.1.37"
 himmelblau_unix_common = { path = "src/common" }
 libhimmelblau = { version = "0.8.18", features = ["broker", "changepassword", "on_behalf_of", "mfa_method_selection", "optional_mfa", "intune_portal_vers_selection", "redirect_uri", "pop_support"] }
 clap = { version = "^4.6", features = ["derive", "env"] }
-clap_complete = "^4.6.2"
+clap_complete = "^4.6.3"
 reqwest = { version = "^0.12.24", features = ["json"] }
 anyhow = "^1.0.102"
-tokio = { version = "^1.52.0", features = ["rt", "macros", "sync", "time", "net", "io-util", "signal", "rt-multi-thread"] }
+tokio = { version = "^1.52.1", features = ["rt", "macros", "sync", "time", "net", "io-util", "signal", "rt-multi-thread"] }
 tokio-util = { version = "^0.7.18", features = ["codec"] }
 async-trait = "^0.1.89"
 himmelblau_policies = { path = "src/policies" }
@@ -79,7 +79,7 @@ libkrimes = { version = "0.1.0", features = ["keyring"] }
 argon2 = { version = "0.5.2", features = ["alloc"] }
 base32 = "^0.5.0"
 base64 = "^0.22.0"
-base64urlsafedata = "0.5.0"
+base64urlsafedata = "0.5.5"
 hex = "^0.4.3"
 num_enum = "^0.7.6"
 scim_proto = "^1.6.4"
@@ -87,18 +87,18 @@ serde_with = "3.18.0"
 time = { version = "^0.3.44", features = ["formatting", "local-offset"] }
 url = "^2.4.0"
 urlencoding = "2.1.3"
-uuid = { version = "^1.23.0", features = ["v4", "v5"] }
+uuid = { version = "^1.23.1", features = ["v4", "v5"] }
 webauthn-rs-proto = "0.5.0"
 kanidm_proto = "1.8.1"
 openssl-sys = "^0.9"
-openssl = "^0.10.77"
+openssl = "^0.10.78"
 rand = "^0.9.4"
 tss-esapi = "^7.2.0"
-sketching = "1.9.1"
+sketching = "1.10.0"
 tracing-forest = "^0.1.6"
 rusqlite = "^0.37.0"
 hashbrown = { version = "0.17.0", features = ["serde", "inline-more"] }
-lru = "^0.16.4"
+lru = "^0.18.0"
 kanidm_lib_crypto = "1.9.1"
 kanidm_utils_users = "1.8.1"
 walkdir = "2"
@@ -121,9 +121,9 @@ tracing-opentelemetry = "0.28.0"
 tracing-core = "0.1.34"
 tonic = "0.14.5"
 compact_jwt = { version = "0.5.3-dev", features = ["msextensions"] }
-kanidm-hsm-crypto = { version = "^0.3.5" }
+kanidm-hsm-crypto = { version = "^0.3.6" }
 whoami = "1.6.1"
-kanidm_lib_file_permissions = "1.9.1"
+kanidm_lib_file_permissions = "1.10.0"
 md4 = "0.10.2"
 md-5 = "0.10.6"
 sha-crypt = "0.5.0"
