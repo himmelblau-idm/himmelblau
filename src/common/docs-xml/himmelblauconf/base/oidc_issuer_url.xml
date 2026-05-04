@@ -5,7 +5,7 @@
                       rust_type="Option&lt;String&gt;"
                       documented="true"
                       domain_specific="false"
-                      order="2"
+                      order="200"
                      >
 <description>
 Specifies the OpenID Connect (OIDC) issuer URL used by Himmelblau to discover

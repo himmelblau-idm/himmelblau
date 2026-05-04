@@ -5,7 +5,7 @@
            rust_type="u64"
            documented="true"
            domain_specific="false"
-           order="46">
+           order="4650">
 <description>
 The timeout in seconds for HTTP requests to authentication servers. This includes DNS resolution, connection attempts across all resolved IP addresses, TLS handshake, and HTTP request/response. Increase this value if authentication fails in environments where DNS returns many IP addresses for the same hostname (e.g., 7+ addresses). Default is 10 seconds to accommodate Happy Eyeballs connection attempts across multiple addresses.
 </description>

@@ -5,7 +5,7 @@
                       rust_type="bool"
                       documented="true"
                       domain_specific="false"
-                      order="7"
+                      order="700"
                      >
 <description>
 Enables or disables user enrollment in Windows Hello authentication. If disabled, users will need to provide MFA for each login.

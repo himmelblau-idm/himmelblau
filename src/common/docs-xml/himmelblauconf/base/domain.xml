@@ -5,7 +5,7 @@
            rust_type="Vec&lt;String&gt;"
            documented="true"
            domain_specific="false"
-           order="1">
+           order="100">
 <description>
 The primary Azure Entra ID domain name used for authentication. This value
 .B SHOULD

@@ -5,7 +5,7 @@
            rust_type="IpVersionSelection"
            documented="true"
            domain_specific="false"
-           order="51">
+           order="5100">
 <description>
 Controls which IP version family Himmelblau should use for outbound network connections.
 

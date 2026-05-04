@@ -5,7 +5,7 @@
            rust_type="bool"
            documented="true"
            domain_specific="false"
-           order="1">
+           order="100">
 <description>
 Boolean value specifying whether offline breakglass mode is permitted.
 

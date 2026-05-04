@@ -5,7 +5,7 @@
                       rust_type="Option&lt;IdAttr&gt;"
                       documented="true"
                       domain_specific="false"
-                      order="6"
+                      order="600"
                      >
 <description>
 Specify whether to map group IDs (GIDs) based on the object name or object UUID when no
