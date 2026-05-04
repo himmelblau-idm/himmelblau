@@ -18,9 +18,7 @@
 use himmelblau_unix_common::auth::{authenticate, MessagePrinter};
 use himmelblau_unix_common::config::HimmelblauConfig;
 use himmelblau_unix_common::pam::{Options, PamResultCode};
-use identity_dbus_broker::{
-    session_broker_serve, LogLevelCallbacks, SessionBroker,
-};
+use identity_dbus_broker::{session_broker_serve, LogLevelCallbacks, SessionBroker};
 use pinentry::PassphraseInput;
 use sd_notify::NotifyState;
 use secrecy::ExposeSecret;
@@ -29,8 +27,8 @@ use std::process::ExitCode;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::time;
-use tracing::{debug, error, info};
 use tracing::level_filters::LevelFilter;
+use tracing::{debug, error, info};
 use tracing_subscriber::prelude::*;
 use tracing_subscriber::{reload, EnvFilter};
 
@@ -94,8 +92,7 @@ impl SyslogLevel {
             Self::Info => "info",
             Self::Debug => "debug",
         };
-        EnvFilter::try_new(tracing_level)
-            .map_err(|e| format!("Failed to create filter: {}", e))
+        EnvFilter::try_new(tracing_level).map_err(|e| format!("Failed to create filter: {}", e))
     }
 }
 
@@ -157,11 +154,7 @@ struct InteractiveSessionBroker {
 impl InteractiveSessionBroker {
     /// Construct the serde JSON for a broker ClientRequest variant
     /// and forward it to the himmelblaud broker socket.
-    fn forward(
-        &self,
-        method: &str,
-        args: &[&str],
-    ) -> Result<String, dbus::MethodErr> {
+    fn forward(&self, method: &str, args: &[&str]) -> Result<String, dbus::MethodErr> {
         use std::io::{Read, Write};
         use std::os::unix::net::UnixStream;
 
@@ -379,9 +372,8 @@ async fn main() -> ExitCode {
         .unwrap_or_else(|_| EnvFilter::new("info,authenticator=warn"));
     let (filter_layer, reload_handle) = reload::Layer::new(initial_filter);
 
-    let initial_syslog_level = SyslogLevel::from_level_filter(
-        filter_layer.max_level_hint().unwrap_or(LevelFilter::INFO),
-    );
+    let initial_syslog_level =
+        SyslogLevel::from_level_filter(filter_layer.max_level_hint().unwrap_or(LevelFilter::INFO));
 
     tracing_subscriber::registry()
         .with(filter_layer)
@@ -395,11 +387,9 @@ async fn main() -> ExitCode {
     let config_handle = reload_handle.clone();
     let config_level = Arc::clone(&syslog_level);
     let log_callbacks = LogLevelCallbacks {
-        get: Arc::new(move || {
-            match get_level.lock() {
-                Ok(level) => level.to_string(),
-                Err(e) => e.into_inner().to_string(),
-            }
+        get: Arc::new(move || match get_level.lock() {
+            Ok(level) => level.to_string(),
+            Err(e) => e.into_inner().to_string(),
         }),
         set: Arc::new(move |level: &str| {
             let parsed = SyslogLevel::parse(level)?;

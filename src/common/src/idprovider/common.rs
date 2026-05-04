@@ -790,7 +790,16 @@ macro_rules! impl_unix_user_access {
         match refresh_cache_entry {
             #![allow(unused_variables)]
             RefreshCacheEntry::Prt(prt) => {
-                $prt_token_refresh!($self, prt, $scopes, $client_id, $redirect_uri, $req_cnf, $tpm, $machine_key)
+                $prt_token_refresh!(
+                    $self,
+                    prt,
+                    $scopes,
+                    $client_id,
+                    $redirect_uri,
+                    $req_cnf,
+                    $tpm,
+                    $machine_key
+                )
             }
             RefreshCacheEntry::RefreshToken(refresh_token) => {
                 $refresh_token_token_refresh!($self, refresh_token, $scopes)

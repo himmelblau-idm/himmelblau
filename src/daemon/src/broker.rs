@@ -88,7 +88,9 @@ fn extract_sso_nonce(sso_url: Option<&str>) -> Option<String> {
 /// a kid are treated as bearer token requests (returns None).
 fn build_req_cnf(pop_params: &Option<PopParamsReq>) -> Option<String> {
     let pp = pop_params.as_ref()?;
-    if !pp.authentication_scheme.as_deref()
+    if !pp
+        .authentication_scheme
+        .as_deref()
         .is_some_and(|s| s.eq_ignore_ascii_case("pop"))
     {
         return None;
@@ -256,10 +258,7 @@ impl HimmelblauBroker for Broker {
         let sso_nonce = extract_sso_nonce(request.sso_url.as_deref());
         let prt = self
             .cachelayer
-            .get_user_prt_cookie(
-                Id::Name(user.spn.clone()),
-                sso_nonce.as_deref(),
-            )
+            .get_user_prt_cookie(Id::Name(user.spn.clone()), sso_nonce.as_deref())
             .await
             .ok_or("Failed to fetch prt sso cookie")?;
         let res = json!({

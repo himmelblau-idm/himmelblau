@@ -503,11 +503,7 @@ pub unsafe extern "C" fn _nss_himmelblau_initgroups_dyn(
     const NSS_STATUS_TRYAGAIN: libc::c_int = -2;
 
     // Validate all pointer arguments before any dereference.
-    if user.is_null()
-        || start.is_null()
-        || size.is_null()
-        || groupsp.is_null()
-        || errnop.is_null()
+    if user.is_null() || start.is_null() || size.is_null() || groupsp.is_null() || errnop.is_null()
     {
         return NSS_STATUS_UNAVAIL;
     }
@@ -552,8 +548,7 @@ pub unsafe extern "C" fn _nss_himmelblau_initgroups_dyn(
     let mut cur_start = *start;
     let mut cur_size = *size;
     let mut groups = *groupsp;
-    if cur_start < 0 || cur_size < 0 || cur_start > cur_size || (cur_size > 0 && groups.is_null())
-    {
+    if cur_start < 0 || cur_size < 0 || cur_start > cur_size || (cur_size > 0 && groups.is_null()) {
         *errnop = libc::EINVAL;
         return NSS_STATUS_UNAVAIL;
     }
@@ -591,10 +586,8 @@ pub unsafe extern "C" fn _nss_himmelblau_initgroups_dyn(
                     return NSS_STATUS_TRYAGAIN;
                 }
             };
-            let new_groups = libc::realloc(
-                groups as *mut libc::c_void,
-                alloc_bytes,
-            ) as *mut libc::gid_t;
+            let new_groups =
+                libc::realloc(groups as *mut libc::c_void, alloc_bytes) as *mut libc::gid_t;
             if new_groups.is_null() {
                 *errnop = libc::ENOMEM;
                 *start = cur_start;

@@ -326,12 +326,17 @@ impl OidcApplication {
     #[instrument(level = "debug", skip_all)]
     pub async fn with_init(config: &HimmelblauConfig, domain: &str) -> Result<Self, IdpError> {
         let app = Self::new();
-        app.delayed_init(&Mutex::new(config.clone()), domain).await?;
+        app.delayed_init(&Mutex::new(config.clone()), domain)
+            .await?;
         Ok(app)
     }
 
     #[instrument(level = "debug", skip_all)]
-    async fn delayed_init(&self, config: &Mutex<HimmelblauConfig>, domain: &str) -> Result<(), IdpError> {
+    async fn delayed_init(
+        &self,
+        config: &Mutex<HimmelblauConfig>,
+        domain: &str,
+    ) -> Result<(), IdpError> {
         let init = self.client.lock().await.is_some();
         if !init {
             let client_id = {
@@ -955,12 +960,7 @@ impl OidcProvider {
         let shell = self.config.lock().await.get_shell(None);
         let token2 = self
             .client
-            .user_token_from_oidc(
-                token,
-                shell,
-                self.idmap.as_ref(),
-                &tenant_id,
-            )
+            .user_token_from_oidc(token, shell, self.idmap.as_ref(), &tenant_id)
             .await?;
         if account_id.to_string().to_lowercase() != token2.name.to_string().to_lowercase() {
             let msg = format!(
