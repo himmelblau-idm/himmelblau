@@ -210,12 +210,14 @@ impl HimmelblauMultiProvider {
                         cfg.get_odc_provider(&domain),
                     )
                 };
+                let request_timeout = config.lock().await.get_request_timeout();
                 let graph = match Graph::new(
                     &odc_provider,
                     &domain,
                     Some(&authority_host),
                     tenant_id.as_deref(),
                     graph_url.as_deref(),
+                    std::time::Duration::from_secs(request_timeout),
                 )
                 .await
                 {
@@ -226,11 +228,17 @@ impl HimmelblauMultiProvider {
                     }
                 };
                 let app_id = config.lock().await.get_app_id(&domain);
-                let app = BrokerClientApplication::new(None, app_id.as_deref(), None, None)
-                    .map_err(|e| {
-                        error!("Failed initializing provider: {:?}", e);
-                        anyhow!("{:?}", e)
-                    })?;
+                let app = BrokerClientApplication::new(
+                    None,
+                    app_id.as_deref(),
+                    None,
+                    None,
+                    std::time::Duration::from_secs(request_timeout),
+                )
+                .map_err(|e| {
+                    error!("Failed initializing provider: {:?}", e);
+                    anyhow!("{:?}", e)
+                })?;
                 let provider = HimmelblauProvider::new(app, &config, &domain, graph, &idmap)
                     .map_err(|e| {
                         error!("Failed to initialize the provider: {:?}", e);
@@ -1212,10 +1220,12 @@ impl IdProvider for HimmelblauProvider {
                     (authority_host, tenant_id)
                 };
                 let authority = format!("https://{}/{}", authority_host, tenant_id);
+                let request_timeout = self.config.lock().await.get_request_timeout();
                 let app = ConfidentialClientApplication::new(
                     $client_id,
                     Some(&authority),
                     $client_credential,
+                    std::time::Duration::from_secs(request_timeout),
                 )
                 .map_err(|e| {
                     error!(?e, "Failed initializing confidential client");
@@ -1546,7 +1556,13 @@ impl IdProvider for HimmelblauProvider {
                 }
             }
             RefreshCacheEntry::RefreshToken(refresh_token) => {
-                let client = PublicClientApplication::new(BROKER_APP_ID, None).map_err(|e| {
+                let request_timeout = self.config.lock().await.get_request_timeout();
+                let client = PublicClientApplication::new(
+                    BROKER_APP_ID,
+                    None,
+                    std::time::Duration::from_secs(request_timeout),
+                )
+                .map_err(|e| {
                     error!("Failed to create public client application: {:?}", e);
                     IdpError::BadRequest
                 })?;
@@ -2823,7 +2839,12 @@ impl IdProvider for HimmelblauProvider {
                             }
                     } else if let Some(RefreshCacheEntry::RefreshToken(refresh_token)) = refresh_cache_entry {
                         // We have a refresh token, exchange that for an access token
-                        let app = match PublicClientApplication::new(BROKER_APP_ID, None) {
+                        let request_timeout = self.config.lock().await.get_request_timeout();
+                        let app = match PublicClientApplication::new(
+                            BROKER_APP_ID,
+                            None,
+                            std::time::Duration::from_secs(request_timeout),
+                        ) {
                             Ok(app) => app,
                             Err(e) => {
                                 error!("Failed to create PublicClientApplication: {:?}", e);
@@ -5000,11 +5021,16 @@ impl HimmelblauProvider {
                     if vers.is_empty() {
                         vers = vec!["1.2511.11".to_string()];
                     }
-                    let intune = IntuneForLinux::new(endpoints, Some(&vers[vers.len() - 1]))
-                        .map_err(|e| {
-                            error!(?e, "Intune device enrollment failed.");
-                            IdpError::BadRequest
-                        })?;
+                    let request_timeout = self.config.lock().await.get_request_timeout();
+                    let intune = IntuneForLinux::new(
+                        endpoints,
+                        Some(&vers[vers.len() - 1]),
+                        std::time::Duration::from_secs(request_timeout),
+                    )
+                    .map_err(|e| {
+                        error!(?e, "Intune device enrollment failed.");
+                        IdpError::BadRequest
+                    })?;
                     let device_id = match device_id {
                         Some(v) => v.to_string(),
                         None => self

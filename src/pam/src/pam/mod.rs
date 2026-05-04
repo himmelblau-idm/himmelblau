@@ -636,7 +636,8 @@ impl PamHooks for PamKanidm {
             None => "common".to_string(),
         };
         let authority = format!("https://{}/{}", cfg.get_authority_host(domain), tenant_id);
-        let app = match PublicClientApplication::new(BROKER_APP_ID, Some(&authority)) {
+        let request_timeout = cfg.get_request_timeout();
+        let app = match PublicClientApplication::new(BROKER_APP_ID, Some(&authority), Duration::from_secs(request_timeout)) {
             Ok(app) => app,
             Err(e) => {
                 error!(err = ?e, "PublicClientApplication");
