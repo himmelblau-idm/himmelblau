@@ -51,9 +51,18 @@ pub async fn apply_intune_policy(
     );
 
     let ip_versions = config.get_ip_versions();
-    let graph = Graph::new(&config.get_odc_provider(domain), domain, None, None, None, &ip_versions)
-        .await
-        .map_err(|e| anyhow!(e))?;
+    let request_timeout = config.get_request_timeout();
+    let graph = Graph::new(
+        &config.get_odc_provider(domain),
+        domain,
+        None,
+        None,
+        None,
+        Duration::from_secs(request_timeout),
+        &ip_versions,
+    )
+    .await
+    .map_err(|e| anyhow!(e))?;
 
     let endpoints = graph
         .intune_service_endpoints(graph_token)
@@ -69,8 +78,13 @@ pub async fn apply_intune_policy(
     if vers.is_empty() {
         vers = vec!["1.2511.11".to_string()];
     }
-    let intune =
-        IntuneForLinux::new(endpoints, Some(&vers[vers.len() - 1]), &ip_versions).map_err(|e| anyhow!(e))?;
+    let intune = IntuneForLinux::new(
+        endpoints,
+        Some(&vers[vers.len() - 1]),
+        Duration::from_secs(request_timeout),
+        &ip_versions,
+    )
+    .map_err(|e| anyhow!(e))?;
 
     let token = UserToken {
         token_type: String::new(),

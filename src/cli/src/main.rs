@@ -565,11 +565,13 @@ async fn confidential_client_access_token(
         };
         let authority = format!("https://{}/{}", authority_host, tenant_id);
         let ip_versions = cfg.get_ip_versions();
+        let request_timeout = cfg.get_request_timeout();
 
         let app = match ConfidentialClientApplication::new(
             &cred_client_id,
             Some(&authority),
             client_creds,
+            Duration::from_secs(request_timeout),
             &ip_versions,
         ) {
             Ok(app) => app,
@@ -737,7 +739,7 @@ async fn main() -> ExitCode {
             };
 
             let ip_versions = $cfg.get_ip_versions();
-            let graph = match Graph::new(DEFAULT_ODC_PROVIDER, &domain, None, None, None, &ip_versions).await {
+            let graph = match Graph::new(DEFAULT_ODC_PROVIDER, &domain, None, None, None, Duration::from_secs($cfg.get_request_timeout()), &ip_versions).await {
                 Ok(graph) => graph,
                 Err(e) => {
                     error!("Failed discovering tenant: {:?}", e);
@@ -824,11 +826,13 @@ async fn main() -> ExitCode {
     macro_rules! client {
         ($cfg:expr, $authority:expr, $transport_key:expr, $cert_key:expr) => {{
             let ip_versions = $cfg.get_ip_versions();
+            let request_timeout = $cfg.get_request_timeout();
             match BrokerClientApplication::new(
                 Some(&$authority),
                 None,
                 $transport_key,
                 $cert_key,
+                Duration::from_secs(request_timeout),
                 &ip_versions,
             ) {
                 Ok(app) => app,
@@ -880,7 +884,16 @@ async fn main() -> ExitCode {
                         }
                     };
                     let ip_versions = cfg.get_ip_versions();
-                    if let Ok(graph) = Graph::new(DEFAULT_ODC_PROVIDER, &domain, None, None, None, &ip_versions).await {
+                    let request_timeout = cfg.get_request_timeout();
+                    if let Ok(graph) = Graph::new(
+                        DEFAULT_ODC_PROVIDER,
+                        &domain,
+                        None,
+                        None,
+                        None,
+                        Duration::from_secs(request_timeout),
+                        &ip_versions
+                    ).await {
                         result = Some((graph, access_token));
                     }
                 }

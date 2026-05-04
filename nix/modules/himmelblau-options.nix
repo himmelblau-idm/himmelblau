@@ -677,6 +677,15 @@ in
       example = 10;
     };
 
+    request_timeout = mkOption {
+      type = types.nullOr (types.ints.unsigned);
+      default = 10;
+      description = ''
+        The timeout in seconds for HTTP requests to authentication servers. This includes DNS resolution, connection attempts across all resolved IP addresses, TLS handshake, and HTTP request/response. Increase this value if authentication fails in environments where DNS returns many IP addresses for the same hostname (e.g., 7+ addresses). Default is 10 seconds to accommodate Happy Eyeballs connection attempts across multiple addresses.
+      '';
+      example = 15;
+    };
+
     use_etc_skel = mkOption {
       type = types.nullOr (types.bool);
       default = false;

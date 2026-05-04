@@ -700,13 +700,20 @@ macro_rules! no_op_prt_token_fetch {
 #[macro_export]
 macro_rules! entra_id_refresh_token_token_fetch {
     ($self:ident, $refresh_token:ident, $scopes:ident) => {{
-        let ip_versions = $self.config.lock().await.get_ip_versions();
-        let client =
-            PublicClientApplication::new(BROKER_APP_ID, None, &ip_versions)
-                .map_err(|e| {
-                    error!("Failed to create public client application: {:?}", e);
-                    IdpError::BadRequest
-                })?;
+        let (ip_versions, request_timeout) = {
+            let cfg = $self.config.lock().await;
+            (cfg.get_ip_versions(), cfg.get_request_timeout())
+        };
+        let client = PublicClientApplication::new(
+            BROKER_APP_ID,
+            None,
+            std::time::Duration::from_secs(request_timeout),
+            &ip_versions,
+        )
+        .map_err(|e| {
+            error!("Failed to create public client application: {:?}", e);
+            IdpError::BadRequest
+        })?;
         let scopes = if $self.is_consumer_tenant().await {
             // Remove "https://graph.microsoft.com/.default" from the
             // scopes for consumer tenants. This is the default scope

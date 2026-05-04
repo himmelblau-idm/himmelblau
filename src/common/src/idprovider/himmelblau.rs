@@ -212,12 +212,14 @@ impl HimmelblauMultiProvider {
                         cfg.get_ip_versions(),
                     )
                 };
+                let request_timeout = config.lock().await.get_request_timeout();
                 let graph = match Graph::new(
                     &odc_provider,
                     &domain,
                     Some(&authority_host),
                     tenant_id.as_deref(),
                     graph_url.as_deref(),
+                    Duration::from_secs(request_timeout),
                     &ip_versions,
                 )
                 .await
@@ -233,6 +235,7 @@ impl HimmelblauMultiProvider {
                     app_id.as_deref(),
                     None,
                     None,
+                    Duration::from_secs(request_timeout),
                     &ip_versions,
                 )
                 .map_err(|e| {
@@ -1221,10 +1224,12 @@ impl IdProvider for HimmelblauProvider {
                     (authority_host, tenant_id, ip_versions)
                 };
                 let authority = format!("https://{}/{}", authority_host, tenant_id);
+                let request_timeout = self.config.lock().await.get_request_timeout();
                 let app = ConfidentialClientApplication::new(
                     $client_id,
                     Some(&authority),
                     $client_credential,
+                    Duration::from_secs(request_timeout),
                     &ip_versions,
                 )
                 .map_err(|e| {
@@ -1556,13 +1561,20 @@ impl IdProvider for HimmelblauProvider {
                 }
             }
             RefreshCacheEntry::RefreshToken(refresh_token) => {
-                let ip_versions = self.config.lock().await.get_ip_versions();
-                let client =
-                    PublicClientApplication::new(BROKER_APP_ID, None, &ip_versions)
-                        .map_err(|e| {
-                            error!("Failed to create public client application: {:?}", e);
-                            IdpError::BadRequest
-                        })?;
+                let (ip_versions, request_timeout) = {
+                    let cfg = self.config.lock().await;
+                    (cfg.get_ip_versions(), cfg.get_request_timeout())
+                };
+                let client = PublicClientApplication::new(
+                    BROKER_APP_ID,
+                    None,
+                    Duration::from_secs(request_timeout),
+                    &ip_versions,
+                )
+                .map_err(|e| {
+                    error!("Failed to create public client application: {:?}", e);
+                    IdpError::BadRequest
+                })?;
                 let mtoken = client
                     .acquire_token_by_refresh_token(&refresh_token, vec![])
                     .await;
@@ -2836,10 +2848,14 @@ impl IdProvider for HimmelblauProvider {
                             }
                     } else if let Some(RefreshCacheEntry::RefreshToken(refresh_token)) = refresh_cache_entry {
                         // We have a refresh token, exchange that for an access token
-                        let ip_versions = self.config.lock().await.get_ip_versions();
+                        let (ip_versions, request_timeout) = {
+                            let cfg = self.config.lock().await;
+                            (cfg.get_ip_versions(), cfg.get_request_timeout())
+                        };
                         let app = match PublicClientApplication::new(
                             BROKER_APP_ID,
                             None,
+                            std::time::Duration::from_secs(request_timeout),
                             &ip_versions,
                         ) {
                             Ok(app) => app,
@@ -5018,12 +5034,20 @@ impl HimmelblauProvider {
                     if vers.is_empty() {
                         vers = vec!["1.2511.11".to_string()];
                     }
-                    let ip_versions = self.config.lock().await.get_ip_versions();
-                    let intune = IntuneForLinux::new(endpoints, Some(&vers[vers.len() - 1]), &ip_versions)
-                        .map_err(|e| {
-                            error!(?e, "Intune device enrollment failed.");
-                            IdpError::BadRequest
-                        })?;
+                    let (ip_versions, request_timeout) = {
+                        let cfg = self.config.lock().await;
+                        (cfg.get_ip_versions(), cfg.get_request_timeout())
+                    };
+                    let intune = IntuneForLinux::new(
+                        endpoints,
+                        Some(&vers[vers.len() - 1]),
+                        std::time::Duration::from_secs(request_timeout),
+                        &ip_versions,
+                    )
+                    .map_err(|e| {
+                        error!(?e, "Intune device enrollment failed.");
+                        IdpError::BadRequest
+                    })?;
                     let device_id = match device_id {
                         Some(v) => v.to_string(),
                         None => self
