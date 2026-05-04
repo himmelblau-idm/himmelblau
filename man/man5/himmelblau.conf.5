@@ -1,4 +1,4 @@
-.TH HIMMELBLAU.CONF "5" "March 2026" "Himmelblau Configuration" "File Formats"
+.TH HIMMELBLAU.CONF "5" "May 2026" "Himmelblau Configuration" "File Formats"
 .SH NAME
 himmelblau.conf \- Configuration file for Himmelblau, enabling Azure Entra ID authentication on Linux.
 
@@ -804,6 +804,17 @@ Default: 300
 
 .P
 Example: cache_timeout = 10
+
+.TP
+.B request_timeout
+.RE
+The timeout in seconds for HTTP requests to authentication servers. This includes DNS resolution, connection attempts across all resolved IP addresses, TLS handshake, and HTTP request/response. Increase this value if authentication fails in environments where DNS returns many IP addresses for the same hostname (e.g., 7+ addresses). Default is 10 seconds to accommodate Happy Eyeballs connection attempts across multiple addresses.
+
+.P
+Default: 10
+
+.P
+Example: request_timeout = 15
 
 .TP
 .B use_etc_skel

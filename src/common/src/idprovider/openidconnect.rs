@@ -360,8 +360,11 @@ impl OidcApplication {
                 })?
             };
 
+            let request_timeout = config.lock().await.get_request_timeout();
             let http_client = reqwest::ClientBuilder::new()
                 .redirect(reqwest::redirect::Policy::none())
+                .connect_timeout(std::time::Duration::from_secs(request_timeout / 2))
+                .timeout(std::time::Duration::from_secs(request_timeout))
                 .build()
                 .map_err(|e| {
                     error!(?e, "Failed to build HTTP client for OIDC");

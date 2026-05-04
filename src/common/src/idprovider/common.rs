@@ -700,7 +700,13 @@ macro_rules! no_op_prt_token_fetch {
 #[macro_export]
 macro_rules! entra_id_refresh_token_token_fetch {
     ($self:ident, $refresh_token:ident, $scopes:ident) => {{
-        let client = PublicClientApplication::new(BROKER_APP_ID, None).map_err(|e| {
+        let request_timeout = $self.config.lock().await.get_request_timeout();
+        let client = PublicClientApplication::new(
+            BROKER_APP_ID,
+            None,
+            std::time::Duration::from_secs(request_timeout),
+        )
+        .map_err(|e| {
             error!("Failed to create public client application: {:?}", e);
             IdpError::BadRequest
         })?;
