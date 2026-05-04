@@ -21,7 +21,7 @@ tracing = { workspace = true }
 clap = { workspace = true, features = ["derive"] }
 anyhow = { workspace = true }
 sketching = { workspace = true }
-rpassword = "^7.4.0"
+rpassword = "^7.5.2"
 libc.workspace = true
 libhimmelblau.workspace = true
 kanidm-hsm-crypto.workspace = true
