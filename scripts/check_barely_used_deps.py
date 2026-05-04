@@ -640,7 +640,10 @@ class DependencyAnalyzer:
         print("Calculating usage breadth metrics...", file=sys.stderr)
 
         for dep_name in self.workspace_deps:
-            symbol_list = self.symbol_imports.get(dep_name, [])
+            # Normalize hyphenated crate names to underscores for lookup
+            # (Cargo.toml uses hyphens, Rust imports use underscores)
+            normalized_dep_name = dep_name.replace("-", "_")
+            symbol_list = self.symbol_imports.get(normalized_dep_name, [])
 
             # Unique symbols (exclude globs)
             unique_symbols = {s.symbol for s in symbol_list if not s.is_glob}
