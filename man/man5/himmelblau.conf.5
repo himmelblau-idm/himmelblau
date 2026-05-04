@@ -722,7 +722,7 @@ Example: idmap_range = 10000000-10999999
 .TP
 .B connection_timeout
 .RE
-The timeout in seconds for connections to the authentication server.
+The timeout in seconds for local Himmelblau daemon socket operations. This setting controls how long clients wait when communicating with local Himmelblau services; HTTP requests to authentication servers are controlled by request_timeout.
 
 .P
 Default: 30
@@ -755,17 +755,6 @@ Default: 300
 
 .P
 Example: cache_timeout = 10
-
-.TP
-.B request_timeout
-.RE
-The timeout in seconds for HTTP requests to authentication servers. This includes DNS resolution, connection attempts across all resolved IP addresses, TLS handshake, and HTTP request/response. Increase this value if authentication fails in environments where DNS returns many IP addresses for the same hostname (e.g., 7+ addresses). Default is 10 seconds to accommodate Happy Eyeballs connection attempts across multiple addresses.
-
-.P
-Default: 10
-
-.P
-Example: request_timeout = 15
 
 .TP
 .B use_etc_skel
@@ -803,6 +792,17 @@ Default: join
 
 .P
 Example: join_type = register
+
+.TP
+.B request_timeout
+.RE
+The timeout in seconds for HTTP requests to authentication servers. This includes DNS resolution, connection attempts across all resolved IP addresses, TLS handshake, and HTTP request/response. Increase this value if authentication fails in environments where DNS returns many IP addresses for the same hostname (e.g., 7+ addresses). Default is 10 seconds to accommodate Happy Eyeballs connection attempts across multiple addresses.
+
+.P
+Default: 10
+
+.P
+Example: request_timeout = 15
 
 .TP
 .B user_map_file
