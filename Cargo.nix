@@ -275,7 +275,7 @@ rec {
           {
             name = "libhimmelblau";
             packageId = "libhimmelblau";
-            features = [ "broker" "changepassword" "on_behalf_of" "mfa_method_selection" "optional_mfa" "intune_portal_vers_selection" "redirect_uri" "pop_support" "ipvers" ];
+            features = [ "broker" "changepassword" "on_behalf_of" "mfa_method_selection" "optional_mfa" "intune_portal_vers_selection" "redirect_uri" "pop_support" "ipvers" "set_timeout" ];
           }
           {
             name = "reqwest";
@@ -6320,7 +6320,7 @@ rec {
           {
             name = "libhimmelblau";
             packageId = "libhimmelblau";
-            features = [ "broker" "changepassword" "on_behalf_of" "mfa_method_selection" "optional_mfa" "intune_portal_vers_selection" "redirect_uri" "pop_support" "ipvers" ];
+            features = [ "broker" "changepassword" "on_behalf_of" "mfa_method_selection" "optional_mfa" "intune_portal_vers_selection" "redirect_uri" "pop_support" "ipvers" "set_timeout" ];
           }
           {
             name = "os-release";
@@ -6434,7 +6434,7 @@ rec {
           {
             name = "libhimmelblau";
             packageId = "libhimmelblau";
-            features = [ "broker" "changepassword" "on_behalf_of" "mfa_method_selection" "optional_mfa" "intune_portal_vers_selection" "redirect_uri" "pop_support" "ipvers" ];
+            features = [ "broker" "changepassword" "on_behalf_of" "mfa_method_selection" "optional_mfa" "intune_portal_vers_selection" "redirect_uri" "pop_support" "ipvers" "set_timeout" ];
           }
           {
             name = "libkrimes";
@@ -6611,7 +6611,7 @@ rec {
           {
             name = "libhimmelblau";
             packageId = "libhimmelblau";
-            features = [ "broker" "changepassword" "on_behalf_of" "mfa_method_selection" "optional_mfa" "intune_portal_vers_selection" "redirect_uri" "pop_support" "ipvers" ];
+            features = [ "broker" "changepassword" "on_behalf_of" "mfa_method_selection" "optional_mfa" "intune_portal_vers_selection" "redirect_uri" "pop_support" "ipvers" "set_timeout" ];
           }
           {
             name = "libkrimes";
@@ -8798,7 +8798,7 @@ rec {
           "redirect_uri" = [ "broker" ];
           "tpm" = [ "broker" "kanidm-hsm-crypto/tpm" ];
         };
-        resolvedDefaultFeatures = [ "broker" "changepassword" "default" "intune_portal_vers_selection" "ipvers" "mfa_method_selection" "on_behalf_of" "optional_mfa" "pop_support" "redirect_uri" "tpm" ];
+        resolvedDefaultFeatures = [ "broker" "changepassword" "default" "intune_portal_vers_selection" "ipvers" "mfa_method_selection" "on_behalf_of" "optional_mfa" "pop_support" "redirect_uri" "set_timeout" "tpm" ];
       };
       "libkrimes" = rec {
         crateName = "libkrimes";
@@ -11232,7 +11232,7 @@ rec {
           {
             name = "libhimmelblau";
             packageId = "libhimmelblau";
-            features = [ "broker" "changepassword" "on_behalf_of" "mfa_method_selection" "optional_mfa" "intune_portal_vers_selection" "redirect_uri" "pop_support" "ipvers" ];
+            features = [ "broker" "changepassword" "on_behalf_of" "mfa_method_selection" "optional_mfa" "intune_portal_vers_selection" "redirect_uri" "pop_support" "ipvers" "set_timeout" ];
           }
           {
             name = "tokio";
