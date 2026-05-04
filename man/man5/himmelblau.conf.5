@@ -808,7 +808,7 @@ Example: request_timeout = 15
 .TP
 .B connection_timeout
 .RE
-The timeout in seconds for connections to the authentication server.
+The timeout in seconds for local Himmelblau daemon socket operations. This setting controls how long clients wait when communicating with local Himmelblau services; HTTP requests to authentication servers are controlled by request_timeout.
 
 .P
 Default: 30

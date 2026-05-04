@@ -7,7 +7,7 @@
            domain_specific="false"
            order="4675">
 <description>
-The timeout in seconds for connections to the authentication server.
+The timeout in seconds for local Himmelblau daemon socket operations. This setting controls how long clients wait when communicating with local Himmelblau services; HTTP requests to authentication servers are controlled by request_timeout.
 </description>
 <default>30</default>
 <default_const>DEFAULT_CONN_TIMEOUT</default_const>
