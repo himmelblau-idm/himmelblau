@@ -186,3 +186,6 @@ himmelblau-qr-greeter = ""
 [package.metadata.generate-rpm.recommends]
 authselect = ""
 "(oddjob-mkhomedir if authselect)" = ""
+
+[package.metadata.cargo-machete]
+ignored = ["libhimmelblau", "pkg-config"]

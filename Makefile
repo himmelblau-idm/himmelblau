@@ -206,6 +206,22 @@ sbom: .packaging ## Generate a Software Bill of Materials
 	cargo sbom -V >/dev/null || (echo "cargo-sbom required" && cargo install cargo-sbom)
 	cargo sbom > ./packaging/sbom.json
 
+check-barely-used: ## Detect barely-used dependencies (high-cost + shallow-usage)
+	@cargo bloat -V >/dev/null 2>&1 || (echo "cargo-bloat required" && cargo install cargo-bloat)
+	@cargo-diet --version >/dev/null 2>&1 || (echo "cargo-diet required" && cargo install cargo-diet)
+	@echo "Analyzing dependency usage patterns..."
+	@PATH="$$HOME/.cargo/bin:$$PATH" python3 scripts/check_barely_used_deps.py --format=human --mode=both
+
+check-shallow: ## Detect shallow-usage dependencies only
+	@echo "Analyzing shallow usage patterns..."
+	@PATH="$$HOME/.cargo/bin:$$PATH" python3 scripts/check_barely_used_deps.py --format=human --mode=shallow-usage
+
+check-high-cost: ## Detect high-cost dependencies only (original analysis)
+	@cargo bloat -V >/dev/null 2>&1 || (echo "cargo-bloat required" && cargo install cargo-bloat)
+	@cargo-diet --version >/dev/null 2>&1 || (echo "cargo-diet required" && cargo install cargo-diet)
+	@echo "Analyzing high-cost dependencies..."
+	@PATH="$$HOME/.cargo/bin:$$PATH" python3 scripts/check_barely_used_deps.py --format=human --mode=high-cost
+
 package: deb rpm sbom ## Build packages for all supported distros (DEB+RPM)
 	ls ./packaging/
 

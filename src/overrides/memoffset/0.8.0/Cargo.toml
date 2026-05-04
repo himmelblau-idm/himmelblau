@@ -1,0 +1,16 @@
+[package]
+name = "memoffset"
+version = "0.8.0"
+authors.workspace = true
+rust-version.workspace = true
+edition.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[features]
+default = ["memoffset/default"]
+unstable_const = ["memoffset/unstable_const"]
+
+[dependencies]
+memoffset = { version = "^0.9.1" }

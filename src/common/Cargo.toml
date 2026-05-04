@@ -18,16 +18,12 @@ path = "src/lib.rs"
 
 [dependencies]
 serde = { workspace = true }
-serde_derive = "^1.0.164"
 serde_json = { workspace = true }
 tracing = { workspace = true }
 configparser = "^3.0.2"
 libhimmelblau = { workspace = true }
 reqwest = { workspace = true }
-pem = { workspace = true }
 kanidm-hsm-crypto = { workspace = true }
-compact_jwt = { workspace = true }
-os-release = { workspace = true }
 zeroize = { workspace = true }
 idmap = { workspace = true }
 lazy_static = { workspace = true }
@@ -46,19 +42,19 @@ libc = { workspace = true }
 bytes = "^1.11.1"
 futures = "^0.3.32"
 anyhow = { workspace = true }
-kanidm_utils_users = { workspace = true }
 csv = { workspace = true }
 sketching = { workspace = true }
-kanidm_lib_file_permissions.workspace = true
 regex = "1.12.3"
 sha2 = "0.11.0"
 base64.workspace = true
 authenticator = { version = "0.5.0", default-features = false, features = ["crypto_openssl"] }
 rpassword = "7.4.0"
-der = "0.8.0"
 openidconnect = "4.0.1"
 oauth2 = "5.0.0"
 totp-rs = { version = "5.7.1", features = ["gen_secret", "otpauth", "qr", "serde_support", "zeroize"] }
 hostname = "0.4.2"
 qrcodegen = "1.8.0"
 urlencoding = { workspace = true }
+
+[package.metadata.cargo-machete]
+ignored = ["libhimmelblau"]

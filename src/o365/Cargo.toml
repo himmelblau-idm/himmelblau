@@ -11,10 +11,6 @@ repository.workspace = true
 
 [dependencies]
 
-[build-dependencies]
-reqwest = { version = "0.12", features = ["blocking", "rustls-tls"] }
-anyhow = "1.0"
-
 [package.metadata.deb]
 depends = ["curl", "libfuse2", "jq"]
 assets = [

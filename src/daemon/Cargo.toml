@@ -27,21 +27,18 @@ idmap = { workspace = true }
 tokio = { workspace = true, features = ["tracing"] }
 tokio-util = { workspace = true }
 tracing = { workspace = true }
-tracing-subscriber = { workspace = true }
 clap = { workspace = true }
 bytes = "^1.11.1"
 uuid = { workspace = true }
 serde = { workspace = true }
 serde_json.workspace = true
 futures = "^0.3.32"
-systemd-journal-logger = "^2.2.2"
 himmelblau_policies = { workspace = true }
 uzers = "^0.12.2"
 sketching = { workspace = true }
 walkdir = { workspace = true }
 libc = { workspace = true }
 kanidm_utils_users = { workspace = true }
-csv = { workspace = true }
 notify-debouncer-full = { workspace = true }
 kanidm-hsm-crypto = { workspace = true }
 kanidm_lib_file_permissions.workspace = true
@@ -129,3 +126,6 @@ himmelblau-sso = ""
 
 [package.metadata.generate-rpm.requires]
 man = ""
+
+[package.metadata.cargo-machete]
+ignored = ["libhimmelblau"]

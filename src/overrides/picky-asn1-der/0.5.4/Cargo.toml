@@ -1,0 +1,12 @@
+[package]
+name = "picky-asn1-der"
+version = "0.5.4"
+authors.workspace = true
+rust-version.workspace = true
+edition.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[features]
+debug_log = []

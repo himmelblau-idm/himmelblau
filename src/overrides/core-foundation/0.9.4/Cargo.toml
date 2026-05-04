@@ -1,0 +1,19 @@
+[package]
+name = "core-foundation"
+version = "0.9.4"
+authors.workspace = true
+rust-version.workspace = true
+edition.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[features]
+default = [] #["core-foundation/default"]
+link = [] #["core-foundation/link"]
+mac_os_10_7_support = [] #["core-foundation/mac_os_10_7_support"]
+mac_os_10_8_features = [] #["core-foundation/mac_os_10_8_features"]
+
+[dependencies]
+#core-foundation = { version = "^0.10.1" }
+#uuid = { version = "^0.5", optional = true, default-features = false }

@@ -1,0 +1,24 @@
+[package]
+name = "schemars"
+version = "0.9.0"
+authors.workspace = true
+rust-version.workspace = true
+edition.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[features]
+_ui_test = ["schemars/_ui_test"]
+default = ["schemars/default"]
+derive = ["schemars/derive", "schemars_derive"]
+preserve_order = ["schemars/preserve_order"]
+raw_value = ["schemars/raw_value"]
+std = ["schemars/std"]
+
+[dependencies]
+schemars = { version = "^1.0.4" }
+chrono = { version = "^0.4", optional = true, default-features = false }
+indexmap = { version = "^2.0", optional = true, default-features = false }
+rust_decimal = { version = "^1", optional = true, default-features = false }
+schemars_derive = { version = "=0.9.0", optional = true, default-features = false }

@@ -28,13 +28,226 @@ url = "https://raw.githubusercontent.com/mozilla/supply-chain/main/audits.toml"
 [imports.zcash]
 url = "https://raw.githubusercontent.com/zcash/rust-ecosystem/main/supply-chain/audits.toml"
 
-[policy.kanidm_build_profiles]
+[policy."adler2:2.0.0"]
+audit-as-crates-io = true
+
+[policy."android_system_properties:0.1.5"]
+audit-as-crates-io = true
+
+[policy."anstyle-wincon:3.0.8"]
+audit-as-crates-io = true
+
+[policy."assert_hex:0.4.1"]
+audit-as-crates-io = true
+
+[policy."base64:0.21.7"]
+audit-as-crates-io = true
+
+[policy."cbindgen:0.29.2"]
+audit-as-crates-io = true
+
+[policy."const-oid:0.9.6"]
+audit-as-crates-io = true
+
+[policy."core-foundation-sys:0.8.7"]
+audit-as-crates-io = true
+
+[policy."core-foundation:0.10.1"]
+audit-as-crates-io = true
+
+[policy."core-foundation:0.9.4"]
+audit-as-crates-io = true
+
+[policy."cpufeatures:0.2.17"]
+audit-as-crates-io = true
+
+[policy."crunchy:0.2.4"]
+audit-as-crates-io = true
+
+[policy."dbus-tokio:0.7.6"]
+audit-as-crates-io = true
+
+[policy."devd-rs:0.3.6"]
+audit-as-crates-io = true
+
+[policy."fiat-crypto:0.2.9"]
+audit-as-crates-io = true
+
+[policy."foldhash:0.1.5"]
+audit-as-crates-io = true
+
+[policy."fsevent-sys:4.1.0"]
+audit-as-crates-io = true
+
+[policy."getopts:0.2.24"]
+audit-as-crates-io = true
+
+[policy."getrandom:0.2.16"]
+audit-as-crates-io = true
+
+[policy."getrandom:0.3.3"]
+audit-as-crates-io = true
+
+[policy."hashbrown:0.15.5"]
+audit-as-crates-io = true
+
+[policy."hashbrown:0.16.1"]
+audit-as-crates-io = true
+
+[policy."hermit-abi:0.4.0"]
+audit-as-crates-io = true
+
+[policy."iana-time-zone-haiku:0.1.2"]
+audit-as-crates-io = true
+
+[policy."indexmap:1.9.3"]
+audit-as-crates-io = true
+
+[policy."jni:0.21.1"]
+audit-as-crates-io = true
+
+[policy."js-sys:0.3.77"]
+audit-as-crates-io = true
+
+[policy."kqueue:1.1.1"]
+audit-as-crates-io = true
+
+[policy."libredox:0.1.3"]
+audit-as-crates-io = true
+
+[policy."linux-raw-sys:0.4.15"]
+audit-as-crates-io = true
+
+[policy."memoffset:0.8.0"]
+audit-as-crates-io = true
+
+[policy."memoffset:0.9.1"]
+audit-as-crates-io = true
+
+[policy."minimal-lexical:0.2.1"]
 audit-as-crates-io = true
 
 [policy.paste]
 audit-as-crates-io = true
 
-[policy.sshkey-attest]
+[policy."pastey:0.1.1"]
+audit-as-crates-io = true
+
+[policy."picky-asn1-der:0.5.4"]
+audit-as-crates-io = true
+
+[policy."picky-asn1:0.10.1"]
+audit-as-crates-io = true
+
+[policy."quinn:0.11.8"]
+audit-as-crates-io = true
+
+[policy."r-efi:5.2.0"]
+audit-as-crates-io = true
+
+[policy."redox_syscall:0.5.12"]
+audit-as-crates-io = true
+
+[policy."reqwest:0.12.24"]
+audit-as-crates-io = true
+
+[policy."ring:0.17.14"]
+audit-as-crates-io = true
+
+[policy."rustls-platform-verifier-android:0.1.1"]
+audit-as-crates-io = true
+
+[policy."schannel:0.1.27"]
+audit-as-crates-io = true
+
+[policy."schemars:0.9.0"]
+audit-as-crates-io = true
+
+[policy."schemars:1.0.4"]
+audit-as-crates-io = true
+
+[policy."security-framework-sys:2.15.0"]
+audit-as-crates-io = true
+
+[policy."security-framework:3.5.1"]
+audit-as-crates-io = true
+
+[policy."socket2:0.5.9"]
+audit-as-crates-io = true
+
+[policy."system-configuration:0.6.1"]
+audit-as-crates-io = true
+
+[policy."thiserror:1.0.69"]
+audit-as-crates-io = true
+
+[policy."tls_codec:0.4.2"]
+audit-as-crates-io = true
+
+[policy."toml_datetime:0.6.11"]
+audit-as-crates-io = true
+
+[policy."uds_windows:1.1.0"]
+audit-as-crates-io = true
+
+[policy."valuable:0.1.1"]
+audit-as-crates-io = true
+
+[policy."wasi:0.11.0+wasi-snapshot-preview1"]
+audit-as-crates-io = true
+
+[policy."wasip2:1.0.2+wasi-0.2.9"]
+audit-as-crates-io = true
+
+[policy."wasip3:0.4.0+wasi-0.3.0-rc-2026-01-06"]
+audit-as-crates-io = true
+
+[policy."wasm-bindgen-futures:0.4.50"]
+audit-as-crates-io = true
+
+[policy."wasm-bindgen:0.2.100"]
+audit-as-crates-io = true
+
+[policy."web-sys:0.3.77"]
+audit-as-crates-io = true
+
+[policy."web-time:1.1.0"]
+audit-as-crates-io = true
+
+[policy."webpki-root-certs:1.0.6"]
+audit-as-crates-io = true
+
+[policy."winapi-util:0.1.9"]
+audit-as-crates-io = true
+
+[policy."winapi:0.3.9"]
+audit-as-crates-io = true
+
+[policy."windows-core:0.61.2"]
+audit-as-crates-io = true
+
+[policy."windows-link:0.2.1"]
+audit-as-crates-io = true
+
+[policy."windows-registry:0.4.0"]
+audit-as-crates-io = true
+
+[policy."windows-sys:0.52.0"]
+audit-as-crates-io = true
+
+[policy."windows-sys:0.59.0"]
+audit-as-crates-io = true
+
+[policy."windows-sys:0.61.2"]
+audit-as-crates-io = true
+
+[policy."windows-targets:0.52.6"]
+audit-as-crates-io = true
+
+[policy."windows-targets:0.53.0"]
+audit-as-crates-io = true
+
+[policy."zerocopy-derive:0.8.25"]
 audit-as-crates-io = true
 
 [[exemptions.aead]]
@@ -179,10 +392,6 @@ criteria = "safe-to-deploy"
 
 [[exemptions.clang-sys]]
 version = "1.8.1"
-criteria = "safe-to-deploy"
-
-[[exemptions.combine]]
-version = "4.6.7"
 criteria = "safe-to-deploy"
 
 [[exemptions.concurrent-queue]]
@@ -453,10 +662,6 @@ criteria = "safe-to-deploy"
 version = "1.1.1"
 criteria = "safe-to-deploy"
 
-[[exemptions.kqueue-sys]]
-version = "1.0.4"
-criteria = "safe-to-deploy"
-
 [[exemptions.lazycell]]
 version = "1.3.0"
 criteria = "safe-to-deploy"
@@ -491,10 +696,6 @@ criteria = "safe-to-deploy"
 
 [[exemptions.libudev-sys]]
 version = "0.1.4"
-criteria = "safe-to-deploy"
-
-[[exemptions.lru-slab]]
-version = "0.1.2"
 criteria = "safe-to-deploy"
 
 [[exemptions.mac]]
@@ -729,10 +930,6 @@ criteria = "safe-to-deploy"
 version = "0.11.8"
 criteria = "safe-to-deploy"
 
-[[exemptions.quinn-proto]]
-version = "0.11.12"
-criteria = "safe-to-deploy"
-
 [[exemptions.r-efi]]
 version = "5.2.0"
 criteria = "safe-to-deploy"
@@ -837,23 +1034,11 @@ criteria = "safe-to-deploy"
 version = "0.6.1"
 criteria = "safe-to-deploy"
 
-[[exemptions.system-configuration-sys]]
-version = "0.6.0"
-criteria = "safe-to-deploy"
-
-[[exemptions.systemd-journal-logger]]
-version = "2.2.2"
-criteria = "safe-to-deploy"
-
 [[exemptions.tendril]]
 version = "0.4.3"
 criteria = "safe-to-deploy"
 
 [[exemptions.tls_codec]]
-version = "0.4.2"
-criteria = "safe-to-deploy"
-
-[[exemptions.tls_codec_derive]]
 version = "0.4.2"
 criteria = "safe-to-deploy"
 
@@ -929,28 +1114,12 @@ criteria = "safe-to-deploy"
 version = "1.1.0"
 criteria = "safe-to-deploy"
 
-[[exemptions.webpki-roots]]
-version = "0.26.11"
-criteria = "safe-to-deploy"
-
-[[exemptions.webpki-roots]]
-version = "1.0.1"
-criteria = "safe-to-deploy"
-
 [[exemptions.which]]
 version = "4.3.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.winapi]]
 version = "0.3.9"
-criteria = "safe-to-deploy"
-
-[[exemptions.winapi-i686-pc-windows-gnu]]
-version = "0.4.0"
-criteria = "safe-to-deploy"
-
-[[exemptions.winapi-x86_64-pc-windows-gnu]]
-version = "0.4.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.x509-cert]]

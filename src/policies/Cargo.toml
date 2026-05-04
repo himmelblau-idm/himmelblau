@@ -15,7 +15,6 @@ path = "src/lib.rs"
 
 [dependencies]
 tracing = { workspace = true }
-reqwest = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 anyhow = { workspace = true }
@@ -27,6 +26,7 @@ himmelblau_unix_common = { workspace = true }
 os-release = "0.1.0"
 semver = "1.0.28"
 libhimmelblau.workspace = true
-uuid.workspace = true
-libc.workspace = true
 tempfile = "3.27.0"
+
+[package.metadata.cargo-machete]
+ignored = ["libhimmelblau"]

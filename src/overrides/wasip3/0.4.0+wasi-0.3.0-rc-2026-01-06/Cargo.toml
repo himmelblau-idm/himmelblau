@@ -1,0 +1,12 @@
+[package]
+name = "wasip3"
+version = "0.4.0+wasi-0.3.0-rc-2026-01-06"
+authors.workspace = true
+rust-version.workspace = true
+edition.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[features]
+http-compat = []

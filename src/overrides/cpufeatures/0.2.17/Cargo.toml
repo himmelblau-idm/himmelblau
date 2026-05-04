@@ -1,0 +1,12 @@
+[package]
+name = "cpufeatures"
+version = "0.2.17"
+authors.workspace = true
+rust-version.workspace = true
+edition.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[dependencies]
+cpufeatures = { version = "^0.3.0" }
