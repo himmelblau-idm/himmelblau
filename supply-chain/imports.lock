@@ -72,8 +72,8 @@ user-login = "jschanck"
 user-name = "John Schanck"
 
 [[publisher.base64urlsafedata]]
-version = "0.5.4"
-when = "2025-12-10"
+version = "0.5.5"
+when = "2026-04-30"
 user-id = 31100
 user-login = "Firstyear"
 user-name = "Firstyear"
@@ -99,8 +99,8 @@ user-login = "emilio"
 user-name = "Emilio Cobos Álvarez"
 
 [[publisher.clap]]
-version = "4.6.0"
-when = "2026-03-12"
+version = "4.6.1"
+when = "2026-04-15"
 user-id = 6743
 user-login = "epage"
 user-name = "Ed Page"
@@ -113,8 +113,8 @@ user-login = "epage"
 user-name = "Ed Page"
 
 [[publisher.clap_derive]]
-version = "4.6.0"
-when = "2026-03-12"
+version = "4.6.1"
+when = "2026-04-15"
 user-id = 6743
 user-login = "epage"
 user-name = "Ed Page"
@@ -333,12 +333,6 @@ user-id = 55123
 user-login = "rust-lang-owner"
 
 [[publisher.hashbrown]]
-version = "0.16.1"
-when = "2025-11-20"
-user-id = 55123
-user-login = "rust-lang-owner"
-
-[[publisher.hashbrown]]
 version = "0.17.0"
 when = "2026-04-09"
 user-id = 55123
@@ -414,8 +408,8 @@ user-login = "alexcrichton"
 user-name = "Alex Crichton"
 
 [[publisher.kanidm-hsm-crypto]]
-version = "0.3.5"
-when = "2025-11-21"
+version = "0.3.6"
+when = "2026-04-30"
 user-id = 31100
 user-login = "Firstyear"
 user-name = "Firstyear"
@@ -428,15 +422,15 @@ user-login = "Firstyear"
 user-name = "Firstyear"
 
 [[publisher.kanidm_lib_file_permissions]]
-version = "1.9.1"
-when = "2026-02-24"
+version = "1.10.0"
+when = "2026-05-01"
 user-id = 31100
 user-login = "Firstyear"
 user-name = "Firstyear"
 
 [[publisher.kanidm_utils_users]]
-version = "1.9.1"
-when = "2026-02-24"
+version = "1.10.0"
+when = "2026-05-01"
 user-id = 31100
 user-login = "Firstyear"
 user-name = "Firstyear"
@@ -449,8 +443,8 @@ user-login = "Firstyear"
 user-name = "Firstyear"
 
 [[publisher.libc]]
-version = "0.2.185"
-when = "2026-04-13"
+version = "0.2.186"
+when = "2026-04-23"
 user-id = 55123
 user-login = "rust-lang-owner"
 
@@ -755,8 +749,8 @@ user-login = "tarcieri"
 user-name = "Tony Arcieri"
 
 [[publisher.sketching]]
-version = "1.9.1"
-when = "2026-02-24"
+version = "1.10.0"
+when = "2026-05-01"
 user-id = 31100
 user-login = "Firstyear"
 user-name = "Firstyear"
@@ -788,13 +782,6 @@ when = "2026-03-06"
 user-id = 6025
 user-login = "Thomasdezeeuw"
 user-name = "Thomas de Zeeuw"
-
-[[publisher.syn]]
-version = "1.0.109"
-when = "2023-02-24"
-user-id = 3618
-user-login = "dtolnay"
-user-name = "David Tolnay"
 
 [[publisher.syn]]
 version = "2.0.117"
@@ -832,8 +819,8 @@ user-login = "dtolnay"
 user-name = "David Tolnay"
 
 [[publisher.tokio]]
-version = "1.51.1"
-when = "2026-04-08"
+version = "1.52.2"
+when = "2026-05-04"
 user-id = 6741
 user-login = "Darksonn"
 user-name = "Alice Ryhl"
@@ -988,6 +975,13 @@ user-name = "Kenny Kerr"
 [[publisher.winnow]]
 version = "0.7.10"
 when = "2025-05-06"
+user-id = 6743
+user-login = "epage"
+user-name = "Ed Page"
+
+[[publisher.winnow]]
+version = "1.0.2"
+when = "2026-04-21"
 user-id = 6743
 user-login = "epage"
 user-name = "Ed Page"
@@ -1419,12 +1413,6 @@ criteria = "safe-to-deploy"
 version = "0.2.1"
 notes = "No unsafe code."
 
-[[audits.bytecode-alliance.audits.peeking_take_while]]
-who = "Nick Fitzgerald <fitzgen@gmail.com>"
-criteria = "safe-to-deploy"
-version = "1.0.0"
-notes = "I am the author of this crate."
-
 [[audits.bytecode-alliance.audits.pem-rfc7468]]
 who = "Chris Fallin <chris@cfallin.org>"
 criteria = "safe-to-deploy"
@@ -1466,6 +1454,18 @@ change.
 who = "Chris Fallin <chris@cfallin.org>"
 criteria = "safe-to-deploy"
 delta = "0.3.29 -> 0.3.32"
+
+[[audits.bytecode-alliance.audits.rustls-webpki]]
+who = "Alex Crichton <alex@alexcrichton.com>"
+criteria = "safe-to-deploy"
+delta = "0.103.10 -> 0.103.12"
+notes = "Minor updates to address recent vulnerabilities, nothing awry."
+
+[[audits.bytecode-alliance.audits.rustls-webpki]]
+who = "Alex Crichton <alex@alexcrichton.com>"
+criteria = "safe-to-deploy"
+delta = "0.103.12 -> 0.103.13"
+notes = "Minor fixes for the bug being fixed in this release, nothing awry."
 
 [[audits.bytecode-alliance.audits.semver]]
 who = "Pat Hickey <phickey@fastly.com>"
@@ -3236,23 +3236,6 @@ criteria = "safe-to-deploy"
 version = "0.4.3"
 aggregated-from = "https://hg.mozilla.org/mozilla-central/raw-file/tip/supply-chain/audits.toml"
 
-[[audits.mozilla.audits.home]]
-who = "Nika Layzell <nika@thelayzells.com>"
-criteria = "safe-to-deploy"
-version = "0.5.3"
-notes = """
-Crate with straightforward code for determining the user's HOME directory. Only
-unsafe code is used to invoke the Windows SHGetFolderPathW API to get the
-profile directory when the USERPROFILE environment variable is unavailable.
-"""
-aggregated-from = "https://raw.githubusercontent.com/mozilla/cargo-vet/main/supply-chain/audits.toml"
-
-[[audits.mozilla.audits.home]]
-who = "Nika Layzell <nika@thelayzells.com>"
-criteria = "safe-to-deploy"
-delta = "0.5.3 -> 0.5.11"
-aggregated-from = "https://raw.githubusercontent.com/mozilla/cargo-vet/main/supply-chain/audits.toml"
-
 [[audits.mozilla.audits.iana-time-zone]]
 who = "Mark Hammond <mhammond@skippinet.com.au>"
 criteria = "safe-to-deploy"
@@ -3430,6 +3413,18 @@ version = "0.3.3"
 notes = "All code written or reviewed by Josh Stone."
 aggregated-from = "https://hg.mozilla.org/mozilla-central/raw-file/tip/supply-chain/audits.toml"
 
+[[audits.mozilla.audits.num-derive]]
+who = "Mike Hommey <mh+mozilla@glandium.org>"
+criteria = "safe-to-deploy"
+delta = "0.3.3 -> 0.4.0"
+aggregated-from = "https://hg.mozilla.org/mozilla-central/raw-file/tip/supply-chain/audits.toml"
+
+[[audits.mozilla.audits.num-derive]]
+who = "Mike Hommey <mh+mozilla@glandium.org>"
+criteria = "safe-to-deploy"
+delta = "0.4.0 -> 0.4.2"
+aggregated-from = "https://hg.mozilla.org/mozilla-central/raw-file/tip/supply-chain/audits.toml"
+
 [[audits.mozilla.audits.once_cell]]
 who = "Mike Hommey <mh+mozilla@glandium.org>"
 criteria = "safe-to-deploy"
@@ -3465,13 +3460,6 @@ aggregated-from = "https://hg.mozilla.org/mozilla-central/raw-file/tip/supply-ch
 who = "Erich Gubler <erichdongubler@gmail.com>"
 criteria = "safe-to-deploy"
 delta = "1.20.3 -> 1.21.1"
-aggregated-from = "https://hg.mozilla.org/mozilla-central/raw-file/tip/supply-chain/audits.toml"
-
-[[audits.mozilla.audits.peeking_take_while]]
-who = "Bobby Holley <bobbyholley@gmail.com>"
-criteria = "safe-to-deploy"
-delta = "1.0.0 -> 0.1.2"
-notes = "Small refactor of some simple iterator logic, no unsafe code or capabilities."
 aggregated-from = "https://hg.mozilla.org/mozilla-central/raw-file/tip/supply-chain/audits.toml"
 
 [[audits.mozilla.audits.percent-encoding]]
