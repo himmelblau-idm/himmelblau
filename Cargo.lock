@@ -404,7 +404,7 @@ dependencies = [
  "memoffset 0.8.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "openssl",
  "openssl-sys",
- "rand 0.8.5",
+ "rand 0.8.6",
  "runloop",
  "serde",
  "serde_bytes",
@@ -1261,7 +1261,7 @@ dependencies = [
  "p384",
  "p521",
  "pkcs8",
- "rand 0.8.5",
+ "rand 0.8.6",
  "rsa",
  "rustls",
  "sec1",
@@ -3318,7 +3318,7 @@ dependencies = [
  "num-traits",
  "num_enum",
  "p256",
- "rand 0.8.5",
+ "rand 0.8.6",
  "rustls",
  "serde",
  "serde-indexed 0.2.0",
@@ -3664,7 +3664,7 @@ dependencies = [
  "num-integer",
  "num-iter",
  "num-traits",
- "rand 0.8.5",
+ "rand 0.8.6",
  "smallvec",
  "zeroize",
 ]
@@ -3752,7 +3752,7 @@ dependencies = [
  "chrono",
  "getrandom 0.2.16 (registry+https://github.com/rust-lang/crates.io-index)",
  "http",
- "rand 0.8.5",
+ "rand 0.8.6",
  "reqwest 0.12.24 (registry+https://github.com/rust-lang/crates.io-index)",
  "serde",
  "serde_json",
@@ -3833,7 +3833,7 @@ dependencies = [
  "oauth2",
  "p256",
  "p384",
- "rand 0.8.5",
+ "rand 0.8.6",
  "rsa",
  "serde",
  "serde-value",
@@ -4568,9 +4568,9 @@ replace = "r-efi 5.2.0"
 
 [[package]]
 name = "rand"
-version = "0.8.5"
+version = "0.8.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "34af8d1a0e25924bc5b7c43c079c942339d8f0a8b57c39049bef581b46327404"
+checksum = "5ca0ecfa931c29007047d1bc58e623ab12e5590e8c7cc53200d5202b69266d8a"
 dependencies = [
  "libc",
  "rand_chacha 0.3.1",
@@ -5360,7 +5360,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "88e79009728d8311d42d754f2f319a975f9e38f156fd5e422d2451486c78b286"
 dependencies = [
  "base64ct",
- "rand 0.8.5",
+ "rand 0.8.6",
  "sha2 0.10.9",
  "subtle",
 ]
