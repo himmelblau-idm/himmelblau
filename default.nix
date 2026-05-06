@@ -31,6 +31,14 @@ let
                 "-isystem ${pkgs.glibc.dev}/include"
               ];
             };
+          hidapi = attrs: {
+            nativeBuildInputs = [
+              pkgs.pkg-config
+            ];
+            buildInputs = [
+              pkgs.udev
+            ];
+          };
           himmelblau_unix_common = attrs: {
             nativeBuildInputs = [
               pkgs.python3
