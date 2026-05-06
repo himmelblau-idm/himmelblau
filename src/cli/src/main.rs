@@ -1609,8 +1609,10 @@ async fn main() -> ExitCode {
             // Map the name
             let account_id = cfg.map_name_to_upn(&account_id);
 
-            let mut opts = Options::default();
-            opts.force_reauth = force_reauth;
+            let opts = Options {
+                force_reauth,
+                ..Default::default()
+            };
             let msg_printer = Arc::new(SimpleMessagePrinter::default());
             match authenticate_async(
                 None,
