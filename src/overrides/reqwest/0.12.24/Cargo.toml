@@ -13,7 +13,7 @@ __rustls = ["reqwest/__rustls"]
 __tls = ["reqwest/__tls"]
 blocking = ["reqwest/blocking"]
 charset = ["reqwest/charset"]
-cookies = ["reqwest/cookies", "cookie_store"]
+cookies = ["reqwest/cookies"]
 default = ["reqwest/default"]
 hickory-dns = ["reqwest/hickory-dns"]
 multipart = ["reqwest/multipart"]
@@ -25,4 +25,3 @@ rustls-tls = ["__rustls"]
 
 [dependencies]
 reqwest = { version = "^0.13.1" }
-cookie_store = { version = "^0.21.0", optional = true, default-features = false }

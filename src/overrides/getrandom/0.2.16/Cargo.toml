@@ -14,5 +14,3 @@ js = []
 
 [dependencies]
 getrandom = { version = "^0.4.1" }
-js-sys = { version = "^0.3", optional = true, default-features = false }
-wasm-bindgen = { version = "^0.2.62", optional = true, default-features = false }
