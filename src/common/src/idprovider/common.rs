@@ -29,6 +29,23 @@ use tokio::sync::RwLock;
 /// `exchange_prt_for_prt` before using it for access-token acquisition.
 pub const PRT_REFRESH_AGE: Duration = Duration::from_secs(4 * 3600);
 
+/// Build a `reqwest::Client` for `attempt_online()` probes.
+///
+/// Uses `request_timeout` for the total request budget and a derived
+/// connect timeout of `min(request_timeout / 2, 3s)` so we fail fast
+/// when the network is unreachable. Mirrors the pattern in libhimmelblau
+/// `auth.rs`.
+pub(crate) fn build_online_probe_client(
+    request_timeout_secs: u64,
+) -> Result<reqwest::Client, reqwest::Error> {
+    let request_timeout = Duration::from_secs(request_timeout_secs);
+    let connect_timeout = std::cmp::min(request_timeout / 2, Duration::from_secs(3));
+    reqwest::Client::builder()
+        .connect_timeout(connect_timeout)
+        .timeout(request_timeout)
+        .build()
+}
+
 pub fn flip_displayname_comma(name: &str) -> String {
     if let Some((left, right)) = name.split_once(',') {
         format!("{} {}", right.trim(), left.trim())

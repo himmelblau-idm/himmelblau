@@ -20,6 +20,7 @@ use crate::config::HimmelblauConfig;
 use crate::constants::ID_MAP_CACHE;
 use crate::db::KeyStoreTxn;
 use crate::idmap_cache::StaticIdCache;
+use crate::idprovider::common::build_online_probe_client;
 use crate::idprovider::common::flip_displayname_comma;
 use crate::idprovider::common::KeyType;
 use crate::idprovider::common::TotpEnrollmentRecord;
@@ -864,8 +865,19 @@ impl OidcProvider {
                 }
             };
 
+        let request_timeout = self.config.lock().await.get_request_timeout();
+        let client = match build_online_probe_client(request_timeout) {
+            Ok(c) => c,
+            Err(e) => {
+                error!(?e, "Failed to build HTTP client for online check");
+                let mut state = self.state.lock().await;
+                *state = CacheState::OfflineNextCheck(now + OFFLINE_NEXT_CHECK);
+                return false;
+            }
+        };
+
         // First try the authorization endpoint
-        match reqwest::get(&authorization_endpoint).await {
+        match client.get(&authorization_endpoint).send().await {
             Ok(resp) => {
                 if resp.status().is_success() {
                     debug!("provider is now online");
@@ -891,7 +903,7 @@ impl OidcProvider {
         }
 
         // Fallback: try the .well-known/openid-configuration URL
-        match reqwest::get(&openid_configuration_url).await {
+        match client.get(&openid_configuration_url).send().await {
             Ok(resp) => {
                 if resp.status().is_success() {
                     debug!("provider is now online (via openid-configuration)");
