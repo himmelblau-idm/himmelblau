@@ -269,7 +269,9 @@ fn fido_auth_inner(
     // Perform authentication
     let (sign_tx, sign_rx) = channel();
     let callback = StateCallback::new(Box::new(move |rv| {
-        sign_tx.send(rv).unwrap();
+        if let Err(e) = sign_tx.send(rv) {
+            error!("Failed sending FIDO assertion result: {:?}", e);
+        }
     }));
 
     manager
@@ -481,7 +483,7 @@ async fn qr_bluetooth_fido_auth(
 /// Called from synchronous PAM code — creates a tokio runtime to bridge
 /// into async. First path to succeed wins; the loser is cancelled.
 pub fn fido_auth_with_qr_bluetooth(
-    msg_printer: Arc<dyn MessagePrinter>,
+    msg_printer: &Arc<dyn MessagePrinter>,
     fido_challenge: String,
     fido_allow_list: Vec<String>,
     timeout_ms: u64,
@@ -541,7 +543,6 @@ pub fn fido_auth_with_qr_bluetooth(
                 match usb_result {
                     // USB succeeded — cancel QR/Bluetooth, return assertion.
                     Ok(Ok(assertion)) => {
-                        drop(qr_bt_handle);
                         Ok(assertion)
                     },
                     // USB failed — fall back to QR/Bluetooth.
@@ -1048,7 +1049,7 @@ fn handle_pam_auth_response_fido(
     let result = if has_physical_security_key && can_qr_bluetooth && is_graphical {
         debug!("FIDO auth: attempting both security key and QR/Bluetooth");
         match fido_auth_with_qr_bluetooth(
-            state.msg_printer.clone(),
+            &state.msg_printer,
             fido_challenge,
             fido_allow_list,
             timeout_ms,

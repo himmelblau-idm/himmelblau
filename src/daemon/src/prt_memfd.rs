@@ -15,7 +15,6 @@
    along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
 
-use libc;
 use memfd::{FileSeal, MemfdOptions};
 use sd_notify::NotifyState;
 use std::io::{self, Read, Seek, SeekFrom, Write};
