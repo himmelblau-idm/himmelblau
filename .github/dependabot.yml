@@ -37,7 +37,7 @@ updates:
     directory: "/"
     target-branch: stable-2.x
     schedule:
-      interval: "quarterly"
+      interval: "monthly"
     commit-message:
       prefix: "deps(rust)"
     ignore:
