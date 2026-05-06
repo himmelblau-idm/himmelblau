@@ -14,4 +14,3 @@ std = []
 
 [dependencies]
 const-oid = { version = "^0.10.1" }
-arbitrary = { version = "^1.2", optional = true, default-features = false }
