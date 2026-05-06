@@ -3,4 +3,5 @@ ignore = [
   "RUSTSEC-2025-0057", # fxhash — replaced via [patch] with maintained rustc-hash wrapper
   "RUSTSEC-2021-0127", # serde_cbor - replaced via [patch] with serde_cbor_2
   "RUSTSEC-2024-0436", # paste - replaced via [patch] with pastey
+  "RUSTSEC-2023-0089", # atomic-polyfill - masked via [replace] and unused
 ]

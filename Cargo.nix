@@ -1382,7 +1382,7 @@ rec {
           }
           {
             name = "rand";
-            packageId = "rand 0.8.5";
+            packageId = "rand 0.8.6";
           }
           {
             name = "runloop";
@@ -3855,7 +3855,7 @@ rec {
           }
           {
             name = "digest";
-            packageId = "digest 0.11.1";
+            packageId = "digest 0.11.3";
             rename = "digest-pre";
             usesDefaultFeatures = false;
             features = [ "mac" ];
@@ -3920,7 +3920,7 @@ rec {
           }
           {
             name = "rand";
-            packageId = "rand 0.8.5";
+            packageId = "rand 0.8.6";
           }
           {
             name = "rsa";
@@ -4943,11 +4943,11 @@ rec {
         };
         resolvedDefaultFeatures = [ "alloc" "block-buffer" "const-oid" "core-api" "default" "mac" "oid" "std" "subtle" ];
       };
-      "digest 0.11.1" = rec {
+      "digest 0.11.3" = rec {
         crateName = "digest";
-        version = "0.11.1";
+        version = "0.11.3";
         edition = "2024";
-        sha256 = "0hvjkm8583wf5y1c9s8ajdkpi5cv65lwq55w2vhv7dncfsk46mr8";
+        sha256 = "1hnmhd4rkybr11292w42pz9ppzx1h49glrhqg107k4s1b2xnvpgi";
         authors = [
           "RustCrypto Developers"
         ];
@@ -7565,14 +7565,14 @@ rec {
         dependencies = [
           {
             name = "digest";
-            packageId = "digest 0.11.1";
+            packageId = "digest 0.11.3";
             features = [ "mac" ];
           }
         ];
         devDependencies = [
           {
             name = "digest";
-            packageId = "digest 0.11.1";
+            packageId = "digest 0.11.3";
             features = [ "dev" ];
           }
         ];
@@ -9254,7 +9254,7 @@ rec {
         dependencies = [
           {
             name = "digest";
-            packageId = "digest 0.11.1";
+            packageId = "digest 0.11.3";
             usesDefaultFeatures = false;
             features = [ "mac" ];
           }
@@ -10066,7 +10066,7 @@ rec {
           }
           {
             name = "rand";
-            packageId = "rand 0.8.5";
+            packageId = "rand 0.8.6";
           }
           {
             name = "rustls";
@@ -11013,7 +11013,7 @@ rec {
           }
           {
             name = "rand";
-            packageId = "rand 0.8.5";
+            packageId = "rand 0.8.6";
             optional = true;
             usesDefaultFeatures = false;
           }
@@ -11032,7 +11032,7 @@ rec {
         devDependencies = [
           {
             name = "rand";
-            packageId = "rand 0.8.5";
+            packageId = "rand 0.8.6";
             features = [ "small_rng" ];
           }
         ];
@@ -11287,7 +11287,7 @@ rec {
           }
           {
             name = "rand";
-            packageId = "rand 0.8.5";
+            packageId = "rand 0.8.6";
           }
           {
             name = "reqwest";
@@ -11481,7 +11481,7 @@ rec {
           }
           {
             name = "rand";
-            packageId = "rand 0.8.5";
+            packageId = "rand 0.8.6";
           }
           {
             name = "rsa";
@@ -13648,11 +13648,11 @@ rec {
         features = {
         };
       };
-      "rand 0.8.5" = rec {
+      "rand 0.8.6" = rec {
         crateName = "rand";
-        version = "0.8.5";
+        version = "0.8.6";
         edition = "2018";
-        sha256 = "013l6931nn7gkc23jz5mm3qdhf93jjf0fg64nz2lp4i51qd8vbrl";
+        sha256 = "12kd4rljn86m00rcaz4c1rcya4mb4gk5ig6i8xq00a8wjgxfr82w";
         authors = [
           "The Rand Project Developers"
           "The Rust Project Developers"
@@ -13681,12 +13681,9 @@ rec {
           "default" = [ "std" "std_rng" ];
           "getrandom" = [ "rand_core/getrandom" ];
           "libc" = [ "dep:libc" ];
-          "log" = [ "dep:log" ];
-          "packed_simd" = [ "dep:packed_simd" ];
           "rand_chacha" = [ "dep:rand_chacha" ];
           "serde" = [ "dep:serde" ];
           "serde1" = [ "serde" "rand_core/serde1" ];
-          "simd_support" = [ "packed_simd" ];
           "std" = [ "rand_core/std" "rand_chacha/std" "alloc" "getrandom" "libc" ];
           "std_rng" = [ "rand_chacha" ];
         };
@@ -16333,7 +16330,7 @@ rec {
           }
           {
             name = "rand";
-            packageId = "rand 0.8.5";
+            packageId = "rand 0.8.6";
             optional = true;
           }
           {
@@ -16468,13 +16465,13 @@ rec {
           }
           {
             name = "digest";
-            packageId = "digest 0.11.1";
+            packageId = "digest 0.11.3";
           }
         ];
         devDependencies = [
           {
             name = "digest";
-            packageId = "digest 0.11.1";
+            packageId = "digest 0.11.3";
             features = [ "dev" ];
           }
         ];

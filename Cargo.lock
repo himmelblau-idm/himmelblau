@@ -1247,7 +1247,7 @@ dependencies = [
  "crypto-common 0.1.6",
  "crypto-common 0.2.1",
  "der 0.7.10",
- "digest 0.11.1",
+ "digest 0.11.3",
  "ecdsa",
  "elliptic-curve",
  "generic-array",
@@ -1603,9 +1603,9 @@ dependencies = [
 
 [[package]]
 name = "digest"
-version = "0.11.1"
+version = "0.11.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "285743a676ccb6b3e116bc14cc69319b957867930ae9c4822f8e0f54509d7243"
+checksum = "f1dd6dbb5841937940781866fa1281a1ff7bd3bf827091440879f9994983d5c2"
 dependencies = [
  "block-buffer 0.12.0",
  "const-oid 0.10.1",
@@ -2463,7 +2463,7 @@ version = "0.13.0-rc.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ef451d73f36d8a3f93ad32c332ea01146c9650e1ec821a9b0e46c01277d544f8"
 dependencies = [
- "digest 0.11.1",
+ "digest 0.11.3",
 ]
 
 [[package]]
@@ -3045,7 +3045,7 @@ version = "0.1.0-rc.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "90ac93c9768b8d587407881c98b0c3a5d3e3049daa73408ebe5bfb1ab1cb9c84"
 dependencies = [
- "digest 0.11.1",
+ "digest 0.11.3",
 ]
 
 [[package]]
@@ -5401,7 +5401,7 @@ checksum = "446ba717509524cb3f22f17ecc096f10f4822d76ab5c0b9822c5f9c284e825f4"
 dependencies = [
  "cfg-if",
  "cpufeatures 0.3.0",
- "digest 0.11.1",
+ "digest 0.11.3",
 ]
 
 [[package]]
