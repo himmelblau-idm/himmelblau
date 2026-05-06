@@ -1,0 +1,17 @@
+[package]
+name = "itertools"
+version = "0.10.5"
+authors.workspace = true
+rust-version.workspace = true
+edition.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[features]
+default = ["itertools/default"]
+use_alloc = ["itertools/use_alloc"]
+use_std = ["itertools/use_std"]
+
+[dependencies]
+itertools = { version = "^0.14.0" }

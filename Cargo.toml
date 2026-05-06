@@ -45,6 +45,7 @@ resolver = "2"
 "hermit-abi:0.4.0" = { path = "src/overrides/hermit-abi/0.4.0" }
 "iana-time-zone-haiku:0.1.2" = { path = "src/overrides/iana-time-zone-haiku/0.1.2" }
 "indexmap:1.9.3" = { path = "src/overrides/indexmap/1.9.3" }
+"itertools:0.10.5" = { path = "src/overrides/itertools/0.10.5" }
 "jni-utils:0.1.1" = { path = "src/overrides/jni-utils/0.1.1" }
 "jni:0.19.0" = { path = "src/overrides/jni/0.19.0" }
 "jni:0.21.1" = { path = "src/overrides/jni/0.21.1" }
@@ -104,6 +105,7 @@ resolver = "2"
 "windows-targets:0.52.6" = { path = "src/overrides/windows-targets/0.52.6" }
 "windows-targets:0.53.0" = { path = "src/overrides/windows-targets/0.53.0" }
 "windows:0.61.3" = { path = "src/overrides/windows/0.61.3" }
+"winnow:0.7.10" = { path = "src/overrides/winnow/0.7.10" }
 "zerocopy-derive:0.8.25" = { path = "src/overrides/zerocopy-derive/0.8.25" }
 
 [workspace.package]
