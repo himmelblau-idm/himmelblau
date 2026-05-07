@@ -931,7 +931,7 @@ dependencies = [
  "futures-core",
  "prost 0.14.1",
  "prost-types",
- "tonic 0.14.5",
+ "tonic 0.14.6",
  "tonic-prost",
  "tracing-core",
 ]
@@ -956,7 +956,7 @@ dependencies = [
  "thread_local",
  "tokio",
  "tokio-stream",
- "tonic 0.14.5",
+ "tonic 0.14.6",
  "tracing",
  "tracing-core",
  "tracing-subscriber",
@@ -5238,9 +5238,9 @@ dependencies = [
 
 [[package]]
 name = "tonic"
-version = "0.14.5"
+version = "0.14.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fec7c61a0695dc1887c1b53952990f3ad2e3a31453e1f49f10e75424943a93ec"
+checksum = "ac2a5518c70fa84342385732db33fb3f44bc4cc748936eb5833d2df34d6445ef"
 dependencies = [
  "async-trait",
  "axum 0.8.6",
@@ -5273,7 +5273,7 @@ checksum = "66bd50ad6ce1252d87ef024b3d64fe4c3cf54a86fb9ef4c631fdd0ded7aeaa67"
 dependencies = [
  "bytes",
  "prost 0.14.1",
- "tonic 0.14.5",
+ "tonic 0.14.6",
 ]
 
 [[package]]
