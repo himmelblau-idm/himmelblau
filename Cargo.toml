@@ -69,7 +69,7 @@ os-release = "^0.1.0"
 jsonwebtoken = "^9.2.0"
 zeroize = "^1.8.2"
 idmap = { path = "src/idmap" }
-identity_dbus_broker = "0.1.4"
+identity_dbus_broker = "0.2.1"
 rustls = ">=0.23.19" # CVE-2024-11738
 console-subscriber = "0.5.0"
 broker-client = { path = "src/broker-client" }
@@ -92,7 +92,7 @@ webauthn-rs-proto = "0.5.0"
 kanidm_proto = "1.8.1"
 openssl-sys = "^0.9"
 openssl = "^0.10.79"
-rand = "^0.9.4"
+rand = "^0.10.1"
 tss-esapi = "^7.2.0"
 sketching = "1.10.0"
 tracing-forest = "^0.1.6"
@@ -119,7 +119,7 @@ opentelemetry_sdk = { version = "0.27.0", features = ["rt-tokio"] }
 opentelemetry-semantic-conventions = "0.27.0"
 tracing-opentelemetry = "0.28.0"
 tracing-core = "0.1.34"
-tonic = "0.14.5"
+tonic = "0.14.6"
 compact_jwt = { version = "0.5.3-dev", features = ["msextensions"] }
 kanidm-hsm-crypto = { version = "^0.3.6" }
 whoami = "1.6.1"
