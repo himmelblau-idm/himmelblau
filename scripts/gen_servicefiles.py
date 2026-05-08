@@ -239,6 +239,7 @@ Conflicts=nscd.service
 ExecStart=/usr/sbin/himmelblaud
 Restart=on-failure
 RestartSec=500ms
+WatchdogSec=120s
 {'FileDescriptorStoreMax=1' if supported('FileDescriptorStoreMax') else ''}
 {'FileDescriptorStorePreserve=yes' if supported('FileDescriptorStorePreserve') else ''}
 
@@ -285,6 +286,7 @@ Type=notify
 ExecStart=/usr/sbin/himmelblaud_tasks
 Restart=on-failure
 RestartSec=1s
+WatchdogSec=120s
 
 CacheDirectory=nss-himmelblau
 CapabilityBoundingSet=CAP_CHOWN CAP_FOWNER CAP_DAC_OVERRIDE CAP_DAC_READ_SEARCH CAP_SETUID CAP_SETGID

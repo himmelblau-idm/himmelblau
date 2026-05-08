@@ -396,11 +396,38 @@ in
       example = false;
     };
 
+    enable_passwordless = mkOption {
+      type = types.nullOr (types.bool);
+      default = true;
+      description = ''
+        A boolean option that controls whether passwordless authentication (Microsoft Authenticator app approval without a password) is offered during Azure Entra ID authentication. When enabled, Himmelblau will include the passwordless option in authentication requests, allowing Entra ID to offer a passwordless flow. When disabled, users will be prompted for a password followed by MFA instead.
+      '';
+      example = false;
+    };
+
+    enable_passwordless_security_key = mkOption {
+      type = types.nullOr (types.bool);
+      default = false;
+      description = ''
+        A boolean option that enables the passwordless physical USB security key flow for Azure Entra ID authentication. When enabled, Himmelblau will attempt to authenticate with Entra ID using a physical FIDO2 security key without requiring a password.
+      '';
+      example = true;
+    };
+
     enable_experimental_passwordless_fido = mkOption {
       type = types.nullOr (types.bool);
       default = false;
       description = ''
         A boolean option that enables the experimental passwordless FIDO flow for Azure Entra ID authentication. When enabled, Himmelblau will attempt to authenticate with Entra ID using a FIDO2 security key without requiring a password.
+      '';
+      example = true;
+    };
+
+    enable_passwordless_qr_bluetooth = mkOption {
+      type = types.nullOr (types.bool);
+      default = false;
+      description = ''
+        A boolean option that enables the passwordless QR code and Bluetooth (caBLE hybrid transport) flow for Azure Entra ID authentication. When enabled, users with a cross-device passkey (e.g. Microsoft Authenticator) can authenticate by scanning a QR code on their phone, which communicates with the device over Bluetooth. Requires Bluetooth hardware on the device.
       '';
       example = true;
     };
@@ -433,6 +460,16 @@ in
         user presence (touching the security key).
       '';
       example = "Bitte den Sicherheitsschlüssel berühren.";
+    };
+
+    qr_bluetooth_prompt = mkOption {
+      type = types.nullOr (types.str);
+      default = "Scan with your authenticator app";
+      description = ''
+        The message displayed to the user when QR/Bluetooth (caBLE) authentication is initiated
+        and they need to scan the QR code with their phone.
+      '';
+      example = "Mit der Authenticator-App scannen";
     };
 
     name_mapping_script = mkOption {
@@ -549,7 +586,7 @@ in
       type = types.nullOr (types.str);
       default = "/var/run/himmelblaud/socket";
       description = ''
-        The path to the socket file for communication between the pam and nss modules and the Himmelblau daemon.
+        The path to the socket file for communication between the pam and nss modules and the Himmelblau daemon. If this is changed, also add a drop-in to override ListenStream= in the himmelblaud.socket unit to keep the paths in sync.
       '';
       example = "/tmp/himmelblaud.sock";
     };
@@ -558,7 +595,7 @@ in
       type = types.nullOr (types.str);
       default = "/var/run/himmelblaud/task_sock";
       description = ''
-        The path to the socket file for communication with the task daemon.
+        The path to the socket file for communication with the task daemon. If this is changed, also add a drop-in to override ListenStream= in the himmelblaud-tasks.socket unit to keep the paths in sync.
       '';
       example = "/tmp/task.sock";
     };
@@ -567,7 +604,7 @@ in
       type = types.nullOr (types.str);
       default = "/var/run/himmelblaud/broker_sock";
       description = ''
-        The path to the socket file for communication with the broker DBus service.
+        The path to the socket file for communication with the broker DBus service. If this is changed, also add a drop-in to override ListenStream= in the himmelblaud-broker.socket unit to keep the paths in sync.
       '';
       example = "/tmp/broker.sock";
     };
@@ -609,15 +646,6 @@ in
         - CN
       '';
       example = "SPN";
-    };
-
-    enable_passwordless = mkOption {
-      type = types.nullOr (types.bool);
-      default = true;
-      description = ''
-        A boolean option that controls whether passwordless authentication (Microsoft Authenticator app approval without a password) is offered during Azure Entra ID authentication. When enabled, Himmelblau will include the passwordless option in authentication requests, allowing Entra ID to offer a passwordless flow. When disabled, users will be prompted for a password followed by MFA instead.
-      '';
-      example = false;
     };
 
     shell = mkOption {
@@ -677,6 +705,15 @@ in
       example = 10;
     };
 
+    request_timeout = mkOption {
+      type = types.nullOr (types.ints.unsigned);
+      default = 10;
+      description = ''
+        The timeout in seconds for HTTP requests to authentication servers. This includes DNS resolution, connection attempts across all resolved IP addresses, TLS handshake, and HTTP request/response. Increase this value if authentication fails in environments where DNS returns many IP addresses for the same hostname (e.g., 7+ addresses). Default is 10 seconds to accommodate Happy Eyeballs connection attempts across multiple addresses.
+      '';
+      example = 15;
+    };
+
     use_etc_skel = mkOption {
       type = types.nullOr (types.bool);
       default = false;
@@ -727,6 +764,23 @@ in
         svcuser:service.account@tenant.local
       '';
       example = "/path/to/user_map";
+    };
+
+    ip_version = mkOption {
+      type = types.nullOr (types.enum [ "ipv4-only" "ipv6-only" "both" ]);
+      default = "both";
+      description = ''
+        Controls which IP version family Himmelblau should use for outbound network connections.
+        
+        Supported values are:
+        
+        - ipv4-only -- use only IPv4 sockets
+        
+        - ipv6-only -- use only IPv6 sockets
+        
+        - both -- allow both IPv4 and IPv6 (default)
+      '';
+      example = "ipv4-only";
     };
 
     # [offline_breakglass] section options

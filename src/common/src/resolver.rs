@@ -600,6 +600,8 @@ where
         account_id: Id,
         scopes: Vec<String>,
         client_id: Option<String>,
+        redirect_uri: Option<String>,
+        req_cnf: Option<String>,
     ) -> Option<UnixUserToken> {
         // Validate the user isn't in the nxset (aka, it's a local user or group).
         let (name, idnumber) = match account_id.clone() {
@@ -628,6 +630,8 @@ where
                 scopes,
                 Some(&token),
                 client_id,
+                redirect_uri,
+                req_cnf,
                 &mut dbtxn,
                 hsm_lock.deref_mut(),
                 &self.machine_key,
@@ -1050,6 +1054,11 @@ where
         self.get_nssgroup(Id::Gid(gid)).await
     }
 
+    pub async fn get_initgroups(&self, account_id: &str) -> Result<Option<Vec<u32>>, ()> {
+        let token = self.get_usertoken(Id::Name(account_id.to_string())).await?;
+        Ok(token.map(|tok| tok.groups.iter().map(|g| g.gidnumber).collect()))
+    }
+
     pub async fn pam_account_allowed(&self, account_id: &str) -> Result<Option<bool>, ()> {
         let token = self.get_usertoken(Id::Name(account_id.to_string())).await?;
 
@@ -1410,6 +1419,9 @@ where
                         // AuthCredHandler::None is invalid with Fido
                         return Err(());
                     }
+                    (AuthCredHandler::None, PamAuthRequest::FidoUnavailable) => {
+                        return Err(());
+                    }
                     (AuthCredHandler::PasswordFirst { .. }, _) => {
                         // AuthCredHandler::PasswordFirst with anything other than
                         // PamAuthRequest::Password is invalid.
@@ -1480,11 +1492,7 @@ where
     /// One-shot PIN-based unseal: runs auth init and, if the daemon
     /// requests a PIN, immediately submits it. Returns Ok(true) on
     /// success, Ok(false) on auth failure, Err(()) on internal error.
-    pub async fn pam_try_unseal(
-        &self,
-        account_id: &str,
-        cred: &str,
-    ) -> Result<bool, ()> {
+    pub async fn pam_try_unseal(&self, account_id: &str, cred: &str) -> Result<bool, ()> {
         let (shutdown_tx, _) = broadcast::channel(1);
 
         let (mut auth_session, init_resp) = self
@@ -1505,7 +1513,10 @@ where
                 return Ok(true);
             }
             _ => {
-                debug!("pam_try_unseal: daemon did not request PIN (got {:?})", init_resp);
+                debug!(
+                    "pam_try_unseal: daemon did not request PIN (got {:?})",
+                    init_resp
+                );
                 return Ok(false);
             }
         }

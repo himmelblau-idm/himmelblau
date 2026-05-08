@@ -1024,6 +1024,7 @@ optional {
 	allow unconfined_service_t himmelblau_var_lib_t:dir search;
 	allow unconfined_service_t himmelblau_var_run_t:dir { add_name search };
 	allow unconfined_service_t himmelblau_var_run_t:sock_file { create write };
+	allow unconfined_service_t himmelblaud_t:dir { getattr search };
 }
 
 #============= unconfined_t ==============

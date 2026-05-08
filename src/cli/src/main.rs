@@ -125,9 +125,7 @@ fn insert_module_line(
     let stack_type = module_line.split_whitespace().next().unwrap_or("");
 
     if lines.iter().any(|l| {
-        if !l.contains("pam_himmelblau.so")
-            || !l.trim_start().starts_with(stack_type)
-        {
+        if !l.contains("pam_himmelblau.so") || !l.trim_start().starts_with(stack_type) {
             return false;
         }
         let existing_opts: std::collections::HashSet<&str> = l
@@ -348,7 +346,10 @@ async fn auth(app: &BrokerClientApplication, account_id: &str) -> Option<UserTok
             None
         }
     };
-    let enable_passwordless = config.as_ref().map(|c| c.get_enable_passwordless()).unwrap_or(true);
+    let enable_passwordless = config
+        .as_ref()
+        .map(|c| c.get_enable_passwordless())
+        .unwrap_or(true);
     let auth_options = if enable_passwordless {
         vec![AuthOption::Passwordless]
     } else {
@@ -564,11 +565,15 @@ async fn confidential_client_access_token(
             None => "common".to_string(),
         };
         let authority = format!("https://{}/{}", authority_host, tenant_id);
+        let ip_versions = cfg.get_ip_versions();
+        let request_timeout = cfg.get_request_timeout();
 
         let app = match ConfidentialClientApplication::new(
             &cred_client_id,
             Some(&authority),
             client_creds,
+            Duration::from_secs(request_timeout),
+            &ip_versions,
         ) {
             Ok(app) => app,
             Err(e) => {
@@ -734,7 +739,18 @@ async fn main() -> ExitCode {
                 return ExitCode::FAILURE;
             };
 
-            let graph = match Graph::new(DEFAULT_ODC_PROVIDER, &domain, None, None, None).await {
+            let ip_versions = $cfg.get_ip_versions();
+            let graph = match Graph::new(
+                DEFAULT_ODC_PROVIDER,
+                &domain,
+                None,
+                None,
+                None,
+                Duration::from_secs($cfg.get_request_timeout()),
+                &ip_versions,
+            )
+            .await
+            {
                 Ok(graph) => graph,
                 Err(e) => {
                     error!("Failed discovering tenant: {:?}", e);
@@ -819,8 +835,17 @@ async fn main() -> ExitCode {
     }
 
     macro_rules! client {
-        ($authority:expr, $transport_key:expr, $cert_key:expr) => {{
-            match BrokerClientApplication::new(Some(&$authority), None, $transport_key, $cert_key) {
+        ($cfg:expr, $authority:expr, $transport_key:expr, $cert_key:expr) => {{
+            let ip_versions = $cfg.get_ip_versions();
+            let request_timeout = $cfg.get_request_timeout();
+            match BrokerClientApplication::new(
+                Some(&$authority),
+                None,
+                $transport_key,
+                $cert_key,
+                Duration::from_secs(request_timeout),
+                &ip_versions,
+            ) {
                 Ok(app) => app,
                 Err(e) => {
                     error!("Failed creating app: {:?}", e);
@@ -862,7 +887,24 @@ async fn main() -> ExitCode {
                 if let Some((domain, access_token)) = confidential_client_access_token(
                     $client_id.clone(), $account_id.clone(), None
                 ).await {
-                    if let Ok(graph) = Graph::new(DEFAULT_ODC_PROVIDER, &domain, None, None, None).await {
+                    let cfg = match HimmelblauConfig::new(Some(DEFAULT_CONFIG_PATH)) {
+                        Ok(c) => c,
+                        Err(_e) => {
+                            error!("Failed to parse {}", DEFAULT_CONFIG_PATH);
+                            return ExitCode::FAILURE;
+                        }
+                    };
+                    let ip_versions = cfg.get_ip_versions();
+                    let request_timeout = cfg.get_request_timeout();
+                    if let Ok(graph) = Graph::new(
+                        DEFAULT_ODC_PROVIDER,
+                        &domain,
+                        None,
+                        None,
+                        None,
+                        Duration::from_secs(request_timeout),
+                        &ip_versions
+                    ).await {
                         result = Some((graph, access_token));
                     }
                 }
@@ -931,7 +973,12 @@ async fn main() -> ExitCode {
                             let (graph, domain, authority) = init!(cfg, Some(account_id.clone()), None);
                             let (mut tpm, loadable_transport_key, loadable_cert_key, machine_key) =
                                 obtain_host_data!(domain, cfg);
-                            let app = client!(authority, Some(loadable_transport_key), Some(loadable_cert_key));
+                            let app = client!(
+                                cfg,
+                                authority,
+                                Some(loadable_transport_key),
+                                Some(loadable_cert_key)
+                            );
                             let user_token = auth(&app, &account_id).await;
                             if let Some(user_token) = &user_token {
                                 let token = on_behalf_of_token!(
@@ -1562,8 +1609,10 @@ async fn main() -> ExitCode {
             // Map the name
             let account_id = cfg.map_name_to_upn(&account_id);
 
-            let mut opts = Options::default();
-            opts.force_reauth = force_reauth;
+            let opts = Options {
+                force_reauth,
+                ..Default::default()
+            };
             let msg_printer = Arc::new(SimpleMessagePrinter::default());
             match authenticate_async(
                 None,

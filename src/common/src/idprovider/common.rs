@@ -29,6 +29,23 @@ use tokio::sync::RwLock;
 /// `exchange_prt_for_prt` before using it for access-token acquisition.
 pub const PRT_REFRESH_AGE: Duration = Duration::from_secs(4 * 3600);
 
+/// Build a `reqwest::Client` for `attempt_online()` probes.
+///
+/// Uses `request_timeout` for the total request budget and a derived
+/// connect timeout of `min(request_timeout / 2, 3s)` so we fail fast
+/// when the network is unreachable. Mirrors the pattern in libhimmelblau
+/// `auth.rs`.
+pub(crate) fn build_online_probe_client(
+    request_timeout_secs: u64,
+) -> Result<reqwest::Client, reqwest::Error> {
+    let request_timeout = Duration::from_secs(request_timeout_secs);
+    let connect_timeout = std::cmp::min(request_timeout / 2, Duration::from_secs(3));
+    reqwest::Client::builder()
+        .connect_timeout(connect_timeout)
+        .timeout(request_timeout)
+        .build()
+}
+
 pub fn flip_displayname_comma(name: &str) -> String {
     if let Some((left, right)) = name.split_once(',') {
         format!("{} {}", right.trim(), left.trim())
@@ -190,7 +207,7 @@ impl RefreshCache {
         let entries: HashMap<String, (SealedData, u64)> = serde_json::from_slice(data)?;
         for (account_id, (prt, epoch_secs)) in entries {
             let iat = SystemTime::UNIX_EPOCH + Duration::from_secs(epoch_secs);
-            refresh_cache.insert(account_id, (prt, iat));
+            refresh_cache.insert(account_id.to_lowercase(), (prt, iat));
         }
         Ok(())
     }
@@ -240,7 +257,7 @@ macro_rules! handle_hello_bad_pin_count {
             .increment_bad_pin_count($account_id)
             .await;
 
-        let hello_pin_retry_count = $self.config.read().await.get_hello_pin_retry_count();
+        let hello_pin_retry_count = $self.config.lock().await.get_hello_pin_retry_count();
         let bad_pin_count = $self.bad_pin_counter.bad_pin_count($account_id).await;
 
         if bad_pin_count == hello_pin_retry_count {
@@ -297,7 +314,7 @@ macro_rules! impl_offline_break_glass {
     ($self:ident, $ttl:ident) => {{
         let mut state = $self.state.lock().await;
         let (ttl, enabled) = {
-            let cfg = $self.config.read().await;
+            let cfg = $self.config.lock().await;
             (
                 match $ttl {
                     Some(ttl) => ttl,
@@ -368,7 +385,7 @@ macro_rules! load_cached_prt {
         if let Ok(Some(hello_prt)) = $keystore.get_tagged_hsm_key(&hello_prt_tag) {
             let prt = $self
                 .client
-                .read()
+                .lock()
                 .await
                 .unseal_user_prt_with_hello_key(&hello_prt, &$hello_key, &$cred, $tpm, $machine_key)
                 .map_err(|e| {
@@ -379,7 +396,7 @@ macro_rules! load_cached_prt {
             // This happens after 14 days of no online contact.
             if $self
                 .client
-                .read()
+                .lock()
                 .await
                 .is_prt_expired(&prt, $tpm, $machine_key)
                 .map_err(|e| {
@@ -412,7 +429,7 @@ macro_rules! impl_himmelblau_offline_auth_init {
     ($self:ident, $account_id:expr, $no_hello_pin:ident, $keystore:expr, $password_auth:expr) => {{
         let hello_key = $self.fetch_hello_key($account_id, $keystore).ok();
         let (sfa_enabled, hello_pin_retry_count, breakglass_enabled) = {
-            let cfg = $self.config.read().await;
+            let cfg = $self.config.lock().await;
             (
                 cfg.get_enable_sfa_fallback(),
                 cfg.get_hello_pin_retry_count(),
@@ -560,7 +577,7 @@ macro_rules! check_hello_totp_setup {
 #[macro_export]
 macro_rules! check_hello_totp_enabled {
     ($self:ident) => {{
-        let cfg = $self.config.read().await;
+        let cfg = $self.config.lock().await;
         cfg.get_enable_hello_totp()
     }};
 }
@@ -666,10 +683,10 @@ macro_rules! impl_himmelblau_offline_auth_step {
 
 #[macro_export]
 macro_rules! entra_id_prt_token_fetch {
-    ($self:ident, $prt:ident, $scopes:ident, $client_id:ident, $tpm:ident, $machine_key:ident) => {{
+    ($self:ident, $prt:ident, $scopes:ident, $client_id:ident, $redirect_uri:ident, $req_cnf:ident, $tpm:ident, $machine_key:ident) => {{
         $self
             .client
-            .read()
+            .lock()
             .await
             .exchange_prt_for_access_token(
                 &$prt,
@@ -678,6 +695,8 @@ macro_rules! entra_id_prt_token_fetch {
                 $client_id.as_deref(),
                 $tpm,
                 $machine_key,
+                $redirect_uri.as_deref(),
+                $req_cnf.as_deref(),
             )
             .await
             .map_err(|e| {
@@ -689,7 +708,7 @@ macro_rules! entra_id_prt_token_fetch {
 
 #[macro_export]
 macro_rules! no_op_prt_token_fetch {
-    ($self:ident, $prt:ident, $scopes:ident, $client_id:ident, $tpm:ident, $machine_key:ident) => {
+    ($self:ident, $prt:ident, $scopes:ident, $client_id:ident, $redirect_uri:ident, $req_cnf:ident, $tpm:ident, $machine_key:ident) => {
         // openidconnect does not have PRTs
         return Err(IdpError::BadRequest)
     };
@@ -698,7 +717,17 @@ macro_rules! no_op_prt_token_fetch {
 #[macro_export]
 macro_rules! entra_id_refresh_token_token_fetch {
     ($self:ident, $refresh_token:ident, $scopes:ident) => {{
-        let client = PublicClientApplication::new(BROKER_APP_ID, None).map_err(|e| {
+        let (ip_versions, request_timeout) = {
+            let cfg = $self.config.lock().await;
+            (cfg.get_ip_versions(), cfg.get_request_timeout())
+        };
+        let client = PublicClientApplication::new(
+            BROKER_APP_ID,
+            None,
+            std::time::Duration::from_secs(request_timeout),
+            &ip_versions,
+        )
+        .map_err(|e| {
             error!("Failed to create public client application: {:?}", e);
             IdpError::BadRequest
         })?;
@@ -756,7 +785,7 @@ macro_rules! oidc_refresh_token_token_fetch {
 
 #[macro_export]
 macro_rules! impl_unix_user_access {
-    ($self:ident, $old_token:ident, $scopes:ident, $client_id:ident, $id:ident, $tpm:ident, $machine_key:ident, $prt_token_refresh:ident, $refresh_token_token_refresh:ident) => {{
+    ($self:ident, $old_token:ident, $scopes:ident, $client_id:ident, $redirect_uri:ident, $req_cnf:ident, $id:ident, $tpm:ident, $machine_key:ident, $prt_token_refresh:ident, $refresh_token_token_refresh:ident) => {{
         if ($self.delayed_init().await).is_err() {
             // We can't fetch an access_token when initialization hasn't
             // completed. This only happens when we're offline during first
@@ -778,7 +807,16 @@ macro_rules! impl_unix_user_access {
         match refresh_cache_entry {
             #![allow(unused_variables)]
             RefreshCacheEntry::Prt(prt) => {
-                $prt_token_refresh!($self, prt, $scopes, $client_id, $tpm, $machine_key)
+                $prt_token_refresh!(
+                    $self,
+                    prt,
+                    $scopes,
+                    $client_id,
+                    $redirect_uri,
+                    $req_cnf,
+                    $tpm,
+                    $machine_key
+                )
             }
             RefreshCacheEntry::RefreshToken(refresh_token) => {
                 $refresh_token_token_refresh!($self, refresh_token, $scopes)
@@ -795,7 +833,7 @@ macro_rules! seal_prt_with_existing_hello_key {
     ($self:expr, $account_id:expr, $token:expr, $hello_key:expr, $pin:expr, $keystore:expr, $tpm:expr, $machine_key:expr) => {{
         // Seal the PRT with the existing Hello key
         if let Some(prt) = &$token.prt {
-            match $self.client.read().await.seal_user_prt_with_hello_key(
+            match $self.client.lock().await.seal_user_prt_with_hello_key(
                 prt,
                 $hello_key,
                 $pin,
@@ -861,7 +899,7 @@ macro_rules! impl_provision_hello_key {
     ($self:ident, $token:ident, $cred:ident, $tpm:ident, $machine_key:ident) => {
         $self
             .client
-            .read()
+            .lock()
             .await
             .provision_hello_for_business_key(&$token, $tpm, $machine_key, &$cred)
             .await

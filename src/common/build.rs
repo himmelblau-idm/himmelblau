@@ -7,7 +7,7 @@ fn main() {
     let manifest_dir = env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR not set");
 
     // Calculate paths relative to the manifest directory
-    let project_root = Path::new(&manifest_dir).parent().unwrap().parent().unwrap();
+    let project_root = Path::new(&manifest_dir);
     let script_path = project_root.join("scripts/gen_param_code.py");
     let xml_dir = project_root.join("docs-xml/himmelblauconf");
     let rust_output = Path::new(&out_dir).join("config_gen.rs");

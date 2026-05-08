@@ -468,11 +468,9 @@ fn write_kerberos_config_snippet(
     let krb_conf_dir = PathBuf::from(DEFAULT_KERBEROS_CONF_DIR);
 
     trace!(?krb_conf_dir, "Check kerberos config dir exists");
-    match std::fs::exists(&krb_conf_dir) {
-        Ok(true) => match &krb_conf_dir.is_dir() {
-            false => Err(format!("Path {krb_conf_dir:?} is not a directory")),
-            true => Ok(()),
-        },
+    match krb_conf_dir.try_exists() {
+        Ok(true) if krb_conf_dir.is_dir() => Ok(()),
+        Ok(true) => Err(format!("Path {krb_conf_dir:?} is not a directory")),
         Ok(false) => Err(format!("Path {krb_conf_dir:?} does not exist")),
         Err(e) => Err(format!("Failed to check if {krb_conf_dir:?} exists: {e}")),
     }?;
@@ -661,12 +659,16 @@ async fn handle_tasks(stream: UnixStream, cfg: &HimmelblauConfig) {
                                 let authority_host = cfg.get_authority_host(domain);
                                 let tenant_id = cfg.get_tenant_id(domain);
                                 let graph_url = cfg.get_graph_url(domain);
+                                let ip_versions = cfg.get_ip_versions();
+                                let request_timeout = cfg.get_request_timeout();
                                 if let Ok(graph) = Graph::new(
                                     &cfg.get_odc_provider(domain),
                                     domain,
                                     Some(&authority_host),
                                     tenant_id.as_deref(),
                                     graph_url.as_deref(),
+                                    Duration::from_secs(request_timeout),
+                                    &ip_versions,
                                 )
                                 .await
                                 {
@@ -897,9 +899,19 @@ async fn main() -> ExitCode {
 
             if systemd_booted {
                 if let Ok(monotonic_usec) = sd_notify::NotifyState::monotonic_usec_now() {
-                    let _ = sd_notify::notify(false, &[NotifyState::Ready, monotonic_usec]);
+                    let _ = sd_notify::notify(&[NotifyState::Ready, monotonic_usec]);
                 }
             }
+
+            // Ping the systemd watchdog at half the configured WatchdogSec interval.
+            let mut watchdog_interval = if systemd_booted {
+                std::env::var("WATCHDOG_USEC")
+                    .ok()
+                    .and_then(|v| v.parse::<u64>().ok())
+                    .map(|usec| time::interval(Duration::from_micros(usec / 2)))
+            } else {
+                None
+            };
 
             loop {
                 tokio::select! {
@@ -942,13 +954,21 @@ async fn main() -> ExitCode {
                     } => {
                         // Ignore
                     }
+                    _ = async {
+                        match watchdog_interval.as_mut() {
+                            Some(interval) => interval.tick().await,
+                            None => std::future::pending().await,
+                        }
+                    } => {
+                        let _ = sd_notify::notify(&[NotifyState::Watchdog]);
+                    }
                 }
             }
 
             info!("Signal received, shutting down");
             if systemd_booted {
                 if let Ok(monotonic_usec) = sd_notify::NotifyState::monotonic_usec_now() {
-                    let _ = sd_notify::notify(false, &[NotifyState::Stopping, monotonic_usec]);
+                    let _ = sd_notify::notify(&[NotifyState::Stopping, monotonic_usec]);
                 }
             }
 

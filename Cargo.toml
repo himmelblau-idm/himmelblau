@@ -16,22 +16,97 @@ members = [
 	"src/selinux",
 	"src/o365",
 	"fuzz",
-	"src/fxhash",
-	"src/serde_cbor",
-	"src/paste",
-	"src/sshkey-attest",
-	"src/kanidm_build_profiles",
-	"src/picky-krb",
 ]
 resolver = "2"
 
-[patch.crates-io]
-fxhash = { path = "src/fxhash" }
-serde_cbor = { path = "src/serde_cbor" }
-paste = { path = "src/paste" }
-sshkey-attest = { path = "src/sshkey-attest" }
-kanidm_build_profiles = { path = "src/kanidm_build_profiles" }
-picky-krb = { path = "src/picky-krb" }
+[replace]
+"adler2:2.0.0" = { path = "src/overrides/adler2/2.0.0" }
+"android_system_properties:0.1.5" = { path = "src/overrides/android_system_properties/0.1.5" }
+"anstyle-wincon:3.0.8" = { path = "src/overrides/anstyle-wincon/3.0.8" }
+"assert_hex:0.4.1" = { path = "src/overrides/assert_hex/0.4.1" }
+"atomic-polyfill:1.0.3" = { path = "src/overrides/atomic-polyfill/1.0.3" }
+"base64:0.21.7" = { path = "src/overrides/base64/0.21.7" }
+"cbindgen:0.29.2" = { path = "src/overrides/cbindgen/0.29.2" }
+"const-oid:0.9.6" = { path = "src/overrides/const-oid/0.9.6" }
+"core-foundation-sys:0.8.7" = { path = "src/overrides/core-foundation-sys/0.8.7" }
+"core-foundation:0.10.1" = { path = "src/overrides/core-foundation/0.10.1" }
+"core-foundation:0.9.4" = { path = "src/overrides/core-foundation/0.9.4" }
+"cpufeatures:0.2.17" = { path = "src/overrides/cpufeatures/0.2.17" }
+"crunchy:0.2.4" = { path = "src/overrides/crunchy/0.2.4" }
+"dashmap:6.1.0" = { path = "src/overrides/dashmap/6.1.0" }
+"devd-rs:0.3.6" = { path = "src/overrides/devd-rs/0.3.6" }
+"fiat-crypto:0.2.9" = { path = "src/overrides/fiat-crypto/0.2.9" }
+"foldhash:0.1.5" = { path = "src/overrides/foldhash/0.1.5" }
+"fsevent-sys:4.1.0" = { path = "src/overrides/fsevent-sys/4.1.0" }
+"getopts:0.2.24" = { path = "src/overrides/getopts/0.2.24" }
+"getrandom:0.2.16" = { path = "src/overrides/getrandom/0.2.16" }
+"getrandom:0.3.3" = { path = "src/overrides/getrandom/0.3.3" }
+"hashbrown:0.15.5" = { path = "src/overrides/hashbrown/0.15.5" }
+"hermit-abi:0.4.0" = { path = "src/overrides/hermit-abi/0.4.0" }
+"iana-time-zone-haiku:0.1.2" = { path = "src/overrides/iana-time-zone-haiku/0.1.2" }
+"indexmap:1.9.3" = { path = "src/overrides/indexmap/1.9.3" }
+"itertools:0.10.5" = { path = "src/overrides/itertools/0.10.5" }
+"jni-utils:0.1.1" = { path = "src/overrides/jni-utils/0.1.1" }
+"jni:0.19.0" = { path = "src/overrides/jni/0.19.0" }
+"jni:0.21.1" = { path = "src/overrides/jni/0.21.1" }
+"js-sys:0.3.77" = { path = "src/overrides/js-sys/0.3.77" }
+"kqueue:1.1.1" = { path = "src/overrides/kqueue/1.1.1" }
+"libredox:0.1.3" = { path = "src/overrides/libredox/0.1.3" }
+"linux-raw-sys:0.4.15" = { path = "src/overrides/linux-raw-sys/0.4.15" }
+"maplit:1.0.2" = { path = "src/overrides/maplit/1.0.2" }
+"memoffset:0.8.0" = { path = "src/overrides/memoffset/0.8.0" }
+"memoffset:0.9.1" = { path = "src/overrides/memoffset/0.9.1" }
+"minimal-lexical:0.2.1" = { path = "src/overrides/minimal-lexical/0.2.1" }
+"mockall:0.13.1" = { path = "src/overrides/mockall/0.13.1" }
+"objc2-core-bluetooth:0.2.2" = { path = "src/overrides/objc2-core-bluetooth/0.2.2" }
+"objc2-foundation:0.2.2" = { path = "src/overrides/objc2-foundation/0.2.2" }
+"objc2:0.5.2" = { path = "src/overrides/objc2/0.5.2" }
+"paste:1.0.15" = { path = "src/overrides/paste" }
+"pastey:0.1.1" = { path = "src/overrides/pastey/0.1.1" }
+"picky-asn1-der:0.5.4" = { path = "src/overrides/picky-asn1-der/0.5.4" }
+"picky-asn1:0.10.1" = { path = "src/overrides/picky-asn1/0.10.1" }
+"picky-krb:0.12.0" = { path = "src/overrides/picky-krb" }
+"quinn:0.11.8" = { path = "src/overrides/quinn/0.11.8" }
+"r-efi:5.2.0" = { path = "src/overrides/r-efi/5.2.0" }
+"redox_syscall:0.5.12" = { path = "src/overrides/redox_syscall/0.5.12" }
+"reqwest:0.12.24" = { path = "src/overrides/reqwest/0.12.24" }
+"rustls-platform-verifier-android:0.1.1" = { path = "src/overrides/rustls-platform-verifier-android/0.1.1" }
+"schannel:0.1.27" = { path = "src/overrides/schannel/0.1.27" }
+"schemars:0.9.0" = { path = "src/overrides/schemars/0.9.0" }
+"schemars:1.0.4" = { path = "src/overrides/schemars/1.0.4" }
+"security-framework-sys:2.15.0" = { path = "src/overrides/security-framework-sys/2.15.0" }
+"security-framework:3.5.1" = { path = "src/overrides/security-framework/3.5.1" }
+"serde_cbor:0.11.2" = { path = "src/overrides/serde_cbor" }
+"socket2:0.5.9" = { path = "src/overrides/socket2/0.5.9" }
+"system-configuration:0.6.1" = { path = "src/overrides/system-configuration/0.6.1" }
+"text_io:0.1.13" = { path = "src/overrides/text_io/0.1.13" }
+"thiserror:1.0.69" = { path = "src/overrides/thiserror/1.0.69" }
+"tls_codec:0.4.2" = { path = "src/overrides/tls_codec/0.4.2" }
+"toml_datetime:0.6.11" = { path = "src/overrides/toml_datetime/0.6.11" }
+"uds_windows:1.1.0" = { path = "src/overrides/uds_windows/1.1.0" }
+"valuable:0.1.1" = { path = "src/overrides/valuable/0.1.1" }
+"wasi:0.11.0+wasi-snapshot-preview1" = { path = "src/overrides/wasi/0.11.0+wasi-snapshot-preview1" }
+"wasip2:1.0.2+wasi-0.2.9" = { path = "src/overrides/wasip2/1.0.2+wasi-0.2.9" }
+"wasip3:0.4.0+wasi-0.3.0-rc-2026-01-06" = { path = "src/overrides/wasip3/0.4.0+wasi-0.3.0-rc-2026-01-06" }
+"wasm-bindgen-futures:0.4.50" = { path = "src/overrides/wasm-bindgen-futures/0.4.50" }
+"wasm-bindgen:0.2.100" = { path = "src/overrides/wasm-bindgen/0.2.100" }
+"web-sys:0.3.77" = { path = "src/overrides/web-sys/0.3.77" }
+"web-time:1.1.0" = { path = "src/overrides/web-time/1.1.0" }
+"webpki-root-certs:1.0.6" = { path = "src/overrides/webpki-root-certs/1.0.6" }
+"winapi-util:0.1.9" = { path = "src/overrides/winapi-util/0.1.9" }
+"winapi:0.3.9" = { path = "src/overrides/winapi/0.3.9" }
+"windows-core:0.61.2" = { path = "src/overrides/windows-core/0.61.2" }
+"windows-future:0.2.1" = { path = "src/overrides/windows-future/0.2.1" }
+"windows-link:0.2.1" = { path = "src/overrides/windows-link/0.2.1" }
+"windows-registry:0.4.0" = { path = "src/overrides/windows-registry/0.4.0" }
+"windows-sys:0.52.0" = { path = "src/overrides/windows-sys/0.52.0" }
+"windows-sys:0.59.0" = { path = "src/overrides/windows-sys/0.59.0" }
+"windows-sys:0.61.2" = { path = "src/overrides/windows-sys/0.61.2" }
+"windows-targets:0.52.6" = { path = "src/overrides/windows-targets/0.52.6" }
+"windows-targets:0.53.0" = { path = "src/overrides/windows-targets/0.53.0" }
+"windows:0.61.3" = { path = "src/overrides/windows/0.61.3" }
+"winnow:0.7.10" = { path = "src/overrides/winnow/0.7.10" }
+"zerocopy-derive:0.8.25" = { path = "src/overrides/zerocopy-derive/0.8.25" }
 
 [workspace.package]
 version = "4.0.0"
@@ -45,21 +120,21 @@ homepage = "https://github.com/himmelblau-idm/himmelblau"
 repository = "https://github.com/himmelblau-idm/himmelblau"
 
 [workspace.dependencies]
-libc = "^0.2.182"
-pkg-config = "^0.3.32"
+libc = "^0.2.186"
+pkg-config = "^0.3.33"
 lazy_static = "^1.4.0"
 paste = "^1.0.12"
 serde = { version = "^1.0.228", features = ["derive"] }
 serde_json = "^1.0.149"
-tracing-subscriber = "^0.3.22"
+tracing-subscriber = "^0.3.23"
 tracing = "^0.1.37"
 himmelblau_unix_common = { path = "src/common" }
-libhimmelblau = { version = "0.8.13", features = ["broker", "changepassword", "on_behalf_of", "mfa_method_selection", "optional_mfa", "intune_portal_vers_selection"] }
-clap = { version = "^4.5", features = ["derive", "env"] }
-clap_complete = "^4.5.66"
+libhimmelblau = { version = "0.8.18", features = ["broker", "changepassword", "on_behalf_of", "mfa_method_selection", "optional_mfa", "intune_portal_vers_selection", "redirect_uri", "pop_support", "ipvers", "set_timeout"] }
+clap = { version = "^4.6", features = ["derive", "env"] }
+clap_complete = "^4.6.2"
 reqwest = { version = "^0.12.24", features = ["json"] }
 anyhow = "^1.0.102"
-tokio = { version = "^1.49.0", features = ["rt", "macros", "sync", "time", "net", "io-util", "signal", "rt-multi-thread"] }
+tokio = { version = "^1.52.2", features = ["rt", "macros", "sync", "time", "net", "io-util", "signal", "rt-multi-thread"] }
 tokio-util = { version = "^0.7.18", features = ["codec"] }
 async-trait = "^0.1.89"
 himmelblau_policies = { path = "src/policies" }
@@ -69,7 +144,7 @@ os-release = "^0.1.0"
 jsonwebtoken = "^9.2.0"
 zeroize = "^1.8.2"
 idmap = { path = "src/idmap" }
-identity_dbus_broker = "0.2.0"
+identity_dbus_broker = "0.2.1"
 rustls = ">=0.23.19" # CVE-2024-11738
 console-subscriber = "0.5.0"
 broker-client = { path = "src/broker-client" }
@@ -79,26 +154,26 @@ libkrimes = { version = "0.1.0", features = ["keyring"] }
 argon2 = { version = "0.5.2", features = ["alloc"] }
 base32 = "^0.5.0"
 base64 = "^0.22.0"
-base64urlsafedata = "0.5.0"
+base64urlsafedata = "0.5.5"
 hex = "^0.4.3"
-num_enum = "^0.7.5"
+num_enum = "^0.7.6"
 scim_proto = "^1.6.4"
-serde_with = "3.17.0"
+serde_with = "3.19.0"
 time = { version = "^0.3.44", features = ["formatting", "local-offset"] }
 url = "^2.4.0"
 urlencoding = "2.1.3"
-uuid = { version = "^1.21.0", features = ["v4", "v5"] }
+uuid = { version = "^1.23.1", features = ["v4", "v5"] }
 webauthn-rs-proto = "0.5.0"
 kanidm_proto = "1.8.1"
 openssl-sys = "^0.9"
-openssl = "^0.10.75"
-rand = "^0.9.2"
+openssl = "^0.10.79"
+rand = "^0.9.4"
 tss-esapi = "^7.2.0"
-sketching = "1.9.1"
+sketching = "1.10.0"
 tracing-forest = "^0.1.6"
 rusqlite = "^0.37.0"
-hashbrown = { version = "0.16.1", features = ["serde", "inline-more"] }
-lru = "^0.16.2"
+hashbrown = { version = "0.17.0", features = ["serde", "inline-more"] }
+lru = "^0.18.0"
 kanidm_lib_crypto = "1.9.1"
 kanidm_utils_users = "1.8.1"
 walkdir = "2"
@@ -121,11 +196,11 @@ tracing-opentelemetry = "0.28.0"
 tracing-core = "0.1.34"
 tonic = "0.14.5"
 compact_jwt = { version = "0.5.3-dev", features = ["msextensions"] }
-kanidm-hsm-crypto = { version = "^0.3.5" }
+kanidm-hsm-crypto = { version = "^0.3.6" }
 whoami = "1.6.1"
-kanidm_lib_file_permissions = "1.9.1"
+kanidm_lib_file_permissions = "1.10.0"
 md4 = "0.10.2"
 md-5 = "0.10.6"
 sha-crypt = "0.5.0"
-sha2 = "0.11.0-rc"
+sha2 = "0.11.0"
 x509-cert = "0.2.5"

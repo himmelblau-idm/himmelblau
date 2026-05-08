@@ -10,9 +10,13 @@ homepage.workspace = true
 repository.workspace = true
 
 [dependencies]
-dbus = "0.9.10"
+dbus = "0.9.11"
 himmelblau_unix_common.workspace = true
 identity_dbus_broker.workspace = true
+pinentry = "0.8.0"
+sd-notify = "0.5.0"
+secrecy = "0.10"
+serde_json.workspace = true
 tokio.workspace = true
 tracing.workspace = true
 tracing-subscriber = { workspace = true }
@@ -27,8 +31,8 @@ conflicts = ["microsoft-identity-broker"]
 provides = ["microsoft-identity-broker"]
 assets = [
   ["target/release/broker", "usr/sbin/himmelblau_broker", "755"],
-  ["../../platform/debian/com.microsoft.identity.broker1.service", "usr/share/dbus-1/services/", "644"],
-  ["../../platform/debian/himmelblau-broker.service", "usr/lib/systemd/user/", "644"],
+  ["platform/com.microsoft.identity.broker1.service", "usr/share/dbus-1/services/", "644"],
+  ["platform/himmelblau-broker.service", "usr/lib/systemd/user/", "644"],
 ]
 maintainer-scripts = "scripts"
 
@@ -36,8 +40,8 @@ maintainer-scripts = "scripts"
 name = "himmelblau-broker"
 assets = [
   { source = "target/release/broker", dest = "/usr/sbin/himmelblau_broker", mode = "755" },
-  { source = "../../platform/opensuse/com.microsoft.identity.broker1.service", dest = "/usr/share/dbus-1/services/", mode = "644" },
-  { source = "../../platform/debian/himmelblau-broker.service", dest = "/usr/lib/systemd/user/", mode = "644" },
+  { source = "platform/com.microsoft.identity.broker1.service", dest = "/usr/share/dbus-1/services/", mode = "644" },
+  { source = "platform/himmelblau-broker.service", dest = "/usr/lib/systemd/user/", mode = "644" },
 ]
 post_install_script = "scripts/postinst"
 pre_uninstall_script = "scripts/prerm"

@@ -15,6 +15,28 @@ use std::time::{Duration, SystemTime};
 
 use crate::unix_proto::{ClientRequest, ClientResponse};
 
+/// Check if the current process is being started by systemd as the
+/// himmelblaud daemon or its tasks helper.  During service startup
+/// sd-executor resolves DynamicUser= and SupplementaryGroups= via NSS
+/// and may also call into PAM.  If himmelblau is listed in nsswitch.conf
+/// or the PAM stack, contacting the himmelblaud socket at that point
+/// would deadlock: the socket-activated socket is listening but the
+/// daemon (this very process) hasn't exec'd yet.
+///
+/// Both the NSS and PAM modules should call this before attempting to
+/// connect to the daemon and bail out immediately when it returns true.
+pub fn should_skip_daemon_call() -> bool {
+    use std::sync::OnceLock;
+
+    static SKIP: OnceLock<bool> = OnceLock::new();
+    *SKIP.get_or_init(|| {
+        matches!(
+            std::env::var_os("SYSTEMD_ACTIVATION_UNIT").as_deref(),
+            Some(v) if v == "himmelblaud.service" || v == "himmelblaud-tasks.service"
+        )
+    })
+}
+
 pub struct DaemonClientBlocking {
     stream: UnixStream,
 }

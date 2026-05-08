@@ -175,6 +175,8 @@ pub enum AuthRequest {
     Fido {
         fido_challenge: String,
         fido_allow_list: Vec<String>,
+        has_physical_security_key: bool,
+        has_cross_device: bool,
     },
     ChangePassword {
         /// Message to display to the user.
@@ -206,9 +208,13 @@ impl Into<PamAuthResponse> for AuthRequest {
             AuthRequest::Fido {
                 fido_challenge,
                 fido_allow_list,
+                has_physical_security_key,
+                has_cross_device,
             } => PamAuthResponse::Fido {
                 fido_challenge,
                 fido_allow_list,
+                has_physical_security_key,
+                has_cross_device,
             },
             AuthRequest::ChangePassword { msg } => PamAuthResponse::ChangePassword { msg },
             AuthRequest::InitDenied { msg } => PamAuthResponse::InitDenied { msg },
@@ -249,12 +255,15 @@ pub trait IdProvider {
         _machine_key: &tpm::structures::StorageKey,
     ) -> Result<UserTokenState, IdpError>;
 
+    #[allow(clippy::too_many_arguments)]
     async fn unix_user_access<D: KeyStoreTxn + Send>(
         &self,
         _id: &Id,
         _scopes: Vec<String>,
         _token: Option<&UserToken>,
         _client_id: Option<String>,
+        _redirect_uri: Option<String>,
+        _req_cnf: Option<String>,
         _keystore: &mut D,
         _tpm: &mut tpm::provider::BoxedDynTpm,
         _machine_key: &tpm::structures::StorageKey,
@@ -294,6 +303,7 @@ pub trait IdProvider {
         _machine_key: &tpm::structures::StorageKey,
     ) -> Result<bool, IdpError>;
 
+    #[allow(clippy::too_many_arguments)]
     async fn unix_user_online_auth_init<D: KeyStoreTxn + Send>(
         &self,
         _account_id: &str,

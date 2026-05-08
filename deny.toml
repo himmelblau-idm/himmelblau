@@ -2,7 +2,7 @@
 allow = [
   # GPL/LGPL that are OK to combine with GPL-3.0
   "GPL-3.0-only", "GPL-3.0-or-later", "GPL-2.0-or-later",
-  "LGPL-3.0-only", "LGPL-3.0-or-later", "LGPL-2.1-or-later",
+  "LGPL-3.0-only", "LGPL-3.0-or-later", "LGPL-2.1-or-later", "LGPL-2.1-only",
   # Deprecated string used by libnss
   "LGPL-3.0",
 

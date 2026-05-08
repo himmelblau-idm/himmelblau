@@ -34,13 +34,14 @@ use crate::constants::{
     DEFAULT_HELLO_PIN_MIN_LEN, DEFAULT_HELLO_PIN_RETRY_COUNT, DEFAULT_HOME_ALIAS,
     DEFAULT_HOME_ATTR, DEFAULT_HOME_PREFIX, DEFAULT_HSM_PIN_PATH, DEFAULT_ID_ATTR_MAP,
     DEFAULT_JOIN_TYPE, DEFAULT_ODC_PROVIDER, DEFAULT_OFFLINE_BREAKGLASS_TTL,
-    DEFAULT_PASSWORD_ONLY_REMOTE_SERVICES_DENY_LIST, DEFAULT_POLICIES_DB_DIR, DEFAULT_SELINUX,
-    DEFAULT_SFA_FALLBACK_ENABLED, DEFAULT_SHELL, DEFAULT_SOCK_PATH, DEFAULT_TASK_SOCK_PATH,
-    DEFAULT_TPM_TCTI_NAME, DEFAULT_USER_MAP_FILE, DEFAULT_USE_ETC_SKEL, MAPPED_NAME_CACHE,
-    SERVER_CONFIG_PATH,
+    DEFAULT_PASSWORD_ONLY_REMOTE_SERVICES_DENY_LIST, DEFAULT_POLICIES_DB_DIR,
+    DEFAULT_REQUEST_TIMEOUT, DEFAULT_SELINUX, DEFAULT_SFA_FALLBACK_ENABLED, DEFAULT_SHELL,
+    DEFAULT_SOCK_PATH, DEFAULT_TASK_SOCK_PATH, DEFAULT_TPM_TCTI_NAME, DEFAULT_USER_MAP_FILE,
+    DEFAULT_USE_ETC_SKEL, MAPPED_NAME_CACHE, SERVER_CONFIG_PATH,
 };
 use crate::mapping::{MappedNameCache, Mode};
 use crate::unix_config::{HomeAttr, HsmType};
+use himmelblau::auth::IpVersion;
 use himmelblau::error::MsalError;
 use idmap::{DEFAULT_IDMAP_RANGE, DEFAULT_SUBID_RANGE};
 use reqwest::Url;
@@ -58,6 +59,13 @@ pub enum IdAttr {
 pub enum JoinType {
     Join,
     Register,
+}
+
+#[derive(Debug, Copy, Clone, PartialEq)]
+pub enum IpVersionSelection {
+    Both,
+    Ipv4Only,
+    Ipv6Only,
 }
 
 impl From<JoinType> for u32 {
@@ -838,6 +846,16 @@ impl HimmelblauConfig {
 // Generated getter methods from XML parameter definitions.
 include!(concat!(env!("OUT_DIR"), "/config_gen.rs"));
 
+impl HimmelblauConfig {
+    pub fn get_ip_versions(&self) -> Vec<IpVersion> {
+        match self.get_ip_version() {
+            IpVersionSelection::Ipv4Only => vec![IpVersion::V4],
+            IpVersionSelection::Ipv6Only => vec![IpVersion::V6],
+            IpVersionSelection::Both => vec![IpVersion::V4, IpVersion::V6],
+        }
+    }
+}
+
 impl fmt::Debug for HimmelblauConfig {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "{:?}", self.config)
@@ -917,6 +935,21 @@ mod tests {
         assert_eq!(config.get_connection_timeout(), 45);
         let config_empty = create_empty_config();
         assert_eq!(config_empty.get_connection_timeout(), 30);
+    }
+
+    #[test]
+    fn test_get_request_timeout() {
+        let config_data = r#"
+        [global]
+        request_timeout = 15
+        "#;
+
+        let temp_file = create_temp_config(config_data);
+        let config = HimmelblauConfig::new(Some(&temp_file)).unwrap();
+
+        assert_eq!(config.get_request_timeout(), 15);
+        let config_empty = create_empty_config();
+        assert_eq!(config_empty.get_request_timeout(), DEFAULT_REQUEST_TIMEOUT);
     }
 
     #[test]
@@ -1019,6 +1052,35 @@ mod tests {
         let temp_file = create_temp_config(config_data);
         let config = HimmelblauConfig::new(Some(&temp_file)).unwrap();
         assert_eq!(config.get_join_type(), JoinType::Join);
+    }
+
+    #[test]
+    fn test_get_ip_version() {
+        let config_data = r#"
+        [global]
+        ip_version = ipv4-only
+        "#;
+
+        let temp_file = create_temp_config(config_data);
+        let config = HimmelblauConfig::new(Some(&temp_file)).unwrap();
+        assert_eq!(config.get_ip_version(), IpVersionSelection::Ipv4Only);
+        assert_eq!(config.get_ip_versions(), vec![IpVersion::V4]);
+
+        let config_data = r#"
+        [global]
+        ip_version = ipv6-only
+        "#;
+        let temp_file = create_temp_config(config_data);
+        let config = HimmelblauConfig::new(Some(&temp_file)).unwrap();
+        assert_eq!(config.get_ip_version(), IpVersionSelection::Ipv6Only);
+        assert_eq!(config.get_ip_versions(), vec![IpVersion::V6]);
+
+        let config_empty = create_empty_config();
+        assert_eq!(config_empty.get_ip_version(), IpVersionSelection::Both);
+        assert_eq!(
+            config_empty.get_ip_versions(),
+            vec![IpVersion::V4, IpVersion::V6]
+        );
     }
 
     #[test]

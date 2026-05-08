@@ -87,6 +87,9 @@ correctly across all supported distros.
 * `nix/modules/himmelblau-options.nix` - Typed NixOS module options
 * `man/man5/himmelblau.conf.5` - Man page documentation
 
+**Cargo.nix Regeneration:** When `Cargo.lock` is staged, the hook runs
+`nix run nixpkgs#crate2nix -- generate` and stages any resulting `Cargo.nix` updates.
+
 Note: Rust code generation is handled by the build system, not the pre-commit hook.
 
 ---

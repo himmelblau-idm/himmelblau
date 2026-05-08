@@ -8,6 +8,7 @@ target/
 result
 result-man
 result-doc
+result-lib
 
 # direnv state
 .direnv/
@@ -38,3 +39,5 @@ platform/opensuse/himmelblau-hsm-pin-init.service
 
 platform/el/authselect
 scripts/__pycache__
+
+.claude/

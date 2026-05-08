@@ -37,7 +37,7 @@ updates:
     directory: "/"
     target-branch: stable-2.x
     schedule:
-      interval: "quarterly"
+      interval: "monthly"
     commit-message:
       prefix: "deps(rust)"
     ignore:
@@ -60,6 +60,12 @@ updates:
       - dependency-name: "sketching"
         versions:
           - ">=1.8.0"
+      - dependency-name: "der"
+        versions:
+          - ">=0.8.0"
+      - dependency-name: "identity_dbus_broker"
+        versions:
+          - ">=0.2.0"
     groups:
       all-cargo-updates:
         patterns:

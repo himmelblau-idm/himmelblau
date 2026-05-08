@@ -13,6 +13,7 @@ all: .packaging dockerfiles ## Auto-detect host distro and build packages just f
 	      22.04*) TARGET="ubuntu22.04" ;; \
 	      24.04*) TARGET="ubuntu24.04" ;; \
 	      25.10*) TARGET="ubuntu25.10" ;; \
+	      26.04*) TARGET="ubuntu26.04" ;; \
 	    esac ;; \
 	  linuxmint) \
 	    case "$$VER" in \
@@ -81,11 +82,15 @@ test-selinux: ## Test the SELinux policy to ensure it builds
 clean: ## Remove cargo build artifacts
 	cargo clean
 
-setup-hooks: ## Configure git to use project hooks (SELinux tests + NixOS options regen)
+setup-hooks: ## Configure git to use project hooks (SELinux, docs-xml, Cargo.nix regen)
 	git config core.hooksPath .githooks
 	@echo "Git hooks configured. Pre-commit hook will:"
 	@echo "  - Run 'make test-selinux' when SELinux policy files are changed"
-	@echo "  - Auto-regenerate nix/modules/himmelblau-options.nix when XML definitions change"
+	@echo "  - Auto-regenerate NixOS options/man page when XML definitions change"
+	@echo "  - Run 'nix run nixpkgs#crate2nix -- generate' when Cargo.lock changes"
+
+crate2nix-generate: ## Regenerate Cargo.nix
+	nix run nixpkgs#crate2nix -- generate
 
 PLATFORM := $(shell grep '^ID=' /etc/os-release | awk -F= '{ print $$2 }' | tr -d '"')
 
@@ -115,7 +120,7 @@ nix: .packaging ## Build Nix packages into ./packaging/
 		$(NIX) --extra-experimental-features 'nix-command flakes' build ".#$$v" --out-link ./packaging/nix-$$v-result; \
 	done
 
-DEB_TARGETS := ubuntu22.04 ubuntu24.04 ubuntu25.10 debian12 debian13
+DEB_TARGETS := ubuntu22.04 ubuntu24.04 ubuntu25.10 ubuntu26.04 debian12 debian13
 RPM_TARGETS := rocky8 rocky9 rocky10 tumbleweed rawhide fedora42 fedora43 amzn2023
 SLE_TARGETS := sle15sp6 sle15sp7 sle16
 GENTOO_TARGETS := gentoo
@@ -201,11 +206,27 @@ sbom: .packaging ## Generate a Software Bill of Materials
 	cargo sbom -V >/dev/null || (echo "cargo-sbom required" && cargo install cargo-sbom)
 	cargo sbom > ./packaging/sbom.json
 
+check-barely-used: ## Detect barely-used dependencies (high-cost + shallow-usage)
+	@cargo bloat -V >/dev/null 2>&1 || (echo "cargo-bloat required" && cargo install cargo-bloat)
+	@cargo-diet --version >/dev/null 2>&1 || (echo "cargo-diet required" && cargo install cargo-diet)
+	@echo "Analyzing dependency usage patterns..."
+	@PATH="$$HOME/.cargo/bin:$$PATH" python3 scripts/check_barely_used_deps.py --format=human --mode=both
+
+check-shallow: ## Detect shallow-usage dependencies only
+	@echo "Analyzing shallow usage patterns..."
+	@PATH="$$HOME/.cargo/bin:$$PATH" python3 scripts/check_barely_used_deps.py --format=human --mode=shallow-usage
+
+check-high-cost: ## Detect high-cost dependencies only (original analysis)
+	@cargo bloat -V >/dev/null 2>&1 || (echo "cargo-bloat required" && cargo install cargo-bloat)
+	@cargo-diet --version >/dev/null 2>&1 || (echo "cargo-diet required" && cargo install cargo-diet)
+	@echo "Analyzing high-cost dependencies..."
+	@PATH="$$HOME/.cargo/bin:$$PATH" python3 scripts/check_barely_used_deps.py --format=human --mode=high-cost
+
 package: deb rpm sbom ## Build packages for all supported distros (DEB+RPM)
 	ls ./packaging/
 
 man: ## Generate the himmelblau.conf man page
-	python3 scripts/gen_param_code.py --gen-man --man-output man/man5/himmelblau.conf.5
+	python3 src/common/scripts/gen_param_code.py --gen-man --man-output man/man5/himmelblau.conf.5
 
 # ---- failure tracking (used by deb/rpm/package) ----
 FAIL_DIR := $(CURDIR)/target/fail
@@ -220,7 +241,7 @@ deb: .packaging dockerfiles ## Build all DEB targets (continue on failure, summa
 	  if $(MAKE) --no-print-directory $$t; then :; else \
 	    echo "$$t" >> "$(FAIL_FILE)"; echo "FAIL: $$t build failed"; rm -f "$$mark"; continue; \
 	  fi; \
-	  cnt=$$(find ./packaging -type f -newer "$$mark" -name "himmelblau_*-$${t}_amd64.deb" | wc -l); \
+	  cnt=$$(find ./packaging -type f -newer "$$mark" -name "himmelblau_*-$${t}*_amd64.deb" | wc -l); \
 	  if [ "$$cnt" -gt 0 ]; then \
 	    echo "OK: $$t produced .deb(s)"; \
 	  else \
@@ -293,6 +314,7 @@ $(DEB_TARGETS): %: .packaging dockerfiles
 	mkdir -p target/$@
 	$(DOCKER) build $(LIBHIMMELBLAU_BUILD_ARG) -t himmelblau-$@-build -f images/Dockerfile.$@ .
 	$(DOCKER) run --rm --security-opt label=disable -it \
+		-e DEB_REVISION_APPEND=$(DEB_REVISION_APPEND) \
 		-v $(CURDIR):/himmelblau \
 		-v $(CURDIR)/target/$@:/himmelblau/target \
 		$(LIBHIMMELBLAU_MOUNT) \
@@ -412,6 +434,7 @@ $(DEB_ARM64_TARGETS): arm64-%: .packaging dockerfiles-arm64
 		-t himmelblau-arm64-$*-build \
 		-f images/Dockerfile.$*.arm64 .
 	$(DOCKER) run --rm --security-opt label=disable \
+		-e DEB_REVISION_APPEND=$(DEB_REVISION_APPEND) \
 		-v $(CURDIR):/himmelblau \
 		-v $(CURDIR)/target/arm64-$*:/himmelblau/target \
 		$(LIBHIMMELBLAU_MOUNT) \

@@ -1,0 +1,9 @@
+[package]
+name = "webpki-root-certs"
+version = "1.0.6"
+authors.workspace = true
+rust-version.workspace = true
+edition.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
