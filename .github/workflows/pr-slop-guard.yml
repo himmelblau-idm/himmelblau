@@ -30,11 +30,15 @@ jobs:
         with:
           egress-policy: audit
 
+      # No explicit `ref:` — actions/checkout defaults to github.ref, which on
+      # pull_request_target resolves to the base branch (never PR head). An
+      # explicit `${{ github.event.pull_request.base.ref }}` is flagged Critical
+      # by OpenSSF Scorecard's Dangerous-Workflow check even though it points
+      # to the same trusted location.
       - name: Checkout base branch (trusted code only)
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           persist-credentials: false
-          ref: ${{ github.event.pull_request.base.ref }}
 
       - name: Run slop checks
         uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7.1.0
