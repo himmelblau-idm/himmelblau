@@ -606,7 +606,14 @@ module.exports = async ({ github, context, core }) => {
   // --- Exemption check ---
   const exemption = isExempt(pr);
   if (exemption.exempt) {
-    core.info(`PR #${prNumber}: skip (${exemption.reason}).`);
+    // If the PR became exempt after a prior failing run (e.g., maintainer
+    // added the exempt label, then reopened), clear the stale guidance.
+    const removed = await deleteExistingComment(github, owner, repo, prNumber);
+    if (removed) {
+      core.info(`PR #${prNumber}: skip (${exemption.reason}); removed stale slop-guard comment.`);
+    } else {
+      core.info(`PR #${prNumber}: skip (${exemption.reason}).`);
+    }
     return;
   }
 
