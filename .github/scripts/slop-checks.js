@@ -598,16 +598,18 @@ module.exports = async ({ github, context, core }) => {
   }
 
   // --- Fetch data in parallel ---
-  const [prDetails, commitsResponse, filesResponse, userData] = await Promise.all([
+  // Paginate listCommits and listFiles so checks like commit-author-match,
+  // blocked-paths, and excessive-comments see the full set instead of just
+  // the first 100. Without this, a PR with >100 files could land a blocked
+  // path on page 2 and evade detection.
+  const [prDetails, commits, files, userData] = await Promise.all([
     github.rest.pulls.get({ owner, repo, pull_number: prNumber }),
-    github.rest.pulls.listCommits({ owner, repo, pull_number: prNumber, per_page: 100 }),
-    github.rest.pulls.listFiles({ owner, repo, pull_number: prNumber, per_page: 100 }),
+    github.paginate(github.rest.pulls.listCommits, { owner, repo, pull_number: prNumber, per_page: 100 }),
+    github.paginate(github.rest.pulls.listFiles, { owner, repo, pull_number: prNumber, per_page: 100 }),
     github.rest.users.getByUsername({ username: author }),
   ]);
 
   const prData = prDetails.data;
-  const commits = commitsResponse.data;
-  const files = filesResponse.data;
   const user = userData.data;
 
   // --- Run all checks ---
