@@ -389,7 +389,19 @@ function checkExcessiveComments(_prData, files) {
     const filename = file.filename || '';
     const ext = getFileExtension(filename);
     const prefixes = COMMENT_PREFIXES[ext];
-    if (!prefixes || !file.patch) {
+    if (!prefixes) {
+      continue;
+    }
+
+    // GitHub omits `patch` for binary files, very large per-file diffs, and
+    // truncated payloads. We can't count comments in that case, but a large
+    // unanalyzable file in a commentable language is a gaming opportunity, so
+    // conservatively count its additions toward the total.
+    if (!file.patch) {
+      const additions = file.additions || 0;
+      if (additions > MAX_ADDED_COMMENTS * 2) {
+        totalCommentLines += additions;
+      }
       continue;
     }
 
