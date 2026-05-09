@@ -88,6 +88,9 @@ function isExempt(pr) {
     return { exempt: true, reason: `author ${login} is ${association}` };
   }
 
+  // Drafts get a pass while WIP. The workflow listens to ready_for_review,
+  // so the check still fires when the draft is converted to ready — without
+  // that trigger, this exemption would be a permanent bypass.
   if (pr.draft) {
     return { exempt: true, reason: 'PR is a draft' };
   }

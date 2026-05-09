@@ -5,6 +5,10 @@ on:
     types:
       - opened
       - reopened
+      # Re-run when a draft is converted to ready: drafts are exempt in
+      # isExempt(), so without this an external contributor could open as a
+      # draft and convert to ready to bypass slop checks entirely.
+      - ready_for_review
   schedule:
     - cron: '15 */2 * * *'
   workflow_dispatch:
