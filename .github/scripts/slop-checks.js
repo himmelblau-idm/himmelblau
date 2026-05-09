@@ -603,7 +603,14 @@ module.exports = async ({ github, context, core }) => {
   }
 
   const prNumber = pr.number;
-  const author = pr.user?.login || 'unknown';
+  const author = pr.user?.login;
+  if (!author) {
+    // Without a login we'd query GitHub user "unknown" (which actually exists)
+    // and run user-based checks against unrelated account data, or 404 and
+    // crash the job. Either way is wrong — bail explicitly.
+    core.setFailed(`PR #${prNumber}: missing pr.user.login on payload.`);
+    return;
+  }
 
   core.info(`Evaluating PR #${prNumber} by ${author}.`);
 
