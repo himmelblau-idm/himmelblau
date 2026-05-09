@@ -394,9 +394,10 @@ function checkExcessiveComments(_prData, files) {
     }
 
     // GitHub omits `patch` for binary files, very large per-file diffs, and
-    // truncated payloads. We can't count comments in that case, but a large
-    // unanalyzable file in a commentable language is a gaming opportunity, so
-    // conservatively count its additions toward the total.
+    // truncated payloads. Tiny unanalyzable files (small binary blobs declared
+    // with a recognized extension) are ignored, but a large unanalyzable file
+    // in a commentable language is a gaming opportunity — conservatively
+    // assume the worst and add its additions to the total.
     if (!file.patch) {
       const additions = file.additions || 0;
       if (additions > MAX_ADDED_COMMENTS * 2) {
