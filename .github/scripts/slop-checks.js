@@ -209,9 +209,12 @@ function checkDescriptionLength(prData) {
 function checkEmojiCount(prData) {
   const body = prData.body || '';
 
-  // Count Unicode emojis (broad range).
+  // Count Unicode emojis as user-perceived units, not codepoints. Matches a
+  // pictographic base + optional skin-tone modifier or VS-16, then any number
+  // of ZWJ-joined extensions (so 👨‍👩‍👧‍👦 is 1, ❤️ is 1). The trailing
+  // alternation handles country flags (regional indicators aren't pictographic).
   const unicodeEmojis = body.match(
-    /[\u{1F600}-\u{1F64F}\u{1F300}-\u{1F5FF}\u{1F680}-\u{1F6FF}\u{1F1E0}-\u{1F1FF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}\u{FE00}-\u{FE0F}\u{1F900}-\u{1F9FF}\u{1FA00}-\u{1FA6F}\u{1FA70}-\u{1FAFF}\u{200D}\u{20E3}]/gu
+    /\p{Extended_Pictographic}(\p{Emoji_Modifier}|\u{FE0F})?(\u{200D}\p{Extended_Pictographic}(\p{Emoji_Modifier}|\u{FE0F})?)*|\p{Regional_Indicator}{2}/gu
   ) || [];
 
   // Count :shortcode: style emojis (e.g., :rocket:, :warning:).
