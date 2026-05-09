@@ -571,6 +571,19 @@ async function postOrUpdateComment(github, owner, repo, prNumber, body) {
   }
 }
 
+async function deleteExistingComment(github, owner, repo, prNumber) {
+  const existing = await findExistingComment(github, owner, repo, prNumber);
+  if (!existing) {
+    return false;
+  }
+  await github.rest.issues.deleteComment({
+    owner,
+    repo,
+    comment_id: existing.id,
+  });
+  return true;
+}
+
 // ---------------------------------------------------------------------------
 // Entrypoint
 // ---------------------------------------------------------------------------
@@ -624,7 +637,14 @@ module.exports = async ({ github, context, core }) => {
 
   // --- Take action based on threshold ---
   if (failedCount === 0) {
-    core.info(`PR #${prNumber}: all checks passed. No action needed.`);
+    // Clear any prior slop-guard comment so a previously-failing PR that has
+    // since been fixed doesn't keep showing stale guidance.
+    const removed = await deleteExistingComment(github, owner, repo, prNumber);
+    if (removed) {
+      core.info(`PR #${prNumber}: all checks passed; removed stale slop-guard comment.`);
+    } else {
+      core.info(`PR #${prNumber}: all checks passed. No action needed.`);
+    }
     return;
   }
 
