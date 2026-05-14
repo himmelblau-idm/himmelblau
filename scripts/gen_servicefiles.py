@@ -232,7 +232,7 @@ Conflicts=nscd.service
 {os.linesep.join(dirs_block)}
 
 {type_line}
-{'LoadCredentialEncrypted=hsm-pin:/var/lib/himmelblaud/hsm-pin.enc' if supported('LoadCredentialEncrypted') else ''}
+{'LoadCredentialEncrypted=hsm-pin:/var/lib/himmelblaud/hsm-pin-nopcr.enc' if supported('LoadCredentialEncrypted') else ''}
 {'Environment=HIMMELBLAU_HSM_PIN_PATH=%d/hsm-pin' if supported('LoadCredentialEncrypted') else ''}
 ExecStart=/usr/sbin/himmelblaud
 Restart=on-failure
@@ -312,7 +312,7 @@ DefaultDependencies=no
 # Wants= (not Requires=) so we degrade gracefully on TPM-less systems.
 After=local-fs.target systemd-tpm2-setup.service
 Wants=systemd-tpm2-setup.service
-ConditionPathExists=!/var/lib/private/himmelblaud/hsm-pin.enc
+ConditionPathExists=!/var/lib/private/himmelblaud/hsm-pin-nopcr.enc
 
 [Service]
 Type=oneshot
