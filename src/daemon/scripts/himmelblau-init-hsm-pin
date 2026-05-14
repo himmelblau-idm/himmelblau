@@ -6,7 +6,8 @@
 set -e
 
 LEGACY=/var/lib/private/himmelblaud/hsm-pin
-CRED=/var/lib/private/himmelblaud/hsm-pin.enc
+LEGACY1=/var/lib/private/himmelblaud/hsm-pin.enc
+CRED=/var/lib/private/himmelblaud/hsm-pin-nopcr.enc
 SRK_HANDLE=0x81000001
 
 gen_pin_hex() {
@@ -163,6 +164,9 @@ fi
 if [ -f "$LEGACY" ]; then
     echo "Migrating existing HSM-PIN to encrypted credential"
     HSM_PIN=$(cat "$LEGACY")
+elif [ -f "$LEGACY1" ]; then
+    echo "Migrating existing HSM-PIN to no PCR lock"
+    HSM_PIN=$(systemd-creds decrypt --name=hsm-pin "$LEGACY1")
 else
     echo "Generating new HSM-PIN"
     HSM_PIN=$(gen_pin_hex)
@@ -173,13 +177,13 @@ fi
 #   auto       — systemd picks the best available (may silently omit TPM if SRK absent)
 if [ -e /dev/tpmrm0 ] || [ -e /dev/tpm0 ]; then
     if srk_is_provisioned; then
-        KEY_ARG="--with-key=host+tpm2"
+        KEY_ARG="--with-key=host+tpm2 --tpm2-pcrs="
     else
         echo "WARNING: TPM present but SRK provisioning failed. HSM PIN will use host key only."
-        KEY_ARG="--with-key=auto"
+        KEY_ARG="--with-key=auto --tpm2-pcrs="
     fi
 else
-    KEY_ARG="--with-key=auto"
+    KEY_ARG="--with-key=auto --tpm2-pcrs="
 fi
 
 # Encrypt the PIN
@@ -187,6 +191,7 @@ if printf '%s' "$HSM_PIN" | systemd-creds encrypt --name=hsm-pin $KEY_ARG \
         --tpm2-device=auto - "$CRED"; then
     echo "HSM PIN credential created successfully"
     rm -f "$LEGACY" 2>/dev/null || true
+    rm -f "$LEGACY1" 2>/dev/null || true
     exit 0
 else
     echo "ERROR: Failed to create HSM PIN credential"
