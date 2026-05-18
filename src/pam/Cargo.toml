@@ -155,6 +155,18 @@ if [ -f "$GDM_PAM" ]; then
         sed -i -E '/^[[:space:]]*auth[[:space:]]+optional[[:space:]]+pam_gnome_keyring\.so/ {/use_authtok/! s/$/ use_authtok/;}' "$GDM_PAM" || :
     fi
 fi
+
+# Fix systemd-user PAM configuration for NSS-based users (openSUSE issue)
+# The default /usr/lib/pam.d/systemd-user uses "account required pam_unix.so"
+# which fails for users not in /etc/passwd. Fix it to use common-account instead.
+SYSTEMD_USER_PAM="/usr/lib/pam.d/systemd-user"
+if [ -f "$SYSTEMD_USER_PAM" ]; then
+    # Check if it has the problematic line
+    if grep -Eq '^[[:space:]]*account[[:space:]]+required[[:space:]]+pam_unix\.so[[:space:]]+no_pass_expiry[[:space:]]*$' "$SYSTEMD_USER_PAM"; then
+        # Patch it to use common-account (which includes himmelblau support)
+        sed -i -E 's/^([[:space:]]*)account[[:space:]]+required[[:space:]]+pam_unix\.so[[:space:]]+no_pass_expiry[[:space:]]*$/\1account  include common-account/' "$SYSTEMD_USER_PAM" || :
+    fi
+fi
 '''
 post_uninstall_script = '''
 # Only remove a symlink if it exists and is a symlink
