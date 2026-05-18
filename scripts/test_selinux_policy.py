@@ -10,7 +10,7 @@ Usage:
     ./test_selinux_policy.py
 
     # Test specific distros
-    ./test_selinux_policy.py --distros rocky10,fedora42
+    ./test_selinux_policy.py --distros rocky10,fedora44
 
     # Build policy from source and test
     ./test_selinux_policy.py --build
@@ -75,15 +75,15 @@ SELINUX_DISTROS = {
         "extra_setup": "dnf install -y 'dnf-command(config-manager)' && dnf config-manager --set-enabled crb && sed -i -e 's|$rltype||g' /etc/yum.repos.d/rocky*.repo",
         "requires_scc": False,
     },
-    "fedora42": {
-        "base_image": "fedora:42",
+    "fedora43": {
+        "base_image": "fedora:43",
         "pkg_manager": "dnf",
         "selinux_pkgs": ["policycoreutils", "selinux-policy-targeted", "selinux-policy-devel", "policycoreutils-devel"],
         "extra_setup": None,
         "requires_scc": False,
     },
-    "fedora43": {
-        "base_image": "fedora:43",
+    "fedora44": {
+        "base_image": "fedora:44",
         "pkg_manager": "dnf",
         "selinux_pkgs": ["policycoreutils", "selinux-policy-targeted", "selinux-policy-devel", "policycoreutils-devel"],
         "extra_setup": None,
@@ -656,7 +656,7 @@ Examples:
   %(prog)s
 
   # Test specific distros
-  %(prog)s --distros rocky10,fedora42
+  %(prog)s --distros rocky10,fedora44
 
   # Test with verbose output
   %(prog)s --verbose
