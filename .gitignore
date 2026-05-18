@@ -32,9 +32,11 @@ src/selinux/src/tmp/
 # Generated systemd service files
 platform/debian/himmelblaud-tasks.service
 platform/debian/himmelblaud.service
+platform/debian/himmelblaud-orchestrator.service
 platform/debian/himmelblau-hsm-pin-init.service
 platform/opensuse/himmelblaud-tasks.service
 platform/opensuse/himmelblaud.service
+platform/opensuse/himmelblaud-orchestrator.service
 platform/opensuse/himmelblau-hsm-pin-init.service
 
 platform/el/authselect
