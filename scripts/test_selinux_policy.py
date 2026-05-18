@@ -10,7 +10,7 @@ Usage:
     ./test_selinux_policy.py
 
     # Test specific distros
-    ./test_selinux_policy.py --distros rocky10,fedora42
+    ./test_selinux_policy.py --distros rocky10,fedora44
 
     # Build policy from source and test
     ./test_selinux_policy.py --build
@@ -656,7 +656,7 @@ Examples:
   %(prog)s
 
   # Test specific distros
-  %(prog)s --distros rocky10,fedora42
+  %(prog)s --distros rocky10,fedora44
 
   # Test with verbose output
   %(prog)s --verbose
