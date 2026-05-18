@@ -262,7 +262,7 @@ You can also target specific distros explicitly.
 Available targets (as of now):
 
 - **DEB:** `ubuntu22.04` `ubuntu24.04` `ubuntu26.04` `debian12` `debian13`
-- **RHEL family:** `rocky8` `rocky9` `rocky10` `fedora41` `fedora42` `fedora43` `rawhide`
+- **RHEL family:** `rocky8` `rocky9` `rocky10` `fedora43` `fedora44` `rawhide`
 - **SUSE:** `sle15sp6` `sle15sp7` `sle16` `tumbleweed`
 
 Examples:

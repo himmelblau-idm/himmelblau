@@ -56,7 +56,7 @@ Common targets:
 
 Per-distro targets (build only one):
 `make ubuntu22.04`, `ubuntu24.04`, `debian12`, `debian13`, `rocky8`, `rocky9`, `rocky10`,
-`tumbleweed`, `rawhide`, `fedora42`, `fedora43`, `sle15sp6`, `sle15sp7`, `sle16`, `gentoo`.
+`tumbleweed`, `rawhide`, `fedora43`, `fedora44`, `sle15sp6`, `sle15sp7`, `sle16`, `gentoo`.
 
 Tips / conventions:
 

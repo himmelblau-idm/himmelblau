@@ -225,15 +225,15 @@ DISTS = {
         "extra_pkgs": ["nodejs"],
     },
     # ---- Fedora family ----
-    "fedora42": {
-        "family": "rpm",
-        "image": "fedora:42",
-        "tpm": True,
-        "selinux": True,
-    },
     "fedora43": {
         "family": "rpm",
         "image": "fedora:43",
+        "tpm": True,
+        "selinux": True,
+    },
+    "fedora44": {
+        "family": "rpm",
+        "image": "fedora:44",
         "tpm": True,
         "selinux": True,
     },
