@@ -34,8 +34,8 @@ all: .packaging dockerfiles ## Auto-detect host distro and build packages just f
 	    esac ;; \
 	  fedora) \
 	    case "$$VER" in \
-	      42*) TARGET="fedora42" ;; \
 	      43*) TARGET="fedora43" ;; \
+	      44*) TARGET="fedora44" ;; \
 	      *) TARGET="rawhide" ;; \
 	    esac ;; \
 	  sles|sled|sle_micro|suse|suse-linux-enterprise) \
@@ -77,7 +77,7 @@ test: dockerfiles ## Run cargo tests in a container
                 himmelblau-test-build
 
 test-selinux: ## Test the SELinux policy to ensure it builds
-	./scripts/test_selinux_policy.py --fix -v --distros rocky8,rocky9,rocky10,fedora42,fedora43,tumbleweed,sle16
+	./scripts/test_selinux_policy.py --fix -v --distros rocky8,rocky9,rocky10,fedora43,fedora44,tumbleweed,sle16
 
 clean: ## Remove cargo build artifacts
 	cargo clean
@@ -123,7 +123,7 @@ nix: .packaging ## Build Nix packages into ./packaging/
 	done
 
 DEB_TARGETS := ubuntu22.04 ubuntu24.04 ubuntu25.10 ubuntu26.04 debian12 debian13
-RPM_TARGETS := rocky8 rocky9 rocky10 tumbleweed rawhide fedora42 fedora43 amzn2023
+RPM_TARGETS := rocky8 rocky9 rocky10 tumbleweed rawhide fedora43 fedora44 amzn2023
 SLE_TARGETS := sle15sp6 sle15sp7 sle16
 GENTOO_TARGETS := gentoo
 ALL_PACKAGE_TARGETS := $(DEB_TARGETS) $(RPM_TARGETS) $(SLE_TARGETS) $(GENTOO_TARGETS)
