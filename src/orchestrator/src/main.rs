@@ -105,10 +105,10 @@ struct OrchestratorArgs {
 
     #[arg(
         long,
-        env = "HIMMELBLAU_ORCHESTRATOR_APPARMOR_UNCONFINED",
-        default_value = "false"
+        env = "HIMMELBLAU_ORCHESTRATOR_APPARMOR_PROFILE",
+        value_name = "PROFILE"
     )]
-    container_apparmor_unconfined: String,
+    container_apparmor_profile: Option<String>,
 }
 
 #[tokio::main]
@@ -140,15 +140,12 @@ async fn main() -> Result<()> {
             "orchestrator container security-opt no-new-privileges is DISABLED; use only for compatibility troubleshooting"
         );
     }
-    let container_apparmor_unconfined = parse_bool_flag(
-        &args.container_apparmor_unconfined,
-        "HIMMELBLAU_ORCHESTRATOR_APPARMOR_UNCONFINED",
-    )?;
-    if container_apparmor_unconfined {
-        warn!(
-            "orchestrator container AppArmor confinement is DISABLED; use only for compatibility troubleshooting"
-        );
-    }
+    let container_apparmor_profile = args
+        .container_apparmor_profile
+        .as_deref()
+        .map(str::trim)
+        .filter(|profile| !profile.is_empty())
+        .map(ToOwned::to_owned);
 
     let podman_client = Arc::new(PodmanClient::new(
         args.podman_binary,
@@ -158,7 +155,7 @@ async fn main() -> Result<()> {
         args.action_timeout_secs,
         args.idle_timeout_secs,
         container_no_new_privileges,
-        container_apparmor_unconfined,
+        container_apparmor_profile,
     ));
 
     let session_manager = Arc::new(SessionManager::new(

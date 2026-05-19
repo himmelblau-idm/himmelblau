@@ -33,7 +33,7 @@ zeroize = { workspace = true }
 
 [package.metadata.deb]
 name = "himmelblau-orchestrator"
-depends = ["$auto", "podman", "himmelblau"]
+depends = ["$auto", "podman", "himmelblau", "himmelblau-apparmor"]
 assets = [
   ["target/release/himmelblaud-orchestrator", "usr/sbin/", "755"],
   ["../../platform/debian/himmelblaud-orchestrator.service", "usr/lib/systemd/system/", "644"],

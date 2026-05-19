@@ -1,0 +1,28 @@
+# AppArmor profile for the browser container launched by himmelblaud-orchestrator.
+
+abi <abi/4.0>,
+include <tunables/global>
+
+profile himmelblau-orchestrator-container flags=(attach_disconnected,mediate_deleted) {
+  include <abstractions/base>
+  include <abstractions/nameservice>
+
+  network inet stream,
+  network inet6 stream,
+  network inet dgram,
+  network inet6 dgram,
+
+  # Podman/crun wires container stdio and process setup through Unix stream
+  # sockets. The browser process needs to read/write those inherited streams.
+  unix (send, receive) peer=(label=crun),
+
+  # Chromium inspects sibling browser processes for memory/process telemetry.
+  ptrace (read) peer="crun//&himmelblau-orchestrator-container",
+
+  # Container mount namespaces and Podman's read-only/tmpfs setup constrain
+  # the filesystem view; AppArmor still needs to allow access inside it.
+  file,
+  umount,
+
+  include if exists <local/himmelblau-orchestrator-container>
+}

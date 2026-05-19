@@ -173,7 +173,7 @@ uninstall: ## Uninstall Himmelblau packages from this host (apt/dnf/yum/zypper a
 	else \
 		echo "Error: no supported package manager found (apt/dnf/yum/zypper)."; exit 2; \
 	fi; \
-	pkgs="himmelblau himmelblau-orchestrator himmelblau-broker himmelblau-qr-greeter himmelblau-selinux himmelblau-sshd-config himmelblau-sso himmelblau-sso-policies nss-himmelblau pam-himmelblau"; \
+	pkgs="himmelblau himmelblau-orchestrator himmelblau-apparmor himmelblau-broker himmelblau-qr-greeter himmelblau-selinux himmelblau-sshd-config himmelblau-sso himmelblau-sso-policies nss-himmelblau pam-himmelblau"; \
 	echo "Removing: $$pkgs"; \
 	$$PM $$pkgs; \
 	echo "Uninstall complete."
@@ -188,10 +188,10 @@ orchestrator-container: ## Build the local orchestrator Playwright container ima
 	$(DOCKER) build -t $(ORCHESTRATOR_CONTAINER_IMAGE) -f $(ORCHESTRATOR_CONTAINER_DOCKERFILE) .
 
 deb-servicefiles:
-	python3 ./scripts/gen_servicefiles.py --out ./platform/debian/
+	python3 ./scripts/gen_servicefiles.py --out ./platform/debian/ --orchestrator-apparmor-profile himmelblau-orchestrator-container
 
 rpm-servicefiles:
-	python3 ./scripts/gen_servicefiles.py --out ./platform/opensuse/
+	python3 ./scripts/gen_servicefiles.py --out ./platform/opensuse/ $(if $(ORCHESTRATOR_APPARMOR_PROFILE),--orchestrator-apparmor-profile $(ORCHESTRATOR_APPARMOR_PROFILE),)
 
 authselect:
 	python3 ./scripts/gen_authselect.py --root=./ --aad-tool=./target/release/aad-tool --output-dir=./platform/el/authselect/

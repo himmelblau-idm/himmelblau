@@ -53,6 +53,16 @@ rec {
       # File a bug if you depend on any for non-debug work!
       debug = internal.debugCrate { inherit packageId; };
     };
+    "apparmor" = rec {
+      packageId = "apparmor";
+      build = internal.buildRustCrateWithFeatures {
+        packageId = "apparmor";
+      };
+
+      # Debug support which might change between releases.
+      # File a bug if you depend on any for non-debug work!
+      debug = internal.debugCrate { inherit packageId; };
+    };
     "broker" = rec {
       packageId = "broker";
       build = internal.buildRustCrateWithFeatures {
@@ -648,6 +658,16 @@ rec {
           "default" = [ "std" ];
         };
         resolvedDefaultFeatures = [ "default" "std" ];
+      };
+      "apparmor" = rec {
+        crateName = "apparmor";
+        version = "4.0.0";
+        edition = "2021";
+        src = lib.cleanSourceWith { filter = sourceFilter;  src = ./src/apparmor; };
+        authors = [
+          "David Mulder <dmulder@suse.com>"
+        ];
+
       };
       "arbitrary" = rec {
         crateName = "arbitrary";
@@ -22085,3 +22105,4 @@ rec {
   #
   };
 }
+

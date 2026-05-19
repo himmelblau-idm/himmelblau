@@ -125,6 +125,7 @@ PACKAGES = [
     ("sso-policies", "src/sso-policies", False),
     ("qr-greeter", "src/qr-greeter", False),
     ("selinux", "src/selinux", False),
+    ("apparmor", "src/apparmor", False),
     ("o365", "src/o365", False),
     ("himmelblau-orchestrator", "src/orchestrator", False),
 ]
@@ -162,21 +163,27 @@ def build_deb_final_cmd(
     return f'CMD ["/bin/sh", "-c", \\\n{CMD_TAB}"{GEN_MANPAGE} && {gen_servicefiles} && {CMD_SEP.join(parts)} "]'
 
 
-def build_rpm_final_cmd(features: list, selinux: bool) -> str:
+def build_rpm_final_cmd(features: list, selinux: bool, apparmor: bool) -> str:
     feat_str = f" --features {','.join(features)}" if features else ""
     build = f"cargo build ${{CARGO_PATCH_ARG}} --release{feat_str} && \\ \n{CMD_TAB}"
     strip = CMD_SEP.join(
         ["strip -s target/release/%s" % s for s in ["*.so", "aad-tool", "himmelblaud", "himmelblaud_tasks", "broker", "himmelblaud-orchestrator"]]
     )
-    if selinux:
-        pkgs = PACKAGES
-    else:
-        pkgs = [pkg for pkg in PACKAGES if pkg[0] != "selinux"]
+    pkgs = []
+    for pkg in PACKAGES:
+        if pkg[0] == "selinux" and not selinux:
+            continue
+        if pkg[0] == "apparmor" and not apparmor:
+            continue
+        pkgs.append(pkg)
     rpm_cmds = []
     for _, s, _ in pkgs:
         rpm_cmds.append(f"cargo generate-rpm -p {s}")
     rpms = CMD_SEP.join(rpm_cmds)
-    gen_servicefiles = "make rpm-servicefiles"
+    if apparmor:
+        gen_servicefiles = "make rpm-servicefiles ORCHESTRATOR_APPARMOR_PROFILE=himmelblau-orchestrator-container"
+    else:
+        gen_servicefiles = "make rpm-servicefiles"
     gen_authselect = "(authselect select minimal --force || authselect select local --force) && make authselect"
     return f'CMD ["/bin/sh", "-c", \\\n{CMD_TAB}"{GEN_MANPAGE} && {gen_servicefiles} && {build}{strip} && {gen_authselect} && \\\n{CMD_TAB}{rpms}"]'
 
@@ -320,6 +327,7 @@ DISTS = {
             "selinux-policy-targeted": "",
         },
         "tpm": True,
+        "apparmor": True,
     },
     "sle15sp7": {
         "family": "zypper",
@@ -341,6 +349,7 @@ DISTS = {
             "selinux-policy-targeted": "",
         },
         "tpm": True,
+        "apparmor": True,
     },
     "sle16": {
         "family": "zypper",
@@ -689,7 +698,7 @@ def render(
         repo_root = Path(__file__).parent.parent.resolve()
         final_cmd = build_gentoo_final_cmd(features, repo_root)
     else:
-        final_cmd = build_rpm_final_cmd(features, selinux)
+        final_cmd = build_rpm_final_cmd(features, selinux, bool(dist_cfg.get("apparmor", False)))
 
     blocks = []
     if dist_cfg.get("extra_prep"):

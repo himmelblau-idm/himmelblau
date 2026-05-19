@@ -1,0 +1,11 @@
+# File: /etc/apparmor.d/local/crun
+#
+# Chromium inside the himmelblaud-orchestrator browser container creates
+# IPv4/IPv6 datagram sockets for DNS/network probing while the process is
+# still mediated by Ubuntu's crun profile.
+
+network inet stream,
+network inet6 stream,
+network inet dgram,
+network inet6 dgram,
+network netlink raw,

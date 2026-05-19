@@ -34,7 +34,7 @@ pub struct PodmanClient {
     action_timeout_secs: u64,
     session_idle_timeout_secs: u64,
     no_new_privileges: bool,
-    apparmor_unconfined: bool,
+    apparmor_profile: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -110,7 +110,7 @@ impl PodmanClient {
         action_timeout_secs: u64,
         session_idle_timeout_secs: u64,
         no_new_privileges: bool,
-        apparmor_unconfined: bool,
+        apparmor_profile: Option<String>,
     ) -> Self {
         Self {
             binary: binary.into(),
@@ -120,7 +120,7 @@ impl PodmanClient {
             action_timeout_secs,
             session_idle_timeout_secs,
             no_new_privileges,
-            apparmor_unconfined,
+            apparmor_profile,
         }
     }
 
@@ -161,8 +161,10 @@ impl PodmanClient {
             command.arg("--security-opt").arg("no-new-privileges");
         }
 
-        if self.apparmor_unconfined {
-            command.arg("--security-opt").arg("apparmor=unconfined");
+        if let Some(profile) = &self.apparmor_profile {
+            command
+                .arg("--security-opt")
+                .arg(format!("apparmor={profile}"));
         }
 
         for mount in host_certificate_mounts() {

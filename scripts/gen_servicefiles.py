@@ -87,6 +87,8 @@ def main():
 
     ap.add_argument("--after-extra", default="", help="Extra units/targets to include in After= (space-separated).")
     ap.add_argument("--wants-extra", default="", help="Extra units/targets to include in Wants= (space-separated).")
+    ap.add_argument("--orchestrator-apparmor-profile", default="",
+                    help="AppArmor profile name to pass to himmelblaud-orchestrator containers.")
 
     args = ap.parse_args()
 
@@ -345,6 +347,11 @@ WantedBy=himmelblaud.service
         if rw_paths_available
         else ""
     )
+    orchestrator_apparmor_line = (
+        f"Environment=HIMMELBLAU_ORCHESTRATOR_APPARMOR_PROFILE={args.orchestrator_apparmor_profile.strip()}"
+        if args.orchestrator_apparmor_profile.strip()
+        else ""
+    )
 
     orchestrator_unit = f"""\
 # You should not need to edit this file. Instead, use a drop-in file:
@@ -363,6 +370,7 @@ Group=tss
 UMask=0007
 Type=simple
 Delegate=yes
+{orchestrator_apparmor_line}
 ExecStart=/usr/sbin/himmelblaud-orchestrator
 Restart=on-failure
 RestartSec=1s

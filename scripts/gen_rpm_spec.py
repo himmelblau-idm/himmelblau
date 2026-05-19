@@ -286,6 +286,7 @@ def collect_zypper_deps(mod):
             "packages": final_pkgs,
             "image": cfg.get("image"),
             "selinux": selinux,
+            "apparmor": bool(cfg.get("apparmor", False)),
             "tpm": cfg.get("tpm", False),
         }
 
@@ -312,9 +313,7 @@ def dep_gen(metadata):
 
 def install_line(asset, dest_replace):
     src = asset["source"]
-    dest = asset["dest"]
-    for key, val in dest_replace.items():
-        dest = dest.replace(key, val)
+    dest = apply_path_replacements(asset["dest"], dest_replace)
     mode = asset.get("mode", "755")
     # Desktop files, icons, and other data files should not be executable
     if src.endswith('.desktop') or src.endswith('.png') or src.endswith('.css'):
@@ -331,8 +330,7 @@ def file_line(asset, dest_replace):
         # Get the final path segment from the src
         filename = os.path.basename(asset["source"])
         dest += filename
-    for key, val in dest_replace.items():
-        dest = dest.replace(key, val)
+    dest = apply_path_replacements(dest, dest_replace)
     prefix = ""
     suffix = ""
     # Only files in /etc should be marked as %config
@@ -349,6 +347,19 @@ def file_line(asset, dest_replace):
     if "%{_mandir}" in dest or "/man/man" in dest:
         suffix = "*"
     return f"{prefix}{dest}{suffix}"
+
+def apply_path_replacements(path: str, dest_replace: dict[str, str]) -> str:
+    for key, val in dest_replace.items():
+        if path == key:
+            return val
+        if path.startswith(key + "/"):
+            return val + path[len(key):]
+        absolute_key = "/" + key
+        if path == absolute_key:
+            return "/" + val
+        if path.startswith(absolute_key + "/"):
+            return "/" + val + path[len(absolute_key):]
+    return path
 
 FILE_REPLACE = {
         "usr/share/man": "%{_mandir}",  # Must come before usr/share
@@ -484,8 +495,7 @@ def generate_files_section(metadata, name=None, dirs=[], extras=[]):
         lines.append("%endif")
 
     for line in extras:
-        for key, val in FILE_REPLACE.items():
-            line = line.replace(key, val)
+        line = apply_path_replacements(line, FILE_REPLACE)
         lines.append(line)
 
     return "\n".join(lines)
@@ -623,6 +633,43 @@ def main() -> int:
     sso_policies_metadata = merge_metadata(["sso-policies"], metadata, root)
     sshd_metadata = merge_metadata(["sshd-config"], metadata, root)
     qr_metadata = merge_metadata(["qr-greeter"], metadata, root)
+    apparmor_metadata = merge_metadata(["apparmor"], metadata, root)
+    apparmor_enabled = bool(deps[args.target].get("apparmor", False))
+    apparmor_servicefiles_arg = (
+        " ORCHESTRATOR_APPARMOR_PROFILE=himmelblau-orchestrator-container"
+        if apparmor_enabled
+        else ""
+    )
+    apparmor_package_section = ""
+    apparmor_install_section = ""
+    apparmor_scripts_section = ""
+    apparmor_files_section = ""
+    if apparmor_enabled:
+        apparmor_package_section = f"""\
+%package -n himmelblau-apparmor
+Summary:        AppArmor profiles for Himmelblau
+Requires:       %{{name}} = %{{version}}
+{dep_gen(apparmor_metadata)}
+BuildArch:      noarch
+
+%description -n himmelblau-apparmor
+AppArmor profile snippets for Himmelblau on AppArmor-based SUSE releases.
+"""
+        apparmor_install_section = f"""\
+# AppArmor
+install -D -d -m 0755 %{{buildroot}}%{{_sysconfdir}}/apparmor.d
+install -D -d -m 0755 %{{buildroot}}%{{_sysconfdir}}/apparmor.d/local
+{generate_install_section(apparmor_metadata)}
+"""
+        apparmor_scripts_section = generate_script_sections(
+            apparmor_metadata,
+            name="himmelblau-apparmor",
+        )
+        apparmor_files_section = generate_files_section(
+            apparmor_metadata,
+            name="himmelblau-apparmor",
+            dirs=["%{_sysconfdir}/apparmor.d", "%{_sysconfdir}/apparmor.d/local"],
+        )
     desc = """Himmelblau is an interoperability suite for Microsoft Azure Entra Id
 and Intune, which allows users to sign into a Linux machine using Azure
 Entra Id credentials."""
@@ -756,11 +803,13 @@ BuildArch:      noarch
 GNOME Shell extension that adds a QR code to authentication prompts
 when a MS DAG URL is detected.
 
+{apparmor_package_section}
+
 %prep
 %autosetup -a1
 
 %build
-make rpm-servicefiles
+make rpm-servicefiles{apparmor_servicefiles_arg}
 %if !(0%{{?suse_version}} > 1600 || 0%{{?sle_version}} >= 160000)
 export HIMMELBLAU_ALLOW_MISSING_SELINUX=1
 %endif
@@ -846,6 +895,8 @@ install -D -d -m 0555 %{{buildroot}}%{{chromium_policy_dir}}
 install -D -d -m 0755 %{{buildroot}}%{{_datarootdir}}/gnome-shell/extensions/qr-greeter@himmelblau-idm.org
 {generate_install_section(qr_metadata)}
 
+{apparmor_install_section}
+
 {generate_script_sections(nss_metadata, name="libnss_himmelblau2", extras={"post_uninstall_script": "/sbin/ldconfig", "post_install_script": "/sbin/ldconfig"})}
 
 {generate_script_sections(pam_metadata, name="pam-himmelblau")}
@@ -859,6 +910,8 @@ install -D -d -m 0755 %{{buildroot}}%{{_datarootdir}}/gnome-shell/extensions/qr-
 {generate_script_sections(sso_policies_metadata, name="himmelblau-sso-policies")}
 
 {generate_script_sections(qr_metadata, name="himmelblau-qr-greeter")}
+
+{apparmor_scripts_section}
 
 {generate_files_section(himmelblau_metadata, name=None, dirs=["%{_sysconfdir}/himmelblau", "%{_localstatedir}/cache/himmelblau-policies", "%{_unitdir}/display-manager.service.d", "%{_datadir}/doc/himmelblau", "%{_docdir}/himmelblau-selinux", "%{_selinux_docdir}"], extras=["%{_sbindir}/rchimmelblaud", "%{_sbindir}/rchimmelblaud_tasks", "%ghost %dir /var/lib/private/himmelblaud"])}
 
@@ -875,6 +928,8 @@ install -D -d -m 0755 %{{buildroot}}%{{_datarootdir}}/gnome-shell/extensions/qr-
 {generate_files_section(sso_policies_metadata, name="himmelblau-sso-policies", dirs=["/etc/firefox", "/etc/firefox/policies", "/etc/chromium/policies", "/etc/chromium/policies/managed", "/etc/opt/chrome", "/etc/opt/chrome/policies", "/etc/opt/chrome/policies/managed", "%attr(0555,root,root) %{chrome_policy_dir}", "%attr(0555,root,root) %{chromium_policy_dir}"])}
 
 {generate_files_section(qr_metadata, name="himmelblau-qr-greeter", dirs=["%{_datarootdir}/gnome-shell", "%{_datarootdir}/gnome-shell/extensions", "%{_datarootdir}/gnome-shell/extensions/qr-greeter@himmelblau-idm.org"])}
+
+{apparmor_files_section}
 
 %changelog
 """.rstrip() + "\n"
