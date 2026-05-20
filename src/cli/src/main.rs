@@ -1539,7 +1539,13 @@ async fn main() -> ExitCode {
             };
 
             // Map the name
-            let account_id = cfg.map_name_to_upn(&account_id);
+            let account_id = match cfg.map_name_to_upn(&account_id) {
+                Some(upn) => upn,
+                None => {
+                    error!("'{}' is not a valid directory user", account_id);
+                    return ExitCode::FAILURE;
+                }
+            };
 
             let opts = Options::default();
             let msg_printer = Arc::new(SimpleMessagePrinter::default());
