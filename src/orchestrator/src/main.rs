@@ -11,6 +11,7 @@
 #![deny(clippy::trivially_copy_pass_by_ref)]
 
 mod communication;
+mod container_pool;
 mod flow;
 mod podman;
 mod provider_definitions;
@@ -20,6 +21,7 @@ mod types;
 use anyhow::{anyhow, Context, Result};
 use clap::Parser;
 use communication::CommunicationServer;
+use container_pool::ContainerPool;
 use flow::FlowExecutor;
 use himmelblau_unix_common::config::HimmelblauConfig;
 use podman::PodmanClient;
@@ -163,6 +165,7 @@ async fn main() -> Result<()> {
         container_no_new_privileges,
         container_apparmor_profile,
     ));
+    let container_pool = Arc::new(ContainerPool::new(Arc::clone(&podman_client)));
 
     if let Err(error) =
         ensure_container_image(&podman_client, Path::new(&args.container_build_dir)).await
@@ -177,6 +180,7 @@ async fn main() -> Result<()> {
 
     let session_manager = Arc::new(SessionManager::new(
         Arc::clone(&podman_client),
+        Arc::clone(&container_pool),
         Duration::from_secs(args.idle_timeout_secs),
         Duration::from_secs(args.terminal_retention_secs),
     ));
@@ -190,6 +194,18 @@ async fn main() -> Result<()> {
     );
 
     let (shutdown_tx, _) = broadcast::channel::<()>(8);
+
+    let pool_task = {
+        let container_pool = Arc::clone(&container_pool);
+        let shutdown_rx = shutdown_tx.subscribe();
+        let keepalive_every =
+            warm_spare_keepalive_interval(args.idle_timeout_secs, args.cleanup_interval_secs);
+        tokio::spawn(async move {
+            container_pool
+                .run_maintenance(shutdown_rx, keepalive_every)
+                .await
+        })
+    };
 
     let cleanup_task = {
         let session_manager = Arc::clone(&session_manager);
@@ -232,10 +248,22 @@ async fn main() -> Result<()> {
         error!(?error, "cleanup task join error");
     }
 
+    if let Err(error) = pool_task.await {
+        error!(?error, "container pool task join error");
+    }
+
     match server_task.await {
         Ok(Ok(())) => {}
         Ok(Err(error)) => error!(?error, "communication server exited with error"),
         Err(error) => error!(?error, "communication server join error"),
+    }
+
+    let shutdown_sessions = session_manager.shutdown_sessions().await;
+    if shutdown_sessions > 0 {
+        info!(
+            shutdown_sessions,
+            "destroyed active orchestrator session containers during shutdown"
+        );
     }
 
     info!(
@@ -243,6 +271,12 @@ async fn main() -> Result<()> {
         "orchestrator stopped"
     );
     Ok(())
+}
+
+fn warm_spare_keepalive_interval(idle_timeout_secs: u64, cleanup_interval_secs: u64) -> Duration {
+    let idle_half = (idle_timeout_secs.max(2) / 2).max(1);
+    let cleanup = cleanup_interval_secs.max(1);
+    Duration::from_secs(idle_half.min(cleanup))
 }
 
 async fn ensure_container_image(podman_client: &PodmanClient, build_dir: &Path) -> Result<()> {

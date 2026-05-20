@@ -16,6 +16,7 @@ use zeroize::{Zeroize, Zeroizing};
 const BRIDGE_SOCKET_FILE_NAME: &str = "bridge.sock";
 const CONTAINER_SESSION_RUNTIME_DIR: &str = "/run/himmelblau-orchestrator-session";
 const CONTAINER_BRIDGE_SOCKET_PATH: &str = "/run/himmelblau-orchestrator-session/bridge.sock";
+const CONTAINER_STOP_TIMEOUT_SECS: &str = "0";
 
 #[derive(Debug, Clone)]
 pub struct ContainerInstance {
@@ -206,6 +207,8 @@ impl PodmanClient {
             .arg("--detach")
             .arg("--rm")
             .arg("--replace")
+            .arg("--stop-timeout")
+            .arg(CONTAINER_STOP_TIMEOUT_SECS)
             .arg("--cap-drop")
             .arg("ALL")
             .arg("--read-only")
@@ -301,18 +304,8 @@ impl PodmanClient {
     async fn wait_for_bridge_socket(&self, container: &ContainerInstance) -> Result<()> {
         let attempts = (self.action_timeout_secs.max(1) * 5).min(300);
         for _ in 0..attempts {
-            if let Ok(response) = self
-                .send_bridge_request(
-                    container,
-                    BridgeRequest::Ping,
-                    Duration::from_secs(1),
-                    "bridge ping failed",
-                )
-                .await
-            {
-                if response.pong.unwrap_or(false) {
-                    return Ok(());
-                }
+            if self.ping_container(container).await.is_ok() {
+                return Ok(());
             }
 
             sleep(Duration::from_millis(200)).await;
@@ -322,6 +315,23 @@ impl PodmanClient {
             "timed out waiting for orchestrator-playwright-bridge readiness on {}",
             container.bridge_socket_path.display()
         ))
+    }
+
+    pub async fn ping_container(&self, container: &ContainerInstance) -> Result<()> {
+        let response = self
+            .send_bridge_request(
+                container,
+                BridgeRequest::Ping,
+                Duration::from_secs(1),
+                "bridge ping failed",
+            )
+            .await?;
+
+        if response.pong.unwrap_or(false) {
+            return Ok(());
+        }
+
+        Err(anyhow!("bridge ping response missing pong=true"))
     }
 
     pub async fn fill(
@@ -425,6 +435,8 @@ impl PodmanClient {
         let output_result = Command::new(&self.binary)
             .arg("rm")
             .arg("-f")
+            .arg("--time")
+            .arg(CONTAINER_STOP_TIMEOUT_SECS)
             .arg(&container.id)
             .stdout(Stdio::null())
             .stderr(Stdio::piped())

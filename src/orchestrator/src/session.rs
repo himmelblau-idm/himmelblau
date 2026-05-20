@@ -1,3 +1,4 @@
+use crate::container_pool::ContainerPool;
 use crate::podman::{ContainerInstance, PodmanClient};
 use crate::provider_definitions::ProviderDefinition;
 use crate::types::{FlowResponse, LogLevel, SessionLogEntry, SessionState, TokenBundle};
@@ -6,6 +7,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tokio::sync::{Mutex, RwLock};
+use tracing::warn;
 use zeroize::Zeroize;
 
 const MAX_SESSION_LOG_ENTRIES: usize = 64;
@@ -165,6 +167,7 @@ impl Session {
 pub struct SessionManager {
     sessions: RwLock<HashMap<String, Arc<Session>>>,
     podman: Arc<PodmanClient>,
+    container_pool: Arc<ContainerPool>,
     idle_timeout: Duration,
     terminal_retention: Duration,
 }
@@ -172,12 +175,14 @@ pub struct SessionManager {
 impl SessionManager {
     pub fn new(
         podman: Arc<PodmanClient>,
+        container_pool: Arc<ContainerPool>,
         idle_timeout: Duration,
         terminal_retention: Duration,
     ) -> Self {
         Self {
             sessions: RwLock::new(HashMap::new()),
             podman,
+            container_pool,
             idle_timeout,
             terminal_retention,
         }
@@ -198,16 +203,7 @@ impl SessionManager {
             return Err(anyhow!("session '{}' already exists", session_id));
         }
 
-        let container = self
-            .podman
-            .create_session_container(&session_id)
-            .await
-            .map_err(|e| {
-                anyhow!(
-                    "failed to create session container for '{}': {e}",
-                    session_id
-                )
-            })?;
+        let container = self.container_pool.acquire_container(&session_id).await?;
 
         let session = Arc::new(Session::new(
             session_id.clone(),
@@ -320,6 +316,52 @@ impl SessionManager {
         }
 
         Ok(cleaned)
+    }
+
+    pub async fn shutdown_sessions(&self) -> usize {
+        let sessions = {
+            let mut guard = self.sessions.write().await;
+            guard
+                .drain()
+                .map(|(_, session)| session)
+                .collect::<Vec<_>>()
+        };
+
+        let mut cleaned = 0_usize;
+        for session in sessions {
+            {
+                let mut runtime = session.runtime.lock().await;
+                runtime.state = SessionState::Cancelled;
+                runtime.detail = Some("Session cancelled by orchestrator shutdown".to_string());
+                runtime.last_activity = Instant::now();
+                runtime.terminal_since = Some(Instant::now());
+            }
+            session
+                .log(
+                    LogLevel::Info,
+                    "Cancelling session during orchestrator shutdown",
+                )
+                .await;
+            match self
+                .podman
+                .destroy_session_container(&session.container)
+                .await
+            {
+                Ok(()) => {
+                    cleaned += 1;
+                }
+                Err(error) => {
+                    warn!(
+                        session_id = %session.session_id,
+                        container = %session.container.name,
+                        ?error,
+                        "failed to destroy active orchestrator session container during shutdown"
+                    );
+                }
+            }
+        }
+
+        cleaned
     }
 
     pub async fn active_count(&self) -> usize {

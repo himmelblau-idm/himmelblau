@@ -376,6 +376,8 @@ ExecStart=/usr/sbin/himmelblaud-orchestrator
 Restart=on-failure
 RestartPreventExitStatus=75
 RestartSec=1s
+KillMode=mixed
+TimeoutStopSec=10s
 { 'ProtectSystem=strict' if supported('ProtectSystemStrict') else '' }
 {orchestrator_rw_line}
 {os.linesep.join(orchestrator_hardening)}
