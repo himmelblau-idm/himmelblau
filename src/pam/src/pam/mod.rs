@@ -265,7 +265,10 @@ impl PamHooks for PamKanidm {
         let user_map = UserMap::new(&cfg.get_user_map_file());
         let account_id = match user_map.get_upn_from_local(&account_id) {
             Some(account_id) => account_id,
-            None => cfg.map_name_to_upn(&account_id),
+            None => match cfg.map_name_to_upn(&account_id) {
+                Some(upn) => upn,
+                None => return PamResultCode::PAM_IGNORE,
+            },
         };
         let req = ClientRequest::PamAccountAllowed(account_id);
         // PamResultCode::PAM_IGNORE
@@ -377,7 +380,10 @@ impl PamHooks for PamKanidm {
         let user_map = UserMap::new(&cfg.get_user_map_file());
         let account_id = match user_map.get_upn_from_local(&account_id) {
             Some(account_id) => account_id,
-            None => cfg.map_name_to_upn(&account_id),
+            None => match cfg.map_name_to_upn(&account_id) {
+                Some(upn) => upn,
+                None => return PamResultCode::PAM_IGNORE,
+            },
         };
 
         let authtok = match pamh.get_authtok() {
@@ -472,7 +478,10 @@ impl PamHooks for PamKanidm {
         let user_map = UserMap::new(&cfg.get_user_map_file());
         let account_id = match user_map.get_upn_from_local(&account_id) {
             Some(account_id) => account_id,
-            None => cfg.map_name_to_upn(&account_id),
+            None => match cfg.map_name_to_upn(&account_id) {
+                Some(upn) => upn,
+                None => return PamResultCode::PAM_IGNORE,
+            },
         };
 
         // Local user (no UPN): not a Himmelblau/Entra account. Skip before touching the
@@ -952,7 +961,10 @@ impl PamHooks for PamKanidm {
         let user_map = UserMap::new(&cfg.get_user_map_file());
         let account_id = match user_map.get_upn_from_local(&account_id) {
             Some(account_id) => account_id,
-            None => cfg.map_name_to_upn(&account_id),
+            None => match cfg.map_name_to_upn(&account_id) {
+                Some(upn) => upn,
+                None => return PamResultCode::PAM_IGNORE,
+            },
         };
 
         let req = ClientRequest::PamAccountBeginSession(account_id);

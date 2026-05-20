@@ -37,7 +37,8 @@ use crate::constants::{
     DEFAULT_PASSWORD_ONLY_REMOTE_SERVICES_DENY_LIST, DEFAULT_POLICIES_DB_DIR,
     DEFAULT_REQUEST_TIMEOUT, DEFAULT_SELINUX, DEFAULT_SFA_FALLBACK_ENABLED, DEFAULT_SHELL,
     DEFAULT_SOCK_PATH, DEFAULT_TASK_SOCK_PATH, DEFAULT_TPM_TCTI_NAME, DEFAULT_USER_MAP_FILE,
-    DEFAULT_USE_ETC_SKEL, MAPPED_NAME_CACHE, SERVER_CONFIG_PATH,
+    DEFAULT_USE_ETC_SKEL, MAPPED_NAME_CACHE, NSS_IGNORE_EXACT, NSS_IGNORE_PREFIX,
+    SERVER_CONFIG_PATH,
 };
 use crate::mapping::{MappedNameCache, Mode};
 use crate::unix_config::{HomeAttr, HsmType};
@@ -698,17 +699,26 @@ impl HimmelblauConfig {
         None
     }
 
-    /// This function attempts to convert a username to a valid UPN. On failure it
-    /// will leave the name as-is, and respond with the original input. Himmelblau
-    /// will reject the authentication attempt if the username isn't a valid UPN.
-    pub fn map_name_to_upn(&self, account_id: &str) -> String {
+    /// Convert a login name to a UPN, or `None` if it cannot be a directory user
+    /// (empty, or a known local-only name). Callers treat `None` as user-unknown
+    /// and must not look it up against Entra. See himmelblau-idm/himmelblau#1392.
+    pub fn map_name_to_upn(&self, account_id: &str) -> Option<String> {
+        self.map_name_to_upn_impl(account_id, "/etc/passwd")
+    }
+
+    /// Inner impl with an injectable passwd path for hermetic unit tests.
+    fn map_name_to_upn_impl(&self, account_id: &str, passwd_path: &str) -> Option<String> {
         let name_mapping_script = self.get_name_mapping_script();
         let cn_name_mapping = self.get_cn_name_mapping();
         let domains = self.get_configured_domains();
 
+        if account_id.trim().is_empty() {
+            return None;
+        }
+
         // Make sure this account_id isn't a local user
         let mut contents = vec![];
-        if let Ok(mut file) = File::open("/etc/passwd") {
+        if let Ok(mut file) = File::open(passwd_path) {
             let _ = file.read_to_end(&mut contents);
         }
         let local_users = parse_etc_passwd(contents.as_slice()).unwrap_or_default();
@@ -718,11 +728,19 @@ impl HimmelblauConfig {
             .collect::<Vec<String>>()
             .contains(&account_id.to_string())
         {
-            return account_id.to_string();
+            return Some(account_id.to_string());
         }
 
-        // The name mapping script is expected to convert the input name to a UPN
-        // if a name is supplied, or to a name if the UPN is supplied.
+        // Local-only names probed by systemd/GDM at boot; never directory users.
+        if NSS_IGNORE_EXACT.contains(&account_id)
+            || NSS_IGNORE_PREFIX
+                .iter()
+                .any(|prefix| account_id.starts_with(prefix))
+        {
+            return None;
+        }
+
+        // Empty script output signals "not a directory user" -> None.
         if !account_id.contains('@') {
             if let Some(name_mapping_script) = &name_mapping_script {
                 let name_cache = MappedNameCache::new(MAPPED_NAME_CACHE, &Mode::ReadWrite).ok();
@@ -733,11 +751,14 @@ impl HimmelblauConfig {
                     Ok(output) => {
                         if output.status.success() {
                             let upn = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                            if upn.is_empty() {
+                                return None;
+                            }
                             if let Some(name_cache) = &name_cache {
                                 // Failing to insert a name map is not a critical failure.
                                 let _ = name_cache.insert_mapping(&upn, account_id);
                             }
-                            return upn;
+                            return Some(upn);
                         } else {
                             error!("Script execution failed with error: {:?}", output.status);
                         }
@@ -759,9 +780,9 @@ impl HimmelblauConfig {
             }
         }
         if cn_name_mapping && !account_id.contains('@') && !domains.is_empty() {
-            return format!("{}@{}", account_id, domains[0]);
+            return Some(format!("{}@{}", account_id, domains[0]));
         }
-        account_id.to_string()
+        Some(account_id.to_string())
     }
 
     /// This function maps a UPN to a mapped name. If a mapping script is
@@ -857,6 +878,13 @@ mod tests {
     fn create_temp_config(contents: &str) -> String {
         let file_path = format!("/tmp/himmelblau_test_config_{}.ini", uuid::Uuid::new_v4());
         fs::write(&file_path, contents).expect("Failed to write temporary config file");
+        file_path
+    }
+
+    // Throwaway passwd file so map_name_to_upn_impl can be tested hermetically.
+    fn create_temp_passwd(contents: &str) -> String {
+        let file_path = format!("/tmp/himmelblau_test_passwd_{}", uuid::Uuid::new_v4());
+        fs::write(&file_path, contents).expect("Failed to write temporary passwd file");
         file_path
     }
 
@@ -1690,74 +1718,153 @@ mod tests {
         assert_eq!(config_missing.get_name_mapping_script(), None);
     }
 
+    const PASSWD_MINIMAL: &str = "root:x:0:0:root:/root:/bin/bash\n";
+
     #[test]
     fn test_map_name_to_upn_script_execution_success() {
-        let config_data = r#"
+        let config = HimmelblauConfig::new(Some(&create_temp_config(
+            r#"
         [global]
         name_mapping_script = ../../scripts/test_script_echo.sh
         domains = example.com
-        "#;
-
-        let temp_file = create_temp_config(config_data);
-        let config = HimmelblauConfig::new(Some(&temp_file)).unwrap();
-
-        let account_id = "user";
-        let expected_output = "user";
-
+        "#,
+        )))
+        .unwrap();
+        let passwd = create_temp_passwd(PASSWD_MINIMAL);
         assert_eq!(
-            config.map_name_to_upn(account_id),
-            expected_output.to_string()
+            config.map_name_to_upn_impl("user", &passwd),
+            Some("user".to_string())
         );
     }
 
     #[test]
     fn test_map_name_to_upn_local_user() {
-        // Simulate a local user in /etc/passwd
-        let account_id = "localuser";
-
-        let config_data = r#"
+        let config = HimmelblauConfig::new(Some(&create_temp_config(
+            r#"
         [global]
-        "#;
+        domains = example.com
+        "#,
+        )))
+        .unwrap();
+        let passwd = create_temp_passwd(&format!(
+            "{}localuser:x:1000:1000::/home/localuser:/bin/bash\n",
+            PASSWD_MINIMAL
+        ));
+        assert_eq!(
+            config.map_name_to_upn_impl("localuser", &passwd),
+            Some("localuser".to_string())
+        );
+    }
 
-        let temp_file = create_temp_config(config_data);
-        let config = HimmelblauConfig::new(Some(&temp_file)).unwrap();
-
-        // Simulating presence of local user
-        assert_eq!(config.map_name_to_upn(account_id), account_id.to_string());
+    #[test]
+    fn test_map_name_to_upn_local_user_wins_over_ignore_list() {
+        let config = HimmelblauConfig::new(Some(&create_temp_config(
+            r#"
+        [global]
+        domains = example.com
+        "#,
+        )))
+        .unwrap();
+        let passwd = create_temp_passwd(&format!(
+            "{}systemd-coredump:x:999:999::/run/systemd:/usr/sbin/nologin\n",
+            PASSWD_MINIMAL
+        ));
+        assert_eq!(
+            config.map_name_to_upn_impl("systemd-coredump", &passwd),
+            Some("systemd-coredump".to_string())
+        );
     }
 
     #[test]
     fn test_map_name_to_upn_add_domain() {
-        let config_data = r#"
+        let config = HimmelblauConfig::new(Some(&create_temp_config(
+            r#"
         [global]
         cn_to_upn_mapping = true
         domains = example.com
-        "#;
-
-        let temp_file = create_temp_config(config_data);
-        let config = HimmelblauConfig::new(Some(&temp_file)).unwrap();
-
-        let account_id = "user";
-        let expected_output = "user@example.com";
-
+        "#,
+        )))
+        .unwrap();
+        let passwd = create_temp_passwd(PASSWD_MINIMAL);
         assert_eq!(
-            config.map_name_to_upn(account_id),
-            expected_output.to_string()
+            config.map_name_to_upn_impl("user", &passwd),
+            Some("user@example.com".to_string())
+        );
+    }
+
+    #[test]
+    fn test_map_name_to_upn_empty_is_none() {
+        let config = HimmelblauConfig::new(Some(&create_temp_config(
+            r#"
+        [global]
+        domains = example.com
+        "#,
+        )))
+        .unwrap();
+        let passwd = create_temp_passwd(PASSWD_MINIMAL);
+        assert_eq!(config.map_name_to_upn_impl("", &passwd), None);
+        assert_eq!(config.map_name_to_upn_impl("   ", &passwd), None);
+    }
+
+    #[test]
+    fn test_map_name_to_upn_ignored_names_are_none() {
+        let config = HimmelblauConfig::new(Some(&create_temp_config(
+            r#"
+        [global]
+        domains = example.com
+        "#,
+        )))
+        .unwrap();
+        let passwd = create_temp_passwd(PASSWD_MINIMAL);
+        for name in [
+            "gdm",
+            "sssd",
+            "systemd-coredump",
+            "gnome-initial-setup",
+            "gdm-greeter",
+            "gdm-greeter-2",
+            "gdm-greeter-9",
+            "pam_unix_non_existent",
+            "pam_unix_non_existent:",
+        ] {
+            assert_eq!(
+                config.map_name_to_upn_impl(name, &passwd),
+                None,
+                "{name} should be None"
+            );
+        }
+    }
+
+    #[test]
+    fn test_map_name_to_upn_prefix_does_not_overmatch() {
+        // A real user whose name merely starts with "gdm" must NOT be ignored.
+        let config = HimmelblauConfig::new(Some(&create_temp_config(
+            r#"
+        [global]
+        domains = example.com
+        "#,
+        )))
+        .unwrap();
+        let passwd = create_temp_passwd(PASSWD_MINIMAL);
+        assert_eq!(
+            config.map_name_to_upn_impl("gdmitrij.popov", &passwd),
+            Some("gdmitrij.popov@example.com".to_string())
         );
     }
 
     #[test]
     fn test_map_name_to_upn_no_mapping() {
-        let config_data = r#"
+        let config = HimmelblauConfig::new(Some(&create_temp_config(
+            r#"
         [global]
-        "#;
-
-        let temp_file = create_temp_config(config_data);
-        let config = HimmelblauConfig::new(Some(&temp_file)).unwrap();
-
-        let account_id = "user";
-
-        assert_eq!(config.map_name_to_upn(account_id), account_id.to_string());
+        "#,
+        )))
+        .unwrap();
+        let passwd = create_temp_passwd(PASSWD_MINIMAL);
+        assert_eq!(
+            config.map_name_to_upn_impl("user", &passwd),
+            Some("user".to_string())
+        );
     }
 
     #[test]

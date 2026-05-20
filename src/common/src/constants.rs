@@ -58,6 +58,10 @@ pub const DEFAULT_ID_ATTR_MAP: IdAttr = IdAttr::Name;
 pub const BROKER_APP_ID: &str = "29d9ed98-a469-4536-ade2-f981bc1d605e";
 pub const BROKER_CLIENT_IDENT: &str = "38aa3b87-a06d-4817-b275-7a316988d93b";
 pub const CN_NAME_MAPPING: bool = true;
+// Local-only names that must never be mapped to a UPN / looked up in Entra.
+// See himmelblau-idm/himmelblau#1392.
+pub const NSS_IGNORE_EXACT: &[&str] = &["gdm", "sssd", "systemd-coredump", "gnome-initial-setup"];
+pub const NSS_IGNORE_PREFIX: &[&str] = &["gdm-greeter", "pam_unix_non_existent"]; // variable suffix
 pub const DEFAULT_HELLO_PIN_MIN_LEN: usize = 6;
 pub const DEFAULT_HELLO_PIN_RETRY_COUNT: u32 = 3;
 pub const DEFAULT_KERBEROS_CONF_DIR: &str = "/etc/krb5.conf.d/";
