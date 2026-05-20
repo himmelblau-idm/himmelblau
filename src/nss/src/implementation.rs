@@ -216,7 +216,10 @@ impl PasswdHooks for HimmelblauPasswd {
             (name.to_lowercase(), Some(local))
         } else {
             // No mapping - use standard cn_name_mapping
-            (cfg.map_name_to_upn(&name), None)
+            match cfg.map_name_to_upn(&name) {
+                Some(upn) => (upn, None),
+                None => return Response::NotFound,
+            }
         };
 
         let req = ClientRequest::NssAccountByName(upn.clone());
@@ -368,7 +371,10 @@ impl GroupHooks for HimmelblauGroup {
         if is_local_group(&cfg.map_upn_to_name(&name)) {
             return Response::NotFound;
         }
-        let upn = cfg.map_name_to_upn(&name);
+        let upn = match cfg.map_name_to_upn(&name) {
+            Some(upn) => upn,
+            None => return Response::NotFound,
+        };
         let mut daemon_client = match DaemonClientBlocking::new(cfg.get_socket_path().as_str()) {
             Ok(dc) => dc,
             Err(_) => {
@@ -611,7 +617,10 @@ impl ShadowHooks for HimmelblauShadow {
             (name.to_lowercase(), Some(local))
         } else {
             // No mapping - use standard cn_name_mapping
-            (cfg.map_name_to_upn(&name), None)
+            match cfg.map_name_to_upn(&name) {
+                Some(upn) => (upn, None),
+                None => return Response::NotFound,
+            }
         };
 
         let req = ClientRequest::NssAccountByName(upn.clone());
