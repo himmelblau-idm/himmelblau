@@ -124,6 +124,76 @@ impl PodmanClient {
         }
     }
 
+    pub async fn image_exists(&self) -> Result<bool> {
+        let output = Command::new(&self.binary)
+            .arg("image")
+            .arg("exists")
+            .arg(&self.image)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .output()
+            .await
+            .context("failed to execute podman image exists")?;
+
+        if output.status.success() {
+            return Ok(true);
+        }
+
+        if output.status.code() == Some(1) {
+            return Ok(false);
+        }
+
+        Err(anyhow!(
+            "podman image exists failed for '{}': status={}; stdout={}; stderr={}",
+            self.image,
+            output.status,
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        ))
+    }
+
+    pub async fn build_image_from_dir(&self, build_dir: &Path) -> Result<()> {
+        if !build_dir.is_dir() {
+            return Err(anyhow!(
+                "orchestrator container build directory does not exist: {}",
+                build_dir.display()
+            ));
+        }
+
+        let dockerfile = build_dir.join("Dockerfile");
+        if !dockerfile.is_file() {
+            return Err(anyhow!(
+                "orchestrator container Dockerfile does not exist: {}",
+                dockerfile.display()
+            ));
+        }
+
+        let output = Command::new(&self.binary)
+            .arg("build")
+            .arg("--layers")
+            .arg("-t")
+            .arg(&self.image)
+            .arg(build_dir)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .output()
+            .await
+            .context("failed to execute podman build")?;
+
+        if output.status.success() {
+            return Ok(());
+        }
+
+        Err(anyhow!(
+            "podman build failed for image '{}' from '{}': status={}\nstdout:\n{}\nstderr:\n{}",
+            self.image,
+            build_dir.display(),
+            output.status,
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        ))
+    }
+
     pub async fn create_session_container(&self, session_id: &str) -> Result<ContainerInstance> {
         let runtime_paths = self
             .prepare_session_runtime(session_id)

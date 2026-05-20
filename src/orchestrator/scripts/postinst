@@ -32,6 +32,62 @@ selinux_policy_loaded() {
     semodule -l 2>/dev/null | awk '{print $1}' | grep -qx himmelblaud
 }
 
+build_orchestrator_container() {
+    CONTAINER_BUILD_DIR="/usr/share/himmelblau/orchestrator-container"
+    IMAGE_TAG="localhost/himmelblau/playwright-orchestrator:latest"
+
+    # Skip when package tools are installing into an alternate root.
+    if [ -n "$DPKG_ROOT" ]; then
+        return 0
+    fi
+
+    # Skip on live systems (installer media)
+    if is_live_system; then
+        return 0
+    fi
+
+    # Check if podman is available
+    if ! command -v podman >/dev/null 2>&1; then
+        echo "Warning: podman not found, skipping orchestrator container build" >&2
+        return 0
+    fi
+
+    if podman image exists "$IMAGE_TAG" >/dev/null 2>&1; then
+        return 0
+    fi
+
+    # Check if build directory exists
+    if [ ! -d "$CONTAINER_BUILD_DIR" ]; then
+        echo "Warning: orchestrator container build directory not found at $CONTAINER_BUILD_DIR" >&2
+        return 0
+    fi
+
+    # Check if Dockerfile exists
+    if [ ! -f "$CONTAINER_BUILD_DIR/Dockerfile" ]; then
+        echo "Warning: orchestrator Dockerfile not found" >&2
+        return 0
+    fi
+
+    echo "Building orchestrator browser container image; this may take several minutes while Chromium and Playwright dependencies are installed..."
+    if podman build --layers -t "$IMAGE_TAG" "$CONTAINER_BUILD_DIR" 2>&1; then
+        echo "Orchestrator container image built successfully: $IMAGE_TAG"
+        return 0
+    else
+        echo "Warning: Failed to build orchestrator container image" >&2
+        echo "The orchestrator service may not function until the container is built manually" >&2
+        echo "To build manually: podman build --layers -t $IMAGE_TAG $CONTAINER_BUILD_DIR" >&2
+        return 0
+    fi
+}
+
+# Build the orchestrator container during package installation/upgrade
+build_orchestrator_container
+
+# Ensure orchestrator cache and container runtime directories exist before any
+# package-triggered service restart. These /run paths are volatile, and the
+# hardened unit can only grant ReadWritePaths for paths that already exist.
+systemd-tmpfiles --create /usr/lib/tmpfiles.d/himmelblaud-orchestrator.conf 2>/dev/null || systemd-tmpfiles --create /usr/lib/x86_64-linux-gnu/tmpfiles.d/himmelblaud-orchestrator.conf 2>/dev/null || true
+
 skip_start=0
 if ! selinux_policy_loaded; then
     skip_start=1
@@ -69,6 +125,3 @@ elif command -v systemctl >/dev/null 2>&1; then
         fi
     fi
 fi
-
-# Ensure orchestrator cache directories are created immediately after install
-systemd-tmpfiles --create /usr/lib/tmpfiles.d/himmelblaud-orchestrator.conf 2>/dev/null || systemd-tmpfiles --create /usr/lib/x86_64-linux-gnu/tmpfiles.d/himmelblaud-orchestrator.conf 2>/dev/null || true

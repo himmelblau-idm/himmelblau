@@ -336,6 +336,7 @@ WantedBy=himmelblaud.service
         h
         for h in hardening
         if not h.startswith("ProtectSystem=")
+        and h != "NoNewPrivileges=true"
         and h != "ProtectControlGroups=true"
         and h != "ProtectKernelTunables=true"
         and h != "ProtectHostname=true"
@@ -373,6 +374,7 @@ Delegate=yes
 {orchestrator_apparmor_line}
 ExecStart=/usr/sbin/himmelblaud-orchestrator
 Restart=on-failure
+RestartPreventExitStatus=75
 RestartSec=1s
 { 'ProtectSystem=strict' if supported('ProtectSystemStrict') else '' }
 {orchestrator_rw_line}

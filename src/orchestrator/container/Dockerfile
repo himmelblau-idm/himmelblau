@@ -1,11 +1,13 @@
+# syntax=docker/dockerfile:1
 FROM registry.opensuse.org/opensuse/tumbleweed:latest
 
 LABEL org.opencontainers.image.title="himmelblau playwright orchestrator"
 LABEL org.opencontainers.image.description="Runtime Playwright bridge container for himmelblaud-orchestrator"
 
-RUN zypper --non-interactive refresh && \
-    zypper --non-interactive dup --allow-vendor-change && \
-    zypper --non-interactive install \
+RUN --mount=type=cache,id=himmelblau-orchestrator-zypp-cache,target=/var/cache/zypp \
+    zypper --non-interactive refresh && \
+    zypper --non-interactive dup --no-recommends --allow-vendor-change && \
+    zypper --non-interactive install --no-recommends \
         ca-certificates \
         chromium \
         dejavu-fonts \
@@ -15,15 +17,22 @@ RUN zypper --non-interactive refresh && \
         liberation-fonts \
         mozilla-nss-tools \
         nodejs \
-        npm && \
-    fc-cache -f && \
-    mkdir -p /opt/himmelblau-orchestrator && \
-    npm --prefix /opt/himmelblau-orchestrator init --yes && \
-    npm --prefix /opt/himmelblau-orchestrator install --omit=dev playwright-core@1.59.1 && \
-    zypper clean --all && \
-    rm -rf /var/cache/zypp /root/.npm
+        npm
 
-COPY src/orchestrator/container/orchestrator-playwright-bridge.mjs /opt/himmelblau-orchestrator/orchestrator-playwright-bridge.mjs
+RUN fc-cache -f && \
+    mkdir -p /opt/himmelblau-orchestrator && \
+    npm --prefix /opt/himmelblau-orchestrator init --yes
+
+RUN --mount=type=cache,id=himmelblau-orchestrator-npm-cache,target=/root/.npm \
+    npm --prefix /opt/himmelblau-orchestrator install \
+        --omit=dev \
+        --no-audit \
+        --no-fund \
+        --prefer-offline \
+        --foreground-scripts \
+        playwright-core@1.59.1
+
+COPY orchestrator-playwright-bridge.mjs /opt/himmelblau-orchestrator/orchestrator-playwright-bridge.mjs
 
 RUN ln -sf /opt/himmelblau-orchestrator/orchestrator-playwright-bridge.mjs /usr/local/bin/orchestrator-playwright-bridge && \
     chmod 0755 /opt/himmelblau-orchestrator/orchestrator-playwright-bridge.mjs && \

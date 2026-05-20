@@ -97,7 +97,7 @@ PLATFORM := $(shell grep '^ID=' /etc/os-release | awk -F= '{ print $$2 }' | tr -
 DOCKER := $(shell command -v podman || command -v docker)
 NIX := $(shell command -v nix)
 ORCHESTRATOR_CONTAINER_IMAGE ?= localhost/himmelblau/playwright-orchestrator:latest
-ORCHESTRATOR_CONTAINER_DOCKERFILE ?= src/orchestrator/container/Dockerfile
+ORCHESTRATOR_CONTAINER_DIRECTORY ?= src/orchestrator/container
 
 # Optional: Mount local libhimmelblau for development testing
 # Usage: LIBHIMMELBLAU_LOCAL=/path/to/libhimmelblau make ubuntu24.04
@@ -185,7 +185,7 @@ dockerfiles-arm64:
 	python3 scripts/gen_dockerfiles.py --out ./images/ --arch arm64 $(PATCH_LIBHIMMELBLAU)
 
 orchestrator-container: ## Build the local orchestrator Playwright container image
-	$(DOCKER) build -t $(ORCHESTRATOR_CONTAINER_IMAGE) -f $(ORCHESTRATOR_CONTAINER_DOCKERFILE) .
+	pushd $(ORCHESTRATOR_CONTAINER_DIRECTORY) && $(DOCKER) build -t $(ORCHESTRATOR_CONTAINER_IMAGE) .
 
 deb-servicefiles:
 	python3 ./scripts/gen_servicefiles.py --out ./platform/debian/ --orchestrator-apparmor-profile himmelblau-orchestrator-container

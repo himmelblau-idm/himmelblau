@@ -25,7 +25,8 @@ use himmelblau_unix_common::config::HimmelblauConfig;
 use podman::PodmanClient;
 use provider_definitions::ProviderRegistry;
 use session::SessionManager;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::process;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::signal::unix::{signal, SignalKind};
@@ -37,7 +38,9 @@ const DEFAULT_ORCHESTRATOR_SOCKET_PATH: &str = "/var/run/himmelblaud/orchestrato
 const DEFAULT_ORCHESTRATOR_RUNTIME_DIR: &str = "/run/himmelblaud/orchestrator";
 const DEFAULT_PROVIDER_OVERRIDE_PATH: &str = "/etc/himmelblau/orchestrator-providers.json";
 const DEFAULT_PLAYWRIGHT_IMAGE: &str = "localhost/himmelblau/playwright-orchestrator:latest";
+const DEFAULT_CONTAINER_BUILD_DIR: &str = "/usr/share/himmelblau/orchestrator-container";
 const DEFAULT_CONTAINER_NETWORK: &str = "host";
+const CONTAINER_IMAGE_BUILD_FAILURE_EXIT_CODE: i32 = 75;
 
 #[derive(Debug, Parser)]
 #[command(name = "himmelblaud-orchestrator")]
@@ -61,6 +64,9 @@ struct OrchestratorArgs {
 
     #[arg(long, env = "HIMMELBLAU_ORCHESTRATOR_IMAGE", default_value = DEFAULT_PLAYWRIGHT_IMAGE)]
     container_image: String,
+
+    #[arg(long, env = "HIMMELBLAU_ORCHESTRATOR_CONTAINER_BUILD_DIR", default_value = DEFAULT_CONTAINER_BUILD_DIR)]
+    container_build_dir: String,
 
     #[arg(long, env = "HIMMELBLAU_ORCHESTRATOR_NETWORK", default_value = DEFAULT_CONTAINER_NETWORK)]
     container_network: String,
@@ -158,6 +164,17 @@ async fn main() -> Result<()> {
         container_apparmor_profile,
     ));
 
+    if let Err(error) =
+        ensure_container_image(&podman_client, Path::new(&args.container_build_dir)).await
+    {
+        error!(
+            %error,
+            exit_code = CONTAINER_IMAGE_BUILD_FAILURE_EXIT_CODE,
+            "orchestrator container image is unavailable; exiting without restart"
+        );
+        process::exit(CONTAINER_IMAGE_BUILD_FAILURE_EXIT_CODE);
+    }
+
     let session_manager = Arc::new(SessionManager::new(
         Arc::clone(&podman_client),
         Duration::from_secs(args.idle_timeout_secs),
@@ -226,6 +243,42 @@ async fn main() -> Result<()> {
         "orchestrator stopped"
     );
     Ok(())
+}
+
+async fn ensure_container_image(podman_client: &PodmanClient, build_dir: &Path) -> Result<()> {
+    match podman_client.image_exists().await {
+        Ok(true) => {
+            info!("orchestrator container image is available");
+            return Ok(());
+        }
+        Ok(false) => {
+            warn!(
+                build_dir = %build_dir.display(),
+                "orchestrator container image is missing; attempting startup build"
+            );
+        }
+        Err(error) => {
+            return Err(error).context("failed checking orchestrator container image");
+        }
+    }
+
+    match podman_client.build_image_from_dir(build_dir).await {
+        Ok(()) => {
+            info!(
+                build_dir = %build_dir.display(),
+                "orchestrator container image built successfully"
+            );
+            Ok(())
+        }
+        Err(error) => {
+            error!(
+                %error,
+                build_dir = %build_dir.display(),
+                "failed building orchestrator container image; shutting down orchestrator"
+            );
+            Err(error).context("failed building orchestrator container image")
+        }
+    }
 }
 
 fn parse_bool_flag(raw: &str, name: &str) -> Result<bool> {
