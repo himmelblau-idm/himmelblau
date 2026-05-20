@@ -768,10 +768,15 @@ fn handle_pam_auth_response_password(state: &mut AuthenticateState) -> PamWhatNe
     let cred = if let Some(cred) = consume_authtok {
         cred
     } else {
-        state
-            .msg_printer
-            .print_text(&state.cfg.get_entra_id_password_prompt());
-        match state.msg_printer.prompt_echo_off("Entra Id Password: ") {
+        let prompt = if state.cfg.get_oidc_issuer_url().is_some() {
+            "Cloud Password:"
+        } else {
+            state
+                .msg_printer
+                .print_text(&state.cfg.get_entra_id_password_prompt());
+            "Entra Id Password:"
+        };
+        match state.msg_printer.prompt_echo_off(prompt) {
             Some(cred) => cred,
             None => {
                 debug!("no password");
