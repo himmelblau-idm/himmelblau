@@ -53,6 +53,16 @@ rec {
       # File a bug if you depend on any for non-debug work!
       debug = internal.debugCrate { inherit packageId; };
     };
+    "apparmor" = rec {
+      packageId = "apparmor";
+      build = internal.buildRustCrateWithFeatures {
+        packageId = "apparmor";
+      };
+
+      # Debug support which might change between releases.
+      # File a bug if you depend on any for non-debug work!
+      debug = internal.debugCrate { inherit packageId; };
+    };
     "broker" = rec {
       packageId = "broker";
       build = internal.buildRustCrateWithFeatures {
@@ -77,6 +87,16 @@ rec {
       packageId = "himmelblau-fuzz";
       build = internal.buildRustCrateWithFeatures {
         packageId = "himmelblau-fuzz";
+      };
+
+      # Debug support which might change between releases.
+      # File a bug if you depend on any for non-debug work!
+      debug = internal.debugCrate { inherit packageId; };
+    };
+    "himmelblau-orchestrator" = rec {
+      packageId = "himmelblau-orchestrator";
+      build = internal.buildRustCrateWithFeatures {
+        packageId = "himmelblau-orchestrator";
       };
 
       # Debug support which might change between releases.
@@ -638,6 +658,16 @@ rec {
           "default" = [ "std" ];
         };
         resolvedDefaultFeatures = [ "default" "std" ];
+      };
+      "apparmor" = rec {
+        crateName = "apparmor";
+        version = "4.0.0";
+        edition = "2021";
+        src = lib.cleanSourceWith { filter = sourceFilter;  src = ./src/apparmor; };
+        authors = [
+          "David Mulder <dmulder@suse.com>"
+        ];
+
       };
       "arbitrary" = rec {
         crateName = "arbitrary";
@@ -7107,6 +7137,83 @@ rec {
           }
         ];
 
+      };
+      "himmelblau-orchestrator" = rec {
+        crateName = "himmelblau-orchestrator";
+        version = "4.0.0";
+        edition = "2021";
+        crateBin = [
+          {
+            name = "himmelblaud-orchestrator";
+            path = "src/main.rs";
+            requiredFeatures = [ ];
+          }
+        ];
+        src = lib.cleanSourceWith { filter = sourceFilter;  src = ./src/orchestrator; };
+        authors = [
+          "David Mulder <dmulder@suse.com>"
+        ];
+        dependencies = [
+          {
+            name = "anyhow";
+            packageId = "anyhow";
+          }
+          {
+            name = "clap";
+            packageId = "clap";
+            features = [ "derive" "env" ];
+          }
+          {
+            name = "futures";
+            packageId = "futures";
+          }
+          {
+            name = "himmelblau_unix_common";
+            packageId = "himmelblau_unix_common";
+          }
+          {
+            name = "libc";
+            packageId = "libc";
+          }
+          {
+            name = "serde";
+            packageId = "serde";
+            features = [ "derive" ];
+          }
+          {
+            name = "serde_json";
+            packageId = "serde_json";
+          }
+          {
+            name = "tokio";
+            packageId = "tokio";
+            features = [ "rt" "macros" "sync" "time" "net" "io-util" "signal" "rt-multi-thread" "process" "fs" ];
+          }
+          {
+            name = "tokio-util";
+            packageId = "tokio-util";
+            features = [ "codec" ];
+          }
+          {
+            name = "tracing";
+            packageId = "tracing";
+          }
+          {
+            name = "tracing-subscriber";
+            packageId = "tracing-subscriber";
+          }
+          {
+            name = "url";
+            packageId = "url";
+          }
+          {
+            name = "zeroize";
+            packageId = "zeroize";
+          }
+        ];
+        features = {
+        };
+        resolvedDefaultFeatures = [ "default" ];
       };
       "himmelblau_policies" = rec {
         crateName = "himmelblau_policies";

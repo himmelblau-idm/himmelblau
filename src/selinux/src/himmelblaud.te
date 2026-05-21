@@ -83,9 +83,50 @@ ifdef(`init_nnp_daemon_domain',
                     typeattribute himmelblaud_tasks_t domain;
                    }')')')
 
+# himmelblaud-orchestrator
+type himmelblaud_orchestrator_t;
+type himmelblaud_orchestrator_exec_t;
+# files_type macro may not exist on all distros (e.g., Rocky 8) - provide fallback
+# Keep fallback optional: some minimal policies omit the file_type attribute
+ifdef(`files_type',`optional {
+        # Some policies provide files_type but omit file_type attribute (Rocky 8)
+        require { attribute file_type; }
+        files_type(himmelblaud_orchestrator_exec_t)
+       }',
+      `optional {
+        require { attribute file_type; }
+        typeattribute himmelblaud_orchestrator_exec_t file_type;
+       }')
+# Use init_nnp_daemon_domain if available (newer distros), fall back to
+# init_daemon_domain (older distros), domain_type, or primitive typeattribute (Rocky 8)
+ifdef(`init_nnp_daemon_domain',
+      `optional {
+        # Some older policies expose the macro but miss supporting attributes
+        require { attribute domain; }
+        init_nnp_daemon_domain(himmelblaud_orchestrator_t, himmelblaud_orchestrator_exec_t)
+       }',
+      `ifdef(`init_daemon_domain',
+            `optional {
+              # Some older policies expose the macro but miss supporting attributes
+              require { attribute domain; }
+              init_daemon_domain(himmelblaud_orchestrator_t, himmelblaud_orchestrator_exec_t)
+             }',
+            `ifdef(`domain_type',
+                  `optional {
+                    # domain_type macro may rely on domain attribute not present (Rocky 8)
+                    require { attribute domain; }
+                    domain_type(himmelblaud_orchestrator_t)
+                   }',
+                  `optional {
+                    # Some minimal policies omit the domain attribute
+                    require { attribute domain; }
+                    typeattribute himmelblaud_orchestrator_t domain;
+                   }')')')
+
 # Let these be valid process domains under system_r
 role system_r types himmelblaud_t;
 role system_r types himmelblaud_tasks_t;
+role system_r types himmelblaud_orchestrator_t;
 
 ############################
 # Domain transitions from init
@@ -111,6 +152,12 @@ allow himmelblaud_tasks_t himmelblaud_tasks_exec_t:file entrypoint;
 allow init_t himmelblaud_tasks_exec_t:file { execute getattr map open read };
 type_transition init_t himmelblaud_tasks_exec_t:process himmelblaud_tasks_t;
 
+# Allow init_t to transition to himmelblaud_orchestrator_t when executing himmelblaud_orchestrator_exec_t
+allow init_t himmelblaud_orchestrator_t:process transition;
+allow himmelblaud_orchestrator_t himmelblaud_orchestrator_exec_t:file entrypoint;
+allow init_t himmelblaud_orchestrator_exec_t:file { execute getattr map open read };
+type_transition init_t himmelblaud_orchestrator_exec_t:process himmelblaud_orchestrator_t;
+
 ############################
 # Permissions for himmelblaud_t and himmelblaud_tasks_t
 # Now that daemons run in their own domains, they need access to their data files.
@@ -129,7 +176,7 @@ allow himmelblaud_t himmelblau_etc_t:dir { getattr open read search };
 allow himmelblaud_t himmelblau_etc_t:file { getattr open read };
 allow himmelblaud_t himmelblau_nss_cache_t:dir { add_name getattr mounton open read remove_name search setattr write };
 allow himmelblaud_t himmelblau_nss_cache_t:file { create getattr lock open read setattr unlink write };
-allow himmelblaud_t himmelblau_var_cache_t:dir { add_name create getattr open read remove_name rmdir search setattr write };
+allow himmelblaud_t himmelblau_var_cache_t:dir { add_name create getattr open read remove_name rename rmdir search setattr write };
 allow himmelblaud_t himmelblau_var_cache_t:file { create getattr lock open read setattr unlink write };
 allow himmelblaud_t himmelblau_var_cache_t:lnk_file { getattr read };
 allow himmelblaud_t himmelblau_var_lib_t:dir { add_name getattr open read search setattr write };
@@ -137,6 +184,130 @@ allow himmelblaud_t himmelblau_var_lib_t:file { create getattr open read setattr
 allow himmelblaud_t himmelblau_var_lib_t:lnk_file read;
 allow himmelblaud_t himmelblau_var_run_t:dir { add_name create getattr mounton open read remove_name rmdir search setattr write };
 allow himmelblaud_t himmelblau_var_run_t:sock_file { create getattr setattr write unlink };
+
+# himmelblaud_orchestrator_t permissions
+allow himmelblaud_orchestrator_t himmelblau_etc_t:dir { getattr open read search };
+allow himmelblaud_orchestrator_t himmelblau_etc_t:file { getattr open read };
+allow himmelblaud_orchestrator_t himmelblau_var_cache_t:dir { add_name create getattr open read remove_name rename rmdir search setattr write };
+allow himmelblaud_orchestrator_t himmelblau_var_cache_t:file { create getattr lock open read setattr unlink write };
+allow himmelblaud_orchestrator_t himmelblau_var_cache_t:lnk_file { getattr read };
+allow himmelblaud_orchestrator_t himmelblau_var_run_t:dir { add_name create getattr mounton open read remove_name rmdir search setattr write };
+allow himmelblaud_orchestrator_t himmelblau_var_run_t:sock_file { create getattr setattr write unlink };
+
+optional {
+	require {
+		class process { fork getsched };
+		class unix_stream_socket { accept bind connect connectto create getopt listen read shutdown write };
+	}
+	allow himmelblaud_t himmelblaud_orchestrator_t:unix_stream_socket connectto;
+	allow himmelblaud_orchestrator_t self:process { fork getsched };
+	allow himmelblaud_orchestrator_t self:unix_stream_socket { accept bind connect create getopt listen read shutdown write };
+}
+
+# Network access for orchestrator-driven browser login flows
+ifdef(`corenet_tcp_connect_http_port',`corenet_tcp_connect_http_port(himmelblaud_orchestrator_t)',
+      `require {
+              type http_port_t;
+              class tcp_socket name_connect;
+       }
+       allow himmelblaud_orchestrator_t http_port_t:tcp_socket name_connect;')
+
+# Podman/container runtime integration for orchestrator.
+# Keep this narrowly scoped and optional across distro policy variants.
+optional {
+	require {
+		type container_runtime_t;
+		class process { noatsecure rlimitinh siginh };
+		class fd use;
+		class fifo_file write;
+	}
+	allow himmelblaud_orchestrator_t container_runtime_t:process { noatsecure rlimitinh siginh };
+	allow container_runtime_t himmelblaud_orchestrator_t:fd use;
+	allow container_runtime_t himmelblaud_orchestrator_t:fifo_file write;
+}
+
+optional {
+	require {
+		type container_runtime_t;
+		class process2 nnp_transition;
+	}
+	allow himmelblaud_orchestrator_t container_runtime_t:process2 nnp_transition;
+}
+
+optional {
+	require {
+		type container_runtime_t;
+		type container_runtime_exec_t;
+		class process transition;
+		class file { entrypoint execute getattr map open read };
+	}
+	allow himmelblaud_orchestrator_t container_runtime_t:process transition;
+	allow container_runtime_t container_runtime_exec_t:file entrypoint;
+	allow himmelblaud_orchestrator_t container_runtime_exec_t:file { execute getattr map open read };
+	type_transition himmelblaud_orchestrator_t container_runtime_exec_t:process container_runtime_t;
+}
+
+optional {
+	require {
+		type podman_exec_t;
+		type container_runtime_t;
+		class process transition;
+		class file { entrypoint execute getattr map open read };
+	}
+	allow himmelblaud_orchestrator_t container_runtime_t:process transition;
+	allow container_runtime_t podman_exec_t:file entrypoint;
+	allow himmelblaud_orchestrator_t podman_exec_t:file { execute getattr map open read };
+	type_transition himmelblaud_orchestrator_t podman_exec_t:process container_runtime_t;
+}
+
+optional {
+	require {
+		type container_var_run_t;
+		class dir { getattr open read search write add_name create remove_name setattr };
+		class file { create getattr open read setattr unlink write };
+		class sock_file { create getattr open read setattr unlink write };
+	}
+	allow himmelblaud_orchestrator_t container_var_run_t:dir { add_name create getattr open read remove_name search setattr write };
+	allow himmelblaud_orchestrator_t container_var_run_t:file { create getattr open read setattr unlink write };
+	allow himmelblaud_orchestrator_t container_var_run_t:sock_file { create getattr open read setattr unlink write };
+}
+
+optional {
+	require {
+		type container_file_t;
+		class dir { getattr open read rmdir search };
+		class sock_file write;
+	}
+	allow himmelblaud_orchestrator_t container_file_t:dir { getattr open read rmdir search };
+	allow himmelblaud_orchestrator_t container_file_t:sock_file write;
+}
+
+optional {
+	require {
+		type container_t;
+		type cert_t;
+		class dir { getattr open read search };
+		class file { getattr open read };
+		class lnk_file read;
+		class unix_stream_socket connectto;
+	}
+	allow himmelblaud_orchestrator_t container_t:unix_stream_socket connectto;
+	allow container_t cert_t:dir { getattr open read search };
+	allow container_t cert_t:file { getattr open read };
+	allow container_t cert_t:lnk_file read;
+}
+
+optional {
+	require {
+		type container_var_lib_t;
+		class dir { getattr open read search };
+		class file { getattr open read };
+		class lnk_file { getattr read };
+	}
+	allow himmelblaud_orchestrator_t container_var_lib_t:dir { getattr open read search };
+	allow himmelblaud_orchestrator_t container_var_lib_t:file { getattr open read };
+	allow himmelblaud_orchestrator_t container_var_lib_t:lnk_file { getattr read };
+}
 
 optional {
 	# Basic system file/device access needed by the daemon (gate for cross-distro compatibility)
@@ -161,7 +332,14 @@ optional {
 		type sysctl_kernel_t;
 		type selinux_config_t;
 		type security_t;
+		type cgroup_t;
+		type etc_t;
+		type var_run_t;
+		type var_t;
 		type var_lib_t;
+		type usr_t;
+		type lib_t;
+		type ld_so_t;
 		type null_device_t;
 		type urandom_device_t;
 		class fd use;
@@ -169,11 +347,11 @@ optional {
 		class file { append create getattr lock map open read setattr unlink write execute execute_no_trans ioctl };
 		class lnk_file { getattr read };
 		class chr_file { getattr open read write ioctl };
-		class fifo_file { getattr read ioctl };
+		class fifo_file { getattr read write ioctl };
 		class filesystem getattr;
 		class capability { dac_read_search dac_override };
 		class process { fork getsched rlimitinh siginh noatsecure };
-		class unix_stream_socket { accept connectto read write };
+		class unix_stream_socket { accept connectto getopt read write };
 		class netlink_route_socket { bind create getattr nlmsg_read read write };
 		class udp_socket { connect create getattr read setopt write };
 		class tcp_socket { connect create getattr getopt read setopt shutdown write };
@@ -219,11 +397,11 @@ optional {
 	allow himmelblaud_t himmelblaud_t:unix_stream_socket { accept listen };
 	# Older SELinux policies (e.g., Rocky 8) do not define the file "watch" permission
 	optional {
-		require {
-			type passwd_file_t;
-			class file { watch };
-		}
-		allow himmelblaud_t passwd_file_t:file watch;
+	require {
+		type passwd_file_t;
+		class file { watch };
+	}
+	allow himmelblaud_t passwd_file_t:file watch;
 	}
 	allow himmelblaud_t net_conf_t:lnk_file read;
 	allow himmelblaud_t net_conf_t:file { getattr open read };
@@ -237,6 +415,66 @@ optional {
 	allow himmelblaud_t self:netlink_route_socket { bind create getattr nlmsg_read read write };
 	allow himmelblaud_t self:udp_socket { connect create getattr read setopt write };
 	allow himmelblaud_t self:tcp_socket { connect create getattr getopt read setopt shutdown write };
+
+	allow himmelblaud_orchestrator_t passwd_file_t:file { getattr open read };
+	allow himmelblaud_orchestrator_t cert_t:dir { getattr open read search };
+	allow himmelblaud_orchestrator_t cert_t:lnk_file read;
+	allow himmelblaud_orchestrator_t cert_t:file { getattr open read };
+	allow himmelblaud_orchestrator_t proc_t:dir search;
+	allow himmelblaud_orchestrator_t proc_t:filesystem getattr;
+	allow himmelblaud_orchestrator_t proc_t:lnk_file read;
+	allow himmelblaud_orchestrator_t himmelblaud_orchestrator_t:dir search;
+	allow himmelblaud_orchestrator_t himmelblaud_orchestrator_t:file { getattr ioctl open read };
+	allow himmelblaud_orchestrator_t self:fifo_file { getattr read write ioctl };
+	allow himmelblaud_orchestrator_t null_device_t:chr_file { getattr open read write ioctl };
+	allow himmelblaud_orchestrator_t urandom_device_t:chr_file { getattr open read };
+	allow himmelblaud_orchestrator_t init_t:fd use;
+	allow himmelblaud_orchestrator_t init_t:unix_stream_socket { read write connectto };
+	allow himmelblaud_orchestrator_t init_var_run_t:dir search;
+	allow himmelblaud_orchestrator_t systemd_unit_file_t:dir getattr;
+	allow himmelblaud_orchestrator_t init_var_run_t:sock_file write;
+	allow himmelblaud_orchestrator_t init_t:process { rlimitinh siginh noatsecure };
+	allow himmelblaud_orchestrator_t root_t:dir { getattr search };
+	allow himmelblaud_orchestrator_t var_run_t:dir search;
+	allow himmelblaud_orchestrator_t var_run_t:lnk_file read;
+	allow himmelblaud_orchestrator_t etc_t:dir search;
+	allow himmelblaud_orchestrator_t etc_t:file { getattr map open read };
+	allow himmelblaud_orchestrator_t var_t:dir search;
+	allow himmelblaud_orchestrator_t var_lib_t:dir { getattr search };
+	allow himmelblaud_orchestrator_t var_lib_t:lnk_file { getattr read };
+	allow himmelblaud_orchestrator_t usr_t:dir search;
+	allow himmelblaud_orchestrator_t bin_t:dir search;
+	allow himmelblaud_orchestrator_t bin_t:file { getattr open read execute execute_no_trans map };
+	allow himmelblaud_orchestrator_t bin_t:lnk_file read;
+	allow himmelblaud_orchestrator_t lib_t:dir search;
+	allow himmelblaud_orchestrator_t lib_t:file { execute getattr map open read };
+	allow himmelblaud_orchestrator_t lib_t:lnk_file read;
+	allow himmelblaud_orchestrator_t ld_so_t:file { execute getattr map open read };
+	allow himmelblaud_orchestrator_t shell_exec_t:file getattr;
+	allow himmelblaud_orchestrator_t himmelblaud_orchestrator_exec_t:file { getattr open read execute map };
+	allow himmelblaud_orchestrator_t net_conf_t:lnk_file read;
+	allow himmelblaud_orchestrator_t net_conf_t:file { getattr open read };
+	allow himmelblaud_orchestrator_t systemd_resolved_var_run_t:dir search;
+	allow himmelblaud_orchestrator_t systemd_resolved_var_run_t:sock_file write;
+	allow himmelblaud_orchestrator_t systemd_resolved_t:unix_stream_socket connectto;
+	allow himmelblaud_orchestrator_t sysctl_t:dir search;
+	allow himmelblaud_orchestrator_t sysctl_kernel_t:dir search;
+	allow himmelblaud_orchestrator_t sysctl_kernel_t:file { getattr open read };
+	allow himmelblaud_orchestrator_t selinux_config_t:dir search;
+	allow himmelblaud_orchestrator_t security_t:filesystem getattr;
+	allow himmelblaud_orchestrator_t sysfs_t:dir search;
+	allow himmelblaud_orchestrator_t sysfs_t:lnk_file read;
+	allow himmelblaud_orchestrator_t sysfs_t:file { getattr open read };
+	allow himmelblaud_orchestrator_t cgroup_t:dir search;
+	allow himmelblaud_orchestrator_t cgroup_t:file { getattr open read };
+	allow himmelblaud_orchestrator_t sysctl_crypto_t:dir search;
+	allow himmelblaud_orchestrator_t sysctl_crypto_t:file { getattr open read };
+	allow himmelblaud_orchestrator_t tmp_t:dir { add_name create getattr open read remove_name search setattr write };
+	allow himmelblaud_orchestrator_t tmp_t:file { create getattr open read setattr unlink write };
+	allow himmelblaud_orchestrator_t self:capability dac_override;
+	allow himmelblaud_orchestrator_t self:netlink_route_socket { bind create getattr nlmsg_read read write };
+	allow himmelblaud_orchestrator_t self:udp_socket { connect create getattr read setopt write };
+	allow himmelblaud_orchestrator_t self:tcp_socket { connect create getattr getopt read setopt shutdown write };
 }
 
 optional {
@@ -292,7 +530,7 @@ allow himmelblaud_tasks_t himmelblau_etc_t:dir { getattr open read search };
 allow himmelblaud_tasks_t himmelblau_etc_t:file { getattr open read };
 allow himmelblaud_tasks_t himmelblau_nss_cache_t:dir { add_name getattr open read remove_name search write };
 allow himmelblaud_tasks_t himmelblau_nss_cache_t:file { create getattr lock open read setattr unlink write };
-allow himmelblaud_tasks_t himmelblau_var_cache_t:dir { add_name create getattr open read remove_name rmdir search setattr write };
+allow himmelblaud_tasks_t himmelblau_var_cache_t:dir { add_name create getattr open read remove_name rename rmdir search setattr write };
 allow himmelblaud_tasks_t himmelblau_var_cache_t:file { create getattr lock open read setattr unlink write };
 allow himmelblaud_tasks_t himmelblau_var_cache_t:lnk_file { getattr read };
 allow himmelblaud_tasks_t himmelblau_var_lib_t:dir { add_name getattr open read setattr write };
@@ -614,6 +852,7 @@ allow himmelblau_nss_cache_t fs_t:filesystem associate;
 allow himmelblau_var_lib_t fs_t:filesystem associate;
 allow himmelblaud_exec_t fs_t:filesystem associate;
 allow himmelblaud_tasks_exec_t fs_t:filesystem associate;
+allow himmelblaud_orchestrator_exec_t fs_t:filesystem associate;
 
 # Allow our types to associate with tmpfs (for /run, /var/cache/private, etc.)
 allow himmelblau_var_run_t tmpfs_t:filesystem associate;
@@ -626,7 +865,7 @@ allow himmelblau_var_lib_t tmpfs_t:filesystem associate;
 
 require {
 	type init_t;
-	class dir { add_name create getattr mounton open read remove_name rmdir search setattr };
+	class dir { add_name create getattr mounton open read remove_name reparent rmdir search setattr };
 	class file { create getattr lock map open read setattr unlink write };
 	class lnk_file read;
 	class sock_file write;
@@ -637,7 +876,7 @@ allow init_t himmelblau_etc_t:dir { getattr open read search };
 allow init_t himmelblau_etc_t:file { getattr open read };
 allow init_t himmelblau_nss_cache_t:dir { add_name getattr mounton open read remove_name search setattr write };
 allow init_t himmelblau_nss_cache_t:file { create getattr lock open read setattr unlink write };
-allow init_t himmelblau_var_cache_t:dir { add_name create getattr open read remove_name rmdir search setattr write };
+allow init_t himmelblau_var_cache_t:dir { add_name create getattr open read remove_name rename reparent rmdir search setattr write };
 allow init_t himmelblau_var_cache_t:file { create getattr lock open read setattr unlink write };
 allow init_t himmelblau_var_cache_t:lnk_file read;
 allow init_t himmelblau_var_lib_t:dir { add_name getattr open read setattr };
@@ -654,13 +893,18 @@ require {
 allow init_t etc_t:file { append getattr open read write };
 allow init_t himmelblaud_t:dir search;
 allow init_t himmelblaud_tasks_t:dir search;
+allow init_t himmelblaud_orchestrator_t:dir search;
 allow init_t himmelblaud_t:process { signull signal sigkill };
 allow init_t himmelblaud_tasks_t:process { signull signal sigkill };
+allow init_t himmelblaud_orchestrator_t:process { signull signal sigkill };
 allow init_t himmelblaud_t:process { noatsecure rlimitinh siginh };
 allow init_t himmelblaud_tasks_t:process { noatsecure rlimitinh siginh };
+allow init_t himmelblaud_orchestrator_t:process { noatsecure rlimitinh siginh };
 allow init_t himmelblaud_t:file { getattr open read ioctl };
 allow init_t himmelblaud_tasks_t:file { getattr open read ioctl };
+allow init_t himmelblaud_orchestrator_t:file { getattr open read ioctl };
 allow init_t himmelblaud_t:unix_stream_socket connectto;
+allow init_t himmelblaud_orchestrator_t:unix_stream_socket connectto;
 allow init_t himmelblaud_t:fd use;
 
 # Optional: init_t access to cron spool (may not exist on all systems)
@@ -1041,6 +1285,7 @@ optional {
 	allow unconfined_t himmelblaud_t:unix_stream_socket connectto;
 	allow unconfined_t himmelblaud_t:dir { getattr search };
 	allow unconfined_t himmelblaud_tasks_t:dir { getattr search };
+	allow unconfined_t himmelblaud_orchestrator_t:dir { getattr search };
 	allow unconfined_t himmelblaud_t:file { getattr ioctl open read };
 	allow unconfined_t himmelblaud_t:lnk_file read;
 	allow unconfined_t himmelblaud_t:process getattr;
@@ -1061,12 +1306,16 @@ optional {
 	}
 	allow syslogd_t himmelblaud_t:dir search;
 	allow syslogd_t himmelblaud_tasks_t:dir search;
+	allow syslogd_t himmelblaud_orchestrator_t:dir search;
 	allow syslogd_t himmelblaud_t:file { getattr open read ioctl };
 	allow syslogd_t himmelblaud_tasks_t:file { getattr open read ioctl };
+	allow syslogd_t himmelblaud_orchestrator_t:file { getattr open read ioctl };
 	allow syslogd_t himmelblaud_t:process getattr;
 	allow syslogd_t himmelblaud_tasks_t:process getattr;
+	allow syslogd_t himmelblaud_orchestrator_t:process getattr;
 	allow syslogd_t himmelblaud_t:lnk_file read;
 	allow syslogd_t himmelblaud_tasks_t:lnk_file read;
+	allow syslogd_t himmelblaud_orchestrator_t:lnk_file read;
 }
 
 #============= auditd_t ==============
@@ -1192,3 +1441,4 @@ optional {
 # Temporarily run Himmelblau domains permissive (still logs AVCs)
 permissive himmelblaud_t;
 permissive himmelblaud_tasks_t;
+permissive himmelblaud_orchestrator_t;

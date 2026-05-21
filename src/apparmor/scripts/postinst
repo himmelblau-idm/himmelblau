@@ -1,0 +1,23 @@
+#!/bin/sh
+set -e
+
+reload_apparmor_profile() {
+    profile=$1
+    name=$2
+
+    if [ -n "${DPKG_ROOT:-}" ]; then
+        return 0
+    fi
+
+    if [ ! -f "$profile" ] || ! command -v apparmor_parser >/dev/null 2>&1; then
+        return 0
+    fi
+
+    apparmor_parser -r "$profile" >/dev/null 2>&1 || echo "apparmor reload failed for $name" >&2
+}
+
+reload_apparmor_profile /etc/apparmor.d/himmelblau-orchestrator-container himmelblau-orchestrator-container
+reload_apparmor_profile /etc/apparmor.d/crun crun
+reload_apparmor_profile /etc/apparmor.d/usr.sbin.cupsd cupsd
+reload_apparmor_profile /etc/apparmor.d/unix-chkpwd unix-chkpwd
+reload_apparmor_profile /etc/apparmor.d/fusermount3 fusermount3

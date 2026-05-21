@@ -161,6 +161,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7f202df86484c868dbad7eaa557ef785d5c66295e41b460ef922eca0723b842c"
 
 [[package]]
+name = "apparmor"
+version = "4.0.0"
+
+[[package]]
 name = "arbitrary"
 version = "1.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2338,6 +2342,25 @@ dependencies = [
  "libfuzzer-sys",
  "tempfile",
  "uuid",
+]
+
+[[package]]
+name = "himmelblau-orchestrator"
+version = "4.0.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "futures",
+ "himmelblau_unix_common",
+ "libc",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tokio-util",
+ "tracing",
+ "tracing-subscriber",
+ "url",
+ "zeroize",
 ]
 
 [[package]]

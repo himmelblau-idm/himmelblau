@@ -1,0 +1,13 @@
+# File: /etc/apparmor.d/local/usr.sbin.cupsd
+#
+# CUPS performs NSS lookups and can load nss_himmelblau. Match the SELinux
+# cupsd_t allowances for Himmelblau config, cache, and daemon socket access.
+
+/etc/himmelblau/ r,
+/etc/himmelblau/himmelblau.conf r,
+/var/cache/private/himmelblaud/ r,
+/var/cache/private/himmelblaud/himmelblau.conf r,
+/var/cache/nss-himmelblau/ rw,
+/var/cache/nss-himmelblau/** rwk,
+@{run}/himmelblaud/ r,
+@{run}/himmelblaud/socket wr,

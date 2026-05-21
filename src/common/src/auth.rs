@@ -711,20 +711,17 @@ fn handle_pam_auth_response_mfapoll(
 }
 
 fn handle_pam_auth_response_mfapollwait(state: &mut AuthenticateState) -> PamWhatNext {
-    if state.poll_attempt < 0 {
-        // No MFA poll was initiated yet.
-        error!("MFAPollWait before MFAPoll");
-        pam_fail!(
-            state.msg_printer,
-            "An unexpected error occurred.",
-            PamResultCode::PAM_IGNORE
-        );
-    }
+    let next_poll_attempt = if state.poll_attempt < 0 {
+        debug!("MFAPollWait received before MFAPoll; starting polling loop from attempt 0");
+        0
+    } else {
+        state.poll_attempt + 1
+    };
 
     // Continue polling if the daemon says to wait
     thread::sleep(Duration::from_secs(state.polling_interval.into()));
 
-    state.poll_attempt += 1;
+    state.poll_attempt = next_poll_attempt;
     let req = ClientRequest::PamAuthenticateStep(PamAuthRequest::MFAPoll {
         poll_attempt: state.poll_attempt as u32,
     });
@@ -771,10 +768,15 @@ fn handle_pam_auth_response_password(state: &mut AuthenticateState) -> PamWhatNe
     let cred = if let Some(cred) = consume_authtok {
         cred
     } else {
-        state
-            .msg_printer
-            .print_text(&state.cfg.get_entra_id_password_prompt());
-        match state.msg_printer.prompt_echo_off("Entra Id Password: ") {
+        let prompt = if state.cfg.get_oidc_issuer_url().is_some() {
+            "Cloud Password:"
+        } else {
+            state
+                .msg_printer
+                .print_text(&state.cfg.get_entra_id_password_prompt());
+            "Entra Id Password:"
+        };
+        match state.msg_printer.prompt_echo_off(prompt) {
             Some(cred) => cred,
             None => {
                 debug!("no password");

@@ -1,0 +1,37 @@
+[package]
+name = "apparmor"
+description = "Himmelblau AppArmor config"
+version.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+edition.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[package.metadata.deb]
+name = "himmelblau-apparmor"
+depends = ["apparmor"]
+assets = [
+  ["../../platform/debian/apparmor.himmelblau-orchestrator-container", "etc/apparmor.d/himmelblau-orchestrator-container", "644"],
+  ["../../platform/debian/apparmor.crun.local", "etc/apparmor.d/local/crun", "644"],
+  ["../../platform/debian/apparmor.cupsd.local", "etc/apparmor.d/local/usr.sbin.cupsd", "644"],
+  ["../../platform/debian/apparmor.unix-chkpwd.local", "etc/apparmor.d/local/unix-chkpwd", "644"],
+  ["../../platform/debian/apparmor.fusermount3.local", "etc/apparmor.d/local/fusermount3", "644"],
+]
+maintainer-scripts = "scripts"
+
+[package.metadata.generate-rpm]
+name = "himmelblau-apparmor"
+assets = [
+  { source = "../../platform/debian/apparmor.himmelblau-orchestrator-container", dest = "/etc/apparmor.d/himmelblau-orchestrator-container", mode = "644" },
+  { source = "../../platform/debian/apparmor.crun.local", dest = "/etc/apparmor.d/local/crun", mode = "644" },
+  { source = "../../platform/debian/apparmor.cupsd.local", dest = "/etc/apparmor.d/local/usr.sbin.cupsd", mode = "644" },
+  { source = "../../platform/debian/apparmor.unix-chkpwd.local", dest = "/etc/apparmor.d/local/unix-chkpwd", mode = "644" },
+  { source = "../../platform/debian/apparmor.fusermount3.local", dest = "/etc/apparmor.d/local/fusermount3", mode = "644" },
+]
+post_install_script = "scripts/postinst"
+post_uninstall_script = "scripts/postrm"
+
+[package.metadata.generate-rpm.recommends]
+apparmor-parser = ""

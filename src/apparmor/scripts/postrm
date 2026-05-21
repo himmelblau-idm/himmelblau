@@ -1,0 +1,23 @@
+#!/bin/sh
+set -e
+
+reload_apparmor_profile() {
+    profile=$1
+
+    if [ -n "${DPKG_ROOT:-}" ]; then
+        return 0
+    fi
+
+    if [ ! -f "$profile" ] || ! command -v apparmor_parser >/dev/null 2>&1; then
+        return 0
+    fi
+
+    apparmor_parser -r "$profile" >/dev/null 2>&1 || true
+}
+
+if [ "${1:-}" = "remove" ] || [ "${1:-}" = "purge" ] || [ "${1:-1}" = "0" ]; then
+    reload_apparmor_profile /etc/apparmor.d/crun
+    reload_apparmor_profile /etc/apparmor.d/usr.sbin.cupsd
+    reload_apparmor_profile /etc/apparmor.d/unix-chkpwd
+    reload_apparmor_profile /etc/apparmor.d/fusermount3
+fi

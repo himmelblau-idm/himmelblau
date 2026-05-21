@@ -14,8 +14,10 @@ members = [
 	"src/qr-greeter",
 	"src/broker-client",
 	"src/selinux",
+	"src/apparmor",
 	"src/o365",
 	"fuzz",
+	"src/orchestrator",
 ]
 resolver = "2"
 
