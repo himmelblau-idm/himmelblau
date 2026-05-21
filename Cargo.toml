@@ -168,7 +168,7 @@ uuid = { version = "^1.23.1", features = ["v4", "v5"] }
 webauthn-rs-proto = "0.5.0"
 kanidm_proto = "1.8.1"
 openssl-sys = "^0.9"
-openssl = "^0.10.79"
+openssl = "^0.10.80"
 rand = "^0.9.4"
 tss-esapi = "^7.2.0"
 sketching = "1.10.0"
