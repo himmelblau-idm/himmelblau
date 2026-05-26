@@ -34,6 +34,9 @@ url = "https://raw.githubusercontent.com/zcash/rust-ecosystem/main/supply-chain/
 [policy.kanidm_build_profiles]
 audit-as-crates-io = true
 
+[policy."ldap3_proto:0.6.2"]
+audit-as-crates-io = true
+
 [policy.paste]
 audit-as-crates-io = true
 
