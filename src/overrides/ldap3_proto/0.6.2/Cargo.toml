@@ -1,0 +1,12 @@
+[package]
+name = "ldap3_proto"
+version = "0.6.2"
+authors.workspace = true
+rust-version.workspace = true
+edition.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[dependencies]
+ldap3_proto = { version = "^0.7" }

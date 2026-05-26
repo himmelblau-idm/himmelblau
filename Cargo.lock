@@ -2706,15 +2706,22 @@ dependencies = [
 [[package]]
 name = "ldap3_proto"
 version = "0.6.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b52f9ddd849c72b3f3147d91b1220a47709fdaacfe55aaaf88912c2ee3d5357b"
 dependencies = [
- "base64 0.21.7",
+ "ldap3_proto 0.7.1",
+]
+
+[[package]]
+name = "ldap3_proto"
+version = "0.7.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "61954eefd3ff2b74d2d5bfa899c235b4c77536b4d17627607ff55430d05e0c61"
+dependencies = [
+ "base64 0.22.1",
  "bytes",
  "lber",
  "nom",
  "peg",
- "thiserror 1.0.69",
+ "thiserror 2.0.17",
  "tokio-util",
  "tracing",
  "uuid",
@@ -2813,7 +2820,7 @@ dependencies = [
  "hmac 0.12.1",
  "keyutils",
  "keyutils-raw",
- "ldap3_proto",
+ "ldap3_proto 0.6.2",
  "libc",
  "md5",
  "num_enum",
