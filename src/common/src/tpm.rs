@@ -11,18 +11,65 @@ use kanidm_hsm_crypto::provider::BoxedDynTpm;
 use kanidm_hsm_crypto::AuthValue;
 use std::error::Error;
 use std::io::Read;
-use std::path::PathBuf;
+use std::path::{Component, Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::str::FromStr;
 use tokio::fs::File;
 use tokio::io::AsyncReadExt;
 use zeroize::{Zeroize, Zeroizing};
 
+/// Validates that the HSM PIN file path is within the expected directory
+fn validate_hsm_pin_path(hsm_pin_path: &str) -> Result<PathBuf, Box<dyn Error>> {
+    let path = Path::new(hsm_pin_path);
+    if path
+        .components()
+        .any(|component| matches!(component, Component::CurDir | Component::ParentDir))
+    {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            format!("Invalid HSM PIN path component: {}", hsm_pin_path),
+        )
+        .into());
+    }
+
+    let canonical = path.canonicalize().or_else(|_| {
+        // If the file doesn't exist yet, canonicalize the parent directory
+        if let Some(parent) = path.parent() {
+            let file_name = path.file_name().ok_or_else(|| {
+                std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    format!("Invalid HSM PIN path: {}", hsm_pin_path),
+                )
+            })?;
+            parent.canonicalize().map(|p| p.join(file_name))
+        } else {
+            Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                format!("Invalid HSM PIN path: {}", hsm_pin_path),
+            ))
+        }
+    })?;
+
+    if !canonical.starts_with("/var/lib/himmelblau") {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::PermissionDenied,
+            format!(
+                "HSM PIN path must be within /var/lib/himmelblau/, got: {}",
+                canonical.display()
+            ),
+        )
+        .into());
+    }
+
+    Ok(canonical)
+}
+
 pub fn decrypt_hsm_pin(hsm_pin_path: &str) -> Result<Zeroizing<Vec<u8>>, Box<dyn Error>> {
+    let validated_path = validate_hsm_pin_path(hsm_pin_path)?;
     let mut child = Command::new("systemd-creds")
         .arg("decrypt")
         .arg("--name=hsm-pin")
-        .arg(hsm_pin_path)
+        .arg(&validated_path)
         .arg("-")
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -32,7 +79,10 @@ pub fn decrypt_hsm_pin(hsm_pin_path: &str) -> Result<Zeroizing<Vec<u8>>, Box<dyn
     let mut stdout = child.stdout.take().ok_or({
         std::io::Error::new(
             std::io::ErrorKind::Other,
-            format!("Failed decrypting HSM PIN from {}", hsm_pin_path),
+            format!(
+                "Failed decrypting HSM PIN from {}",
+                validated_path.display()
+            ),
         )
     })?;
     let mut buf = Vec::new();
@@ -45,7 +95,11 @@ pub fn decrypt_hsm_pin(hsm_pin_path: &str) -> Result<Zeroizing<Vec<u8>>, Box<dyn
         buf.zeroize();
         return Err(std::io::Error::new(
             std::io::ErrorKind::Other,
-            format!("Failed decrypting HSM PIN from {}: {}", hsm_pin_path, code),
+            format!(
+                "Failed decrypting HSM PIN from {}: {}",
+                validated_path.display(),
+                code
+            ),
         )
         .into());
     }
@@ -58,28 +112,32 @@ pub fn decrypt_hsm_pin(hsm_pin_path: &str) -> Result<Zeroizing<Vec<u8>>, Box<dyn
 }
 
 pub async fn read_hsm_pin(hsm_pin_path: &str) -> Result<Zeroizing<Vec<u8>>, Box<dyn Error>> {
-    if !PathBuf::from_str(hsm_pin_path)?.exists() {
+    let validated_path = validate_hsm_pin_path(hsm_pin_path)?;
+
+    if !validated_path.exists() {
         return Err(std::io::Error::new(
             std::io::ErrorKind::NotFound,
-            format!("HSM PIN file '{}' not found", hsm_pin_path),
+            format!("HSM PIN file '{}' not found", validated_path.display()),
         )
         .into());
     }
 
-    let mut file = File::open(hsm_pin_path).await?;
+    let mut file = File::open(&validated_path).await?;
     let mut contents = vec![];
     file.read_to_end(&mut contents).await?;
     Ok(contents.into())
 }
 
 pub async fn write_hsm_pin(hsm_pin_path: &str) -> Result<(), Box<dyn Error>> {
-    if !PathBuf::from_str(hsm_pin_path)?.exists() {
+    let validated_path = validate_hsm_pin_path(hsm_pin_path)?;
+
+    if !validated_path.exists() {
         let new_pin = AuthValue::generate().map_err(|hsm_err| {
             error!(?hsm_err, "Unable to generate new pin");
             std::io::Error::new(std::io::ErrorKind::Other, "Unable to generate new pin")
         })?;
 
-        std::fs::write(hsm_pin_path, new_pin)?;
+        std::fs::write(&validated_path, new_pin)?;
 
         info!("Generated new HSM pin");
     }
