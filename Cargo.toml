@@ -53,6 +53,7 @@ resolver = "2"
 "jni:0.21.1" = { path = "src/overrides/jni/0.21.1" }
 "js-sys:0.3.77" = { path = "src/overrides/js-sys/0.3.77" }
 "kqueue:1.1.1" = { path = "src/overrides/kqueue/1.1.1" }
+"ldap3_proto:0.6.2" = { path = "src/overrides/ldap3_proto/0.6.2" }
 "libredox:0.1.3" = { path = "src/overrides/libredox/0.1.3" }
 "linux-raw-sys:0.4.15" = { path = "src/overrides/linux-raw-sys/0.4.15" }
 "maplit:1.0.2" = { path = "src/overrides/maplit/1.0.2" }
