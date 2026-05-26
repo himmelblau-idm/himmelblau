@@ -13,7 +13,6 @@ use std::error::Error;
 use std::io::Read;
 use std::path::{Component, Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::str::FromStr;
 use tokio::fs::File;
 use tokio::io::AsyncReadExt;
 use zeroize::{Zeroize, Zeroizing};

@@ -90,6 +90,12 @@ const CONSENT_REQUIRED: u32 = 65002;
 // AADSTS50125: PasswordResetRegistrationRequiredInterrupt
 const PASSWORD_RESET_REGISTRATION_REQUIRED: u32 = 50125;
 
+fn is_unavailable_mfa_method_error(msg: &str, requested_method: &str) -> bool {
+    let expected_prefix =
+        format!("Requested MFA method '{requested_method}' not available. Available methods: ");
+    msg.starts_with(&expected_prefix)
+}
+
 /// Convert an MsalError to a short, user-friendly message for PAM display.
 /// This intentionally ignores the internal string contents of error variants
 /// to avoid leaking verbose or sensitive information to the user.
@@ -881,6 +887,56 @@ impl HimmelblauProvider {
     /// Import PRT entries from FD store data.
     pub async fn import_broker_prts(&self, data: &[u8]) -> Result<(), serde_json::Error> {
         self.refresh_cache.import_broker_prts(data).await
+    }
+
+    /// Initiate MFA flow with automatic fallback if the requested method is unavailable.
+    /// If a specific MFA method is requested but not available, this will automatically
+    /// retry with no method specified (allowing Azure to choose the default).
+    async fn initiate_mfa_flow_with_fallback(
+        &self,
+        account_id: &str,
+        password: Option<&str>,
+        auth_options: &[AuthOption],
+        auth_init: Option<himmelblau::auth::AuthInit>,
+        mfa_method: Option<String>,
+    ) -> Result<himmelblau::auth::MFAAuthContinue, MsalError> {
+        let result = self
+            .client
+            .lock()
+            .await
+            .initiate_acquire_token_by_mfa_flow_for_device_enrollment(
+                account_id,
+                password,
+                auth_options,
+                auth_init.clone(),
+                mfa_method.as_deref(),
+            )
+            .await;
+
+        match result {
+            Ok(flow) => Ok(flow),
+            Err(MsalError::GeneralFailure(ref msg))
+                if mfa_method
+                    .as_deref()
+                    .map(|method| is_unavailable_mfa_method_error(msg, method))
+                    .unwrap_or(false) =>
+            {
+                // Requested MFA method not available, fall back to default
+                warn!("{} Retrying with default MFA method.", msg);
+                self.client
+                    .lock()
+                    .await
+                    .initiate_acquire_token_by_mfa_flow_for_device_enrollment(
+                        account_id,
+                        password,
+                        auth_options,
+                        auth_init,
+                        None, // Retry without specifying MFA method
+                    )
+                    .await
+            }
+            Err(e) => Err(e),
+        }
     }
 }
 
@@ -1823,16 +1879,14 @@ impl IdProvider for HimmelblauProvider {
                     }
                     Ok((AuthRequest::Password, AuthCredHandler::None))
                 } else {
+                    let mfa_method = self.config.lock().await.get_mfa_method();
                     let flow = net_down_check!(
-                        self.client
-                            .lock()
-                            .await
-                            .initiate_acquire_token_by_mfa_flow_for_device_enrollment(
+                        self.initiate_mfa_flow_with_fallback(
                                 account_id,
                                 None,
                                 &auth_options,
                                 Some(auth_init),
-                                self.config.lock().await.get_mfa_method().as_deref()
+                                mfa_method
                             )
                             .await,
                         Err(MsalError::PasswordRequired) => {
@@ -2250,15 +2304,12 @@ impl IdProvider for HimmelblauProvider {
                     }
 
                     let flow = match self
-                        .client
-                        .lock()
-                        .await
-                        .initiate_acquire_token_by_mfa_flow_for_device_enrollment(
+                        .initiate_mfa_flow_with_fallback(
                             account_id,
                             None, // No password — we only have the PIN
                             &auth_options,
                             None, // No auth_init — user already exists
-                            mfa_method.as_deref()
+                            mfa_method
                         )
                         .await
                     {
@@ -3524,16 +3575,14 @@ impl IdProvider for HimmelblauProvider {
                 // from check_user_exists() was fetched without ForceMFA, so reusing
                 // it would bypass the amr_values=ngcmfa parameter in the
                 // /oauth2/authorize request.
+                let mfa_method = self.config.lock().await.get_mfa_method();
                 let flow = net_down_check!(
-                    self.client
-                        .lock()
-                        .await
-                        .initiate_acquire_token_by_mfa_flow_for_device_enrollment(
+                    self.initiate_mfa_flow_with_fallback(
                             account_id,
                             Some(&cred),
                             auth_options,
                             None,
-                            self.config.lock().await.get_mfa_method().as_deref()
+                            mfa_method.clone()
                         )
                         .await,
                     Ok(flow) => flow,
@@ -3544,15 +3593,12 @@ impl IdProvider for HimmelblauProvider {
                             auth_options.push(AuthOption::ForceMFA);
                         }
                         net_down_check!(
-                            self.client
-                                .lock()
-                                .await
-                                .initiate_acquire_token_by_mfa_flow_for_device_enrollment(
+                            self.initiate_mfa_flow_with_fallback(
                                     account_id,
                                     Some(&cred),
                                     auth_options,
                                     None,
-                                    self.config.lock().await.get_mfa_method().as_deref()
+                                    mfa_method
                                 )
                                 .await,
                             Ok(flow) => flow,
@@ -3655,16 +3701,14 @@ impl IdProvider for HimmelblauProvider {
                 }
 
                 // Call the appropriate method based on whether mfa_method is configured
+                let mfa_method = self.config.lock().await.get_mfa_method();
                 let mresp = self
-                    .client
-                    .lock()
-                    .await
-                    .initiate_acquire_token_by_mfa_flow_for_device_enrollment(
+                    .initiate_mfa_flow_with_fallback(
                         account_id,
                         Some(&cred),
                         &opts,
                         None,
-                        self.config.lock().await.get_mfa_method().as_deref(),
+                        mfa_method,
                     )
                     .await;
 
@@ -5270,5 +5314,27 @@ impl HimmelblauProvider {
             return false;
         }
         true
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_unavailable_mfa_method_error;
+
+    #[test]
+    fn unavailable_mfa_method_error_requires_exact_requested_method() {
+        assert!(is_unavailable_mfa_method_error(
+            "Requested MFA method 'FidoKey' not available. Available methods: PhoneAppOTP",
+            "FidoKey"
+        ));
+
+        assert!(!is_unavailable_mfa_method_error(
+            "Requested MFA method 'PhoneAppOTP' not available. Available methods: FidoKey",
+            "FidoKey"
+        ));
+        assert!(!is_unavailable_mfa_method_error(
+            "Stored MFA method 'FidoKey' is not available. Available methods: PhoneAppOTP",
+            "FidoKey"
+        ));
     }
 }
