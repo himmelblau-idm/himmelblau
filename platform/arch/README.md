@@ -43,25 +43,13 @@ already derived from the GitHub release tag in CI.
 
 ## Local testing
 
-Until a scripted harness lands, you can manually validate the rendered
-PKGBUILD in a clean Arch container:
+Run the podman-based validation harness:
 
 ```bash
-podman run --rm --platform linux/amd64 -v "$(pwd):/src:ro" archlinux:base-devel bash -c '
-  # pacman 6.1+ sandbox segfaults under rootless podman; this is the documented fix.
-  sed -i "s/^#DisableSandboxSyscalls$/DisableSandboxSyscalls/" /etc/pacman.conf
-  pacman -Sy --noconfirm namcap
-  cd /tmp
-  cp /src/platform/arch/PKGBUILD.in PKGBUILD
-  cp /src/platform/arch/himmelblau.install .
-  sed -i -e "s|@PKGVER@|3.1.5|g" -e "s|@SHA256@|SKIP|g" PKGBUILD
-  namcap PKGBUILD
-  useradd -m builder
-  chown builder:builder PKGBUILD himmelblau.install
-  su builder -c "cd /tmp && makepkg --printsrcinfo"
-'
+./platform/arch/test/lint.sh                  # lint, ~30s (latest local tag)
+./platform/arch/test/lint.sh --version 3.1.5  # lint, explicit version
+./platform/arch/test/lint.sh --build          # full makepkg build (20–40 min under qemu)
 ```
 
-(SHA `SKIP` is a makepkg shortcut that skips checksum validation — fine for
-linting the metadata; never use for a real build. `--platform linux/amd64` is
-only needed on Apple Silicon / non-x86_64 hosts.)
+See `platform/arch/test/README.md` for the full usage, exit-code semantics,
+and the Apple Silicon / rootless-podman caveats baked into the script.
