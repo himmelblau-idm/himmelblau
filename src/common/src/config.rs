@@ -744,7 +744,12 @@ impl HimmelblauConfig {
                             let upn = String::from_utf8_lossy(&output.stdout).trim().to_string();
                             if let Some(name_cache) = &name_cache {
                                 // Failing to insert a name map is not a critical failure.
-                                let _ = name_cache.insert_mapping(&upn, account_id);
+                                if let Err(e) = name_cache.insert_mapping(&upn, account_id) {
+                                    error!(
+                                        "Failed to cache name mapping for {} as {}: {}",
+                                        account_id, upn, e
+                                    );
+                                }
                             }
                             return upn;
                         } else {
