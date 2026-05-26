@@ -1,0 +1,57 @@
+## post_install
+post_install() {
+  cat <<'EOF'
+==> himmelblau installed.
+
+Configuration:
+  Edit /etc/himmelblau/himmelblau.conf — at minimum set:
+    domains  = your.tenant.onmicrosoft.com
+    pam_allow_groups = ...
+
+NSS:
+  Add 'himmelblau' to the passwd, group, and shadow lines of /etc/nsswitch.conf:
+    passwd:  files himmelblau systemd
+    group:   files himmelblau systemd
+    shadow:  files himmelblau
+
+PAM:
+  This package installs the PAM module but does not edit /etc/pam.d/* for you.
+  Use one of:
+    aad-tool configure-pam --really       (himmelblau's built-in helper)
+    authselect select himmelblau          (if you use authselect)
+    manual edits to /etc/pam.d/system-auth and /etc/pam.d/system-login
+
+Services:
+  systemctl enable --now himmelblaud.service
+
+Browser SSO (optional):
+  Native messaging hosts for Firefox / Chrome / Chromium are installed.
+  Install the linked browser extension(s) — see:
+    https://github.com/himmelblau-idm/himmelblau#browser-sso
+EOF
+}
+
+post_upgrade() {
+  if [ -f /etc/himmelblau/himmelblau.conf.pacnew ]; then
+    cat <<'EOF'
+==> /etc/himmelblau/himmelblau.conf.pacnew exists.
+    Review with: diff /etc/himmelblau/himmelblau.conf{,.pacnew}
+    Merge any new parameters, then remove the .pacnew file.
+EOF
+  fi
+
+  # Reload systemd daemon so changed unit files take effect on next start.
+  systemctl daemon-reload 2>/dev/null || true
+}
+
+post_remove() {
+  cat <<'EOF'
+==> himmelblau removed.
+
+Cleanup checklist (not done automatically):
+  - Remove 'himmelblau' from /etc/nsswitch.conf
+  - Remove himmelblau entries from /etc/pam.d/*
+  - Remove /etc/himmelblau/ if you no longer need the config
+  - Cached credentials persist under /var/cache/himmelblau* — remove if not needed
+EOF
+}
