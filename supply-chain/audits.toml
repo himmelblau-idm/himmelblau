@@ -584,6 +584,11 @@ who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
 delta = "0.10.77 -> 0.10.79"
 
+[[audits.openssl]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+delta = "0.10.79 -> 0.10.80"
+
 [[audits.openssl-probe]]
 who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
@@ -614,6 +619,11 @@ who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
 delta = "0.9.113 -> 0.9.115"
 
+[[audits.openssl-sys]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+delta = "0.9.115 -> 0.9.116"
+
 [[audits.opentelemetry-otlp]]
 who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
@@ -633,6 +643,21 @@ delta = "0.1.1 -> 0.2.0"
 who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
 delta = "0.2.0 -> 0.2.1"
+
+[[audits.peg]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+delta = "0.8.5 -> 0.8.6"
+
+[[audits.peg-macros]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+delta = "0.8.5 -> 0.8.6"
+
+[[audits.peg-runtime]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+delta = "0.8.5 -> 0.8.6"
 
 [[audits.pem]]
 who = "David Mulder <dmulder@samba.org>"
@@ -1694,7 +1719,7 @@ end = "2026-09-11"
 
 [[trusted.group]]
 criteria = "safe-to-deploy"
-user-id = 1244 # ebfull
+user-id = 1244 # Sean Bowe (ebfull)
 start = "2019-10-08"
 end = "2026-09-11"
 
