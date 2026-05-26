@@ -1,0 +1,38 @@
+#!/bin/sh
+# Temporary workaround for himmelblau-idm/himmelblau#1206.
+
+IFACE="${1:-}"
+ACTION="${2:-}"
+TAG="himmelblau-nm-dispatcher"
+
+case "$IFACE" in
+    ""|lo|docker*|virbr*|br-*|veth*|vnet*|tun*|tap*|wg*|ppp*)
+        exit 0
+        ;;
+esac
+
+case "$ACTION" in
+    pre-down|down)
+        ;;
+    *)
+        exit 0
+        ;;
+esac
+
+if [ ! -d /run/systemd/system ] || ! command -v systemctl >/dev/null 2>&1; then
+    exit 0
+fi
+
+state="$(systemctl is-active himmelblaud.service 2>/dev/null || true)"
+case "$state" in
+    active|failed)
+        ;;
+    *)
+        exit 0
+        ;;
+esac
+
+logger -t "$TAG" "Network $IFACE going $ACTION - restarting himmelblaud.service"
+systemctl restart --no-block himmelblaud.service 2>&1 | logger -t "$TAG"
+
+exit 0
