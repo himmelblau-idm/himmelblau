@@ -83,10 +83,14 @@ impl MappedNameCache {
 
         if let Some(conn) = &self.conn {
             if self.writable {
-                let _ = conn.execute(
+                conn.execute(
                     "INSERT OR REPLACE INTO mapping (upn, mapped_name) VALUES (?1, ?2)",
                     params![upn, mapped_name],
-                );
+                )
+                .map_err(|e| {
+                    error!("Failed to insert name mapping for {}: {}", upn, e);
+                    e
+                })?;
             }
         }
         Ok(())
