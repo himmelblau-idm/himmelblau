@@ -9487,18 +9487,34 @@ rec {
         ];
 
       };
-      "ldap3_proto" = rec {
+      "ldap3_proto 0.6.2" = rec {
         crateName = "ldap3_proto";
         version = "0.6.2";
         edition = "2021";
-        sha256 = "0yrmspijwb4ii2pslmgymkd9yw2718ib34bx2krv6wlwhkfrsbxm";
+        src = lib.cleanSourceWith { filter = sourceFilter;  src = ./src/overrides/ldap3_proto/0.6.2; };
+        authors = [
+          "David Mulder <dmulder@suse.com>"
+        ];
+        dependencies = [
+          {
+            name = "ldap3_proto";
+            packageId = "ldap3_proto 0.7.1";
+          }
+        ];
+
+      };
+      "ldap3_proto 0.7.1" = rec {
+        crateName = "ldap3_proto";
+        version = "0.7.1";
+        edition = "2021";
+        sha256 = "0q8cbv830m7mgxh2fxninhv7bixl6p19ka5zsp978azzsgplx5b1";
         authors = [
           "William Brown <william@blackhats.net.au>"
         ];
         dependencies = [
           {
             name = "base64";
-            packageId = "base64 0.21.7";
+            packageId = "base64 0.22.1";
           }
           {
             name = "bytes";
@@ -9518,7 +9534,7 @@ rec {
           }
           {
             name = "thiserror";
-            packageId = "thiserror 1.0.69";
+            packageId = "thiserror 2.0.16";
           }
           {
             name = "tokio-util";
@@ -9842,7 +9858,7 @@ rec {
           }
           {
             name = "ldap3_proto";
-            packageId = "ldap3_proto";
+            packageId = "ldap3_proto 0.6.2";
           }
           {
             name = "libc";
@@ -11651,9 +11667,9 @@ rec {
       };
       "openssl" = rec {
         crateName = "openssl";
-        version = "0.10.79";
+        version = "0.10.80";
         edition = "2021";
-        sha256 = "0hpma19c8qrjwgi6jb4iwv5iifyaw4vh3wdsy3s34a7f8r3l62xz";
+        sha256 = "0ryrcbdd7hq0ydvassn4cr02agii1l54yd6sali7chkci2ma4px4";
         authors = [
           "Steven Fackler <sfackler@gmail.com>"
         ];
@@ -11730,10 +11746,10 @@ rec {
       };
       "openssl-sys" = rec {
         crateName = "openssl-sys";
-        version = "0.9.115";
+        version = "0.9.116";
         edition = "2021";
         links = "openssl";
-        sha256 = "10cpkh7aswv97k108a2ya10jvdxfal76jzksdsm40r3ljarfb3qm";
+        sha256 = "1i0qcgsimh8qkfgrglmzz2kq3jk2d5575rz5jvqabka0f7f252pj";
         build = "build/main.rs";
         libName = "openssl_sys";
         authors = [
@@ -12714,9 +12730,9 @@ rec {
       };
       "peg" = rec {
         crateName = "peg";
-        version = "0.8.5";
+        version = "0.8.6";
         edition = "2021";
-        sha256 = "0xr42lbgihlwbyfcmjggqv1s3a38agp4j077cd8yqdhv235cya4r";
+        sha256 = "0wqpa1jirzvi85bmpkhj07lxbnrsm1qdvz7j0chsffmnwl5hgb8a";
         authors = [
           "Kevin Mehall <km@kevinmehall.net>"
         ];
@@ -12740,10 +12756,10 @@ rec {
       };
       "peg-macros" = rec {
         crateName = "peg-macros";
-        version = "0.8.5";
+        version = "0.8.6";
         edition = "2021";
         crateBin = [];
-        sha256 = "0w8g53c75hz6iy3khc1ja2qm0idpnygjc0xsa9fmpyh2q82ap632";
+        sha256 = "1vp7rddb1ps3ghcy0bds48gs58hnnscnmqhs0dam7sfa4mlfzn6x";
         procMacro = true;
         libName = "peg_macros";
         libPath = "lib.rs";
@@ -12769,9 +12785,9 @@ rec {
       };
       "peg-runtime" = rec {
         crateName = "peg-runtime";
-        version = "0.8.5";
+        version = "0.8.6";
         edition = "2021";
-        sha256 = "1jkgfy5jkjqwqy7h11nn3bmm1qfyn9kq2wnxnlspp4ldhsdwlb8k";
+        sha256 = "19nqlxjlpq3r5s7nhayjx5bfmfsbbqnv3czxn72bspja91xxj4bh";
         libName = "peg_runtime";
         libPath = "lib.rs";
         authors = [
