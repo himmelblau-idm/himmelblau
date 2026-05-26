@@ -16,14 +16,14 @@ path = "src/lib.rs"
 name = "himmelblau-sshd-config"
 depends = ["openssh-server"]
 assets = [
-  ["../../platform/debian/sshd_config", "etc/ssh/sshd_config.d/himmelblau.conf", "644"],
+  ["../../platform/debian/sshd_config", "etc/ssh/sshd_config.d/30-himmelblau.conf", "644"],
 ]
 maintainer-scripts = "scripts"
 
 [package.metadata.generate-rpm]
 name = "himmelblau-sshd-config"
 assets = [
-  { source = "../../platform/el/sshd_config", dest = "/etc/ssh/sshd_config.d/himmelblau.conf", mode = "644" },
+  { source = "../../platform/el/sshd_config", dest = "/etc/ssh/sshd_config.d/30-himmelblau.conf", mode = "644" },
 ]
 post_install_script = "scripts/postinst"
 
