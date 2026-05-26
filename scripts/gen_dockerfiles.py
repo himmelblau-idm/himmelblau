@@ -158,7 +158,11 @@ def build_deb_final_cmd(
         feat_str = f" --features {','.join(pkg_features)}" if pkg_features else ""
         if "pam" in pkg or "nss" in pkg:
             feat_str += " --multiarch=same"
-        parts.append(f"cargo deb ${{CARGO_PATCH_ARG}}{target_arg}{feat_str} --deb-revision={distro_slug}${{DEB_REVISION_APPEND}} -p {pkg}")
+        cmd = f"cargo deb ${{CARGO_PATCH_ARG}}{target_arg}{feat_str} --deb-revision={distro_slug}${{DEB_REVISION_APPEND}} -p {pkg}"
+        if pkg == "apparmor":
+            package_dir = f"target/{cross_target}/debian" if cross_target else "target/debian"
+            cmd += f" && python3 scripts/patch_apparmor_deb_relationships.py --distro={distro_slug} --package-dir={package_dir}"
+        parts.append(cmd)
     gen_servicefiles = "make deb-servicefiles"
     return f'CMD ["/bin/sh", "-c", \\\n{CMD_TAB}"{GEN_MANPAGE} && {gen_servicefiles} && {CMD_SEP.join(parts)} "]'
 
