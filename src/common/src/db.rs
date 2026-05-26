@@ -152,7 +152,7 @@ pub enum DbError {
 
 impl Db {
     pub fn new(path: &str) -> Result<Self, DbError> {
-        let before = unsafe { umask(0o0027) };
+        let before = unsafe { umask(0o0077) };
         let conn = Connection::open(path).map_err(|e| {
             error!(err = ?e, "rusqulite error");
             DbError::Sqlite
