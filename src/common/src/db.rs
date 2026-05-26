@@ -552,7 +552,9 @@ impl<'a> CacheTxn for DbTxn<'a> {
                 "DELETE FROM hsm_data_t
                  WHERE key LIKE '%/hello'
                     OR key LIKE '%/hello_decoupled'
-                    OR key LIKE '%/hello_prt'",
+                    OR key LIKE '%/hello_prt'
+                    OR key LIKE '%/hello_refresh_token'
+                    OR key LIKE '%/hello_totp'",
                 [],
             )
             .map_err(|e| self.sqlite_error("delete hello keys", &e))?;
@@ -1088,7 +1090,7 @@ impl<'a> Drop for DbTxn<'a> {
 #[cfg(test)]
 mod tests {
 
-    use super::{Cache, CacheTxn, Db};
+    use super::{Cache, CacheTxn, Db, KeyStoreTxn};
     use crate::idprovider::interface::{GroupToken, Id, UserToken};
     use kanidm_hsm_crypto::{provider::BoxedDynTpm, provider::Tpm, AuthValue};
 
@@ -1105,6 +1107,41 @@ mod tests {
     fn setup_tpm() -> BoxedDynTpm {
         use kanidm_hsm_crypto::provider::SoftTpm;
         BoxedDynTpm::new(SoftTpm::new())
+    }
+
+    #[tokio::test]
+    async fn test_clear_hello_keys() {
+        sketching::test_init();
+        let db = Db::new("").expect("failed to create.");
+        let mut dbtxn = db.write().await;
+        assert!(dbtxn.migrate().is_ok());
+
+        let hello_keys = [
+            "testuser@example.com/hello",
+            "testuser@example.com/hello_decoupled",
+            "testuser@example.com/hello_prt",
+            "testuser@example.com/hello_refresh_token",
+            "testuser@example.com/hello_totp",
+        ];
+        let unrelated_key = "testuser@example.com/not_hello";
+        let value = "test value".to_string();
+
+        for key in hello_keys {
+            dbtxn.insert_tagged_hsm_key(key, &value).unwrap();
+        }
+        dbtxn.insert_tagged_hsm_key(unrelated_key, &value).unwrap();
+
+        assert!(dbtxn.clear_hello_keys().is_ok());
+
+        for key in hello_keys {
+            let stored: Option<String> = dbtxn.get_tagged_hsm_key(key).unwrap();
+            assert!(stored.is_none());
+        }
+
+        let stored: Option<String> = dbtxn.get_tagged_hsm_key(unrelated_key).unwrap();
+        assert_eq!(stored, Some(value));
+
+        assert!(dbtxn.commit().is_ok());
     }
 
     #[tokio::test]
