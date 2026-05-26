@@ -774,11 +774,17 @@ where
             .await;
 
         drop(hsm_lock);
-        dbtxn.commit().map_err(|_| ())?;
 
-        res.map_err(|e| {
-            trace!("change_auth_token error -> {:?}", e);
-        })
+        match res {
+            Ok(res) => {
+                dbtxn.commit().map_err(|_| ())?;
+                Ok(res)
+            }
+            Err(e) => {
+                trace!("change_auth_token error -> {:?}", e);
+                Err(())
+            }
+        }
     }
 
     pub async fn offline_break_glass(&self, ttl: Option<u64>) -> Result<(), ()> {
