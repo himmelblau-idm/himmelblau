@@ -992,6 +992,31 @@ macro_rules! impl_change_auth_token {
                 error!("Failed to provision hello key: {:?}", e);
                 IdpError::Tpm
             })?;
+
+        let hello_prt_tag = $self.fetch_hello_prt_key_tag($account_id);
+        $keystore
+            .delete_tagged_hsm_key(&hello_prt_tag)
+            .map_err(|e| {
+                error!("Failed to delete hello PRT: {:?}", e);
+                IdpError::Tpm
+            })?;
+
+        let hello_refresh_token_tag = $self.fetch_hello_refresh_token_key_tag($account_id);
+        $keystore
+            .delete_tagged_hsm_key(&hello_refresh_token_tag)
+            .map_err(|e| {
+                error!("Failed to delete hello refresh token: {:?}", e);
+                IdpError::Tpm
+            })?;
+
+        let hello_totp_tag = $self.fetch_hello_totp_key_tag($account_id);
+        $keystore
+            .delete_tagged_hsm_key(&hello_totp_tag)
+            .map_err(|e| {
+                error!("Failed to delete hello TOTP: {:?}", e);
+                IdpError::Tpm
+            })?;
+
         Ok(true)
     }};
 }
