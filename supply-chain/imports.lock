@@ -318,6 +318,7 @@ version = "0.12.0"
 when = "2022-05-04"
 user-id = 1244
 user-login = "ebfull"
+user-name = "Sean Bowe"
 
 [[publisher.h2]]
 version = "0.4.10"
@@ -438,6 +439,13 @@ user-name = "Firstyear"
 [[publisher.ldap3_proto]]
 version = "0.6.2"
 when = "2025-04-28"
+user-id = 31100
+user-login = "Firstyear"
+user-name = "Firstyear"
+
+[[publisher.ldap3_proto]]
+version = "0.7.1"
+when = "2026-04-30"
 user-id = 31100
 user-login = "Firstyear"
 user-name = "Firstyear"
