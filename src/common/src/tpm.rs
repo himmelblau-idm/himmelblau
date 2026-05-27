@@ -49,11 +49,20 @@ fn validate_hsm_pin_path(hsm_pin_path: &str) -> Result<PathBuf, Box<dyn Error>> 
         }
     })?;
 
-    if !canonical.starts_with("/var/lib/himmelblau") {
+    // Accept the himmelblaud state directory (with and without the systemd
+    // DynamicUser `/var/lib/private/` prefix) and the runtime credentials
+    // directory that `LoadCredentialEncrypted=` materialises for the unit.
+    const ALLOWED_PREFIXES: &[&str] = &[
+        "/var/lib/himmelblaud",
+        "/var/lib/private/himmelblaud",
+        "/run/credentials/himmelblaud.service",
+    ];
+    if !ALLOWED_PREFIXES.iter().any(|p| canonical.starts_with(p)) {
         return Err(std::io::Error::new(
             std::io::ErrorKind::PermissionDenied,
             format!(
-                "HSM PIN path must be within /var/lib/himmelblau/, got: {}",
+                "HSM PIN path must be within one of {:?}, got: {}",
+                ALLOWED_PREFIXES,
                 canonical.display()
             ),
         )
