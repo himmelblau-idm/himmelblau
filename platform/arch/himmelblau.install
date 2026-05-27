@@ -5,29 +5,46 @@ post_install() {
 
 Configuration:
   Edit /etc/himmelblau/himmelblau.conf — at minimum set:
-    domains  = your.tenant.onmicrosoft.com
-    pam_allow_groups = ...
+    domain = your.tenant.onmicrosoft.com
 
 NSS:
   Add 'himmelblau' to the passwd, group, and shadow lines of /etc/nsswitch.conf:
-    passwd:  files himmelblau systemd
-    group:   files himmelblau systemd
+    passwd:  files systemd himmelblau
+    group:   files systemd himmelblau
     shadow:  files himmelblau
 
 PAM:
   This package installs the PAM module but does not edit /etc/pam.d/* for you.
-  Use one of:
-    aad-tool configure-pam --really       (himmelblau's built-in helper)
-    authselect select himmelblau          (if you use authselect)
-    manual edits to /etc/pam.d/system-auth and /etc/pam.d/system-login
+  Arch has no authselect/authconfig equivalent — PAM stacks are edited
+  directly. The recommended approach is:
+
+    aad-tool configure-pam --really
+
+  This detects Arch's /etc/pam.d/system-auth and /etc/pam.d/system-login
+  (shipped by pambase) and inserts the pam_himmelblau.so lines in the
+  correct order. To preview the edits without writing, omit '--really'.
+
+  Manual alternative: edit /etc/pam.d/system-auth and /etc/pam.d/system-login
+  to add pam_himmelblau.so to the auth, account, session, and password
+  stacks. See 'man pam_himmelblau' (or src/pam/README.md upstream) for the
+  exact line shapes.
+
+  Heads up: pambase upgrades may write .pacnew files for system-auth /
+  system-login. Re-merge your himmelblau lines after each pambase upgrade
+  (diff /etc/pam.d/system-auth{,.pacnew}).
 
 Services:
-  systemctl enable --now himmelblaud.service
+  systemctl enable --now himmelblaud.service himmelblaud-tasks.service
 
 Browser SSO (optional):
-  Native messaging hosts for Firefox / Chrome / Chromium are installed.
-  Install the linked browser extension(s) — see:
-    https://github.com/himmelblau-idm/himmelblau#browser-sso
+  Native-messaging hosts for Firefox / Chrome / Chromium / Edge are installed.
+  For Chrome, Chromium, and Edge, a managed-policy drop-in is also installed
+  under /etc/{opt/chrome,chromium,opt/edge}/policies/managed/ that
+  force-installs the linux-entra-sso extension on next launch — no manual
+  step needed.
+  For Firefox, see the example policy at
+    /usr/share/doc/himmelblau/firefox-policies.json.example
+  and merge it into your distribution/policies.json.
 EOF
 }
 
@@ -52,6 +69,7 @@ Cleanup checklist (not done automatically):
   - Remove 'himmelblau' from /etc/nsswitch.conf
   - Remove himmelblau entries from /etc/pam.d/*
   - Remove /etc/himmelblau/ if you no longer need the config
-  - Cached credentials persist under /var/cache/himmelblau* — remove if not needed
+  - Purge cached credentials and unjoin the host from Entra ID with:
+      aad-tool cache-clear --full
 EOF
 }

@@ -9,7 +9,7 @@
 pkgname=himmelblau
 pkgver=@PKGVER@
 pkgrel=1
-pkgdesc="Microsoft Entra ID (Azure AD) authentication for Linux — NSS, PAM, broker, and SSO integration"
+pkgdesc="Microsoft Entra ID (Azure AD) authentication for Linux — NSS, PAM, broker, SSO, and Intune integration"
 arch=('x86_64' 'aarch64')
 url="https://github.com/himmelblau-idm/himmelblau"
 license=('GPL-3.0-or-later')
@@ -85,6 +85,7 @@ makedepends=(
 optdepends=(
   'chromium: Microsoft Entra SSO via the Chromium native-messaging host'
   'firefox: Microsoft Entra SSO via the Firefox native-messaging host'
+  'microsoft-edge-stable-bin: Microsoft Entra SSO via the Edge native-messaging host (Chromium-based; consumes the Chrome managed-policy drop-in)'
   'krb5: Kerberos ticket utilities (kinit, klist, kdestroy) for inspecting Entra-issued TGTs from /etc/krb5.conf.d/'
   'openssh-server: server-side SSH integration via the etc/ssh/sshd_config.d/himmelblau.conf drop-in'
 )
@@ -240,6 +241,8 @@ package() {
                                                   "${pkgdir}/etc/opt/chrome/policies/managed/himmelblau.json"
   install -Dm644 src/sso-policies/src/chrome/policies.json \
                                                   "${pkgdir}/etc/chromium/policies/managed/himmelblau.json"
+  install -Dm644 src/sso-policies/src/chrome/policies.json \
+                                                  "${pkgdir}/etc/opt/edge/policies/managed/himmelblau.json"
   install -Dm644 src/sso-policies/src/firefox/policies.json \
                                                   "${pkgdir}/usr/share/doc/${pkgname}/firefox-policies.json.example"
 
