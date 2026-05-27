@@ -2874,21 +2874,23 @@ dependencies = [
 
 [[package]]
 name = "libhimmelblau"
-version = "0.8.19"
+version = "0.8.20"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4331d6c174da030b21bb2bf7dde3ea49d9cea3a08cd99007a008f65a64059ae8"
+checksum = "c0aced2dc4e76ba0a04043e9b9eb87569fc7e9f9bebe89ce734986cf3ac0df49"
 dependencies = [
  "base64 0.22.1",
  "cbindgen",
  "chrono",
  "compact_jwt",
  "crypto-glue",
+ "der 0.7.10",
  "hostname",
  "kanidm-hsm-crypto",
  "libkrimes",
  "openssl",
  "os-release",
  "paste",
+ "pem-rfc7468",
  "percent-encoding",
  "picky-asn1",
  "picky-asn1-der",
@@ -2907,6 +2909,7 @@ dependencies = [
  "tracing-subscriber",
  "urlencoding",
  "uuid",
+ "x509-cert",
  "zeroize",
 ]
 
@@ -3382,7 +3385,7 @@ version = "5.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "51e219e79014df21a225b1860a479e2dcd7cbd9130f4defd4bd0e191ea31d67d"
 dependencies = [
- "base64 0.21.7",
+ "base64 0.22.1",
  "chrono",
  "getrandom 0.2.16",
  "http",
