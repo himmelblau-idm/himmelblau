@@ -482,6 +482,13 @@ user-id = 31100
 user-login = "Firstyear"
 user-name = "Firstyear"
 
+[[publisher.ldap3_proto]]
+version = "0.7.1"
+when = "2026-04-30"
+user-id = 31100
+user-login = "Firstyear"
+user-name = "Firstyear"
+
 [[publisher.libc]]
 version = "0.2.186"
 when = "2026-04-23"
@@ -496,8 +503,8 @@ user-login = "fitzgen"
 user-name = "Nick Fitzgerald"
 
 [[publisher.libhimmelblau]]
-version = "0.8.19"
-when = "2026-05-06"
+version = "0.8.20"
+when = "2026-05-28"
 user-id = 247655
 user-login = "dmulder"
 user-name = "David Mulder"
@@ -3147,6 +3154,11 @@ who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
 delta = "0.10.77 -> 0.10.79"
 
+[[audits.himmelblau.audits.openssl]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+delta = "0.10.79 -> 0.10.80"
+
 [[audits.himmelblau.audits.openssl-sys]]
 who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
@@ -3161,6 +3173,11 @@ delta = "0.9.112 -> 0.9.113"
 who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
 delta = "0.9.113 -> 0.9.115"
+
+[[audits.himmelblau.audits.openssl-sys]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+delta = "0.9.115 -> 0.9.116"
 
 [[audits.himmelblau.audits.opentelemetry-otlp]]
 who = "David Mulder <dmulder@samba.org>"
