@@ -773,25 +773,6 @@ def _render_parameter_example_block(
     return lines
 
 
-def _append_domain_override_example(lines: List[str], params: List[Parameter], debian_mode: bool) -> None:
-    """Append a per-domain override example snippet for domain-specific options."""
-    domain_specific = [p for p in params if p.section == 'global' and p.documented and p.domain_specific]
-    domain_specific.sort(key=lambda p: p.order)
-
-    if not domain_specific:
-        return
-
-    lines.append('### Domain-specific values')
-    lines.append('# The following options may be overridden per domain section.')
-    lines.append('#')
-    lines.append('# [example.com]')
-    for param in domain_specific:
-        value = _sample_value_for_param(param, debian_mode=debian_mode)
-        assignment = f'{param.name} = {value}' if value else f'{param.name} ='
-        lines.append(f'# {assignment}')
-    lines.append('')
-
-
 def _append_offline_breakglass_example(
     lines: List[str],
     params: List[Parameter],
@@ -855,7 +836,6 @@ def generate_conf_example(
         ))
 
     lines.append('')
-    _append_domain_override_example(lines, params, debian_mode=debian_mode)
     _append_offline_breakglass_example(lines, params, sections, debian_mode=debian_mode)
 
     return '\n'.join(lines).rstrip() + '\n'
