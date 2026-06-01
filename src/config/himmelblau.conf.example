@@ -1,10 +1,10 @@
 [global]
-# REQUIRED: The list of configured domains. This must be specified, or no users
-# will be permitted to authenticate. The first user to authenticate to each
+# REQUIRED: The configured domain. This must be specified, or no users
+# will be permitted to authenticate. The first user to authenticate to the
 # domain will be the owner of the device object in the directory. Typically
 # this would be the primary user of the device. Specify ONLY the primary domain
 # for your tenant.
-# domains =
+# domain =
 #
 ### Optional global values
 # Configure whether the logger will output debug messages to the journal.
@@ -73,7 +73,7 @@
 #
 # CN to UPN mapping allows users to simply enter the short form of their
 # username (`dave` instead of `dave@example.com`). Himmelblau will only map CNs
-# to the primary domain (the first domain listed in the `domains` option
+# to the primary domain (the domain listed in the `domain` option
 # above). WARNING: CN mapping could mask local users, depending on your PAM
 # configuration.
 # cn_name_mapping = true
@@ -142,28 +142,3 @@
 # cache_timeout = 300
 # use_etc_skel = false
 # selinux = true
-
-### Domain specific values
-# Individual domain values may be overridden by specifying these values under
-# a domain section. These options take precedent over global config options.
-# For example:
-#
-# [example.com]
-# odc_provider = odc.officeapps.live.com
-# home_prefix = /home/
-# home_attr = UUID
-# home_alias = SPN
-# shell = /bin/zsh
-# idmap_range = 6000000-6999999
-#
-# Application ID used for requesting an ACCESS_TOKEN on behalf of the user.
-# If not set, the domain’s app_id is used.
-# logon_token_app_id = 544e695f-5d78-442e-b14e-e114e95e640c
-#
-# The `app_id` option specifies the Entra ID application ID that has the
-# necessary permissions to obtain access tokens for the `logon_script`. This
-# application SHOULD also include the `GroupMember.Read.All` permission,
-# enabling Himmelblau to retrieve the `gidNumber` extended attribute.
-#
-# [example.com]
-# app_id = d023f7aa-d214-4b59-911d-6074de623765

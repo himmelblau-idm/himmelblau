@@ -1214,7 +1214,7 @@ end = "2026-09-11"
 
 [[trusted.group]]
 criteria = "safe-to-deploy"
-user-id = 1244 # ebfull
+user-id = 1244 # Sean Bowe (ebfull)
 start = "2019-10-08"
 end = "2026-09-11"
 
