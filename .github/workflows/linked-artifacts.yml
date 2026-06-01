@@ -1,0 +1,77 @@
+name: Publish Linked Artifacts
+
+on:
+  schedule:
+    - cron: '0 */2 * * *'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Optional stable release tag to process
+        required: false
+        type: string
+      limit:
+        description: Number of recent stable tags to scan when tag is omitted
+        required: false
+        default: '20'
+        type: string
+      dry_run:
+        description: Print storage-record payloads without writing to GitHub
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+  # artifact-metadata: write enables publishing to GitHub's Linked Artifacts feature.
+  # See: https://docs.github.com/en/rest/artifact-metadata
+  artifact-metadata: write
+
+concurrency:
+  group: publish-linked-artifacts
+  cancel-in-progress: false
+
+jobs:
+  publish-linked-artifacts:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+    - name: Harden the runner (Audit all outbound calls)
+      uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5 # v2.19.3
+      with:
+        egress-policy: audit
+
+    - name: Checkout code
+      uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      with:
+        fetch-depth: 0
+
+    - name: Run unit tests
+      shell: bash
+      run: python3 .github/scripts/test_release_automation.py
+
+    - name: Publish linked artifact metadata
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      shell: bash
+      run: |
+        LIMIT="${{ github.event.inputs.limit }}"
+        if [ -z "$LIMIT" ]; then
+          LIMIT=20
+        fi
+
+        ARGS=(
+          --repo "$GITHUB_REPOSITORY"
+          publish-linked-artifacts
+          --limit "$LIMIT"
+        )
+
+        if [ -n "${{ github.event.inputs.tag }}" ]; then
+          ARGS+=(--tag "${{ github.event.inputs.tag }}")
+        fi
+
+        if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ github.event.inputs.dry_run }}" = "true" ]; then
+          ARGS+=(--dry-run)
+        fi
+
+        python3 .github/scripts/release_automation.py "${ARGS[@]}"

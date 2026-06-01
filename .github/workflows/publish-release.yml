@@ -1,0 +1,103 @@
+name: Publish GitHub Release
+
+on:
+  push:
+    tags:
+      - '*.*.*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Stable release tag to publish
+        required: true
+        type: string
+      dry_run:
+        description: Write the AI prompt instead of calling Azure
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+jobs:
+  publish-release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+    - name: Harden the runner (Audit all outbound calls)
+      uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5 # v2.19.3
+      with:
+        egress-policy: audit
+
+    - name: Checkout code
+      uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      with:
+        fetch-depth: 0
+
+    - name: Resolve tag
+      id: release-tag
+      shell: bash
+      run: |
+        if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+          TAG="${{ github.event.inputs.tag }}"
+          git fetch --tags --force
+          git checkout "$TAG"
+        else
+          TAG="${GITHUB_REF_NAME}"
+        fi
+        if [[ ! "$TAG" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+          echo "stable=false" >> "$GITHUB_OUTPUT"
+          echo "Skipping non-stable tag: $TAG"
+          exit 0
+        fi
+        echo "stable=true" >> "$GITHUB_OUTPUT"
+        echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
+    - name: Generate release notes
+      if: ${{ steps.release-tag.outputs.stable == 'true' }}
+      env:
+        AZURE_API_KEY: ${{ secrets.AZURE_API_KEY }}
+        AZURE_COGNITIVE_SERVICES_API_KEY: ${{ secrets.AZURE_COGNITIVE_SERVICES_API_KEY }}
+        AZURE_OPENAI_DEPLOYMENT: ${{ vars.AZURE_OPENAI_DEPLOYMENT }}
+        AZURE_RESOURCE_NAME: ${{ secrets.AZURE_RESOURCE_NAME }}
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      shell: bash
+      run: |
+        ARGS=(
+          --repo "$GITHUB_REPOSITORY"
+          release-notes
+          --tag "${{ steps.release-tag.outputs.tag }}"
+          --prompt-file .github/release-notes-prompt.md
+          --output release-notes.md
+        )
+        if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ github.event.inputs.dry_run }}" = "true" ]; then
+          ARGS+=(--dry-run)
+        fi
+        python3 .github/scripts/release_automation.py "${ARGS[@]}"
+
+    - name: Add package links
+      if: ${{ steps.release-tag.outputs.stable == 'true' && (github.event_name != 'workflow_dispatch' || github.event.inputs.dry_run != 'true') }}
+      shell: bash
+      run: |
+        TAG="${{ steps.release-tag.outputs.tag }}"
+        {
+          printf '\n---\n\n'
+          printf '## Packages\n\n'
+          printf -- '- Stable packages: https://packages.himmelblau-idm.org/stable/%s/\n' "$TAG"
+          printf -- '- SBOM: https://packages.himmelblau-idm.org/stable/%s/sbom/sbom.json\n' "$TAG"
+        } >> release-notes.md
+
+    - name: Publish GitHub Release
+      if: ${{ steps.release-tag.outputs.stable == 'true' && (github.event_name != 'workflow_dispatch' || github.event.inputs.dry_run != 'true') }}
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      shell: bash
+      run: |
+        TAG="${{ steps.release-tag.outputs.tag }}"
+        if gh release view "$TAG" >/dev/null 2>&1; then
+          gh release edit "$TAG" --title "Himmelblau $TAG" --notes-file release-notes.md
+        else
+          gh release create "$TAG" --title "Himmelblau $TAG" --notes-file release-notes.md --verify-tag
+        fi
