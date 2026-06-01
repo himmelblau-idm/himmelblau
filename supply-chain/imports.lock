@@ -3014,6 +3014,11 @@ who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
 delta = "0.10.77 -> 0.10.79"
 
+[[audits.himmelblau.audits.openssl]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+delta = "0.10.79 -> 0.10.80"
+
 [[audits.himmelblau.audits.openssl-probe]]
 who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
@@ -3033,6 +3038,11 @@ delta = "0.9.112 -> 0.9.113"
 who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
 delta = "0.9.113 -> 0.9.115"
+
+[[audits.himmelblau.audits.openssl-sys]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+delta = "0.9.115 -> 0.9.116"
 
 [[audits.himmelblau.audits.picky-asn1-der]]
 who = "David Mulder <dmulder@samba.org>"
