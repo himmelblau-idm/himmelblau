@@ -44,18 +44,67 @@ If generated files are involved, update generator/template sources, not only gen
 
 ## AI-assisted contributions
 
-AI assistance is allowed, but responsibility remains with the human submitter.
+Himmelblau welcomes contributions created with the assistance of AI tools, including coding assistants, chatbots, code-completion systems, and autonomous coding agents.
 
-If you use AI, you must:
+AI tools are considered development aids, similar to compilers, debuggers, IDEs, and static analysis tools. Their use is permitted and encouraged where they improve contributor productivity.
 
-- review and understand every changed line;
-- verify the change with real tests;
-- ensure PR text is repository-specific and technically accurate;
-- disclose significant AI assistance in the PR description.
+### Contributor responsibility
 
-Low-signal bulk submissions are not acceptable.
+Regardless of how a contribution is created, the human contributor remains fully responsible for the submitted work.
 
-Using AI to produce a feature implementation without prior [enhancement discussion](https://github.com/himmelblau-idm/himmelblau/issues) does not satisfy project process requirements.
+Before submitting a contribution, contributors must:
+
+- Review all generated code.
+- Understand how the code works.
+- Verify that the implementation is correct.
+- Test the changes appropriately.
+- Ensure that the contribution complies with the project's licensing requirements.
+- Be prepared to explain and maintain the submitted code.
+
+Contributors must not submit code that they do not understand.
+
+### Disclosure
+
+When AI tools materially contribute to a change, contributors **MUST** disclose this using an `Assisted-by:` trailer in the commit message.
+
+Examples:
+
+```text
+Signed-off-by: Jane Doe <jane@example.com>
+Assisted-by: Claude Code
+```
+
+```text
+Signed-off-by: Jane Doe <jane@example.com>
+Assisted-by: GitHub Copilot
+Assisted-by: ChatGPT
+```
+
+```text
+Signed-off-by: Jane Doe <jane@example.com>
+Assisted-by: OpenAI Codex
+```
+
+Model names are optional. The tool name is sufficient. Multiple tools may be listed when applicable.
+
+Disclosure is intended to improve review transparency and help maintainers apply appropriate scrutiny during code review. Disclosure does not imply lower quality, nor does it automatically affect acceptance decisions.
+
+### Maintainer review
+
+Maintainers may request additional explanation, testing, or design justification for any contribution, whether AI-assisted or not.
+
+Maintainers may reject contributions when:
+
+- The submitter cannot adequately explain the implementation.
+- The code lacks sufficient testing or validation.
+- The change introduces unnecessary complexity.
+- The origin or licensing status of the contribution cannot be reasonably established.
+
+These standards apply equally to human-written and AI-assisted code.
+
+### Low-signal bulk submissions
+
+Using AI to produce feature implementations without prior [enhancement discussion](https://github.com/himmelblau-idm/himmelblau/issues) does not satisfy project process requirements. Discussing proposed changes before implementation remains mandatory for features and large behavior changes, regardless of how the code is written.
 
 ## Review and closure policy
 

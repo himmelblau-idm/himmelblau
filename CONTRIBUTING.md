@@ -9,7 +9,7 @@ This document explains how to get involved, set up your environment, and follow 
 All contributors are expected to follow our [Code of Conduct](CODE_OF_CONDUCT.md).  
 Please read it before participating in issues, discussions, or pull requests.
 
-Please also read the [Contributor Policy](CONTRIBUTOR_POLICY.md), which documents review expectations, AI-assisted contribution requirements, and automated PR triage behavior.
+Please also read the [Contributor Policy](CONTRIBUTOR_POLICY.md), which documents review expectations, AI-assisted contribution disclosure requirements, and automated PR triage behavior.
 
 ---
 
