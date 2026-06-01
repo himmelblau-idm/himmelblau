@@ -654,6 +654,11 @@ who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
 delta = "0.12.3 -> 0.14.2"
 
+[[audits.tonic]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+delta = "0.14.5 -> 0.14.6"
+
 [[audits.tonic-prost]]
 who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
