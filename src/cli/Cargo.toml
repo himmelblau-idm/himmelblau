@@ -25,7 +25,7 @@ clap_complete = { workspace = true }
 anyhow = { workspace = true }
 uzers = "^0.12.2"
 sketching = { workspace = true }
-rpassword = "^7.5.2"
+rpassword = "^7.5.4"
 libc.workspace = true
 libhimmelblau.workspace = true
 kanidm-hsm-crypto.workspace = true
