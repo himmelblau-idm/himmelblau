@@ -18,7 +18,7 @@ tracing.workspace = true
 uuid.workspace = true
 
 [build-dependencies]
-cc = "1.2.61"
+cc = "1.2.63"
 bindgen = "0.72.1"
 
 [package.metadata.cargo-machete]
