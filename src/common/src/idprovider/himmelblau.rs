@@ -89,11 +89,27 @@ use zeroize::Zeroizing;
 const CONSENT_REQUIRED: u32 = 65002;
 // AADSTS50125: PasswordResetRegistrationRequiredInterrupt
 const PASSWORD_RESET_REGISTRATION_REQUIRED: u32 = 50125;
+// AADSTS50072/50074/50076: Strong auth/MFA is required for this request.
+const MFA_REQUIRED_FOR_ENROLLMENT: [u32; 3] = [50072, 50074, 50076];
 
 fn is_unavailable_mfa_method_error(msg: &str, requested_method: &str) -> bool {
     let expected_prefix =
         format!("Requested MFA method '{requested_method}' not available. Available methods: ");
     msg.starts_with(&expected_prefix)
+}
+
+fn is_mfa_required_for_enrollment(e: &MsalError) -> bool {
+    match e {
+        MsalError::AcquireTokenFailed(resp) => resp
+            .error_codes
+            .iter()
+            .any(|code| MFA_REQUIRED_FOR_ENROLLMENT.contains(code)),
+        MsalError::AADSTSError(aadsts_err) => {
+            MFA_REQUIRED_FOR_ENROLLMENT.contains(&aadsts_err.code)
+        }
+        MsalError::MFARequired => true,
+        _ => false,
+    }
 }
 
 /// Convert an MsalError to a short, user-friendly message for PAM display.
@@ -2076,10 +2092,82 @@ impl IdProvider for HimmelblauProvider {
             };
         }
         macro_rules! enroll_and_obtain_enrolled_token {
-            ($token:ident) => {{
+            ($token:ident, $cred:expr) => {{
                 if !self.is_domain_joined(keystore).await {
                     debug!("Device is not enrolled. Enrolling now.");
                     if let Err(e) = self.join_domain(tpm, &$token, keystore, machine_key).await {
+                        if is_mfa_required_for_enrollment(&e) {
+                            info!("Device enrollment requires MFA; restarting authentication with ForceMFA.");
+
+                            let (
+                                console_password_only,
+                                remote_services,
+                                enable_experimental_passwordless_fido,
+                                enable_passwordless_security_key,
+                                enable_passwordless_qr_bluetooth,
+                                enable_passwordless,
+                                mfa_method,
+                            ) = {
+                                let cfg = self.config.lock().await;
+                                (
+                                    cfg.get_allow_console_password_only(),
+                                    cfg.get_password_only_remote_services_deny_list(),
+                                    cfg.get_enable_experimental_passwordless_fido(),
+                                    cfg.get_enable_passwordless_security_key(),
+                                    cfg.get_enable_passwordless_qr_bluetooth(),
+                                    cfg.get_enable_passwordless(),
+                                    cfg.get_mfa_method(),
+                                )
+                            };
+                            let is_remote_service = service.starts_with("remote:")
+                                || remote_services
+                                    .iter()
+                                    .any(|s| !s.is_empty() && service.contains(s));
+                            let mut auth_options = vec![AuthOption::ForceMFA];
+                            if enable_passwordless {
+                                auth_options.push(AuthOption::Passwordless);
+                            }
+                            if !is_remote_service {
+                                auth_options.push(AuthOption::Fido);
+                                if enable_experimental_passwordless_fido {
+                                    auth_options.push(AuthOption::PasswordlessFido);
+                                }
+                                if enable_passwordless_security_key {
+                                    auth_options.push(AuthOption::PasswordlessSecurityKey);
+                                }
+                                if enable_passwordless_qr_bluetooth {
+                                    auth_options.push(AuthOption::PasswordlessQrBluetooth);
+                                }
+                            }
+                            if is_remote_service {
+                                auth_options.push(AuthOption::RemoteSession);
+                            } else if console_password_only {
+                                debug!(
+                                    "Forcing MFA for device enrollment despite console password-only mode."
+                                );
+                            }
+
+                            let enrollment_cred: Option<String> = $cred;
+                            let flow = net_down_check!(
+                                self.initiate_mfa_flow_with_fallback(
+                                    account_id,
+                                    enrollment_cred.as_deref(),
+                                    &auth_options,
+                                    None,
+                                    mfa_method,
+                                )
+                                .await,
+                                Ok(flow) => flow,
+                                Err(e) => {
+                                    error!("MFA flow initiation failed after enrollment MFA demand: {:?}", e);
+                                    return Ok((
+                                        AuthResult::Denied(msal_error_to_user_message(&e)),
+                                        AuthCacheAction::None,
+                                    ));
+                                }
+                            );
+                            nested_auth_handle_mfa_resp!(flow, enrollment_cred)
+                        }
                         error!("Failed to join domain: {:?}", e);
                         return Ok((
                             AuthResult::Denied("Failed to join domain. Please contact your administrator.".to_string()),
@@ -3147,10 +3235,11 @@ impl IdProvider for HimmelblauProvider {
             }};
         }
         macro_rules! nested_auth_handle_mfa_resp {
-            ($resp:ident, $cred:ident) => {
+            ($resp:ident, $cred:expr) => {
                 nested_auth_handle_mfa_resp!($resp, $cred, None)
             };
-            ($resp:ident, $cred:ident, $reauth_hello_pin:expr) => {{
+            ($resp:ident, $cred:expr, $reauth_hello_pin:expr) => {{
+                let password: Option<String> = $cred.into();
                 let reauth_hello_pin: Option<Zeroizing<String>> = $reauth_hello_pin;
                 auth_handle_mfa_resp!(
                     $resp,
@@ -3177,16 +3266,18 @@ impl IdProvider for HimmelblauProvider {
                                 ));
                             }
                         };
+                        let action = match (
+                            self.config.lock().await.get_offline_breakglass_enabled(),
+                            password.as_ref(),
+                        ) {
+                            (true, Some(cred)) => AuthCacheAction::PasswordHashUpdate { cred: cred.clone() },
+                            _ => AuthCacheAction::None,
+                        };
                         *cred_handler = AuthCredHandler::MFA {
                             flow: Box::new($resp),
-                            password: Some($cred.clone()),
+                            password,
                             extra_data: None,
                             reauth_hello_pin: reauth_hello_pin.clone(),
-                        };
-                        let action = if self.config.lock().await.get_offline_breakglass_enabled() {
-                            AuthCacheAction::PasswordHashUpdate { $cred }
-                        } else {
-                            AuthCacheAction::None
                         };
                         return Ok((
                             AuthResult::Next(AuthRequest::Fido {
@@ -3203,16 +3294,18 @@ impl IdProvider for HimmelblauProvider {
                     // PROMPT
                     {
                         let msg = $resp.msg.clone();
+                        let action = match (
+                            self.config.lock().await.get_offline_breakglass_enabled(),
+                            password.as_ref(),
+                        ) {
+                            (true, Some(cred)) => AuthCacheAction::PasswordHashUpdate { cred: cred.clone() },
+                            _ => AuthCacheAction::None,
+                        };
                         *cred_handler = AuthCredHandler::MFA {
                             flow: Box::new($resp),
-                            password: Some($cred.clone()),
+                            password,
                             extra_data: None,
                             reauth_hello_pin: reauth_hello_pin.clone(),
-                        };
-                        let action = if self.config.lock().await.get_offline_breakglass_enabled() {
-                            AuthCacheAction::PasswordHashUpdate { $cred }
-                        } else {
-                            AuthCacheAction::None
                         };
                         return Ok((
                             AuthResult::Next(AuthRequest::MFACode { msg }),
@@ -3225,16 +3318,18 @@ impl IdProvider for HimmelblauProvider {
                     {
                         let msg = $resp.msg.clone();
                         let polling_interval = $resp.polling_interval.unwrap_or(5000);
+                        let action = match (
+                            self.config.lock().await.get_offline_breakglass_enabled(),
+                            password.as_ref(),
+                        ) {
+                            (true, Some(cred)) => AuthCacheAction::PasswordHashUpdate { cred: cred.clone() },
+                            _ => AuthCacheAction::None,
+                        };
                         *cred_handler = AuthCredHandler::MFA {
                             flow: Box::new($resp),
-                            password: Some($cred.clone()),
+                            password,
                             extra_data: None,
                             reauth_hello_pin: reauth_hello_pin.clone(),
-                        };
-                        let action = if self.config.lock().await.get_offline_breakglass_enabled() {
-                            AuthCacheAction::PasswordHashUpdate { $cred }
-                        } else {
-                            AuthCacheAction::None
                         };
                         return Ok((
                             AuthResult::Next(AuthRequest::MFAPoll {
@@ -3474,7 +3569,7 @@ impl IdProvider for HimmelblauProvider {
                     Some(Ok(token)) => {
                         // Password validated and no MFA required - return success
                         debug!("ROPC succeeded - no MFA required");
-                        let token2 = enroll_and_obtain_enrolled_token!(token);
+                        let token2 = enroll_and_obtain_enrolled_token!(token, Some(cred.clone()));
                         return match self.token_validate(account_id, &token2, None).await {
                             Ok(AuthResult::Success { token }) => {
                                 let action =
@@ -3792,7 +3887,7 @@ impl IdProvider for HimmelblauProvider {
                                 return Ok((AuthResult::Denied(msal_error_to_user_message(&e)), AuthCacheAction::None));
                             }
                         };
-                        let token2 = enroll_and_obtain_enrolled_token!(token);
+                        let token2 = enroll_and_obtain_enrolled_token!(token, Some(cred.clone()));
                         return match self.token_validate(account_id, &token2, None).await {
                             Ok(AuthResult::Success { token }) => {
                                 // STOP! If we just enrolled with an SFA token, then we
@@ -3854,7 +3949,7 @@ impl IdProvider for HimmelblauProvider {
                         }
                     }
                 );
-                let token2 = enroll_and_obtain_enrolled_token!(token);
+                let token2 = enroll_and_obtain_enrolled_token!(token, password.clone());
                 match self.token_validate(account_id, &token2, None).await {
                     Ok(AuthResult::Success { token: token3 }) => {
                         reseal_prt_with_existing_hello_key_on_success!(
@@ -3984,7 +4079,7 @@ impl IdProvider for HimmelblauProvider {
                 let token2 = if msa_tenant {
                     token.clone()
                 } else {
-                    enroll_and_obtain_enrolled_token!(token)
+                    enroll_and_obtain_enrolled_token!(token, password.clone())
                 };
                 match self.token_validate(account_id, &token2, None).await {
                     Ok(AuthResult::Success { token: token3 }) => {
@@ -4083,7 +4178,7 @@ impl IdProvider for HimmelblauProvider {
                         }
                     }
                 );
-                let token2 = enroll_and_obtain_enrolled_token!(token);
+                let token2 = enroll_and_obtain_enrolled_token!(token, password.clone());
                 match self.token_validate(account_id, &token2, None).await {
                     Ok(AuthResult::Success { token: token3 }) => {
                         reseal_prt_with_existing_hello_key_on_success!(
@@ -5319,7 +5414,10 @@ impl HimmelblauProvider {
 
 #[cfg(test)]
 mod tests {
-    use super::is_unavailable_mfa_method_error;
+    use super::{
+        is_mfa_required_for_enrollment, is_unavailable_mfa_method_error, CONSENT_REQUIRED,
+    };
+    use himmelblau::error::{AADSTSError, ErrorResponse, MsalError, DEVICE_AUTH_FAIL};
 
     #[test]
     fn unavailable_mfa_method_error_requires_exact_requested_method() {
@@ -5336,5 +5434,44 @@ mod tests {
             "Stored MFA method 'FidoKey' is not available. Available methods: PhoneAppOTP",
             "FidoKey"
         ));
+    }
+
+    #[test]
+    fn enrollment_mfa_classifier_matches_strong_auth_demands() {
+        for code in [50072, 50074, 50076] {
+            assert!(is_mfa_required_for_enrollment(
+                &MsalError::AcquireTokenFailed(ErrorResponse {
+                    error: "invalid_grant".to_string(),
+                    error_description: format!("AADSTS{code}: MFA required"),
+                    error_codes: vec![code],
+                })
+            ));
+            assert!(is_mfa_required_for_enrollment(&MsalError::AADSTSError(
+                AADSTSError::new(code, None)
+            )));
+        }
+
+        assert!(is_mfa_required_for_enrollment(&MsalError::MFARequired));
+    }
+
+    #[test]
+    fn enrollment_mfa_classifier_ignores_unrelated_errors() {
+        assert!(!is_mfa_required_for_enrollment(
+            &MsalError::AcquireTokenFailed(ErrorResponse {
+                error: "invalid_grant".to_string(),
+                error_description: "device auth failed".to_string(),
+                error_codes: vec![DEVICE_AUTH_FAIL],
+            })
+        ));
+        assert!(!is_mfa_required_for_enrollment(
+            &MsalError::AcquireTokenFailed(ErrorResponse {
+                error: "invalid_grant".to_string(),
+                error_description: "consent required".to_string(),
+                error_codes: vec![CONSENT_REQUIRED],
+            })
+        ));
+        assert!(!is_mfa_required_for_enrollment(&MsalError::RequestFailed(
+            "network down".to_string()
+        )));
     }
 }
