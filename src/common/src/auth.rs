@@ -1048,6 +1048,16 @@ fn handle_pam_auth_response_fido(
         }
     }
 
+    let fido_unavailable = |err: PamResultCode| {
+        debug!(
+            ?err,
+            "FIDO auth: local assertion failed, requesting fallback to other MFA methods"
+        );
+        PamWhatNext::Next(ClientRequest::PamAuthenticateStep(
+            PamAuthRequest::FidoUnavailable,
+        ))
+    };
+
     let result = if has_physical_security_key && can_qr_bluetooth && is_graphical {
         debug!("FIDO auth: attempting both security key and QR/Bluetooth");
         match fido_auth_with_qr_bluetooth(
@@ -1061,11 +1071,7 @@ fn handle_pam_auth_response_fido(
         ) {
             Ok(assertion) => assertion,
             Err(e) => {
-                pam_fail!(
-                    state.msg_printer,
-                    "Security key and QR/Bluetooth authentication failed.",
-                    e
-                );
+                return fido_unavailable(e);
             }
         }
     } else if can_qr_bluetooth && is_graphical {
@@ -1078,7 +1084,7 @@ fn handle_pam_auth_response_fido(
         ) {
             Ok(assertion) => assertion,
             Err(e) => {
-                pam_fail!(state.msg_printer, "QR/Bluetooth authentication failed.", e);
+                return fido_unavailable(e);
             }
         }
     } else {
@@ -1093,7 +1099,7 @@ fn handle_pam_auth_response_fido(
         ) {
             Ok(assertion) => assertion,
             Err(e) => {
-                pam_fail!(state.msg_printer, "Security key authentication failed.", e);
+                return fido_unavailable(e);
             }
         }
     };
