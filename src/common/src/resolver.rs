@@ -1374,6 +1374,10 @@ where
                         // AuthCredHandler::None is invalid with Fido
                         return Err(());
                     }
+                    (AuthCredHandler::None, PamAuthRequest::FidoUnavailable) => {
+                        // AuthCredHandler::None is invalid with FidoUnavailable
+                        return Err(());
+                    }
                     (AuthCredHandler::PasswordFirst { .. }, _) => {
                         // AuthCredHandler::PasswordFirst with anything other than
                         // PamAuthRequest::Password is invalid.

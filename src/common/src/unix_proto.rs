@@ -80,6 +80,8 @@ pub enum PamAuthRequest {
     SetupPin { pin: String },
     Pin { cred: String },
     Fido { assertion: String },
+    /// FIDO hardware is unavailable on the PAM client.
+    FidoUnavailable,
 }
 
 #[derive(Serialize, Deserialize, Debug)]

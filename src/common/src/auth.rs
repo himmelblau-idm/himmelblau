@@ -533,11 +533,12 @@ macro_rules! match_sm_auth_client_response {
                     let result = match fido_auth($msg_printer.clone(), fido_challenge, fido_allow_list) {
                         Ok(assertion) => assertion,
                         Err(e) => {
-                            pam_fail!(
-                                $msg_printer,
-                                "Entra Id Fido authentication failed.",
-                                e
+                            debug!(
+                                ?e,
+                                "FIDO auth: local assertion failed, requesting fallback to password"
                             );
+                            $req = ClientRequest::PamAuthenticateStep(PamAuthRequest::FidoUnavailable);
+                            continue;
                         },
                     };
 

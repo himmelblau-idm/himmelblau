@@ -3721,6 +3721,26 @@ impl IdProvider for HimmelblauProvider {
                     Err(e) => Err(e),
                 }
             }
+            (AuthCredHandler::MFA { password, .. }, PamAuthRequest::FidoUnavailable) => {
+                let password_was_supplied = password.is_some();
+                *cred_handler = AuthCredHandler::None;
+                if password_was_supplied {
+                    debug!("FIDO hardware unavailable after password entry, denying auth");
+                    Ok((
+                        AuthResult::Denied(
+                            "FIDO authentication is unavailable. Please insert your security key or use another sign-in method."
+                                .to_string(),
+                        ),
+                        AuthCacheAction::None,
+                    ))
+                } else {
+                    debug!("FIDO hardware unavailable on client, falling back to password");
+                    Ok((
+                        AuthResult::Next(AuthRequest::Password),
+                        AuthCacheAction::None,
+                    ))
+                }
+            }
             (
                 AuthCredHandler::MFA {
                     ref mut flow,
