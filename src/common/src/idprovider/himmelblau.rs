@@ -3755,12 +3755,10 @@ impl IdProvider for HimmelblauProvider {
                 // Check if this is a remote service:
                 // - Service starts with "remote:" (set by PAM module when PAM_RHOST is set)
                 // - Service name contains any entry from remote_services_deny_list
-                // - Service name or TTY contains "ssh" (fallback check)
                 let is_remote_service = service.starts_with("remote:")
                     || remote_services
                         .iter()
-                        .any(|s| !s.is_empty() && service.contains(s))
-                    || service.to_lowercase().contains("ssh");
+                        .any(|s| !s.is_empty() && service.contains(s));
                 let console_password_only =
                     self.config.lock().await.get_allow_console_password_only();
                 if !is_remote_service {
