@@ -30,45 +30,34 @@
 #![deny(clippy::needless_pass_by_value)]
 #![deny(clippy::trivially_copy_pass_by_ref)]
 use std::collections::HashMap;
-use std::ffi::CString;
 use std::fmt;
+use std::io::Cursor;
 use std::num::NonZeroU32;
-use std::ptr;
-use std::sync::RwLock;
+use unicode_normalization::UnicodeNormalization;
 use uuid::Uuid;
 
-#[macro_use]
-extern crate tracing;
-
-mod ffi {
-    #![allow(non_upper_case_globals)]
-    #![allow(non_camel_case_types)]
-    #![allow(non_snake_case)]
-    #![allow(dead_code)]
-    include!(concat!(env!("OUT_DIR"), "/bindings.rs"));
-}
+const MURMUR3_SEED: u32 = 0xdeadbeef;
 
 #[derive(PartialEq, Eq)]
 pub struct IdmapError(u32);
 
-pub const IDMAP_SUCCESS: IdmapError = IdmapError(ffi::idmap_error_code_IDMAP_SUCCESS);
-pub const IDMAP_NOT_IMPLEMENTED: IdmapError =
-    IdmapError(ffi::idmap_error_code_IDMAP_NOT_IMPLEMENTED);
-pub const IDMAP_ERROR: IdmapError = IdmapError(ffi::idmap_error_code_IDMAP_ERROR);
-pub const IDMAP_OUT_OF_MEMORY: IdmapError = IdmapError(ffi::idmap_error_code_IDMAP_OUT_OF_MEMORY);
-pub const IDMAP_NO_DOMAIN: IdmapError = IdmapError(ffi::idmap_error_code_IDMAP_NO_DOMAIN);
-pub const IDMAP_CONTEXT_INVALID: IdmapError =
-    IdmapError(ffi::idmap_error_code_IDMAP_CONTEXT_INVALID);
-pub const IDMAP_SID_INVALID: IdmapError = IdmapError(ffi::idmap_error_code_IDMAP_SID_INVALID);
-pub const IDMAP_SID_UNKNOWN: IdmapError = IdmapError(ffi::idmap_error_code_IDMAP_SID_UNKNOWN);
-pub const IDMAP_NO_RANGE: IdmapError = IdmapError(ffi::idmap_error_code_IDMAP_NO_RANGE);
-pub const IDMAP_BUILTIN_SID: IdmapError = IdmapError(ffi::idmap_error_code_IDMAP_BUILTIN_SID);
-pub const IDMAP_OUT_OF_SLICES: IdmapError = IdmapError(ffi::idmap_error_code_IDMAP_OUT_OF_SLICES);
-pub const IDMAP_COLLISION: IdmapError = IdmapError(ffi::idmap_error_code_IDMAP_COLLISION);
-pub const IDMAP_EXTERNAL: IdmapError = IdmapError(ffi::idmap_error_code_IDMAP_EXTERNAL);
-pub const IDMAP_NAME_UNKNOWN: IdmapError = IdmapError(ffi::idmap_error_code_IDMAP_NAME_UNKNOWN);
-pub const IDMAP_NO_REVERSE: IdmapError = IdmapError(ffi::idmap_error_code_IDMAP_NO_REVERSE);
-pub const IDMAP_ERR_LAST: IdmapError = IdmapError(ffi::idmap_error_code_IDMAP_ERR_LAST);
+pub const IDMAP_SUCCESS: IdmapError = IdmapError(0);
+pub const IDMAP_NOT_IMPLEMENTED: IdmapError = IdmapError(1);
+pub const IDMAP_ERROR: IdmapError = IdmapError(2);
+pub const IDMAP_OUT_OF_MEMORY: IdmapError = IdmapError(3);
+pub const IDMAP_NO_DOMAIN: IdmapError = IdmapError(4);
+pub const IDMAP_CONTEXT_INVALID: IdmapError = IdmapError(5);
+pub const IDMAP_SID_INVALID: IdmapError = IdmapError(6);
+pub const IDMAP_SID_UNKNOWN: IdmapError = IdmapError(7);
+pub const IDMAP_NO_RANGE: IdmapError = IdmapError(8);
+pub const IDMAP_BUILTIN_SID: IdmapError = IdmapError(9);
+pub const IDMAP_OUT_OF_SLICES: IdmapError = IdmapError(10);
+pub const IDMAP_COLLISION: IdmapError = IdmapError(11);
+pub const IDMAP_EXTERNAL: IdmapError = IdmapError(12);
+pub const IDMAP_NAME_UNKNOWN: IdmapError = IdmapError(13);
+pub const IDMAP_NO_REVERSE: IdmapError = IdmapError(14);
+pub const IDMAP_UTF8_ERROR: IdmapError = IdmapError(15);
+pub const IDMAP_ERR_LAST: IdmapError = IdmapError(16);
 
 impl fmt::Display for IdmapError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -88,6 +77,7 @@ impl fmt::Display for IdmapError {
             IDMAP_EXTERNAL => "IDMAP_EXTERNAL",
             IDMAP_NAME_UNKNOWN => "IDMAP_NAME_UNKNOWN",
             IDMAP_NO_REVERSE => "IDMAP_NO_REVERSE",
+            IDMAP_UTF8_ERROR => "IDMAP_UTF8_ERROR",
             IDMAP_ERR_LAST => "IDMAP_ERR_LAST",
             _ => "UNKNOWN_ERROR",
         };
@@ -198,93 +188,66 @@ pub const DEFAULT_SUBID_RANGE: (u32, u32) = (2100000000, 4200000000);
 /// Number of subordinate IDs allocated per user (standard for container runtimes)
 pub const SUBID_COUNT: u32 = 65536;
 
-// The ctx is behind a read/write lock to make it 'safer' to Send/Sync.
-// Granted, dereferencing a raw pointer is still inherently unsafe.
+#[derive(Debug, Clone, Copy)]
+struct DomainRange {
+    min: u32,
+    max: u32,
+}
+
 pub struct Idmap {
-    ctx: RwLock<*mut ffi::sss_idmap_ctx>,
-    ranges: HashMap<String, (u32, u32)>,
+    ranges: HashMap<String, DomainRange>,
 }
 
 impl Idmap {
     pub fn new() -> Result<Idmap, IdmapError> {
-        let mut ctx = ptr::null_mut();
-        unsafe {
-            match IdmapError(ffi::sss_idmap_init(None, ptr::null_mut(), None, &mut ctx)) {
-                IDMAP_SUCCESS => Ok(Idmap {
-                    ctx: RwLock::new(ctx),
-                    ranges: HashMap::new(),
-                }),
-                e => Err(e),
-            }
-        }
+        Ok(Idmap {
+            ranges: HashMap::new(),
+        })
     }
 
     pub fn add_gen_domain(
         &mut self,
-        domain_name: &str,
+        _domain_name: &str,
         tenant_id: &str,
         range: (u32, u32),
     ) -> Result<(), IdmapError> {
         if self.ranges.contains_key(tenant_id) {
             return Err(IDMAP_COLLISION);
         }
-        let ctx = self.ctx.write().map_err(|e| {
-            error!("Failed obtaining write lock on sss_idmap_ctx: {}", e);
-            IDMAP_ERROR
-        })?;
-        let domain_name_cstr = CString::new(domain_name).map_err(|_| IDMAP_OUT_OF_MEMORY)?;
-        let tenant_id_cstr = CString::new(tenant_id).map_err(|_| IDMAP_OUT_OF_MEMORY)?;
-        let mut idmap_range = ffi::sss_idmap_range {
-            min: range.0,
-            max: range.1,
-        };
-        self.ranges.insert(tenant_id.to_string(), range);
-        unsafe {
-            match IdmapError(ffi::sss_idmap_add_gen_domain_ex(
-                *ctx,
-                domain_name_cstr.as_ptr(),
-                tenant_id_cstr.as_ptr(),
-                &mut idmap_range,
-                ptr::null_mut(),
-                None,
-                None,
-                ptr::null_mut(),
-                0,
-                false,
-            )) {
-                IDMAP_SUCCESS => Ok(()),
-                e => Err(e),
+
+        for existing in self.ranges.values() {
+            if ranges_collide(*existing, range) {
+                return Err(IDMAP_COLLISION);
             }
         }
+
+        self.ranges.insert(
+            tenant_id.to_string(),
+            DomainRange {
+                min: range.0,
+                max: range.1,
+            },
+        );
+        Ok(())
     }
 
     pub fn gen_to_unix(&self, tenant_id: &str, input: &str) -> Result<u32, IdmapError> {
-        if !self.ranges.contains_key(tenant_id) {
-            return Err(IDMAP_NO_DOMAIN);
+        let range = self.ranges.get(tenant_id).ok_or(IDMAP_NO_DOMAIN)?;
+        let range_size = range.max.checked_sub(range.min).ok_or(IDMAP_NO_RANGE)?;
+        let range_size = range_size.checked_add(1).ok_or(IDMAP_NO_RANGE)?;
+        if range_size == 0 {
+            return Err(IDMAP_NO_RANGE);
         }
-        let ctx = self.ctx.write().map_err(|e| {
-            error!("Failed obtaining write lock on sss_idmap_ctx: {}", e);
-            IDMAP_ERROR
-        })?;
-        let tenant_id_cstr = CString::new(tenant_id).map_err(|_| IDMAP_OUT_OF_MEMORY)?;
-        let input_cstr = CString::new(input.to_lowercase()).map_err(|_| IDMAP_OUT_OF_MEMORY)?;
-        unsafe {
-            let mut id: u32 = 0;
-            match IdmapError(ffi::sss_idmap_gen_to_unix(
-                *ctx,
-                tenant_id_cstr.as_ptr(),
-                input_cstr.as_ptr(),
-                &mut id,
-            )) {
-                IDMAP_SUCCESS => Ok(id),
-                e => Err(e),
-            }
-        }
+
+        let input = normalize_for_hash(input);
+        let hash = murmur3_32(&input)?;
+        Ok(range.min + (hash % range_size))
     }
 
     pub fn object_id_to_unix_id(&self, tenant_id: &str, sid: &AadSid) -> Result<u32, IdmapError> {
         let rid = sid.rid()?;
-        let &(lo, hi) = self.ranges.get(tenant_id).ok_or(IDMAP_NO_RANGE)?;
+        let range = self.ranges.get(tenant_id).ok_or(IDMAP_NO_RANGE)?;
+        let (lo, hi) = (range.min, range.max);
         let uid_count = NonZeroU32::new(hi.saturating_sub(lo)).ok_or(IDMAP_NO_RANGE)?;
         Ok((rid % uid_count) + lo)
     }
@@ -300,8 +263,6 @@ impl Idmap {
 /// # Returns
 /// The starting subordinate ID for this user's range
 pub fn gen_subid_start(username: &str, subid_range: (u32, u32)) -> u32 {
-    const SEED: u32 = 0xdeadbeef;
-
     let (min_id, max_id) = subid_range;
     let range_size = max_id.saturating_sub(min_id);
 
@@ -313,57 +274,51 @@ pub fn gen_subid_start(username: &str, subid_range: (u32, u32)) -> u32 {
         return min_id;
     }
 
-    // Use MurmurHash3 to hash the username (same algorithm as SSSD idmap)
     let input = username.to_lowercase();
-    let hash = unsafe {
-        ffi::murmurhash3(
-            input.as_ptr() as *const std::os::raw::c_char,
-            input.len() as i32,
-            SEED,
-        )
-    };
+    let hash = murmur3_32(&input).unwrap_or(0);
 
     // Map hash to a slot number and calculate the start ID
     let slot = hash % num_slots;
     min_id + (slot * SUBID_COUNT)
 }
 
-impl Drop for Idmap {
-    fn drop(&mut self) {
-        match self.ctx.write() {
-            Ok(ctx) => unsafe {
-                let _ = ffi::sss_idmap_free(*ctx);
-            },
-            Err(e) => {
-                error!(
-                    "Failed obtaining write lock on sss_idmap_ctx during drop: {}",
-                    e
-                );
-            }
-        }
-    }
+fn ranges_collide(existing: DomainRange, new: (u32, u32)) -> bool {
+    // Check if ranges overlap in any way:
+    // 1. new.min falls within existing range
+    // 2. new.max falls within existing range
+    // 3. new range completely contains existing range
+    (new.0 >= existing.min && new.0 <= existing.max)
+        || (new.1 >= existing.min && new.1 <= existing.max)
+        || (new.0 <= existing.min && new.1 >= existing.max)
 }
 
-unsafe impl Send for Idmap {}
-unsafe impl Sync for Idmap {}
+fn normalize_for_hash(input: &str) -> String {
+    input.to_lowercase().nfkc().collect()
+}
+
+fn murmur3_32(input: &str) -> Result<u32, IdmapError> {
+    murmur3::murmur3_32(&mut Cursor::new(input.as_bytes()), MURMUR3_SEED).map_err(|_| IDMAP_ERROR)
+}
 
 #[cfg(test)]
 mod tests {
     use crate::{
-        gen_subid_start, AadSid, Idmap, DEFAULT_IDMAP_RANGE, DEFAULT_SUBID_RANGE, SUBID_COUNT,
+        gen_subid_start, AadSid, Idmap, DEFAULT_IDMAP_RANGE, DEFAULT_SUBID_RANGE,
+        IDMAP_BUILTIN_SID, IDMAP_COLLISION, IDMAP_CONTEXT_INVALID, IDMAP_ERROR, IDMAP_ERR_LAST,
+        IDMAP_EXTERNAL, IDMAP_NAME_UNKNOWN, IDMAP_NOT_IMPLEMENTED, IDMAP_NO_DOMAIN, IDMAP_NO_RANGE,
+        IDMAP_NO_REVERSE, IDMAP_OUT_OF_MEMORY, IDMAP_OUT_OF_SLICES, IDMAP_SID_INVALID,
+        IDMAP_SID_UNKNOWN, IDMAP_SUCCESS, SUBID_COUNT,
     };
     use std::collections::HashMap;
     use uuid::Uuid;
 
     #[test]
-    fn sssd_idmapping() {
+    fn sssd_idmapping() -> Result<(), Box<dyn std::error::Error>> {
         let domain = "contoso.onmicrosoft.com";
         let tenant_id = "d7af6c1b-0497-40fe-9d17-07e6b0f8332e";
-        let mut idmap = Idmap::new().expect("Idmap initialization failed");
+        let mut idmap = Idmap::new()?;
 
-        idmap
-            .add_gen_domain(domain, tenant_id, DEFAULT_IDMAP_RANGE)
-            .expect("Failed initializing test domain idmapping");
+        idmap.add_gen_domain(domain, tenant_id, DEFAULT_IDMAP_RANGE)?;
 
         // Verify we always get the same mapping for various users
         let mut usermap: HashMap<String, u32> = HashMap::new();
@@ -374,23 +329,21 @@ mod tests {
         usermap.insert("georg@contoso.onmicrosoft.com".to_string(), 866887005);
 
         for (username, expected_uid) in &usermap {
-            let uid = idmap
-                .gen_to_unix(tenant_id, username)
-                .expect(&format!("Failed converting username {} to uid", username));
+            let uid = idmap.gen_to_unix(tenant_id, username)?;
             assert_eq!(uid, *expected_uid, "Uid for {} did not match", username);
         }
+
+        Ok(())
     }
 
     #[test]
-    fn legacy_idmapping() {
+    fn legacy_idmapping() -> Result<(), Box<dyn std::error::Error>> {
         let domain = "contoso.onmicrosoft.com";
         let tenant_id = "d7af6c1b-0497-40fe-9d17-07e6b0f8332e";
-        let mut idmap = Idmap::new().expect("Idmap initialization failed");
+        let mut idmap = Idmap::new()?;
 
         // Test using the legacy default idmap range
-        idmap
-            .add_gen_domain(domain, tenant_id, (1000000, 6999999))
-            .expect("Failed initializing test domain idmapping");
+        idmap.add_gen_domain(domain, tenant_id, (1000000, 6999999))?;
 
         // Verify we always get the same mapping for various users
         let mut usermap: HashMap<String, (u32, String)> = HashMap::new();
@@ -416,26 +369,20 @@ mod tests {
         );
 
         for (username, (expected_uid, object_id)) in &usermap {
-            let object_uuid = Uuid::parse_str(&object_id).expect("Failed parsing object_id");
-            let uid = idmap
-                .object_id_to_unix_id(
-                    tenant_id,
-                    &AadSid::from_object_id(&object_uuid).expect("Failed parsing object id"),
-                )
-                .expect(&format!("Failed converting uuid {} to uid", object_id));
+            let object_uuid = Uuid::parse_str(object_id)?;
+            let sid = AadSid::from_object_id(&object_uuid)?;
+            let uid = idmap.object_id_to_unix_id(tenant_id, &sid)?;
             assert_eq!(uid, *expected_uid, "Uid for {} did not match", username);
         }
+
+        Ok(())
     }
 
     #[test]
-    fn sid_match_object_id() {
-        let object_id = AadSid::from_object_id(
-            &Uuid::parse_str("e8b5ca15-cb55-4b86-9113-a616d7f84214")
-                .expect("Failed parsing object id"),
-        )
-        .expect("Failed parsing object id as sid");
-        let sid = AadSid::from_sid_str("S-1-12-1-3904227861-1267125077-379982737-339933399")
-            .expect("Failed parsing sid");
+    fn sid_match_object_id() -> Result<(), Box<dyn std::error::Error>> {
+        let object_id =
+            AadSid::from_object_id(&Uuid::parse_str("e8b5ca15-cb55-4b86-9113-a616d7f84214")?)?;
+        let sid = AadSid::from_sid_str("S-1-12-1-3904227861-1267125077-379982737-339933399")?;
 
         assert_eq!(object_id, sid, "Parsed object id did not match parsed sid!");
         assert_eq!(
@@ -443,6 +390,8 @@ mod tests {
             sid.rid(),
             "Parsed object id RID did not match parsed sid RID!"
         );
+
+        Ok(())
     }
 
     #[test]
@@ -509,5 +458,506 @@ mod tests {
 
         // Should return min_id when range is too small
         assert_eq!(subid, small_range.0, "Small range should return min_id");
+    }
+
+    #[test]
+    fn gen_to_unix_parity_cases() -> Result<(), Box<dyn std::error::Error>> {
+        let domain = "contoso.onmicrosoft.com";
+        let tenant_id = "d7af6c1b-0497-40fe-9d17-07e6b0f8332e";
+        let mut idmap = Idmap::new()?;
+
+        idmap.add_gen_domain(domain, tenant_id, DEFAULT_IDMAP_RANGE)?;
+
+        let cases = [
+            ("", 233362409),
+            ("TUX@CONTOSO.ONMICROSOFT.COM", 1912749799),
+            ("Tux@Contoso.OnMicrosoft.Com", 1912749799),
+            ("tux@contoso.onmicrosoft.com", 1912749799),
+            ("user@example.com", 1608008066),
+            ("Ａlice@contoso.onmicrosoft.com", 245350431),
+            ("Alice@contoso.onmicrosoft.com", 245350431),
+            ("é@example.com", 1844060247),
+            ("e\u{301}@example.com", 1844060247),
+        ];
+
+        for (input, expected_uid) in cases {
+            assert_eq!(
+                idmap.gen_to_unix(tenant_id, input)?,
+                expected_uid,
+                "Uid for {input:?} did not match"
+            );
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn gen_to_unix_range_and_domain_errors() -> Result<(), Box<dyn std::error::Error>> {
+        let mut idmap = Idmap::new()?;
+
+        idmap.add_gen_domain("domain-a", "tenant-a", (100, 100))?;
+        assert_eq!(idmap.gen_to_unix("tenant-a", "anything")?, 100);
+        assert_eq!(
+            idmap.gen_to_unix("missing", "anything"),
+            Err(IDMAP_NO_DOMAIN)
+        );
+        assert_eq!(
+            idmap.add_gen_domain("domain-a", "tenant-a", (30, 40)),
+            Err(IDMAP_COLLISION)
+        );
+        assert_eq!(
+            idmap.add_gen_domain("domain-b", "tenant-b", (100, 110)),
+            Err(IDMAP_COLLISION)
+        );
+        assert_eq!(
+            idmap.gen_to_unix("tenant-b", "anything"),
+            Err(IDMAP_NO_DOMAIN)
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn gen_to_unix_degenerate_ranges() -> Result<(), Box<dyn std::error::Error>> {
+        for (range, expected) in [
+            ((1000, 1000), Ok(1000)),
+            ((1000, 1001), Ok(1001)),
+            ((1000, 1002), Ok(1002)),
+            ((2000, 1000), Err(IDMAP_NO_RANGE)),
+        ] {
+            let mut idmap = Idmap::new()?;
+            idmap.add_gen_domain("domain", "tenant", range)?;
+            assert_eq!(
+                idmap.gen_to_unix("tenant", "x"),
+                expected,
+                "Mapping result for range {range:?} did not match"
+            );
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn subid_parity_cases() {
+        for (input, expected_start) in [
+            ("", 3249566976),
+            ("user@example.com", 3312284928),
+            ("USER@EXAMPLE.COM", 3312284928),
+            ("tux@contoso.onmicrosoft.com", 4151342336),
+            ("admin@contoso.onmicrosoft.com", 3473962240),
+        ] {
+            assert_eq!(
+                gen_subid_start(input, DEFAULT_SUBID_RANGE),
+                expected_start,
+                "Subid start for {input:?} did not match"
+            );
+        }
+
+        for (range, expected_start) in [
+            ((100000, 165536), 100000),
+            ((100000, 165535), 100000),
+            ((100000, 231072), 100000),
+            ((2000, 1000), 2000),
+        ] {
+            assert_eq!(
+                gen_subid_start("user@example.com", range),
+                expected_start,
+                "Subid start for range {range:?} did not match"
+            );
+        }
+    }
+
+    #[test]
+    fn object_id_to_sid_parity_cases() -> Result<(), Box<dyn std::error::Error>> {
+        let cases = [
+            (
+                "00000000-0000-0000-0000-000000000000",
+                "S-1-12-1-0-0-0-0",
+                0,
+            ),
+            (
+                "ffffffff-ffff-ffff-ffff-ffffffffffff",
+                "S-1-12-1-4294967295-4294967295-4294967295-4294967295",
+                u32::MAX,
+            ),
+            (
+                "4210d86f-ce97-4aff-97f7-bd3789727903",
+                "S-1-12-1-1108400239-1258278551-935196567-58290825",
+                58290825,
+            ),
+        ];
+
+        for (object_id, sid_str, expected_rid) in cases {
+            let object_sid = AadSid::from_object_id(&Uuid::parse_str(object_id)?)?;
+            let parsed_sid = AadSid::from_sid_str(sid_str)?;
+
+            assert_eq!(object_sid, parsed_sid);
+            assert_eq!(object_sid.rid()?, expected_rid);
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn sid_parser_rejects_invalid_inputs() {
+        for sid in [
+            "",
+            "s-1-12-1",
+            " S-1-12-1",
+            "S-1",
+            "S-1-12",
+            "S-1-12-",
+            "S-1-12-1-",
+            "S-1-12--1",
+            "S-1-12--",
+            "S-1-12-4294967296",
+            "S-1-12-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1-1",
+        ] {
+            assert_eq!(
+                AadSid::from_sid_str(sid),
+                Err(IDMAP_SID_INVALID),
+                "{sid:?} should be rejected"
+            );
+        }
+    }
+
+    #[test]
+    fn error_constants_are_stable() {
+        assert_eq!(IDMAP_SUCCESS.0, 0);
+        assert_eq!(IDMAP_NOT_IMPLEMENTED.0, 1);
+        assert_eq!(IDMAP_ERROR.0, 2);
+        assert_eq!(IDMAP_OUT_OF_MEMORY.0, 3);
+        assert_eq!(IDMAP_NO_DOMAIN.0, 4);
+        assert_eq!(IDMAP_CONTEXT_INVALID.0, 5);
+        assert_eq!(IDMAP_SID_INVALID.0, 6);
+        assert_eq!(IDMAP_SID_UNKNOWN.0, 7);
+        assert_eq!(IDMAP_NO_RANGE.0, 8);
+        assert_eq!(IDMAP_BUILTIN_SID.0, 9);
+        assert_eq!(IDMAP_OUT_OF_SLICES.0, 10);
+        assert_eq!(IDMAP_COLLISION.0, 11);
+        assert_eq!(IDMAP_EXTERNAL.0, 12);
+        assert_eq!(IDMAP_NAME_UNKNOWN.0, 13);
+        assert_eq!(IDMAP_NO_REVERSE.0, 14);
+        assert_eq!(IDMAP_ERR_LAST.0, 16);
+        assert_eq!(format!("{IDMAP_NO_RANGE:?}"), "IdmapError(IDMAP_NO_RANGE)");
+    }
+
+    #[test]
+    fn idmap_range_overlap_detection() -> Result<(), Box<dyn std::error::Error>> {
+        // === 1. Non-overlapping ranges (should succeed) ===
+
+        // 1.1: Adjacent ranges (touching boundaries) should be allowed
+        let mut idmap = Idmap::new()?;
+        idmap.add_gen_domain("domain-a", "tenant-a", (1000, 1999))?;
+        idmap.add_gen_domain("domain-b", "tenant-b", (2000, 2999))?;
+        idmap.add_gen_domain("domain-c", "tenant-c", (3000, 3999))?;
+
+        // 1.2: Non-adjacent ranges with gaps should be allowed
+        let mut idmap = Idmap::new()?;
+        idmap.add_gen_domain("domain-a", "tenant-a", (1000, 1999))?;
+        idmap.add_gen_domain("domain-b", "tenant-b", (5000, 5999))?;
+        idmap.add_gen_domain("domain-c", "tenant-c", (10000, 19999))?;
+
+        // 1.3: Single-ID ranges that don't overlap
+        let mut idmap = Idmap::new()?;
+        idmap.add_gen_domain("domain-a", "tenant-a", (100, 100))?;
+        idmap.add_gen_domain("domain-b", "tenant-b", (101, 101))?;
+        idmap.add_gen_domain("domain-c", "tenant-c", (200, 200))?;
+
+        // 1.4: Real-world ranges (DEFAULT_IDMAP_RANGE vs DEFAULT_SUBID_RANGE)
+        // These are the production ranges that must never overlap
+        let mut idmap = Idmap::new()?;
+        idmap.add_gen_domain("idmap", "tenant-idmap", DEFAULT_IDMAP_RANGE)?;
+        idmap.add_gen_domain("subid", "tenant-subid", DEFAULT_SUBID_RANGE)?;
+
+        // 1.5: Minimum and maximum u32 boundary ranges
+        let mut idmap = Idmap::new()?;
+        idmap.add_gen_domain("domain-min", "tenant-min", (0, 1000))?;
+        idmap.add_gen_domain("domain-mid", "tenant-mid", (2000000000, 3000000000))?;
+        idmap.add_gen_domain("domain-max", "tenant-max", (4000000000, u32::MAX))?;
+
+        // === 2. Overlapping ranges (should fail with IDMAP_COLLISION) ===
+
+        // 2.1: Complete overlap (new range entirely contains existing range)
+        let mut idmap = Idmap::new()?;
+        idmap.add_gen_domain("domain-a", "tenant-a", (1000, 2000))?;
+        assert_eq!(
+            idmap.add_gen_domain("domain-b", "tenant-b", (500, 2500)),
+            Err(IDMAP_COLLISION),
+            "New range completely containing existing range should be rejected"
+        );
+
+        // 2.2: Complete containment (new range entirely within existing range)
+        let mut idmap = Idmap::new()?;
+        idmap.add_gen_domain("domain-a", "tenant-a", (1000, 5000))?;
+        assert_eq!(
+            idmap.add_gen_domain("domain-b", "tenant-b", (2000, 3000)),
+            Err(IDMAP_COLLISION),
+            "New range completely within existing range should be rejected"
+        );
+
+        // 2.3: Exact duplicate range
+        let mut idmap = Idmap::new()?;
+        idmap.add_gen_domain("domain-a", "tenant-a", (1000, 2000))?;
+        assert_eq!(
+            idmap.add_gen_domain("domain-b", "tenant-b", (1000, 2000)),
+            Err(IDMAP_COLLISION),
+            "Exact duplicate range should be rejected"
+        );
+
+        // 2.4: Partial overlap at lower boundary (new.min overlaps)
+        let mut idmap = Idmap::new()?;
+        idmap.add_gen_domain("domain-a", "tenant-a", (1000, 2000))?;
+        assert_eq!(
+            idmap.add_gen_domain("domain-b", "tenant-b", (500, 1500)),
+            Err(IDMAP_COLLISION),
+            "New range overlapping at lower boundary should be rejected"
+        );
+
+        // 2.5: Partial overlap at upper boundary (new.max overlaps)
+        let mut idmap = Idmap::new()?;
+        idmap.add_gen_domain("domain-a", "tenant-a", (1000, 2000))?;
+        assert_eq!(
+            idmap.add_gen_domain("domain-b", "tenant-b", (1500, 2500)),
+            Err(IDMAP_COLLISION),
+            "New range overlapping at upper boundary should be rejected"
+        );
+
+        // 2.6: Single ID overlap at exact boundary (new.min == existing.max)
+        let mut idmap = Idmap::new()?;
+        idmap.add_gen_domain("domain-a", "tenant-a", (1000, 2000))?;
+        assert_eq!(
+            idmap.add_gen_domain("domain-b", "tenant-b", (2000, 3000)),
+            Err(IDMAP_COLLISION),
+            "New range starting at existing.max should be rejected (inclusive boundary)"
+        );
+
+        // 2.7: Single ID overlap at exact boundary (new.max == existing.min)
+        let mut idmap = Idmap::new()?;
+        idmap.add_gen_domain("domain-a", "tenant-a", (2000, 3000))?;
+        assert_eq!(
+            idmap.add_gen_domain("domain-b", "tenant-b", (1000, 2000)),
+            Err(IDMAP_COLLISION),
+            "New range ending at existing.min should be rejected (inclusive boundary)"
+        );
+
+        // 2.8: Multiple existing ranges, overlap with first
+        let mut idmap = Idmap::new()?;
+        idmap.add_gen_domain("domain-a", "tenant-a", (1000, 2000))?;
+        idmap.add_gen_domain("domain-b", "tenant-b", (5000, 6000))?;
+        idmap.add_gen_domain("domain-c", "tenant-c", (10000, 11000))?;
+        assert_eq!(
+            idmap.add_gen_domain("domain-d", "tenant-d", (1500, 1700)),
+            Err(IDMAP_COLLISION),
+            "Overlap with first of multiple ranges should be rejected"
+        );
+
+        // 2.9: Multiple existing ranges, overlap with middle
+        let mut idmap = Idmap::new()?;
+        idmap.add_gen_domain("domain-a", "tenant-a", (1000, 2000))?;
+        idmap.add_gen_domain("domain-b", "tenant-b", (5000, 6000))?;
+        idmap.add_gen_domain("domain-c", "tenant-c", (10000, 11000))?;
+        assert_eq!(
+            idmap.add_gen_domain("domain-d", "tenant-d", (5500, 5700)),
+            Err(IDMAP_COLLISION),
+            "Overlap with middle of multiple ranges should be rejected"
+        );
+
+        // 2.10: Multiple existing ranges, overlap with last
+        let mut idmap = Idmap::new()?;
+        idmap.add_gen_domain("domain-a", "tenant-a", (1000, 2000))?;
+        idmap.add_gen_domain("domain-b", "tenant-b", (5000, 6000))?;
+        idmap.add_gen_domain("domain-c", "tenant-c", (10000, 11000))?;
+        assert_eq!(
+            idmap.add_gen_domain("domain-d", "tenant-d", (10500, 10700)),
+            Err(IDMAP_COLLISION),
+            "Overlap with last of multiple ranges should be rejected"
+        );
+
+        // 2.11: New range spans multiple existing ranges
+        let mut idmap = Idmap::new()?;
+        idmap.add_gen_domain("domain-a", "tenant-a", (1000, 2000))?;
+        idmap.add_gen_domain("domain-b", "tenant-b", (5000, 6000))?;
+        idmap.add_gen_domain("domain-c", "tenant-c", (10000, 11000))?;
+        assert_eq!(
+            idmap.add_gen_domain("domain-d", "tenant-d", (500, 20000)),
+            Err(IDMAP_COLLISION),
+            "New range spanning multiple existing ranges should be rejected"
+        );
+
+        // 2.12: Single-ID ranges that overlap
+        let mut idmap = Idmap::new()?;
+        idmap.add_gen_domain("domain-a", "tenant-a", (100, 100))?;
+        assert_eq!(
+            idmap.add_gen_domain("domain-b", "tenant-b", (100, 100)),
+            Err(IDMAP_COLLISION),
+            "Duplicate single-ID ranges should be rejected"
+        );
+
+        // 2.13: Single-ID range overlapping with multi-ID range
+        let mut idmap = Idmap::new()?;
+        idmap.add_gen_domain("domain-a", "tenant-a", (1000, 2000))?;
+        assert_eq!(
+            idmap.add_gen_domain("domain-b", "tenant-b", (1500, 1500)),
+            Err(IDMAP_COLLISION),
+            "Single-ID range within existing range should be rejected"
+        );
+
+        // 2.14: Verify DEFAULT_IDMAP_RANGE and DEFAULT_SUBID_RANGE don't overlap
+        // This is a critical production constraint
+        assert!(
+            DEFAULT_IDMAP_RANGE.1 < DEFAULT_SUBID_RANGE.0,
+            "Production ranges must not overlap: DEFAULT_IDMAP_RANGE ({:?}) vs DEFAULT_SUBID_RANGE ({:?})",
+            DEFAULT_IDMAP_RANGE,
+            DEFAULT_SUBID_RANGE
+        );
+
+        // === 3. Duplicate tenant_id (should fail with IDMAP_COLLISION) ===
+
+        // 3.1: Same tenant_id with identical range
+        let mut idmap = Idmap::new()?;
+        idmap.add_gen_domain("domain-a", "tenant-same", (1000, 2000))?;
+        assert_eq!(
+            idmap.add_gen_domain("domain-b", "tenant-same", (1000, 2000)),
+            Err(IDMAP_COLLISION),
+            "Same tenant_id should be rejected even with identical range"
+        );
+
+        // 3.2: Same tenant_id with different non-overlapping range
+        let mut idmap = Idmap::new()?;
+        idmap.add_gen_domain("domain-a", "tenant-same", (1000, 2000))?;
+        assert_eq!(
+            idmap.add_gen_domain("domain-b", "tenant-same", (5000, 6000)),
+            Err(IDMAP_COLLISION),
+            "Same tenant_id should be rejected even with different range"
+        );
+
+        // === 4. Boundary value testing ===
+
+        // 4.1: Zero-width range (min == max) should be allowed but shouldn't overlap
+        let mut idmap = Idmap::new()?;
+        idmap.add_gen_domain("domain-a", "tenant-a", (1000, 1000))?;
+        idmap.add_gen_domain("domain-b", "tenant-b", (1001, 1001))?;
+        assert_eq!(
+            idmap.add_gen_domain("domain-c", "tenant-c", (1000, 1001)),
+            Err(IDMAP_COLLISION),
+            "Range overlapping zero-width range should be rejected"
+        );
+
+        // 4.2: Maximum u32 boundary overlap detection
+        let mut idmap = Idmap::new()?;
+        idmap.add_gen_domain("domain-a", "tenant-a", (u32::MAX - 1000, u32::MAX))?;
+        assert_eq!(
+            idmap.add_gen_domain("domain-b", "tenant-b", (u32::MAX - 500, u32::MAX)),
+            Err(IDMAP_COLLISION),
+            "Overlap at u32::MAX boundary should be rejected"
+        );
+
+        // 4.3: Minimum u32 boundary overlap detection
+        let mut idmap = Idmap::new()?;
+        idmap.add_gen_domain("domain-a", "tenant-a", (0, 1000))?;
+        assert_eq!(
+            idmap.add_gen_domain("domain-b", "tenant-b", (0, 500)),
+            Err(IDMAP_COLLISION),
+            "Overlap at u32::MIN (0) boundary should be rejected"
+        );
+
+        // 4.4: Full u32 range
+        let mut idmap = Idmap::new()?;
+        idmap.add_gen_domain("domain-a", "tenant-a", (0, u32::MAX))?;
+        assert_eq!(
+            idmap.add_gen_domain("domain-b", "tenant-b", (1000, 2000)),
+            Err(IDMAP_COLLISION),
+            "Any range should overlap with full u32 range"
+        );
+
+        // === 5. Off-by-one boundary testing ===
+
+        // 5.1: Range ending just before another starts (should succeed)
+        let mut idmap = Idmap::new()?;
+        idmap.add_gen_domain("domain-a", "tenant-a", (1000, 1999))?;
+        idmap.add_gen_domain("domain-b", "tenant-b", (2000, 2999))?;
+
+        // 5.2: Range starting just after another ends (already tested above, but explicitly)
+        let mut idmap = Idmap::new()?;
+        idmap.add_gen_domain("domain-a", "tenant-a", (2000, 2999))?;
+        idmap.add_gen_domain("domain-b", "tenant-b", (1000, 1999))?;
+
+        // 5.3: One-ID gap between ranges (should succeed)
+        let mut idmap = Idmap::new()?;
+        idmap.add_gen_domain("domain-a", "tenant-a", (1000, 1999))?;
+        idmap.add_gen_domain("domain-b", "tenant-b", (2001, 2999))?;
+
+        // 5.4: Overlap by exactly one ID at upper boundary
+        let mut idmap = Idmap::new()?;
+        idmap.add_gen_domain("domain-a", "tenant-a", (1000, 2000))?;
+        assert_eq!(
+            idmap.add_gen_domain("domain-b", "tenant-b", (2000, 2001)),
+            Err(IDMAP_COLLISION),
+            "Single-ID overlap at boundary should be rejected"
+        );
+
+        // === 6. Stress testing with many ranges ===
+
+        // 6.1: Many non-overlapping ranges in sequence
+        let mut idmap = Idmap::new()?;
+        for i in 0..100 {
+            let base = i * 1000;
+            idmap.add_gen_domain(
+                &format!("domain-{i}"),
+                &format!("tenant-{i}"),
+                (base, base + 999),
+            )?;
+        }
+
+        // 6.2: Attempt to add overlapping range to crowded idmap
+        assert_eq!(
+            idmap.add_gen_domain("overlap", "tenant-overlap", (50500, 50600)),
+            Err(IDMAP_COLLISION),
+            "Overlap detection should work with many existing ranges"
+        );
+
+        // 6.3: Add valid non-overlapping range to crowded idmap (in a gap)
+        idmap.add_gen_domain("domain-gap", "tenant-gap", (500000, 600000))?;
+
+        // === 7. Real-world scenario validation ===
+
+        // 7.1: Simulate multiple Azure tenants (realistic scenario)
+        let mut idmap = Idmap::new()?;
+        let tenant_ranges = [
+            (
+                "contoso.onmicrosoft.com",
+                "tenant-contoso",
+                (200000, 1000000),
+            ),
+            (
+                "fabrikam.onmicrosoft.com",
+                "tenant-fabrikam",
+                (1000001, 1800000),
+            ),
+            (
+                "adventure-works.onmicrosoft.com",
+                "tenant-adventure",
+                (1800001, 2600000),
+            ),
+        ];
+
+        for (domain, tenant, range) in tenant_ranges {
+            idmap.add_gen_domain(domain, tenant, range)?;
+        }
+
+        // 7.2: Verify overlap detection still works
+        assert_eq!(
+            idmap.add_gen_domain("overlap-low", "tenant-low", (500000, 700000)),
+            Err(IDMAP_COLLISION),
+            "Overlap with first tenant should be rejected"
+        );
+        assert_eq!(
+            idmap.add_gen_domain("overlap-mid", "tenant-mid", (1400000, 1900000)),
+            Err(IDMAP_COLLISION),
+            "Overlap spanning two tenants should be rejected"
+        );
+
+        Ok(())
     }
 }
