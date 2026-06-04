@@ -14,12 +14,6 @@ name = "idmap"
 path = "src/lib.rs"
 
 [dependencies]
-tracing.workspace = true
+murmur3 = "0.5.2"
+unicode-normalization = "0.1.24"
 uuid.workspace = true
-
-[build-dependencies]
-cc = "1.2.61"
-bindgen = "0.72.1"
-
-[package.metadata.cargo-machete]
-ignored = ["bindgen", "cc"]
