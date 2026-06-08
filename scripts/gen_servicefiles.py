@@ -399,16 +399,55 @@ WantedBy=multi-user.target
     hsm_pin_init_unit = squeeze_blank_lines(hsm_pin_init_unit)
     orchestrator_unit = squeeze_blank_lines(orchestrator_unit)
 
+    # ---- Compose himmelblau-compliance-check.service (user unit) ----
+    compliance_check_service = """\
+# You should not need to edit this file. Instead, use a drop-in file:
+#   systemctl --user edit himmelblau-compliance-check.service
+
+[Unit]
+Description=Himmelblau Compliance Check
+Documentation=man:aad-tool(1)
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/aad-tool compliance-check
+
+[Install]
+WantedBy=default.target
+"""
+
+    # ---- Compose himmelblau-compliance-check.timer (user unit) ----
+    compliance_check_timer = """\
+# You should not need to edit this file. Instead, use a drop-in file:
+#   systemctl --user edit himmelblau-compliance-check.timer
+
+[Unit]
+Description=Himmelblau Compliance Check Timer
+Documentation=man:aad-tool(1)
+
+[Timer]
+OnBootSec=10min
+OnUnitActiveSec=8h
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+"""
+
     (out_dir / "himmelblaud.service").write_text(daemon_unit)
     (out_dir / "himmelblaud-tasks.service").write_text(tasks_unit)
     (out_dir / "himmelblau-hsm-pin-init.service").write_text(hsm_pin_init_unit)
     (out_dir / "himmelblaud-orchestrator.service").write_text(orchestrator_unit)
+    (out_dir / "himmelblau-compliance-check.service").write_text(compliance_check_service)
+    (out_dir / "himmelblau-compliance-check.timer").write_text(compliance_check_timer)
 
     print(f"[gen-systemd] systemd version detected/assumed: {ver}")
     print(f"[gen-systemd] Wrote: {out_dir/'himmelblaud.service'}")
     print(f"[gen-systemd] Wrote: {out_dir/'himmelblaud-tasks.service'}")
     print(f"[gen-systemd] Wrote: {out_dir/'himmelblau-hsm-pin-init.service'}")
     print(f"[gen-systemd] Wrote: {out_dir/'himmelblaud-orchestrator.service'}")
+    print(f"[gen-systemd] Wrote: {out_dir/'himmelblau-compliance-check.service'}")
+    print(f"[gen-systemd] Wrote: {out_dir/'himmelblau-compliance-check.timer'}")
 
 if __name__ == "__main__":
     main()

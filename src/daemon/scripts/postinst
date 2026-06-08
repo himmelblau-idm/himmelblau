@@ -116,6 +116,16 @@ if command -v deb-systemd-helper >/dev/null 2>&1; then
             deb-systemd-invoke restart himmelblaud.service himmelblaud-tasks.service >/dev/null || true
         fi
     fi
+
+    # was-enabled defaults to true, so new installations run enable.
+    if deb-systemd-helper --user --quiet was-enabled himmelblau-compliance-check.timer; then
+        # Globally enable user timer for compliance checks (does not start existing sessions).
+        deb-systemd-helper --user enable himmelblau-compliance-check.timer >/dev/null || true
+    else
+        # Update the statefile to add new symlinks (if any), which need to be
+        # cleaned up on purge. Also remove old symlinks.
+        deb-systemd-helper --user update-state himmelblau-compliance-check.timer >/dev/null || true
+    fi
 elif command -v systemctl >/dev/null 2>&1; then
     # Reload systemd to pick up the new service files from /usr/lib/systemd/system/
     systemctl daemon-reload || true
@@ -140,4 +150,7 @@ elif command -v systemctl >/dev/null 2>&1; then
             systemctl restart himmelblaud.service himmelblaud-tasks.service 2>/dev/null || true
         fi
     fi
+
+    # Globally enable user timer for compliance checks (does not start existing sessions)
+    systemctl --global enable himmelblau-compliance-check.timer 2>/dev/null || true
 fi

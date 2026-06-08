@@ -10,3 +10,14 @@ if [ -d /run/systemd/system ]; then
         systemctl stop himmelblaud.service himmelblaud-tasks.service himmelblau-hsm-pin-init.service >/dev/null || true
     fi
 fi
+
+# Globally disable user timer on package removal (not during upgrades)
+if [ "$1" = remove ] || [ "$1" = purge ]; then
+    if command -v deb-systemd-helper >/dev/null 2>&1; then
+        deb-systemd-helper --user disable himmelblau-compliance-check.timer >/dev/null || true
+    elif command -v systemctl >/dev/null 2>&1; then
+        if [ -z "$DPKG_ROOT" ]; then
+            systemctl --global disable himmelblau-compliance-check.timer 2>/dev/null || true
+        fi
+    fi
+fi
