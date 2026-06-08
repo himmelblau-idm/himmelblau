@@ -19,6 +19,7 @@
 #![deny(clippy::needless_pass_by_value)]
 #![deny(clippy::trivially_copy_pass_by_ref)]
 
+use std::collections::HashMap;
 use std::error::Error;
 use std::fs::metadata;
 use std::io;
@@ -65,6 +66,7 @@ use tokio::net::{UnixListener, UnixStream};
 use tokio::sync::broadcast;
 use tokio::sync::mpsc::{channel, Receiver, Sender};
 use tokio::sync::oneshot;
+use tokio::sync::Mutex;
 use tokio::time;
 use tokio_util::codec::{Decoder, Encoder, Framed};
 use tracing::span;
@@ -88,6 +90,15 @@ enum TaskOutcome {
 }
 
 type AsyncTaskRequest = (TaskRequest, oneshot::Sender<TaskOutcome>);
+type IntunePolicyThrottle = Arc<Mutex<HashMap<String, IntunePolicyThrottleState>>>;
+
+const INTUNE_POLICY_THROTTLE_INTERVAL: Duration = Duration::from_secs(30 * 60);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum IntunePolicyThrottleState {
+    InFlight,
+    LastRun(time::Instant),
+}
 
 #[derive(Default)]
 struct ClientCodec;
@@ -237,6 +248,7 @@ async fn handle_client(
     sock: UnixStream,
     cachelayer: Arc<Resolver<HimmelblauMultiProvider>>,
     task_channel_tx: &Sender<AsyncTaskRequest>,
+    intune_policy_throttle: IntunePolicyThrottle,
     cfg: HimmelblauConfig,
 ) -> Result<(), Box<dyn Error>> {
     trace!("Accepted connection");
@@ -600,12 +612,14 @@ async fn handle_client(
 
                                                     // Apply Intune policies
                                                     if cfg.get_apply_policy() {
-                                                        spawn_intune_policy_application(
+                                                        spawn_intune_policy_application_if_due(
                                                             cachelayer.clone(),
                                                             cfg.clone(),
                                                             task_channel_tx.clone(),
+                                                            intune_policy_throttle.clone(),
                                                             account_id.clone(),
-                                                        );
+                                                        )
+                                                        .await;
                                                     }
 
                                                     ClientResponse::PamAuthenticateStepResponse(resp)
@@ -887,7 +901,22 @@ async fn handle_client(
                         }
                     };
 
-                    match apply_intune_policy_for_account(
+                    let account_id = account_id.to_lowercase();
+                    if !start_intune_policy_application(
+                        &intune_policy_throttle,
+                        &account_id,
+                        false,
+                    )
+                    .await
+                    {
+                        warn!(
+                            "compliance check: Intune policy application is already in flight for {}",
+                            account_id
+                        );
+                        return ClientResponse::Error;
+                    }
+
+                    let resp = match apply_intune_policy_for_account(
                         &cachelayer,
                         &cfg,
                         task_channel_tx,
@@ -933,7 +962,10 @@ async fn handle_client(
                             warn!("compliance check: timeout: {}", e);
                             ClientResponse::Error
                         }
-                    }
+                    };
+
+                    complete_intune_policy_application(&intune_policy_throttle, account_id).await;
+                    resp
                 }
                 .instrument(span)
                 .await
@@ -1001,10 +1033,88 @@ enum ApplyPolicyError {
     NonCompliant(Vec<NoncompliantRule>),
 }
 
+fn should_start_intune_policy_application(
+    throttle_state: &mut HashMap<String, IntunePolicyThrottleState>,
+    account_id: &str,
+    now: time::Instant,
+    enforce_recent_run_throttle: bool,
+) -> bool {
+    let account_key = intune_policy_throttle_key(account_id);
+
+    match throttle_state.get(&account_key) {
+        Some(IntunePolicyThrottleState::InFlight) => false,
+        Some(IntunePolicyThrottleState::LastRun(last_run))
+            if enforce_recent_run_throttle
+                && now.duration_since(*last_run) < INTUNE_POLICY_THROTTLE_INTERVAL =>
+        {
+            false
+        }
+        _ => {
+            throttle_state.insert(account_key, IntunePolicyThrottleState::InFlight);
+            true
+        }
+    }
+}
+
+fn intune_policy_throttle_key(account_id: &str) -> String {
+    account_id.to_lowercase()
+}
+
+async fn start_intune_policy_application(
+    intune_policy_throttle: &IntunePolicyThrottle,
+    account_id: &str,
+    enforce_recent_run_throttle: bool,
+) -> bool {
+    let mut throttle_state = intune_policy_throttle.lock().await;
+    should_start_intune_policy_application(
+        &mut throttle_state,
+        account_id,
+        time::Instant::now(),
+        enforce_recent_run_throttle,
+    )
+}
+
+async fn complete_intune_policy_application(
+    intune_policy_throttle: &IntunePolicyThrottle,
+    account_id: String,
+) {
+    let account_key = intune_policy_throttle_key(&account_id);
+
+    intune_policy_throttle.lock().await.insert(
+        account_key,
+        IntunePolicyThrottleState::LastRun(time::Instant::now()),
+    );
+}
+
+async fn spawn_intune_policy_application_if_due(
+    cachelayer: Arc<Resolver<HimmelblauMultiProvider>>,
+    cfg: HimmelblauConfig,
+    task_channel_tx: Sender<AsyncTaskRequest>,
+    intune_policy_throttle: IntunePolicyThrottle,
+    account_id: String,
+) {
+    if !start_intune_policy_application(&intune_policy_throttle, &account_id, true).await {
+        debug!(
+            "Skipping Intune policy application for {}; recently run or already in flight",
+            account_id
+        );
+        return;
+    }
+
+    spawn_intune_policy_application(
+        cachelayer,
+        cfg,
+        task_channel_tx,
+        intune_policy_throttle,
+        account_id,
+    );
+}
+
 fn spawn_intune_policy_application(
     cachelayer: Arc<Resolver<HimmelblauMultiProvider>>,
     cfg: HimmelblauConfig,
     task_channel_tx: Sender<AsyncTaskRequest>,
+    intune_policy_throttle: IntunePolicyThrottle,
     account_id: String,
 ) {
     tokio::spawn(async move {
@@ -1038,6 +1148,8 @@ fn spawn_intune_policy_application(
                 warn!("Intune failure: {}", e);
             }
         }
+
+        complete_intune_policy_application(&intune_policy_throttle, account_id).await;
     });
 }
 
@@ -1135,6 +1247,185 @@ async fn apply_intune_policy_for_account(
         Ok(Ok(TaskOutcome::NonCompliant(rules))) => Err(ApplyPolicyError::NonCompliant(rules)),
         Ok(Err(e)) => Err(ApplyPolicyError::TaskError(e.to_string())),
         Err(e) => Err(ApplyPolicyError::TaskTimeout(e.to_string())),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const ACCOUNT_ID: &str = "user@example.com";
+
+    #[test]
+    fn intune_policy_throttle_allows_first_run_and_marks_in_flight() {
+        let mut throttle_state = HashMap::new();
+        let now = time::Instant::now();
+
+        assert!(should_start_intune_policy_application(
+            &mut throttle_state,
+            ACCOUNT_ID,
+            now,
+            true,
+        ));
+        assert_eq!(
+            throttle_state.get(ACCOUNT_ID),
+            Some(&IntunePolicyThrottleState::InFlight)
+        );
+    }
+
+    #[test]
+    fn intune_policy_throttle_skips_in_flight_run() {
+        let mut throttle_state =
+            HashMap::from([(ACCOUNT_ID.to_string(), IntunePolicyThrottleState::InFlight)]);
+        let now = time::Instant::now();
+
+        assert!(!should_start_intune_policy_application(
+            &mut throttle_state,
+            ACCOUNT_ID,
+            now,
+            true,
+        ));
+        assert_eq!(
+            throttle_state.get(ACCOUNT_ID),
+            Some(&IntunePolicyThrottleState::InFlight)
+        );
+    }
+
+    #[test]
+    fn intune_policy_throttle_normalizes_account_id_for_in_flight_run() {
+        let mut throttle_state =
+            HashMap::from([(ACCOUNT_ID.to_string(), IntunePolicyThrottleState::InFlight)]);
+        let now = time::Instant::now();
+
+        assert!(!should_start_intune_policy_application(
+            &mut throttle_state,
+            "User@Example.com",
+            now,
+            true,
+        ));
+        assert_eq!(
+            throttle_state.get(ACCOUNT_ID),
+            Some(&IntunePolicyThrottleState::InFlight)
+        );
+        assert!(!throttle_state.contains_key("User@Example.com"));
+    }
+
+    #[test]
+    fn intune_policy_throttle_skips_recent_run() {
+        let mut throttle_state = HashMap::new();
+        let now = time::Instant::now();
+        throttle_state.insert(
+            ACCOUNT_ID.to_string(),
+            IntunePolicyThrottleState::LastRun(
+                now - INTUNE_POLICY_THROTTLE_INTERVAL + Duration::from_secs(1),
+            ),
+        );
+
+        assert!(!should_start_intune_policy_application(
+            &mut throttle_state,
+            ACCOUNT_ID,
+            now,
+            true,
+        ));
+    }
+
+    #[test]
+    fn intune_policy_throttle_allows_run_after_interval() {
+        let mut throttle_state = HashMap::new();
+        let now = time::Instant::now();
+        throttle_state.insert(
+            ACCOUNT_ID.to_string(),
+            IntunePolicyThrottleState::LastRun(now - INTUNE_POLICY_THROTTLE_INTERVAL),
+        );
+
+        assert!(should_start_intune_policy_application(
+            &mut throttle_state,
+            ACCOUNT_ID,
+            now,
+            true,
+        ));
+        assert_eq!(
+            throttle_state.get(ACCOUNT_ID),
+            Some(&IntunePolicyThrottleState::InFlight)
+        );
+    }
+
+    #[test]
+    fn intune_policy_throttle_tracks_users_independently() {
+        let mut throttle_state = HashMap::new();
+        let now = time::Instant::now();
+        throttle_state.insert(
+            ACCOUNT_ID.to_string(),
+            IntunePolicyThrottleState::LastRun(now),
+        );
+
+        assert!(should_start_intune_policy_application(
+            &mut throttle_state,
+            "other@example.com",
+            now,
+            true,
+        ));
+        assert_eq!(
+            throttle_state.get(ACCOUNT_ID),
+            Some(&IntunePolicyThrottleState::LastRun(now))
+        );
+        assert_eq!(
+            throttle_state.get("other@example.com"),
+            Some(&IntunePolicyThrottleState::InFlight)
+        );
+    }
+
+    #[test]
+    fn intune_policy_compliance_check_ignores_recent_run_throttle() {
+        let mut throttle_state = HashMap::new();
+        let now = time::Instant::now();
+        throttle_state.insert(
+            ACCOUNT_ID.to_string(),
+            IntunePolicyThrottleState::LastRun(now),
+        );
+
+        assert!(should_start_intune_policy_application(
+            &mut throttle_state,
+            ACCOUNT_ID,
+            now,
+            false,
+        ));
+        assert_eq!(
+            throttle_state.get(ACCOUNT_ID),
+            Some(&IntunePolicyThrottleState::InFlight)
+        );
+    }
+
+    #[test]
+    fn intune_policy_compliance_check_skips_in_flight_run() {
+        let mut throttle_state =
+            HashMap::from([(ACCOUNT_ID.to_string(), IntunePolicyThrottleState::InFlight)]);
+        let now = time::Instant::now();
+
+        assert!(!should_start_intune_policy_application(
+            &mut throttle_state,
+            ACCOUNT_ID,
+            now,
+            false,
+        ));
+        assert_eq!(
+            throttle_state.get(ACCOUNT_ID),
+            Some(&IntunePolicyThrottleState::InFlight)
+        );
+    }
+
+    #[tokio::test]
+    async fn intune_policy_throttle_normalizes_account_id_on_completion() {
+        let throttle_state: IntunePolicyThrottle = Arc::new(Mutex::new(HashMap::new()));
+
+        complete_intune_policy_application(&throttle_state, "User@Example.com".to_string()).await;
+
+        let throttle_state = throttle_state.lock().await;
+        assert!(matches!(
+            throttle_state.get(ACCOUNT_ID),
+            Some(IntunePolicyThrottleState::LastRun(_))
+        ));
+        assert!(!throttle_state.contains_key("User@Example.com"));
     }
 }
 
@@ -1736,11 +2027,13 @@ async fn main() -> ExitCode {
 
             // Keep a reference for PRT FD store persistence on service shutdown.
             let shutdown_cachelayer = cachelayer.clone();
+            let intune_policy_throttle = Arc::new(Mutex::new(HashMap::new()));
 
             let task_a = tokio::spawn(async move {
                 loop {
                     let tc_tx = task_channel_tx_cln.clone();
                     let cfg_h = cfg.clone();
+                    let intune_policy_throttle = intune_policy_throttle.clone();
 
                     tokio::select! {
                         _ = broadcast_rx.recv() => {
@@ -1751,7 +2044,7 @@ async fn main() -> ExitCode {
                                 Ok((socket, _addr)) => {
                                     let cachelayer_ref = cachelayer.clone();
                                     tokio::spawn(async move {
-                                        if let Err(e) = handle_client(socket, cachelayer_ref.clone(), &tc_tx, cfg_h).await
+                                        if let Err(e) = handle_client(socket, cachelayer_ref.clone(), &tc_tx, intune_policy_throttle, cfg_h).await
                                         {
                                             debug!("handle_client disconnected; error = {:?}", e);
                                         }
