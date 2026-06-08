@@ -180,7 +180,7 @@ impl HimmelblauBroker for Broker {
                     .ok_or("Failed to fetch access token")?,
                 "accessTokenType": 0,
                 "clientInfo": URL_SAFE_NO_PAD.encode(json!(&token.client_info).to_string()),
-                "expiresOn": now.as_millis() + u128::from(token.expires_in) * 1000,
+                "expiresOn": (token.expires_in as u128) + now.as_millis(),
                 "extendedExpiresOn": (token.ext_expires_in as u64) + now.as_secs(),
                 "grantedScopes": token.scope.clone()
                     .ok_or("Failed to fetch scopes")?,
