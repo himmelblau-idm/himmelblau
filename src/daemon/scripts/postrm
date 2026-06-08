@@ -26,6 +26,11 @@ if [ "$_is_full_remove" = "1" ]; then
         systemctl disable himmelblaud.service himmelblaud-tasks.service himmelblau-hsm-pin-init.service >/dev/null || true
     fi
 
+    # Globally disable and remove user timer on final package removal
+    if command -v systemctl >/dev/null 2>&1; then
+        systemctl --global disable himmelblau-compliance-check.timer 2>/dev/null || true
+    fi
+
     rm -rf /var/cache/himmelblaud/
     rm -rf /var/cache/nss-himmelblau/
     rm -rf /var/cache/himmelblau-policies/
