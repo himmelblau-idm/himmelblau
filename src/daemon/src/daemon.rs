@@ -600,36 +600,12 @@ async fn handle_client(
 
                                                     // Apply Intune policies
                                                     if cfg.get_apply_policy() {
-                                                        match apply_intune_policy_for_account(
-                                                            &cachelayer,
-                                                            &cfg,
-                                                            task_channel_tx,
-                                                            &account_id,
-                                                        )
-                                                        .await
-                                                        {
-                                                            Ok(()) => {
-                                                                debug!("Successfully applied Intune policies");
-                                                            }
-                                                            Err(ApplyPolicyError::TokenAcquisitionFailed)
-                                                            | Err(ApplyPolicyError::MissingAccessToken) => {
-                                                                warn!("Intune failure: could not acquire tokens");
-                                                            }
-                                                            Err(ApplyPolicyError::PolicyFailure) => {
-                                                                warn!("Intune failure");
-                                                            }
-                                                            Err(ApplyPolicyError::NonCompliant(rules)) => {
-                                                                warn!(
-                                                                    count = rules.len(),
-                                                                    "Intune reports device is non-compliant"
-                                                                );
-                                                            }
-                                                            Err(ApplyPolicyError::DispatchFailed(e))
-                                                            | Err(ApplyPolicyError::TaskTimeout(e))
-                                                            | Err(ApplyPolicyError::TaskError(e)) => {
-                                                                warn!("Intune failure: {}", e);
-                                                            }
-                                                        }
+                                                        spawn_intune_policy_application(
+                                                            cachelayer.clone(),
+                                                            cfg.clone(),
+                                                            task_channel_tx.clone(),
+                                                            account_id.clone(),
+                                                        );
                                                     }
 
                                                     ClientResponse::PamAuthenticateStepResponse(resp)
@@ -1023,6 +999,46 @@ enum ApplyPolicyError {
     PolicyFailure,
     /// Intune reported the device as non-compliant.
     NonCompliant(Vec<NoncompliantRule>),
+}
+
+fn spawn_intune_policy_application(
+    cachelayer: Arc<Resolver<HimmelblauMultiProvider>>,
+    cfg: HimmelblauConfig,
+    task_channel_tx: Sender<AsyncTaskRequest>,
+    account_id: String,
+) {
+    tokio::spawn(async move {
+        match apply_intune_policy_for_account(
+            cachelayer.as_ref(),
+            &cfg,
+            &task_channel_tx,
+            &account_id,
+        )
+        .await
+        {
+            Ok(()) => {
+                debug!("Successfully applied Intune policies");
+            }
+            Err(ApplyPolicyError::TokenAcquisitionFailed)
+            | Err(ApplyPolicyError::MissingAccessToken) => {
+                warn!("Intune failure: could not acquire tokens");
+            }
+            Err(ApplyPolicyError::PolicyFailure) => {
+                warn!("Intune failure");
+            }
+            Err(ApplyPolicyError::NonCompliant(rules)) => {
+                warn!(
+                    count = rules.len(),
+                    "Intune reports device is non-compliant"
+                );
+            }
+            Err(ApplyPolicyError::DispatchFailed(e))
+            | Err(ApplyPolicyError::TaskTimeout(e))
+            | Err(ApplyPolicyError::TaskError(e)) => {
+                warn!("Intune failure: {}", e);
+            }
+        }
+    });
 }
 
 async fn apply_intune_policy_for_account(
