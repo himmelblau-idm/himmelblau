@@ -569,106 +569,13 @@ async fn handle_client(
                                                     }
 
                                                     // Apply Intune policies
-                                                    if cfg.get_apply_policy()
-                                                    {
-                                                        let intune_device_id = split_username(&account_id)
-                                                            .map(|(_, domain)| domain)
-                                                            .and_then(|domain| {
-                                                                // The intune_device_id may have been written after startup,
-                                                                // so we re-read the config here.
-                                                                HimmelblauConfig::new(Some(&cfg.get_config_file())).ok()
-                                                                .map(|cfg| {
-                                                                    cfg.get_intune_device_id(domain)
-                                                                })
-                                                            }).flatten();
-                                                        let graph_token = cachelayer
-                                                            .get_user_accesstoken(
-                                                                Id::Name(account_id.clone()),
-                                                                vec!["00000003-0000-0000-c000-000000000000/.default".to_string()],
-                                                                Some(DEFAULT_APP_ID.to_string())
-                                                            ).await;
-                                                        let intune_token = cachelayer
-                                                            .get_user_accesstoken(
-                                                                Id::Name(account_id.clone()),
-                                                                vec!["0000000a-0000-0000-c000-000000000000/.default".to_string()],
-                                                                Some(DEFAULT_APP_ID.to_string())
-                                                            ).await;
-                                                        let iwservice_token = cachelayer
-                                                            .get_user_accesstoken(
-                                                                Id::Name(account_id.clone()),
-                                                                vec!["b8066b99-6e67-41be-abfa-75db1a2c8809/.default".to_string()],
-                                                                Some(DEFAULT_APP_ID.to_string())
-                                                            ).await;
-
-                                                        if let Some(graph_token) = graph_token {
-                                                            if let Some(intune_token) = intune_token {
-                                                                if let Some(iwservice_token) = iwservice_token {
-                                                                    let (tx, rx) = oneshot::channel();
-
-                                                                    match task_channel_tx
-                                                                        .send_timeout(
-                                                                            (
-                                                                                TaskRequest::ApplyPolicy(
-                                                                                    intune_device_id,
-                                                                                    account_id.clone(),
-                                                                                    graph_token
-                                                                                        .access_token
-                                                                                        .clone()
-                                                                                        .unwrap_or("".to_string()),
-                                                                                    intune_token
-                                                                                        .access_token
-                                                                                        .clone()
-                                                                                        .unwrap_or("".to_string()),
-                                                                                    iwservice_token
-                                                                                        .access_token
-                                                                                        .clone()
-                                                                                        .unwrap_or("".to_string()),
-                                                                                ),
-                                                                                tx,
-                                                                            ),
-                                                                            Duration::from_millis(500),
-                                                                        )
-                                                                        .await
-                                                                    {
-                                                                        Ok(()) => {
-                                                                            // Now wait for the other end OR timeout.
-                                                                            match time::timeout_at(
-                                                                                /* From the MS specs:
-                                                                                 * Custom compliance discovery scripts for Microsoft Intune
-                                                                                 * Limits:
-                                                                                 * Scripts must have a limited run time:
-                                                                                 *   On Linux, scripts must take five minutes or less to run.
-                                                                                 */
-                                                                                time::Instant::now()
-                                                                                    + Duration::from_secs(
-                                                                                        300,
-                                                                                    ),
-                                                                                rx,
-                                                                            )
-                                                                            .await
-                                                                            {
-                                                                                Ok(Ok(status)) => {
-                                                                                    if status == 0 {
-                                                                                        debug!("Successfully applied Intune policies");
-                                                                                    } else {
-                                                                                        warn!("Intune failure");
-                                                                                    }
-                                                                                }
-                                                                                Ok(Err(e)) => {
-                                                                                    warn!("Intune failure: {}", e);
-                                                                                }
-                                                                                Err(e) => {
-                                                                                    warn!("Intune failure: {}", e);
-                                                                                }
-                                                                            }
-                                                                        }
-                                                                        Err(e) => {
-                                                                            warn!("Intune failure: {}", e);
-                                                                        }
-                                                                    }
-                                                                }
-                                                            }
-                                                        }
+                                                    if cfg.get_apply_policy() {
+                                                        spawn_intune_policy_application(
+                                                            cachelayer.clone(),
+                                                            cfg.clone(),
+                                                            task_channel_tx.clone(),
+                                                            account_id.clone(),
+                                                        );
                                                     }
 
                                                     ClientResponse::PamAuthenticateStepResponse(resp)
@@ -942,6 +849,114 @@ async fn handle_client(
     // Disconnect them
     trace!("Disconnecting client ...");
     Ok(())
+}
+
+fn spawn_intune_policy_application(
+    cachelayer: Arc<Resolver<HimmelblauMultiProvider>>,
+    cfg: HimmelblauConfig,
+    task_channel_tx: Sender<AsyncTaskRequest>,
+    account_id: String,
+) {
+    tokio::spawn(async move {
+        let intune_device_id = split_username(&account_id)
+            .map(|(_, domain)| domain)
+            .and_then(|domain| {
+                // The intune_device_id may have been written after startup,
+                // so we re-read the config here.
+                HimmelblauConfig::new(Some(&cfg.get_config_file())).ok()
+                .map(|cfg| {
+                    cfg.get_intune_device_id(domain)
+                })
+            }).flatten();
+        let graph_token = cachelayer
+            .get_user_accesstoken(
+                Id::Name(account_id.clone()),
+                vec!["00000003-0000-0000-c000-000000000000/.default".to_string()],
+                Some(DEFAULT_APP_ID.to_string())
+            ).await;
+        let intune_token = cachelayer
+            .get_user_accesstoken(
+                Id::Name(account_id.clone()),
+                vec!["0000000a-0000-0000-c000-000000000000/.default".to_string()],
+                Some(DEFAULT_APP_ID.to_string())
+            ).await;
+        let iwservice_token = cachelayer
+            .get_user_accesstoken(
+                Id::Name(account_id.clone()),
+                vec!["b8066b99-6e67-41be-abfa-75db1a2c8809/.default".to_string()],
+                Some(DEFAULT_APP_ID.to_string())
+            ).await;
+
+        if let Some(graph_token) = graph_token {
+            if let Some(intune_token) = intune_token {
+                if let Some(iwservice_token) = iwservice_token {
+                    let (tx, rx) = oneshot::channel();
+
+                    match task_channel_tx
+                        .send_timeout(
+                            (
+                                TaskRequest::ApplyPolicy(
+                                    intune_device_id,
+                                    account_id.clone(),
+                                    graph_token
+                                        .access_token
+                                        .clone()
+                                        .unwrap_or("".to_string()),
+                                    intune_token
+                                        .access_token
+                                        .clone()
+                                        .unwrap_or("".to_string()),
+                                    iwservice_token
+                                        .access_token
+                                        .clone()
+                                        .unwrap_or("".to_string()),
+                                ),
+                                tx,
+                            ),
+                            Duration::from_millis(500),
+                        )
+                        .await
+                    {
+                        Ok(()) => {
+                            // Now wait for the other end OR timeout.
+                            match time::timeout_at(
+                                /* From the MS specs:
+                                 * Custom compliance discovery scripts for Microsoft Intune
+                                 * Limits:
+                                 * Scripts must have a limited run time:
+                                 *   On Linux, scripts must take five minutes or less to run.
+                                 */
+                                time::Instant::now()
+                                    + Duration::from_secs(
+                                        300,
+                                    ),
+                                rx,
+                            )
+                            .await
+                            {
+                                Ok(Ok(status)) => {
+                                    if status == 0 {
+                                        debug!("Successfully applied Intune policies");
+                                    } else {
+                                        warn!("Intune failure");
+                                    }
+                                }
+                                Ok(Err(e)) => {
+                                    warn!("Intune failure: {}", e);
+                                }
+                                Err(e) => {
+                                    warn!("Intune failure: {}", e);
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            warn!("Intune failure: {}", e);
+                        }
+                    }
+                }
+            }
+        }
+    });
 }
 
 async fn process_etc_passwd_group(
