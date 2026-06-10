@@ -1,0 +1,309 @@
+---
+name: Update OBS Package
+
+permissions:
+  contents: read
+
+# Trigger on pushes to stable-3.x branch, with a manual fallback for
+# exceptional maintenance updates such as direct CVE fixes.
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - stable-3.x
+
+concurrency:
+  group: obs-submit-stable
+  cancel-in-progress: false
+
+env:
+  OBS_API_URL: https://api.opensuse.org
+  OBS_TARGET_PROJECT: network:idm
+  OBS_PACKAGE: himmelblau
+  OBS_STABLE_BRANCH: stable-3.x
+
+jobs:
+  update-obs:
+    name: Submit latest stable to Tumbleweed
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+        with:
+          egress-policy: audit
+
+      - name: Checkout repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && env.OBS_STABLE_BRANCH || github.sha }}
+
+      - name: Configure osc credentials
+        env:
+          OBS_USER: ${{ secrets.OBS_USER }}
+          OBS_PASSWORD: ${{ secrets.OBS_PASSWORD }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${OBS_USER:-}" ]; then
+            echo "::error::OBS_USER secret is not configured"
+            exit 1
+          fi
+
+          if [ -z "${OBS_PASSWORD:-}" ]; then
+            echo "::error::OBS_PASSWORD secret is not configured"
+            exit 1
+          fi
+
+          umask 077
+          mkdir -p "$HOME/.config/osc"
+          cat > "$HOME/.config/osc/oscrc" << EOF
+          [general]
+          apiurl = ${OBS_API_URL}
+
+          [${OBS_API_URL}]
+          user=${OBS_USER}
+          pass=${OBS_PASSWORD}
+          credentials_mgr_class=osc.credentials.PlaintextConfigFileCredentialsManager
+          trusted_prj=${OBS_TARGET_PROJECT}
+          EOF
+
+      - name: Install osc and OBS services
+        run: |
+          set -euo pipefail
+
+          sudo apt-get update
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            ca-certificates \
+            curl \
+            gnupg
+
+          sudo install -d -m 0755 /etc/apt/keyrings
+          curl -fsSL https://download.opensuse.org/repositories/openSUSE:/Tools/xUbuntu_24.04/Release.key |
+            gpg --dearmor |
+            sudo tee /etc/apt/keyrings/opensuse-tools.gpg >/dev/null
+          sudo chmod 0644 /etc/apt/keyrings/opensuse-tools.gpg
+
+          echo "deb [signed-by=/etc/apt/keyrings/opensuse-tools.gpg] https://download.opensuse.org/repositories/openSUSE:/Tools/xUbuntu_24.04/ /" \
+            | sudo tee /etc/apt/sources.list.d/opensuse-tools.list >/dev/null
+
+          sudo apt-get update
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            osc \
+            cpio \
+            libgcc-s1 \
+            libtimedate-perl \
+            libxml2-utils \
+            libssl3t64 \
+            libzstd1 \
+            obs-service-tar-scm \
+            obs-service-set-version \
+            obs-service-recompress \
+            obs-service-download-files \
+            obs-service-format-spec-file \
+            obs-service-source-validator \
+            rpm2cpio \
+            zlib1g \
+            zstd
+
+          curl https://sh.rustup.rs -sSf | sh -s -- -y
+          . "$HOME/.cargo/env"
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+
+          CARGO_SERVICE_RPM_DIR=$(mktemp -d "${RUNNER_TEMP}/obs-service-cargo-rpm.XXXXXX")
+          CARGO_SERVICE_EXTRACT_DIR=$(mktemp -d "${RUNNER_TEMP}/obs-service-cargo-extract.XXXXXX")
+
+          osc getbinaries \
+            -d "$CARGO_SERVICE_RPM_DIR" \
+            devel:languages:rust \
+            obs-service-cargo \
+            openSUSE_Tumbleweed \
+            x86_64
+
+          CARGO_SERVICE_RPM=$(find "$CARGO_SERVICE_RPM_DIR" \
+            -maxdepth 1 \
+            -type f \
+            -name 'obs-service-cargo-[0-9]*.x86_64.rpm' \
+            ! -name '*debuginfo*' \
+            ! -name '*debugsource*' \
+            -print \
+            -quit)
+
+          if [ -z "$CARGO_SERVICE_RPM" ]; then
+            echo "::error::Unable to find obs-service-cargo RPM from devel:languages:rust"
+            exit 1
+          fi
+
+          (
+            cd "$CARGO_SERVICE_EXTRACT_DIR"
+            rpm2cpio "$CARGO_SERVICE_RPM" | cpio -idm --quiet
+          )
+
+          sudo install -d -m 0755 /usr/lib/obs/service
+          sudo install -m 0755 "$CARGO_SERVICE_EXTRACT_DIR/usr/lib/obs/service/cargo_vendor" /usr/lib/obs/service/cargo_vendor
+          sudo install -m 0755 "$CARGO_SERVICE_EXTRACT_DIR/usr/lib/obs/service/cargo_audit" /usr/lib/obs/service/cargo_audit
+          sudo install -m 0644 "$CARGO_SERVICE_EXTRACT_DIR/usr/lib/obs/service/cargo_vendor.service" /usr/lib/obs/service/cargo_vendor.service
+
+          osc version
+          cargo --version
+          rustc --version
+          command -v xmllint
+          perl -MDate::Parse -e 1
+          /usr/lib/obs/service/cargo_vendor --version
+          /usr/lib/obs/service/cargo_vendor --help >/dev/null
+          test -x /usr/lib/obs/service/cargo_vendor
+          test -f /usr/lib/obs/service/cargo_vendor.service
+          dpkg-query -W \
+            osc \
+            cpio \
+            libtimedate-perl \
+            libxml2-utils \
+            libgcc-s1 \
+            libssl3t64 \
+            libzstd1 \
+            obs-service-tar-scm \
+            obs-service-set-version \
+            obs-service-recompress \
+            obs-service-download-files \
+            obs-service-format-spec-file \
+            obs-service-source-validator \
+            rpm2cpio \
+            zlib1g \
+            zstd
+          osc api "/source/${OBS_TARGET_PROJECT}/${OBS_PACKAGE}" >/dev/null
+
+      - name: Detect source version
+        id: version
+        run: |
+          set -euo pipefail
+
+          VERSION=$(grep '^version =' Cargo.toml | head -n 1 | sed 's/version = "\(.*\)"/\1/')
+          if [ -z "$VERSION" ]; then
+            echo "::error::Unable to detect package version from Cargo.toml"
+            exit 1
+          fi
+
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Submitting ${OBS_PACKAGE} ${VERSION} from ${OBS_STABLE_BRANCH}"
+
+      - name: Set up temporary OBS branch project
+        id: branch
+        env:
+          OBS_USER: ${{ secrets.OBS_USER }}
+        run: |
+          set -euo pipefail
+
+          BRANCH_PROJECT="home:${OBS_USER}:branches:${OBS_TARGET_PROJECT}:gh${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          echo "branch_project=$BRANCH_PROJECT" >> "$GITHUB_OUTPUT"
+          echo "OBS_BRANCH_PROJECT=$BRANCH_PROJECT" >> "$GITHUB_ENV"
+          echo "OBS_SR_CREATED=false" >> "$GITHUB_ENV"
+          echo "Using OBS branch project: $BRANCH_PROJECT"
+
+      - name: Branch package from OBS
+        run: |
+          set -euo pipefail
+
+          WORKDIR="${RUNNER_TEMP}/obs-work"
+          mkdir -p "$WORKDIR"
+          cd "$WORKDIR"
+
+          osc branch "$OBS_TARGET_PROJECT" "$OBS_PACKAGE" "${{ steps.branch.outputs.branch_project }}"
+
+      - name: Checkout branched package
+        run: |
+          set -euo pipefail
+
+          WORKDIR="${RUNNER_TEMP}/obs-work"
+          cd "$WORKDIR"
+
+          osc co "${{ steps.branch.outputs.branch_project }}/${OBS_PACKAGE}"
+
+      - name: Update OBS package sources
+        id: update
+        run: |
+          set -euo pipefail
+
+          WORKDIR="${RUNNER_TEMP}/obs-work/${{ steps.branch.outputs.branch_project }}/${OBS_PACKAGE}"
+          cd "$WORKDIR"
+
+          if [ -f _service ]; then
+            python3 - <<'PY'
+          import os
+          import re
+          from pathlib import Path
+
+          service_file = Path("_service")
+          stable_branch = os.environ["OBS_STABLE_BRANCH"]
+          content = service_file.read_text()
+
+          def replace_tag_revision(match):
+              revision = match.group("revision").strip()
+              if re.fullmatch(r"v?[0-9]+(?:\.[0-9]+)+(?:[-+][0-9A-Za-z_.-]+)?", revision):
+                  print(f"Updating _service revision from tag {revision} to {stable_branch}")
+                  return f'{match.group("open")}{stable_branch}{match.group("close")}'
+              print(f"Leaving _service revision unchanged: {revision}")
+              return match.group(0)
+
+          updated = re.sub(
+              r'(?P<open><param\s+name="revision"\s*>)(?P<revision>[^<]+)(?P<close></param>)',
+              replace_tag_revision,
+              content,
+          )
+
+          if updated != content:
+              service_file.write_text(updated)
+          PY
+          fi
+
+          while IFS= read -r -d '' old_source; do
+            old_source=${old_source#./}
+            echo "Removing old source archive: $old_source"
+            osc rm "$old_source"
+          done < <(find . -maxdepth 1 -type f -name "${OBS_PACKAGE}-*.tar.*" -print0)
+
+          osc service mr
+          osc addremove
+
+          STATUS=$(osc status)
+          if [ -z "$STATUS" ]; then
+            echo "No OBS package changes detected."
+            echo "has_changes=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "$STATUS"
+          osc diff || true
+          echo "has_changes=true" >> "$GITHUB_OUTPUT"
+
+      - name: Commit and submit OBS changes
+        if: steps.update.outputs.has_changes == 'true'
+        run: |
+          set -euo pipefail
+
+          WORKDIR="${RUNNER_TEMP}/obs-work/${{ steps.branch.outputs.branch_project }}/${OBS_PACKAGE}"
+          cd "$WORKDIR"
+
+          COMMIT_MESSAGE="Update ${OBS_PACKAGE} to ${{ steps.version.outputs.version }} from GitHub ${OBS_STABLE_BRANCH}"
+          osc commit -m "$COMMIT_MESSAGE"
+
+          SUBMIT_MESSAGE="Automated update from GitHub Actions ${OBS_STABLE_BRANCH}
+
+          Package: ${OBS_PACKAGE} ${{ steps.version.outputs.version }}
+          Source: https://github.com/${GITHUB_REPOSITORY}/commit/${GITHUB_SHA}
+          Workflow: https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+
+          osc sr "$OBS_TARGET_PROJECT" "$OBS_PACKAGE" -m "$SUBMIT_MESSAGE"
+          echo "OBS_SR_CREATED=true" >> "$GITHUB_ENV"
+
+      - name: Cleanup temporary OBS branch project
+        if: always()
+        run: |
+          set -euo pipefail
+
+          if [ -n "${OBS_BRANCH_PROJECT:-}" ] && [ "${OBS_SR_CREATED:-false}" != "true" ]; then
+            osc rdelete -m "Cleanup package after failed automated GitHub Actions submission" \
+              "$OBS_BRANCH_PROJECT" "$OBS_PACKAGE" || true
+            osc rdelete -m "Cleanup after automated GitHub Actions submission" "$OBS_BRANCH_PROJECT" || true
+          fi
+
+          rm -f "$HOME/.config/osc/oscrc"
