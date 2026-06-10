@@ -35,7 +35,7 @@ picky-krb = { path = "src/picky-krb" }
 ldap3_proto = { path = "src/overrides/ldap3_proto/0.6.2" }
 
 [workspace.package]
-version = "3.1.6"
+version = "3.1.7"
 authors = [
     "David Mulder <dmulder@suse.com>"
 ]
