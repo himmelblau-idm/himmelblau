@@ -153,11 +153,53 @@ if [ -f "$GDM_PAM" ]; then
         sed -i -E '/^[[:space:]]*auth[[:space:]]+optional[[:space:]]+pam_gnome_keyring\.so/ {/use_authtok/! s/$/ use_authtok/;}' "$GDM_PAM" || :
     fi
 fi
+
+# Fix systemd-user PAM configuration for NSS-based users (openSUSE issue).
+# The vendor /usr/lib/pam.d/systemd-user can use "account required pam_unix.so",
+# which fails for users not in /etc/passwd. If needed, install a managed
+# /etc/pam.d/systemd-user override instead of editing the vendor file in-place.
+install_systemd_user_override() {
+    local vendor="/usr/lib/pam.d/systemd-user"
+    local target="/etc/pam.d/systemd-user"
+    local marker="# Managed by pam-himmelblau: systemd-user NSS account workaround"
+    local tmp
+
+    [ -f "$vendor" ] || return 0
+
+    if ! grep -Eq '^[[:space:]]*account[[:space:]]+required[[:space:]]+pam_unix\.so[[:space:]]+no_pass_expiry[[:space:]]*$' "$vendor"; then
+        return 0
+    fi
+
+    if [ -e "$target" ] && ! grep -qxF "$marker" "$target"; then
+        return 0
+    fi
+
+    tmp="${target}.himmelblau.$$"
+    {
+        printf '%s\n' "$marker"
+        sed -E 's/^([[:space:]]*)account[[:space:]]+required[[:space:]]+pam_unix\.so[[:space:]]+no_pass_expiry[[:space:]]*$/\1account  include common-account/' "$vendor"
+    } >"$tmp" || {
+        rm -f "$tmp"
+        return 0
+    }
+    chmod --reference="$vendor" "$tmp" 2>/dev/null || chmod 0644 "$tmp" 2>/dev/null || :
+    mv "$tmp" "$target" || rm -f "$tmp"
+}
+
+install_systemd_user_override >/dev/null 2>&1 || :
 '''
 post_uninstall_script = '''
-# Only remove a symlink if it exists and is a symlink
-if [ -L /lib64/security/pam_himmelblau.so ]; then
-    rm -f /lib64/security/pam_himmelblau.so
+if [ "${1:-1}" = "0" ]; then
+    # Only remove a symlink if it exists and is a symlink
+    if [ -L /lib64/security/pam_himmelblau.so ]; then
+        rm -f /lib64/security/pam_himmelblau.so
+    fi
+
+    SYSTEMD_USER_OVERRIDE="/etc/pam.d/systemd-user"
+    SYSTEMD_USER_MARKER="# Managed by pam-himmelblau: systemd-user NSS account workaround"
+    if [ -f "$SYSTEMD_USER_OVERRIDE" ] && grep -qxF "$SYSTEMD_USER_MARKER" "$SYSTEMD_USER_OVERRIDE"; then
+        rm -f "$SYSTEMD_USER_OVERRIDE"
+    fi
 fi
 '''
 pre_uninstall_script='''
