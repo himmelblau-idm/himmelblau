@@ -116,6 +116,11 @@ if command -v deb-systemd-helper >/dev/null 2>&1; then
             deb-systemd-invoke restart himmelblaud.service himmelblaud-tasks.service >/dev/null || true
         fi
     fi
+
+    # Globally enable user timer for compliance checks (does not start existing sessions)
+    if [ -z "$DPKG_ROOT" ] && [ -d /run/systemd/system ]; then
+        systemctl --global enable himmelblau-compliance-check.timer 2>/dev/null || true
+    fi
 elif command -v systemctl >/dev/null 2>&1; then
     # Reload systemd to pick up the new service files from /usr/lib/systemd/system/
     systemctl daemon-reload || true
@@ -140,4 +145,7 @@ elif command -v systemctl >/dev/null 2>&1; then
             systemctl restart himmelblaud.service himmelblaud-tasks.service 2>/dev/null || true
         fi
     fi
+
+    # Globally enable user timer for compliance checks (does not start existing sessions)
+    systemctl --global enable himmelblau-compliance-check.timer 2>/dev/null || true
 fi

@@ -9,4 +9,11 @@ if [ -d /run/systemd/system ]; then
     elif command -v systemctl >/dev/null 2>&1; then
         systemctl stop himmelblaud.service himmelblaud-tasks.service himmelblau-hsm-pin-init.service >/dev/null || true
     fi
+
+    # Globally disable user timer on package removal (not during upgrades)
+    if command -v systemctl >/dev/null 2>&1; then
+        if [ "$1" = remove ] || [ "$1" = purge ]; then
+            systemctl --global disable himmelblau-compliance-check.timer 2>/dev/null || true
+        fi
+    fi
 fi
