@@ -131,8 +131,8 @@ user-login = "epage"
 user-name = "Ed Page"
 
 [[publisher.clap_complete]]
-version = "4.6.3"
-when = "2026-04-27"
+version = "4.6.5"
+when = "2026-05-11"
 user-id = 6743
 user-login = "epage"
 user-name = "Ed Page"
@@ -359,8 +359,8 @@ user-id = 55123
 user-login = "rust-lang-owner"
 
 [[publisher.hashbrown]]
-version = "0.17.0"
-when = "2026-04-09"
+version = "0.17.1"
+when = "2026-05-09"
 user-id = 55123
 user-login = "rust-lang-owner"
 
@@ -503,8 +503,8 @@ user-login = "fitzgen"
 user-name = "Nick Fitzgerald"
 
 [[publisher.libhimmelblau]]
-version = "0.8.20"
-when = "2026-05-28"
+version = "0.8.22"
+when = "2026-06-10"
 user-id = 247655
 user-login = "dmulder"
 user-name = "David Mulder"
@@ -796,8 +796,8 @@ user-login = "dtolnay"
 user-name = "David Tolnay"
 
 [[publisher.serde_json]]
-version = "1.0.149"
-when = "2026-01-06"
+version = "1.0.150"
+when = "2026-05-21"
 user-id = 3618
 user-login = "dtolnay"
 user-name = "David Tolnay"
@@ -5030,6 +5030,12 @@ who = "Jack Grigg <jack@electriccoin.co>"
 criteria = "safe-to-deploy"
 delta = "0.10.3 -> 0.10.4"
 notes = "Adds panics to prevent a block size of zero from causing unsoundness."
+aggregated-from = "https://raw.githubusercontent.com/zcash/zcash/master/qa/supply-chain/audits.toml"
+
+[[audits.zcash.audits.bs58]]
+who = "Daira-Emma Hopwood <daira@jacaranda.org>"
+criteria = "safe-to-deploy"
+delta = "0.5.0 -> 0.5.1"
 aggregated-from = "https://raw.githubusercontent.com/zcash/zcash/master/qa/supply-chain/audits.toml"
 
 [[audits.zcash.audits.constant_time_eq]]
