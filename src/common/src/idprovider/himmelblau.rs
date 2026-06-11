@@ -52,7 +52,8 @@ use crate::{
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use himmelblau::auth::{
-    BrokerClientApplication, PublicClientApplication, UserToken as UnixUserToken, BROKER_APP_ID,
+    BrokerClientApplication, MfaMethodInfo, PublicClientApplication, UserToken as UnixUserToken,
+    BROKER_APP_ID,
 };
 use himmelblau::discovery::EnrollAttrs;
 use himmelblau::error::{MsalError, DEVICE_AUTH_FAIL};
@@ -110,6 +111,19 @@ fn is_mfa_required_for_enrollment(e: &MsalError) -> bool {
         MsalError::MFARequired => true,
         _ => false,
     }
+}
+
+fn select_fido_unavailable_fallback_method(flow: &MFAAuthContinue) -> Option<MfaMethodInfo> {
+    flow.mfa_method_details
+        .iter()
+        .filter(|m| m.auth_method_id != "FidoKey")
+        .find(|m| m.is_default)
+        .or_else(|| {
+            flow.mfa_method_details
+                .iter()
+                .find(|m| m.auth_method_id != "FidoKey")
+        })
+        .cloned()
 }
 
 /// Convert an MsalError to a short, user-friendly message for PAM display.
@@ -4124,13 +4138,52 @@ impl IdProvider for HimmelblauProvider {
                     Err(e) => Err(e),
                 }
             }
-            (AuthCredHandler::MFA { .. }, PamAuthRequest::FidoUnavailable) => {
-                debug!("FIDO hardware unavailable on client, falling back to password");
-                *cred_handler = AuthCredHandler::None;
-                Ok((
-                    AuthResult::Next(AuthRequest::Password),
-                    AuthCacheAction::None,
-                ))
+            (AuthCredHandler::MFA { flow, password, .. }, PamAuthRequest::FidoUnavailable) => {
+                debug!("FIDO hardware unavailable, checking for alternative MFA methods");
+
+                if let Some(next_method) = select_fido_unavailable_fallback_method(flow) {
+                    debug!(
+                        "Switching from FIDO to alternative MFA method: {} ({})",
+                        next_method.auth_method_id, next_method.display
+                    );
+
+                    // Re-initiate MFA flow with the alternative method
+                    let auth_options = vec![]; // Use empty options for non-FIDO methods
+                    match self
+                        .initiate_mfa_flow_with_fallback(
+                            account_id,
+                            password.as_deref(),
+                            &auth_options,
+                            None,
+                            Some(next_method.auth_method_id.clone()),
+                        )
+                        .await
+                    {
+                        Ok(new_flow) => {
+                            // Use nested_auth_handle_mfa_resp to handle all possible MFA response types
+                            nested_auth_handle_mfa_resp!(new_flow, password.clone())
+                        }
+                        Err(e) => {
+                            error!("Failed to initiate alternative MFA method: {:?}", e);
+                            *cred_handler = AuthCredHandler::None;
+                            Ok((
+                                AuthResult::Denied(msal_error_to_user_message(&e)),
+                                AuthCacheAction::None,
+                            ))
+                        }
+                    }
+                } else {
+                    // No alternative MFA methods - FIDO is required
+                    debug!("No alternative MFA methods available, FIDO is required");
+                    *cred_handler = AuthCredHandler::None;
+                    Ok((
+                        AuthResult::Denied(
+                            "Your FIDO security key is required to sign in, but it is not available. Please insert your security key and try again."
+                                .to_string(),
+                        ),
+                        AuthCacheAction::None,
+                    ))
+                }
             }
             (
                 AuthCredHandler::MFA {
@@ -5413,9 +5466,28 @@ impl HimmelblauProvider {
 #[cfg(test)]
 mod tests {
     use super::{
-        is_mfa_required_for_enrollment, is_unavailable_mfa_method_error, CONSENT_REQUIRED,
+        is_mfa_required_for_enrollment, is_unavailable_mfa_method_error,
+        select_fido_unavailable_fallback_method, CONSENT_REQUIRED,
     };
+    use himmelblau::auth::MfaMethodInfo;
     use himmelblau::error::{AADSTSError, ErrorResponse, MsalError, DEVICE_AUTH_FAIL};
+    use himmelblau::MFAAuthContinue;
+
+    fn mfa_method(auth_method_id: &str, is_default: bool) -> MfaMethodInfo {
+        MfaMethodInfo {
+            auth_method_id: auth_method_id.to_string(),
+            display: auth_method_id.to_string(),
+            is_default,
+        }
+    }
+
+    fn mfa_flow(methods: Vec<MfaMethodInfo>) -> MFAAuthContinue {
+        MFAAuthContinue {
+            mfa_methods: methods.iter().map(|m| m.auth_method_id.clone()).collect(),
+            mfa_method_details: methods,
+            ..Default::default()
+        }
+    }
 
     #[test]
     fn unavailable_mfa_method_error_requires_exact_requested_method() {
@@ -5471,5 +5543,37 @@ mod tests {
         assert!(!is_mfa_required_for_enrollment(&MsalError::RequestFailed(
             "network down".to_string()
         )));
+    }
+
+    fn fido_unavailable_denies_when_only_fido_available() {
+        let flow = mfa_flow(vec![mfa_method("FidoKey", true)]);
+
+        assert!(select_fido_unavailable_fallback_method(&flow).is_none());
+    }
+
+    #[test]
+    fn fido_unavailable_prefers_default_non_fido_method() {
+        let flow = mfa_flow(vec![
+            mfa_method("FidoKey", true),
+            mfa_method("PhoneAppOTP", false),
+            mfa_method("PhoneAppNotification", true),
+        ]);
+
+        let selected = select_fido_unavailable_fallback_method(&flow)
+            .expect("expected non-FIDO fallback method");
+        assert_eq!(selected.auth_method_id, "PhoneAppNotification");
+    }
+
+    #[test]
+    fn fido_unavailable_uses_first_non_fido_method_without_default() {
+        let flow = mfa_flow(vec![
+            mfa_method("FidoKey", true),
+            mfa_method("AccessPass", false),
+            mfa_method("PhoneAppOTP", false),
+        ]);
+
+        let selected = select_fido_unavailable_fallback_method(&flow)
+            .expect("expected non-FIDO fallback method");
+        assert_eq!(selected.auth_method_id, "AccessPass");
     }
 }
