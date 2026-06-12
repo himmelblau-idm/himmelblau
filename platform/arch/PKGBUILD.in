@@ -1,0 +1,259 @@
+# Maintainer: Jeff Melton <jeff@melton.cloud>
+# Upstream maintainer: David Mulder <dmulder@suse.com>
+#
+# This file is a template. CI substitutes:
+#   @PKGVER@  → the upstream release version (e.g. 3.1.5)
+#   @SHA256@  → sha256 of the upstream source tarball
+# .SRCINFO is always regenerated via `makepkg --printsrcinfo`; it is never committed.
+
+pkgname=himmelblau
+pkgver=@PKGVER@
+pkgrel=1
+pkgdesc="Microsoft Entra ID (Azure AD) authentication for Linux — NSS, PAM, broker, SSO, and Intune integration"
+arch=('x86_64' 'aarch64')
+url="https://github.com/himmelblau-idm/himmelblau"
+license=('GPL-3.0-or-later')
+
+# Runtime: built with --features tpm by default, so tpm2-tss is required (not optional).
+#
+# Dependency selection rationale (validated via source audit + namcap on the
+# built .pkg.tar.zst — see git log for the investigation that produced this):
+#
+#   bash           Required by the /bin/sh shebang in
+#                  usr/lib/himmelblau/himmelblau-init-hsm-pin. On Arch,
+#                  /bin/sh is provided by the bash package.
+#   dbus           The broker exposes com.microsoft.identity.broker1 on the
+#                  session bus; the daemon talks to it over D-Bus.
+#   libunistring   Linked transitively by upstream's PAM crate for safe
+#                  unicode string handling on PAM/NSS inputs.
+#   openssl        Direct ELF dependency on libssl/libcrypto for HTTP TLS
+#                  to Microsoft Entra ID endpoints.
+#   pam            Required by the libpam_himmelblau.so PAM module.
+#   sqlite         Backing store for himmelblaud's user/group/token cache
+#                  (/var/cache/himmelblau/himmelblau.cache.db).
+#   systemd        Required as the init system: the daemons rely on systemd
+#                  socket activation, sd_notify-style readiness reporting,
+#                  and the /usr/lib/systemd/system/ unit files installed by
+#                  this package. Note: sd-notify is implemented in pure Rust
+#                  (no libsystemd link), so namcap reports 'may not be
+#                  needed' against the built binary — that warning is a
+#                  false positive and is allowlisted in platform/arch/test/lint.sh.
+#   tpm2-tss       Direct ELF dependency from the tpm feature, which is on
+#                  by default in the cargo build below.
+#
+# Intentionally NOT in depends (moved to optdepends or dropped entirely):
+#
+#   krb5           Upstream treats this as an RPM 'recommends', not a hard
+#                  requires. himmelblau does not link libkrb5/libgssapi at
+#                  all — it only reads /etc/krb5.conf.d/ and shells out to
+#                  the krb5 user-space tools when present. Listing krb5
+#                  here would force-install it for every himmelblau user,
+#                  including the majority who only need NSS/PAM identity
+#                  lookups and never touch Kerberos. Moved to optdepends.
+#   openssh        Only the etc/ssh/sshd_config.d/himmelblau.conf drop-in
+#                  references openssh, and it has no effect until
+#                  openssh-server is installed. Moved to optdepends; the
+#                  drop-in file itself is harmless when openssh-server is
+#                  absent.
+#   libcap         No source-tree or Cargo-tree usage; no DT_NEEDED entry
+#                  on the built binaries. Dropped.
+#   pcre2          No source-tree or Cargo-tree usage; no DT_NEEDED entry
+#                  on the built binaries. Dropped.
+#   systemd-libs   Implicitly satisfied via libudev.so.1 (Arch packaging
+#                  guidelines say not to declare it explicitly).
+depends=(
+  'bash'
+  'dbus'
+  'libunistring'
+  'openssl'
+  'pam'
+  'sqlite'
+  'systemd'
+  'tpm2-tss'
+)
+
+makedepends=(
+  'cargo'
+  'clang'
+  'cmake'
+  'git'
+  'perl'
+  'pkgconf'
+  'python'
+)
+
+optdepends=(
+  'chromium: Microsoft Entra SSO via the Chromium native-messaging host'
+  'firefox: Microsoft Entra SSO via the Firefox native-messaging host'
+  'microsoft-edge-stable-bin: Microsoft Entra SSO via the Edge native-messaging host (Chromium-based; consumes the Chrome managed-policy drop-in)'
+  'krb5: Kerberos ticket utilities (kinit, klist, kdestroy) for inspecting Entra-issued TGTs from /etc/krb5.conf.d/'
+  'openssh-server: server-side SSH integration via the etc/ssh/sshd_config.d/himmelblau.conf drop-in'
+)
+
+# Virtual-package claims declared upstream across the workspace
+# (see [package.metadata.generate-rpm.provides] in src/{daemon,nss,pam,broker,sso}/Cargo.toml).
+# Bundled package, so we forward the union.
+provides=(
+  'aad-cli'
+  'aad-common'
+  'authd'
+  'authd-msentraid'
+  'libnss-aad'
+  'libpam-aad'
+  'linux-entra-sso'
+  'intune-portal'
+  'microsoft-identity-broker'
+)
+
+# The user's edited config survives upgrades; pacman writes the new version as .pacnew.
+backup=('etc/himmelblau/himmelblau.conf')
+
+install="${pkgname}.install"
+
+# Rename the GitHub archive on disk so it doesn't collide with other projects' tarballs.
+source=("${pkgname}-${pkgver}.tar.gz::https://github.com/himmelblau-idm/himmelblau/archive/refs/tags/${pkgver}.tar.gz")
+sha256sums=('@SHA256@')
+
+build() {
+  cd "${pkgname}-${pkgver}"
+
+  # 1. Generate version-gated systemd unit files into ./platform/opensuse/
+  #    (this matches what scripts/install_local.py and the Makefile RPM/Gentoo
+  #    paths do — these .service files are build artifacts, not source files).
+  python3 scripts/gen_servicefiles.py --out ./platform/opensuse/
+
+  # 2. Generate himmelblau.conf.example from the XML parameter docs
+  #    (same source-of-truth scripts/install_local.py uses). Two distinct
+  #    facts about the upstream tree make this delicate:
+  #      (a) the gen_param_code.py script moved from scripts/ to
+  #          src/common/scripts/ post-3.1.5 (commit 238a9e9f);
+  #      (b) the --gen-conf-example / --gen-debian-conf-example flags
+  #          were added post-3.1.5 (commit 1f848d27) — at tag 3.1.5 the
+  #          example files are still checked into the tree at
+  #          src/config/himmelblau.conf.example and
+  #          platform/debian/himmelblau.conf.example, and the script
+  #          rejects --gen-conf-example with 'unrecognized arguments'.
+  #    Handle both shapes so the PKGBUILD works against the current
+  #    release (3.1.5) and any future release.
+  mkdir -p target/config target/debian
+  GEN_PARAM_CODE=src/common/scripts/gen_param_code.py
+  [ -f "$GEN_PARAM_CODE" ] || GEN_PARAM_CODE=scripts/gen_param_code.py
+  if python3 "$GEN_PARAM_CODE" --help 2>&1 | grep -q -- '--gen-conf-example'; then
+    python3 "$GEN_PARAM_CODE" \
+      --gen-conf-example --conf-example-output target/config/himmelblau.conf.example \
+      --gen-debian-conf-example --debian-conf-example-output target/debian/himmelblau.conf.example
+  else
+    cp src/config/himmelblau.conf.example target/config/himmelblau.conf.example
+    cp platform/debian/himmelblau.conf.example target/debian/himmelblau.conf.example
+  fi
+
+  # 3. Standard release build with the TPM feature (the upstream production
+  #    default). --locked uses Cargo.lock-pinned dependency versions (the
+  #    set upstream actually tested against at this tag) while still
+  #    allowing network fetch — unlike --frozen, which adds --offline and
+  #    breaks against a fresh AUR build container that has no cargo cache.
+  #    --workspace --exclude himmelblau-fuzz omits the cargo-fuzz harness
+  #    crate, whose binaries are libfuzzer-sys targets without a `main`
+  #    function and only link under `cargo fuzz`. Building them with plain
+  #    `cargo build` produces 'undefined symbol: main' linker errors
+  #    regardless of host or distro.
+  export RUSTUP_TOOLCHAIN=stable
+  export CARGO_TARGET_DIR=target
+
+  # Arch's makepkg.conf defaults inject aggressive CFLAGS / LDFLAGS /
+  # RUSTFLAGS (notably -D_FORTIFY_SOURCE=3, -Wl,-z,now, hardening shims, and
+  # an opinionated -C target-cpu) that break crates whose build.rs uses the
+  # cc crate to compile C/asm into static libs — symbols come out of cc's
+  # static lib but ld.lld can't resolve them in the final binary link.
+  # Symptoms: undefined refs to ring_core_* and aws_lc_*_ functions even
+  # though those crates' build.rs ran cleanly.
+  #
+  # We clear those env vars here so cargo uses each crate's intended build
+  # configuration. The .pkg.tar.zst still gets stripped + compressed per
+  # makepkg's *packaging* defaults — we're only neutralizing *build-time*
+  # flag injection. (Verified against upstream's own ubuntu CI which uses
+  # vanilla `cargo build` and links cleanly.)
+  unset CFLAGS CXXFLAGS CPPFLAGS LDFLAGS RUSTFLAGS
+
+  cargo build --release --locked --features tpm \
+    --workspace --exclude himmelblau-fuzz
+}
+
+package() {
+  cd "${pkgname}-${pkgver}"
+
+  # ── Binaries ─────────────────────────────────────────────────────────────────
+  install -Dm755 target/release/aad-tool          "${pkgdir}/usr/bin/aad-tool"
+  install -Dm755 target/release/linux-entra-sso   "${pkgdir}/usr/bin/linux-entra-sso"
+  install -Dm755 target/release/himmelblaud       "${pkgdir}/usr/sbin/himmelblaud"
+  install -Dm755 target/release/himmelblaud_tasks "${pkgdir}/usr/sbin/himmelblaud_tasks"
+  # Upstream's broker binary is named 'broker' but installs as 'himmelblau_broker' to avoid collisions.
+  install -Dm755 target/release/broker            "${pkgdir}/usr/sbin/himmelblau_broker"
+
+  # ── NSS + PAM modules (Arch uses /usr/lib, not /usr/lib64) ───────────────────
+  install -Dm755 target/release/libnss_himmelblau.so "${pkgdir}/usr/lib/libnss_himmelblau.so.2"
+  install -Dm755 target/release/libpam_himmelblau.so "${pkgdir}/usr/lib/security/pam_himmelblau.so"
+
+  # ── HSM PIN init helper ──────────────────────────────────────────────────────
+  install -Dm755 src/daemon/scripts/himmelblau-init-hsm-pin \
+                                                  "${pkgdir}/usr/lib/himmelblau/himmelblau-init-hsm-pin"
+
+  # ── systemd units (generated above) + D-Bus service + user unit ──────────────
+  install -Dm644 platform/opensuse/himmelblaud.service \
+                                                  "${pkgdir}/usr/lib/systemd/system/himmelblaud.service"
+  install -Dm644 platform/opensuse/himmelblaud-tasks.service \
+                                                  "${pkgdir}/usr/lib/systemd/system/himmelblaud-tasks.service"
+  install -Dm644 platform/opensuse/himmelblau-hsm-pin-init.service \
+                                                  "${pkgdir}/usr/lib/systemd/system/himmelblau-hsm-pin-init.service"
+  install -Dm644 platform/opensuse/com.microsoft.identity.broker1.service \
+                                                  "${pkgdir}/usr/share/dbus-1/services/com.microsoft.identity.broker1.service"
+  install -Dm644 platform/debian/himmelblau-broker.service \
+                                                  "${pkgdir}/usr/lib/systemd/user/himmelblau-broker.service"
+
+  # ── GDM service override (only takes effect if gdm is installed) ─────────────
+  install -Dm644 src/config/gdm3_service_override.conf \
+                                                  "${pkgdir}/usr/lib/systemd/system/display-manager.service.d/override.conf"
+
+  # ── Default config + example ─────────────────────────────────────────────────
+  install -Dm644 target/config/himmelblau.conf.example \
+                                                  "${pkgdir}/etc/himmelblau/himmelblau.conf"
+  install -Dm644 target/config/himmelblau.conf.example \
+                                                  "${pkgdir}/usr/share/doc/${pkgname}/himmelblau.conf.example"
+
+  # ── tmpfiles.d ───────────────────────────────────────────────────────────────
+  install -Dm644 src/daemon/src/himmelblaud.tmpfiles.conf \
+                                                  "${pkgdir}/usr/lib/tmpfiles.d/himmelblaud.conf"
+  install -Dm644 src/daemon/src/himmelblau-policies.tmpfiles.conf \
+                                                  "${pkgdir}/usr/lib/tmpfiles.d/himmelblau-policies.conf"
+  install -Dm644 src/nss/src/nss-himmelblau.tmpfiles.conf \
+                                                  "${pkgdir}/usr/lib/tmpfiles.d/nss-himmelblau.conf"
+
+  # ── Browser SSO native messaging hosts ───────────────────────────────────────
+  install -Dm644 src/sso/src/firefox/linux_entra_sso.json \
+                                                  "${pkgdir}/usr/lib/mozilla/native-messaging-hosts/linux_entra_sso.json"
+  install -Dm644 src/sso/src/chrome/linux_entra_sso.json \
+                                                  "${pkgdir}/etc/opt/chrome/native-messaging-hosts/linux_entra_sso.json"
+  install -Dm644 src/sso/src/chrome/linux_entra_sso.json \
+                                                  "${pkgdir}/etc/chromium/native-messaging-hosts/linux_entra_sso.json"
+
+  # ── Managed browser policies (sso-policies subpackage upstream) ──────────────
+  install -Dm644 src/sso-policies/src/chrome/policies.json \
+                                                  "${pkgdir}/etc/opt/chrome/policies/managed/himmelblau.json"
+  install -Dm644 src/sso-policies/src/chrome/policies.json \
+                                                  "${pkgdir}/etc/chromium/policies/managed/himmelblau.json"
+  install -Dm644 src/sso-policies/src/chrome/policies.json \
+                                                  "${pkgdir}/etc/opt/edge/policies/managed/himmelblau.json"
+  install -Dm644 src/sso-policies/src/firefox/policies.json \
+                                                  "${pkgdir}/usr/share/doc/${pkgname}/firefox-policies.json.example"
+
+  # ── sshd_config drop-in (himmelblau-sshd-config subpackage upstream) ─────────
+  install -Dm644 platform/el/sshd_config \
+                                                  "${pkgdir}/etc/ssh/sshd_config.d/himmelblau.conf"
+
+  # ── Documentation ────────────────────────────────────────────────────────────
+  install -Dm644 README.md   "${pkgdir}/usr/share/doc/${pkgname}/README.md"
+  install -Dm644 man/man1/aad-tool.1         "${pkgdir}/usr/share/man/man1/aad-tool.1"
+  install -Dm644 man/man5/himmelblau.conf.5  "${pkgdir}/usr/share/man/man5/himmelblau.conf.5"
+  install -Dm644 man/man8/himmelblaud.8      "${pkgdir}/usr/share/man/man8/himmelblaud.8"
+  install -Dm644 man/man8/himmelblaud_tasks.8 "${pkgdir}/usr/share/man/man8/himmelblaud_tasks.8"
+}
