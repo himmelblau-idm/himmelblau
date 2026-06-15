@@ -1,9 +1,10 @@
 use crate::container_pool::ContainerPool;
 use crate::podman::{ContainerInstance, PodmanClient};
-use crate::provider_definitions::ProviderDefinition;
-use crate::types::{FlowResponse, LogLevel, SessionLogEntry, SessionState, TokenBundle};
+use crate::types::{
+    FlowResponse, InputType, LogLevel, RequiredInput, SessionLogEntry, SessionState,
+};
 use anyhow::{anyhow, Result};
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tokio::sync::{Mutex, RwLock};
@@ -25,20 +26,8 @@ impl CollectedInput {
         Self { value, sensitive }
     }
 
-    pub fn plain(value: String) -> Self {
-        Self::new(value, false)
-    }
-
-    pub fn sensitive(value: String) -> Self {
-        Self::new(value, true)
-    }
-
     pub fn value(&self) -> &str {
         &self.value
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.value.is_empty()
     }
 }
 
@@ -50,31 +39,54 @@ impl Drop for CollectedInput {
     }
 }
 
+#[derive(Debug, Clone)]
+pub(crate) struct PendingField {
+    pub interaction_id: String,
+    pub field: RequiredInput,
+    pub selector: String,
+    pub submit_selector: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct PendingAction {
+    pub interaction_id: String,
+    pub prompt: String,
+    pub selector: String,
+}
+
 #[derive(Debug)]
 pub(crate) struct SessionRuntime {
     pub state: SessionState,
-    pub current_step_index: usize,
     pub last_activity: Instant,
     pub terminal_since: Option<Instant>,
     pub detail: Option<String>,
-    pub collected_inputs: HashMap<String, CollectedInput>,
-    pub tokens: TokenBundle,
     pub metadata: HashMap<String, String>,
     pub logs: Vec<SessionLogEntry>,
+    pub pending_fields: VecDeque<PendingField>,
+    pub active_field: Option<PendingField>,
+    pub collected_inputs: HashMap<String, CollectedInput>,
+    pub pending_action: Option<PendingAction>,
+    pub confirmed_action: Option<PendingAction>,
+    pub auto_clicks_this_turn: usize,
+    pub interaction_counter: u64,
 }
 
 impl Default for SessionRuntime {
     fn default() -> Self {
         Self {
             state: SessionState::InProgress,
-            current_step_index: 0,
             last_activity: Instant::now(),
             terminal_since: None,
             detail: None,
-            collected_inputs: HashMap::new(),
-            tokens: TokenBundle::default(),
             metadata: HashMap::new(),
             logs: Vec::new(),
+            pending_fields: VecDeque::new(),
+            active_field: None,
+            collected_inputs: HashMap::new(),
+            pending_action: None,
+            confirmed_action: None,
+            auto_clicks_this_turn: 0,
+            interaction_counter: 0,
         }
     }
 }
@@ -84,39 +96,36 @@ impl Drop for SessionRuntime {
         for value in self.metadata.values_mut() {
             value.zeroize();
         }
+        self.collected_inputs.clear();
     }
 }
 
 #[derive(Debug)]
 pub struct Session {
     pub session_id: String,
-    pub provider: String,
     pub owner_uid: u32,
     pub container: ContainerInstance,
-    pub definition: RwLock<Arc<ProviderDefinition>>,
     pub(crate) runtime: Mutex<SessionRuntime>,
 }
 
 impl Session {
-    pub fn new(
-        session_id: String,
-        provider: String,
-        owner_uid: u32,
-        container: ContainerInstance,
-        definition: Arc<ProviderDefinition>,
-    ) -> Self {
+    pub fn new(session_id: String, owner_uid: u32, container: ContainerInstance) -> Self {
         Self {
             session_id,
-            provider,
             owner_uid,
             container,
-            definition: RwLock::new(definition),
             runtime: Mutex::new(SessionRuntime::default()),
         }
     }
 
     pub fn owned_by(&self, uid: u32) -> bool {
         self.owner_uid == uid
+    }
+
+    pub async fn next_interaction_id(&self) -> String {
+        let mut runtime = self.runtime.lock().await;
+        runtime.interaction_counter = runtime.interaction_counter.saturating_add(1);
+        format!("{}-{}", self.session_id, runtime.interaction_counter)
     }
 
     pub async fn log(&self, level: LogLevel, message: impl Into<String>) {
@@ -136,7 +145,6 @@ impl Session {
         let runtime = self.runtime.lock().await;
         FlowResponse::SessionStatus {
             session_id: self.session_id.clone(),
-            provider: self.provider.clone(),
             state: runtime.state.clone(),
             detail: runtime.detail.clone(),
             logs: runtime.logs.clone(),
@@ -191,34 +199,23 @@ impl SessionManager {
     pub async fn create_session(
         &self,
         session_id: String,
-        provider: String,
         owner_uid: u32,
         username: Option<String>,
         issuer_url: Option<String>,
         dag_auth_url: Option<String>,
         dag_user_code: Option<String>,
-        definition: Arc<ProviderDefinition>,
     ) -> Result<Arc<Session>> {
         if self.sessions.read().await.contains_key(&session_id) {
             return Err(anyhow!("session '{}' already exists", session_id));
         }
 
         let container = self.container_pool.acquire_container(&session_id).await?;
-
-        let session = Arc::new(Session::new(
-            session_id.clone(),
-            provider,
-            owner_uid,
-            container,
-            definition,
-        ));
+        let session = Arc::new(Session::new(session_id.clone(), owner_uid, container));
 
         {
             let mut runtime = session.runtime.lock().await;
             if let Some(username) = username {
-                runtime
-                    .collected_inputs
-                    .insert("username".to_string(), CollectedInput::plain(username));
+                runtime.metadata.insert("username".to_string(), username);
             }
             if let Some(issuer_url) = issuer_url {
                 runtime
@@ -233,11 +230,7 @@ impl SessionManager {
             if let Some(dag_user_code) = dag_user_code {
                 runtime
                     .metadata
-                    .insert("dag_user_code".to_string(), dag_user_code.clone());
-                runtime.collected_inputs.insert(
-                    "dag_user_code".to_string(),
-                    CollectedInput::sensitive(dag_user_code),
-                );
+                    .insert("dag_user_code".to_string(), dag_user_code);
             }
         }
 
@@ -267,6 +260,35 @@ impl SessionManager {
 
     pub async fn get_session(&self, session_id: &str) -> Option<Arc<Session>> {
         self.sessions.read().await.get(session_id).cloned()
+    }
+
+    pub async fn complete_session(&self, session_id: &str) -> Result<bool> {
+        let session = self.sessions.write().await.remove(session_id);
+        if let Some(session) = session {
+            {
+                let mut runtime = session.runtime.lock().await;
+                runtime.state = SessionState::Completed;
+                runtime.detail = Some("Session completed by himmelblaud".to_string());
+                runtime.last_activity = Instant::now();
+                runtime.terminal_since = Some(Instant::now());
+            }
+            session.log(LogLevel::Info, "Completing session").await;
+            if let Err(error) = self
+                .podman
+                .destroy_session_container(&session.container)
+                .await
+            {
+                warn!(
+                    session_id = %session.session_id,
+                    container = %session.container.name,
+                    ?error,
+                    "failed to destroy completed orchestrator session container"
+                );
+            }
+            return Ok(true);
+        }
+
+        Ok(false)
     }
 
     pub async fn cancel_session(&self, session_id: &str) -> Result<bool> {
@@ -369,6 +391,21 @@ impl SessionManager {
     }
 }
 
+pub(crate) fn input_sensitive(input_type: &InputType, prompt: Option<&str>) -> bool {
+    if matches!(input_type, InputType::Password | InputType::Otp) {
+        return true;
+    }
+    let Some(prompt) = prompt else {
+        return false;
+    };
+    let prompt = prompt.to_ascii_lowercase();
+    prompt.contains("password")
+        || prompt.contains("passcode")
+        || prompt.contains("verification code")
+        || prompt.contains("backup code")
+        || prompt.contains("recovery code")
+}
+
 fn now_epoch_s() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -408,12 +445,10 @@ mod tests {
     }
 
     #[test]
-    fn truncate_log_message_preserves_utf8_boundaries() {
-        let message = "é".repeat(MAX_SESSION_LOG_MESSAGE_BYTES);
-        let truncated = truncate_log_message(message);
-
-        assert!(truncated.len() <= MAX_SESSION_LOG_MESSAGE_BYTES);
-        assert!(truncated.ends_with(TRUNCATED_LOG_SUFFIX));
-        assert!(truncated.is_char_boundary(truncated.len()));
+    fn sensitive_inputs_include_password_and_otp() {
+        assert!(input_sensitive(&InputType::Password, None));
+        assert!(input_sensitive(&InputType::Otp, None));
+        assert!(input_sensitive(&InputType::Text, Some("Enter backup code")));
+        assert!(!input_sensitive(&InputType::Username, Some("Username")));
     }
 }

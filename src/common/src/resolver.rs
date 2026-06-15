@@ -1413,6 +1413,10 @@ where
                         // AuthCredHandler::None is invalid with MFACode
                         return Err(());
                     }
+                    (AuthCredHandler::None, PamAuthRequest::TextInput { .. }) => {
+                        // AuthCredHandler::None is invalid with TextInput
+                        return Err(());
+                    }
                     (AuthCredHandler::None, PamAuthRequest::MFAPoll { .. }) => {
                         // AuthCredHandler::None is invalid with MFAPoll
                         return Err(());

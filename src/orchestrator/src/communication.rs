@@ -1,10 +1,8 @@
 use crate::flow::FlowExecutor;
-use crate::provider_definitions::ProviderRegistry;
 use crate::session::SessionManager;
 use crate::types::{FlowCommand, FlowResponse, ORCHESTRATOR_PROTOCOL_VERSION};
 use anyhow::{anyhow, Context, Result};
 use futures::{SinkExt, StreamExt};
-use himmelblau_unix_common::config::HimmelblauConfig;
 use std::ffi::CString;
 use std::io;
 use std::os::unix::ffi::OsStrExt;
@@ -81,22 +79,13 @@ impl Encoder<FlowResponse> for FlowCodec {
 #[derive(Clone)]
 pub struct CommunicationServer {
     session_manager: Arc<SessionManager>,
-    provider_registry: Arc<ProviderRegistry>,
-    config: Arc<HimmelblauConfig>,
     flow_executor: Arc<FlowExecutor>,
 }
 
 impl CommunicationServer {
-    pub fn new(
-        session_manager: Arc<SessionManager>,
-        provider_registry: Arc<ProviderRegistry>,
-        config: Arc<HimmelblauConfig>,
-        flow_executor: Arc<FlowExecutor>,
-    ) -> Self {
+    pub fn new(session_manager: Arc<SessionManager>, flow_executor: Arc<FlowExecutor>) -> Self {
         Self {
             session_manager,
-            provider_registry,
-            config,
             flow_executor,
         }
     }
@@ -230,7 +219,6 @@ impl CommunicationServer {
         match &mut command {
             FlowCommand::StartSession {
                 session_id,
-                provider,
                 username,
                 issuer_url,
                 dag_auth_url,
@@ -238,7 +226,6 @@ impl CommunicationServer {
             } => {
                 self.handle_start_session(
                     std::mem::take(session_id),
-                    std::mem::take(provider),
                     peer_uid,
                     std::mem::take(username),
                     std::mem::take(issuer_url),
@@ -249,14 +236,20 @@ impl CommunicationServer {
             }
             FlowCommand::NextStep {
                 session_id,
+                interaction_id,
                 provided_inputs,
             } => {
                 self.handle_next_step(
                     std::mem::take(session_id),
+                    std::mem::take(interaction_id),
                     std::mem::take(provided_inputs),
                     peer_uid,
                 )
                 .await
+            }
+            FlowCommand::CompleteSession { session_id } => {
+                self.handle_complete_session(std::mem::take(session_id), peer_uid)
+                    .await
             }
             FlowCommand::CancelSession { session_id } => {
                 self.handle_cancel_session(std::mem::take(session_id), peer_uid)
@@ -275,71 +268,30 @@ impl CommunicationServer {
     async fn handle_start_session(
         &self,
         session_id: String,
-        provider: Option<String>,
         owner_uid: u32,
         username: Option<String>,
         issuer_url: Option<String>,
         dag_auth_url: Option<String>,
         dag_user_code: Option<String>,
     ) -> Result<FlowResponse> {
-        let provider_name = self.provider_registry.detect_provider(
-            provider.as_deref(),
-            username.as_deref(),
-            issuer_url.as_deref(),
-            self.config.as_ref(),
-        );
         debug!(
             session_id = %session_id,
-            requested_provider = ?provider,
-            resolved_provider = %provider_name,
             username_present = username.as_ref().is_some_and(|entry| !entry.is_empty()),
             issuer_url = ?issuer_url,
             dag_auth_url_present = dag_auth_url.is_some(),
             dag_user_code_present = dag_user_code.is_some(),
-            "resolved start_session provider"
-        );
-
-        let definition = self
-            .provider_registry
-            .get(&provider_name)
-            .ok_or_else(|| anyhow!("unknown provider '{}'", provider_name))?;
-
-        let step_summaries = definition
-            .steps
-            .iter()
-            .map(|step| {
-                let required_inputs = step
-                    .required_inputs
-                    .iter()
-                    .map(|input| input.name.clone())
-                    .collect::<Vec<_>>();
-                format!(
-                    "{}(required_inputs={:?}, actions={})",
-                    step.name,
-                    required_inputs,
-                    step.actions.len()
-                )
-            })
-            .collect::<Vec<_>>();
-        debug!(
-            session_id = %session_id,
-            provider = %provider_name,
-            step_count = definition.steps.len(),
-            steps = ?step_summaries,
-            "resolved provider definition for session"
+            "starting providerless orchestrator session"
         );
 
         let session = self
             .session_manager
             .create_session(
                 session_id.clone(),
-                provider_name,
                 owner_uid,
                 username,
                 issuer_url,
                 dag_auth_url,
                 dag_user_code,
-                definition,
             )
             .await?;
 
@@ -349,6 +301,7 @@ impl CommunicationServer {
     async fn handle_next_step(
         &self,
         session_id: String,
+        interaction_id: Option<String>,
         provided_inputs: Vec<crate::types::ProvidedInput>,
         peer_uid: u32,
     ) -> Result<FlowResponse> {
@@ -358,6 +311,7 @@ impl CommunicationServer {
             .collect::<Vec<_>>();
         debug!(
             session_id = %session_id,
+            interaction_id = ?interaction_id,
             provided_inputs = ?provided_input_names,
             provided_count = provided_input_names.len(),
             "continuing session with next_step inputs"
@@ -378,8 +332,37 @@ impl CommunicationServer {
         }
 
         self.flow_executor
-            .continue_session(Arc::clone(&session), provided_inputs)
+            .continue_session(Arc::clone(&session), interaction_id, provided_inputs)
             .await
+    }
+
+    async fn handle_complete_session(
+        &self,
+        session_id: String,
+        peer_uid: u32,
+    ) -> Result<FlowResponse> {
+        if let Some(session) = self.session_manager.get_session(&session_id).await {
+            if !session.owned_by(peer_uid) {
+                return Err(anyhow!(
+                    "session '{}' is not owned by caller uid {}",
+                    session_id,
+                    peer_uid
+                ));
+            }
+        }
+
+        let completed = self.session_manager.complete_session(&session_id).await?;
+        if completed {
+            Ok(FlowResponse::Ack {
+                session_id: Some(session_id),
+                message: "session completed".to_string(),
+            })
+        } else {
+            Ok(FlowResponse::SessionError {
+                session_id,
+                error: "session not found".to_string(),
+            })
+        }
     }
 
     async fn handle_cancel_session(
@@ -500,8 +483,8 @@ fn response_kind(response: &FlowResponse) -> &'static str {
     match response {
         FlowResponse::Ack { .. } => "ack",
         FlowResponse::NextStep { .. } => "next_step",
+        FlowResponse::Waiting { .. } => "waiting",
         FlowResponse::SessionStatus { .. } => "session_status",
-        FlowResponse::SessionComplete { .. } => "session_complete",
         FlowResponse::SessionError { .. } => "session_error",
         FlowResponse::Error { .. } => "error",
         FlowResponse::Pong { .. } => "pong",

@@ -1,14 +1,11 @@
-use crate::podman::PodmanClient;
-use crate::provider_definitions::{
-    BranchCondition, ExtractTarget, FlowAction, ProviderStep, SuccessCondition, WaitCondition,
-};
-use crate::session::{CollectedInput, Session};
-use crate::types::{FlowResponse, InputType, LogLevel, ProvidedInput, SessionState};
+use crate::podman::{InspectedAction, InspectedField, InspectedForm, PageInspection, PodmanClient};
+use crate::session::{input_sensitive, CollectedInput, PendingAction, PendingField, Session};
+use crate::types::{FlowResponse, InputType, LogLevel, ProvidedInput, RequiredInput, SessionState};
 use anyhow::{anyhow, Context, Result};
-use std::collections::HashSet;
 use std::sync::Arc;
 use tokio::time::{sleep, Duration};
-use zeroize::Zeroizing;
+
+const MAX_AUTO_CLICKS_PER_TURN: usize = 4;
 
 pub struct FlowExecutor {
     podman: Arc<PodmanClient>,
@@ -21,963 +18,1086 @@ impl FlowExecutor {
 
     pub async fn start_session(&self, session: Arc<Session>) -> Result<FlowResponse> {
         session
-            .log(
-                LogLevel::Info,
-                format!("Starting provider flow '{}'", session.provider),
-            )
+            .log(LogLevel::Info, "Starting generic browser DAG flow")
             .await;
-
-        self.initialize_session_navigation(&session)
-            .await
-            .context("failed to initialize browser navigation for session")?;
-
-        self.advance_until_blocked_or_complete(session).await
-    }
-
-    async fn initialize_session_navigation(&self, session: &Arc<Session>) -> Result<()> {
-        let provider_start_url = {
-            let definition = session.definition.read().await;
-            definition.start_url.clone()
-        };
 
         let dag_auth_url = {
             let runtime = session.runtime.lock().await;
             runtime.metadata.get("dag_auth_url").cloned()
-        };
-
-        let (navigation_source, navigation_url) = if let Some(url) = dag_auth_url {
-            ("dag_auth_url", url)
-        } else if let Some(url) = provider_start_url {
-            let Some(resolved) = self.resolve_navigation_url(session, &url).await else {
-                session
-                    .log(
-                        LogLevel::Debug,
-                        format!(
-                            "Skipping initial navigation: provider_start_url '{}' could not be resolved",
-                            url
-                        ),
-                    )
-                    .await;
-                return Ok(());
-            };
-            ("provider_start_url", resolved)
-        } else {
-            session
-                .log(
-                    LogLevel::Debug,
-                    "No initial navigation URL available; relying on in-step navigation"
-                        .to_string(),
-                )
-                .await;
-            return Ok(());
-        };
-
-        let navigation_url_for_debug = redact_url_parameters(&navigation_url);
-
-        session
-            .log(
-                LogLevel::Debug,
-                format!(
-                    "Initial navigation using {}='{}'",
-                    navigation_source, navigation_url_for_debug
-                ),
-            )
-            .await;
+        }
+        .ok_or_else(|| anyhow!("start_session requires dag_auth_url"))?;
 
         self.podman
-            .navigate(&session.container, &navigation_url)
+            .navigate(&session.container, &dag_auth_url)
             .await
-            .with_context(|| {
-                format!(
-                    "initial navigation failed using {}='{}'",
-                    navigation_source, navigation_url
-                )
-            })
+            .context("initial DAG browser navigation failed")?;
+
+        self.advance(session).await
     }
 
     pub async fn continue_session(
         &self,
         session: Arc<Session>,
-        provided_inputs: Vec<ProvidedInput>,
+        interaction_id: Option<String>,
+        mut provided_inputs: Vec<ProvidedInput>,
     ) -> Result<FlowResponse> {
-        if !provided_inputs.is_empty() {
-            let provided_summary = provided_inputs
-                .iter()
-                .map(|input| format!("{}(len={})", input.name, input.value.len()))
-                .collect::<Vec<_>>();
-            session
-                .log(
-                    LogLevel::Debug,
-                    format!(
-                        "Received next_step inputs for session continuation: {:?}",
-                        provided_summary
-                    ),
-                )
-                .await;
-
-            let sensitive_input_names = sensitive_input_names(&session).await;
+        {
             let mut runtime = session.runtime.lock().await;
-            for mut input in provided_inputs {
-                let sensitive = sensitive_input_names.contains(input.name.as_str());
-                let name = std::mem::take(&mut input.name);
-                let value = std::mem::take(&mut input.value);
-                runtime
-                    .collected_inputs
-                    .insert(name, CollectedInput::new(value, sensitive));
-            }
+            runtime.auto_clicks_this_turn = 0;
             runtime.state = SessionState::InProgress;
             runtime.detail = Some("Continuing browser flow".to_string());
             runtime.last_activity = std::time::Instant::now();
         }
 
-        self.advance_until_blocked_or_complete(session).await
+        if !provided_inputs.is_empty() {
+            self.accept_provided_input(&session, interaction_id, &mut provided_inputs)
+                .await?;
+        }
+
+        self.advance(session).await
     }
 
-    async fn advance_until_blocked_or_complete(
+    async fn accept_provided_input(
         &self,
-        session: Arc<Session>,
-    ) -> Result<FlowResponse> {
-        loop {
-            let (current_step_index, collected_input_keys) = {
-                let runtime = session.runtime.lock().await;
-                (
-                    runtime.current_step_index,
-                    runtime.collected_inputs.keys().cloned().collect::<Vec<_>>(),
-                )
-            };
-            let (step, definition_len) = {
-                let definition = session.definition.read().await;
-                (
-                    definition.steps.get(current_step_index).cloned(),
-                    definition.steps.len(),
-                )
-            };
-
-            let Some(step) = step else {
-                session
-                    .log(
-                        LogLevel::Debug,
-                        format!(
-                            "No step at index {} (definition has {} steps)",
-                            current_step_index, definition_len
-                        ),
-                    )
-                    .await;
-                return self
-                    .complete_session(session, "Flow reached terminal step")
-                    .await;
-            };
-
-            session
-                .log(
-                    LogLevel::Debug,
-                    format!(
-                        "Step '{}' context: step_index={} collected_inputs={:?} required_inputs={:?} actions={}",
-                        step.name,
-                        current_step_index,
-                        collected_input_keys,
-                        step.required_inputs
-                            .iter()
-                            .map(|input| input.name.clone())
-                            .collect::<Vec<_>>(),
-                        step.actions.len(),
-                    ),
-                )
-                .await;
-
-            session
-                .log(LogLevel::Info, format!("Executing step '{}'", step.name))
-                .await;
-
-            if !self
-                .optional_step_wait_condition_satisfied(&session, &step)
-                .await?
-            {
-                if let Some(next_step_index) = self
-                    .evaluate_branch_excluding(&session, &step, Some(step.name.as_str()))
-                    .await?
+        session: &Arc<Session>,
+        interaction_id: Option<String>,
+        provided_inputs: &mut [ProvidedInput],
+    ) -> Result<()> {
+        let mut runtime = session.runtime.lock().await;
+        for input in provided_inputs {
+            if let Some(action) = runtime.pending_action.take() {
+                if interaction_id
+                    .as_deref()
+                    .map(|id| id != action.interaction_id)
+                    .unwrap_or(false)
                 {
-                    let next_step_name = {
-                        let definition = session.definition.read().await;
-                        definition
-                            .steps
-                            .get(next_step_index)
-                            .map(|candidate| candidate.name.clone())
-                            .unwrap_or_else(|| "<unknown>".to_string())
-                    };
-                    session
-                        .log(
-                            LogLevel::Debug,
-                            format!(
-                                "Optional step '{}' wait_for not satisfied; following fallback branch to '{}'",
-                                step.name, next_step_name
-                            ),
-                        )
-                        .await;
-                    let mut runtime = session.runtime.lock().await;
-                    runtime.current_step_index = next_step_index;
-                    runtime.last_activity = std::time::Instant::now();
+                    return Err(anyhow!(
+                        "provided confirmation interaction_id does not match"
+                    ));
+                }
+                if input.value.eq_ignore_ascii_case("true") || input.value == "1" {
+                    runtime.confirmed_action = Some(action);
                     continue;
                 }
-
-                session
-                    .log(
-                        LogLevel::Debug,
-                        format!(
-                            "Optional step '{}' wait_for not satisfied; advancing sequentially",
-                            step.name
-                        ),
-                    )
-                    .await;
-
-                let mut runtime = session.runtime.lock().await;
-                runtime.current_step_index += 1;
-                runtime.last_activity = std::time::Instant::now();
-                continue;
+                return Err(anyhow!("confirmation declined"));
             }
 
-            if let Some(response) = self.maybe_request_inputs(&session, &step).await {
+            let active = runtime
+                .active_field
+                .take()
+                .ok_or_else(|| anyhow!("provided input but no field is waiting"))?;
+            if interaction_id
+                .as_deref()
+                .map(|id| id != active.interaction_id)
+                .unwrap_or(false)
+            {
+                return Err(anyhow!("provided input interaction_id does not match"));
+            }
+            if input.name != active.field.name {
+                return Err(anyhow!(
+                    "provided input '{}' does not match active field '{}'",
+                    input.name,
+                    active.field.name
+                ));
+            }
+            let value = std::mem::take(&mut input.value);
+            runtime.collected_inputs.insert(
+                active.field.name.clone(),
+                CollectedInput::new(value, active.field.sensitive),
+            );
+        }
+        Ok(())
+    }
+
+    async fn advance(&self, session: Arc<Session>) -> Result<FlowResponse> {
+        loop {
+            if let Some(response) = self.next_queued_prompt(&session).await {
                 return Ok(response);
             }
 
-            if let Err(error) = self
-                .execute_step_actions(&session, current_step_index, &step)
-                .await
-                .with_context(|| format!("provider step '{}' failed", step.name))
-            {
-                if !step.optional {
-                    return Err(error);
-                }
+            if self.try_submit_collected_form(&session).await? {
+                continue;
+            }
 
+            if self.try_click_pending_action(&session).await? {
+                continue;
+            }
+
+            let inspection = self
+                .podman
+                .inspect_page(&session.container)
+                .await
+                .context("failed inspecting browser page")?;
+
+            if self
+                .queue_fields_from_inspection(&session, &inspection)
+                .await?
+            {
+                continue;
+            }
+
+            if let Some(response) = self
+                .terminal_browser_error_from_inspection(&session, &inspection)
+                .await
+            {
+                return Ok(response);
+            }
+
+            if self
+                .try_auto_click_from_inspection(&session, &inspection)
+                .await?
+            {
+                continue;
+            }
+
+            if self
+                .queue_confirmation_from_inspection(&session, &inspection)
+                .await?
+            {
+                continue;
+            }
+
+            {
+                let mut runtime = session.runtime.lock().await;
+                runtime.state = SessionState::WaitingForBrowser;
+                runtime.detail = Some(format!(
+                    "Waiting for browser interaction at {}",
+                    display_page_location(&inspection)
+                ));
+                runtime.last_activity = std::time::Instant::now();
+            }
+
+            return Ok(FlowResponse::Waiting {
+                session_id: session.session_id.clone(),
+                message: Some("Waiting for browser authentication to continue".to_string()),
+            });
+        }
+    }
+
+    async fn next_queued_prompt(&self, session: &Arc<Session>) -> Option<FlowResponse> {
+        let mut runtime = session.runtime.lock().await;
+        if runtime.active_field.is_none() {
+            runtime.active_field = runtime.pending_fields.pop_front();
+        }
+        if let Some(active) = runtime.active_field.clone() {
+            runtime.state = SessionState::WaitingForInput;
+            runtime.detail = Some(format!("Awaiting input '{}'", active.field.name));
+            runtime.last_activity = std::time::Instant::now();
+            return Some(FlowResponse::NextStep {
+                session_id: session.session_id.clone(),
+                required_inputs: vec![active.field],
+                message: Some("Browser authentication requires input".to_string()),
+            });
+        }
+
+        if let Some(action) = runtime.pending_action.clone() {
+            runtime.state = SessionState::WaitingForInput;
+            runtime.detail = Some("Awaiting browser confirmation".to_string());
+            runtime.last_activity = std::time::Instant::now();
+            return Some(FlowResponse::NextStep {
+                session_id: session.session_id.clone(),
+                required_inputs: vec![RequiredInput {
+                    name: "confirmation".to_string(),
+                    input_type: InputType::Confirmation,
+                    prompt: Some(action.prompt),
+                    optional: false,
+                    sensitive: false,
+                    interaction_id: Some(action.interaction_id),
+                }],
+                message: Some("Browser authentication requires confirmation".to_string()),
+            });
+        }
+
+        None
+    }
+
+    async fn try_submit_collected_form(&self, session: &Arc<Session>) -> Result<bool> {
+        let (fields, submit_selector) = {
+            let runtime = session.runtime.lock().await;
+            if runtime.active_field.is_some()
+                || !runtime.pending_fields.is_empty()
+                || runtime.collected_inputs.is_empty()
+            {
+                return Ok(false);
+            }
+            let submit_selector = runtime
+                .collected_inputs
+                .keys()
+                .find_map(|name| {
+                    runtime
+                        .pending_fields
+                        .iter()
+                        .find(|field| field.field.name == *name)
+                        .and_then(|field| field.submit_selector.clone())
+                })
+                .or_else(|| runtime.metadata.get("last_submit_selector").cloned());
+            let fields = runtime
+                .collected_inputs
+                .iter()
+                .map(|(name, value)| (name.clone(), value.value().to_string()))
+                .collect::<Vec<_>>();
+            (fields, submit_selector)
+        };
+
+        if fields.is_empty() {
+            return Ok(false);
+        }
+
+        let selectors = {
+            let runtime = session.runtime.lock().await;
+            fields
+                .iter()
+                .filter_map(|(name, _)| runtime.metadata.get(&format!("selector:{name}")).cloned())
+                .collect::<Vec<_>>()
+        };
+
+        if selectors.len() != fields.len() {
+            return Ok(false);
+        }
+
+        for ((name, value), selector) in fields.iter().zip(selectors.iter()) {
+            session
+                .log(
+                    LogLevel::Debug,
+                    format!("Filling browser field '{}' via generic inspection", name),
+                )
+                .await;
+            self.podman
+                .fill(&session.container, selector, value)
+                .await
+                .with_context(|| format!("failed filling browser field '{}'", name))?;
+        }
+
+        {
+            let mut runtime = session.runtime.lock().await;
+            runtime.collected_inputs.clear();
+            runtime.metadata.remove("last_submit_selector");
+            runtime
+                .metadata
+                .retain(|key, _| !key.starts_with("selector:"));
+        }
+
+        if let Some(selector) = submit_selector {
+            if let Err(error) = self.podman.click(&session.container, &selector).await {
+                let Some(first_field_selector) = selectors.first() else {
+                    return Err(error).context("failed submitting browser form");
+                };
                 session
                     .log(
-                        LogLevel::Warn,
-                        format!(
-                            "Optional step '{}' failed and will be skipped: {}",
-                            step.name, error
-                        ),
+                        LogLevel::Debug,
+                        "Submit button click failed; submitting enclosing form via filled field",
                     )
                     .await;
-
-                if let Some(next_step_index) = self.evaluate_branch(&session, &step).await? {
-                    let next_step_name = {
-                        let definition = session.definition.read().await;
-                        definition
-                            .steps
-                            .get(next_step_index)
-                            .map(|candidate| candidate.name.clone())
-                            .unwrap_or_else(|| "<unknown>".to_string())
-                    };
+                if let Err(submit_error) = self
+                    .podman
+                    .submit_form(&session.container, first_field_selector)
+                    .await
+                {
                     session
                         .log(
                             LogLevel::Debug,
                             format!(
-                                "Optional step '{}' fallback branch: next_step_index={} next_step='{}'",
-                                step.name, next_step_index, next_step_name
+                                "Form submit fallback failed after click error: {}; {}",
+                                error, submit_error
                             ),
                         )
                         .await;
-                    let mut runtime = session.runtime.lock().await;
-                    runtime.current_step_index = next_step_index;
-                    runtime.last_activity = std::time::Instant::now();
-                    continue;
-                }
-
-                session
-                    .log(
-                        LogLevel::Debug,
-                        format!(
-                            "Optional step '{}' has no fallback branch; advancing sequentially",
-                            step.name
-                        ),
-                    )
-                    .await;
-
-                let mut runtime = session.runtime.lock().await;
-                runtime.current_step_index += 1;
-                runtime.last_activity = std::time::Instant::now();
-                continue;
-            }
-
-            if self.step_successful(&session, &step).await? {
-                return self
-                    .complete_session(session, "Flow reported successful authentication")
-                    .await;
-            }
-
-            if let Some(next_step_index) = self.evaluate_branch(&session, &step).await? {
-                let next_step_name = {
-                    let definition = session.definition.read().await;
-                    definition
-                        .steps
-                        .get(next_step_index)
-                        .map(|candidate| candidate.name.clone())
-                        .unwrap_or_else(|| "<unknown>".to_string())
-                };
-                session
-                    .log(
-                        LogLevel::Debug,
-                        format!(
-                            "Branch transition after step '{}': next_step_index={} next_step='{}'",
-                            step.name, next_step_index, next_step_name
-                        ),
-                    )
-                    .await;
-                let mut runtime = session.runtime.lock().await;
-                runtime.current_step_index = next_step_index;
-                runtime.last_activity = std::time::Instant::now();
-                continue;
-            }
-
-            session
-                .log(
-                    LogLevel::Debug,
-                    format!(
-                        "No branch matched after step '{}'; advancing sequentially",
-                        step.name
-                    ),
-                )
-                .await;
-
-            let mut runtime = session.runtime.lock().await;
-            runtime.current_step_index += 1;
-            runtime.last_activity = std::time::Instant::now();
-        }
-    }
-
-    async fn optional_step_wait_condition_satisfied(
-        &self,
-        session: &Arc<Session>,
-        step: &ProviderStep,
-    ) -> Result<bool> {
-        if !step.optional {
-            return Ok(true);
-        }
-
-        let Some(wait_for) = &step.wait_for else {
-            return Ok(true);
-        };
-
-        self.wait_condition_satisfied(session, &step.name, wait_for)
-            .await
-    }
-
-    async fn wait_condition_satisfied(
-        &self,
-        session: &Arc<Session>,
-        step_name: &str,
-        wait_for: &WaitCondition,
-    ) -> Result<bool> {
-        let probe = SuccessCondition {
-            url_contains: wait_for.pattern.clone(),
-            dom_selector: wait_for.selector.clone(),
-            token_key: None,
-        };
-
-        if probe.url_contains.is_none() && probe.dom_selector.is_none() {
-            return Ok(true);
-        }
-
-        let matched = self
-            .podman
-            .check_success_condition(&session.container, &probe)
-            .await
-            .with_context(|| {
-                format!(
-                    "failed to evaluate wait_for condition before step '{}'",
-                    step_name
-                )
-            })?;
-
-        session
-            .log(
-                LogLevel::Debug,
-                format!(
-                    "Step '{}' wait_for probe result: matched={} selector={:?} pattern={:?}",
-                    step_name, matched, wait_for.selector, wait_for.pattern
-                ),
-            )
-            .await;
-
-        Ok(matched)
-    }
-
-    async fn maybe_request_inputs(
-        &self,
-        session: &Arc<Session>,
-        step: &ProviderStep,
-    ) -> Option<FlowResponse> {
-        let (required_inputs, input_presence) = {
-            let runtime = session.runtime.lock().await;
-            let missing = step
-                .required_inputs
-                .iter()
-                .filter(|required| {
-                    if required.optional {
-                        return false;
-                    }
-
-                    match runtime.collected_inputs.get(&required.name) {
-                        Some(value) => value.is_empty(),
-                        None => true,
-                    }
-                })
-                .cloned()
-                .collect::<Vec<_>>();
-            let presence = step
-                .required_inputs
-                .iter()
-                .map(|required| {
-                    let status = match runtime.collected_inputs.get(&required.name) {
-                        Some(value) if value.is_empty() => "present-empty",
-                        Some(_) => "present",
-                        None => "missing",
-                    };
-                    format!("{}:{}", required.name, status)
-                })
-                .collect::<Vec<_>>();
-            (missing, presence)
-        };
-
-        if required_inputs.is_empty() {
-            session
-                .log(
-                    LogLevel::Debug,
-                    format!(
-                        "Step '{}' has all required inputs satisfied: {:?}",
-                        step.name, input_presence
-                    ),
-                )
-                .await;
-            return None;
-        }
-
-        session
-            .log(
-                LogLevel::Debug,
-                format!(
-                    "Step '{}' blocking for inputs. Presence: {:?}; missing_required={:?}",
-                    step.name,
-                    input_presence,
-                    required_inputs
-                        .iter()
-                        .map(|input| input.name.as_str())
-                        .collect::<Vec<_>>()
-                ),
-            )
-            .await;
-
-        {
-            let mut runtime = session.runtime.lock().await;
-            runtime.state = SessionState::WaitingForInput;
-            runtime.detail = Some(format!("Awaiting input for step '{}'", step.name));
-            runtime.last_activity = std::time::Instant::now();
-        }
-
-        Some(FlowResponse::NextStep {
-            session_id: session.session_id.clone(),
-            required_inputs: {
-                let mut response_inputs = Vec::with_capacity(required_inputs.len());
-                for input in required_inputs {
-                    response_inputs.push(crate::types::RequiredInput {
-                        name: input.name,
-                        input_type: input.input_type,
-                        prompt: self
-                            .resolve_required_input_prompt(session, input.prompt)
-                            .await,
-                        optional: input.optional,
-                    });
-                }
-                response_inputs
-            },
-            message: Some(format!("Step '{}' requires additional inputs", step.name)),
-        })
-    }
-
-    async fn resolve_required_input_prompt(
-        &self,
-        session: &Arc<Session>,
-        prompt: Option<String>,
-    ) -> Option<String> {
-        const BROWSER_URL_PLACEHOLDER: &str = "{{browser:url}}";
-
-        let mut resolved = prompt?;
-        if !resolved.contains(BROWSER_URL_PLACEHOLDER) {
-            return Some(resolved);
-        }
-
-        match self.extract_value(session, "browser:url").await {
-            Ok(Some(browser_url)) => {
-                resolved = resolved.replace(BROWSER_URL_PLACEHOLDER, &browser_url);
-            }
-            Ok(None) => {}
-            Err(error) => {
-                session
-                    .log(
-                        LogLevel::Warn,
-                        format!(
-                            "Failed resolving required input prompt placeholder '{{browser:url}}': {}",
-                            error
-                        ),
-                    )
-                    .await;
-            }
-        }
-
-        Some(resolved)
-    }
-
-    async fn execute_step_actions(
-        &self,
-        session: &Arc<Session>,
-        current_step_index: usize,
-        step: &ProviderStep,
-    ) -> Result<()> {
-        let total_actions = step.actions.len();
-        for (idx, action) in step.actions.iter().enumerate() {
-            let action_idx = idx + 1;
-            let action_summary = summarize_action(action);
-            session
-                .log(
-                    LogLevel::Debug,
-                    format!(
-                        "Step '{}' action {}/{}: {}",
-                        step.name, action_idx, total_actions, action_summary
-                    ),
-                )
-                .await;
-
-            self.execute_action(session, action)
-                .await
-                .with_context(|| {
-                    format!(
-                        "step '{}' action {}/{} failed ({})",
-                        step.name, action_idx, total_actions, action_summary
-                    )
-                })?;
-            if let FlowAction::Fill { input, .. } = action {
-                self.forget_sensitive_input_if_unreferenced(
-                    session,
-                    current_step_index,
-                    idx,
-                    input,
-                )
-                .await;
-            }
-        }
-        Ok(())
-    }
-
-    async fn execute_action(&self, session: &Arc<Session>, action: &FlowAction) -> Result<()> {
-        match action {
-            FlowAction::Fill { selector, input } => {
-                let (value, available_inputs) = {
-                    let runtime = session.runtime.lock().await;
-                    (
-                        runtime
-                            .collected_inputs
-                            .get(input)
-                            .map(|value| Zeroizing::new(value.value().to_string())),
-                        runtime.collected_inputs.keys().cloned().collect::<Vec<_>>(),
-                    )
-                };
-                let value = value.ok_or_else(|| {
-                    anyhow!(
-                        "missing required input '{}' (available inputs: {:?})",
-                        input,
-                        available_inputs
-                    )
-                })?;
-
-                session
-                    .log(
-                        LogLevel::Debug,
-                        format!("Fill '{}' with '{}'", selector, input),
-                    )
-                    .await;
-                self.podman
-                    .fill(&session.container, selector, value.as_str())
-                    .await
-                    .with_context(|| {
-                        format!(
-                            "bridge fill failed for selector '{}' and input '{}'",
-                            selector, input
-                        )
-                    })?;
-            }
-            FlowAction::Click { selector } => {
-                session
-                    .log(LogLevel::Debug, format!("Click '{}'", selector))
-                    .await;
-                self.podman
-                    .click(&session.container, selector)
-                    .await
-                    .with_context(|| format!("bridge click failed for selector '{}'", selector))?;
-            }
-            FlowAction::Wait { millis } => {
-                session
-                    .log(LogLevel::Debug, format!("Wait {}ms", millis))
-                    .await;
-                sleep(Duration::from_millis(*millis)).await;
-            }
-            FlowAction::Navigate { url } => {
-                let resolved_url =
-                    self.resolve_navigation_url(session, url)
+                    self.podman
+                        .wait_for_settle(&session.container)
                         .await
-                        .ok_or_else(|| {
-                            anyhow!(
-                        "navigation URL '{}' requires dag_auth_url metadata but none is available",
-                        url
-                    )
-                        })?;
-                session
-                    .log(LogLevel::Debug, format!("Navigate to '{}'", resolved_url))
-                    .await;
-                self.podman
-                    .navigate(&session.container, &resolved_url)
-                    .await
-                    .with_context(|| {
-                        format!("bridge navigate failed for url '{}'", resolved_url)
-                    })?;
-            }
-            FlowAction::Extract { target, source } => {
-                let value = self
-                    .extract_value(session, source)
-                    .await
-                    .with_context(|| format!("extract failed for source '{}'", source))?;
-                if let Some(value) = value {
-                    let mut runtime = session.runtime.lock().await;
-                    match target {
-                        ExtractTarget::AccessToken => runtime.tokens.access_token = Some(value),
-                        ExtractTarget::IdToken => runtime.tokens.id_token = Some(value),
-                        ExtractTarget::RefreshToken => runtime.tokens.refresh_token = Some(value),
-                        ExtractTarget::AuthorizationCode => {
-                            runtime.tokens.authorization_code = Some(value)
-                        }
-                    }
-                    runtime.last_activity = std::time::Instant::now();
+                        .context("failed waiting after browser submit fallback")?;
                 }
             }
-            FlowAction::Log { message } => {
-                session.log(LogLevel::Info, message.clone()).await;
+        } else {
+            if let Some(first_field_selector) = selectors.first() {
+                if self
+                    .podman
+                    .submit_form(&session.container, first_field_selector)
+                    .await
+                    .is_err()
+                {
+                    self.podman
+                        .wait_for_settle(&session.container)
+                        .await
+                        .context("failed waiting after browser field fill")?;
+                }
+            } else {
+                self.podman
+                    .wait_for_settle(&session.container)
+                    .await
+                    .context("failed waiting after browser field fill")?;
             }
         }
 
-        Ok(())
+        sleep(Duration::from_millis(500)).await;
+        Ok(true)
     }
 
-    async fn extract_value(&self, session: &Arc<Session>, source: &str) -> Result<Option<String>> {
-        if let Some(input_name) = source.strip_prefix("input:") {
-            let runtime = session.runtime.lock().await;
-            return Ok(runtime
-                .collected_inputs
-                .get(input_name)
-                .map(|value| value.value().to_string()));
-        }
-
-        if let Some(value) = source.strip_prefix("static:") {
-            return Ok(Some(value.to_string()));
-        }
-
-        self.podman
-            .capture_artifact(&session.container, source)
-            .await
-    }
-
-    async fn resolve_navigation_url(&self, session: &Arc<Session>, url: &str) -> Option<String> {
-        if url == "$dag_auth_url" {
-            let runtime = session.runtime.lock().await;
-            if let Some(value) = runtime.metadata.get("dag_auth_url") {
-                return Some(value.clone());
-            }
-            return None;
-        }
-
-        Some(url.to_string())
-    }
-
-    async fn step_successful(&self, session: &Arc<Session>, step: &ProviderStep) -> Result<bool> {
-        let Some(success) = &step.success else {
+    async fn try_click_pending_action(&self, session: &Arc<Session>) -> Result<bool> {
+        let action = {
+            let mut runtime = session.runtime.lock().await;
+            runtime.confirmed_action.take()
+        };
+        let Some(action) = action else {
             return Ok(false);
         };
 
-        if let Some(token_key) = &success.token_key {
+        session
+            .log(
+                LogLevel::Debug,
+                format!("Clicking confirmed browser action '{}'", action.prompt),
+            )
+            .await;
+        self.podman
+            .click(&session.container, &action.selector)
+            .await
+            .context("failed clicking confirmed browser action")?;
+        Ok(true)
+    }
+
+    async fn queue_fields_from_inspection(
+        &self,
+        session: &Arc<Session>,
+        inspection: &PageInspection,
+    ) -> Result<bool> {
+        let Some(form) = select_active_form(inspection) else {
+            return Ok(false);
+        };
+
+        let fields = form
+            .fields
+            .iter()
+            .filter(|field| field_is_promptable(field))
+            .collect::<Vec<_>>();
+        if fields.is_empty() {
+            return Ok(false);
+        }
+
+        let submit_selector = select_submit_action(&form.actions)
+            .or_else(|| select_submit_action(&inspection.actions));
+        let interaction_id = session.next_interaction_id().await;
+        let username = {
             let runtime = session.runtime.lock().await;
-            let has_token = match token_key.as_str() {
-                "access_token" => runtime.tokens.access_token.is_some(),
-                "id_token" => runtime.tokens.id_token.is_some(),
-                "refresh_token" => runtime.tokens.refresh_token.is_some(),
-                "authorization_code" => runtime.tokens.authorization_code.is_some(),
-                _ => false,
-            };
-
-            if has_token {
-                session
-                    .log(
-                        LogLevel::Debug,
-                        format!(
-                            "Step '{}' success condition satisfied by token_key='{}'",
-                            step.name, token_key
-                        ),
-                    )
-                    .await;
-                return Ok(true);
+            runtime.metadata.get("username").cloned()
+        };
+        let mut pending = Vec::with_capacity(fields.len());
+        let mut used_names = Vec::<String>::new();
+        let mut auto_collected = Vec::<(String, String, String)>::new();
+        let mut auto_collected_logs = Vec::<(String, InputType)>::new();
+        for field in fields {
+            let input_type = classify_field(field);
+            let prompt = prompt_for_field(field, &input_type);
+            let sensitive = input_sensitive(&input_type, Some(&prompt));
+            let name = unique_field_name(stable_field_name(field, &input_type), &mut used_names);
+            if let Some(username) =
+                auto_fill_value_for_field(field, &input_type, username.as_deref())
+            {
+                auto_collected_logs.push((name.clone(), input_type.clone()));
+                auto_collected.push((name, username, field.selector.clone()));
+                continue;
             }
-
-            session
-                .log(
-                    LogLevel::Debug,
-                    format!(
-                        "Step '{}' success token_key='{}' not yet available",
-                        step.name, token_key
-                    ),
-                )
-                .await;
+            pending.push(PendingField {
+                interaction_id: interaction_id.clone(),
+                field: RequiredInput {
+                    name: name.clone(),
+                    input_type,
+                    prompt: Some(prompt),
+                    optional: false,
+                    sensitive,
+                    interaction_id: Some(interaction_id.clone()),
+                },
+                selector: field.selector.clone(),
+                submit_selector: submit_selector.clone(),
+            });
         }
 
-        if success.dom_selector.is_some() || success.url_contains.is_some() {
-            let matched = self
-                .podman
-                .check_success_condition(&session.container, success)
-                .await?;
-            session
-                .log(
-                    LogLevel::Debug,
-                    format!(
-                        "Step '{}' success probe result via dom/url condition: {}",
-                        step.name, matched
-                    ),
-                )
-                .await;
-            return Ok(matched);
-        }
-
-        Ok(false)
-    }
-
-    async fn evaluate_branch(
-        &self,
-        session: &Arc<Session>,
-        step: &ProviderStep,
-    ) -> Result<Option<usize>> {
-        self.evaluate_branch_excluding(session, step, None).await
-    }
-
-    async fn evaluate_branch_excluding(
-        &self,
-        session: &Arc<Session>,
-        step: &ProviderStep,
-        excluded_target_step: Option<&str>,
-    ) -> Result<Option<usize>> {
-        if step.branches.is_empty() {
-            return Ok(None);
-        }
-
-        let matched_target = {
-            let runtime = session.runtime.lock().await;
-            step.branches.iter().find_map(|branch| {
-                let matched = match &branch.condition {
-                    BranchCondition::Always => true,
-                    BranchCondition::InputPresent { input } => runtime
-                        .collected_inputs
-                        .get(input)
-                        .map(|value| !value.is_empty())
-                        .unwrap_or(false),
-                    BranchCondition::InputEquals { input, value } => runtime
-                        .collected_inputs
-                        .get(input)
-                        .map(|current| current.value() == value)
-                        .unwrap_or(false),
-                };
-
-                if !matched {
-                    return None;
-                }
-
-                if excluded_target_step
-                    .map(|excluded| branch.goto_step == excluded)
-                    .unwrap_or(false)
-                {
-                    return None;
-                }
-
-                Some(branch.goto_step.clone())
-            })
-        };
-
-        let Some(goto_step) = matched_target else {
-            return Ok(None);
-        };
-
-        let next_index = {
-            let definition = session.definition.read().await;
-            definition
-                .steps
-                .iter()
-                .position(|candidate| candidate.name == goto_step)
-                .ok_or_else(|| {
-                    anyhow!(
-                        "step '{}' branches to unknown step '{}'",
-                        step.name,
-                        goto_step
-                    )
-                })?
-        };
-
-        Ok(Some(next_index))
-    }
-
-    async fn forget_sensitive_input_if_unreferenced(
-        &self,
-        session: &Arc<Session>,
-        current_step_index: usize,
-        current_action_index: usize,
-        input_name: &str,
-    ) {
-        let should_forget = {
-            let definition = session.definition.read().await;
-            if !definition.steps.iter().any(|step| {
-                step.required_inputs.iter().any(|input| {
-                    input.name == input_name
-                        && matches!(input.input_type, InputType::Password | InputType::Otp)
-                })
-            }) {
-                return;
-            }
-
-            !definition
-                .steps
-                .iter()
-                .enumerate()
-                .any(|(step_index, step)| {
-                    if step_index < current_step_index {
-                        return false;
-                    }
-
-                    if step_index == current_step_index {
-                        step_references_input_after_action(step, current_action_index, input_name)
-                    } else {
-                        step_references_input(step, input_name)
-                    }
-                })
-        };
-
-        if should_forget {
-            let mut runtime = session.runtime.lock().await;
-            if let Some(removed) = runtime.collected_inputs.remove(input_name) {
-                drop(removed);
-                runtime.last_activity = std::time::Instant::now();
-            }
-        }
-    }
-
-    async fn complete_session(
-        &self,
-        session: Arc<Session>,
-        detail: impl Into<String>,
-    ) -> Result<FlowResponse> {
         {
             let mut runtime = session.runtime.lock().await;
-            runtime.state = SessionState::Completed;
-            runtime.detail = Some(detail.into());
+            runtime.pending_fields.clear();
+            runtime.active_field = None;
+            runtime.collected_inputs.clear();
+            runtime.pending_action = None;
+            runtime.confirmed_action = None;
+            runtime.metadata.remove("last_submit_selector");
+            runtime
+                .metadata
+                .retain(|key, _| !key.starts_with("selector:"));
+            for field in &pending {
+                runtime.metadata.insert(
+                    format!("selector:{}", field.field.name),
+                    field.selector.clone(),
+                );
+            }
+            for (name, value, selector) in auto_collected {
+                runtime
+                    .metadata
+                    .insert(format!("selector:{name}"), selector);
+                runtime
+                    .collected_inputs
+                    .insert(name, CollectedInput::new(value, false));
+            }
+            if let Some(selector) = submit_selector {
+                runtime
+                    .metadata
+                    .insert("last_submit_selector".to_string(), selector);
+            }
+            runtime.pending_fields.extend(pending);
+            runtime.state = SessionState::WaitingForInput;
+            runtime.detail = Some(format!(
+                "Queued {} browser input prompt(s) at {}",
+                runtime.pending_fields.len(),
+                display_page_location(inspection)
+            ));
+            runtime.last_activity = std::time::Instant::now();
+        }
+
+        for (name, input_type) in auto_collected_logs {
+            session
+                .log(
+                    LogLevel::Debug,
+                    format!(
+                        "Auto-filled browser field '{}' from session username as {:?}",
+                        name, input_type
+                    ),
+                )
+                .await;
+        }
+
+        Ok(true)
+    }
+
+    async fn terminal_browser_error_from_inspection(
+        &self,
+        session: &Arc<Session>,
+        inspection: &PageInspection,
+    ) -> Option<FlowResponse> {
+        let error = terminal_browser_error(inspection)?.to_string();
+
+        {
+            let mut runtime = session.runtime.lock().await;
+            runtime.state = SessionState::Failed;
+            runtime.detail = Some(error.clone());
             runtime.last_activity = std::time::Instant::now();
             runtime.terminal_since = Some(std::time::Instant::now());
         }
 
-        session.log(LogLevel::Info, "Session completed").await;
+        session
+            .log(
+                LogLevel::Error,
+                format!("Browser authentication failed: {}", error),
+            )
+            .await;
 
-        let mut runtime = session.runtime.lock().await;
-        let tokens = std::mem::take(&mut runtime.tokens);
-        let metadata = std::mem::take(&mut runtime.metadata);
-        Ok(FlowResponse::SessionComplete {
+        Some(FlowResponse::SessionError {
             session_id: session.session_id.clone(),
-            success: true,
-            tokens,
-            metadata,
+            error,
         })
     }
-}
 
-fn redact_url_parameters(url: &str) -> String {
-    let Some((base, query_and_fragment)) = url.split_once('?') else {
-        return url.to_string();
-    };
+    async fn try_auto_click_from_inspection(
+        &self,
+        session: &Arc<Session>,
+        inspection: &PageInspection,
+    ) -> Result<bool> {
+        let Some(action) = single_auto_click_action(&inspection.actions) else {
+            return Ok(false);
+        };
 
-    if let Some((_, fragment)) = query_and_fragment.split_once('#') {
-        format!("{}?<redacted>#{}", base, fragment)
-    } else {
-        format!("{}?<redacted>", base)
-    }
-}
-
-async fn sensitive_input_names(session: &Arc<Session>) -> HashSet<String> {
-    let definition = session.definition.read().await;
-    definition
-        .steps
-        .iter()
-        .flat_map(|step| step.required_inputs.iter())
-        .filter(|input| matches!(input.input_type, InputType::Password | InputType::Otp))
-        .map(|input| input.name.clone())
-        .collect()
-}
-
-fn summarize_action(action: &FlowAction) -> String {
-    match action {
-        FlowAction::Fill { selector, input } => {
-            format!("fill selector='{}' input='{}'", selector, input)
+        {
+            let mut runtime = session.runtime.lock().await;
+            if runtime.auto_clicks_this_turn >= MAX_AUTO_CLICKS_PER_TURN {
+                return Ok(false);
+            }
+            runtime.auto_clicks_this_turn += 1;
+            runtime.state = SessionState::InProgress;
+            runtime.detail = Some(format!("Auto-clicking '{}'", action.text));
+            runtime.last_activity = std::time::Instant::now();
         }
-        FlowAction::Click { selector } => format!("click selector='{}'", selector),
-        FlowAction::Wait { millis } => format!("wait {}ms", millis),
-        FlowAction::Navigate { url } => format!("navigate url='{}'", url),
-        FlowAction::Extract { target, source } => {
-            format!("extract target='{:?}' source='{}'", target, source)
-        }
-        FlowAction::Log { message } => format!("log '{}'", message),
+
+        session
+            .log(
+                LogLevel::Debug,
+                format!("Auto-clicking generic browser action '{}'", action.text),
+            )
+            .await;
+        self.podman
+            .click(&session.container, &action.selector)
+            .await
+            .with_context(|| format!("failed auto-clicking '{}'", action.text))?;
+        Ok(true)
     }
-}
 
-fn step_references_input_after_action(
-    step: &ProviderStep,
-    current_action_index: usize,
-    input_name: &str,
-) -> bool {
-    step.actions
-        .iter()
-        .skip(current_action_index + 1)
-        .any(|action| action_references_input(action, input_name))
-        || branches_reference_input(step, input_name)
-}
-
-fn step_references_input(step: &ProviderStep, input_name: &str) -> bool {
-    step.required_inputs
-        .iter()
-        .any(|input| input.name == input_name)
-        || step
+    async fn queue_confirmation_from_inspection(
+        &self,
+        session: &Arc<Session>,
+        inspection: &PageInspection,
+    ) -> Result<bool> {
+        let candidates = inspection
             .actions
             .iter()
-            .any(|action| action_references_input(action, input_name))
-        || branches_reference_input(step, input_name)
-}
+            .filter(|action| action_is_forward(action))
+            .collect::<Vec<_>>();
+        if candidates.len() != 1 {
+            return Ok(false);
+        }
 
-fn action_references_input(action: &FlowAction, input_name: &str) -> bool {
-    match action {
-        FlowAction::Fill { input, .. } => input == input_name,
-        FlowAction::Extract { source, .. } => source
-            .strip_prefix("input:")
-            .map(|source_input| source_input == input_name)
-            .unwrap_or(false),
-        FlowAction::Click { .. }
-        | FlowAction::Wait { .. }
-        | FlowAction::Navigate { .. }
-        | FlowAction::Log { .. } => false,
+        let action = candidates[0];
+        let interaction_id = session.next_interaction_id().await;
+        let prompt = if action.text.is_empty() {
+            "Continue".to_string()
+        } else {
+            action.text.clone()
+        };
+        let mut runtime = session.runtime.lock().await;
+        runtime.pending_action = Some(PendingAction {
+            interaction_id,
+            prompt,
+            selector: action.selector.clone(),
+        });
+        runtime.state = SessionState::WaitingForInput;
+        runtime.detail = Some(format!(
+            "Queued browser confirmation at {}",
+            display_page_location(inspection)
+        ));
+        runtime.last_activity = std::time::Instant::now();
+        Ok(true)
     }
 }
 
-fn branches_reference_input(step: &ProviderStep, input_name: &str) -> bool {
-    step.branches.iter().any(|branch| match &branch.condition {
-        BranchCondition::InputPresent { input } | BranchCondition::InputEquals { input, .. } => {
-            input == input_name
+fn select_active_form(inspection: &PageInspection) -> Option<&InspectedForm> {
+    inspection
+        .forms
+        .iter()
+        .filter(|form| form.fields.iter().any(field_is_promptable))
+        .max_by_key(|form| {
+            let required = form.fields.iter().filter(|field| field.required).count();
+            required * 10 + form.fields.len()
+        })
+}
+
+fn field_is_promptable(field: &InspectedField) -> bool {
+    field_is_promptable_value(field)
+}
+
+fn field_is_promptable_value(field: &InspectedField) -> bool {
+    if field.selector.is_empty() {
+        return false;
+    }
+    !matches!(
+        field.input_type.as_str(),
+        "checkbox" | "radio" | "file" | "range" | "color"
+    )
+}
+
+fn terminal_browser_error(inspection: &PageInspection) -> Option<&str> {
+    let error = inspection.browser_error.as_deref()?.trim();
+    if error.is_empty() {
+        return None;
+    }
+    let has_promptable_fields = inspection
+        .forms
+        .iter()
+        .flat_map(|form| form.fields.iter())
+        .any(field_is_promptable);
+    if has_promptable_fields {
+        return None;
+    }
+    Some(error)
+}
+
+fn classify_field(field: &InspectedField) -> InputType {
+    let haystack = field_haystack(field);
+
+    if field.input_type == "password" || contains_wordish(&haystack, "password") {
+        return InputType::Password;
+    }
+    if field.autocomplete.contains("one-time-code")
+        || contains_wordish(&haystack, "otp")
+        || contains_wordish(&haystack, "totp")
+        || contains_wordish(&haystack, "mfa")
+        || haystack.contains("verification code")
+        || contains_wordish(&haystack, "authenticator")
+    {
+        return InputType::Otp;
+    }
+    if field_looks_like_login_identifier(field, &haystack) {
+        return InputType::Username;
+    }
+    if field.tag == "input" || field.tag == "textarea" || field.tag == "select" {
+        return InputType::Text;
+    }
+    InputType::Unknown
+}
+
+fn auto_fill_value_for_field(
+    field: &InspectedField,
+    input_type: &InputType,
+    username: Option<&str>,
+) -> Option<String> {
+    let username = username?.trim();
+    if username.is_empty() {
+        return None;
+    }
+
+    if matches!(input_type, InputType::Username) {
+        return Some(username.to_string());
+    }
+
+    if field_looks_like_profile_email(field) && username_looks_like_email(username) {
+        return Some(username.to_string());
+    }
+
+    None
+}
+
+fn field_haystack(field: &InspectedField) -> String {
+    format!(
+        "{} {} {} {} {} {}",
+        field.input_type,
+        field.name,
+        field.autocomplete,
+        field.id_attr,
+        field.label,
+        field.placeholder
+    )
+    .to_ascii_lowercase()
+}
+
+fn field_looks_like_login_identifier(field: &InspectedField, haystack: &str) -> bool {
+    if field.autocomplete == "username" {
+        return true;
+    }
+
+    let name = field.name.to_ascii_lowercase();
+    let id_attr = field.id_attr.to_ascii_lowercase();
+    let label = field.label.to_ascii_lowercase();
+    let placeholder = field.placeholder.to_ascii_lowercase();
+
+    name == "username"
+        || id_attr == "username"
+        || contains_wordish(&label, "username")
+        || contains_wordish(&placeholder, "username")
+        || contains_wordish(haystack, "login")
+        || contains_wordish(haystack, "loginfmt")
+        || contains_wordish(haystack, "account")
+}
+
+fn field_looks_like_profile_email(field: &InspectedField) -> bool {
+    let name = field.name.trim().to_ascii_lowercase();
+    let id_attr = field.id_attr.trim().to_ascii_lowercase();
+    let autocomplete = field.autocomplete.trim().to_ascii_lowercase();
+    let label = field.label.trim().to_ascii_lowercase();
+    let placeholder = field.placeholder.trim().to_ascii_lowercase();
+
+    autocomplete == "email"
+        || name == "email"
+        || id_attr == "email"
+        || label == "email"
+        || placeholder == "email"
+}
+
+fn username_looks_like_email(value: &str) -> bool {
+    let trimmed = value.trim();
+    let Some((local, domain)) = trimmed.split_once('@') else {
+        return false;
+    };
+
+    !local.is_empty()
+        && domain.contains('.')
+        && !domain.starts_with('.')
+        && !domain.ends_with('.')
+        && !domain.contains('@')
+}
+
+fn contains_wordish(haystack: &str, needle: &str) -> bool {
+    haystack
+        .split(|ch: char| !ch.is_ascii_alphanumeric())
+        .any(|part| part == needle)
+}
+
+fn prompt_for_field(field: &InspectedField, input_type: &InputType) -> String {
+    for candidate in [
+        field.label.as_str(),
+        field.aria_label.as_str(),
+        field.placeholder.as_str(),
+        field.name.as_str(),
+        field.id_attr.as_str(),
+    ] {
+        let trimmed = candidate.trim();
+        if !trimmed.is_empty() {
+            return trimmed.to_string();
         }
-        BranchCondition::Always => false,
-    })
+    }
+
+    match input_type {
+        InputType::Username => "Username".to_string(),
+        InputType::Password => "Password".to_string(),
+        InputType::Otp => "Verification code".to_string(),
+        InputType::Text => "Additional information".to_string(),
+        InputType::Confirmation => "Continue".to_string(),
+        InputType::Unknown => "Input required".to_string(),
+    }
+}
+
+fn stable_field_name(field: &InspectedField, input_type: &InputType) -> String {
+    for candidate in [field.name.as_str(), field.id_attr.as_str()] {
+        let sanitized = sanitize_name(candidate);
+        if !sanitized.is_empty() {
+            return sanitized;
+        }
+    }
+    match input_type {
+        InputType::Username => "username".to_string(),
+        InputType::Password => "password".to_string(),
+        InputType::Otp => "otp".to_string(),
+        InputType::Text => format!("text_{}", field.id),
+        InputType::Confirmation => "confirmation".to_string(),
+        InputType::Unknown => format!("input_{}", field.id),
+    }
+}
+
+fn unique_field_name(mut base: String, used_names: &mut Vec<String>) -> String {
+    if base.is_empty() {
+        base = "input".to_string();
+    }
+    if !used_names.iter().any(|name| name == &base) {
+        used_names.push(base.clone());
+        return base;
+    }
+    let mut idx = 2_u64;
+    loop {
+        let candidate = format!("{base}_{idx}");
+        if !used_names.iter().any(|name| name == &candidate) {
+            used_names.push(candidate.clone());
+            return candidate;
+        }
+        idx = idx.saturating_add(1);
+    }
+}
+
+fn sanitize_name(value: &str) -> String {
+    let mut output = String::new();
+    let mut last_sep = false;
+    for ch in value.chars() {
+        if ch.is_ascii_alphanumeric() {
+            output.push(ch.to_ascii_lowercase());
+            last_sep = false;
+        } else if !last_sep {
+            output.push('_');
+            last_sep = true;
+        }
+    }
+    output.trim_matches('_').to_string()
+}
+
+fn select_submit_action(actions: &[InspectedAction]) -> Option<String> {
+    actions
+        .iter()
+        .find(|action| action_is_forward(action))
+        .map(|action| action.selector.clone())
+        .filter(|selector| !selector.is_empty())
+}
+
+fn single_auto_click_action(actions: &[InspectedAction]) -> Option<&InspectedAction> {
+    let candidates = actions
+        .iter()
+        .filter(|action| action_is_forward(action))
+        .collect::<Vec<_>>();
+    if candidates.len() == 1 {
+        Some(candidates[0])
+    } else {
+        None
+    }
+}
+
+fn action_is_forward(action: &&InspectedAction) -> bool {
+    action_is_forward_value(action)
+}
+
+fn action_is_forward_value(action: &InspectedAction) -> bool {
+    if action.selector.is_empty() {
+        return false;
+    }
+    let text = action.text.to_ascii_lowercase();
+    if text.is_empty() && action.kind != "submit" {
+        return false;
+    }
+    let deny = ["cancel", "back", "deny", "decline", "no", "reject"];
+    if deny.iter().any(|needle| text.contains(needle)) {
+        return false;
+    }
+    let allow = [
+        "continue", "next", "submit", "sign in", "signin", "verify", "done", "allow", "accept",
+        "approve", "yes", "ok", "use code", "log in", "login",
+    ];
+    action.kind == "submit" || allow.iter().any(|needle| text.contains(needle))
+}
+
+fn display_page_location(inspection: &PageInspection) -> String {
+    if !inspection.title.trim().is_empty() {
+        return inspection.title.clone();
+    }
+    if !inspection.origin.trim().is_empty() {
+        return inspection.origin.clone();
+    }
+    inspection.url.clone()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::podman::ContainerInstance;
+    use std::path::PathBuf;
+
+    fn field(
+        selector: &str,
+        input_type: &str,
+        name: &str,
+        autocomplete: &str,
+        id_attr: &str,
+        label: &str,
+    ) -> InspectedField {
+        InspectedField {
+            id: name.to_string(),
+            selector: selector.to_string(),
+            tag: "input".to_string(),
+            input_type: input_type.to_string(),
+            name: name.to_string(),
+            autocomplete: autocomplete.to_string(),
+            id_attr: id_attr.to_string(),
+            label: label.to_string(),
+            required: true,
+            ..Default::default()
+        }
+    }
+
+    fn inspection(fields: Vec<InspectedField>) -> PageInspection {
+        PageInspection {
+            title: "test page".to_string(),
+            forms: vec![InspectedForm {
+                fields,
+                actions: vec![InspectedAction {
+                    selector: "[data-submit]".to_string(),
+                    text: "Submit".to_string(),
+                    kind: "submit".to_string(),
+                }],
+            }],
+            actions: vec![InspectedAction {
+                selector: "[data-submit]".to_string(),
+                text: "Submit".to_string(),
+                kind: "submit".to_string(),
+            }],
+            ..Default::default()
+        }
+    }
+
+    fn inspection_with_error(fields: Vec<InspectedField>, browser_error: &str) -> PageInspection {
+        PageInspection {
+            browser_error: Some(browser_error.to_string()),
+            ..inspection(fields)
+        }
+    }
+
+    fn executor() -> FlowExecutor {
+        FlowExecutor::new(Arc::new(PodmanClient::new(
+            "podman", "image", None, "/tmp", 1, 1, true, None,
+        )))
+    }
+
+    fn session(username: &str) -> Arc<Session> {
+        let session = Arc::new(Session::new(
+            "session-1".to_string(),
+            0,
+            ContainerInstance {
+                id: "container-1".to_string(),
+                name: "container-1".to_string(),
+                session_dir: PathBuf::from("/tmp/session-1"),
+                bridge_socket_path: PathBuf::from("/tmp/session-1/bridge.sock"),
+            },
+        ));
+        futures::executor::block_on(async {
+            session
+                .runtime
+                .lock()
+                .await
+                .metadata
+                .insert("username".to_string(), username.to_string());
+        });
+        session
+    }
+
+    #[test]
+    fn pure_email_field_is_text_not_username() {
+        let email = field("[data-email]", "text", "email", "email", "email", "Email");
+
+        assert_eq!(classify_field(&email), InputType::Text);
+    }
+
+    #[test]
+    fn username_or_email_login_field_is_username() {
+        let username = field(
+            "[data-username]",
+            "text",
+            "username",
+            "username",
+            "username",
+            "Username or email",
+        );
+
+        assert_eq!(classify_field(&username), InputType::Username);
+    }
+
+    #[test]
+    fn no_input_browser_error_is_terminal() {
+        let inspection =
+            inspection_with_error(Vec::new(), "Failed to send email, please try again later.");
+
+        assert_eq!(
+            terminal_browser_error(&inspection),
+            Some("Failed to send email, please try again later.")
+        );
+    }
+
+    #[test]
+    fn field_level_browser_error_is_not_terminal() {
+        let inspection = inspection_with_error(
+            vec![field(
+                "[data-password]",
+                "password",
+                "password",
+                "current-password",
+                "password",
+                "Password",
+            )],
+            "Invalid username or password.",
+        );
+
+        assert_eq!(terminal_browser_error(&inspection), None);
+    }
+
+    #[test]
+    fn no_input_page_without_browser_error_is_not_terminal() {
+        let inspection = inspection(Vec::new());
+
+        assert_eq!(terminal_browser_error(&inspection), None);
+    }
+
+    #[tokio::test]
+    async fn login_form_autofills_username_and_prompts_password() {
+        let session = session("tux2");
+        let inspection = inspection(vec![
+            field(
+                "[data-username]",
+                "text",
+                "username",
+                "username",
+                "username",
+                "Username or email",
+            ),
+            field(
+                "[data-password]",
+                "password",
+                "password",
+                "current-password",
+                "password",
+                "Password",
+            ),
+        ]);
+
+        assert!(executor()
+            .queue_fields_from_inspection(&session, &inspection)
+            .await
+            .unwrap());
+
+        let runtime = session.runtime.lock().await;
+        assert!(runtime.collected_inputs.contains_key("username"));
+        assert_eq!(runtime.pending_fields.len(), 1);
+        assert_eq!(runtime.pending_fields[0].field.name, "password");
+        assert_eq!(
+            runtime.pending_fields[0].field.input_type,
+            InputType::Password
+        );
+    }
+
+    #[tokio::test]
+    async fn profile_form_with_short_username_prompts_email_first_and_last_name() {
+        let session = session("tux2");
+        let inspection = inspection(vec![
+            field("[data-email]", "text", "email", "email", "email", "Email"),
+            field(
+                "[data-first-name]",
+                "text",
+                "firstName",
+                "",
+                "firstName",
+                "First name",
+            ),
+            field(
+                "[data-last-name]",
+                "text",
+                "lastName",
+                "",
+                "lastName",
+                "Last name",
+            ),
+        ]);
+
+        assert!(executor()
+            .queue_fields_from_inspection(&session, &inspection)
+            .await
+            .unwrap());
+
+        let runtime = session.runtime.lock().await;
+        assert!(runtime.collected_inputs.is_empty());
+        let names = runtime
+            .pending_fields
+            .iter()
+            .map(|field| field.field.name.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(names, vec!["email", "firstname", "lastname"]);
+    }
+
+    #[tokio::test]
+    async fn profile_form_with_email_username_autofills_email() {
+        let session = session("user@example.com");
+        let inspection = inspection(vec![
+            field("[data-email]", "text", "email", "email", "email", "Email"),
+            field(
+                "[data-first-name]",
+                "text",
+                "firstName",
+                "",
+                "firstName",
+                "First name",
+            ),
+            field(
+                "[data-last-name]",
+                "text",
+                "lastName",
+                "",
+                "lastName",
+                "Last name",
+            ),
+        ]);
+
+        assert!(executor()
+            .queue_fields_from_inspection(&session, &inspection)
+            .await
+            .unwrap());
+
+        let runtime = session.runtime.lock().await;
+        assert_eq!(
+            runtime
+                .collected_inputs
+                .get("email")
+                .map(|input| input.value()),
+            Some("user@example.com")
+        );
+        let names = runtime
+            .pending_fields
+            .iter()
+            .map(|field| field.field.name.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(names, vec!["firstname", "lastname"]);
+    }
 }

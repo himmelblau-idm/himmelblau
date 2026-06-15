@@ -1,26 +1,26 @@
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 use zeroize::Zeroize;
 
-pub const ORCHESTRATOR_PROTOCOL_VERSION: &str = "0.1";
+pub const ORCHESTRATOR_PROTOCOL_VERSION: &str = "0.2";
 
 const MAX_SESSION_ID_LEN: usize = 128;
-const MAX_PROVIDER_LEN: usize = 64;
 const MAX_USERNAME_LEN: usize = 320;
 const MAX_ISSUER_URL_LEN: usize = 2048;
 const MAX_DAG_AUTH_URL_LEN: usize = 4096;
 const MAX_DAG_USER_CODE_LEN: usize = 128;
-const MAX_INPUT_NAME_LEN: usize = 64;
+const MAX_INPUT_NAME_LEN: usize = 128;
 const MAX_INPUT_VALUE_LEN: usize = 8192;
-const MAX_PROVIDED_INPUTS: usize = 32;
+const MAX_PROVIDED_INPUTS: usize = 4;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum InputType {
-    Text,
+    Username,
     Password,
     Otp,
+    Text,
     Confirmation,
+    Unknown,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -32,6 +32,10 @@ pub struct RequiredInput {
     pub prompt: Option<String>,
     #[serde(default)]
     pub optional: bool,
+    #[serde(default)]
+    pub sensitive: bool,
+    #[serde(default)]
+    pub interaction_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -46,40 +50,12 @@ impl Drop for ProvidedInput {
     }
 }
 
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct TokenBundle {
-    #[serde(default)]
-    pub access_token: Option<String>,
-    #[serde(default)]
-    pub id_token: Option<String>,
-    #[serde(default)]
-    pub refresh_token: Option<String>,
-    #[serde(default)]
-    pub authorization_code: Option<String>,
-}
-
-impl Drop for TokenBundle {
-    fn drop(&mut self) {
-        if let Some(value) = &mut self.access_token {
-            value.zeroize();
-        }
-        if let Some(value) = &mut self.id_token {
-            value.zeroize();
-        }
-        if let Some(value) = &mut self.refresh_token {
-            value.zeroize();
-        }
-        if let Some(value) = &mut self.authorization_code {
-            value.zeroize();
-        }
-    }
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SessionState {
     InProgress,
     WaitingForInput,
+    WaitingForBrowser,
     Completed,
     Failed,
     Cancelled,
@@ -107,8 +83,6 @@ pub enum FlowCommand {
     StartSession {
         session_id: String,
         #[serde(default)]
-        provider: Option<String>,
-        #[serde(default)]
         username: Option<String>,
         #[serde(default)]
         issuer_url: Option<String>,
@@ -120,7 +94,12 @@ pub enum FlowCommand {
     NextStep {
         session_id: String,
         #[serde(default)]
+        interaction_id: Option<String>,
+        #[serde(default)]
         provided_inputs: Vec<ProvidedInput>,
+    },
+    CompleteSession {
+        session_id: String,
     },
     CancelSession {
         session_id: String,
@@ -136,17 +115,12 @@ impl FlowCommand {
         match self {
             Self::StartSession {
                 session_id,
-                provider,
                 username,
                 issuer_url,
                 dag_auth_url,
                 dag_user_code,
             } => {
                 validate_required_text("session_id", session_id, MAX_SESSION_ID_LEN)?;
-
-                if let Some(value) = provider {
-                    validate_optional_text("provider", value, MAX_PROVIDER_LEN)?;
-                }
                 if let Some(value) = username {
                     validate_optional_text("username", value, MAX_USERNAME_LEN)?;
                 }
@@ -159,15 +133,17 @@ impl FlowCommand {
                 if let Some(value) = dag_user_code {
                     validate_optional_text("dag_user_code", value, MAX_DAG_USER_CODE_LEN)?;
                 }
-
                 Ok(())
             }
             Self::NextStep {
                 session_id,
+                interaction_id,
                 provided_inputs,
             } => {
                 validate_required_text("session_id", session_id, MAX_SESSION_ID_LEN)?;
-
+                if let Some(value) = interaction_id {
+                    validate_optional_text("interaction_id", value, MAX_SESSION_ID_LEN)?;
+                }
                 if provided_inputs.len() > MAX_PROVIDED_INPUTS {
                     return Err(format!(
                         "provided_inputs contains {} entries; max is {}",
@@ -175,15 +151,15 @@ impl FlowCommand {
                         MAX_PROVIDED_INPUTS
                     ));
                 }
-
                 for input in provided_inputs {
                     validate_required_text("provided_input.name", &input.name, MAX_INPUT_NAME_LEN)?;
                     validate_text_max("provided_input.value", &input.value, MAX_INPUT_VALUE_LEN)?;
                 }
-
                 Ok(())
             }
-            Self::CancelSession { session_id } | Self::GetSessionStatus { session_id } => {
+            Self::CompleteSession { session_id }
+            | Self::CancelSession { session_id }
+            | Self::GetSessionStatus { session_id } => {
                 validate_required_text("session_id", session_id, MAX_SESSION_ID_LEN)
             }
             Self::Ping => Ok(()),
@@ -194,16 +170,14 @@ impl FlowCommand {
         match self {
             Self::StartSession {
                 session_id,
-                provider,
                 username,
                 issuer_url,
                 dag_auth_url,
                 dag_user_code,
             } => {
                 format!(
-                    "start_session(session_id={}, provider={:?}, username_present={}, issuer_url_present={}, dag_auth_url_present={}, dag_user_code_present={})",
+                    "start_session(session_id={}, username_present={}, issuer_url_present={}, dag_auth_url_present={}, dag_user_code_present={})",
                     session_id,
-                    provider,
                     username.as_ref().is_some_and(|entry| !entry.is_empty()),
                     issuer_url.as_ref().is_some_and(|entry| !entry.is_empty()),
                     dag_auth_url.as_ref().is_some_and(|entry| !entry.is_empty()),
@@ -212,13 +186,20 @@ impl FlowCommand {
             }
             Self::NextStep {
                 session_id,
+                interaction_id,
                 provided_inputs,
             } => {
                 let names: Vec<&str> = provided_inputs
                     .iter()
                     .map(|entry| entry.name.as_str())
                     .collect();
-                format!("next_step(session_id={}, inputs={:?})", session_id, names)
+                format!(
+                    "next_step(session_id={}, interaction_id={:?}, inputs={:?})",
+                    session_id, interaction_id, names
+                )
+            }
+            Self::CompleteSession { session_id } => {
+                format!("complete_session(session_id={})", session_id)
             }
             Self::CancelSession { session_id } => {
                 format!("cancel_session(session_id={})", session_id)
@@ -253,7 +234,10 @@ impl Drop for FlowCommand {
                     input.value.zeroize();
                 }
             }
-            Self::CancelSession { .. } | Self::GetSessionStatus { .. } | Self::Ping => {}
+            Self::CompleteSession { .. }
+            | Self::CancelSession { .. }
+            | Self::GetSessionStatus { .. }
+            | Self::Ping => {}
         }
     }
 }
@@ -281,11 +265,9 @@ fn validate_text_max(field: &str, value: &str, max_len: usize) -> Result<(), Str
             value.len()
         ));
     }
-
     if value.chars().any(|ch| ch.is_control()) {
         return Err(format!("{} contains control characters", field));
     }
-
     Ok(())
 }
 
@@ -303,21 +285,18 @@ pub enum FlowResponse {
         #[serde(default)]
         message: Option<String>,
     },
+    Waiting {
+        session_id: String,
+        #[serde(default)]
+        message: Option<String>,
+    },
     SessionStatus {
         session_id: String,
-        provider: String,
         state: SessionState,
         #[serde(default)]
         detail: Option<String>,
         #[serde(default)]
         logs: Vec<SessionLogEntry>,
-    },
-    SessionComplete {
-        session_id: String,
-        success: bool,
-        tokens: TokenBundle,
-        #[serde(default)]
-        metadata: HashMap<String, String>,
     },
     SessionError {
         session_id: String,
@@ -334,16 +313,12 @@ pub enum FlowResponse {
 impl Drop for FlowResponse {
     fn drop(&mut self) {
         match self {
-            Self::SessionComplete { metadata, .. } => {
-                for value in metadata.values_mut() {
-                    value.zeroize();
-                }
-            }
             Self::SessionError { error, .. } | Self::Error { error } => {
                 error.zeroize();
             }
             Self::Ack { .. }
             | Self::NextStep { .. }
+            | Self::Waiting { .. }
             | Self::SessionStatus { .. }
             | Self::Pong { .. } => {}
         }

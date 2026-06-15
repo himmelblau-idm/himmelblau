@@ -538,13 +538,20 @@ async function runServer(sessionId, idleSeconds) {
     });
   });
 
-  process.on("SIGTERM", async () => {
+  const exitAfterCleanup = async () => {
+    const forceExit = setTimeout(() => {
+      process.exit(0);
+    }, 1000);
+    forceExit.unref();
     await cleanup();
     process.exit(0);
+  };
+
+  process.on("SIGTERM", () => {
+    void exitAfterCleanup();
   });
-  process.on("SIGINT", async () => {
-    await cleanup();
-    process.exit(0);
+  process.on("SIGINT", () => {
+    void exitAfterCleanup();
   });
 
   await new Promise((resolve, reject) => {
@@ -576,11 +583,12 @@ async function handleRequest(page, request) {
   if (request.command === "action") {
     return await handleAction(page, request.payload);
   }
-  if (request.command === "extract") {
-    return await handleExtract(page, request.source);
+  if (request.command === "inspect_page") {
+    return await handleInspectPage(page);
   }
-  if (request.command === "success") {
-    return await handleSuccess(page, request.success);
+  if (request.command === "wait_for_settle") {
+    await waitForSettle(page);
+    return { ok: true };
   }
   if (request.command === "ping") {
     return { ok: true, pong: true };
@@ -617,70 +625,229 @@ async function handleAction(page, payload) {
 
   if (payload.action === "click") {
     await page.click(payload.selector, { timeout: 15000 });
+    await waitForSettle(page);
+    return { ok: true };
+  }
+
+  if (payload.action === "submit_form") {
+    const submitted = await page.evaluate((selector) => {
+      const element = document.querySelector(selector);
+      if (!element) {
+        return false;
+      }
+      const form = element.closest("form");
+      if (!form) {
+        return false;
+      }
+      if (typeof form.requestSubmit === "function") {
+        form.requestSubmit();
+      } else {
+        form.submit();
+      }
+      return true;
+    }, payload.selector);
+    if (!submitted) {
+      await page.press(payload.selector, "Enter", { timeout: 15000 });
+    }
+    await waitForSettle(page);
     return { ok: true };
   }
 
   throw new Error(`unsupported action '${payload.action}'`);
 }
 
-async function handleExtract(page, source) {
-  if (typeof source !== "string" || source.length === 0) {
-    throw new Error("extract requires a non-empty source");
+async function waitForSettle(page) {
+  try {
+    await page.waitForLoadState("domcontentloaded", { timeout: 5000 });
+  } catch (_error) {
+    // DOM may already be settled or the page may be a single-page app.
   }
-
-  let value = null;
-  if (source.startsWith("browser:query:")) {
-    const key = source.slice("browser:query:".length);
-    const current = new URL(page.url());
-    value = current.searchParams.get(key);
-  } else if (source.startsWith("browser:storage:")) {
-    const key = source.slice("browser:storage:".length);
-    value = await page.evaluate((storageKey) => {
-      const local = window.localStorage.getItem(storageKey);
-      if (local !== null) {
-        return local;
-      }
-      return window.sessionStorage.getItem(storageKey);
-    }, key);
-  } else if (source === "browser:url") {
-    value = page.url();
-  } else if (source === "browser:title") {
-    value = await page.title();
+  try {
+    await page.waitForTimeout(500);
+  } catch (_error) {
+    // no-op
   }
-
-  return { ok: true, value: value === undefined ? null : value };
 }
 
-async function handleSuccess(page, success) {
-  if (!success || typeof success !== "object") {
-    throw new Error("success probe requires a payload");
-  }
+async function handleInspectPage(page) {
+  const value = await page.evaluate(() => {
+    const textOf = (value, max = 240) =>
+      String(value || "")
+        .replace(/\s+/g, " ")
+        .trim()
+        .slice(0, max);
 
-  const urlMatches =
-    typeof success.url_contains === "string" && success.url_contains.length > 0
-      ? page.url().includes(success.url_contains)
-      : true;
+    const isVisible = (element) => {
+      if (!element) {
+        return false;
+      }
+      const style = window.getComputedStyle(element);
+      if (style.display === "none" || style.visibility === "hidden" || style.opacity === "0") {
+        return false;
+      }
+      const rect = element.getBoundingClientRect();
+      return rect.width > 0 && rect.height > 0;
+    };
 
-  const domMatches =
-    typeof success.dom_selector === "string" && success.dom_selector.length > 0
-      ? await page.evaluate((selector) => {
-      const isVisible = (element) => {
-        if (!element) {
-          return false;
+    const cssEscape = (value) => {
+      if (window.CSS && typeof window.CSS.escape === "function") {
+        return window.CSS.escape(value);
+      }
+      return String(value).replace(/[^a-zA-Z0-9_-]/g, "\\$&");
+    };
+
+    const selectorFor = (element, stableId) => {
+      if (stableId) {
+        element.setAttribute("data-himmelblau-orchestrator-id", stableId);
+        return `[data-himmelblau-orchestrator-id="${stableId}"]`;
+      }
+      if (element.id) {
+        return `#${cssEscape(element.id)}`;
+      }
+      const name = element.getAttribute("name");
+      if (name) {
+        const tag = element.tagName.toLowerCase();
+        return `${tag}[name="${String(name).replace(/"/g, '\\"')}"]`;
+      }
+      const all = Array.from(document.querySelectorAll(element.tagName.toLowerCase()));
+      const index = all.indexOf(element);
+      return `${element.tagName.toLowerCase()}:nth-of-type(${index + 1})`;
+    };
+
+    const labelFor = (element) => {
+      const id = element.id;
+      if (id) {
+        const explicit = document.querySelector(`label[for="${cssEscape(id)}"]`);
+        if (explicit) {
+          return textOf(explicit.innerText || explicit.textContent);
         }
-        const style = window.getComputedStyle(element);
-        if (style.display === "none" || style.visibility === "hidden" || style.opacity === "0") {
-          return false;
-        }
-        const rect = element.getBoundingClientRect();
-        return rect.width > 0 && rect.height > 0;
-      };
-      const node = document.querySelector(selector);
-      return isVisible(node);
-    }, success.dom_selector)
-      : true;
+      }
+      const wrapping = element.closest("label");
+      if (wrapping) {
+        return textOf(wrapping.innerText || wrapping.textContent);
+      }
+      return "";
+    };
 
-  return { ok: true, success: urlMatches && domMatches };
+    const browserError = () => {
+      const selectors = [
+        "#kc-error-message",
+        "body[data-page-id*='error' i] #kc-error-message",
+        "body[data-page-id*='error' i] main",
+        "[role='alert']",
+        "[aria-live='assertive']",
+        ".alert-danger",
+        ".pf-m-danger",
+        "[id*='error' i]",
+        "[class*='error' i]",
+      ];
+      for (const selector of selectors) {
+        for (const element of Array.from(document.querySelectorAll(selector))) {
+          if (!isVisible(element)) {
+            continue;
+          }
+          const text = textOf(element.innerText || element.textContent, 600);
+          if (text) {
+            return text;
+          }
+        }
+      }
+      return "";
+    };
+
+    const actionFrom = (element, index) => ({
+      id: `action-${index}`,
+      selector: selectorFor(element, `action-${index}`),
+      text: textOf(element.innerText || element.textContent || element.getAttribute("value")),
+      kind: textOf(element.getAttribute("type") || element.getAttribute("role") || element.tagName.toLowerCase(), 64),
+    });
+
+    const fieldFrom = (element, index) => ({
+      id: `field-${index}`,
+      selector: selectorFor(element, `field-${index}`),
+      tag: element.tagName.toLowerCase(),
+      input_type: textOf(element.getAttribute("type") || "", 64).toLowerCase(),
+      name: textOf(element.getAttribute("name") || "", 128),
+      autocomplete: textOf(element.getAttribute("autocomplete") || "", 128).toLowerCase(),
+      id_attr: textOf(element.getAttribute("id") || "", 128),
+      label: labelFor(element),
+      placeholder: textOf(element.getAttribute("placeholder") || "", 160),
+      aria_label: textOf(element.getAttribute("aria-label") || "", 160),
+      required:
+        element.hasAttribute("required") ||
+        element.getAttribute("aria-required") === "true",
+    });
+
+    const fieldSelector =
+      "input:not([type='hidden']):not([type='submit']):not([type='button']):not([type='reset']), textarea, select, [contenteditable='true']";
+    const actionSelector =
+      "button, input[type='submit'], input[type='button'], input[type='reset'], a[role='button']";
+
+    const allFields = Array.from(document.querySelectorAll(fieldSelector)).filter(
+      (element) => isVisible(element) && !element.disabled && !element.readOnly
+    );
+    const allActions = Array.from(document.querySelectorAll(actionSelector)).filter(
+      (element) => isVisible(element) && !element.disabled
+    );
+
+    const fieldIds = new Map();
+    allFields.forEach((field, index) => fieldIds.set(field, `field-${index}`));
+    const actionIds = new Map();
+    allActions.forEach((action, index) => actionIds.set(action, `action-${index}`));
+
+    const forms = Array.from(document.querySelectorAll("form"))
+      .filter((form) => isVisible(form))
+      .map((form, formIndex) => {
+        const fields = allFields
+          .filter((field) => form.contains(field))
+          .map((field) => fieldFrom(field, Number(fieldIds.get(field).slice("field-".length))));
+        const actions = allActions
+          .filter((action) => form.contains(action))
+          .map((action) => actionFrom(action, Number(actionIds.get(action).slice("action-".length))));
+        return {
+          id: `form-${formIndex}`,
+          text: textOf(form.innerText || form.textContent, 1000),
+          fields,
+          actions,
+        };
+      });
+
+    const formFieldSelectors = new Set(
+      forms.flatMap((form) => form.fields.map((field) => field.selector))
+    );
+    const looseFields = allFields
+      .filter((field) => {
+        const index = Number(fieldIds.get(field).slice("field-".length));
+        return !formFieldSelectors.has(selectorFor(field, `field-${index}`));
+      })
+      .map((field) => fieldFrom(field, Number(fieldIds.get(field).slice("field-".length))));
+    if (looseFields.length > 0) {
+      forms.push({
+        id: "form-loose",
+        text: textOf(document.body.innerText || document.body.textContent, 1000),
+        fields: looseFields,
+        actions: allActions.map((action, index) => actionFrom(action, index)),
+      });
+    }
+
+    let origin = "";
+    try {
+      origin = window.location.origin;
+    } catch (_error) {
+      origin = "";
+    }
+
+    return {
+      url: window.location.href,
+      origin,
+      title: document.title || "",
+      forms,
+      actions: allActions.map((action, index) => actionFrom(action, index)),
+      browser_error: browserError(),
+    };
+  });
+
+  return { ok: true, value };
 }
 
 async function runClient(parsedArgs) {
@@ -688,25 +855,6 @@ async function runClient(parsedArgs) {
     const payload = JSON.parse(parsedArgs.action);
     const response = await sendRequest({ command: "action", payload });
     ensureOk(response);
-    return;
-  }
-
-  if (parsedArgs.extract) {
-    const response = await sendRequest({ command: "extract", source: parsedArgs.extract });
-    ensureOk(response);
-    if (response.value === null || response.value === undefined || response.value === "") {
-      process.stdout.write("null\n");
-    } else {
-      process.stdout.write(`${String(response.value)}\n`);
-    }
-    return;
-  }
-
-  if (parsedArgs.success) {
-    const success = JSON.parse(parsedArgs.success);
-    const response = await sendRequest({ command: "success", success });
-    ensureOk(response);
-    process.stdout.write(`${response.success ? "true" : "false"}\n`);
     return;
   }
 

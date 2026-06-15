@@ -136,6 +136,20 @@ impl MessagePrinter for PinentryMessagePrinter {
             }
         }
     }
+
+    fn prompt_echo_on(&self, prompt: &str) -> Option<String> {
+        let mut input = PassphraseInput::with_default_binary()?;
+        input
+            .with_description("Entra ID Authentication")
+            .with_prompt(prompt);
+        match input.interact() {
+            Ok(secret) => Some(secret.expose_secret().to_string()),
+            Err(e) => {
+                debug!("pinentry interaction failed: {:?}", e);
+                None
+            }
+        }
+    }
 }
 
 /// Session broker that forwards all D-Bus calls to the himmelblaud

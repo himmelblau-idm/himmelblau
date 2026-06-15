@@ -3,6 +3,7 @@ FROM registry.opensuse.org/opensuse/tumbleweed:latest
 
 LABEL org.opencontainers.image.title="himmelblau playwright orchestrator"
 LABEL org.opencontainers.image.description="Runtime Playwright bridge container for himmelblaud-orchestrator"
+LABEL org.himmelblau.orchestrator.bridge_protocol="0.2"
 
 RUN --mount=type=cache,id=himmelblau-orchestrator-zypp-cache,target=/var/cache/zypp \
     zypper --non-interactive refresh && \

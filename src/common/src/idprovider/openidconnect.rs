@@ -126,10 +126,12 @@ pub fn mfa_from_oidc_device(
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 enum OrchestratorInputType {
+    Username,
     Text,
     Password,
     Otp,
     Confirmation,
+    Unknown,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -153,35 +155,10 @@ struct OrchestratorRequiredInput {
     prompt: Option<String>,
     #[serde(default)]
     optional: bool,
-}
-
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-struct OrchestratorTokenBundle {
     #[serde(default)]
-    access_token: Option<String>,
+    sensitive: bool,
     #[serde(default)]
-    id_token: Option<String>,
-    #[serde(default)]
-    refresh_token: Option<String>,
-    #[serde(default)]
-    authorization_code: Option<String>,
-}
-
-impl Drop for OrchestratorTokenBundle {
-    fn drop(&mut self) {
-        if let Some(value) = &mut self.access_token {
-            value.zeroize();
-        }
-        if let Some(value) = &mut self.id_token {
-            value.zeroize();
-        }
-        if let Some(value) = &mut self.refresh_token {
-            value.zeroize();
-        }
-        if let Some(value) = &mut self.authorization_code {
-            value.zeroize();
-        }
-    }
+    interaction_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -189,8 +166,6 @@ impl Drop for OrchestratorTokenBundle {
 enum OrchestratorCommand {
     StartSession {
         session_id: String,
-        #[serde(default)]
-        provider: Option<String>,
         #[serde(default)]
         username: Option<String>,
         #[serde(default)]
@@ -203,7 +178,12 @@ enum OrchestratorCommand {
     NextStep {
         session_id: String,
         #[serde(default)]
+        interaction_id: Option<String>,
+        #[serde(default)]
         provided_inputs: Vec<OrchestratorProvidedInput>,
+    },
+    CompleteSession {
+        session_id: String,
     },
 }
 
@@ -216,10 +196,10 @@ enum OrchestratorResponse {
         #[serde(default)]
         message: Option<String>,
     },
-    SessionComplete {
+    Waiting {
         session_id: String,
-        success: bool,
-        tokens: OrchestratorTokenBundle,
+        #[serde(default)]
+        message: Option<String>,
     },
     SessionError {
         session_id: String,
@@ -235,7 +215,6 @@ enum OrchestratorResponse {
     },
     SessionStatus {
         session_id: String,
-        provider: String,
         state: String,
         #[serde(default)]
         detail: Option<String>,
@@ -264,7 +243,6 @@ enum OidcMfaExtraData {
 struct OidcOrchestratorConfig {
     enabled: bool,
     socket_path: String,
-    provider: Option<String>,
     timeout: Duration,
     poll_interval_secs: u32,
 }
@@ -272,9 +250,11 @@ struct OidcOrchestratorConfig {
 fn orchestrator_input_type_label(input_type: &OrchestratorInputType) -> &'static str {
     match input_type {
         OrchestratorInputType::Text => "text",
+        OrchestratorInputType::Username => "username",
         OrchestratorInputType::Password => "password",
         OrchestratorInputType::Otp => "otp",
         OrchestratorInputType::Confirmation => "confirmation",
+        OrchestratorInputType::Unknown => "unknown",
     }
 }
 
@@ -309,6 +289,7 @@ fn pam_auth_request_kind(pam_next_req: &PamAuthRequest) -> &'static str {
     match pam_next_req {
         PamAuthRequest::Password { .. } => "password",
         PamAuthRequest::MFACode { .. } => "mfa_code",
+        PamAuthRequest::TextInput { .. } => "text_input",
         PamAuthRequest::MFAPoll { .. } => "mfa_poll",
         PamAuthRequest::Pin { .. } => "pin",
         PamAuthRequest::SetupPin { .. } => "setup_pin",
@@ -321,7 +302,9 @@ fn pam_auth_request_kind(pam_next_req: &PamAuthRequest) -> &'static str {
 fn auth_request_kind(auth_req: &AuthRequest) -> &'static str {
     match auth_req {
         AuthRequest::Password => "password",
+        AuthRequest::PasswordWithPrompt { .. } => "password_with_prompt",
         AuthRequest::MFACode { .. } => "mfa_code",
+        AuthRequest::TextInput { .. } => "text_input",
         AuthRequest::HelloTOTP { .. } => "hello_totp",
         AuthRequest::MFAPoll { .. } => "mfa_poll",
         AuthRequest::MFAPollWait => "mfa_poll_wait",
@@ -336,7 +319,7 @@ fn auth_request_kind(auth_req: &AuthRequest) -> &'static str {
 fn orchestrator_response_kind(response: &OrchestratorResponse) -> &'static str {
     match response {
         OrchestratorResponse::NextStep { .. } => "next_step",
-        OrchestratorResponse::SessionComplete { .. } => "session_complete",
+        OrchestratorResponse::Waiting { .. } => "waiting",
         OrchestratorResponse::SessionError { .. } => "session_error",
         OrchestratorResponse::Error { .. } => "error",
         OrchestratorResponse::Ack { .. } => "ack",
@@ -349,6 +332,7 @@ fn orchestrator_command_kind(command: &OrchestratorCommand) -> &'static str {
     match command {
         OrchestratorCommand::StartSession { .. } => "start_session",
         OrchestratorCommand::NextStep { .. } => "next_step",
+        OrchestratorCommand::CompleteSession { .. } => "complete_session",
     }
 }
 
@@ -421,7 +405,6 @@ async fn orchestrator_send_command(
     let command_kind = orchestrator_command_kind(&command);
     match &command {
         OrchestratorCommand::StartSession {
-            provider,
             username,
             issuer_url,
             dag_auth_url,
@@ -431,7 +414,6 @@ async fn orchestrator_send_command(
             debug!(
                 socket = %cfg.socket_path,
                 command = command_kind,
-                provider = ?provider,
                 has_username = username.is_some(),
                 has_issuer_url = issuer_url.is_some(),
                 has_dag_auth_url = dag_auth_url.is_some(),
@@ -441,15 +423,27 @@ async fn orchestrator_send_command(
             );
         }
         OrchestratorCommand::NextStep {
-            provided_inputs, ..
+            interaction_id,
+            provided_inputs,
+            ..
         } => {
             debug!(
                 socket = %cfg.socket_path,
                 command = command_kind,
+                interaction_id = ?interaction_id,
                 provided_input_count = provided_inputs.len(),
                 provided_input_names = ?orchestrator_provided_input_names(provided_inputs),
                 timeout = ?cfg.timeout,
                 "Sending orchestrator next step command"
+            );
+        }
+        OrchestratorCommand::CompleteSession { session_id } => {
+            debug!(
+                socket = %cfg.socket_path,
+                command = command_kind,
+                %session_id,
+                timeout = ?cfg.timeout,
+                "Sending orchestrator complete session command"
             );
         }
     }
@@ -542,7 +536,6 @@ async fn orchestrator_try_start(
     let session_id = Uuid::new_v4().to_string();
     debug!(
         %session_id,
-        provider = ?cfg.provider,
         account_id = %account_id,
         has_issuer_url = issuer_url.is_some(),
         has_dag_auth_url = dag_auth_url.is_some(),
@@ -555,7 +548,6 @@ async fn orchestrator_try_start(
         cfg,
         OrchestratorCommand::StartSession {
             session_id,
-            provider: cfg.provider.clone(),
             username: Some(account_id.to_string()),
             issuer_url,
             dag_auth_url,
@@ -567,7 +559,6 @@ async fn orchestrator_try_start(
         Ok(response) => response,
         Err(_) => {
             debug!(
-                provider = ?cfg.provider,
                 account_id = %account_id,
                 "Orchestrator start failed; falling back to direct OIDC device flow"
             );
@@ -599,32 +590,18 @@ async fn orchestrator_try_start(
                 },
             }))
         }
-        OrchestratorResponse::SessionComplete {
+        OrchestratorResponse::Waiting {
             session_id,
-            success,
-            tokens,
+            message,
         } => {
-            debug!(
-                %session_id,
-                success,
-                has_access = tokens.access_token.is_some(),
-                has_id = tokens.id_token.is_some(),
-                has_refresh = tokens.refresh_token.is_some(),
-                has_authorization_code = tokens.authorization_code.is_some(),
-                "Orchestrator completed at session start"
-            );
-            if success {
-                info!(
-                    %session_id,
-                    has_access = tokens.access_token.is_some(),
-                    has_id = tokens.id_token.is_some(),
-                    has_refresh = tokens.refresh_token.is_some(),
-                    "Orchestrator completed during session start"
-                );
-            } else {
-                warn!(%session_id, "Orchestrator reported unsuccessful completion");
-            }
-            Ok(None)
+            debug!(%session_id, ?message, "Orchestrator start returned waiting state");
+            Ok(Some(OidcMfaExtraData::Orchestrator {
+                state: OrchestratorFlowState {
+                    session_id,
+                    required_inputs: Vec::new(),
+                    dag_json,
+                },
+            }))
         }
         OrchestratorResponse::SessionError { session_id, error } => {
             warn!(%session_id, %error, "Orchestrator rejected start request");
@@ -650,8 +627,13 @@ async fn orchestrator_continue(
     state: &OrchestratorFlowState,
     provided_inputs: Vec<OrchestratorProvidedInput>,
 ) -> Result<OrchestratorResponse, IdpError> {
+    let interaction_id = state
+        .required_inputs
+        .first()
+        .and_then(|input| input.interaction_id.clone());
     debug!(
         session_id = %state.session_id,
+        interaction_id = ?interaction_id,
         required_input_count = state.required_inputs.len(),
         required_inputs = ?orchestrator_required_inputs_summary(&state.required_inputs),
         provided_input_count = provided_inputs.len(),
@@ -664,10 +646,37 @@ async fn orchestrator_continue(
         cfg,
         OrchestratorCommand::NextStep {
             session_id: state.session_id.clone(),
+            interaction_id,
             provided_inputs,
         },
     )
     .await
+}
+
+async fn orchestrator_complete_session(
+    cfg: &OidcOrchestratorConfig,
+    session_id: &str,
+) -> Result<(), IdpError> {
+    match orchestrator_send_command(
+        cfg,
+        OrchestratorCommand::CompleteSession {
+            session_id: session_id.to_string(),
+        },
+    )
+    .await
+    {
+        Ok(OrchestratorResponse::Ack { .. })
+        | Ok(OrchestratorResponse::SessionError { .. })
+        | Ok(OrchestratorResponse::Error { .. }) => Ok(()),
+        Ok(other) => {
+            debug!(
+                response = orchestrator_response_kind(&other),
+                "Unexpected orchestrator complete_session response"
+            );
+            Ok(())
+        }
+        Err(error) => Err(error),
+    }
 }
 
 fn parse_oidc_mfa_extra_data(raw: &str) -> Result<OidcMfaExtraData, IdpError> {
@@ -697,20 +706,26 @@ fn auth_request_from_orchestrator_inputs(
         "Selecting next PAM request from orchestrator inputs"
     );
 
-    if required_inputs
+    if let Some(input) = required_inputs
         .iter()
-        .any(|input| matches!(input.input_type, OrchestratorInputType::Password))
+        .find(|input| matches!(input.input_type, OrchestratorInputType::Password))
     {
-        debug!("Selected Password prompt from orchestrator inputs");
-        return AuthRequest::Password;
+        let msg = input
+            .prompt
+            .clone()
+            .unwrap_or_else(|| format!("{}: ", input.name));
+        debug!(
+            selected_input = %input.name,
+            input_type = orchestrator_input_type_label(&input.input_type),
+            "Selected provider-supplied Password prompt from orchestrator inputs"
+        );
+        return AuthRequest::PasswordWithPrompt { msg };
     }
 
-    if let Some(input) = required_inputs.iter().find(|input| {
-        matches!(
-            input.input_type,
-            OrchestratorInputType::Otp | OrchestratorInputType::Text
-        )
-    }) {
+    if let Some(input) = required_inputs
+        .iter()
+        .find(|input| matches!(input.input_type, OrchestratorInputType::Otp))
+    {
         let msg = input
             .prompt
             .clone()
@@ -721,6 +736,26 @@ fn auth_request_from_orchestrator_inputs(
             "Selected MFACode prompt from orchestrator inputs"
         );
         return AuthRequest::MFACode { msg };
+    }
+
+    if let Some(input) = required_inputs.iter().find(|input| {
+        matches!(
+            input.input_type,
+            OrchestratorInputType::Text
+                | OrchestratorInputType::Username
+                | OrchestratorInputType::Unknown
+        )
+    }) {
+        let msg = input
+            .prompt
+            .clone()
+            .unwrap_or_else(|| format!("{}: ", input.name));
+        debug!(
+            selected_input = %input.name,
+            input_type = orchestrator_input_type_label(&input.input_type),
+            "Selected TextInput prompt from orchestrator inputs"
+        );
+        return AuthRequest::TextInput { msg };
     }
 
     if let Some(input) = required_inputs
@@ -809,12 +844,7 @@ fn orchestrator_inputs_from_pam_request(
         PamAuthRequest::MFACode { cred } => {
             let target = required_inputs
                 .iter()
-                .find(|input| {
-                    matches!(
-                        input.input_type,
-                        OrchestratorInputType::Otp | OrchestratorInputType::Text
-                    )
-                })
+                .find(|input| matches!(input.input_type, OrchestratorInputType::Otp))
                 .or_else(|| {
                     if required_inputs.len() == 1 {
                         required_inputs.first()
@@ -837,6 +867,43 @@ fn orchestrator_inputs_from_pam_request(
                 provided_input_count = mapped.len(),
                 provided_input_names = ?orchestrator_provided_input_names(&mapped),
                 "Mapped MFACode request to orchestrator input"
+            );
+
+            Ok(mapped)
+        }
+        PamAuthRequest::TextInput { cred } => {
+            let target = required_inputs
+                .iter()
+                .find(|input| {
+                    matches!(
+                        input.input_type,
+                        OrchestratorInputType::Text
+                            | OrchestratorInputType::Username
+                            | OrchestratorInputType::Unknown
+                    )
+                })
+                .or_else(|| {
+                    if required_inputs.len() == 1 {
+                        required_inputs.first()
+                    } else {
+                        None
+                    }
+                })
+                .ok_or_else(|| {
+                    error!("Orchestrator requested no text input for TextInput prompt");
+                    IdpError::BadRequest
+                })?;
+
+            let mapped = vec![OrchestratorProvidedInput {
+                name: target.name.clone(),
+                value: cred,
+            }];
+
+            debug!(
+                target_input = %target.name,
+                provided_input_count = mapped.len(),
+                provided_input_names = ?orchestrator_provided_input_names(&mapped),
+                "Mapped TextInput request to orchestrator input"
             );
 
             Ok(mapped)
@@ -907,6 +974,8 @@ mod tests {
                     input_type: OrchestratorInputType::Password,
                     prompt: Some("Password".to_string()),
                     optional: false,
+                    sensitive: true,
+                    interaction_id: Some("i1".to_string()),
                 }],
                 dag_json: Some("{\"device_code\":\"abc\"}".to_string()),
             },
@@ -945,17 +1014,60 @@ mod tests {
                 input_type: OrchestratorInputType::Otp,
                 prompt: Some("OTP".to_string()),
                 optional: false,
+                sensitive: true,
+                interaction_id: None,
             },
             OrchestratorRequiredInput {
                 name: "password".to_string(),
                 input_type: OrchestratorInputType::Password,
                 prompt: Some("Password".to_string()),
                 optional: false,
+                sensitive: true,
+                interaction_id: None,
             },
         ];
 
         let request = auth_request_from_orchestrator_inputs(&required_inputs, 2);
-        assert!(matches!(request, AuthRequest::Password));
+        match request {
+            AuthRequest::PasswordWithPrompt { msg } => assert_eq!(msg, "Password"),
+            _ => panic!("expected PasswordWithPrompt request"),
+        }
+    }
+
+    #[test]
+    fn auth_request_preserves_password_update_prompt() {
+        let required_inputs = vec![OrchestratorRequiredInput {
+            name: "password-new".to_string(),
+            input_type: OrchestratorInputType::Password,
+            prompt: Some("New Password".to_string()),
+            optional: false,
+            sensitive: true,
+            interaction_id: None,
+        }];
+
+        let request = auth_request_from_orchestrator_inputs(&required_inputs, 2);
+        match request {
+            AuthRequest::PasswordWithPrompt { msg } => assert_eq!(msg, "New Password"),
+            _ => panic!("expected PasswordWithPrompt request"),
+        }
+    }
+
+    #[test]
+    fn auth_request_password_without_prompt_uses_input_name() {
+        let required_inputs = vec![OrchestratorRequiredInput {
+            name: "password-confirm".to_string(),
+            input_type: OrchestratorInputType::Password,
+            prompt: None,
+            optional: false,
+            sensitive: true,
+            interaction_id: None,
+        }];
+
+        let request = auth_request_from_orchestrator_inputs(&required_inputs, 2);
+        match request {
+            AuthRequest::PasswordWithPrompt { msg } => assert_eq!(msg, "password-confirm: "),
+            _ => panic!("expected PasswordWithPrompt request"),
+        }
     }
 
     #[test]
@@ -965,6 +1077,8 @@ mod tests {
             input_type: OrchestratorInputType::Confirmation,
             prompt: Some("Approve in app".to_string()),
             optional: false,
+            sensitive: false,
+            interaction_id: None,
         }];
 
         let request = auth_request_from_orchestrator_inputs(&required_inputs, 5);
@@ -987,6 +1101,8 @@ mod tests {
             input_type: OrchestratorInputType::Password,
             prompt: None,
             optional: false,
+            sensitive: true,
+            interaction_id: None,
         }];
 
         let mapped = orchestrator_inputs_from_pam_request(
@@ -1009,6 +1125,8 @@ mod tests {
             input_type: OrchestratorInputType::Password,
             prompt: None,
             optional: false,
+            sensitive: true,
+            interaction_id: None,
         }];
 
         let result = orchestrator_inputs_from_pam_request(
@@ -1028,6 +1146,8 @@ mod tests {
             input_type: OrchestratorInputType::Confirmation,
             prompt: Some("Approve sign-in".to_string()),
             optional: false,
+            sensitive: false,
+            interaction_id: None,
         }];
 
         let mapped = orchestrator_inputs_from_pam_request(
@@ -1048,6 +1168,8 @@ mod tests {
             input_type: OrchestratorInputType::Password,
             prompt: None,
             optional: false,
+            sensitive: true,
+            interaction_id: None,
         }];
 
         let mapped = orchestrator_inputs_from_pam_request(
@@ -1860,12 +1982,11 @@ impl OidcProvider {
     }
 
     async fn orchestrator_config(&self) -> OidcOrchestratorConfig {
-        let (enabled, socket_path, provider, timeout_secs, poll_interval_secs) = {
+        let (enabled, socket_path, timeout_secs, poll_interval_secs) = {
             let cfg = self.config.lock().await;
             (
                 cfg.get_orchestrator_enabled(),
                 cfg.get_orchestrator_socket(),
-                cfg.get_orchestrator_provider(),
                 cfg.get_orchestrator_timeout_secs(),
                 cfg.get_orchestrator_poll_secs(),
             )
@@ -1874,7 +1995,6 @@ impl OidcProvider {
         if enabled {
             debug!(
                 socket = %socket_path,
-                provider = ?provider,
                 timeout_secs,
                 poll_interval_secs,
                 "OIDC orchestrator integration is enabled"
@@ -1884,7 +2004,6 @@ impl OidcProvider {
         OidcOrchestratorConfig {
             enabled,
             socket_path,
-            provider,
             timeout: Duration::from_secs(timeout_secs.max(1)),
             poll_interval_secs: poll_interval_secs.max(1),
         }
@@ -1909,7 +2028,6 @@ impl OidcProvider {
         let (_, dag_json) = mfa_from_oidc_device(dag_details)?;
         debug!(
             account_id = %account_id,
-            provider = ?cfg.provider,
             dag_poll_interval_secs = dag_details.interval().as_secs(),
             dag_expires_in_secs = dag_details.expires_in().as_secs(),
             has_verification_uri_complete = dag_details.verification_uri_complete().is_some(),
@@ -1929,7 +2047,6 @@ impl OidcProvider {
         else {
             debug!(
                 account_id = %account_id,
-                provider = ?cfg.provider,
                 "Orchestrator flow not started; continuing with direct OIDC MFA"
             );
             return Ok(None);
@@ -2720,6 +2837,9 @@ impl IdProvider for OidcProvider {
                                             poll_attempt,
                                             "DAG token endpoint returned success during orchestrator poll"
                                         );
+                                        let _ =
+                                            orchestrator_complete_session(&cfg, &state.session_id)
+                                                .await;
                                         return self
                                             .finalize_mfa_success(
                                                 account_id,
@@ -2733,12 +2853,8 @@ impl IdProvider for OidcProvider {
                                         debug!(
                                             session_id = %state.session_id,
                                             poll_attempt,
-                                            "DAG token endpoint still pending; returning MFAPollWait"
+                                            "DAG token endpoint still pending; checking browser orchestrator state"
                                         );
-                                        return Ok((
-                                            AuthResult::Next(AuthRequest::MFAPollWait),
-                                            AuthCacheAction::None,
-                                        ));
                                     }
                                     Err(e) => {
                                         error!(
@@ -2774,6 +2890,16 @@ impl IdProvider for OidcProvider {
                                 ));
                             }
                         };
+
+                        if provided_inputs.is_empty() && !state.required_inputs.is_empty() {
+                            return Ok((
+                                AuthResult::Denied(
+                                    "Unexpected authentication step. Please try signing in again."
+                                        .to_string(),
+                                ),
+                                AuthCacheAction::None,
+                            ));
+                        }
 
                         debug!(
                             session_id = %state.session_id,
@@ -2822,128 +2948,29 @@ impl IdProvider for OidcProvider {
                                     Some(cfg.poll_interval_secs.saturating_mul(1000));
                                 Ok((AuthResult::Next(next_req), AuthCacheAction::None))
                             }
-                            Ok(OrchestratorResponse::SessionComplete {
+                            Ok(OrchestratorResponse::Waiting {
                                 session_id,
-                                success,
-                                mut tokens,
+                                message,
                             }) => {
-                                info!(
+                                debug!(
                                     %session_id,
-                                    success,
-                                    has_access = tokens.access_token.is_some(),
-                                    has_id = tokens.id_token.is_some(),
-                                    has_refresh = tokens.refresh_token.is_some(),
-                                    has_authorization_code = tokens.authorization_code.is_some(),
-                                    "Orchestrator session reported completion"
+                                    ?message,
+                                    "Orchestrator is waiting for browser progress"
                                 );
-
-                                if !success {
-                                    return Ok((
-                                        AuthResult::Denied(
-                                            "Authentication failed in browser flow.".to_string(),
-                                        ),
-                                        AuthCacheAction::None,
-                                    ));
-                                }
-
-                                if let Some(flow_state) = dag_flow.as_ref() {
-                                    debug!(
-                                        %session_id,
-                                        "Attempting DAG token polling after orchestrator completion"
-                                    );
-                                    match self.client.acquire_token_by_device_flow(flow_state).await
-                                    {
-                                        Ok(token) => {
-                                            info!(
-                                                %session_id,
-                                                "DAG token endpoint succeeded after orchestrator completion"
-                                            );
-                                            return self
-                                                .finalize_mfa_success(
-                                                    account_id,
-                                                    no_hello_pin,
-                                                    cred_handler,
-                                                    token,
-                                                )
-                                                .await;
-                                        }
-                                        Err(MsalError::MFAPollContinue) => {
-                                            debug!(
-                                                %session_id,
-                                                "DAG token still pending after orchestrator completion"
-                                            );
-                                            return Ok((
-                                                AuthResult::Next(AuthRequest::MFAPollWait),
-                                                AuthCacheAction::None,
-                                            ));
-                                        }
-                                        Err(e) => {
-                                            error!(
-                                                ?e,
-                                                %session_id,
-                                                "Failed polling DAG token endpoint"
-                                            );
-                                            return Ok((
-                                                AuthResult::Denied(format!(
-                                                    "Authentication failed: {}",
-                                                    e
-                                                )),
-                                                AuthCacheAction::None,
-                                            ));
-                                        }
-                                    }
-                                }
-
-                                let refresh_token = match tokens.refresh_token.take() {
-                                    Some(token) => token,
-                                    None => {
-                                        error!(
-                                            %session_id,
-                                            "Orchestrator completion missing refresh token"
-                                        );
-                                        return Ok((
-                                            AuthResult::Denied(
-                                                "Authentication did not return a refresh token. Please try again."
-                                                    .to_string(),
-                                            ),
-                                            AuthCacheAction::None,
-                                        ));
-                                    }
+                                let next_state = OidcMfaExtraData::Orchestrator {
+                                    state: OrchestratorFlowState {
+                                        session_id: session_id.clone(),
+                                        required_inputs: Vec::new(),
+                                        dag_json: state.dag_json.clone(),
+                                    },
                                 };
-
-                                match self
-                                    .client
-                                    .acquire_token_by_refresh_token(&refresh_token, vec![])
-                                    .await
-                                {
-                                    Ok(token) => {
-                                        info!(
-                                            %session_id,
-                                            "Refresh token exchange succeeded after orchestrator completion"
-                                        );
-                                        self.finalize_mfa_success(
-                                            account_id,
-                                            no_hello_pin,
-                                            cred_handler,
-                                            token,
-                                        )
-                                        .await
-                                    }
-                                    Err(e) => {
-                                        error!(
-                                            ?e,
-                                            %session_id,
-                                            "Failed exchanging orchestrator refresh token"
-                                        );
-                                        Ok((
-                                            AuthResult::Denied(
-                                                "Authentication flow completed but token exchange failed. Please try again."
-                                                    .to_string(),
-                                            ),
-                                            AuthCacheAction::None,
-                                        ))
-                                    }
-                                }
+                                *extra_data = Some(serialize_oidc_mfa_extra_data(&next_state)?);
+                                flow.polling_interval =
+                                    Some(cfg.poll_interval_secs.saturating_mul(1000));
+                                Ok((
+                                    AuthResult::Next(AuthRequest::MFAPollWait),
+                                    AuthCacheAction::None,
+                                ))
                             }
                             Ok(OrchestratorResponse::SessionError { session_id, error }) => {
                                 warn!(

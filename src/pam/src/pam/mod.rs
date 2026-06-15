@@ -188,6 +188,15 @@ impl MessagePrinter for PamConvMessagePrinter {
                 .flatten()
         })
     }
+
+    fn prompt_echo_on(&self, prompt: &str) -> Option<String> {
+        self.conv.lock().ok().and_then(|conv| {
+            conv.send(PAM_PROMPT_ECHO_ON, prompt)
+                .map_err(|e| error!("PAM conversation failed: {:?}", e))
+                .ok()
+                .flatten()
+        })
+    }
 }
 
 fn should_capture_keyring_secret(prompt: &str) -> bool {
@@ -229,6 +238,10 @@ impl MessagePrinter for KeyringCaptureMessagePrinter {
             }
         }
         result
+    }
+
+    fn prompt_echo_on(&self, prompt: &str) -> Option<String> {
+        self.inner.prompt_echo_on(prompt)
     }
 }
 

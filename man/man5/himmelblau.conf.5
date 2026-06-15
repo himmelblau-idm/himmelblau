@@ -1,4 +1,4 @@
-.TH HIMMELBLAU.CONF "5" "May 2026" "Himmelblau Configuration" "File Formats"
+.TH HIMMELBLAU.CONF "5" "June 2026" "Himmelblau Configuration" "File Formats"
 .SH NAME
 himmelblau.conf \- Configuration file for Himmelblau, enabling Azure Entra ID authentication on Linux.
 
@@ -964,18 +964,6 @@ Default: /var/run/himmelblaud/orchestrator.sock
 
 .P
 Example: orchestrator_socket = /run/himmelblaud/orchestrator.sock
-
-.TP
-.B orchestrator_provider
-.RE
-Optional explicit provider key passed to himmelblaud-orchestrator when starting
-an OIDC browser flow.
-
-If unset, the orchestrator auto-detects the provider from issuer URL, domain,
-or embedded provider match rules.
-
-.P
-Example: orchestrator_provider = keycloak
 
 .TP
 .B orchestrator_timeout_secs

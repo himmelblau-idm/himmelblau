@@ -35,6 +35,8 @@ selinux_policy_loaded() {
 build_orchestrator_container() {
     CONTAINER_BUILD_DIR="/usr/share/himmelblau/orchestrator-container"
     IMAGE_TAG="localhost/himmelblau/playwright-orchestrator:latest"
+    BRIDGE_PROTOCOL_LABEL="org.himmelblau.orchestrator.bridge_protocol"
+    BRIDGE_PROTOCOL_VERSION="0.2"
 
     # Skip when package tools are installing into an alternate root.
     if [ -n "$DPKG_ROOT" ]; then
@@ -53,7 +55,11 @@ build_orchestrator_container() {
     fi
 
     if podman image exists "$IMAGE_TAG" >/dev/null 2>&1; then
-        return 0
+        current_protocol="$(podman image inspect --format "{{ index .Config.Labels \"$BRIDGE_PROTOCOL_LABEL\" }}" "$IMAGE_TAG" 2>/dev/null || true)"
+        if [ "$current_protocol" = "$BRIDGE_PROTOCOL_VERSION" ]; then
+            return 0
+        fi
+        echo "Existing orchestrator container image has stale bridge protocol '$current_protocol'; rebuilding..."
     fi
 
     # Check if build directory exists

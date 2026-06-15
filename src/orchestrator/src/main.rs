@@ -14,7 +14,6 @@ mod communication;
 mod container_pool;
 mod flow;
 mod podman;
-mod provider_definitions;
 mod session;
 mod types;
 
@@ -25,7 +24,6 @@ use container_pool::ContainerPool;
 use flow::FlowExecutor;
 use himmelblau_unix_common::config::HimmelblauConfig;
 use podman::PodmanClient;
-use provider_definitions::ProviderRegistry;
 use session::SessionManager;
 use std::path::{Path, PathBuf};
 use std::process;
@@ -38,11 +36,12 @@ use tracing::{error, info, warn};
 
 const DEFAULT_ORCHESTRATOR_SOCKET_PATH: &str = "/var/run/himmelblaud/orchestrator.sock";
 const DEFAULT_ORCHESTRATOR_RUNTIME_DIR: &str = "/run/himmelblaud/orchestrator";
-const DEFAULT_PROVIDER_OVERRIDE_PATH: &str = "/etc/himmelblau/orchestrator-providers.json";
 const DEFAULT_PLAYWRIGHT_IMAGE: &str = "localhost/himmelblau/playwright-orchestrator:latest";
 const DEFAULT_CONTAINER_BUILD_DIR: &str = "/usr/share/himmelblau/orchestrator-container";
 const DEFAULT_CONTAINER_NETWORK: &str = "host";
 const CONTAINER_IMAGE_BUILD_FAILURE_EXIT_CODE: i32 = 75;
+const BRIDGE_PROTOCOL_LABEL: &str = "org.himmelblau.orchestrator.bridge_protocol";
+const BRIDGE_PROTOCOL_VERSION: &str = "0.2";
 
 #[derive(Debug, Parser)]
 #[command(name = "himmelblaud-orchestrator")]
@@ -57,9 +56,6 @@ struct OrchestratorArgs {
 
     #[arg(long, env = "HIMMELBLAU_ORCHESTRATOR_SOCKET", default_value = DEFAULT_ORCHESTRATOR_SOCKET_PATH)]
     socket: String,
-
-    #[arg(long, env = "HIMMELBLAU_ORCHESTRATOR_PROVIDER_FILE", default_value = DEFAULT_PROVIDER_OVERRIDE_PATH)]
-    provider_file: String,
 
     #[arg(long, env = "HIMMELBLAU_ORCHESTRATOR_PODMAN", default_value = "podman")]
     podman_binary: String,
@@ -128,17 +124,6 @@ async fn main() -> Result<()> {
         .context("failed to load himmelblau config")?;
 
     init_tracing(config.get_debug());
-    let config = Arc::new(config);
-
-    let provider_override_path = PathBuf::from(&args.provider_file);
-    let provider_registry = Arc::new(if provider_override_path.exists() {
-        ProviderRegistry::load(Some(provider_override_path.as_path())).await?
-    } else {
-        ProviderRegistry::load(None).await?
-    });
-
-    info!(providers = ?provider_registry.providers(), "loaded provider definitions");
-
     let container_no_new_privileges = parse_bool_flag(
         &args.container_no_new_privileges,
         "HIMMELBLAU_ORCHESTRATOR_NO_NEW_PRIVILEGES",
@@ -186,12 +171,8 @@ async fn main() -> Result<()> {
     ));
     let flow_executor = Arc::new(FlowExecutor::new(Arc::clone(&podman_client)));
 
-    let communication_server = CommunicationServer::new(
-        Arc::clone(&session_manager),
-        Arc::clone(&provider_registry),
-        Arc::clone(&config),
-        Arc::clone(&flow_executor),
-    );
+    let communication_server =
+        CommunicationServer::new(Arc::clone(&session_manager), Arc::clone(&flow_executor));
 
     let (shutdown_tx, _) = broadcast::channel::<()>(8);
 
@@ -282,8 +263,27 @@ fn warm_spare_keepalive_interval(idle_timeout_secs: u64, cleanup_interval_secs: 
 async fn ensure_container_image(podman_client: &PodmanClient, build_dir: &Path) -> Result<()> {
     match podman_client.image_exists().await {
         Ok(true) => {
-            info!("orchestrator container image is available");
-            return Ok(());
+            match podman_client
+                .image_label_matches(BRIDGE_PROTOCOL_LABEL, BRIDGE_PROTOCOL_VERSION)
+                .await
+            {
+                Ok(true) => {
+                    info!("orchestrator container image is available");
+                    return Ok(());
+                }
+                Ok(false) => {
+                    return Err(anyhow!(
+                        "orchestrator container image bridge protocol is stale (label '{}' is not '{}'); rebuild the image from {}",
+                        BRIDGE_PROTOCOL_LABEL,
+                        BRIDGE_PROTOCOL_VERSION,
+                        build_dir.display()
+                    ));
+                }
+                Err(error) => {
+                    return Err(error)
+                        .context("failed checking orchestrator container image bridge protocol");
+                }
+            }
         }
         Ok(false) => {
             warn!(

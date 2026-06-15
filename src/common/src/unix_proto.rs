@@ -36,8 +36,16 @@ pub enum PamAuthResponse {
     Success,
     Denied(String),
     Password,
+    /// PAM must prompt for a password using a supplied provider prompt
+    PasswordWithPrompt {
+        msg: String,
+    },
     /// PAM must prompt for an authentication code
     MFACode {
+        msg: String,
+    },
+    /// PAM must prompt for generic visible text input
+    TextInput {
         msg: String,
     },
     /// PAM must prompt for a TOTP code
@@ -80,6 +88,9 @@ pub enum PamAuthRequest {
         cred: String,
     },
     MFACode {
+        cred: String,
+    },
+    TextInput {
         cred: String,
     },
     HelloTOTP {

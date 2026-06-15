@@ -68,6 +68,7 @@ pub trait MessagePrinter: Send + Sync {
     fn print_text(&self, msg: &str);
     fn print_error(&self, msg: &str);
     fn prompt_echo_off(&self, prompt: &str) -> Option<String>;
+    fn prompt_echo_on(&self, prompt: &str) -> Option<String>;
 }
 
 #[derive(Default)]
@@ -84,6 +85,16 @@ impl MessagePrinter for SimpleMessagePrinter {
 
     fn prompt_echo_off(&self, prompt: &str) -> Option<String> {
         prompt_password(prompt).ok()
+    }
+
+    fn prompt_echo_on(&self, prompt: &str) -> Option<String> {
+        use std::io::{self, Write};
+
+        print!("{}", prompt);
+        let _ = io::stdout().flush();
+        let mut input = String::new();
+        io::stdin().read_line(&mut input).ok()?;
+        Some(input.trim_end_matches(['\r', '\n']).to_string())
     }
 }
 
@@ -794,6 +805,31 @@ fn handle_pam_auth_response_password(state: &mut AuthenticateState) -> PamWhatNe
     PamWhatNext::Next(req)
 }
 
+fn handle_pam_auth_response_password_with_prompt(
+    state: &AuthenticateState,
+    msg: &str,
+) -> PamWhatNext {
+    let prompt = if msg.trim().is_empty() {
+        "Password:"
+    } else {
+        msg
+    };
+    let cred = match state.msg_printer.prompt_echo_off(prompt) {
+        Some(cred) => cred,
+        None => {
+            debug!("no password");
+            pam_fail!(
+                state.msg_printer,
+                "No password was supplied.",
+                PamResultCode::PAM_CRED_INSUFFICIENT
+            );
+        }
+    };
+
+    let req = ClientRequest::PamAuthenticateStep(PamAuthRequest::Password { cred });
+    PamWhatNext::Next(req)
+}
+
 fn handle_pam_auth_response_mfacode(state: &AuthenticateState, msg: &str) -> PamWhatNext {
     state.msg_printer.print_text(msg);
     let cred = match state.msg_printer.prompt_echo_off("Code: ") {
@@ -810,6 +846,28 @@ fn handle_pam_auth_response_mfacode(state: &AuthenticateState, msg: &str) -> Pam
 
     // Now setup the request for the next loop.
     let req = ClientRequest::PamAuthenticateStep(PamAuthRequest::MFACode { cred });
+    PamWhatNext::Next(req)
+}
+
+fn handle_pam_auth_response_text_input(state: &AuthenticateState, msg: &str) -> PamWhatNext {
+    let prompt = if msg.trim().is_empty() {
+        "Input: "
+    } else {
+        msg
+    };
+    let cred = match state.msg_printer.prompt_echo_on(prompt) {
+        Some(cred) => cred,
+        None => {
+            debug!("no text input");
+            pam_fail!(
+                state.msg_printer,
+                "No input was supplied.",
+                PamResultCode::PAM_CRED_INSUFFICIENT
+            );
+        }
+    };
+
+    let req = ClientRequest::PamAuthenticateStep(PamAuthRequest::TextInput { cred });
     PamWhatNext::Next(req)
 }
 
@@ -1204,7 +1262,11 @@ fn authenticate_request_response(
         PamAuthResponse::Denied(msg) => handle_pam_auth_response_denied(state, &msg),
         PamAuthResponse::InitDenied { msg } => handle_pam_auth_init_denied(state, &msg),
         PamAuthResponse::Password => handle_pam_auth_response_password(state),
+        PamAuthResponse::PasswordWithPrompt { msg } => {
+            handle_pam_auth_response_password_with_prompt(state, &msg)
+        }
         PamAuthResponse::MFACode { msg } => handle_pam_auth_response_mfacode(state, &msg),
+        PamAuthResponse::TextInput { msg } => handle_pam_auth_response_text_input(state, &msg),
         PamAuthResponse::HelloTOTP { msg } => handle_pam_auth_response_hellototp(state, &msg),
         PamAuthResponse::MFAPoll {
             msg,

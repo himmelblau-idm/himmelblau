@@ -1,4 +1,3 @@
-use crate::provider_definitions::SuccessCondition;
 use anyhow::{anyhow, Context, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -43,6 +42,7 @@ pub struct PodmanClient {
 enum BridgeAction<'a> {
     Fill { selector: &'a str, value: &'a str },
     Click { selector: &'a str },
+    SubmitForm { selector: &'a str },
     Navigate { url: &'a str },
 }
 
@@ -50,8 +50,8 @@ enum BridgeAction<'a> {
 #[serde(tag = "command", rename_all = "snake_case")]
 enum BridgeRequest<'a> {
     Action { payload: BridgeAction<'a> },
-    Extract { source: &'a str },
-    Success { success: &'a SuccessCondition },
+    InspectPage,
+    WaitForSettle,
     Ping,
 }
 
@@ -62,8 +62,6 @@ struct BridgeResponse {
     error: Option<String>,
     #[serde(default)]
     pong: Option<bool>,
-    #[serde(default)]
-    success: Option<bool>,
     #[serde(default)]
     value: Option<Value>,
 }
@@ -77,6 +75,66 @@ impl Drop for BridgeResponse {
             zeroize_json_value(value);
         }
     }
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct PageInspection {
+    #[serde(default)]
+    pub url: String,
+    #[serde(default)]
+    pub origin: String,
+    #[serde(default)]
+    pub title: String,
+    #[serde(default)]
+    pub browser_error: Option<String>,
+    #[serde(default)]
+    pub forms: Vec<InspectedForm>,
+    #[serde(default)]
+    pub actions: Vec<InspectedAction>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct InspectedForm {
+    #[serde(default)]
+    pub fields: Vec<InspectedField>,
+    #[serde(default)]
+    pub actions: Vec<InspectedAction>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct InspectedField {
+    #[serde(default)]
+    pub id: String,
+    #[serde(default)]
+    pub selector: String,
+    #[serde(default)]
+    pub tag: String,
+    #[serde(default)]
+    pub input_type: String,
+    #[serde(default)]
+    pub name: String,
+    #[serde(default)]
+    pub autocomplete: String,
+    #[serde(default)]
+    pub id_attr: String,
+    #[serde(default)]
+    pub label: String,
+    #[serde(default)]
+    pub placeholder: String,
+    #[serde(default)]
+    pub aria_label: String,
+    #[serde(default)]
+    pub required: bool,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct InspectedAction {
+    #[serde(default)]
+    pub selector: String,
+    #[serde(default)]
+    pub text: String,
+    #[serde(default)]
+    pub kind: String,
 }
 
 fn zeroize_json_value(value: &mut Value) {
@@ -151,6 +209,32 @@ impl PodmanClient {
             String::from_utf8_lossy(&output.stdout),
             String::from_utf8_lossy(&output.stderr)
         ))
+    }
+
+    pub async fn image_label_matches(&self, label: &str, expected: &str) -> Result<bool> {
+        let output = Command::new(&self.binary)
+            .arg("image")
+            .arg("inspect")
+            .arg("--format")
+            .arg(format!("{{{{ index .Config.Labels \"{label}\" }}}}"))
+            .arg(&self.image)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .output()
+            .await
+            .context("failed to execute podman image inspect")?;
+
+        if !output.status.success() {
+            return Err(anyhow!(
+                "podman image inspect failed for '{}': status={}; stdout={}; stderr={}",
+                self.image,
+                output.status,
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            ));
+        }
+
+        Ok(String::from_utf8_lossy(&output.stdout).trim() == expected)
     }
 
     pub async fn build_image_from_dir(&self, build_dir: &Path) -> Result<()> {
@@ -367,6 +451,20 @@ impl PodmanClient {
         Ok(())
     }
 
+    pub async fn submit_form(&self, container: &ContainerInstance, selector: &str) -> Result<()> {
+        let _ = self
+            .send_bridge_request(
+                container,
+                BridgeRequest::Action {
+                    payload: BridgeAction::SubmitForm { selector },
+                },
+                self.action_timeout(),
+                "bridge submit form action failed",
+            )
+            .await?;
+        Ok(())
+    }
+
     pub async fn navigate(&self, container: &ContainerInstance, url: &str) -> Result<()> {
         let _ = self
             .send_bridge_request(
@@ -381,53 +479,32 @@ impl PodmanClient {
         Ok(())
     }
 
-    pub async fn capture_artifact(
-        &self,
-        container: &ContainerInstance,
-        source: &str,
-    ) -> Result<Option<String>> {
+    pub async fn inspect_page(&self, container: &ContainerInstance) -> Result<PageInspection> {
         let response = self
             .send_bridge_request(
                 container,
-                BridgeRequest::Extract { source },
+                BridgeRequest::InspectPage,
                 self.action_timeout(),
-                "bridge artifact extraction failed",
+                "bridge page inspection failed",
             )
             .await?;
 
         let mut response = response;
-        let value = match std::mem::take(&mut response.value) {
-            None | Some(Value::Null) => None,
-            Some(Value::String(raw)) => {
-                if raw.is_empty() {
-                    None
-                } else {
-                    Some(raw)
-                }
-            }
-            Some(other) => Some(other.to_string()),
-        };
-
-        Ok(value)
+        let value = std::mem::take(&mut response.value)
+            .ok_or_else(|| anyhow!("bridge inspection response missing value"))?;
+        serde_json::from_value(value).context("failed decoding bridge page inspection")
     }
 
-    pub async fn check_success_condition(
-        &self,
-        container: &ContainerInstance,
-        success: &SuccessCondition,
-    ) -> Result<bool> {
-        let response = self
+    pub async fn wait_for_settle(&self, container: &ContainerInstance) -> Result<()> {
+        let _ = self
             .send_bridge_request(
                 container,
-                BridgeRequest::Success { success },
+                BridgeRequest::WaitForSettle,
                 self.action_timeout(),
-                "bridge success probe failed",
+                "bridge wait for settle failed",
             )
             .await?;
-
-        response
-            .success
-            .ok_or_else(|| anyhow!("bridge success probe response missing 'success'"))
+        Ok(())
     }
 
     pub async fn destroy_session_container(&self, container: &ContainerInstance) -> Result<()> {
