@@ -204,6 +204,7 @@ impl SessionManager {
         issuer_url: Option<String>,
         dag_auth_url: Option<String>,
         dag_user_code: Option<String>,
+        device_label: Option<String>,
     ) -> Result<Arc<Session>> {
         if self.sessions.read().await.contains_key(&session_id) {
             return Err(anyhow!("session '{}' already exists", session_id));
@@ -231,6 +232,11 @@ impl SessionManager {
                 runtime
                     .metadata
                     .insert("dag_user_code".to_string(), dag_user_code);
+            }
+            if let Some(device_label) = device_label {
+                runtime
+                    .metadata
+                    .insert("device_label".to_string(), device_label);
             }
         }
 
@@ -392,7 +398,10 @@ impl SessionManager {
 }
 
 pub(crate) fn input_sensitive(input_type: &InputType, prompt: Option<&str>) -> bool {
-    if matches!(input_type, InputType::Password | InputType::Otp) {
+    if matches!(
+        input_type,
+        InputType::Password | InputType::Otp | InputType::TotpSetup
+    ) {
         return true;
     }
     let Some(prompt) = prompt else {
@@ -448,6 +457,7 @@ mod tests {
     fn sensitive_inputs_include_password_and_otp() {
         assert!(input_sensitive(&InputType::Password, None));
         assert!(input_sensitive(&InputType::Otp, None));
+        assert!(input_sensitive(&InputType::TotpSetup, None));
         assert!(input_sensitive(&InputType::Text, Some("Enter backup code")));
         assert!(!input_sensitive(&InputType::Username, Some("Username")));
     }

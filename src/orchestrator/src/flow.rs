@@ -1,6 +1,12 @@
-use crate::podman::{InspectedAction, InspectedField, InspectedForm, PageInspection, PodmanClient};
+use crate::podman::{
+    InspectedAction, InspectedField, InspectedForm, InspectedTotpEnrollment, PageInspection,
+    PodmanClient,
+};
 use crate::session::{input_sensitive, CollectedInput, PendingAction, PendingField, Session};
-use crate::types::{FlowResponse, InputType, LogLevel, ProvidedInput, RequiredInput, SessionState};
+use crate::types::{
+    FlowResponse, InputType, LogLevel, ProvidedInput, RequiredInput, SessionState,
+    TotpEnrollmentInfo,
+};
 use anyhow::{anyhow, Context, Result};
 use std::sync::Arc;
 use tokio::time::{sleep, Duration};
@@ -130,6 +136,13 @@ impl FlowExecutor {
                 .context("failed inspecting browser page")?;
 
             if self
+                .queue_totp_enrollment_from_inspection(&session, &inspection)
+                .await?
+            {
+                continue;
+            }
+
+            if self
                 .queue_fields_from_inspection(&session, &inspection)
                 .await?
             {
@@ -203,12 +216,129 @@ impl FlowExecutor {
                     optional: false,
                     sensitive: false,
                     interaction_id: Some(action.interaction_id),
+                    totp_enrollment: None,
                 }],
                 message: Some("Browser authentication requires confirmation".to_string()),
             });
         }
 
         None
+    }
+
+    async fn queue_totp_enrollment_from_inspection(
+        &self,
+        session: &Arc<Session>,
+        inspection: &PageInspection,
+    ) -> Result<bool> {
+        let Some(enrollment) = select_totp_enrollment(inspection) else {
+            return Ok(false);
+        };
+        if enrollment.code_field.selector.is_empty() {
+            return Ok(false);
+        }
+
+        let interaction_id = session.next_interaction_id().await;
+        let input_name = unique_field_name("totp_setup".to_string(), &mut Vec::new());
+        let device_label = {
+            let runtime = session.runtime.lock().await;
+            runtime
+                .metadata
+                .get("device_label")
+                .cloned()
+                .unwrap_or_else(|| "Himmelblau".to_string())
+        };
+        let submit_selector = enrollment
+            .submit_selector
+            .clone()
+            .or_else(|| {
+                select_submit_action(
+                    inspection
+                        .forms
+                        .iter()
+                        .find(|form| form.id == enrollment.form_id)
+                        .map(|form| form.actions.as_slice())
+                        .unwrap_or(&[]),
+                )
+            })
+            .or_else(|| select_submit_action(&inspection.actions));
+
+        let totp_enrollment = TotpEnrollmentInfo {
+            otpauth_uri: enrollment.otpauth_uri.clone(),
+            secret: enrollment.secret.clone(),
+            issuer: enrollment.issuer.clone(),
+            account_name: enrollment.account_name.clone(),
+            algorithm: enrollment.algorithm.clone(),
+            digits: enrollment.digits,
+            period: enrollment.period,
+        };
+
+        let mut label_inputs = Vec::new();
+        for field in &enrollment.device_label_fields {
+            if field.selector.is_empty() {
+                continue;
+            }
+            let name = stable_field_name(field, &InputType::Text);
+            label_inputs.push((name, field.selector.clone()));
+        }
+
+        {
+            let mut runtime = session.runtime.lock().await;
+            runtime.pending_fields.clear();
+            runtime.active_field = None;
+            runtime.collected_inputs.clear();
+            runtime.pending_action = None;
+            runtime.confirmed_action = None;
+            runtime.metadata.remove("last_submit_selector");
+            runtime
+                .metadata
+                .retain(|key, _| !key.starts_with("selector:"));
+            runtime.metadata.insert(
+                format!("selector:{input_name}"),
+                enrollment.code_field.selector.clone(),
+            );
+            for (name, selector) in label_inputs {
+                runtime
+                    .metadata
+                    .insert(format!("selector:{name}"), selector);
+                runtime
+                    .collected_inputs
+                    .insert(name, CollectedInput::new(device_label.clone(), false));
+            }
+            if let Some(selector) = submit_selector.clone() {
+                runtime
+                    .metadata
+                    .insert("last_submit_selector".to_string(), selector);
+            }
+            runtime.pending_fields.push_back(PendingField {
+                interaction_id: interaction_id.clone(),
+                field: RequiredInput {
+                    name: input_name,
+                    input_type: InputType::TotpSetup,
+                    prompt: Some("TOTP setup".to_string()),
+                    optional: false,
+                    sensitive: true,
+                    interaction_id: Some(interaction_id),
+                    totp_enrollment: Some(totp_enrollment),
+                },
+                selector: enrollment.code_field.selector.clone(),
+                submit_selector,
+            });
+            runtime.state = SessionState::WaitingForInput;
+            runtime.detail = Some(format!(
+                "Queued TOTP enrollment prompt at {}",
+                display_page_location(inspection)
+            ));
+            runtime.last_activity = std::time::Instant::now();
+        }
+
+        session
+            .log(
+                LogLevel::Debug,
+                "Detected browser TOTP enrollment setup prompt",
+            )
+            .await;
+
+        Ok(true)
     }
 
     async fn try_submit_collected_form(&self, session: &Arc<Session>) -> Result<bool> {
@@ -405,6 +535,7 @@ impl FlowExecutor {
                     optional: false,
                     sensitive,
                     interaction_id: Some(interaction_id.clone()),
+                    totp_enrollment: None,
                 },
                 selector: field.selector.clone(),
                 submit_selector: submit_selector.clone(),
@@ -629,6 +760,13 @@ fn classify_field(field: &InspectedField) -> InputType {
     InputType::Unknown
 }
 
+fn select_totp_enrollment(inspection: &PageInspection) -> Option<&InspectedTotpEnrollment> {
+    inspection.totp_enrollments.iter().find(|enrollment| {
+        !enrollment.code_field.selector.is_empty()
+            && (enrollment.otpauth_uri.is_some() || enrollment.secret.is_some())
+    })
+}
+
 fn auto_fill_value_for_field(
     field: &InspectedField,
     input_type: &InputType,
@@ -733,6 +871,7 @@ fn prompt_for_field(field: &InspectedField, input_type: &InputType) -> String {
         InputType::Username => "Username".to_string(),
         InputType::Password => "Password".to_string(),
         InputType::Otp => "Verification code".to_string(),
+        InputType::TotpSetup => "TOTP setup".to_string(),
         InputType::Text => "Additional information".to_string(),
         InputType::Confirmation => "Continue".to_string(),
         InputType::Unknown => "Input required".to_string(),
@@ -750,6 +889,7 @@ fn stable_field_name(field: &InspectedField, input_type: &InputType) -> String {
         InputType::Username => "username".to_string(),
         InputType::Password => "password".to_string(),
         InputType::Otp => "otp".to_string(),
+        InputType::TotpSetup => "totp_setup".to_string(),
         InputType::Text => format!("text_{}", field.id),
         InputType::Confirmation => "confirmation".to_string(),
         InputType::Unknown => format!("input_{}", field.id),
@@ -875,6 +1015,7 @@ mod tests {
         PageInspection {
             title: "test page".to_string(),
             forms: vec![InspectedForm {
+                id: "form-0".to_string(),
                 fields,
                 actions: vec![InspectedAction {
                     selector: "[data-submit]".to_string(),
@@ -1099,5 +1240,75 @@ mod tests {
             .map(|field| field.field.name.as_str())
             .collect::<Vec<_>>();
         assert_eq!(names, vec!["firstname", "lastname"]);
+    }
+
+    #[tokio::test]
+    async fn totp_enrollment_queues_hello_totp_and_autofills_device_label() {
+        let session = session("user@example.com");
+        {
+            session.runtime.lock().await.metadata.insert(
+                "device_label".to_string(),
+                "Himmelblau testhost".to_string(),
+            );
+        }
+
+        let code_field = field(
+            "[data-totp]",
+            "text",
+            "totp",
+            "one-time-code",
+            "totp",
+            "One-time code",
+        );
+        let label_field = field(
+            "[data-label]",
+            "text",
+            "userLabel",
+            "",
+            "userLabel",
+            "Device Name",
+        );
+        let mut inspection = inspection(vec![code_field.clone(), label_field.clone()]);
+        inspection.totp_enrollments = vec![InspectedTotpEnrollment {
+            form_id: "form-0".to_string(),
+            code_field,
+            submit_selector: Some("[data-submit]".to_string()),
+            device_label_fields: vec![label_field],
+            otpauth_uri: Some(
+                "otpauth://totp/Issuer:user@example.com?secret=ABCDEF234567&issuer=Issuer"
+                    .to_string(),
+            ),
+            secret: Some("ABCDEF234567".to_string()),
+            issuer: Some("Issuer".to_string()),
+            account_name: Some("user@example.com".to_string()),
+            algorithm: Some("SHA1".to_string()),
+            digits: Some(6),
+            period: Some(30),
+        }];
+
+        assert!(executor()
+            .queue_totp_enrollment_from_inspection(&session, &inspection)
+            .await
+            .unwrap());
+
+        let runtime = session.runtime.lock().await;
+        assert_eq!(runtime.pending_fields.len(), 1);
+        assert_eq!(
+            runtime.pending_fields[0].field.input_type,
+            InputType::TotpSetup
+        );
+        assert!(runtime.pending_fields[0]
+            .field
+            .totp_enrollment
+            .as_ref()
+            .and_then(|info| info.otpauth_uri.as_deref())
+            .is_some_and(|uri| uri.starts_with("otpauth://")));
+        assert_eq!(
+            runtime
+                .collected_inputs
+                .get("userlabel")
+                .map(|input| input.value()),
+            Some("Himmelblau testhost")
+        );
     }
 }

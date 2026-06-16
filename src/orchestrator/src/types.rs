@@ -1,13 +1,14 @@
 use serde::{Deserialize, Serialize};
 use zeroize::Zeroize;
 
-pub const ORCHESTRATOR_PROTOCOL_VERSION: &str = "0.2";
+pub const ORCHESTRATOR_PROTOCOL_VERSION: &str = "0.3";
 
 const MAX_SESSION_ID_LEN: usize = 128;
 const MAX_USERNAME_LEN: usize = 320;
 const MAX_ISSUER_URL_LEN: usize = 2048;
 const MAX_DAG_AUTH_URL_LEN: usize = 4096;
 const MAX_DAG_USER_CODE_LEN: usize = 128;
+const MAX_DEVICE_LABEL_LEN: usize = 256;
 const MAX_INPUT_NAME_LEN: usize = 128;
 const MAX_INPUT_VALUE_LEN: usize = 8192;
 const MAX_PROVIDED_INPUTS: usize = 4;
@@ -18,9 +19,39 @@ pub enum InputType {
     Username,
     Password,
     Otp,
+    TotpSetup,
     Text,
     Confirmation,
     Unknown,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct TotpEnrollmentInfo {
+    #[serde(default)]
+    pub otpauth_uri: Option<String>,
+    #[serde(default)]
+    pub secret: Option<String>,
+    #[serde(default)]
+    pub issuer: Option<String>,
+    #[serde(default)]
+    pub account_name: Option<String>,
+    #[serde(default)]
+    pub algorithm: Option<String>,
+    #[serde(default)]
+    pub digits: Option<u32>,
+    #[serde(default)]
+    pub period: Option<u32>,
+}
+
+impl Drop for TotpEnrollmentInfo {
+    fn drop(&mut self) {
+        if let Some(value) = &mut self.otpauth_uri {
+            value.zeroize();
+        }
+        if let Some(value) = &mut self.secret {
+            value.zeroize();
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -36,6 +67,8 @@ pub struct RequiredInput {
     pub sensitive: bool,
     #[serde(default)]
     pub interaction_id: Option<String>,
+    #[serde(default)]
+    pub totp_enrollment: Option<TotpEnrollmentInfo>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -90,6 +123,8 @@ pub enum FlowCommand {
         dag_auth_url: Option<String>,
         #[serde(default)]
         dag_user_code: Option<String>,
+        #[serde(default)]
+        device_label: Option<String>,
     },
     NextStep {
         session_id: String,
@@ -119,6 +154,7 @@ impl FlowCommand {
                 issuer_url,
                 dag_auth_url,
                 dag_user_code,
+                device_label,
             } => {
                 validate_required_text("session_id", session_id, MAX_SESSION_ID_LEN)?;
                 if let Some(value) = username {
@@ -132,6 +168,9 @@ impl FlowCommand {
                 }
                 if let Some(value) = dag_user_code {
                     validate_optional_text("dag_user_code", value, MAX_DAG_USER_CODE_LEN)?;
+                }
+                if let Some(value) = device_label {
+                    validate_optional_text("device_label", value, MAX_DEVICE_LABEL_LEN)?;
                 }
                 Ok(())
             }
@@ -174,14 +213,16 @@ impl FlowCommand {
                 issuer_url,
                 dag_auth_url,
                 dag_user_code,
+                device_label,
             } => {
                 format!(
-                    "start_session(session_id={}, username_present={}, issuer_url_present={}, dag_auth_url_present={}, dag_user_code_present={})",
+                    "start_session(session_id={}, username_present={}, issuer_url_present={}, dag_auth_url_present={}, dag_user_code_present={}, device_label_present={})",
                     session_id,
                     username.as_ref().is_some_and(|entry| !entry.is_empty()),
                     issuer_url.as_ref().is_some_and(|entry| !entry.is_empty()),
                     dag_auth_url.as_ref().is_some_and(|entry| !entry.is_empty()),
-                    dag_user_code.is_some()
+                    dag_user_code.is_some(),
+                    device_label.as_ref().is_some_and(|entry| !entry.is_empty())
                 )
             }
             Self::NextStep {

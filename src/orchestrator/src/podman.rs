@@ -91,10 +91,14 @@ pub struct PageInspection {
     pub forms: Vec<InspectedForm>,
     #[serde(default)]
     pub actions: Vec<InspectedAction>,
+    #[serde(default)]
+    pub totp_enrollments: Vec<InspectedTotpEnrollment>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct InspectedForm {
+    #[serde(default)]
+    pub id: String,
     #[serde(default)]
     pub fields: Vec<InspectedField>,
     #[serde(default)]
@@ -135,6 +139,32 @@ pub struct InspectedAction {
     pub text: String,
     #[serde(default)]
     pub kind: String,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct InspectedTotpEnrollment {
+    #[serde(default)]
+    pub form_id: String,
+    #[serde(default)]
+    pub code_field: InspectedField,
+    #[serde(default)]
+    pub submit_selector: Option<String>,
+    #[serde(default)]
+    pub device_label_fields: Vec<InspectedField>,
+    #[serde(default)]
+    pub otpauth_uri: Option<String>,
+    #[serde(default)]
+    pub secret: Option<String>,
+    #[serde(default)]
+    pub issuer: Option<String>,
+    #[serde(default)]
+    pub account_name: Option<String>,
+    #[serde(default)]
+    pub algorithm: Option<String>,
+    #[serde(default)]
+    pub digits: Option<u32>,
+    #[serde(default)]
+    pub period: Option<u32>,
 }
 
 fn zeroize_json_value(value: &mut Value) {

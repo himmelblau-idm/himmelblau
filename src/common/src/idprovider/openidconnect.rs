@@ -130,6 +130,7 @@ enum OrchestratorInputType {
     Text,
     Password,
     Otp,
+    TotpSetup,
     Confirmation,
     Unknown,
 }
@@ -159,6 +160,37 @@ struct OrchestratorRequiredInput {
     sensitive: bool,
     #[serde(default)]
     interaction_id: Option<String>,
+    #[serde(default)]
+    totp_enrollment: Option<OrchestratorTotpEnrollmentInfo>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct OrchestratorTotpEnrollmentInfo {
+    #[serde(default)]
+    otpauth_uri: Option<String>,
+    #[serde(default)]
+    secret: Option<String>,
+    #[serde(default)]
+    issuer: Option<String>,
+    #[serde(default)]
+    account_name: Option<String>,
+    #[serde(default)]
+    algorithm: Option<String>,
+    #[serde(default)]
+    digits: Option<u32>,
+    #[serde(default)]
+    period: Option<u32>,
+}
+
+impl Drop for OrchestratorTotpEnrollmentInfo {
+    fn drop(&mut self) {
+        if let Some(value) = &mut self.otpauth_uri {
+            value.zeroize();
+        }
+        if let Some(value) = &mut self.secret {
+            value.zeroize();
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -174,6 +206,8 @@ enum OrchestratorCommand {
         dag_auth_url: Option<String>,
         #[serde(default)]
         dag_user_code: Option<String>,
+        #[serde(default)]
+        device_label: Option<String>,
     },
     NextStep {
         session_id: String,
@@ -253,6 +287,7 @@ fn orchestrator_input_type_label(input_type: &OrchestratorInputType) -> &'static
         OrchestratorInputType::Username => "username",
         OrchestratorInputType::Password => "password",
         OrchestratorInputType::Otp => "otp",
+        OrchestratorInputType::TotpSetup => "totp_setup",
         OrchestratorInputType::Confirmation => "confirmation",
         OrchestratorInputType::Unknown => "unknown",
     }
@@ -336,6 +371,19 @@ fn orchestrator_command_kind(command: &OrchestratorCommand) -> &'static str {
     }
 }
 
+fn default_orchestrator_device_label() -> String {
+    let hostname = hostname::get()
+        .unwrap_or_default()
+        .to_string_lossy()
+        .trim()
+        .to_string();
+    if hostname.is_empty() {
+        "Himmelblau".to_string()
+    } else {
+        format!("Himmelblau {hostname}")
+    }
+}
+
 #[derive(Default)]
 struct OrchestratorCodec;
 
@@ -409,6 +457,7 @@ async fn orchestrator_send_command(
             issuer_url,
             dag_auth_url,
             dag_user_code,
+            device_label,
             ..
         } => {
             debug!(
@@ -418,6 +467,7 @@ async fn orchestrator_send_command(
                 has_issuer_url = issuer_url.is_some(),
                 has_dag_auth_url = dag_auth_url.is_some(),
                 has_dag_user_code = dag_user_code.is_some(),
+                has_device_label = device_label.as_ref().is_some_and(|entry| !entry.is_empty()),
                 timeout = ?cfg.timeout,
                 "Sending orchestrator start session command"
             );
@@ -552,6 +602,7 @@ async fn orchestrator_try_start(
             issuer_url,
             dag_auth_url,
             dag_user_code,
+            device_label: Some(default_orchestrator_device_label()),
         },
     )
     .await
@@ -695,6 +746,38 @@ fn serialize_oidc_mfa_extra_data(extra: &OidcMfaExtraData) -> Result<String, Idp
     })
 }
 
+fn orchestrator_totp_otpauth_uri(info: &OrchestratorTotpEnrollmentInfo) -> Option<String> {
+    if let Some(uri) = info
+        .otpauth_uri
+        .as_deref()
+        .filter(|uri| uri.starts_with("otpauth://"))
+    {
+        return Some(uri.to_string());
+    }
+
+    let secret = info.secret.as_deref()?.trim();
+    if secret.is_empty() {
+        return None;
+    }
+
+    let issuer = info.issuer.as_deref().unwrap_or("OIDC");
+    let account_name = info.account_name.as_deref().unwrap_or("account");
+    let algorithm = info.algorithm.as_deref().unwrap_or("SHA1");
+    let digits = info.digits.unwrap_or(6);
+    let period = info.period.unwrap_or(30);
+
+    Some(format!(
+        "otpauth://totp/{}:{}?secret={}&issuer={}&algorithm={}&digits={}&period={}",
+        urlencoding::encode(issuer),
+        urlencoding::encode(account_name),
+        secret,
+        urlencoding::encode(issuer),
+        urlencoding::encode(algorithm),
+        digits,
+        period
+    ))
+}
+
 fn auth_request_from_orchestrator_inputs(
     required_inputs: &[OrchestratorRequiredInput],
     poll_interval_secs: u32,
@@ -720,6 +803,25 @@ fn auth_request_from_orchestrator_inputs(
             "Selected provider-supplied Password prompt from orchestrator inputs"
         );
         return AuthRequest::PasswordWithPrompt { msg };
+    }
+
+    if let Some(input) = required_inputs
+        .iter()
+        .find(|input| matches!(input.input_type, OrchestratorInputType::TotpSetup))
+    {
+        let msg = input
+            .totp_enrollment
+            .as_ref()
+            .and_then(orchestrator_totp_otpauth_uri)
+            .or_else(|| input.prompt.clone())
+            .unwrap_or_else(|| "TOTP setup required. Enter the generated code.".to_string());
+        debug!(
+            selected_input = %input.name,
+            input_type = orchestrator_input_type_label(&input.input_type),
+            has_otpauth_uri = input.totp_enrollment.as_ref().and_then(orchestrator_totp_otpauth_uri).is_some(),
+            "Selected HelloTOTP enrollment prompt from orchestrator inputs"
+        );
+        return AuthRequest::HelloTOTP { msg };
     }
 
     if let Some(input) = required_inputs
@@ -871,6 +973,29 @@ fn orchestrator_inputs_from_pam_request(
 
             Ok(mapped)
         }
+        PamAuthRequest::HelloTOTP { cred } => {
+            let target = required_inputs
+                .iter()
+                .find(|input| matches!(input.input_type, OrchestratorInputType::TotpSetup))
+                .ok_or_else(|| {
+                    error!("Orchestrator requested no TOTP setup input for HelloTOTP prompt");
+                    IdpError::BadRequest
+                })?;
+
+            let mapped = vec![OrchestratorProvidedInput {
+                name: target.name.clone(),
+                value: cred,
+            }];
+
+            debug!(
+                target_input = %target.name,
+                provided_input_count = mapped.len(),
+                provided_input_names = ?orchestrator_provided_input_names(&mapped),
+                "Mapped HelloTOTP request to orchestrator TOTP setup input"
+            );
+
+            Ok(mapped)
+        }
         PamAuthRequest::TextInput { cred } => {
             let target = required_inputs
                 .iter()
@@ -921,7 +1046,7 @@ mod tests {
         auth_request_from_orchestrator_inputs, mfa_from_oidc_device,
         orchestrator_inputs_from_pam_request, parse_oidc_mfa_extra_data,
         serialize_oidc_mfa_extra_data, OidcMfaExtraData, OrchestratorFlowState,
-        OrchestratorInputType, OrchestratorRequiredInput,
+        OrchestratorInputType, OrchestratorRequiredInput, OrchestratorTotpEnrollmentInfo,
     };
     use crate::idprovider::interface::AuthRequest;
     use crate::unix_proto::PamAuthRequest;
@@ -976,6 +1101,7 @@ mod tests {
                     optional: false,
                     sensitive: true,
                     interaction_id: Some("i1".to_string()),
+                    totp_enrollment: None,
                 }],
                 dag_json: Some("{\"device_code\":\"abc\"}".to_string()),
             },
@@ -1016,6 +1142,7 @@ mod tests {
                 optional: false,
                 sensitive: true,
                 interaction_id: None,
+                totp_enrollment: None,
             },
             OrchestratorRequiredInput {
                 name: "password".to_string(),
@@ -1024,6 +1151,7 @@ mod tests {
                 optional: false,
                 sensitive: true,
                 interaction_id: None,
+                totp_enrollment: None,
             },
         ];
 
@@ -1043,6 +1171,7 @@ mod tests {
             optional: false,
             sensitive: true,
             interaction_id: None,
+            totp_enrollment: None,
         }];
 
         let request = auth_request_from_orchestrator_inputs(&required_inputs, 2);
@@ -1061,6 +1190,7 @@ mod tests {
             optional: false,
             sensitive: true,
             interaction_id: None,
+            totp_enrollment: None,
         }];
 
         let request = auth_request_from_orchestrator_inputs(&required_inputs, 2);
@@ -1079,6 +1209,7 @@ mod tests {
             optional: false,
             sensitive: false,
             interaction_id: None,
+            totp_enrollment: None,
         }];
 
         let request = auth_request_from_orchestrator_inputs(&required_inputs, 5);
@@ -1095,6 +1226,36 @@ mod tests {
     }
 
     #[test]
+    fn auth_request_totp_setup_maps_to_hello_totp() {
+        let required_inputs = vec![OrchestratorRequiredInput {
+            name: "totp_setup".to_string(),
+            input_type: OrchestratorInputType::TotpSetup,
+            prompt: None,
+            optional: false,
+            sensitive: true,
+            interaction_id: None,
+            totp_enrollment: Some(OrchestratorTotpEnrollmentInfo {
+                otpauth_uri: Some(
+                    "otpauth://totp/Issuer:user@example.com?secret=ABCDEF234567&issuer=Issuer"
+                        .to_string(),
+                ),
+                secret: Some("ABCDEF234567".to_string()),
+                issuer: Some("Issuer".to_string()),
+                account_name: Some("user@example.com".to_string()),
+                algorithm: Some("SHA1".to_string()),
+                digits: Some(6),
+                period: Some(30),
+            }),
+        }];
+
+        let request = auth_request_from_orchestrator_inputs(&required_inputs, 5);
+        match request {
+            AuthRequest::HelloTOTP { msg } => assert!(msg.starts_with("otpauth://totp/")),
+            _ => panic!("expected HelloTOTP request"),
+        }
+    }
+
+    #[test]
     fn pam_password_maps_to_orchestrator_input() {
         let required_inputs = vec![OrchestratorRequiredInput {
             name: "password".to_string(),
@@ -1103,6 +1264,7 @@ mod tests {
             optional: false,
             sensitive: true,
             interaction_id: None,
+            totp_enrollment: None,
         }];
 
         let mapped = orchestrator_inputs_from_pam_request(
@@ -1119,6 +1281,39 @@ mod tests {
     }
 
     #[test]
+    fn pam_hello_totp_maps_to_orchestrator_totp_setup_input() {
+        let required_inputs = vec![OrchestratorRequiredInput {
+            name: "totp_setup".to_string(),
+            input_type: OrchestratorInputType::TotpSetup,
+            prompt: None,
+            optional: false,
+            sensitive: true,
+            interaction_id: None,
+            totp_enrollment: Some(OrchestratorTotpEnrollmentInfo {
+                otpauth_uri: None,
+                secret: Some("ABCDEF234567".to_string()),
+                issuer: Some("Issuer".to_string()),
+                account_name: Some("user@example.com".to_string()),
+                algorithm: Some("SHA1".to_string()),
+                digits: Some(6),
+                period: Some(30),
+            }),
+        }];
+
+        let mapped = orchestrator_inputs_from_pam_request(
+            PamAuthRequest::HelloTOTP {
+                cred: "123456".to_string(),
+            },
+            &required_inputs,
+        )
+        .unwrap();
+
+        assert_eq!(mapped.len(), 1);
+        assert_eq!(mapped[0].name, "totp_setup");
+        assert_eq!(mapped[0].value, "123456");
+    }
+
+    #[test]
     fn pam_invalid_step_returns_error() {
         let required_inputs = vec![OrchestratorRequiredInput {
             name: "password".to_string(),
@@ -1127,6 +1322,7 @@ mod tests {
             optional: false,
             sensitive: true,
             interaction_id: None,
+            totp_enrollment: None,
         }];
 
         let result = orchestrator_inputs_from_pam_request(
@@ -1148,6 +1344,7 @@ mod tests {
             optional: false,
             sensitive: false,
             interaction_id: None,
+            totp_enrollment: None,
         }];
 
         let mapped = orchestrator_inputs_from_pam_request(
@@ -1170,6 +1367,7 @@ mod tests {
             optional: false,
             sensitive: true,
             interaction_id: None,
+            totp_enrollment: None,
         }];
 
         let mapped = orchestrator_inputs_from_pam_request(

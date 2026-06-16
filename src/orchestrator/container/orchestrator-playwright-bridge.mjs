@@ -670,7 +670,7 @@ async function waitForSettle(page) {
 }
 
 async function handleInspectPage(page) {
-  const value = await page.evaluate(() => {
+  const value = await page.evaluate(async () => {
     const textOf = (value, max = 240) =>
       String(value || "")
         .replace(/\s+/g, " ")
@@ -778,6 +778,279 @@ async function handleInspectPage(page) {
         element.getAttribute("aria-required") === "true",
     });
 
+    const haystackForField = (field) =>
+      [
+        field.input_type,
+        field.name,
+        field.autocomplete,
+        field.id_attr,
+        field.label,
+        field.placeholder,
+        field.aria_label,
+      ]
+        .join(" ")
+        .toLowerCase();
+
+    const containsWordish = (haystack, needle) =>
+      String(haystack || "")
+        .split(/[^a-zA-Z0-9]+/)
+        .some((part) => part === needle);
+
+    const fieldLooksLikeOtpCode = (field) => {
+      const haystack = haystackForField(field);
+      return (
+        field.autocomplete.includes("one-time-code") ||
+        containsWordish(haystack, "otp") ||
+        containsWordish(haystack, "totp") ||
+        containsWordish(haystack, "mfa") ||
+        haystack.includes("one-time code") ||
+        haystack.includes("verification code") ||
+        containsWordish(haystack, "authenticator")
+      );
+    };
+
+    const fieldLooksLikeDeviceLabel = (field) => {
+      const haystack = haystackForField(field);
+      if (
+        containsWordish(haystack, "username") ||
+        containsWordish(haystack, "password") ||
+        containsWordish(haystack, "otp") ||
+        containsWordish(haystack, "totp") ||
+        haystack.includes("one-time code")
+      ) {
+        return false;
+      }
+      return (
+        haystack.includes("device name") ||
+        haystack.includes("device label") ||
+        haystack.includes("code name") ||
+        containsWordish(haystack, "label") ||
+        containsWordish(haystack, "name")
+      );
+    };
+
+    const base32EncodeUtf8 = (value) => {
+      const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
+      const bytes = new TextEncoder().encode(String(value || ""));
+      let output = "";
+      let buffer = 0;
+      let bits = 0;
+      for (const byte of bytes) {
+        buffer = (buffer << 8) | byte;
+        bits += 8;
+        while (bits >= 5) {
+          output += alphabet[(buffer >> (bits - 5)) & 31];
+          bits -= 5;
+        }
+      }
+      if (bits > 0) {
+        output += alphabet[(buffer << (5 - bits)) & 31];
+      }
+      return output;
+    };
+
+    const base32ParseableSecret = (value) => {
+      const normalized = String(value || "")
+        .replace(/[\s-]+/g, "")
+        .replace(/=+$/g, "")
+        .trim()
+        .toUpperCase();
+      if (!/^[A-Z2-7]{8,256}$/.test(normalized)) {
+        return "";
+      }
+
+      // RFC 4648 Base32 without padding can only have these final block sizes.
+      if (![0, 2, 4, 5, 7].includes(normalized.length % 8)) {
+        return "";
+      }
+
+      return normalized;
+    };
+
+    const normalizeBase32Secret = (value) => base32ParseableSecret(value);
+
+    const providerSecretToOtpauthSecret = (value) => {
+      const raw = String(value || "").trim();
+      if (raw.length < 8 || raw.length > 256 || /[\s]/.test(raw)) {
+        return "";
+      }
+
+      const parsedBase32 = base32ParseableSecret(raw);
+      if (parsedBase32) {
+        return parsedBase32;
+      }
+
+      return base32EncodeUtf8(raw);
+    };
+
+    const firstOtpauthUri = (root) => {
+      const candidates = [];
+      for (const element of Array.from(root.querySelectorAll("a[href], img[src], input[value], textarea"))) {
+        candidates.push(element.getAttribute("href"));
+        candidates.push(element.getAttribute("src"));
+        candidates.push(element.getAttribute("value"));
+        candidates.push(element.textContent);
+      }
+      candidates.push(root.innerText || root.textContent || "");
+
+      for (const candidate of candidates) {
+        const match = String(candidate || "").match(/otpauth:\/\/[^\s<>"']+/i);
+        if (match) {
+          try {
+            return decodeURIComponent(match[0]);
+          } catch (_error) {
+            return match[0];
+          }
+        }
+      }
+      return "";
+    };
+
+    const parseOtpauthUri = (uri) => {
+      if (!uri) {
+        return {};
+      }
+      try {
+        const parsed = new URL(uri);
+        if (parsed.protocol !== "otpauth:") {
+          return {};
+        }
+        const secret = normalizeBase32Secret(parsed.searchParams.get("secret"));
+        const issuer = parsed.searchParams.get("issuer") || "";
+        let accountName = decodeURIComponent(parsed.pathname.replace(/^\/+/, ""));
+        if (issuer && accountName.toLowerCase().startsWith(`${issuer.toLowerCase()}:`)) {
+          accountName = accountName.slice(issuer.length + 1);
+        }
+        const digits = Number.parseInt(parsed.searchParams.get("digits") || "", 10);
+        const period = Number.parseInt(parsed.searchParams.get("period") || "", 10);
+        return {
+          secret,
+          issuer,
+          account_name: accountName,
+          algorithm: parsed.searchParams.get("algorithm") || "",
+          digits: Number.isFinite(digits) ? digits : null,
+          period: Number.isFinite(period) ? period : null,
+        };
+      } catch (_error) {
+        return {};
+      }
+    };
+
+    const firstQrOtpauthUri = async (root) => {
+      if (typeof window.BarcodeDetector !== "function") {
+        return "";
+      }
+      let detector;
+      try {
+        detector = new window.BarcodeDetector({ formats: ["qr_code"] });
+      } catch (_error) {
+        return "";
+      }
+
+      for (const image of Array.from(root.querySelectorAll("img"))) {
+        if (!isVisible(image)) {
+          continue;
+        }
+        try {
+          if (!image.complete) {
+            await new Promise((resolve) => {
+              image.addEventListener("load", resolve, { once: true });
+              image.addEventListener("error", resolve, { once: true });
+              setTimeout(resolve, 1000);
+            });
+          }
+          const codes = await detector.detect(image);
+          for (const code of codes || []) {
+            const raw = String(code.rawValue || "");
+            if (raw.startsWith("otpauth://")) {
+              return raw;
+            }
+          }
+        } catch (_error) {
+          // Ignore images that the browser cannot decode or access.
+        }
+      }
+      return "";
+    };
+
+    const firstSecret = (root) => {
+      const controls = Array.from(root.querySelectorAll("input, textarea, [data-secret], [data-otp-secret]"));
+      for (const element of controls) {
+        const descriptor = [
+          element.getAttribute("name"),
+          element.getAttribute("id"),
+          element.getAttribute("aria-label"),
+          element.getAttribute("data-secret"),
+          element.getAttribute("data-otp-secret"),
+        ]
+          .join(" ")
+          .toLowerCase();
+        if (
+          descriptor.includes("secret") ||
+          descriptor.includes("totp") ||
+          descriptor.includes("otp")
+        ) {
+          for (const attr of ["value", "data-secret", "data-otp-secret"]) {
+            const secret = providerSecretToOtpauthSecret(element.getAttribute(attr));
+            if (secret) {
+              return secret;
+            }
+          }
+        }
+      }
+
+      const text = String(root.innerText || root.textContent || "");
+      const secretMatch = text.match(/(?:secret|setup key|set up key|manual key|key)\s*[:\-]?\s*([A-Za-z2-7][A-Za-z2-7\s-]{7,255})/i);
+      return secretMatch ? normalizeBase32Secret(secretMatch[1]) : "";
+    };
+
+    const pageIssuer = () => {
+      const title = textOf(document.title, 80);
+      if (title) {
+        return title;
+      }
+      try {
+        return window.location.hostname || "OIDC";
+      } catch (_error) {
+        return "OIDC";
+      }
+    };
+
+    const synthesizeOtpauthUri = ({ secret, issuer, accountName, algorithm, digits, period }) => {
+      if (!secret) {
+        return "";
+      }
+      const finalIssuer = issuer || pageIssuer();
+      const finalAccount = accountName || "account";
+      const label = `${encodeURIComponent(finalIssuer)}:${encodeURIComponent(finalAccount)}`;
+      const params = new URLSearchParams();
+      params.set("secret", secret);
+      params.set("issuer", finalIssuer);
+      params.set("algorithm", algorithm || "SHA1");
+      params.set("digits", String(digits || 6));
+      params.set("period", String(period || 30));
+      return `otpauth://totp/${label}?${params.toString()}`;
+    };
+
+    const pageLooksLikeTotpSetup = (formText) => {
+      const text = `${formText || ""} ${document.body?.innerText || ""}`.toLowerCase();
+      return (
+        text.includes("setup") ||
+        text.includes("set up") ||
+        text.includes("enroll") ||
+        text.includes("scan") ||
+        text.includes("barcode") ||
+        text.includes("qr") ||
+        text.includes("mobile authenticator") ||
+        text.includes("authenticator setup")
+      ) && (
+        text.includes("totp") ||
+        text.includes("otp") ||
+        text.includes("one-time code") ||
+        text.includes("authenticator")
+      );
+    };
+
     const fieldSelector =
       "input:not([type='hidden']):not([type='submit']):not([type='button']):not([type='reset']), textarea, select, [contenteditable='true']";
     const actionSelector =
@@ -830,6 +1103,74 @@ async function handleInspectPage(page) {
       });
     }
 
+    const formElements = Array.from(document.querySelectorAll("form")).filter((form) =>
+      isVisible(form)
+    );
+    const submitForForm = (formInfo) => {
+      const action = formInfo.actions.find((candidate) => {
+        const text = String(candidate.text || "").toLowerCase();
+        return (
+          candidate.kind === "submit" ||
+          text.includes("submit") ||
+          text.includes("verify") ||
+          text.includes("continue") ||
+          text.includes("done") ||
+          text.includes("save")
+        );
+      });
+      return action ? action.selector : null;
+    };
+
+    const totpEnrollments = [];
+    for (const formInfo of forms) {
+      const formIndex = Number(String(formInfo.id).replace(/^form-/, ""));
+      const root =
+        Number.isFinite(formIndex) && formElements[formIndex]
+          ? formElements[formIndex]
+          : document.body;
+      const codeField = formInfo.fields.find((field) => fieldLooksLikeOtpCode(field));
+      if (!codeField) {
+        continue;
+      }
+
+      const otpauthUri = firstOtpauthUri(root) || (await firstQrOtpauthUri(root));
+      const parsed = parseOtpauthUri(otpauthUri);
+      const secret = parsed.secret || firstSecret(root);
+      if (!otpauthUri && !secret && !pageLooksLikeTotpSetup(formInfo.text)) {
+        continue;
+      }
+      if (!otpauthUri && !secret) {
+        continue;
+      }
+
+      const issuer = parsed.issuer || "";
+      const accountName = parsed.account_name || "";
+      const finalOtpauthUri =
+        otpauthUri ||
+        synthesizeOtpauthUri({
+          secret,
+          issuer,
+          accountName,
+          algorithm: parsed.algorithm,
+          digits: parsed.digits,
+          period: parsed.period,
+        });
+
+      totpEnrollments.push({
+        form_id: formInfo.id,
+        code_field: codeField,
+        submit_selector: submitForForm(formInfo),
+        device_label_fields: formInfo.fields.filter((field) => fieldLooksLikeDeviceLabel(field)),
+        otpauth_uri: finalOtpauthUri || null,
+        secret: secret || null,
+        issuer: issuer || null,
+        account_name: accountName || null,
+        algorithm: parsed.algorithm || "SHA1",
+        digits: parsed.digits || 6,
+        period: parsed.period || 30,
+      });
+    }
+
     let origin = "";
     try {
       origin = window.location.origin;
@@ -843,6 +1184,7 @@ async function handleInspectPage(page) {
       title: document.title || "",
       forms,
       actions: allActions.map((action, index) => actionFrom(action, index)),
+      totp_enrollments: totpEnrollments,
       browser_error: browserError(),
     };
   });

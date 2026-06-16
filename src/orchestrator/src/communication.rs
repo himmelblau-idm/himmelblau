@@ -223,6 +223,7 @@ impl CommunicationServer {
                 issuer_url,
                 dag_auth_url,
                 dag_user_code,
+                device_label,
             } => {
                 self.handle_start_session(
                     std::mem::take(session_id),
@@ -231,6 +232,7 @@ impl CommunicationServer {
                     std::mem::take(issuer_url),
                     std::mem::take(dag_auth_url),
                     std::mem::take(dag_user_code),
+                    std::mem::take(device_label),
                 )
                 .await
             }
@@ -273,6 +275,7 @@ impl CommunicationServer {
         issuer_url: Option<String>,
         dag_auth_url: Option<String>,
         dag_user_code: Option<String>,
+        device_label: Option<String>,
     ) -> Result<FlowResponse> {
         debug!(
             session_id = %session_id,
@@ -280,6 +283,7 @@ impl CommunicationServer {
             issuer_url = ?issuer_url,
             dag_auth_url_present = dag_auth_url.is_some(),
             dag_user_code_present = dag_user_code.is_some(),
+            device_label_present = device_label.as_ref().is_some_and(|entry| !entry.is_empty()),
             "starting providerless orchestrator session"
         );
 
@@ -292,6 +296,7 @@ impl CommunicationServer {
                 issuer_url,
                 dag_auth_url,
                 dag_user_code,
+                device_label,
             )
             .await?;
 
