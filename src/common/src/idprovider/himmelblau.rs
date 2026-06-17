@@ -112,6 +112,23 @@ fn is_mfa_required_for_enrollment(e: &MsalError) -> bool {
     }
 }
 
+fn password_change_required(
+    cred_handler: &mut AuthCredHandler,
+    old_cred: String,
+) -> (AuthResult, AuthCacheAction) {
+    *cred_handler = AuthCredHandler::ChangePassword { old_cred };
+    (
+        AuthResult::Next(AuthRequest::ChangePassword {
+            msg: "Update your password\n\
+                 You need to update your password because this is\n\
+                 the first time you are signing in, or because your\n\
+                 password has expired."
+                .to_string(),
+        }),
+        AuthCacheAction::None,
+    )
+}
+
 /// Convert an MsalError to a short, user-friendly message for PAM display.
 /// This intentionally ignores the internal string contents of error variants
 /// to avoid leaking verbose or sensitive information to the user.
@@ -2158,6 +2175,16 @@ impl IdProvider for HimmelblauProvider {
                                 )
                                 .await,
                                 Ok(flow) => flow,
+                                Err(MsalError::ChangePassword) => {
+                                    if let Some(old_cred) = enrollment_cred.as_ref() {
+                                        return Ok(password_change_required(cred_handler, old_cred.clone()));
+                                    }
+                                    error!("Password change required, but no old password is available.");
+                                    return Ok((
+                                        AuthResult::Denied(msal_error_to_user_message(&MsalError::ChangePassword)),
+                                        AuthCacheAction::None,
+                                    ));
+                                },
                                 Err(e) => {
                                     error!("MFA flow initiation failed after enrollment MFA demand: {:?}", e);
                                     return Ok((
@@ -3613,18 +3640,7 @@ impl IdProvider for HimmelblauProvider {
                         prt_signin_frequency_check!(cred)
                     }
                     Some(Err(MsalError::ChangePassword)) => {
-                        // The user needs to set a new password.
-                        *cred_handler = AuthCredHandler::ChangePassword { old_cred: cred };
-                        return Ok((
-                            AuthResult::Next(AuthRequest::ChangePassword {
-                                msg: "Update your password\n\
-                                     You need to update your password because this is\n\
-                                     the first time you are signing in, or because your\n\
-                                     password has expired."
-                                    .to_string(),
-                            }),
-                            AuthCacheAction::None,
-                        ));
+                        return Ok(password_change_required(cred_handler, cred));
                     }
                     Some(Err(e)) => {
                         // ROPC failed - this could be a bad password or other error
@@ -3697,11 +3713,17 @@ impl IdProvider for HimmelblauProvider {
                                 )
                                 .await,
                             Ok(flow) => flow,
+                            Err(MsalError::ChangePassword) => {
+                                return Ok(password_change_required(cred_handler, cred));
+                            },
                             Err(e) => {
                                 error!("MFA flow initiation failed: {:?}", e);
                                 return Ok((AuthResult::Denied(msal_error_to_user_message(&e)), AuthCacheAction::None));
                             }
                         )
+                    },
+                    Err(MsalError::ChangePassword) => {
+                        return Ok(password_change_required(cred_handler, cred));
                     },
                     Err(MsalError::PasswordRequired) => {
                         // This shouldn't happen since we already validated the password
@@ -5413,8 +5435,10 @@ impl HimmelblauProvider {
 #[cfg(test)]
 mod tests {
     use super::{
-        is_mfa_required_for_enrollment, is_unavailable_mfa_method_error, CONSENT_REQUIRED,
+        is_mfa_required_for_enrollment, is_unavailable_mfa_method_error, password_change_required,
+        CONSENT_REQUIRED,
     };
+    use crate::idprovider::interface::{AuthCacheAction, AuthCredHandler, AuthRequest, AuthResult};
     use himmelblau::error::{AADSTSError, ErrorResponse, MsalError, DEVICE_AUTH_FAIL};
 
     #[test]
@@ -5474,5 +5498,34 @@ mod tests {
         assert!(!is_mfa_required_for_enrollment(&MsalError::RequestFailed(
             "network down".to_string()
         )));
+    }
+
+    #[test]
+    fn password_change_required_sets_change_password_handler() {
+        let mut cred_handler = AuthCredHandler::None;
+
+        let (result, action) = password_change_required(&mut cred_handler, "old-password".into());
+
+        match cred_handler {
+            AuthCredHandler::ChangePassword { old_cred } => {
+                assert_eq!(old_cred, "old-password");
+            }
+            other => panic!("unexpected credential handler: {other:?}"),
+        }
+
+        match result {
+            AuthResult::Next(AuthRequest::ChangePassword { msg }) => {
+                assert!(msg.contains("Update your password"));
+                assert!(msg.contains("password has expired"));
+            }
+            _ => panic!("expected password change request"),
+        }
+
+        match action {
+            AuthCacheAction::None => {}
+            AuthCacheAction::PasswordHashUpdate { .. } => {
+                panic!("password change prompt must not update auth cache")
+            }
+        }
     }
 }
