@@ -60,6 +60,8 @@ pub const DEFAULT_CONSOLE_PASSWORD_ONLY: bool = true;
 // These are substring patterns matched via contains(), so "ssh" matches "sshd", "openssh", etc.
 pub const DEFAULT_PASSWORD_ONLY_REMOTE_SERVICES_DENY_LIST: &str =
     "ssh,telnet,ftp,rsh,rlogin,rexec,vnc,xrdp,cockpit,mosh";
+// PAM services that need an input prompt to flush/display MFA poll messages.
+pub const DEFAULT_MFA_POLL_PROMPT_SERVICES: &str = "ssh,cockpit";
 pub const DEFAULT_ID_ATTR_MAP: IdAttr = IdAttr::Name;
 pub const BROKER_APP_ID: &str = "29d9ed98-a469-4536-ade2-f981bc1d605e";
 pub const BROKER_CLIENT_IDENT: &str = "38aa3b87-a06d-4817-b275-7a316988d93b";

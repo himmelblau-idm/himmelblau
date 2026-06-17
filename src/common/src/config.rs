@@ -33,12 +33,13 @@ use crate::constants::{
     DEFAULT_CONSOLE_PASSWORD_ONLY, DEFAULT_DB_PATH, DEFAULT_FIDO_TIMEOUT, DEFAULT_HELLO_ENABLED,
     DEFAULT_HELLO_PIN_MIN_LEN, DEFAULT_HELLO_PIN_RETRY_COUNT, DEFAULT_HOME_ALIAS,
     DEFAULT_HOME_ATTR, DEFAULT_HOME_PREFIX, DEFAULT_HSM_PIN_PATH, DEFAULT_ID_ATTR_MAP,
-    DEFAULT_JOIN_TYPE, DEFAULT_ODC_PROVIDER, DEFAULT_OFFLINE_BREAKGLASS_TTL,
-    DEFAULT_ORCHESTRATOR_SOCK_PATH, DEFAULT_PASSWORD_ONLY_REMOTE_SERVICES_DENY_LIST,
-    DEFAULT_POLICIES_DB_DIR, DEFAULT_REQUEST_TIMEOUT, DEFAULT_SELINUX,
-    DEFAULT_SFA_FALLBACK_ENABLED, DEFAULT_SHELL, DEFAULT_SOCK_PATH, DEFAULT_TASK_SOCK_PATH,
-    DEFAULT_TPM_TCTI_NAME, DEFAULT_USER_MAP_FILE, DEFAULT_USE_ETC_SKEL, MAPPED_NAME_CACHE,
-    NSS_IGNORE_EXACT, NSS_IGNORE_PREFIX, SERVER_CONFIG_PATH,
+    DEFAULT_JOIN_TYPE, DEFAULT_MFA_POLL_PROMPT_SERVICES, DEFAULT_ODC_PROVIDER,
+    DEFAULT_OFFLINE_BREAKGLASS_TTL, DEFAULT_ORCHESTRATOR_SOCK_PATH,
+    DEFAULT_PASSWORD_ONLY_REMOTE_SERVICES_DENY_LIST, DEFAULT_POLICIES_DB_DIR,
+    DEFAULT_REQUEST_TIMEOUT, DEFAULT_SELINUX, DEFAULT_SFA_FALLBACK_ENABLED, DEFAULT_SHELL,
+    DEFAULT_SOCK_PATH, DEFAULT_TASK_SOCK_PATH, DEFAULT_TPM_TCTI_NAME, DEFAULT_USER_MAP_FILE,
+    DEFAULT_USE_ETC_SKEL, MAPPED_NAME_CACHE, NSS_IGNORE_EXACT, NSS_IGNORE_PREFIX,
+    SERVER_CONFIG_PATH,
 };
 use crate::mapping::{MappedNameCache, Mode};
 use crate::unix_config::{HomeAttr, HsmType};
@@ -2167,6 +2168,63 @@ mod tests {
 
         let result = config.get_password_only_remote_services_deny_list();
         assert_eq!(result, vec!["ssh"]);
+    }
+
+    #[test]
+    fn test_get_mfa_poll_prompt_services_default_value() {
+        let config = create_empty_config();
+
+        let result = config.get_mfa_poll_prompt_services();
+        let expected: Vec<String> = DEFAULT_MFA_POLL_PROMPT_SERVICES
+            .split(',')
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect();
+        assert_eq!(result, expected);
+        assert!(result.contains(&"ssh".to_string()));
+        assert!(result.contains(&"cockpit".to_string()));
+    }
+
+    #[test]
+    fn test_get_mfa_poll_prompt_services_comma_separated() {
+        let config_data = r#"
+        [global]
+        mfa_poll_prompt_services = ssh,cockpit,custom
+        "#;
+
+        let temp_file = create_temp_config(config_data);
+        let config = HimmelblauConfig::new(Some(&temp_file)).unwrap();
+
+        let result = config.get_mfa_poll_prompt_services();
+        assert_eq!(result, vec!["ssh", "cockpit", "custom"]);
+    }
+
+    #[test]
+    fn test_get_mfa_poll_prompt_services_whitespace_trimming() {
+        let config_data = r#"
+        [global]
+        mfa_poll_prompt_services = ssh , cockpit,  custom
+        "#;
+
+        let temp_file = create_temp_config(config_data);
+        let config = HimmelblauConfig::new(Some(&temp_file)).unwrap();
+
+        let result = config.get_mfa_poll_prompt_services();
+        assert_eq!(result, vec!["ssh", "cockpit", "custom"]);
+    }
+
+    #[test]
+    fn test_get_mfa_poll_prompt_services_empty_string() {
+        let config_data = r#"
+        [global]
+        mfa_poll_prompt_services =
+        "#;
+
+        let temp_file = create_temp_config(config_data);
+        let config = HimmelblauConfig::new(Some(&temp_file)).unwrap();
+
+        let result = config.get_mfa_poll_prompt_services();
+        assert_eq!(result, Vec::<String>::new());
     }
 
     // Tests for parse_ttl_to_seconds()
