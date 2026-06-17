@@ -252,6 +252,25 @@ in
       example = [ "ssh" "telnet" "vnc" "xrdp" ];
     };
 
+    mfa_poll_prompt_services = mkOption {
+      type = types.nullOr (types.listOf types.str);
+      default = [ ];
+      description = ''
+        A comma-separated list of PAM service names that should receive an input prompt
+        after Himmelblau prints MFA polling text. This is required for PAM consumers
+        that do not display
+        **PAM_TEXT_INFO**
+        messages until an input prompt is shown.
+        
+        This setting only applies when the
+        **mfa_poll_prompt**
+        PAM module option is enabled.
+        
+        Entries are matched as substrings, so "ssh" will match "ssh", "sshd", "openssh", etc.
+      '';
+      example = [ "ssh" "cockpit" ];
+    };
+
     mfa_method = mkOption {
       type = types.nullOr (types.str);
       default = null;

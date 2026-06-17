@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<parameter name="mfa_poll_prompt_services"
+                      section="global"
+                      type="string_list"
+                      rust_type="Vec&lt;String&gt;"
+                      documented="true"
+                      domain_specific="false"
+                      order="1510"
+                     >
+<description>
+A comma-separated list of PAM service names that should receive an input prompt
+after Himmelblau prints MFA polling text. This is required for PAM consumers
+that do not display
+.B PAM_TEXT_INFO
+messages until an input prompt is shown.
+
+This setting only applies when the
+.B mfa_poll_prompt
+PAM module option is enabled.
+
+Entries are matched as substrings, so "ssh" will match "ssh", "sshd", "openssh", etc.
+</description>
+<conf_description>PAM services that need MFA poll prompt flushing.</conf_description>
+<default>ssh,cockpit</default>
+<default_const>DEFAULT_MFA_POLL_PROMPT_SERVICES</default_const>
+<example>mfa_poll_prompt_services = ssh,cockpit</example>
+</parameter>

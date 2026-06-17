@@ -679,9 +679,9 @@ fn handle_pam_auth_response_mfapoll(
     // Necessary because of OpenSSH bug
     // https://bugzilla.mindrot.org/show_bug.cgi?id=2876 -
     // PAM_TEXT_INFO and PAM_ERROR_MSG conversation not
-    // honoured during PAM authentication. Only prompt if
-    // this is the ssh service and a message was sent.
-    if state.opts.mfa_poll_prompt && state.service.contains("ssh") && !msg.trim().is_empty() {
+    // honoured during PAM authentication. Some other PAM consumers, such as
+    // Cockpit, also need an input prompt before they display the message.
+    if should_prompt_mfa_poll(&state.service, &state.opts, &state.cfg, &msg) {
         state.msg_printer.prompt_echo_off("Press enter to continue");
     }
 
@@ -726,6 +726,20 @@ fn handle_pam_auth_response_mfapollwait(state: &mut AuthenticateState) -> PamWha
         poll_attempt: state.poll_attempt as u32,
     });
     PamWhatNext::Next(req)
+}
+
+fn should_prompt_mfa_poll(
+    service: &str,
+    opts: &Options,
+    cfg: &HimmelblauConfig,
+    msg: &str,
+) -> bool {
+    opts.mfa_poll_prompt
+        && !msg.trim().is_empty()
+        && cfg
+            .get_mfa_poll_prompt_services()
+            .iter()
+            .any(|s| service.contains(s))
 }
 
 enum PamWhatNext {
@@ -1306,5 +1320,129 @@ pub async fn authenticate_async(
             PamResultCode::PAM_SERVICE_ERR
         }
         Ok(r) => r,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+
+    fn create_temp_config(contents: &str) -> String {
+        let file_path = format!(
+            "/tmp/himmelblau_auth_test_config_{}.ini",
+            uuid::Uuid::new_v4()
+        );
+        fs::write(&file_path, contents).expect("Failed to write temporary config file");
+        file_path
+    }
+
+    fn test_config(contents: &str) -> HimmelblauConfig {
+        let temp_file = create_temp_config(contents);
+        HimmelblauConfig::new(Some(&temp_file)).unwrap()
+    }
+
+    fn test_options(mfa_poll_prompt: bool) -> Options {
+        Options {
+            mfa_poll_prompt,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn test_should_prompt_mfa_poll_for_ssh_default() {
+        let cfg = test_config("");
+        let opts = test_options(true);
+
+        assert!(should_prompt_mfa_poll(
+            "sshd",
+            &opts,
+            &cfg,
+            "Approve sign-in"
+        ));
+    }
+
+    #[test]
+    fn test_should_prompt_mfa_poll_for_cockpit_default() {
+        let cfg = test_config("");
+        let opts = test_options(true);
+
+        assert!(should_prompt_mfa_poll(
+            "cockpit",
+            &opts,
+            &cfg,
+            "Approve sign-in"
+        ));
+    }
+
+    #[test]
+    fn test_should_prompt_mfa_poll_for_remote_cockpit_default() {
+        let cfg = test_config("");
+        let opts = test_options(true);
+
+        assert!(should_prompt_mfa_poll(
+            "remote:cockpit",
+            &opts,
+            &cfg,
+            "Approve sign-in"
+        ));
+    }
+
+    #[test]
+    fn test_should_not_prompt_mfa_poll_for_unmatched_service() {
+        let cfg = test_config("");
+        let opts = test_options(true);
+
+        assert!(!should_prompt_mfa_poll(
+            "login",
+            &opts,
+            &cfg,
+            "Approve sign-in"
+        ));
+    }
+
+    #[test]
+    fn test_should_not_prompt_mfa_poll_when_option_disabled() {
+        let cfg = test_config("");
+        let opts = test_options(false);
+
+        assert!(!should_prompt_mfa_poll(
+            "cockpit",
+            &opts,
+            &cfg,
+            "Approve sign-in"
+        ));
+    }
+
+    #[test]
+    fn test_should_not_prompt_mfa_poll_for_empty_message() {
+        let cfg = test_config("");
+        let opts = test_options(true);
+
+        assert!(!should_prompt_mfa_poll("cockpit", &opts, &cfg, "   "));
+    }
+
+    #[test]
+    fn test_should_prompt_mfa_poll_for_configured_service() {
+        let cfg = test_config(
+            r#"
+            [global]
+            mfa_poll_prompt_services = login
+            "#,
+        );
+        let opts = test_options(true);
+
+        assert!(should_prompt_mfa_poll(
+            "login",
+            &opts,
+            &cfg,
+            "Approve sign-in"
+        ));
+        assert!(!should_prompt_mfa_poll(
+            "cockpit",
+            &opts,
+            &cfg,
+            "Approve sign-in"
+        ));
     }
 }

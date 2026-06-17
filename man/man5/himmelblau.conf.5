@@ -1,4 +1,4 @@
-.TH HIMMELBLAU.CONF "5" "May 2026" "Himmelblau Configuration" "File Formats"
+.TH HIMMELBLAU.CONF "5" "June 2026" "Himmelblau Configuration" "File Formats"
 .SH NAME
 himmelblau.conf \- Configuration file for Himmelblau, enabling Azure Entra ID authentication on Linux.
 
@@ -321,6 +321,27 @@ Default: ssh,telnet,ftp,rsh,rlogin,rexec,vnc,xrdp,cockpit,mosh
 
 .P
 Example: password_only_remote_services_deny_list = ssh,telnet,vnc,xrdp
+
+.TP
+.B mfa_poll_prompt_services
+.RE
+A comma-separated list of PAM service names that should receive an input prompt
+after Himmelblau prints MFA polling text. This is required for PAM consumers
+that do not display
+.B PAM_TEXT_INFO
+messages until an input prompt is shown.
+
+This setting only applies when the
+.B mfa_poll_prompt
+PAM module option is enabled.
+
+Entries are matched as substrings, so "ssh" will match "ssh", "sshd", "openssh", etc.
+
+.P
+Default: ssh,cockpit
+
+.P
+Example: mfa_poll_prompt_services = ssh,cockpit
 
 .TP
 .B mfa_method

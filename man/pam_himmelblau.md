@@ -24,7 +24,7 @@
   Returns `PAM_IGNORE` for users not in Entra ID, allowing fallback to local authentication via subsequent PAM modules.
 
 - **mfa_poll_prompt**  
-  Workaround for OpenSSH Bug 2876, which prevents PAM messages from being flushed to stdout until after sending a prompt for input. This workaround causes pam to prompt the user to 'press enter to continue' when polling on another device for MFA.
+  Workaround for PAM consumers such as OpenSSH and Cockpit that do not display MFA polling messages until after an input prompt is sent. This causes PAM to prompt the user to 'press enter to continue' when polling on another device for MFA. Matching services are configured with `mfa_poll_prompt_services` in `himmelblau.conf`.
 
 - **no_hello_pin**  
   Disables Linux Hello PIN login for this service (e.g., for `sudo` or `ssh`), even if Hello is configured globally.

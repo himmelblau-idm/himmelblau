@@ -291,9 +291,9 @@ def generate_rust_code(params: List[Parameter], sections: Dict[str, Section]) ->
         elif param.param_type == 'string_list':
             default_expr = param.default_const if param.default_const else f'DEFAULT_{param.name.upper()}'
             lines.append(f'        match self.config.get("{section}", "{param.name}") {{')
-            lines.append(f'            Some(val) => val.split(\',\').map(|s| s.trim().to_string()).collect(),')
+            lines.append(f'            Some(val) => val.split(\',\').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect(),')
             if param.default:
-                lines.append(f'            None => {default_expr}.split(\',\').map(|s| s.trim().to_string()).collect(),')
+                lines.append(f'            None => {default_expr}.split(\',\').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect(),')
             else:
                 lines.append('            None => vec![],')
             lines.append('        }')
