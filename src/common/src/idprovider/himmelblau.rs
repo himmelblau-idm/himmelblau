@@ -5441,6 +5441,7 @@ mod tests {
                 &MsalError::AcquireTokenFailed(ErrorResponse {
                     error: "invalid_grant".to_string(),
                     error_description: format!("AADSTS{code}: MFA required"),
+                    suberror: None,
                     error_codes: vec![code],
                 })
             ));
@@ -5458,6 +5459,7 @@ mod tests {
             &MsalError::AcquireTokenFailed(ErrorResponse {
                 error: "invalid_grant".to_string(),
                 error_description: "device auth failed".to_string(),
+                suberror: None,
                 error_codes: vec![DEVICE_AUTH_FAIL],
             })
         ));
@@ -5465,6 +5467,7 @@ mod tests {
             &MsalError::AcquireTokenFailed(ErrorResponse {
                 error: "invalid_grant".to_string(),
                 error_description: "consent required".to_string(),
+                suberror: None,
                 error_codes: vec![CONSENT_REQUIRED],
             })
         ));
