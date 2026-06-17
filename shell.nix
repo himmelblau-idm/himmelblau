@@ -18,6 +18,9 @@ pkgs.mkShell {
     stdenv.cc
     pam
     sqlite.dev
+    python3
+    rustc
+    cargo
   ];
 
   env = {
