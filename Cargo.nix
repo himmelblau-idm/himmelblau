@@ -9628,9 +9628,9 @@ rec {
       };
       "libhimmelblau" = rec {
         crateName = "libhimmelblau";
-        version = "0.8.19";
+        version = "0.8.22";
         edition = "2021";
-        sha256 = "1s4s0mj5mxh8l03r1nccl2iwxna9xbixvxrbpchhn0ysfk0xcca3";
+        sha256 = "04z4mfyb0xzp2w80jd6f7dvi7jg6jxp6lq9yrhgval2v7il0qw67";
         libName = "himmelblau";type = [ "rlib" "cdylib" ];
         authors = [
           "David Mulder <dmulder@suse.com>"
@@ -9654,6 +9654,11 @@ rec {
             packageId = "crypto-glue";
           }
           {
+            name = "der";
+            packageId = "der 0.7.10";
+            features = [ "pem" ];
+          }
+          {
             name = "hostname";
             packageId = "hostname";
           }
@@ -9665,6 +9670,11 @@ rec {
           {
             name = "libkrimes";
             packageId = "libkrimes";
+          }
+          {
+            name = "libkrimes";
+            packageId = "libkrimes";
+            target = { target, features }: ("linux" == target."os" or null);
             features = [ "keyring" ];
           }
           {
@@ -9676,8 +9686,12 @@ rec {
             packageId = "os-release";
           }
           {
-            name = "paste";
-            packageId = "paste";
+            name = "pastey";
+            packageId = "pastey 0.2.1";
+          }
+          {
+            name = "pem-rfc7468";
+            packageId = "pem-rfc7468";
           }
           {
             name = "percent-encoding";
@@ -9757,6 +9771,11 @@ rec {
             features = [ "v4" "serde" ];
           }
           {
+            name = "x509-cert";
+            packageId = "x509-cert";
+            features = [ "builder" ];
+          }
+          {
             name = "zeroize";
             packageId = "zeroize";
             features = [ "zeroize_derive" ];
@@ -9770,10 +9789,9 @@ rec {
         ];
         features = {
           "broker" = [ "dep:compact_jwt" "compact_jwt/msextensions" "dep:kanidm-hsm-crypto" ];
-          "capi" = [ "broker" ];
+          "capi" = [ "broker" "on_behalf_of" ];
           "default" = [ "broker" ];
           "developer" = [ "broker" "proxyable" "custom_oidc_discovery_url" ];
-          "interactive" = [ "dep:browser-window" "browser-window/webkitgtk" "browser-window/threadsafe" ];
           "on_behalf_of" = [ "broker" ];
           "pop_support" = [ "broker" ];
           "pyapi" = [ "broker" "dep:pyo3" ];
