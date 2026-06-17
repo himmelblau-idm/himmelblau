@@ -1,4 +1,4 @@
-.TH HIMMELBLAU.CONF "5" "May 2026" "Himmelblau Configuration" "File Formats"
+.TH HIMMELBLAU.CONF "5" "June 2026" "Himmelblau Configuration" "File Formats"
 .SH NAME
 himmelblau.conf \- Configuration file for Himmelblau, enabling Azure Entra ID authentication on Linux.
 
@@ -1005,6 +1005,28 @@ Default: 2
 
 .P
 Example: orchestrator_poll_secs = 3
+
+.TP
+.B enable_kerberos_cache
+.RE
+Retrieve kerberos via TGT from Azure's cloud KDC
+
+.P
+Default: true
+
+.P
+Example: enable_kerberos_cache = false
+
+.TP
+.B fetch_profile_picture
+.RE
+Fetch the users profile picture for display in login managers such as Gnome
+
+.P
+Default: true
+
+.P
+Example: fetch_profile_picture = false
 
 .SH OFFLINE BREAKGLASS CONFIGURATION
 The

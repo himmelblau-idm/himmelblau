@@ -844,6 +844,24 @@ in
       example = 3;
     };
 
+    enable_kerberos_cache = mkOption {
+      type = types.nullOr (types.bool);
+      default = true;
+      description = ''
+        Retrieve kerberos via TGT from Azure's cloud KDC
+      '';
+      example = false;
+    };
+
+    fetch_profile_picture = mkOption {
+      type = types.nullOr (types.bool);
+      default = true;
+      description = ''
+        Fetch the users profile picture for display in login managers such as Gnome
+      '';
+      example = false;
+    };
+
     # [offline_breakglass] section options
     # The
     # **[offline_breakglass]**
