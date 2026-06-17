@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<parameter name="fetch_profile_picture"
+           section="global"
+           type="bool"
+           rust_type="bool"
+           documented="true"
+           domain_specific="false"
+           order="5800">
+<description>
+Fetch the users profile picture for display in login managers such as Gnome
+</description>
+<conf_description>Fetch user profile picture.</conf_description>
+<default>true</default>
+<example>fetch_profile_picture = false</example>
+</parameter>

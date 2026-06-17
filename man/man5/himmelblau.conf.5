@@ -1027,6 +1027,28 @@ Default: 2
 .P
 Example: orchestrator_poll_secs = 3
 
+.TP
+.B enable_kerberos_cache
+.RE
+Retrieve kerberos via TGT from Azure's cloud KDC
+
+.P
+Default: true
+
+.P
+Example: enable_kerberos_cache = false
+
+.TP
+.B fetch_profile_picture
+.RE
+Fetch the users profile picture for display in login managers such as Gnome
+
+.P
+Default: true
+
+.P
+Example: fetch_profile_picture = false
+
 .SH OFFLINE BREAKGLASS CONFIGURATION
 The
 .B [offline_breakglass]
