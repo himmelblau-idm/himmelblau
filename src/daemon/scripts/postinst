@@ -89,6 +89,44 @@ for OLD_FILE in \
     fi
 done
 
+disable_old_nm_dispatcher_workarounds() {
+    dispatcher_dir="${DPKG_ROOT:-}/etc/NetworkManager/dispatcher.d"
+    [ -d "$dispatcher_dir" ] || return 0
+
+    for file in \
+        "$dispatcher_dir/99-zzz-himmelblau" \
+        "$dispatcher_dir/99-restart-himmelblau" \
+        "$dispatcher_dir/99-himmelblau"; do
+        [ -f "$file" ] || continue
+        if grep -Eq 'himmelblau-idm/himmelblau#1206|NM-dispatcher\.99-restart-himmelblau|99-zzz-himmelblau' "$file" \
+            && grep -Eq 'systemctl[[:space:]]+restart.*himmelblaud(\.service)?' "$file"; then
+            disabled="${file}.himmelblau-disabled"
+            if [ -e "$disabled" ]; then
+                disabled="${disabled}.$$"
+            fi
+            if mv "$file" "$disabled"; then
+                echo "Disabled old manual Himmelblau NetworkManager workaround: $file -> $disabled"
+            else
+                echo "Warning: failed to disable old manual Himmelblau NetworkManager workaround: $file" >&2
+            fi
+        fi
+    done
+
+    for file in "$dispatcher_dir"/*himmelblau* "$dispatcher_dir"/*himmelblaud*; do
+        [ -f "$file" ] || continue
+        case "$file" in
+            *.himmelblau-disabled|*.himmelblau-disabled.*)
+                continue
+                ;;
+        esac
+        if grep -Eq 'systemctl[[:space:]]+restart.*himmelblaud(\.service)?' "$file"; then
+            echo "Warning: found unmanaged Himmelblau NetworkManager dispatcher script: $file" >&2
+        fi
+    done
+}
+
+disable_old_nm_dispatcher_workarounds
+
 if command -v deb-systemd-helper >/dev/null 2>&1; then
     if [ "$1" != "configure" ]; then
         exit 0
