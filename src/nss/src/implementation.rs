@@ -18,6 +18,7 @@ use himmelblau_unix_common::user_map::UserMap;
 use libnss::group::{Group, GroupHooks};
 use libnss::interop::Response;
 use libnss::passwd::{Passwd, PasswdHooks};
+use libnss::shadow::{Shadow, ShadowHooks};
 use std::fs::File;
 use std::io::Read;
 use uuid::Uuid;
@@ -477,6 +478,30 @@ fn group_from_nssgroup(ng: NssGroup) -> Group {
     }
 }
 
+fn shadow_from_nssuser(nu: &NssUser) -> Shadow {
+    Shadow {
+        name: nu.name.clone(),
+        passwd: "!".to_string(), // Locked - passwords handled by Azure AD/pam_himmelblau
+        last_change: -1,         // Disable Unix password aging; auth is handled by pam_himmelblau.
+        change_min_days: 0,
+        change_max_days: 99999,
+        change_warn_days: 7,
+        change_inactive_days: -1,
+        expire_date: -1, // Could map from Azure AD account expiry
+        reserved: 0,
+    }
+}
+
+fn mapped_shadow_from_nssuser(
+    nu: &NssUser,
+    cfg: &HimmelblauConfig,
+    local_name: Option<String>,
+) -> Shadow {
+    let mut shadow = shadow_from_nssuser(nu);
+    shadow.name = local_name.unwrap_or_else(|| cfg.map_upn_to_name(&shadow.name));
+    shadow
+}
+
 /// Implement the glibc "initgroups_dyn" NSS interface.
 ///
 /// When glibc needs the supplementary groups for a user (e.g. via
@@ -615,72 +640,317 @@ pub unsafe extern "C" fn _nss_himmelblau_initgroups_dyn(
     NSS_STATUS_SUCCESS
 }
 
+struct HimmelblauShadow;
+libnss_shadow_hooks!(himmelblau, HimmelblauShadow);
+
+impl ShadowHooks for HimmelblauShadow {
+    fn get_all_entries() -> Response<Vec<Shadow>> {
+        if should_skip_daemon_call() {
+            return Response::Unavail;
+        }
+        let cfg = match HimmelblauConfig::new(Some(DEFAULT_CONFIG_PATH)) {
+            Ok(c) => c,
+            Err(_) => {
+                return Response::Unavail;
+            }
+        };
+        let req = ClientRequest::NssAccounts;
+
+        let nss_cache = try_nss_cache!();
+
+        // Load user map to filter out mapped users (they are handled by local NSS)
+        let user_map = UserMap::new(&cfg.get_user_map_file());
+
+        let mut daemon_client = match DaemonClientBlocking::new(cfg.get_socket_path().as_str()) {
+            Ok(dc) => dc,
+            Err(_) => {
+                // Return cached shadow entries if daemon unavailable
+                return match nss_cache {
+                    Some(ref c) => Response::Success(
+                        c.get_users()
+                            .into_iter()
+                            .filter_map(|nu| {
+                                // Skip users whose UPN is mapped to a local user
+                                if user_map
+                                    .get_local_from_upn(&nu.name.to_lowercase())
+                                    .is_some()
+                                {
+                                    return None;
+                                }
+                                Some(mapped_shadow_from_nssuser(&nu, &cfg, None))
+                            })
+                            .collect(),
+                    ),
+                    None => Response::Success(Vec::new()),
+                };
+            }
+        };
+
+        daemon_client
+            .call_and_wait(&req, cfg.get_unix_sock_timeout())
+            .map(|r| match r {
+                ClientResponse::NssAccounts(l) => l
+                    .into_iter()
+                    .filter_map(|nu| {
+                        // Skip users whose UPN is mapped to a local user
+                        if user_map
+                            .get_local_from_upn(&nu.name.to_lowercase())
+                            .is_some()
+                        {
+                            return None;
+                        }
+                        insert_cached_user!(nss_cache, nu);
+                        Some(mapped_shadow_from_nssuser(&nu, &cfg, None))
+                    })
+                    .collect(),
+                _ => match nss_cache {
+                    Some(ref c) => c
+                        .get_users()
+                        .into_iter()
+                        .filter_map(|nu| {
+                            // Skip users whose UPN is mapped to a local user
+                            if user_map
+                                .get_local_from_upn(&nu.name.to_lowercase())
+                                .is_some()
+                            {
+                                return None;
+                            }
+                            Some(mapped_shadow_from_nssuser(&nu, &cfg, None))
+                        })
+                        .collect(),
+                    None => Vec::new(),
+                },
+            })
+            .map(Response::Success)
+            .unwrap_or_else(|_| match nss_cache {
+                Some(ref c) => Response::Success(
+                    c.get_users()
+                        .into_iter()
+                        .filter_map(|nu| {
+                            // Skip users whose UPN is mapped to a local user
+                            if user_map
+                                .get_local_from_upn(&nu.name.to_lowercase())
+                                .is_some()
+                            {
+                                return None;
+                            }
+                            Some(mapped_shadow_from_nssuser(&nu, &cfg, None))
+                        })
+                        .collect(),
+                ),
+                None => Response::Success(Vec::new()),
+            })
+    }
+
+    fn get_entry_by_name(name: String) -> Response<Shadow> {
+        if should_skip_daemon_call() {
+            return Response::Unavail;
+        }
+        let cfg = match HimmelblauConfig::new(Some(DEFAULT_CONFIG_PATH)) {
+            Ok(c) => c,
+            Err(_) => {
+                return Response::Unavail;
+            }
+        };
+
+        // Handle user mapping just like passwd lookup
+        let user_map = UserMap::new(&cfg.get_user_map_file());
+        let (upn, local_name) = if let Some(mapped_upn) = user_map.get_upn_from_local(&name) {
+            // Local name is mapped to a UPN - look up the UPN
+            (mapped_upn, Some(name.clone()))
+        } else if let Some(local) = user_map.get_local_from_upn(&name.to_lowercase()) {
+            // UPN is mapped to a local name - look up the UPN, return as local name
+            (name.to_lowercase(), Some(local))
+        } else {
+            // No mapping - use standard cn_name_mapping
+            match cfg.map_name_to_upn(&name) {
+                Some(upn) => (upn, None),
+                None => return Response::NotFound,
+            }
+        };
+
+        let req = ClientRequest::NssAccountByName(upn.clone());
+
+        let nss_cache = try_nss_cache!();
+
+        let mut daemon_client = match DaemonClientBlocking::new(cfg.get_socket_path().as_str()) {
+            Ok(dc) => dc,
+            Err(_) => {
+                // Try cache if daemon unavailable
+                return match nss_cache {
+                    Some(ref c) => match c.get_user(&Id::Name(upn)) {
+                        Some(nu) => {
+                            Response::Success(mapped_shadow_from_nssuser(&nu, &cfg, local_name))
+                        }
+                        None => Response::Unavail,
+                    },
+                    None => Response::Unavail,
+                };
+            }
+        };
+
+        daemon_client
+            .call_and_wait(&req, cfg.get_unix_sock_timeout())
+            .map(|r| match r {
+                ClientResponse::NssAccount(opt) => opt
+                    .map(|nu| {
+                        insert_cached_user!(nss_cache, nu);
+                        Response::Success(mapped_shadow_from_nssuser(&nu, &cfg, local_name.clone()))
+                    })
+                    .unwrap_or_else(|| {
+                        // Check cache on NotFound
+                        match nss_cache {
+                            Some(ref c) => match c.get_user(&Id::Name(upn.clone())) {
+                                Some(nu) => Response::Success(mapped_shadow_from_nssuser(
+                                    &nu,
+                                    &cfg,
+                                    local_name.clone(),
+                                )),
+                                None => Response::NotFound,
+                            },
+                            None => Response::NotFound,
+                        }
+                    }),
+                _ => {
+                    // Check cache on unexpected response
+                    match nss_cache {
+                        Some(ref c) => match c.get_user(&Id::Name(upn.clone())) {
+                            Some(nu) => Response::Success(mapped_shadow_from_nssuser(
+                                &nu,
+                                &cfg,
+                                local_name.clone(),
+                            )),
+                            None => Response::NotFound,
+                        },
+                        None => Response::NotFound,
+                    }
+                }
+            })
+            .unwrap_or_else(|_| {
+                // Check cache on error
+                match nss_cache {
+                    Some(ref c) => match c.get_user(&Id::Name(upn)) {
+                        Some(nu) => {
+                            Response::Success(mapped_shadow_from_nssuser(&nu, &cfg, local_name))
+                        }
+                        None => Response::NotFound,
+                    },
+                    None => Response::NotFound,
+                }
+            })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::fs;
 
-    fn create_temp_config(contents: &str) -> String {
+    fn create_temp_config(contents: &str) -> Result<String, String> {
         let file_path = format!(
             "/tmp/himmelblau_nss_test_config_{}.ini",
             uuid::Uuid::new_v4()
         );
-        fs::write(&file_path, contents).expect("Failed to write temporary config file");
-        file_path
+        fs::write(&file_path, contents)
+            .map_err(|e| format!("Failed to write temporary config file: {e}"))?;
+        Ok(file_path)
     }
 
-    fn test_config() -> HimmelblauConfig {
+    fn test_config() -> Result<HimmelblauConfig, String> {
         let config_data = r#"
             [global]
             domains = contoso.com,fabrikam.com
             cn_name_mapping = true
         "#;
 
-        let temp_file = create_temp_config(config_data);
-        HimmelblauConfig::new(Some(&temp_file)).expect("Failed to create test config")
+        let temp_file = create_temp_config(config_data)?;
+        let config = HimmelblauConfig::new(Some(&temp_file))
+            .map_err(|e| format!("Failed to create test config: {e}"));
+        fs::remove_file(&temp_file).ok();
+        config
+    }
+
+    fn test_nss_user(name: &str) -> NssUser {
+        NssUser {
+            name: name.to_string(),
+            uid: 1000,
+            gid: 1000,
+            gecos: "Test User".to_string(),
+            homedir: "/home/test".to_string(),
+            shell: "/bin/bash".to_string(),
+        }
     }
 
     #[test]
-    fn blocks_short_group_name_collision() {
-        let cfg = test_config();
+    fn mapped_shadow_uses_local_name_override() -> Result<(), String> {
+        let cfg = test_config()?;
+        let nu = test_nss_user("alice@contoso.com");
+
+        let shadow = mapped_shadow_from_nssuser(&nu, &cfg, Some("alice-local".to_string()));
+
+        assert_eq!(shadow.name, "alice-local");
+        assert_eq!(shadow.passwd, "!");
+        assert_eq!(shadow.last_change, -1);
+        Ok(())
+    }
+
+    #[test]
+    fn mapped_shadow_uses_config_name_mapping_without_override() -> Result<(), String> {
+        let cfg = test_config()?;
+        let nu = test_nss_user("alice@contoso.com");
+
+        let shadow = mapped_shadow_from_nssuser(&nu, &cfg, None);
+
+        assert_eq!(shadow.name, "alice");
+        assert_eq!(shadow.passwd, "!");
+        Ok(())
+    }
+
+    #[test]
+    fn blocks_short_group_name_collision() -> Result<(), String> {
+        let cfg = test_config()?;
         let groups = b"root:x:0:\nsudo:x:27:\nwheel:x:10:\n";
 
         assert!(is_group_name_in_groups(
             &cfg.map_upn_to_name("sudo"),
             groups
         ));
+        Ok(())
     }
 
     #[test]
-    fn blocks_primary_domain_upn_group_collision() {
-        let cfg = test_config();
+    fn blocks_primary_domain_upn_group_collision() -> Result<(), String> {
+        let cfg = test_config()?;
         let groups = b"root:x:0:\nsudo:x:27:\nwheel:x:10:\n";
 
         assert!(is_group_name_in_groups(
             &cfg.map_upn_to_name("sudo@contoso.com"),
             groups
         ));
+        Ok(())
     }
 
     #[test]
-    fn allows_non_primary_domain_upn_lookup() {
-        let cfg = test_config();
+    fn allows_non_primary_domain_upn_lookup() -> Result<(), String> {
+        let cfg = test_config()?;
         let groups = b"root:x:0:\nsudo:x:27:\nwheel:x:10:\n";
 
         assert!(!is_group_name_in_groups(
             &cfg.map_upn_to_name("sudo@fabrikam.com"),
             groups
         ));
+        Ok(())
     }
 
     #[test]
-    fn allows_non_colliding_group_name() {
-        let cfg = test_config();
+    fn allows_non_colliding_group_name() -> Result<(), String> {
+        let cfg = test_config()?;
         let groups = b"root:x:0:\nsudo:x:27:\nwheel:x:10:\n";
 
         assert!(!is_group_name_in_groups(
             &cfg.map_upn_to_name("engineering"),
             groups
         ));
+        Ok(())
     }
 }
