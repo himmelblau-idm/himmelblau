@@ -42,28 +42,26 @@ pub struct DaemonClientBlocking {
 }
 
 impl DaemonClientBlocking {
-    pub fn new(path: &str) -> Result<DaemonClientBlocking, Box<dyn Error>> {
+    pub fn new(path: &str) -> std::io::Result<DaemonClientBlocking> {
         debug!(%path);
 
-        let stream = UnixStream::connect(path)
-            .map_err(|e| {
-                // ENOENT means the daemon isn't running — expected during boot,
-                // daemon-reload, or when himmelblau is not configured. Log at
-                // debug to avoid distracting users with spurious error output.
-                if e.kind() == ErrorKind::NotFound {
-                    debug!(
-                        "himmelblaud socket not found at {} (daemon not running?)",
-                        path
-                    );
-                } else {
-                    error!(
-                        "Unix socket stream setup error while connecting to {} -> {:?}",
-                        path, e
-                    );
-                }
-                e
-            })
-            .map_err(Box::new)?;
+        let stream = UnixStream::connect(path).map_err(|e| {
+            // ENOENT means the daemon isn't running - expected during boot,
+            // daemon-reload, or when himmelblau is not configured. Log at
+            // debug to avoid distracting users with spurious error output.
+            if e.kind() == ErrorKind::NotFound {
+                debug!(
+                    "himmelblaud socket not found at {} (daemon not running?)",
+                    path
+                );
+            } else {
+                error!(
+                    "Unix socket stream setup error while connecting to {} -> {:?}",
+                    path, e
+                );
+            }
+            e
+        })?;
 
         Ok(DaemonClientBlocking { stream })
     }

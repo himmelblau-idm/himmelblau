@@ -20,13 +20,14 @@ use crate::config::HimmelblauConfig;
 use crate::hello_pin_complexity::{is_simple_pin, meets_intune_pin_policy};
 use crate::unix_proto::{ClientRequest, ClientResponse, PamAuthRequest, PamAuthResponse};
 use regex::{Match, Regex};
+use std::io::{self, ErrorKind};
 use std::sync::Arc;
 
 use lazy_static::lazy_static;
 use tracing::{debug, error};
 
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use crate::pam::{Options, PamResultCode};
 use authenticator::{
@@ -69,6 +70,10 @@ pub trait MessagePrinter: Send + Sync {
     fn print_error(&self, msg: &str);
     fn prompt_echo_off(&self, prompt: &str) -> Option<String>;
 }
+
+pub const DAEMON_START_WAIT_MESSAGE: &str = "Himmelblau authentication is starting, please wait...";
+pub const DAEMON_START_WAIT_TIMEOUT: Duration = Duration::from_secs(20);
+pub const DAEMON_START_WAIT_INTERVAL: Duration = Duration::from_millis(250);
 
 #[derive(Default)]
 pub struct SimpleMessagePrinter {}
@@ -1257,7 +1262,86 @@ struct AuthenticateState {
     polling_interval: u32,
 }
 
-pub fn authenticate(
+fn daemon_connect_error_is_retryable(err: &io::Error) -> bool {
+    if matches!(
+        err.kind(),
+        ErrorKind::NotFound
+            | ErrorKind::ConnectionRefused
+            | ErrorKind::TimedOut
+            | ErrorKind::WouldBlock
+            | ErrorKind::Interrupted
+    ) {
+        return true;
+    }
+
+    matches!(
+        err.raw_os_error(),
+        Some(libc::ENOENT | libc::ECONNREFUSED | libc::ETIMEDOUT | libc::EAGAIN | libc::EINTR)
+    )
+}
+
+fn wait_for_daemon_client_with<T, F, S>(
+    path: &str,
+    msg_printer: &dyn MessagePrinter,
+    timeout: Duration,
+    interval: Duration,
+    mut connect: F,
+    mut sleep: S,
+) -> Result<T, PamResultCode>
+where
+    F: FnMut(&str) -> io::Result<T>,
+    S: FnMut(Duration),
+{
+    let started = Instant::now();
+    let mut announced = false;
+
+    loop {
+        match connect(path) {
+            Ok(client) => return Ok(client),
+            Err(err) => {
+                if !daemon_connect_error_is_retryable(&err) {
+                    error!(?err, "himmelblaud socket connection failed");
+                    msg_printer.print_error("Himmelblau authentication service is unavailable.");
+                    return Err(PamResultCode::PAM_IGNORE);
+                }
+
+                if !announced {
+                    msg_printer.print_text(DAEMON_START_WAIT_MESSAGE);
+                    announced = true;
+                }
+
+                let elapsed = started.elapsed();
+                if elapsed >= timeout {
+                    error!(?err, "timed out waiting for himmelblaud socket");
+                    msg_printer.print_error(
+                        "Himmelblau authentication service did not become available in time.",
+                    );
+                    return Err(PamResultCode::PAM_IGNORE);
+                }
+
+                let remaining = timeout.saturating_sub(elapsed);
+                sleep(std::cmp::min(interval, remaining));
+            }
+        }
+    }
+}
+
+pub fn wait_for_daemon_client(
+    path: &str,
+    msg_printer: Arc<dyn MessagePrinter>,
+) -> Result<DaemonClientBlocking, PamResultCode> {
+    wait_for_daemon_client_with(
+        path,
+        msg_printer.as_ref(),
+        DAEMON_START_WAIT_TIMEOUT,
+        DAEMON_START_WAIT_INTERVAL,
+        DaemonClientBlocking::new,
+        thread::sleep,
+    )
+}
+
+pub fn authenticate_with_client(
+    daemon_client: DaemonClientBlocking,
     authtok: Option<String>,
     cfg: HimmelblauConfig,
     account_id: &str,
@@ -1265,14 +1349,6 @@ pub fn authenticate(
     opts: Options,
     msg_printer: Arc<dyn MessagePrinter>,
 ) -> PamResultCode {
-    let daemon_client = match DaemonClientBlocking::new(cfg.get_socket_path().as_str()) {
-        Ok(dc) => dc,
-        Err(e) => {
-            debug!(err = ?e, "himmelblaud not available, ignoring");
-            return PamResultCode::PAM_IGNORE;
-        }
-    };
-
     let mut state = AuthenticateState {
         daemon_client,
         authtok,
@@ -1302,6 +1378,31 @@ pub fn authenticate(
     }
 }
 
+pub fn authenticate(
+    authtok: Option<String>,
+    cfg: HimmelblauConfig,
+    account_id: &str,
+    service: &str,
+    opts: Options,
+    msg_printer: Arc<dyn MessagePrinter>,
+) -> PamResultCode {
+    let daemon_client =
+        match wait_for_daemon_client(cfg.get_socket_path().as_str(), msg_printer.clone()) {
+            Ok(dc) => dc,
+            Err(code) => return code,
+        };
+
+    authenticate_with_client(
+        daemon_client,
+        authtok,
+        cfg,
+        account_id,
+        service,
+        opts,
+        msg_printer,
+    )
+}
+
 pub async fn authenticate_async(
     authtok: Option<String>,
     cfg: HimmelblauConfig,
@@ -1327,6 +1428,8 @@ pub async fn authenticate_async(
 mod tests {
     use super::*;
     use std::fs;
+    use std::io::Error as IoError;
+    use std::sync::Mutex;
 
     fn create_temp_config(contents: &str) -> String {
         let file_path = format!(
@@ -1347,6 +1450,168 @@ mod tests {
             mfa_poll_prompt,
             ..Default::default()
         }
+    }
+
+    #[derive(Default)]
+    struct RecordingPrinter {
+        text: Mutex<Vec<String>>,
+        error: Mutex<Vec<String>>,
+    }
+
+    impl MessagePrinter for RecordingPrinter {
+        fn print_text(&self, msg: &str) {
+            self.text.lock().unwrap().push(msg.to_string());
+        }
+
+        fn print_error(&self, msg: &str) {
+            self.error.lock().unwrap().push(msg.to_string());
+        }
+
+        fn prompt_echo_off(&self, _prompt: &str) -> Option<String> {
+            None
+        }
+    }
+
+    fn retryable_connect_error() -> io::Error {
+        IoError::new(ErrorKind::NotFound, "missing socket")
+    }
+
+    #[test]
+    fn test_wait_for_daemon_client_immediate_success_has_no_message() {
+        let printer = RecordingPrinter::default();
+        let mut attempts = 0;
+
+        let result = wait_for_daemon_client_with(
+            "/run/himmelblaud/socket",
+            &printer,
+            Duration::from_secs(20),
+            Duration::from_millis(250),
+            |_| {
+                attempts += 1;
+                Ok("connected")
+            },
+            |_| panic!("sleep should not be called"),
+        );
+
+        assert_eq!(result.unwrap(), "connected");
+        assert_eq!(attempts, 1);
+        assert!(printer.text.lock().unwrap().is_empty());
+        assert!(printer.error.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn test_wait_for_daemon_client_retries_transient_errors() {
+        let printer = RecordingPrinter::default();
+        let mut attempts = 0;
+        let mut sleeps = Vec::new();
+
+        let result = wait_for_daemon_client_with(
+            "/run/himmelblaud/socket",
+            &printer,
+            Duration::from_secs(20),
+            Duration::from_millis(250),
+            |_| {
+                attempts += 1;
+                if attempts < 3 {
+                    Err(retryable_connect_error())
+                } else {
+                    Ok("connected")
+                }
+            },
+            |duration| sleeps.push(duration),
+        );
+
+        assert_eq!(result.unwrap(), "connected");
+        assert_eq!(attempts, 3);
+        assert_eq!(sleeps, vec![Duration::from_millis(250); 2]);
+        assert_eq!(
+            printer.text.lock().unwrap().as_slice(),
+            &[DAEMON_START_WAIT_MESSAGE.to_string()]
+        );
+        assert!(printer.error.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn test_wait_for_daemon_client_times_out() {
+        let printer = RecordingPrinter::default();
+
+        let result: Result<(), PamResultCode> = wait_for_daemon_client_with(
+            "/run/himmelblaud/socket",
+            &printer,
+            Duration::ZERO,
+            Duration::from_millis(250),
+            |_| Err(retryable_connect_error()),
+            |_| panic!("sleep should not be called after timeout"),
+        );
+
+        assert_eq!(result.err(), Some(PamResultCode::PAM_IGNORE));
+        assert_eq!(
+            printer.text.lock().unwrap().as_slice(),
+            &[DAEMON_START_WAIT_MESSAGE.to_string()]
+        );
+        assert_eq!(
+            printer.error.lock().unwrap().as_slice(),
+            &["Himmelblau authentication service did not become available in time.".to_string()]
+        );
+    }
+
+    #[test]
+    fn test_wait_for_daemon_client_retries_missing_socket_os_error() {
+        let printer = RecordingPrinter::default();
+        let connect_error = IoError::from_raw_os_error(libc::ENOENT);
+        assert!(
+            daemon_connect_error_is_retryable(&connect_error),
+            "missing socket error should be retryable: kind={:?} raw_os_error={:?} err={:?}",
+            connect_error.kind(),
+            connect_error.raw_os_error(),
+            connect_error
+        );
+        let mut connect_error = Some(connect_error);
+
+        let result: Result<(), PamResultCode> = wait_for_daemon_client_with(
+            "/run/himmelblaud/socket",
+            &printer,
+            Duration::ZERO,
+            Duration::from_millis(250),
+            |_| Err(connect_error.take().unwrap()),
+            |_| panic!("sleep should not be called after timeout"),
+        );
+
+        assert_eq!(result.err(), Some(PamResultCode::PAM_IGNORE));
+        assert_eq!(
+            printer.text.lock().unwrap().as_slice(),
+            &[DAEMON_START_WAIT_MESSAGE.to_string()]
+        );
+        assert_eq!(
+            printer.error.lock().unwrap().as_slice(),
+            &["Himmelblau authentication service did not become available in time.".to_string()]
+        );
+    }
+
+    #[test]
+    fn test_wait_for_daemon_client_stops_on_non_retryable_error() {
+        let printer = RecordingPrinter::default();
+
+        let result: Result<(), PamResultCode> = wait_for_daemon_client_with(
+            "/run/himmelblaud/socket",
+            &printer,
+            Duration::from_secs(20),
+            Duration::from_millis(250),
+            |_| {
+                Err(IoError::new(
+                    ErrorKind::PermissionDenied,
+                    "permission denied",
+                ))
+            },
+            |_| panic!("sleep should not be called for non-retryable errors"),
+        );
+
+        assert_eq!(result.unwrap_err(), PamResultCode::PAM_IGNORE);
+        assert!(printer.text.lock().unwrap().is_empty());
+        assert_eq!(
+            printer.error.lock().unwrap().as_slice(),
+            &["Himmelblau authentication service is unavailable.".to_string()]
+        );
     }
 
     #[test]
