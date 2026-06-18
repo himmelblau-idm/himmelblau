@@ -4,22 +4,43 @@
 IFACE="${1:-}"
 ACTION="${2:-}"
 TAG="himmelblau-nm-dispatcher"
+SYSTEMD_RUN_DIR="${HIMMELBLAU_SYSTEMD_RUN_DIR:-/run/systemd/system}"
+LOCKFILE="${HIMMELBLAU_NM_LOCKDIR:-/run/himmelblau-nm-dispatcher.lock}"
+STAMP="${HIMMELBLAU_NM_STAMP:-/run/himmelblau-nm-dispatcher.last}"
+COOLDOWN_SECONDS=15
+STATUS_TIMEOUT_SECONDS=2
 
-case "$IFACE" in
-    ""|lo|docker*|virbr*|br-*|veth*|vnet*|tun*|tap*|wg*|ppp*)
-        exit 0
-        ;;
-esac
+log_skip() {
+    logger -t "$TAG" "Skipping $ACTION on ${IFACE:-none}: $1"
+}
+
+log_info() {
+    logger -t "$TAG" "$1"
+}
 
 case "$ACTION" in
     pre-down|down)
+        case "$IFACE" in
+            ""|lo|docker*|virbr*|br-*|veth*|vnet*|tun*|tap*|wg*|ppp*)
+                exit 0
+                ;;
+        esac
+        ;;
+    vpn-down)
+        ;;
+    connectivity-change)
+        case "${CONNECTIVITY_STATE:-unknown}" in
+            FULL|full)
+                exit 0
+                ;;
+        esac
         ;;
     *)
         exit 0
         ;;
 esac
 
-if [ ! -d /run/systemd/system ] || ! command -v systemctl >/dev/null 2>&1; then
+if [ ! -d "$SYSTEMD_RUN_DIR" ] || ! command -v systemctl >/dev/null 2>&1; then
     exit 0
 fi
 
@@ -27,12 +48,80 @@ state="$(systemctl is-active himmelblaud.service 2>/dev/null || true)"
 case "$state" in
     active|failed)
         ;;
+    activating|deactivating)
+        log_skip "himmelblaud.service is $state"
+        exit 0
+        ;;
     *)
+        log_skip "himmelblaud.service is $state"
         exit 0
         ;;
 esac
 
-logger -t "$TAG" "Network $IFACE going $ACTION - restarting himmelblaud.service"
-systemctl restart --no-block himmelblaud.service 2>&1 | logger -t "$TAG"
+restart_if_needed() {
+    now="$(date +%s 2>/dev/null || echo 0)"
+    last=0
+    if [ -r "$STAMP" ]; then
+        last="$(cat "$STAMP" 2>/dev/null || echo 0)"
+    fi
+    case "$last" in
+        *[!0-9]*|"")
+            last=0
+            ;;
+    esac
+
+    if [ "$now" -gt 0 ] && [ "$last" -gt 0 ]; then
+        elapsed=$((now - last))
+        if [ "$elapsed" -ge 0 ] && [ "$elapsed" -lt "$COOLDOWN_SECONDS" ]; then
+            log_skip "restart cooldown active (${elapsed}s)"
+            exit 0
+        fi
+    fi
+
+    if [ "$state" = "active" ] && [ "$ACTION" != "pre-down" ]; then
+        if command -v aad-tool >/dev/null 2>&1 && command -v timeout >/dev/null 2>&1; then
+            if timeout "$STATUS_TIMEOUT_SECONDS" aad-tool status 2>/dev/null | grep -qx "working!"; then
+                log_skip "himmelblaud.service is responsive"
+                exit 0
+            fi
+        fi
+    fi
+
+    if [ "$now" -gt 0 ]; then
+        printf '%s\n' "$now" >"$STAMP" 2>/dev/null || true
+    fi
+
+    logger -t "$TAG" "Network ${IFACE:-none} event $ACTION - restarting himmelblaud.service and himmelblaud-tasks.service"
+    systemctl restart --no-block himmelblaud.service himmelblaud-tasks.service 2>&1 | logger -t "$TAG"
+
+    exit 0
+}
+
+if [ -d "$LOCKFILE" ]; then
+    if rmdir "$LOCKFILE" 2>/dev/null; then
+        log_info "Removed stale dispatcher lock directory: $LOCKFILE"
+    else
+        log_skip "stale dispatcher lock directory is present"
+        exit 0
+    fi
+fi
+
+if command -v flock >/dev/null 2>&1; then
+    (
+        if ! exec 9>"$LOCKFILE"; then
+            log_skip "dispatcher lock file is unavailable"
+            exit 0
+        fi
+        if ! flock -n 9; then
+            log_skip "another dispatcher run is active"
+            exit 0
+        fi
+        restart_if_needed
+    )
+    exit $?
+fi
+
+log_info "flock unavailable; proceeding without dispatcher lock"
+restart_if_needed
 
 exit 0
