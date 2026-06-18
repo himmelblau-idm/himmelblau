@@ -980,7 +980,9 @@ def format_nix_default(param: Parameter) -> Optional[str]:
             return f'"{default}"'
 
     elif param_type == 'string_list':
-        return '[ ]'
+        items = [item.strip() for item in default.split(',') if item.strip()]
+        items_str = ' '.join(f'"{item}"' for item in items)
+        return f'[ {items_str} ]'
 
     elif param_type == 'enum':
         return f'"{default}"'
