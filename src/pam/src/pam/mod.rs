@@ -90,7 +90,9 @@ use tracing_subscriber::prelude::*;
 use std::thread;
 use std::time::Duration;
 
-use himmelblau_unix_common::auth::{authenticate, fido_auth, MessagePrinter};
+use himmelblau_unix_common::auth::{
+    authenticate_with_client, fido_auth, wait_for_daemon_client, MessagePrinter,
+};
 use himmelblau_unix_common::pam::Options;
 use std::sync::{Arc, Mutex};
 use tokio::runtime::Runtime;
@@ -441,6 +443,11 @@ impl PamHooks for PamKanidm {
         let set_authtok = opts.set_authtok;
         let keyring_secret = Arc::new(Mutex::new(authtok.clone()));
         let base_printer: Arc<dyn MessagePrinter> = Arc::new(PamConvMessagePrinter::new(conv));
+        let daemon_client =
+            match wait_for_daemon_client(cfg.get_socket_path().as_str(), base_printer.clone()) {
+                Ok(client) => client,
+                Err(code) => return code,
+            };
         let msg_printer: Arc<dyn MessagePrinter> = if set_authtok {
             Arc::new(KeyringCaptureMessagePrinter::new(
                 base_printer.clone(),
@@ -450,7 +457,15 @@ impl PamHooks for PamKanidm {
             base_printer
         };
 
-        let result = authenticate(authtok, cfg, &account_id, &service, opts, msg_printer);
+        let result = authenticate_with_client(
+            daemon_client,
+            authtok,
+            cfg,
+            &account_id,
+            &service,
+            opts,
+            msg_printer,
+        );
 
         if set_authtok && result == PamResultCode::PAM_SUCCESS {
             if let Ok(Some(secret)) = keyring_secret.lock().map(|s| s.clone()) {
