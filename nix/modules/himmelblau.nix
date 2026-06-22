@@ -237,7 +237,7 @@ in
             User = "root";
             ProtectSystem = "strict";
             ReadWritePaths = "/home /var/run/himmelblaud /tmp /etc/krb5.conf.d /etc /var/lib /var/cache/nss-himmelblau";
-            RestrictAddressFamilies = "AF_UNIX";
+            RestrictAddressFamilies = ["AF_UNIX" "AF_INET" "AF_INET6"];
           };
         };
       };
