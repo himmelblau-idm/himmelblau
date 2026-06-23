@@ -21,6 +21,7 @@ assets = [
   ["src/chrome/policies.json", "etc/opt/chrome/policies/managed/himmelblau.json", "644"],
   ["src/chrome/policies.json", "etc/chromium/policies/managed/himmelblau.json", "644"],
   ["src/firefox/policies.json", "usr/share/doc/himmelblau-sso-policies/firefox-policies.json.example", "644"],
+  ["src/thunderbird/policies.json", "usr/share/doc/himmelblau-sso-policies/thunderbird-policies.json.example", "644"],
 ]
 maintainer-scripts = "scripts"
 
@@ -30,6 +31,7 @@ assets = [
   { source = "src/chrome/policies.json", dest = "/etc/opt/chrome/policies/managed/himmelblau.json", mode = "644" },
   { source = "src/chrome/policies.json", dest = "/etc/chromium/policies/managed/himmelblau.json", mode = "644" },
   { source = "src/firefox/policies.json", dest = "/usr/share/doc/himmelblau-sso-policies/firefox-policies.json.example", mode = "644", doc = true },
+  { source = "src/thunderbird/policies.json", dest = "/usr/share/doc/himmelblau-sso-policies/thunderbird-policies.json.example", mode = "644", doc = true },
 ]
 post_install_script = "scripts/postinst"
 post_uninstall_script = "scripts/postrm"

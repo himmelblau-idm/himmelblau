@@ -4,6 +4,7 @@
     "path": "/usr/bin/linux-entra-sso",
     "type": "stdio",
     "allowed_extensions": [
-        "linux-entra-sso@example.com"
+        "linux-entra-sso@example.com",
+        "@linux-entra-sso.tb"
     ]
 }
