@@ -31,9 +31,9 @@ Do NOT wrap the entire output in triple backticks.
 
 The changelog MUST follow this structure:
 
-# What's Changed
+## What's Changed
 
-## Category Name
+### Category Name
 
 - Concise explanation of the change.
 - Describe the impact to users or administrators when applicable.
@@ -43,25 +43,25 @@ The changelog MUST follow this structure:
 - Mention security, authentication, networking, packaging, compatibility, or performance implications explicitly.
 - Mention issue numbers when discoverable.
 
-## Another Category
+### Another Category
 
 - Additional grouped changes.
 
-## Packaging / Build / CI
+### Packaging / Build / CI
 
 - Packaging improvements
 - Dependency changes
 - Build fixes
 - CI improvements
 
-## Documentation
+### Documentation
 
 - Documentation updates
 - Examples
 - Man page changes
 - Wiki improvements
 
-## Known Issues
+### Known Issues
 (Only include if applicable)
 
 - Describe remaining limitations or caveats.
