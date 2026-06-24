@@ -41,9 +41,9 @@ remove_firefox_policy() {
     fi
 }
 
-# Only run on purge or remove
+# Only run on Debian purge/remove or RPM erase ($1=0)
 case "$1" in
-    remove|purge)
+    remove|purge|0)
         # Remove Firefox policy
         remove_firefox_policy "/etc/firefox/policies/policies.json"
 
