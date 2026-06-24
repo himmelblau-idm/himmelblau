@@ -395,7 +395,11 @@ async fn qr_bluetooth_fido_auth(
     let mut device = match device {
         Some(d) => d,
         None => {
-            let d = CableQrCodeDevice::new_transient(QrCodeOperationHint::GetAssertionRequest);
+            let d = CableQrCodeDevice::new_transient(QrCodeOperationHint::GetAssertionRequest)
+                .map_err(|e| {
+                    error!("Failed to create QR/Bluetooth device: {:?}", e);
+                    PamResultCode::PAM_CRED_INSUFFICIENT
+                })?;
             let qr_url = d.qr_code.to_string();
             // Combine into single print_text to avoid GDM per-message delay.
             msg_printer.print_text(&format!("[QR_BT_LABEL] {}\n[QR_BT] {}", qr_prompt, qr_url));
@@ -409,24 +413,13 @@ async fn qr_bluetooth_fido_auth(
         PamResultCode::PAM_CRED_INSUFFICIENT
     })?;
 
-    // Build the WebAuthn clientDataJSON and hash it for the assertion request.
-    let challenge_str = json_to_string(&json!({
-        "type": "webauthn.get",
-        "challenge": URL_SAFE_NO_PAD.encode(&fido_challenge),
-        "origin": "https://login.microsoft.com"
-    }))
-    .map_err(|e| {
-        error!("{:?}", e);
-        PamResultCode::PAM_CRED_INSUFFICIENT
-    })?;
-
-    let chall_bytes = Sha256::digest(challenge_str.clone()).to_vec();
-
     // Empty allowList forces the phone to use a discoverable credential,
     // which includes userHandle (required by Entra to identify the user).
     let request = GetAssertionRequest {
         relying_party_id: "login.microsoft.com".to_string(),
-        hash: chall_bytes,
+        challenge: fido_challenge.as_bytes().to_vec(),
+        origin: "https://login.microsoft.com".to_string(),
+        cross_origin: None,
         allow: vec![],
         extensions: None,
         user_verification: CableUvReq::Preferred,
@@ -471,7 +464,7 @@ async fn qr_bluetooth_fido_auth(
 
     let json_response = json!({
         "id": URL_SAFE_NO_PAD.encode(&credential_id),
-        "clientDataJSON": URL_SAFE_NO_PAD.encode(&challenge_str),
+        "clientDataJSON": URL_SAFE_NO_PAD.encode(request.client_data_json()),
         "authenticatorData": URL_SAFE_NO_PAD.encode(&auth_data),
         "signature": URL_SAFE_NO_PAD.encode(signature),
         "userHandle": URL_SAFE_NO_PAD.encode(&user_handle),
@@ -505,7 +498,11 @@ pub fn fido_auth_with_qr_bluetooth(
     // (FIDO_INSERT + QR_BT_LABEL + QR_BT) in a single print_text call
     // from within fido_auth. This avoids concurrent PAM conversation
     // calls that block each other for ~2.5s each in GDM.
-    let cable_device = CableQrCodeDevice::new_transient(QrCodeOperationHint::GetAssertionRequest);
+    let cable_device = CableQrCodeDevice::new_transient(QrCodeOperationHint::GetAssertionRequest)
+        .map_err(|e| {
+        error!("Failed to create QR/Bluetooth device: {:?}", e);
+        PamResultCode::PAM_CRED_INSUFFICIENT
+    })?;
     let qr_url = cable_device.qr_code.to_string();
     let qr_suffix = format!("[QR_BT_LABEL] {}\n[QR_BT] {}", qr_prompt, qr_url);
 
