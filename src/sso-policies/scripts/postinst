@@ -5,8 +5,8 @@ set -e
 # Merges Firefox/Thunderbird extension configuration into existing policies without overwriting
 # (Chrome/Chromium use separate policy files per application, so no merging needed)
 
-FIREFOX_EXTENSION_URL="https://github.com/siemens/linux-entra-sso/releases/download/v1.8.0/linux_entra_sso-1.8.0.xpi"
-THUNDERBIRD_EXTENSION_URL="https://github.com/siemens/linux-entra-sso/releases/download/v1.8.0/linux_entra_sso-1.8.0.thunderbird.xpi"
+FIREFOX_EXTENSION_URL="https://github.com/siemens/linux-entra-sso/releases/download/v1.9.1/linux_entra_sso-1.9.1.xpi"
+THUNDERBIRD_EXTENSION_URL="https://github.com/siemens/linux-entra-sso/releases/download/v1.9.1/linux_entra_sso-1.9.1.thunderbird.xpi"
 
 # Function to merge a Mozilla extension into policies.json
 merge_mozilla_policy() {

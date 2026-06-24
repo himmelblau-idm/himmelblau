@@ -2,7 +2,7 @@
   "policies": {
     "Extensions": {
       "Install": [
-        "https://github.com/siemens/linux-entra-sso/releases/download/v1.8.0/linux_entra_sso-1.8.0.thunderbird.xpi"
+        "https://github.com/siemens/linux-entra-sso/releases/download/v1.9.1/linux_entra_sso-1.9.1.thunderbird.xpi"
       ]
     }
   }
