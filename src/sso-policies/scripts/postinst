@@ -8,10 +8,11 @@ set -e
 FIREFOX_EXTENSION_URL="https://github.com/siemens/linux-entra-sso/releases/download/v1.8.0/linux_entra_sso-1.8.0.xpi"
 THUNDERBIRD_EXTENSION_URL="https://github.com/siemens/linux-entra-sso/releases/download/v1.8.0/linux_entra_sso-1.8.0.thunderbird.xpi"
 
-# Function to merge Firefox extension into policies.json
+# Function to merge a Mozilla extension into policies.json
 merge_mozilla_policy() {
     POLICY_FILE="$1"
     EXTENSION_URL="$2"
+    APP_NAME="$3"
     POLICY_DIR=$(dirname "$POLICY_FILE")
 
     # Ensure directory exists
@@ -21,8 +22,8 @@ merge_mozilla_policy() {
         # Check if jq is available for proper JSON merging
         if command -v jq >/dev/null 2>&1; then
             # Check if the extension URL is already present
-            if jq -e ".policies.Extensions.Install[]? | select(. == \"$EXTENSION_URL\")" "$POLICY_FILE" >/dev/null 2>&1; then
-                echo "Firefox SSO extension already configured in $POLICY_FILE"
+            if jq -e --arg url "$EXTENSION_URL" '.policies.Extensions.Install[]? | select(. == $url)' "$POLICY_FILE" >/dev/null 2>&1; then
+                echo "$APP_NAME SSO extension already configured in $POLICY_FILE"
                 return 0
             fi
 
@@ -31,11 +32,11 @@ merge_mozilla_policy() {
             jq --arg url "$EXTENSION_URL" '
                 .policies.Extensions.Install = ((.policies.Extensions.Install // []) + [$url] | unique)
             ' "$POLICY_FILE" > "$TEMP_FILE" && mv "$TEMP_FILE" "$POLICY_FILE"
-            echo "Merged Firefox SSO extension into $POLICY_FILE"
+            echo "Merged $APP_NAME SSO extension into $POLICY_FILE"
         else
             # Without jq, check if our extension is already there
             if grep -q "$EXTENSION_URL" "$POLICY_FILE" 2>/dev/null; then
-                echo "Firefox SSO extension already configured in $POLICY_FILE"
+                echo "$APP_NAME SSO extension already configured in $POLICY_FILE"
                 return 0
             fi
             echo "Warning: jq not found. Cannot safely merge into existing $POLICY_FILE"
@@ -55,12 +56,12 @@ merge_mozilla_policy() {
   }
 }
 EOF
-        echo "Created Firefox SSO policy at $POLICY_FILE"
+        echo "Created $APP_NAME SSO policy at $POLICY_FILE"
     fi
 }
 
-# Merge Firefox policy
-merge_mozilla_policy "/etc/firefox/policies/policies.json" "$FIREFOX_EXTENSION_URL"
-merge_mozilla_policy "/etc/thunderbird/policies/policies.json" "$THUNDERBIRD_EXTENSION_URL"
+# Merge Firefox and Thunderbird policies
+merge_mozilla_policy "/etc/firefox/policies/policies.json" "$FIREFOX_EXTENSION_URL" "Firefox"
+merge_mozilla_policy "/etc/thunderbird/policies/policies.json" "$THUNDERBIRD_EXTENSION_URL" "Thunderbird"
 
 echo "Himmelblau SSO Mozilla policy configuration complete"

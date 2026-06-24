@@ -39,6 +39,10 @@ remove_mozilla_policy() {
                 rm -f "$POLICY_FILE"
                 echo "Removed empty policy file $POLICY_FILE"
             fi
+        else
+            echo "Warning: jq not found. Cannot safely remove SSO extension from $POLICY_FILE"
+            echo "Please manually remove the extension URL from policies.Extensions.Install:"
+            echo "  $EXTENSION_URL"
         fi
     fi
 }
