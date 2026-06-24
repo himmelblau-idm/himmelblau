@@ -13,14 +13,17 @@ Usage:
 """
 
 import argparse
+import importlib.util
 import json
 import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import urllib.request
 from dataclasses import dataclass, field
 from pathlib import Path
+from types import ModuleType
 from typing import Optional, Set
 
 # Configuration constants
@@ -30,6 +33,8 @@ TIMEOUT_CARGO_UPDATE_SECONDS = 120  # 2 minutes for cargo update
 TIMEOUT_BUILD_SECONDS = 600  # 10 minutes for cargo build
 TIMEOUT_MAKE_VET_SECONDS = 600  # 10 minutes for make vet
 MAX_BUILD_FIX_ATTEMPTS = 3
+LINUX_ENTRA_SSO_UPDATER_PATH = ".github/scripts/update_linux_entra_sso.py"
+LINUX_ENTRA_SSO_UPDATER_REF = "origin/main"
 
 # Git status codes that indicate unresolved conflicts
 CONFLICT_STATUS_CODES = {"UU", "AA", "DD"}
@@ -974,6 +979,69 @@ class BackportManager:
         self.versions = versions
         self.repository = repository
         self.dry_run = dry_run
+        self._linux_entra_sso_updater: Optional[ModuleType] = None
+        self._linux_entra_sso_updater_tempdir: Optional[tempfile.TemporaryDirectory] = None
+
+    def _load_linux_entra_sso_updater_from_main(self) -> ModuleType:
+        """Load the linux-entra-sso updater from origin/main without checking it out."""
+        if self._linux_entra_sso_updater is not None:
+            return self._linux_entra_sso_updater
+
+        script_ref = f"{LINUX_ENTRA_SSO_UPDATER_REF}:{LINUX_ENTRA_SSO_UPDATER_PATH}"
+        result = self.git.run("show", script_ref)
+        tempdir = tempfile.TemporaryDirectory(prefix="himmelblau-linux-entra-sso-")
+        script_path = Path(tempdir.name) / "update_linux_entra_sso.py"
+        script_path.write_text(result.stdout, encoding="utf-8")
+
+        module_name = f"_himmelblau_update_linux_entra_sso_{id(self)}"
+        spec = importlib.util.spec_from_file_location(module_name, script_path)
+        if spec is None or spec.loader is None:
+            tempdir.cleanup()
+            raise RuntimeError(f"Could not load {script_ref}")
+
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[module_name] = module
+        try:
+            spec.loader.exec_module(module)
+        except Exception:
+            sys.modules.pop(module_name, None)
+            tempdir.cleanup()
+            raise
+
+        self._linux_entra_sso_updater = module
+        self._linux_entra_sso_updater_tempdir = tempdir
+        return module
+
+    def update_linux_entra_sso_extensions(self) -> Optional[str]:
+        """Update pinned linux-entra-sso extension URLs using the updater from main."""
+        print_color("\nUpdating linux-entra-sso extension URLs...", "blue")
+
+        try:
+            updater = self._load_linux_entra_sso_updater_from_main()
+            release = updater.fetch_latest_release()
+            changed = updater.update_tracked_urls(self.repo_root, release)
+            updater.validate_tracked_urls(self.repo_root, release)
+
+            if not changed:
+                print_color(f"  linux-entra-sso extension URLs already match {release.version}", "green")
+                return None
+
+            files_to_stage = [str(path) for path in changed]
+            self.git.add(*files_to_stage)
+            if self.git.has_staged_changes(*files_to_stage):
+                self.git.commit(
+                    f"fix(sso): update Entra SSO extension to {release.version}\n\n"
+                    f"Update Firefox and Thunderbird policy URLs to linux-entra-sso {release.version}.",
+                    signoff=True,
+                )
+                print_color(f"  Updated linux-entra-sso extension URLs to {release.version}", "green")
+                return str(release.version)
+
+            print_color("  No staged linux-entra-sso URL changes needed", "green")
+            return None
+        except Exception as e:
+            print_color(f"  Warning: Could not update linux-entra-sso extension URLs: {e}", "yellow")
+            return None
 
     def update_make_vet_from_main(self, target_branch: str) -> bool:
         """Update make vet target and cargo_vet_review.py from main branch."""
@@ -1302,6 +1370,7 @@ class BackportManager:
         target_version: SupportedVersion,
         commits: list[Commit],
         dependabot_prs: Optional[list[DependabotPR]] = None,
+        linux_entra_sso_version: Optional[str] = None,
     ) -> bool:
         """Create a PR for the backport."""
         print_color(f"\nCreating PR for {branch_name}...", "blue")
@@ -1330,11 +1399,20 @@ class BackportManager:
 
 """
 
+        extension_section = ""
+        if linux_entra_sso_version:
+            extension_section = f"""
+### Linux Entra SSO Extension Update Included
+- Updated pinned browser extension URLs to linux-entra-sso {linux_entra_sso_version}
+
+"""
+
         body = f"""## Summary
 Backport commits to {target_version.branch}:
 
 {commit_list}
 {dependabot_section}
+{extension_section}
 ## Test plan
 - [ ] Build succeeds
 - [ ] `make vet` passes
@@ -1353,6 +1431,8 @@ Generated with [Claude Code](https://claude.com/claude-code)
                 title_parts.append(f"{len(commits)} commits")
         if dependabot_prs:
             title_parts.append(f"{len(dependabot_prs)} dependency update(s)")
+        if linux_entra_sso_version:
+            title_parts.append(f"linux-entra-sso {linux_entra_sso_version}")
 
         title = f"Backport to {target_version.version}: " + " + ".join(title_parts)
 
@@ -1497,6 +1577,11 @@ Examples:
         "--skip-dependabot",
         action="store_true",
         help="Skip cherry-picking open dependabot PRs",
+    )
+    parser.add_argument(
+        "--skip-linux-entra-sso",
+        action="store_true",
+        help="Skip updating pinned linux-entra-sso browser extension URLs",
     )
     parser.add_argument(
         "--branch",
@@ -1890,6 +1975,12 @@ Examples:
         if not all_success:
             print_color(f"\nSome cherry-picks failed for {version_str}", "yellow")
 
+        linux_entra_sso_version = None
+        if not args.skip_linux_entra_sso:
+            linux_entra_sso_version = manager.update_linux_entra_sso_extensions()
+        else:
+            print_color("\nSkipping linux-entra-sso extension URL update (--skip-linux-entra-sso)", "yellow")
+
         # Try to build
         build_success, build_error = manager.try_build()
         max_fix_attempts = MAX_BUILD_FIX_ATTEMPTS
@@ -1950,7 +2041,9 @@ Examples:
                 # May fail if nothing to commit
                 pass
 
-        successful_branches.append((branch_name, target, commits_for_version, cherry_picked_dependabot_prs))
+        successful_branches.append(
+            (branch_name, target, commits_for_version, cherry_picked_dependabot_prs, linux_entra_sso_version)
+        )
         print_color(f"\nBackport branch {branch_name} ready", "green")
 
     # Return to original branch
@@ -1970,8 +2063,14 @@ Examples:
         print_color("Creating Pull Requests", "bold")
         print_color(f"{'=' * 70}", "cyan")
 
-        for branch_name, target, commits_list, dependabot_prs_list in successful_branches:
-            manager.create_pr(branch_name, target, [c for c, _info in commits_list], dependabot_prs_list)
+        for branch_name, target, commits_list, dependabot_prs_list, linux_entra_sso_version in successful_branches:
+            manager.create_pr(
+                branch_name,
+                target,
+                [c for c, _info in commits_list],
+                dependabot_prs_list,
+                linux_entra_sso_version,
+            )
 
     # Summary
     print()
@@ -1984,9 +2083,10 @@ Examples:
 
     if successful_branches:
         print("\n  Created branches:")
-        for branch_name, target, commits_list, dependabot_list in successful_branches:
+        for branch_name, target, commits_list, dependabot_list, linux_entra_sso_version in successful_branches:
             deps_info = f" (+{len(dependabot_list)} dependabot)" if dependabot_list else ""
-            print(f"    - {branch_name} -> {target.branch}{deps_info}")
+            sso_info = f" (+linux-entra-sso {linux_entra_sso_version})" if linux_entra_sso_version else ""
+            print(f"    - {branch_name} -> {target.branch}{deps_info}{sso_info}")
 
 
 if __name__ == "__main__":

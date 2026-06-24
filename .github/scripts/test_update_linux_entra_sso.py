@@ -119,23 +119,23 @@ class LinuxEntraSsoUpdaterTests(unittest.TestCase):
 
     def test_normalizes_drift_without_newer_version(self) -> None:
         self.repo.write_tracked(
-            "old.txt",
+            "src/sso-policies/scripts/postinst",
             '"https://github.com/siemens/linux-entra-sso/releases/download/v1.9.9/linux_entra_sso-1.9.9.xpi"',
         )
         self.repo.write_tracked(
-            "new.txt",
+            "src/sso-policies/src/firefox/policies.json",
             '"https://github.com/siemens/linux-entra-sso/releases/download/v1.10.0/linux_entra_sso-1.10.0.xpi"',
         )
         release = updater.release_from_payload(release_payload("1.10.0"))
 
         changed = updater.update_tracked_urls(self.repo.root, release)
 
-        self.assertEqual(changed, [Path("old.txt")])
+        self.assertEqual(changed, [Path("src/sso-policies/scripts/postinst")])
         updater.validate_tracked_urls(self.repo.root, release)
 
     def test_refuses_to_downgrade(self) -> None:
         self.repo.write_tracked(
-            "current.txt",
+            "src/sso-policies/src/firefox/policies.json",
             '"https://github.com/siemens/linux-entra-sso/releases/download/v1.10.0/linux_entra_sso-1.10.0.xpi"',
         )
         release = updater.release_from_payload(release_payload("1.9.9"))
@@ -145,7 +145,7 @@ class LinuxEntraSsoUpdaterTests(unittest.TestCase):
 
     def test_ignores_untracked_files(self) -> None:
         self.repo.write_tracked(
-            "current.txt",
+            "src/sso-policies/src/firefox/policies.json",
             '"https://github.com/siemens/linux-entra-sso/releases/download/v1.9.9/linux_entra_sso-1.9.9.xpi"',
         )
         untracked = self.repo.root / "generated.spec"
@@ -158,6 +158,23 @@ class LinuxEntraSsoUpdaterTests(unittest.TestCase):
         updater.update_tracked_urls(self.repo.root, release)
 
         self.assertIn("v1.8.0", untracked.read_text(encoding="utf-8"))
+
+    def test_ignores_tracked_test_fixture_urls(self) -> None:
+        self.repo.write_tracked(
+            "src/sso-policies/src/firefox/policies.json",
+            '"https://github.com/siemens/linux-entra-sso/releases/download/v1.9.9/linux_entra_sso-1.9.9.xpi"',
+        )
+        test_fixture = self.repo.write_tracked(
+            ".github/scripts/test_update_linux_entra_sso.py",
+            '"https://github.com/siemens/linux-entra-sso/releases/download/v1.10.0/linux_entra_sso-1.10.0.xpi"',
+        )
+        release = updater.release_from_payload(release_payload("1.9.9"))
+
+        changed = updater.update_tracked_urls(self.repo.root, release)
+        updater.validate_tracked_urls(self.repo.root, release)
+
+        self.assertEqual(changed, [])
+        self.assertIn("v1.10.0", test_fixture.read_text(encoding="utf-8"))
 
     def test_skips_tracked_directory_paths(self) -> None:
         self.repo.write_tracked(
@@ -173,8 +190,9 @@ class LinuxEntraSsoUpdaterTests(unittest.TestCase):
             "git_ls_files",
             return_value=[self.repo.root / "current.txt", tracked_dir],
         ):
-            changed = updater.update_tracked_urls(self.repo.root, release)
-            updater.validate_tracked_urls(self.repo.root, release)
+            candidate_paths = ("current.txt", "docs-xml")
+            changed = updater.update_tracked_urls(self.repo.root, release, candidate_paths)
+            updater.validate_tracked_urls(self.repo.root, release, candidate_paths)
 
         self.assertEqual(changed, [Path("current.txt")])
 

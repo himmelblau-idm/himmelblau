@@ -25,6 +25,13 @@ EXTENSION_URL_RE = re.compile(
     r"v?(?P<release>[0-9]+(?:\.[0-9]+){2})/"
     r"linux_entra_sso-(?P<asset>[0-9]+(?:\.[0-9]+){2})(?P<thunderbird>\.thunderbird)?\.xpi"
 )
+DEFAULT_EXTENSION_URL_PATHS = (
+    "nix/modules/himmelblau.nix",
+    "src/sso-policies/scripts/postinst",
+    "src/sso-policies/scripts/postrm",
+    "src/sso-policies/src/firefox/policies.json",
+    "src/sso-policies/src/thunderbird/policies.json",
+)
 
 
 @dataclass(frozen=True, order=True)
@@ -125,6 +132,18 @@ def find_extension_urls(text: str) -> list[re.Match[str]]:
     return list(EXTENSION_URL_RE.finditer(text))
 
 
+def tracked_extension_url_files(
+    repo_root: Path,
+    candidate_paths: tuple[str, ...] = DEFAULT_EXTENSION_URL_PATHS,
+) -> list[Path]:
+    tracked = {
+        path.relative_to(repo_root).as_posix()
+        for path in git_ls_files(repo_root)
+        if path.is_relative_to(repo_root)
+    }
+    return [repo_root / path for path in candidate_paths if path in tracked]
+
+
 def highest_tracked_version(files: list[Path]) -> Version | None:
     highest: Version | None = None
     for path in files:
@@ -144,8 +163,12 @@ def highest_tracked_version(files: list[Path]) -> Version | None:
     return highest
 
 
-def update_tracked_urls(repo_root: Path, release: ReleaseInfo) -> list[Path]:
-    tracked_files = git_ls_files(repo_root)
+def update_tracked_urls(
+    repo_root: Path,
+    release: ReleaseInfo,
+    candidate_paths: tuple[str, ...] = DEFAULT_EXTENSION_URL_PATHS,
+) -> list[Path]:
+    tracked_files = tracked_extension_url_files(repo_root, candidate_paths)
     current_version = highest_tracked_version(tracked_files)
     if current_version is None:
         raise RuntimeError("No tracked linux-entra-sso extension URLs found")
@@ -174,10 +197,14 @@ def update_tracked_urls(repo_root: Path, release: ReleaseInfo) -> list[Path]:
     return changed
 
 
-def validate_tracked_urls(repo_root: Path, release: ReleaseInfo) -> None:
+def validate_tracked_urls(
+    repo_root: Path,
+    release: ReleaseInfo,
+    candidate_paths: tuple[str, ...] = DEFAULT_EXTENSION_URL_PATHS,
+) -> None:
     expected = {release.firefox_url, release.thunderbird_url}
     unexpected: list[str] = []
-    for path in git_ls_files(repo_root):
+    for path in tracked_extension_url_files(repo_root, candidate_paths):
         if not path.is_file():
             continue
         try:
