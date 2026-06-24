@@ -43,9 +43,9 @@ remove_mozilla_policy() {
     fi
 }
 
-# Only run on purge or remove
+# Only run on Debian purge/remove or RPM erase ($1=0)
 case "$1" in
-    remove|purge)
+    remove|purge|0)
         # Remove Firefox and Thunderbird policies
         remove_mozilla_policy "/etc/firefox/policies/policies.json" "$FIREFOX_EXTENSION_URL"
         remove_mozilla_policy "/etc/thunderbird/policies/policies.json" "$THUNDERBIRD_EXTENSION_URL"
