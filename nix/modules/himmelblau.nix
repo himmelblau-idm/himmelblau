@@ -131,7 +131,7 @@ in
     programs.firefox = {
       policies = {
         Extensions.Install = [
-          "https://github.com/siemens/linux-entra-sso/releases/download/v1.7.1/linux_entra_sso-1.7.1.xpi"
+          "https://github.com/siemens/linux-entra-sso/releases/download/v1.9.1/linux_entra_sso-1.9.1.xpi"
         ];
       };
       nativeMessagingHosts.packages = [ cfg.ssoPackage ];
