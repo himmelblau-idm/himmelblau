@@ -52,7 +52,10 @@ jobs:
         fi
         if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
           git fetch --tags --force
-          git checkout --detach "$TAG"
+          if ! git rev-parse -q --verify "refs/tags/$TAG^{commit}" >/dev/null; then
+            echo "Stable tag does not exist: $TAG" >&2
+            exit 1
+          fi
         fi
         echo "stable=true" >> "$GITHUB_OUTPUT"
         echo "tag=$TAG" >> "$GITHUB_OUTPUT"
