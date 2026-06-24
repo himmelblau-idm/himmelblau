@@ -5,8 +5,8 @@ set -e
 # Removes Firefox/Thunderbird extension configuration that was merged during install
 # (Chrome/Chromium policy files are handled by package manager directly)
 
-FIREFOX_EXTENSION_URL="https://github.com/siemens/linux-entra-sso/releases/download/v1.8.0/linux_entra_sso-1.8.0.xpi"
-THUNDERBIRD_EXTENSION_URL="https://github.com/siemens/linux-entra-sso/releases/download/v1.8.0/linux_entra_sso-1.8.0.thunderbird.xpi"
+FIREFOX_EXTENSION_URL="https://github.com/siemens/linux-entra-sso/releases/download/v1.9.1/linux_entra_sso-1.9.1.xpi"
+THUNDERBIRD_EXTENSION_URL="https://github.com/siemens/linux-entra-sso/releases/download/v1.9.1/linux_entra_sso-1.9.1.thunderbird.xpi"
 
 # Function to remove a Mozilla extension from policies.json
 remove_mozilla_policy() {
