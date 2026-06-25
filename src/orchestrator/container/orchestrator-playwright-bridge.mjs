@@ -646,9 +646,79 @@ async function handleExtract(page, source) {
     value = page.url();
   } else if (source === "browser:title") {
     value = await page.title();
+  } else if (source.startsWith("browser:page:")) {
+    value = await extractPageValue(page, source);
   }
 
   return { ok: true, value: value === undefined ? null : value };
+}
+
+function parsePageValueSource(source) {
+  const body = source.slice("browser:page:".length);
+  for (const read of ["text", "value", "html"]) {
+    const suffix = `:${read}`;
+    if (body.endsWith(suffix)) {
+      const selector = body.slice(0, -suffix.length);
+      return selector.length > 0 ? { selector, read, name: null } : null;
+    }
+  }
+
+  for (const read of ["attr", "prop"]) {
+    const marker = `:${read}:`;
+    const markerIndex = body.lastIndexOf(marker);
+    if (markerIndex > 0) {
+      const selector = body.slice(0, markerIndex);
+      const name = body.slice(markerIndex + marker.length);
+      return selector.length > 0 && name.length > 0 ? { selector, read, name } : null;
+    }
+  }
+
+  return null;
+}
+
+async function extractPageValue(page, source) {
+  const parsed = parsePageValueSource(source);
+  if (!parsed) {
+    return null;
+  }
+
+  return await page.evaluate(({ selector, read, name }) => {
+    const element = document.querySelector(selector);
+    if (!element) {
+      return null;
+    }
+
+    const scalar = (value) => {
+      if (value === null || value === undefined) {
+        return null;
+      }
+      if (["string", "number", "boolean"].includes(typeof value)) {
+        return String(value);
+      }
+      return null;
+    };
+
+    if (read === "text") {
+      return scalar(element.textContent);
+    }
+    if (read === "html") {
+      return scalar(element.innerHTML);
+    }
+    if (read === "value") {
+      return "value" in element ? scalar(element.value) : null;
+    }
+    if (read === "attr") {
+      if (name.toLowerCase() === "href" && element instanceof HTMLAnchorElement) {
+        return scalar(element.href);
+      }
+      return scalar(element.getAttribute(name));
+    }
+    if (read === "prop") {
+      return scalar(element[name]);
+    }
+
+    return null;
+  }, parsed);
 }
 
 async function handleSuccess(page, success) {

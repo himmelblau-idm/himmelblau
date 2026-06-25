@@ -499,28 +499,29 @@ impl FlowExecutor {
         session: &Arc<Session>,
         prompt: Option<String>,
     ) -> Option<String> {
-        const BROWSER_URL_PLACEHOLDER: &str = "{{browser:url}}";
-
         let mut resolved = prompt?;
-        if !resolved.contains(BROWSER_URL_PLACEHOLDER) {
+        let placeholders = prompt_placeholders(&resolved);
+        if placeholders.is_empty() {
             return Some(resolved);
         }
 
-        match self.extract_value(session, "browser:url").await {
-            Ok(Some(browser_url)) => {
-                resolved = resolved.replace(BROWSER_URL_PLACEHOLDER, &browser_url);
-            }
-            Ok(None) => {}
-            Err(error) => {
-                session
-                    .log(
-                        LogLevel::Warn,
-                        format!(
-                            "Failed resolving required input prompt placeholder '{{browser:url}}': {}",
-                            error
-                        ),
-                    )
-                    .await;
+        for placeholder in placeholders {
+            match self.extract_value(session, &placeholder.source).await {
+                Ok(Some(value)) => {
+                    resolved = resolved.replace(&placeholder.token, &value);
+                }
+                Ok(None) => {}
+                Err(error) => {
+                    session
+                        .log(
+                            LogLevel::Warn,
+                            format!(
+                                "Failed resolving required input prompt placeholder '{}': {}",
+                                placeholder.token, error
+                            ),
+                        )
+                        .await;
+                }
             }
         }
 
@@ -910,6 +911,39 @@ fn redact_url_parameters(url: &str) -> String {
     }
 }
 
+#[derive(Debug, PartialEq, Eq)]
+struct PromptPlaceholder {
+    token: String,
+    source: String,
+}
+
+fn prompt_placeholders(prompt: &str) -> Vec<PromptPlaceholder> {
+    let mut placeholders = Vec::new();
+    let mut cursor = 0;
+
+    while let Some(start_offset) = prompt[cursor..].find("{{") {
+        let start = cursor + start_offset;
+        let value_start = start + 2;
+        let Some(end_offset) = prompt[value_start..].find("}}") else {
+            break;
+        };
+        let end = value_start + end_offset;
+        let token_end = end + 2;
+        let source = prompt[value_start..end].trim();
+
+        if !source.is_empty() {
+            placeholders.push(PromptPlaceholder {
+                token: prompt[start..token_end].to_string(),
+                source: source.to_string(),
+            });
+        }
+
+        cursor = token_end;
+    }
+
+    placeholders
+}
+
 async fn sensitive_input_names(session: &Arc<Session>) -> HashSet<String> {
     let definition = session.definition.read().await;
     definition
@@ -980,4 +1014,44 @@ fn branches_reference_input(step: &ProviderStep, input_name: &str) -> bool {
         }
         BranchCondition::Always => false,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn prompt_placeholders_include_existing_browser_url_source() {
+        assert_eq!(
+            prompt_placeholders("Use {{browser:url}}"),
+            vec![PromptPlaceholder {
+                token: "{{browser:url}}".to_string(),
+                source: "browser:url".to_string(),
+            }]
+        );
+    }
+
+    #[test]
+    fn prompt_placeholders_include_generic_page_sources() {
+        assert_eq!(
+            prompt_placeholders(
+                "Manual link: {{browser:page:a#mode-manual:attr:href}}; title={{ browser:title }}"
+            ),
+            vec![
+                PromptPlaceholder {
+                    token: "{{browser:page:a#mode-manual:attr:href}}".to_string(),
+                    source: "browser:page:a#mode-manual:attr:href".to_string(),
+                },
+                PromptPlaceholder {
+                    token: "{{ browser:title }}".to_string(),
+                    source: "browser:title".to_string(),
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn prompt_placeholders_ignore_empty_and_unclosed_tokens() {
+        assert_eq!(prompt_placeholders("{{}} {{   }} {{browser:url"), vec![]);
+    }
 }
