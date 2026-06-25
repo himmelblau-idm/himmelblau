@@ -86,7 +86,7 @@
         {
           "name": "totp_setup_code",
           "type": "otp",
-          "prompt": "Open your authenticator app and finish TOTP setup using this link:\n{{browser:url}}\nThen enter the generated code.",
+          "prompt": "[TOTP_QR] {{browser:totp-uri:input#totpSecret}}\n{{browser:page:ol#kc-totp-settings:text}}",
           "optional": false
         }
       ],
@@ -176,13 +176,13 @@
         {
           "name": "new_password",
           "type": "password",
-          "prompt": "New password",
+          "prompt": "{{browser:page:span.kc-feedback-text:text}}\nNew password",
           "optional": false
         },
         {
           "name": "confirm_password",
           "type": "password",
-          "prompt": "Confirm password",
+          "prompt": "{{browser:page:span.kc-feedback-text:text}}\nConfirm password",
           "optional": false
         }
       ],
@@ -232,19 +232,19 @@
         {
           "name": "email",
           "type": "text",
-          "prompt": "Email",
+          "prompt": "{{browser:page:#kc-page-title:text}}\nEmail",
           "optional": false
         },
         {
           "name": "first_name",
           "type": "text",
-          "prompt": "First name",
+          "prompt": "{{browser:page:#kc-page-title:text}}\nFirst name",
           "optional": false
         },
         {
           "name": "last_name",
           "type": "text",
-          "prompt": "Last name",
+          "prompt": "{{browser:page:#kc-page-title:text}}\nLast name",
           "optional": false
         }
       ],

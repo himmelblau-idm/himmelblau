@@ -19,6 +19,7 @@ const FIDO_TOUCH_PREFIX = "[FIDO_TOUCH] ";
 // Must match the prefixes used in src/common/src/auth.rs qr_bluetooth_fido_auth()
 const QR_BT_PREFIX = "[QR_BT] ";
 const QR_BT_LABEL_PREFIX = "[QR_BT_LABEL] ";
+const TOTP_QR_PREFIX = "[TOTP_QR] ";
 
 // Maximum URL length for QR code generation (longer URLs create denser, harder to scan codes)
 const MAX_URL_LENGTH = 500;
@@ -199,12 +200,25 @@ export default class QrGreeterExtension extends Extension {
                     line.startsWith(FIDO_INSERT_PREFIX) ||
                     line.startsWith(FIDO_TOUCH_PREFIX) ||
                     line.startsWith(QR_BT_PREFIX) ||
-                    line.startsWith(QR_BT_LABEL_PREFIX)
+                    line.startsWith(QR_BT_LABEL_PREFIX) ||
+                    line.startsWith(TOTP_QR_PREFIX)
                 );
                 if (hasTaggedLine) {
+                    const displayLines = [];
                     for (const line of lines) {
-                        if (line.length > 0)
+                        if (line.startsWith(FIDO_INSERT_PREFIX) ||
+                            line.startsWith(FIDO_TOUCH_PREFIX) ||
+                            line.startsWith(QR_BT_PREFIX) ||
+                            line.startsWith(QR_BT_LABEL_PREFIX) ||
+                            line.startsWith(TOTP_QR_PREFIX)) {
                             this.setMessage(line, styleClass);
+                        } else {
+                            displayLines.push(line);
+                        }
+                    }
+                    const displayMessage = displayLines.join("\n").trim();
+                    if (displayMessage.length > 0) {
+                        origSetMessage.call(this, displayMessage, styleClass);
                     }
                     return;
                 }
@@ -213,6 +227,7 @@ export default class QrGreeterExtension extends Extension {
             let displayMessage = message;
             const isQrBtLabel = message && message.startsWith(QR_BT_LABEL_PREFIX);
             const isQrBt = message && message.startsWith(QR_BT_PREFIX);
+            const isTotpQr = message && message.startsWith(TOTP_QR_PREFIX);
             if (isQrBtLabel) {
                 this._qrBtLabel = message.substring(QR_BT_LABEL_PREFIX.length);
                 return;
@@ -220,6 +235,8 @@ export default class QrGreeterExtension extends Extension {
                 // Don't overwrite the FIDO prompt in the main message area;
                 // the QR code and its label are rendered separately below.
                 displayMessage = this._lastFidoMessage || "";
+            } else if (isTotpQr) {
+                displayMessage = "";
             } else if (message && message.startsWith(FIDO_INSERT_PREFIX)) {
                 displayMessage = message.substring(FIDO_INSERT_PREFIX.length);
                 this._lastFidoMessage = displayMessage;
@@ -377,10 +394,13 @@ export default class QrGreeterExtension extends Extension {
                 }
             }
 
-            const totpMatch = message ? message.startsWith("otpauth://") : null;
+            const totpMessage = isTotpQr
+                ? message.substring(TOTP_QR_PREFIX.length).trim()
+                : message;
+            const totpMatch = totpMessage ? totpMessage.startsWith("otpauth://") : null;
             if (totpMatch) {
                 try {
-                    const qr = QrCode.encodeText(message, Ecc.MEDIUM);
+                    const qr = QrCode.encodeText(totpMessage, Ecc.MEDIUM);
                     const svgContent = qrCodeToSvg(qr, 2, '#ffffff', '#000000');
                     const tempFilePath = writeSvgToTempFile(svgContent);
                     this._totpTempFile = tempFilePath; // Track for cleanup on this instance
@@ -388,7 +408,7 @@ export default class QrGreeterExtension extends Extension {
                     const fileUri = `file://${tempFilePath}`;
                     this._qrContainer.set_style(`background-image: url('${fileUri}'); background-size: contain; background-repeat: no-repeat; background-position: center;`);
                     this._qrContainer.show();
-                    this._qrLabel.set_text("Scan with your phone to set up Hello TOTP");
+                    this._qrLabel.set_text(isTotpQr ? "Scan with your phone to set up TOTP" : "Scan with your phone to set up Hello TOTP");
                     this._qrLabel.show();
                     // Replace the verbose message with a simple instruction
                     if (this._message) {
