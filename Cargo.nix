@@ -8730,23 +8730,17 @@ rec {
         ];
         dependencies = [
           {
-            name = "tracing";
-            packageId = "tracing";
+            name = "murmur3";
+            packageId = "murmur3";
+          }
+          {
+            name = "unicode-normalization";
+            packageId = "unicode-normalization";
           }
           {
             name = "uuid";
             packageId = "uuid";
             features = [ "v4" "v5" ];
-          }
-        ];
-        buildDependencies = [
-          {
-            name = "bindgen";
-            packageId = "bindgen";
-          }
-          {
-            name = "cc";
-            packageId = "cc";
           }
         ];
 
@@ -10813,6 +10807,16 @@ rec {
         ];
         features = {
         };
+      };
+      "murmur3" = rec {
+        crateName = "murmur3";
+        version = "0.5.2";
+        edition = "2018";
+        sha256 = "0jvi9hsppwln53xvcvad79zm0jx2qb531q7qnqlhkfijy4f12llj";
+        authors = [
+          "Stu Small <stuart.alan.small@gmail.com>"
+        ];
+
       };
       "new_debug_unreachable" = rec {
         crateName = "new_debug_unreachable";
@@ -17671,6 +17675,46 @@ rec {
         };
         resolvedDefaultFeatures = [ "alloc" "zerovec" ];
       };
+      "tinyvec" = rec {
+        crateName = "tinyvec";
+        version = "1.11.0";
+        edition = "2018";
+        sha256 = "1wvycrghzmaysnw34kzwnf0mfx6r75045s24r214wnnjadqfcq9y";
+        authors = [
+          "Lokathor <zefria@gmail.com>"
+        ];
+        dependencies = [
+          {
+            name = "tinyvec_macros";
+            packageId = "tinyvec_macros";
+            optional = true;
+          }
+        ];
+        features = {
+          "alloc" = [ "tinyvec_macros" ];
+          "arbitrary" = [ "dep:arbitrary" ];
+          "borsh" = [ "dep:borsh" ];
+          "defmt" = [ "dep:defmt" ];
+          "generic-array" = [ "dep:generic-array" ];
+          "latest_stable_rust" = [ "rustc_1_61" ];
+          "real_blackbox" = [ "criterion/real_blackbox" ];
+          "rustc_1_61" = [ "rustc_1_57" ];
+          "serde" = [ "dep:serde_core" ];
+          "std" = [ "alloc" ];
+          "tinyvec_macros" = [ "dep:tinyvec_macros" ];
+        };
+        resolvedDefaultFeatures = [ "alloc" "default" "tinyvec_macros" ];
+      };
+      "tinyvec_macros" = rec {
+        crateName = "tinyvec_macros";
+        version = "0.1.1";
+        edition = "2018";
+        sha256 = "081gag86208sc3y6sdkshgw3vysm5d34p431dzw0bshz66ncng0z";
+        authors = [
+          "Soveu <marx.tomasz@gmail.com>"
+        ];
+
+      };
       "tls_codec" = rec {
         crateName = "tls_codec";
         version = "0.4.2";
@@ -19326,6 +19370,28 @@ rec {
           "David Tolnay <dtolnay@gmail.com>"
         ];
 
+      };
+      "unicode-normalization" = rec {
+        crateName = "unicode-normalization";
+        version = "0.1.25";
+        edition = "2018";
+        sha256 = "1s76dcrxw7vs32yhpi0p074apdc3s7lak7809f3qvclwij3zdm2z";
+        libName = "unicode_normalization";
+        authors = [
+          "kwantam <kwantam@gmail.com>"
+          "Manish Goregaokar <manishsmail@gmail.com>"
+        ];
+        dependencies = [
+          {
+            name = "tinyvec";
+            packageId = "tinyvec";
+            features = [ "alloc" ];
+          }
+        ];
+        features = {
+          "default" = [ "std" ];
+        };
+        resolvedDefaultFeatures = [ "default" "std" ];
       };
       "uninit" = rec {
         crateName = "uninit";
