@@ -65,6 +65,62 @@
           "condition": {
             "type": "always"
           },
+          "goto_step": "update_password"
+        }
+      ],
+      "success": {
+        "url_contains": "code=",
+        "dom_selector": null,
+        "token_key": null
+      }
+    },
+    {
+      "name": "update_password",
+      "optional": true,
+      "wait_for": {
+        "selector": "body[data-page-id='login-login-update-password'] form#kc-passwd-update-form, form#kc-passwd-update-form",
+        "pattern": null,
+        "timeout_ms": null
+      },
+      "required_inputs": [
+        {
+          "name": "new_password",
+          "type": "password",
+          "prompt": "New password",
+          "optional": false
+        },
+        {
+          "name": "confirm_password",
+          "type": "password",
+          "prompt": "Confirm password",
+          "optional": false
+        }
+      ],
+      "actions": [
+        {
+          "type": "fill",
+          "selector": "form#kc-passwd-update-form input#password-new",
+          "input": "new_password"
+        },
+        {
+          "type": "fill",
+          "selector": "form#kc-passwd-update-form input#password-confirm",
+          "input": "confirm_password"
+        },
+        {
+          "type": "click",
+          "selector": "form#kc-passwd-update-form button#kc-submit, form#kc-passwd-update-form button[type='submit']"
+        },
+        {
+          "type": "wait",
+          "millis": 10000
+        }
+      ],
+      "branches": [
+        {
+          "condition": {
+            "type": "always"
+          },
           "goto_step": "setup_totp"
         }
       ],
