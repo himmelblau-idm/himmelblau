@@ -646,11 +646,112 @@ async function handleExtract(page, source) {
     value = page.url();
   } else if (source === "browser:title") {
     value = await page.title();
+  } else if (source.startsWith("browser:totp-uri:")) {
+    value = await extractTotpUri(page, source);
   } else if (source.startsWith("browser:page:")) {
     value = await extractPageValue(page, source);
   }
 
   return { ok: true, value: value === undefined ? null : value };
+}
+
+async function extractTotpUri(page, source) {
+  const selector = source.slice("browser:totp-uri:".length);
+  if (selector.length === 0) {
+    return null;
+  }
+
+  return await page.evaluate((selector) => {
+    const element = document.querySelector(selector);
+    if (!element) {
+      return null;
+    }
+
+    const scalar = (value) => {
+      if (value === null || value === undefined) {
+        return "";
+      }
+      if (["string", "number", "boolean"].includes(typeof value)) {
+        return String(value).trim();
+      }
+      return "";
+    };
+
+    const base32EncodeUtf8 = (value) => {
+      const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
+      const bytes = new TextEncoder().encode(String(value || ""));
+      let output = "";
+      let buffer = 0;
+      let bits = 0;
+      for (const byte of bytes) {
+        buffer = (buffer << 8) | byte;
+        bits += 8;
+        while (bits >= 5) {
+          output += alphabet[(buffer >> (bits - 5)) & 31];
+          bits -= 5;
+        }
+      }
+      if (bits > 0) {
+        output += alphabet[(buffer << (5 - bits)) & 31];
+      }
+      return output;
+    };
+
+    const base32ParseableSecret = (value) => {
+      const normalized = String(value || "")
+        .replace(/[\s-]+/g, "")
+        .replace(/=+$/g, "")
+        .trim()
+        .toUpperCase();
+      if (!/^[A-Z2-7]{8,256}$/.test(normalized)) {
+        return "";
+      }
+      if (![0, 2, 4, 5, 7].includes(normalized.length % 8)) {
+        return "";
+      }
+      return normalized;
+    };
+
+    const providerSecretToOtpauthSecret = (value) => {
+      const raw = String(value || "").trim();
+      if (raw.length < 8 || raw.length > 256 || /[\s]/.test(raw)) {
+        return "";
+      }
+      return base32ParseableSecret(raw) || base32EncodeUtf8(raw);
+    };
+
+    const issuerFromLocation = () => {
+      try {
+        const match = window.location.pathname.match(/\/realms\/([^/]+)/);
+        if (match && match[1]) {
+          return decodeURIComponent(match[1]);
+        }
+        return window.location.hostname || "OIDC";
+      } catch (_error) {
+        return "OIDC";
+      }
+    };
+
+    const rawSecret =
+      scalar(element.value) ||
+      scalar(element.getAttribute("value")) ||
+      scalar(element.textContent);
+    const secret = providerSecretToOtpauthSecret(rawSecret);
+    if (!secret) {
+      return null;
+    }
+
+    const issuer = issuerFromLocation();
+    const account = "account";
+    const label = `${encodeURIComponent(issuer)}:${encodeURIComponent(account)}`;
+    const params = new URLSearchParams();
+    params.set("secret", secret);
+    params.set("issuer", issuer);
+    params.set("algorithm", "SHA1");
+    params.set("digits", "6");
+    params.set("period", "30");
+    return `otpauth://totp/${label}?${params.toString()}`;
+  }, selector);
 }
 
 function parsePageValueSource(source) {

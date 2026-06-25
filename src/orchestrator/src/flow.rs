@@ -482,9 +482,11 @@ impl FlowExecutor {
                     response_inputs.push(crate::types::RequiredInput {
                         name: input.name,
                         input_type: input.input_type,
+                        // Normalize the prompt, removing whitespace
                         prompt: self
                             .resolve_required_input_prompt(session, input.prompt)
-                            .await,
+                            .await
+                            .map(|prompt| prompt.trim().to_string().replace("\n\n", "\n")),
                         optional: input.optional,
                     });
                 }
