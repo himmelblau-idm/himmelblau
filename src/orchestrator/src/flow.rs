@@ -790,37 +790,56 @@ impl FlowExecutor {
             return Ok(None);
         }
 
-        let matched_target = {
-            let runtime = session.runtime.lock().await;
-            step.branches.iter().find_map(|branch| {
-                let matched = match &branch.condition {
-                    BranchCondition::Always => true,
-                    BranchCondition::InputPresent { input } => runtime
+        let mut matched_target = None;
+        for branch in &step.branches {
+            if excluded_target_step
+                .map(|excluded| branch.goto_step == excluded)
+                .unwrap_or(false)
+            {
+                continue;
+            }
+
+            let matched = match &branch.condition {
+                BranchCondition::Always => true,
+                BranchCondition::InputPresent { input } => {
+                    let runtime = session.runtime.lock().await;
+                    runtime
                         .collected_inputs
                         .get(input)
                         .map(|value| !value.is_empty())
-                        .unwrap_or(false),
-                    BranchCondition::InputEquals { input, value } => runtime
+                        .unwrap_or(false)
+                }
+                BranchCondition::InputEquals { input, value } => {
+                    let runtime = session.runtime.lock().await;
+                    runtime
                         .collected_inputs
                         .get(input)
                         .map(|current| current.value() == value)
-                        .unwrap_or(false),
-                };
-
-                if !matched {
-                    return None;
+                        .unwrap_or(false)
                 }
-
-                if excluded_target_step
-                    .map(|excluded| branch.goto_step == excluded)
-                    .unwrap_or(false)
-                {
-                    return None;
+                BranchCondition::DomSelector { selector } => {
+                    let probe = SuccessCondition {
+                        url_contains: None,
+                        dom_selector: Some(selector.clone()),
+                        token_key: None,
+                    };
+                    self.podman
+                        .check_success_condition(&session.container, &probe)
+                        .await
+                        .with_context(|| {
+                            format!(
+                                "failed to evaluate dom_selector branch for step '{}' selector '{}'",
+                                step.name, selector
+                            )
+                        })?
                 }
+            };
 
-                Some(branch.goto_step.clone())
-            })
-        };
+            if matched {
+                matched_target = Some(branch.goto_step.clone());
+                break;
+            }
+        }
 
         let Some(goto_step) = matched_target else {
             return Ok(None);
@@ -1043,7 +1062,7 @@ fn branches_reference_input(step: &ProviderStep, input_name: &str) -> bool {
         BranchCondition::InputPresent { input } | BranchCondition::InputEquals { input, .. } => {
             input == input_name
         }
-        BranchCondition::Always => false,
+        BranchCondition::Always | BranchCondition::DomSelector { .. } => false,
     })
 }
 
