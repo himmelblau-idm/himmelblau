@@ -446,7 +446,10 @@ macro_rules! impl_himmelblau_offline_auth_init {
             Ok((AuthRequest::Pin, AuthCredHandler::None))
         } else if $password_auth && (sfa_enabled || breakglass_enabled) {
             Ok((
-                AuthRequest::Password { prompt: None },
+                AuthRequest::Password {
+                    prompt: None,
+                    long_prompt: None,
+                },
                 AuthCredHandler::None,
             ))
         } else {

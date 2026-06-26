@@ -38,6 +38,8 @@ pub enum PamAuthResponse {
     Password {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         prompt: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        long_prompt: Option<String>,
     },
     /// PAM must prompt for a generic input value.
     #[serde(alias = "MFACode")]
@@ -283,13 +285,18 @@ fn test_legacy_mfa_code_response_defaults_to_hidden_input() {
 fn test_password_response_preserves_prompt() {
     let response = PamAuthResponse::Password {
         prompt: Some("New password".to_string()),
+        long_prompt: Some("Your password has expired".to_string()),
     };
     let serialized = serde_json::to_string(&response).unwrap();
     let decoded: PamAuthResponse = serde_json::from_str(&serialized).unwrap();
 
     match decoded {
-        PamAuthResponse::Password { prompt } => {
+        PamAuthResponse::Password {
+            prompt,
+            long_prompt,
+        } => {
             assert_eq!(prompt.as_deref(), Some("New password"));
+            assert_eq!(long_prompt.as_deref(), Some("Your password has expired"));
         }
         other => panic!("expected Password response, got {:?}", other),
     }

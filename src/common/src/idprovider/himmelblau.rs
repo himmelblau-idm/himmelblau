@@ -1891,7 +1891,10 @@ impl IdProvider for HimmelblauProvider {
                     }
                     let is_domain_joined = self.is_domain_joined(keystore).await;
                     return Ok((
-                        AuthRequest::Password { prompt: None },
+                        AuthRequest::Password {
+                            prompt: None,
+                            long_prompt: None,
+                        },
                         AuthCredHandler::PasswordFirst {
                             auth_options,
                             is_domain_joined,
@@ -1911,7 +1914,10 @@ impl IdProvider for HimmelblauProvider {
                         ));
                     }
                     Ok((
-                        AuthRequest::Password { prompt: None },
+                        AuthRequest::Password {
+                            prompt: None,
+                            long_prompt: None,
+                        },
                         AuthCredHandler::None,
                     ))
                 } else {
@@ -1927,7 +1933,10 @@ impl IdProvider for HimmelblauProvider {
                             .await,
                         Err(MsalError::PasswordRequired) => {
                             return Ok((
-                                AuthRequest::Password { prompt: None },
+                                AuthRequest::Password {
+                                    prompt: None,
+                                    long_prompt: None,
+                                },
                                 AuthCredHandler::None,
                             ));
                         },
@@ -2456,7 +2465,10 @@ impl IdProvider for HimmelblauProvider {
                                 reauth_hello_pin: reauth_pin_value,
                             };
                             return Ok((
-                                AuthResult::Next(AuthRequest::Password { prompt: None }),
+                                AuthResult::Next(AuthRequest::Password {
+                                    prompt: None,
+                                    long_prompt: None,
+                                }),
                                 AuthCacheAction::None,
                             ));
                         }
@@ -4162,7 +4174,10 @@ impl IdProvider for HimmelblauProvider {
                 debug!("FIDO hardware unavailable on client, falling back to password");
                 *cred_handler = AuthCredHandler::None;
                 Ok((
-                    AuthResult::Next(AuthRequest::Password { prompt: None }),
+                    AuthResult::Next(AuthRequest::Password {
+                        prompt: None,
+                        long_prompt: None,
+                    }),
                     AuthCacheAction::None,
                 ))
             }

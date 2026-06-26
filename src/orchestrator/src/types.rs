@@ -31,6 +31,8 @@ pub struct RequiredInput {
     #[serde(default)]
     pub prompt: Option<String>,
     #[serde(default)]
+    pub long_prompt: Option<String>,
+    #[serde(default)]
     pub optional: bool,
 }
 

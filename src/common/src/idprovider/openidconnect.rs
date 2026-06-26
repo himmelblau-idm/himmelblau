@@ -152,6 +152,8 @@ struct OrchestratorRequiredInput {
     #[serde(default)]
     prompt: Option<String>,
     #[serde(default)]
+    long_prompt: Option<String>,
+    #[serde(default)]
     optional: bool,
 }
 
@@ -707,6 +709,7 @@ fn auth_request_from_orchestrator_inputs(
         );
         return AuthRequest::Password {
             prompt: input.prompt.clone(),
+            long_prompt: input.long_prompt.clone(),
         };
     }
 
@@ -914,6 +917,7 @@ mod tests {
                     name: "password".to_string(),
                     input_type: OrchestratorInputType::Password,
                     prompt: Some("Password".to_string()),
+                    long_prompt: Some("Password expired".to_string()),
                     optional: false,
                 }],
                 dag_json: Some("{\"device_code\":\"abc\"}".to_string()),
@@ -928,6 +932,10 @@ mod tests {
                 assert_eq!(state.session_id, "session-1");
                 assert_eq!(state.required_inputs.len(), 1);
                 assert_eq!(state.required_inputs[0].name, "password");
+                assert_eq!(
+                    state.required_inputs[0].long_prompt.as_deref(),
+                    Some("Password expired")
+                );
                 assert_eq!(state.dag_json.as_deref(), Some("{\"device_code\":\"abc\"}"));
             }
             OidcMfaExtraData::DeviceFlow { .. } => panic!("expected orchestrator state"),
@@ -952,20 +960,26 @@ mod tests {
                 name: "otp".to_string(),
                 input_type: OrchestratorInputType::Otp,
                 prompt: Some("OTP".to_string()),
+                long_prompt: None,
                 optional: false,
             },
             OrchestratorRequiredInput {
                 name: "password".to_string(),
                 input_type: OrchestratorInputType::Password,
                 prompt: Some("Password".to_string()),
+                long_prompt: Some("Your password has expired".to_string()),
                 optional: false,
             },
         ];
 
         let request = auth_request_from_orchestrator_inputs(&required_inputs, 2);
         match request {
-            AuthRequest::Password { prompt } => {
+            AuthRequest::Password {
+                prompt,
+                long_prompt,
+            } => {
                 assert_eq!(prompt.as_deref(), Some("Password"));
+                assert_eq!(long_prompt.as_deref(), Some("Your password has expired"));
             }
             _ => panic!("expected Password request"),
         }
@@ -977,6 +991,7 @@ mod tests {
             name: "email".to_string(),
             input_type: OrchestratorInputType::Text,
             prompt: Some("Email".to_string()),
+            long_prompt: None,
             optional: false,
         }];
 
@@ -996,6 +1011,7 @@ mod tests {
             name: "otp".to_string(),
             input_type: OrchestratorInputType::Otp,
             prompt: Some("OTP".to_string()),
+            long_prompt: None,
             optional: false,
         }];
 
@@ -1015,6 +1031,7 @@ mod tests {
             name: "approve".to_string(),
             input_type: OrchestratorInputType::Confirmation,
             prompt: Some("Approve in app".to_string()),
+            long_prompt: None,
             optional: false,
         }];
 
@@ -1037,6 +1054,7 @@ mod tests {
             name: "password".to_string(),
             input_type: OrchestratorInputType::Password,
             prompt: None,
+            long_prompt: None,
             optional: false,
         }];
 
@@ -1059,6 +1077,7 @@ mod tests {
             name: "email".to_string(),
             input_type: OrchestratorInputType::Text,
             prompt: None,
+            long_prompt: None,
             optional: false,
         }];
 
@@ -1081,6 +1100,7 @@ mod tests {
             name: "password".to_string(),
             input_type: OrchestratorInputType::Password,
             prompt: None,
+            long_prompt: None,
             optional: false,
         }];
 
@@ -1100,6 +1120,7 @@ mod tests {
             name: "approve".to_string(),
             input_type: OrchestratorInputType::Confirmation,
             prompt: Some("Approve sign-in".to_string()),
+            long_prompt: None,
             optional: false,
         }];
 
@@ -1120,6 +1141,7 @@ mod tests {
             name: "password".to_string(),
             input_type: OrchestratorInputType::Password,
             prompt: None,
+            long_prompt: None,
             optional: false,
         }];
 

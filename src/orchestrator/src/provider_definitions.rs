@@ -73,6 +73,8 @@ pub struct ProviderInput {
     #[serde(default)]
     pub prompt: Option<String>,
     #[serde(default)]
+    pub long_prompt: Option<String>,
+    #[serde(default)]
     pub optional: bool,
 }
 
@@ -368,6 +370,17 @@ pub fn validate_provider_definition(definition: &ProviderDefinition) -> Result<(
             }
         }
 
+        for input in &step.required_inputs {
+            if input.long_prompt.is_some() && !matches!(input.input_type, InputType::Password) {
+                return Err(anyhow!(
+                    "provider '{}' step '{}' input '{}' uses long_prompt on non-password input",
+                    definition.provider,
+                    step.name,
+                    input.name
+                ));
+            }
+        }
+
         if let Some(wait_for) = &step.wait_for {
             if let Some(selector) = &wait_for.selector {
                 validate_selector(selector).with_context(|| {
@@ -508,6 +521,25 @@ mod tests {
             .unwrap_or_default();
 
         assert!(error.contains("invalid success selector"));
+    }
+
+    #[test]
+    fn validates_long_prompt_only_on_password_inputs() {
+        let mut definition = minimal_definition();
+        definition.steps[0].required_inputs = vec![ProviderInput {
+            name: "email".to_string(),
+            input_type: InputType::Text,
+            prompt: Some("Email".to_string()),
+            long_prompt: Some("Extra details".to_string()),
+            optional: false,
+        }];
+
+        let error = validate_provider_definition(&definition)
+            .err()
+            .map(|error| error.to_string())
+            .unwrap_or_default();
+
+        assert!(error.contains("long_prompt on non-password input"));
     }
 
     #[test]

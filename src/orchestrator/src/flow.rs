@@ -487,6 +487,10 @@ impl FlowExecutor {
                             .resolve_required_input_prompt(session, input.prompt)
                             .await
                             .map(|prompt| prompt.trim().to_string().replace("\n\n", "\n")),
+                        long_prompt: self
+                            .resolve_required_input_prompt(session, input.long_prompt)
+                            .await
+                            .map(|prompt| prompt.trim().to_string().replace("\n\n", "\n")),
                         optional: input.optional,
                     });
                 }
