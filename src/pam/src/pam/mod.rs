@@ -182,6 +182,15 @@ impl MessagePrinter for PamConvMessagePrinter {
         }
     }
 
+    fn prompt_echo_on(&self, prompt: &str) -> Option<String> {
+        self.conv.lock().ok().and_then(|conv| {
+            conv.send(PAM_PROMPT_ECHO_ON, prompt)
+                .map_err(|e| error!("PAM conversation failed: {:?}", e))
+                .ok()
+                .flatten()
+        })
+    }
+
     fn prompt_echo_off(&self, prompt: &str) -> Option<String> {
         self.conv.lock().ok().and_then(|conv| {
             conv.send(PAM_PROMPT_ECHO_OFF, prompt)
@@ -219,6 +228,10 @@ impl MessagePrinter for KeyringCaptureMessagePrinter {
 
     fn print_error(&self, msg: &str) {
         self.inner.print_error(msg);
+    }
+
+    fn prompt_echo_on(&self, prompt: &str) -> Option<String> {
+        self.inner.prompt_echo_on(prompt)
     }
 
     fn prompt_echo_off(&self, prompt: &str) -> Option<String> {
@@ -444,7 +457,7 @@ impl PamHooks for PamKanidm {
         let keyring_secret = Arc::new(Mutex::new(authtok.clone()));
         let base_printer: Arc<dyn MessagePrinter> = Arc::new(PamConvMessagePrinter::new(conv));
         let daemon_client =
-            match wait_for_daemon_client(cfg.get_socket_path().as_str(), base_printer.clone()) {
+            match wait_for_daemon_client(cfg.get_socket_path().as_str(), &base_printer) {
                 Ok(client) => client,
                 Err(code) => return code,
             };

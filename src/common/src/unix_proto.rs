@@ -36,9 +36,12 @@ pub enum PamAuthResponse {
     Success,
     Denied(String),
     Password,
-    /// PAM must prompt for an authentication code
-    MFACode {
+    /// PAM must prompt for a generic input value.
+    #[serde(alias = "MFACode")]
+    Input {
         msg: String,
+        #[serde(default)]
+        echo_on: bool,
     },
     /// PAM must prompt for a TOTP code
     HelloTOTP {
@@ -79,7 +82,8 @@ pub enum PamAuthRequest {
     Password {
         cred: String,
     },
-    MFACode {
+    #[serde(alias = "MFACode")]
+    Input {
         cred: String,
     },
     HelloTOTP {
@@ -257,4 +261,27 @@ fn test_clientrequest_as_safe_string() {
         "as_safe_string() must not leak credentials: {}",
         safe
     );
+}
+
+#[test]
+fn test_legacy_mfa_code_response_defaults_to_hidden_input() {
+    let response: PamAuthResponse = serde_json::from_str(r#"{"MFACode":{"msg":"Code:"}}"#).unwrap();
+
+    match response {
+        PamAuthResponse::Input { msg, echo_on } => {
+            assert_eq!(msg, "Code:");
+            assert!(!echo_on);
+        }
+        other => panic!("expected Input response, got {:?}", other),
+    }
+}
+
+#[test]
+fn test_legacy_mfa_code_request_aliases_to_input() {
+    let request: PamAuthRequest = serde_json::from_str(r#"{"MFACode":{"cred":"123456"}}"#).unwrap();
+
+    match request {
+        PamAuthRequest::Input { cred } => assert_eq!(cred, "123456"),
+        other => panic!("expected Input request, got {:?}", other),
+    }
 }

@@ -3335,7 +3335,10 @@ impl IdProvider for HimmelblauProvider {
                             reauth_hello_pin: reauth_hello_pin.clone(),
                         };
                         return Ok((
-                            AuthResult::Next(AuthRequest::MFACode { msg }),
+                            AuthResult::Next(AuthRequest::Input {
+                                msg,
+                                echo_on: false,
+                            }),
                             /* Cache the offline password hash for breakglass
                              * conditions, if enabled. */
                             action,
@@ -3932,7 +3935,7 @@ impl IdProvider for HimmelblauProvider {
                     ref reauth_hello_pin,
                     ..
                 },
-                PamAuthRequest::MFACode { cred },
+                PamAuthRequest::Input { cred },
             ) => {
                 let reauth_hello_pin = reauth_hello_pin.clone();
                 let token = net_down_check!(

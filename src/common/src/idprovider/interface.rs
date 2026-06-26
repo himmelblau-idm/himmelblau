@@ -154,8 +154,9 @@ impl fmt::Debug for AuthCredHandler {
 
 pub enum AuthRequest {
     Password,
-    MFACode {
+    Input {
         msg: String,
+        echo_on: bool,
     },
     HelloTOTP {
         msg: String,
@@ -193,7 +194,7 @@ impl Into<PamAuthResponse> for AuthRequest {
     fn into(self) -> PamAuthResponse {
         match self {
             AuthRequest::Password => PamAuthResponse::Password,
-            AuthRequest::MFACode { msg } => PamAuthResponse::MFACode { msg },
+            AuthRequest::Input { msg, echo_on } => PamAuthResponse::Input { msg, echo_on },
             AuthRequest::HelloTOTP { msg } => PamAuthResponse::HelloTOTP { msg },
             AuthRequest::MFAPoll {
                 msg,

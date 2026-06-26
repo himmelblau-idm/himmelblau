@@ -123,6 +123,10 @@ impl MessagePrinter for PinentryMessagePrinter {
         }
     }
 
+    fn prompt_echo_on(&self, prompt: &str) -> Option<String> {
+        self.prompt_echo_off(prompt)
+    }
+
     fn prompt_echo_off(&self, prompt: &str) -> Option<String> {
         let mut input = PassphraseInput::with_default_binary()?;
         input
