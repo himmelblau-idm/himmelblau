@@ -20,7 +20,7 @@ use crate::config::HimmelblauConfig;
 use crate::hello_pin_complexity::{is_simple_pin, meets_intune_pin_policy};
 use crate::unix_proto::{ClientRequest, ClientResponse, PamAuthRequest, PamAuthResponse};
 use regex::{Match, Regex};
-use std::io::{self, ErrorKind};
+use std::io::{self, ErrorKind, Write};
 use std::sync::Arc;
 
 use lazy_static::lazy_static;
@@ -68,6 +68,7 @@ macro_rules! auth_handle_mfa_resp {
 pub trait MessagePrinter: Send + Sync {
     fn print_text(&self, msg: &str);
     fn print_error(&self, msg: &str);
+    fn prompt_echo_on(&self, prompt: &str) -> Option<String>;
     fn prompt_echo_off(&self, prompt: &str) -> Option<String>;
 }
 
@@ -85,6 +86,15 @@ impl MessagePrinter for SimpleMessagePrinter {
 
     fn print_error(&self, msg: &str) {
         eprintln!("{}", msg);
+    }
+
+    fn prompt_echo_on(&self, prompt: &str) -> Option<String> {
+        print!("{}", prompt);
+        io::stdout().flush().ok()?;
+
+        let mut input = String::new();
+        io::stdin().read_line(&mut input).ok()?;
+        Some(input.trim_end_matches(['\r', '\n']).to_string())
     }
 
     fn prompt_echo_off(&self, prompt: &str) -> Option<String> {
@@ -810,22 +820,30 @@ fn handle_pam_auth_response_password(state: &mut AuthenticateState) -> PamWhatNe
     PamWhatNext::Next(req)
 }
 
-fn handle_pam_auth_response_mfacode(state: &AuthenticateState, msg: &str) -> PamWhatNext {
+fn handle_pam_auth_response_input(
+    state: &AuthenticateState,
+    msg: &str,
+    echo_on: bool,
+) -> PamWhatNext {
     state.msg_printer.print_text(msg);
-    let cred = match state.msg_printer.prompt_echo_off("Code: ") {
+    let cred = match if echo_on {
+        state.msg_printer.prompt_echo_on("Value: ")
+    } else {
+        state.msg_printer.prompt_echo_off("Code: ")
+    } {
         Some(cred) => cred,
         None => {
-            debug!("no mfa code");
+            debug!("no input");
             pam_fail!(
                 state.msg_printer,
-                "No Entra Id auth code was supplied.",
+                "No input was supplied.",
                 PamResultCode::PAM_CRED_INSUFFICIENT
             );
         }
     };
 
     // Now setup the request for the next loop.
-    let req = ClientRequest::PamAuthenticateStep(PamAuthRequest::MFACode { cred });
+    let req = ClientRequest::PamAuthenticateStep(PamAuthRequest::Input { cred });
     PamWhatNext::Next(req)
 }
 
@@ -1220,7 +1238,9 @@ fn authenticate_request_response(
         PamAuthResponse::Denied(msg) => handle_pam_auth_response_denied(state, &msg),
         PamAuthResponse::InitDenied { msg } => handle_pam_auth_init_denied(state, &msg),
         PamAuthResponse::Password => handle_pam_auth_response_password(state),
-        PamAuthResponse::MFACode { msg } => handle_pam_auth_response_mfacode(state, &msg),
+        PamAuthResponse::Input { msg, echo_on } => {
+            handle_pam_auth_response_input(state, &msg, echo_on)
+        }
         PamAuthResponse::HelloTOTP { msg } => handle_pam_auth_response_hellototp(state, &msg),
         PamAuthResponse::MFAPoll {
             msg,
@@ -1325,7 +1345,7 @@ where
 
 pub fn wait_for_daemon_client(
     path: &str,
-    msg_printer: Arc<dyn MessagePrinter>,
+    msg_printer: &Arc<dyn MessagePrinter>,
 ) -> Result<DaemonClientBlocking, PamResultCode> {
     wait_for_daemon_client_with(
         path,
@@ -1383,11 +1403,10 @@ pub fn authenticate(
     opts: Options,
     msg_printer: Arc<dyn MessagePrinter>,
 ) -> PamResultCode {
-    let daemon_client =
-        match wait_for_daemon_client(cfg.get_socket_path().as_str(), msg_printer.clone()) {
-            Ok(dc) => dc,
-            Err(code) => return code,
-        };
+    let daemon_client = match wait_for_daemon_client(cfg.get_socket_path().as_str(), &msg_printer) {
+        Ok(dc) => dc,
+        Err(code) => return code,
+    };
 
     authenticate_with_client(
         daemon_client,
@@ -1462,6 +1481,10 @@ mod tests {
 
         fn print_error(&self, msg: &str) {
             self.error.lock().unwrap().push(msg.to_string());
+        }
+
+        fn prompt_echo_on(&self, _prompt: &str) -> Option<String> {
+            None
         }
 
         fn prompt_echo_off(&self, _prompt: &str) -> Option<String> {

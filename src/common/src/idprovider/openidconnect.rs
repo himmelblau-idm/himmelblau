@@ -308,7 +308,7 @@ fn orchestrator_provided_input_names(provided_inputs: &[OrchestratorProvidedInpu
 fn pam_auth_request_kind(pam_next_req: &PamAuthRequest) -> &'static str {
     match pam_next_req {
         PamAuthRequest::Password { .. } => "password",
-        PamAuthRequest::MFACode { .. } => "mfa_code",
+        PamAuthRequest::Input { .. } => "input",
         PamAuthRequest::MFAPoll { .. } => "mfa_poll",
         PamAuthRequest::Pin { .. } => "pin",
         PamAuthRequest::SetupPin { .. } => "setup_pin",
@@ -321,7 +321,7 @@ fn pam_auth_request_kind(pam_next_req: &PamAuthRequest) -> &'static str {
 fn auth_request_kind(auth_req: &AuthRequest) -> &'static str {
     match auth_req {
         AuthRequest::Password => "password",
-        AuthRequest::MFACode { .. } => "mfa_code",
+        AuthRequest::Input { .. } => "input",
         AuthRequest::HelloTOTP { .. } => "hello_totp",
         AuthRequest::MFAPoll { .. } => "mfa_poll",
         AuthRequest::MFAPollWait => "mfa_poll_wait",
@@ -718,9 +718,12 @@ fn auth_request_from_orchestrator_inputs(
         debug!(
             selected_input = %input.name,
             input_type = orchestrator_input_type_label(&input.input_type),
-            "Selected MFACode prompt from orchestrator inputs"
+            "Selected input prompt from orchestrator inputs"
         );
-        return AuthRequest::MFACode { msg };
+        return AuthRequest::Input {
+            msg,
+            echo_on: matches!(input.input_type, OrchestratorInputType::Text),
+        };
     }
 
     if let Some(input) = required_inputs
@@ -806,7 +809,7 @@ fn orchestrator_inputs_from_pam_request(
 
             Ok(mapped)
         }
-        PamAuthRequest::MFACode { cred } => {
+        PamAuthRequest::Input { cred } => {
             let target = required_inputs
                 .iter()
                 .find(|input| {
@@ -823,7 +826,7 @@ fn orchestrator_inputs_from_pam_request(
                     }
                 })
                 .ok_or_else(|| {
-                    error!("Orchestrator requested no MFA code/text input for MFACode prompt");
+                    error!("Orchestrator requested no OTP/text input for Input prompt");
                     IdpError::BadRequest
                 })?;
 
@@ -836,7 +839,7 @@ fn orchestrator_inputs_from_pam_request(
                 target_input = %target.name,
                 provided_input_count = mapped.len(),
                 provided_input_names = ?orchestrator_provided_input_names(&mapped),
-                "Mapped MFACode request to orchestrator input"
+                "Mapped Input request to orchestrator input"
             );
 
             Ok(mapped)
@@ -959,6 +962,44 @@ mod tests {
     }
 
     #[test]
+    fn auth_request_text_input_echoes_on() {
+        let required_inputs = vec![OrchestratorRequiredInput {
+            name: "email".to_string(),
+            input_type: OrchestratorInputType::Text,
+            prompt: Some("Email".to_string()),
+            optional: false,
+        }];
+
+        let request = auth_request_from_orchestrator_inputs(&required_inputs, 2);
+        match request {
+            AuthRequest::Input { msg, echo_on } => {
+                assert_eq!(msg, "Email");
+                assert!(echo_on);
+            }
+            _ => panic!("expected Input request"),
+        }
+    }
+
+    #[test]
+    fn auth_request_otp_input_echoes_off() {
+        let required_inputs = vec![OrchestratorRequiredInput {
+            name: "otp".to_string(),
+            input_type: OrchestratorInputType::Otp,
+            prompt: Some("OTP".to_string()),
+            optional: false,
+        }];
+
+        let request = auth_request_from_orchestrator_inputs(&required_inputs, 2);
+        match request {
+            AuthRequest::Input { msg, echo_on } => {
+                assert_eq!(msg, "OTP");
+                assert!(!echo_on);
+            }
+            _ => panic!("expected Input request"),
+        }
+    }
+
+    #[test]
     fn auth_request_confirmation_maps_to_poll() {
         let required_inputs = vec![OrchestratorRequiredInput {
             name: "approve".to_string(),
@@ -1000,6 +1041,28 @@ mod tests {
         assert_eq!(mapped.len(), 1);
         assert_eq!(mapped[0].name, "password");
         assert_eq!(mapped[0].value, "secret");
+    }
+
+    #[test]
+    fn pam_input_maps_to_orchestrator_text_input() {
+        let required_inputs = vec![OrchestratorRequiredInput {
+            name: "email".to_string(),
+            input_type: OrchestratorInputType::Text,
+            prompt: None,
+            optional: false,
+        }];
+
+        let mapped = orchestrator_inputs_from_pam_request(
+            PamAuthRequest::Input {
+                cred: "user@example.com".to_string(),
+            },
+            &required_inputs,
+        )
+        .unwrap();
+
+        assert_eq!(mapped.len(), 1);
+        assert_eq!(mapped[0].name, "email");
+        assert_eq!(mapped[0].value, "user@example.com");
     }
 
     #[test]

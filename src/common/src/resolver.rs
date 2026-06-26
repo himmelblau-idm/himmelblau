@@ -1409,8 +1409,8 @@ where
                         // AuthCredHandler::HelloTOTP with anything other than HelloTOTP is invalid
                         return Err(());
                     }
-                    (AuthCredHandler::None, PamAuthRequest::MFACode { .. }) => {
-                        // AuthCredHandler::None is invalid with MFACode
+                    (AuthCredHandler::None, PamAuthRequest::Input { .. }) => {
+                        // AuthCredHandler::None is invalid with Input
                         return Err(());
                     }
                     (AuthCredHandler::None, PamAuthRequest::MFAPoll { .. }) => {
