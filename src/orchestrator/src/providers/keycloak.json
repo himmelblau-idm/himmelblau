@@ -63,6 +63,13 @@
       "branches": [
         {
           "condition": {
+            "type": "dom_selector",
+            "selector": "form#kc-form-login input#password"
+          },
+          "goto_step": "login_with_username_password"
+        },
+        {
+          "condition": {
             "type": "always"
           },
           "goto_step": "setup_totp"
@@ -108,6 +115,13 @@
       "branches": [
         {
           "condition": {
+            "type": "dom_selector",
+            "selector": "form#kc-totp-settings-form input#totp, form#kc-totp-settings-form input[name='totp']"
+          },
+          "goto_step": "setup_totp"
+        },
+        {
+          "condition": {
             "type": "always"
           },
           "goto_step": "submit_otp"
@@ -151,6 +165,13 @@
         }
       ],
       "branches": [
+        {
+          "condition": {
+            "type": "dom_selector",
+            "selector": "form#kc-otp-login-form input#otp[name='otp'], form#kc-otp-login-form input[name='otp'][autocomplete='one-time-code'], input#otp[name='otp'], input[name='totp']"
+          },
+          "goto_step": "submit_otp"
+        },
         {
           "condition": {
             "type": "always"
@@ -208,6 +229,13 @@
         }
       ],
       "branches": [
+        {
+          "condition": {
+            "type": "dom_selector",
+            "selector": "body[data-page-id='login-login-update-password'] form#kc-passwd-update-form, form#kc-passwd-update-form"
+          },
+          "goto_step": "update_password"
+        },
         {
           "condition": {
             "type": "always"
