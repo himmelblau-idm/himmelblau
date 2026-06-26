@@ -124,6 +124,7 @@ pub enum BranchCondition {
     Always,
     InputPresent { input: String },
     InputEquals { input: String, value: String },
+    DomSelector { selector: String },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -406,6 +407,15 @@ pub fn validate_provider_definition(definition: &ProviderDefinition) -> Result<(
 
     for step in &definition.steps {
         for branch in &step.branches {
+            if let BranchCondition::DomSelector { selector } = &branch.condition {
+                validate_selector(selector).with_context(|| {
+                    format!(
+                        "provider '{}' step '{}' contains invalid branch dom_selector",
+                        definition.provider, step.name
+                    )
+                })?;
+            }
+
             if !seen_steps.contains(&branch.goto_step) {
                 return Err(anyhow!(
                     "provider '{}' step '{}' branches to unknown step '{}'",
@@ -521,6 +531,58 @@ mod tests {
             .unwrap_or_default();
 
         assert!(error.contains("invalid success selector"));
+    }
+
+    #[test]
+    fn parses_branch_dom_selector_condition() {
+        let raw = r##"
+        {
+          "provider": "test",
+          "display_name": "Test",
+          "steps": [
+            {
+              "name": "start",
+              "branches": [
+                {
+                  "condition": {
+                    "type": "dom_selector",
+                    "selector": "input#username"
+                  },
+                  "goto_step": "start"
+                }
+              ]
+            }
+          ]
+        }
+        "##;
+
+        let definitions = parse_provider_override(raw).unwrap();
+        assert!(validate_provider_definition(&definitions[0]).is_ok());
+
+        match &definitions[0].steps[0].branches[0].condition {
+            BranchCondition::DomSelector { selector } => {
+                assert_eq!(selector, "input#username");
+            }
+            other => panic!("expected dom_selector branch condition, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn validates_branch_dom_selector() {
+        let mut definition = minimal_definition();
+        definition.steps[0].branches = vec![BranchRule {
+            condition: BranchCondition::DomSelector {
+                selector: String::new(),
+            },
+            goto_step: "start".to_string(),
+        }];
+
+        let error = validate_provider_definition(&definition)
+            .err()
+            .map(|error| error.to_string())
+            .unwrap_or_default();
+
+        assert!(error.contains("invalid branch dom_selector"));
     }
 
     #[test]
