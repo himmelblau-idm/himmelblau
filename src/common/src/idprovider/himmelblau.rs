@@ -1891,7 +1891,7 @@ impl IdProvider for HimmelblauProvider {
                     }
                     let is_domain_joined = self.is_domain_joined(keystore).await;
                     return Ok((
-                        AuthRequest::Password,
+                        AuthRequest::Password { prompt: None },
                         AuthCredHandler::PasswordFirst {
                             auth_options,
                             is_domain_joined,
@@ -1910,7 +1910,10 @@ impl IdProvider for HimmelblauProvider {
                             AuthCredHandler::None,
                         ));
                     }
-                    Ok((AuthRequest::Password, AuthCredHandler::None))
+                    Ok((
+                        AuthRequest::Password { prompt: None },
+                        AuthCredHandler::None,
+                    ))
                 } else {
                     let mfa_method = self.config.lock().await.get_mfa_method();
                     let flow = net_down_check!(
@@ -1923,7 +1926,10 @@ impl IdProvider for HimmelblauProvider {
                             )
                             .await,
                         Err(MsalError::PasswordRequired) => {
-                            return Ok((AuthRequest::Password, AuthCredHandler::None));
+                            return Ok((
+                                AuthRequest::Password { prompt: None },
+                                AuthCredHandler::None,
+                            ));
                         },
                         Err(e) => {
                             error!("{:?}", e);
@@ -2449,7 +2455,10 @@ impl IdProvider for HimmelblauProvider {
                             *cred_handler = AuthCredHandler::ReauthPassword {
                                 reauth_hello_pin: reauth_pin_value,
                             };
-                            return Ok((AuthResult::Next(AuthRequest::Password), AuthCacheAction::None));
+                            return Ok((
+                                AuthResult::Next(AuthRequest::Password { prompt: None }),
+                                AuthCacheAction::None,
+                            ));
                         }
                         Err(e) => {
                             error!("Failed to initiate reauth MFA flow: {:?}", e);
@@ -4153,7 +4162,7 @@ impl IdProvider for HimmelblauProvider {
                 debug!("FIDO hardware unavailable on client, falling back to password");
                 *cred_handler = AuthCredHandler::None;
                 Ok((
-                    AuthResult::Next(AuthRequest::Password),
+                    AuthResult::Next(AuthRequest::Password { prompt: None }),
                     AuthCacheAction::None,
                 ))
             }
