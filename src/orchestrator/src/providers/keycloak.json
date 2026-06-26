@@ -36,7 +36,8 @@
         {
           "name": "password",
           "type": "password",
-          "prompt": "Sign in to your account",
+          "prompt": "Password",
+          "long_prompt": "Sign in to your account",
           "optional": false
         }
       ],
