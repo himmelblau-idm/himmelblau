@@ -101,6 +101,10 @@ pub enum FlowAction {
     Log {
         message: String,
     },
+    Fail {
+        #[serde(default)]
+        message: Option<String>,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -583,6 +587,45 @@ mod tests {
             .unwrap_or_default();
 
         assert!(error.contains("invalid branch dom_selector"));
+    }
+
+    #[test]
+    fn parses_fail_action_with_optional_message() {
+        let raw = r##"
+        {
+          "provider": "test",
+          "display_name": "Test",
+          "steps": [
+            {
+              "name": "start",
+              "actions": [
+                {
+                  "type": "fail",
+                  "message": "{{browser:page:#error:text}}"
+                },
+                {
+                  "type": "fail"
+                }
+              ]
+            }
+          ]
+        }
+        "##;
+
+        let definitions = parse_provider_override(raw).unwrap();
+        assert!(validate_provider_definition(&definitions[0]).is_ok());
+
+        match &definitions[0].steps[0].actions[0] {
+            FlowAction::Fail { message } => {
+                assert_eq!(message.as_deref(), Some("{{browser:page:#error:text}}"));
+            }
+            other => panic!("expected fail action, got {other:?}"),
+        }
+
+        match &definitions[0].steps[0].actions[1] {
+            FlowAction::Fail { message } => assert!(message.is_none()),
+            other => panic!("expected fail action, got {other:?}"),
+        }
     }
 
     #[test]

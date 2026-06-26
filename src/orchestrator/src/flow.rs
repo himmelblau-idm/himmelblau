@@ -14,6 +14,11 @@ pub struct FlowExecutor {
     podman: Arc<PodmanClient>,
 }
 
+enum ActionExecution {
+    Continue,
+    Terminal(FlowResponse),
+}
+
 impl FlowExecutor {
     pub fn new(podman: Arc<PodmanClient>) -> Self {
         Self { podman }
@@ -240,63 +245,67 @@ impl FlowExecutor {
                 return Ok(response);
             }
 
-            if let Err(error) = self
-                .execute_step_actions(&session, current_step_index, &step)
+            match self
+                .execute_step_actions(Arc::clone(&session), current_step_index, &step)
                 .await
                 .with_context(|| format!("provider step '{}' failed", step.name))
             {
-                if !step.optional {
-                    return Err(error);
-                }
+                Ok(Some(response)) => return Ok(response),
+                Ok(None) => {}
+                Err(error) => {
+                    if !step.optional {
+                        return Err(error);
+                    }
 
-                session
-                    .log(
-                        LogLevel::Warn,
-                        format!(
-                            "Optional step '{}' failed and will be skipped: {}",
-                            step.name, error
-                        ),
-                    )
-                    .await;
+                    session
+                        .log(
+                            LogLevel::Warn,
+                            format!(
+                                "Optional step '{}' failed and will be skipped: {}",
+                                step.name, error
+                            ),
+                        )
+                        .await;
 
-                if let Some(next_step_index) = self.evaluate_branch(&session, &step).await? {
-                    let next_step_name = {
-                        let definition = session.definition.read().await;
-                        definition
-                            .steps
-                            .get(next_step_index)
-                            .map(|candidate| candidate.name.clone())
-                            .unwrap_or_else(|| "<unknown>".to_string())
-                    };
+                    if let Some(next_step_index) = self.evaluate_branch(&session, &step).await? {
+                        let next_step_name = {
+                            let definition = session.definition.read().await;
+                            definition
+                                .steps
+                                .get(next_step_index)
+                                .map(|candidate| candidate.name.clone())
+                                .unwrap_or_else(|| "<unknown>".to_string())
+                        };
+                        session
+                            .log(
+                                LogLevel::Debug,
+                                format!(
+                                    "Optional step '{}' fallback branch: next_step_index={} next_step='{}'",
+                                    step.name, next_step_index, next_step_name
+                                ),
+                            )
+                            .await;
+                        let mut runtime = session.runtime.lock().await;
+                        runtime.current_step_index = next_step_index;
+                        runtime.last_activity = std::time::Instant::now();
+                        continue;
+                    }
+
                     session
                         .log(
                             LogLevel::Debug,
                             format!(
-                                "Optional step '{}' fallback branch: next_step_index={} next_step='{}'",
-                                step.name, next_step_index, next_step_name
+                                "Optional step '{}' has no fallback branch; advancing sequentially",
+                                step.name
                             ),
                         )
                         .await;
+
                     let mut runtime = session.runtime.lock().await;
-                    runtime.current_step_index = next_step_index;
+                    runtime.current_step_index += 1;
                     runtime.last_activity = std::time::Instant::now();
                     continue;
                 }
-
-                session
-                    .log(
-                        LogLevel::Debug,
-                        format!(
-                            "Optional step '{}' has no fallback branch; advancing sequentially",
-                            step.name
-                        ),
-                    )
-                    .await;
-
-                let mut runtime = session.runtime.lock().await;
-                runtime.current_step_index += 1;
-                runtime.last_activity = std::time::Instant::now();
-                continue;
             }
 
             if self.step_successful(&session, &step).await? {
@@ -505,10 +514,15 @@ impl FlowExecutor {
         session: &Arc<Session>,
         prompt: Option<String>,
     ) -> Option<String> {
-        let mut resolved = prompt?;
+        let prompt = prompt?;
+        Some(self.resolve_template(session, &prompt).await)
+    }
+
+    async fn resolve_template(&self, session: &Arc<Session>, template: &str) -> String {
+        let mut resolved = template.to_string();
         let placeholders = prompt_placeholders(&resolved);
         if placeholders.is_empty() {
-            return Some(resolved);
+            return resolved;
         }
 
         for placeholder in placeholders {
@@ -531,15 +545,15 @@ impl FlowExecutor {
             }
         }
 
-        Some(resolved)
+        resolved
     }
 
     async fn execute_step_actions(
         &self,
-        session: &Arc<Session>,
+        session: Arc<Session>,
         current_step_index: usize,
         step: &ProviderStep,
-    ) -> Result<()> {
+    ) -> Result<Option<FlowResponse>> {
         let total_actions = step.actions.len();
         for (idx, action) in step.actions.iter().enumerate() {
             let action_idx = idx + 1;
@@ -554,17 +568,21 @@ impl FlowExecutor {
                 )
                 .await;
 
-            self.execute_action(session, action)
+            match self
+                .execute_action(&session, action)
                 .await
                 .with_context(|| {
                     format!(
                         "step '{}' action {}/{} failed ({})",
                         step.name, action_idx, total_actions, action_summary
                     )
-                })?;
+                })? {
+                ActionExecution::Continue => {}
+                ActionExecution::Terminal(response) => return Ok(Some(response)),
+            }
             if let FlowAction::Fill { input, .. } = action {
                 self.forget_sensitive_input_if_unreferenced(
-                    session,
+                    &session,
                     current_step_index,
                     idx,
                     input,
@@ -572,10 +590,14 @@ impl FlowExecutor {
                 .await;
             }
         }
-        Ok(())
+        Ok(None)
     }
 
-    async fn execute_action(&self, session: &Arc<Session>, action: &FlowAction) -> Result<()> {
+    async fn execute_action(
+        &self,
+        session: &Arc<Session>,
+        action: &FlowAction,
+    ) -> Result<ActionExecution> {
         match action {
             FlowAction::Fill { selector, input } => {
                 let (value, available_inputs) = {
@@ -668,9 +690,17 @@ impl FlowExecutor {
             FlowAction::Log { message } => {
                 session.log(LogLevel::Info, message.clone()).await;
             }
+            FlowAction::Fail { message } => {
+                let resolved = match message {
+                    Some(message) => self.resolve_template(session, message).await,
+                    None => String::new(),
+                };
+                let response = self.fail_session(Arc::clone(session), resolved).await?;
+                return Ok(ActionExecution::Terminal(response));
+            }
         }
 
-        Ok(())
+        Ok(ActionExecution::Continue)
     }
 
     async fn extract_value(&self, session: &Arc<Session>, source: &str) -> Result<Option<String>> {
@@ -932,6 +962,34 @@ impl FlowExecutor {
             metadata,
         })
     }
+
+    async fn fail_session(
+        &self,
+        session: Arc<Session>,
+        detail: impl Into<String>,
+    ) -> Result<FlowResponse> {
+        let mut detail = detail.into();
+        if detail.trim().is_empty() {
+            detail = "Provider flow failed".to_string();
+        }
+
+        {
+            let mut runtime = session.runtime.lock().await;
+            runtime.state = SessionState::Failed;
+            runtime.detail = Some(detail.clone());
+            runtime.last_activity = std::time::Instant::now();
+            runtime.terminal_since = Some(std::time::Instant::now());
+        }
+
+        session
+            .log(LogLevel::Error, format!("Session failed: {}", detail))
+            .await;
+
+        Ok(FlowResponse::SessionError {
+            session_id: session.session_id.clone(),
+            error: detail,
+        })
+    }
 }
 
 fn redact_url_parameters(url: &str) -> String {
@@ -1017,6 +1075,9 @@ fn summarize_action(action: &FlowAction) -> String {
             format!("extract target='{:?}' source='{}'", target, source)
         }
         FlowAction::Log { message } => format!("log '{}'", message),
+        FlowAction::Fail { message } => {
+            format!("fail message_present={}", message.is_some())
+        }
     }
 }
 
@@ -1050,11 +1111,25 @@ fn action_references_input(action: &FlowAction, input_name: &str) -> bool {
             .strip_prefix("input:")
             .map(|source_input| source_input == input_name)
             .unwrap_or(false),
+        FlowAction::Fail { message } => message
+            .as_deref()
+            .map(|message| template_references_input(message, input_name))
+            .unwrap_or(false),
         FlowAction::Click { .. }
         | FlowAction::Wait { .. }
         | FlowAction::Navigate { .. }
         | FlowAction::Log { .. } => false,
     }
+}
+
+fn template_references_input(template: &str, input_name: &str) -> bool {
+    prompt_placeholders(template).iter().any(|placeholder| {
+        placeholder
+            .source
+            .strip_prefix("input:")
+            .map(|source_input| source_input == input_name)
+            .unwrap_or(false)
+    })
 }
 
 fn branches_reference_input(step: &ProviderStep, input_name: &str) -> bool {
@@ -1069,6 +1144,64 @@ fn branches_reference_input(step: &ProviderStep, input_name: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::podman::ContainerInstance;
+    use crate::provider_definitions::{ProviderDefinition, ProviderInput};
+    use std::path::PathBuf;
+
+    fn test_executor() -> FlowExecutor {
+        FlowExecutor::new(Arc::new(PodmanClient::new(
+            "podman",
+            "localhost/test:latest",
+            None,
+            PathBuf::from("/tmp/himmelblau-orchestrator-test"),
+            1,
+            1,
+            true,
+            None,
+        )))
+    }
+
+    fn test_session(step: ProviderStep) -> Arc<Session> {
+        Arc::new(Session::new(
+            "test-session".to_string(),
+            "test".to_string(),
+            0,
+            ContainerInstance {
+                id: "container-id".to_string(),
+                name: "container-name".to_string(),
+                session_dir: PathBuf::from("/tmp/himmelblau-orchestrator-test/session"),
+                bridge_socket_path: PathBuf::from(
+                    "/tmp/himmelblau-orchestrator-test/session/bridge.sock",
+                ),
+            },
+            Arc::new(ProviderDefinition {
+                provider: "test".to_string(),
+                display_name: "Test".to_string(),
+                matchers: None,
+                start_url: None,
+                steps: vec![step],
+            }),
+        ))
+    }
+
+    fn step_with_actions(optional: bool, actions: Vec<FlowAction>) -> ProviderStep {
+        ProviderStep {
+            name: "start".to_string(),
+            optional,
+            wait_for: None,
+            required_inputs: Vec::new(),
+            actions,
+            branches: Vec::new(),
+            success: None,
+        }
+    }
+
+    async fn insert_input(session: &Arc<Session>, name: &str, value: &str) {
+        let mut runtime = session.runtime.lock().await;
+        runtime
+            .collected_inputs
+            .insert(name.to_string(), CollectedInput::plain(value.to_string()));
+    }
 
     #[test]
     fn prompt_placeholders_include_existing_browser_url_source() {
@@ -1116,5 +1249,139 @@ mod tests {
     #[test]
     fn normalize_prompt_returns_empty_for_whitespace_only_prompt() {
         assert_eq!(normalize_prompt(" \n\t\n   "), "");
+    }
+
+    #[tokio::test]
+    async fn fail_action_returns_session_error_and_marks_session_failed() {
+        let session = test_session(step_with_actions(
+            false,
+            vec![FlowAction::Fail {
+                message: Some("Authentication failed".to_string()),
+            }],
+        ));
+
+        let response = test_executor().start_session(Arc::clone(&session)).await;
+
+        let response = response.unwrap();
+        match &response {
+            FlowResponse::SessionError { session_id, error } => {
+                assert_eq!(session_id, "test-session");
+                assert_eq!(error, "Authentication failed");
+            }
+            other => panic!("expected session error, got {other:?}"),
+        }
+
+        let status = session.status_response().await;
+        match &status {
+            FlowResponse::SessionStatus { state, detail, .. } => {
+                assert!(matches!(state, SessionState::Failed));
+                assert_eq!(detail.as_deref(), Some("Authentication failed"));
+            }
+            other => panic!("expected session status, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn fail_action_resolves_message_templates_and_stops_later_actions() {
+        let session = test_session(step_with_actions(
+            false,
+            vec![
+                FlowAction::Fail {
+                    message: Some("Denied {{input:username}}: {{static:bad password}}".to_string()),
+                },
+                FlowAction::Log {
+                    message: "after fail".to_string(),
+                },
+            ],
+        ));
+        insert_input(&session, "username", "alice").await;
+
+        let response = test_executor().start_session(Arc::clone(&session)).await;
+
+        let response = response.unwrap();
+        match &response {
+            FlowResponse::SessionError { error, .. } => {
+                assert_eq!(error, "Denied alice: bad password");
+            }
+            other => panic!("expected session error, got {other:?}"),
+        }
+
+        let status = session.status_response().await;
+        match &status {
+            FlowResponse::SessionStatus { logs, .. } => {
+                assert!(!logs.iter().any(|entry| entry.message == "after fail"));
+            }
+            other => panic!("expected session status, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn fail_action_without_message_uses_default_error() {
+        let session = test_session(step_with_actions(
+            false,
+            vec![FlowAction::Fail { message: None }],
+        ));
+
+        let response = test_executor().start_session(session).await;
+
+        let response = response.unwrap();
+        match &response {
+            FlowResponse::SessionError { error, .. } => {
+                assert_eq!(error, "Provider flow failed");
+            }
+            other => panic!("expected session error, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn fail_action_in_optional_step_is_terminal() {
+        let session = test_session(step_with_actions(
+            true,
+            vec![FlowAction::Fail {
+                message: Some("Optional page failure".to_string()),
+            }],
+        ));
+
+        let response = test_executor().start_session(Arc::clone(&session)).await;
+
+        let response = response.unwrap();
+        match &response {
+            FlowResponse::SessionError { error, .. } => {
+                assert_eq!(error, "Optional page failure");
+            }
+            other => panic!("expected session error, got {other:?}"),
+        }
+
+        let status = session.status_response().await;
+        match &status {
+            FlowResponse::SessionStatus { state, .. } => {
+                assert!(matches!(state, SessionState::Failed));
+            }
+            other => panic!("expected session status, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn fail_message_placeholders_reference_inputs() {
+        let step = ProviderStep {
+            name: "start".to_string(),
+            optional: false,
+            wait_for: None,
+            required_inputs: vec![ProviderInput {
+                name: "password".to_string(),
+                input_type: InputType::Password,
+                prompt: None,
+                long_prompt: None,
+                optional: false,
+            }],
+            actions: vec![FlowAction::Fail {
+                message: Some("Denied: {{ input:password }}".to_string()),
+            }],
+            branches: Vec::new(),
+            success: None,
+        };
+
+        assert!(step_references_input(&step, "password"));
+        assert!(!step_references_input(&step, "otp"));
     }
 }
