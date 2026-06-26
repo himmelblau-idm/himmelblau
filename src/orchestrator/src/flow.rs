@@ -486,11 +486,11 @@ impl FlowExecutor {
                         prompt: self
                             .resolve_required_input_prompt(session, input.prompt)
                             .await
-                            .map(|prompt| prompt.trim().to_string().replace("\n\n", "\n")),
+                            .map(|prompt| normalize_prompt(&prompt)),
                         long_prompt: self
                             .resolve_required_input_prompt(session, input.long_prompt)
                             .await
-                            .map(|prompt| prompt.trim().to_string().replace("\n\n", "\n")),
+                            .map(|prompt| normalize_prompt(&prompt)),
                         optional: input.optional,
                     });
                 }
@@ -927,6 +927,21 @@ fn redact_url_parameters(url: &str) -> String {
     }
 }
 
+fn normalize_prompt(prompt: &str) -> String {
+    let mut normalized = String::new();
+
+    for line in prompt
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+    {
+        normalized.push_str(line);
+        normalized.push('\n');
+    }
+
+    normalized
+}
+
 #[derive(Debug, PartialEq, Eq)]
 struct PromptPlaceholder {
     token: String,
@@ -1069,5 +1084,18 @@ mod tests {
     #[test]
     fn prompt_placeholders_ignore_empty_and_unclosed_tokens() {
         assert_eq!(prompt_placeholders("{{}} {{   }} {{browser:url"), vec![]);
+    }
+
+    #[test]
+    fn normalize_prompt_trims_lines_and_removes_blank_lines() {
+        assert_eq!(
+            normalize_prompt(" \n  First line  \n\t\n Second line\t\n\n  Third line  "),
+            "First line\nSecond line\nThird line\n"
+        );
+    }
+
+    #[test]
+    fn normalize_prompt_returns_empty_for_whitespace_only_prompt() {
+        assert_eq!(normalize_prompt(" \n\t\n   "), "");
     }
 }
