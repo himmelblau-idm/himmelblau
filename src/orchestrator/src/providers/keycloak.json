@@ -65,6 +65,13 @@
         {
           "condition": {
             "type": "dom_selector",
+            "selector": "#kc-error-message p.instruction"
+          },
+          "goto_step": "keycloak_error"
+        },
+        {
+          "condition": {
+            "type": "dom_selector",
             "selector": "form#kc-form-login input#password"
           },
           "goto_step": "login_with_username_password"
@@ -117,6 +124,13 @@
         {
           "condition": {
             "type": "dom_selector",
+            "selector": "#kc-error-message p.instruction"
+          },
+          "goto_step": "keycloak_error"
+        },
+        {
+          "condition": {
+            "type": "dom_selector",
             "selector": "form#kc-totp-settings-form input#totp, form#kc-totp-settings-form input[name='totp']"
           },
           "goto_step": "setup_totp"
@@ -166,6 +180,13 @@
         }
       ],
       "branches": [
+        {
+          "condition": {
+            "type": "dom_selector",
+            "selector": "#kc-error-message p.instruction"
+          },
+          "goto_step": "keycloak_error"
+        },
         {
           "condition": {
             "type": "dom_selector",
@@ -230,6 +251,13 @@
         }
       ],
       "branches": [
+        {
+          "condition": {
+            "type": "dom_selector",
+            "selector": "#kc-error-message p.instruction"
+          },
+          "goto_step": "keycloak_error"
+        },
         {
           "condition": {
             "type": "dom_selector",
@@ -306,6 +334,13 @@
       "branches": [
         {
           "condition": {
+            "type": "dom_selector",
+            "selector": "#kc-error-message p.instruction"
+          },
+          "goto_step": "keycloak_error"
+        },
+        {
+          "condition": {
             "type": "always"
           },
           "goto_step": "grant_device_access_consent"
@@ -339,6 +374,13 @@
       "branches": [
         {
           "condition": {
+            "type": "dom_selector",
+            "selector": "#kc-error-message p.instruction"
+          },
+          "goto_step": "keycloak_error"
+        },
+        {
+          "condition": {
             "type": "always"
           },
           "goto_step": "confirm_device_login_success"
@@ -370,6 +412,15 @@
         "dom_selector": "#kc-info-message p.instruction",
         "token_key": null
       }
+    },
+    {
+      "name": "keycloak_error",
+      "actions": [
+        {
+          "type": "fail",
+          "message": "{{browser:page:#kc-error-message p.instruction:text}}"
+        }
+      ]
     }
   ]
 }
