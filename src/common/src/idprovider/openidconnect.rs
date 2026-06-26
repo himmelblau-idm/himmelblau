@@ -320,7 +320,7 @@ fn pam_auth_request_kind(pam_next_req: &PamAuthRequest) -> &'static str {
 
 fn auth_request_kind(auth_req: &AuthRequest) -> &'static str {
     match auth_req {
-        AuthRequest::Password => "password",
+        AuthRequest::Password { .. } => "password",
         AuthRequest::Input { .. } => "input",
         AuthRequest::HelloTOTP { .. } => "hello_totp",
         AuthRequest::MFAPoll { .. } => "mfa_poll",
@@ -697,12 +697,17 @@ fn auth_request_from_orchestrator_inputs(
         "Selecting next PAM request from orchestrator inputs"
     );
 
-    if required_inputs
+    if let Some(input) = required_inputs
         .iter()
-        .any(|input| matches!(input.input_type, OrchestratorInputType::Password))
+        .find(|input| matches!(input.input_type, OrchestratorInputType::Password))
     {
-        debug!("Selected Password prompt from orchestrator inputs");
-        return AuthRequest::Password;
+        debug!(
+            selected_input = %input.name,
+            "Selected Password prompt from orchestrator inputs"
+        );
+        return AuthRequest::Password {
+            prompt: input.prompt.clone(),
+        };
     }
 
     if let Some(input) = required_inputs.iter().find(|input| {
@@ -958,7 +963,12 @@ mod tests {
         ];
 
         let request = auth_request_from_orchestrator_inputs(&required_inputs, 2);
-        assert!(matches!(request, AuthRequest::Password));
+        match request {
+            AuthRequest::Password { prompt } => {
+                assert_eq!(prompt.as_deref(), Some("Password"));
+            }
+            _ => panic!("expected Password request"),
+        }
     }
 
     #[test]

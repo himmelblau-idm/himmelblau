@@ -785,7 +785,10 @@ fn handle_pam_auth_response_denied(state: &AuthenticateState, msg: &str) -> PamW
     PamWhatNext::Next(req)
 }
 
-fn handle_pam_auth_response_password(state: &mut AuthenticateState) -> PamWhatNext {
+fn handle_pam_auth_response_password(
+    state: &mut AuthenticateState,
+    prompt: Option<&str>,
+) -> PamWhatNext {
     let mut consume_authtok = None;
     // Swap the authtok out with a None, so it can only be consumed once.
     // If it's already been swapped, we are just swapping two null pointers
@@ -794,13 +797,15 @@ fn handle_pam_auth_response_password(state: &mut AuthenticateState) -> PamWhatNe
     let cred = if let Some(cred) = consume_authtok {
         cred
     } else {
-        let prompt = if state.cfg.get_oidc_issuer_url().is_some() {
-            "Cloud Password:"
-        } else {
-            state
-                .msg_printer
-                .print_text(&state.cfg.get_entra_id_password_prompt());
-            "Entra Id Password:"
+        let prompt = match prompt.filter(|prompt| !prompt.trim().is_empty()) {
+            Some(prompt) => prompt,
+            None if state.cfg.get_oidc_issuer_url().is_some() => "Cloud Password:",
+            None => {
+                state
+                    .msg_printer
+                    .print_text(&state.cfg.get_entra_id_password_prompt());
+                "Entra Id Password:"
+            }
         };
         match state.msg_printer.prompt_echo_off(prompt) {
             Some(cred) => cred,
@@ -1237,7 +1242,9 @@ fn authenticate_request_response(
         PamAuthResponse::Success => handle_pam_auth_response_success(),
         PamAuthResponse::Denied(msg) => handle_pam_auth_response_denied(state, &msg),
         PamAuthResponse::InitDenied { msg } => handle_pam_auth_init_denied(state, &msg),
-        PamAuthResponse::Password => handle_pam_auth_response_password(state),
+        PamAuthResponse::Password { prompt } => {
+            handle_pam_auth_response_password(state, prompt.as_deref())
+        }
         PamAuthResponse::Input { msg, echo_on } => {
             handle_pam_auth_response_input(state, &msg, echo_on)
         }
