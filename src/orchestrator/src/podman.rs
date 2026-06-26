@@ -49,9 +49,17 @@ enum BridgeAction<'a> {
 #[derive(Serialize)]
 #[serde(tag = "command", rename_all = "snake_case")]
 enum BridgeRequest<'a> {
-    Action { payload: BridgeAction<'a> },
-    Extract { source: &'a str },
-    Success { success: &'a SuccessCondition },
+    Action {
+        payload: BridgeAction<'a>,
+    },
+    Extract {
+        source: &'a str,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        totp_account: Option<&'a str>,
+    },
+    Success {
+        success: &'a SuccessCondition,
+    },
     Ping,
 }
 
@@ -381,15 +389,19 @@ impl PodmanClient {
         Ok(())
     }
 
-    pub async fn capture_artifact(
+    pub async fn capture_artifact_with_totp_account(
         &self,
         container: &ContainerInstance,
         source: &str,
+        totp_account: Option<&str>,
     ) -> Result<Option<String>> {
         let response = self
             .send_bridge_request(
                 container,
-                BridgeRequest::Extract { source },
+                BridgeRequest::Extract {
+                    source,
+                    totp_account,
+                },
                 self.action_timeout(),
                 "bridge artifact extraction failed",
             )

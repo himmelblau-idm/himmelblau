@@ -577,7 +577,7 @@ async function handleRequest(page, request) {
     return await handleAction(page, request.payload);
   }
   if (request.command === "extract") {
-    return await handleExtract(page, request.source);
+    return await handleExtract(page, request.source, request.totp_account);
   }
   if (request.command === "success") {
     return await handleSuccess(page, request.success);
@@ -623,7 +623,7 @@ async function handleAction(page, payload) {
   throw new Error(`unsupported action '${payload.action}'`);
 }
 
-async function handleExtract(page, source) {
+async function handleExtract(page, source, totpAccount = null) {
   if (typeof source !== "string" || source.length === 0) {
     throw new Error("extract requires a non-empty source");
   }
@@ -647,7 +647,7 @@ async function handleExtract(page, source) {
   } else if (source === "browser:title") {
     value = await page.title();
   } else if (source.startsWith("browser:totp-uri:")) {
-    value = await extractTotpUri(page, source);
+    value = await extractTotpUri(page, source, totpAccount);
   } else if (source.startsWith("browser:page:")) {
     value = await extractPageValue(page, source);
   }
@@ -655,13 +655,13 @@ async function handleExtract(page, source) {
   return { ok: true, value: value === undefined ? null : value };
 }
 
-async function extractTotpUri(page, source) {
+async function extractTotpUri(page, source, totpAccount = null) {
   const selector = source.slice("browser:totp-uri:".length);
   if (selector.length === 0) {
     return null;
   }
 
-  return await page.evaluate((selector) => {
+  return await page.evaluate(({ selector, totpAccount }) => {
     const element = document.querySelector(selector);
     if (!element) {
       return null;
@@ -742,7 +742,7 @@ async function extractTotpUri(page, source) {
     }
 
     const issuer = issuerFromLocation();
-    const account = "account";
+    const account = scalar(totpAccount) || "account";
     const label = `${encodeURIComponent(issuer)}:${encodeURIComponent(account)}`;
     const params = new URLSearchParams();
     params.set("secret", secret);
@@ -751,7 +751,7 @@ async function extractTotpUri(page, source) {
     params.set("digits", "6");
     params.set("period", "30");
     return `otpauth://totp/${label}?${params.toString()}`;
-  }, selector);
+  }, { selector, totpAccount });
 }
 
 function parsePageValueSource(source) {

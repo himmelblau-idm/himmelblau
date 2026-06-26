@@ -682,8 +682,18 @@ impl FlowExecutor {
             return Ok(Some(value.to_string()));
         }
 
+        let totp_account = if source.starts_with("browser:totp-uri:") {
+            let runtime = session.runtime.lock().await;
+            runtime
+                .collected_inputs
+                .get("username")
+                .map(|value| value.value().to_string())
+        } else {
+            None
+        };
+
         self.podman
-            .capture_artifact(&session.container, source)
+            .capture_artifact_with_totp_account(&session.container, source, totp_account.as_deref())
             .await
     }
 
