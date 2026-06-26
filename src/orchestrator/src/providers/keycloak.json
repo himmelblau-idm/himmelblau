@@ -10,15 +10,6 @@
     "url_contains": [
       "/login-actions/",
       "/realms/"
-    ],
-    "page_title_contains": [
-      "Sign in to"
-    ],
-    "dom_selectors": [
-      "button#kc-login",
-      "form#kc-form-login",
-      "input#password",
-      "input#username"
     ]
   },
   "start_url": "$dag_auth_url",
