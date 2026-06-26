@@ -20,10 +20,6 @@ pub struct ProviderMatchers {
     pub domains: Vec<String>,
     #[serde(default)]
     pub url_contains: Vec<String>,
-    #[serde(default)]
-    pub page_title_contains: Vec<String>,
-    #[serde(default)]
-    pub dom_selectors: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -336,15 +332,6 @@ pub fn validate_provider_definition(definition: &ProviderDefinition) -> Result<(
 
     let mut seen_steps = HashSet::new();
 
-    if let Some(matchers) = &definition.matchers {
-        validate_matchers(matchers).with_context(|| {
-            format!(
-                "provider '{}' contains invalid matchers",
-                definition.provider
-            )
-        })?;
-    }
-
     for step in &definition.steps {
         if step.name.trim().is_empty() {
             return Err(anyhow!(
@@ -447,13 +434,6 @@ fn validate_selector(selector: &str) -> Result<()> {
     }
     if trimmed.contains("javascript:") {
         return Err(anyhow!("selector contains forbidden javascript scheme"));
-    }
-    Ok(())
-}
-
-fn validate_matchers(matchers: &ProviderMatchers) -> Result<()> {
-    for selector in &matchers.dom_selectors {
-        validate_selector(selector).context("matcher dom_selector is invalid")?;
     }
     Ok(())
 }
