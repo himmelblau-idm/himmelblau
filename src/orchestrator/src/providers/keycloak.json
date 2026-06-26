@@ -176,13 +176,14 @@
         {
           "name": "new_password",
           "type": "password",
-          "prompt": "{{browser:page:span.kc-feedback-text:text}}\nNew password",
+          "prompt": "New password",
+          "long_prompt": "{{browser:page:span.kc-feedback-text:text}}",
           "optional": false
         },
         {
           "name": "confirm_password",
           "type": "password",
-          "prompt": "{{browser:page:span.kc-feedback-text:text}}\nConfirm password",
+          "prompt": "Confirm password",
           "optional": false
         }
       ],

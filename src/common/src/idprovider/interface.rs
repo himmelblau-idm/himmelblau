@@ -155,6 +155,7 @@ impl fmt::Debug for AuthCredHandler {
 pub enum AuthRequest {
     Password {
         prompt: Option<String>,
+        long_prompt: Option<String>,
     },
     Input {
         msg: String,
@@ -195,7 +196,13 @@ pub enum AuthRequest {
 impl Into<PamAuthResponse> for AuthRequest {
     fn into(self) -> PamAuthResponse {
         match self {
-            AuthRequest::Password { prompt } => PamAuthResponse::Password { prompt },
+            AuthRequest::Password {
+                prompt,
+                long_prompt,
+            } => PamAuthResponse::Password {
+                prompt,
+                long_prompt,
+            },
             AuthRequest::Input { msg, echo_on } => PamAuthResponse::Input { msg, echo_on },
             AuthRequest::HelloTOTP { msg } => PamAuthResponse::HelloTOTP { msg },
             AuthRequest::MFAPoll {

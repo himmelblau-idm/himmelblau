@@ -788,6 +788,7 @@ fn handle_pam_auth_response_denied(state: &AuthenticateState, msg: &str) -> PamW
 fn handle_pam_auth_response_password(
     state: &mut AuthenticateState,
     prompt: Option<&str>,
+    long_prompt: Option<&str>,
 ) -> PamWhatNext {
     let mut consume_authtok = None;
     // Swap the authtok out with a None, so it can only be consumed once.
@@ -797,6 +798,10 @@ fn handle_pam_auth_response_password(
     let cred = if let Some(cred) = consume_authtok {
         cred
     } else {
+        if let Some(long_prompt) = long_prompt.filter(|prompt| !prompt.trim().is_empty()) {
+            state.msg_printer.print_text(long_prompt);
+        }
+
         let prompt = match prompt.filter(|prompt| !prompt.trim().is_empty()) {
             Some(prompt) => prompt,
             None if state.cfg.get_oidc_issuer_url().is_some() => "Cloud Password:",
@@ -1242,9 +1247,10 @@ fn authenticate_request_response(
         PamAuthResponse::Success => handle_pam_auth_response_success(),
         PamAuthResponse::Denied(msg) => handle_pam_auth_response_denied(state, &msg),
         PamAuthResponse::InitDenied { msg } => handle_pam_auth_init_denied(state, &msg),
-        PamAuthResponse::Password { prompt } => {
-            handle_pam_auth_response_password(state, prompt.as_deref())
-        }
+        PamAuthResponse::Password {
+            prompt,
+            long_prompt,
+        } => handle_pam_auth_response_password(state, prompt.as_deref(), long_prompt.as_deref()),
         PamAuthResponse::Input { msg, echo_on } => {
             handle_pam_auth_response_input(state, &msg, echo_on)
         }
