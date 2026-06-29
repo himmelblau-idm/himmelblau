@@ -24,6 +24,7 @@ uuid = { workspace = true }
 [package.metadata.deb]
 name = "nss-himmelblau"
 maintainer = "David Mulder <dmulder@suse.com>"
+depends = ["$auto", "libnss-systemd"]
 assets = [
   ["target/release/libnss_himmelblau.so", "usr/lib/libnss_himmelblau.so.2", "755"],
   ["src/nss-himmelblau.tmpfiles.conf", "usr/lib/tmpfiles.d/nss-himmelblau.conf", "644"],
