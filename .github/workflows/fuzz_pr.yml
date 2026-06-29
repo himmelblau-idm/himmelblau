@@ -55,6 +55,10 @@ jobs:
         with:
           egress-policy: audit
 
+      - uses: socketdev/action@ba6de6cc0565af1f42295590380973573297e31f # v1.3.2
+        with:
+          mode: firewall
+
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
       - uses: dtolnay/rust-toolchain@55d80eb3c5a4228eec5390a083c092095115c6f1 # nightly
         with: { components: llvm-tools-preview }
@@ -83,7 +87,7 @@ jobs:
             fuzz-weekly-corpus-${{ runner.os }}-
 
       - name: Install cargo-fuzz
-        run: cargo install cargo-fuzz --version 0.13.1
+        run: sfw cargo install cargo-fuzz --version 0.13.1
 
       - name: Run ${{ matrix.target }} (ASan quick)
         run: |
