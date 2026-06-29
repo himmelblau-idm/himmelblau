@@ -156,9 +156,9 @@ replace = "anstyle-wincon 3.0.8"
 
 [[package]]
 name = "anyhow"
-version = "1.0.102"
+version = "1.0.103"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7f202df86484c868dbad7eaa557ef785d5c66295e41b460ef922eca0723b842c"
+checksum = "2a4385e2e34eb35d6b3efe798b9eb88096925d87726c0798709bf56d9ed84af3"
 
 [[package]]
 name = "apparmor"
@@ -3193,9 +3193,9 @@ dependencies = [
 
 [[package]]
 name = "libhimmelblau"
-version = "0.8.23"
+version = "0.8.24"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b3e3b22cf59b1c0e974a32be481f3a25d21bd064deb7b78a8b62cc031070abd6"
+checksum = "28b24e31a74cd7f0392e830caf0615e72fa73f6aaca42b0b55163f41789d180c"
 dependencies = [
  "base64 0.22.1",
  "cbindgen 0.29.2 (registry+https://github.com/rust-lang/crates.io-index)",
