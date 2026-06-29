@@ -344,7 +344,7 @@ WantedBy=himmelblaud.service
     ]
     orchestrator_private_devices = "PrivateDevices=false" if supported("PrivateDevices") else ""
     orchestrator_rw_line = (
-        "ReadWritePaths=/run/himmelblaud /run/lock /run/netns -/run/containers -/var/lib/containers -/run/libpod -/run/crun -/run/runc -/var/cache/himmelblaud/orchestrator -/var/cache/private/himmelblaud/orchestrator"
+        "ReadWritePaths=/run/himmelblaud /run/lock /run/netns -/run/containers -/var/lib/containers -/run/libpod -/run/crun -/run/runc -/etc/containers/networks -/var/cache/himmelblaud/orchestrator -/var/cache/private/himmelblaud/orchestrator"
         if rw_paths_available
         else ""
     )

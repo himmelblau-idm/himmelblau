@@ -171,7 +171,7 @@ async fn main() -> Result<()> {
         ensure_container_image(&podman_client, Path::new(&args.container_build_dir)).await
     {
         error!(
-            %error,
+            error = %format_args!("{:#}", error),
             exit_code = CONTAINER_IMAGE_BUILD_FAILURE_EXIT_CODE,
             "orchestrator container image is unavailable; exiting without restart"
         );
