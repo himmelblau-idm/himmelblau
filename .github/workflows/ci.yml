@@ -34,6 +34,7 @@ jobs:
   build:
     name: Build
     runs-on: ubuntu-latest
+    needs: dependency-firewall
     steps:
       - name: Harden the runner (Audit all outbound calls)
         uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
@@ -151,6 +152,7 @@ jobs:
   test:
     name: Test
     runs-on: ubuntu-latest
+    needs: dependency-firewall
     steps:
       - name: Harden the runner (Audit all outbound calls)
         uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
@@ -302,3 +304,31 @@ jobs:
       - name: Check for unused dependencies with udeps
         run: cargo +nightly udeps --all-targets
         continue-on-error: true
+
+  dependency-firewall:
+    name: Socket Dependency Firewall
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411 # v2.19.4
+        with:
+          egress-policy: audit
+
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+
+      - uses: dtolnay/rust-toolchain@5d458579430fc14a04a08a1e7d3694f545e91ce6 # stable
+
+      - uses: socketdev/action@ba6de6cc0565af1f42295590380973573297e31f # v1.3.2
+        with:
+          mode: firewall
+
+      - name: Clear Cargo package cache
+        run: rm -rf ~/.cargo/registry ~/.cargo/git
+
+      - name: Fetch dependencies through Socket Firewall
+        run: |
+          unset RUSTC_WRAPPER
+          unset SCCACHE_GHA_ENABLED
+          sfw cargo fetch --locked
