@@ -96,6 +96,20 @@ impl SyslogLevel {
     }
 }
 
+/// True when we can prompt: a graphical session and a pinentry binary exist.
+fn interactive_session_available() -> bool {
+    let has_display =
+        std::env::var_os("WAYLAND_DISPLAY").is_some() || std::env::var_os("DISPLAY").is_some();
+    let has_pinentry = pinentry::PassphraseInput::with_default_binary().is_some();
+    if !has_display {
+        error!("No X11/Wayland session detected; cannot prompt interactively");
+    }
+    if !has_pinentry {
+        error!("No pinentry binary found on PATH; cannot prompt interactively");
+    }
+    has_display && has_pinentry
+}
+
 /// A `MessagePrinter` that uses `pinentry` for prompts and messages.
 /// Used by `authenticate()` for the interactive auth flow.
 struct PinentryMessagePrinter;
@@ -213,17 +227,10 @@ impl InteractiveSessionBroker {
         String::from_utf8(data)
             .map_err(|e| dbus::MethodErr::failed(&format!("invalid UTF-8: {}", e)))
     }
-}
 
-impl SessionBroker for InteractiveSessionBroker {
-    fn acquire_token_interactively(
-        &mut self,
-        protocol_version: String,
-        correlation_id: String,
-        request_json: String,
-    ) -> Result<String, dbus::MethodErr> {
-        // Extract the username from the request for authenticate()
-        let account_id = serde_json::from_str::<serde_json::Value>(&request_json)
+    /// Extract the account username from a broker request payload.
+    fn extract_account_id(request_json: &str) -> Option<String> {
+        serde_json::from_str::<serde_json::Value>(request_json)
             .ok()
             .and_then(|v| {
                 v.get("account")
@@ -232,7 +239,15 @@ impl SessionBroker for InteractiveSessionBroker {
                     .and_then(|u| u.as_str())
                     .map(String::from)
             })
-            .ok_or_else(|| dbus::MethodErr::failed(&"Missing account username in request"))?;
+    }
+
+    /// Drive an interactive auth via pinentry to re-prime the daemon cache.
+    fn run_interactive_auth(&self, account_id: &str) -> Result<(), dbus::MethodErr> {
+        if !interactive_session_available() {
+            return Err(dbus::MethodErr::failed(
+                &"No interactive prompt available: no graphical session or pinentry binary found",
+            ));
+        }
 
         // Run authenticate() on a dedicated thread to avoid nested
         // tokio runtime issues (fido_auth creates its own Runtime).
@@ -249,12 +264,9 @@ impl SessionBroker for InteractiveSessionBroker {
             force_reauth: true,
         };
 
-        info!(
-            "acquireTokenInteractively: starting interactive auth for {}",
-            account_id
-        );
+        info!("starting interactive auth for {}", account_id);
 
-        let account_id_clone = account_id.clone();
+        let account_id_clone = account_id.to_string();
         let auth_result = std::thread::spawn(move || {
             authenticate(
                 None,
@@ -275,10 +287,23 @@ impl SessionBroker for InteractiveSessionBroker {
             )));
         }
 
-        info!(
-            "acquireTokenInteractively: auth succeeded for {}, acquiring token",
-            account_id
-        );
+        info!("interactive auth succeeded for {}", account_id);
+        Ok(())
+    }
+}
+
+impl SessionBroker for InteractiveSessionBroker {
+    fn acquire_token_interactively(
+        &mut self,
+        protocol_version: String,
+        correlation_id: String,
+        request_json: String,
+    ) -> Result<String, dbus::MethodErr> {
+        // Extract the username from the request for authenticate()
+        let account_id = Self::extract_account_id(&request_json)
+            .ok_or_else(|| dbus::MethodErr::failed(&"Missing account username in request"))?;
+
+        self.run_interactive_auth(&account_id)?;
 
         // Auth succeeded — PRT is now refreshed. Acquire the token
         // silently via the broker socket.
@@ -327,10 +352,24 @@ impl SessionBroker for InteractiveSessionBroker {
         correlation_id: String,
         request_json: String,
     ) -> Result<String, dbus::MethodErr> {
-        self.forward(
+        match self.forward(
             "acquirePrtSsoCookie",
             &[&protocol_version, &correlation_id, &request_json],
-        )
+        ) {
+            Ok(cookie) => Ok(cookie),
+            Err(e) => {
+                // PRT likely gone from cache; re-prime interactively then retry.
+                info!("Silent PRT SSO cookie failed ({e}); attempting interactive re-auth");
+                let account_id = Self::extract_account_id(&request_json).ok_or_else(|| {
+                    dbus::MethodErr::failed(&"Missing account username in request")
+                })?;
+                self.run_interactive_auth(&account_id)?;
+                self.forward(
+                    "acquirePrtSsoCookie",
+                    &[&protocol_version, &correlation_id, &request_json],
+                )
+            }
+        }
     }
 
     fn generate_signed_http_request(
@@ -491,5 +530,41 @@ async fn main() -> ExitCode {
                 let _ = sd_notify::notify(&[NotifyState::Watchdog]);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn extracts_top_level_account() {
+        let json = r#"{"account":{"username":"user@example.com"}}"#;
+        assert_eq!(
+            InteractiveSessionBroker::extract_account_id(json).as_deref(),
+            Some("user@example.com")
+        );
+    }
+
+    #[test]
+    fn extracts_nested_auth_parameters() {
+        let json = r#"{"authParameters":{"account":{"username":"user@example.com"}}}"#;
+        assert_eq!(
+            InteractiveSessionBroker::extract_account_id(json).as_deref(),
+            Some("user@example.com")
+        );
+    }
+
+    #[test]
+    fn none_when_missing() {
+        assert_eq!(InteractiveSessionBroker::extract_account_id("{}"), None);
+        assert_eq!(
+            InteractiveSessionBroker::extract_account_id("not json"),
+            None
+        );
+        assert_eq!(
+            InteractiveSessionBroker::extract_account_id(r#"{"account":{}}"#),
+            None
+        );
     }
 }
