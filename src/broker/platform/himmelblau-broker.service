@@ -1,11 +1,17 @@
 [Unit]
 Description=Himmelblau Authentication Broker
+# Tie lifetime to the graphical session so pinentry has a display to use.
+PartOf=graphical-session.target
+After=graphical-session.target
 
 [Service]
 Type=dbus
 BusName=com.microsoft.identity.broker1
 ExecStart=/usr/sbin/himmelblau_broker
+# Inherit the session display vars the user manager imports at login.
+PassEnvironment=DISPLAY WAYLAND_DISPLAY XAUTHORITY
 Slice=background.slice
 TimeoutStopSec=5
 Restart=on-failure
 WatchdogSec=120s
+
