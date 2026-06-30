@@ -102,17 +102,15 @@ fn interactive_session_available() -> bool {
         std::env::var_os("WAYLAND_DISPLAY").is_some() || std::env::var_os("DISPLAY").is_some();
     let has_pinentry = pinentry::PassphraseInput::with_default_binary().is_some();
     if !has_display {
-        error!("No X11/Wayland session detected; cannot prompt interactively");
+        info!("No X11/Wayland session detected; cannot prompt interactively");
     }
     if !has_pinentry {
-        error!("No pinentry binary found on PATH; cannot prompt interactively");
+        info!("No pinentry binary found on PATH; cannot prompt interactively");
     }
     has_display && has_pinentry
 }
 
-/// True when a broker SSO cookie response actually carries a cookie.
-/// The daemon sends no response when it cannot mint one, so an empty or
-/// `cookieContent`-less payload means silent acquisition failed.
+/// True when a broker SSO cookie response carries a usable cookie.
 fn sso_cookie_response_is_valid(resp: &str) -> bool {
     serde_json::from_str::<serde_json::Value>(resp)
         .ok()
@@ -366,10 +364,9 @@ impl SessionBroker for InteractiveSessionBroker {
         correlation_id: String,
         request_json: String,
     ) -> Result<String, dbus::MethodErr> {
-        // Transport failures propagate as-is. A daemon that cannot mint a
-        // cookie (e.g. the PRT is gone from the cache) closes the connection
-        // without a response, which forward() surfaces as a payload without a
-        // cookieContent field rather than an Err.
+        // A daemon that cannot mint a cookie closes the connection without a
+        // response, so forward() yields a payload with no cookieContent rather
+        // than an Err; transport errors still propagate here.
         let resp = self.forward(
             "acquirePrtSsoCookie",
             &[&protocol_version, &correlation_id, &request_json],
@@ -378,9 +375,14 @@ impl SessionBroker for InteractiveSessionBroker {
             return Ok(resp);
         }
 
-        // No cookie. Re-prime the PRT interactively when we can, otherwise
-        // return the original response rather than masking it.
+        // No cookie: re-prime the PRT interactively, or surface the failure
+        // (an empty response means no reply at all) when we cannot prompt.
         if !interactive_session_available() {
+            if resp.is_empty() {
+                return Err(dbus::MethodErr::failed(
+                    &"PRT SSO cookie unavailable and no interactive session to re-authenticate",
+                ));
+            }
             return Ok(resp);
         }
         info!("Silent PRT SSO cookie unavailable; attempting interactive re-auth");
