@@ -110,6 +110,20 @@ fn interactive_session_available() -> bool {
     has_display && has_pinentry
 }
 
+/// True when a broker SSO cookie response actually carries a cookie.
+/// The daemon sends no response when it cannot mint one, so an empty or
+/// `cookieContent`-less payload means silent acquisition failed.
+fn sso_cookie_response_is_valid(resp: &str) -> bool {
+    serde_json::from_str::<serde_json::Value>(resp)
+        .ok()
+        .and_then(|v| {
+            v.get("cookieContent")
+                .and_then(|c| c.as_str())
+                .map(|c| !c.is_empty())
+        })
+        .unwrap_or(false)
+}
+
 /// A `MessagePrinter` that uses `pinentry` for prompts and messages.
 /// Used by `authenticate()` for the interactive auth flow.
 struct PinentryMessagePrinter;
@@ -352,24 +366,31 @@ impl SessionBroker for InteractiveSessionBroker {
         correlation_id: String,
         request_json: String,
     ) -> Result<String, dbus::MethodErr> {
-        match self.forward(
+        // Transport failures propagate as-is. A daemon that cannot mint a
+        // cookie (e.g. the PRT is gone from the cache) closes the connection
+        // without a response, which forward() surfaces as a payload without a
+        // cookieContent field rather than an Err.
+        let resp = self.forward(
             "acquirePrtSsoCookie",
             &[&protocol_version, &correlation_id, &request_json],
-        ) {
-            Ok(cookie) => Ok(cookie),
-            Err(e) => {
-                // PRT likely gone from cache; re-prime interactively then retry.
-                info!("Silent PRT SSO cookie failed ({e}); attempting interactive re-auth");
-                let account_id = Self::extract_account_id(&request_json).ok_or_else(|| {
-                    dbus::MethodErr::failed(&"Missing account username in request")
-                })?;
-                self.run_interactive_auth(&account_id)?;
-                self.forward(
-                    "acquirePrtSsoCookie",
-                    &[&protocol_version, &correlation_id, &request_json],
-                )
-            }
+        )?;
+        if sso_cookie_response_is_valid(&resp) {
+            return Ok(resp);
         }
+
+        // No cookie. Re-prime the PRT interactively when we can, otherwise
+        // return the original response rather than masking it.
+        if !interactive_session_available() {
+            return Ok(resp);
+        }
+        info!("Silent PRT SSO cookie unavailable; attempting interactive re-auth");
+        let account_id = Self::extract_account_id(&request_json)
+            .ok_or_else(|| dbus::MethodErr::failed(&"Missing account username in request"))?;
+        self.run_interactive_auth(&account_id)?;
+        self.forward(
+            "acquirePrtSsoCookie",
+            &[&protocol_version, &correlation_id, &request_json],
+        )
     }
 
     fn generate_signed_http_request(
@@ -566,5 +587,16 @@ mod tests {
             InteractiveSessionBroker::extract_account_id(r#"{"account":{}}"#),
             None
         );
+    }
+
+    #[test]
+    fn sso_cookie_valid_only_with_cookie_content() {
+        assert!(sso_cookie_response_is_valid(
+            r#"{"cookieContent":"abc","cookieName":"x"}"#
+        ));
+        assert!(!sso_cookie_response_is_valid(r#"{"cookieContent":""}"#));
+        assert!(!sso_cookie_response_is_valid(r#"{"account":{}}"#));
+        assert!(!sso_cookie_response_is_valid(""));
+        assert!(!sso_cookie_response_is_valid("not json"));
     }
 }
