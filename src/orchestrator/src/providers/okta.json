@@ -3,11 +3,17 @@
   "display_name": "Okta",
   "matchers": {
     "issuer_contains": [
-      "okta.com"
+      "okta.com",
+      "oktapreview.com",
+      "okta-emea.com",
+      "okta-gov.com"
     ],
     "domains": [],
     "url_contains": [
-      "okta.com"
+      "okta.com",
+      "oktapreview.com",
+      "okta-emea.com",
+      "okta-gov.com"
     ]
   },
   "start_url": "$dag_auth_url",
