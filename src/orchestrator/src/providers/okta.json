@@ -1,0 +1,274 @@
+{
+  "provider": "okta",
+  "display_name": "Okta",
+  "matchers": {
+    "issuer_contains": [
+      "okta.com"
+    ],
+    "domains": [],
+    "url_contains": [
+      "okta.com"
+    ]
+  },
+  "start_url": "$dag_auth_url",
+  "steps": [
+    {
+      "name": "okta_device_activation_code",
+      "wait_for": {
+        "selector": "[data-se='o-form-fieldset-userCode'] input[name='userCode']"
+      },
+      "required_inputs": [
+        {
+          "name": "dag_user_code",
+          "type": "text",
+          "prompt": null,
+          "optional": false
+        }
+      ],
+      "actions": [
+        {
+          "type": "fill",
+          "selector": "[data-se='o-form-fieldset-userCode'] input[name='userCode']",
+          "input": "dag_user_code"
+        },
+        {
+          "type": "click",
+          "selector": ".o-form-button-bar input[type='submit'][value='Next'][data-type='save']"
+        },
+        {
+          "type": "wait",
+          "millis": 3000
+        }
+      ],
+      "branches": [
+        {
+          "condition": {
+            "type": "dom_selector",
+            "selector": "[data-se='o-form-fieldset-identifier'] input[name='identifier'][autocomplete='username']"
+          },
+          "goto_step": "okta_identifier"
+        }
+      ]
+    },
+    {
+      "name": "okta_identifier",
+      "wait_for": {
+        "selector": "[data-se='o-form-fieldset-identifier'] input[name='identifier'][autocomplete='username']"
+      },
+      "required_inputs": [
+        {
+          "name": "username",
+          "type": "text",
+          "prompt": null,
+          "optional": false
+        }
+      ],
+      "actions": [
+        {
+          "type": "fill",
+          "selector": "[data-se='o-form-fieldset-identifier'] input[name='identifier'][autocomplete='username']",
+          "input": "username"
+        },
+        {
+          "type": "click",
+          "selector": "input[type='submit'][value='Next'], button[type='submit']"
+        },
+        {
+          "type": "wait",
+          "millis": 3000
+        }
+      ],
+      "branches": [
+        {
+          "condition": {
+            "type": "dom_selector",
+            "selector": ".authenticator-verify-list [data-se='okta_password'] a[data-se='button'], .authenticator-verify-list [data-se='okta_verify-totp'] a[data-se='button']"
+          },
+          "goto_step": "okta_select_password_method"
+        },
+        {
+          "condition": {
+            "type": "dom_selector",
+            "selector": "[data-se='o-form-fieldset-credentials.passcode'] input[name='credentials.passcode'][type='password']"
+          },
+          "goto_step": "okta_password"
+        },
+        {
+          "condition": {
+            "type": "dom_selector",
+            "selector": "[data-se='o-form-fieldset-credentials.totp'] input[name='credentials.totp']"
+          },
+          "goto_step": "okta_verify_totp"
+        }
+      ]
+    },
+    {
+      "name": "okta_select_password_method",
+      "optional": true,
+      "wait_for": {
+        "selector": ".authenticator-verify-list [data-se='okta_password'] a[data-se='button']"
+      },
+      "required_inputs": [],
+      "actions": [
+        {
+          "type": "click",
+          "selector": ".authenticator-verify-list [data-se='okta_password'] a[data-se='button']"
+        },
+        {
+          "type": "wait",
+          "millis": 3000
+        }
+      ],
+      "branches": [
+        {
+          "condition": {
+            "type": "dom_selector",
+            "selector": "[data-se='o-form-fieldset-credentials.passcode'] input[name='credentials.passcode'][type='password']"
+          },
+          "goto_step": "okta_password"
+        },
+        {
+          "condition": {
+            "type": "always"
+          },
+          "goto_step": "okta_select_okta_verify_method"
+        }
+      ]
+    },
+    {
+      "name": "okta_select_okta_verify_method",
+      "optional": true,
+      "wait_for": {
+        "selector": ".authenticator-verify-list [data-se='okta_verify-totp'] a[data-se='button']"
+      },
+      "required_inputs": [],
+      "actions": [
+        {
+          "type": "click",
+          "selector": ".authenticator-verify-list [data-se='okta_verify-totp'] a[data-se='button']"
+        },
+        {
+          "type": "wait",
+          "millis": 3000
+        }
+      ],
+      "branches": [
+        {
+          "condition": {
+            "type": "dom_selector",
+            "selector": "[data-se='o-form-fieldset-credentials.totp'] input[name='credentials.totp']"
+          },
+          "goto_step": "okta_verify_totp"
+        }
+      ]
+    },
+    {
+      "name": "okta_verify_totp",
+      "wait_for": {
+        "selector": "[data-se='o-form-fieldset-credentials.totp'] input[name='credentials.totp']"
+      },
+      "required_inputs": [
+        {
+          "name": "otp",
+          "type": "otp",
+          "prompt": "Okta Verify code",
+          "optional": false
+        }
+      ],
+      "actions": [
+        {
+          "type": "fill",
+          "selector": "[data-se='o-form-fieldset-credentials.totp'] input[name='credentials.totp']",
+          "input": "otp"
+        },
+        {
+          "type": "click",
+          "selector": ".o-form-button-bar input[type='submit'][value='Verify'][data-type='save']"
+        },
+        {
+          "type": "wait",
+          "millis": 5000
+        }
+      ],
+      "branches": [
+        {
+          "condition": {
+            "type": "dom_selector",
+            "selector": "form[data-se='o-form'][action='/activate'].terminal-state"
+          },
+          "goto_step": "okta_confirm_device_login_success"
+        },
+        {
+          "condition": {
+            "type": "dom_selector",
+            "selector": "[data-se='o-form-fieldset-credentials.passcode'] input[name='credentials.passcode'][type='password']"
+          },
+          "goto_step": "okta_password"
+        }
+      ]
+    },
+    {
+      "name": "okta_password",
+      "wait_for": {
+        "selector": "[data-se='o-form-fieldset-credentials.passcode'] input[name='credentials.passcode'][type='password']"
+      },
+      "required_inputs": [
+        {
+          "name": "password",
+          "type": "password",
+          "prompt": "Password",
+          "long_prompt": "Verify with your password",
+          "optional": false
+        }
+      ],
+      "actions": [
+        {
+          "type": "fill",
+          "selector": "[data-se='o-form-fieldset-credentials.passcode'] input[name='credentials.passcode'][type='password']",
+          "input": "password"
+        },
+        {
+          "type": "click",
+          "selector": ".o-form-button-bar input[type='submit'][value='Verify'][data-type='save']"
+        },
+        {
+          "type": "wait",
+          "millis": 5000
+        }
+      ],
+      "branches": [
+        {
+          "condition": {
+            "type": "dom_selector",
+            "selector": "form[data-se='o-form'][action='/activate'].terminal-state"
+          },
+          "goto_step": "okta_confirm_device_login_success"
+        },
+        {
+          "condition": {
+            "type": "dom_selector",
+            "selector": "[data-se='o-form-fieldset-credentials.totp'] input[name='credentials.totp']"
+          },
+          "goto_step": "okta_verify_totp"
+        }
+      ]
+    },
+    {
+      "name": "okta_confirm_device_login_success",
+      "optional": true,
+      "wait_for": {
+        "selector": "form[data-se='o-form'][action='/activate'].terminal-state"
+      },
+      "required_inputs": [],
+      "actions": [
+        {
+          "type": "log",
+          "message": "Checking for Okta device-login success page."
+        }
+      ],
+      "success": {
+        "dom_selector": "form[data-se='o-form'][action='/activate'].terminal-state"
+      }
+    }
+  ]
+}

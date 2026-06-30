@@ -9,8 +9,9 @@ use tokio::fs;
 use url::Url;
 
 //const BUILTIN_PROVIDER_KEYS: [&str; 4] = ["entra", "okta", "google", "keycloak"];
-const BUILTIN_PROVIDER_KEYS: [&str; 1] = ["keycloak"];
+const BUILTIN_PROVIDER_KEYS: [&str; 2] = ["keycloak", "okta"];
 const BUILTIN_KEYCLOAK_PROVIDER: &str = include_str!("providers/keycloak.json");
+const BUILTIN_OKTA_PROVIDER: &str = include_str!("providers/okta.json");
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProviderMatchers {
@@ -166,6 +167,14 @@ impl ProviderRegistry {
 
         // Keycloak
         for definition in parse_provider_override(BUILTIN_KEYCLOAK_PROVIDER)? {
+            validate_provider_definition(&definition)?;
+            if !by_name.contains_key(&definition.provider) {
+                by_name.insert(definition.provider.clone(), Arc::new(definition));
+            }
+        }
+
+        // Okta
+        for definition in parse_provider_override(BUILTIN_OKTA_PROVIDER)? {
             validate_provider_definition(&definition)?;
             if !by_name.contains_key(&definition.provider) {
                 by_name.insert(definition.provider.clone(), Arc::new(definition));
@@ -630,6 +639,19 @@ mod tests {
     #[test]
     fn validates_builtin_keycloak_provider() {
         let definitions = parse_provider_override(BUILTIN_KEYCLOAK_PROVIDER);
+        assert!(definitions.is_ok());
+
+        let mut definitions = definitions.unwrap_or_default();
+        assert!(!definitions.is_empty());
+
+        for definition in definitions.drain(..) {
+            assert!(validate_provider_definition(&definition).is_ok());
+        }
+    }
+
+    #[test]
+    fn validates_builtin_okta_provider() {
+        let definitions = parse_provider_override(BUILTIN_OKTA_PROVIDER);
         assert!(definitions.is_ok());
 
         let mut definitions = definitions.unwrap_or_default();
