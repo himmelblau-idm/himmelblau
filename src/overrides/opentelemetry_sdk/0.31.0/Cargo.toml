@@ -1,0 +1,32 @@
+[package]
+name = "opentelemetry_sdk"
+version = "0.31.0"
+authors.workspace = true
+rust-version.workspace = true
+edition.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[features]
+default = ["opentelemetry_sdk/default"]
+experimental_async_runtime = ["opentelemetry_sdk/experimental_async_runtime"]
+experimental_logs_batch_log_processor_with_async_runtime = ["opentelemetry_sdk/experimental_logs_batch_log_processor_with_async_runtime"]
+experimental_logs_concurrent_log_processor = ["opentelemetry_sdk/experimental_logs_concurrent_log_processor"]
+experimental_metrics_custom_reader = ["opentelemetry_sdk/experimental_metrics_custom_reader"]
+experimental_metrics_disable_name_validation = ["opentelemetry_sdk/experimental_metrics_disable_name_validation"]
+experimental_metrics_periodicreader_with_async_runtime = ["opentelemetry_sdk/experimental_metrics_periodicreader_with_async_runtime"]
+experimental_trace_batch_span_processor_with_async_runtime = ["opentelemetry_sdk/experimental_trace_batch_span_processor_with_async_runtime"]
+internal-logs = ["opentelemetry_sdk/internal-logs"]
+jaeger_remote_sampler = ["opentelemetry_sdk/jaeger_remote_sampler"]
+logs = ["opentelemetry_sdk/logs"]
+metrics = ["opentelemetry_sdk/metrics"]
+rt-tokio = ["opentelemetry_sdk/rt-tokio"]
+rt-tokio-current-thread = ["opentelemetry_sdk/rt-tokio-current-thread"]
+spec_unstable_logs_enabled = ["opentelemetry_sdk/logs"]
+spec_unstable_metrics_views = ["opentelemetry_sdk/spec_unstable_metrics_views"]
+testing = ["opentelemetry_sdk/testing"]
+trace = ["opentelemetry_sdk/trace"]
+
+[dependencies]
+opentelemetry_sdk = { version = "^0.32.1" }
