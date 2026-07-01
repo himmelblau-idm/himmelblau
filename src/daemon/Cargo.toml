@@ -118,7 +118,7 @@ himmelblau-selinux = "*"
 himmelblau-apparmor = "*"
 krb5 = "*"
 cron = "*" # For Intune policy scripts
-system-user-tss = "*"
+"(system-user-tss or tpm2-tss)" = "*"
 # Boolean OR: covers tpm2-tools (Fedora/Rocky/Amazon) and tpm2.0-tools (openSUSE/SLE) in one
 # expression. Requires RPM 4.13+, which ships on all supported RPM targets.
 "(tpm2-tools or tpm2.0-tools)" = "*"
