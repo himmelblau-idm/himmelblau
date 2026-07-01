@@ -17,6 +17,8 @@
 */
 use crate::idprovider::interface::IdpError;
 use kanidm_hsm_crypto::structures::SealedData;
+use lazy_static::lazy_static;
+use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::thread::sleep;
 use std::{
@@ -64,10 +66,14 @@ pub struct TotpEnrollmentRecord {
     pub account_name: String,
 }
 
+lazy_static! {
+    pub(crate) static ref URL_REGEX: Option<Regex> = Regex::new(r#"https?://[^\s"'<>]+"#).ok();
+}
+
 #[macro_export]
 macro_rules! extract_base_url {
     ($msg:expr) => {{
-        if let Ok(regex) = Regex::new(r#"https?://[^\s"'<>]+"#) {
+        if let Some(regex) = $crate::idprovider::common::URL_REGEX.as_ref() {
             if let Some(mat) = regex.find(&$msg) {
                 if let Ok(mut parsed) = Url::parse(mat.as_str()) {
                     parsed.set_query(None);

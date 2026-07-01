@@ -64,7 +64,6 @@ use openidconnect::{
     EndpointMaybeSet, EndpointNotSet, EndpointSet, IdTokenFields, IssuerUrl, OAuth2TokenResponse,
     ProviderMetadata, Scope,
 };
-use regex::Regex;
 use reqwest::Url;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
