@@ -2417,6 +2417,7 @@ dependencies = [
  "oauth2",
  "openidconnect",
  "qrcodegen",
+ "rand 0.9.4",
  "regex",
  "reqwest 0.12.24 (registry+https://github.com/rust-lang/crates.io-index)",
  "rpassword",
@@ -3193,9 +3194,9 @@ dependencies = [
 
 [[package]]
 name = "libhimmelblau"
-version = "0.8.23"
+version = "0.8.25"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b3e3b22cf59b1c0e974a32be481f3a25d21bd064deb7b78a8b62cc031070abd6"
+checksum = "7b31aa9faf50d11844eff6abeb52d3bb8b8d2ef8494dce891cba01285066da81"
 dependencies = [
  "base64 0.22.1",
  "cbindgen 0.29.2 (registry+https://github.com/rust-lang/crates.io-index)",

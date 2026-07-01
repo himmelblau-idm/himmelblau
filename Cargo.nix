@@ -7414,6 +7414,10 @@ rec {
             packageId = "qrcodegen";
           }
           {
+            name = "rand";
+            packageId = "rand 0.9.4";
+          }
+          {
             name = "regex";
             packageId = "regex";
           }
@@ -9653,9 +9657,9 @@ rec {
       };
       "libhimmelblau" = rec {
         crateName = "libhimmelblau";
-        version = "0.8.23";
+        version = "0.8.25";
         edition = "2021";
-        sha256 = "1mmbf0807k32if5bgdyyck81pli578gligij9abhw74vylnb5qxk";
+        sha256 = "10fscr82h0ds3j4wwka9z0p8v2xvsd9fpaznxx21ilahmygslcbv";
         libName = "himmelblau";type = [ "rlib" "cdylib" ];
         authors = [
           "David Mulder <dmulder@suse.com>"
