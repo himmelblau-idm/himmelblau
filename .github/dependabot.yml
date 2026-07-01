@@ -27,6 +27,10 @@ updates:
       interval: "monthly"
     commit-message:
       prefix: "deps(rust)"
+    ignore:
+      - dependency-name: "identity_dbus_broker"
+        versions:
+          - ">=0.2.0"
     groups:
       all-cargo-updates:
         patterns:
