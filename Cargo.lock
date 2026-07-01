@@ -1851,13 +1851,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "fxhash"
-version = "0.2.1"
-dependencies = [
- "rustc-hash",
-]
-
-[[package]]
 name = "generic-array"
 version = "0.14.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2717,10 +2710,6 @@ dependencies = [
  "tss-esapi",
  "tss-esapi-sys",
 ]
-
-[[package]]
-name = "kanidm_build_profiles"
-version = "1.8.1"
 
 [[package]]
 name = "kanidm_lib_crypto"
@@ -3849,10 +3838,6 @@ checksum = "e57fef6bc5981e38c2ce2d63bfa546861309f875b8a75f092d1d54ae2d64f266"
 dependencies = [
  "siphasher",
 ]
-
-[[package]]
-name = "picky-krb"
-version = "0.12.0"
 
 [[package]]
 name = "pin-project"
@@ -5164,13 +5149,6 @@ dependencies = [
 [[package]]
 name = "sshd-config"
 version = "3.1.7"
-
-[[package]]
-name = "sshkey-attest"
-version = "0.5.999"
-dependencies = [
- "serde",
-]
 
 [[package]]
 name = "sso"
