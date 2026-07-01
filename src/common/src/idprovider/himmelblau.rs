@@ -68,8 +68,7 @@ use kanidm_hsm_crypto::{
 };
 use libc::getpwnam;
 use libkrimes::proto::KerberosCredentials;
-use regex::Regex;
-use reqwest;
+use rand::Rng;
 use reqwest::Url;
 use std::collections::HashMap;
 use std::ffi::CString;
@@ -91,6 +90,10 @@ const CONSENT_REQUIRED: u32 = 65002;
 const PASSWORD_RESET_REGISTRATION_REQUIRED: u32 = 50125;
 // AADSTS50072/50074/50076: Strong auth/MFA is required for this request.
 const MFA_REQUIRED_FOR_ENROLLMENT: [u32; 3] = [50072, 50074, 50076];
+// AADSTS90055: TenantThrottlingError - There are too many incoming requests.
+const THROTTLING_ERROR: u32 = 90055;
+// AADSTS90006: ExternalServerRetryableError - The service is temporarily unavailable.
+const RETRYABLE_ERROR: u32 = 90006;
 
 fn is_unavailable_mfa_method_error(msg: &str, requested_method: &str) -> bool {
     let expected_prefix =
@@ -1033,6 +1036,18 @@ fn is_sspr_required(e: &MsalError) -> bool {
     }
 }
 
+fn throttle_backoff_delay(attempt: usize) -> Duration {
+    let base_ms = match attempt {
+        0 => 1_000,
+        1 => 3_000,
+        _ => 7_000,
+    };
+
+    let jitter_ms = rand::rng().random_range(250..=750);
+
+    Duration::from_millis(base_ms + jitter_ms)
+}
+
 #[async_trait]
 impl IdProvider for HimmelblauProvider {
     async fn offline_break_glass(&self, ttl: Option<u64>) -> Result<(), IdpError> {
@@ -1433,7 +1448,10 @@ impl IdProvider for HimmelblauProvider {
                                 return Err(IdpError::BadRequest);
                             }
                         );
-                        if auth_init.exists() {
+                        if auth_init.try_exists().map_err(|e| {
+                            error!(?e, "Failed checking user existence");
+                            IdpError::BadRequest
+                        })? {
                             // Generate a UserToken, with invalid uuid. We can
                             // only fetch this from an authenticated token.
                             let id_attr_map = self.config.lock().await.get_id_attr_map();
@@ -1860,17 +1878,56 @@ impl IdProvider for HimmelblauProvider {
                     auth_options.push(AuthOption::RemoteSession);
                 }
 
-                let auth_init = net_down_check!(
-                    self.client
-                        .lock()
-                        .await
-                        .check_user_exists(account_id, &auth_options)
-                        .await,
-                    Err(e) => {
-                        error!("{:?}", e);
-                        return Err(IdpError::BadRequest);
+                let mut attempts = 0;
+                let auth_init = loop {
+                    let auth_init_attempt = net_down_check!(
+                        self.client
+                            .lock()
+                            .await
+                            .check_user_exists(account_id, &auth_options)
+                            .await,
+                        Err(e) => {
+                            error!("{:?}", e);
+                            return Err(IdpError::BadRequest);
+                        }
+                    );
+                    let delay = throttle_backoff_delay(attempts);
+                    attempts += 1;
+                    match auth_init_attempt.try_exists() {
+                        Ok(_) => break auth_init_attempt,
+                        Err(MsalError::AADSTSError(e)) => {
+                            if attempts > 2 {
+                                error!("{:?}", e);
+                                return Ok((
+                                    AuthRequest::InitDenied {
+                                        msg: "Authentication service is temporarily unavailable. Please try again shortly.".to_string(),
+                                    },
+                                    AuthCredHandler::None,
+                                ));
+                            }
+                            match e.code {
+                                THROTTLING_ERROR => {
+                                    info!(?e, "Throttling authentication attempt");
+                                    tokio::time::sleep(delay).await;
+                                    continue;
+                                }
+                                RETRYABLE_ERROR => {
+                                    info!(?e, "Transient error, retrying");
+                                    tokio::time::sleep(delay).await;
+                                    continue;
+                                }
+                                _ => {
+                                    error!("{:?}", e);
+                                    return Err(IdpError::BadRequest);
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            error!("{:?}", e);
+                            return Err(IdpError::BadRequest);
+                        }
                     }
-                );
+                };
 
                 // Sign-in frequency optimization: For console logins with password_only mode,
                 // request password first and use PasswordFirst handler. This allows us to

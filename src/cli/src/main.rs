@@ -364,7 +364,14 @@ async fn auth(app: &BrokerClientApplication, account_id: &str) -> Option<UserTok
         }
     };
 
-    debug!("User {} exists? {}", &account_id, auth_init.exists());
+    let exists = match auth_init.try_exists() {
+        Ok(res) => res,
+        Err(e) => {
+            error!("Failed checking if user exists: {:?}", e);
+            return None;
+        }
+    };
+    debug!("User {} exists? {}", &account_id, exists);
 
     let password = if !auth_init.passwordless() {
         print!("{} password: ", &account_id);
