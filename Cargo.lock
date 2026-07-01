@@ -372,7 +372,7 @@ dependencies = [
  "runloop",
  "serde",
  "serde_bytes",
- "serde_cbor",
+ "serde_cbor 0.11.2 (registry+https://github.com/rust-lang/crates.io-index)",
  "serde_json",
  "sha2 0.10.9",
  "winapi",
@@ -1746,13 +1746,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "fxhash"
-version = "0.2.1"
-dependencies = [
- "rustc-hash",
-]
-
-[[package]]
 name = "generic-array"
 version = "0.14.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2579,10 +2572,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "kanidm_build_profiles"
-version = "1.7.4"
-
-[[package]]
 name = "kanidm_lib_crypto"
 version = "1.8.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2709,6 +2698,13 @@ dependencies = [
 
 [[package]]
 name = "ldap3_proto"
+version = "0.6.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b52f9ddd849c72b3f3147d91b1220a47709fdaacfe55aaaf88912c2ee3d5357b"
+replace = "ldap3_proto 0.6.2"
+
+[[package]]
+name = "ldap3_proto"
 version = "0.7.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "61954eefd3ff2b74d2d5bfa899c235b4c77536b4d17627607ff55430d05e0c61"
@@ -2814,7 +2810,7 @@ dependencies = [
  "hmac 0.12.1",
  "keyutils",
  "keyutils-raw",
- "ldap3_proto 0.6.2",
+ "ldap3_proto 0.6.2 (registry+https://github.com/rust-lang/crates.io-index)",
  "libc",
  "md5",
  "num_enum",
@@ -2854,7 +2850,7 @@ checksum = "e401ab1018ee75ca809cd81852c635f1f453d796fdd5398c14fbb5f322855eab"
 dependencies = [
  "lazy_static",
  "libc",
- "paste",
+ "paste 1.0.15 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 
 [[package]]
@@ -3157,7 +3153,7 @@ dependencies = [
  "lazy_static",
  "libc",
  "libnss",
- "paste",
+ "paste 1.0.15 (registry+https://github.com/rust-lang/crates.io-index)",
  "uuid",
 ]
 
@@ -3525,6 +3521,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "paste"
+version = "1.0.15"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "57c0d7b74b563b49d38dae00a0c37d4d6de9b432382b2892f0574ddcae73fd0a"
+replace = "paste 1.0.15"
+
+[[package]]
 name = "pastey"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3650,10 +3653,6 @@ checksum = "e57fef6bc5981e38c2ce2d63bfa546861309f875b8a75f092d1d54ae2d64f266"
 dependencies = [
  "siphasher",
 ]
-
-[[package]]
-name = "picky-krb"
-version = "0.12.0"
 
 [[package]]
 name = "pin-project"
@@ -4528,6 +4527,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "serde_cbor"
+version = "0.11.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2bef2ebfde456fb76bbcf9f59315333decc4fda0b2b44b420243c11e0f5ec1f5"
+replace = "serde_cbor 0.11.2"
+
+[[package]]
 name = "serde_cbor_2"
 version = "0.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4775,13 +4781,6 @@ dependencies = [
 [[package]]
 name = "sshd-config"
 version = "2.3.12"
-
-[[package]]
-name = "sshkey-attest"
-version = "0.5.999"
-dependencies = [
- "serde",
-]
 
 [[package]]
 name = "sso"
@@ -5440,7 +5439,7 @@ dependencies = [
  "malloced",
  "num-derive",
  "num-traits",
- "paste",
+ "paste 1.0.15 (registry+https://github.com/rust-lang/crates.io-index)",
  "pkcs8",
  "regex",
  "semver",

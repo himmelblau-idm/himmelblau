@@ -15,23 +15,13 @@ members = [
 	"src/selinux",
 	"src/o365",
 	"fuzz",
-	"src/fxhash",
-	"src/serde_cbor",
-	"src/paste",
-	"src/sshkey-attest",
-	"src/kanidm_build_profiles",
-	"src/picky-krb",
 ]
 resolver = "2"
 
-[patch.crates-io]
-fxhash = { path = "src/fxhash" }
-serde_cbor = { path = "src/serde_cbor" }
-paste = { path = "src/paste" }
-sshkey-attest = { path = "src/sshkey-attest" }
-kanidm_build_profiles = { path = "src/kanidm_build_profiles" }
-picky-krb = { path = "src/picky-krb" }
-ldap3_proto = { path = "src/overrides/ldap3_proto/0.6.2" }
+[replace]
+"ldap3_proto:0.6.2" = { path = "src/overrides/ldap3_proto/0.6.2" }
+"paste:1.0.15" = { path = "src/paste" }
+"serde_cbor:0.11.2" = { path = "src/serde_cbor" }
 
 [workspace.package]
 version = "2.3.12"
