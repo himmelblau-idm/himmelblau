@@ -11834,11 +11834,37 @@ rec {
           "vendored" = [ "openssl-src" ];
         };
       };
-      "opentelemetry" = rec {
+      "opentelemetry 0.31.0" = rec {
         crateName = "opentelemetry";
         version = "0.31.0";
         edition = "2021";
-        sha256 = "18629xsj4rsyiby9aj511q6wcw6s9m09gx3ymw1yjcvix1mcsjxq";
+        src = lib.cleanSourceWith { filter = sourceFilter;  src = ./src/overrides/opentelemetry/0.31.0; };
+        authors = [
+          "David Mulder <dmulder@suse.com>"
+        ];
+        dependencies = [
+          {
+            name = "opentelemetry";
+            packageId = "opentelemetry 0.32.0";
+          }
+        ];
+        features = {
+          "default" = [ "opentelemetry/default" ];
+          "futures" = [ "opentelemetry/futures" ];
+          "internal-logs" = [ "opentelemetry/internal-logs" ];
+          "logs" = [ "opentelemetry/logs" ];
+          "metrics" = [ "opentelemetry/metrics" ];
+          "spec_unstable_logs_enabled" = [ "opentelemetry/spec_unstable_logs_enabled" ];
+          "testing" = [ "opentelemetry/testing" ];
+          "trace" = [ "opentelemetry/trace" ];
+        };
+        resolvedDefaultFeatures = [ "default" "metrics" "trace" ];
+      };
+      "opentelemetry 0.32.0" = rec {
+        crateName = "opentelemetry";
+        version = "0.32.0";
+        edition = "2021";
+        sha256 = "10ln14d1jgc8rvw97mblc9blzcgpg1bimim4d170b7ia4mijq55h";
         dependencies = [
           {
             name = "futures-core";
@@ -11875,12 +11901,12 @@ rec {
         ];
         features = {
           "default" = [ "trace" "metrics" "logs" "internal-logs" "futures" ];
+          "experimental_metrics_bound_instruments" = [ "metrics" ];
           "futures" = [ "futures-core" "futures-sink" "pin-project-lite" ];
           "futures-core" = [ "dep:futures-core" ];
           "futures-sink" = [ "dep:futures-sink" ];
           "internal-logs" = [ "tracing" ];
           "pin-project-lite" = [ "dep:pin-project-lite" ];
-          "spec_unstable_logs_enabled" = [ "logs" ];
           "testing" = [ "trace" ];
           "thiserror" = [ "dep:thiserror" ];
           "trace" = [ "futures" "thiserror" ];
@@ -11890,9 +11916,9 @@ rec {
       };
       "opentelemetry-http" = rec {
         crateName = "opentelemetry-http";
-        version = "0.31.0";
+        version = "0.32.0";
         edition = "2021";
-        sha256 = "0pc5nw1ds8v8w0nvyall39m92v8m1xl1p3vwvxk6nkhrffdd19np";
+        sha256 = "0ca3drvm4fx5nskl7yn42dimy3bg35ppzc85y1p27pz215fh30sn";
         libName = "opentelemetry_http";
         dependencies = [
           {
@@ -11911,9 +11937,15 @@ rec {
           }
           {
             name = "opentelemetry";
-            packageId = "opentelemetry";
+            packageId = "opentelemetry 0.32.0";
             usesDefaultFeatures = false;
             features = [ "trace" ];
+          }
+          {
+            name = "reqwest";
+            packageId = "reqwest 0.13.1";
+            optional = true;
+            usesDefaultFeatures = false;
           }
         ];
         features = {
@@ -11922,15 +11954,60 @@ rec {
           "internal-logs" = [ "opentelemetry/internal-logs" ];
           "reqwest" = [ "dep:reqwest" ];
           "reqwest-blocking" = [ "dep:reqwest" "reqwest/blocking" ];
-          "reqwest-rustls" = [ "dep:reqwest" "reqwest/rustls-tls-native-roots" ];
-          "reqwest-rustls-webpki-roots" = [ "dep:reqwest" "reqwest/rustls-tls-webpki-roots" ];
+          "reqwest-rustls" = [ "dep:reqwest" "reqwest/default-tls" ];
+          "reqwest-rustls-webpki-roots" = [ "dep:reqwest" "reqwest/default-tls" "reqwest/webpki-roots" ];
         };
+        resolvedDefaultFeatures = [ "reqwest" "reqwest-blocking" ];
       };
-      "opentelemetry-otlp" = rec {
+      "opentelemetry-otlp 0.31.1" = rec {
         crateName = "opentelemetry-otlp";
         version = "0.31.1";
         edition = "2021";
-        sha256 = "07zp0b62b9dajnvvcd6j2ppw5zg7wp4ixka9z6fr3bxrrdmcss8z";
+        src = lib.cleanSourceWith { filter = sourceFilter;  src = ./src/overrides/opentelemetry-otlp/0.31.1; };
+        libName = "opentelemetry_otlp";
+        authors = [
+          "David Mulder <dmulder@suse.com>"
+        ];
+        dependencies = [
+          {
+            name = "opentelemetry-otlp";
+            packageId = "opentelemetry-otlp 0.32.0";
+          }
+        ];
+        features = {
+          "default" = [ "opentelemetry-otlp/default" ];
+          "grpc-tonic" = [ "opentelemetry-otlp/grpc-tonic" ];
+          "gzip-http" = [ "opentelemetry-otlp/gzip-http" ];
+          "gzip-tonic" = [ "opentelemetry-otlp/gzip-tonic" ];
+          "http-json" = [ "opentelemetry-otlp/http-json" ];
+          "http-proto" = [ "opentelemetry-otlp/http-proto" ];
+          "hyper-client" = [ "opentelemetry-otlp/hyper-client" ];
+          "integration-testing" = [ "opentelemetry-otlp/integration-testing" ];
+          "internal-logs" = [ "opentelemetry-otlp/internal-logs" ];
+          "logs" = [ "opentelemetry-otlp/logs" ];
+          "metrics" = [ "opentelemetry-otlp/metrics" ];
+          "reqwest-blocking-client" = [ "opentelemetry-otlp/reqwest-blocking-client" ];
+          "reqwest-client" = [ "opentelemetry-otlp/reqwest-client" ];
+          "reqwest-rustls" = [ "opentelemetry-otlp/reqwest-rustls" ];
+          "reqwest-rustls-webpki-roots" = [ "opentelemetry-otlp/reqwest-rustls-webpki-roots" ];
+          "serialize" = [ "opentelemetry-otlp/serialize" ];
+          "tls" = [ "opentelemetry-otlp/tls" ];
+          "tls-aws-lc" = [ "opentelemetry-otlp/tls-aws-lc" ];
+          "tls-provider-agnostic" = [ "opentelemetry-otlp/tls-provider-agnostic" ];
+          "tls-ring" = [ "opentelemetry-otlp/tls-ring" ];
+          "tls-roots" = [ "opentelemetry-otlp/tls-roots" ];
+          "tls-webpki-roots" = [ "opentelemetry-otlp/tls-webpki-roots" ];
+          "trace" = [ "opentelemetry-otlp/trace" ];
+          "zstd-http" = [ "opentelemetry-otlp/zstd-http" ];
+          "zstd-tonic" = [ "opentelemetry-otlp/zstd-tonic" ];
+        };
+        resolvedDefaultFeatures = [ "grpc-tonic" "http-proto" "logs" "metrics" "serde" ];
+      };
+      "opentelemetry-otlp 0.32.0" = rec {
+        crateName = "opentelemetry-otlp";
+        version = "0.32.0";
+        edition = "2021";
+        sha256 = "0d9cys2flpidfxbr6h1103hjc633cax47ihnqgbj0xnicscr4rlr";
         libName = "opentelemetry_otlp";
         dependencies = [
           {
@@ -11942,7 +12019,7 @@ rec {
           }
           {
             name = "opentelemetry";
-            packageId = "opentelemetry";
+            packageId = "opentelemetry 0.32.0";
             usesDefaultFeatures = false;
           }
           {
@@ -11958,7 +12035,7 @@ rec {
           }
           {
             name = "opentelemetry_sdk";
-            packageId = "opentelemetry_sdk";
+            packageId = "opentelemetry_sdk 0.32.1";
             usesDefaultFeatures = false;
           }
           {
@@ -11967,11 +12044,10 @@ rec {
             optional = true;
           }
           {
-            name = "serde";
-            packageId = "serde";
+            name = "reqwest";
+            packageId = "reqwest 0.13.1";
             optional = true;
             usesDefaultFeatures = false;
-            features = [ "derive" ];
           }
           {
             name = "thiserror";
@@ -11991,11 +12067,16 @@ rec {
             optional = true;
             usesDefaultFeatures = false;
           }
+          {
+            name = "tonic-types";
+            packageId = "tonic-types";
+            optional = true;
+          }
         ];
         devDependencies = [
           {
             name = "opentelemetry_sdk";
-            packageId = "opentelemetry_sdk";
+            packageId = "opentelemetry_sdk 0.32.1";
             usesDefaultFeatures = false;
             features = [ "trace" "testing" ];
           }
@@ -12014,16 +12095,19 @@ rec {
         ];
         features = {
           "default" = [ "http-proto" "reqwest-blocking-client" "trace" "metrics" "logs" "internal-logs" ];
+          "experimental-grpc-retry" = [ "grpc-tonic" "opentelemetry_sdk/experimental_async_runtime" "opentelemetry_sdk/rt-tokio" ];
+          "experimental-http-retry" = [ "opentelemetry_sdk/experimental_async_runtime" "opentelemetry_sdk/rt-tokio" "tokio" "httpdate" ];
           "flate2" = [ "dep:flate2" ];
-          "grpc-tonic" = [ "tonic" "prost" "http" "tokio" "opentelemetry-proto/gen-tonic" ];
+          "grpc-tonic" = [ "tonic" "tonic-types" "prost" "http" "tokio" "opentelemetry-proto/gen-tonic" ];
           "gzip-http" = [ "flate2" ];
           "gzip-tonic" = [ "tonic/gzip" ];
           "http" = [ "dep:http" ];
           "http-json" = [ "serde_json" "prost" "opentelemetry-http" "opentelemetry-proto/gen-tonic-messages" "opentelemetry-proto/with-serde" "http" "trace" "metrics" ];
           "http-proto" = [ "prost" "opentelemetry-http" "opentelemetry-proto/gen-tonic-messages" "http" "trace" "metrics" ];
+          "httpdate" = [ "dep:httpdate" ];
           "hyper-client" = [ "opentelemetry-http/hyper" ];
           "integration-testing" = [ "tonic" "prost" "tokio/full" "trace" "logs" ];
-          "internal-logs" = [ "tracing" "opentelemetry_sdk/internal-logs" "opentelemetry-http/internal-logs" ];
+          "internal-logs" = [ "opentelemetry_sdk/internal-logs" "opentelemetry/internal-logs" ];
           "logs" = [ "opentelemetry/logs" "opentelemetry_sdk/logs" "opentelemetry-proto/logs" ];
           "metrics" = [ "opentelemetry/metrics" "opentelemetry_sdk/metrics" "opentelemetry-proto/metrics" ];
           "opentelemetry-http" = [ "dep:opentelemetry-http" ];
@@ -12036,37 +12120,37 @@ rec {
           "serde" = [ "dep:serde" ];
           "serde_json" = [ "dep:serde_json" ];
           "serialize" = [ "serde" "serde_json" ];
-          "tls" = [ "tonic/tls-ring" ];
+          "tls" = [ "tls-ring" ];
           "tls-aws-lc" = [ "tonic/tls-aws-lc" ];
           "tls-provider-agnostic" = [ "tonic/_tls-any" ];
           "tls-ring" = [ "tonic/tls-ring" ];
-          "tls-roots" = [ "tls" "tonic/tls-native-roots" ];
-          "tls-webpki-roots" = [ "tls" "tonic/tls-webpki-roots" ];
+          "tls-roots" = [ "tonic/tls-native-roots" ];
+          "tls-webpki-roots" = [ "tonic/tls-webpki-roots" ];
           "tokio" = [ "dep:tokio" ];
           "tonic" = [ "dep:tonic" ];
+          "tonic-types" = [ "dep:tonic-types" ];
           "trace" = [ "opentelemetry/trace" "opentelemetry_sdk/trace" "opentelemetry-proto/trace" ];
-          "tracing" = [ "dep:tracing" ];
           "zstd" = [ "dep:zstd" ];
           "zstd-http" = [ "zstd" ];
           "zstd-tonic" = [ "tonic/zstd" ];
         };
-        resolvedDefaultFeatures = [ "grpc-tonic" "http" "http-proto" "logs" "metrics" "opentelemetry-http" "prost" "serde" "tokio" "tonic" "trace" ];
+        resolvedDefaultFeatures = [ "default" "grpc-tonic" "http" "http-proto" "internal-logs" "logs" "metrics" "opentelemetry-http" "prost" "reqwest" "reqwest-blocking-client" "tokio" "tonic" "tonic-types" "trace" ];
       };
       "opentelemetry-proto" = rec {
         crateName = "opentelemetry-proto";
-        version = "0.31.0";
+        version = "0.32.0";
         edition = "2021";
-        sha256 = "03xkjsjrsm7zkkx5gascqd9bg2z20wymm06l16cyxsp5dpq5s5x7";
+        sha256 = "0f5ny4rpnpq6q5q34b8k2q548rf31rpbxkwjqjwzfqxg3yx5imjn";
         libName = "opentelemetry_proto";
         dependencies = [
           {
             name = "opentelemetry";
-            packageId = "opentelemetry";
+            packageId = "opentelemetry 0.32.0";
             usesDefaultFeatures = false;
           }
           {
             name = "opentelemetry_sdk";
-            packageId = "opentelemetry_sdk";
+            packageId = "opentelemetry_sdk 0.32.1";
             usesDefaultFeatures = false;
           }
           {
@@ -12090,7 +12174,7 @@ rec {
         devDependencies = [
           {
             name = "opentelemetry";
-            packageId = "opentelemetry";
+            packageId = "opentelemetry 0.32.0";
             usesDefaultFeatures = false;
             features = [ "testing" ];
           }
@@ -12100,21 +12184,20 @@ rec {
           "const-hex" = [ "dep:const-hex" ];
           "default" = [ "full" ];
           "full" = [ "gen-tonic" "trace" "logs" "metrics" "zpages" "with-serde" "internal-logs" ];
-          "gen-tonic" = [ "gen-tonic-messages" "tonic/channel" ];
-          "gen-tonic-messages" = [ "tonic" "tonic-prost" "prost" ];
+          "gen-tonic" = [ "gen-tonic-messages" "tonic" "tonic-prost" "tonic/channel" ];
+          "gen-tonic-messages" = [ "prost" ];
           "internal-logs" = [ "opentelemetry/internal-logs" ];
           "logs" = [ "opentelemetry/logs" "opentelemetry_sdk/logs" ];
           "metrics" = [ "opentelemetry/metrics" "opentelemetry_sdk/metrics" ];
           "prost" = [ "dep:prost" ];
           "schemars" = [ "dep:schemars" ];
           "serde" = [ "dep:serde" ];
-          "serde_json" = [ "dep:serde_json" ];
           "testing" = [ "opentelemetry/testing" ];
           "tonic" = [ "dep:tonic" ];
           "tonic-prost" = [ "dep:tonic-prost" ];
           "trace" = [ "opentelemetry/trace" "opentelemetry_sdk/trace" ];
           "with-schemars" = [ "schemars" ];
-          "with-serde" = [ "serde" "const-hex" "base64" "serde_json" ];
+          "with-serde" = [ "serde" "const-hex" "base64" ];
           "zpages" = [ "trace" ];
         };
         resolvedDefaultFeatures = [ "gen-tonic" "gen-tonic-messages" "logs" "metrics" "prost" "tonic" "tonic-prost" "trace" ];
@@ -12129,11 +12212,47 @@ rec {
         };
         resolvedDefaultFeatures = [ "default" "semconv_experimental" ];
       };
-      "opentelemetry_sdk" = rec {
+      "opentelemetry_sdk 0.31.0" = rec {
         crateName = "opentelemetry_sdk";
         version = "0.31.0";
         edition = "2021";
-        sha256 = "1gbjsggdxfpjbanjvaxa3nq32vfa37i3v13dvx4gsxhrk7sy8jp1";
+        src = lib.cleanSourceWith { filter = sourceFilter;  src = ./src/overrides/opentelemetry_sdk/0.31.0; };
+        authors = [
+          "David Mulder <dmulder@suse.com>"
+        ];
+        dependencies = [
+          {
+            name = "opentelemetry_sdk";
+            packageId = "opentelemetry_sdk 0.32.1";
+          }
+        ];
+        features = {
+          "default" = [ "opentelemetry_sdk/default" ];
+          "experimental_async_runtime" = [ "opentelemetry_sdk/experimental_async_runtime" ];
+          "experimental_logs_batch_log_processor_with_async_runtime" = [ "opentelemetry_sdk/experimental_logs_batch_log_processor_with_async_runtime" ];
+          "experimental_logs_concurrent_log_processor" = [ "opentelemetry_sdk/experimental_logs_concurrent_log_processor" ];
+          "experimental_metrics_custom_reader" = [ "opentelemetry_sdk/experimental_metrics_custom_reader" ];
+          "experimental_metrics_disable_name_validation" = [ "opentelemetry_sdk/experimental_metrics_disable_name_validation" ];
+          "experimental_metrics_periodicreader_with_async_runtime" = [ "opentelemetry_sdk/experimental_metrics_periodicreader_with_async_runtime" ];
+          "experimental_trace_batch_span_processor_with_async_runtime" = [ "opentelemetry_sdk/experimental_trace_batch_span_processor_with_async_runtime" ];
+          "internal-logs" = [ "opentelemetry_sdk/internal-logs" ];
+          "jaeger_remote_sampler" = [ "opentelemetry_sdk/jaeger_remote_sampler" ];
+          "logs" = [ "opentelemetry_sdk/logs" ];
+          "metrics" = [ "opentelemetry_sdk/metrics" ];
+          "rt-tokio" = [ "opentelemetry_sdk/rt-tokio" ];
+          "rt-tokio-current-thread" = [ "opentelemetry_sdk/rt-tokio-current-thread" ];
+          "spec_unstable_logs_enabled" = [ "opentelemetry_sdk/logs" ];
+          "spec_unstable_metrics_views" = [ "opentelemetry_sdk/spec_unstable_metrics_views" ];
+          "testing" = [ "opentelemetry_sdk/testing" ];
+          "trace" = [ "opentelemetry_sdk/trace" ];
+        };
+        resolvedDefaultFeatures = [ "default" "rt-tokio" ];
+      };
+      "opentelemetry_sdk 0.32.1" = rec {
+        crateName = "opentelemetry_sdk";
+        version = "0.32.1";
+        edition = "2021";
+        sha256 = "1ycl11syranrinhgn4c2hlzhyzyvpa06ryxq5mxgzmf4387ghncv";
         dependencies = [
           {
             name = "futures-channel";
@@ -12151,13 +12270,20 @@ rec {
           }
           {
             name = "opentelemetry";
-            packageId = "opentelemetry";
+            packageId = "opentelemetry 0.32.0";
             usesDefaultFeatures = false;
           }
           {
             name = "percent-encoding";
             packageId = "percent-encoding";
             optional = true;
+          }
+          {
+            name = "portable-atomic";
+            packageId = "portable-atomic";
+            usesDefaultFeatures = false;
+            target = { target, features }: (!("64" == target."has_atomic" or null));
+            features = [ "fallback" ];
           }
           {
             name = "rand";
@@ -12183,10 +12309,18 @@ rec {
             optional = true;
           }
         ];
+        devDependencies = [
+          {
+            name = "tokio";
+            packageId = "tokio";
+            usesDefaultFeatures = false;
+            features = [ "macros" "rt-multi-thread" ];
+          }
+        ];
         features = {
           "default" = [ "trace" "metrics" "logs" "internal-logs" ];
           "experimental_logs_batch_log_processor_with_async_runtime" = [ "logs" "experimental_async_runtime" ];
-          "experimental_logs_concurrent_log_processor" = [ "logs" ];
+          "experimental_metrics_bound_instruments" = [ "metrics" "opentelemetry/experimental_metrics_bound_instruments" ];
           "experimental_metrics_custom_reader" = [ "metrics" ];
           "experimental_metrics_disable_name_validation" = [ "metrics" ];
           "experimental_metrics_periodicreader_with_async_runtime" = [ "metrics" "experimental_async_runtime" ];
@@ -12203,9 +12337,8 @@ rec {
           "rt-tokio-current-thread" = [ "tokio/rt" "tokio/time" "tokio-stream" "experimental_async_runtime" ];
           "serde" = [ "dep:serde" ];
           "serde_json" = [ "dep:serde_json" ];
-          "spec_unstable_logs_enabled" = [ "logs" "opentelemetry/spec_unstable_logs_enabled" ];
           "spec_unstable_metrics_views" = [ "metrics" ];
-          "testing" = [ "opentelemetry/testing" "trace" "metrics" "logs" "rt-tokio" "rt-tokio-current-thread" "tokio/macros" "tokio/rt-multi-thread" ];
+          "testing" = [ "opentelemetry/testing" "trace" "metrics" "logs" "tokio/sync" ];
           "tokio" = [ "dep:tokio" ];
           "tokio-stream" = [ "dep:tokio-stream" ];
           "trace" = [ "opentelemetry/trace" "rand" "percent-encoding" ];
@@ -13371,6 +13504,19 @@ rec {
           "zeroize" = [ "dep:zeroize" ];
         };
       };
+      "portable-atomic" = rec {
+        crateName = "portable-atomic";
+        version = "1.13.1";
+        edition = "2018";
+        sha256 = "0j8vlar3n5acyigq8q6f4wjx3k3s5yz0rlpqrv76j73gi5qr8fn3";
+        libName = "portable_atomic";
+        features = {
+          "critical-section" = [ "dep:critical-section" ];
+          "default" = [ "fallback" ];
+          "serde" = [ "dep:serde" ];
+        };
+        resolvedDefaultFeatures = [ "fallback" ];
+      };
       "potential_utf" = rec {
         crateName = "potential_utf";
         version = "0.1.2";
@@ -14197,8 +14343,20 @@ rec {
             target = { target, features }: (!("wasm32" == target."arch" or null));
           }
           {
+            name = "futures-channel";
+            packageId = "futures-channel";
+            optional = true;
+            target = { target, features }: (!("wasm32" == target."arch" or null));
+          }
+          {
             name = "futures-core";
             packageId = "futures-core";
+            usesDefaultFeatures = false;
+          }
+          {
+            name = "futures-util";
+            packageId = "futures-util";
+            optional = true;
             usesDefaultFeatures = false;
           }
           {
@@ -14373,6 +14531,13 @@ rec {
         ];
         devDependencies = [
           {
+            name = "futures-util";
+            packageId = "futures-util";
+            usesDefaultFeatures = false;
+            target = { target, features }: (!("wasm32" == target."arch" or null));
+            features = [ "std" "alloc" ];
+          }
+          {
             name = "hyper";
             packageId = "hyper";
             usesDefaultFeatures = false;
@@ -14444,7 +14609,7 @@ rec {
           "webpki-roots" = [ "dep:webpki-roots" ];
           "zstd" = [ "tower-http/decompression-zstd" ];
         };
-        resolvedDefaultFeatures = [ "__rustls" "__rustls-aws-lc-rs" "__tls" "charset" "cookies" "default" "default-tls" "form" "http2" "json" "rustls" "system-proxy" ];
+        resolvedDefaultFeatures = [ "__rustls" "__rustls-aws-lc-rs" "__tls" "blocking" "charset" "cookies" "default" "default-tls" "form" "http2" "json" "rustls" "system-proxy" ];
       };
       "reqwest_cookie_store" = rec {
         crateName = "reqwest_cookie_store";
@@ -16769,12 +16934,12 @@ rec {
           }
           {
             name = "opentelemetry";
-            packageId = "opentelemetry";
+            packageId = "opentelemetry 0.31.0";
             features = [ "metrics" ];
           }
           {
             name = "opentelemetry-otlp";
-            packageId = "opentelemetry-otlp";
+            packageId = "opentelemetry-otlp 0.31.1";
             usesDefaultFeatures = false;
             features = [ "serde" "logs" "metrics" "http-proto" "grpc-tonic" "serde" "logs" "metrics" "http-proto" "grpc-tonic" ];
           }
@@ -16785,7 +16950,7 @@ rec {
           }
           {
             name = "opentelemetry_sdk";
-            packageId = "opentelemetry_sdk";
+            packageId = "opentelemetry_sdk 0.31.0";
             features = [ "rt-tokio" "rt-tokio" ];
           }
           {
@@ -18342,6 +18507,33 @@ rec {
         ];
 
       };
+      "tonic-types" = rec {
+        crateName = "tonic-types";
+        version = "0.14.6";
+        edition = "2024";
+        sha256 = "1s286gg71pjajny8xar0azq1w9lgz1ks3jm3pccxb0qz0q11pavk";
+        libName = "tonic_types";
+        authors = [
+          "Lucio Franco <luciofranco14@gmail.com>"
+          "Rafael Lemos <flemos.rafael.dev@gmail.com>"
+        ];
+        dependencies = [
+          {
+            name = "prost";
+            packageId = "prost";
+          }
+          {
+            name = "prost-types";
+            packageId = "prost-types";
+          }
+          {
+            name = "tonic";
+            packageId = "tonic";
+            usesDefaultFeatures = false;
+          }
+        ];
+
+      };
       "totp-rs" = rec {
         crateName = "totp-rs";
         version = "5.7.2";
@@ -18883,7 +19075,7 @@ rec {
           }
           {
             name = "opentelemetry";
-            packageId = "opentelemetry";
+            packageId = "opentelemetry 0.31.0";
             usesDefaultFeatures = false;
             features = [ "trace" ];
           }
@@ -18923,7 +19115,7 @@ rec {
         devDependencies = [
           {
             name = "opentelemetry";
-            packageId = "opentelemetry";
+            packageId = "opentelemetry 0.31.0";
             features = [ "trace" "metrics" ];
           }
           {

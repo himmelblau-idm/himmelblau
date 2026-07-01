@@ -130,6 +130,15 @@ audit-as-crates-io = true
 [policy."minimal-lexical:0.2.1"]
 audit-as-crates-io = true
 
+[policy."opentelemetry-otlp:0.31.1"]
+audit-as-crates-io = true
+
+[policy."opentelemetry:0.31.0"]
+audit-as-crates-io = true
+
+[policy."opentelemetry_sdk:0.31.0"]
+audit-as-crates-io = true
+
 [policy.paste]
 audit-as-crates-io = true
 

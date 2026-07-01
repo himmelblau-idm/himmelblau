@@ -674,10 +674,35 @@ who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
 delta = "0.9.116 -> 0.9.117"
 
+[[audits.opentelemetry]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+delta = "0.31.0 -> 0.32.0"
+
+[[audits.opentelemetry-http]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+delta = "0.31.0 -> 0.32.0"
+
 [[audits.opentelemetry-otlp]]
 who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
 delta = "0.31.0 -> 0.31.1"
+
+[[audits.opentelemetry-otlp]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+delta = "0.31.1 -> 0.32.0"
+
+[[audits.opentelemetry-proto]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+delta = "0.31.0 -> 0.32.0"
+
+[[audits.opentelemetry_sdk]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+delta = "0.31.0 -> 0.32.1"
 
 [[audits.p521]]
 who = "David Mulder <dmulder@samba.org>"
@@ -738,6 +763,11 @@ delta = "0.3.32 -> 0.3.33"
 who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
 version = "0.7.2"
+
+[[audits.portable-atomic]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+version = "1.13.1"
 
 [[audits.quinn-proto]]
 who = "David Mulder <dmulder@samba.org>"
@@ -1133,6 +1163,11 @@ delta = "0.14.5 -> 0.14.6"
 who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
 version = "0.14.2"
+
+[[audits.tonic-types]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+version = "0.14.6"
 
 [[audits.totp-rs]]
 who = "David Mulder <dmulder@samba.org>"
