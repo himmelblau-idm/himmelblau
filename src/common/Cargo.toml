@@ -62,3 +62,5 @@ hostname = "0.4.2"
 qrcodegen = "1.8.0"
 urlencoding = { workspace = true }
 x509-cert = { workspace = true }
+rand.workspace = true
+lazy_static.workspace = true
