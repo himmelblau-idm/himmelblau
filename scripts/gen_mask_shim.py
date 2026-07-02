@@ -27,6 +27,18 @@ def validate_version(version: str) -> bool:
     return bool(re.match(r'^\d+\.\d+(\.\d+)?', version))
 
 
+def patch_key(crate_name: str, version: str) -> str:
+    """Create a unique [patch.crates-io] alias for a crate version."""
+    return re.sub(r'[^A-Za-z0-9_-]+', '-', f'{crate_name}-{version}').strip('-')
+
+
+def patch_entry(crate_name: str, version: str) -> str:
+    """Create a [patch.crates-io] entry for a generated shim."""
+    key = patch_key(crate_name, version)
+    path = f'src/overrides/{crate_name}/{version}'
+    return f'{key} = {{ package = "{crate_name}", path = "{path}" }}'
+
+
 def fetch_feature_names(crate_name: str, version: str) -> Tuple[bool, List[str], str]:
     """
     Fetch feature names from crates.io.
@@ -164,7 +176,7 @@ def create_shim_files(
 
 
 def update_root_cargo_toml(crate_name: str, managed_versions: List[str]) -> Tuple[bool, str]:
-    """Update root Cargo.toml with replace entries."""
+    """Update root Cargo.toml with [patch.crates-io] entries."""
     cargo_toml_path = Path('./Cargo.toml')
 
     if not cargo_toml_path.exists():
@@ -172,37 +184,57 @@ def update_root_cargo_toml(crate_name: str, managed_versions: List[str]) -> Tupl
 
     try:
         content = cargo_toml_path.read_text()
-        if not re.search(r'\[replace\]', content):
-            return False, 'No [replace] section found in Cargo.toml'
+        if re.search(r'(?m)^\[replace\]\s*$', content):
+            return False, 'Cargo.toml still contains [replace]; migrate it before adding [patch] entries'
 
         lines = content.split('\n')
-        replace_idx = None
+        patch_idx = None
         for i, line in enumerate(lines):
-            if line.strip() == '[replace]':
-                replace_idx = i
+            if line.strip() == '[patch.crates-io]':
+                patch_idx = i
                 break
 
-        if replace_idx is None:
-            return False, 'Could not locate [replace] section'
+        if patch_idx is None:
+            insert_at = next(
+                (i for i, line in enumerate(lines) if line.strip() == '[workspace.package]'),
+                len(lines)
+            )
+            new_entries = sorted(patch_entry(crate_name, version) for version in managed_versions)
+            new_lines = lines[:insert_at]
+            if new_lines and new_lines[-1].strip():
+                new_lines.append('')
+            new_lines.append('[patch.crates-io]')
+            new_lines.extend(new_entries)
+            if insert_at < len(lines):
+                new_lines.append('')
+            new_lines.extend(lines[insert_at:])
+            cargo_toml_path.write_text('\n'.join(new_lines))
+            return True, ''
 
         existing_entries = []
-        insert_idx = replace_idx + 1
-        for i in range(replace_idx + 1, len(lines)):
+        existing_by_key = {}
+        insert_idx = patch_idx + 1
+        for i in range(patch_idx + 1, len(lines)):
             line = lines[i].strip()
-            if line.startswith('[') or (not line and i > replace_idx + 1):
+            if line.startswith('['):
                 insert_idx = i
                 break
             if line and not line.startswith('#'):
                 existing_entries.append(line)
+                key = line.split('=', 1)[0].strip().strip('"')
+                existing_by_key[key] = line
                 insert_idx = i + 1
 
-        new_entries = [
-            f'"{crate_name}:{version}" = {{ path = "src/overrides/{crate_name}/{version}" }}'
-            for version in managed_versions
-        ]
+        new_entries = []
+        for version in managed_versions:
+            entry = patch_entry(crate_name, version)
+            key = entry.split('=', 1)[0].strip()
+            if key in existing_by_key and existing_by_key[key] != entry:
+                return False, f'Conflicting [patch.crates-io] entry already exists for {key}'
+            new_entries.append(entry)
         all_entries = sorted(set(existing_entries + new_entries))
 
-        new_lines = lines[:replace_idx + 1]
+        new_lines = lines[:patch_idx + 1]
         new_lines.extend(all_entries)
         new_lines.extend(lines[insert_idx:])
         cargo_toml_path.write_text('\n'.join(new_lines))
@@ -261,7 +293,7 @@ def main() -> None:
 
         print('\nUpdated:')
         entry_word = 'entry' if len(succeeded) == 1 else 'entries'
-        print(f'  - ./Cargo.toml [replace] section ({len(succeeded)} {entry_word} added)')
+        print(f'  - ./Cargo.toml [patch.crates-io] section ({len(succeeded)} {entry_word} added)')
 
     if failed:
         print('\nFailed:')

@@ -37,6 +37,11 @@ from datetime import datetime
 from pathlib import Path
 from typing import List
 
+try:
+    import tomllib
+except ImportError:
+    import tomli as tomllib
+
 # Import GitClient from backport.py
 sys.path.insert(0, str(Path(__file__).parent))
 from backport import GitClient
@@ -121,7 +126,7 @@ class DependencyExtractor:
 
     def get_already_masked(self) -> set[str]:
         """
-        Read [replace] section from Cargo.toml to find already-masked dependencies.
+        Read [patch.crates-io] from Cargo.toml to find already-masked dependencies.
 
         Returns set of "crate:version" strings.
         """
@@ -130,26 +135,37 @@ class DependencyExtractor:
             return set()
 
         masked = set()
-        in_replace_section = False
 
-        with open(cargo_toml) as f:
-            for line in f:
-                stripped = line.strip()
+        with open(cargo_toml, "rb") as f:
+            data = tomllib.load(f)
 
-                # Track [replace] section
-                if stripped == "[replace]":
-                    in_replace_section = True
-                    continue
-                elif stripped.startswith("[") and in_replace_section:
-                    # Exited [replace] section
-                    break
+        patch_section = data.get("patch", {}).get("crates-io", {})
+        for value in patch_section.values():
+            if not isinstance(value, dict):
+                continue
 
-                # Parse entries like: "crate:version" = { path = "..." }
-                if in_replace_section and stripped.startswith('"'):
-                    # Extract "crate:version" part
-                    end_quote = stripped.find('"', 1)
-                    if end_quote > 0:
-                        masked.add(stripped[1:end_quote])
+            override_path = value.get("path")
+            if not override_path:
+                continue
+
+            override_dir = self.repo_root / override_path
+            try:
+                override_dir.relative_to(self.repo_root / "src" / "overrides")
+            except ValueError:
+                continue
+
+            shim_manifest = override_dir / "Cargo.toml"
+            if not shim_manifest.exists():
+                continue
+
+            with open(shim_manifest, "rb") as f:
+                shim = tomllib.load(f)
+
+            package = shim.get("package", {})
+            name = package.get("name")
+            version = package.get("version")
+            if name and version:
+                masked.add(f"{name}:{version}")
 
         return masked
 
@@ -393,7 +409,7 @@ class GitOperations:
 
         # Stage all relevant files:
         # - override directory
-        # - Cargo.toml (updated [replace] section)
+        # - Cargo.toml (updated [patch.crates-io] section)
         # - Cargo.lock (updated after masking)
         # - supply-chain/config.toml (new policy entry, reformatted by cargo vet)
         override_dir = f"src/overrides/{dep.name}/{dep.version}"
