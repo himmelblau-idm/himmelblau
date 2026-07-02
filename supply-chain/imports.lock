@@ -1,10 +1,6 @@
 
 # cargo-vet imports lock
 
-[[unpublished.sshkey-attest]]
-version = "0.5.999"
-audited_as = "0.5.5"
-
 [[publisher.aho-corasick]]
 version = "1.1.3"
 when = "2024-03-20"
@@ -48,8 +44,8 @@ user-login = "epage"
 user-name = "Ed Page"
 
 [[publisher.anyhow]]
-version = "1.0.102"
-when = "2026-02-20"
+version = "1.0.103"
+when = "2026-06-25"
 user-id = 3618
 user-login = "dtolnay"
 user-name = "David Tolnay"
@@ -90,8 +86,8 @@ user-login = "fitzgen"
 user-name = "Nick Fitzgerald"
 
 [[publisher.bytes]]
-version = "1.11.1"
-when = "2026-02-03"
+version = "1.12.0"
+when = "2026-06-18"
 user-id = 6741
 user-login = "Darksonn"
 user-name = "Alice Ryhl"
@@ -118,8 +114,8 @@ user-login = "epage"
 user-name = "Ed Page"
 
 [[publisher.clap_complete]]
-version = "4.6.3"
-when = "2026-04-27"
+version = "4.6.6"
+when = "2026-06-30"
 user-id = 6743
 user-login = "epage"
 user-name = "Ed Page"
@@ -310,8 +306,8 @@ user-id = 55123
 user-login = "rust-lang-owner"
 
 [[publisher.hashbrown]]
-version = "0.17.0"
-when = "2026-04-09"
+version = "0.17.1"
+when = "2026-05-09"
 user-id = 55123
 user-login = "rust-lang-owner"
 
@@ -365,13 +361,6 @@ user-login = "dmulder"
 user-name = "David Mulder"
 
 [[publisher.indexmap]]
-version = "1.9.3"
-when = "2023-03-24"
-user-id = 539
-user-login = "cuviper"
-user-name = "Josh Stone"
-
-[[publisher.indexmap]]
 version = "2.12.1"
 when = "2025-11-20"
 user-id = 539
@@ -405,13 +394,6 @@ user-id = 31100
 user-login = "Firstyear"
 user-name = "Firstyear"
 
-[[publisher.kanidm_build_profiles]]
-version = "1.7.4"
-when = "2025-10-13"
-user-id = 127515
-user-login = "yaleman"
-user-name = "James Hodgkinson"
-
 [[publisher.kanidm_lib_crypto]]
 version = "1.8.5"
 when = "2025-12-13"
@@ -440,15 +422,15 @@ user-id = 55123
 user-login = "rust-lang-owner"
 
 [[publisher.libfuzzer-sys]]
-version = "0.4.12"
-when = "2026-02-10"
+version = "0.4.13"
+when = "2026-06-04"
 user-id = 696
 user-login = "fitzgen"
 user-name = "Nick Fitzgerald"
 
 [[publisher.libhimmelblau]]
-version = "0.8.20"
-when = "2026-05-28"
+version = "0.8.25"
+when = "2026-07-01"
 user-id = 247655
 user-login = "dmulder"
 user-name = "David Mulder"
@@ -607,8 +589,8 @@ user-login = "dtolnay"
 user-name = "David Tolnay"
 
 [[publisher.regex]]
-version = "1.12.3"
-when = "2026-02-03"
+version = "1.12.4"
+when = "2026-06-09"
 user-id = 189
 user-login = "BurntSushi"
 user-name = "Andrew Gallant"
@@ -649,8 +631,8 @@ user-login = "sunfishcode"
 user-name = "Dan Gohman"
 
 [[publisher.rustls]]
-version = "0.23.38"
-when = "2026-04-12"
+version = "0.23.41"
+when = "2026-06-22"
 user-id = 4556
 user-login = "djc"
 user-name = "Dirkjan Ochtman"
@@ -705,8 +687,8 @@ user-login = "dtolnay"
 user-name = "David Tolnay"
 
 [[publisher.serde_json]]
-version = "1.0.149"
-when = "2026-01-06"
+version = "1.0.150"
+when = "2026-05-21"
 user-id = 3618
 user-login = "dtolnay"
 user-name = "David Tolnay"
@@ -733,11 +715,11 @@ user-login = "tarcieri"
 user-name = "Tony Arcieri"
 
 [[publisher.sketching]]
-version = "1.7.4"
-when = "2025-10-13"
-user-id = 127515
-user-login = "yaleman"
-user-name = "James Hodgkinson"
+version = "1.10.4"
+when = "2026-06-23"
+user-id = 31100
+user-login = "Firstyear"
+user-name = "Firstyear"
 
 [[publisher.slab]]
 version = "0.4.9"
@@ -766,13 +748,6 @@ when = "2025-07-05"
 user-id = 6025
 user-login = "Thomasdezeeuw"
 user-name = "Thomas de Zeeuw"
-
-[[publisher.sshkey-attest]]
-version = "0.5.5"
-when = "2026-04-30"
-user-id = 31100
-user-login = "Firstyear"
-user-name = "Firstyear"
 
 [[publisher.syn]]
 version = "2.0.117"
@@ -871,13 +846,6 @@ when = "2025-12-08"
 user-id = 359
 user-login = "seanmonstar"
 user-name = "Sean McArthur"
-
-[[publisher.tracing-opentelemetry]]
-version = "0.28.0"
-when = "2024-11-13"
-user-id = 4556
-user-login = "djc"
-user-name = "Dirkjan Ochtman"
 
 [[publisher.unicode-width]]
 version = "0.2.1"
@@ -1787,16 +1755,34 @@ criteria = "safe-to-deploy"
 delta = "0.46.0 -> 0.50.1"
 notes = "Lots of stylistic/rust-related changes, plus new features, but nothing out of the ordrinary."
 
+[[audits.bytecode-alliance.audits.num-conv]]
+who = "Alex Crichton <alex@alexcrichton.com>"
+criteria = "safe-to-deploy"
+delta = "0.2.0 -> 0.2.1"
+notes = "Minor update, nothing major"
+
 [[audits.bytecode-alliance.audits.num-traits]]
 who = "Andrew Brown <andrew.brown@intel.com>"
 criteria = "safe-to-deploy"
 version = "0.2.19"
 notes = "As advertised: a numeric library. The only `unsafe` is from some float-to-int conversions, which seems expected."
 
+[[audits.bytecode-alliance.audits.openssl]]
+who = "Alex Crichton <alex@alexcrichton.com>"
+criteria = "safe-to-deploy"
+delta = "0.10.79 -> 0.10.80"
+notes = "Minor updates, no unsafe changes"
+
 [[audits.bytecode-alliance.audits.openssl-macros]]
 who = "Pat Hickey <phickey@fastly.com>"
 criteria = "safe-to-deploy"
 version = "0.1.0"
+
+[[audits.bytecode-alliance.audits.openssl-sys]]
+who = "Alex Crichton <alex@alexcrichton.com>"
+criteria = "safe-to-deploy"
+delta = "0.9.115 -> 0.9.116"
+notes = "Minor build system updates and versions"
 
 [[audits.bytecode-alliance.audits.parking]]
 who = "Chris Fallin <chris@cfallin.org>"
@@ -1909,26 +1895,6 @@ who = "Pat Hickey <phickey@fastly.com>"
 criteria = "safe-to-deploy"
 version = "1.1.4"
 notes = "uses unsafe to implement thread local storage of objects"
-
-[[audits.bytecode-alliance.audits.tinyvec]]
-who = "Alex Crichton <alex@alexcrichton.com>"
-criteria = "safe-to-deploy"
-version = "1.6.0"
-notes = """
-This crate, while it implements collections, does so without `std::*` APIs and
-without `unsafe`. Skimming the crate everything looks reasonable and what one
-would expect from idiomatic safe collections in Rust.
-"""
-
-[[audits.bytecode-alliance.audits.tinyvec_macros]]
-who = "Alex Crichton <alex@alexcrichton.com>"
-criteria = "safe-to-deploy"
-version = "0.1.0"
-notes = """
-This is a trivial crate which only contains a singular macro definition which is
-intended to multiplex across the internal representation of a tinyvec,
-presumably. This trivially doesn't contain anything bad.
-"""
 
 [[audits.bytecode-alliance.audits.tokio-native-tls]]
 who = "Pat Hickey <phickey@fastly.com>"
@@ -2050,12 +2016,6 @@ who = "Johan Andersson <opensource@embark-studios.com>"
 criteria = "safe-to-deploy"
 version = "2.1.0"
 notes = "Some unsafe usage but with safety comments and tests, and appear sound but didn't do detailed evaluation. No ambient capabilities"
-
-[[audits.embark-studios.audits.cfg_aliases]]
-who = "Johan Andersson <opensource@embark-studios.com>"
-criteria = "safe-to-deploy"
-version = "0.1.1"
-notes = "No unsafe usage or ambient capabilities"
 
 [[audits.embark-studios.audits.idna]]
 who = "Johan Andersson <opensource@embark-studios.com>"
@@ -2644,42 +2604,6 @@ Previously reviewed during security review and the audit is grandparented in.
 """
 aggregated-from = "https://chromium.googlesource.com/chromium/src/+/main/third_party/rust/chromium_crates_io/supply-chain/audits.toml?format=TEXT"
 
-[[audits.google.audits.tinyvec]]
-who = "Adrian Taylor <adetaylor@chromium.org>"
-criteria = "safe-to-deploy"
-delta = "1.6.0 -> 1.6.1"
-aggregated-from = "https://chromium.googlesource.com/chromium/src/+/main/third_party/rust/chromium_crates_io/supply-chain/audits.toml?format=TEXT"
-
-[[audits.google.audits.tinyvec]]
-who = "Adrian Taylor <adetaylor@chromium.org>"
-criteria = "safe-to-deploy"
-delta = "1.6.1 -> 1.7.0"
-aggregated-from = "https://chromium.googlesource.com/chromium/src/+/main/third_party/rust/chromium_crates_io/supply-chain/audits.toml?format=TEXT"
-
-[[audits.google.audits.tinyvec]]
-who = "Dustin J. Mitchell <djmitche@chromium.org>"
-criteria = "safe-to-deploy"
-delta = "1.7.0 -> 1.8.0"
-aggregated-from = "https://chromium.googlesource.com/chromium/src/+/main/third_party/rust/chromium_crates_io/supply-chain/audits.toml?format=TEXT"
-
-[[audits.google.audits.tinyvec]]
-who = "Adrian Taylor <adetaylor@chromium.org>"
-criteria = "safe-to-deploy"
-delta = "1.8.0 -> 1.8.1"
-aggregated-from = "https://chromium.googlesource.com/chromium/src/+/main/third_party/rust/chromium_crates_io/supply-chain/audits.toml?format=TEXT"
-
-[[audits.google.audits.tinyvec]]
-who = "Daniel Cheng <dcheng@chromium.org>"
-criteria = "safe-to-deploy"
-delta = "1.8.1 -> 1.9.0"
-notes = """
-Larger delta, but no unsafe code introduced. Deltas for:
-- borsh (Binary Object Representation Serializer for Hashing) serialization/deserialization support behind the `borsh` feature.
-- trait implementations to interoperate with the generic-array crate
-- miscellaneous helper functions and support code, e.g. `into_vec()`.
-"""
-aggregated-from = "https://chromium.googlesource.com/chromium/src/+/main/third_party/rust/chromium_crates_io/supply-chain/audits.toml?format=TEXT"
-
 [[audits.google.audits.tokio-stream]]
 who = "David Koloski <dkoloski@google.com>"
 criteria = "safe-to-deploy"
@@ -2864,6 +2788,11 @@ who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
 delta = "1.2.60 -> 1.2.61"
 
+[[audits.himmelblau.audits.cc]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+delta = "1.2.61 -> 1.2.65"
+
 [[audits.himmelblau.audits.cesu8]]
 who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
@@ -2873,6 +2802,16 @@ version = "1.1.0"
 who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
 delta = "0.4.43 -> 0.4.44"
+
+[[audits.himmelblau.audits.chrono]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+delta = "0.4.44 -> 0.4.45"
+
+[[audits.himmelblau.audits.configparser]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+delta = "3.1.0 -> 3.2.0"
 
 [[audits.himmelblau.audits.dbus]]
 who = "David Mulder <dmulder@samba.org>"
@@ -2984,6 +2923,11 @@ who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
 version = "0.36.1"
 
+[[audits.himmelblau.audits.num-conv]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+delta = "0.2.1 -> 0.2.2"
+
 [[audits.himmelblau.audits.num_enum]]
 who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
@@ -3017,7 +2961,7 @@ delta = "0.10.77 -> 0.10.79"
 [[audits.himmelblau.audits.openssl]]
 who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
-delta = "0.10.79 -> 0.10.80"
+delta = "0.10.80 -> 0.10.81"
 
 [[audits.himmelblau.audits.openssl-probe]]
 who = "David Mulder <dmulder@samba.org>"
@@ -3042,22 +2986,52 @@ delta = "0.9.113 -> 0.9.115"
 [[audits.himmelblau.audits.openssl-sys]]
 who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
-delta = "0.9.115 -> 0.9.116"
+delta = "0.9.116 -> 0.9.117"
 
-[[audits.himmelblau.audits.picky-asn1-der]]
+[[audits.himmelblau.audits.opentelemetry]]
 who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
-delta = "0.4.1 -> 0.5.4"
+delta = "0.31.0 -> 0.32.0"
+
+[[audits.himmelblau.audits.opentelemetry-http]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+delta = "0.31.0 -> 0.32.0"
+
+[[audits.himmelblau.audits.opentelemetry-otlp]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+delta = "0.31.0 -> 0.31.1"
+
+[[audits.himmelblau.audits.opentelemetry-otlp]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+delta = "0.31.1 -> 0.32.0"
+
+[[audits.himmelblau.audits.opentelemetry-proto]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+delta = "0.31.0 -> 0.32.0"
+
+[[audits.himmelblau.audits.opentelemetry_sdk]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+delta = "0.31.0 -> 0.32.1"
 
 [[audits.himmelblau.audits.pkg-config]]
 who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
 delta = "0.3.32 -> 0.3.33"
 
-[[audits.himmelblau.audits.quinn-proto]]
+[[audits.himmelblau.audits.portable-atomic]]
 who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
-delta = "0.11.12 -> 0.11.14"
+version = "1.13.1"
+
+[[audits.himmelblau.audits.regex-syntax]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+delta = "0.8.5 -> 0.8.11"
 
 [[audits.himmelblau.audits.reqwest_cookie_store]]
 who = "David Mulder <dmulder@samba.org>"
@@ -3069,15 +3043,15 @@ who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
 delta = "7.4.0 -> 7.5.2"
 
+[[audits.himmelblau.audits.rpassword]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+delta = "7.5.2 -> 7.5.4"
+
 [[audits.himmelblau.audits.rustc-hash]]
 who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
 delta = "2.1.1 -> 2.1.2"
-
-[[audits.himmelblau.audits.rustls]]
-who = "David Mulder <dmulder@samba.org>"
-criteria = "safe-to-deploy"
-delta = "0.23.38 -> 0.23.40"
 
 [[audits.himmelblau.audits.rustls-native-certs]]
 who = "David Mulder <dmulder@samba.org>"
@@ -3129,6 +3103,11 @@ who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
 delta = "0.4.0 -> 0.4.3"
 
+[[audits.himmelblau.audits.shlex]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+delta = "1.3.0 -> 2.0.1"
+
 [[audits.himmelblau.audits.string_cache]]
 who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
@@ -3149,10 +3128,25 @@ who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
 delta = "0.3.44 -> 0.3.47"
 
+[[audits.himmelblau.audits.time]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+delta = "0.3.47 -> 0.3.51"
+
+[[audits.himmelblau.audits.time-core]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+delta = "0.1.8 -> 0.1.9"
+
 [[audits.himmelblau.audits.time-macros]]
 who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
 delta = "0.2.22 -> 0.2.27"
+
+[[audits.himmelblau.audits.time-macros]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+delta = "0.2.27 -> 0.2.30"
 
 [[audits.himmelblau.audits.toml_parser]]
 who = "David Mulder <dmulder@samba.org>"
@@ -3163,6 +3157,11 @@ version = "1.0.2"
 who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
 delta = "0.14.3 -> 0.14.5"
+
+[[audits.himmelblau.audits.tonic-types]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+version = "0.14.6"
 
 [[audits.himmelblau.audits.tracing]]
 who = "David Mulder <dmulder@samba.org>"
@@ -3214,6 +3213,11 @@ who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
 delta = "1.23.0 -> 1.23.1"
 
+[[audits.himmelblau.audits.uuid]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+delta = "1.23.1 -> 1.23.4"
+
 [[audits.himmelblau.audits.uzers]]
 who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
@@ -3239,6 +3243,11 @@ who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
 delta = "5.14.0 -> 5.15.0"
 
+[[audits.himmelblau.audits.zbus]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+delta = "5.15.0 -> 5.16.0"
+
 [[audits.himmelblau.audits.zbus_macros]]
 who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
@@ -3249,11 +3258,26 @@ who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
 delta = "5.14.0 -> 5.15.0"
 
+[[audits.himmelblau.audits.zbus_macros]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+delta = "5.15.0 -> 5.16.0"
+
 [[audits.himmelblau.audits.zbus_names]]
 who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
 delta = "4.3.1 -> 4.3.2"
 
+[[audits.himmelblau.audits.zeroize]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+delta = "1.8.2 -> 1.9.0"
+
+[[audits.himmelblau.audits.zeroize_derive]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+delta = "1.4.2 -> 1.5.0"
+
 [[audits.himmelblau.audits.zvariant]]
 who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
@@ -3264,6 +3288,11 @@ who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
 delta = "5.10.0 -> 5.11.0"
 
+[[audits.himmelblau.audits.zvariant]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+delta = "5.11.0 -> 5.12.0"
+
 [[audits.himmelblau.audits.zvariant_derive]]
 who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
@@ -3273,11 +3302,21 @@ delta = "5.9.2 -> 5.10.0"
 who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
 delta = "5.10.0 -> 5.11.0"
+
+[[audits.himmelblau.audits.zvariant_derive]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+delta = "5.11.0 -> 5.12.0"
 
 [[audits.himmelblau.audits.zvariant_utils]]
 who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
 delta = "3.3.0 -> 3.3.1"
+
+[[audits.himmelblau.audits.zvariant_utils]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+delta = "3.3.1 -> 3.4.0"
 
 [[audits.isrg.audits.base64]]
 who = "Tim Geoghegan <timg@letsencrypt.org>"
@@ -3605,13 +3644,6 @@ criteria = "safe-to-deploy"
 delta = "0.10.2 -> 0.10.3"
 aggregated-from = "https://hg.mozilla.org/mozilla-central/raw-file/tip/supply-chain/audits.toml"
 
-[[audits.mozilla.audits.cfg_aliases]]
-who = "Alex Franchuk <afranchuk@mozilla.com>"
-criteria = "safe-to-deploy"
-delta = "0.1.1 -> 0.2.1"
-notes = "Very minor changes."
-aggregated-from = "https://hg.mozilla.org/mozilla-central/raw-file/tip/supply-chain/audits.toml"
-
 [[audits.mozilla.audits.core-foundation]]
 who = "Teodor Tanasoaia <ttanasoaia@mozilla.com>"
 criteria = "safe-to-deploy"
@@ -3786,6 +3818,30 @@ criteria = "safe-to-deploy"
 delta = "0.6.0 -> 0.6.1"
 aggregated-from = "https://hg.mozilla.org/mozilla-central/raw-file/tip/supply-chain/audits.toml"
 
+[[audits.mozilla.audits.deranged]]
+who = "Alex Franchuk <afranchuk@mozilla.com>"
+criteria = "safe-to-deploy"
+version = "0.3.11"
+notes = """
+This crate contains a decent bit of `unsafe` code, however all internal
+unsafety is verified with copious assertions (many are compile-time), and
+otherwise the unsafety is documented and left to the caller to verify.
+"""
+aggregated-from = "https://hg.mozilla.org/mozilla-central/raw-file/tip/supply-chain/audits.toml"
+
+[[audits.mozilla.audits.deranged]]
+who = "Lars Eggert <lars@eggert.org>"
+criteria = "safe-to-deploy"
+delta = "0.3.11 -> 0.4.0"
+aggregated-from = "https://raw.githubusercontent.com/mozilla/glean/main/supply-chain/audits.toml"
+
+[[audits.mozilla.audits.deranged]]
+who = "Lars Eggert <lars@eggert.org>"
+criteria = "safe-to-deploy"
+delta = "0.4.0 -> 0.5.8"
+notes = "New unsafe code is properly guarded"
+aggregated-from = "https://hg.mozilla.org/mozilla-central/raw-file/tip/supply-chain/audits.toml"
+
 [[audits.mozilla.audits.devd-rs]]
 who = "Mike Hommey <mh+mozilla@glandium.org>"
 criteria = "safe-to-deploy"
@@ -3838,6 +3894,18 @@ who = "Teodor Tanasoaia <ttanasoaia@mozilla.com>"
 criteria = "safe-to-deploy"
 delta = "0.2.10 -> 0.2.11"
 aggregated-from = "https://hg.mozilla.org/mozilla-central/raw-file/tip/supply-chain/audits.toml"
+
+[[audits.mozilla.audits.fallible-iterator]]
+who = "Jan-Erik Rediger <jrediger@mozilla.com>"
+criteria = "safe-to-deploy"
+version = "0.2.0"
+aggregated-from = "https://raw.githubusercontent.com/mozilla/glean/main/supply-chain/audits.toml"
+
+[[audits.mozilla.audits.fallible-streaming-iterator]]
+who = "Jan-Erik Rediger <jrediger@mozilla.com>"
+criteria = "safe-to-deploy"
+version = "0.1.9"
+aggregated-from = "https://raw.githubusercontent.com/mozilla/glean/main/supply-chain/audits.toml"
 
 [[audits.mozilla.audits.fastrand]]
 who = "Mike Hommey <mh+mozilla@glandium.org>"
@@ -3972,13 +4040,6 @@ static/non-owning. Other changes also look reasonable too: some tweaks to
 inlining and a syscall-based linux back-end, whose relevant unsafe code looks
 reasonable.
 """
-aggregated-from = "https://hg.mozilla.org/mozilla-central/raw-file/tip/supply-chain/audits.toml"
-
-[[audits.mozilla.audits.hashbrown]]
-who = "Mike Hommey <mh+mozilla@glandium.org>"
-criteria = "safe-to-deploy"
-version = "0.12.3"
-notes = "This version is used in rust's libstd, so effectively we're already trusting it"
 aggregated-from = "https://hg.mozilla.org/mozilla-central/raw-file/tip/supply-chain/audits.toml"
 
 [[audits.mozilla.audits.hashlink]]
@@ -4266,55 +4327,6 @@ version = "0.1.1"
 notes = "This is a trivial crate."
 aggregated-from = "https://hg.mozilla.org/mozilla-central/raw-file/tip/supply-chain/audits.toml"
 
-[[audits.mozilla.audits.quinn-udp]]
-who = "Max Inden <mail@max-inden.de>"
-criteria = "safe-to-deploy"
-version = "0.5.4"
-notes = "This is a small crate, providing safe wrappers around various low-level networking specific operating system features. Given that the Rust standard library does not provide safe wrappers for these low-level features, safe wrappers need to be build in the crate itself, i.e. `quinn-udp`, thus requiring `unsafe` code."
-aggregated-from = "https://hg.mozilla.org/mozilla-central/raw-file/tip/supply-chain/audits.toml"
-
-[[audits.mozilla.audits.quinn-udp]]
-who = "Max Inden <mail@max-inden.de>"
-criteria = "safe-to-deploy"
-delta = "0.5.4 -> 0.5.6"
-aggregated-from = "https://hg.mozilla.org/mozilla-central/raw-file/tip/supply-chain/audits.toml"
-
-[[audits.mozilla.audits.quinn-udp]]
-who = "Max Inden <mail@max-inden.de>"
-criteria = "safe-to-deploy"
-delta = "0.5.6 -> 0.5.8"
-aggregated-from = "https://hg.mozilla.org/mozilla-central/raw-file/tip/supply-chain/audits.toml"
-
-[[audits.mozilla.audits.quinn-udp]]
-who = "Max Inden <mail@max-inden.de>"
-criteria = "safe-to-deploy"
-delta = "0.5.8 -> 0.5.9"
-aggregated-from = "https://hg.mozilla.org/mozilla-central/raw-file/tip/supply-chain/audits.toml"
-
-[[audits.mozilla.audits.quinn-udp]]
-who = "Max Leonard Inden <mail@max-inden.de>"
-criteria = "safe-to-deploy"
-delta = "0.5.9 -> 0.5.10"
-aggregated-from = "https://hg.mozilla.org/mozilla-central/raw-file/tip/supply-chain/audits.toml"
-
-[[audits.mozilla.audits.quinn-udp]]
-who = "Max Leonard Inden <mail@max-inden.de>"
-criteria = "safe-to-deploy"
-delta = "0.5.10 -> 0.5.11"
-aggregated-from = "https://hg.mozilla.org/mozilla-central/raw-file/tip/supply-chain/audits.toml"
-
-[[audits.mozilla.audits.quinn-udp]]
-who = "Max Leonard Inden <mail@max-inden.de>"
-criteria = "safe-to-deploy"
-delta = "0.5.11 -> 0.5.12"
-aggregated-from = "https://hg.mozilla.org/mozilla-central/raw-file/tip/supply-chain/audits.toml"
-
-[[audits.mozilla.audits.quinn-udp]]
-who = "Max Leonard Inden <mail@max-inden.de>"
-criteria = "safe-to-deploy"
-delta = "0.5.12 -> 0.5.13"
-aggregated-from = "https://hg.mozilla.org/mozilla-central/raw-file/tip/supply-chain/audits.toml"
-
 [[audits.mozilla.audits.rand]]
 who = "Henrik Skupin <mail@hskupin.info>"
 criteria = "safe-to-deploy"
@@ -4588,12 +4600,6 @@ aggregated-from = "https://hg.mozilla.org/mozilla-central/raw-file/tip/supply-ch
 who = "Makoto Kato <m_kato@ga2.so-net.ne.jp>"
 criteria = "safe-to-deploy"
 delta = "0.7.6 -> 0.8.1"
-aggregated-from = "https://hg.mozilla.org/mozilla-central/raw-file/tip/supply-chain/audits.toml"
-
-[[audits.mozilla.audits.tinyvec_macros]]
-who = "Drew Willcoxon <adw@mozilla.com>"
-criteria = "safe-to-deploy"
-delta = "0.1.0 -> 0.1.1"
 aggregated-from = "https://hg.mozilla.org/mozilla-central/raw-file/tip/supply-chain/audits.toml"
 
 [[audits.mozilla.audits.toml_datetime]]
