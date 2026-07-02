@@ -28,7 +28,7 @@ resolver = "2"
 "serde_cbor:0.11.2" = { path = "src/serde_cbor" }
 
 [workspace.package]
-version = "2.3.12"
+version = "2.3.13"
 authors = [
     "David Mulder <dmulder@suse.com>"
 ]
