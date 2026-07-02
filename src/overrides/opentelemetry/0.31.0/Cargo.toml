@@ -1,0 +1,22 @@
+[package]
+name = "opentelemetry"
+version = "0.31.0"
+authors.workspace = true
+rust-version.workspace = true
+edition.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[features]
+default = ["opentelemetry/default"]
+futures = ["opentelemetry/futures"]
+internal-logs = ["opentelemetry/internal-logs"]
+logs = ["opentelemetry/logs"]
+metrics = ["opentelemetry/metrics"]
+spec_unstable_logs_enabled = ["opentelemetry/spec_unstable_logs_enabled"]
+testing = ["opentelemetry/testing"]
+trace = ["opentelemetry/trace"]
+
+[dependencies]
+opentelemetry = { version = "^0.32.0" }
