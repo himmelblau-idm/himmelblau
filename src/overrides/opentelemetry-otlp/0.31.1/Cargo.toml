@@ -1,0 +1,40 @@
+[package]
+name = "opentelemetry-otlp"
+version = "0.31.1"
+authors.workspace = true
+rust-version.workspace = true
+edition.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[features]
+default = ["opentelemetry-otlp/default"]
+grpc-tonic = ["opentelemetry-otlp/grpc-tonic"]
+gzip-http = ["opentelemetry-otlp/gzip-http"]
+gzip-tonic = ["opentelemetry-otlp/gzip-tonic"]
+http-json = ["opentelemetry-otlp/http-json"]
+http-proto = ["opentelemetry-otlp/http-proto"]
+hyper-client = ["opentelemetry-otlp/hyper-client"]
+integration-testing = ["opentelemetry-otlp/integration-testing"]
+internal-logs = ["opentelemetry-otlp/internal-logs"]
+logs = ["opentelemetry-otlp/logs"]
+metrics = ["opentelemetry-otlp/metrics"]
+reqwest-blocking-client = ["opentelemetry-otlp/reqwest-blocking-client"]
+reqwest-client = ["opentelemetry-otlp/reqwest-client"]
+reqwest-rustls = ["opentelemetry-otlp/reqwest-rustls"]
+reqwest-rustls-webpki-roots = ["opentelemetry-otlp/reqwest-rustls-webpki-roots"]
+serialize = ["opentelemetry-otlp/serialize"]
+tls = ["opentelemetry-otlp/tls"]
+tls-aws-lc = ["opentelemetry-otlp/tls-aws-lc"]
+tls-provider-agnostic = ["opentelemetry-otlp/tls-provider-agnostic"]
+tls-ring = ["opentelemetry-otlp/tls-ring"]
+tls-roots = ["opentelemetry-otlp/tls-roots"]
+tls-webpki-roots = ["opentelemetry-otlp/tls-webpki-roots"]
+trace = ["opentelemetry-otlp/trace"]
+zstd-http = ["opentelemetry-otlp/zstd-http"]
+zstd-tonic = ["opentelemetry-otlp/zstd-tonic"]
+serde = []
+
+[dependencies]
+opentelemetry-otlp = { version = "^0.32.0" }
