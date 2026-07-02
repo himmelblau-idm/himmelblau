@@ -21,6 +21,9 @@ resolver = "2"
 
 [patch.crates-io]
 ldap3_proto-0-6-2 = { package = "ldap3_proto", path = "src/overrides/ldap3_proto/0.6.2" }
+opentelemetry-0-31-0 = { package = "opentelemetry", path = "src/overrides/opentelemetry/0.31.0" }
+opentelemetry-otlp-0-31-1 = { package = "opentelemetry-otlp", path = "src/overrides/opentelemetry-otlp/0.31.1" }
+opentelemetry_sdk-0-31-0 = { package = "opentelemetry_sdk", path = "src/overrides/opentelemetry_sdk/0.31.0" }
 paste-1-0-15 = { package = "paste", path = "src/paste" }
 serde_cbor-0-11-2 = { package = "serde_cbor", path = "src/serde_cbor" }
 
