@@ -469,6 +469,11 @@ who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
 delta = "0.2.1 -> 0.2.2"
 
+[[audits.pastey]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+delta = "0.2.2 -> 0.2.3"
+
 [[audits.pbkdf2]]
 who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
@@ -624,6 +629,11 @@ who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
 version = "0.3.46"
 
+[[audits.time]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+delta = "0.3.51 -> 0.3.53"
+
 [[audits.time-core]]
 who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
@@ -643,6 +653,11 @@ version = "0.2.25"
 who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
 version = "0.2.26"
+
+[[audits.time-macros]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+delta = "0.2.30 -> 0.2.31"
 
 [[audits.toml_parser]]
 who = "David Mulder <dmulder@samba.org>"
