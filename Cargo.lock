@@ -678,6 +678,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "bluer"
+version = "0.17.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "af68112f5c60196495c8b0eea68349817855f565df5b04b2477916d09fb1a901"
+dependencies = [
+ "futures",
+ "hex",
+ "libc",
+ "log",
+ "macaddr",
+ "nix",
+ "num-derive",
+ "num-traits",
+ "serde",
+ "serde_json",
+ "strum",
+ "tokio",
+ "uuid",
+]
+
+[[package]]
 name = "bluez-async"
 version = "0.8.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -859,6 +880,12 @@ name = "cfg-if"
 version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "baf1de4339761588bc0619e3cbc0120ee582ebb74b53b4efbf79117bd2da40fd"
+
+[[package]]
+name = "cfg_aliases"
+version = "0.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "613afe47fcd5fac7ccf1db93babcb082c5994d996f20b8b159f2ad1658eb5724"
 
 [[package]]
 name = "chacha20"
@@ -3337,14 +3364,16 @@ dependencies = [
 
 [[package]]
 name = "libwebauthn"
-version = "0.3.0"
+version = "0.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c2f74ddf06fefa81809987cb138dc265bcd50131bdce8f9d4ddc7e409a5c7167"
+checksum = "9e105a094cd8a9714866e5683c5be55ebdf6b4e734c09f5deeb3be6cadb23204"
 dependencies = [
  "aes",
+ "aes-gcm",
  "async-trait",
  "base64-url",
  "bitflags 2.9.1",
+ "bluer",
  "btleplug",
  "byteorder",
  "cbc",
@@ -3352,12 +3381,16 @@ dependencies = [
  "ctap-types",
  "curve25519-dalek",
  "dbus",
+ "der 0.7.10",
+ "flate2",
  "futures",
  "heapless",
  "hex",
  "hidapi",
  "hkdf",
  "hmac 0.12.1",
+ "http",
+ "icu_normalizer",
  "idna",
  "maplit 1.0.2 (registry+https://github.com/rust-lang/crates.io-index)",
  "mockall 0.13.1 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -3365,6 +3398,7 @@ dependencies = [
  "num-traits",
  "num_enum",
  "p256",
+ "publicsuffix",
  "rand 0.8.6",
  "rustls",
  "serde",
@@ -3376,6 +3410,7 @@ dependencies = [
  "serde_repr",
  "sha2 0.10.9",
  "snow",
+ "spki",
  "text_io 0.1.13 (registry+https://github.com/rust-lang/crates.io-index)",
  "thiserror 2.0.16",
  "time",
@@ -3384,8 +3419,10 @@ dependencies = [
  "tokio-tungstenite",
  "tracing",
  "tungstenite",
+ "url",
  "uuid",
  "x509-parser",
+ "zeroize",
 ]
 
 [[package]]
@@ -3450,6 +3487,12 @@ name = "mac"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c41e0c4fef86961ac6d6f8a82609f55f31b05e4fce149ac5710e439df7619ba4"
+
+[[package]]
+name = "macaddr"
+version = "1.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "baee0bbc17ce759db233beb01648088061bf678383130602a298e6998eedb2d8"
 
 [[package]]
 name = "malloced"
@@ -3614,6 +3657,18 @@ name = "new_debug_unreachable"
 version = "1.0.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "650eef8c711430f1a879fdd01d4745a7deea475becfb90269c06775983bbf086"
+
+[[package]]
+name = "nix"
+version = "0.29.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "71e2746dc3a24dd78b3cfcb7be93368c6de9963d30f43a6a73998a9cf4b17b46"
+dependencies = [
+ "bitflags 2.9.1",
+ "cfg-if",
+ "cfg_aliases",
+ "libc",
+]
 
 [[package]]
 name = "nom"
@@ -5682,6 +5737,28 @@ name = "strsim"
 version = "0.11.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7da8b5736845d9f2fcb837ea5d9e2628564b3b043a70948a3f0b778838c5fb4f"
+
+[[package]]
+name = "strum"
+version = "0.26.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8fec0f0aef304996cf250b31b5a10dee7980c85da9d759361292b8bca5a18f06"
+dependencies = [
+ "strum_macros",
+]
+
+[[package]]
+name = "strum_macros"
+version = "0.26.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4c6bee85a5a24955dc440386795aa378cd9cf82acd5f764469152d2270e581be"
+dependencies = [
+ "heck",
+ "proc-macro2",
+ "quote",
+ "rustversion",
+ "syn",
+]
 
 [[package]]
 name = "subtle"
