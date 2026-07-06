@@ -3304,10 +3304,20 @@ who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
 delta = "3.19.0 -> 3.21.0"
 
+[[audits.himmelblau.audits.time]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+delta = "0.3.47 -> 0.3.51"
+
 [[audits.himmelblau.audits.time-core]]
 who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
 delta = "0.1.8 -> 0.1.9"
+
+[[audits.himmelblau.audits.time-macros]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+delta = "0.2.27 -> 0.2.30"
 
 [[audits.himmelblau.audits.tonic-types]]
 who = "David Mulder <dmulder@samba.org>"
