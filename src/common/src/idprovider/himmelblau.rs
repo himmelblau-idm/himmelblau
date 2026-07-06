@@ -299,7 +299,7 @@ impl HimmelblauMultiProvider {
                 .await
                 .insert("oidc".to_string(), Providers::Oidc(provider));
         }
-        if providers.providers.lock().await.len() == 0 {
+        if providers.providers.lock().await.is_empty() {
             return Err(anyhow!("No provider was configured!"));
         }
 
