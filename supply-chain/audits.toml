@@ -264,6 +264,11 @@ who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
 version = "0.5.2"
 
+[[audits.cmov]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+delta = "0.5.2 -> 0.5.4"
+
 [[audits.configparser]]
 who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
