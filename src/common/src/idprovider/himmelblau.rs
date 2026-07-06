@@ -1333,7 +1333,10 @@ impl IdProvider for HimmelblauProvider {
                                 return Err(IdpError::BadRequest);
                             }
                         );
-                        if auth_init.exists() {
+                        if auth_init.try_exists().map_err(|e| {
+                            error!(?e, "Failed checking user existence");
+                            IdpError::BadRequest
+                        })? {
                             // Generate a UserToken, with invalid uuid. We can
                             // only fetch this from an authenticated token.
                             let id_attr_map = self.config.lock().await.get_id_attr_map();
