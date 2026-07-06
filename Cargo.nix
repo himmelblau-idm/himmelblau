@@ -3146,9 +3146,9 @@ rec {
       };
       "cmov" = rec {
         crateName = "cmov";
-        version = "0.5.2";
+        version = "0.5.4";
         edition = "2024";
-        sha256 = "1hsxwpms8k75wwyv7rppw8gbj13nnj8r9mplv4givmijpbnmh1yy";
+        sha256 = "0yh22sqdvcdrfbhvnja4kaq5dyklpb4s70w5r6rplfdw4jna17hc";
         authors = [
           "RustCrypto Developers"
         ];
