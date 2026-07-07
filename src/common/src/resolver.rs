@@ -106,6 +106,272 @@ impl Display for Id {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::{AuthSession, Resolver};
+    use crate::db::{Cache, CacheTxn, Db, KeyStoreTxn};
+    use crate::idprovider::interface::{
+        tpm, AuthCacheAction, AuthCredHandler, AuthRequest, AuthResult, CacheState, GroupToken, Id,
+        IdProvider, IdpError, UserToken, UserTokenState,
+    };
+    use crate::unix_config::{HomeAttr, UidAttr};
+    use crate::unix_proto::{PamAuthRequest, PamAuthResponse};
+    use async_trait::async_trait;
+    use himmelblau::UserToken as UnixUserToken;
+    use kanidm_hsm_crypto::{provider::BoxedDynTpm, provider::SoftTpm, provider::Tpm, AuthValue};
+    use libkrimes::proto::KerberosCredentials;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::time::{Duration, SystemTime};
+    use tokio::sync::broadcast;
+
+    struct OfflineFallbackProvider {
+        offline: AtomicBool,
+    }
+
+    impl OfflineFallbackProvider {
+        fn new() -> Self {
+            Self {
+                offline: AtomicBool::new(false),
+            }
+        }
+    }
+
+    #[async_trait]
+    impl IdProvider for OfflineFallbackProvider {
+        async fn check_online(
+            &self,
+            _tpm: &mut tpm::provider::BoxedDynTpm,
+            _now: SystemTime,
+        ) -> bool {
+            true
+        }
+
+        async fn unix_user_get<D: KeyStoreTxn + Send>(
+            &self,
+            _id: &Id,
+            _token: Option<&UserToken>,
+            _keystore: &mut D,
+            _tpm: &mut tpm::provider::BoxedDynTpm,
+            _machine_key: &tpm::structures::StorageKey,
+        ) -> Result<UserTokenState, IdpError> {
+            Ok(UserTokenState::UseCached)
+        }
+
+        async fn unix_user_access<D: KeyStoreTxn + Send>(
+            &self,
+            _id: &Id,
+            _scopes: Vec<String>,
+            _token: Option<&UserToken>,
+            _client_id: Option<String>,
+            _redirect_uri: Option<String>,
+            _req_cnf: Option<String>,
+            _keystore: &mut D,
+            _tpm: &mut tpm::provider::BoxedDynTpm,
+            _machine_key: &tpm::structures::StorageKey,
+        ) -> Result<UnixUserToken, IdpError> {
+            Err(IdpError::BadRequest)
+        }
+
+        async fn unix_user_tgts<D: KeyStoreTxn + Send>(
+            &self,
+            _id: &Id,
+            _old_token: Option<&UserToken>,
+            _keystore: &mut D,
+            _tpm: &mut tpm::provider::BoxedDynTpm,
+            _machine_key: &tpm::structures::StorageKey,
+        ) -> (
+            Option<Box<KerberosCredentials>>,
+            Option<Box<KerberosCredentials>>,
+            Option<String>,
+            Option<String>,
+        ) {
+            (None, None, None, None)
+        }
+
+        async fn unix_user_prt_cookie<D: KeyStoreTxn + Send>(
+            &self,
+            _id: &Id,
+            _token: Option<&UserToken>,
+            _sso_nonce: Option<&str>,
+            _keystore: &mut D,
+            _tpm: &mut tpm::provider::BoxedDynTpm,
+            _machine_key: &tpm::structures::StorageKey,
+        ) -> Result<String, IdpError> {
+            Err(IdpError::BadRequest)
+        }
+
+        async fn change_auth_token<D: KeyStoreTxn + Send>(
+            &self,
+            _account_id: &str,
+            _token: &UnixUserToken,
+            _new_tok: &str,
+            _keystore: &mut D,
+            _tpm: &mut tpm::provider::BoxedDynTpm,
+            _machine_key: &tpm::structures::StorageKey,
+        ) -> Result<bool, IdpError> {
+            Err(IdpError::BadRequest)
+        }
+
+        async fn unix_user_online_auth_init<D: KeyStoreTxn + Send>(
+            &self,
+            _account_id: &str,
+            _token: Option<&UserToken>,
+            _service: &str,
+            _no_hello_pin: bool,
+            _force_reauth: bool,
+            _keystore: &mut D,
+            _tpm: &mut tpm::provider::BoxedDynTpm,
+            _machine_key: &tpm::structures::StorageKey,
+            _shutdown_rx: &broadcast::Receiver<()>,
+        ) -> Result<(AuthRequest, AuthCredHandler), IdpError> {
+            self.offline.store(true, Ordering::Release);
+            Err(IdpError::BadRequest)
+        }
+
+        async fn unix_user_online_auth_step<D: KeyStoreTxn + Send>(
+            &self,
+            _account_id: &str,
+            _old_token: &UserToken,
+            _service: &str,
+            _no_hello_pin: bool,
+            _cred_handler: &mut AuthCredHandler,
+            _pam_next_req: PamAuthRequest,
+            _keystore: &mut D,
+            _tpm: &mut tpm::provider::BoxedDynTpm,
+            _machine_key: &tpm::structures::StorageKey,
+            _shutdown_rx: &broadcast::Receiver<()>,
+        ) -> Result<(AuthResult, AuthCacheAction), IdpError> {
+            Err(IdpError::BadRequest)
+        }
+
+        async fn unix_user_offline_auth_init<D: KeyStoreTxn + Send>(
+            &self,
+            _account_id: &str,
+            _token: Option<&UserToken>,
+            _no_hello_pin: bool,
+            _keystore: &mut D,
+        ) -> Result<(AuthRequest, AuthCredHandler), IdpError> {
+            Ok((AuthRequest::Pin, AuthCredHandler::None))
+        }
+
+        async fn unix_user_offline_auth_step<D: KeyStoreTxn + Send>(
+            &self,
+            _account_id: &str,
+            _token: &UserToken,
+            _cred_handler: &mut AuthCredHandler,
+            _pam_next_req: PamAuthRequest,
+            _keystore: &mut D,
+            _tpm: &mut tpm::provider::BoxedDynTpm,
+            _machine_key: &tpm::structures::StorageKey,
+            _online_at_init: bool,
+        ) -> Result<AuthResult, IdpError> {
+            Err(IdpError::BadRequest)
+        }
+
+        async fn unix_group_get(
+            &self,
+            _id: &Id,
+            _tpm: &mut tpm::provider::BoxedDynTpm,
+        ) -> Result<GroupToken, IdpError> {
+            Err(IdpError::NotFound {
+                what: "group".to_string(),
+                where_: "test".to_string(),
+            })
+        }
+
+        async fn get_cachestate<D: KeyStoreTxn + Send>(
+            &self,
+            _account_id: Option<&str>,
+            _keystore: &mut D,
+        ) -> CacheState {
+            if self.offline.load(Ordering::Acquire) {
+                CacheState::OfflineNextCheck(SystemTime::now() + Duration::from_secs(60))
+            } else {
+                CacheState::Online
+            }
+        }
+
+        async fn offline_break_glass(&self, _ttl: Option<u64>) -> Result<(), IdpError> {
+            Ok(())
+        }
+    }
+
+    fn test_token() -> UserToken {
+        UserToken {
+            name: "testuser".to_string(),
+            spn: "testuser@example.com".to_string(),
+            uuid: uuid::uuid!("0302b99c-f0f6-41ab-9492-852692b0fd16"),
+            real_gidnumber: Some(2000),
+            gidnumber: 2000,
+            displayname: "Test User".to_string(),
+            shell: None,
+            groups: Vec::new(),
+            tenant_id: Some(uuid::uuid!("58e8a301-2502-4814-81c5-a4d17c399a45")),
+            valid: true,
+        }
+    }
+
+    async fn setup_resolver() -> Resolver<OfflineFallbackProvider> {
+        let db = Db::new("").expect("failed to create test db");
+        let mut dbtxn = db.write().await;
+        dbtxn.migrate().expect("failed to migrate test db");
+        dbtxn
+            .update_account(&test_token(), 0)
+            .expect("failed to seed test token");
+        dbtxn.commit().expect("failed to commit test db");
+
+        let mut hsm = BoxedDynTpm::new(SoftTpm::new());
+        let auth_value = AuthValue::ephemeral().expect("failed to create auth value");
+        let loadable_machine_key = hsm
+            .root_storage_key_create(&auth_value)
+            .expect("failed to create machine key");
+        let machine_key = hsm
+            .root_storage_key_load(&auth_value, &loadable_machine_key)
+            .expect("failed to load machine key");
+
+        Resolver::new(
+            db,
+            OfflineFallbackProvider::new(),
+            hsm,
+            machine_key,
+            3600,
+            Vec::new(),
+            "/bin/sh".to_string(),
+            "/home/".to_string(),
+            HomeAttr::Name,
+            None,
+            UidAttr::Name,
+            UidAttr::Name,
+            Vec::new(),
+        )
+        .await
+        .expect("failed to create resolver")
+    }
+
+    #[tokio::test]
+    async fn online_auth_init_offline_fallback_does_not_reenter_db_lock() {
+        let resolver = setup_resolver().await;
+        let (_shutdown_tx, shutdown_rx) = broadcast::channel(1);
+
+        let result = tokio::time::timeout(
+            Duration::from_secs(5),
+            resolver.pam_account_authenticate_init(
+                "testuser@example.com",
+                "gdm-password",
+                false,
+                false,
+                shutdown_rx,
+            ),
+        )
+        .await
+        .expect("auth init deadlocked waiting for the db lock")
+        .expect("auth init failed");
+
+        assert!(matches!(result.0, AuthSession::InProgress { .. }));
+        assert!(matches!(result.1, PamAuthResponse::Pin));
+    }
+}
+
 impl<I> Resolver<I>
 where
     I: IdProvider + Sync,
@@ -1139,24 +1405,26 @@ where
         };
 
         let maybe_err = if online_at_init {
-            let mut hsm_lock = self.hsm.lock().await;
-            let mut dbtxn = self.db.write().await;
+            let online_result = {
+                let mut hsm_lock = self.hsm.lock().await;
+                let mut dbtxn = self.db.write().await;
 
-            match self
-                .client
-                .unix_user_online_auth_init(
-                    account_id,
-                    token.as_ref(),
-                    service,
-                    no_hello_pin,
-                    force_reauth,
-                    &mut dbtxn,
-                    hsm_lock.deref_mut(),
-                    &self.machine_key,
-                    &shutdown_rx,
-                )
-                .await
-            {
+                self.client
+                    .unix_user_online_auth_init(
+                        account_id,
+                        token.as_ref(),
+                        service,
+                        no_hello_pin,
+                        force_reauth,
+                        &mut dbtxn,
+                        hsm_lock.deref_mut(),
+                        &self.machine_key,
+                        &shutdown_rx,
+                    )
+                    .await
+            };
+
+            match online_result {
                 Ok(res) => Ok(res),
                 Err(e) => {
                     if force_reauth {
@@ -1169,6 +1437,7 @@ where
                         match self.get_cachestate(Some(account_id)).await {
                             CacheState::Offline | CacheState::OfflineNextCheck(_) => {
                                 // Attempt to proceed offline
+                                let mut dbtxn = self.db.write().await;
                                 self.client
                                     .unix_user_offline_auth_init(
                                         account_id,
