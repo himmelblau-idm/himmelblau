@@ -67,6 +67,7 @@ use himmelblau_unix_common::config::{split_username, HimmelblauConfig};
 use himmelblau_unix_common::constants::BROKER_APP_ID;
 use himmelblau_unix_common::constants::DEFAULT_CONFIG_PATH;
 use himmelblau_unix_common::hello_pin_complexity::is_simple_pin;
+use himmelblau_unix_common::i18n::{self, tr, tr_fmt};
 use himmelblau_unix_common::idprovider::openidconnect::{
     mfa_from_oidc_device, OidcApplication, OidcTokenResponseExt,
 };
@@ -330,6 +331,7 @@ impl PamHooks for PamKanidm {
 
     #[instrument(skip(pamh, args, _flags))]
     fn sm_authenticate(pamh: &PamHandle, args: Vec<&CStr>, _flags: PamFlag) -> PamResultCode {
+        i18n::init();
         if should_skip_daemon_call() {
             return PamResultCode::PAM_IGNORE;
         }
@@ -497,6 +499,7 @@ impl PamHooks for PamKanidm {
 
     #[instrument(skip(pamh, args, flags))]
     fn sm_chauthtok(pamh: &PamHandle, args: Vec<&CStr>, flags: PamFlag) -> PamResultCode {
+        i18n::init();
         if should_skip_daemon_call() {
             return PamResultCode::PAM_IGNORE;
         }
@@ -570,7 +573,7 @@ impl PamHooks for PamKanidm {
         };
         match conv.send(
             PAM_TEXT_INFO,
-            "This command changes your local Hello PIN, NOT your Entra Id password.",
+            &tr("This command changes your local Hello PIN, NOT your Entra Id password."),
         ) {
             Ok(_) => {}
             Err(err) => {
@@ -583,15 +586,15 @@ impl PamHooks for PamKanidm {
 
         let mut pin;
         loop {
-            pin = match conv.send(PAM_PROMPT_ECHO_OFF, "New PIN: ") {
+            pin = match conv.send(PAM_PROMPT_ECHO_OFF, &(tr("New PIN:") + " ")) {
                 Ok(password) => match password {
                     Some(cred) => {
                         if cred.len() < cfg.get_hello_pin_min_length() {
                             match conv.send(
                                 PAM_TEXT_INFO,
-                                &format!(
-                                    "Chosen pin is too short! {} chars required.",
-                                    cfg.get_hello_pin_min_length()
+                                &tr_fmt(
+                                    "Chosen pin is too short! {length} chars required.",
+                                    &[("length", cfg.get_hello_pin_min_length().to_string())],
                                 ),
                             ) {
                                 Ok(_) => {}
@@ -605,7 +608,7 @@ impl PamHooks for PamKanidm {
                             continue;
                         } else if is_simple_pin(&cred) {
                             match conv
-                                .send(PAM_TEXT_INFO, "PIN must not use repeating or predictable sequences. Avoid patterns like '111111', '123456', or '135791'.")
+                                .send(PAM_TEXT_INFO, &tr("PIN must not use repeating or predictable sequences. Avoid patterns like '111111', '123456', or '135791'."))
                             {
                                 Ok(_) => {}
                                 Err(err) => {
@@ -631,7 +634,7 @@ impl PamHooks for PamKanidm {
                 }
             };
 
-            let confirm = match conv.send(PAM_PROMPT_ECHO_OFF, "Confirm PIN: ") {
+            let confirm = match conv.send(PAM_PROMPT_ECHO_OFF, &(tr("Confirm PIN:") + " ")) {
                 Ok(password) => match password {
                     Some(cred) => cred,
                     None => {
@@ -648,7 +651,7 @@ impl PamHooks for PamKanidm {
             if pin == confirm {
                 break;
             } else {
-                match conv.send(PAM_TEXT_INFO, "Inputs did not match. Try again.") {
+                match conv.send(PAM_TEXT_INFO, &tr("Inputs did not match. Try again.")) {
                     Ok(_) => {}
                     Err(err) => {
                         if opts.debug {
@@ -706,7 +709,7 @@ impl PamHooks for PamKanidm {
             };
 
             let password = if !auth_init.passwordless() {
-                match conv.send(PAM_PROMPT_ECHO_OFF, "Entra Id Password: ") {
+                match conv.send(PAM_PROMPT_ECHO_OFF, &(tr("Entra Id Password:") + " ")) {
                     Ok(password) => match password {
                         Some(cred) => Some(cred),
                         None => {
@@ -745,18 +748,18 @@ impl PamHooks for PamKanidm {
                     // Server requires a password even though check_user_exists
                     // didn't indicate it. Prompt and retry without auth_init so
                     // the library starts a fresh MFA flow with the password.
-                    let retry_password = match conv.send(PAM_PROMPT_ECHO_OFF, "Entra Id Password: ")
-                    {
-                        Ok(Some(cred)) => cred,
-                        Ok(None) => {
-                            debug!("no password provided");
-                            return PamResultCode::PAM_CRED_INSUFFICIENT;
-                        }
-                        Err(err) => {
-                            debug!("unable to get password");
-                            return err;
-                        }
-                    };
+                    let retry_password =
+                        match conv.send(PAM_PROMPT_ECHO_OFF, &(tr("Entra Id Password:") + " ")) {
+                            Ok(Some(cred)) => cred,
+                            Ok(None) => {
+                                debug!("no password provided");
+                                return PamResultCode::PAM_CRED_INSUFFICIENT;
+                            }
+                            Err(err) => {
+                                debug!("unable to get password");
+                                return err;
+                            }
+                        };
                     match rt.block_on(async {
                         app.initiate_acquire_token_by_mfa_flow(
                             &account_id,
@@ -817,10 +820,13 @@ impl PamHooks for PamKanidm {
                     ) {
                         Ok(assertion) => assertion,
                         Err(e) => {
-                            msg_printer.print_text(&format!("{:?}: {}\n{}",
-                                e,
-                                "Entra Id Fido authentication failed.",
-                                "If you are now prompted for a password from pam_unix, please disregard the prompt, go back and try again."));
+                            msg_printer.print_text(&tr_fmt(
+                                "{code}: {message}\nIf you are now prompted for a password from pam_unix, please disregard the prompt, go back and try again.",
+                                &[
+                                    ("code", format!("{:?}", e)),
+                                    ("message", tr("Entra Id Fido authentication failed.")),
+                                ],
+                            ));
                             thread::sleep(Duration::from_secs(2));
                             // Abort the auth attempt, and don't continue executing the stack
                             return PamResultCode::PAM_ABORT;
@@ -844,7 +850,10 @@ impl PamHooks for PamKanidm {
                 },
                 // PROMPT
                 {
-                    let input = match conv.send(PAM_PROMPT_ECHO_OFF, &mfa_req.msg) {
+                    let input = match conv.send(
+                        PAM_PROMPT_ECHO_OFF,
+                        &i18n::translate_external_message(&mfa_req.msg),
+                    ) {
                         Ok(password) => match password {
                             Some(cred) => cred,
                             None => {
@@ -870,7 +879,10 @@ impl PamHooks for PamKanidm {
                 },
                 // POLL
                 {
-                    match conv.send(PAM_TEXT_INFO, &mfa_req.msg) {
+                    match conv.send(
+                        PAM_TEXT_INFO,
+                        &i18n::translate_external_message(&mfa_req.msg),
+                    ) {
                         Ok(_) => {}
                         Err(err) => {
                             if opts.debug {
@@ -932,7 +944,10 @@ impl PamHooks for PamKanidm {
                 }
             };
 
-            match conv.send(PAM_TEXT_INFO, &mfa_req.msg) {
+            match conv.send(
+                PAM_TEXT_INFO,
+                &i18n::translate_external_message(&mfa_req.msg),
+            ) {
                 Ok(_) => {}
                 Err(err) => {
                     if opts.debug {

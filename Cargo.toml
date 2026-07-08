@@ -182,6 +182,7 @@ kanidm_utils_users = "1.8.1"
 walkdir = "2"
 csv = "1.4.0"
 notify-debouncer-full = { version = "0.5" }
+gettextrs = { package = "gettext-rs", version = "0.7", features = ["gettext-system"] }
 utoipa = "4.2.0"
 utoipa-swagger-ui = "4.0.0"
 opentelemetry = { version = "0.27.0" }

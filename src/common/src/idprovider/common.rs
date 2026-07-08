@@ -268,7 +268,7 @@ macro_rules! handle_hello_bad_pin_count {
 
         if bad_pin_count == hello_pin_retry_count {
             return $ret_fn(
-                "Failed to authenticate with Hello PIN. One more failed attempt will require multi-factor authentication and resetting your Linux Hello PIN."
+                &tr("Failed to authenticate with Hello PIN. One more failed attempt will require multi-factor authentication and resetting your Linux Hello PIN.")
             );
         }
 
@@ -303,7 +303,7 @@ macro_rules! handle_hello_bad_pin_count {
                     IdpError::Tpm
                 })?;
             return $ret_fn(
-                "Too many incorrect PIN attempts. You will need to enroll a new Linux Hello PIN."
+                &tr("Too many incorrect PIN attempts. You will need to enroll a new Linux Hello PIN.")
             );
         }
     }};
@@ -410,10 +410,9 @@ macro_rules! load_cached_prt {
                     IdpError::Tpm
                 })?
             {
-                return Ok(AuthResult::Denied(
-                    "Offline auth has expired. Please connect to the network to continue."
-                        .to_string(),
-                ));
+                return Ok(AuthResult::Denied(tr(
+                    "Offline auth has expired. Please connect to the network to continue.",
+                )));
             }
             $self
                 .refresh_cache
@@ -461,7 +460,7 @@ macro_rules! impl_himmelblau_offline_auth_init {
         } else {
             Ok((
                 AuthRequest::InitDenied {
-                    msg: "Network outage detected.".to_string(),
+                    msg: tr("Network outage detected."),
                 },
                 AuthCredHandler::None,
             ))
@@ -552,9 +551,9 @@ macro_rules! impl_handle_hello_pin_totp_auth {
                     handle_hello_bad_pin_count!($self, $account_id, $keystore, |msg: &str| {
                         Ok(($auth_cache_action)(AuthResult::Denied(msg.to_string())))
                     });
-                    Ok(($auth_cache_action)(AuthResult::Denied(
-                        "Failed to authenticate with Hello TOTP code.".to_string(),
-                    )))
+                    Ok(($auth_cache_action)(AuthResult::Denied(tr(
+                        "Failed to authenticate with Hello TOTP code.",
+                    ))))
                 }
             }
             Err(e) => {
@@ -562,9 +561,9 @@ macro_rules! impl_handle_hello_pin_totp_auth {
                 handle_hello_bad_pin_count!($self, $account_id, $keystore, |msg: &str| {
                     Ok(($auth_cache_action)(AuthResult::Denied(msg.to_string())))
                 });
-                Ok(($auth_cache_action)(AuthResult::Denied(
-                    "Failed to authenticate with Hello TOTP code.".to_string(),
-                )))
+                Ok(($auth_cache_action)(AuthResult::Denied(tr(
+                    "Failed to authenticate with Hello TOTP code.",
+                ))))
             }
         }
     }};
@@ -647,8 +646,9 @@ macro_rules! impl_himmelblau_offline_auth_step {
                             && check_hello_totp_enabled!($self)
                         {
                             Ok(AuthResult::Next(AuthRequest::HelloTOTP {
-                                msg: "Please enter your Hello TOTP code from your Authenticator: "
-                                    .to_string(),
+                                msg: tr(
+                                    "Please enter your Hello TOTP code from your Authenticator:",
+                                ) + " ",
                             }))
                         } else {
                             $self.bad_pin_counter.reset_bad_pin_count($account_id).await;
@@ -662,9 +662,9 @@ macro_rules! impl_himmelblau_offline_auth_step {
                         handle_hello_bad_pin_count!($self, $account_id, $keystore, |msg: &str| {
                             Ok(AuthResult::Denied(msg.to_string()))
                         });
-                        Ok(AuthResult::Denied(
-                            "Failed to authenticate with Hello PIN.".to_string(),
-                        ))
+                        Ok(AuthResult::Denied(tr(
+                            "Failed to authenticate with Hello PIN.",
+                        )))
                     }
                 }
             }

@@ -1,0 +1,204 @@
+#!/usr/bin/env python3
+import ast
+import datetime
+import json
+import os
+import pathlib
+import re
+import subprocess
+
+ROOT = pathlib.Path(__file__).resolve().parents[1]
+PO_DIR = ROOT / "po"
+POTFILES = PO_DIR / "POTFILES.in"
+OUTPUT = PO_DIR / "himmelblau.pot"
+
+CALL_RE = re.compile(r"(?:^|[^A-Za-z0-9_])(?:(?:i18n::|\$crate::i18n::)?(tr|tr_fmt|trn|trn_fmt))\s*!?\s*\(")
+IDENT_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+CONST_STR_RE = re.compile(r"\bconst\s+([A-Za-z_][A-Za-z0-9_]*)\s*:\s*&str\s*=")
+GENERATED_CONFIG_GLOB = "**/build/himmelblau_unix_common-*/out/config_gen.rs"
+
+
+def decode_string(source: str, start: int) -> tuple[str, int] | None:
+    idx = start
+    while idx < len(source) and source[idx].isspace():
+        idx += 1
+    if idx >= len(source) or source[idx] != '"':
+        return None
+
+    escaped = False
+    end = idx + 1
+    while end < len(source):
+        ch = source[end]
+        if escaped:
+            escaped = False
+        elif ch == "\\":
+            escaped = True
+        elif ch == '"':
+            literal = source[idx : end + 1]
+            return ast.literal_eval(literal), end + 1
+        end += 1
+    return None
+
+
+def line_for_offset(source: str, offset: int) -> int:
+    return source.count("\n", 0, offset) + 1
+
+
+def decode_identifier(source: str, start: int) -> tuple[str, int] | None:
+    idx = start
+    while idx < len(source) and source[idx].isspace():
+        idx += 1
+    match = IDENT_RE.match(source, idx)
+    if not match:
+        return None
+    return match.group(0), match.end()
+
+
+def decode_msgid_arg(
+    source: str, start: int, constants: dict[str, str]
+) -> tuple[str, int] | None:
+    literal = decode_string(source, start)
+    if literal:
+        return literal
+
+    identifier = decode_identifier(source, start)
+    if not identifier:
+        return None
+
+    name, offset = identifier
+    value = constants.get(name)
+    if value is None:
+        return None
+    return value, offset
+
+
+def find_string_constants(source: str) -> dict[str, str]:
+    constants = {}
+    for match in CONST_STR_RE.finditer(source):
+        value = decode_string(source, match.end())
+        if value:
+            constants[match.group(1)] = value[0]
+    return constants
+
+
+def find_msgids(path: pathlib.Path, constants: dict[str, str] | None = None):
+    constants = constants or {}
+    source = path.read_text(encoding="utf-8")
+    for match in CALL_RE.finditer(source):
+        fn = match.group(1)
+        first = decode_msgid_arg(source, match.end(), constants)
+        if not first:
+            continue
+        msgid, offset = first
+        if fn in ("trn", "trn_fmt"):
+            comma = source.find(",", offset)
+            if comma == -1:
+                continue
+            second = decode_msgid_arg(source, comma + 1, constants)
+            if not second:
+                continue
+            yield line_for_offset(source, match.start()), msgid, second[0]
+        else:
+            yield line_for_offset(source, match.start()), msgid, None
+
+
+def cargo_target_dirs() -> list[pathlib.Path]:
+    target_dirs = []
+
+    if env_target_dir := os.environ.get("CARGO_TARGET_DIR"):
+        target_dirs.append(pathlib.Path(env_target_dir))
+
+    try:
+        metadata = subprocess.run(
+            ["cargo", "metadata", "--no-deps", "--format-version", "1"],
+            cwd=ROOT,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        target_dirs.append(pathlib.Path(json.loads(metadata.stdout)["target_directory"]))
+    except (OSError, subprocess.CalledProcessError, KeyError, json.JSONDecodeError):
+        # cargo metadata may be unavailable in minimal build environments; use fallbacks.
+        target_dirs.append(ROOT / "target")
+
+    target_dirs.append(ROOT / "target")
+    return list(dict.fromkeys(target_dirs))
+
+
+def find_generated_config() -> pathlib.Path | None:
+    candidates = []
+    for target_dir in cargo_target_dirs():
+        if not target_dir.is_dir():
+            continue
+        candidates.extend(
+            path for path in target_dir.glob(GENERATED_CONFIG_GLOB) if path.is_file()
+        )
+
+    if not candidates:
+        return None
+
+    return max(candidates, key=lambda path: path.stat().st_mtime)
+
+
+def po_quote(value: str) -> str:
+    return '"' + value.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n\"\n\"") + '"'
+
+
+def main() -> int:
+    entries: dict[tuple[str, str | None], list[str]] = {}
+    for raw in POTFILES.read_text(encoding="utf-8").splitlines():
+        rel = raw.split("#", 1)[0].strip()
+        if not rel:
+            continue
+        path = ROOT / rel
+        for line, msgid, plural in find_msgids(path):
+            entries.setdefault((msgid, plural), []).append(f"{rel}:{line}")
+
+    generated_config = find_generated_config()
+    if generated_config is None:
+        raise SystemExit(
+            "generated config_gen.rs not found; run "
+            "`cargo check -p himmelblau_unix_common` first"
+        )
+
+    generated_source = generated_config.read_text(encoding="utf-8")
+    generated_constants = find_string_constants(generated_source)
+    for line, msgid, plural in find_msgids(generated_config, generated_constants):
+        entries.setdefault((msgid, plural), []).append(f"config_gen.rs:{line}")
+
+    now = datetime.datetime.now(datetime.timezone.utc)
+    year = now.year
+    lines = [
+        "# Himmelblau message catalog template.",
+        f"# Copyright (C) {year} Himmelblau contributors",
+        "# This file is distributed under the same license as Himmelblau.",
+        "#",
+        'msgid ""',
+        'msgstr ""',
+        f'"Project-Id-Version: himmelblau\\n"',
+        f'"POT-Creation-Date: {now.strftime("%Y-%m-%d %H:%M+0000")}\\n"',
+        '"MIME-Version: 1.0\\n"',
+        '"Content-Type: text/plain; charset=UTF-8\\n"',
+        '"Content-Transfer-Encoding: 8bit\\n"',
+        "",
+    ]
+
+    for (msgid, plural), refs in sorted(entries.items(), key=lambda item: item[0][0]):
+        lines.append("#: " + " ".join(refs))
+        if plural is None:
+            lines.append(f"msgid {po_quote(msgid)}")
+            lines.append('msgstr ""')
+        else:
+            lines.append(f"msgid {po_quote(msgid)}")
+            lines.append(f"msgid_plural {po_quote(plural)}")
+            lines.append('msgstr[0] ""')
+            lines.append('msgstr[1] ""')
+        lines.append("")
+
+    OUTPUT.write_text("\n".join(lines), encoding="utf-8")
+    print(f"wrote {OUTPUT.relative_to(ROOT)}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

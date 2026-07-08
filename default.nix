@@ -40,14 +40,47 @@ let
             ];
           };
           himmelblau_unix_common = attrs: {
-            nativeBuildInputs = [
+            nativeBuildInputs = (if attrs ? nativeBuildInputs then attrs.nativeBuildInputs else [ ]) ++ [
               pkgs.python3
+              pkgs.gettext
             ];
           };
           himmelblaud =
             attrs:
             unistring
             // {
+              nativeBuildInputs = (if attrs ? nativeBuildInputs then attrs.nativeBuildInputs else [ ]) ++ [
+                pkgs.gettext
+                pkgs.makeWrapper
+              ];
+              postInstall = (if attrs ? postInstall then attrs.postInstall else "") + ''
+                po_dir=${./po}
+                linguas="$po_dir/LINGUAS"
+                if [ -f "$linguas" ]; then
+                  while IFS= read -r raw; do
+                    lang="''${raw%%#*}"
+                    lang="$(printf '%s' "$lang" | xargs)"
+                    [ -n "$lang" ] || continue
+
+                    po="$po_dir/$lang.po"
+                    if [ ! -f "$po" ]; then
+                      echo "po/LINGUAS lists $lang, but $po is missing" >&2
+                      exit 1
+                    fi
+
+                    mo="$out/share/locale/$lang/LC_MESSAGES/himmelblau.mo"
+                    mkdir -p "$(dirname "$mo")"
+                    msgfmt --check-format --output-file "$mo" "$po"
+                  done < "$linguas"
+                fi
+
+                for bin in himmelblaud himmelblaud_tasks; do
+                  if [ -x "$out/bin/$bin" ]; then
+                    wrapProgram "$out/bin/$bin" \
+                      --set HIMMELBLAU_LOCALEDIR "$out/share/locale"
+                  fi
+                done
+              '';
             };
           aad-tool =
             attrs:

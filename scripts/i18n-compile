@@ -1,0 +1,44 @@
+#!/usr/bin/env python3
+import argparse
+import pathlib
+import subprocess
+
+ROOT = pathlib.Path(__file__).resolve().parents[1]
+PO_DIR = ROOT / "po"
+
+
+def languages() -> list[str]:
+    linguas = PO_DIR / "LINGUAS"
+    if not linguas.exists():
+        return []
+    result = []
+    for raw in linguas.read_text(encoding="utf-8").splitlines():
+        lang = raw.split("#", 1)[0].strip()
+        if lang:
+            result.append(lang)
+    return result
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--profile", default="debug")
+    parser.add_argument("--target-dir", default=str(ROOT / "target"))
+    args = parser.parse_args()
+
+    out_root = pathlib.Path(args.target_dir) / args.profile / "locale"
+    for lang in languages():
+        po = PO_DIR / f"{lang}.po"
+        if not po.exists():
+            raise SystemExit(f"po/LINGUAS lists {lang}, but {po} is missing")
+        out = out_root / lang / "LC_MESSAGES" / "himmelblau.mo"
+        out.parent.mkdir(parents=True, exist_ok=True)
+        subprocess.run(
+            ["msgfmt", "--check-format", "--output-file", str(out), str(po)],
+            check=True,
+        )
+        print(out.relative_to(ROOT))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
