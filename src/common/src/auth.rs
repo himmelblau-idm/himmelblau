@@ -73,7 +73,7 @@ pub trait MessagePrinter: Send + Sync {
 }
 
 pub const DAEMON_START_WAIT_MESSAGE: &str = "Himmelblau authentication is starting, please wait...";
-pub const DAEMON_START_WAIT_TIMEOUT: Duration = Duration::from_secs(20);
+pub const DAEMON_START_WAIT_TIMEOUT: Duration = Duration::from_secs(1);
 pub const DAEMON_START_WAIT_INTERVAL: Duration = Duration::from_millis(250);
 
 #[derive(Default)]
