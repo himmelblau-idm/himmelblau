@@ -439,6 +439,16 @@ who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
 delta = "0.3.3 -> 0.4.1"
 
+[[audits.gettext-rs]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+version = "0.7.7"
+
+[[audits.gettext-sys]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+version = "0.26.0"
+
 [[audits.hash32]]
 who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
@@ -529,6 +539,11 @@ who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
 delta = "0.2.2 -> 0.3.0"
 
+[[audits.locale_config]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+version = "0.3.0"
+
 [[audits.lru]]
 who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
@@ -598,6 +613,11 @@ delta = "0.7.4 -> 0.7.5"
 who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
 delta = "0.7.5 -> 0.7.6"
+
+[[audits.objc_id]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+version = "0.1.1"
 
 [[audits.oid-registry]]
 who = "David Mulder <dmulder@samba.org>"

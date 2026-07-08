@@ -2101,16 +2101,6 @@ rec {
         };
         resolvedDefaultFeatures = [ "std" ];
       };
-      "block" = rec {
-        crateName = "block";
-        version = "0.1.6";
-        edition = "2015";
-        sha256 = "16k9jgll25pzsq14f244q22cdv0zb4bqacldg3kx6h89d7piz30d";
-        authors = [
-          "Steven Sheldon"
-        ];
-
-      };
       "block-buffer 0.10.4" = rec {
         crateName = "block-buffer";
         version = "0.10.4";
@@ -10604,22 +10594,6 @@ rec {
         ];
 
       };
-      "malloc_buf" = rec {
-        crateName = "malloc_buf";
-        version = "0.0.6";
-        edition = "2015";
-        sha256 = "1jqr77j89pwszv51fmnknzvd53i1nkmcr8rjrvcxhm4dx1zr1fv2";
-        authors = [
-          "Steven Sheldon"
-        ];
-        dependencies = [
-          {
-            name = "libc";
-            packageId = "libc";
-          }
-        ];
-
-      };
       "malloced" = rec {
         crateName = "malloced";
         version = "1.3.1";
@@ -11626,44 +11600,22 @@ rec {
       "objc" = rec {
         crateName = "objc";
         version = "0.2.7";
-        edition = "2015";
-        sha256 = "1cbpf6kz8a244nn1qzl3xyhmp05gsg4n313c9m3567625d3innwi";
+        edition = "2021";
+        src = lib.cleanSourceWith { filter = sourceFilter;  src = ./src/overrides/objc/0.2.7; };
         authors = [
-          "Steven Sheldon"
-        ];
-        dependencies = [
-          {
-            name = "malloc_buf";
-            packageId = "malloc_buf";
-          }
+          "David Mulder <dmulder@suse.com>"
         ];
         features = {
-          "exception" = [ "objc_exception" ];
-          "objc_exception" = [ "dep:objc_exception" ];
         };
       };
       "objc-foundation" = rec {
         crateName = "objc-foundation";
         version = "0.1.1";
-        edition = "2015";
-        sha256 = "1y9bwb3m5fdq7w7i4bnds067dhm4qxv4m1mbg9y61j9nkrjipp8s";
+        edition = "2021";
+        src = lib.cleanSourceWith { filter = sourceFilter;  src = ./src/overrides/objc-foundation/0.1.1; };
         libName = "objc_foundation";
         authors = [
-          "Steven Sheldon"
-        ];
-        dependencies = [
-          {
-            name = "block";
-            packageId = "block";
-          }
-          {
-            name = "objc";
-            packageId = "objc";
-          }
-          {
-            name = "objc_id";
-            packageId = "objc_id";
-          }
+          "David Mulder <dmulder@suse.com>"
         ];
 
       };
@@ -11704,22 +11656,6 @@ rec {
         features = {
         };
         resolvedDefaultFeatures = [ "NSArray" "NSData" "NSDictionary" "NSEnumerator" "NSError" "NSObject" "NSString" "NSUUID" "NSValue" "block2" "std" ];
-      };
-      "objc_id" = rec {
-        crateName = "objc_id";
-        version = "0.1.1";
-        edition = "2015";
-        sha256 = "0fq71hnp2sdblaighjc82yrac3adfmqzhpr11irhvdfp9gdlsbf9";
-        authors = [
-          "Steven Sheldon"
-        ];
-        dependencies = [
-          {
-            name = "objc";
-            packageId = "objc";
-          }
-        ];
-
       };
       "oid-registry" = rec {
         crateName = "oid-registry";
@@ -17716,10 +17652,16 @@ rec {
         crateName = "temp-dir";
         version = "0.1.16";
         edition = "2021";
-        sha256 = "0r09qwiiqm8pk6inaqmmp0h6zjg9py6m1dkcwqgghv21x5cnf5w3";
+        src = lib.cleanSourceWith { filter = sourceFilter;  src = ./src/overrides/temp-dir/0.1.16; };
         libName = "temp_dir";
         authors = [
-          "Michael Leonhard <michael@leonhardllc.com>"
+          "David Mulder <dmulder@suse.com>"
+        ];
+        dependencies = [
+          {
+            name = "tempfile";
+            packageId = "tempfile";
+          }
         ];
 
       };
