@@ -59,6 +59,7 @@ qrcodegen = "1.8.0"
 urlencoding = { workspace = true }
 zbus = "5.14"
 rand.workspace = true
+gettextrs.workspace = true
 
 [package.metadata.cargo-machete]
 ignored = ["libhimmelblau"]

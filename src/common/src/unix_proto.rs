@@ -8,6 +8,7 @@
  * file, You can obtain one at https://mozilla.org/MPL/2.0/.
  */
 
+use crate::i18n;
 use himmelblau::intune::NoncompliantRule;
 use libc::uid_t;
 use libkrimes::proto::KerberosCredentials;
@@ -91,6 +92,53 @@ pub enum PamAuthResponse {
     InitDenied {
         msg: String,
     },
+}
+
+impl PamAuthResponse {
+    pub fn translate_user_visible(self) -> Self {
+        match self {
+            PamAuthResponse::Denied(msg) => {
+                PamAuthResponse::Denied(i18n::translate_external_message(&msg))
+            }
+            PamAuthResponse::Password {
+                prompt,
+                long_prompt,
+            } => PamAuthResponse::Password {
+                prompt: prompt.map(|msg| i18n::translate_external_message(&msg)),
+                long_prompt: long_prompt.map(|msg| i18n::translate_external_message(&msg)),
+            },
+            PamAuthResponse::Input { msg, echo_on } => PamAuthResponse::Input {
+                msg: i18n::translate_external_message(&msg),
+                echo_on,
+            },
+            PamAuthResponse::HelloTOTP { msg } => PamAuthResponse::HelloTOTP {
+                msg: i18n::translate_external_message(&msg),
+            },
+            PamAuthResponse::MFAPoll {
+                msg,
+                polling_interval,
+                show_push_hint,
+            } => PamAuthResponse::MFAPoll {
+                msg: i18n::translate_external_message(&msg),
+                polling_interval,
+                show_push_hint,
+            },
+            PamAuthResponse::SetupPin { msg } => PamAuthResponse::SetupPin {
+                msg: i18n::translate_external_message(&msg),
+            },
+            PamAuthResponse::ChangePassword { msg } => PamAuthResponse::ChangePassword {
+                msg: i18n::translate_external_message(&msg),
+            },
+            PamAuthResponse::InitDenied { msg } => PamAuthResponse::InitDenied {
+                msg: i18n::translate_external_message(&msg),
+            },
+            PamAuthResponse::Unknown
+            | PamAuthResponse::Success
+            | PamAuthResponse::MFAPollWait
+            | PamAuthResponse::Pin
+            | PamAuthResponse::Fido { .. } => self,
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize, Debug)]

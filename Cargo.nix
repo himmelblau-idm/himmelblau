@@ -2101,6 +2101,16 @@ rec {
         };
         resolvedDefaultFeatures = [ "std" ];
       };
+      "block" = rec {
+        crateName = "block";
+        version = "0.1.6";
+        edition = "2015";
+        sha256 = "16k9jgll25pzsq14f244q22cdv0zb4bqacldg3kx6h89d7piz30d";
+        authors = [
+          "Steven Sheldon"
+        ];
+
+      };
       "block-buffer 0.10.4" = rec {
         crateName = "block-buffer";
         version = "0.10.4";
@@ -6568,6 +6578,57 @@ rec {
         };
         resolvedDefaultFeatures = [ "std" ];
       };
+      "gettext-rs" = rec {
+        crateName = "gettext-rs";
+        version = "0.7.7";
+        edition = "2015";
+        sha256 = "1prb49j0d33kam9ww0pi5bbr95726ks37s0xjs3fw3vz3gf5fn2x";
+        libName = "gettextrs";
+        authors = [
+          "Konstantin Salikhov <koka58@yandex.ru>"
+          "Alexander Batischev <eual.jp@gmail.com>"
+        ];
+        dependencies = [
+          {
+            name = "gettext-sys";
+            packageId = "gettext-sys";
+          }
+          {
+            name = "locale_config";
+            packageId = "locale_config";
+          }
+        ];
+        features = {
+          "gettext-system" = [ "gettext-sys/gettext-system" ];
+        };
+        resolvedDefaultFeatures = [ "gettext-system" ];
+      };
+      "gettext-sys" = rec {
+        crateName = "gettext-sys";
+        version = "0.26.0";
+        edition = "2015";
+        links = "gettext";
+        sha256 = "1scfknchxmmdfl3w3ik8bnb9rlq3gl3kwaq34gw0zryp1nmmka2f";
+        libName = "gettext_sys";
+        libPath = "lib.rs";
+        authors = [
+          "Brian Olsen <brian@maven-group.org>"
+          "Alexander Batischev <eual.jp@gmail.com>"
+        ];
+        buildDependencies = [
+          {
+            name = "cc";
+            packageId = "cc";
+          }
+          {
+            name = "temp-dir";
+            packageId = "temp-dir";
+          }
+        ];
+        features = {
+        };
+        resolvedDefaultFeatures = [ "gettext-system" ];
+      };
       "ghash" = rec {
         crateName = "ghash";
         version = "0.5.1";
@@ -7353,6 +7414,12 @@ rec {
           {
             name = "futures";
             packageId = "futures";
+          }
+          {
+            name = "gettext-rs";
+            packageId = "gettext-rs";
+            rename = "gettextrs";
+            features = [ "gettext-system" ];
           }
           {
             name = "hashbrown";
@@ -10418,6 +10485,42 @@ rec {
           "unicode-xid" = [ "dep:unicode-xid" ];
         };
       };
+      "locale_config" = rec {
+        crateName = "locale_config";
+        version = "0.3.0";
+        edition = "2015";
+        sha256 = "0d399alr1i7h7yji4vydbdbzd8hp0xaykr7h4rn3yj7l2rdw7lh8";
+        authors = [
+          "Jan Hudec <bulb@ucw.cz>"
+        ];
+        dependencies = [
+          {
+            name = "lazy_static";
+            packageId = "lazy_static";
+          }
+          {
+            name = "objc";
+            packageId = "objc";
+            target = { target, features }: ("macos" == target."os" or null);
+          }
+          {
+            name = "objc-foundation";
+            packageId = "objc-foundation";
+            target = { target, features }: ("macos" == target."os" or null);
+          }
+          {
+            name = "regex";
+            packageId = "regex";
+          }
+          {
+            name = "winapi";
+            packageId = "winapi";
+            target = { target, features }: (target."windows" or false);
+            features = [ "winnls" ];
+          }
+        ];
+
+      };
       "lock_api" = rec {
         crateName = "lock_api";
         version = "0.4.12";
@@ -10498,6 +10601,22 @@ rec {
         sha256 = "194vc7vrshqff72rl56f9xgb0cazyl4jda7qsv31m5l6xx7hq7n4";
         authors = [
           "Jonathan Reem <jonathan.reem@gmail.com>"
+        ];
+
+      };
+      "malloc_buf" = rec {
+        crateName = "malloc_buf";
+        version = "0.0.6";
+        edition = "2015";
+        sha256 = "1jqr77j89pwszv51fmnknzvd53i1nkmcr8rjrvcxhm4dx1zr1fv2";
+        authors = [
+          "Steven Sheldon"
+        ];
+        dependencies = [
+          {
+            name = "libc";
+            packageId = "libc";
+          }
         ];
 
       };
@@ -11504,6 +11623,50 @@ rec {
         };
         resolvedDefaultFeatures = [ "default" "reqwest" "rustls-tls" ];
       };
+      "objc" = rec {
+        crateName = "objc";
+        version = "0.2.7";
+        edition = "2015";
+        sha256 = "1cbpf6kz8a244nn1qzl3xyhmp05gsg4n313c9m3567625d3innwi";
+        authors = [
+          "Steven Sheldon"
+        ];
+        dependencies = [
+          {
+            name = "malloc_buf";
+            packageId = "malloc_buf";
+          }
+        ];
+        features = {
+          "exception" = [ "objc_exception" ];
+          "objc_exception" = [ "dep:objc_exception" ];
+        };
+      };
+      "objc-foundation" = rec {
+        crateName = "objc-foundation";
+        version = "0.1.1";
+        edition = "2015";
+        sha256 = "1y9bwb3m5fdq7w7i4bnds067dhm4qxv4m1mbg9y61j9nkrjipp8s";
+        libName = "objc_foundation";
+        authors = [
+          "Steven Sheldon"
+        ];
+        dependencies = [
+          {
+            name = "block";
+            packageId = "block";
+          }
+          {
+            name = "objc";
+            packageId = "objc";
+          }
+          {
+            name = "objc_id";
+            packageId = "objc_id";
+          }
+        ];
+
+      };
       "objc2" = rec {
         crateName = "objc2";
         version = "0.5.2";
@@ -11541,6 +11704,22 @@ rec {
         features = {
         };
         resolvedDefaultFeatures = [ "NSArray" "NSData" "NSDictionary" "NSEnumerator" "NSError" "NSObject" "NSString" "NSUUID" "NSValue" "block2" "std" ];
+      };
+      "objc_id" = rec {
+        crateName = "objc_id";
+        version = "0.1.1";
+        edition = "2015";
+        sha256 = "0fq71hnp2sdblaighjc82yrac3adfmqzhpr11irhvdfp9gdlsbf9";
+        authors = [
+          "Steven Sheldon"
+        ];
+        dependencies = [
+          {
+            name = "objc";
+            packageId = "objc";
+          }
+        ];
+
       };
       "oid-registry" = rec {
         crateName = "oid-registry";
@@ -17533,6 +17712,17 @@ rec {
         };
         resolvedDefaultFeatures = [ "default" ];
       };
+      "temp-dir" = rec {
+        crateName = "temp-dir";
+        version = "0.1.16";
+        edition = "2021";
+        sha256 = "0r09qwiiqm8pk6inaqmmp0h6zjg9py6m1dkcwqgghv21x5cnf5w3";
+        libName = "temp_dir";
+        authors = [
+          "Michael Leonhard <michael@leonhardllc.com>"
+        ];
+
+      };
       "tempfile" = rec {
         crateName = "tempfile";
         version = "3.27.0";
@@ -20063,7 +20253,7 @@ rec {
         ];
         features = {
         };
-        resolvedDefaultFeatures = [ "handleapi" "hidclass" "hidpi" "hidusage" "setupapi" ];
+        resolvedDefaultFeatures = [ "handleapi" "hidclass" "hidpi" "hidusage" "setupapi" "winnls" ];
       };
       "winapi-util" = rec {
         crateName = "winapi-util";

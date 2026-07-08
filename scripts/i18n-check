@@ -1,0 +1,69 @@
+#!/usr/bin/env python3
+import ast
+import pathlib
+import re
+import subprocess
+import sys
+
+ROOT = pathlib.Path(__file__).resolve().parents[1]
+PO_DIR = ROOT / "po"
+PLACEHOLDER_RE = re.compile(r"\{[A-Za-z_][A-Za-z0-9_]*\}")
+
+
+def parse_po(path: pathlib.Path):
+    entries = []
+    current = {}
+    active = None
+    for raw in path.read_text(encoding="utf-8").splitlines():
+        line = raw.strip()
+        if not line:
+            if current:
+                entries.append(current)
+                current = {}
+                active = None
+            continue
+        if line.startswith("msgid "):
+            active = "msgid"
+            current[active] = ast.literal_eval(line[6:])
+        elif line.startswith("msgid_plural "):
+            active = "msgid_plural"
+            current[active] = ast.literal_eval(line[13:])
+        elif line.startswith("msgstr"):
+            active = line.split()[0]
+            current[active] = ast.literal_eval(line.split(" ", 1)[1])
+        elif line.startswith('"') and active:
+            current[active] += ast.literal_eval(line)
+    if current:
+        entries.append(current)
+    return entries
+
+
+def placeholders(value: str) -> set[str]:
+    return set(PLACEHOLDER_RE.findall(value))
+
+
+def main() -> int:
+    failed = False
+    for po in sorted(PO_DIR.glob("*.po")):
+        result = subprocess.run(["msgfmt", "--check-format", "--check", "-o", "/dev/null", str(po)])
+        if result.returncode != 0:
+            failed = True
+
+        for entry in parse_po(po):
+            msgid_placeholders = placeholders(entry.get("msgid", ""))
+            msgid_placeholders |= placeholders(entry.get("msgid_plural", ""))
+            if not msgid_placeholders:
+                continue
+            for key, msgstr in entry.items():
+                if key.startswith("msgstr") and msgstr and placeholders(msgstr) != msgid_placeholders:
+                    print(
+                        f"{po}: placeholder mismatch for {entry.get('msgid', '')!r}: {key}",
+                        file=sys.stderr,
+                    )
+                    failed = True
+
+    return 1 if failed else 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

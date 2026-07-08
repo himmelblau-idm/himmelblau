@@ -45,6 +45,8 @@ pub mod db;
 #[cfg(target_family = "unix")]
 pub mod hello_pin_complexity;
 #[cfg(target_family = "unix")]
+pub mod i18n;
+#[cfg(target_family = "unix")]
 pub mod idmap_cache;
 #[cfg(target_family = "unix")]
 pub mod idprovider;
