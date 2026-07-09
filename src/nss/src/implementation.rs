@@ -481,7 +481,7 @@ fn group_from_nssgroup(ng: NssGroup) -> Group {
 fn shadow_from_nssuser(nu: &NssUser) -> Shadow {
     Shadow {
         name: nu.name.clone(),
-        passwd: "!".to_string(), // Locked - passwords handled by Azure AD/pam_himmelblau
+        passwd: "x".to_string(), // Hash invalid - passwords handled by pam_himmelblau
         last_change: -1,         // Disable Unix password aging; auth is handled by pam_himmelblau.
         change_min_days: 0,
         change_max_days: 99999,
@@ -896,7 +896,7 @@ mod tests {
         let shadow = mapped_shadow_from_nssuser(&nu, &cfg, Some("alice-local".to_string()));
 
         assert_eq!(shadow.name, "alice-local");
-        assert_eq!(shadow.passwd, "!");
+        assert_eq!(shadow.passwd, "x");
         assert_eq!(shadow.last_change, -1);
         Ok(())
     }
@@ -909,7 +909,7 @@ mod tests {
         let shadow = mapped_shadow_from_nssuser(&nu, &cfg, None);
 
         assert_eq!(shadow.name, "alice");
-        assert_eq!(shadow.passwd, "!");
+        assert_eq!(shadow.passwd, "x");
         Ok(())
     }
 
