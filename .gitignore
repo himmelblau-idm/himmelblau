@@ -38,6 +38,8 @@ platform/opensuse/himmelblaud-tasks.service
 platform/opensuse/himmelblaud.service
 platform/opensuse/himmelblaud-orchestrator.service
 platform/opensuse/himmelblau-hsm-pin-init.service
+platform/opensuse/himmelblau-compliance-check.service
+platform/opensuse/himmelblau-compliance-check.timer
 
 platform/el/authselect
 scripts/__pycache__
