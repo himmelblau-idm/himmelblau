@@ -78,9 +78,8 @@ assets = [
   ["../../man/man8/himmelblaud_tasks.8", "usr/share/man/man8/", "644"],
   ["src/himmelblau-policies.tmpfiles.conf", "usr/lib/tmpfiles.d/himmelblau-policies.conf", "644"],
   ["src/himmelblaud.tmpfiles.conf", "usr/lib/tmpfiles.d/himmelblaud.conf", "644"],
-  # TODO: Add locale files when po/LINGUAS is populated:
-  # For each language XX in po/LINGUAS, add:
-  # ["target/release/locale/XX/LC_MESSAGES/himmelblau.mo", "usr/share/locale/XX/LC_MESSAGES/", "644"],
+  # For each language in po/LINGUAS, add:
+  ["target/release/locale/de/LC_MESSAGES/himmelblau.mo", "usr/share/locale/de/LC_MESSAGES/", "644"],
 ]
 maintainer-scripts = "scripts"
 
@@ -107,9 +106,8 @@ assets = [
   { source = "../../man/man8/himmelblaud_tasks.8", dest = "/usr/share/man/man8/", mode = "644" },
   { source = "src/himmelblau-policies.tmpfiles.conf", dest = "/usr/lib/tmpfiles.d/himmelblau-policies.conf", mode = "644" },
   { source = "src/himmelblaud.tmpfiles.conf", dest = "/usr/lib/tmpfiles.d/himmelblaud.conf", mode = "644" },
-  # TODO: Add locale files when po/LINGUAS is populated:
-  # For each language XX in po/LINGUAS, add:
-  # { source = "target/release/locale/XX/LC_MESSAGES/himmelblau.mo", dest = "/usr/share/locale/XX/LC_MESSAGES/", mode = "644" },
+  # For each language in po/LINGUAS, add:
+  { source = "target/release/locale/de/LC_MESSAGES/himmelblau.mo", dest = "/usr/share/locale/de/LC_MESSAGES/", mode = "644" },
 ]
 post_install_script = "scripts/postinst"
 pre_uninstall_script = "scripts/prerm"
