@@ -1,0 +1,530 @@
+# German translations for Himmelblau.
+# Copyright (C) 2026 Himmelblau contributors
+# This file is distributed under the same license as Himmelblau.
+#
+msgid ""
+msgstr ""
+"Project-Id-Version: himmelblau\n"
+"POT-Creation-Date: 2026-07-08 19:34+0000\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"PO-Revision-Date: 2026-07-09 09:42-0600\n"
+"Last-Translator:  <dmulder@himmelblau-idm.org>\n"
+"Language-Team: German <translation-team-de@lists.sourceforge.net>\n"
+"Language: de\n"
+"Plural-Forms: nplurals=2; plural=(n != 1);\n"
+
+#: src/common/src/auth.rs:1276 src/common/src/auth.rs:1289
+msgid "An unexpected error occurred."
+msgstr "Es ist ein unerwarteter Fehler aufgetreten."
+
+#: src/common/src/idprovider/openidconnect.rs:753
+msgid "Approve sign-in in your authenticator app, then wait..."
+msgstr "Bestätigen Sie die Anmeldung in Ihrer Authentifizierungs-App und warten Sie dann..."
+
+#: src/common/src/idprovider/himmelblau.rs:4806
+msgid "Authenticated user {user} does not match requested user"
+msgstr "Der authentifizierte Benutzer {user} stimmt nicht mit dem angeforderten Benutzer überein."
+
+#: src/common/src/idprovider/openidconnect.rs:2118
+msgid "Authenticated user {uuid} does not match requested user"
+msgstr "Der authentifizierte Benutzer {uuid} stimmt nicht mit dem angeforderten Benutzer überein"
+
+#: src/common/src/idprovider/openidconnect.rs:3003
+msgid "Authentication did not return a refresh token. Please try again."
+msgstr "Die Authentifizierung hat kein Aktualisierungstoken zurückgegeben. Bitte versuchen Sie es erneut."
+
+#: src/common/src/idprovider/himmelblau.rs:3946
+msgid "Authentication failed (AADSTS{code})"
+msgstr "Authentifizierung fehlgeschlagen (AADSTS{code})"
+
+#: src/common/src/idprovider/openidconnect.rs:2939
+msgid "Authentication failed in browser flow."
+msgstr "Die Authentifizierung im Browser-Ablauf ist fehlgeschlagen."
+
+#: src/common/src/idprovider/himmelblau.rs:209
+msgid "Authentication failed. Please contact your administrator."
+msgstr "Die Authentifizierung ist fehlgeschlagen. Bitte wenden Sie sich an Ihren Administrator."
+
+#: src/common/src/idprovider/himmelblau.rs:3826
+msgid "Authentication failed. Please try again."
+msgstr "Die Authentifizierung ist fehlgeschlagen. Bitte versuchen Sie es erneut."
+
+#: src/common/src/idprovider/himmelblau.rs:3126
+msgid "Authentication failed. Please try signing in again."
+msgstr "Die Authentifizierung ist fehlgeschlagen. Bitte versuchen Sie, sich erneut anzumelden."
+
+#: src/common/src/idprovider/himmelblau.rs:168
+msgid "Authentication failed: Authentication method not supported."
+msgstr "Authentifizierung fehlgeschlagen: Die Authentifizierungsmethode wird nicht unterstützt."
+
+#: src/common/src/idprovider/himmelblau.rs:171 src/common/src/idprovider/himmelblau.rs:176
+msgid "Authentication failed: Configuration error."
+msgstr "Authentifizierung fehlgeschlagen: Konfigurationsfehler."
+
+#: src/common/src/idprovider/himmelblau.rs:175
+msgid "Authentication failed: Cryptographic error."
+msgstr "Authentifizierung fehlgeschlagen: Kryptografischer Fehler."
+
+#: src/common/src/idprovider/himmelblau.rs:152
+msgid "Authentication failed: Invalid server response."
+msgstr "Authentifizierung fehlgeschlagen: Ungültige Serverantwort."
+
+#: src/common/src/idprovider/himmelblau.rs:188
+msgid "Authentication failed: Missing required data."
+msgstr "Authentifizierung fehlgeschlagen: Fehlende erforderliche Daten."
+
+#: src/common/src/idprovider/himmelblau.rs:170
+msgid "Authentication failed: Security hardware error."
+msgstr "Authentifizierung fehlgeschlagen: Sicherheitshardwarefehler."
+
+#: src/common/src/idprovider/himmelblau.rs:165
+msgid "Authentication failed: Unable to reach authentication server."
+msgstr "Authentifizierung fehlgeschlagen: Der Authentifizierungsserver konnte nicht erreicht werden."
+
+#: src/common/src/idprovider/openidconnect.rs:2738 src/common/src/idprovider/openidconnect.rs:2849 src/common/src/idprovider/openidconnect.rs:2984 src/common/src/idprovider/openidconnect.rs:3050 src/common/src/idprovider/openidconnect.rs:3063
+msgid "Authentication failed: {error}"
+msgstr "Authentifizierung fehlgeschlagen: {error}"
+
+#: src/common/src/idprovider/openidconnect.rs:3036
+msgid "Authentication flow completed but token exchange failed. Please try again."
+msgstr "Der Authentifizierungsvorgang wurde abgeschlossen, aber der Tokenaustausch ist fehlgeschlagen. Bitte versuchen Sie es erneut."
+
+#: src/common/src/idprovider/himmelblau.rs:179 src/common/src/idprovider/himmelblau.rs:203
+msgid "Authentication in progress."
+msgstr "Authentifizierung läuft."
+
+#: src/common/src/idprovider/openidconnect.rs:2537
+msgid "Authentication incomplete. Please try again."
+msgstr "Authentifizierung unvollständig. Bitte versuchen Sie es erneut."
+
+#: src/common/src/idprovider/himmelblau.rs:1909
+msgid "Authentication service is temporarily unavailable. Please try again shortly."
+msgstr "Der Authentifizierungsdienst ist vorübergehend nicht verfügbar. Bitte versuchen Sie es in Kürze erneut."
+
+#: src/common/src/idprovider/himmelblau.rs:3166
+msgid "Authentication service unavailable. Please try again later."
+msgstr "Der Authentifizierungsdienst ist nicht verfügbar. Bitte versuchen Sie es später erneut."
+
+#: src/common/src/idprovider/openidconnect.rs:2674 src/common/src/idprovider/openidconnect.rs:2713 src/common/src/idprovider/openidconnect.rs:2774
+msgid "Authentication session corrupted. Please try again."
+msgstr "Die Authentifizierungssitzung ist beschädigt. Bitte versuchen Sie es erneut."
+
+#: src/common/src/idprovider/openidconnect.rs:2661
+msgid "Authentication session data missing. Please try again."
+msgstr "Die Authentifizierungssitzungsdaten fehlen. Bitte versuchen Sie es erneut."
+
+#: src/common/src/idprovider/openidconnect.rs:3078
+msgid "Authentication session returned an unexpected state. Please try again."
+msgstr "Die Authentifizierungssitzung hat einen unerwarteten Status zurückgegeben. Bitte versuchen Sie es erneut."
+
+#: src/common/src/idprovider/himmelblau.rs:4121 src/common/src/idprovider/openidconnect.rs:2701 src/common/src/idprovider/openidconnect.rs:2801
+msgid "Authentication timed out. Please try again."
+msgstr "Zeitüberschreitung bei der Authentifizierung. Bitte versuchen Sie es erneut."
+
+#: src/common/src/idprovider/openidconnect.rs:3105
+msgid "Browser authentication backend unavailable. Please try again."
+msgstr "Browser-Authentifizierungs-Backend ist nicht verfügbar. Bitte versuchen Sie es erneut."
+
+#: src/common/src/auth.rs:1252
+msgid "Changing the password. Please wait..."
+msgstr "Passwort wird geändert. Bitte warten..."
+
+#: src/common/src/auth.rs:1209
+msgid "Chosen password is too short! 8 chars required."
+msgstr "Das gewählte Passwort ist zu kurz! 8 Zeichen sind erforderlich."
+
+#: src/common/src/auth.rs:979 src/pam/src/pam/mod.rs:595
+msgid "Chosen pin is too short! {length} chars required."
+msgstr "Die gewählte PIN ist zu kurz! {length} Zeichen erforderlich."
+
+#: src/common/src/auth.rs:829
+msgid "Cloud Password:"
+msgstr "Cloud-Passwort:"
+
+#: src/common/src/auth.rs:868
+msgid "Code:"
+msgstr "Code:"
+
+#: src/common/src/auth.rs:1010 src/pam/src/pam/mod.rs:637
+msgid "Confirm PIN:"
+msgstr "PIN bestätigen:"
+
+#: src/common/src/auth.rs:1228
+msgid "Confirm password:"
+msgstr "Passwort bestätigen:"
+
+#: src/common/src/idprovider/himmelblau.rs:199
+msgid "Consent required. Please contact your administrator."
+msgstr "Einwilligung erforderlich. Bitte wenden Sie sich an Ihren Administrator."
+
+#: src/common/src/idprovider/himmelblau.rs:3606
+msgid "Create a PIN to use in place of passwords."
+msgstr "Erstellen Sie eine PIN, die Sie anstelle von Passwörtern verwenden können."
+
+#: src/common/src/idprovider/himmelblau.rs:173
+msgid "Device enrollment failed. Please contact your administrator."
+msgstr "Die Geräteregistrierung ist fehlgeschlagen. Bitte wenden Sie sich an Ihren Administrator."
+
+#: src/common/src/idprovider/himmelblau.rs:1020
+msgid "Device has been removed from the domain."
+msgstr "Das Gerät wurde aus der Domäne entfernt."
+
+#: src/common/src/auth.rs:1117
+msgid "Enable Bluetooth to sign in with your phone."
+msgstr "Aktivieren Sie Bluetooth, um sich mit Ihrem Telefon anzumelden."
+
+#: src/common/src/auth.rs:1034
+msgid "Enrolling the Hello PIN. Please wait..."
+msgstr "Hello PIN wird eingerichtet. Bitte warten..."
+
+#: src/common/src/auth.rs:652
+msgid "Enter the setup key '{secret}' to enroll a TOTP Authenticator app. Use '{issuer}' for the code name and '{account}' as the label/name."
+msgstr "Geben Sie den Einrichtungsschlüssel '{secret}' ein, um eine TOTP-Authenticator-App zu registrieren. Verwenden Sie '{issuer}' als Codenamen und '{account}' als Bezeichnung/Namen."
+
+#: src/pam/src/pam/mod.rs:827
+msgid "Entra Id Fido authentication failed."
+msgstr "Die Entra-ID-Fido-Authentifizierung ist fehlgeschlagen."
+
+#: src/common/src/auth.rs:836 src/pam/src/pam/mod.rs:712 src/pam/src/pam/mod.rs:752
+msgid "Entra Id Password:"
+msgstr "Entra-ID Passwort:"
+
+#: src/common/src/idprovider/himmelblau.rs:3366 src/common/src/idprovider/himmelblau.rs:3377
+msgid "FIDO authentication not available. Please try a different authentication method."
+msgstr "FIDO-Authentifizierung nicht verfügbar. Bitte versuchen Sie eine andere Authentifizierungsmethode."
+
+#: src/common/src/idprovider/himmelblau.rs:2721 src/common/src/idprovider/himmelblau.rs:2834 src/common/src/idprovider/himmelblau.rs:2877 src/common/src/idprovider/himmelblau.rs:2924 src/common/src/idprovider/himmelblau.rs:2939 src/common/src/idprovider/openidconnect.rs:2368 src/common/src/idprovider/common.rs:665
+msgid "Failed to authenticate with Hello PIN."
+msgstr "Authentifizierung mit Hello PIN fehlgeschlagen."
+
+#: src/common/src/idprovider/common.rs:271
+msgid "Failed to authenticate with Hello PIN. One more failed attempt will require multi-factor authentication and resetting your Linux Hello PIN."
+msgstr "Die Authentifizierung mit der Hello-PIN ist fehlgeschlagen. Ein weiterer fehlgeschlagener Versuch erfordert eine Multi-Faktor-Authentifizierung und das Zurücksetzen Ihrer Linux Hello-PIN."
+
+#: src/common/src/idprovider/common.rs:554 src/common/src/idprovider/common.rs:564
+msgid "Failed to authenticate with Hello TOTP code."
+msgstr "Authentifizierung mit dem Hello-TOTP-Code fehlgeschlagen."
+
+#: src/common/src/auth.rs:638
+msgid "Failed to build regex: {error}"
+msgstr "Der reguläre Ausdruck konnte nicht erstellt werden: {error}"
+
+#: src/common/src/idprovider/himmelblau.rs:1001
+msgid "Failed to delete CSR key"
+msgstr "CSR-Schlüssel konnte nicht gelöscht werden"
+
+#: src/common/src/idprovider/himmelblau.rs:1012
+msgid "Failed to delete intune key"
+msgstr "Intune-Schlüssel konnte nicht gelöscht werden"
+
+#: src/common/src/auth.rs:625 src/common/src/auth.rs:630 src/common/src/auth.rs:647 src/common/src/auth.rs:664
+msgid "Failed to generate QR code"
+msgstr "QR-Code konnte nicht generiert werden"
+
+#: src/common/src/idprovider/himmelblau.rs:2280
+msgid "Failed to join domain. Please contact your administrator."
+msgstr "Der Beitritt zur Domäne ist fehlgeschlagen. Bitte wenden Sie sich an Ihren Administrator."
+
+#: src/common/src/idprovider/himmelblau.rs:3600
+msgid "Failed to provision hello key: {error}\n"
+"{message}"
+msgstr "Fehler beim Bereitstellen des Hello-Schlüssels: {error}\n"
+"{message}"
+
+#: src/common/src/idprovider/himmelblau.rs:2170
+msgid "Failed to save device configuration. Please contact your administrator."
+msgstr "Die Gerätekonfiguration konnte nicht gespeichert werden. Bitte wenden Sie sich an Ihren Administrator."
+
+#: src/common/src/idprovider/himmelblau.rs:2179
+msgid "Failed to store device credentials. Please contact your administrator."
+msgstr "Die Geräteanmeldeinformationen konnten nicht gespeichert werden. Bitte wenden Sie sich an Ihren Administrator."
+
+#: src/common/src/auth.rs:126 src/common/src/auth.rs:147
+msgid "Fido PIN:"
+msgstr "Fido PIN:"
+
+#: src/common/src/auth.rs:1392
+msgid "Himmelblau authentication is starting, please wait..."
+msgstr "Die Himmelblau-Authentifizierung beginnt, bitte warten..."
+
+#: src/common/src/auth.rs:1399
+msgid "Himmelblau authentication service did not become available in time."
+msgstr "Der Himmelblau-Authentifizierungsdienst war nicht rechtzeitig verfügbar."
+
+#: src/common/src/auth.rs:1386
+msgid "Himmelblau authentication service is unavailable."
+msgstr "Der Himmelblau-Authentifizierungsdienst ist nicht verfügbar."
+
+#: src/common/src/auth.rs:1027 src/common/src/auth.rs:1245 src/pam/src/pam/mod.rs:654
+msgid "Inputs did not match. Try again."
+msgstr "Die Eingaben stimmten nicht überein. Bitte versuchen Sie es erneut."
+
+#: src/common/src/idprovider/himmelblau.rs:207
+msgid "Multi-factor authentication required."
+msgstr "Multifaktor-Authentifizierung erforderlich."
+
+#: src/common/src/idprovider/himmelblau.rs:4161
+msgid "Multi-factor authentication required. Please try signing in again."
+msgstr "Multifaktor-Authentifizierung erforderlich. Bitte versuchen Sie, sich erneut anzumelden."
+
+#: src/common/src/idprovider/himmelblau.rs:1847 src/common/src/idprovider/himmelblau.rs:1950 src/common/src/idprovider/himmelblau.rs:1974 src/common/src/idprovider/himmelblau.rs:2134 src/common/src/idprovider/himmelblau.rs:2152 src/common/src/idprovider/himmelblau.rs:2520 src/common/src/idprovider/himmelblau.rs:2621 src/common/src/idprovider/openidconnect.rs:2250 src/common/src/idprovider/openidconnect.rs:2349 src/common/src/idprovider/common.rs:463
+msgid "Network outage detected."
+msgstr "Netzwerkausfall festgestellt."
+
+#: src/common/src/auth.rs:976 src/pam/src/pam/mod.rs:589
+msgid "New PIN:"
+msgstr "Neuer PIN:"
+
+#: src/common/src/auth.rs:1203
+msgid "New password:"
+msgstr "Neues Passwort:"
+
+#: src/common/src/auth.rs:1002 src/common/src/auth.rs:1061
+msgid "No Entra Id Hello PIN was supplied."
+msgstr "Es wurde keine Entra Id Hello PIN angegeben."
+
+#: src/common/src/auth.rs:1016
+msgid "No Entra Id Hello confirmation PIN was supplied."
+msgstr "Es wurde keine Entra Id Hello-Bestätigungs-PIN angegeben."
+
+#: src/common/src/auth.rs:1234
+msgid "No Entra Id confirmation password was supplied."
+msgstr "Es wurde kein Entra-ID-Bestätigungspasswort angegeben."
+
+#: src/common/src/auth.rs:845 src/common/src/auth.rs:1218
+msgid "No Entra Id password was supplied."
+msgstr "Es wurde kein Entra-ID-Passwort angegeben."
+
+#: src/common/src/auth.rs:951
+msgid "No Hello TOTP code was supplied."
+msgstr "Es wurde kein Hello TOTP-Code übermittelt."
+
+#: src/common/src/auth.rs:875
+msgid "No input was supplied."
+msgstr "Es wurden keine Eingaben gemacht."
+
+#: src/common/src/idprovider/common.rs:413
+msgid "Offline auth has expired. Please connect to the network to continue."
+msgstr "Die Offline-Authentifizierung ist abgelaufen. Bitte stellen Sie eine Netzwerkverbindung her, um fortzufahren."
+
+#: src/common/src/i18n.rs:82
+msgid "Open your Authenticator app, and enter the number '{entropy}' to sign in."
+msgstr "Öffnen Sie Ihre Authenticator-App und geben Sie die Zahl '{entropy}' ein, um sich anzumelden."
+
+#: src/common/src/auth.rs:922
+msgid "Open your authenticator app and scan this QR code to enroll. Then enter the generated code.\n"
+"{qr}"
+msgstr "Öffnen Sie Ihre Authentifizierungs-App und scannen Sie diesen QR-Code, um sich zu registrieren. Geben Sie anschließend den generierten Code ein.\n"
+"{qr}"
+
+#: src/common/src/auth.rs:986 src/pam/src/pam/mod.rs:611
+msgid "PIN must not use repeating or predictable sequences. Avoid patterns like '111111', '123456', or '135791'."
+msgstr "Die PIN darf keine sich wiederholenden oder vorhersehbaren Sequenzen enthalten. Bitte vermeiden Sie Muster wie „111111“, „123456“ oder „135791“."
+
+#: src/common/src/idprovider/himmelblau.rs:3582
+msgid "PIN setup failed. Please try signing in again."
+msgstr "Die PIN-Einrichtung ist fehlgeschlagen. Bitte versuchen Sie, sich erneut anzumelden."
+
+#: src/common/src/auth.rs:1055
+msgid "PIN:"
+msgstr "PIN:"
+
+#: src/common/src/idprovider/himmelblau.rs:191
+msgid "Password change required. Please contact your administrator."
+msgstr "Passwortänderung erforderlich. Bitte kontaktieren Sie Ihren Administrator."
+
+#: src/common/src/idprovider/himmelblau.rs:195
+msgid "Password entry required."
+msgstr "Passworteingabe erforderlich."
+
+#: src/common/src/idprovider/himmelblau.rs:158 src/common/src/idprovider/himmelblau.rs:183
+msgid "Password reset registration required. Complete setup at https://aka.ms/ssprsetup from another device, then try again."
+msgstr "Für das Zurücksetzen des Passworts ist eine Registrierung erforderlich. Schließen Sie die Einrichtung unter https://aka.ms/ssprsetup von einem anderen Gerät aus ab und versuchen Sie es dann erneut."
+
+#: src/common/src/idprovider/himmelblau.rs:2687 src/common/src/idprovider/himmelblau.rs:2783 src/common/src/idprovider/himmelblau.rs:3069 src/common/src/idprovider/himmelblau.rs:3205 src/common/src/idprovider/himmelblau.rs:3322 src/common/src/idprovider/openidconnect.rs:2472 src/common/src/idprovider/openidconnect.rs:2585 src/common/src/idprovider/common.rs:649
+msgid "Please enter your Hello TOTP code from your Authenticator:"
+msgstr "Bitte geben Sie Ihren Hello TOTP-Code von Ihrem Authenticator ein:"
+
+#: config_gen.rs:178
+msgid "Please insert your security key."
+msgstr "Bitte den Sicherheitsschlüssel einstecken."
+
+#: src/common/src/auth.rs:119
+msgid "Please select a device by touching one of them."
+msgstr "Bitte wählen Sie ein Gerät aus, indem Sie eines davon antippen."
+
+#: config_gen.rs:186
+msgid "Please touch your security key."
+msgstr "Bitte den Sicherheitsschlüssel berühren."
+
+#: src/common/src/auth.rs:688
+msgid "Press enter to continue"
+msgstr "Drücken Sie die Eingabetaste, um fortzufahren."
+
+#: src/common/src/auth.rs:1165
+msgid "QR/Bluetooth authentication failed."
+msgstr "QR-/Bluetooth-Authentifizierung fehlgeschlagen."
+
+#: src/common/src/idprovider/openidconnect.rs:90
+msgid "Scan the QR code to continue sign-in, or open this link on another device:\n"
+"{complete}\n"
+"If you cannot scan, visit:\n"
+"{verification_uri}\n"
+"And enter the code:\n"
+"{user_code}"
+msgstr "Scannen Sie den QR-Code, um sich anzumelden, oder öffnen Sie diesen Link auf einem anderen Gerät:\n"
+"{complete}\n"
+"Falls Sie ihn nicht scannen können, besuchen Sie:\n"
+"{verification_uri}\n"
+"Und geben Sie den Code ein:\n"
+"{user_code}"
+
+#: config_gen.rs:194
+msgid "Scan with your authenticator app"
+msgstr "Mit der Authenticator-App scannen"
+
+#: src/common/src/auth.rs:1148
+msgid "Security key and QR/Bluetooth authentication failed."
+msgstr "Sicherheitsschlüssel- und QR-/Bluetooth-Authentifizierung fehlgeschlagen."
+
+#: src/common/src/auth.rs:1184
+msgid "Security key authentication failed."
+msgstr "Die Authentifizierung des Sicherheitsschlüssels ist fehlgeschlagen."
+
+#: src/common/src/idprovider/openidconnect.rs:2404 src/common/src/idprovider/openidconnect.rs:2424
+msgid "Session data corrupted. Please sign in again."
+msgstr "Die Sitzungsdaten sind beschädigt. Bitte melden Sie sich erneut an."
+
+#: src/common/src/idprovider/himmelblau.rs:3479 src/common/src/idprovider/himmelblau.rs:4098 src/common/src/idprovider/himmelblau.rs:4219 src/common/src/idprovider/himmelblau.rs:4312 src/common/src/idprovider/openidconnect.rs:2093
+msgid "Set up a PIN\n"
+"A Hello PIN is a fast, secure way to sign in to your device, apps, and services."
+msgstr "Richten Sie eine PIN ein\n"
+"Eine Hello-PIN ist eine schnelle und sichere Möglichkeit, sich bei Ihrem Gerät, Ihren Apps und Diensten anzumelden."
+
+#: src/common/src/auth.rs:945
+msgid "TOTP Code:"
+msgstr "TOTP-Code:"
+
+#: src/common/src/auth.rs:966
+msgid "The minimum PIN length is {length} characters."
+msgstr "Die Mindestlänge der PIN beträgt {length} Zeichen."
+
+#: src/pam/src/pam/mod.rs:576
+msgid "This command changes your local Hello PIN, NOT your Entra Id password."
+msgstr "Dieser Befehl ändert Ihre lokale Hello-PIN, NICHT Ihr Entra-ID-Passwort."
+
+#: src/common/src/auth.rs:181
+msgid "Too many failed UV-attempts."
+msgstr "Zu viele fehlgeschlagene UV-Versuche."
+
+#: src/common/src/auth.rs:158
+msgid "Too many failed attempts in one row. Your device has been temporarily blocked. Please unplug it and plug in again."
+msgstr "Zu viele fehlgeschlagene Verbindungsversuche hintereinander. Ihr Gerät wurde vorübergehend gesperrt. Bitte trennen Sie es vom Gerät und schließen Sie es erneut an."
+
+#: src/common/src/auth.rs:162
+msgid "Too many failed attempts. Your device has been blocked. Reset it."
+msgstr "Zu viele Fehlversuche. Ihr Gerät wurde gesperrt. Bitte setzen Sie es zurück."
+
+#: src/common/src/idprovider/common.rs:306
+msgid "Too many incorrect PIN attempts. You will need to enroll a new Linux Hello PIN."
+msgstr "Zu viele falsche PIN-Eingaben. Sie müssen eine neue Linux Hello-PIN registrieren."
+
+#: src/common/src/auth.rs:137 src/common/src/auth.rs:168
+msgid "Try again."
+msgstr "Bitte versuchen Sie es erneut."
+
+#: src/common/src/idprovider/himmelblau.rs:3335 src/common/src/idprovider/openidconnect.rs:2598 src/common/src/idprovider/openidconnect.rs:2690 src/common/src/idprovider/openidconnect.rs:2868 src/common/src/idprovider/openidconnect.rs:3138
+msgid "Unexpected authentication step. Please try signing in again."
+msgstr "Unerwarteter Authentifizierungsschritt. Bitte versuchen Sie, sich erneut anzumelden."
+
+#: src/common/src/auth.rs:696
+msgid "Unexpected error occurred."
+msgstr "Es ist ein unerwarteter Fehler aufgetreten."
+
+#: src/common/src/auth.rs:185
+msgid "Unexpected error: {error}"
+msgstr "Unerwarteter Fehler: {error}"
+
+#: src/common/src/auth.rs:193
+msgid "Unexpected select device notice"
+msgstr "Unerwartete Geräteauswahlbenachrichtigung"
+
+#: src/common/src/idprovider/himmelblau.rs:137 src/common/src/idprovider/himmelblau.rs:3983 src/common/src/idprovider/himmelblau.rs:4051 src/common/src/idprovider/himmelblau.rs:4141 src/common/src/idprovider/himmelblau.rs:4265
+msgid "Update your password\n"
+"You need to update your password because this is\n"
+"the first time you are signing in, or because your\n"
+"password has expired."
+msgstr "Aktualisieren Sie Ihr Passwort\n"
+"Sie müssen Ihr Passwort aktualisieren, entweder weil\n"
+"Sie sich zum ersten Mal anmelden oder weil Ihr\n"
+"Passwort abgelaufen ist."
+
+#: config_gen.rs:74
+msgid "Use the Linux Hello PIN for this device."
+msgstr "Verwenden Sie die Linux Hello PIN für dieses Gerät."
+
+#: config_gen.rs:82
+msgid "Use the password for your Office 365 or Microsoft online login."
+msgstr "Verwenden Sie das Passwort für Ihre Office 365- oder Microsoft-Online-Anmeldung."
+
+#: src/common/src/i18n.rs:110 src/common/src/idprovider/openidconnect.rs:98
+msgid "Using a browser on another device, visit:\n"
+"{verification_uri}\n"
+"And enter the code:\n"
+"{user_code}"
+msgstr "Besuchen Sie mit einem Browser auf einem anderen Gerät die folgende Seite:\n"
+"{verification_uri}\n"
+"Und geben Sie den Code ein:\n"
+"{user_code}"
+
+#: src/common/src/auth.rs:866
+msgid "Value:"
+msgstr "Wert:"
+
+#: src/common/src/idprovider/openidconnect.rs:761
+msgid "Waiting for browser authentication to complete..."
+msgstr "Warten auf den Abschluss der Browserauthentifizierung..."
+
+#: src/common/src/i18n.rs:89
+msgid "We texted your phone {phone}. Please enter the code to sign in:"
+msgstr "Wir haben Ihnen eine SMS an Ihre Telefonnummer {phone} gesendet. Bitte geben Sie den Code ein, um sich anzumelden:"
+
+#: src/common/src/i18n.rs:103
+msgid "We're calling your office phone {phone}. Please answer it to continue."
+msgstr "Wir rufen Sie in Ihrem Büro unter der Telefonnummer {phone} an. Bitte nehmen Sie den Anruf entgegen, um fortzufahren."
+
+#: src/common/src/i18n.rs:96
+msgid "We're calling your phone {phone}. Please answer it to continue."
+msgstr "Wir rufen Sie unter der Telefonnummer {phone} an. Bitte nehmen Sie den Anruf entgegen, um fortzufahren."
+
+#: src/common/src/auth.rs:145
+msgid "Wrong PIN! {message}"
+msgstr "Falsche PIN! {message}"
+
+#: src/common/src/auth.rs:176
+msgid "Wrong UV! {message}"
+msgstr "Falsche UV! {message}"
+
+#: src/common/src/auth.rs:138 src/common/src/auth.rs:169
+msgid "You have {attempts} attempt left."
+msgid_plural "You have {attempts} attempts left."
+msgstr[0] "Sie haben noch {attempts} Versuch übrig."
+msgstr[1] "Sie haben noch {attempts} Versuche übrig."
+
+#: src/common/src/idprovider/himmelblau.rs:2544 src/common/src/idprovider/himmelblau.rs:2629 src/common/src/idprovider/openidconnect.rs:2412 src/common/src/idprovider/openidconnect.rs:2431 src/common/src/idprovider/openidconnect.rs:2505 src/common/src/idprovider/openidconnect.rs:2520
+msgid "Your session has expired. Please sign in again."
+msgstr "Ihre Sitzung ist abgelaufen. Bitte melden Sie sich erneut an."
+
+#: src/common/src/auth.rs:605 src/pam/src/pam/mod.rs:823
+msgid "{code}: {message}\n"
+"If you are now prompted for a password from pam_unix, please disregard the prompt, go back and try again."
+msgstr "{code}: {message}\n"
+"Falls Sie nun von pam_unix zur Eingabe eines Passworts aufgefordert werden, ignorieren Sie diese Aufforderung bitte, gehen Sie zurück und versuchen Sie es erneut."
+
+#: src/common/src/auth.rs:718
+msgid "{message}\n"
+"No push? Check your mobile device's internet connection."
+msgstr "{message}\n"
+"Keine Push-Benachrichtigung erhalten? Überprüfen Sie die Internetverbindung Ihres Mobilgeräts."
