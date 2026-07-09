@@ -167,7 +167,7 @@ pub enum AuthRequest {
     MFAPoll {
         /// Message to display to the user.
         msg: String,
-        /// Interval in seconds between poll attemts.
+        /// Interval in seconds between poll attempts.
         polling_interval: u32,
         /// Whether PAM should append push-notification troubleshooting text.
         show_push_hint: bool,
