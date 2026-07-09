@@ -653,37 +653,9 @@ fn handle_pam_auth_response_mfapoll(
     state: &mut AuthenticateState,
     msg: &str,
     polling_interval: u32,
+    show_push_hint: bool,
 ) -> PamWhatNext {
-    // Suggest users connect mobile devices to the internet, except when
-    // polling a DAG.
-    let msg = if !msg.contains("https://microsoft.com/devicelogin") && !msg.trim().is_empty() {
-        format!(
-            "{}\nNo push? Check your mobile device's internet connection.",
-            msg
-        )
-    } else if state.service != "gdm-password" {
-        lazy_static! {
-            // Avoid compiling a new Regex every time with a lazy_static ref
-            static ref RE: Option<Regex> =
-                Regex::new(r#"(?i)\bhttps?://[^\s<>"']+[^\s<>"'\]\[)\(\}\{.,;:!?]"#).ok();
-        }
-        // In case of any failure matching for URLs or generating the QR the
-        // plain message will be returned
-        if let Some(qr) = RE
-            .as_ref()
-            .and_then(|re| {
-                re.captures(msg)
-                    .and_then(|cap| cap.get(0).map(|x| x.as_str()))
-            })
-            .and_then(|url| generate_unicode_qr(url).ok())
-        {
-            format!("{}\n{}", msg, qr)
-        } else {
-            msg.to_string()
-        }
-    } else {
-        msg.to_string()
-    };
+    let msg = format_mfa_poll_message(msg, &state.service, show_push_hint);
     if !msg.trim().is_empty() {
         state.msg_printer.print_text(&msg);
     }
@@ -720,6 +692,37 @@ fn handle_pam_auth_response_mfapoll(
         poll_attempt: state.poll_attempt as u32,
     });
     PamWhatNext::Next(next)
+}
+
+fn format_mfa_poll_message(msg: &str, service: &str, show_push_hint: bool) -> String {
+    if show_push_hint && !msg.trim().is_empty() {
+        format!(
+            "{}\nNo push? Check your mobile device's internet connection.",
+            msg
+        )
+    } else if service != "gdm-password" {
+        lazy_static! {
+            // Avoid compiling a new Regex every time with a lazy_static ref
+            static ref RE: Option<Regex> =
+                Regex::new(r#"(?i)\bhttps?://[^\s<>"']+[^\s<>"'\]\[)\(\}\{.,;:!?]"#).ok();
+        }
+        // In case of any failure matching for URLs or generating the QR the
+        // plain message will be returned
+        if let Some(qr) = RE
+            .as_ref()
+            .and_then(|re| {
+                re.captures(msg)
+                    .and_then(|cap| cap.get(0).map(|x| x.as_str()))
+            })
+            .and_then(|url| generate_unicode_qr(url).ok())
+        {
+            format!("{}\n{}", msg, qr)
+        } else {
+            msg.to_string()
+        }
+    } else {
+        msg.to_string()
+    }
 }
 
 fn handle_pam_auth_response_mfapollwait(state: &mut AuthenticateState) -> PamWhatNext {
@@ -1258,7 +1261,8 @@ fn authenticate_request_response(
         PamAuthResponse::MFAPoll {
             msg,
             polling_interval,
-        } => handle_pam_auth_response_mfapoll(state, &msg, polling_interval),
+            show_push_hint,
+        } => handle_pam_auth_response_mfapoll(state, &msg, polling_interval, show_push_hint),
         PamAuthResponse::MFAPollWait => handle_pam_auth_response_mfapollwait(state),
         PamAuthResponse::SetupPin { msg } => handle_pam_auth_response_setup_pin(state, &msg),
         PamAuthResponse::Pin => handle_pam_auth_response_pin(state),
@@ -1742,5 +1746,46 @@ mod tests {
             &cfg,
             "Approve sign-in"
         ));
+    }
+
+    #[test]
+    fn test_format_mfa_poll_message_adds_push_hint_when_enabled() {
+        let msg = format_mfa_poll_message("Approve sign-in", "login", true);
+
+        assert!(msg.contains("Approve sign-in"));
+        assert!(msg.contains("No push? Check your mobile device's internet connection."));
+    }
+
+    #[test]
+    fn test_format_mfa_poll_message_suppresses_push_hint_when_disabled() {
+        let msg = format_mfa_poll_message(
+            "Waiting for browser authentication to complete...",
+            "login",
+            false,
+        );
+
+        assert_eq!(msg, "Waiting for browser authentication to complete...");
+        assert!(!msg.contains("No push?"));
+    }
+
+    #[test]
+    fn test_format_mfa_poll_message_does_not_add_push_hint_to_empty_message() {
+        let msg = format_mfa_poll_message("   ", "login", true);
+
+        assert_eq!(msg, "   ");
+        assert!(!msg.contains("No push?"));
+    }
+
+    #[test]
+    fn test_format_mfa_poll_message_keeps_dag_qr_when_push_hint_disabled() {
+        let input = "Using a browser on another device, visit:\nhttps://microsoft.com/devicelogin\nAnd enter the code:\nABC123";
+        let msg = format_mfa_poll_message(input, "login", false);
+
+        assert!(msg.contains(input));
+        assert!(!msg.contains("No push?"));
+        assert!(
+            msg.len() > input.len(),
+            "DAG message should still include generated QR content"
+        );
     }
 }

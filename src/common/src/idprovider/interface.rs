@@ -169,6 +169,8 @@ pub enum AuthRequest {
         msg: String,
         /// Interval in seconds between poll attemts.
         polling_interval: u32,
+        /// Whether PAM should append push-notification troubleshooting text.
+        show_push_hint: bool,
     },
     MFAPollWait,
     SetupPin {
@@ -208,9 +210,11 @@ impl Into<PamAuthResponse> for AuthRequest {
             AuthRequest::MFAPoll {
                 msg,
                 polling_interval,
+                show_push_hint,
             } => PamAuthResponse::MFAPoll {
                 msg,
                 polling_interval,
+                show_push_hint,
             },
             AuthRequest::MFAPollWait => PamAuthResponse::MFAPollWait,
             AuthRequest::SetupPin { msg } => PamAuthResponse::SetupPin { msg },
