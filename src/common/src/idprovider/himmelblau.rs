@@ -101,6 +101,17 @@ fn is_unavailable_mfa_method_error(msg: &str, requested_method: &str) -> bool {
     msg.starts_with(&expected_prefix)
 }
 
+fn mfa_flow_uses_push_hint(flow: &MFAAuthContinue) -> bool {
+    flow.get_default_mfa_method_details()
+        .map(|method| {
+            matches!(
+                method.auth_method_id.as_str(),
+                "PhoneAppNotification" | "CompanionAppsNotification"
+            )
+        })
+        .unwrap_or(false)
+}
+
 fn is_mfa_required_for_enrollment(e: &MsalError) -> bool {
     match e {
         MsalError::AcquireTokenFailed(resp) => resp
@@ -2031,6 +2042,7 @@ impl IdProvider for HimmelblauProvider {
                             // Kanidm pam expects a polling_interval in
                             // seconds, not milliseconds.
                             polling_interval: polling_interval / 1000,
+                            show_push_hint: mfa_flow_uses_push_hint(&flow),
                         },
                         AuthCredHandler::MFA {
                             flow: Box::new(flow),
@@ -2068,6 +2080,7 @@ impl IdProvider for HimmelblauProvider {
                         // Kanidm pam expects a polling_interval in
                         // seconds, not milliseconds.
                         polling_interval: polling_interval / 1000,
+                        show_push_hint: false,
                     },
                     AuthCredHandler::MFA {
                         flow: Box::new(flow),
@@ -2566,6 +2579,7 @@ impl IdProvider for HimmelblauProvider {
 
                     let msg = flow.msg.clone();
                     let polling_interval = flow.polling_interval.unwrap_or(5000);
+                    let show_push_hint = mfa_flow_uses_push_hint(&flow);
                     *cred_handler = AuthCredHandler::MFA {
                         flow: Box::new(flow),
                         password: None,
@@ -2579,6 +2593,7 @@ impl IdProvider for HimmelblauProvider {
                             // Kanidm pam expects a polling_interval in
                             // seconds, not milliseconds.
                             polling_interval: polling_interval / 1000,
+                            show_push_hint,
                         }),
                         AuthCacheAction::None,
                     ));
@@ -2638,6 +2653,7 @@ impl IdProvider for HimmelblauProvider {
                             // Kanidm pam expects a polling_interval in
                             // seconds, not milliseconds.
                             polling_interval: polling_interval / 1000,
+                            show_push_hint: false,
                         }),
                         AuthCacheAction::None,
                     ));
@@ -3426,6 +3442,7 @@ impl IdProvider for HimmelblauProvider {
                     {
                         let msg = $resp.msg.clone();
                         let polling_interval = $resp.polling_interval.unwrap_or(5000);
+                        let show_push_hint = mfa_flow_uses_push_hint(&$resp);
                         let action = match (
                             self.config.lock().await.get_offline_breakglass_enabled(),
                             password.as_ref(),
@@ -3445,6 +3462,7 @@ impl IdProvider for HimmelblauProvider {
                                 // Kanidm pam expects a polling_interval in
                                 // seconds, not milliseconds.
                                 polling_interval: polling_interval / 1000,
+                                show_push_hint,
                             }),
                             /* Cache the offline password hash for breakglass
                              * conditions, if enabled. */
@@ -5519,11 +5537,12 @@ impl HimmelblauProvider {
 #[cfg(test)]
 mod tests {
     use super::{
-        is_mfa_required_for_enrollment, is_unavailable_mfa_method_error, password_change_required,
-        CONSENT_REQUIRED,
+        is_mfa_required_for_enrollment, is_unavailable_mfa_method_error, mfa_flow_uses_push_hint,
+        password_change_required, CONSENT_REQUIRED,
     };
     use crate::idprovider::interface::{AuthCacheAction, AuthCredHandler, AuthRequest, AuthResult};
     use himmelblau::error::{AADSTSError, ErrorResponse, MsalError, DEVICE_AUTH_FAIL};
+    use himmelblau::{MFAAuthContinue, MfaMethodInfo};
 
     #[test]
     fn unavailable_mfa_method_error_requires_exact_requested_method() {
@@ -5540,6 +5559,33 @@ mod tests {
             "Stored MFA method 'FidoKey' is not available. Available methods: PhoneAppOTP",
             "FidoKey"
         ));
+    }
+
+    fn mfa_flow_with_method(method_id: &str) -> MFAAuthContinue {
+        MFAAuthContinue {
+            mfa_methods: vec![method_id.to_string()],
+            mfa_method_details: vec![MfaMethodInfo {
+                auth_method_id: method_id.to_string(),
+                display: method_id.to_string(),
+                is_default: true,
+            }],
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn mfa_flow_uses_push_hint_only_for_push_methods() {
+        assert!(mfa_flow_uses_push_hint(&mfa_flow_with_method(
+            "PhoneAppNotification"
+        )));
+        assert!(mfa_flow_uses_push_hint(&mfa_flow_with_method(
+            "CompanionAppsNotification"
+        )));
+        assert!(!mfa_flow_uses_push_hint(&mfa_flow_with_method(
+            "PhoneAppOTP"
+        )));
+        assert!(!mfa_flow_uses_push_hint(&mfa_flow_with_method("OneWaySMS")));
+        assert!(!mfa_flow_uses_push_hint(&MFAAuthContinue::default()));
     }
 
     #[test]

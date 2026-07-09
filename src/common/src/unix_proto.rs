@@ -13,6 +13,14 @@ use libc::uid_t;
 use libkrimes::proto::KerberosCredentials;
 use serde::{Deserialize, Serialize};
 
+fn default_true() -> bool {
+    true
+}
+
+fn is_true(value: &bool) -> bool {
+    *value
+}
+
 #[derive(Serialize, Deserialize, Debug)]
 pub struct NssUser {
     pub name: String,
@@ -58,6 +66,9 @@ pub enum PamAuthResponse {
         msg: String,
         /// Seconds between polling attempts.
         polling_interval: u32,
+        /// Whether PAM should append push-notification troubleshooting text.
+        #[serde(default = "default_true", skip_serializing_if = "is_true")]
+        show_push_hint: bool,
     },
     MFAPollWait,
     /// PAM must prompt for a new PIN and confirm that PIN input
@@ -299,6 +310,49 @@ fn test_password_response_preserves_prompt() {
             assert_eq!(long_prompt.as_deref(), Some("Your password has expired"));
         }
         other => panic!("expected Password response, got {:?}", other),
+    }
+}
+
+#[test]
+fn test_legacy_mfa_poll_response_defaults_to_push_hint() {
+    let response: PamAuthResponse =
+        serde_json::from_str(r#"{"MFAPoll":{"msg":"Approve","polling_interval":5}}"#).unwrap();
+
+    match response {
+        PamAuthResponse::MFAPoll {
+            msg,
+            polling_interval,
+            show_push_hint,
+        } => {
+            assert_eq!(msg, "Approve");
+            assert_eq!(polling_interval, 5);
+            assert!(show_push_hint);
+        }
+        other => panic!("expected MFAPoll response, got {:?}", other),
+    }
+}
+
+#[test]
+fn test_mfa_poll_response_preserves_push_hint_opt_out() {
+    let response = PamAuthResponse::MFAPoll {
+        msg: "Waiting for browser authentication to complete...".to_string(),
+        polling_interval: 2,
+        show_push_hint: false,
+    };
+    let serialized = serde_json::to_string(&response).unwrap();
+    let decoded: PamAuthResponse = serde_json::from_str(&serialized).unwrap();
+
+    match decoded {
+        PamAuthResponse::MFAPoll {
+            msg,
+            polling_interval,
+            show_push_hint,
+        } => {
+            assert_eq!(msg, "Waiting for browser authentication to complete...");
+            assert_eq!(polling_interval, 2);
+            assert!(!show_push_hint);
+        }
+        other => panic!("expected MFAPoll response, got {:?}", other),
     }
 }
 

@@ -746,6 +746,7 @@ fn auth_request_from_orchestrator_inputs(
                 "Approve sign-in in your authenticator app, then wait...".to_string()
             }),
             polling_interval: poll_interval_secs,
+            show_push_hint: false,
         };
     }
 
@@ -753,6 +754,7 @@ fn auth_request_from_orchestrator_inputs(
     AuthRequest::MFAPoll {
         msg: "Waiting for browser authentication to complete...".to_string(),
         polling_interval: poll_interval_secs,
+        show_push_hint: false,
     }
 }
 
@@ -1039,9 +1041,11 @@ mod tests {
             AuthRequest::MFAPoll {
                 msg,
                 polling_interval,
+                show_push_hint,
             } => {
                 assert_eq!(msg, "Approve in app");
                 assert_eq!(polling_interval, 5);
+                assert!(!show_push_hint);
             }
             _ => panic!("expected MFAPoll request"),
         }
@@ -2298,6 +2302,7 @@ impl IdProvider for OidcProvider {
                 AuthRequest::MFAPoll {
                     msg: flow.msg.clone(),
                     polling_interval: polling_interval / 1000,
+                    show_push_hint: false,
                 },
                 AuthCredHandler::MFA {
                     flow: Box::new(flow),
