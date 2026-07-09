@@ -598,11 +598,20 @@ async fn handle_client(
                                                                         )
                                                                         .await
                                                                         {
-                                                                            Ok(_) => {
+                                                                            Ok(Ok(TaskOutcome::Status(0))) => {
                                                                                 info!("Fetching user profile picture succeeded");
                                                                             }
-                                                                            _ => {
-                                                                                error!("Fetching user profile picture failed");
+                                                                            Ok(Ok(TaskOutcome::Status(status))) => {
+                                                                                error!("Fetching user profile picture failed: status code {}", status);
+                                                                            }
+                                                                            Ok(Ok(TaskOutcome::NonCompliant(_))) => {
+                                                                                error!("Fetching user profile picture: unexpected NonCompliant task outcome");
+                                                                            }
+                                                                            Ok(Err(e)) => {
+                                                                                error!("Fetching user profile picture failed: {:?}", e);
+                                                                            }
+                                                                            Err(e) => {
+                                                                                error!("Fetching user profile picture failed: {:?}", e);
                                                                             }
                                                                         }
                                                                     }
