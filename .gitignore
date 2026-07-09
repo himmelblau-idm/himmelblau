@@ -34,6 +34,8 @@ platform/debian/himmelblaud-tasks.service
 platform/debian/himmelblaud.service
 platform/debian/himmelblaud-orchestrator.service
 platform/debian/himmelblau-hsm-pin-init.service
+platform/debian/himmelblau-compliance-check.service
+platform/debian/himmelblau-compliance-check.timer
 platform/opensuse/himmelblaud-tasks.service
 platform/opensuse/himmelblaud.service
 platform/opensuse/himmelblaud-orchestrator.service
