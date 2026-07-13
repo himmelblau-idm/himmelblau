@@ -543,7 +543,12 @@ fn commit_profile_photo(
     tmp_path: &Path,
 ) -> Result<(), String> {
     // Ensure the downloaded bytes are durably on disk before the rename.
-    std::fs::File::open(tmp_path)
+    // Re-open with O_NOFOLLOW to preserve the guarantee that the temp path
+    // was not swapped for a symlink between download and fsync.
+    OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW)
+        .open(tmp_path)
         .and_then(|f| f.sync_all())
         .map_err(|e| format!("sync of {} failed: {}", tmp_path.display(), e))?;
 
@@ -722,12 +727,14 @@ async fn handle_tasks(stream: UnixStream, cfg: &HimmelblauConfig) {
                         ));
                     }
 
-                    // Fetch into a temp file and only install it on success.
-                    let tmp_path = icons_dir.join(format!(".{account_id}.tmp"));
+                    // Fetch into a unique temp file and only install it on
+                    // success; create_new avoids clobbering a concurrent task's
+                    // or a stale leftover temp file for the same account.
+                    let tmp_path =
+                        icons_dir.join(format!(".{account_id}.{}.tmp", uuid::Uuid::new_v4()));
                     let file = OpenOptions::new()
                         .write(true)
-                        .create(true)
-                        .truncate(true)
+                        .create_new(true)
                         .custom_flags(libc::O_NOFOLLOW)
                         .open(&tmp_path)
                         .map_err(|e| format!("Failed creating {}: {}", tmp_path.display(), e))?;
