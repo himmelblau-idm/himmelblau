@@ -516,38 +516,70 @@ fn write_kerberos_config_snippet(
 
 // Reject names that could escape the AccountsService dirs or alias another user.
 fn valid_profile_account_id(account_id: &str) -> bool {
-    !account_id.is_empty()
-        && account_id
+    if account_id.is_empty()
+        || !account_id
             .chars()
             .all(|c| c.is_ascii_alphanumeric() || matches!(c, '@' | '.' | '_' | '-'))
+    {
+        return false;
+    }
+
+    // Must be a single normal path component; rejects ".", "..", and anything
+    // that would resolve to a different directory.
+    let mut components = Path::new(account_id).components();
+    matches!(
+        (components.next(), components.next()),
+        (Some(std::path::Component::Normal(_)), None)
+    )
 }
 
 // Move a freshly fetched photo into place and point AccountsService at it. The
-// rename is atomic, so a failed fetch never leaves a truncated icon, and the
-// keyfile is only written once the icon exists.
+// temp file is fsync'd and the rename is atomic, so a crash never leaves a
+// truncated icon, and the keyfile is only written once the icon exists.
 fn commit_profile_photo(
-    icons_dir: &str,
-    users_dir: &str,
+    icons_dir: &Path,
+    users_dir: &Path,
     account_id: &str,
     tmp_path: &Path,
 ) -> Result<(), String> {
-    let icon_path = format!("{}{}", icons_dir, account_id);
-    std::fs::rename(tmp_path, &icon_path).map_err(|e| format!("{:?}", e))?;
+    // Ensure the downloaded bytes are durably on disk before the rename.
+    std::fs::File::open(tmp_path)
+        .and_then(|f| f.sync_all())
+        .map_err(|e| format!("sync of {} failed: {}", tmp_path.display(), e))?;
 
-    let user_file = format!("{}{}", users_dir, account_id);
+    let icon_path = icons_dir.join(account_id);
+    std::fs::rename(tmp_path, &icon_path).map_err(|e| {
+        format!(
+            "rename {} -> {} failed: {}",
+            tmp_path.display(),
+            icon_path.display(),
+            e
+        )
+    })?;
+
+    let user_file = users_dir.join(account_id);
     let mut file = OpenOptions::new()
         .write(true)
         .create(true)
         .truncate(true)
         .custom_flags(libc::O_NOFOLLOW)
         .open(&user_file)
-        .map_err(|e| format!("{:?}", e))?;
-    file.write_all(format!("[User]\nIcon={}\nSystemAccount=false\n", icon_path).as_bytes())
-        .map_err(|e| format!("{:?}", e))
+        .map_err(|e| format!("open {} failed: {}", user_file.display(), e))?;
+    file.write_all(
+        format!(
+            "[User]\nIcon={}\nSystemAccount=false\n",
+            icon_path.display()
+        )
+        .as_bytes(),
+    )
+    .map_err(|e| format!("write {} failed: {}", user_file.display(), e))
 }
 
 async fn handle_tasks(stream: UnixStream, cfg: &HimmelblauConfig) {
     let mut reqs = Framed::new(stream, TaskCodec::new());
+
+    // Parsed once per connection rather than per LoadProfilePhoto task.
+    let user_map = UserMap::new(&cfg.get_user_map_file());
 
     loop {
         let next_req = reqs.next().await;
@@ -658,12 +690,15 @@ async fn handle_tasks(stream: UnixStream, cfg: &HimmelblauConfig) {
             }
             Some(Ok(TaskRequest::LoadProfilePhoto(account_id, access_token))) => {
                 debug!("Received task -> LoadProfilePhoto(...)");
-                let icons_dir = "/var/lib/AccountsService/icons/";
-                let users_dir = "/var/lib/AccountsService/users/";
+                let icons_dir = Path::new("/var/lib/AccountsService/icons/");
+                let users_dir = Path::new("/var/lib/AccountsService/users/");
 
                 let outcome: Result<(), String> = async {
-                    if !Path::new(icons_dir).exists() {
-                        info!("Profile photo directory '{}' doesn't exist.", icons_dir);
+                    if !icons_dir.exists() {
+                        info!(
+                            "Profile photo directory '{}' doesn't exist.",
+                            icons_dir.display()
+                        );
                         return Ok(());
                     }
 
@@ -675,7 +710,6 @@ async fn handle_tasks(stream: UnixStream, cfg: &HimmelblauConfig) {
                     // When a user_map maps this UPN to a local account, NSS presents
                     // that local name, so the avatar must be keyed to the local user
                     // rather than the UPN-derived name for GNOME to find it.
-                    let user_map = UserMap::new(&cfg.get_user_map_file());
                     let account_id = match user_map.get_local_from_upn(&upn.to_lowercase()) {
                         Some(local) => local,
                         None => cfg.map_upn_to_name(&account_id),
@@ -689,14 +723,14 @@ async fn handle_tasks(stream: UnixStream, cfg: &HimmelblauConfig) {
                     }
 
                     // Fetch into a temp file and only install it on success.
-                    let tmp_path = PathBuf::from(format!("{}.{}.tmp", icons_dir, account_id));
+                    let tmp_path = icons_dir.join(format!(".{account_id}.tmp"));
                     let file = OpenOptions::new()
                         .write(true)
                         .create(true)
                         .truncate(true)
                         .custom_flags(libc::O_NOFOLLOW)
                         .open(&tmp_path)
-                        .map_err(|e| format!("Failed creating temp profile photo: {:?}", e))?;
+                        .map_err(|e| format!("Failed creating {}: {}", tmp_path.display(), e))?;
 
                     let authority_host = cfg.get_authority_host(domain);
                     let tenant_id = cfg.get_tenant_id(domain);
@@ -1025,12 +1059,7 @@ async fn main() -> ExitCode {
 mod tests {
     use super::*;
     use std::fs;
-
-    fn temp_dir() -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("hb_photo_test_{}", uuid::Uuid::new_v4()));
-        fs::create_dir_all(&dir).unwrap();
-        dir
-    }
+    use tempfile::TempDir;
 
     #[test]
     fn valid_profile_account_id_accepts_upn_and_local_names() {
@@ -1042,6 +1071,8 @@ mod tests {
     #[test]
     fn valid_profile_account_id_rejects_traversal_and_empty() {
         assert!(!valid_profile_account_id(""));
+        assert!(!valid_profile_account_id("."));
+        assert!(!valid_profile_account_id(".."));
         assert!(!valid_profile_account_id("../etc/passwd"));
         assert!(!valid_profile_account_id("a/lice"));
         assert!(!valid_profile_account_id("alice\0"));
@@ -1049,40 +1080,36 @@ mod tests {
 
     #[test]
     fn commit_profile_photo_installs_icon_and_keyfile() {
-        let base = temp_dir();
-        let icons_dir = format!("{}/icons/", base.display());
-        let users_dir = format!("{}/users/", base.display());
+        let base = TempDir::new().unwrap();
+        let icons_dir = base.path().join("icons");
+        let users_dir = base.path().join("users");
         fs::create_dir_all(&icons_dir).unwrap();
         fs::create_dir_all(&users_dir).unwrap();
 
-        let tmp_path = base.join("photo.tmp");
+        let tmp_path = base.path().join("photo.tmp");
         fs::write(&tmp_path, b"image-bytes").unwrap();
 
         commit_profile_photo(&icons_dir, &users_dir, "alice", &tmp_path).unwrap();
 
-        let icon_path = format!("{}alice", icons_dir);
+        let icon_path = icons_dir.join("alice");
         assert_eq!(fs::read(&icon_path).unwrap(), b"image-bytes");
         assert!(!tmp_path.exists(), "temp file should be renamed away");
 
-        let keyfile = fs::read_to_string(format!("{}alice", users_dir)).unwrap();
-        assert!(keyfile.contains(&format!("Icon={}", icon_path)));
+        let keyfile = fs::read_to_string(users_dir.join("alice")).unwrap();
+        assert!(keyfile.contains(&format!("Icon={}", icon_path.display())));
         assert!(keyfile.contains("SystemAccount=false"));
-
-        fs::remove_dir_all(&base).unwrap();
     }
 
     #[test]
     fn commit_profile_photo_errors_without_touching_keyfile_when_tmp_missing() {
-        let base = temp_dir();
-        let icons_dir = format!("{}/icons/", base.display());
-        let users_dir = format!("{}/users/", base.display());
+        let base = TempDir::new().unwrap();
+        let icons_dir = base.path().join("icons");
+        let users_dir = base.path().join("users");
         fs::create_dir_all(&icons_dir).unwrap();
         fs::create_dir_all(&users_dir).unwrap();
 
-        let tmp_path = base.join("missing.tmp");
+        let tmp_path = base.path().join("missing.tmp");
         assert!(commit_profile_photo(&icons_dir, &users_dir, "alice", &tmp_path).is_err());
-        assert!(!PathBuf::from(format!("{}alice", users_dir)).exists());
-
-        fs::remove_dir_all(&base).unwrap();
+        assert!(!users_dir.join("alice").exists());
     }
 }
