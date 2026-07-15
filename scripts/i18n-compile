@@ -36,7 +36,11 @@ def main() -> int:
             ["msgfmt", "--check-format", "--output-file", str(out), str(po)],
             check=True,
         )
-        print(out.relative_to(ROOT))
+        try:
+            display_path = out.relative_to(ROOT)
+        except ValueError:
+            display_path = out
+        print(display_path)
     return 0
 
 
