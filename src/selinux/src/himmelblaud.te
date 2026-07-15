@@ -224,7 +224,8 @@ optional {
 	allow himmelblaud_orchestrator_t container_runtime_t:process { noatsecure rlimitinh siginh };
 	allow container_runtime_t himmelblaud_orchestrator_t:fd use;
 	allow container_runtime_t himmelblaud_orchestrator_t:fifo_file write;
-}
+
+	allow container_runtime_t himmelblaud_t:unix_stream_socket { connectto };}
 
 optional {
 	require {
@@ -1004,7 +1005,8 @@ optional {
 	allow local_login_t himmelblau_var_cache_t:lnk_file read;
 	allow local_login_t himmelblau_var_run_t:dir search;
 	allow local_login_t himmelblau_var_run_t:sock_file write;
-}
+
+	allow local_login_t himmelblaud_t:unix_stream_socket { connectto };}
 
 #============= accountsd_t ==============
 # accountsd_t is for GNOME AccountsService, may not be installed
@@ -1045,7 +1047,7 @@ optional {
 		class unix_stream_socket connectto;
 	}
 	allow chkpwd_t himmelblau_etc_t:file { getattr open read };
-	allow chkpwd_t himmelblau_nss_cache_t:dir { add_name remove_name };
+	allow chkpwd_t himmelblau_nss_cache_t:dir { add_name remove_name write };
 	allow chkpwd_t himmelblau_nss_cache_t:file { create getattr lock open read setattr unlink write };
 	allow chkpwd_t himmelblau_var_cache_t:file { getattr open read };
 	allow chkpwd_t himmelblau_var_cache_t:lnk_file read;
@@ -1080,7 +1082,7 @@ optional {
 	}
 	allow cupsd_t himmelblau_etc_t:dir search;
 	allow cupsd_t himmelblau_etc_t:file { getattr open read };
-	allow cupsd_t himmelblau_nss_cache_t:dir { add_name getattr open read remove_name search };
+	allow cupsd_t himmelblau_nss_cache_t:dir { add_name getattr open read remove_name search write };
 	allow cupsd_t himmelblau_nss_cache_t:file { create getattr lock open read setattr unlink write };
 	allow cupsd_t himmelblau_var_cache_t:dir search;
 	allow cupsd_t himmelblau_var_cache_t:file { getattr open read };
@@ -1098,7 +1100,7 @@ optional {
 	}
 	allow NetworkManager_t himmelblau_etc_t:dir { getattr open read search };
 	allow NetworkManager_t himmelblau_etc_t:file { getattr open read };
-	allow NetworkManager_t himmelblau_nss_cache_t:dir { add_name getattr open read remove_name search };
+	allow NetworkManager_t himmelblau_nss_cache_t:dir { add_name getattr open read remove_name search write };
 	allow NetworkManager_t himmelblau_nss_cache_t:file { create getattr lock open read setattr unlink write };
 	allow NetworkManager_t himmelblau_var_cache_t:dir { getattr open read search };
 	allow NetworkManager_t himmelblau_var_cache_t:file { getattr open read };
@@ -1272,7 +1274,8 @@ optional {
 	allow unconfined_service_t himmelblau_var_run_t:dir { add_name search };
 	allow unconfined_service_t himmelblau_var_run_t:sock_file { create write };
 	allow unconfined_service_t himmelblaud_t:dir { getattr search };
-}
+
+	allow unconfined_service_t himmelblaud_t:unix_stream_socket { connectto };}
 
 #============= unconfined_t ==============
 # unconfined_t is for unconfined processes, may not exist on all distros
@@ -1286,8 +1289,8 @@ optional {
 	allow unconfined_t himmelblau_var_run_t:dir search;
 	allow unconfined_t himmelblau_var_run_t:sock_file write;
 	allow unconfined_t himmelblaud_t:unix_stream_socket connectto;
-	allow unconfined_t himmelblaud_t:dir { getattr search };
-	allow unconfined_t himmelblaud_tasks_t:dir { getattr search };
+	allow unconfined_t himmelblaud_t:dir { getattr open read search };
+	allow unconfined_t himmelblaud_tasks_t:dir { getattr open read search };
 	allow unconfined_t himmelblaud_orchestrator_t:dir { getattr search };
 	allow unconfined_t himmelblaud_t:file { getattr ioctl open read };
 	allow unconfined_t himmelblaud_t:lnk_file read;
@@ -1336,7 +1339,9 @@ optional {
 	allow auditd_t himmelblau_var_run_t:dir search;
 	allow auditd_t himmelblau_var_run_t:sock_file write;
 	allow auditd_t himmelblaud_t:unix_stream_socket connectto;
-}
+
+	allow auditd_t himmelblau_var_cache_t:file { getattr open read };
+	allow auditd_t himmelblau_nss_cache_t:file { getattr lock open read write };}
 
 #============= systemd_userdbd_t ==============
 # systemd_userdbd_t is for systemd-userdbd, may not exist on all distros
@@ -1347,8 +1352,8 @@ optional {
 	allow systemd_userdbd_t himmelblau_etc_t:dir search;
 	allow systemd_userdbd_t himmelblau_var_run_t:dir search;
 	allow systemd_userdbd_t himmelblau_var_run_t:sock_file write;
-	allow systemd_userdbd_t himmelblau_nss_cache_t:dir { getattr search };
-	allow systemd_userdbd_t himmelblau_nss_cache_t:file { getattr open read write lock append };
+	allow systemd_userdbd_t himmelblau_nss_cache_t:dir { add_name getattr remove_name search write };
+	allow systemd_userdbd_t himmelblau_nss_cache_t:file { append create getattr lock open read setattr unlink write };
 	allow systemd_userdbd_t himmelblau_var_cache_t:dir search;
 	allow systemd_userdbd_t himmelblau_var_cache_t:file { getattr open read };
 	allow systemd_userdbd_t himmelblau_var_cache_t:lnk_file read;
@@ -1439,6 +1444,31 @@ optional {
 	}
 	allow plymouthd_t self:capability dac_override;
 }
+
+#============= systemd_homed_t ==============
+optional {
+	require {
+		type systemd_homed_t;
+	}
+	allow himmelblaud_tasks_t systemd_homed_t:unix_stream_socket { connectto };
+}
+
+#============= systemd_nsresourced_runtime_t ==============
+optional {
+	require {
+		type systemd_nsresourced_runtime_t;
+	}
+	allow himmelblaud_tasks_t systemd_nsresourced_runtime_t:sock_file { write };
+}
+
+#============= systemd_nsresourced_t ==============
+optional {
+	require {
+		type systemd_nsresourced_t;
+	}
+	allow himmelblaud_tasks_t systemd_nsresourced_t:unix_stream_socket { connectto };
+}
+
 
 ############################
 # Temporarily run Himmelblau domains permissive (still logs AVCs)
