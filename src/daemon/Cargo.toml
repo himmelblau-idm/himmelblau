@@ -80,6 +80,7 @@ assets = [
   ["src/himmelblaud.tmpfiles.conf", "usr/lib/tmpfiles.d/himmelblaud.conf", "644"],
   # For each language in po/LINGUAS, add:
   ["target/release/locale/de/LC_MESSAGES/himmelblau.mo", "usr/share/locale/de/LC_MESSAGES/", "644"],
+  ["target/release/locale/fr/LC_MESSAGES/himmelblau.mo", "usr/share/locale/fr/LC_MESSAGES/", "644"],
 ]
 maintainer-scripts = "scripts"
 
@@ -108,6 +109,7 @@ assets = [
   { source = "src/himmelblaud.tmpfiles.conf", dest = "/usr/lib/tmpfiles.d/himmelblaud.conf", mode = "644" },
   # For each language in po/LINGUAS, add:
   { source = "target/release/locale/de/LC_MESSAGES/himmelblau.mo", dest = "/usr/share/locale/de/LC_MESSAGES/", mode = "644" },
+  { source = "target/release/locale/fr/LC_MESSAGES/himmelblau.mo", dest = "/usr/share/locale/fr/LC_MESSAGES/", mode = "644" },
 ]
 post_install_script = "scripts/postinst"
 pre_uninstall_script = "scripts/prerm"
