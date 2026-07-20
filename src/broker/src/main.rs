@@ -169,9 +169,10 @@ impl MessagePrinter for PinentryMessagePrinter {
 }
 
 /// Session broker that forwards all D-Bus calls to the himmelblaud
-/// broker socket, but overrides `acquireTokenInteractively` to
-/// drive a full interactive auth (via `authenticate()` on the main
-/// daemon socket with pinentry) when silent acquisition fails.
+/// broker socket, but overrides `acquireTokenInteractively` to try
+/// silent acquisition first and only fall back to interactive auth
+/// (via `authenticate()` on the main daemon socket with pinentry)
+/// when silent fails and a graphical session is available.
 struct InteractiveSessionBroker {
     /// Path to the himmelblaud broker socket.
     broker_sock_path: String,
@@ -311,7 +312,31 @@ impl SessionBroker for InteractiveSessionBroker {
         correlation_id: String,
         request_json: String,
     ) -> Result<String, dbus::MethodErr> {
-        // Extract the username from the request for authenticate()
+        // Prefer silent first. Edge/OneAuth often calls AcquireTokenInteractively
+        // even when a warm PRT can satisfy the request. Interactive auth needs
+        // DISPLAY/WAYLAND_DISPLAY + pinentry, which himmelblau-broker often
+        // lacks under background.slice — failing interactive first returned
+        // org.freedesktop.DBus.Error.Failed (Edge tag 4ulu3) despite a usable PRT.
+        match self.acquire_token_silently(
+            protocol_version.clone(),
+            correlation_id.clone(),
+            request_json.clone(),
+        ) {
+            Ok(resp) => return Ok(resp),
+            Err(e) => {
+                info!(
+                    "Silent token acquisition failed ({}); considering interactive re-auth",
+                    e
+                );
+            }
+        }
+
+        if !interactive_session_available() {
+            return Err(dbus::MethodErr::failed(
+                &"Silent token acquisition failed and no interactive session is available to re-authenticate",
+            ));
+        }
+
         let account_id = Self::extract_account_id(&request_json)
             .ok_or_else(|| dbus::MethodErr::failed(&"Missing account username in request"))?;
 
