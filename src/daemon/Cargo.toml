@@ -81,6 +81,7 @@ assets = [
   # For each language in po/LINGUAS, add:
   ["target/release/locale/de/LC_MESSAGES/himmelblau.mo", "usr/share/locale/de/LC_MESSAGES/", "644"],
   ["target/release/locale/fr/LC_MESSAGES/himmelblau.mo", "usr/share/locale/fr/LC_MESSAGES/", "644"],
+  ["target/release/locale/fr_CA/LC_MESSAGES/himmelblau.mo", "usr/share/locale/fr_CA/LC_MESSAGES/", "644"],
   ["target/release/locale/sr@latin/LC_MESSAGES/himmelblau.mo", "usr/share/locale/sr@latin/LC_MESSAGES/", "644"],
   ["target/release/locale/sr@latin/LC_MESSAGES/himmelblau.mo", "usr/share/locale/sr/LC_MESSAGES/", "644"],
   ["target/release/locale/es/LC_MESSAGES/himmelblau.mo", "usr/share/locale/es/LC_MESSAGES/", "644"],
@@ -114,6 +115,7 @@ assets = [
   # For each language in po/LINGUAS, add:
   { source = "target/release/locale/de/LC_MESSAGES/himmelblau.mo", dest = "/usr/share/locale/de/LC_MESSAGES/", mode = "644" },
   { source = "target/release/locale/fr/LC_MESSAGES/himmelblau.mo", dest = "/usr/share/locale/fr/LC_MESSAGES/", mode = "644" },
+  { source = "target/release/locale/fr_CA/LC_MESSAGES/himmelblau.mo", dest = "/usr/share/locale/fr_CA/LC_MESSAGES/", mode = "644" },
   { source = "target/release/locale/sr@latin/LC_MESSAGES/himmelblau.mo", dest = "/usr/share/locale/sr@latin/LC_MESSAGES/", mode = "644" },
   { source = "target/release/locale/sr@latin/LC_MESSAGES/himmelblau.mo", dest = "/usr/share/locale/sr/LC_MESSAGES/", mode = "644" },
   { source = "target/release/locale/es/LC_MESSAGES/himmelblau.mo", dest = "/usr/share/locale/es/LC_MESSAGES/", mode = "644" },
