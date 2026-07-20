@@ -1,0 +1,528 @@
+# Korean translations for Himmelblau.
+# Copyright (C) 2026 Himmelblau contributors
+# This file is distributed under the same license as Himmelblau.
+#
+msgid ""
+msgstr ""
+"Project-Id-Version: himmelblau\n"
+"POT-Creation-Date: 2026-07-20 21:14+0000\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"PO-Revision-Date: 2026-07-20 21:27+0000\n"
+"Last-Translator: Automated via Codex <noreply@himmelblau-idm.org>\n"
+"Language-Team: Korean\n"
+"Language: ko\n"
+"Plural-Forms: nplurals=1; plural=0;\n"
+
+#: src/common/src/auth.rs:1285 src/common/src/auth.rs:1298
+msgid "An unexpected error occurred."
+msgstr "예기치 않은 오류가 발생했습니다."
+
+#: src/common/src/idprovider/openidconnect.rs:753
+msgid "Approve sign-in in your authenticator app, then wait..."
+msgstr "인증 앱에서 로그인을 승인한 후 기다려 주세요..."
+
+#: src/common/src/idprovider/himmelblau.rs:4809
+msgid "Authenticated user {user} does not match requested user"
+msgstr "인증된 사용자 {user}이(가) 요청한 사용자와 일치하지 않습니다"
+
+#: src/common/src/idprovider/openidconnect.rs:2118
+msgid "Authenticated user {uuid} does not match requested user"
+msgstr "인증된 사용자 {uuid}가 요청된 사용자와 일치하지 않습니다"
+
+#: src/common/src/idprovider/openidconnect.rs:3003
+msgid "Authentication did not return a refresh token. Please try again."
+msgstr "인증에서 새로 고침 토큰이 반환되지 않았습니다. 다시 시도해 주세요."
+
+#: src/common/src/idprovider/himmelblau.rs:3949
+msgid "Authentication failed (AADSTS{code})"
+msgstr "인증에 실패했습니다(AADSTS{code})"
+
+#: src/common/src/idprovider/openidconnect.rs:2939
+msgid "Authentication failed in browser flow."
+msgstr "브라우저 흐름에서 인증에 실패했습니다."
+
+#: src/common/src/idprovider/himmelblau.rs:209
+msgid "Authentication failed. Please contact your administrator."
+msgstr "인증에 실패했습니다. 관리자에게 문의하세요."
+
+#: src/common/src/idprovider/himmelblau.rs:3829
+msgid "Authentication failed. Please try again."
+msgstr "인증에 실패했습니다. 다시 시도해 주세요."
+
+#: src/common/src/idprovider/himmelblau.rs:3129
+msgid "Authentication failed. Please try signing in again."
+msgstr "인증에 실패했습니다. 다시 로그인해 주세요."
+
+#: src/common/src/idprovider/himmelblau.rs:168
+msgid "Authentication failed: Authentication method not supported."
+msgstr "인증 실패: 지원되지 않는 인증 방법입니다."
+
+#: src/common/src/idprovider/himmelblau.rs:171 src/common/src/idprovider/himmelblau.rs:176
+msgid "Authentication failed: Configuration error."
+msgstr "인증 실패: 구성 오류입니다."
+
+#: src/common/src/idprovider/himmelblau.rs:175
+msgid "Authentication failed: Cryptographic error."
+msgstr "인증에 실패했습니다: 암호화 오류입니다."
+
+#: src/common/src/idprovider/himmelblau.rs:152
+msgid "Authentication failed: Invalid server response."
+msgstr "인증 실패: 서버 응답이 올바르지 않습니다."
+
+#: src/common/src/idprovider/himmelblau.rs:188
+msgid "Authentication failed: Missing required data."
+msgstr "인증 실패: 필수 데이터가 누락되었습니다."
+
+#: src/common/src/idprovider/himmelblau.rs:170
+msgid "Authentication failed: Security hardware error."
+msgstr "인증 실패: 보안 하드웨어 오류입니다."
+
+#: src/common/src/idprovider/himmelblau.rs:165
+msgid "Authentication failed: Unable to reach authentication server."
+msgstr "인증 실패: 인증 서버에 연결할 수 없습니다."
+
+#: src/common/src/idprovider/openidconnect.rs:2738 src/common/src/idprovider/openidconnect.rs:2849 src/common/src/idprovider/openidconnect.rs:2984 src/common/src/idprovider/openidconnect.rs:3050 src/common/src/idprovider/openidconnect.rs:3063
+msgid "Authentication failed: {error}"
+msgstr "인증 실패: {error}"
+
+#: src/common/src/idprovider/openidconnect.rs:3036
+msgid "Authentication flow completed but token exchange failed. Please try again."
+msgstr "인증 흐름이 완료되었지만 토큰 교환에 실패했습니다. 다시 시도해 주세요."
+
+#: src/common/src/idprovider/himmelblau.rs:179 src/common/src/idprovider/himmelblau.rs:203
+msgid "Authentication in progress."
+msgstr "인증 진행 중입니다."
+
+#: src/common/src/idprovider/openidconnect.rs:2537
+msgid "Authentication incomplete. Please try again."
+msgstr "인증이 완료되지 않았습니다. 다시 시도해 주세요."
+
+#: src/common/src/idprovider/himmelblau.rs:1912
+msgid "Authentication service is temporarily unavailable. Please try again shortly."
+msgstr "인증 서비스를 일시적으로 사용할 수 없습니다. 잠시 후 다시 시도해 주세요."
+
+#: src/common/src/idprovider/himmelblau.rs:3169
+msgid "Authentication service unavailable. Please try again later."
+msgstr "인증 서비스를 사용할 수 없습니다. 나중에 다시 시도해 주세요."
+
+#: src/common/src/idprovider/openidconnect.rs:2674 src/common/src/idprovider/openidconnect.rs:2713 src/common/src/idprovider/openidconnect.rs:2774
+msgid "Authentication session corrupted. Please try again."
+msgstr "인증 세션이 손상되었습니다. 다시 시도해 주세요."
+
+#: src/common/src/idprovider/openidconnect.rs:2661
+msgid "Authentication session data missing. Please try again."
+msgstr "인증 세션 데이터가 없습니다. 다시 시도해 주세요."
+
+#: src/common/src/idprovider/openidconnect.rs:3078
+msgid "Authentication session returned an unexpected state. Please try again."
+msgstr "인증 세션이 예상치 못한 상태를 반환했습니다. 다시 시도해 주세요."
+
+#: src/common/src/idprovider/himmelblau.rs:4124 src/common/src/idprovider/openidconnect.rs:2701 src/common/src/idprovider/openidconnect.rs:2801
+msgid "Authentication timed out. Please try again."
+msgstr "인증 시간이 초과되었습니다. 다시 시도해 주세요."
+
+#: src/common/src/idprovider/openidconnect.rs:3105
+msgid "Browser authentication backend unavailable. Please try again."
+msgstr "브라우저 인증 백엔드를 사용할 수 없습니다. 다시 시도해 주세요."
+
+#: src/common/src/auth.rs:1261
+msgid "Changing the password. Please wait..."
+msgstr "암호를 변경하는 중입니다. 잠시 기다려 주세요..."
+
+#: src/common/src/auth.rs:1215
+msgid "Chosen password is too short! 8 chars required."
+msgstr "선택한 암호가 너무 짧습니다! 8자가 필요합니다."
+
+#: src/common/src/auth.rs:979 src/pam/src/pam/mod.rs:595
+msgid "Chosen pin is too short! {length} chars required."
+msgstr "선택한 PIN이 너무 짧습니다! {length}자가 필요합니다."
+
+#: src/common/src/auth.rs:829
+msgid "Cloud Password:"
+msgstr "클라우드 암호:"
+
+#: src/common/src/auth.rs:868
+msgid "Code:"
+msgstr "코드:"
+
+#: src/common/src/auth.rs:1012 src/pam/src/pam/mod.rs:637
+msgid "Confirm PIN:"
+msgstr "PIN 확인:"
+
+#: src/common/src/auth.rs:1236
+msgid "Confirm password:"
+msgstr "비밀번호 확인:"
+
+#: src/common/src/idprovider/himmelblau.rs:199
+msgid "Consent required. Please contact your administrator."
+msgstr "동의가 필요합니다. 관리자에게 문의하세요."
+
+#: src/common/src/idprovider/himmelblau.rs:3609
+msgid "Create a PIN to use in place of passwords."
+msgstr "비밀번호 대신 사용할 PIN을 만드세요."
+
+#: src/common/src/idprovider/himmelblau.rs:173
+msgid "Device enrollment failed. Please contact your administrator."
+msgstr "디바이스 등록에 실패했습니다. 관리자에게 문의하세요."
+
+#: src/common/src/idprovider/himmelblau.rs:1022
+msgid "Device has been removed from the domain."
+msgstr "장치가 도메인에서 제거되었습니다."
+
+#: src/common/src/auth.rs:1120
+msgid "Enable Bluetooth to sign in with your phone."
+msgstr "휴대폰으로 로그인하려면 Bluetooth를 활성화하세요."
+
+#: src/common/src/auth.rs:1037
+msgid "Enrolling the Hello PIN. Please wait..."
+msgstr "Hello PIN을 등록하는 중입니다. 잠시 기다려 주세요..."
+
+#: src/common/src/auth.rs:652
+msgid "Enter the setup key '{secret}' to enroll a TOTP Authenticator app. Use '{issuer}' for the code name and '{account}' as the label/name."
+msgstr "TOTP 인증 앱을 등록하려면 설정 키 '{secret}'을 입력하세요. 코드 이름에는 '{issuer}'을 사용하고, 레이블/이름에는 '{account}'을 사용하세요."
+
+#: src/pam/src/pam/mod.rs:827
+msgid "Entra Id Fido authentication failed."
+msgstr "Entra ID FIDO 인증에 실패했습니다."
+
+#: src/common/src/auth.rs:836 src/pam/src/pam/mod.rs:712 src/pam/src/pam/mod.rs:752
+msgid "Entra Id Password:"
+msgstr "Entra ID 비밀번호:"
+
+#: src/common/src/idprovider/himmelblau.rs:3369 src/common/src/idprovider/himmelblau.rs:3380
+msgid "FIDO authentication not available. Please try a different authentication method."
+msgstr "FIDO 인증을 사용할 수 없습니다. 다른 인증 방법을 시도해 주세요."
+
+#: src/common/src/idprovider/himmelblau.rs:2724 src/common/src/idprovider/himmelblau.rs:2837 src/common/src/idprovider/himmelblau.rs:2880 src/common/src/idprovider/himmelblau.rs:2927 src/common/src/idprovider/himmelblau.rs:2942 src/common/src/idprovider/openidconnect.rs:2368 src/common/src/idprovider/common.rs:665
+msgid "Failed to authenticate with Hello PIN."
+msgstr "Hello PIN으로 인증하지 못했습니다."
+
+#: src/common/src/idprovider/common.rs:271
+msgid "Failed to authenticate with Hello PIN. One more failed attempt will require multi-factor authentication and resetting your Linux Hello PIN."
+msgstr "Hello PIN으로 인증하지 못했습니다. 한 번 더 실패하면 다단계 인증을 수행하고 Linux Hello PIN을 재설정해야 합니다."
+
+#: src/common/src/idprovider/common.rs:554 src/common/src/idprovider/common.rs:564
+msgid "Failed to authenticate with Hello TOTP code."
+msgstr "Hello TOTP 코드로 인증하지 못했습니다."
+
+#: src/common/src/auth.rs:638
+msgid "Failed to build regex: {error}"
+msgstr "정규식을 빌드하지 못했습니다: {error}"
+
+#: src/common/src/idprovider/himmelblau.rs:1002
+msgid "Failed to delete CSR key"
+msgstr "CSR 키를 삭제하지 못했습니다"
+
+#: src/common/src/idprovider/himmelblau.rs:1014
+msgid "Failed to delete intune key"
+msgstr "Intune 키를 삭제하지 못했습니다"
+
+#: src/common/src/auth.rs:625 src/common/src/auth.rs:630 src/common/src/auth.rs:647 src/common/src/auth.rs:664
+msgid "Failed to generate QR code"
+msgstr "QR 코드를 생성하지 못했습니다"
+
+#: src/common/src/idprovider/himmelblau.rs:2283
+msgid "Failed to join domain. Please contact your administrator."
+msgstr "도메인에 가입하지 못했습니다. 관리자에게 문의하세요."
+
+#: src/common/src/idprovider/himmelblau.rs:3603
+msgid "Failed to provision hello key: {error}\n"
+"{message}"
+msgstr "hello 키를 프로비저닝하지 못했습니다: {error}\n"
+"{message}"
+
+#: src/common/src/idprovider/himmelblau.rs:2173
+msgid "Failed to save device configuration. Please contact your administrator."
+msgstr "장치 구성을 저장하지 못했습니다. 관리자에게 문의하세요."
+
+#: src/common/src/idprovider/himmelblau.rs:2182
+msgid "Failed to store device credentials. Please contact your administrator."
+msgstr "디바이스 자격 증명을 저장하지 못했습니다. 관리자에게 문의하세요."
+
+#: src/common/src/auth.rs:126 src/common/src/auth.rs:147
+msgid "Fido PIN:"
+msgstr "Fido PIN:"
+
+#: src/common/src/auth.rs:1401
+msgid "Himmelblau authentication is starting, please wait..."
+msgstr "Himmelblau 인증이 시작되는 중입니다. 잠시 기다려 주세요..."
+
+#: src/common/src/auth.rs:1408
+msgid "Himmelblau authentication service did not become available in time."
+msgstr "Himmelblau 인증 서비스를 제때 사용할 수 없었습니다."
+
+#: src/common/src/auth.rs:1395
+msgid "Himmelblau authentication service is unavailable."
+msgstr "Himmelblau 인증 서비스를 사용할 수 없습니다."
+
+#: src/common/src/auth.rs:1030 src/common/src/auth.rs:1254 src/pam/src/pam/mod.rs:654
+msgid "Inputs did not match. Try again."
+msgstr "입력이 일치하지 않습니다. 다시 시도하세요."
+
+#: src/common/src/idprovider/himmelblau.rs:207
+msgid "Multi-factor authentication required."
+msgstr "다단계 인증이 필요합니다."
+
+#: src/common/src/idprovider/himmelblau.rs:4164
+msgid "Multi-factor authentication required. Please try signing in again."
+msgstr "다단계 인증이 필요합니다. 다시 로그인해 주세요."
+
+#: src/common/src/idprovider/himmelblau.rs:1850 src/common/src/idprovider/himmelblau.rs:1953 src/common/src/idprovider/himmelblau.rs:1977 src/common/src/idprovider/himmelblau.rs:2137 src/common/src/idprovider/himmelblau.rs:2155 src/common/src/idprovider/himmelblau.rs:2523 src/common/src/idprovider/himmelblau.rs:2624 src/common/src/idprovider/openidconnect.rs:2250 src/common/src/idprovider/openidconnect.rs:2349 src/common/src/idprovider/common.rs:463
+msgid "Network outage detected."
+msgstr "네트워크 장애가 감지되었습니다."
+
+#: src/common/src/auth.rs:976 src/pam/src/pam/mod.rs:589
+msgid "New PIN:"
+msgstr "새 PIN:"
+
+#: src/common/src/auth.rs:1208
+msgid "New password:"
+msgstr "새 비밀번호:"
+
+#: src/common/src/auth.rs:1002 src/common/src/auth.rs:1064
+msgid "No Entra Id Hello PIN was supplied."
+msgstr "Entra ID Hello PIN이 제공되지 않았습니다."
+
+#: src/common/src/auth.rs:1019
+msgid "No Entra Id Hello confirmation PIN was supplied."
+msgstr "Entra ID Hello 확인 PIN이 제공되지 않았습니다."
+
+#: src/common/src/auth.rs:1243
+msgid "No Entra Id confirmation password was supplied."
+msgstr "Entra ID 확인 암호가 제공되지 않았습니다."
+
+#: src/common/src/auth.rs:845 src/common/src/auth.rs:1224
+msgid "No Entra Id password was supplied."
+msgstr "Entra ID 암호가 제공되지 않았습니다."
+
+#: src/common/src/auth.rs:951
+msgid "No Hello TOTP code was supplied."
+msgstr "Hello TOTP 코드가 제공되지 않았습니다."
+
+#: src/common/src/auth.rs:875
+msgid "No input was supplied."
+msgstr "입력이 제공되지 않았습니다."
+
+#: src/common/src/idprovider/common.rs:413
+msgid "Offline auth has expired. Please connect to the network to continue."
+msgstr "오프라인 인증이 만료되었습니다. 계속하려면 네트워크에 연결하세요."
+
+#: src/common/src/i18n.rs:82
+msgid "Open your Authenticator app, and enter the number '{entropy}' to sign in."
+msgstr "Authenticator 앱을 열고, 로그인하려면 숫자 '{entropy}'를 입력하세요."
+
+#: src/common/src/auth.rs:922
+msgid "Open your authenticator app and scan this QR code to enroll. Then enter the generated code.\n"
+"{qr}"
+msgstr "인증 앱을 열고 이 QR 코드를 스캔하여 등록하세요. 그런 다음 생성된 코드를 입력하세요.\n"
+"{qr}"
+
+#: src/common/src/auth.rs:986 src/pam/src/pam/mod.rs:611
+msgid "PIN must not use repeating or predictable sequences. Avoid patterns like '111111', '123456', or '135791'."
+msgstr "PIN에는 반복되거나 예측 가능한 순서를 사용할 수 없습니다. '111111', '123456', '135791'과 같은 패턴은 피하세요."
+
+#: src/common/src/idprovider/himmelblau.rs:3585
+msgid "PIN setup failed. Please try signing in again."
+msgstr "PIN 설정에 실패했습니다. 다시 로그인해 주세요."
+
+#: src/common/src/auth.rs:1058
+msgid "PIN:"
+msgstr "PIN:"
+
+#: src/common/src/idprovider/himmelblau.rs:191
+msgid "Password change required. Please contact your administrator."
+msgstr "비밀번호 변경이 필요합니다. 관리자에게 문의하세요."
+
+#: src/common/src/idprovider/himmelblau.rs:195
+msgid "Password entry required."
+msgstr "비밀번호를 입력해야 합니다."
+
+#: src/common/src/idprovider/himmelblau.rs:158 src/common/src/idprovider/himmelblau.rs:183
+msgid "Password reset registration required. Complete setup at https://aka.ms/ssprsetup from another device, then try again."
+msgstr "암호 재설정 등록이 필요합니다. 다른 장치에서 https://aka.ms/ssprsetup 으로 이동하여 설정을 완료한 후 다시 시도하세요."
+
+#: src/common/src/idprovider/himmelblau.rs:2690 src/common/src/idprovider/himmelblau.rs:2786 src/common/src/idprovider/himmelblau.rs:3072 src/common/src/idprovider/himmelblau.rs:3208 src/common/src/idprovider/himmelblau.rs:3325 src/common/src/idprovider/openidconnect.rs:2472 src/common/src/idprovider/openidconnect.rs:2585 src/common/src/idprovider/common.rs:649
+msgid "Please enter your Hello TOTP code from your Authenticator:"
+msgstr "Authenticator의 Hello TOTP 코드를 입력해 주세요."
+
+#: config_gen.rs:178
+msgid "Please insert your security key."
+msgstr "보안 키를 삽입해 주세요."
+
+#: src/common/src/auth.rs:119
+msgid "Please select a device by touching one of them."
+msgstr "기기 중 하나를 터치하여 선택해 주세요."
+
+#: config_gen.rs:186
+msgid "Please touch your security key."
+msgstr "보안 키를 터치해 주세요."
+
+#: src/common/src/auth.rs:688
+msgid "Press enter to continue"
+msgstr "계속하려면 Enter 키를 누르세요"
+
+#: src/common/src/auth.rs:1168
+msgid "QR/Bluetooth authentication failed."
+msgstr "QR/Bluetooth 인증에 실패했습니다."
+
+#: src/common/src/idprovider/openidconnect.rs:90
+msgid "Scan the QR code to continue sign-in, or open this link on another device:\n"
+"{complete}\n"
+"If you cannot scan, visit:\n"
+"{verification_uri}\n"
+"And enter the code:\n"
+"{user_code}"
+msgstr "로그인을 계속하려면 QR 코드를 스캔하거나 다른 장치에서 이 링크를 여세요.\n"
+"{complete}\n"
+"스캔할 수 없는 경우 다음 주소로 이동하세요.\n"
+"{verification_uri}\n"
+"그리고 다음 코드를 입력하세요.\n"
+"{user_code}"
+
+#: config_gen.rs:194
+msgid "Scan with your authenticator app"
+msgstr "인증 앱으로 스캔하세요"
+
+#: src/common/src/auth.rs:1151
+msgid "Security key and QR/Bluetooth authentication failed."
+msgstr "보안 키 및 QR/Bluetooth 인증에 실패했습니다."
+
+#: src/common/src/auth.rs:1187
+msgid "Security key authentication failed."
+msgstr "보안 키 인증에 실패했습니다."
+
+#: src/common/src/idprovider/openidconnect.rs:2404 src/common/src/idprovider/openidconnect.rs:2424
+msgid "Session data corrupted. Please sign in again."
+msgstr "세션 데이터가 손상되었습니다. 다시 로그인해 주세요."
+
+#: src/common/src/idprovider/himmelblau.rs:3482 src/common/src/idprovider/himmelblau.rs:4101 src/common/src/idprovider/himmelblau.rs:4222 src/common/src/idprovider/himmelblau.rs:4315 src/common/src/idprovider/openidconnect.rs:2093
+msgid "Set up a PIN\n"
+"A Hello PIN is a fast, secure way to sign in to your device, apps, and services."
+msgstr "PIN 설정\n"
+"Hello PIN은 디바이스, 앱 및 서비스에 빠르고 안전하게 로그인할 수 있는 방법입니다."
+
+#: src/common/src/auth.rs:945
+msgid "TOTP Code:"
+msgstr "TOTP 코드:"
+
+#: src/common/src/auth.rs:966
+msgid "The minimum PIN length is {length} characters."
+msgstr "최소 PIN 길이는 {length}자입니다."
+
+#: src/pam/src/pam/mod.rs:576
+msgid "This command changes your local Hello PIN, NOT your Entra Id password."
+msgstr "이 명령은 Entra ID 비밀번호가 아니라 로컬 Hello PIN을 변경합니다."
+
+#: src/common/src/auth.rs:158
+msgid "Too many failed attempts in one row. Your device has been temporarily blocked. Please unplug it and plug in again."
+msgstr "한 번에 너무 많은 인증 시도가 실패했습니다. 장치가 일시적으로 차단되었습니다. 장치를 분리했다가 다시 연결해 주세요."
+
+#: src/common/src/auth.rs:162
+msgid "Too many failed attempts. Your device has been blocked. Reset it."
+msgstr "실패한 시도가 너무 많습니다. 디바이스가 차단되었습니다. 디바이스를 초기화하세요."
+
+#: src/common/src/auth.rs:181
+msgid "Too many failed user verification attempts."
+msgstr "사용자 확인 시도가 너무 많이 실패했습니다."
+
+#: src/common/src/idprovider/common.rs:306
+msgid "Too many incorrect PIN attempts. You will need to enroll a new Linux Hello PIN."
+msgstr "잘못된 PIN 입력 시도가 너무 많습니다. 새 Linux Hello PIN을 등록해야 합니다."
+
+#: src/common/src/auth.rs:137 src/common/src/auth.rs:168
+msgid "Try again."
+msgstr "다시 시도하세요."
+
+#: src/common/src/idprovider/himmelblau.rs:3338 src/common/src/idprovider/openidconnect.rs:2598 src/common/src/idprovider/openidconnect.rs:2690 src/common/src/idprovider/openidconnect.rs:2868 src/common/src/idprovider/openidconnect.rs:3138
+msgid "Unexpected authentication step. Please try signing in again."
+msgstr "예기치 않은 인증 단계입니다. 다시 로그인해 주세요."
+
+#: src/common/src/auth.rs:696
+msgid "Unexpected error occurred."
+msgstr "예상치 못한 오류가 발생했습니다."
+
+#: src/common/src/auth.rs:185
+msgid "Unexpected error: {error}"
+msgstr "예상치 못한 오류: {error}"
+
+#: src/common/src/auth.rs:193
+msgid "Unexpected select device notice"
+msgstr "예기치 않은 장치 선택 알림"
+
+#: src/common/src/idprovider/himmelblau.rs:137 src/common/src/idprovider/himmelblau.rs:3986 src/common/src/idprovider/himmelblau.rs:4054 src/common/src/idprovider/himmelblau.rs:4144 src/common/src/idprovider/himmelblau.rs:4268
+msgid "Update your password\n"
+"You need to update your password because this is\n"
+"the first time you are signing in, or because your\n"
+"password has expired."
+msgstr "암호 업데이트\n"
+"처음 로그인하시거나 암호가 만료되었으므로\n"
+"암호를 업데이트해야 합니다."
+
+#: config_gen.rs:74
+msgid "Use the Linux Hello PIN for this device."
+msgstr "이 장치의 Linux Hello PIN을 사용하세요."
+
+#: config_gen.rs:82
+msgid "Use the password for your Office 365 or Microsoft online login."
+msgstr "Office 365 또는 Microsoft 온라인 로그인 암호를 사용하세요."
+
+#: src/common/src/i18n.rs:110 src/common/src/idprovider/openidconnect.rs:98
+msgid "Using a browser on another device, visit:\n"
+"{verification_uri}\n"
+"And enter the code:\n"
+"{user_code}"
+msgstr "다른 기기에서 브라우저를 사용하여 다음 주소로 이동하세요:\n"
+"{verification_uri}\n"
+"그리고 다음 코드를 입력하세요:\n"
+"{user_code}"
+
+#: src/common/src/auth.rs:866
+msgid "Value:"
+msgstr "값:"
+
+#: src/common/src/idprovider/openidconnect.rs:761
+msgid "Waiting for browser authentication to complete..."
+msgstr "브라우저 인증이 완료되기를 기다리는 중입니다..."
+
+#: src/common/src/i18n.rs:89
+msgid "We texted your phone {phone}. Please enter the code to sign in:"
+msgstr "{phone} 번호로 문자 메시지를 보냈습니다. 로그인하려면 코드를 입력하세요:"
+
+#: src/common/src/i18n.rs:103
+msgid "We're calling your office phone {phone}. Please answer it to continue."
+msgstr "사무실 전화 {phone}로 전화를 걸고 있습니다. 계속하려면 전화를 받아 주세요."
+
+#: src/common/src/i18n.rs:96
+msgid "We're calling your phone {phone}. Please answer it to continue."
+msgstr "{phone}번으로 전화를 드리고 있습니다. 계속하려면 전화를 받아 주세요."
+
+#: src/common/src/auth.rs:145
+msgid "Wrong PIN! {message}"
+msgstr "PIN이 잘못되었습니다! {message}"
+
+#: src/common/src/auth.rs:176
+msgid "Wrong user verification! {message}"
+msgstr "사용자 확인이 잘못되었습니다! {message}"
+
+#: src/common/src/auth.rs:138 src/common/src/auth.rs:169
+msgid "You have {attempts} attempt left."
+msgid_plural "You have {attempts} attempts left."
+msgstr[0] "남은 시도 횟수는 {attempts}회입니다."
+
+#: src/common/src/idprovider/himmelblau.rs:2547 src/common/src/idprovider/himmelblau.rs:2632 src/common/src/idprovider/openidconnect.rs:2412 src/common/src/idprovider/openidconnect.rs:2431 src/common/src/idprovider/openidconnect.rs:2505 src/common/src/idprovider/openidconnect.rs:2520
+msgid "Your session has expired. Please sign in again."
+msgstr "세션이 만료되었습니다. 다시 로그인해 주세요."
+
+#: src/common/src/auth.rs:605 src/pam/src/pam/mod.rs:823
+msgid "{code}: {message}\n"
+"If you are now prompted for a password from pam_unix, please disregard the prompt, go back and try again."
+msgstr "{code}: {message}\n"
+"이제 pam_unix에서 암호를 입력하라는 메시지가 표시되면 해당 메시지를 무시하고 뒤로 돌아가 다시 시도하세요."
+
+#: src/common/src/auth.rs:718
+msgid "{message}\n"
+"No push? Check your mobile device's internet connection."
+msgstr "{message}\n"
+"푸시 알림이 없나요? 모바일 기기의 인터넷 연결을 확인하세요."
