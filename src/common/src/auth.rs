@@ -719,7 +719,9 @@ fn format_mfa_poll_message(msg: &str, service: &str, show_push_hint: bool) -> St
             "{message}\nNo push? Check your mobile device's internet connection.",
             &[("message", i18n::translate_external_message(msg))],
         )
-    } else if service != "gdm-password" {
+    } else if service != "gdm-password" && service != "broker-interactive" {
+        // GDM renders its own QR; broker-interactive uses pinentry, which
+        // panics on long Assuan payloads if we append unicode QR art.
         lazy_static! {
             // Avoid compiling a new Regex every time with a lazy_static ref
             static ref RE: Option<Regex> =
@@ -915,8 +917,12 @@ fn generate_unicode_qr(content: &str) -> Result<String, String> {
 
 fn handle_pam_auth_response_hellototp(state: &AuthenticateState, msg: &str) -> PamWhatNext {
     // GDM will render its own QR code if qr-greeter is installed.
+    // Broker pinentry cannot display unicode QR art (Assuan line-length panic).
     // Otherwise render with unicode chars.
-    if msg.starts_with("otpauth://") && state.service != "gdm-password" {
+    if msg.starts_with("otpauth://")
+        && state.service != "gdm-password"
+        && state.service != "broker-interactive"
+    {
         match generate_unicode_qr(msg) {
             Ok(qr) => {
                 let msg = tr_fmt(
