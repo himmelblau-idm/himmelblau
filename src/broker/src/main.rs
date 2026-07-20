@@ -122,30 +122,80 @@ fn sso_cookie_response_is_valid(resp: &str) -> bool {
         .unwrap_or(false)
 }
 
+/// True when a line is unicode/ASCII QR art (mostly block-drawing glyphs).
+/// Those lines must not be sent through pinentry: the Assuan client panics on
+/// long undivided SETDESC payloads (`splitting of long lines yet implemented`).
+fn is_qr_art_line(line: &str) -> bool {
+    let trimmed = line.trim();
+    if trimmed.is_empty() {
+        return false;
+    }
+    let non_space = trimmed.chars().filter(|c| !c.is_whitespace()).count();
+    if non_space == 0 {
+        return false;
+    }
+    let blocks = trimmed
+        .chars()
+        .filter(|c| matches!(*c, '\u{2580}'..='\u{259F}'))
+        .count();
+    // QR rows are almost entirely half/full blocks + spaces.
+    blocks * 2 >= non_space
+}
+
+/// Prepare auth messages for pinentry: drop greeter prefixes and QR art, and
+/// keep Assuan command payloads short enough that pinentry-rs does not panic.
+fn sanitize_for_pinentry(msg: &str) -> String {
+    let clean = msg
+        .trim_start_matches("[FIDO_INSERT] ")
+        .trim_start_matches("[FIDO_TOUCH] ");
+
+    let without_qr: String = clean
+        .lines()
+        .filter(|line| !is_qr_art_line(line))
+        .collect::<Vec<_>>()
+        .join("\n")
+        .trim()
+        .to_string();
+
+    // pinentry-rs 0.8 does not split long Assuan lines; stay well under 1KiB.
+    const MAX_PINENTRY_CHARS: usize = 900;
+    if without_qr.chars().count() <= MAX_PINENTRY_CHARS {
+        return without_qr;
+    }
+    let truncated: String = without_qr.chars().take(MAX_PINENTRY_CHARS).collect();
+    format!("{truncated}…")
+}
+
 /// A `MessagePrinter` that uses `pinentry` for prompts and messages.
 /// Used by `authenticate()` for the interactive auth flow.
 struct PinentryMessagePrinter;
 
 impl MessagePrinter for PinentryMessagePrinter {
     fn print_text(&self, msg: &str) {
-        // Strip greeter protocol prefixes as these are meant for the
-        // qr-greeter GNOME extension, not for end-user display.
-        let clean = msg
-            .trim_start_matches("[FIDO_INSERT] ")
-            .trim_start_matches("[FIDO_TOUCH] ");
+        let clean = sanitize_for_pinentry(msg);
+        if clean.is_empty() {
+            return;
+        }
         debug!("message: {}", clean);
         if let Some(mut dialog) = pinentry::MessageDialog::with_default_binary() {
-            let _ = dialog.with_ok("OK").show_message(clean);
+            // Pinentry-rs panics on oversized Assuan lines; never let that
+            // unwind through the D-Bus handler (Edge AcquireTokenInteractively).
+            let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                let _ = dialog.with_ok("OK").show_message(&clean);
+            }));
         }
     }
 
     fn print_error(&self, msg: &str) {
-        let clean = msg
-            .trim_start_matches("[FIDO_INSERT] ")
-            .trim_start_matches("[FIDO_TOUCH] ");
+        let clean = sanitize_for_pinentry(msg);
+        if clean.is_empty() {
+            return;
+        }
         error!("auth error: {}", clean);
         if let Some(mut dialog) = pinentry::MessageDialog::with_default_binary() {
-            let _ = dialog.with_ok("OK").show_message(clean);
+            let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                let _ = dialog.with_ok("OK").show_message(&clean);
+            }));
         }
     }
 
@@ -600,5 +650,27 @@ mod tests {
         assert!(!sso_cookie_response_is_valid(r#"{"account":{}}"#));
         assert!(!sso_cookie_response_is_valid(""));
         assert!(!sso_cookie_response_is_valid("not json"));
+    }
+
+    #[test]
+    fn sanitize_for_pinentry_strips_qr_art_keeps_prose() {
+        let msg = "To sign in, visit https://login.microsoft.com/device and enter EH5PRW7RY.\n\
+                   \u{2588}\u{2588}\u{2580}\u{2584}  \u{2588}\u{2580}\u{2588}\n\
+                   \u{2580}\u{2584}\u{2588}\u{2580}\u{2584}\u{2588}\u{2580}\n\
+                   Done.";
+        let out = sanitize_for_pinentry(msg);
+        assert!(out.contains("login.microsoft.com/device"));
+        assert!(out.contains("EH5PRW7RY"));
+        assert!(!out.contains('\u{2588}'));
+        assert!(!out.contains('\u{2580}'));
+        assert!(out.contains("Done."));
+    }
+
+    #[test]
+    fn sanitize_for_pinentry_truncates_oversized_text() {
+        let huge = "x".repeat(2000);
+        let out = sanitize_for_pinentry(&huge);
+        assert!(out.chars().count() <= 901);
+        assert!(out.ends_with('…'));
     }
 }
