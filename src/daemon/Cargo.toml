@@ -91,6 +91,9 @@ assets = [
   ["target/release/locale/pt_PT/LC_MESSAGES/himmelblau.mo", "usr/share/locale/pt_PT/LC_MESSAGES/", "644"],
   ["target/release/locale/ca/LC_MESSAGES/himmelblau.mo", "usr/share/locale/ca/LC_MESSAGES/", "644"],
   ["target/release/locale/ur_PK/LC_MESSAGES/himmelblau.mo", "usr/share/locale/ur_PK/LC_MESSAGES/", "644"],
+  ["target/release/locale/am/LC_MESSAGES/himmelblau.mo", "usr/share/locale/am/LC_MESSAGES/", "644"],
+  ["target/release/locale/om/LC_MESSAGES/himmelblau.mo", "usr/share/locale/om/LC_MESSAGES/", "644"],
+  ["target/release/locale/ti/LC_MESSAGES/himmelblau.mo", "usr/share/locale/ti/LC_MESSAGES/", "644"],
 ]
 maintainer-scripts = "scripts"
 
@@ -130,6 +133,9 @@ assets = [
   { source = "target/release/locale/pt_PT/LC_MESSAGES/himmelblau.mo", dest = "/usr/share/locale/pt_PT/LC_MESSAGES/", mode = "644" },
   { source = "target/release/locale/ca/LC_MESSAGES/himmelblau.mo", dest = "/usr/share/locale/ca/LC_MESSAGES/", mode = "644" },
   { source = "target/release/locale/ur_PK/LC_MESSAGES/himmelblau.mo", dest = "/usr/share/locale/ur_PK/LC_MESSAGES/", mode = "644" },
+  { source = "target/release/locale/am/LC_MESSAGES/himmelblau.mo", dest = "/usr/share/locale/am/LC_MESSAGES/", mode = "644" },
+  { source = "target/release/locale/om/LC_MESSAGES/himmelblau.mo", dest = "/usr/share/locale/om/LC_MESSAGES/", mode = "644" },
+  { source = "target/release/locale/ti/LC_MESSAGES/himmelblau.mo", dest = "/usr/share/locale/ti/LC_MESSAGES/", mode = "644" },
 ]
 post_install_script = "scripts/postinst"
 pre_uninstall_script = "scripts/prerm"
