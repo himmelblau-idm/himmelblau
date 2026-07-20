@@ -416,8 +416,8 @@ msgid "This command changes your local Hello PIN, NOT your Entra Id password."
 msgstr "Dieser Befehl ändert Ihre lokale Hello-PIN, NICHT Ihr Entra-ID-Passwort."
 
 #: src/common/src/auth.rs:181
-msgid "Too many failed UV-attempts."
-msgstr "Zu viele fehlgeschlagene UV-Versuche."
+msgid "Too many failed user verification attempts."
+msgstr "Zu viele fehlgeschlagene Benutzerverifizierungsversuche."
 
 #: src/common/src/auth.rs:158
 msgid "Too many failed attempts in one row. Your device has been temporarily blocked. Please unplug it and plug in again."
@@ -504,8 +504,8 @@ msgid "Wrong PIN! {message}"
 msgstr "Falsche PIN! {message}"
 
 #: src/common/src/auth.rs:176
-msgid "Wrong UV! {message}"
-msgstr "Falsche UV! {message}"
+msgid "Wrong user verification! {message}"
+msgstr "Falsche Benutzerverifizierung! {message}"
 
 #: src/common/src/auth.rs:138 src/common/src/auth.rs:169
 msgid "You have {attempts} attempt left."
