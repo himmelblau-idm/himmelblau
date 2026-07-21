@@ -1,0 +1,532 @@
+# Ukrainian translations for Himmelblau.
+# Copyright (C) 2026 Himmelblau contributors
+# This file is distributed under the same license as Himmelblau.
+#
+msgid ""
+msgstr ""
+"Project-Id-Version: himmelblau\n"
+"POT-Creation-Date: 2026-07-20 21:59+0000\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"PO-Revision-Date: 2026-07-21 13:39+0000\n"
+"Last-Translator: Automated via Codex <noreply@himmelblau-idm.org>\n"
+"Language-Team: Ukrainian\n"
+"Language: uk\n"
+"Plural-Forms: nplurals=3; plural=(n%10==1 && n%100!=11 ? 0 : n%10>=2 "
+"&& n%10<=4 && (n%100<10 || n%100>=20) ? 1 : 2);\n"
+
+#: src/common/src/auth.rs:1285 src/common/src/auth.rs:1298
+msgid "An unexpected error occurred."
+msgstr "Сталася неочікувана помилка."
+
+#: src/common/src/idprovider/openidconnect.rs:753
+msgid "Approve sign-in in your authenticator app, then wait..."
+msgstr "Підтвердьте вхід у своєму застосунку автентифікації, а потім зачекайте..."
+
+#: src/common/src/idprovider/himmelblau.rs:4809
+msgid "Authenticated user {user} does not match requested user"
+msgstr "Автентифікований користувач {user} не відповідає запитаному користувачу"
+
+#: src/common/src/idprovider/openidconnect.rs:2118
+msgid "Authenticated user {uuid} does not match requested user"
+msgstr "Автентифікований користувач {uuid} не відповідає запитаному користувачу"
+
+#: src/common/src/idprovider/openidconnect.rs:3003
+msgid "Authentication did not return a refresh token. Please try again."
+msgstr "Автентифікація не повернула токен оновлення. Спробуйте ще раз."
+
+#: src/common/src/idprovider/himmelblau.rs:3949
+msgid "Authentication failed (AADSTS{code})"
+msgstr "Автентифікація не вдалася (AADSTS{code})"
+
+#: src/common/src/idprovider/openidconnect.rs:2939
+msgid "Authentication failed in browser flow."
+msgstr "Не вдалося автентифікуватися під час процесу в браузері."
+
+#: src/common/src/idprovider/himmelblau.rs:209
+msgid "Authentication failed. Please contact your administrator."
+msgstr "Помилка автентифікації. Зверніться до адміністратора."
+
+#: src/common/src/idprovider/himmelblau.rs:3829
+msgid "Authentication failed. Please try again."
+msgstr "Не вдалося пройти автентифікацію. Спробуйте ще раз."
+
+#: src/common/src/idprovider/himmelblau.rs:3129
+msgid "Authentication failed. Please try signing in again."
+msgstr "Не вдалося пройти автентифікацію. Спробуйте ввійти ще раз."
+
+#: src/common/src/idprovider/himmelblau.rs:168
+msgid "Authentication failed: Authentication method not supported."
+msgstr "Помилка автентифікації: метод автентифікації не підтримується."
+
+#: src/common/src/idprovider/himmelblau.rs:171 src/common/src/idprovider/himmelblau.rs:176
+msgid "Authentication failed: Configuration error."
+msgstr "Помилка автентифікації: помилка конфігурації."
+
+#: src/common/src/idprovider/himmelblau.rs:175
+msgid "Authentication failed: Cryptographic error."
+msgstr "Помилка автентифікації: криптографічна помилка."
+
+#: src/common/src/idprovider/himmelblau.rs:152
+msgid "Authentication failed: Invalid server response."
+msgstr "Автентифікація не вдалася: недійсна відповідь сервера."
+
+#: src/common/src/idprovider/himmelblau.rs:188
+msgid "Authentication failed: Missing required data."
+msgstr "Помилка автентифікації: відсутні обов’язкові дані."
+
+#: src/common/src/idprovider/himmelblau.rs:170
+msgid "Authentication failed: Security hardware error."
+msgstr "Автентифікація не вдалася: помилка апаратного засобу безпеки."
+
+#: src/common/src/idprovider/himmelblau.rs:165
+msgid "Authentication failed: Unable to reach authentication server."
+msgstr "Помилка автентифікації: не вдалося підключитися до сервера автентифікації."
+
+#: src/common/src/idprovider/openidconnect.rs:2738 src/common/src/idprovider/openidconnect.rs:2849 src/common/src/idprovider/openidconnect.rs:2984 src/common/src/idprovider/openidconnect.rs:3050 src/common/src/idprovider/openidconnect.rs:3063
+msgid "Authentication failed: {error}"
+msgstr "Не вдалося виконати автентифікацію: {error}"
+
+#: src/common/src/idprovider/openidconnect.rs:3036
+msgid "Authentication flow completed but token exchange failed. Please try again."
+msgstr "Потік автентифікації завершено, але обмін токена не вдався. Спробуйте ще раз."
+
+#: src/common/src/idprovider/himmelblau.rs:179 src/common/src/idprovider/himmelblau.rs:203
+msgid "Authentication in progress."
+msgstr "Триває автентифікація."
+
+#: src/common/src/idprovider/openidconnect.rs:2537
+msgid "Authentication incomplete. Please try again."
+msgstr "Автентифікацію не завершено. Спробуйте ще раз."
+
+#: src/common/src/idprovider/himmelblau.rs:1912
+msgid "Authentication service is temporarily unavailable. Please try again shortly."
+msgstr "Служба автентифікації тимчасово недоступна. Повторіть спробу трохи пізніше."
+
+#: src/common/src/idprovider/himmelblau.rs:3169
+msgid "Authentication service unavailable. Please try again later."
+msgstr "Служба автентифікації недоступна. Спробуйте ще раз пізніше."
+
+#: src/common/src/idprovider/openidconnect.rs:2674 src/common/src/idprovider/openidconnect.rs:2713 src/common/src/idprovider/openidconnect.rs:2774
+msgid "Authentication session corrupted. Please try again."
+msgstr "Сеанс автентифікації пошкоджено. Спробуйте ще раз."
+
+#: src/common/src/idprovider/openidconnect.rs:2661
+msgid "Authentication session data missing. Please try again."
+msgstr "Дані сеансу автентифікації відсутні. Спробуйте ще раз."
+
+#: src/common/src/idprovider/openidconnect.rs:3078
+msgid "Authentication session returned an unexpected state. Please try again."
+msgstr "Сеанс автентифікації повернув неочікуваний стан. Спробуйте ще раз."
+
+#: src/common/src/idprovider/himmelblau.rs:4124 src/common/src/idprovider/openidconnect.rs:2701 src/common/src/idprovider/openidconnect.rs:2801
+msgid "Authentication timed out. Please try again."
+msgstr "Час очікування автентифікації минув. Спробуйте ще раз."
+
+#: src/common/src/idprovider/openidconnect.rs:3105
+msgid "Browser authentication backend unavailable. Please try again."
+msgstr "Серверна частина автентифікації через браузер недоступна. Спробуйте ще раз."
+
+#: src/common/src/auth.rs:1261
+msgid "Changing the password. Please wait..."
+msgstr "Змінюємо пароль. Зачекайте, будь ласка..."
+
+#: src/common/src/auth.rs:1215
+msgid "Chosen password is too short! 8 chars required."
+msgstr "Вибраний пароль занадто короткий! Потрібно 8 символів."
+
+#: src/common/src/auth.rs:979 src/pam/src/pam/mod.rs:595
+msgid "Chosen pin is too short! {length} chars required."
+msgstr "Вибраний PIN-код занадто короткий! Потрібно {length} символів."
+
+#: src/common/src/auth.rs:829
+msgid "Cloud Password:"
+msgstr "Хмарний пароль:"
+
+#: src/common/src/auth.rs:868
+msgid "Code:"
+msgstr "Код:"
+
+#: src/common/src/auth.rs:1012 src/pam/src/pam/mod.rs:637
+msgid "Confirm PIN:"
+msgstr "Підтвердьте PIN-код:"
+
+#: src/common/src/auth.rs:1236
+msgid "Confirm password:"
+msgstr "Підтвердьте пароль:"
+
+#: src/common/src/idprovider/himmelblau.rs:199
+msgid "Consent required. Please contact your administrator."
+msgstr "Потрібна згода. Зверніться до адміністратора."
+
+#: src/common/src/idprovider/himmelblau.rs:3609
+msgid "Create a PIN to use in place of passwords."
+msgstr "Створіть PIN-код, щоб використовувати його замість паролів."
+
+#: src/common/src/idprovider/himmelblau.rs:173
+msgid "Device enrollment failed. Please contact your administrator."
+msgstr "Не вдалося зареєструвати пристрій. Зверніться до свого адміністратора."
+
+#: src/common/src/idprovider/himmelblau.rs:1022
+msgid "Device has been removed from the domain."
+msgstr "Пристрій вилучено з домену."
+
+#: src/common/src/auth.rs:1120
+msgid "Enable Bluetooth to sign in with your phone."
+msgstr "Увімкніть Bluetooth, щоб увійти за допомогою телефона."
+
+#: src/common/src/auth.rs:1037
+msgid "Enrolling the Hello PIN. Please wait..."
+msgstr "Реєстрація PIN-коду Hello. Зачекайте..."
+
+#: src/common/src/auth.rs:652
+msgid "Enter the setup key '{secret}' to enroll a TOTP Authenticator app. Use '{issuer}' for the code name and '{account}' as the label/name."
+msgstr "Введіть ключ налаштування «{secret}», щоб зареєструвати застосунок автентифікатора TOTP. Використовуйте «{issuer}» як назву коду, а «{account}» як мітку/назву."
+
+#: src/pam/src/pam/mod.rs:827
+msgid "Entra Id Fido authentication failed."
+msgstr "Не вдалося виконати автентифікацію Entra ID FIDO."
+
+#: src/common/src/auth.rs:836 src/pam/src/pam/mod.rs:712 src/pam/src/pam/mod.rs:752
+msgid "Entra Id Password:"
+msgstr "Пароль Entra ID:"
+
+#: src/common/src/idprovider/himmelblau.rs:3369 src/common/src/idprovider/himmelblau.rs:3380
+msgid "FIDO authentication not available. Please try a different authentication method."
+msgstr "Автентифікація FIDO недоступна. Спробуйте інший метод автентифікації."
+
+#: src/common/src/idprovider/himmelblau.rs:2724 src/common/src/idprovider/himmelblau.rs:2837 src/common/src/idprovider/himmelblau.rs:2880 src/common/src/idprovider/himmelblau.rs:2927 src/common/src/idprovider/himmelblau.rs:2942 src/common/src/idprovider/openidconnect.rs:2368 src/common/src/idprovider/common.rs:665
+msgid "Failed to authenticate with Hello PIN."
+msgstr "Не вдалося пройти автентифікацію за допомогою PIN-коду Hello."
+
+#: src/common/src/idprovider/common.rs:271
+msgid "Failed to authenticate with Hello PIN. One more failed attempt will require multi-factor authentication and resetting your Linux Hello PIN."
+msgstr "Не вдалося пройти автентифікацію за допомогою Hello PIN. Ще одна невдала спроба призведе до необхідності багатофакторної автентифікації та скидання вашого Linux Hello PIN."
+
+#: src/common/src/idprovider/common.rs:554 src/common/src/idprovider/common.rs:564
+msgid "Failed to authenticate with Hello TOTP code."
+msgstr "Не вдалося автентифікуватися за допомогою коду Hello TOTP."
+
+#: src/common/src/auth.rs:638
+msgid "Failed to build regex: {error}"
+msgstr "Не вдалося створити регулярний вираз: {error}"
+
+#: src/common/src/idprovider/himmelblau.rs:1002
+msgid "Failed to delete CSR key"
+msgstr "Не вдалося видалити ключ CSR"
+
+#: src/common/src/idprovider/himmelblau.rs:1014
+msgid "Failed to delete intune key"
+msgstr "Не вдалося видалити ключ Intune"
+
+#: src/common/src/auth.rs:625 src/common/src/auth.rs:630 src/common/src/auth.rs:647 src/common/src/auth.rs:664
+msgid "Failed to generate QR code"
+msgstr "Не вдалося створити QR-код"
+
+#: src/common/src/idprovider/himmelblau.rs:2283
+msgid "Failed to join domain. Please contact your administrator."
+msgstr "Не вдалося приєднатися до домену. Зверніться до адміністратора."
+
+#: src/common/src/idprovider/himmelblau.rs:3603
+msgid "Failed to provision hello key: {error}\n"
+"{message}"
+msgstr "Не вдалося підготувати ключ Hello: {error}\n"
+"{message}"
+
+#: src/common/src/idprovider/himmelblau.rs:2173
+msgid "Failed to save device configuration. Please contact your administrator."
+msgstr "Не вдалося зберегти конфігурацію пристрою. Зверніться до адміністратора."
+
+#: src/common/src/idprovider/himmelblau.rs:2182
+msgid "Failed to store device credentials. Please contact your administrator."
+msgstr "Не вдалося зберегти облікові дані пристрою. Зверніться до свого адміністратора."
+
+#: src/common/src/auth.rs:126 src/common/src/auth.rs:147
+msgid "Fido PIN:"
+msgstr "PIN-код FIDO:"
+
+#: src/common/src/auth.rs:1401
+msgid "Himmelblau authentication is starting, please wait..."
+msgstr "Автентифікація Himmelblau запускається, зачекайте..."
+
+#: src/common/src/auth.rs:1408
+msgid "Himmelblau authentication service did not become available in time."
+msgstr "Служба автентифікації Himmelblau не стала доступною вчасно."
+
+#: src/common/src/auth.rs:1395
+msgid "Himmelblau authentication service is unavailable."
+msgstr "Служба автентифікації Himmelblau недоступна."
+
+#: src/common/src/auth.rs:1030 src/common/src/auth.rs:1254 src/pam/src/pam/mod.rs:654
+msgid "Inputs did not match. Try again."
+msgstr "Введені дані не збігаються. Спробуйте ще раз."
+
+#: src/common/src/idprovider/himmelblau.rs:207
+msgid "Multi-factor authentication required."
+msgstr "Потрібна багатофакторна автентифікація."
+
+#: src/common/src/idprovider/himmelblau.rs:4164
+msgid "Multi-factor authentication required. Please try signing in again."
+msgstr "Потрібна багатофакторна автентифікація. Спробуйте ввійти ще раз."
+
+#: src/common/src/idprovider/himmelblau.rs:1850 src/common/src/idprovider/himmelblau.rs:1953 src/common/src/idprovider/himmelblau.rs:1977 src/common/src/idprovider/himmelblau.rs:2137 src/common/src/idprovider/himmelblau.rs:2155 src/common/src/idprovider/himmelblau.rs:2523 src/common/src/idprovider/himmelblau.rs:2624 src/common/src/idprovider/openidconnect.rs:2250 src/common/src/idprovider/openidconnect.rs:2349 src/common/src/idprovider/common.rs:463
+msgid "Network outage detected."
+msgstr "Виявлено збій у роботі мережі."
+
+#: src/common/src/auth.rs:976 src/pam/src/pam/mod.rs:589
+msgid "New PIN:"
+msgstr "Новий PIN-код:"
+
+#: src/common/src/auth.rs:1208
+msgid "New password:"
+msgstr "Новий пароль:"
+
+#: src/common/src/auth.rs:1002 src/common/src/auth.rs:1064
+msgid "No Entra Id Hello PIN was supplied."
+msgstr "PIN-код Entra ID Hello не було надано."
+
+#: src/common/src/auth.rs:1019
+msgid "No Entra Id Hello confirmation PIN was supplied."
+msgstr "Не було надано PIN-код підтвердження Entra Id Hello."
+
+#: src/common/src/auth.rs:1243
+msgid "No Entra Id confirmation password was supplied."
+msgstr "Пароль підтвердження Entra Id не було надано."
+
+#: src/common/src/auth.rs:845 src/common/src/auth.rs:1224
+msgid "No Entra Id password was supplied."
+msgstr "Пароль Entra Id не було надано."
+
+#: src/common/src/auth.rs:951
+msgid "No Hello TOTP code was supplied."
+msgstr "Не було надано TOTP-код Hello."
+
+#: src/common/src/auth.rs:875
+msgid "No input was supplied."
+msgstr "Не було надано жодних вхідних даних."
+
+#: src/common/src/idprovider/common.rs:413
+msgid "Offline auth has expired. Please connect to the network to continue."
+msgstr "Термін дії офлайн-автентифікації минув. Підключіться до мережі, щоб продовжити."
+
+#: src/common/src/i18n.rs:82
+msgid "Open your Authenticator app, and enter the number '{entropy}' to sign in."
+msgstr "Відкрийте застосунок Authenticator і введіть число «{entropy}», щоб увійти."
+
+#: src/common/src/auth.rs:922
+msgid "Open your authenticator app and scan this QR code to enroll. Then enter the generated code.\n"
+"{qr}"
+msgstr "Відкрийте застосунок автентифікації та відскануйте цей QR-код, щоб зареєструватися. Потім введіть згенерований код.\n"
+"{qr}"
+
+#: src/common/src/auth.rs:986 src/pam/src/pam/mod.rs:611
+msgid "PIN must not use repeating or predictable sequences. Avoid patterns like '111111', '123456', or '135791'."
+msgstr "PIN-код не повинен містити повторювані або передбачувані послідовності. Уникайте шаблонів на кшталт '111111', '123456' або '135791'."
+
+#: src/common/src/idprovider/himmelblau.rs:3585
+msgid "PIN setup failed. Please try signing in again."
+msgstr "Не вдалося налаштувати PIN-код. Спробуйте ввійти ще раз."
+
+#: src/common/src/auth.rs:1058
+msgid "PIN:"
+msgstr "PIN-код:"
+
+#: src/common/src/idprovider/himmelblau.rs:191
+msgid "Password change required. Please contact your administrator."
+msgstr "Потрібно змінити пароль. Зверніться до свого адміністратора."
+
+#: src/common/src/idprovider/himmelblau.rs:195
+msgid "Password entry required."
+msgstr "Потрібно ввести пароль."
+
+#: src/common/src/idprovider/himmelblau.rs:158 src/common/src/idprovider/himmelblau.rs:183
+msgid "Password reset registration required. Complete setup at https://aka.ms/ssprsetup from another device, then try again."
+msgstr "Потрібна реєстрація для скидання пароля. Завершіть налаштування на https://aka.ms/ssprsetup з іншого пристрою, а потім спробуйте ще раз."
+
+#: src/common/src/idprovider/himmelblau.rs:2690 src/common/src/idprovider/himmelblau.rs:2786 src/common/src/idprovider/himmelblau.rs:3072 src/common/src/idprovider/himmelblau.rs:3208 src/common/src/idprovider/himmelblau.rs:3325 src/common/src/idprovider/openidconnect.rs:2472 src/common/src/idprovider/openidconnect.rs:2585 src/common/src/idprovider/common.rs:649
+msgid "Please enter your Hello TOTP code from your Authenticator:"
+msgstr "Будь ласка, введіть свій код Hello TOTP з Authenticator:"
+
+#: config_gen.rs:178
+msgid "Please insert your security key."
+msgstr "Будь ласка, вставте ключ безпеки."
+
+#: src/common/src/auth.rs:119
+msgid "Please select a device by touching one of them."
+msgstr "Будь ласка, виберіть пристрій, торкнувшись одного з них."
+
+#: config_gen.rs:186
+msgid "Please touch your security key."
+msgstr "Торкніться свого ключа безпеки."
+
+#: src/common/src/auth.rs:688
+msgid "Press enter to continue"
+msgstr "Натисніть Enter, щоб продовжити"
+
+#: src/common/src/auth.rs:1168
+msgid "QR/Bluetooth authentication failed."
+msgstr "Не вдалося виконати автентифікацію за допомогою QR/Bluetooth."
+
+#: src/common/src/idprovider/openidconnect.rs:90
+msgid "Scan the QR code to continue sign-in, or open this link on another device:\n"
+"{complete}\n"
+"If you cannot scan, visit:\n"
+"{verification_uri}\n"
+"And enter the code:\n"
+"{user_code}"
+msgstr "Scan the QR code to continue signing in, or open this link on another device:\n"
+"{complete}\n"
+"If you cannot scan, visit:\n"
+"{verification_uri}\n"
+"And enter the code:\n"
+"{user_code}"
+
+#: config_gen.rs:194
+msgid "Scan with your authenticator app"
+msgstr "Відскануйте за допомогою програми автентифікації"
+
+#: src/common/src/auth.rs:1151
+msgid "Security key and QR/Bluetooth authentication failed."
+msgstr "Не вдалося виконати автентифікацію за допомогою ключа безпеки та QR/Bluetooth."
+
+#: src/common/src/auth.rs:1187
+msgid "Security key authentication failed."
+msgstr "Не вдалося виконати автентифікацію за допомогою ключа безпеки."
+
+#: src/common/src/idprovider/openidconnect.rs:2404 src/common/src/idprovider/openidconnect.rs:2424
+msgid "Session data corrupted. Please sign in again."
+msgstr "Дані сеансу пошкоджено. Увійдіть знову."
+
+#: src/common/src/idprovider/himmelblau.rs:3482 src/common/src/idprovider/himmelblau.rs:4101 src/common/src/idprovider/himmelblau.rs:4222 src/common/src/idprovider/himmelblau.rs:4315 src/common/src/idprovider/openidconnect.rs:2093
+msgid "Set up a PIN\n"
+"A Hello PIN is a fast, secure way to sign in to your device, apps, and services."
+msgstr "Set up a PIN\n"
+"A Hello PIN is a fast, secure way to sign in to your device, apps and services."
+
+#: src/common/src/auth.rs:945
+msgid "TOTP Code:"
+msgstr "Код TOTP:"
+
+#: src/common/src/auth.rs:966
+msgid "The minimum PIN length is {length} characters."
+msgstr "Мінімальна довжина PIN-коду — {length} символів."
+
+#: src/pam/src/pam/mod.rs:576
+msgid "This command changes your local Hello PIN, NOT your Entra Id password."
+msgstr "Ця команда змінює ваш локальний PIN-код Hello, а НЕ ваш пароль Entra Id."
+
+#: src/common/src/auth.rs:158
+msgid "Too many failed attempts in one row. Your device has been temporarily blocked. Please unplug it and plug in again."
+msgstr "Забагато невдалих спроб поспіль. Ваш пристрій тимчасово заблоковано. Від'єднайте його та підключіть знову."
+
+#: src/common/src/auth.rs:162
+msgid "Too many failed attempts. Your device has been blocked. Reset it."
+msgstr "Забагато невдалих спроб. Ваш пристрій заблоковано. Скиньте його налаштування."
+
+#: src/common/src/auth.rs:181
+msgid "Too many failed user verification attempts."
+msgstr "Забагато невдалих спроб перевірки користувача."
+
+#: src/common/src/idprovider/common.rs:306
+msgid "Too many incorrect PIN attempts. You will need to enroll a new Linux Hello PIN."
+msgstr "Забагато неправильних спроб введення PIN-коду. Вам потрібно буде зареєструвати новий PIN-код Linux Hello."
+
+#: src/common/src/auth.rs:137 src/common/src/auth.rs:168
+msgid "Try again."
+msgstr "Спробуйте ще раз."
+
+#: src/common/src/idprovider/himmelblau.rs:3338 src/common/src/idprovider/openidconnect.rs:2598 src/common/src/idprovider/openidconnect.rs:2690 src/common/src/idprovider/openidconnect.rs:2868 src/common/src/idprovider/openidconnect.rs:3138
+msgid "Unexpected authentication step. Please try signing in again."
+msgstr "Неочікуваний етап автентифікації. Спробуйте ввійти знову."
+
+#: src/common/src/auth.rs:696
+msgid "Unexpected error occurred."
+msgstr "Сталася неочікувана помилка."
+
+#: src/common/src/auth.rs:185
+msgid "Unexpected error: {error}"
+msgstr "Неочікувана помилка: {error}"
+
+#: src/common/src/auth.rs:193
+msgid "Unexpected select device notice"
+msgstr "Неочікуване повідомлення про вибір пристрою"
+
+#: src/common/src/idprovider/himmelblau.rs:137 src/common/src/idprovider/himmelblau.rs:3986 src/common/src/idprovider/himmelblau.rs:4054 src/common/src/idprovider/himmelblau.rs:4144 src/common/src/idprovider/himmelblau.rs:4268
+msgid "Update your password\n"
+"You need to update your password because this is\n"
+"the first time you are signing in, or because your\n"
+"password has expired."
+msgstr "Оновіть пароль\n"
+"Вам потрібно оновити пароль, оскільки це\n"
+"перший раз, коли ви входите в систему, або тому, що термін дії вашого\n"
+"пароля завершився."
+
+#: config_gen.rs:74
+msgid "Use the Linux Hello PIN for this device."
+msgstr "Використайте PIN-код Linux Hello для цього пристрою."
+
+#: config_gen.rs:82
+msgid "Use the password for your Office 365 or Microsoft online login."
+msgstr "Використовуйте пароль для входу в Office 365 або Microsoft Online."
+
+#: src/common/src/i18n.rs:110 src/common/src/idprovider/openidconnect.rs:98
+msgid "Using a browser on another device, visit:\n"
+"{verification_uri}\n"
+"And enter the code:\n"
+"{user_code}"
+msgstr "Використовуючи браузер на іншому пристрої, перейдіть за адресою:\n"
+"{verification_uri}\n"
+"І введіть код:\n"
+"{user_code}"
+
+#: src/common/src/auth.rs:866
+msgid "Value:"
+msgstr "Значення:"
+
+#: src/common/src/idprovider/openidconnect.rs:761
+msgid "Waiting for browser authentication to complete..."
+msgstr "Очікування завершення автентифікації в браузері..."
+
+#: src/common/src/i18n.rs:89
+msgid "We texted your phone {phone}. Please enter the code to sign in:"
+msgstr "Ми надіслали SMS на ваш телефон {phone}. Введіть код, щоб увійти:"
+
+#: src/common/src/i18n.rs:103
+msgid "We're calling your office phone {phone}. Please answer it to continue."
+msgstr "Ми телефонуємо на ваш робочий телефон {phone}. Будь ласка, прийміть дзвінок, щоб продовжити."
+
+#: src/common/src/i18n.rs:96
+msgid "We're calling your phone {phone}. Please answer it to continue."
+msgstr "Ми телефонуємо вам на номер {phone}. Будь ласка, дайте відповідь, щоб продовжити."
+
+#: src/common/src/auth.rs:145
+msgid "Wrong PIN! {message}"
+msgstr "Неправильний PIN-код! {message}"
+
+#: src/common/src/auth.rs:176
+msgid "Wrong user verification! {message}"
+msgstr "Неправильна перевірка користувача! {message}"
+
+#: src/common/src/auth.rs:138 src/common/src/auth.rs:169
+msgid "You have {attempts} attempt left."
+msgid_plural "You have {attempts} attempts left."
+msgstr[0] "У вас залишилася {attempts} спроба."
+msgstr[1] "У вас залишилося {attempts} спроби."
+msgstr[2] "У вас залишилося {attempts} спроб."
+
+#: src/common/src/idprovider/himmelblau.rs:2547 src/common/src/idprovider/himmelblau.rs:2632 src/common/src/idprovider/openidconnect.rs:2412 src/common/src/idprovider/openidconnect.rs:2431 src/common/src/idprovider/openidconnect.rs:2505 src/common/src/idprovider/openidconnect.rs:2520
+msgid "Your session has expired. Please sign in again."
+msgstr "Ваш сеанс завершився. Увійдіть знову."
+
+#: src/common/src/auth.rs:605 src/pam/src/pam/mod.rs:823
+msgid "{code}: {message}\n"
+"If you are now prompted for a password from pam_unix, please disregard the prompt, go back and try again."
+msgstr "{code}: {message}\n"
+"Якщо зараз вам пропонується ввести пароль від pam_unix, проігноруйте цей запит, поверніться назад і спробуйте ще раз."
+
+#: src/common/src/auth.rs:718
+msgid "{message}\n"
+"No push? Check your mobile device's internet connection."
+msgstr "{message}\n"
+"Не надійшло push-сповіщення? Перевірте підключення до інтернету на своєму мобільному пристрої."
