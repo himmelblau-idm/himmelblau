@@ -53,7 +53,7 @@ use kanidm_hsm_crypto::PinValue;
 use oauth2::basic::BasicTokenType;
 use oauth2::{
     DeviceAuthorizationResponse as OauthDeviceAuthResponse, EmptyExtraTokenFields,
-    RequestTokenError, StandardTokenResponse,
+    RequestTokenError, ResourceOwnerPassword, ResourceOwnerUsername, StandardTokenResponse,
 };
 use openidconnect::core::{
     CoreAuthDisplay, CoreClaimName, CoreClaimType, CoreClient, CoreClientAuthMethod,
@@ -870,14 +870,89 @@ fn orchestrator_inputs_from_pam_request(
 mod tests {
     use super::{
         auth_request_from_orchestrator_inputs, mfa_from_oidc_device,
-        orchestrator_inputs_from_pam_request, parse_oidc_mfa_extra_data,
-        serialize_oidc_mfa_extra_data, OidcMfaExtraData, OrchestratorFlowState,
+        oidc_should_prompt_hello_setup, orchestrator_inputs_from_pam_request,
+        parse_oidc_mfa_extra_data, ropc_is_invalid_credentials, serialize_oidc_mfa_extra_data,
+        validated_password_cache_action, OidcMfaExtraData, OrchestratorFlowState,
         OrchestratorInputType, OrchestratorRequiredInput,
     };
-    use crate::idprovider::interface::AuthRequest;
+    use crate::idprovider::interface::{AuthCacheAction, AuthRequest, AuthResult};
     use crate::unix_proto::PamAuthRequest;
     use oauth2::DeviceAuthorizationResponse;
     use serde_json::json;
+
+    #[test]
+    fn ropc_invalid_credentials_detects_bad_password() {
+        // Keycloak / OneLogin wording for a wrong password.
+        assert!(ropc_is_invalid_credentials(Some(
+            "Invalid user credentials"
+        )));
+        // Case-insensitive matching.
+        assert!(ropc_is_invalid_credentials(Some(
+            "INVALID USER CREDENTIALS"
+        )));
+        // Entra embeds the AADSTS code and message in the description text.
+        assert!(ropc_is_invalid_credentials(Some(
+            "AADSTS50126: Error validating credentials due to invalid username or password."
+        )));
+        assert!(ropc_is_invalid_credentials(Some("Bad credentials")));
+    }
+
+    #[test]
+    fn ropc_invalid_credentials_ignores_mfa_and_unknown() {
+        // Keycloak returns this distinct message when OTP/MFA is required.
+        assert!(!ropc_is_invalid_credentials(Some(
+            "Account is not fully set up"
+        )));
+        assert!(!ropc_is_invalid_credentials(Some(
+            "MFA is required for this user"
+        )));
+        // Missing or unrecognized descriptions must not be treated as bad
+        // credentials (they fall back to the device flow).
+        assert!(!ropc_is_invalid_credentials(None));
+        assert!(!ropc_is_invalid_credentials(Some("something unexpected")));
+    }
+
+    #[test]
+    fn oidc_hello_setup_requires_missing_key_and_refresh_token() {
+        assert!(oidc_should_prompt_hello_setup(true, false, true, true));
+        assert!(!oidc_should_prompt_hello_setup(false, false, true, true));
+        assert!(!oidc_should_prompt_hello_setup(true, true, true, true));
+        assert!(!oidc_should_prompt_hello_setup(true, false, false, true));
+        assert!(!oidc_should_prompt_hello_setup(true, false, true, false));
+    }
+
+    #[test]
+    fn validated_password_cache_action_preserves_setup_pin_next() {
+        let result = AuthResult::Next(AuthRequest::SetupPin {
+            msg: "Set up a PIN".to_string(),
+        });
+
+        match validated_password_cache_action(&result, true, Some("secret")) {
+            AuthCacheAction::PasswordHashUpdate { cred } => assert_eq!(cred, "secret"),
+            AuthCacheAction::None => panic!("expected password hash update"),
+        }
+    }
+
+    #[test]
+    fn validated_password_cache_action_skips_denied_and_disabled() {
+        let denied = AuthResult::Denied("no".to_string());
+        assert!(matches!(
+            validated_password_cache_action(&denied, true, Some("secret")),
+            AuthCacheAction::None
+        ));
+
+        let next = AuthResult::Next(AuthRequest::SetupPin {
+            msg: "Set up a PIN".to_string(),
+        });
+        assert!(matches!(
+            validated_password_cache_action(&next, false, Some("secret")),
+            AuthCacheAction::None
+        ));
+        assert!(matches!(
+            validated_password_cache_action(&next, true, None),
+            AuthCacheAction::None
+        ));
+    }
 
     #[test]
     fn mfa_message_prefers_verification_uri_complete() {
@@ -1313,6 +1388,77 @@ struct OidcDelayedInit {
     http_client: reqwest::Client,
     authorization_endpoint: String,
     openid_configuration_url: String,
+    /// Whether the provider advertises the OAuth2 `password` (ROPC) grant in its
+    /// discovery document. Password-only auth is only offered when this is true.
+    password_grant_supported: bool,
+}
+
+/// Result of an attempted OIDC Resource Owner Password Credentials (ROPC) grant.
+/// The caller only needs to decide between rejecting the login and falling back
+/// to the interactive device flow.
+pub(crate) enum RopcError {
+    /// The provider confidently reported bad credentials; deny the login.
+    InvalidCredentials,
+    /// MFA is required, or the failure could not be confidently classified
+    /// (unknown server error, transport/parse error). Fall back to the device
+    /// flow so a legitimate user can still complete login. The String is for
+    /// logging only.
+    Fallback(String),
+}
+
+/// Classify an OIDC token-endpoint `error_description` as a confident
+/// bad-credential failure. Only a small curated set of provider-specific
+/// phrases counts; everything else (including MFA-required responses and
+/// unrecognized errors) returns false so the caller falls back to the device
+/// flow rather than wrongly rejecting a legitimate user.
+fn ropc_is_invalid_credentials(desc: Option<&str>) -> bool {
+    let d = match desc {
+        Some(d) => d.to_lowercase(),
+        None => return false,
+    };
+    [
+        "invalid user credentials",
+        "invalid username or password",
+        "invalid credentials",
+        "wrong username or password",
+        "incorrect password",
+        "bad credentials",
+    ]
+    .iter()
+    .any(|needle| d.contains(needle))
+}
+
+fn oidc_should_prompt_hello_setup(
+    hello_enabled: bool,
+    no_hello_pin: bool,
+    hello_key_missing: bool,
+    has_refresh_token: bool,
+) -> bool {
+    hello_enabled && !no_hello_pin && hello_key_missing && has_refresh_token
+}
+
+fn validated_password_cache_action(
+    auth_result: &AuthResult,
+    breakglass_enabled: bool,
+    cred: Option<&str>,
+) -> AuthCacheAction {
+    if !breakglass_enabled {
+        return AuthCacheAction::None;
+    }
+
+    if !matches!(
+        auth_result,
+        AuthResult::Success { .. } | AuthResult::Next(AuthRequest::SetupPin { .. })
+    ) {
+        return AuthCacheAction::None;
+    }
+
+    match cred {
+        Some(cred) => AuthCacheAction::PasswordHashUpdate {
+            cred: cred.to_string(),
+        },
+        None => AuthCacheAction::None,
+    }
 }
 
 pub struct OidcApplication {
@@ -1394,6 +1540,13 @@ impl OidcApplication {
                 provider_metadata.issuer().as_str().trim_end_matches('/')
             );
 
+            // Only offer password-only (ROPC) auth if the provider advertises the
+            // `password` grant. If the field is absent, treat it as unsupported.
+            let password_grant_supported = provider_metadata
+                .grant_types_supported()
+                .map(|grants| grants.contains(&CoreGrantType::Password))
+                .unwrap_or(false);
+
             let device_endpoint = provider_metadata
                 .additional_metadata()
                 .device_authorization_endpoint
@@ -1411,6 +1564,7 @@ impl OidcApplication {
                 http_client,
                 authorization_endpoint,
                 openid_configuration_url,
+                password_grant_supported,
             });
         }
         Ok(())
@@ -1449,6 +1603,64 @@ impl OidcApplication {
             Err(MsalError::RequestFailed(
                 "OIDC client not initialized".to_string(),
             ))
+        }
+    }
+
+    /// Whether the provider advertises the OAuth2 `password` (ROPC) grant.
+    /// Returns false if the client has not been initialized yet.
+    #[instrument(level = "debug", skip_all)]
+    pub async fn password_grant_supported(&self) -> bool {
+        match &*self.client.lock().await {
+            Some(delayed_init) => delayed_init.password_grant_supported,
+            None => false,
+        }
+    }
+
+    /// Acquire a token using the OAuth2 Resource Owner Password Credentials
+    /// (ROPC) grant. Uses the openidconnect/oauth2 client's own request builder
+    /// (like `initiate_device_flow`); ROPC has no polling, so no hand-rolled POST
+    /// is needed. Errors are reduced to a reject-vs-fallback decision for the
+    /// caller (see `RopcError`).
+    #[instrument(level = "debug", skip_all)]
+    pub(crate) async fn acquire_token_by_password(
+        &self,
+        username: &str,
+        password: &str,
+    ) -> Result<OidcTokenResponse, RopcError> {
+        let scopes = vec![
+            Scope::new("openid".to_string()),
+            Scope::new("profile".to_string()),
+            Scope::new("email".to_string()),
+            Scope::new("offline_access".to_string()),
+        ];
+        let guard = self.client.lock().await;
+        let delayed_init = guard
+            .as_ref()
+            .ok_or_else(|| RopcError::Fallback("OIDC client not initialized".to_string()))?;
+
+        // Bind the credentials to locals so they outlive the borrowing request.
+        // NOTE: ResourceOwnerPassword owns a plain String and does not zeroize on
+        // drop (oauth2 5.0.0), so this copy of the plaintext is the residual one we
+        // cannot scrub without patching the crate. Callers wrap their own copies in
+        // Zeroizing.
+        let ropc_username = ResourceOwnerUsername::new(username.to_string());
+        let ropc_password = ResourceOwnerPassword::new(password.to_string());
+        let req = delayed_init
+            .client
+            .exchange_password(&ropc_username, &ropc_password)
+            .map_err(|e| RopcError::Fallback(format!("token endpoint unavailable: {e}")))?
+            .add_scopes(scopes);
+
+        match req.request_async(&delayed_init.http_client).await {
+            Ok(token) => Ok(token),
+            Err(RequestTokenError::ServerResponse(resp)) => {
+                if ropc_is_invalid_credentials(resp.error_description().map(|s| s.as_str())) {
+                    Err(RopcError::InvalidCredentials)
+                } else {
+                    Err(RopcError::Fallback(resp.to_string()))
+                }
+            }
+            Err(e) => Err(RopcError::Fallback(format!("{e}"))),
         }
     }
 
@@ -2070,30 +2282,88 @@ impl OidcProvider {
         )))
     }
 
+    async fn initiate_device_or_orchestrator_auth(
+        &self,
+        account_id: &str,
+    ) -> Result<(AuthRequest, AuthCredHandler), IdpError> {
+        let device_flow = self.client.initiate_device_flow().await.map_err(|e| {
+            error!(?e, "Failed to initiate device flow");
+            IdpError::BadRequest
+        })?;
+
+        if let Some(orchestrator_flow) = self
+            .maybe_start_orchestrator_flow(account_id, &device_flow)
+            .await?
+        {
+            return Ok(orchestrator_flow);
+        }
+
+        let (flow, extra_data) = mfa_from_oidc_device(&device_flow)?;
+
+        let extra_data = serialize_oidc_mfa_extra_data(&OidcMfaExtraData::DeviceFlow {
+            dag_json: extra_data,
+        })?;
+
+        let polling_interval = flow.polling_interval.unwrap_or(5000);
+        Ok((
+            AuthRequest::MFAPoll {
+                msg: flow.msg.clone(),
+                polling_interval: polling_interval / 1000,
+                show_push_hint: false,
+            },
+            AuthCredHandler::MFA {
+                flow: Box::new(flow),
+                password: None,
+                extra_data: Some(extra_data),
+                reauth_hello_pin: None,
+            },
+        ))
+    }
+
     async fn finalize_mfa_success(
         &self,
         account_id: &str,
         no_hello_pin: bool,
         cred_handler: &mut AuthCredHandler,
+        keystore: &mut (impl KeyStoreTxn + Send),
         token: OidcTokenResponse,
+        validated_password: Option<Zeroizing<String>>,
     ) -> Result<(AuthResult, AuthCacheAction), IdpError> {
+        let has_refresh_token = token.refresh_token().is_some();
         match self.token_validate(account_id, &token).await {
             Ok(AuthResult::Success { token: token2 }) => {
                 let hello_enabled = self.config.lock().await.get_enable_hello();
-                if !hello_enabled || no_hello_pin {
-                    info!("Skipping Hello enrollment because it is disabled");
-                    return Ok((AuthResult::Success { token: token2 }, AuthCacheAction::None));
-                }
+                let hello_key_missing = self.fetch_hello_key(account_id, keystore).is_err();
 
-                *cred_handler = AuthCredHandler::SetupPin {
-                    token: Box::new(None),
-                };
-                Ok((
+                let result = if oidc_should_prompt_hello_setup(
+                    hello_enabled,
+                    no_hello_pin,
+                    hello_key_missing,
+                    has_refresh_token,
+                ) {
+                    *cred_handler = AuthCredHandler::SetupPin {
+                        token: Box::new(None),
+                    };
                     AuthResult::Next(AuthRequest::SetupPin {
                         msg: tr("Set up a PIN\nA Hello PIN is a fast, secure way to sign in to your device, apps, and services."),
-                    }),
-                    AuthCacheAction::None,
-                ))
+                    })
+                } else {
+                    if !hello_enabled || no_hello_pin {
+                        info!("Skipping Hello enrollment because it is disabled");
+                    } else if !hello_key_missing {
+                        debug!("Skipping Hello enrollment because Hello is already configured");
+                    } else if !has_refresh_token {
+                        warn!("Skipping Hello enrollment because OIDC response did not include a refresh token");
+                    }
+                    AuthResult::Success { token: token2 }
+                };
+
+                let action = validated_password_cache_action(
+                    &result,
+                    self.config.lock().await.get_offline_breakglass_enabled(),
+                    validated_password.as_ref().map(|c| c.as_str()),
+                );
+                Ok((result, action))
             }
             Ok(auth_result) => Ok((auth_result, AuthCacheAction::None)),
             Err(e) => Err(e),
@@ -2281,38 +2551,28 @@ impl IdProvider for OidcProvider {
             || no_hello_pin
             || force_reauth
         {
-            let device_flow = self.client.initiate_device_flow().await.map_err(|e| {
-                error!(?e, "Failed to initiate device flow");
-                IdpError::BadRequest
-            })?;
-
-            if let Some(orchestrator_flow) = self
-                .maybe_start_orchestrator_flow(account_id, &device_flow)
-                .await?
+            // Offer password-only (ROPC) auth in place of the device flow when it
+            // is enabled by config, this is not a remote service, and the provider
+            // advertises the `password` grant. Behaves like the Entra password-only
+            // flow: a successful password can still lead to Hello PIN setup.
+            let console_password_only = self.config.lock().await.get_allow_console_password_only();
+            if console_password_only
+                && !is_remote_service
+                && self.client.password_grant_supported().await
             {
-                return Ok(orchestrator_flow);
+                return Ok((
+                    AuthRequest::Password {
+                        prompt: None,
+                        long_prompt: None,
+                    },
+                    AuthCredHandler::PasswordFirst {
+                        auth_options: vec![],
+                        is_domain_joined: false,
+                    },
+                ));
             }
 
-            let (flow, extra_data) = mfa_from_oidc_device(&device_flow)?;
-
-            let extra_data = serialize_oidc_mfa_extra_data(&OidcMfaExtraData::DeviceFlow {
-                dag_json: extra_data,
-            })?;
-
-            let polling_interval = flow.polling_interval.unwrap_or(5000);
-            Ok((
-                AuthRequest::MFAPoll {
-                    msg: flow.msg.clone(),
-                    polling_interval: polling_interval / 1000,
-                    show_push_hint: false,
-                },
-                AuthCredHandler::MFA {
-                    flow: Box::new(flow),
-                    password: None,
-                    extra_data: Some(extra_data),
-                    reauth_hello_pin: None,
-                },
-            ))
+            self.initiate_device_or_orchestrator_auth(account_id).await
         } else {
             // Check if the network is even up prior to sending a PIN prompt,
             // otherwise we duplicate the PIN prompt when the network goes down.
@@ -2635,6 +2895,52 @@ impl IdProvider for OidcProvider {
 
                 auth_and_validate_hello_key!(hello_key, keytype, cred)
             }
+            (AuthCredHandler::PasswordFirst { .. }, PamAuthRequest::Password { cred }) => {
+                // Wrap the wire-delivered credential so this copy (and the clone
+                // handed to finalize_mfa_success below) is zeroized on drop.
+                let cred = Zeroizing::new(cred);
+                match self
+                    .client
+                    .acquire_token_by_password(account_id, &cred)
+                    .await
+                {
+                    Ok(token) => {
+                        let (res, action) = self
+                            .finalize_mfa_success(
+                                account_id,
+                                no_hello_pin,
+                                cred_handler,
+                                keystore,
+                                token,
+                                Some(cred.clone()),
+                            )
+                            .await?;
+                        Ok((res, action))
+                    }
+                    // Confident bad password: reject rather than dropping the user
+                    // into a device flow.
+                    Err(RopcError::InvalidCredentials) => {
+                        info!("OIDC password authentication failed: invalid credentials");
+                        Ok((
+                            AuthResult::Denied(tr("Invalid credentials")),
+                            AuthCacheAction::None,
+                        ))
+                    }
+                    // MFA required, or an error we can't confidently classify: fall
+                    // back to the device/MFA flow so a legitimate user can still log in.
+                    Err(RopcError::Fallback(msg)) => {
+                        debug!(
+                            %msg,
+                            "OIDC password grant did not complete; falling back to device flow"
+                        );
+                        let (req, handler) = self
+                            .initiate_device_or_orchestrator_auth(account_id)
+                            .await?;
+                        *cred_handler = handler;
+                        Ok((AuthResult::Next(req), AuthCacheAction::None))
+                    }
+                }
+            }
             (_, PamAuthRequest::Pin { cred }) => {
                 let (hello_key, keytype) =
                     self.fetch_hello_key(account_id, keystore).map_err(|e| {
@@ -2724,7 +3030,9 @@ impl IdProvider for OidcProvider {
                                     account_id,
                                     no_hello_pin,
                                     cred_handler,
+                                    keystore,
                                     token,
+                                    None,
                                 )
                                 .await
                             }
@@ -2823,7 +3131,9 @@ impl IdProvider for OidcProvider {
                                                 account_id,
                                                 no_hello_pin,
                                                 cred_handler,
+                                                keystore,
                                                 token,
+                                                None,
                                             )
                                             .await;
                                     }
@@ -2960,7 +3270,9 @@ impl IdProvider for OidcProvider {
                                                     account_id,
                                                     no_hello_pin,
                                                     cred_handler,
+                                                    keystore,
                                                     token,
+                                                    None,
                                                 )
                                                 .await;
                                         }
@@ -3021,7 +3333,9 @@ impl IdProvider for OidcProvider {
                                             account_id,
                                             no_hello_pin,
                                             cred_handler,
+                                            keystore,
                                             token,
+                                            None,
                                         )
                                         .await
                                     }
