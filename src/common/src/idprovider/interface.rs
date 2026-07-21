@@ -124,15 +124,15 @@ pub enum AuthCredHandler {
     ChangePassword {
         old_cred: String,
     },
-    /// Password-first authentication for console_password_only mode.
-    /// When this handler is active, we first validate the password via ROPC,
-    /// then check if sign-in frequency is satisfied via PRT exchange before
-    /// prompting for MFA. This allows skipping MFA when Azure's sign-in
-    /// frequency policy is already satisfied.
+    /// Password-first authentication for console_password_only mode. Providers
+    /// first try to validate the password, then either complete auth or continue
+    /// into their provider-specific MFA/device flow.
     PasswordFirst {
-        /// Auth options to pass if we need to initiate MFA flow
+        /// Entra auth options to pass if we need to initiate an MFA flow.
+        /// Generic OIDC providers ignore this field.
         auth_options: Vec<AuthOption>,
-        /// Whether the user is domain joined (affects resource URL in MFA flow)
+        /// Whether the device is domain joined for Entra ROPC/MFA behavior.
+        /// Generic OIDC providers ignore this field.
         is_domain_joined: bool,
     },
     None,

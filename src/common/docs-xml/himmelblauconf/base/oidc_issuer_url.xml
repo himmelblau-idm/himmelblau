@@ -40,6 +40,18 @@ Incorrect issuer URLs will cause provider discovery to fail.
 
 If this option is not set, Himmelblau defaults to its native Microsoft Entra ID
 authentication flow.
+
+.PP
+If
+.B allow_console_password_only
+is enabled and the OIDC provider advertises the
+.B password
+grant type in its discovery document, local console logins are offered
+password-only (single-factor) authentication via the Resource Owner Password
+Credentials (ROPC) grant instead of the device-authorization (browser) flow.
+Providers that do not advertise the
+.B password
+grant continue to use the device flow.
 </description>
 <conf_description>OIDC issuer URL for non-Entra providers.</conf_description>
 <default></default>

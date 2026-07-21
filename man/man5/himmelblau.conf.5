@@ -1,4 +1,4 @@
-.TH HIMMELBLAU.CONF "5" "June 2026" "Himmelblau Configuration" "File Formats"
+.TH HIMMELBLAU.CONF "5" "July 2026" "Himmelblau Configuration" "File Formats"
 .SH NAME
 himmelblau.conf \- Configuration file for Himmelblau, enabling Azure Entra ID authentication on Linux.
 
@@ -103,6 +103,18 @@ Incorrect issuer URLs will cause provider discovery to fail.
 
 If this option is not set, Himmelblau defaults to its native Microsoft Entra ID
 authentication flow.
+
+.PP
+If
+.B allow_console_password_only
+is enabled and the OIDC provider advertises the
+.B password
+grant type in its discovery document, local console logins are offered
+password-only (single-factor) authentication via the Resource Owner Password
+Credentials (ROPC) grant instead of the device-authorization (browser) flow.
+Providers that do not advertise the
+.B password
+grant continue to use the device flow.
 
 .P
 Example: oidc_issuer_url = https://login.microsoftonline.com/0656e57d-a8fc-4aa4-8366-8045787115ca/v2.0
@@ -294,6 +306,17 @@ This option requires the device to be domain-joined, matching the behavior of Mi
 use Hello PIN authentication if it is configured. To require MFA for all logins
 (including local console), set this option to
 .B false.
+
+.PP
+When a generic OIDC provider is configured (see
+.B oidc_issuer_url
+), this option also enables password-only login using the OIDC Resource Owner
+Password Credentials (ROPC) grant. It is only offered when the provider
+advertises the
+.B password
+grant type in its discovery document; providers that disable this grant fall
+back to the device-authorization (browser) flow. If the provider additionally
+requires MFA, authentication falls back to the device flow automatically.
 
 .P
 Default: true
