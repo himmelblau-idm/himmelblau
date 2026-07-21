@@ -1,0 +1,531 @@
+# Latvian translations for Himmelblau.
+# Copyright (C) 2026 Himmelblau contributors
+# This file is distributed under the same license as Himmelblau.
+#
+msgid ""
+msgstr ""
+"Project-Id-Version: himmelblau\n"
+"POT-Creation-Date: 2026-07-21 15:26+0000\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"PO-Revision-Date: 2026-07-21 15:44+0000\n"
+"Last-Translator: Automated via Codex <noreply@himmelblau-idm.org>\n"
+"Language-Team: Latvian\n"
+"Language: lv\n"
+"Plural-Forms: nplurals=3; plural=(((((((n % 10) == 1)) && (!(((n % 100) == 11)))) || ((((0 == 2)) && (((0 % 10) == 1))) && (!(((0 % 100) == 11))))) || ((!((0 == 2))) && (((0 % 10) == 1)))) ? 1 : (((((n % 10) == 0)) || (((n % 100) >= 11 && (n % 100) <= 19))) || (((0 == 2)) && (((0 % 100) >= 11 && (0 % 100) <= 19)))) ? 0 : 2);\n"
+
+#: src/common/src/auth.rs:1285 src/common/src/auth.rs:1298
+msgid "An unexpected error occurred."
+msgstr "Radās neparedzēta kļūda."
+
+#: src/common/src/idprovider/openidconnect.rs:753
+msgid "Approve sign-in in your authenticator app, then wait..."
+msgstr "Apstipriniet pierakstīšanos savā autentifikatora lietotnē, pēc tam uzgaidiet..."
+
+#: src/common/src/idprovider/himmelblau.rs:4809
+msgid "Authenticated user {user} does not match requested user"
+msgstr "Autentificētais lietotājs {user} neatbilst pieprasītajam lietotājam"
+
+#: src/common/src/idprovider/openidconnect.rs:2118
+msgid "Authenticated user {uuid} does not match requested user"
+msgstr "Autentificētais lietotājs {uuid} neatbilst pieprasītajam lietotājam"
+
+#: src/common/src/idprovider/openidconnect.rs:3003
+msgid "Authentication did not return a refresh token. Please try again."
+msgstr "Autentifikācija neatgrieza atsvaidzināšanas pilnvaru. Lūdzu, mēģiniet vēlreiz."
+
+#: src/common/src/idprovider/himmelblau.rs:3949
+msgid "Authentication failed (AADSTS{code})"
+msgstr "Autentifikācija neizdevās (AADSTS{code})"
+
+#: src/common/src/idprovider/openidconnect.rs:2939
+msgid "Authentication failed in browser flow."
+msgstr "Autentifikācija pārlūkprogrammas plūsmā neizdevās."
+
+#: src/common/src/idprovider/himmelblau.rs:209
+msgid "Authentication failed. Please contact your administrator."
+msgstr "Autentifikācija neizdevās. Lūdzu, sazinieties ar savu administratoru."
+
+#: src/common/src/idprovider/himmelblau.rs:3829
+msgid "Authentication failed. Please try again."
+msgstr "Autentifikācija neizdevās. Lūdzu, mēģiniet vēlreiz."
+
+#: src/common/src/idprovider/himmelblau.rs:3129
+msgid "Authentication failed. Please try signing in again."
+msgstr "Autentifikācija neizdevās. Lūdzu, mēģiniet pierakstīties vēlreiz."
+
+#: src/common/src/idprovider/himmelblau.rs:168
+msgid "Authentication failed: Authentication method not supported."
+msgstr "Autentifikācija neizdevās: autentifikācijas metode netiek atbalstīta."
+
+#: src/common/src/idprovider/himmelblau.rs:171 src/common/src/idprovider/himmelblau.rs:176
+msgid "Authentication failed: Configuration error."
+msgstr "Autentifikācija neizdevās: konfigurācijas kļūda."
+
+#: src/common/src/idprovider/himmelblau.rs:175
+msgid "Authentication failed: Cryptographic error."
+msgstr "Autentifikācija neizdevās: kriptogrāfiska kļūda."
+
+#: src/common/src/idprovider/himmelblau.rs:152
+msgid "Authentication failed: Invalid server response."
+msgstr "Autentifikācija neizdevās: nederīga servera atbilde."
+
+#: src/common/src/idprovider/himmelblau.rs:188
+msgid "Authentication failed: Missing required data."
+msgstr "Autentifikācija neizdevās: trūkst nepieciešamo datu."
+
+#: src/common/src/idprovider/himmelblau.rs:170
+msgid "Authentication failed: Security hardware error."
+msgstr "Autentifikācija neizdevās: drošības aparatūras kļūda."
+
+#: src/common/src/idprovider/himmelblau.rs:165
+msgid "Authentication failed: Unable to reach authentication server."
+msgstr "Autentifikācija neizdevās: neizdevās sasniegt autentifikācijas serveri."
+
+#: src/common/src/idprovider/openidconnect.rs:2738 src/common/src/idprovider/openidconnect.rs:2849 src/common/src/idprovider/openidconnect.rs:2984 src/common/src/idprovider/openidconnect.rs:3050 src/common/src/idprovider/openidconnect.rs:3063
+msgid "Authentication failed: {error}"
+msgstr "Autentifikācija neizdevās: {error}"
+
+#: src/common/src/idprovider/openidconnect.rs:3036
+msgid "Authentication flow completed but token exchange failed. Please try again."
+msgstr "Autentifikācijas plūsma tika pabeigta, bet marķiera apmaiņa neizdevās. Lūdzu, mēģiniet vēlreiz."
+
+#: src/common/src/idprovider/himmelblau.rs:179 src/common/src/idprovider/himmelblau.rs:203
+msgid "Authentication in progress."
+msgstr "Notiek autentifikācija."
+
+#: src/common/src/idprovider/openidconnect.rs:2537
+msgid "Authentication incomplete. Please try again."
+msgstr "Autentifikācija nav pabeigta. Lūdzu, mēģiniet vēlreiz."
+
+#: src/common/src/idprovider/himmelblau.rs:1912
+msgid "Authentication service is temporarily unavailable. Please try again shortly."
+msgstr "Autentifikācijas pakalpojums īslaicīgi nav pieejams. Lūdzu, mēģiniet vēlreiz pēc brīža."
+
+#: src/common/src/idprovider/himmelblau.rs:3169
+msgid "Authentication service unavailable. Please try again later."
+msgstr "Autentifikācijas pakalpojums nav pieejams. Lūdzu, mēģiniet vēlreiz vēlāk."
+
+#: src/common/src/idprovider/openidconnect.rs:2674 src/common/src/idprovider/openidconnect.rs:2713 src/common/src/idprovider/openidconnect.rs:2774
+msgid "Authentication session corrupted. Please try again."
+msgstr "Autentifikācijas sesija ir bojāta. Lūdzu, mēģiniet vēlreiz."
+
+#: src/common/src/idprovider/openidconnect.rs:2661
+msgid "Authentication session data missing. Please try again."
+msgstr "Trūkst autentifikācijas sesijas datu. Lūdzu, mēģiniet vēlreiz."
+
+#: src/common/src/idprovider/openidconnect.rs:3078
+msgid "Authentication session returned an unexpected state. Please try again."
+msgstr "Autentifikācijas sesija atgrieza neparedzētu stāvokli. Lūdzu, mēģiniet vēlreiz."
+
+#: src/common/src/idprovider/himmelblau.rs:4124 src/common/src/idprovider/openidconnect.rs:2701 src/common/src/idprovider/openidconnect.rs:2801
+msgid "Authentication timed out. Please try again."
+msgstr "Autentifikācijai iestājās noildze. Lūdzu, mēģiniet vēlreiz."
+
+#: src/common/src/idprovider/openidconnect.rs:3105
+msgid "Browser authentication backend unavailable. Please try again."
+msgstr "Pārlūka autentifikācijas aizmugursistēma nav pieejama. Lūdzu, mēģiniet vēlreiz."
+
+#: src/common/src/auth.rs:1261
+msgid "Changing the password. Please wait..."
+msgstr "Notiek paroles maiņa. Lūdzu, uzgaidiet..."
+
+#: src/common/src/auth.rs:1215
+msgid "Chosen password is too short! 8 chars required."
+msgstr "Izvēlētā parole ir pārāk īsa! Nepieciešamas 8 rakstzīmes."
+
+#: src/common/src/auth.rs:979 src/pam/src/pam/mod.rs:595
+msgid "Chosen pin is too short! {length} chars required."
+msgstr "Izvēlētais PIN kods ir pārāk īss! Nepieciešamas {length} rakstzīmes."
+
+#: src/common/src/auth.rs:829
+msgid "Cloud Password:"
+msgstr "Mākoņa parole:"
+
+#: src/common/src/auth.rs:868
+msgid "Code:"
+msgstr "Kods:"
+
+#: src/common/src/auth.rs:1012 src/pam/src/pam/mod.rs:637
+msgid "Confirm PIN:"
+msgstr "Apstipriniet PIN:"
+
+#: src/common/src/auth.rs:1236
+msgid "Confirm password:"
+msgstr "Apstipriniet paroli:"
+
+#: src/common/src/idprovider/himmelblau.rs:199
+msgid "Consent required. Please contact your administrator."
+msgstr "Nepieciešama piekrišana. Lūdzu, sazinieties ar administratoru."
+
+#: src/common/src/idprovider/himmelblau.rs:3609
+msgid "Create a PIN to use in place of passwords."
+msgstr "Izveidojiet PIN kodu, ko izmantot paroļu vietā."
+
+#: src/common/src/idprovider/himmelblau.rs:173
+msgid "Device enrollment failed. Please contact your administrator."
+msgstr "Ierīces reģistrācija neizdevās. Lūdzu, sazinieties ar savu administratoru."
+
+#: src/common/src/idprovider/himmelblau.rs:1022
+msgid "Device has been removed from the domain."
+msgstr "Ierīce ir noņemta no domēna."
+
+#: src/common/src/auth.rs:1120
+msgid "Enable Bluetooth to sign in with your phone."
+msgstr "Ieslēdziet Bluetooth, lai pierakstītos ar tālruni."
+
+#: src/common/src/auth.rs:1037
+msgid "Enrolling the Hello PIN. Please wait..."
+msgstr "Reģistrē Hello PIN. Lūdzu, uzgaidiet..."
+
+#: src/common/src/auth.rs:652
+msgid "Enter the setup key '{secret}' to enroll a TOTP Authenticator app. Use '{issuer}' for the code name and '{account}' as the label/name."
+msgstr "Ievadiet iestatīšanas atslēgu '{secret}', lai reģistrētu TOTP autentifikatora lietotni. Izmantojiet '{issuer}' kā koda nosaukumu un '{account}' kā etiķeti/nosaukumu."
+
+#: src/pam/src/pam/mod.rs:827
+msgid "Entra Id Fido authentication failed."
+msgstr "Entra ID FIDO autentifikācija neizdevās."
+
+#: src/common/src/auth.rs:836 src/pam/src/pam/mod.rs:712 src/pam/src/pam/mod.rs:752
+msgid "Entra Id Password:"
+msgstr "Entra ID parole:"
+
+#: src/common/src/idprovider/himmelblau.rs:3369 src/common/src/idprovider/himmelblau.rs:3380
+msgid "FIDO authentication not available. Please try a different authentication method."
+msgstr "FIDO autentifikācija nav pieejama. Lūdzu, izmēģiniet citu autentifikācijas metodi."
+
+#: src/common/src/idprovider/himmelblau.rs:2724 src/common/src/idprovider/himmelblau.rs:2837 src/common/src/idprovider/himmelblau.rs:2880 src/common/src/idprovider/himmelblau.rs:2927 src/common/src/idprovider/himmelblau.rs:2942 src/common/src/idprovider/openidconnect.rs:2368 src/common/src/idprovider/common.rs:665
+msgid "Failed to authenticate with Hello PIN."
+msgstr "Neizdevās autentificēties ar Hello PIN."
+
+#: src/common/src/idprovider/common.rs:271
+msgid "Failed to authenticate with Hello PIN. One more failed attempt will require multi-factor authentication and resetting your Linux Hello PIN."
+msgstr "Neizdevās autentificēties ar Hello PIN. Vēl viens neveiksmīgs mēģinājums prasīs daudzfaktoru autentifikāciju un Linux Hello PIN atiestatīšanu."
+
+#: src/common/src/idprovider/common.rs:554 src/common/src/idprovider/common.rs:564
+msgid "Failed to authenticate with Hello TOTP code."
+msgstr "Neizdevās autentificēties ar Hello TOTP kodu."
+
+#: src/common/src/auth.rs:638
+msgid "Failed to build regex: {error}"
+msgstr "Neizdevās izveidot regulāro izteiksmi: {error}"
+
+#: src/common/src/idprovider/himmelblau.rs:1002
+msgid "Failed to delete CSR key"
+msgstr "Neizdevās izdzēst CSR atslēgu"
+
+#: src/common/src/idprovider/himmelblau.rs:1014
+msgid "Failed to delete intune key"
+msgstr "Neizdevās dzēst Intune atslēgu"
+
+#: src/common/src/auth.rs:625 src/common/src/auth.rs:630 src/common/src/auth.rs:647 src/common/src/auth.rs:664
+msgid "Failed to generate QR code"
+msgstr "Neizdevās ģenerēt QR kodu"
+
+#: src/common/src/idprovider/himmelblau.rs:2283
+msgid "Failed to join domain. Please contact your administrator."
+msgstr "Neizdevās pievienoties domēnam. Lūdzu, sazinieties ar savu administratoru."
+
+#: src/common/src/idprovider/himmelblau.rs:3603
+msgid "Failed to provision hello key: {error}\n"
+"{message}"
+msgstr "Neizdevās nodrošināt Hello atslēgu: {error}\n"
+"{message}"
+
+#: src/common/src/idprovider/himmelblau.rs:2173
+msgid "Failed to save device configuration. Please contact your administrator."
+msgstr "Neizdevās saglabāt ierīces konfigurāciju. Lūdzu, sazinieties ar savu administratoru."
+
+#: src/common/src/idprovider/himmelblau.rs:2182
+msgid "Failed to store device credentials. Please contact your administrator."
+msgstr "Neizdevās saglabāt ierīces akreditācijas datus. Lūdzu, sazinieties ar savu administratoru."
+
+#: src/common/src/auth.rs:126 src/common/src/auth.rs:147
+msgid "Fido PIN:"
+msgstr "Fido PIN kods:"
+
+#: src/common/src/auth.rs:1401
+msgid "Himmelblau authentication is starting, please wait..."
+msgstr "Tiek sākta Himmelblau autentifikācija, lūdzu, uzgaidiet..."
+
+#: src/common/src/auth.rs:1408
+msgid "Himmelblau authentication service did not become available in time."
+msgstr "Himmelblau autentifikācijas pakalpojums laikus nekļuva pieejams."
+
+#: src/common/src/auth.rs:1395
+msgid "Himmelblau authentication service is unavailable."
+msgstr "Himmelblau autentifikācijas pakalpojums nav pieejams."
+
+#: src/common/src/auth.rs:1030 src/common/src/auth.rs:1254 src/pam/src/pam/mod.rs:654
+msgid "Inputs did not match. Try again."
+msgstr "Ievadītās vērtības nesakrita. Mēģiniet vēlreiz."
+
+#: src/common/src/idprovider/himmelblau.rs:207
+msgid "Multi-factor authentication required."
+msgstr "Nepieciešama daudzfaktoru autentifikācija."
+
+#: src/common/src/idprovider/himmelblau.rs:4164
+msgid "Multi-factor authentication required. Please try signing in again."
+msgstr "Nepieciešama daudzfaktoru autentifikācija. Lūdzu, mēģiniet pierakstīties vēlreiz."
+
+#: src/common/src/idprovider/himmelblau.rs:1850 src/common/src/idprovider/himmelblau.rs:1953 src/common/src/idprovider/himmelblau.rs:1977 src/common/src/idprovider/himmelblau.rs:2137 src/common/src/idprovider/himmelblau.rs:2155 src/common/src/idprovider/himmelblau.rs:2523 src/common/src/idprovider/himmelblau.rs:2624 src/common/src/idprovider/openidconnect.rs:2250 src/common/src/idprovider/openidconnect.rs:2349 src/common/src/idprovider/common.rs:463
+msgid "Network outage detected."
+msgstr "Konstatēts tīkla darbības pārtraukums."
+
+#: src/common/src/auth.rs:976 src/pam/src/pam/mod.rs:589
+msgid "New PIN:"
+msgstr "Jauns PIN kods:"
+
+#: src/common/src/auth.rs:1208
+msgid "New password:"
+msgstr "Jaunā parole:"
+
+#: src/common/src/auth.rs:1002 src/common/src/auth.rs:1064
+msgid "No Entra Id Hello PIN was supplied."
+msgstr "Netika norādīts Entra ID Hello PIN kods."
+
+#: src/common/src/auth.rs:1019
+msgid "No Entra Id Hello confirmation PIN was supplied."
+msgstr "Netika norādīts Entra Id Hello apstiprinājuma PIN."
+
+#: src/common/src/auth.rs:1243
+msgid "No Entra Id confirmation password was supplied."
+msgstr "Netika norādīta Entra ID apstiprinājuma parole."
+
+#: src/common/src/auth.rs:845 src/common/src/auth.rs:1224
+msgid "No Entra Id password was supplied."
+msgstr "Netika norādīta Entra ID parole."
+
+#: src/common/src/auth.rs:951
+msgid "No Hello TOTP code was supplied."
+msgstr "Hello TOTP kods netika norādīts."
+
+#: src/common/src/auth.rs:875
+msgid "No input was supplied."
+msgstr "Netika ievadīta informācija."
+
+#: src/common/src/idprovider/common.rs:413
+msgid "Offline auth has expired. Please connect to the network to continue."
+msgstr "Bezsaistes autentifikācijas termiņš ir beidzies. Lūdzu, izveidojiet savienojumu ar tīklu, lai turpinātu."
+
+#: src/common/src/i18n.rs:82
+msgid "Open your Authenticator app, and enter the number '{entropy}' to sign in."
+msgstr "Atveriet savu lietotni Authenticator un ievadiet skaitli “{entropy}”, lai pierakstītos."
+
+#: src/common/src/auth.rs:922
+msgid "Open your authenticator app and scan this QR code to enroll. Then enter the generated code.\n"
+"{qr}"
+msgstr "Atveriet autentifikatora lietotni un noskenējiet šo QR kodu, lai reģistrētos. Pēc tam ievadiet ģenerēto kodu.\n"
+"{qr}"
+
+#: src/common/src/auth.rs:986 src/pam/src/pam/mod.rs:611
+msgid "PIN must not use repeating or predictable sequences. Avoid patterns like '111111', '123456', or '135791'."
+msgstr "PIN nedrīkst izmantot atkārtotas vai paredzamas secības. Izvairieties no tādiem paraugiem kā “111111”, “123456” vai “135791”."
+
+#: src/common/src/idprovider/himmelblau.rs:3585
+msgid "PIN setup failed. Please try signing in again."
+msgstr "PIN iestatīšana neizdevās. Lūdzu, mēģiniet pierakstīties vēlreiz."
+
+#: src/common/src/auth.rs:1058
+msgid "PIN:"
+msgstr "PIN kods:"
+
+#: src/common/src/idprovider/himmelblau.rs:191
+msgid "Password change required. Please contact your administrator."
+msgstr "Nepieciešama paroles maiņa. Lūdzu, sazinieties ar savu administratoru."
+
+#: src/common/src/idprovider/himmelblau.rs:195
+msgid "Password entry required."
+msgstr "Nepieciešama paroles ievade."
+
+#: src/common/src/idprovider/himmelblau.rs:158 src/common/src/idprovider/himmelblau.rs:183
+msgid "Password reset registration required. Complete setup at https://aka.ms/ssprsetup from another device, then try again."
+msgstr "Nepieciešama paroles atiestatīšanas reģistrācija. Pabeidziet iestatīšanu vietnē https://aka.ms/ssprsetup no citas ierīces un pēc tam mēģiniet vēlreiz."
+
+#: src/common/src/idprovider/himmelblau.rs:2690 src/common/src/idprovider/himmelblau.rs:2786 src/common/src/idprovider/himmelblau.rs:3072 src/common/src/idprovider/himmelblau.rs:3208 src/common/src/idprovider/himmelblau.rs:3325 src/common/src/idprovider/openidconnect.rs:2472 src/common/src/idprovider/openidconnect.rs:2585 src/common/src/idprovider/common.rs:649
+msgid "Please enter your Hello TOTP code from your Authenticator:"
+msgstr "Lūdzu, ievadiet savu Hello TOTP kodu no autentifikatora:"
+
+#: config_gen.rs:178
+msgid "Please insert your security key."
+msgstr "Lūdzu, ievietojiet savu drošības atslēgu."
+
+#: src/common/src/auth.rs:119
+msgid "Please select a device by touching one of them."
+msgstr "Lūdzu, atlasiet ierīci, pieskaroties vienai no tām."
+
+#: config_gen.rs:186
+msgid "Please touch your security key."
+msgstr "Lūdzu, pieskarieties savai drošības atslēgai."
+
+#: src/common/src/auth.rs:688
+msgid "Press enter to continue"
+msgstr "Nospiediet Enter, lai turpinātu"
+
+#: src/common/src/auth.rs:1168
+msgid "QR/Bluetooth authentication failed."
+msgstr "QR/Bluetooth autentifikācija neizdevās."
+
+#: src/common/src/idprovider/openidconnect.rs:90
+msgid "Scan the QR code to continue sign-in, or open this link on another device:\n"
+"{complete}\n"
+"If you cannot scan, visit:\n"
+"{verification_uri}\n"
+"And enter the code:\n"
+"{user_code}"
+msgstr "Skenējiet QR kodu, lai turpinātu pierakstīšanos, vai atveriet šo saiti citā ierīcē:\n"
+"{complete}\n"
+"Ja nevarat skenēt, apmeklējiet:\n"
+"{verification_uri}\n"
+"Un ievadiet kodu:\n"
+"{user_code}"
+
+#: config_gen.rs:194
+msgid "Scan with your authenticator app"
+msgstr "Skenējiet ar savu autentifikatora lietotni"
+
+#: src/common/src/auth.rs:1151
+msgid "Security key and QR/Bluetooth authentication failed."
+msgstr "Drošības atslēgas un QR/Bluetooth autentifikācija neizdevās."
+
+#: src/common/src/auth.rs:1187
+msgid "Security key authentication failed."
+msgstr "Drošības atslēgas autentifikācija neizdevās."
+
+#: src/common/src/idprovider/openidconnect.rs:2404 src/common/src/idprovider/openidconnect.rs:2424
+msgid "Session data corrupted. Please sign in again."
+msgstr "Sesijas dati ir bojāti. Lūdzu, pierakstieties vēlreiz."
+
+#: src/common/src/idprovider/himmelblau.rs:3482 src/common/src/idprovider/himmelblau.rs:4101 src/common/src/idprovider/himmelblau.rs:4222 src/common/src/idprovider/himmelblau.rs:4315 src/common/src/idprovider/openidconnect.rs:2093
+msgid "Set up a PIN\n"
+"A Hello PIN is a fast, secure way to sign in to your device, apps, and services."
+msgstr "Iestatiet PIN kodu\n"
+"Hello PIN kods ir ātrs un drošs veids, kā pierakstīties ierīcē, lietotnēs un pakalpojumos."
+
+#: src/common/src/auth.rs:945
+msgid "TOTP Code:"
+msgstr "TOTP kods:"
+
+#: src/common/src/auth.rs:966
+msgid "The minimum PIN length is {length} characters."
+msgstr "Minimālais PIN koda garums ir {length} rakstzīmes."
+
+#: src/pam/src/pam/mod.rs:576
+msgid "This command changes your local Hello PIN, NOT your Entra Id password."
+msgstr "Šī komanda maina jūsu lokālo Hello PIN kodu, NEVIS jūsu Entra Id paroli."
+
+#: src/common/src/auth.rs:158
+msgid "Too many failed attempts in one row. Your device has been temporarily blocked. Please unplug it and plug in again."
+msgstr "Pārāk daudz neveiksmīgu mēģinājumu pēc kārtas. Jūsu ierīce ir īslaicīgi bloķēta. Lūdzu, atvienojiet to un pievienojiet vēlreiz."
+
+#: src/common/src/auth.rs:162
+msgid "Too many failed attempts. Your device has been blocked. Reset it."
+msgstr "Pārāk daudz neveiksmīgu mēģinājumu. Jūsu ierīce ir bloķēta. Atiestatiet to."
+
+#: src/common/src/auth.rs:181
+msgid "Too many failed user verification attempts."
+msgstr "Pārāk daudz neveiksmīgu lietotāja verifikācijas mēģinājumu."
+
+#: src/common/src/idprovider/common.rs:306
+msgid "Too many incorrect PIN attempts. You will need to enroll a new Linux Hello PIN."
+msgstr "Pārāk daudz nepareizu PIN mēģinājumu. Jums būs jāreģistrē jauns Linux Hello PIN."
+
+#: src/common/src/auth.rs:137 src/common/src/auth.rs:168
+msgid "Try again."
+msgstr "Mēģiniet vēlreiz."
+
+#: src/common/src/idprovider/himmelblau.rs:3338 src/common/src/idprovider/openidconnect.rs:2598 src/common/src/idprovider/openidconnect.rs:2690 src/common/src/idprovider/openidconnect.rs:2868 src/common/src/idprovider/openidconnect.rs:3138
+msgid "Unexpected authentication step. Please try signing in again."
+msgstr "Neparedzēts autentifikācijas solis. Lūdzu, mēģiniet pierakstīties vēlreiz."
+
+#: src/common/src/auth.rs:696
+msgid "Unexpected error occurred."
+msgstr "Radās neparedzēta kļūda."
+
+#: src/common/src/auth.rs:185
+msgid "Unexpected error: {error}"
+msgstr "Neparedzēta kļūda: {error}"
+
+#: src/common/src/auth.rs:193
+msgid "Unexpected select device notice"
+msgstr "Negaidīts paziņojums par ierīces izvēli"
+
+#: src/common/src/idprovider/himmelblau.rs:137 src/common/src/idprovider/himmelblau.rs:3986 src/common/src/idprovider/himmelblau.rs:4054 src/common/src/idprovider/himmelblau.rs:4144 src/common/src/idprovider/himmelblau.rs:4268
+msgid "Update your password\n"
+"You need to update your password because this is\n"
+"the first time you are signing in, or because your\n"
+"password has expired."
+msgstr "Atjauniniet savu paroli\n"
+"Jums ir jāatjaunina sava parole, jo šī ir\n"
+"pirmā reize, kad pierakstāties, vai arī jūsu\n"
+"paroles derīguma termiņš ir beidzies."
+
+#: config_gen.rs:74
+msgid "Use the Linux Hello PIN for this device."
+msgstr "Izmantojiet šīs ierīces Linux Hello PIN kodu."
+
+#: config_gen.rs:82
+msgid "Use the password for your Office 365 or Microsoft online login."
+msgstr "Izmantojiet paroli, ko lietojat Office 365 vai Microsoft tiešsaistes pieteikšanās kontam."
+
+#: src/common/src/i18n.rs:110 src/common/src/idprovider/openidconnect.rs:98
+msgid "Using a browser on another device, visit:\n"
+"{verification_uri}\n"
+"And enter the code:\n"
+"{user_code}"
+msgstr "Izmantojot pārlūkprogrammu citā ierīcē, apmeklējiet:\n"
+"{verification_uri}\n"
+"Un ievadiet kodu:\n"
+"{user_code}"
+
+#: src/common/src/auth.rs:866
+msgid "Value:"
+msgstr "Vērtība:"
+
+#: src/common/src/idprovider/openidconnect.rs:761
+msgid "Waiting for browser authentication to complete..."
+msgstr "Gaida, līdz pārlūkā tiks pabeigta autentifikācija..."
+
+#: src/common/src/i18n.rs:89
+msgid "We texted your phone {phone}. Please enter the code to sign in:"
+msgstr "Mēs nosūtījām īsziņu uz jūsu tālruni {phone}. Lūdzu, ievadiet kodu, lai pierakstītos:"
+
+#: src/common/src/i18n.rs:103
+msgid "We're calling your office phone {phone}. Please answer it to continue."
+msgstr "Mēs zvanām uz jūsu darba tālruni {phone}. Lūdzu, atbildiet uz zvanu, lai turpinātu."
+
+#: src/common/src/i18n.rs:96
+msgid "We're calling your phone {phone}. Please answer it to continue."
+msgstr "Mēs zvanām uz jūsu tālruni {phone}. Lūdzu, atbildiet uz zvanu, lai turpinātu."
+
+#: src/common/src/auth.rs:145
+msgid "Wrong PIN! {message}"
+msgstr "Nepareizs PIN! {message}"
+
+#: src/common/src/auth.rs:176
+msgid "Wrong user verification! {message}"
+msgstr "Nepareiza lietotāja verifikācija! {message}"
+
+#: src/common/src/auth.rs:138 src/common/src/auth.rs:169
+msgid "You have {attempts} attempt left."
+msgid_plural "You have {attempts} attempts left."
+msgstr[0] "Jums ir atlicis {attempts} mēģinājums."
+msgstr[1] "Jums ir atlikuši {attempts} mēģinājumi."
+msgstr[2] "Jums ir atlikuši {attempts} mēģinājumu."
+
+#: src/common/src/idprovider/himmelblau.rs:2547 src/common/src/idprovider/himmelblau.rs:2632 src/common/src/idprovider/openidconnect.rs:2412 src/common/src/idprovider/openidconnect.rs:2431 src/common/src/idprovider/openidconnect.rs:2505 src/common/src/idprovider/openidconnect.rs:2520
+msgid "Your session has expired. Please sign in again."
+msgstr "Jūsu sesija ir beigusies. Lūdzu, pierakstieties vēlreiz."
+
+#: src/common/src/auth.rs:605 src/pam/src/pam/mod.rs:823
+msgid "{code}: {message}\n"
+"If you are now prompted for a password from pam_unix, please disregard the prompt, go back and try again."
+msgstr "{code}: {message}\n"
+"Ja tagad saņemat pam_unix paroles pieprasījumu, lūdzu, ignorējiet to, atgriezieties un mēģiniet vēlreiz."
+
+#: src/common/src/auth.rs:718
+msgid "{message}\n"
+"No push? Check your mobile device's internet connection."
+msgstr "{message}\n"
+"Nesaņēmāt pašpiegādes paziņojumu? Pārbaudiet savas mobilās ierīces interneta savienojumu."
