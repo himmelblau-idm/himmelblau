@@ -1,0 +1,531 @@
+# Slovak translations for Himmelblau.
+# Copyright (C) 2026 Himmelblau contributors
+# This file is distributed under the same license as Himmelblau.
+#
+msgid ""
+msgstr ""
+"Project-Id-Version: himmelblau\n"
+"POT-Creation-Date: 2026-07-20 22:00+0000\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"PO-Revision-Date: 2026-07-21 13:39+0000\n"
+"Last-Translator: Automated via Codex <noreply@himmelblau-idm.org>\n"
+"Language-Team: Slovak\n"
+"Language: sk\n"
+"Plural-Forms: nplurals=3; plural=(n==1) ? 0 : (n>=2 && n<=4) ? 1 : 2;\n"
+
+#: src/common/src/auth.rs:1285 src/common/src/auth.rs:1298
+msgid "An unexpected error occurred."
+msgstr "Vyskytla sa neočakávaná chyba."
+
+#: src/common/src/idprovider/openidconnect.rs:753
+msgid "Approve sign-in in your authenticator app, then wait..."
+msgstr "Schváľte prihlásenie vo svojej overovacej aplikácii a potom počkajte..."
+
+#: src/common/src/idprovider/himmelblau.rs:4809
+msgid "Authenticated user {user} does not match requested user"
+msgstr "Overený používateľ {user} sa nezhoduje s požadovaným používateľom"
+
+#: src/common/src/idprovider/openidconnect.rs:2118
+msgid "Authenticated user {uuid} does not match requested user"
+msgstr "Overený používateľ {uuid} sa nezhoduje s požadovaným používateľom"
+
+#: src/common/src/idprovider/openidconnect.rs:3003
+msgid "Authentication did not return a refresh token. Please try again."
+msgstr "Autentifikácia nevrátila obnovovací token. Skúste to znova."
+
+#: src/common/src/idprovider/himmelblau.rs:3949
+msgid "Authentication failed (AADSTS{code})"
+msgstr "Overenie zlyhalo (AADSTS{code})"
+
+#: src/common/src/idprovider/openidconnect.rs:2939
+msgid "Authentication failed in browser flow."
+msgstr "Overenie totožnosti v toku prehliadača zlyhalo."
+
+#: src/common/src/idprovider/himmelblau.rs:209
+msgid "Authentication failed. Please contact your administrator."
+msgstr "Autentifikácia zlyhala. Kontaktujte svojho správcu."
+
+#: src/common/src/idprovider/himmelblau.rs:3829
+msgid "Authentication failed. Please try again."
+msgstr "Overenie zlyhalo. Skúste to znova."
+
+#: src/common/src/idprovider/himmelblau.rs:3129
+msgid "Authentication failed. Please try signing in again."
+msgstr "Autentifikácia zlyhala. Skúste sa prihlásiť znova."
+
+#: src/common/src/idprovider/himmelblau.rs:168
+msgid "Authentication failed: Authentication method not supported."
+msgstr "Autentifikácia zlyhala: Metóda autentifikácie nie je podporovaná."
+
+#: src/common/src/idprovider/himmelblau.rs:171 src/common/src/idprovider/himmelblau.rs:176
+msgid "Authentication failed: Configuration error."
+msgstr "Overenie zlyhalo: Chyba konfigurácie."
+
+#: src/common/src/idprovider/himmelblau.rs:175
+msgid "Authentication failed: Cryptographic error."
+msgstr "Overenie zlyhalo: kryptografická chyba."
+
+#: src/common/src/idprovider/himmelblau.rs:152
+msgid "Authentication failed: Invalid server response."
+msgstr "Overenie zlyhalo: Neplatná odpoveď servera."
+
+#: src/common/src/idprovider/himmelblau.rs:188
+msgid "Authentication failed: Missing required data."
+msgstr "Overenie zlyhalo: Chýbajú povinné údaje."
+
+#: src/common/src/idprovider/himmelblau.rs:170
+msgid "Authentication failed: Security hardware error."
+msgstr "Overenie zlyhalo: Chyba bezpečnostného hardvéru."
+
+#: src/common/src/idprovider/himmelblau.rs:165
+msgid "Authentication failed: Unable to reach authentication server."
+msgstr "Autentifikácia zlyhala: Nepodarilo sa kontaktovať autentifikačný server."
+
+#: src/common/src/idprovider/openidconnect.rs:2738 src/common/src/idprovider/openidconnect.rs:2849 src/common/src/idprovider/openidconnect.rs:2984 src/common/src/idprovider/openidconnect.rs:3050 src/common/src/idprovider/openidconnect.rs:3063
+msgid "Authentication failed: {error}"
+msgstr "Overenie totožnosti zlyhalo: {error}"
+
+#: src/common/src/idprovider/openidconnect.rs:3036
+msgid "Authentication flow completed but token exchange failed. Please try again."
+msgstr "Tok overenia bol dokončený, ale výmena tokenu zlyhala. Skúste to znova."
+
+#: src/common/src/idprovider/himmelblau.rs:179 src/common/src/idprovider/himmelblau.rs:203
+msgid "Authentication in progress."
+msgstr "Prebieha overovanie totožnosti."
+
+#: src/common/src/idprovider/openidconnect.rs:2537
+msgid "Authentication incomplete. Please try again."
+msgstr "Overenie totožnosti nebolo dokončené. Skúste to znova."
+
+#: src/common/src/idprovider/himmelblau.rs:1912
+msgid "Authentication service is temporarily unavailable. Please try again shortly."
+msgstr "Služba overovania je dočasne nedostupná. Skúste to znova o chvíľu."
+
+#: src/common/src/idprovider/himmelblau.rs:3169
+msgid "Authentication service unavailable. Please try again later."
+msgstr "Služba overovania nie je dostupná. Skúste to znova neskôr."
+
+#: src/common/src/idprovider/openidconnect.rs:2674 src/common/src/idprovider/openidconnect.rs:2713 src/common/src/idprovider/openidconnect.rs:2774
+msgid "Authentication session corrupted. Please try again."
+msgstr "Autentifikačná relácia je poškodená. Skúste to znova."
+
+#: src/common/src/idprovider/openidconnect.rs:2661
+msgid "Authentication session data missing. Please try again."
+msgstr "Chýbajú údaje autentifikačnej relácie. Skúste to znova."
+
+#: src/common/src/idprovider/openidconnect.rs:3078
+msgid "Authentication session returned an unexpected state. Please try again."
+msgstr "Relácia overovania totožnosti vrátila neočakávaný stav. Skúste to znova."
+
+#: src/common/src/idprovider/himmelblau.rs:4124 src/common/src/idprovider/openidconnect.rs:2701 src/common/src/idprovider/openidconnect.rs:2801
+msgid "Authentication timed out. Please try again."
+msgstr "Časový limit overenia totožnosti vypršal. Skúste to, prosím, znova."
+
+#: src/common/src/idprovider/openidconnect.rs:3105
+msgid "Browser authentication backend unavailable. Please try again."
+msgstr "Backend overovania cez prehliadač nie je dostupný. Skúste to znova."
+
+#: src/common/src/auth.rs:1261
+msgid "Changing the password. Please wait..."
+msgstr "Zmena hesla. Čakajte, prosím..."
+
+#: src/common/src/auth.rs:1215
+msgid "Chosen password is too short! 8 chars required."
+msgstr "Zvolené heslo je príliš krátke! Vyžaduje sa 8 znakov."
+
+#: src/common/src/auth.rs:979 src/pam/src/pam/mod.rs:595
+msgid "Chosen pin is too short! {length} chars required."
+msgstr "Zvolený PIN je príliš krátky! Vyžaduje sa {length} znakov."
+
+#: src/common/src/auth.rs:829
+msgid "Cloud Password:"
+msgstr "Cloudové heslo:"
+
+#: src/common/src/auth.rs:868
+msgid "Code:"
+msgstr "Kód:"
+
+#: src/common/src/auth.rs:1012 src/pam/src/pam/mod.rs:637
+msgid "Confirm PIN:"
+msgstr "Potvrďte PIN:"
+
+#: src/common/src/auth.rs:1236
+msgid "Confirm password:"
+msgstr "Potvrďte heslo:"
+
+#: src/common/src/idprovider/himmelblau.rs:199
+msgid "Consent required. Please contact your administrator."
+msgstr "Vyžaduje sa súhlas. Obráťte sa na svojho správcu."
+
+#: src/common/src/idprovider/himmelblau.rs:3609
+msgid "Create a PIN to use in place of passwords."
+msgstr "Vytvorte si PIN, ktorý budete používať namiesto hesiel."
+
+#: src/common/src/idprovider/himmelblau.rs:173
+msgid "Device enrollment failed. Please contact your administrator."
+msgstr "Registrácia zariadenia zlyhala. Kontaktujte svojho správcu."
+
+#: src/common/src/idprovider/himmelblau.rs:1022
+msgid "Device has been removed from the domain."
+msgstr "Zariadenie bolo odstránené z domény."
+
+#: src/common/src/auth.rs:1120
+msgid "Enable Bluetooth to sign in with your phone."
+msgstr "Zapnite Bluetooth, aby ste sa mohli prihlásiť pomocou telefónu."
+
+#: src/common/src/auth.rs:1037
+msgid "Enrolling the Hello PIN. Please wait..."
+msgstr "Prebieha registrácia Hello PIN-u. Čakajte, prosím..."
+
+#: src/common/src/auth.rs:652
+msgid "Enter the setup key '{secret}' to enroll a TOTP Authenticator app. Use '{issuer}' for the code name and '{account}' as the label/name."
+msgstr "Zadajte nastavovací kľúč „{secret}“ na registráciu aplikácie TOTP Authenticator. Ako názov kódu použite „{issuer}“ a ako označenie/názov „{account}“."
+
+#: src/pam/src/pam/mod.rs:827
+msgid "Entra Id Fido authentication failed."
+msgstr "Overenie pomocou Entra Id Fido zlyhalo."
+
+#: src/common/src/auth.rs:836 src/pam/src/pam/mod.rs:712 src/pam/src/pam/mod.rs:752
+msgid "Entra Id Password:"
+msgstr "Heslo Entra ID:"
+
+#: src/common/src/idprovider/himmelblau.rs:3369 src/common/src/idprovider/himmelblau.rs:3380
+msgid "FIDO authentication not available. Please try a different authentication method."
+msgstr "Overenie FIDO nie je k dispozícii. Skúste použiť iný spôsob overenia."
+
+#: src/common/src/idprovider/himmelblau.rs:2724 src/common/src/idprovider/himmelblau.rs:2837 src/common/src/idprovider/himmelblau.rs:2880 src/common/src/idprovider/himmelblau.rs:2927 src/common/src/idprovider/himmelblau.rs:2942 src/common/src/idprovider/openidconnect.rs:2368 src/common/src/idprovider/common.rs:665
+msgid "Failed to authenticate with Hello PIN."
+msgstr "Overenie pomocou Hello PIN zlyhalo."
+
+#: src/common/src/idprovider/common.rs:271
+msgid "Failed to authenticate with Hello PIN. One more failed attempt will require multi-factor authentication and resetting your Linux Hello PIN."
+msgstr "Overenie pomocou kódu Hello PIN zlyhalo. Ešte jeden neúspešný pokus bude vyžadovať viacfaktorové overenie a resetovanie vášho kódu Linux Hello PIN."
+
+#: src/common/src/idprovider/common.rs:554 src/common/src/idprovider/common.rs:564
+msgid "Failed to authenticate with Hello TOTP code."
+msgstr "Autentifikácia pomocou kódu Hello TOTP zlyhala."
+
+#: src/common/src/auth.rs:638
+msgid "Failed to build regex: {error}"
+msgstr "Nepodarilo sa vytvoriť regulárny výraz: {error}"
+
+#: src/common/src/idprovider/himmelblau.rs:1002
+msgid "Failed to delete CSR key"
+msgstr "Nepodarilo sa odstrániť kľúč CSR"
+
+#: src/common/src/idprovider/himmelblau.rs:1014
+msgid "Failed to delete intune key"
+msgstr "Nepodarilo sa odstrániť kľúč Intune"
+
+#: src/common/src/auth.rs:625 src/common/src/auth.rs:630 src/common/src/auth.rs:647 src/common/src/auth.rs:664
+msgid "Failed to generate QR code"
+msgstr "Nepodarilo sa vygenerovať QR kód"
+
+#: src/common/src/idprovider/himmelblau.rs:2283
+msgid "Failed to join domain. Please contact your administrator."
+msgstr "Nepodarilo sa pripojiť k doméne. Kontaktujte svojho správcu."
+
+#: src/common/src/idprovider/himmelblau.rs:3603
+msgid "Failed to provision hello key: {error}\n"
+"{message}"
+msgstr "Nepodarilo sa zriadiť kľúč Hello: {error}\n"
+"{message}"
+
+#: src/common/src/idprovider/himmelblau.rs:2173
+msgid "Failed to save device configuration. Please contact your administrator."
+msgstr "Nepodarilo sa uložiť konfiguráciu zariadenia. Kontaktujte svojho správcu."
+
+#: src/common/src/idprovider/himmelblau.rs:2182
+msgid "Failed to store device credentials. Please contact your administrator."
+msgstr "Nepodarilo sa uložiť poverenia zariadenia. Obráťte sa na svojho správcu."
+
+#: src/common/src/auth.rs:126 src/common/src/auth.rs:147
+msgid "Fido PIN:"
+msgstr "PIN Fido:"
+
+#: src/common/src/auth.rs:1401
+msgid "Himmelblau authentication is starting, please wait..."
+msgstr "Overenie cez Himmelblau sa spúšťa, čakajte, prosím..."
+
+#: src/common/src/auth.rs:1408
+msgid "Himmelblau authentication service did not become available in time."
+msgstr "Autentifikačná služba Himmelblau nebola dostupná včas."
+
+#: src/common/src/auth.rs:1395
+msgid "Himmelblau authentication service is unavailable."
+msgstr "Autentifikačná služba Himmelblau nie je dostupná."
+
+#: src/common/src/auth.rs:1030 src/common/src/auth.rs:1254 src/pam/src/pam/mod.rs:654
+msgid "Inputs did not match. Try again."
+msgstr "Vstupy sa nezhodovali. Skúste to znova."
+
+#: src/common/src/idprovider/himmelblau.rs:207
+msgid "Multi-factor authentication required."
+msgstr "Vyžaduje sa viacfaktorové overenie."
+
+#: src/common/src/idprovider/himmelblau.rs:4164
+msgid "Multi-factor authentication required. Please try signing in again."
+msgstr "Vyžaduje sa viacfaktorové overenie. Skúste sa prihlásiť znova."
+
+#: src/common/src/idprovider/himmelblau.rs:1850 src/common/src/idprovider/himmelblau.rs:1953 src/common/src/idprovider/himmelblau.rs:1977 src/common/src/idprovider/himmelblau.rs:2137 src/common/src/idprovider/himmelblau.rs:2155 src/common/src/idprovider/himmelblau.rs:2523 src/common/src/idprovider/himmelblau.rs:2624 src/common/src/idprovider/openidconnect.rs:2250 src/common/src/idprovider/openidconnect.rs:2349 src/common/src/idprovider/common.rs:463
+msgid "Network outage detected."
+msgstr "Zistený výpadok siete."
+
+#: src/common/src/auth.rs:976 src/pam/src/pam/mod.rs:589
+msgid "New PIN:"
+msgstr "Nový PIN:"
+
+#: src/common/src/auth.rs:1208
+msgid "New password:"
+msgstr "Nové heslo:"
+
+#: src/common/src/auth.rs:1002 src/common/src/auth.rs:1064
+msgid "No Entra Id Hello PIN was supplied."
+msgstr "Nebol zadaný žiadny Hello PIN pre Entra ID."
+
+#: src/common/src/auth.rs:1019
+msgid "No Entra Id Hello confirmation PIN was supplied."
+msgstr "Nebol zadaný žiadny potvrdzovací PIN kód Entra ID Hello."
+
+#: src/common/src/auth.rs:1243
+msgid "No Entra Id confirmation password was supplied."
+msgstr "Nebolo zadané žiadne potvrdzovacie heslo Entra ID."
+
+#: src/common/src/auth.rs:845 src/common/src/auth.rs:1224
+msgid "No Entra Id password was supplied."
+msgstr "Nebolo zadané žiadne heslo Entra ID."
+
+#: src/common/src/auth.rs:951
+msgid "No Hello TOTP code was supplied."
+msgstr "Nebol zadaný žiadny kód Hello TOTP."
+
+#: src/common/src/auth.rs:875
+msgid "No input was supplied."
+msgstr "Nebol zadaný žiadny vstup."
+
+#: src/common/src/idprovider/common.rs:413
+msgid "Offline auth has expired. Please connect to the network to continue."
+msgstr "Platnosť offline overenia vypršala. Ak chcete pokračovať, pripojte sa k sieti."
+
+#: src/common/src/i18n.rs:82
+msgid "Open your Authenticator app, and enter the number '{entropy}' to sign in."
+msgstr "Otvorte aplikáciu Authenticator a na prihlásenie zadajte číslo {entropy}."
+
+#: src/common/src/auth.rs:922
+msgid "Open your authenticator app and scan this QR code to enroll. Then enter the generated code.\n"
+"{qr}"
+msgstr "Otvorte svoju overovaciu aplikáciu a naskenujte tento QR kód, aby ste sa zaregistrovali. Potom zadajte vygenerovaný kód.\n"
+"{qr}"
+
+#: src/common/src/auth.rs:986 src/pam/src/pam/mod.rs:611
+msgid "PIN must not use repeating or predictable sequences. Avoid patterns like '111111', '123456', or '135791'."
+msgstr "PIN nesmie používať opakujúce sa alebo predvídateľné postupnosti. Vyhnite sa vzorom ako „111111“, „123456“ alebo „135791“."
+
+#: src/common/src/idprovider/himmelblau.rs:3585
+msgid "PIN setup failed. Please try signing in again."
+msgstr "Nastavenie PIN kódu zlyhalo. Skúste sa prihlásiť znova."
+
+#: src/common/src/auth.rs:1058
+msgid "PIN:"
+msgstr "PIN:"
+
+#: src/common/src/idprovider/himmelblau.rs:191
+msgid "Password change required. Please contact your administrator."
+msgstr "Vyžaduje sa zmena hesla. Kontaktujte svojho správcu."
+
+#: src/common/src/idprovider/himmelblau.rs:195
+msgid "Password entry required."
+msgstr "Vyžaduje sa zadanie hesla."
+
+#: src/common/src/idprovider/himmelblau.rs:158 src/common/src/idprovider/himmelblau.rs:183
+msgid "Password reset registration required. Complete setup at https://aka.ms/ssprsetup from another device, then try again."
+msgstr "Vyžaduje sa registrácia na obnovenie hesla. Dokončite nastavenie na https://aka.ms/ssprsetup z iného zariadenia a potom to skúste znova."
+
+#: src/common/src/idprovider/himmelblau.rs:2690 src/common/src/idprovider/himmelblau.rs:2786 src/common/src/idprovider/himmelblau.rs:3072 src/common/src/idprovider/himmelblau.rs:3208 src/common/src/idprovider/himmelblau.rs:3325 src/common/src/idprovider/openidconnect.rs:2472 src/common/src/idprovider/openidconnect.rs:2585 src/common/src/idprovider/common.rs:649
+msgid "Please enter your Hello TOTP code from your Authenticator:"
+msgstr "Zadajte svoj Hello TOTP kód z aplikácie Authenticator:"
+
+#: config_gen.rs:178
+msgid "Please insert your security key."
+msgstr "Prosím, vložte svoj bezpečnostný kľúč."
+
+#: src/common/src/auth.rs:119
+msgid "Please select a device by touching one of them."
+msgstr "Vyberte zariadenie dotykom jedného z nich."
+
+#: config_gen.rs:186
+msgid "Please touch your security key."
+msgstr "Dotknite sa svojho bezpečnostného kľúča."
+
+#: src/common/src/auth.rs:688
+msgid "Press enter to continue"
+msgstr "Pokračujte stlačením klávesu Enter"
+
+#: src/common/src/auth.rs:1168
+msgid "QR/Bluetooth authentication failed."
+msgstr "Overenie QR/Bluetooth zlyhalo."
+
+#: src/common/src/idprovider/openidconnect.rs:90
+msgid "Scan the QR code to continue sign-in, or open this link on another device:\n"
+"{complete}\n"
+"If you cannot scan, visit:\n"
+"{verification_uri}\n"
+"And enter the code:\n"
+"{user_code}"
+msgstr "Naskenujte QR kód a pokračujte v prihlasovaní alebo otvorte tento odkaz na inom zariadení:\n"
+"{complete}\n"
+"Ak nemôžete skenovať, navštívte stránku:\n"
+"{verification_uri}\n"
+"A zadajte kód:\n"
+"{user_code}"
+
+#: config_gen.rs:194
+msgid "Scan with your authenticator app"
+msgstr "Skenujte pomocou overovacej aplikácie"
+
+#: src/common/src/auth.rs:1151
+msgid "Security key and QR/Bluetooth authentication failed."
+msgstr "Overenie bezpečnostným kľúčom a pomocou QR/Bluetooth zlyhalo."
+
+#: src/common/src/auth.rs:1187
+msgid "Security key authentication failed."
+msgstr "Overenie pomocou bezpečnostného kľúča zlyhalo."
+
+#: src/common/src/idprovider/openidconnect.rs:2404 src/common/src/idprovider/openidconnect.rs:2424
+msgid "Session data corrupted. Please sign in again."
+msgstr "Údaje relácie sú poškodené. Prihláste sa znova."
+
+#: src/common/src/idprovider/himmelblau.rs:3482 src/common/src/idprovider/himmelblau.rs:4101 src/common/src/idprovider/himmelblau.rs:4222 src/common/src/idprovider/himmelblau.rs:4315 src/common/src/idprovider/openidconnect.rs:2093
+msgid "Set up a PIN\n"
+"A Hello PIN is a fast, secure way to sign in to your device, apps, and services."
+msgstr "Nastavte si PIN\n"
+"PIN kód Hello je rýchly a bezpečný spôsob prihlásenia do vášho zariadenia, aplikácií a služieb."
+
+#: src/common/src/auth.rs:945
+msgid "TOTP Code:"
+msgstr "Kód TOTP:"
+
+#: src/common/src/auth.rs:966
+msgid "The minimum PIN length is {length} characters."
+msgstr "Minimálna dĺžka PIN kódu je {length} znakov."
+
+#: src/pam/src/pam/mod.rs:576
+msgid "This command changes your local Hello PIN, NOT your Entra Id password."
+msgstr "Tento príkaz zmení váš miestny Hello PIN, NIE vaše heslo Entra Id."
+
+#: src/common/src/auth.rs:158
+msgid "Too many failed attempts in one row. Your device has been temporarily blocked. Please unplug it and plug in again."
+msgstr "Príliš veľa neúspešných pokusov za sebou. Vaše zariadenie bolo dočasne zablokované. Odpojte ho a znova ho pripojte."
+
+#: src/common/src/auth.rs:162
+msgid "Too many failed attempts. Your device has been blocked. Reset it."
+msgstr "Príliš veľa neúspešných pokusov. Vaše zariadenie bolo zablokované. Resetujte ho."
+
+#: src/common/src/auth.rs:181
+msgid "Too many failed user verification attempts."
+msgstr "Príliš veľa neúspešných pokusov o overenie používateľa."
+
+#: src/common/src/idprovider/common.rs:306
+msgid "Too many incorrect PIN attempts. You will need to enroll a new Linux Hello PIN."
+msgstr "Príliš veľa nesprávnych pokusov o zadanie PIN kódu. Budete si musieť zaregistrovať nový PIN pre Linux Hello."
+
+#: src/common/src/auth.rs:137 src/common/src/auth.rs:168
+msgid "Try again."
+msgstr "Skúste to znova."
+
+#: src/common/src/idprovider/himmelblau.rs:3338 src/common/src/idprovider/openidconnect.rs:2598 src/common/src/idprovider/openidconnect.rs:2690 src/common/src/idprovider/openidconnect.rs:2868 src/common/src/idprovider/openidconnect.rs:3138
+msgid "Unexpected authentication step. Please try signing in again."
+msgstr "Neočakávaný krok overenia. Skúste sa znova prihlásiť."
+
+#: src/common/src/auth.rs:696
+msgid "Unexpected error occurred."
+msgstr "Vyskytla sa neočakávaná chyba."
+
+#: src/common/src/auth.rs:185
+msgid "Unexpected error: {error}"
+msgstr "Neočakávaná chyba: {error}"
+
+#: src/common/src/auth.rs:193
+msgid "Unexpected select device notice"
+msgstr "Neočakávané oznámenie o výbere zariadenia"
+
+#: src/common/src/idprovider/himmelblau.rs:137 src/common/src/idprovider/himmelblau.rs:3986 src/common/src/idprovider/himmelblau.rs:4054 src/common/src/idprovider/himmelblau.rs:4144 src/common/src/idprovider/himmelblau.rs:4268
+msgid "Update your password\n"
+"You need to update your password because this is\n"
+"the first time you are signing in, or because your\n"
+"password has expired."
+msgstr "Aktualizujte svoje heslo\n"
+"Musíte si aktualizovať heslo, pretože sa prihlasujete\n"
+"prvýkrát alebo preto, že platnosť vášho\n"
+"hesla uplynula."
+
+#: config_gen.rs:74
+msgid "Use the Linux Hello PIN for this device."
+msgstr "Použite PIN Linux Hello pre toto zariadenie."
+
+#: config_gen.rs:82
+msgid "Use the password for your Office 365 or Microsoft online login."
+msgstr "Použite heslo, ktorým sa prihlasujete do Office 365 alebo online účtu Microsoft."
+
+#: src/common/src/i18n.rs:110 src/common/src/idprovider/openidconnect.rs:98
+msgid "Using a browser on another device, visit:\n"
+"{verification_uri}\n"
+"And enter the code:\n"
+"{user_code}"
+msgstr "Pomocou prehliadača na inom zariadení navštívte:\n"
+"{verification_uri}\n"
+"A zadajte kód:\n"
+"{user_code}"
+
+#: src/common/src/auth.rs:866
+msgid "Value:"
+msgstr "Hodnota:"
+
+#: src/common/src/idprovider/openidconnect.rs:761
+msgid "Waiting for browser authentication to complete..."
+msgstr "Čaká sa na dokončenie overenia v prehliadači..."
+
+#: src/common/src/i18n.rs:89
+msgid "We texted your phone {phone}. Please enter the code to sign in:"
+msgstr "Na váš telefón {phone} sme odoslali SMS. Zadajte kód na prihlásenie:"
+
+#: src/common/src/i18n.rs:103
+msgid "We're calling your office phone {phone}. Please answer it to continue."
+msgstr "Voláme na váš pracovný telefón {phone}. Ak chcete pokračovať, prijmite hovor."
+
+#: src/common/src/i18n.rs:96
+msgid "We're calling your phone {phone}. Please answer it to continue."
+msgstr "Voláme na váš telefón {phone}. Ak chcete pokračovať, prijmite hovor."
+
+#: src/common/src/auth.rs:145
+msgid "Wrong PIN! {message}"
+msgstr "Nesprávny PIN! {message}"
+
+#: src/common/src/auth.rs:176
+msgid "Wrong user verification! {message}"
+msgstr "Nesprávne overenie používateľa! {message}"
+
+#: src/common/src/auth.rs:138 src/common/src/auth.rs:169
+msgid "You have {attempts} attempt left."
+msgid_plural "You have {attempts} attempts left."
+msgstr[0] "Zostáva vám {attempts} pokus."
+msgstr[1] "Zostávajú vám {attempts} pokusy."
+msgstr[2] "Zostáva vám {attempts} pokusov."
+
+#: src/common/src/idprovider/himmelblau.rs:2547 src/common/src/idprovider/himmelblau.rs:2632 src/common/src/idprovider/openidconnect.rs:2412 src/common/src/idprovider/openidconnect.rs:2431 src/common/src/idprovider/openidconnect.rs:2505 src/common/src/idprovider/openidconnect.rs:2520
+msgid "Your session has expired. Please sign in again."
+msgstr "Platnosť vašej relácie uplynula. Prihláste sa znova."
+
+#: src/common/src/auth.rs:605 src/pam/src/pam/mod.rs:823
+msgid "{code}: {message}\n"
+"If you are now prompted for a password from pam_unix, please disregard the prompt, go back and try again."
+msgstr "{code}: {message}\n"
+"Ak sa vám teraz zobrazí výzva na zadanie hesla od pam_unix, ignorujte ju, vráťte sa späť a skúste to znova."
+
+#: src/common/src/auth.rs:718
+msgid "{message}\n"
+"No push? Check your mobile device's internet connection."
+msgstr "{message}\n"
+"Neprišlo push oznámenie? Skontrolujte internetové pripojenie svojho mobilného zariadenia."
