@@ -820,21 +820,18 @@ fn handle_pam_auth_response_password(
     let cred = if let Some(cred) = consume_authtok {
         cred
     } else {
-        if let Some(long_prompt) = long_prompt.filter(|prompt| !prompt.trim().is_empty()) {
-            state.msg_printer.print_text(long_prompt);
-        }
-
         let prompt = match prompt.filter(|prompt| !prompt.trim().is_empty()) {
             Some(prompt) => i18n::translate_external_message(prompt),
             None if state.cfg.get_oidc_issuer_url().is_some() => tr("Cloud Password:"),
-            None => {
-                state
-                    .msg_printer
-                    .print_text(&i18n::translate_external_message(
-                        &state.cfg.get_entra_id_password_prompt(),
-                    ));
+            None => format!(
+                "{}\n{}",
+                i18n::translate_external_message(&state.cfg.get_entra_id_password_prompt()),
                 tr("Entra Id Password:")
-            }
+            ),
+        };
+        let prompt = match long_prompt.filter(|prompt| !prompt.trim().is_empty()) {
+            Some(long_prompt) => format!("{}\n{}", long_prompt, prompt),
+            None => prompt,
         };
         match state.msg_printer.prompt_echo_off(&prompt) {
             Some(cred) => cred,
@@ -1549,6 +1546,7 @@ mod tests {
     struct RecordingPrinter {
         text: Mutex<Vec<String>>,
         error: Mutex<Vec<String>>,
+        prompts: Mutex<Vec<String>>,
     }
 
     impl MessagePrinter for RecordingPrinter {
@@ -1564,8 +1562,9 @@ mod tests {
             None
         }
 
-        fn prompt_echo_off(&self, _prompt: &str) -> Option<String> {
-            None
+        fn prompt_echo_off(&self, prompt: &str) -> Option<String> {
+            self.prompts.lock().unwrap().push(prompt.to_string());
+            Some("hunter2".to_string())
         }
     }
 
@@ -1847,5 +1846,68 @@ mod tests {
             msg.len() > input.len(),
             "DAG message should still include generated QR content"
         );
+    }
+
+    fn test_password_state(
+        printer: Arc<RecordingPrinter>,
+    ) -> (AuthenticateState, std::os::unix::net::UnixListener) {
+        let socket_path = format!("/tmp/himmelblau_auth_test_sock_{}", uuid::Uuid::new_v4());
+        let listener = std::os::unix::net::UnixListener::bind(&socket_path)
+            .expect("Failed to bind test socket");
+        let daemon_client =
+            DaemonClientBlocking::new(&socket_path).expect("Failed to connect test socket");
+        (
+            AuthenticateState {
+                daemon_client,
+                authtok: None,
+                cfg: test_config(""),
+                account_id: "user@example.com".to_string(),
+                service: "mariadb".to_string(),
+                opts: Options::default(),
+                msg_printer: printer,
+                poll_attempt: 0,
+                polling_interval: 0,
+            },
+            listener,
+        )
+    }
+
+    #[test]
+    fn test_password_prompt_folds_info_into_single_prompt() {
+        let printer = Arc::new(RecordingPrinter::default());
+        let (mut state, _listener) = test_password_state(printer.clone());
+
+        let next = handle_pam_auth_response_password(&mut state, None, Some("MFA required"));
+
+        assert!(printer.text.lock().unwrap().is_empty());
+        let prompts = printer.prompts.lock().unwrap();
+        assert_eq!(prompts.len(), 1);
+        assert!(prompts[0].contains("MFA required"));
+        assert!(prompts[0].contains(&state.cfg.get_entra_id_password_prompt()));
+        assert!(prompts[0].contains("Entra Id Password:"));
+        match next {
+            PamWhatNext::Next(ClientRequest::PamAuthenticateStep(PamAuthRequest::Password {
+                cred,
+            })) => assert_eq!(cred, "hunter2"),
+            _ => panic!("expected a password step request"),
+        }
+    }
+
+    #[test]
+    fn test_password_prompt_folds_info_into_provided_prompt() {
+        let printer = Arc::new(RecordingPrinter::default());
+        let (mut state, _listener) = test_password_state(printer.clone());
+
+        let _ = handle_pam_auth_response_password(
+            &mut state,
+            Some("Custom prompt:"),
+            Some("MFA required"),
+        );
+
+        assert!(printer.text.lock().unwrap().is_empty());
+        let prompts = printer.prompts.lock().unwrap();
+        assert_eq!(prompts.len(), 1);
+        assert!(prompts[0].starts_with("MFA required"));
+        assert!(prompts[0].contains("Custom prompt:"));
     }
 }
