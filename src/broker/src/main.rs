@@ -122,31 +122,129 @@ fn sso_cookie_response_is_valid(resp: &str) -> bool {
         .unwrap_or(false)
 }
 
+/// True when a line is unicode/ASCII QR art (mostly block-drawing glyphs).
+/// Those lines must not be sent through pinentry: the Assuan client panics on
+/// long undivided SETDESC payloads (`splitting of long lines yet implemented`).
+fn is_qr_art_line(line: &str) -> bool {
+    let trimmed = line.trim();
+    if trimmed.is_empty() {
+        return false;
+    }
+    let non_space = trimmed.chars().filter(|c| !c.is_whitespace()).count();
+    if non_space == 0 {
+        return false;
+    }
+    let blocks = trimmed
+        .chars()
+        .filter(|c| matches!(*c, '\u{2580}'..='\u{259F}'))
+        .count();
+    // QR rows are almost entirely half/full blocks + spaces.
+    blocks * 2 >= non_space
+}
+
+/// Prepare auth messages for pinentry: drop greeter prefixes and QR art, and
+/// keep Assuan command payloads short enough that pinentry-rs does not panic.
+fn sanitize_for_pinentry(msg: &str) -> String {
+    let clean = msg
+        .trim_start_matches("[FIDO_INSERT] ")
+        .trim_start_matches("[FIDO_TOUCH] ");
+
+    let without_qr: String = clean
+        .lines()
+        .filter(|line| !is_qr_art_line(line))
+        .collect::<Vec<_>>()
+        .join("\n")
+        .trim()
+        .to_string();
+
+    // pinentry-rs 0.8 does not split long Assuan lines; stay well under 1KiB.
+    const MAX_PINENTRY_CHARS: usize = 900;
+    if without_qr.chars().count() <= MAX_PINENTRY_CHARS {
+        return without_qr;
+    }
+    let truncated: String = without_qr.chars().take(MAX_PINENTRY_CHARS).collect();
+    format!("{truncated}…")
+}
+
+/// Pull https URLs out of MFA / device-code messages for browser launch.
+fn extract_https_urls(msg: &str) -> Vec<String> {
+    let mut urls = Vec::new();
+    let mut rest = msg;
+    while let Some(start) = rest.find("https://") {
+        let candidate = &rest[start..];
+        let end = candidate
+            .find(|c: char| c.is_whitespace() || matches!(c, '`' | '"' | '\'' | ')' | ']' | '>' | ','))
+            .unwrap_or(candidate.len());
+        let url = candidate[..end].trim_end_matches(['.', ';', ':']).to_string();
+        if !url.is_empty() {
+            urls.push(url);
+        }
+        rest = &candidate[end.max(1)..];
+    }
+    urls
+}
+
+fn is_device_code_message(msg: &str) -> bool {
+    let lower = msg.to_ascii_lowercase();
+    lower.contains("enter the code")
+        || lower.contains("login.microsoft.com/device")
+        || lower.contains("microsoft.com/devicelogin")
+}
+
+/// Open MFA / device-code URLs so the user is not stuck with a dead pinentry OK.
+fn maybe_open_auth_urls(msg: &str) {
+    for url in extract_https_urls(msg) {
+        let lower = url.to_ascii_lowercase();
+        if !(lower.contains("login.microsoft")
+            || lower.contains("microsoftonline")
+            || lower.contains("/device"))
+        {
+            continue;
+        }
+        match std::process::Command::new("xdg-open").arg(&url).spawn() {
+            Ok(_) => info!("opened auth URL in browser: {}", url),
+            Err(e) => debug!("could not open auth URL {}: {}", url, e),
+        }
+    }
+}
+
+fn show_pinentry_message(msg: &str) {
+    maybe_open_auth_urls(msg);
+    let ok_label = if is_device_code_message(msg) {
+        "Continue after signing in"
+    } else {
+        "OK"
+    };
+    if let Some(mut dialog) = pinentry::MessageDialog::with_default_binary() {
+        // Pinentry-rs panics on oversized Assuan lines; never let that
+        // unwind through the D-Bus handler (Edge AcquireTokenInteractively).
+        let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _ = dialog.with_ok(ok_label).show_message(msg);
+        }));
+    }
+}
+
 /// A `MessagePrinter` that uses `pinentry` for prompts and messages.
 /// Used by `authenticate()` for the interactive auth flow.
 struct PinentryMessagePrinter;
 
 impl MessagePrinter for PinentryMessagePrinter {
     fn print_text(&self, msg: &str) {
-        // Strip greeter protocol prefixes as these are meant for the
-        // qr-greeter GNOME extension, not for end-user display.
-        let clean = msg
-            .trim_start_matches("[FIDO_INSERT] ")
-            .trim_start_matches("[FIDO_TOUCH] ");
-        debug!("message: {}", clean);
-        if let Some(mut dialog) = pinentry::MessageDialog::with_default_binary() {
-            let _ = dialog.with_ok("OK").show_message(clean);
+        let clean = sanitize_for_pinentry(msg);
+        if clean.is_empty() {
+            return;
         }
+        debug!("message: {}", clean);
+        show_pinentry_message(&clean);
     }
 
     fn print_error(&self, msg: &str) {
-        let clean = msg
-            .trim_start_matches("[FIDO_INSERT] ")
-            .trim_start_matches("[FIDO_TOUCH] ");
-        error!("auth error: {}", clean);
-        if let Some(mut dialog) = pinentry::MessageDialog::with_default_binary() {
-            let _ = dialog.with_ok("OK").show_message(clean);
+        let clean = sanitize_for_pinentry(msg);
+        if clean.is_empty() {
+            return;
         }
+        error!("auth error: {}", clean);
+        show_pinentry_message(&clean);
     }
 
     fn prompt_echo_on(&self, prompt: &str) -> Option<String> {
@@ -265,15 +363,19 @@ impl InteractiveSessionBroker {
         // tokio runtime issues (fido_auth creates its own Runtime).
         let cfg = (*self.cfg).clone();
         let msg_printer: Arc<dyn MessagePrinter> = Arc::new(PinentryMessagePrinter);
+        // Edge AcquireTokenInteractively needs a real interactive step, but
+        // Hello PIN *is* that step. force_reauth / no_hello_pin both skip
+        // Hello in unix_user_online_auth_init and fall straight through to
+        // MFA device-code (pinentry MessageDialog) — useless for Edge sync.
         let opts = Options {
             debug: false,
             use_first_pass: false,
             ignore_unknown_user: false,
             mfa_poll_prompt: false,
-            no_hello_pin: true,
+            no_hello_pin: false,
             set_authtok: false,
             try_unseal: false,
-            force_reauth: true,
+            force_reauth: false,
         };
 
         info!("starting interactive auth for {}", account_id);
@@ -600,5 +702,35 @@ mod tests {
         assert!(!sso_cookie_response_is_valid(r#"{"account":{}}"#));
         assert!(!sso_cookie_response_is_valid(""));
         assert!(!sso_cookie_response_is_valid("not json"));
+    }
+
+    #[test]
+    fn sanitize_for_pinentry_strips_qr_art_keeps_prose() {
+        let msg = "To sign in, visit https://login.microsoft.com/device and enter EH5PRW7RY.\n\
+                   \u{2588}\u{2588}\u{2580}\u{2584}  \u{2588}\u{2580}\u{2588}\n\
+                   \u{2580}\u{2584}\u{2588}\u{2580}\u{2584}\u{2588}\u{2580}\n\
+                   Done.";
+        let out = sanitize_for_pinentry(msg);
+        assert!(out.contains("login.microsoft.com/device"));
+        assert!(out.contains("EH5PRW7RY"));
+        assert!(!out.contains('\u{2588}'));
+        assert!(!out.contains('\u{2580}'));
+        assert!(out.contains("Done."));
+    }
+
+    #[test]
+    fn sanitize_for_pinentry_truncates_oversized_text() {
+        let huge = "x".repeat(2000);
+        let out = sanitize_for_pinentry(&huge);
+        assert!(out.chars().count() <= 901);
+        assert!(out.ends_with('…'));
+    }
+
+    #[test]
+    fn extract_https_urls_from_device_code_message() {
+        let msg = "To sign in, use a web browser to open the page `https://login.microsoft.com/device` and enter the code `BESBK78A2`.";
+        let urls = extract_https_urls(msg);
+        assert_eq!(urls, vec!["https://login.microsoft.com/device".to_string()]);
+        assert!(is_device_code_message(msg));
     }
 }
