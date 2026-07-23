@@ -184,7 +184,6 @@ def main() -> int:
     ]
 
     for (msgid, plural), refs in sorted(entries.items(), key=lambda item: item[0][0]):
-        lines.append("#: " + " ".join(refs))
         if plural is None:
             lines.append(f"msgid {po_quote(msgid)}")
             lines.append('msgstr ""')

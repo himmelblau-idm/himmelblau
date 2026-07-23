@@ -3,371 +3,289 @@
 # This file is distributed under the same license as Himmelblau.
 #
 msgid ""
-msgstr ""
-"Project-Id-Version: himmelblau\n"
-"POT-Creation-Date: 2026-07-20 21:14+0000\n"
-"MIME-Version: 1.0\n"
-"Content-Type: text/plain; charset=UTF-8\n"
-"Content-Transfer-Encoding: 8bit\n"
-"PO-Revision-Date: 2026-07-20 21:26+0000\n"
+msgstr "Project-Id-Version: himmelblau\n"
+"POT-Creation-Date: 2026-07-22 22:33+0000\n"
+"PO-Revision-Date: 2026-07-23 14:39+0000\n"
 "Last-Translator: Automated via Codex <noreply@himmelblau-idm.org>\n"
 "Language-Team: Indonesian\n"
 "Language: id\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
 "Plural-Forms: nplurals=1; plural=0;\n"
+""
 
-#: src/common/src/auth.rs:1285 src/common/src/auth.rs:1298
 msgid "An unexpected error occurred."
 msgstr "Terjadi kesalahan yang tidak terduga."
 
-#: src/common/src/idprovider/openidconnect.rs:753
 msgid "Approve sign-in in your authenticator app, then wait..."
 msgstr "Setujui masuk di aplikasi autentikator Anda, lalu tunggu..."
 
-#: src/common/src/idprovider/himmelblau.rs:4809
 msgid "Authenticated user {user} does not match requested user"
 msgstr "Pengguna yang diautentikasi {user} tidak cocok dengan pengguna yang diminta"
 
-#: src/common/src/idprovider/openidconnect.rs:2118
 msgid "Authenticated user {uuid} does not match requested user"
 msgstr "Pengguna terautentikasi {uuid} tidak cocok dengan pengguna yang diminta"
 
-#: src/common/src/idprovider/openidconnect.rs:3003
 msgid "Authentication did not return a refresh token. Please try again."
 msgstr "Autentikasi tidak mengembalikan token penyegaran. Silakan coba lagi."
 
-#: src/common/src/idprovider/himmelblau.rs:3949
 msgid "Authentication failed (AADSTS{code})"
 msgstr "Autentikasi gagal (AADSTS{code})"
 
-#: src/common/src/idprovider/openidconnect.rs:2939
 msgid "Authentication failed in browser flow."
 msgstr "Autentikasi gagal dalam alur browser."
 
-#: src/common/src/idprovider/himmelblau.rs:209
 msgid "Authentication failed. Please contact your administrator."
 msgstr "Autentikasi gagal. Silakan hubungi administrator Anda."
 
-#: src/common/src/idprovider/himmelblau.rs:3829
 msgid "Authentication failed. Please try again."
 msgstr "Autentikasi gagal. Silakan coba lagi."
 
-#: src/common/src/idprovider/himmelblau.rs:3129
 msgid "Authentication failed. Please try signing in again."
 msgstr "Autentikasi gagal. Silakan coba masuk lagi."
 
-#: src/common/src/idprovider/himmelblau.rs:168
 msgid "Authentication failed: Authentication method not supported."
 msgstr "Autentikasi gagal: Metode autentikasi tidak didukung."
 
-#: src/common/src/idprovider/himmelblau.rs:171 src/common/src/idprovider/himmelblau.rs:176
 msgid "Authentication failed: Configuration error."
 msgstr "Autentikasi gagal: Kesalahan konfigurasi."
 
-#: src/common/src/idprovider/himmelblau.rs:175
 msgid "Authentication failed: Cryptographic error."
 msgstr "Autentikasi gagal: Terjadi kesalahan kriptografi."
 
-#: src/common/src/idprovider/himmelblau.rs:152
 msgid "Authentication failed: Invalid server response."
 msgstr "Autentikasi gagal: Respons server tidak valid."
 
-#: src/common/src/idprovider/himmelblau.rs:188
 msgid "Authentication failed: Missing required data."
 msgstr "Autentikasi gagal: Data wajib tidak ada."
 
-#: src/common/src/idprovider/himmelblau.rs:170
 msgid "Authentication failed: Security hardware error."
 msgstr "Autentikasi gagal: Kesalahan perangkat keras keamanan."
 
-#: src/common/src/idprovider/himmelblau.rs:165
 msgid "Authentication failed: Unable to reach authentication server."
 msgstr "Autentikasi gagal: Tidak dapat menjangkau server autentikasi."
 
-#: src/common/src/idprovider/openidconnect.rs:2738 src/common/src/idprovider/openidconnect.rs:2849 src/common/src/idprovider/openidconnect.rs:2984 src/common/src/idprovider/openidconnect.rs:3050 src/common/src/idprovider/openidconnect.rs:3063
 msgid "Authentication failed: {error}"
 msgstr "Autentikasi gagal: {error}"
 
-#: src/common/src/idprovider/openidconnect.rs:3036
 msgid "Authentication flow completed but token exchange failed. Please try again."
 msgstr "Alur autentikasi selesai, tetapi pertukaran token gagal. Silakan coba lagi."
 
-#: src/common/src/idprovider/himmelblau.rs:179 src/common/src/idprovider/himmelblau.rs:203
 msgid "Authentication in progress."
 msgstr "Autentikasi sedang berlangsung."
 
-#: src/common/src/idprovider/openidconnect.rs:2537
 msgid "Authentication incomplete. Please try again."
 msgstr "Autentikasi belum selesai. Silakan coba lagi."
 
-#: src/common/src/idprovider/himmelblau.rs:1912
 msgid "Authentication service is temporarily unavailable. Please try again shortly."
 msgstr "Layanan autentikasi tidak tersedia untuk sementara. Silakan coba lagi sebentar lagi."
 
-#: src/common/src/idprovider/himmelblau.rs:3169
 msgid "Authentication service unavailable. Please try again later."
 msgstr "Layanan autentikasi tidak tersedia. Silakan coba lagi nanti."
 
-#: src/common/src/idprovider/openidconnect.rs:2674 src/common/src/idprovider/openidconnect.rs:2713 src/common/src/idprovider/openidconnect.rs:2774
 msgid "Authentication session corrupted. Please try again."
 msgstr "Sesi autentikasi rusak. Silakan coba lagi."
 
-#: src/common/src/idprovider/openidconnect.rs:2661
 msgid "Authentication session data missing. Please try again."
 msgstr "Data sesi autentikasi tidak ditemukan. Silakan coba lagi."
 
-#: src/common/src/idprovider/openidconnect.rs:3078
 msgid "Authentication session returned an unexpected state. Please try again."
 msgstr "Sesi autentikasi mengembalikan status yang tidak terduga. Silakan coba lagi."
 
-#: src/common/src/idprovider/himmelblau.rs:4124 src/common/src/idprovider/openidconnect.rs:2701 src/common/src/idprovider/openidconnect.rs:2801
 msgid "Authentication timed out. Please try again."
 msgstr "Autentikasi kehabisan waktu. Silakan coba lagi."
 
-#: src/common/src/idprovider/openidconnect.rs:3105
 msgid "Browser authentication backend unavailable. Please try again."
 msgstr "Backend autentikasi browser tidak tersedia. Silakan coba lagi."
 
-#: src/common/src/auth.rs:1261
 msgid "Changing the password. Please wait..."
 msgstr "Sedang mengubah kata sandi. Harap tunggu..."
 
-#: src/common/src/auth.rs:1215
 msgid "Chosen password is too short! 8 chars required."
 msgstr "Kata sandi yang dipilih terlalu pendek! Diperlukan 8 karakter."
 
-#: src/common/src/auth.rs:979 src/pam/src/pam/mod.rs:595
 msgid "Chosen pin is too short! {length} chars required."
 msgstr "PIN yang dipilih terlalu pendek! Diperlukan {length} karakter."
 
-#: src/common/src/auth.rs:829
 msgid "Cloud Password:"
 msgstr "Kata Sandi Cloud:"
 
-#: src/common/src/auth.rs:868
 msgid "Code:"
 msgstr "Kode:"
 
-#: src/common/src/auth.rs:1012 src/pam/src/pam/mod.rs:637
 msgid "Confirm PIN:"
 msgstr "Konfirmasi PIN:"
 
-#: src/common/src/auth.rs:1236
 msgid "Confirm password:"
 msgstr "Konfirmasi kata sandi:"
 
-#: src/common/src/idprovider/himmelblau.rs:199
 msgid "Consent required. Please contact your administrator."
 msgstr "Diperlukan persetujuan. Silakan hubungi administrator Anda."
 
-#: src/common/src/idprovider/himmelblau.rs:3609
 msgid "Create a PIN to use in place of passwords."
 msgstr "Buat PIN untuk digunakan sebagai pengganti kata sandi."
 
-#: src/common/src/idprovider/himmelblau.rs:173
 msgid "Device enrollment failed. Please contact your administrator."
 msgstr "Pendaftaran perangkat gagal. Silakan hubungi administrator Anda."
 
-#: src/common/src/idprovider/himmelblau.rs:1022
 msgid "Device has been removed from the domain."
 msgstr "Perangkat telah dihapus dari domain."
 
-#: src/common/src/auth.rs:1120
 msgid "Enable Bluetooth to sign in with your phone."
 msgstr "Aktifkan Bluetooth untuk masuk dengan ponsel Anda."
 
-#: src/common/src/auth.rs:1037
 msgid "Enrolling the Hello PIN. Please wait..."
 msgstr "Mendaftarkan PIN Hello. Harap tunggu..."
 
-#: src/common/src/auth.rs:652
 msgid "Enter the setup key '{secret}' to enroll a TOTP Authenticator app. Use '{issuer}' for the code name and '{account}' as the label/name."
 msgstr "Masukkan kunci penyiapan '{secret}' untuk mendaftarkan aplikasi Authenticator TOTP. Gunakan '{issuer}' sebagai nama kode dan '{account}' sebagai label/nama."
 
-#: src/pam/src/pam/mod.rs:827
 msgid "Entra Id Fido authentication failed."
 msgstr "Autentikasi FIDO Entra ID gagal."
 
-#: src/common/src/auth.rs:836 src/pam/src/pam/mod.rs:712 src/pam/src/pam/mod.rs:752
 msgid "Entra Id Password:"
 msgstr "Kata Sandi Entra Id:"
 
-#: src/common/src/idprovider/himmelblau.rs:3369 src/common/src/idprovider/himmelblau.rs:3380
 msgid "FIDO authentication not available. Please try a different authentication method."
 msgstr "Autentikasi FIDO tidak tersedia. Silakan coba metode autentikasi lain."
 
-#: src/common/src/idprovider/himmelblau.rs:2724 src/common/src/idprovider/himmelblau.rs:2837 src/common/src/idprovider/himmelblau.rs:2880 src/common/src/idprovider/himmelblau.rs:2927 src/common/src/idprovider/himmelblau.rs:2942 src/common/src/idprovider/openidconnect.rs:2368 src/common/src/idprovider/common.rs:665
 msgid "Failed to authenticate with Hello PIN."
 msgstr "Gagal mengautentikasi dengan PIN Hello."
 
-#: src/common/src/idprovider/common.rs:271
 msgid "Failed to authenticate with Hello PIN. One more failed attempt will require multi-factor authentication and resetting your Linux Hello PIN."
 msgstr "Gagal mengautentikasi dengan PIN Hello. Satu kali percobaan gagal lagi akan memerlukan autentikasi multifaktor dan pengaturan ulang PIN Linux Hello Anda."
 
-#: src/common/src/idprovider/common.rs:554 src/common/src/idprovider/common.rs:564
 msgid "Failed to authenticate with Hello TOTP code."
 msgstr "Gagal mengautentikasi dengan kode Hello TOTP."
 
-#: src/common/src/auth.rs:638
 msgid "Failed to build regex: {error}"
 msgstr "Gagal membuat regex: {error}"
 
-#: src/common/src/idprovider/himmelblau.rs:1002
+msgid "Failed to change user password: {msg}"
+msgstr "Gagal mengubah kata sandi pengguna: {msg}"
+
 msgid "Failed to delete CSR key"
 msgstr "Gagal menghapus kunci CSR"
 
-#: src/common/src/idprovider/himmelblau.rs:1014
 msgid "Failed to delete intune key"
 msgstr "Gagal menghapus kunci Intune"
 
-#: src/common/src/auth.rs:625 src/common/src/auth.rs:630 src/common/src/auth.rs:647 src/common/src/auth.rs:664
 msgid "Failed to generate QR code"
 msgstr "Gagal membuat kode QR"
 
-#: src/common/src/idprovider/himmelblau.rs:2283
 msgid "Failed to join domain. Please contact your administrator."
 msgstr "Gagal bergabung dengan domain. Silakan hubungi administrator Anda."
 
-#: src/common/src/idprovider/himmelblau.rs:3603
 msgid "Failed to provision hello key: {error}\n"
 "{message}"
 msgstr "Gagal menyediakan hello key: {error}\n"
 "{message}"
 
-#: src/common/src/idprovider/himmelblau.rs:2173
 msgid "Failed to save device configuration. Please contact your administrator."
 msgstr "Gagal menyimpan konfigurasi perangkat. Silakan hubungi administrator Anda."
 
-#: src/common/src/idprovider/himmelblau.rs:2182
 msgid "Failed to store device credentials. Please contact your administrator."
 msgstr "Gagal menyimpan kredensial perangkat. Hubungi administrator Anda."
 
-#: src/common/src/auth.rs:126 src/common/src/auth.rs:147
 msgid "Fido PIN:"
 msgstr "PIN Fido:"
 
-#: src/common/src/auth.rs:1401
 msgid "Himmelblau authentication is starting, please wait..."
 msgstr "Autentikasi Himmelblau sedang dimulai, harap tunggu..."
 
-#: src/common/src/auth.rs:1408
 msgid "Himmelblau authentication service did not become available in time."
 msgstr "Layanan autentikasi Himmelblau tidak tersedia tepat waktu."
 
-#: src/common/src/auth.rs:1395
 msgid "Himmelblau authentication service is unavailable."
 msgstr "Layanan autentikasi Himmelblau tidak tersedia."
 
-#: src/common/src/auth.rs:1030 src/common/src/auth.rs:1254 src/pam/src/pam/mod.rs:654
 msgid "Inputs did not match. Try again."
 msgstr "Input tidak cocok. Coba lagi."
 
-#: src/common/src/idprovider/himmelblau.rs:207
+msgid "Invalid credentials"
+msgstr "Kredensial tidak valid"
+
 msgid "Multi-factor authentication required."
 msgstr "Diperlukan autentikasi multifaktor."
 
-#: src/common/src/idprovider/himmelblau.rs:4164
 msgid "Multi-factor authentication required. Please try signing in again."
 msgstr "Diperlukan autentikasi multifaktor. Silakan coba masuk lagi."
 
-#: src/common/src/idprovider/himmelblau.rs:1850 src/common/src/idprovider/himmelblau.rs:1953 src/common/src/idprovider/himmelblau.rs:1977 src/common/src/idprovider/himmelblau.rs:2137 src/common/src/idprovider/himmelblau.rs:2155 src/common/src/idprovider/himmelblau.rs:2523 src/common/src/idprovider/himmelblau.rs:2624 src/common/src/idprovider/openidconnect.rs:2250 src/common/src/idprovider/openidconnect.rs:2349 src/common/src/idprovider/common.rs:463
 msgid "Network outage detected."
 msgstr "Terdeteksi gangguan jaringan."
 
-#: src/common/src/auth.rs:976 src/pam/src/pam/mod.rs:589
 msgid "New PIN:"
 msgstr "PIN baru:"
 
-#: src/common/src/auth.rs:1208
 msgid "New password:"
 msgstr "Kata sandi baru:"
 
-#: src/common/src/auth.rs:1002 src/common/src/auth.rs:1064
 msgid "No Entra Id Hello PIN was supplied."
 msgstr "Tidak ada PIN Hello Entra ID yang diberikan."
 
-#: src/common/src/auth.rs:1019
 msgid "No Entra Id Hello confirmation PIN was supplied."
 msgstr "PIN konfirmasi Hello Entra ID tidak diberikan."
 
-#: src/common/src/auth.rs:1243
 msgid "No Entra Id confirmation password was supplied."
 msgstr "Kata sandi konfirmasi Entra ID tidak diberikan."
 
-#: src/common/src/auth.rs:845 src/common/src/auth.rs:1224
 msgid "No Entra Id password was supplied."
 msgstr "Tidak ada kata sandi Entra ID yang diberikan."
 
-#: src/common/src/auth.rs:951
 msgid "No Hello TOTP code was supplied."
 msgstr "Tidak ada kode TOTP Hello yang diberikan."
 
-#: src/common/src/auth.rs:875
 msgid "No input was supplied."
 msgstr "Tidak ada input yang diberikan."
 
-#: src/common/src/idprovider/common.rs:413
 msgid "Offline auth has expired. Please connect to the network to continue."
 msgstr "Autentikasi offline telah kedaluwarsa. Harap sambungkan ke jaringan untuk melanjutkan."
 
-#: src/common/src/i18n.rs:82
 msgid "Open your Authenticator app, and enter the number '{entropy}' to sign in."
 msgstr "Buka aplikasi Authenticator Anda, lalu masukkan nomor '{entropy}' untuk masuk."
 
-#: src/common/src/auth.rs:922
 msgid "Open your authenticator app and scan this QR code to enroll. Then enter the generated code.\n"
 "{qr}"
 msgstr "Buka aplikasi autentikator Anda dan pindai kode QR ini untuk mendaftar. Kemudian masukkan kode yang dihasilkan.\n"
 "{qr}"
 
-#: src/common/src/auth.rs:986 src/pam/src/pam/mod.rs:611
 msgid "PIN must not use repeating or predictable sequences. Avoid patterns like '111111', '123456', or '135791'."
 msgstr "PIN tidak boleh menggunakan urutan yang berulang atau mudah ditebak. Hindari pola seperti '111111', '123456', atau '135791'."
 
-#: src/common/src/idprovider/himmelblau.rs:3585
 msgid "PIN setup failed. Please try signing in again."
 msgstr "Penyiapan PIN gagal. Silakan coba masuk lagi."
 
-#: src/common/src/auth.rs:1058
 msgid "PIN:"
 msgstr "PIN:"
 
-#: src/common/src/idprovider/himmelblau.rs:191
 msgid "Password change required. Please contact your administrator."
 msgstr "Perubahan kata sandi diperlukan. Silakan hubungi administrator Anda."
 
-#: src/common/src/idprovider/himmelblau.rs:195
 msgid "Password entry required."
 msgstr "Entri kata sandi diperlukan."
 
-#: src/common/src/idprovider/himmelblau.rs:158 src/common/src/idprovider/himmelblau.rs:183
 msgid "Password reset registration required. Complete setup at https://aka.ms/ssprsetup from another device, then try again."
 msgstr "Pendaftaran pengaturan ulang kata sandi diperlukan. Selesaikan penyiapan di https://aka.ms/ssprsetup dari perangkat lain, lalu coba lagi."
 
-#: src/common/src/idprovider/himmelblau.rs:2690 src/common/src/idprovider/himmelblau.rs:2786 src/common/src/idprovider/himmelblau.rs:3072 src/common/src/idprovider/himmelblau.rs:3208 src/common/src/idprovider/himmelblau.rs:3325 src/common/src/idprovider/openidconnect.rs:2472 src/common/src/idprovider/openidconnect.rs:2585 src/common/src/idprovider/common.rs:649
 msgid "Please enter your Hello TOTP code from your Authenticator:"
 msgstr "Silakan masukkan kode TOTP Hello dari Authenticator Anda:"
 
-#: config_gen.rs:178
 msgid "Please insert your security key."
 msgstr "Silakan masukkan kunci keamanan Anda."
 
-#: src/common/src/auth.rs:119
 msgid "Please select a device by touching one of them."
 msgstr "Silakan pilih perangkat dengan menyentuh salah satunya."
 
-#: config_gen.rs:186
 msgid "Please touch your security key."
 msgstr "Silakan sentuh kunci keamanan Anda."
 
-#: src/common/src/auth.rs:688
 msgid "Press enter to continue"
 msgstr "Tekan Enter untuk melanjutkan"
 
-#: src/common/src/auth.rs:1168
 msgid "QR/Bluetooth authentication failed."
 msgstr "Autentikasi QR/Bluetooth gagal."
 
-#: src/common/src/idprovider/openidconnect.rs:90
 msgid "Scan the QR code to continue sign-in, or open this link on another device:\n"
 "{complete}\n"
 "If you cannot scan, visit:\n"
@@ -381,77 +299,59 @@ msgstr "Pindai kode QR untuk melanjutkan masuk, atau buka tautan ini di perangka
 "Dan masukkan kode:\n"
 "{user_code}"
 
-#: config_gen.rs:194
 msgid "Scan with your authenticator app"
 msgstr "Pindai dengan aplikasi autentikator Anda"
 
-#: src/common/src/auth.rs:1151
 msgid "Security key and QR/Bluetooth authentication failed."
 msgstr "Autentikasi kunci keamanan dan QR/Bluetooth gagal."
 
-#: src/common/src/auth.rs:1187
 msgid "Security key authentication failed."
 msgstr "Autentikasi kunci keamanan gagal."
 
-#: src/common/src/idprovider/openidconnect.rs:2404 src/common/src/idprovider/openidconnect.rs:2424
 msgid "Session data corrupted. Please sign in again."
 msgstr "Data sesi rusak. Silakan masuk lagi."
 
-#: src/common/src/idprovider/himmelblau.rs:3482 src/common/src/idprovider/himmelblau.rs:4101 src/common/src/idprovider/himmelblau.rs:4222 src/common/src/idprovider/himmelblau.rs:4315 src/common/src/idprovider/openidconnect.rs:2093
 msgid "Set up a PIN\n"
 "A Hello PIN is a fast, secure way to sign in to your device, apps, and services."
 msgstr "Siapkan PIN\n"
 "PIN Hello adalah cara yang cepat dan aman untuk masuk ke perangkat, aplikasi, dan layanan Anda."
 
-#: src/common/src/auth.rs:945
 msgid "TOTP Code:"
 msgstr "Kode TOTP:"
 
-#: src/common/src/auth.rs:966
 msgid "The minimum PIN length is {length} characters."
 msgstr "Panjang PIN minimum adalah {length} karakter."
 
-#: src/pam/src/pam/mod.rs:576
 msgid "This command changes your local Hello PIN, NOT your Entra Id password."
 msgstr "Perintah ini mengubah PIN Hello lokal Anda, BUKAN kata sandi Entra Id Anda."
 
-#: src/common/src/auth.rs:158
 msgid "Too many failed attempts in one row. Your device has been temporarily blocked. Please unplug it and plug in again."
 msgstr "Terlalu banyak percobaan gagal berturut-turut. Perangkat Anda telah diblokir sementara. Cabut perangkat lalu colokkan kembali."
 
-#: src/common/src/auth.rs:162
 msgid "Too many failed attempts. Your device has been blocked. Reset it."
 msgstr "Terlalu banyak upaya yang gagal. Perangkat Anda telah diblokir. Setel ulang perangkat Anda."
 
-#: src/common/src/auth.rs:181
 msgid "Too many failed user verification attempts."
 msgstr "Terlalu banyak upaya verifikasi pengguna yang gagal."
 
-#: src/common/src/idprovider/common.rs:306
 msgid "Too many incorrect PIN attempts. You will need to enroll a new Linux Hello PIN."
 msgstr "Terlalu banyak percobaan PIN yang salah. Anda perlu mendaftarkan PIN Linux Hello baru."
 
-#: src/common/src/auth.rs:137 src/common/src/auth.rs:168
 msgid "Try again."
 msgstr "Coba lagi."
 
-#: src/common/src/idprovider/himmelblau.rs:3338 src/common/src/idprovider/openidconnect.rs:2598 src/common/src/idprovider/openidconnect.rs:2690 src/common/src/idprovider/openidconnect.rs:2868 src/common/src/idprovider/openidconnect.rs:3138
 msgid "Unexpected authentication step. Please try signing in again."
 msgstr "Langkah autentikasi tidak terduga. Silakan coba masuk lagi."
 
-#: src/common/src/auth.rs:696
 msgid "Unexpected error occurred."
 msgstr "Terjadi kesalahan yang tidak terduga."
 
-#: src/common/src/auth.rs:185
 msgid "Unexpected error: {error}"
 msgstr "Terjadi kesalahan tak terduga: {error}"
 
-#: src/common/src/auth.rs:193
 msgid "Unexpected select device notice"
 msgstr "Pemberitahuan pemilihan perangkat yang tidak terduga"
 
-#: src/common/src/idprovider/himmelblau.rs:137 src/common/src/idprovider/himmelblau.rs:3986 src/common/src/idprovider/himmelblau.rs:4054 src/common/src/idprovider/himmelblau.rs:4144 src/common/src/idprovider/himmelblau.rs:4268
 msgid "Update your password\n"
 "You need to update your password because this is\n"
 "the first time you are signing in, or because your\n"
@@ -461,15 +361,12 @@ msgstr "Perbarui kata sandi Anda\n"
 "pertama kalinya Anda masuk, atau karena kata sandi\n"
 "Anda telah kedaluwarsa."
 
-#: config_gen.rs:74
 msgid "Use the Linux Hello PIN for this device."
 msgstr "Gunakan PIN Linux Hello untuk perangkat ini."
 
-#: config_gen.rs:82
 msgid "Use the password for your Office 365 or Microsoft online login."
 msgstr "Gunakan kata sandi untuk login Office 365 atau Microsoft online Anda."
 
-#: src/common/src/i18n.rs:110 src/common/src/idprovider/openidconnect.rs:98
 msgid "Using a browser on another device, visit:\n"
 "{verification_uri}\n"
 "And enter the code:\n"
@@ -479,50 +376,39 @@ msgstr "Gunakan browser di perangkat lain, kunjungi:\n"
 "Lalu masukkan kode:\n"
 "{user_code}"
 
-#: src/common/src/auth.rs:866
 msgid "Value:"
 msgstr "Nilai:"
 
-#: src/common/src/idprovider/openidconnect.rs:761
 msgid "Waiting for browser authentication to complete..."
 msgstr "Menunggu autentikasi browser selesai..."
 
-#: src/common/src/i18n.rs:89
 msgid "We texted your phone {phone}. Please enter the code to sign in:"
 msgstr "Kami telah mengirim SMS ke ponsel Anda {phone}. Masukkan kode untuk masuk:"
 
-#: src/common/src/i18n.rs:103
 msgid "We're calling your office phone {phone}. Please answer it to continue."
 msgstr "Kami sedang menelepon telepon kantor Anda {phone}. Harap jawab untuk melanjutkan."
 
-#: src/common/src/i18n.rs:96
 msgid "We're calling your phone {phone}. Please answer it to continue."
 msgstr "Kami sedang menghubungi ponsel Anda {phone}. Harap jawab panggilan tersebut untuk melanjutkan."
 
-#: src/common/src/auth.rs:145
 msgid "Wrong PIN! {message}"
 msgstr "PIN salah! {message}"
 
-#: src/common/src/auth.rs:176
 msgid "Wrong user verification! {message}"
 msgstr "Verifikasi pengguna salah! {message}"
 
-#: src/common/src/auth.rs:138 src/common/src/auth.rs:169
 msgid "You have {attempts} attempt left."
 msgid_plural "You have {attempts} attempts left."
 msgstr[0] "Anda memiliki {attempts} percobaan tersisa."
 
-#: src/common/src/idprovider/himmelblau.rs:2547 src/common/src/idprovider/himmelblau.rs:2632 src/common/src/idprovider/openidconnect.rs:2412 src/common/src/idprovider/openidconnect.rs:2431 src/common/src/idprovider/openidconnect.rs:2505 src/common/src/idprovider/openidconnect.rs:2520
 msgid "Your session has expired. Please sign in again."
 msgstr "Sesi Anda telah berakhir. Silakan masuk lagi."
 
-#: src/common/src/auth.rs:605 src/pam/src/pam/mod.rs:823
 msgid "{code}: {message}\n"
 "If you are now prompted for a password from pam_unix, please disregard the prompt, go back and try again."
 msgstr "{code}: {message}\n"
 "Jika Anda sekarang diminta memasukkan kata sandi dari pam_unix, abaikan permintaan tersebut, kembali, lalu coba lagi."
 
-#: src/common/src/auth.rs:718
 msgid "{message}\n"
 "No push? Check your mobile device's internet connection."
 msgstr "{message}\n"

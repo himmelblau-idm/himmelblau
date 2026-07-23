@@ -17,5 +17,6 @@ Maintainer commands:
 
 ```sh
 scripts/i18n-update-pot
+scripts/i18n-update-po
 scripts/i18n-check
 ```
