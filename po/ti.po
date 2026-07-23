@@ -1,364 +1,371 @@
-# Himmelblau message catalog template.
+# Tigrinya translations for Himmelblau.
 # Copyright (C) 2026 Himmelblau contributors
 # This file is distributed under the same license as Himmelblau.
 #
 msgid ""
 msgstr ""
 "Project-Id-Version: himmelblau\n"
-"POT-Creation-Date: 2026-07-20 16:17+0000\n"
+"POT-Creation-Date: 2026-07-20 20:02+0000\n"
 "MIME-Version: 1.0\n"
 "Content-Type: text/plain; charset=UTF-8\n"
 "Content-Transfer-Encoding: 8bit\n"
+"PO-Revision-Date: 2026-07-20 20:14+0000\n"
+"Last-Translator: Automated via Codex <noreply@himmelblau-idm.org>\n"
+"Language-Team: Tigrinya\n"
+"Language: ti\n"
+"Plural-Forms: nplurals=2; plural=(n != 1);\n"
 
 #: src/common/src/auth.rs:1285 src/common/src/auth.rs:1298
 msgid "An unexpected error occurred."
-msgstr ""
+msgstr "ዘይተጸበናዮ ጌጋ ኣጋጢሙ።"
 
 #: src/common/src/idprovider/openidconnect.rs:753
 msgid "Approve sign-in in your authenticator app, then wait..."
-msgstr ""
+msgstr "ኣብ ናይ ምርግጋጽ መተግበሪኻ ምእታው ኣጽድቕ፣ ድሕሪኡ ተጸበ..."
 
 #: src/common/src/idprovider/himmelblau.rs:4809
 msgid "Authenticated user {user} does not match requested user"
-msgstr ""
+msgstr "ዝተረጋገጸ ተጠቃሚ {user} ምስቲ ዝተሓተተ ተጠቃሚ ኣይሰማማዕን"
 
 #: src/common/src/idprovider/openidconnect.rs:2118
 msgid "Authenticated user {uuid} does not match requested user"
-msgstr ""
+msgstr "ዝተረጋገጸ ተጠቃሚ {uuid} ምስቲ ዝተሓተተ ተጠቃሚ ኣይሰማማዕን"
 
 #: src/common/src/idprovider/openidconnect.rs:3003
 msgid "Authentication did not return a refresh token. Please try again."
-msgstr ""
+msgstr "ምርግጋጽ መንነት ናይ ምሕዳስ ቶከን ኣይመለሰን። በጃኹም እንደገና ፈትኑ።"
 
 #: src/common/src/idprovider/himmelblau.rs:3949
 msgid "Authentication failed (AADSTS{code})"
-msgstr ""
+msgstr "ምርግጋጽ መንነት ኣይተዓወተን (AADSTS{code})"
 
 #: src/common/src/idprovider/openidconnect.rs:2939
 msgid "Authentication failed in browser flow."
-msgstr ""
+msgstr "ሓበሬታ መንነት ኣብ ናይ መርበብ መተሓላለፊ ምውሳድ ኣይተዓወተን።"
 
 #: src/common/src/idprovider/himmelblau.rs:209
 msgid "Authentication failed. Please contact your administrator."
-msgstr ""
+msgstr "ምርግጋጽ መንነት ኣይተዓወተን። በጃኹም ንኣመሓዳሪኹም ተወከሱ።"
 
 #: src/common/src/idprovider/himmelblau.rs:3829
 msgid "Authentication failed. Please try again."
-msgstr ""
+msgstr "ምርግጋጽ መንነት ኣይተዓወተን። በጃኹም እንደገና ፈትኑ።"
 
 #: src/common/src/idprovider/himmelblau.rs:3129
 msgid "Authentication failed. Please try signing in again."
-msgstr ""
+msgstr "ምርግጋጽ መንነት ኣይተዓወተን። በጃኹም እንደገና ክትኣትዉ ፈትኑ።"
 
 #: src/common/src/idprovider/himmelblau.rs:168
 msgid "Authentication failed: Authentication method not supported."
-msgstr ""
+msgstr "ምርግጋጽ ኣይተዓወተን፦ ናይ ምርግጋጽ ዘዴ ኣይድገፍን እዩ።"
 
 #: src/common/src/idprovider/himmelblau.rs:171 src/common/src/idprovider/himmelblau.rs:176
 msgid "Authentication failed: Configuration error."
-msgstr ""
+msgstr "ምርግጋጽ መንነት ፈሺሉ፦ ጌጋ ውቅር።"
 
 #: src/common/src/idprovider/himmelblau.rs:175
 msgid "Authentication failed: Cryptographic error."
-msgstr ""
+msgstr "ምርግጋጽ መንነት ኣይተዓወተን፦ ናይ ክሪፕቶግራፊ ጌጋ።"
 
 #: src/common/src/idprovider/himmelblau.rs:152
 msgid "Authentication failed: Invalid server response."
-msgstr ""
+msgstr "ምስክርነት ኣይተዓወተን፦ ዘይቅኑዕ መልሲ ካብ ኣገልጋሊ።"
 
 #: src/common/src/idprovider/himmelblau.rs:188
 msgid "Authentication failed: Missing required data."
-msgstr ""
+msgstr "ምልላይ ኣይተዓወተን፦ ዘድሊ ዳታ ጎዲሉ ኣሎ።"
 
 #: src/common/src/idprovider/himmelblau.rs:170
 msgid "Authentication failed: Security hardware error."
-msgstr ""
+msgstr "ምርግጋጽ መንነት ፈሺሉ፦ ስሕተት ናይ ድሕነት ሃርድዌር።"
 
 #: src/common/src/idprovider/himmelblau.rs:165
 msgid "Authentication failed: Unable to reach authentication server."
-msgstr ""
+msgstr "ምስክርነት ኣይተዓወተን፦ ናብ ኣገልጋሊ ምስክርነት ክብጻሕ ኣይተኻእለን።"
 
 #: src/common/src/idprovider/openidconnect.rs:2738 src/common/src/idprovider/openidconnect.rs:2849 src/common/src/idprovider/openidconnect.rs:2984 src/common/src/idprovider/openidconnect.rs:3050 src/common/src/idprovider/openidconnect.rs:3063
 msgid "Authentication failed: {error}"
-msgstr ""
+msgstr "ምርግጋጽ መንነት ኣይተዓወተን: {error}"
 
 #: src/common/src/idprovider/openidconnect.rs:3036
 msgid "Authentication flow completed but token exchange failed. Please try again."
-msgstr ""
+msgstr "ናይ ምርግጋጽ መስርሕ ተዛዚሙ እዩ፣ ግን ናይ ቶከን ልውውጥ ኣይተዓወተን። በጃኹም ደጊምኩም ፈትኑ።"
 
 #: src/common/src/idprovider/himmelblau.rs:179 src/common/src/idprovider/himmelblau.rs:203
 msgid "Authentication in progress."
-msgstr ""
+msgstr "ምርግጋጽ መንነት ኣብ ሂደት ኣሎ።"
 
 #: src/common/src/idprovider/openidconnect.rs:2537
 msgid "Authentication incomplete. Please try again."
-msgstr ""
+msgstr "ምስክርነት ኣይተዛዘመን። በጃኻ እንደገና ፈትን።"
 
 #: src/common/src/idprovider/himmelblau.rs:1912
 msgid "Authentication service is temporarily unavailable. Please try again shortly."
-msgstr ""
+msgstr "ናይ መረጋገጺ ኣገልግሎት ንግዚኡ ኣይርከብን ኣሎ። በጃኹም ድሕሪ ቁሩብ ግዜ እንደገና ፈትኑ።"
 
 #: src/common/src/idprovider/himmelblau.rs:3169
 msgid "Authentication service unavailable. Please try again later."
-msgstr ""
+msgstr "ኣገልግሎት ምርግጋጽ መንነት ኣይርከብን ኣሎ። በጃኹም ድሒርኩም እንደገና ፈትኑ።"
 
 #: src/common/src/idprovider/openidconnect.rs:2674 src/common/src/idprovider/openidconnect.rs:2713 src/common/src/idprovider/openidconnect.rs:2774
 msgid "Authentication session corrupted. Please try again."
-msgstr ""
+msgstr "ናይ ምርግጋጽ መንነት ክፍለ-ግዜ ተበላሽዩ። በጃኹም እንደገና ፈትኑ።"
 
 #: src/common/src/idprovider/openidconnect.rs:2661
 msgid "Authentication session data missing. Please try again."
-msgstr ""
+msgstr "ዳታ ናይ መረጋገጺ ክፍለ-ግዜ የለን። በጃኹም እንደገና ፈትኑ።"
 
 #: src/common/src/idprovider/openidconnect.rs:3078
 msgid "Authentication session returned an unexpected state. Please try again."
-msgstr ""
+msgstr "ናይ መለለዪ ክፍለ-ጊዜ ዘይተጸበናዮ ኩነታት መሊሱ። በጃኹም እንደገና ፈትኑ።"
 
 #: src/common/src/idprovider/himmelblau.rs:4124 src/common/src/idprovider/openidconnect.rs:2701 src/common/src/idprovider/openidconnect.rs:2801
 msgid "Authentication timed out. Please try again."
-msgstr ""
+msgstr "ምርግጋጽ መንነት ግዜኡ ኣብቂዑ። በጃኹም እንደገና ፈትኑ።"
 
 #: src/common/src/idprovider/openidconnect.rs:3105
 msgid "Browser authentication backend unavailable. Please try again."
-msgstr ""
+msgstr "መረጋገጺ መንነት ብመርበብ ሓበሬታ ዝሰርሕ ድሕረ-ኣገልግሎት ኣይርከብን ኣሎ። በጃኹም እንደገና ፈትኑ።"
 
 #: src/common/src/auth.rs:1261
 msgid "Changing the password. Please wait..."
-msgstr ""
+msgstr "ቃል ምስጢር ይቕየር ኣሎ። በጃኹም ተጸበዩ..."
 
 #: src/common/src/auth.rs:1215
 msgid "Chosen password is too short! 8 chars required."
-msgstr ""
+msgstr "ዝመረጽካዮ ምስጢራዊ ቃል ኣዝዩ ሓጺር እዩ! 8 ፊደላት የድልዩ።"
 
 #: src/common/src/auth.rs:979 src/pam/src/pam/mod.rs:595
 msgid "Chosen pin is too short! {length} chars required."
-msgstr ""
+msgstr "ዝተመርጸ PIN ኣዝዩ ሓጺር እዩ! {length} ፊደላት የድልዩ።"
 
 #: src/common/src/auth.rs:829
 msgid "Cloud Password:"
-msgstr ""
+msgstr "Cloud ምስጢር ቃል:"
 
 #: src/common/src/auth.rs:868
 msgid "Code:"
-msgstr ""
+msgstr "ኮድ:"
 
 #: src/common/src/auth.rs:1012 src/pam/src/pam/mod.rs:637
 msgid "Confirm PIN:"
-msgstr ""
+msgstr "PIN ኣረጋግጽ:"
 
 #: src/common/src/auth.rs:1236
 msgid "Confirm password:"
-msgstr ""
+msgstr "ናይ ይሕለፍ ቃል ኣረጋግጽ:"
 
 #: src/common/src/idprovider/himmelblau.rs:199
 msgid "Consent required. Please contact your administrator."
-msgstr ""
+msgstr "ፍቓድ የድሊ። በጃኹም ንኣመሓዳሪኹም ተወከሱ።"
 
 #: src/common/src/idprovider/himmelblau.rs:3609
 msgid "Create a PIN to use in place of passwords."
-msgstr ""
+msgstr "ኣብ ክንዲ መሕለፊ ቃላት ክትጥቀመሉ ፒን ፍጠር።"
 
 #: src/common/src/idprovider/himmelblau.rs:173
 msgid "Device enrollment failed. Please contact your administrator."
-msgstr ""
+msgstr "ምዝገባ መሳርሒ ኣይተዓወተን። በጃኹም ንኣመሓዳሪኹም ተወከሱ።"
 
 #: src/common/src/idprovider/himmelblau.rs:1022
 msgid "Device has been removed from the domain."
-msgstr ""
+msgstr "እቲ መሳርሒ ካብቲ ዶመይን ተኣልዩ ኣሎ።"
 
 #: src/common/src/auth.rs:1120
 msgid "Enable Bluetooth to sign in with your phone."
-msgstr ""
+msgstr "ብስልክኻ ንምእታው ብሉቱዝ ኣንቃዕ"
 
 #: src/common/src/auth.rs:1037
 msgid "Enrolling the Hello PIN. Please wait..."
-msgstr ""
+msgstr "ናይ Hello PIN ይምዝገብ ኣሎ። በጃኹም ተጸበዩ..."
 
 #: src/common/src/auth.rs:652
 msgid "Enter the setup key '{secret}' to enroll a TOTP Authenticator app. Use '{issuer}' for the code name and '{account}' as the label/name."
-msgstr ""
+msgstr "ንTOTP Authenticator app ንምምዝጋብ ቁልፊ ምትካል '{secret}' ኣእቱ። ንስም ኮድ '{issuer}' ተጠቐም፣ ንመለለዪ/ስም ድማ '{account}' ተጠቐም።"
 
 #: src/pam/src/pam/mod.rs:827
 msgid "Entra Id Fido authentication failed."
-msgstr ""
+msgstr "ናይ Entra ID FIDO ምርግጋጽ መንነት ኣይተዓወተን።"
 
 #: src/common/src/auth.rs:836 src/pam/src/pam/mod.rs:712 src/pam/src/pam/mod.rs:752
 msgid "Entra Id Password:"
-msgstr ""
+msgstr "ናይ Entra ID ምስጢር ቃል:"
 
 #: src/common/src/idprovider/himmelblau.rs:3369 src/common/src/idprovider/himmelblau.rs:3380
 msgid "FIDO authentication not available. Please try a different authentication method."
-msgstr ""
+msgstr "ናይ FIDO ምርግጋጽ መንነት ኣይርከብን። በጃኹም ካልእ ናይ ምርግጋጽ መንነት ዘዴ ፈትኑ።"
 
 #: src/common/src/idprovider/himmelblau.rs:2724 src/common/src/idprovider/himmelblau.rs:2837 src/common/src/idprovider/himmelblau.rs:2880 src/common/src/idprovider/himmelblau.rs:2927 src/common/src/idprovider/himmelblau.rs:2942 src/common/src/idprovider/openidconnect.rs:2368 src/common/src/idprovider/common.rs:665
 msgid "Failed to authenticate with Hello PIN."
-msgstr ""
+msgstr "ብHello PIN ምርግጋጽ መንነት ኣይተኻእለን።"
 
 #: src/common/src/idprovider/common.rs:271
 msgid "Failed to authenticate with Hello PIN. One more failed attempt will require multi-factor authentication and resetting your Linux Hello PIN."
-msgstr ""
+msgstr "ብHello PIN ምርግጋጽ ኣይተዓወተን። ሓደ ተወሳኺ ዘይተዓወተ ፈተነ እንተተፈጺሙ፣ ብዙሕ-ረቛሒ ምርግጋጽን Linux Hello PIN ዳግማይ ምቕማጥን ከድሊ እዩ።"
 
 #: src/common/src/idprovider/common.rs:554 src/common/src/idprovider/common.rs:564
 msgid "Failed to authenticate with Hello TOTP code."
-msgstr ""
+msgstr "ብናይ Hello TOTP ኮድ ምርግጋጽ መንነት ኣይተዓወተን።"
 
 #: src/common/src/auth.rs:638
 msgid "Failed to build regex: {error}"
-msgstr ""
+msgstr "ሬገክስ ምህናጽ ኣይተኻእለን: {error}"
 
 #: src/common/src/idprovider/himmelblau.rs:1002
 msgid "Failed to delete CSR key"
-msgstr ""
+msgstr "ቁልፊ CSR ምስራዝ ኣይተኻእለን"
 
 #: src/common/src/idprovider/himmelblau.rs:1014
 msgid "Failed to delete intune key"
-msgstr ""
+msgstr "ቁልፊ Intune ምድምሳስ ኣይተኻእለን"
 
 #: src/common/src/auth.rs:625 src/common/src/auth.rs:630 src/common/src/auth.rs:647 src/common/src/auth.rs:664
 msgid "Failed to generate QR code"
-msgstr ""
+msgstr "ኮድ QR ምፍጣር ኣይተኻእለን"
 
 #: src/common/src/idprovider/himmelblau.rs:2283
 msgid "Failed to join domain. Please contact your administrator."
-msgstr ""
+msgstr "ናብ ዶመይን ምጽንባር ኣይተኻእለን። በጃኹም ንኣመሓዳሪኹም ተወከሱ።"
 
 #: src/common/src/idprovider/himmelblau.rs:3603
 msgid "Failed to provision hello key: {error}\n"
 "{message}"
-msgstr ""
+msgstr "ናይ Hello ቁልፊ ምድላው ኣይተኻእለን: {error}\n"
+"{message}"
 
 #: src/common/src/idprovider/himmelblau.rs:2173
 msgid "Failed to save device configuration. Please contact your administrator."
-msgstr ""
+msgstr "ውቅር መሳርሒ ምዕቃብ ኣይተኻእለን። በጃኹም ንኣመሓዳሪኹም ተወከሱ።"
 
 #: src/common/src/idprovider/himmelblau.rs:2182
 msgid "Failed to store device credentials. Please contact your administrator."
-msgstr ""
+msgstr "መረጋገጺ መሳርሒ ምዕቃብ ኣይተኻእለን። በጃኹም ንኣመሓዳሪኹም ተወከሱ።"
 
 #: src/common/src/auth.rs:126 src/common/src/auth.rs:147
 msgid "Fido PIN:"
-msgstr ""
+msgstr "Fido ፒን:"
 
 #: src/common/src/auth.rs:1401
 msgid "Himmelblau authentication is starting, please wait..."
-msgstr ""
+msgstr "ምርግጋጽ መንነት Himmelblau ይጅምር ኣሎ፣ በጃኹም ተጸበዩ..."
 
 #: src/common/src/auth.rs:1408
 msgid "Himmelblau authentication service did not become available in time."
-msgstr ""
+msgstr "ኣገልግሎት ምርግጋጽ መንነት Himmelblau ኣብ ግዚኡ ኣይተዳለወን።"
 
 #: src/common/src/auth.rs:1395
 msgid "Himmelblau authentication service is unavailable."
-msgstr ""
+msgstr "ኣገልግሎት ምርግጋጽ መንነት Himmelblau ኣይርከብን ኣሎ።"
 
 #: src/common/src/auth.rs:1030 src/common/src/auth.rs:1254 src/pam/src/pam/mod.rs:654
 msgid "Inputs did not match. Try again."
-msgstr ""
+msgstr "ዝኣተዉ ሓበሬታታት ኣይተሰማምዑን። እንደገና ፈትኑ።"
 
 #: src/common/src/idprovider/himmelblau.rs:207
 msgid "Multi-factor authentication required."
-msgstr ""
+msgstr "ብዙሕ-ረቛሒ ምርግጋጽ መንነት የድሊ."
 
 #: src/common/src/idprovider/himmelblau.rs:4164
 msgid "Multi-factor authentication required. Please try signing in again."
-msgstr ""
+msgstr "ብዙሕ-ረቛሒ ምርግጋጽ መንነት የድሊ። በጃኹም ደጊምኩም ክትኣትዉ ፈትኑ።"
 
 #: src/common/src/idprovider/himmelblau.rs:1850 src/common/src/idprovider/himmelblau.rs:1953 src/common/src/idprovider/himmelblau.rs:1977 src/common/src/idprovider/himmelblau.rs:2137 src/common/src/idprovider/himmelblau.rs:2155 src/common/src/idprovider/himmelblau.rs:2523 src/common/src/idprovider/himmelblau.rs:2624 src/common/src/idprovider/openidconnect.rs:2250 src/common/src/idprovider/openidconnect.rs:2349 src/common/src/idprovider/common.rs:463
 msgid "Network outage detected."
-msgstr ""
+msgstr "ምቁራጽ መርበብ ተረኺቡ።"
 
 #: src/common/src/auth.rs:976 src/pam/src/pam/mod.rs:589
 msgid "New PIN:"
-msgstr ""
+msgstr "ሓድሽ PIN:"
 
 #: src/common/src/auth.rs:1208
 msgid "New password:"
-msgstr ""
+msgstr "ሓድሽ ቃል ምስጢር:"
 
 #: src/common/src/auth.rs:1002 src/common/src/auth.rs:1064
 msgid "No Entra Id Hello PIN was supplied."
-msgstr ""
+msgstr "Entra Id Hello PIN ኣይተዋህበን።"
 
 #: src/common/src/auth.rs:1019
 msgid "No Entra Id Hello confirmation PIN was supplied."
-msgstr ""
+msgstr "ናይ Entra Id Hello መረጋገጺ PIN ኣይቀረበን።"
 
 #: src/common/src/auth.rs:1243
 msgid "No Entra Id confirmation password was supplied."
-msgstr ""
+msgstr "ናይ Entra ID ናይ ምርግጋጽ ፓስዎርድ ኣይተቕረበን።"
 
 #: src/common/src/auth.rs:845 src/common/src/auth.rs:1224
 msgid "No Entra Id password was supplied."
-msgstr ""
+msgstr "ናይ Entra ID ቃል ምስጢር ኣይቀረበን።"
 
 #: src/common/src/auth.rs:951
 msgid "No Hello TOTP code was supplied."
-msgstr ""
+msgstr "ናይ Hello TOTP ኮድ ኣይቀረበን።"
 
 #: src/common/src/auth.rs:875
 msgid "No input was supplied."
-msgstr ""
+msgstr "ዝኾነ እታወት ኣይቀረበን።"
 
 #: src/common/src/idprovider/common.rs:413
 msgid "Offline auth has expired. Please connect to the network to continue."
-msgstr ""
+msgstr "ናይ ኦፍላይን ምርግጋጽ መንነት ግዜኡ ኣብቂዑ ኣሎ። ንምቕጻል በጃኹም ናብ መርበብ ተራኸቡ።"
 
 #: src/common/src/i18n.rs:82
 msgid "Open your Authenticator app, and enter the number '{entropy}' to sign in."
-msgstr ""
+msgstr "ናብ መተግበሪ Authenticator ክፈት፣ ንምእታው ድማ ቁጽሪ '{entropy}' ኣእቱ።"
 
 #: src/common/src/auth.rs:922
 msgid "Open your authenticator app and scan this QR code to enroll. Then enter the generated code.\n"
 "{qr}"
-msgstr ""
+msgstr "መተግበሪ መረጋገጺኻ ክፈት እሞ ንምምዝጋብ ነዚ QR ኮድ ስካን ግበር። ድሕሪኡ ነቲ ዝተፈጥረ ኮድ ኣእቱ።\n"
+"{qr}"
 
 #: src/common/src/auth.rs:986 src/pam/src/pam/mod.rs:611
 msgid "PIN must not use repeating or predictable sequences. Avoid patterns like '111111', '123456', or '135791'."
-msgstr ""
+msgstr "PIN ተደጋጋሚ ወይም ብቐሊሉ ዝግመቱ ቅደም ተኸተላት ክጥቀም የብሉን። ከም '111111', '123456', ወይም '135791' ዝኣመሰሉ ቅርጽታት ኣወግድ።"
 
 #: src/common/src/idprovider/himmelblau.rs:3585
 msgid "PIN setup failed. Please try signing in again."
-msgstr ""
+msgstr "ምድላው PIN ኣይተዓወተን። በጃኹም እንደገና ክትኣትዉ ፈትኑ።"
 
 #: src/common/src/auth.rs:1058
 msgid "PIN:"
-msgstr ""
+msgstr "PIN:"
 
 #: src/common/src/idprovider/himmelblau.rs:191
 msgid "Password change required. Please contact your administrator."
-msgstr ""
+msgstr "ምቕያር ቃለ ምስጢር የድሊ። በጃኹም ንኣመሓዳሪኹም ተወከሱ።"
 
 #: src/common/src/idprovider/himmelblau.rs:195
 msgid "Password entry required."
-msgstr ""
+msgstr "መእተዊ ቃል ምእታው የድሊ።"
 
 #: src/common/src/idprovider/himmelblau.rs:158 src/common/src/idprovider/himmelblau.rs:183
 msgid "Password reset registration required. Complete setup at https://aka.ms/ssprsetup from another device, then try again."
-msgstr ""
+msgstr "ናይ መሕለፊ ቓል ዳግማይ ምቕማጥ ምዝገባ የድሊ እዩ። ካብ ካልእ መሳርሒ ኣብ https://aka.ms/ssprsetup ቅንብር ዛዝሙ፣ ድሕሪኡ እንደገና ፈትኑ።"
 
 #: src/common/src/idprovider/himmelblau.rs:2690 src/common/src/idprovider/himmelblau.rs:2786 src/common/src/idprovider/himmelblau.rs:3072 src/common/src/idprovider/himmelblau.rs:3208 src/common/src/idprovider/himmelblau.rs:3325 src/common/src/idprovider/openidconnect.rs:2472 src/common/src/idprovider/openidconnect.rs:2585 src/common/src/idprovider/common.rs:649
 msgid "Please enter your Hello TOTP code from your Authenticator:"
-msgstr ""
+msgstr "በጃኹም ካብ ኣረጋጋጺኹም ዝመጽእ ናይ Hello TOTP ኮድ ኣእትዉ:"
 
 #: config_gen.rs:178
 msgid "Please insert your security key."
-msgstr ""
+msgstr "በጃኹም መፍትሕ ድሕነትኩም ኣእትዉ"
 
 #: src/common/src/auth.rs:119
 msgid "Please select a device by touching one of them."
-msgstr ""
+msgstr "በጃኹም ካብኣቶም ሓደ ብምትንካፍ መሳርሒ ምረጹ።"
 
 #: config_gen.rs:186
 msgid "Please touch your security key."
-msgstr ""
+msgstr "በጃኻ ናይ ድሕነት መፍትሕኻ ተንክፍ."
 
 #: src/common/src/auth.rs:688
 msgid "Press enter to continue"
-msgstr ""
+msgstr "ንምቕጻል ኢንተር ጠውቕ"
 
 #: src/common/src/auth.rs:1168
 msgid "QR/Bluetooth authentication failed."
-msgstr ""
+msgstr "ናይ QR/Bluetooth ምርግጋጽ መንነት ኣይተዓወተን."
 
 #: src/common/src/idprovider/openidconnect.rs:90
 msgid "Scan the QR code to continue sign-in, or open this link on another device:\n"
@@ -367,143 +374,156 @@ msgid "Scan the QR code to continue sign-in, or open this link on another device
 "{verification_uri}\n"
 "And enter the code:\n"
 "{user_code}"
-msgstr ""
+msgstr "ንመእተዊ ምቕጻል QR ኮድ ስካን ግበሩ፣ ወይ ነዚ መላግቦ ኣብ ካልእ መሳርሒ ክፈትዎ:\n"
+"{complete}\n"
+"ስካን ክትገብሩ እንተዘይክኢልኩም፣ በጽሑ:\n"
+"{verification_uri}\n"
+"እቲ ኮድ ድማ ኣእትዉ:\n"
+"{user_code}"
 
 #: config_gen.rs:194
 msgid "Scan with your authenticator app"
-msgstr ""
+msgstr "ብመተግበሪ መረጋገጺኹም ስካን ግበሩ"
 
 #: src/common/src/auth.rs:1151
 msgid "Security key and QR/Bluetooth authentication failed."
-msgstr ""
+msgstr "ናይ ደሕንነት መፍትሕን ናይ QR/Bluetooth መረጋገጺን ኣይተዓወተን።"
 
 #: src/common/src/auth.rs:1187
 msgid "Security key authentication failed."
-msgstr ""
+msgstr "ምርግጋጽ መንነት ቁልፊ ድሕነት ኣይተዓወተን።"
 
 #: src/common/src/idprovider/openidconnect.rs:2404 src/common/src/idprovider/openidconnect.rs:2424
 msgid "Session data corrupted. Please sign in again."
-msgstr ""
+msgstr "መረዳእታ ክፍለ ግዜኹም ተበላሽዩ። በጃኹም እንደገና እተዉ።"
 
 #: src/common/src/idprovider/himmelblau.rs:3482 src/common/src/idprovider/himmelblau.rs:4101 src/common/src/idprovider/himmelblau.rs:4222 src/common/src/idprovider/himmelblau.rs:4315 src/common/src/idprovider/openidconnect.rs:2093
 msgid "Set up a PIN\n"
 "A Hello PIN is a fast, secure way to sign in to your device, apps, and services."
-msgstr ""
+msgstr "PIN ኣቐናብር\n"
+"Hello PIN ናብ መሳርሒኻ፣ መተግበሪታትን ኣገልግሎታትን ንምእታው ቅልጡፍን ውሑስን መንገዲ እዩ።"
 
 #: src/common/src/auth.rs:945
 msgid "TOTP Code:"
-msgstr ""
+msgstr "ናይ TOTP ኮድ:"
 
 #: src/common/src/auth.rs:966
 msgid "The minimum PIN length is {length} characters."
-msgstr ""
+msgstr "ዝተሓተ ንውሓት PIN {length} ፊደላት እዩ።"
 
 #: src/pam/src/pam/mod.rs:576
 msgid "This command changes your local Hello PIN, NOT your Entra Id password."
-msgstr ""
+msgstr "እዚ ትእዛዝ እዚ ናይ ከባቢኻ Hello PIN ይቕይር፣ ናይ Entra Id መሕለፊ ቃልካ ኣይኮነን።"
 
 #: src/common/src/auth.rs:158
 msgid "Too many failed attempts in one row. Your device has been temporarily blocked. Please unplug it and plug in again."
-msgstr ""
+msgstr "ብዙሕ ዝፈሸለ ፈተነታት ብተኸታታሊ ተፈጺሙ። መሳርሒኻ ንግዜኡ ተዓጊቱ ኣሎ። በጃኻ ኣውጺእካ እንደገና ኣእትዎ።"
 
 #: src/common/src/auth.rs:162
 msgid "Too many failed attempts. Your device has been blocked. Reset it."
-msgstr ""
+msgstr "ብዙሕ ዝፈሸለ ፈተነታት ተገይሩ። መሳርሒኻ ተዓጊቱ ኣሎ። ዳግም ኣቐምጦ።"
 
 #: src/common/src/auth.rs:181
 msgid "Too many failed user verification attempts."
-msgstr ""
+msgstr "ብዙሕ ዝፈሸለ ፈተነታት ምርግጋጽ ተጠቃሚ ተፈጺሙ።"
 
 #: src/common/src/idprovider/common.rs:306
 msgid "Too many incorrect PIN attempts. You will need to enroll a new Linux Hello PIN."
-msgstr ""
+msgstr "ብዙሓት ዘይቅኑዓት PIN ፈተነታት ተገይሮም። ሓድሽ Linux Hello PIN ክትምዝግቡ ከድልየኩም እዩ።"
 
 #: src/common/src/auth.rs:137 src/common/src/auth.rs:168
 msgid "Try again."
-msgstr ""
+msgstr "ፈትኑ ደጊምኩም"
 
 #: src/common/src/idprovider/himmelblau.rs:3338 src/common/src/idprovider/openidconnect.rs:2598 src/common/src/idprovider/openidconnect.rs:2690 src/common/src/idprovider/openidconnect.rs:2868 src/common/src/idprovider/openidconnect.rs:3138
 msgid "Unexpected authentication step. Please try signing in again."
-msgstr ""
+msgstr "ዘይተጸበናዮ ደረጃ ምርግጋጽ መንነት። በጃኹም እንደገና ክትኣትዉ ፈትኑ።"
 
 #: src/common/src/auth.rs:696
 msgid "Unexpected error occurred."
-msgstr ""
+msgstr "ዘይተጸበናዮ ጌጋ ኣጋጢሙ።"
 
 #: src/common/src/auth.rs:185
 msgid "Unexpected error: {error}"
-msgstr ""
+msgstr "ዘይተጸበናዮ ጌጋ: {error}"
 
 #: src/common/src/auth.rs:193
 msgid "Unexpected select device notice"
-msgstr ""
+msgstr "ሃንደበታዊ ምልክታ ምረጽ መሳርሒ"
 
 #: src/common/src/idprovider/himmelblau.rs:137 src/common/src/idprovider/himmelblau.rs:3986 src/common/src/idprovider/himmelblau.rs:4054 src/common/src/idprovider/himmelblau.rs:4144 src/common/src/idprovider/himmelblau.rs:4268
 msgid "Update your password\n"
 "You need to update your password because this is\n"
 "the first time you are signing in, or because your\n"
 "password has expired."
-msgstr ""
+msgstr "ናይ ይሕለፍ ቃልካ ኣዘምን\n"
+"\n"
+"እዚ ንመጀመርታ ግዜ ትኣቱ ስለዘለኻ፣ ወይ ናይ ይሕለፍ ቃልካ ግዜኡ ስለዝሓለፈ፣ ናይ ይሕለፍ ቃልካ ከተዘምን የድልየካ።"
 
 #: config_gen.rs:74
 msgid "Use the Linux Hello PIN for this device."
-msgstr ""
+msgstr "ናይዚ መሳርሒ ናይ Linux Hello PIN ይጠቐሙ።"
 
 #: config_gen.rs:82
 msgid "Use the password for your Office 365 or Microsoft online login."
-msgstr ""
+msgstr "ናይ Office 365 ወይ Microsoft ኦንላይን መእተዊኻ ቃል-ምስጢር ተጠቐም።"
 
 #: src/common/src/i18n.rs:110 src/common/src/idprovider/openidconnect.rs:98
 msgid "Using a browser on another device, visit:\n"
 "{verification_uri}\n"
 "And enter the code:\n"
 "{user_code}"
-msgstr ""
+msgstr "ብመርበብ ሓበሬታ ኣብ ካልእ መሳርሒ፡ ተወከሱ፦\n"
+"{verification_uri}\n"
+"እዚ ኮድ ድማ ኣእትዉ፦\n"
+"{user_code}"
 
 #: src/common/src/auth.rs:866
 msgid "Value:"
-msgstr ""
+msgstr "ዋጋ:"
 
 #: src/common/src/idprovider/openidconnect.rs:761
 msgid "Waiting for browser authentication to complete..."
-msgstr ""
+msgstr "ምርግጋጽ መንነት ብመቃኛ ክዛዘም ይጽበ ኣሎ..."
 
 #: src/common/src/i18n.rs:89
 msgid "We texted your phone {phone}. Please enter the code to sign in:"
-msgstr ""
+msgstr "ናብ ስልክኩም {phone} መልእኽቲ ጽሑፍ ሰዲድና። ንምእታው በጃኹም ነቲ ኮድ ኣእትዉ:"
 
 #: src/common/src/i18n.rs:103
 msgid "We're calling your office phone {phone}. Please answer it to continue."
-msgstr ""
+msgstr "ናብ ስልኪ ቤት ጽሕፈትኩም {phone} ንድውል ኣለና። ንምቕጻል በጃኹም መልሱ።"
 
 #: src/common/src/i18n.rs:96
 msgid "We're calling your phone {phone}. Please answer it to continue."
-msgstr ""
+msgstr "ናብ ስልክኩም {phone} ንድውል ኣለና። ንምቕጻል በጃኹም መልሱ።"
 
 #: src/common/src/auth.rs:145
 msgid "Wrong PIN! {message}"
-msgstr ""
+msgstr "ጌጋ ፒን! {message}"
 
 #: src/common/src/auth.rs:176
 msgid "Wrong user verification! {message}"
-msgstr ""
+msgstr "ምርግጋጽ ተጠቃሚ ትኽክል ኣይኮነን! {message}"
 
 #: src/common/src/auth.rs:138 src/common/src/auth.rs:169
 msgid "You have {attempts} attempt left."
 msgid_plural "You have {attempts} attempts left."
-msgstr[0] ""
-msgstr[1] ""
+msgstr[0] "{attempts} ፈተነ ተሪፉ ኣሎ።"
+msgstr[1] "{attempts} ፈተነታት ተሪፎም ኣለዉ።"
 
 #: src/common/src/idprovider/himmelblau.rs:2547 src/common/src/idprovider/himmelblau.rs:2632 src/common/src/idprovider/openidconnect.rs:2412 src/common/src/idprovider/openidconnect.rs:2431 src/common/src/idprovider/openidconnect.rs:2505 src/common/src/idprovider/openidconnect.rs:2520
 msgid "Your session has expired. Please sign in again."
-msgstr ""
+msgstr "ናይ ክፍለ-ጊዜኹም ግዜ ኣብቂዑ እዩ። በጃኹም እንደገና እተዉ።"
 
 #: src/common/src/auth.rs:605 src/pam/src/pam/mod.rs:823
 msgid "{code}: {message}\n"
 "If you are now prompted for a password from pam_unix, please disregard the prompt, go back and try again."
-msgstr ""
+msgstr "{code}: {message}\n"
+"ኣብዚ ሕጂ ካብ pam_unix መሕለፊ ቃል ክተእቱ እንተተሓቲትኩም፣ በጃኹም ነቲ ሕቶ ኣይትግደሱሉ፣ ተመሊስኩም ዳግማይ ፈትኑ።"
 
 #: src/common/src/auth.rs:718
 msgid "{message}\n"
 "No push? Check your mobile device's internet connection."
-msgstr ""
+msgstr "{message}\n"
+"Push የለን? ናይ ሞባይል መሳርሒኻ ናይ ኢንተርነት ርክብ ፈትሽ።"

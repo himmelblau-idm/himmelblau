@@ -173,12 +173,12 @@ async fn fido_status_check(
                         &[("attempts", a.to_string())],
                     )
                 });
-                let msg = tr_fmt("Wrong UV! {message}", &[("message", detail)]);
+                let msg = tr_fmt("Wrong user verification! {message}", &[("message", detail)]);
                 msg_printer.print_error(&msg);
                 continue;
             }
             Ok(StatusUpdate::PinUvError(StatusPinUv::UvBlocked)) => {
-                msg_printer.print_error(&tr("Too many failed UV-attempts."));
+                msg_printer.print_error(&tr("Too many failed user verification attempts."));
                 break;
             }
             Ok(StatusUpdate::PinUvError(e)) => {

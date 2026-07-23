@@ -1,0 +1,530 @@
+# Hindi translations for Himmelblau.
+# Copyright (C) 2026 Himmelblau contributors
+# This file is distributed under the same license as Himmelblau.
+#
+msgid ""
+msgstr ""
+"Project-Id-Version: himmelblau\n"
+"POT-Creation-Date: 2026-07-15 20:34+0000\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"PO-Revision-Date: 2026-07-15 20:40+0000\n"
+"Last-Translator: Automated via Codex <noreply@himmelblau-idm.org>\n"
+"Language-Team: Hindi\n"
+"Language: hi\n"
+"Plural-Forms: nplurals=2; plural=(n != 1);\n"
+
+#: src/common/src/auth.rs:1285 src/common/src/auth.rs:1298
+msgid "An unexpected error occurred."
+msgstr "एक अप्रत्याशित त्रुटि हुई।"
+
+#: src/common/src/idprovider/openidconnect.rs:753
+msgid "Approve sign-in in your authenticator app, then wait..."
+msgstr "अपने प्रमाणक ऐप में साइन-इन को स्वीकृत करें, फिर प्रतीक्षा करें..."
+
+#: src/common/src/idprovider/himmelblau.rs:4809
+msgid "Authenticated user {user} does not match requested user"
+msgstr "प्रमाणित उपयोगकर्ता {user} अनुरोधित उपयोगकर्ता से मेल नहीं खाता"
+
+#: src/common/src/idprovider/openidconnect.rs:2118
+msgid "Authenticated user {uuid} does not match requested user"
+msgstr "प्रमाणित उपयोगकर्ता {uuid} अनुरोधित उपयोगकर्ता से मेल नहीं खाता"
+
+#: src/common/src/idprovider/openidconnect.rs:3003
+msgid "Authentication did not return a refresh token. Please try again."
+msgstr "प्रमाणीकरण ने रिफ्रेश टोकन वापस नहीं किया। कृपया फिर से प्रयास करें।"
+
+#: src/common/src/idprovider/himmelblau.rs:3949
+msgid "Authentication failed (AADSTS{code})"
+msgstr "प्रमाणीकरण विफल रहा (AADSTS{code})"
+
+#: src/common/src/idprovider/openidconnect.rs:2939
+msgid "Authentication failed in browser flow."
+msgstr "ब्राउज़र प्रवाह में प्रमाणीकरण विफल रहा।"
+
+#: src/common/src/idprovider/himmelblau.rs:209
+msgid "Authentication failed. Please contact your administrator."
+msgstr "प्रमाणीकरण विफल रहा। कृपया अपने व्यवस्थापक से संपर्क करें।"
+
+#: src/common/src/idprovider/himmelblau.rs:3829
+msgid "Authentication failed. Please try again."
+msgstr "प्रमाणीकरण विफल रहा। कृपया पुनः प्रयास करें।"
+
+#: src/common/src/idprovider/himmelblau.rs:3129
+msgid "Authentication failed. Please try signing in again."
+msgstr "प्रमाणीकरण विफल रहा। कृपया फिर से साइन इन करने का प्रयास करें।"
+
+#: src/common/src/idprovider/himmelblau.rs:168
+msgid "Authentication failed: Authentication method not supported."
+msgstr "प्रमाणीकरण विफल: प्रमाणीकरण विधि समर्थित नहीं है।"
+
+#: src/common/src/idprovider/himmelblau.rs:171 src/common/src/idprovider/himmelblau.rs:176
+msgid "Authentication failed: Configuration error."
+msgstr "प्रमाणीकरण विफल: कॉन्फ़िगरेशन त्रुटि।"
+
+#: src/common/src/idprovider/himmelblau.rs:175
+msgid "Authentication failed: Cryptographic error."
+msgstr "प्रमाणीकरण विफल: क्रिप्टोग्राफ़िक त्रुटि।"
+
+#: src/common/src/idprovider/himmelblau.rs:152
+msgid "Authentication failed: Invalid server response."
+msgstr "प्रमाणीकरण विफल: अमान्य सर्वर प्रतिक्रिया।"
+
+#: src/common/src/idprovider/himmelblau.rs:188
+msgid "Authentication failed: Missing required data."
+msgstr "प्रमाणीकरण विफल: आवश्यक डेटा मौजूद नहीं है।"
+
+#: src/common/src/idprovider/himmelblau.rs:170
+msgid "Authentication failed: Security hardware error."
+msgstr "प्रमाणीकरण विफल: सुरक्षा हार्डवेयर त्रुटि।"
+
+#: src/common/src/idprovider/himmelblau.rs:165
+msgid "Authentication failed: Unable to reach authentication server."
+msgstr "प्रमाणीकरण विफल रहा: प्रमाणीकरण सर्वर तक पहुँचने में असमर्थ।"
+
+#: src/common/src/idprovider/openidconnect.rs:2738 src/common/src/idprovider/openidconnect.rs:2849 src/common/src/idprovider/openidconnect.rs:2984 src/common/src/idprovider/openidconnect.rs:3050 src/common/src/idprovider/openidconnect.rs:3063
+msgid "Authentication failed: {error}"
+msgstr "प्रमाणीकरण विफल रहा: {error}"
+
+#: src/common/src/idprovider/openidconnect.rs:3036
+msgid "Authentication flow completed but token exchange failed. Please try again."
+msgstr "प्रमाणीकरण प्रवाह पूरा हो गया, लेकिन टोकन एक्सचेंज विफल रहा। कृपया फिर से प्रयास करें।"
+
+#: src/common/src/idprovider/himmelblau.rs:179 src/common/src/idprovider/himmelblau.rs:203
+msgid "Authentication in progress."
+msgstr "प्रमाणीकरण प्रगति पर है।"
+
+#: src/common/src/idprovider/openidconnect.rs:2537
+msgid "Authentication incomplete. Please try again."
+msgstr "प्रमाणीकरण अधूरा है। कृपया फिर से प्रयास करें।"
+
+#: src/common/src/idprovider/himmelblau.rs:1912
+msgid "Authentication service is temporarily unavailable. Please try again shortly."
+msgstr "प्रमाणीकरण सेवा अस्थायी रूप से उपलब्ध नहीं है। कृपया थोड़ी देर बाद फिर से प्रयास करें।"
+
+#: src/common/src/idprovider/himmelblau.rs:3169
+msgid "Authentication service unavailable. Please try again later."
+msgstr "प्रमाणीकरण सेवा उपलब्ध नहीं है। कृपया बाद में पुनः प्रयास करें।"
+
+#: src/common/src/idprovider/openidconnect.rs:2674 src/common/src/idprovider/openidconnect.rs:2713 src/common/src/idprovider/openidconnect.rs:2774
+msgid "Authentication session corrupted. Please try again."
+msgstr "प्रमाणीकरण सत्र दूषित हो गया है। कृपया पुनः प्रयास करें।"
+
+#: src/common/src/idprovider/openidconnect.rs:2661
+msgid "Authentication session data missing. Please try again."
+msgstr "प्रमाणीकरण सत्र डेटा अनुपलब्ध है। कृपया फिर से प्रयास करें।"
+
+#: src/common/src/idprovider/openidconnect.rs:3078
+msgid "Authentication session returned an unexpected state. Please try again."
+msgstr "प्रमाणीकरण सत्र ने एक अप्रत्याशित स्थिति लौटाई। कृपया फिर से प्रयास करें।"
+
+#: src/common/src/idprovider/himmelblau.rs:4124 src/common/src/idprovider/openidconnect.rs:2701 src/common/src/idprovider/openidconnect.rs:2801
+msgid "Authentication timed out. Please try again."
+msgstr "प्रमाणीकरण का समय समाप्त हो गया। कृपया पुनः प्रयास करें।"
+
+#: src/common/src/idprovider/openidconnect.rs:3105
+msgid "Browser authentication backend unavailable. Please try again."
+msgstr "ब्राउज़र प्रमाणीकरण बैकएंड अनुपलब्ध है। कृपया फिर से प्रयास करें।"
+
+#: src/common/src/auth.rs:1261
+msgid "Changing the password. Please wait..."
+msgstr "पासवर्ड बदला जा रहा है। कृपया प्रतीक्षा करें..."
+
+#: src/common/src/auth.rs:1215
+msgid "Chosen password is too short! 8 chars required."
+msgstr "चुना गया पासवर्ड बहुत छोटा है! 8 वर्ण आवश्यक हैं।"
+
+#: src/common/src/auth.rs:979 src/pam/src/pam/mod.rs:595
+msgid "Chosen pin is too short! {length} chars required."
+msgstr "चुना गया पिन बहुत छोटा है! {length} वर्ण आवश्यक हैं।"
+
+#: src/common/src/auth.rs:829
+msgid "Cloud Password:"
+msgstr "क्लाउड पासवर्ड:"
+
+#: src/common/src/auth.rs:868
+msgid "Code:"
+msgstr "कोड:"
+
+#: src/common/src/auth.rs:1012 src/pam/src/pam/mod.rs:637
+msgid "Confirm PIN:"
+msgstr "पिन की पुष्टि करें:"
+
+#: src/common/src/auth.rs:1236
+msgid "Confirm password:"
+msgstr "पासवर्ड की पुष्टि करें:"
+
+#: src/common/src/idprovider/himmelblau.rs:199
+msgid "Consent required. Please contact your administrator."
+msgstr "सहमति आवश्यक है। कृपया अपने व्यवस्थापक से संपर्क करें।"
+
+#: src/common/src/idprovider/himmelblau.rs:3609
+msgid "Create a PIN to use in place of passwords."
+msgstr "पासवर्ड के स्थान पर उपयोग करने के लिए एक PIN बनाएं।"
+
+#: src/common/src/idprovider/himmelblau.rs:173
+msgid "Device enrollment failed. Please contact your administrator."
+msgstr "डिवाइस नामांकन विफल रहा। कृपया अपने व्यवस्थापक से संपर्क करें।"
+
+#: src/common/src/idprovider/himmelblau.rs:1022
+msgid "Device has been removed from the domain."
+msgstr "डिवाइस को डोमेन से हटा दिया गया है।"
+
+#: src/common/src/auth.rs:1120
+msgid "Enable Bluetooth to sign in with your phone."
+msgstr "अपने फ़ोन से साइन इन करने के लिए Bluetooth सक्षम करें।"
+
+#: src/common/src/auth.rs:1037
+msgid "Enrolling the Hello PIN. Please wait..."
+msgstr "Hello PIN नामांकित किया जा रहा है। कृपया प्रतीक्षा करें..."
+
+#: src/common/src/auth.rs:652
+msgid "Enter the setup key '{secret}' to enroll a TOTP Authenticator app. Use '{issuer}' for the code name and '{account}' as the label/name."
+msgstr "TOTP Authenticator ऐप नामांकित करने के लिए सेटअप कुंजी '{secret}' दर्ज करें। कोड नाम के लिए '{issuer}' और लेबल/नाम के रूप में '{account}' का उपयोग करें।"
+
+#: src/pam/src/pam/mod.rs:827
+msgid "Entra Id Fido authentication failed."
+msgstr "Entra ID FIDO प्रमाणीकरण विफल रहा।"
+
+#: src/common/src/auth.rs:836 src/pam/src/pam/mod.rs:712 src/pam/src/pam/mod.rs:752
+msgid "Entra Id Password:"
+msgstr "Entra Id पासवर्ड:"
+
+#: src/common/src/idprovider/himmelblau.rs:3369 src/common/src/idprovider/himmelblau.rs:3380
+msgid "FIDO authentication not available. Please try a different authentication method."
+msgstr "FIDO प्रमाणीकरण उपलब्ध नहीं है। कृपया कोई अन्य प्रमाणीकरण विधि आज़माएँ।"
+
+#: src/common/src/idprovider/himmelblau.rs:2724 src/common/src/idprovider/himmelblau.rs:2837 src/common/src/idprovider/himmelblau.rs:2880 src/common/src/idprovider/himmelblau.rs:2927 src/common/src/idprovider/himmelblau.rs:2942 src/common/src/idprovider/openidconnect.rs:2368 src/common/src/idprovider/common.rs:665
+msgid "Failed to authenticate with Hello PIN."
+msgstr "Hello PIN से प्रमाणीकरण करने में विफल।"
+
+#: src/common/src/idprovider/common.rs:271
+msgid "Failed to authenticate with Hello PIN. One more failed attempt will require multi-factor authentication and resetting your Linux Hello PIN."
+msgstr "Hello PIN से प्रमाणीकरण विफल रहा। एक और विफल प्रयास पर बहु-कारक प्रमाणीकरण और आपके Linux Hello PIN को रीसेट करना आवश्यक होगा।"
+
+#: src/common/src/idprovider/common.rs:554 src/common/src/idprovider/common.rs:564
+msgid "Failed to authenticate with Hello TOTP code."
+msgstr "Hello TOTP कोड से प्रमाणीकरण विफल रहा।"
+
+#: src/common/src/auth.rs:638
+msgid "Failed to build regex: {error}"
+msgstr "रेगेक्स बनाने में विफल: {error}"
+
+#: src/common/src/idprovider/himmelblau.rs:1002
+msgid "Failed to delete CSR key"
+msgstr "CSR कुंजी हटाने में विफल रहा"
+
+#: src/common/src/idprovider/himmelblau.rs:1014
+msgid "Failed to delete intune key"
+msgstr "Intune कुंजी हटाने में विफल रहा"
+
+#: src/common/src/auth.rs:625 src/common/src/auth.rs:630 src/common/src/auth.rs:647 src/common/src/auth.rs:664
+msgid "Failed to generate QR code"
+msgstr "QR कोड जनरेट करने में विफल रहा"
+
+#: src/common/src/idprovider/himmelblau.rs:2283
+msgid "Failed to join domain. Please contact your administrator."
+msgstr "डोमेन से जुड़ने में विफल। कृपया अपने व्यवस्थापक से संपर्क करें।"
+
+#: src/common/src/idprovider/himmelblau.rs:3603
+msgid "Failed to provision hello key: {error}\n"
+"{message}"
+msgstr "हैलो कुंजी प्रोविज़न करने में विफल: {error}\n"
+"{message}"
+
+#: src/common/src/idprovider/himmelblau.rs:2173
+msgid "Failed to save device configuration. Please contact your administrator."
+msgstr "डिवाइस कॉन्फ़िगरेशन सहेजने में विफल। कृपया अपने व्यवस्थापक से संपर्क करें।"
+
+#: src/common/src/idprovider/himmelblau.rs:2182
+msgid "Failed to store device credentials. Please contact your administrator."
+msgstr "डिवाइस क्रेडेंशियल संग्रहीत करने में विफल। कृपया अपने व्यवस्थापक से संपर्क करें।"
+
+#: src/common/src/auth.rs:126 src/common/src/auth.rs:147
+msgid "Fido PIN:"
+msgstr "FIDO पिन:"
+
+#: src/common/src/auth.rs:1401
+msgid "Himmelblau authentication is starting, please wait..."
+msgstr "Himmelblau प्रमाणीकरण शुरू हो रहा है, कृपया प्रतीक्षा करें..."
+
+#: src/common/src/auth.rs:1408
+msgid "Himmelblau authentication service did not become available in time."
+msgstr "Himmelblau प्रमाणीकरण सेवा समय पर उपलब्ध नहीं हो सकी।"
+
+#: src/common/src/auth.rs:1395
+msgid "Himmelblau authentication service is unavailable."
+msgstr "Himmelblau प्रमाणीकरण सेवा उपलब्ध नहीं है।"
+
+#: src/common/src/auth.rs:1030 src/common/src/auth.rs:1254 src/pam/src/pam/mod.rs:654
+msgid "Inputs did not match. Try again."
+msgstr "इनपुट मेल नहीं खाते। फिर से प्रयास करें।"
+
+#: src/common/src/idprovider/himmelblau.rs:207
+msgid "Multi-factor authentication required."
+msgstr "बहु-कारक प्रमाणीकरण आवश्यक है।"
+
+#: src/common/src/idprovider/himmelblau.rs:4164
+msgid "Multi-factor authentication required. Please try signing in again."
+msgstr "मल्टी-फ़ैक्टर प्रमाणीकरण आवश्यक है। कृपया फिर से साइन इन करने का प्रयास करें।"
+
+#: src/common/src/idprovider/himmelblau.rs:1850 src/common/src/idprovider/himmelblau.rs:1953 src/common/src/idprovider/himmelblau.rs:1977 src/common/src/idprovider/himmelblau.rs:2137 src/common/src/idprovider/himmelblau.rs:2155 src/common/src/idprovider/himmelblau.rs:2523 src/common/src/idprovider/himmelblau.rs:2624 src/common/src/idprovider/openidconnect.rs:2250 src/common/src/idprovider/openidconnect.rs:2349 src/common/src/idprovider/common.rs:463
+msgid "Network outage detected."
+msgstr "नेटवर्क आउटेज का पता चला।"
+
+#: src/common/src/auth.rs:976 src/pam/src/pam/mod.rs:589
+msgid "New PIN:"
+msgstr "नया PIN:"
+
+#: src/common/src/auth.rs:1208
+msgid "New password:"
+msgstr "नया पासवर्ड:"
+
+#: src/common/src/auth.rs:1002 src/common/src/auth.rs:1064
+msgid "No Entra Id Hello PIN was supplied."
+msgstr "कोई Entra ID Hello PIN प्रदान नहीं किया गया।"
+
+#: src/common/src/auth.rs:1019
+msgid "No Entra Id Hello confirmation PIN was supplied."
+msgstr "कोई Entra ID Hello पुष्टिकरण PIN प्रदान नहीं किया गया।"
+
+#: src/common/src/auth.rs:1243
+msgid "No Entra Id confirmation password was supplied."
+msgstr "कोई Entra Id पुष्टिकरण पासवर्ड प्रदान नहीं किया गया था।"
+
+#: src/common/src/auth.rs:845 src/common/src/auth.rs:1224
+msgid "No Entra Id password was supplied."
+msgstr "कोई Entra Id पासवर्ड प्रदान नहीं किया गया था।"
+
+#: src/common/src/auth.rs:951
+msgid "No Hello TOTP code was supplied."
+msgstr "कोई Hello TOTP कोड प्रदान नहीं किया गया।"
+
+#: src/common/src/auth.rs:875
+msgid "No input was supplied."
+msgstr "कोई इनपुट प्रदान नहीं किया गया था।"
+
+#: src/common/src/idprovider/common.rs:413
+msgid "Offline auth has expired. Please connect to the network to continue."
+msgstr "ऑफ़लाइन प्रमाणीकरण की अवधि समाप्त हो गई है। जारी रखने के लिए कृपया नेटवर्क से कनेक्ट करें।"
+
+#: src/common/src/i18n.rs:82
+msgid "Open your Authenticator app, and enter the number '{entropy}' to sign in."
+msgstr "अपना Authenticator ऐप खोलें, और साइन इन करने के लिए संख्या '{entropy}' दर्ज करें।"
+
+#: src/common/src/auth.rs:922
+msgid "Open your authenticator app and scan this QR code to enroll. Then enter the generated code.\n"
+"{qr}"
+msgstr "अपना ऑथेंटिकेटर ऐप खोलें और नामांकन के लिए इस QR कोड को स्कैन करें। फिर जनरेट किया गया कोड दर्ज करें।\n"
+"{qr}"
+
+#: src/common/src/auth.rs:986 src/pam/src/pam/mod.rs:611
+msgid "PIN must not use repeating or predictable sequences. Avoid patterns like '111111', '123456', or '135791'."
+msgstr "पिन में दोहराए जाने वाले या अनुमान लगाने योग्य क्रमों का उपयोग नहीं होना चाहिए। '111111', '123456' या '135791' जैसे पैटर्न से बचें।"
+
+#: src/common/src/idprovider/himmelblau.rs:3585
+msgid "PIN setup failed. Please try signing in again."
+msgstr "PIN सेटअप विफल रहा। कृपया फिर से साइन इन करने का प्रयास करें।"
+
+#: src/common/src/auth.rs:1058
+msgid "PIN:"
+msgstr "पिन:"
+
+#: src/common/src/idprovider/himmelblau.rs:191
+msgid "Password change required. Please contact your administrator."
+msgstr "पासवर्ड बदलना आवश्यक है। कृपया अपने व्यवस्थापक से संपर्क करें।"
+
+#: src/common/src/idprovider/himmelblau.rs:195
+msgid "Password entry required."
+msgstr "पासवर्ड दर्ज करना आवश्यक है।"
+
+#: src/common/src/idprovider/himmelblau.rs:158 src/common/src/idprovider/himmelblau.rs:183
+msgid "Password reset registration required. Complete setup at https://aka.ms/ssprsetup from another device, then try again."
+msgstr "पासवर्ड रीसेट पंजीकरण आवश्यक है। किसी अन्य डिवाइस से https://aka.ms/ssprsetup पर सेटअप पूरा करें, फिर दोबारा प्रयास करें।"
+
+#: src/common/src/idprovider/himmelblau.rs:2690 src/common/src/idprovider/himmelblau.rs:2786 src/common/src/idprovider/himmelblau.rs:3072 src/common/src/idprovider/himmelblau.rs:3208 src/common/src/idprovider/himmelblau.rs:3325 src/common/src/idprovider/openidconnect.rs:2472 src/common/src/idprovider/openidconnect.rs:2585 src/common/src/idprovider/common.rs:649
+msgid "Please enter your Hello TOTP code from your Authenticator:"
+msgstr "कृपया अपने Authenticator से अपना Hello TOTP कोड दर्ज करें:"
+
+#: config_gen.rs:178
+msgid "Please insert your security key."
+msgstr "कृपया अपनी सुरक्षा कुंजी डालें।"
+
+#: src/common/src/auth.rs:119
+msgid "Please select a device by touching one of them."
+msgstr "कृपया उनमें से किसी एक को स्पर्श करके कोई डिवाइस चुनें।"
+
+#: config_gen.rs:186
+msgid "Please touch your security key."
+msgstr "कृपया अपनी सुरक्षा कुंजी को स्पर्श करें।"
+
+#: src/common/src/auth.rs:688
+msgid "Press enter to continue"
+msgstr "जारी रखने के लिए Enter दबाएं"
+
+#: src/common/src/auth.rs:1168
+msgid "QR/Bluetooth authentication failed."
+msgstr "QR/ब्लूटूथ प्रमाणीकरण विफल रहा।"
+
+#: src/common/src/idprovider/openidconnect.rs:90
+msgid "Scan the QR code to continue sign-in, or open this link on another device:\n"
+"{complete}\n"
+"If you cannot scan, visit:\n"
+"{verification_uri}\n"
+"And enter the code:\n"
+"{user_code}"
+msgstr "साइन-इन जारी रखने के लिए QR कोड स्कैन करें, या इस लिंक को किसी अन्य डिवाइस पर खोलें:\n"
+"{complete}\n"
+"यदि आप स्कैन नहीं कर सकते, तो यहां जाएं:\n"
+"{verification_uri}\n"
+"और कोड दर्ज करें:\n"
+"{user_code}"
+
+#: config_gen.rs:194
+msgid "Scan with your authenticator app"
+msgstr "अपने प्रमाणक ऐप से स्कैन करें"
+
+#: src/common/src/auth.rs:1151
+msgid "Security key and QR/Bluetooth authentication failed."
+msgstr "सुरक्षा कुंजी और QR/Bluetooth प्रमाणीकरण विफल रहा।"
+
+#: src/common/src/auth.rs:1187
+msgid "Security key authentication failed."
+msgstr "सुरक्षा कुंजी प्रमाणीकरण विफल हो गया।"
+
+#: src/common/src/idprovider/openidconnect.rs:2404 src/common/src/idprovider/openidconnect.rs:2424
+msgid "Session data corrupted. Please sign in again."
+msgstr "सत्र डेटा दूषित हो गया है। कृपया फिर से साइन इन करें।"
+
+#: src/common/src/idprovider/himmelblau.rs:3482 src/common/src/idprovider/himmelblau.rs:4101 src/common/src/idprovider/himmelblau.rs:4222 src/common/src/idprovider/himmelblau.rs:4315 src/common/src/idprovider/openidconnect.rs:2093
+msgid "Set up a PIN\n"
+"A Hello PIN is a fast, secure way to sign in to your device, apps, and services."
+msgstr "पिन सेट अप करें\n"
+"Hello पिन आपके डिवाइस, ऐप्स और सेवाओं में साइन इन करने का एक तेज़, सुरक्षित तरीका है।"
+
+#: src/common/src/auth.rs:945
+msgid "TOTP Code:"
+msgstr "TOTP कोड:"
+
+#: src/common/src/auth.rs:966
+msgid "The minimum PIN length is {length} characters."
+msgstr "न्यूनतम PIN लंबाई {length} वर्ण है।"
+
+#: src/pam/src/pam/mod.rs:576
+msgid "This command changes your local Hello PIN, NOT your Entra Id password."
+msgstr "यह कमांड आपका स्थानीय Hello PIN बदलती है, आपका Entra Id पासवर्ड नहीं।"
+
+#: src/common/src/auth.rs:181
+msgid "Too many failed user verification attempts."
+msgstr "बहुत अधिक उपयोगकर्ता सत्यापन प्रयास विफल रहे।"
+
+#: src/common/src/auth.rs:158
+msgid "Too many failed attempts in one row. Your device has been temporarily blocked. Please unplug it and plug in again."
+msgstr "एक ही पंक्ति में बहुत अधिक असफल प्रयास हुए। आपका डिवाइस अस्थायी रूप से ब्लॉक कर दिया गया है। कृपया इसे अनप्लग करें और फिर से प्लग इन करें।"
+
+#: src/common/src/auth.rs:162
+msgid "Too many failed attempts. Your device has been blocked. Reset it."
+msgstr "बहुत अधिक असफल प्रयास हुए हैं। आपका डिवाइस ब्लॉक कर दिया गया है। इसे रीसेट करें।"
+
+#: src/common/src/idprovider/common.rs:306
+msgid "Too many incorrect PIN attempts. You will need to enroll a new Linux Hello PIN."
+msgstr "बहुत अधिक बार गलत PIN दर्ज किया गया है। आपको नया Linux Hello PIN नामांकित करना होगा।"
+
+#: src/common/src/auth.rs:137 src/common/src/auth.rs:168
+msgid "Try again."
+msgstr "फिर से प्रयास करें।"
+
+#: src/common/src/idprovider/himmelblau.rs:3338 src/common/src/idprovider/openidconnect.rs:2598 src/common/src/idprovider/openidconnect.rs:2690 src/common/src/idprovider/openidconnect.rs:2868 src/common/src/idprovider/openidconnect.rs:3138
+msgid "Unexpected authentication step. Please try signing in again."
+msgstr "अप्रत्याशित प्रमाणीकरण चरण। कृपया फिर से साइन इन करने का प्रयास करें।"
+
+#: src/common/src/auth.rs:696
+msgid "Unexpected error occurred."
+msgstr "एक अनपेक्षित त्रुटि हुई।"
+
+#: src/common/src/auth.rs:185
+msgid "Unexpected error: {error}"
+msgstr "अप्रत्याशित त्रुटि: {error}"
+
+#: src/common/src/auth.rs:193
+msgid "Unexpected select device notice"
+msgstr "अनपेक्षित डिवाइस चयन सूचना"
+
+#: src/common/src/idprovider/himmelblau.rs:137 src/common/src/idprovider/himmelblau.rs:3986 src/common/src/idprovider/himmelblau.rs:4054 src/common/src/idprovider/himmelblau.rs:4144 src/common/src/idprovider/himmelblau.rs:4268
+msgid "Update your password\n"
+"You need to update your password because this is\n"
+"the first time you are signing in, or because your\n"
+"password has expired."
+msgstr "अपना पासवर्ड अपडेट करें\n"
+"आपको अपना पासवर्ड अपडेट करना होगा क्योंकि यह\n"
+"आपके साइन इन करने का पहला अवसर है, या क्योंकि आपका\n"
+"पासवर्ड समाप्त हो गया है।"
+
+#: config_gen.rs:74
+msgid "Use the Linux Hello PIN for this device."
+msgstr "इस डिवाइस के लिए Linux Hello PIN का उपयोग करें।"
+
+#: config_gen.rs:82
+msgid "Use the password for your Office 365 or Microsoft online login."
+msgstr "अपने Office 365 या Microsoft ऑनलाइन लॉगिन का पासवर्ड उपयोग करें।"
+
+#: src/common/src/i18n.rs:110 src/common/src/idprovider/openidconnect.rs:98
+msgid "Using a browser on another device, visit:\n"
+"{verification_uri}\n"
+"And enter the code:\n"
+"{user_code}"
+msgstr "किसी अन्य डिवाइस पर ब्राउज़र का उपयोग करके यहां जाएं:\n"
+"{verification_uri}\n"
+"और कोड दर्ज करें:\n"
+"{user_code}"
+
+#: src/common/src/auth.rs:866
+msgid "Value:"
+msgstr "मान:"
+
+#: src/common/src/idprovider/openidconnect.rs:761
+msgid "Waiting for browser authentication to complete..."
+msgstr "ब्राउज़र प्रमाणीकरण पूरा होने की प्रतीक्षा की जा रही है..."
+
+#: src/common/src/i18n.rs:89
+msgid "We texted your phone {phone}. Please enter the code to sign in:"
+msgstr "हमने आपके फ़ोन {phone} पर टेक्स्ट संदेश भेजा है। साइन इन करने के लिए कृपया कोड दर्ज करें:"
+
+#: src/common/src/i18n.rs:103
+msgid "We're calling your office phone {phone}. Please answer it to continue."
+msgstr "हम आपके कार्यालय के फ़ोन {phone} पर कॉल कर रहे हैं। जारी रखने के लिए कृपया इसका उत्तर दें।"
+
+#: src/common/src/i18n.rs:96
+msgid "We're calling your phone {phone}. Please answer it to continue."
+msgstr "हम आपके फ़ोन {phone} पर कॉल कर रहे हैं। जारी रखने के लिए कृपया इसका उत्तर दें।"
+
+#: src/common/src/auth.rs:145
+msgid "Wrong PIN! {message}"
+msgstr "गलत PIN! {message}"
+
+#: src/common/src/auth.rs:176
+msgid "Wrong user verification! {message}"
+msgstr "गलत उपयोगकर्ता सत्यापन! {message}"
+
+#: src/common/src/auth.rs:138 src/common/src/auth.rs:169
+msgid "You have {attempts} attempt left."
+msgid_plural "You have {attempts} attempts left."
+msgstr[0] "आपके पास {attempts} प्रयास शेष है।"
+msgstr[1] "आपके पास {attempts} प्रयास शेष हैं।"
+
+#: src/common/src/idprovider/himmelblau.rs:2547 src/common/src/idprovider/himmelblau.rs:2632 src/common/src/idprovider/openidconnect.rs:2412 src/common/src/idprovider/openidconnect.rs:2431 src/common/src/idprovider/openidconnect.rs:2505 src/common/src/idprovider/openidconnect.rs:2520
+msgid "Your session has expired. Please sign in again."
+msgstr "आपका सत्र समाप्त हो गया है। कृपया फिर से साइन इन करें।"
+
+#: src/common/src/auth.rs:605 src/pam/src/pam/mod.rs:823
+msgid "{code}: {message}\n"
+"If you are now prompted for a password from pam_unix, please disregard the prompt, go back and try again."
+msgstr "{code}: {message}\n"
+"यदि अब आपसे pam_unix द्वारा पासवर्ड मांगा जाता है, तो कृपया उस संकेत को अनदेखा करें, वापस जाएं और फिर से प्रयास करें।"
+
+#: src/common/src/auth.rs:718
+msgid "{message}\n"
+"No push? Check your mobile device's internet connection."
+msgstr "{message}\n"
+"पुश नहीं मिला? अपने मोबाइल डिवाइस का इंटरनेट कनेक्शन जांचें।"

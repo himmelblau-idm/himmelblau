@@ -1,364 +1,371 @@
-# Himmelblau message catalog template.
+# Croatian translations for Himmelblau.
 # Copyright (C) 2026 Himmelblau contributors
 # This file is distributed under the same license as Himmelblau.
 #
 msgid ""
 msgstr ""
 "Project-Id-Version: himmelblau\n"
-"POT-Creation-Date: 2026-07-20 16:17+0000\n"
+"POT-Creation-Date: 2026-07-21 15:26+0000\n"
 "MIME-Version: 1.0\n"
 "Content-Type: text/plain; charset=UTF-8\n"
 "Content-Transfer-Encoding: 8bit\n"
+"PO-Revision-Date: 2026-07-21 15:43+0000\n"
+"Last-Translator: Automated via Codex <noreply@himmelblau-idm.org>\n"
+"Language-Team: Croatian\n"
+"Language: hr\n"
+"Plural-Forms: nplurals=3; plural=((((((0 == 0)) && (((n % 10) >= 2 && (n % 10) <= 4))) && (!(((n % 100) >= 12 && (n % 100) <= 14)))) || ((((0 % 10) >= 2 && (0 % 10) <= 4)) && (!(((0 % 100) >= 12 && (0 % 100) <= 14))))) ? 1 : (((((0 == 0)) && (((n % 10) == 1))) && (!(((n % 100) == 11)))) || ((((0 % 10) == 1)) && (!(((0 % 100) == 11))))) ? 0 : 2);\n"
 
 #: src/common/src/auth.rs:1285 src/common/src/auth.rs:1298
 msgid "An unexpected error occurred."
-msgstr ""
+msgstr "Došlo je do neočekivane pogreške."
 
 #: src/common/src/idprovider/openidconnect.rs:753
 msgid "Approve sign-in in your authenticator app, then wait..."
-msgstr ""
+msgstr "Odobrite prijavu u aplikaciji za provjeru autentičnosti, a zatim pričekajte..."
 
 #: src/common/src/idprovider/himmelblau.rs:4809
 msgid "Authenticated user {user} does not match requested user"
-msgstr ""
+msgstr "Autentificirani korisnik {user} ne podudara se sa zatraženim korisnikom"
 
 #: src/common/src/idprovider/openidconnect.rs:2118
 msgid "Authenticated user {uuid} does not match requested user"
-msgstr ""
+msgstr "Autentificirani korisnik {uuid} ne podudara se sa zatraženim korisnikom"
 
 #: src/common/src/idprovider/openidconnect.rs:3003
 msgid "Authentication did not return a refresh token. Please try again."
-msgstr ""
+msgstr "Provjera autentičnosti nije vratila token za osvježavanje. Pokušajte ponovno."
 
 #: src/common/src/idprovider/himmelblau.rs:3949
 msgid "Authentication failed (AADSTS{code})"
-msgstr ""
+msgstr "Autentikacija nije uspjela (AADSTS{code})"
 
 #: src/common/src/idprovider/openidconnect.rs:2939
 msgid "Authentication failed in browser flow."
-msgstr ""
+msgstr "Autentikacija putem preglednika nije uspjela."
 
 #: src/common/src/idprovider/himmelblau.rs:209
 msgid "Authentication failed. Please contact your administrator."
-msgstr ""
+msgstr "Autentifikacija nije uspjela. Obratite se svom administratoru."
 
 #: src/common/src/idprovider/himmelblau.rs:3829
 msgid "Authentication failed. Please try again."
-msgstr ""
+msgstr "Autentifikacija nije uspjela. Pokušajte ponovno."
 
 #: src/common/src/idprovider/himmelblau.rs:3129
 msgid "Authentication failed. Please try signing in again."
-msgstr ""
+msgstr "Provjera autentičnosti nije uspjela. Pokušajte se ponovno prijaviti."
 
 #: src/common/src/idprovider/himmelblau.rs:168
 msgid "Authentication failed: Authentication method not supported."
-msgstr ""
+msgstr "Autentifikacija nije uspjela: Metoda autentifikacije nije podržana."
 
 #: src/common/src/idprovider/himmelblau.rs:171 src/common/src/idprovider/himmelblau.rs:176
 msgid "Authentication failed: Configuration error."
-msgstr ""
+msgstr "Autentifikacija nije uspjela: pogreška u konfiguraciji."
 
 #: src/common/src/idprovider/himmelblau.rs:175
 msgid "Authentication failed: Cryptographic error."
-msgstr ""
+msgstr "Autentifikacija nije uspjela: kriptografska pogreška."
 
 #: src/common/src/idprovider/himmelblau.rs:152
 msgid "Authentication failed: Invalid server response."
-msgstr ""
+msgstr "Provjera autentičnosti nije uspjela: nevažeći odgovor poslužitelja."
 
 #: src/common/src/idprovider/himmelblau.rs:188
 msgid "Authentication failed: Missing required data."
-msgstr ""
+msgstr "Autentifikacija nije uspjela: Nedostaju obavezni podaci."
 
 #: src/common/src/idprovider/himmelblau.rs:170
 msgid "Authentication failed: Security hardware error."
-msgstr ""
+msgstr "Autentikacija nije uspjela: pogreška sigurnosnog hardvera."
 
 #: src/common/src/idprovider/himmelblau.rs:165
 msgid "Authentication failed: Unable to reach authentication server."
-msgstr ""
+msgstr "Provjera autentičnosti nije uspjela: nije moguće pristupiti poslužitelju za provjeru autentičnosti."
 
 #: src/common/src/idprovider/openidconnect.rs:2738 src/common/src/idprovider/openidconnect.rs:2849 src/common/src/idprovider/openidconnect.rs:2984 src/common/src/idprovider/openidconnect.rs:3050 src/common/src/idprovider/openidconnect.rs:3063
 msgid "Authentication failed: {error}"
-msgstr ""
+msgstr "Provjera autentičnosti nije uspjela: {error}"
 
 #: src/common/src/idprovider/openidconnect.rs:3036
 msgid "Authentication flow completed but token exchange failed. Please try again."
-msgstr ""
+msgstr "Tijek provjere autentičnosti je dovršen, ali razmjena tokena nije uspjela. Pokušajte ponovno."
 
 #: src/common/src/idprovider/himmelblau.rs:179 src/common/src/idprovider/himmelblau.rs:203
 msgid "Authentication in progress."
-msgstr ""
+msgstr "Autentikacija je u tijeku."
 
 #: src/common/src/idprovider/openidconnect.rs:2537
 msgid "Authentication incomplete. Please try again."
-msgstr ""
+msgstr "Autentifikacija nije dovršena. Pokušajte ponovno."
 
 #: src/common/src/idprovider/himmelblau.rs:1912
 msgid "Authentication service is temporarily unavailable. Please try again shortly."
-msgstr ""
+msgstr "Usluga autentifikacije privremeno je nedostupna. Pokušajte ponovno uskoro."
 
 #: src/common/src/idprovider/himmelblau.rs:3169
 msgid "Authentication service unavailable. Please try again later."
-msgstr ""
+msgstr "Usluga provjere autentičnosti nije dostupna. Pokušajte ponovno kasnije."
 
 #: src/common/src/idprovider/openidconnect.rs:2674 src/common/src/idprovider/openidconnect.rs:2713 src/common/src/idprovider/openidconnect.rs:2774
 msgid "Authentication session corrupted. Please try again."
-msgstr ""
+msgstr "Sesija autentifikacije je oštećena. Pokušajte ponovno."
 
 #: src/common/src/idprovider/openidconnect.rs:2661
 msgid "Authentication session data missing. Please try again."
-msgstr ""
+msgstr "Nedostaju podaci sesije provjere autentičnosti. Pokušajte ponovno."
 
 #: src/common/src/idprovider/openidconnect.rs:3078
 msgid "Authentication session returned an unexpected state. Please try again."
-msgstr ""
+msgstr "Sesija autentifikacije vratila je neočekivano stanje. Pokušajte ponovno."
 
 #: src/common/src/idprovider/himmelblau.rs:4124 src/common/src/idprovider/openidconnect.rs:2701 src/common/src/idprovider/openidconnect.rs:2801
 msgid "Authentication timed out. Please try again."
-msgstr ""
+msgstr "Autentikacija je istekla. Pokušajte ponovno."
 
 #: src/common/src/idprovider/openidconnect.rs:3105
 msgid "Browser authentication backend unavailable. Please try again."
-msgstr ""
+msgstr "Pozadinski sustav za autentifikaciju putem preglednika nije dostupan. Pokušajte ponovno."
 
 #: src/common/src/auth.rs:1261
 msgid "Changing the password. Please wait..."
-msgstr ""
+msgstr "Promjena lozinke. Pričekajte..."
 
 #: src/common/src/auth.rs:1215
 msgid "Chosen password is too short! 8 chars required."
-msgstr ""
+msgstr "Odabrana lozinka je prekratka! Potrebno je 8 znakova."
 
 #: src/common/src/auth.rs:979 src/pam/src/pam/mod.rs:595
 msgid "Chosen pin is too short! {length} chars required."
-msgstr ""
+msgstr "Odabrani PIN je prekratak! Potrebno je {length} znakova."
 
 #: src/common/src/auth.rs:829
 msgid "Cloud Password:"
-msgstr ""
+msgstr "Lozinka za oblak:"
 
 #: src/common/src/auth.rs:868
 msgid "Code:"
-msgstr ""
+msgstr "Kod:"
 
 #: src/common/src/auth.rs:1012 src/pam/src/pam/mod.rs:637
 msgid "Confirm PIN:"
-msgstr ""
+msgstr "Potvrdite PIN:"
 
 #: src/common/src/auth.rs:1236
 msgid "Confirm password:"
-msgstr ""
+msgstr "Potvrdite lozinku:"
 
 #: src/common/src/idprovider/himmelblau.rs:199
 msgid "Consent required. Please contact your administrator."
-msgstr ""
+msgstr "Potreban je pristanak. Obratite se svom administratoru."
 
 #: src/common/src/idprovider/himmelblau.rs:3609
 msgid "Create a PIN to use in place of passwords."
-msgstr ""
+msgstr "Izradite PIN koji ćete upotrebljavati umjesto lozinki."
 
 #: src/common/src/idprovider/himmelblau.rs:173
 msgid "Device enrollment failed. Please contact your administrator."
-msgstr ""
+msgstr "Registracija uređaja nije uspjela. Obratite se administratoru."
 
 #: src/common/src/idprovider/himmelblau.rs:1022
 msgid "Device has been removed from the domain."
-msgstr ""
+msgstr "Uređaj je uklonjen iz domene."
 
 #: src/common/src/auth.rs:1120
 msgid "Enable Bluetooth to sign in with your phone."
-msgstr ""
+msgstr "Omogućite Bluetooth da biste se prijavili putem telefona."
 
 #: src/common/src/auth.rs:1037
 msgid "Enrolling the Hello PIN. Please wait..."
-msgstr ""
+msgstr "Registriranje Hello PIN-a. Pričekajte..."
 
 #: src/common/src/auth.rs:652
 msgid "Enter the setup key '{secret}' to enroll a TOTP Authenticator app. Use '{issuer}' for the code name and '{account}' as the label/name."
-msgstr ""
+msgstr "Unesite ključ za postavljanje '{secret}' da biste registrirali aplikaciju za TOTP autentifikaciju. Upotrijebite '{issuer}' kao naziv koda i '{account}' kao oznaku/naziv."
 
 #: src/pam/src/pam/mod.rs:827
 msgid "Entra Id Fido authentication failed."
-msgstr ""
+msgstr "Autentikacija putem Entra ID FIDO nije uspjela."
 
 #: src/common/src/auth.rs:836 src/pam/src/pam/mod.rs:712 src/pam/src/pam/mod.rs:752
 msgid "Entra Id Password:"
-msgstr ""
+msgstr "Entra ID lozinka:"
 
 #: src/common/src/idprovider/himmelblau.rs:3369 src/common/src/idprovider/himmelblau.rs:3380
 msgid "FIDO authentication not available. Please try a different authentication method."
-msgstr ""
+msgstr "FIDO autentifikacija nije dostupna. Pokušajte s drugim načinom autentifikacije."
 
 #: src/common/src/idprovider/himmelblau.rs:2724 src/common/src/idprovider/himmelblau.rs:2837 src/common/src/idprovider/himmelblau.rs:2880 src/common/src/idprovider/himmelblau.rs:2927 src/common/src/idprovider/himmelblau.rs:2942 src/common/src/idprovider/openidconnect.rs:2368 src/common/src/idprovider/common.rs:665
 msgid "Failed to authenticate with Hello PIN."
-msgstr ""
+msgstr "Autentifikacija pomoću Hello PIN-a nije uspjela."
 
 #: src/common/src/idprovider/common.rs:271
 msgid "Failed to authenticate with Hello PIN. One more failed attempt will require multi-factor authentication and resetting your Linux Hello PIN."
-msgstr ""
+msgstr "Autentikacija pomoću Hello PIN-a nije uspjela. Još jedan neuspjeli pokušaj zahtijevat će višefaktorsku autentikaciju i ponovno postavljanje vašeg Linux Hello PIN-a."
 
 #: src/common/src/idprovider/common.rs:554 src/common/src/idprovider/common.rs:564
 msgid "Failed to authenticate with Hello TOTP code."
-msgstr ""
+msgstr "Autentifikacija pomoću Hello TOTP koda nije uspjela."
 
 #: src/common/src/auth.rs:638
 msgid "Failed to build regex: {error}"
-msgstr ""
+msgstr "Izrada regularnog izraza nije uspjela: {error}"
 
 #: src/common/src/idprovider/himmelblau.rs:1002
 msgid "Failed to delete CSR key"
-msgstr ""
+msgstr "Brisanje CSR ključa nije uspjelo"
 
 #: src/common/src/idprovider/himmelblau.rs:1014
 msgid "Failed to delete intune key"
-msgstr ""
+msgstr "Brisanje ključa za Intune nije uspjelo"
 
 #: src/common/src/auth.rs:625 src/common/src/auth.rs:630 src/common/src/auth.rs:647 src/common/src/auth.rs:664
 msgid "Failed to generate QR code"
-msgstr ""
+msgstr "Generiranje QR koda nije uspjelo"
 
 #: src/common/src/idprovider/himmelblau.rs:2283
 msgid "Failed to join domain. Please contact your administrator."
-msgstr ""
+msgstr "Pridruživanje domeni nije uspjelo. Obratite se administratoru."
 
 #: src/common/src/idprovider/himmelblau.rs:3603
 msgid "Failed to provision hello key: {error}\n"
 "{message}"
-msgstr ""
+msgstr "Nije uspjelo postavljanje Hello ključa: {error}\n"
+"{message}"
 
 #: src/common/src/idprovider/himmelblau.rs:2173
 msgid "Failed to save device configuration. Please contact your administrator."
-msgstr ""
+msgstr "Nije uspjelo spremanje konfiguracije uređaja. Obratite se svom administratoru."
 
 #: src/common/src/idprovider/himmelblau.rs:2182
 msgid "Failed to store device credentials. Please contact your administrator."
-msgstr ""
+msgstr "Pohranjivanje vjerodajnica uređaja nije uspjelo. Obratite se svom administratoru."
 
 #: src/common/src/auth.rs:126 src/common/src/auth.rs:147
 msgid "Fido PIN:"
-msgstr ""
+msgstr "Fido PIN:"
 
 #: src/common/src/auth.rs:1401
 msgid "Himmelblau authentication is starting, please wait..."
-msgstr ""
+msgstr "Himmelblau autentifikacija se pokreće, pričekajte..."
 
 #: src/common/src/auth.rs:1408
 msgid "Himmelblau authentication service did not become available in time."
-msgstr ""
+msgstr "Himmelblau servis za provjeru autentičnosti nije postao dostupan na vrijeme."
 
 #: src/common/src/auth.rs:1395
 msgid "Himmelblau authentication service is unavailable."
-msgstr ""
+msgstr "Usluga autentifikacije Himmelblau nije dostupna."
 
 #: src/common/src/auth.rs:1030 src/common/src/auth.rs:1254 src/pam/src/pam/mod.rs:654
 msgid "Inputs did not match. Try again."
-msgstr ""
+msgstr "Unosi se ne podudaraju. Pokušajte ponovno."
 
 #: src/common/src/idprovider/himmelblau.rs:207
 msgid "Multi-factor authentication required."
-msgstr ""
+msgstr "Potrebna je višefaktorska autentifikacija."
 
 #: src/common/src/idprovider/himmelblau.rs:4164
 msgid "Multi-factor authentication required. Please try signing in again."
-msgstr ""
+msgstr "Potrebna je višefaktorska autentifikacija. Pokušajte se ponovno prijaviti."
 
 #: src/common/src/idprovider/himmelblau.rs:1850 src/common/src/idprovider/himmelblau.rs:1953 src/common/src/idprovider/himmelblau.rs:1977 src/common/src/idprovider/himmelblau.rs:2137 src/common/src/idprovider/himmelblau.rs:2155 src/common/src/idprovider/himmelblau.rs:2523 src/common/src/idprovider/himmelblau.rs:2624 src/common/src/idprovider/openidconnect.rs:2250 src/common/src/idprovider/openidconnect.rs:2349 src/common/src/idprovider/common.rs:463
 msgid "Network outage detected."
-msgstr ""
+msgstr "Otkriven je prekid mrežne veze."
 
 #: src/common/src/auth.rs:976 src/pam/src/pam/mod.rs:589
 msgid "New PIN:"
-msgstr ""
+msgstr "Novi PIN:"
 
 #: src/common/src/auth.rs:1208
 msgid "New password:"
-msgstr ""
+msgstr "Nova lozinka:"
 
 #: src/common/src/auth.rs:1002 src/common/src/auth.rs:1064
 msgid "No Entra Id Hello PIN was supplied."
-msgstr ""
+msgstr "Nije unesen PIN za Entra Id Hello."
 
 #: src/common/src/auth.rs:1019
 msgid "No Entra Id Hello confirmation PIN was supplied."
-msgstr ""
+msgstr "Nije dostavljen PIN za potvrdu za Entra ID Hello."
 
 #: src/common/src/auth.rs:1243
 msgid "No Entra Id confirmation password was supplied."
-msgstr ""
+msgstr "Nije navedena lozinka za potvrdu za Entra ID."
 
 #: src/common/src/auth.rs:845 src/common/src/auth.rs:1224
 msgid "No Entra Id password was supplied."
-msgstr ""
+msgstr "Nije unesena lozinka za Entra ID."
 
 #: src/common/src/auth.rs:951
 msgid "No Hello TOTP code was supplied."
-msgstr ""
+msgstr "Nije naveden Hello TOTP kôd."
 
 #: src/common/src/auth.rs:875
 msgid "No input was supplied."
-msgstr ""
+msgstr "Nije unesen nikakav unos."
 
 #: src/common/src/idprovider/common.rs:413
 msgid "Offline auth has expired. Please connect to the network to continue."
-msgstr ""
+msgstr "Autentikacija izvan mreže je istekla. Povežite se s mrežom za nastavak."
 
 #: src/common/src/i18n.rs:82
 msgid "Open your Authenticator app, and enter the number '{entropy}' to sign in."
-msgstr ""
+msgstr "Otvorite aplikaciju Authenticator i unesite broj '{entropy}' za prijavu."
 
 #: src/common/src/auth.rs:922
 msgid "Open your authenticator app and scan this QR code to enroll. Then enter the generated code.\n"
 "{qr}"
-msgstr ""
+msgstr "Otvorite aplikaciju za autentifikaciju i skenirajte ovaj QR kod za registraciju. Zatim unesite generirani kod.\n"
+"{qr}"
 
 #: src/common/src/auth.rs:986 src/pam/src/pam/mod.rs:611
 msgid "PIN must not use repeating or predictable sequences. Avoid patterns like '111111', '123456', or '135791'."
-msgstr ""
+msgstr "PIN ne smije sadržavati ponavljajuće ili predvidljive nizove. Izbjegavajte obrasce poput „111111”, „123456” ili „135791”."
 
 #: src/common/src/idprovider/himmelblau.rs:3585
 msgid "PIN setup failed. Please try signing in again."
-msgstr ""
+msgstr "Postavljanje PIN-a nije uspjelo. Pokušajte se ponovno prijaviti."
 
 #: src/common/src/auth.rs:1058
 msgid "PIN:"
-msgstr ""
+msgstr "PIN:"
 
 #: src/common/src/idprovider/himmelblau.rs:191
 msgid "Password change required. Please contact your administrator."
-msgstr ""
+msgstr "Potrebna je promjena lozinke. Obratite se administratoru."
 
 #: src/common/src/idprovider/himmelblau.rs:195
 msgid "Password entry required."
-msgstr ""
+msgstr "Potreban je unos lozinke."
 
 #: src/common/src/idprovider/himmelblau.rs:158 src/common/src/idprovider/himmelblau.rs:183
 msgid "Password reset registration required. Complete setup at https://aka.ms/ssprsetup from another device, then try again."
-msgstr ""
+msgstr "Potrebna je registracija za ponovno postavljanje lozinke. Dovršite postavljanje na https://aka.ms/ssprsetup s drugog uređaja, a zatim pokušajte ponovno."
 
 #: src/common/src/idprovider/himmelblau.rs:2690 src/common/src/idprovider/himmelblau.rs:2786 src/common/src/idprovider/himmelblau.rs:3072 src/common/src/idprovider/himmelblau.rs:3208 src/common/src/idprovider/himmelblau.rs:3325 src/common/src/idprovider/openidconnect.rs:2472 src/common/src/idprovider/openidconnect.rs:2585 src/common/src/idprovider/common.rs:649
 msgid "Please enter your Hello TOTP code from your Authenticator:"
-msgstr ""
+msgstr "Unesite svoj Hello TOTP kôd iz aplikacije Authenticator:"
 
 #: config_gen.rs:178
 msgid "Please insert your security key."
-msgstr ""
+msgstr "Umetnite svoj sigurnosni ključ."
 
 #: src/common/src/auth.rs:119
 msgid "Please select a device by touching one of them."
-msgstr ""
+msgstr "Odaberite uređaj dodirom jednog od njih."
 
 #: config_gen.rs:186
 msgid "Please touch your security key."
-msgstr ""
+msgstr "Dodirnite svoj sigurnosni ključ."
 
 #: src/common/src/auth.rs:688
 msgid "Press enter to continue"
-msgstr ""
+msgstr "Pritisnite Enter za nastavak"
 
 #: src/common/src/auth.rs:1168
 msgid "QR/Bluetooth authentication failed."
-msgstr ""
+msgstr "QR/Bluetooth autentifikacija nije uspjela."
 
 #: src/common/src/idprovider/openidconnect.rs:90
 msgid "Scan the QR code to continue sign-in, or open this link on another device:\n"
@@ -367,143 +374,157 @@ msgid "Scan the QR code to continue sign-in, or open this link on another device
 "{verification_uri}\n"
 "And enter the code:\n"
 "{user_code}"
-msgstr ""
+msgstr "Skenirajte QR kod za nastavak prijave ili otvorite ovu poveznicu na drugom uređaju:\n"
+"{complete}\n"
+"Ako ne možete skenirati, posjetite:\n"
+"{verification_uri}\n"
+"I unesite kod:\n"
+"{user_code}"
 
 #: config_gen.rs:194
 msgid "Scan with your authenticator app"
-msgstr ""
+msgstr "Skenirajte pomoću aplikacije za provjeru autentičnosti"
 
 #: src/common/src/auth.rs:1151
 msgid "Security key and QR/Bluetooth authentication failed."
-msgstr ""
+msgstr "Autentifikacija sigurnosnim ključem i QR/Bluetooth autentifikacija nisu uspjele."
 
 #: src/common/src/auth.rs:1187
 msgid "Security key authentication failed."
-msgstr ""
+msgstr "Autentikacija sigurnosnim ključem nije uspjela."
 
 #: src/common/src/idprovider/openidconnect.rs:2404 src/common/src/idprovider/openidconnect.rs:2424
 msgid "Session data corrupted. Please sign in again."
-msgstr ""
+msgstr "Podaci sesije su oštećeni. Prijavite se ponovno."
 
 #: src/common/src/idprovider/himmelblau.rs:3482 src/common/src/idprovider/himmelblau.rs:4101 src/common/src/idprovider/himmelblau.rs:4222 src/common/src/idprovider/himmelblau.rs:4315 src/common/src/idprovider/openidconnect.rs:2093
 msgid "Set up a PIN\n"
 "A Hello PIN is a fast, secure way to sign in to your device, apps, and services."
-msgstr ""
+msgstr "Postavite PIN\n"
+"Hello PIN brz je i siguran način prijave na vaš uređaj, aplikacije i usluge."
 
 #: src/common/src/auth.rs:945
 msgid "TOTP Code:"
-msgstr ""
+msgstr "TOTP kod:"
 
 #: src/common/src/auth.rs:966
 msgid "The minimum PIN length is {length} characters."
-msgstr ""
+msgstr "Minimalna duljina PIN-a iznosi {length} znakova."
 
 #: src/pam/src/pam/mod.rs:576
 msgid "This command changes your local Hello PIN, NOT your Entra Id password."
-msgstr ""
+msgstr "Ova naredba mijenja vaš lokalni Hello PIN, NE vašu lozinku za Entra ID."
 
 #: src/common/src/auth.rs:158
 msgid "Too many failed attempts in one row. Your device has been temporarily blocked. Please unplug it and plug in again."
-msgstr ""
+msgstr "Previše neuspjelih pokušaja zaredom. Vaš je uređaj privremeno blokiran. Odspojite ga i ponovno ga priključite."
 
 #: src/common/src/auth.rs:162
 msgid "Too many failed attempts. Your device has been blocked. Reset it."
-msgstr ""
+msgstr "Previše neuspjelih pokušaja. Vaš je uređaj blokiran. Resetirajte ga."
 
 #: src/common/src/auth.rs:181
 msgid "Too many failed user verification attempts."
-msgstr ""
+msgstr "Previše neuspjelih pokušaja provjere korisnika."
 
 #: src/common/src/idprovider/common.rs:306
 msgid "Too many incorrect PIN attempts. You will need to enroll a new Linux Hello PIN."
-msgstr ""
+msgstr "Previše netočnih pokušaja unosa PIN-a. Morat ćete registrirati novi Linux Hello PIN."
 
 #: src/common/src/auth.rs:137 src/common/src/auth.rs:168
 msgid "Try again."
-msgstr ""
+msgstr "Pokušajte ponovno."
 
 #: src/common/src/idprovider/himmelblau.rs:3338 src/common/src/idprovider/openidconnect.rs:2598 src/common/src/idprovider/openidconnect.rs:2690 src/common/src/idprovider/openidconnect.rs:2868 src/common/src/idprovider/openidconnect.rs:3138
 msgid "Unexpected authentication step. Please try signing in again."
-msgstr ""
+msgstr "Neočekivani korak provjere autentičnosti. Pokušajte se ponovno prijaviti."
 
 #: src/common/src/auth.rs:696
 msgid "Unexpected error occurred."
-msgstr ""
+msgstr "Došlo je do neočekivane pogreške."
 
 #: src/common/src/auth.rs:185
 msgid "Unexpected error: {error}"
-msgstr ""
+msgstr "Neočekivana pogreška: {error}"
 
 #: src/common/src/auth.rs:193
 msgid "Unexpected select device notice"
-msgstr ""
+msgstr "Neočekivana obavijest o odabiru uređaja"
 
 #: src/common/src/idprovider/himmelblau.rs:137 src/common/src/idprovider/himmelblau.rs:3986 src/common/src/idprovider/himmelblau.rs:4054 src/common/src/idprovider/himmelblau.rs:4144 src/common/src/idprovider/himmelblau.rs:4268
 msgid "Update your password\n"
 "You need to update your password because this is\n"
 "the first time you are signing in, or because your\n"
 "password has expired."
-msgstr ""
+msgstr "Ažurirajte svoju lozinku\n"
+"Morate ažurirati svoju lozinku jer se prijavljujete\n"
+"prvi put ili zato što je vaša lozinka istekla."
 
 #: config_gen.rs:74
 msgid "Use the Linux Hello PIN for this device."
-msgstr ""
+msgstr "Upotrijebite Linux Hello PIN za ovaj uređaj."
 
 #: config_gen.rs:82
 msgid "Use the password for your Office 365 or Microsoft online login."
-msgstr ""
+msgstr "Upotrijebite lozinku za prijavu u Office 365 ili Microsoft online."
 
 #: src/common/src/i18n.rs:110 src/common/src/idprovider/openidconnect.rs:98
 msgid "Using a browser on another device, visit:\n"
 "{verification_uri}\n"
 "And enter the code:\n"
 "{user_code}"
-msgstr ""
+msgstr "Pomoću preglednika na drugom uređaju posjetite:\n"
+"{verification_uri}\n"
+"I unesite kod:\n"
+"{user_code}"
 
 #: src/common/src/auth.rs:866
 msgid "Value:"
-msgstr ""
+msgstr "Vrijednost:"
 
 #: src/common/src/idprovider/openidconnect.rs:761
 msgid "Waiting for browser authentication to complete..."
-msgstr ""
+msgstr "Čeka se dovršetak autentifikacije u pregledniku..."
 
 #: src/common/src/i18n.rs:89
 msgid "We texted your phone {phone}. Please enter the code to sign in:"
-msgstr ""
+msgstr "Poslali smo SMS na vaš telefon {phone}. Unesite kod za prijavu:"
 
 #: src/common/src/i18n.rs:103
 msgid "We're calling your office phone {phone}. Please answer it to continue."
-msgstr ""
+msgstr "Zovemo vaš uredski telefon {phone}. Javite se kako biste nastavili."
 
 #: src/common/src/i18n.rs:96
 msgid "We're calling your phone {phone}. Please answer it to continue."
-msgstr ""
+msgstr "Zovemo vaš telefon {phone}. Odgovorite na poziv za nastavak."
 
 #: src/common/src/auth.rs:145
 msgid "Wrong PIN! {message}"
-msgstr ""
+msgstr "Pogrešan PIN! {message}"
 
 #: src/common/src/auth.rs:176
 msgid "Wrong user verification! {message}"
-msgstr ""
+msgstr "Neispravna provjera korisnika! {message}"
 
 #: src/common/src/auth.rs:138 src/common/src/auth.rs:169
 msgid "You have {attempts} attempt left."
 msgid_plural "You have {attempts} attempts left."
-msgstr[0] ""
-msgstr[1] ""
+msgstr[0] "Preostao vam je {attempts} pokušaj."
+msgstr[1] "Preostala su vam {attempts} pokušaja."
+msgstr[2] "Preostalo vam je {attempts} pokušaja."
 
 #: src/common/src/idprovider/himmelblau.rs:2547 src/common/src/idprovider/himmelblau.rs:2632 src/common/src/idprovider/openidconnect.rs:2412 src/common/src/idprovider/openidconnect.rs:2431 src/common/src/idprovider/openidconnect.rs:2505 src/common/src/idprovider/openidconnect.rs:2520
 msgid "Your session has expired. Please sign in again."
-msgstr ""
+msgstr "Vaša sesija je istekla. Prijavite se ponovno."
 
 #: src/common/src/auth.rs:605 src/pam/src/pam/mod.rs:823
 msgid "{code}: {message}\n"
 "If you are now prompted for a password from pam_unix, please disregard the prompt, go back and try again."
-msgstr ""
+msgstr "{code}: {message}\n"
+"Ako se sada prikaže upit za lozinku iz pam_unix, zanemarite taj upit, vratite se i pokušajte ponovno."
 
 #: src/common/src/auth.rs:718
 msgid "{message}\n"
 "No push? Check your mobile device's internet connection."
-msgstr ""
+msgstr "{message}\n"
+"Nema push obavijesti? Provjerite internetsku vezu svog mobilnog uređaja."

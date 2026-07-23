@@ -1,364 +1,371 @@
-# Himmelblau message catalog template.
+# Norwegian translations for Himmelblau.
 # Copyright (C) 2026 Himmelblau contributors
 # This file is distributed under the same license as Himmelblau.
 #
 msgid ""
 msgstr ""
 "Project-Id-Version: himmelblau\n"
-"POT-Creation-Date: 2026-07-20 16:17+0000\n"
+"POT-Creation-Date: 2026-07-20 21:59+0000\n"
 "MIME-Version: 1.0\n"
 "Content-Type: text/plain; charset=UTF-8\n"
 "Content-Transfer-Encoding: 8bit\n"
+"PO-Revision-Date: 2026-07-21 13:39+0000\n"
+"Last-Translator: Automated via Codex <noreply@himmelblau-idm.org>\n"
+"Language-Team: Norwegian\n"
+"Language: nb\n"
+"Plural-Forms: nplurals=2; plural=(n != 1);\n"
 
 #: src/common/src/auth.rs:1285 src/common/src/auth.rs:1298
 msgid "An unexpected error occurred."
-msgstr ""
+msgstr "Det oppstod en uventet feil."
 
 #: src/common/src/idprovider/openidconnect.rs:753
 msgid "Approve sign-in in your authenticator app, then wait..."
-msgstr ""
+msgstr "Godkjenn påloggingen i autentiseringsappen din, og vent..."
 
 #: src/common/src/idprovider/himmelblau.rs:4809
 msgid "Authenticated user {user} does not match requested user"
-msgstr ""
+msgstr "Autentisert bruker {user} samsvarer ikke med forespurt bruker"
 
 #: src/common/src/idprovider/openidconnect.rs:2118
 msgid "Authenticated user {uuid} does not match requested user"
-msgstr ""
+msgstr "Autentisert bruker {uuid} samsvarer ikke med forespurt bruker"
 
 #: src/common/src/idprovider/openidconnect.rs:3003
 msgid "Authentication did not return a refresh token. Please try again."
-msgstr ""
+msgstr "Autentisering returnerte ikke et oppdateringstoken. Prøv på nytt."
 
 #: src/common/src/idprovider/himmelblau.rs:3949
 msgid "Authentication failed (AADSTS{code})"
-msgstr ""
+msgstr "Autentisering mislyktes (AADSTS{code})"
 
 #: src/common/src/idprovider/openidconnect.rs:2939
 msgid "Authentication failed in browser flow."
-msgstr ""
+msgstr "Autentisering mislyktes i nettleserflyten."
 
 #: src/common/src/idprovider/himmelblau.rs:209
 msgid "Authentication failed. Please contact your administrator."
-msgstr ""
+msgstr "Autentisering mislyktes. Kontakt administratoren din."
 
 #: src/common/src/idprovider/himmelblau.rs:3829
 msgid "Authentication failed. Please try again."
-msgstr ""
+msgstr "Autentisering mislyktes. Prøv på nytt."
 
 #: src/common/src/idprovider/himmelblau.rs:3129
 msgid "Authentication failed. Please try signing in again."
-msgstr ""
+msgstr "Autentisering mislyktes. Prøv å logge på igjen."
 
 #: src/common/src/idprovider/himmelblau.rs:168
 msgid "Authentication failed: Authentication method not supported."
-msgstr ""
+msgstr "Autentisering mislyktes: Autentiseringsmetoden støttes ikke."
 
 #: src/common/src/idprovider/himmelblau.rs:171 src/common/src/idprovider/himmelblau.rs:176
 msgid "Authentication failed: Configuration error."
-msgstr ""
+msgstr "Autentisering mislyktes: Konfigurasjonsfeil."
 
 #: src/common/src/idprovider/himmelblau.rs:175
 msgid "Authentication failed: Cryptographic error."
-msgstr ""
+msgstr "Autentisering mislyktes: Kryptografisk feil."
 
 #: src/common/src/idprovider/himmelblau.rs:152
 msgid "Authentication failed: Invalid server response."
-msgstr ""
+msgstr "Autentisering mislyktes: Ugyldig serversvar."
 
 #: src/common/src/idprovider/himmelblau.rs:188
 msgid "Authentication failed: Missing required data."
-msgstr ""
+msgstr "Autentisering mislyktes: Mangler nødvendige data."
 
 #: src/common/src/idprovider/himmelblau.rs:170
 msgid "Authentication failed: Security hardware error."
-msgstr ""
+msgstr "Autentisering mislyktes: Feil med sikkerhetsmaskinvare."
 
 #: src/common/src/idprovider/himmelblau.rs:165
 msgid "Authentication failed: Unable to reach authentication server."
-msgstr ""
+msgstr "Autentisering mislyktes: Kan ikke nå autentiseringsserveren."
 
 #: src/common/src/idprovider/openidconnect.rs:2738 src/common/src/idprovider/openidconnect.rs:2849 src/common/src/idprovider/openidconnect.rs:2984 src/common/src/idprovider/openidconnect.rs:3050 src/common/src/idprovider/openidconnect.rs:3063
 msgid "Authentication failed: {error}"
-msgstr ""
+msgstr "Autentisering mislyktes: {error}"
 
 #: src/common/src/idprovider/openidconnect.rs:3036
 msgid "Authentication flow completed but token exchange failed. Please try again."
-msgstr ""
+msgstr "Autentiseringsflyten ble fullført, men tokenutvekslingen mislyktes. Prøv igjen."
 
 #: src/common/src/idprovider/himmelblau.rs:179 src/common/src/idprovider/himmelblau.rs:203
 msgid "Authentication in progress."
-msgstr ""
+msgstr "Autentisering pågår."
 
 #: src/common/src/idprovider/openidconnect.rs:2537
 msgid "Authentication incomplete. Please try again."
-msgstr ""
+msgstr "Autentisering ufullført. Prøv på nytt."
 
 #: src/common/src/idprovider/himmelblau.rs:1912
 msgid "Authentication service is temporarily unavailable. Please try again shortly."
-msgstr ""
+msgstr "Autentiseringstjenesten er midlertidig utilgjengelig. Prøv igjen om kort tid."
 
 #: src/common/src/idprovider/himmelblau.rs:3169
 msgid "Authentication service unavailable. Please try again later."
-msgstr ""
+msgstr "Autentiseringstjenesten er utilgjengelig. Prøv igjen senere."
 
 #: src/common/src/idprovider/openidconnect.rs:2674 src/common/src/idprovider/openidconnect.rs:2713 src/common/src/idprovider/openidconnect.rs:2774
 msgid "Authentication session corrupted. Please try again."
-msgstr ""
+msgstr "Autentiseringsøkten er skadet. Prøv på nytt."
 
 #: src/common/src/idprovider/openidconnect.rs:2661
 msgid "Authentication session data missing. Please try again."
-msgstr ""
+msgstr "Data for autentiseringsøkten mangler. Prøv på nytt."
 
 #: src/common/src/idprovider/openidconnect.rs:3078
 msgid "Authentication session returned an unexpected state. Please try again."
-msgstr ""
+msgstr "Autentiseringsøkten returnerte en uventet tilstand. Prøv igjen."
 
 #: src/common/src/idprovider/himmelblau.rs:4124 src/common/src/idprovider/openidconnect.rs:2701 src/common/src/idprovider/openidconnect.rs:2801
 msgid "Authentication timed out. Please try again."
-msgstr ""
+msgstr "Autentiseringen ble tidsavbrutt. Prøv igjen."
 
 #: src/common/src/idprovider/openidconnect.rs:3105
 msgid "Browser authentication backend unavailable. Please try again."
-msgstr ""
+msgstr "Backend for nettlesergodkjenning er utilgjengelig. Prøv igjen."
 
 #: src/common/src/auth.rs:1261
 msgid "Changing the password. Please wait..."
-msgstr ""
+msgstr "Endrer passordet. Vennligst vent..."
 
 #: src/common/src/auth.rs:1215
 msgid "Chosen password is too short! 8 chars required."
-msgstr ""
+msgstr "Det valgte passordet er for kort! 8 tegn kreves."
 
 #: src/common/src/auth.rs:979 src/pam/src/pam/mod.rs:595
 msgid "Chosen pin is too short! {length} chars required."
-msgstr ""
+msgstr "Valgt PIN-kode er for kort! {length} tegn kreves."
 
 #: src/common/src/auth.rs:829
 msgid "Cloud Password:"
-msgstr ""
+msgstr "Skypassord:"
 
 #: src/common/src/auth.rs:868
 msgid "Code:"
-msgstr ""
+msgstr "Kode:"
 
 #: src/common/src/auth.rs:1012 src/pam/src/pam/mod.rs:637
 msgid "Confirm PIN:"
-msgstr ""
+msgstr "Bekreft PIN-kode:"
 
 #: src/common/src/auth.rs:1236
 msgid "Confirm password:"
-msgstr ""
+msgstr "Bekreft passord:"
 
 #: src/common/src/idprovider/himmelblau.rs:199
 msgid "Consent required. Please contact your administrator."
-msgstr ""
+msgstr "Samtykke kreves. Kontakt administratoren din."
 
 #: src/common/src/idprovider/himmelblau.rs:3609
 msgid "Create a PIN to use in place of passwords."
-msgstr ""
+msgstr "Opprett en PIN-kode som kan brukes i stedet for passord."
 
 #: src/common/src/idprovider/himmelblau.rs:173
 msgid "Device enrollment failed. Please contact your administrator."
-msgstr ""
+msgstr "Enhetsregistrering mislyktes. Kontakt administratoren din."
 
 #: src/common/src/idprovider/himmelblau.rs:1022
 msgid "Device has been removed from the domain."
-msgstr ""
+msgstr "Enheten er fjernet fra domenet."
 
 #: src/common/src/auth.rs:1120
 msgid "Enable Bluetooth to sign in with your phone."
-msgstr ""
+msgstr "Slå på Bluetooth for å logge på med telefonen din."
 
 #: src/common/src/auth.rs:1037
 msgid "Enrolling the Hello PIN. Please wait..."
-msgstr ""
+msgstr "Registrerer Hello-PIN-koden. Vennligst vent..."
 
 #: src/common/src/auth.rs:652
 msgid "Enter the setup key '{secret}' to enroll a TOTP Authenticator app. Use '{issuer}' for the code name and '{account}' as the label/name."
-msgstr ""
+msgstr "Skriv inn oppsettnøkkelen '{secret}' for å registrere en TOTP-autentiseringsapp. Bruk '{issuer}' som kodenavn og '{account}' som etikett/navn."
 
 #: src/pam/src/pam/mod.rs:827
 msgid "Entra Id Fido authentication failed."
-msgstr ""
+msgstr "Entra ID FIDO-autentisering mislyktes."
 
 #: src/common/src/auth.rs:836 src/pam/src/pam/mod.rs:712 src/pam/src/pam/mod.rs:752
 msgid "Entra Id Password:"
-msgstr ""
+msgstr "Entra ID-passord:"
 
 #: src/common/src/idprovider/himmelblau.rs:3369 src/common/src/idprovider/himmelblau.rs:3380
 msgid "FIDO authentication not available. Please try a different authentication method."
-msgstr ""
+msgstr "FIDO-autentisering er ikke tilgjengelig. Prøv en annen autentiseringsmetode."
 
 #: src/common/src/idprovider/himmelblau.rs:2724 src/common/src/idprovider/himmelblau.rs:2837 src/common/src/idprovider/himmelblau.rs:2880 src/common/src/idprovider/himmelblau.rs:2927 src/common/src/idprovider/himmelblau.rs:2942 src/common/src/idprovider/openidconnect.rs:2368 src/common/src/idprovider/common.rs:665
 msgid "Failed to authenticate with Hello PIN."
-msgstr ""
+msgstr "Kunne ikke autentisere med Hello PIN."
 
 #: src/common/src/idprovider/common.rs:271
 msgid "Failed to authenticate with Hello PIN. One more failed attempt will require multi-factor authentication and resetting your Linux Hello PIN."
-msgstr ""
+msgstr "Kunne ikke autentisere med Hello-PIN. Ett mislykket forsøk til vil kreve flerfaktorautentisering og tilbakestilling av Linux Hello-PIN-koden."
 
 #: src/common/src/idprovider/common.rs:554 src/common/src/idprovider/common.rs:564
 msgid "Failed to authenticate with Hello TOTP code."
-msgstr ""
+msgstr "Kunne ikke autentisere med Hello TOTP-kode."
 
 #: src/common/src/auth.rs:638
 msgid "Failed to build regex: {error}"
-msgstr ""
+msgstr "Kunne ikke bygge regex: {error}"
 
 #: src/common/src/idprovider/himmelblau.rs:1002
 msgid "Failed to delete CSR key"
-msgstr ""
+msgstr "Kunne ikke slette CSR-nøkkel"
 
 #: src/common/src/idprovider/himmelblau.rs:1014
 msgid "Failed to delete intune key"
-msgstr ""
+msgstr "Kunne ikke slette Intune-nøkkelen"
 
 #: src/common/src/auth.rs:625 src/common/src/auth.rs:630 src/common/src/auth.rs:647 src/common/src/auth.rs:664
 msgid "Failed to generate QR code"
-msgstr ""
+msgstr "Kunne ikke generere QR-kode"
 
 #: src/common/src/idprovider/himmelblau.rs:2283
 msgid "Failed to join domain. Please contact your administrator."
-msgstr ""
+msgstr "Kunne ikke koble til domenet. Kontakt administratoren din."
 
 #: src/common/src/idprovider/himmelblau.rs:3603
 msgid "Failed to provision hello key: {error}\n"
 "{message}"
-msgstr ""
+msgstr "Kunne ikke klargjøre hello-nøkkel: {error}\n"
+"{message}"
 
 #: src/common/src/idprovider/himmelblau.rs:2173
 msgid "Failed to save device configuration. Please contact your administrator."
-msgstr ""
+msgstr "Kunne ikke lagre enhetskonfigurasjonen. Kontakt administratoren din."
 
 #: src/common/src/idprovider/himmelblau.rs:2182
 msgid "Failed to store device credentials. Please contact your administrator."
-msgstr ""
+msgstr "Kunne ikke lagre enhetslegitimasjon. Kontakt administratoren din."
 
 #: src/common/src/auth.rs:126 src/common/src/auth.rs:147
 msgid "Fido PIN:"
-msgstr ""
+msgstr "FIDO-PIN:"
 
 #: src/common/src/auth.rs:1401
 msgid "Himmelblau authentication is starting, please wait..."
-msgstr ""
+msgstr "Himmelblau-autentisering starter, vennligst vent..."
 
 #: src/common/src/auth.rs:1408
 msgid "Himmelblau authentication service did not become available in time."
-msgstr ""
+msgstr "Himmelblau-autentiseringstjenesten ble ikke tilgjengelig i tide."
 
 #: src/common/src/auth.rs:1395
 msgid "Himmelblau authentication service is unavailable."
-msgstr ""
+msgstr "Himmelblau-autentiseringstjenesten er utilgjengelig."
 
 #: src/common/src/auth.rs:1030 src/common/src/auth.rs:1254 src/pam/src/pam/mod.rs:654
 msgid "Inputs did not match. Try again."
-msgstr ""
+msgstr "Inndataene samsvarte ikke. Prøv igjen."
 
 #: src/common/src/idprovider/himmelblau.rs:207
 msgid "Multi-factor authentication required."
-msgstr ""
+msgstr "Flerfaktorautentisering kreves."
 
 #: src/common/src/idprovider/himmelblau.rs:4164
 msgid "Multi-factor authentication required. Please try signing in again."
-msgstr ""
+msgstr "Flerfaktorautentisering kreves. Prøv å logge på igjen."
 
 #: src/common/src/idprovider/himmelblau.rs:1850 src/common/src/idprovider/himmelblau.rs:1953 src/common/src/idprovider/himmelblau.rs:1977 src/common/src/idprovider/himmelblau.rs:2137 src/common/src/idprovider/himmelblau.rs:2155 src/common/src/idprovider/himmelblau.rs:2523 src/common/src/idprovider/himmelblau.rs:2624 src/common/src/idprovider/openidconnect.rs:2250 src/common/src/idprovider/openidconnect.rs:2349 src/common/src/idprovider/common.rs:463
 msgid "Network outage detected."
-msgstr ""
+msgstr "Nettverksbrudd oppdaget."
 
 #: src/common/src/auth.rs:976 src/pam/src/pam/mod.rs:589
 msgid "New PIN:"
-msgstr ""
+msgstr "Ny PIN-kode:"
 
 #: src/common/src/auth.rs:1208
 msgid "New password:"
-msgstr ""
+msgstr "Nytt passord:"
 
 #: src/common/src/auth.rs:1002 src/common/src/auth.rs:1064
 msgid "No Entra Id Hello PIN was supplied."
-msgstr ""
+msgstr "Ingen Entra ID Hello-PIN ble oppgitt."
 
 #: src/common/src/auth.rs:1019
 msgid "No Entra Id Hello confirmation PIN was supplied."
-msgstr ""
+msgstr "Det ble ikke oppgitt noen bekreftelses-PIN for Entra ID Hello."
 
 #: src/common/src/auth.rs:1243
 msgid "No Entra Id confirmation password was supplied."
-msgstr ""
+msgstr "Det ble ikke oppgitt noe bekreftelsespassord for Entra ID."
 
 #: src/common/src/auth.rs:845 src/common/src/auth.rs:1224
 msgid "No Entra Id password was supplied."
-msgstr ""
+msgstr "Det ble ikke oppgitt noe Entra ID-passord."
 
 #: src/common/src/auth.rs:951
 msgid "No Hello TOTP code was supplied."
-msgstr ""
+msgstr "Ingen Hello TOTP-kode ble oppgitt."
 
 #: src/common/src/auth.rs:875
 msgid "No input was supplied."
-msgstr ""
+msgstr "Det ble ikke oppgitt noen inndata."
 
 #: src/common/src/idprovider/common.rs:413
 msgid "Offline auth has expired. Please connect to the network to continue."
-msgstr ""
+msgstr "Frakoblet autentisering er utløpt. Koble til nettverket for å fortsette."
 
 #: src/common/src/i18n.rs:82
 msgid "Open your Authenticator app, and enter the number '{entropy}' to sign in."
-msgstr ""
+msgstr "Åpne Authenticator-appen din, og skriv inn tallet {entropy} for å logge på."
 
 #: src/common/src/auth.rs:922
 msgid "Open your authenticator app and scan this QR code to enroll. Then enter the generated code.\n"
 "{qr}"
-msgstr ""
+msgstr "Åpne autentiseringsappen og skann denne QR-koden for å registrere deg. Deretter skriver du inn den genererte koden.\n"
+"{qr}"
 
 #: src/common/src/auth.rs:986 src/pam/src/pam/mod.rs:611
 msgid "PIN must not use repeating or predictable sequences. Avoid patterns like '111111', '123456', or '135791'."
-msgstr ""
+msgstr "PIN-koden må ikke bruke gjentakende eller forutsigbare sekvenser. Unngå mønstre som «111111», «123456» eller «135791»."
 
 #: src/common/src/idprovider/himmelblau.rs:3585
 msgid "PIN setup failed. Please try signing in again."
-msgstr ""
+msgstr "Oppsett av PIN-kode mislyktes. Prøv å logge på igjen."
 
 #: src/common/src/auth.rs:1058
 msgid "PIN:"
-msgstr ""
+msgstr "PIN-kode:"
 
 #: src/common/src/idprovider/himmelblau.rs:191
 msgid "Password change required. Please contact your administrator."
-msgstr ""
+msgstr "Passordendring kreves. Kontakt administratoren din."
 
 #: src/common/src/idprovider/himmelblau.rs:195
 msgid "Password entry required."
-msgstr ""
+msgstr "Passord må oppgis."
 
 #: src/common/src/idprovider/himmelblau.rs:158 src/common/src/idprovider/himmelblau.rs:183
 msgid "Password reset registration required. Complete setup at https://aka.ms/ssprsetup from another device, then try again."
-msgstr ""
+msgstr "Registrering for tilbakestilling av passord kreves. Fullfør konfigurasjonen på https://aka.ms/ssprsetup fra en annen enhet, og prøv deretter på nytt."
 
 #: src/common/src/idprovider/himmelblau.rs:2690 src/common/src/idprovider/himmelblau.rs:2786 src/common/src/idprovider/himmelblau.rs:3072 src/common/src/idprovider/himmelblau.rs:3208 src/common/src/idprovider/himmelblau.rs:3325 src/common/src/idprovider/openidconnect.rs:2472 src/common/src/idprovider/openidconnect.rs:2585 src/common/src/idprovider/common.rs:649
 msgid "Please enter your Hello TOTP code from your Authenticator:"
-msgstr ""
+msgstr "Skriv inn Hello TOTP-koden fra autentiseringsappen din:"
 
 #: config_gen.rs:178
 msgid "Please insert your security key."
-msgstr ""
+msgstr "Sett inn sikkerhetsnøkkelen din."
 
 #: src/common/src/auth.rs:119
 msgid "Please select a device by touching one of them."
-msgstr ""
+msgstr "Velg en enhet ved å berøre en av dem."
 
 #: config_gen.rs:186
 msgid "Please touch your security key."
-msgstr ""
+msgstr "Berør sikkerhetsnøkkelen din."
 
 #: src/common/src/auth.rs:688
 msgid "Press enter to continue"
-msgstr ""
+msgstr "Trykk Enter for å fortsette"
 
 #: src/common/src/auth.rs:1168
 msgid "QR/Bluetooth authentication failed."
-msgstr ""
+msgstr "QR-/Bluetooth-autentisering mislyktes."
 
 #: src/common/src/idprovider/openidconnect.rs:90
 msgid "Scan the QR code to continue sign-in, or open this link on another device:\n"
@@ -367,143 +374,157 @@ msgid "Scan the QR code to continue sign-in, or open this link on another device
 "{verification_uri}\n"
 "And enter the code:\n"
 "{user_code}"
-msgstr ""
+msgstr "Skann QR-koden for å fortsette påloggingen, eller åpne denne lenken på en annen enhet:\n"
+"{complete}\n"
+"Hvis du ikke kan skanne, gå til:\n"
+"{verification_uri}\n"
+"Og skriv inn koden:\n"
+"{user_code}"
 
 #: config_gen.rs:194
 msgid "Scan with your authenticator app"
-msgstr ""
+msgstr "Skann med autentiseringsappen din"
 
 #: src/common/src/auth.rs:1151
 msgid "Security key and QR/Bluetooth authentication failed."
-msgstr ""
+msgstr "Sikkerhetsnøkkel og QR-/Bluetooth-autentisering mislyktes."
 
 #: src/common/src/auth.rs:1187
 msgid "Security key authentication failed."
-msgstr ""
+msgstr "Autentisering med sikkerhetsnøkkel mislyktes."
 
 #: src/common/src/idprovider/openidconnect.rs:2404 src/common/src/idprovider/openidconnect.rs:2424
 msgid "Session data corrupted. Please sign in again."
-msgstr ""
+msgstr "Øktdataene er skadet. Logg på igjen."
 
 #: src/common/src/idprovider/himmelblau.rs:3482 src/common/src/idprovider/himmelblau.rs:4101 src/common/src/idprovider/himmelblau.rs:4222 src/common/src/idprovider/himmelblau.rs:4315 src/common/src/idprovider/openidconnect.rs:2093
 msgid "Set up a PIN\n"
 "A Hello PIN is a fast, secure way to sign in to your device, apps, and services."
-msgstr ""
+msgstr "Sett opp en PIN-kode\n"
+"En Hello-PIN-kode er en rask og sikker måte å logge på enheten, appene og tjenestene dine på."
 
 #: src/common/src/auth.rs:945
 msgid "TOTP Code:"
-msgstr ""
+msgstr "TOTP-kode:"
 
 #: src/common/src/auth.rs:966
 msgid "The minimum PIN length is {length} characters."
-msgstr ""
+msgstr "Minimumslengden for PIN-koden er {length} tegn."
 
 #: src/pam/src/pam/mod.rs:576
 msgid "This command changes your local Hello PIN, NOT your Entra Id password."
-msgstr ""
+msgstr "Denne kommandoen endrer din lokale Hello-PIN, IKKE Entra Id-passordet ditt."
 
 #: src/common/src/auth.rs:158
 msgid "Too many failed attempts in one row. Your device has been temporarily blocked. Please unplug it and plug in again."
-msgstr ""
+msgstr "For mange mislykkede forsøk på rad. Enheten din er midlertidig blokkert. Koble den fra og koble den til igjen."
 
 #: src/common/src/auth.rs:162
 msgid "Too many failed attempts. Your device has been blocked. Reset it."
-msgstr ""
+msgstr "For mange mislykkede forsøk. Enheten din er blokkert. Tilbakestill den."
 
 #: src/common/src/auth.rs:181
 msgid "Too many failed user verification attempts."
-msgstr ""
+msgstr "For mange mislykkede forsøk på brukerverifisering."
 
 #: src/common/src/idprovider/common.rs:306
 msgid "Too many incorrect PIN attempts. You will need to enroll a new Linux Hello PIN."
-msgstr ""
+msgstr "For mange feil PIN-forsøk. Du må registrere en ny Linux Hello-PIN."
 
 #: src/common/src/auth.rs:137 src/common/src/auth.rs:168
 msgid "Try again."
-msgstr ""
+msgstr "Prøv igjen."
 
 #: src/common/src/idprovider/himmelblau.rs:3338 src/common/src/idprovider/openidconnect.rs:2598 src/common/src/idprovider/openidconnect.rs:2690 src/common/src/idprovider/openidconnect.rs:2868 src/common/src/idprovider/openidconnect.rs:3138
 msgid "Unexpected authentication step. Please try signing in again."
-msgstr ""
+msgstr "Uventet autentiseringstrinn. Prøv å logge på igjen."
 
 #: src/common/src/auth.rs:696
 msgid "Unexpected error occurred."
-msgstr ""
+msgstr "Det oppstod en uventet feil."
 
 #: src/common/src/auth.rs:185
 msgid "Unexpected error: {error}"
-msgstr ""
+msgstr "Uventet feil: {error}"
 
 #: src/common/src/auth.rs:193
 msgid "Unexpected select device notice"
-msgstr ""
+msgstr "Uventet varsel om valg av enhet"
 
 #: src/common/src/idprovider/himmelblau.rs:137 src/common/src/idprovider/himmelblau.rs:3986 src/common/src/idprovider/himmelblau.rs:4054 src/common/src/idprovider/himmelblau.rs:4144 src/common/src/idprovider/himmelblau.rs:4268
 msgid "Update your password\n"
 "You need to update your password because this is\n"
 "the first time you are signing in, or because your\n"
 "password has expired."
-msgstr ""
+msgstr "Oppdater passordet ditt\n"
+"Du må oppdatere passordet ditt fordi dette er\n"
+"første gang du logger på, eller fordi\n"
+"passordet ditt har utløpt."
 
 #: config_gen.rs:74
 msgid "Use the Linux Hello PIN for this device."
-msgstr ""
+msgstr "Bruk Linux Hello-PIN-koden for denne enheten."
 
 #: config_gen.rs:82
 msgid "Use the password for your Office 365 or Microsoft online login."
-msgstr ""
+msgstr "Bruk passordet for Office 365- eller Microsoft-påloggingen din på nettet."
 
 #: src/common/src/i18n.rs:110 src/common/src/idprovider/openidconnect.rs:98
 msgid "Using a browser on another device, visit:\n"
 "{verification_uri}\n"
 "And enter the code:\n"
 "{user_code}"
-msgstr ""
+msgstr "Bruk en nettleser på en annen enhet, og gå til:\n"
+"{verification_uri}\n"
+"Skriv deretter inn koden:\n"
+"{user_code}"
 
 #: src/common/src/auth.rs:866
 msgid "Value:"
-msgstr ""
+msgstr "Verdi:"
 
 #: src/common/src/idprovider/openidconnect.rs:761
 msgid "Waiting for browser authentication to complete..."
-msgstr ""
+msgstr "Venter på at autentisering i nettleseren skal fullføres..."
 
 #: src/common/src/i18n.rs:89
 msgid "We texted your phone {phone}. Please enter the code to sign in:"
-msgstr ""
+msgstr "Vi sendte en tekstmelding til telefonen din {phone}. Skriv inn koden for å logge på:"
 
 #: src/common/src/i18n.rs:103
 msgid "We're calling your office phone {phone}. Please answer it to continue."
-msgstr ""
+msgstr "Vi ringer kontortelefonen din på {phone}. Svar på anropet for å fortsette."
 
 #: src/common/src/i18n.rs:96
 msgid "We're calling your phone {phone}. Please answer it to continue."
-msgstr ""
+msgstr "Vi ringer telefonen din på {phone}. Svar på anropet for å fortsette."
 
 #: src/common/src/auth.rs:145
 msgid "Wrong PIN! {message}"
-msgstr ""
+msgstr "Feil PIN-kode! {message}"
 
 #: src/common/src/auth.rs:176
 msgid "Wrong user verification! {message}"
-msgstr ""
+msgstr "Feil brukerverifisering! {message}"
 
 #: src/common/src/auth.rs:138 src/common/src/auth.rs:169
 msgid "You have {attempts} attempt left."
 msgid_plural "You have {attempts} attempts left."
-msgstr[0] ""
-msgstr[1] ""
+msgstr[0] "Du har {attempts} forsøk igjen."
+msgstr[1] "Du har {attempts} forsøk igjen."
 
 #: src/common/src/idprovider/himmelblau.rs:2547 src/common/src/idprovider/himmelblau.rs:2632 src/common/src/idprovider/openidconnect.rs:2412 src/common/src/idprovider/openidconnect.rs:2431 src/common/src/idprovider/openidconnect.rs:2505 src/common/src/idprovider/openidconnect.rs:2520
 msgid "Your session has expired. Please sign in again."
-msgstr ""
+msgstr "Økten din har utløpt. Logg på igjen."
 
 #: src/common/src/auth.rs:605 src/pam/src/pam/mod.rs:823
 msgid "{code}: {message}\n"
 "If you are now prompted for a password from pam_unix, please disregard the prompt, go back and try again."
-msgstr ""
+msgstr "{code}: {message}\n"
+"Hvis du nå blir bedt om et passord fra pam_unix, kan du se bort fra forespørselen, gå tilbake og prøve på nytt."
 
 #: src/common/src/auth.rs:718
 msgid "{message}\n"
 "No push? Check your mobile device's internet connection."
-msgstr ""
+msgstr "{message}\n"
+"Ingen pushvarsel? Sjekk internettforbindelsen på mobilenheten din."

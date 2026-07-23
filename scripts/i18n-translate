@@ -1,0 +1,729 @@
+#!/usr/bin/env python3
+"""
+Automated Translation Generator for Himmelblau
+
+Generates translation (.po) files by automatically translating strings from
+the himmelblau.pot template using the codex CLI.
+
+Usage:
+  ./scripts/i18n-translate LANGUAGE_CODE [OPTIONS]
+
+Examples:
+  ./scripts/i18n-translate fr
+  ./scripts/i18n-translate de --force
+  ./scripts/i18n-translate ja --dry-run
+"""
+
+import argparse
+import ast
+import datetime
+import os
+import pathlib
+import re
+import shutil
+import subprocess
+import sys
+import tempfile
+from typing import Dict, List, Optional, Set, Tuple
+
+# Configuration
+ROOT = pathlib.Path(__file__).resolve().parents[1]
+PO_DIR = ROOT / "po"
+PLACEHOLDER_RE = re.compile(r"\{[A-Za-z_][A-Za-z0-9_]*\}")
+TIMEOUT_CODEX_SECONDS = 30
+MAX_RETRIES = 3
+
+LANGUAGE_ALIASES = {
+    "sr-Latn": "sr@latin",
+}
+UNSUPPORTED_GETTEXT_OPERAND_RE = re.compile(r"(?<![A-Za-z])[ce](?![A-Za-z])")
+
+
+def print_color(text: str, color: str):
+    """Print colored text."""
+    colors = {
+        'red': '\033[91m',
+        'green': '\033[92m',
+        'yellow': '\033[93m',
+        'blue': '\033[94m',
+        'reset': '\033[0m',
+        'bold': '\033[1m',
+    }
+    print(f"{colors.get(color, '')}{text}{colors['reset']}")
+
+
+def print_error(text: str):
+    """Print error message in red."""
+    print_color(f"ERROR: {text}", 'red')
+
+
+def print_warning(text: str):
+    """Print warning message in yellow."""
+    print_color(f"WARNING: {text}", 'yellow')
+
+
+def print_success(text: str):
+    """Print success message in green."""
+    print_color(f"SUCCESS: {text}", 'green')
+
+
+def parse_po_template(pot_path: pathlib.Path) -> List[Dict]:
+    """Parse .pot template file into structured entries.
+
+    Returns list of dicts with keys:
+    - references: source file references
+    - msgid: singular message
+    - msgid_plural: plural message (if present)
+    """
+    entries = []
+    current = {}
+    active = None
+
+    for raw in pot_path.read_text(encoding="utf-8").splitlines():
+        line = raw.strip()
+
+        if not line:
+            if current and current.get("msgid"):
+                entries.append(current)
+                current = {}
+                active = None
+            continue
+
+        if line.startswith("#:"):
+            current["references"] = line[2:].strip()
+        elif line.startswith("msgid "):
+            active = "msgid"
+            current[active] = ast.literal_eval(line[6:])
+        elif line.startswith("msgid_plural "):
+            active = "msgid_plural"
+            current[active] = ast.literal_eval(line[13:])
+        elif line.startswith("msgstr"):
+            active = line.split()[0]
+            current[active] = ast.literal_eval(line.split(" ", 1)[1])
+        elif line.startswith('"') and active:
+            current[active] += ast.literal_eval(line)
+
+    if current and current.get("msgid"):
+        entries.append(current)
+
+    # Skip header entry (first entry with empty msgid)
+    return [e for e in entries if e.get("msgid")]
+
+
+def extract_placeholders(text: str) -> Set[str]:
+    """Extract {variable} placeholders from text."""
+    return set(PLACEHOLDER_RE.findall(text))
+
+
+def extract_pot_creation_date(pot_path: pathlib.Path) -> str:
+    """Extract POT-Creation-Date from .pot file header."""
+    content = pot_path.read_text(encoding="utf-8")
+    match = re.search(r'"POT-Creation-Date: ([^"]+)"', content)
+    if match:
+        return match.group(1).removesuffix(r"\n")
+    # Fallback to current timestamp
+    now = datetime.datetime.now(datetime.timezone.utc)
+    return now.strftime("%Y-%m-%d %H:%M+0000")
+
+
+def po_quote(value: str) -> str:
+    """Quote string for PO file format (from i18n-update-pot)."""
+    return '"' + value.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n\"\n\"") + '"'
+
+
+def canonical_language_code(language_code: str) -> str:
+    """Return the repository's canonical gettext locale name."""
+    return LANGUAGE_ALIASES.get(language_code, language_code)
+
+
+def babel_locale_id(language_code: str) -> str:
+    """Convert repository gettext locale names to Babel locale identifiers."""
+    language_code = language_code.replace("-", "_")
+    if "@" not in language_code:
+        return language_code
+
+    base, modifier = language_code.split("@", 1)
+    if modifier.lower() == "latin":
+        return f"{base}_Latn"
+    return language_code
+
+
+def get_language_metadata(language_code: str) -> Dict[str, str]:
+    """Get CLDR-backed language metadata for PO headers."""
+    language_code = canonical_language_code(language_code)
+    try:
+        from babel import Locale
+        from babel.core import UnknownLocaleError
+        from babel.plural import RuleError, to_gettext
+    except ImportError:
+        print_error(
+            "Babel is required to generate translation metadata. "
+            "Install python3-babel or the Babel Python package."
+        )
+        raise SystemExit(1)
+
+    try:
+        locale = Locale.parse(babel_locale_id(language_code), sep="_")
+    except (ValueError, UnknownLocaleError):
+        print_error(f"No CLDR locale metadata found for {language_code}")
+        raise SystemExit(1)
+
+    # Babel exposes full CLDR plural rules, including decimal/compact operands
+    # that GNU gettext's Plural-Forms expression language cannot parse. PO
+    # plural formulas are integer-only, so keep only integer-compatible rules.
+    integer_rules = {
+        tag: rule
+        for tag, rule in locale.plural_form.rules.items()
+        if not UNSUPPORTED_GETTEXT_OPERAND_RE.search(rule)
+    }
+
+    try:
+        plural_forms = to_gettext(integer_rules)
+    except RuleError as e:
+        print_error(f"Failed to convert CLDR plural rules for {language_code}: {e}")
+        raise SystemExit(1)
+
+    return {
+        "name": locale.get_display_name("en"),
+        "plural_forms": plural_forms,
+    }
+
+
+def get_nplurals(plural_forms: str) -> int:
+    """Extract nplurals from a GNU gettext Plural-Forms header."""
+    match = re.search(r"(?:^|;)\s*nplurals\s*=\s*(\d+)\s*(?:;|$)", plural_forms)
+    if match:
+        return int(match.group(1))
+    return 2
+
+
+def check_codex_available() -> bool:
+    """Check if codex CLI is available."""
+    return shutil.which("codex") is not None
+
+
+def build_translation_prompt(
+    msgid: str,
+    language_code: str,
+    language_name: str,
+    msgid_plural: Optional[str] = None,
+    nplurals: int = 2,
+    placeholders: Optional[Set[str]] = None,
+    context: Optional[str] = None,
+) -> str:
+    """Build prompt for codex translation request."""
+    placeholders = placeholders or set()
+    placeholder_list = ', '.join(sorted(placeholders)) if placeholders else 'none'
+
+    if msgid_plural:
+        plural_labels = "\n".join(
+            f"MSGSTR[{plural_index}]: <{language_name} plural form {plural_index}>"
+            for plural_index in range(nplurals)
+        )
+        prompt = f"""Translate this English message pair to {language_name} for the Himmelblau Azure AD authentication system.
+
+## Context
+This is a user-facing authentication message that appears during login flows.
+{f'Source location: {context}' if context else ''}
+
+## English Messages
+SINGULAR: "{msgid}"
+PLURAL: "{msgid_plural}"
+
+## Requirements
+1. Translate all {nplurals} target plural forms to {language_name}
+2. Preserve ALL placeholder variables EXACTLY as written: {placeholder_list}
+3. Match the tone: professional, clear, user-friendly
+4. Keep the same meaning and level of formality
+5. Return ONLY the translations in this exact format:
+
+{plural_labels}
+
+Do not include explanations or additional text."""
+    else:
+        prompt = f"""Translate this English message to {language_name} for the Himmelblau Azure AD authentication system.
+
+## Context
+This is a user-facing authentication message that appears during login flows.
+{f'Source location: {context}' if context else ''}
+
+## English Message
+"{msgid}"
+
+## Requirements
+1. Translate to {language_name}
+2. Preserve ALL placeholder variables EXACTLY as written: {placeholder_list}
+3. Match the tone: professional, clear, user-friendly
+4. Keep the same meaning and level of formality
+5. Return ONLY the translation without quotes or additional text
+
+Translation:"""
+
+    return prompt
+
+
+def _strip_wrapping_quotes(text: str) -> str:
+    """Remove a single pair of surrounding quotes if present."""
+    text = text.strip()
+    if len(text) >= 2 and text[0] == text[-1] and text[0] in ('"', "'"):
+        return text[1:-1]
+    return text
+
+
+def parse_translation_response(response: str, is_plural: bool, nplurals: int = 2) -> Dict[str, str]:
+    """Parse codex response into msgstr format.
+
+    The response comes from codex's --output-last-message file, so it contains
+    only the model's final message (no metadata or "codex" banner lines). It
+    may span multiple lines, so we must preserve internal newlines rather than
+    collapsing to a single line.
+    """
+    response = response.strip()
+
+    if is_plural:
+        parsed = {}
+        label_re = re.compile(r'^\s*MSGSTR\[(\d+)\]:\s*(.*)$', re.IGNORECASE | re.MULTILINE)
+        matches = list(label_re.finditer(response))
+
+        for index, match in enumerate(matches):
+            plural_index = int(match.group(1))
+            if plural_index >= nplurals:
+                continue
+            start = match.end()
+            end = matches[index + 1].start() if index + 1 < len(matches) else len(response)
+            value = match.group(2) + response[start:end]
+            value = _strip_wrapping_quotes(value.strip())
+            if value:
+                parsed[f"msgstr[{plural_index}]"] = value
+
+        missing = [f"msgstr[{plural_index}]" for plural_index in range(nplurals) if f"msgstr[{plural_index}]" not in parsed]
+        if missing:
+            raise ValueError(f"Could not parse plural response; missing {', '.join(missing)}: {response}")
+
+        return parsed
+
+    # Singular: the entire response is the translation. Drop a leading
+    # "Translation:" label if the model echoed one, but keep all other lines.
+    if response.lower().startswith("translation:"):
+        response = response.split(":", 1)[1].strip()
+
+    translation = _strip_wrapping_quotes(response)
+    if not translation:
+        raise ValueError(f"Could not parse translation: {response!r}")
+
+    return {"msgstr": translation}
+
+
+def validate_placeholders(entry: Dict, translation: Dict) -> None:
+    """Ensure all placeholders are preserved in translation."""
+    source_placeholders = set()
+    source_placeholders.update(extract_placeholders(entry["msgid"]))
+    if entry.get("msgid_plural"):
+        source_placeholders.update(extract_placeholders(entry["msgid_plural"]))
+
+    target_placeholders = set()
+    for value in translation.values():
+        target_placeholders.update(extract_placeholders(value))
+
+    if source_placeholders != target_placeholders:
+        missing = source_placeholders - target_placeholders
+        extra = target_placeholders - source_placeholders
+        msg = []
+        if missing:
+            msg.append(f"missing {missing}")
+        if extra:
+            msg.append(f"extra {extra}")
+        raise ValueError(f"Placeholder mismatch: {', '.join(msg)}")
+
+
+def translate_string(
+    msgid: str,
+    language_code: str,
+    language_name: str,
+    msgid_plural: Optional[str] = None,
+    nplurals: int = 2,
+    context: Optional[str] = None,
+) -> Dict[str, str]:
+    """Translate a single string or plural form using codex.
+
+    Returns:
+        For singular: {"msgstr": "translated text"}
+        For plural: {"msgstr[0]": "...", ..., "msgstr[nplurals-1]": "..."}
+    """
+    placeholders = extract_placeholders(msgid)
+    if msgid_plural:
+        placeholders.update(extract_placeholders(msgid_plural))
+
+    prompt = build_translation_prompt(
+        msgid=msgid,
+        language_code=language_code,
+        language_name=language_name,
+        msgid_plural=msgid_plural,
+        nplurals=nplurals,
+        placeholders=placeholders,
+        context=context,
+    )
+
+    # Use --output-last-message to capture the complete (possibly multi-line)
+    # final response cleanly. The prompt is passed via stdin ("-") because
+    # passing a multi-line prompt as an argument causes codex to hang waiting
+    # on stdin.
+    with tempfile.NamedTemporaryFile(mode="w+", suffix=".txt", delete=False) as tmp:
+        output_file = tmp.name
+
+    try:
+        result = subprocess.run(
+            [
+                "codex", "exec",
+                "--cd", str(ROOT),
+                "--sandbox", "read-only",
+                "--dangerously-bypass-approvals-and-sandbox",
+                "--output-last-message", output_file,
+                "-"  # Read prompt from stdin
+            ],
+            input=prompt,
+            capture_output=True,
+            text=True,
+            timeout=TIMEOUT_CODEX_SECONDS
+        )
+
+        if result.returncode == 0:
+            with open(output_file, "r", encoding="utf-8") as f:
+                output = f.read().strip()
+            if output:
+                return parse_translation_response(output, msgid_plural is not None, nplurals)
+
+        raise RuntimeError(f"Codex failed or returned no output (exit code {result.returncode})")
+
+    except subprocess.TimeoutExpired:
+        raise RuntimeError(f"Codex timeout after {TIMEOUT_CODEX_SECONDS}s")
+    except Exception as e:
+        raise RuntimeError(f"Codex error: {e}")
+    finally:
+        if os.path.exists(output_file):
+            os.unlink(output_file)
+
+
+def translate_entry_with_retry(
+    entry: Dict,
+    language_code: str,
+    language_name: str,
+    nplurals: int,
+    max_retries: int = MAX_RETRIES
+) -> Optional[Dict[str, str]]:
+    """Translate a single entry with retry logic."""
+    for attempt in range(max_retries):
+        try:
+            translation = translate_string(
+                msgid=entry["msgid"],
+                language_code=language_code,
+                language_name=language_name,
+                msgid_plural=entry.get("msgid_plural"),
+                nplurals=nplurals,
+                context=entry.get("references"),
+            )
+
+            # Validate placeholders preserved
+            validate_placeholders(entry, translation)
+
+            return translation
+
+        except (RuntimeError, ValueError) as e:
+            if attempt < max_retries - 1:
+                print(f"  Retry {attempt + 1}/{max_retries}...")
+                continue
+            else:
+                print_error(f"Failed after {max_retries} attempts")
+                print(f"    msgid: {entry['msgid'][:50]}...")
+                print(f"    error: {e}")
+                return None
+
+
+def translate_all_entries(
+    entries: List[Dict],
+    language_code: str,
+    language_name: str,
+    nplurals: int,
+) -> Tuple[List[Dict], List[Dict]]:
+    """Translate all entries with progress reporting."""
+    total = len(entries)
+    translated = []
+    failed = []
+
+    print(f"\nTranslating {total} entries to {language_name}...")
+
+    for i, entry in enumerate(entries, 1):
+        msgid_preview = entry["msgid"][:60]
+        if len(entry["msgid"]) > 60:
+            msgid_preview += "..."
+
+        print(f"  [{i}/{total}] {msgid_preview}", end="", flush=True)
+
+        translation = translate_entry_with_retry(entry, language_code, language_name, nplurals)
+
+        if translation:
+            entry.update(translation)
+            translated.append(entry)
+            print(" ✓")  # checkmark
+        else:
+            failed.append(entry)
+            print(" ✗")  # X mark
+
+    return translated, failed
+
+
+def write_po_file(
+    output_path: pathlib.Path,
+    language_code: str,
+    language_name: str,
+    entries: List[Dict],
+    pot_creation_date: str,
+) -> None:
+    """Write complete PO file with headers and translations."""
+    now = datetime.datetime.now(datetime.timezone.utc)
+    year = now.year
+
+    metadata = get_language_metadata(language_code)
+    nplurals = get_nplurals(metadata["plural_forms"])
+
+    lines = [
+        f"# {language_name} translations for Himmelblau.",
+        f"# Copyright (C) {year} Himmelblau contributors",
+        "# This file is distributed under the same license as Himmelblau.",
+        "#",
+        'msgid ""',
+        'msgstr ""',
+        '"Project-Id-Version: himmelblau\\n"',
+        f'"POT-Creation-Date: {pot_creation_date}\\n"',
+        '"MIME-Version: 1.0\\n"',
+        '"Content-Type: text/plain; charset=UTF-8\\n"',
+        '"Content-Transfer-Encoding: 8bit\\n"',
+        f'"PO-Revision-Date: {now.strftime("%Y-%m-%d %H:%M%z")}\\n"',
+        '"Last-Translator: Automated via Codex <noreply@himmelblau-idm.org>\\n"',
+        f'"Language-Team: {language_name}\\n"',
+        f'"Language: {language_code}\\n"',
+        f'"Plural-Forms: {metadata["plural_forms"]}\\n"',
+        "",
+    ]
+
+    for entry in entries:
+        if entry.get("references"):
+            lines.append(f"#: {entry['references']}")
+
+        lines.append(f'msgid {po_quote(entry["msgid"])}')
+
+        if entry.get("msgid_plural"):
+            lines.append(f'msgid_plural {po_quote(entry["msgid_plural"])}')
+            for plural_index in range(nplurals):
+                lines.append(f'msgstr[{plural_index}] {po_quote(entry.get(f"msgstr[{plural_index}]", ""))}')
+        else:
+            lines.append(f'msgstr {po_quote(entry.get("msgstr", ""))}')
+
+        lines.append("")
+
+    output_path.write_text("\n".join(lines), encoding="utf-8")
+
+
+def update_linguas_file(language_code: str) -> None:
+    """Add language to LINGUAS file if not present."""
+    linguas_file = PO_DIR / "LINGUAS"
+
+    if not linguas_file.exists():
+        linguas_file.write_text(f"{language_code}\n", encoding="utf-8")
+        print(f"Created po/LINGUAS with {language_code}")
+        return
+
+    content = linguas_file.read_text(encoding="utf-8")
+    existing_langs = []
+    normalized_alias = False
+
+    for line in content.splitlines():
+        raw_lang = line.split("#", 1)[0].strip()
+        lang = canonical_language_code(raw_lang)
+        if lang:
+            normalized_alias = normalized_alias or lang != raw_lang
+            if lang not in existing_langs:
+                existing_langs.append(lang)
+
+    if language_code in existing_langs:
+        if normalized_alias:
+            existing_langs.sort()
+            linguas_file.write_text("\n".join(existing_langs) + "\n", encoding="utf-8")
+            print("Normalized aliases in po/LINGUAS")
+            return
+        print(f"Language {language_code} already in po/LINGUAS")
+        return
+
+    # Add new language in alphabetical order
+    existing_langs.append(language_code)
+    existing_langs.sort()
+
+    linguas_file.write_text("\n".join(existing_langs) + "\n", encoding="utf-8")
+    print(f"Added {language_code} to po/LINGUAS")
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(
+        description="Generate automated translations using codex CLI",
+        epilog="Example: ./scripts/i18n-translate fr"
+    )
+    parser.add_argument(
+        "language_code",
+        help="Target language code (e.g., de, fr, es, hi, ja, zh, ru, pt, it, nl, pl, sr@latin)",
+    )
+    parser.add_argument(
+        "--update-pot",
+        action="store_true",
+        default=True,
+        help="Update .pot template before translating (default: enabled)",
+    )
+    parser.add_argument(
+        "--no-update-pot",
+        dest="update_pot",
+        action="store_false",
+        help="Skip .pot template update",
+    )
+    parser.add_argument(
+        "--update-linguas",
+        action="store_true",
+        default=True,
+        help="Add language to po/LINGUAS (default: enabled)",
+    )
+    parser.add_argument(
+        "--no-update-linguas",
+        dest="update_linguas",
+        action="store_false",
+        help="Skip LINGUAS update",
+    )
+    parser.add_argument(
+        "--validate",
+        action="store_true",
+        default=True,
+        help="Run i18n-check validation after (default: enabled)",
+    )
+    parser.add_argument(
+        "--no-validate",
+        dest="validate",
+        action="store_false",
+        help="Skip validation",
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Show what would be done without calling codex",
+    )
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Overwrite existing translation file",
+    )
+
+    args = parser.parse_args()
+    args.language_code = canonical_language_code(args.language_code)
+
+    # 1. Pre-flight checks
+    if not args.dry_run and not check_codex_available():
+        print_error("codex CLI not found. Please install codex first.")
+        return 1
+
+    output_file = PO_DIR / f"{args.language_code}.po"
+    if output_file.exists() and not args.force and not args.dry_run:
+        print_error(f"{output_file.relative_to(ROOT)} already exists. Use --force to overwrite.")
+        return 1
+
+    metadata = get_language_metadata(args.language_code)
+    language_name = metadata["name"]
+    nplurals = get_nplurals(metadata["plural_forms"])
+
+    # 2. Update POT template
+    if args.update_pot:
+        print("Updating .pot template...")
+        result = subprocess.run([str(ROOT / "scripts" / "i18n-update-pot")])
+        if result.returncode != 0:
+            print_error("Failed to update .pot template")
+            return 1
+
+    # 3. Parse POT file
+    pot_file = PO_DIR / "himmelblau.pot"
+    if not pot_file.exists():
+        print_error(f"{pot_file.relative_to(ROOT)} not found. Run ./scripts/i18n-update-pot first.")
+        return 1
+
+    print(f"Parsing {pot_file.relative_to(ROOT)}...")
+    entries = parse_po_template(pot_file)
+    pot_creation_date = extract_pot_creation_date(pot_file)
+
+    print(f"Found {len(entries)} entries to translate")
+
+    if args.dry_run:
+        print("\nDRY RUN - would translate:")
+        for entry in entries[:5]:
+            msgid_preview = entry["msgid"][:60]
+            if len(entry["msgid"]) > 60:
+                msgid_preview += "..."
+            print(f"  - {msgid_preview}")
+        if len(entries) > 5:
+            print(f"  ... and {len(entries) - 5} more")
+        return 0
+
+    # 4. Translate all entries
+    translated_entries, failed_entries = translate_all_entries(
+        entries,
+        args.language_code,
+        language_name,
+        nplurals,
+    )
+
+    if failed_entries:
+        print_warning(f"\n{len(failed_entries)} entries failed to translate:")
+        for entry in failed_entries[:10]:
+            msgid_preview = entry["msgid"][:60]
+            if len(entry["msgid"]) > 60:
+                msgid_preview += "..."
+            print(f"  - {msgid_preview}")
+        if len(failed_entries) > 10:
+            print(f"  ... and {len(failed_entries) - 10} more")
+
+        user_input = input("\nContinue with partial translation? [y/N] ")
+        if user_input.lower() != 'y':
+            print("Aborted.")
+            return 1
+
+    output_entries = entries if failed_entries else translated_entries
+
+    # 5. Write PO file
+    print(f"\nWriting {output_file.relative_to(ROOT)}...")
+    write_po_file(
+        output_file,
+        args.language_code,
+        language_name,
+        output_entries,
+        pot_creation_date,
+    )
+
+    print(f"Wrote {len(translated_entries)}/{len(entries)} translated entries")
+
+    # 6. Update LINGUAS
+    if args.update_linguas:
+        update_linguas_file(args.language_code)
+
+    # 7. Validate output
+    if args.validate:
+        print("\nValidating translation file...")
+        result = subprocess.run([str(ROOT / "scripts" / "i18n-check")])
+        if result.returncode != 0:
+            print_error("Validation failed! Please review the errors above.")
+            return 1
+        print_success("Validation passed ✓")
+
+    print_success(f"\nSuccessfully generated {output_file.relative_to(ROOT)}")
+    print("\nNext steps:")
+    print(f"  1. Review the translation: less {output_file.relative_to(ROOT)}")
+    print(f"  2. Compile translations: ./scripts/i18n-compile")
+    print(f"  3. Test with: LANG={args.language_code} <your-command>")
+
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
