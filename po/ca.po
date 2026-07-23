@@ -3,371 +3,289 @@
 # This file is distributed under the same license as Himmelblau.
 #
 msgid ""
-msgstr ""
-"Project-Id-Version: himmelblau\n"
-"POT-Creation-Date: 2026-07-13 16:06+0000\n"
-"PO-Revision-Date: 2026-07-18 00:00+0000\n"
-"Language: ca\n"
-"Last-Translator: Carles Gonzalez Silva <carles.gonzalez.silva@himmelblau-idm.org>\n"
+msgstr "Project-Id-Version: himmelblau\n"
+"POT-Creation-Date: 2026-07-22 22:33+0000\n"
+"PO-Revision-Date: 2026-07-23 14:38+0000\n"
+"Last-Translator: Automated via Codex <noreply@himmelblau-idm.org>\n"
 "Language-Team: Catalan\n"
+"Language: ca\n"
 "MIME-Version: 1.0\n"
 "Content-Type: text/plain; charset=UTF-8\n"
 "Content-Transfer-Encoding: 8bit\n"
 "Plural-Forms: nplurals=2; plural=(n != 1);\n"
+""
 
-#: src/common/src/auth.rs:1276 src/common/src/auth.rs:1289
 msgid "An unexpected error occurred."
 msgstr "S'ha produït un error inesperat."
 
-#: src/common/src/idprovider/openidconnect.rs:753
 msgid "Approve sign-in in your authenticator app, then wait..."
 msgstr "Aproveu l'inici de sessió a l'aplicació d'autenticació i espereu..."
 
-#: src/common/src/idprovider/himmelblau.rs:4806
 msgid "Authenticated user {user} does not match requested user"
 msgstr "L'usuari autenticat {user} no coincideix amb l'usuari sol·licitat"
 
-#: src/common/src/idprovider/openidconnect.rs:2118
 msgid "Authenticated user {uuid} does not match requested user"
 msgstr "L'usuari autenticat {uuid} no coincideix amb l'usuari sol·licitat"
 
-#: src/common/src/idprovider/openidconnect.rs:3003
 msgid "Authentication did not return a refresh token. Please try again."
 msgstr "L'autenticació no ha retornat un testimoni d'actualització. Torneu-ho a provar."
 
-#: src/common/src/idprovider/himmelblau.rs:3946
 msgid "Authentication failed (AADSTS{code})"
 msgstr "L'autenticació ha fallat (AADSTS{code})"
 
-#: src/common/src/idprovider/openidconnect.rs:2939
 msgid "Authentication failed in browser flow."
 msgstr "L'autenticació ha fallat durant el flux del navegador."
 
-#: src/common/src/idprovider/himmelblau.rs:209
 msgid "Authentication failed. Please contact your administrator."
 msgstr "L'autenticació ha fallat. Contacteu amb l'administrador."
 
-#: src/common/src/idprovider/himmelblau.rs:3826
 msgid "Authentication failed. Please try again."
 msgstr "L'autenticació ha fallat. Torneu-ho a provar."
 
-#: src/common/src/idprovider/himmelblau.rs:3126
 msgid "Authentication failed. Please try signing in again."
 msgstr "L'autenticació ha fallat. Torneu a intentar iniciar sessió."
 
-#: src/common/src/idprovider/himmelblau.rs:168
 msgid "Authentication failed: Authentication method not supported."
 msgstr "L'autenticació ha fallat: el mètode d'autenticació no és compatible."
 
-#: src/common/src/idprovider/himmelblau.rs:171 src/common/src/idprovider/himmelblau.rs:176
 msgid "Authentication failed: Configuration error."
 msgstr "L'autenticació ha fallat: error de configuració."
 
-#: src/common/src/idprovider/himmelblau.rs:175
 msgid "Authentication failed: Cryptographic error."
 msgstr "L'autenticació ha fallat: error criptogràfic."
 
-#: src/common/src/idprovider/himmelblau.rs:152
 msgid "Authentication failed: Invalid server response."
 msgstr "L'autenticació ha fallat: resposta del servidor no vàlida."
 
-#: src/common/src/idprovider/himmelblau.rs:188
 msgid "Authentication failed: Missing required data."
 msgstr "L'autenticació ha fallat: falten dades obligatòries."
 
-#: src/common/src/idprovider/himmelblau.rs:170
 msgid "Authentication failed: Security hardware error."
 msgstr "L'autenticació ha fallat: error de maquinari de seguretat."
 
-#: src/common/src/idprovider/himmelblau.rs:165
 msgid "Authentication failed: Unable to reach authentication server."
 msgstr "L'autenticació ha fallat: no s'ha pogut contactar amb el servidor d'autenticació."
 
-#: src/common/src/idprovider/openidconnect.rs:2738 src/common/src/idprovider/openidconnect.rs:2849 src/common/src/idprovider/openidconnect.rs:2984 src/common/src/idprovider/openidconnect.rs:3050 src/common/src/idprovider/openidconnect.rs:3063
 msgid "Authentication failed: {error}"
 msgstr "L'autenticació ha fallat: {error}"
 
-#: src/common/src/idprovider/openidconnect.rs:3036
 msgid "Authentication flow completed but token exchange failed. Please try again."
 msgstr "El flux d'autenticació s'ha completat, però l'intercanvi de testimonis ha fallat. Torneu-ho a provar."
 
-#: src/common/src/idprovider/himmelblau.rs:179 src/common/src/idprovider/himmelblau.rs:203
 msgid "Authentication in progress."
 msgstr "Autenticació en curs."
 
-#: src/common/src/idprovider/openidconnect.rs:2537
 msgid "Authentication incomplete. Please try again."
 msgstr "L'autenticació no s'ha completat. Torneu-ho a provar."
 
-#: src/common/src/idprovider/himmelblau.rs:1909
 msgid "Authentication service is temporarily unavailable. Please try again shortly."
 msgstr "El servei d'autenticació no està disponible temporalment. Torneu-ho a provar en uns moments."
 
-#: src/common/src/idprovider/himmelblau.rs:3166
 msgid "Authentication service unavailable. Please try again later."
 msgstr "El servei d'autenticació no està disponible. Torneu-ho a provar més tard."
 
-#: src/common/src/idprovider/openidconnect.rs:2674 src/common/src/idprovider/openidconnect.rs:2713 src/common/src/idprovider/openidconnect.rs:2774
 msgid "Authentication session corrupted. Please try again."
 msgstr "La sessió d'autenticació és corrupta. Torneu-ho a provar."
 
-#: src/common/src/idprovider/openidconnect.rs:2661
 msgid "Authentication session data missing. Please try again."
 msgstr "Falten dades de la sessió d'autenticació. Torneu-ho a provar."
 
-#: src/common/src/idprovider/openidconnect.rs:3078
 msgid "Authentication session returned an unexpected state. Please try again."
 msgstr "La sessió d'autenticació ha retornat un estat inesperat. Torneu-ho a provar."
 
-#: src/common/src/idprovider/himmelblau.rs:4121 src/common/src/idprovider/openidconnect.rs:2701 src/common/src/idprovider/openidconnect.rs:2801
 msgid "Authentication timed out. Please try again."
 msgstr "L'autenticació ha superat el temps d'espera. Torneu-ho a provar."
 
-#: src/common/src/idprovider/openidconnect.rs:3105
 msgid "Browser authentication backend unavailable. Please try again."
 msgstr "El servei d'autenticació del navegador no està disponible. Torneu-ho a provar."
 
-#: src/common/src/auth.rs:1252
 msgid "Changing the password. Please wait..."
 msgstr "S'està canviant la contrasenya. Espereu..."
 
-#: src/common/src/auth.rs:1209
 msgid "Chosen password is too short! 8 chars required."
 msgstr "La contrasenya triada és massa curta. Calen 8 caràcters com a mínim."
 
-#: src/common/src/auth.rs:979 src/pam/src/pam/mod.rs:595
 msgid "Chosen pin is too short! {length} chars required."
 msgstr "El PIN triat és massa curt. Calen {length} caràcters com a mínim."
 
-#: src/common/src/auth.rs:829
 msgid "Cloud Password:"
 msgstr "Contrasenya del núvol:"
 
-#: src/common/src/auth.rs:868
 msgid "Code:"
 msgstr "Codi:"
 
-#: src/common/src/auth.rs:1010 src/pam/src/pam/mod.rs:637
 msgid "Confirm PIN:"
 msgstr "Confirmeu el PIN:"
 
-#: src/common/src/auth.rs:1228
 msgid "Confirm password:"
 msgstr "Confirmeu la contrasenya:"
 
-#: src/common/src/idprovider/himmelblau.rs:199
 msgid "Consent required. Please contact your administrator."
 msgstr "Cal consentiment. Contacteu amb l'administrador."
 
-#: src/common/src/idprovider/himmelblau.rs:3606
 msgid "Create a PIN to use in place of passwords."
 msgstr "Creeu un PIN per utilitzar-lo en lloc de contrasenyes."
 
-#: src/common/src/idprovider/himmelblau.rs:173
 msgid "Device enrollment failed. Please contact your administrator."
 msgstr "El registre del dispositiu ha fallat. Contacteu amb l'administrador."
 
-#: src/common/src/idprovider/himmelblau.rs:1020
 msgid "Device has been removed from the domain."
 msgstr "El dispositiu ha estat eliminat del domini."
 
-#: src/common/src/auth.rs:1117
 msgid "Enable Bluetooth to sign in with your phone."
 msgstr "Activeu el Bluetooth per iniciar sessió amb el telèfon."
 
-#: src/common/src/auth.rs:1034
 msgid "Enrolling the Hello PIN. Please wait..."
 msgstr "S'està registrant el PIN Hello. Espereu..."
 
-#: src/common/src/auth.rs:652
 msgid "Enter the setup key '{secret}' to enroll a TOTP Authenticator app. Use '{issuer}' for the code name and '{account}' as the label/name."
 msgstr "Introduïu la clau de configuració «{secret}» per registrar una aplicació d'autenticació TOTP. Utilitzeu «{issuer}» com a nom del codi i «{account}» com a etiqueta/nom."
 
-#: src/pam/src/pam/mod.rs:827
 msgid "Entra Id Fido authentication failed."
 msgstr "L'autenticació FIDO d'Entra Id ha fallat."
 
-#: src/common/src/auth.rs:836 src/pam/src/pam/mod.rs:712 src/pam/src/pam/mod.rs:752
 msgid "Entra Id Password:"
 msgstr "Contrasenya d'Entra Id:"
 
-#: src/common/src/idprovider/himmelblau.rs:3366 src/common/src/idprovider/himmelblau.rs:3377
 msgid "FIDO authentication not available. Please try a different authentication method."
 msgstr "L'autenticació FIDO no està disponible. Proveu un altre mètode d'autenticació."
 
-#: src/common/src/idprovider/himmelblau.rs:2721 src/common/src/idprovider/himmelblau.rs:2834 src/common/src/idprovider/himmelblau.rs:2877 src/common/src/idprovider/himmelblau.rs:2924 src/common/src/idprovider/himmelblau.rs:2939 src/common/src/idprovider/openidconnect.rs:2368 src/common/src/idprovider/common.rs:665
 msgid "Failed to authenticate with Hello PIN."
 msgstr "No s'ha pogut autenticar amb el PIN Hello."
 
-#: src/common/src/idprovider/common.rs:271
 msgid "Failed to authenticate with Hello PIN. One more failed attempt will require multi-factor authentication and resetting your Linux Hello PIN."
 msgstr "No s'ha pogut autenticar amb el PIN Hello. Un intent fallit més requerirà autenticació multifactor i restablir el PIN Hello de Linux."
 
-#: src/common/src/idprovider/common.rs:554 src/common/src/idprovider/common.rs:564
 msgid "Failed to authenticate with Hello TOTP code."
 msgstr "No s'ha pogut autenticar amb el codi TOTP Hello."
 
-#: src/common/src/auth.rs:638
 msgid "Failed to build regex: {error}"
 msgstr "No s'ha pogut construir l'expressió regular: {error}"
 
-#: src/common/src/idprovider/himmelblau.rs:1001
+msgid "Failed to change user password: {msg}"
+msgstr "No s'ha pogut canviar la contrasenya de l'usuari: {msg}"
+
 msgid "Failed to delete CSR key"
 msgstr "No s'ha pogut eliminar la clau CSR"
 
-#: src/common/src/idprovider/himmelblau.rs:1012
 msgid "Failed to delete intune key"
 msgstr "No s'ha pogut eliminar la clau d'Intune"
 
-#: src/common/src/auth.rs:625 src/common/src/auth.rs:630 src/common/src/auth.rs:647 src/common/src/auth.rs:664
 msgid "Failed to generate QR code"
 msgstr "No s'ha pogut generar el codi QR"
 
-#: src/common/src/idprovider/himmelblau.rs:2280
 msgid "Failed to join domain. Please contact your administrator."
 msgstr "No s'ha pogut unir al domini. Contacteu amb l'administrador."
 
-#: src/common/src/idprovider/himmelblau.rs:3600
 msgid "Failed to provision hello key: {error}\n"
 "{message}"
 msgstr "No s'ha pogut aprovisionar la clau Hello: {error}\n"
 "{message}"
 
-#: src/common/src/idprovider/himmelblau.rs:2170
 msgid "Failed to save device configuration. Please contact your administrator."
 msgstr "No s'ha pogut desar la configuració del dispositiu. Contacteu amb l'administrador."
 
-#: src/common/src/idprovider/himmelblau.rs:2179
 msgid "Failed to store device credentials. Please contact your administrator."
 msgstr "No s'han pogut emmagatzemar les credencials del dispositiu. Contacteu amb l'administrador."
 
-#: src/common/src/auth.rs:126 src/common/src/auth.rs:147
 msgid "Fido PIN:"
 msgstr "PIN FIDO:"
 
-#: src/common/src/auth.rs:1392
 msgid "Himmelblau authentication is starting, please wait..."
 msgstr "S'està iniciant l'autenticació de Himmelblau, espereu..."
 
-#: src/common/src/auth.rs:1399
 msgid "Himmelblau authentication service did not become available in time."
 msgstr "El servei d'autenticació de Himmelblau no ha estat disponible a temps."
 
-#: src/common/src/auth.rs:1386
 msgid "Himmelblau authentication service is unavailable."
 msgstr "El servei d'autenticació de Himmelblau no està disponible."
 
-#: src/common/src/auth.rs:1027 src/common/src/auth.rs:1245 src/pam/src/pam/mod.rs:654
 msgid "Inputs did not match. Try again."
 msgstr "Les entrades no coincideixen. Torneu-ho a provar."
 
-#: src/common/src/idprovider/himmelblau.rs:207
+msgid "Invalid credentials"
+msgstr "Credencials no vàlides"
+
 msgid "Multi-factor authentication required."
 msgstr "Cal autenticació multifactor."
 
-#: src/common/src/idprovider/himmelblau.rs:4161
 msgid "Multi-factor authentication required. Please try signing in again."
 msgstr "Cal autenticació multifactor. Torneu a intentar iniciar sessió."
 
-#: src/common/src/idprovider/himmelblau.rs:1847 src/common/src/idprovider/himmelblau.rs:1950 src/common/src/idprovider/himmelblau.rs:1974 src/common/src/idprovider/himmelblau.rs:2134 src/common/src/idprovider/himmelblau.rs:2152 src/common/src/idprovider/himmelblau.rs:2520 src/common/src/idprovider/himmelblau.rs:2621 src/common/src/idprovider/openidconnect.rs:2250 src/common/src/idprovider/openidconnect.rs:2349 src/common/src/idprovider/common.rs:463
 msgid "Network outage detected."
 msgstr "S'ha detectat una interrupció de la xarxa."
 
-#: src/common/src/auth.rs:976 src/pam/src/pam/mod.rs:589
 msgid "New PIN:"
 msgstr "PIN nou:"
 
-#: src/common/src/auth.rs:1203
 msgid "New password:"
 msgstr "Contrasenya nova:"
 
-#: src/common/src/auth.rs:1002 src/common/src/auth.rs:1061
 msgid "No Entra Id Hello PIN was supplied."
 msgstr "No s'ha proporcionat cap PIN Hello d'Entra Id."
 
-#: src/common/src/auth.rs:1016
 msgid "No Entra Id Hello confirmation PIN was supplied."
 msgstr "No s'ha proporcionat cap PIN de confirmació Hello d'Entra Id."
 
-#: src/common/src/auth.rs:1234
 msgid "No Entra Id confirmation password was supplied."
 msgstr "No s'ha proporcionat cap contrasenya de confirmació d'Entra Id."
 
-#: src/common/src/auth.rs:845 src/common/src/auth.rs:1218
 msgid "No Entra Id password was supplied."
 msgstr "No s'ha proporcionat cap contrasenya d'Entra Id."
 
-#: src/common/src/auth.rs:951
 msgid "No Hello TOTP code was supplied."
 msgstr "No s'ha proporcionat cap codi TOTP Hello."
 
-#: src/common/src/auth.rs:875
 msgid "No input was supplied."
 msgstr "No s'ha proporcionat cap entrada."
 
-#: src/common/src/idprovider/common.rs:413
 msgid "Offline auth has expired. Please connect to the network to continue."
 msgstr "L'autenticació sense connexió ha caducat. Connecteu-vos a la xarxa per continuar."
 
-#: src/common/src/i18n.rs:82
 msgid "Open your Authenticator app, and enter the number '{entropy}' to sign in."
 msgstr "Obriu l'aplicació d'autenticació i introduïu el número «{entropy}» per iniciar sessió."
 
-#: src/common/src/auth.rs:922
 msgid "Open your authenticator app and scan this QR code to enroll. Then enter the generated code.\n"
 "{qr}"
 msgstr "Obriu l'aplicació d'autenticació i escanegeu aquest codi QR per registrar-vos. A continuació, introduïu el codi generat.\n"
 "{qr}"
 
-#: src/common/src/auth.rs:986 src/pam/src/pam/mod.rs:611
 msgid "PIN must not use repeating or predictable sequences. Avoid patterns like '111111', '123456', or '135791'."
 msgstr "El PIN no pot contenir seqüències repetitives o previsibles. Eviteu patrons com «111111», «123456» o «135791»."
 
-#: src/common/src/idprovider/himmelblau.rs:3582
 msgid "PIN setup failed. Please try signing in again."
 msgstr "La configuració del PIN ha fallat. Torneu a intentar iniciar sessió."
 
-#: src/common/src/auth.rs:1055
 msgid "PIN:"
 msgstr "PIN:"
 
-#: src/common/src/idprovider/himmelblau.rs:191
 msgid "Password change required. Please contact your administrator."
 msgstr "Cal canviar la contrasenya. Contacteu amb l'administrador."
 
-#: src/common/src/idprovider/himmelblau.rs:195
 msgid "Password entry required."
 msgstr "Cal introduir la contrasenya."
 
-#: src/common/src/idprovider/himmelblau.rs:158 src/common/src/idprovider/himmelblau.rs:183
 msgid "Password reset registration required. Complete setup at https://aka.ms/ssprsetup from another device, then try again."
 msgstr "Cal completar el registre per al restabliment de contrasenya. Completeu la configuració a https://aka.ms/ssprsetup des d'un altre dispositiu i torneu-ho a provar."
 
-#: src/common/src/idprovider/himmelblau.rs:2687 src/common/src/idprovider/himmelblau.rs:2783 src/common/src/idprovider/himmelblau.rs:3069 src/common/src/idprovider/himmelblau.rs:3205 src/common/src/idprovider/himmelblau.rs:3322 src/common/src/idprovider/openidconnect.rs:2472 src/common/src/idprovider/openidconnect.rs:2585 src/common/src/idprovider/common.rs:649
 msgid "Please enter your Hello TOTP code from your Authenticator:"
 msgstr "Introduïu el codi TOTP Hello de l'aplicació d'autenticació:"
 
-#: config_gen.rs:178
 msgid "Please insert your security key."
 msgstr "Inseriu la clau de seguretat."
 
-#: src/common/src/auth.rs:119
 msgid "Please select a device by touching one of them."
 msgstr "Seleccioneu un dispositiu tocant-ne un."
 
-#: config_gen.rs:186
 msgid "Please touch your security key."
 msgstr "Toqueu la clau de seguretat."
 
-#: src/common/src/auth.rs:688
 msgid "Press enter to continue"
 msgstr "Premeu Retorn per continuar"
 
-#: src/common/src/auth.rs:1165
 msgid "QR/Bluetooth authentication failed."
 msgstr "L'autenticació per QR/Bluetooth ha fallat."
 
-#: src/common/src/idprovider/openidconnect.rs:90
 msgid "Scan the QR code to continue sign-in, or open this link on another device:\n"
 "{complete}\n"
 "If you cannot scan, visit:\n"
@@ -381,77 +299,59 @@ msgstr "Escanegeu el codi QR per continuar l'inici de sessió, o obriu aquest en
 "I introduïu el codi:\n"
 "{user_code}"
 
-#: config_gen.rs:194
 msgid "Scan with your authenticator app"
 msgstr "Escanegeu amb l'aplicació d'autenticació"
 
-#: src/common/src/auth.rs:1148
 msgid "Security key and QR/Bluetooth authentication failed."
 msgstr "L'autenticació per clau de seguretat i QR/Bluetooth ha fallat."
 
-#: src/common/src/auth.rs:1184
 msgid "Security key authentication failed."
 msgstr "L'autenticació per clau de seguretat ha fallat."
 
-#: src/common/src/idprovider/openidconnect.rs:2404 src/common/src/idprovider/openidconnect.rs:2424
 msgid "Session data corrupted. Please sign in again."
 msgstr "Les dades de sessió són corruptes. Torneu a iniciar sessió."
 
-#: src/common/src/idprovider/himmelblau.rs:3479 src/common/src/idprovider/himmelblau.rs:4098 src/common/src/idprovider/himmelblau.rs:4219 src/common/src/idprovider/himmelblau.rs:4312 src/common/src/idprovider/openidconnect.rs:2093
 msgid "Set up a PIN\n"
 "A Hello PIN is a fast, secure way to sign in to your device, apps, and services."
 msgstr "Configureu un PIN\n"
 "Un PIN Hello és una manera ràpida i segura d'iniciar sessió al dispositiu, les aplicacions i els serveis."
 
-#: src/common/src/auth.rs:945
 msgid "TOTP Code:"
 msgstr "Codi TOTP:"
 
-#: src/common/src/auth.rs:966
 msgid "The minimum PIN length is {length} characters."
 msgstr "La longitud mínima del PIN és de {length} caràcters."
 
-#: src/pam/src/pam/mod.rs:576
 msgid "This command changes your local Hello PIN, NOT your Entra Id password."
 msgstr "Aquesta ordre canvia el PIN Hello local, NO la contrasenya d'Entra Id."
 
-#: src/common/src/auth.rs:181
-msgid "Too many failed user verification attempts."
-msgstr "Massa intents de verificació d'usuari fallits."
-
-#: src/common/src/auth.rs:158
 msgid "Too many failed attempts in one row. Your device has been temporarily blocked. Please unplug it and plug in again."
 msgstr "Massa intents fallits seguits. El dispositiu ha estat blocat temporalment. Desconnecteu-lo i torneu-lo a connectar."
 
-#: src/common/src/auth.rs:162
 msgid "Too many failed attempts. Your device has been blocked. Reset it."
 msgstr "Massa intents fallits. El dispositiu ha estat blocat. Restabliu-lo."
 
-#: src/common/src/idprovider/common.rs:306
+msgid "Too many failed user verification attempts."
+msgstr "Massa intents de verificació d'usuari fallits."
+
 msgid "Too many incorrect PIN attempts. You will need to enroll a new Linux Hello PIN."
 msgstr "Massa intents de PIN incorrectes. Haureu de registrar un PIN Hello de Linux nou."
 
-#: src/common/src/auth.rs:137 src/common/src/auth.rs:168
 msgid "Try again."
 msgstr "Torneu-ho a provar."
 
-#: src/common/src/idprovider/himmelblau.rs:3335 src/common/src/idprovider/openidconnect.rs:2598 src/common/src/idprovider/openidconnect.rs:2690 src/common/src/idprovider/openidconnect.rs:2868 src/common/src/idprovider/openidconnect.rs:3138
 msgid "Unexpected authentication step. Please try signing in again."
 msgstr "Pas d'autenticació inesperat. Torneu a intentar iniciar sessió."
 
-#: src/common/src/auth.rs:696
 msgid "Unexpected error occurred."
 msgstr "S'ha produït un error inesperat."
 
-#: src/common/src/auth.rs:185
 msgid "Unexpected error: {error}"
 msgstr "Error inesperat: {error}"
 
-#: src/common/src/auth.rs:193
 msgid "Unexpected select device notice"
 msgstr "Avís de selecció de dispositiu inesperat"
 
-#: src/common/src/idprovider/himmelblau.rs:137 src/common/src/idprovider/himmelblau.rs:3983 src/common/src/idprovider/himmelblau.rs:4051 src/common/src/idprovider/himmelblau.rs:4141 src/common/src/idprovider/himmelblau.rs:4265
 msgid "Update your password\n"
 "You need to update your password because this is\n"
 "the first time you are signing in, or because your\n"
@@ -461,15 +361,12 @@ msgstr "Actualitzeu la contrasenya\n"
 "el primer cop que inicieu sessió, o bé perquè\n"
 "la contrasenya ha caducat."
 
-#: config_gen.rs:74
 msgid "Use the Linux Hello PIN for this device."
 msgstr "Utilitzeu el PIN Hello de Linux per a aquest dispositiu."
 
-#: config_gen.rs:82
 msgid "Use the password for your Office 365 or Microsoft online login."
 msgstr "Utilitzeu la contrasenya del vostre compte d'Office 365 o d'inici de sessió en línia de Microsoft."
 
-#: src/common/src/i18n.rs:110 src/common/src/idprovider/openidconnect.rs:98
 msgid "Using a browser on another device, visit:\n"
 "{verification_uri}\n"
 "And enter the code:\n"
@@ -479,51 +376,40 @@ msgstr "Des d'un navegador en un altre dispositiu, visiteu:\n"
 "I introduïu el codi:\n"
 "{user_code}"
 
-#: src/common/src/auth.rs:866
 msgid "Value:"
 msgstr "Valor:"
 
-#: src/common/src/idprovider/openidconnect.rs:761
 msgid "Waiting for browser authentication to complete..."
 msgstr "S'està esperant que es completi l'autenticació del navegador..."
 
-#: src/common/src/i18n.rs:89
 msgid "We texted your phone {phone}. Please enter the code to sign in:"
 msgstr "Us hem enviat un missatge de text al telèfon {phone}. Introduïu el codi per iniciar sessió:"
 
-#: src/common/src/i18n.rs:103
 msgid "We're calling your office phone {phone}. Please answer it to continue."
 msgstr "Us estem trucant al telèfon de l'oficina {phone}. Responeu la trucada per continuar."
 
-#: src/common/src/i18n.rs:96
 msgid "We're calling your phone {phone}. Please answer it to continue."
 msgstr "Us estem trucant al telèfon {phone}. Responeu la trucada per continuar."
 
-#: src/common/src/auth.rs:145
 msgid "Wrong PIN! {message}"
 msgstr "PIN incorrecte! {message}"
 
-#: src/common/src/auth.rs:176
 msgid "Wrong user verification! {message}"
 msgstr "Verificació d'usuari incorrecta! {message}"
 
-#: src/common/src/auth.rs:138 src/common/src/auth.rs:169
 msgid "You have {attempts} attempt left."
 msgid_plural "You have {attempts} attempts left."
 msgstr[0] "Us queda {attempts} intent."
 msgstr[1] "Us queden {attempts} intents."
 
-#: src/common/src/idprovider/himmelblau.rs:2544 src/common/src/idprovider/himmelblau.rs:2629 src/common/src/idprovider/openidconnect.rs:2412 src/common/src/idprovider/openidconnect.rs:2431 src/common/src/idprovider/openidconnect.rs:2505 src/common/src/idprovider/openidconnect.rs:2520
 msgid "Your session has expired. Please sign in again."
 msgstr "La sessió ha caducat. Torneu a iniciar sessió."
 
-#: src/common/src/auth.rs:605 src/pam/src/pam/mod.rs:823
 msgid "{code}: {message}\n"
 "If you are now prompted for a password from pam_unix, please disregard the prompt, go back and try again."
 msgstr "{code}: {message}\n"
 "Si ara se us demana una contrasenya de pam_unix, ignoreu el missatge, torneu enrere i torneu-ho a provar."
 
-#: src/common/src/auth.rs:718
 msgid "{message}\n"
 "No push? Check your mobile device's internet connection."
 msgstr "{message}\n"
