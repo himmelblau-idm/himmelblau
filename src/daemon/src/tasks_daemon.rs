@@ -36,6 +36,7 @@ use himmelblau_policies::policies::apply_intune_policy;
 use himmelblau_unix_common::config::{split_username, HimmelblauConfig};
 use himmelblau_unix_common::constants::{DEFAULT_CONFIG_PATH, DEFAULT_KERBEROS_CONF_DIR};
 use himmelblau_unix_common::unix_proto::{HomeDirectoryInfo, TaskRequest, TaskResponse};
+use himmelblau_unix_common::user_map::UserMap;
 use kanidm_utils_users::{get_effective_gid, get_effective_uid};
 use libc::uid_t;
 use libc::{lchown, umask};
@@ -513,8 +514,77 @@ fn write_kerberos_config_snippet(
     Ok(())
 }
 
+// Reject names that could escape the AccountsService dirs or alias another user.
+fn valid_profile_account_id(account_id: &str) -> bool {
+    if account_id.is_empty()
+        || !account_id
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '@' | '.' | '_' | '-'))
+    {
+        return false;
+    }
+
+    // Must be a single normal path component; rejects ".", "..", and anything
+    // that would resolve to a different directory.
+    let mut components = Path::new(account_id).components();
+    matches!(
+        (components.next(), components.next()),
+        (Some(std::path::Component::Normal(_)), None)
+    )
+}
+
+// Move a freshly fetched photo into place and point AccountsService at it. The
+// temp file is fsync'd and the rename is atomic, so a crash never leaves a
+// truncated icon, and the keyfile is only written once the icon exists.
+fn commit_profile_photo(
+    icons_dir: &Path,
+    users_dir: &Path,
+    account_id: &str,
+    tmp_path: &Path,
+) -> Result<(), String> {
+    // Ensure the downloaded bytes are durably on disk before the rename.
+    // Re-open with O_NOFOLLOW to preserve the guarantee that the temp path
+    // was not swapped for a symlink between download and fsync.
+    OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW)
+        .open(tmp_path)
+        .and_then(|f| f.sync_all())
+        .map_err(|e| format!("sync of {} failed: {}", tmp_path.display(), e))?;
+
+    let icon_path = icons_dir.join(account_id);
+    std::fs::rename(tmp_path, &icon_path).map_err(|e| {
+        format!(
+            "rename {} -> {} failed: {}",
+            tmp_path.display(),
+            icon_path.display(),
+            e
+        )
+    })?;
+
+    let user_file = users_dir.join(account_id);
+    let mut file = OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .custom_flags(libc::O_NOFOLLOW)
+        .open(&user_file)
+        .map_err(|e| format!("open {} failed: {}", user_file.display(), e))?;
+    file.write_all(
+        format!(
+            "[User]\nIcon={}\nSystemAccount=false\n",
+            icon_path.display()
+        )
+        .as_bytes(),
+    )
+    .map_err(|e| format!("write {} failed: {}", user_file.display(), e))
+}
+
 async fn handle_tasks(stream: UnixStream, cfg: &HimmelblauConfig) {
     let mut reqs = Framed::new(stream, TaskCodec::new());
+
+    // Parsed once per connection rather than per LoadProfilePhoto task.
+    let user_map = UserMap::new(&cfg.get_user_map_file());
 
     loop {
         let next_req = reqs.next().await;
@@ -623,93 +693,96 @@ async fn handle_tasks(stream: UnixStream, cfg: &HimmelblauConfig) {
                     return;
                 }
             }
-            Some(Ok(TaskRequest::LoadProfilePhoto(mut account_id, access_token))) => {
+            Some(Ok(TaskRequest::LoadProfilePhoto(account_id, access_token))) => {
                 debug!("Received task -> LoadProfilePhoto(...)");
-                let icons_dir = "/var/lib/AccountsService/icons/";
-                let users_dir = "/var/lib/AccountsService/users/";
-                if !Path::new(icons_dir).exists() {
-                    info!("Profile photo directory '{}' doesn't exist.", icons_dir);
-                } else {
-                    let upn = account_id.clone();
-                    let domain = split_username(&upn).map(|(_, domain)| domain);
-                    account_id = cfg.map_upn_to_name(&account_id);
+                let icons_dir = Path::new("/var/lib/AccountsService/icons/");
+                let users_dir = Path::new("/var/lib/AccountsService/users/");
 
-                    // Validate account_id to prevent path traversal and
-                    // cross-user aliasing. Reject rather than strip to avoid
-                    // collisions (e.g. "a/lice" and "alice" mapping to the same file).
-                    if account_id.is_empty()
-                        || !account_id.chars().all(|c| {
-                            c.is_ascii_alphanumeric() || matches!(c, '@' | '.' | '_' | '-')
-                        })
-                    {
-                        error!(
-                            "Invalid account_id for profile photo - disallowed characters, rejecting"
+                let outcome: Result<(), String> = async {
+                    if !icons_dir.exists() {
+                        info!(
+                            "Profile photo directory '{}' doesn't exist.",
+                            icons_dir.display()
                         );
-                    // Set the profile picture
-                    } else if let Some(domain) = domain {
-                        let filename = format!("{}{}", icons_dir, account_id);
-                        match OpenOptions::new()
-                            .write(true)
-                            .create(true)
-                            .truncate(true)
-                            .custom_flags(libc::O_NOFOLLOW)
-                            .open(&filename)
-                        {
-                            Ok(file) => {
-                                let authority_host = cfg.get_authority_host(domain);
-                                let tenant_id = cfg.get_tenant_id(domain);
-                                let graph_url = cfg.get_graph_url(domain);
-                                let ip_versions = cfg.get_ip_versions();
-                                let request_timeout = cfg.get_request_timeout();
-                                if let Ok(graph) = Graph::new(
-                                    &cfg.get_odc_provider(domain),
-                                    domain,
-                                    Some(&authority_host),
-                                    tenant_id.as_deref(),
-                                    graph_url.as_deref(),
-                                    Duration::from_secs(request_timeout),
-                                    &ip_versions,
-                                )
-                                .await
-                                {
-                                    if let Err(e) =
-                                        graph.fetch_user_profile_photo(&access_token, file).await
-                                    {
-                                        error!("Failed fetching user profile photo: {:?}", e);
-                                    }
-                                }
-                            }
-                            Err(e) => {
-                                error!("Failed creating file for user profile photo: {:?}", e)
-                            }
-                        }
-                        let user_file = format!("{}{}", users_dir, account_id);
-                        match OpenOptions::new()
-                            .write(true)
-                            .create(true)
-                            .truncate(true)
-                            .custom_flags(libc::O_NOFOLLOW)
-                            .open(&user_file)
-                        {
-                            Ok(mut file) => {
-                                let contents =
-                                    format!("[User]\nIcon={}\nSystemAccount=false\n", filename);
+                        return Ok(());
+                    }
 
-                                if let Err(e) = file.write_all(contents.as_bytes()) {
-                                    error!("Failed writing to user profile settings: {:?}", e);
-                                }
-                            }
-                            Err(e) => {
-                                error!("Failed creating file for user profile settings: {:?}", e)
-                            }
+                    let upn = account_id.clone();
+                    let domain = split_username(&upn)
+                        .map(|(_, domain)| domain)
+                        .ok_or_else(|| "Couldn't parse domain from name".to_string())?;
+
+                    // When a user_map maps this UPN to a local account, NSS presents
+                    // that local name, so the avatar must be keyed to the local user
+                    // rather than the UPN-derived name for GNOME to find it.
+                    let account_id = match user_map.get_local_from_upn(&upn.to_lowercase()) {
+                        Some(local) => local,
+                        None => cfg.map_upn_to_name(&account_id),
+                    };
+
+                    if !valid_profile_account_id(&account_id) {
+                        return Err(format!(
+                            "Invalid account_id '{}' for profile photo - disallowed characters",
+                            account_id
+                        ));
+                    }
+
+                    // Fetch into a unique temp file and only install it on
+                    // success; create_new avoids clobbering a concurrent task's
+                    // or a stale leftover temp file for the same account.
+                    let tmp_path =
+                        icons_dir.join(format!(".{account_id}.{}.tmp", uuid::Uuid::new_v4()));
+                    let file = OpenOptions::new()
+                        .write(true)
+                        .create_new(true)
+                        .custom_flags(libc::O_NOFOLLOW)
+                        .open(&tmp_path)
+                        .map_err(|e| format!("Failed creating {}: {}", tmp_path.display(), e))?;
+
+                    let authority_host = cfg.get_authority_host(domain);
+                    let tenant_id = cfg.get_tenant_id(domain);
+                    let graph_url = cfg.get_graph_url(domain);
+                    let ip_versions = cfg.get_ip_versions();
+                    let request_timeout = cfg.get_request_timeout();
+                    let fetch = async {
+                        let graph = Graph::new(
+                            &cfg.get_odc_provider(domain),
+                            domain,
+                            Some(&authority_host),
+                            tenant_id.as_deref(),
+                            graph_url.as_deref(),
+                            Duration::from_secs(request_timeout),
+                            &ip_versions,
+                        )
+                        .await
+                        .map_err(|e| format!("Failed constructing Graph client: {:?}", e))?;
+                        graph
+                            .fetch_user_profile_photo(&access_token, file)
+                            .await
+                            .map_err(|e| format!("Failed fetching user profile photo: {:?}", e))
+                    }
+                    .await;
+
+                    match fetch {
+                        Ok(()) => {
+                            commit_profile_photo(icons_dir, users_dir, &account_id, &tmp_path)
                         }
-                    } else {
-                        error!("Couldn't parse domain from name");
+                        Err(e) => {
+                            let _ = std::fs::remove_file(&tmp_path);
+                            Err(e)
+                        }
                     }
                 }
+                .await;
 
-                // Always indicate success here
-                if let Err(e) = reqs.send(TaskResponse::Success(0)).await {
+                let response = match outcome {
+                    Ok(()) => TaskResponse::Success(0),
+                    Err(e) => {
+                        error!("{}", e);
+                        TaskResponse::Error(e)
+                    }
+                };
+                if let Err(e) = reqs.send(response).await {
                     error!("Error -> {:?}", e);
                     return;
                 }
@@ -987,4 +1060,63 @@ async fn main() -> ExitCode {
             ExitCode::SUCCESS
         })
         .await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use tempfile::TempDir;
+
+    #[test]
+    fn valid_profile_account_id_accepts_upn_and_local_names() {
+        assert!(valid_profile_account_id("alice"));
+        assert!(valid_profile_account_id("alice@example.com"));
+        assert!(valid_profile_account_id("a.b_c-d"));
+    }
+
+    #[test]
+    fn valid_profile_account_id_rejects_traversal_and_empty() {
+        assert!(!valid_profile_account_id(""));
+        assert!(!valid_profile_account_id("."));
+        assert!(!valid_profile_account_id(".."));
+        assert!(!valid_profile_account_id("../etc/passwd"));
+        assert!(!valid_profile_account_id("a/lice"));
+        assert!(!valid_profile_account_id("alice\0"));
+    }
+
+    #[test]
+    fn commit_profile_photo_installs_icon_and_keyfile() {
+        let base = TempDir::new().unwrap();
+        let icons_dir = base.path().join("icons");
+        let users_dir = base.path().join("users");
+        fs::create_dir_all(&icons_dir).unwrap();
+        fs::create_dir_all(&users_dir).unwrap();
+
+        let tmp_path = base.path().join("photo.tmp");
+        fs::write(&tmp_path, b"image-bytes").unwrap();
+
+        commit_profile_photo(&icons_dir, &users_dir, "alice", &tmp_path).unwrap();
+
+        let icon_path = icons_dir.join("alice");
+        assert_eq!(fs::read(&icon_path).unwrap(), b"image-bytes");
+        assert!(!tmp_path.exists(), "temp file should be renamed away");
+
+        let keyfile = fs::read_to_string(users_dir.join("alice")).unwrap();
+        assert!(keyfile.contains(&format!("Icon={}", icon_path.display())));
+        assert!(keyfile.contains("SystemAccount=false"));
+    }
+
+    #[test]
+    fn commit_profile_photo_errors_without_touching_keyfile_when_tmp_missing() {
+        let base = TempDir::new().unwrap();
+        let icons_dir = base.path().join("icons");
+        let users_dir = base.path().join("users");
+        fs::create_dir_all(&icons_dir).unwrap();
+        fs::create_dir_all(&users_dir).unwrap();
+
+        let tmp_path = base.path().join("missing.tmp");
+        assert!(commit_profile_photo(&icons_dir, &users_dir, "alice", &tmp_path).is_err());
+        assert!(!users_dir.join("alice").exists());
+    }
 }

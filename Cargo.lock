@@ -2483,6 +2483,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sketching",
+ "tempfile",
  "tokio",
  "tokio-util",
  "tracing",
