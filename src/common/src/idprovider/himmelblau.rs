@@ -3838,7 +3838,7 @@ impl IdProvider for HimmelblauProvider {
 
                 nested_auth_handle_mfa_resp!(flow, cred)
             }
-            (change_password, PamAuthRequest::Password { mut cred }) => {
+            (change_password, PamAuthRequest::Password { cred }) => {
                 let mut reauth_hello_pin: Option<Zeroizing<String>> = None;
                 if let AuthCredHandler::ReauthPassword {
                     reauth_hello_pin: pin,
@@ -3848,8 +3848,8 @@ impl IdProvider for HimmelblauProvider {
                 }
 
                 if let AuthCredHandler::ChangePassword { old_cred } = change_password {
-                    // Report errors, but don't bail out. If the password change fails,
-                    // we'll make another run at it in a moment.
+                    // If the password change fails, show the provider error and
+                    // prompt for another new password while keeping the old password.
                     let _ = net_down_check!(
                         self.client
                             .lock()
@@ -3859,7 +3859,16 @@ impl IdProvider for HimmelblauProvider {
                         Ok(_) => {},
                         Err(e) => {
                             error!("Failed to change user password: {:?}", e);
-                            cred = old_cred.to_string();
+                            *cred_handler = AuthCredHandler::ChangePassword { old_cred: old_cred.to_string() };
+                            return Ok((
+                                AuthResult::Next(
+                                    AuthRequest::ChangePassword { msg: tr_fmt(
+                                        "Failed to change user password: {msg}",
+                                        &[("msg", msal_error_to_user_message(&e))],
+                                    )}
+                                ),
+                                AuthCacheAction::None,
+                            ));
                         }
                     );
                 }
