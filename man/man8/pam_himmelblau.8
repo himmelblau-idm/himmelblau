@@ -6,7 +6,7 @@
 Himmelblau
 .SH SYNOPSIS
 \f[B]pam_himmelblau.so\f[R] [debug] [use_first_pass]
-[ignore_unknown_user] [mfa_poll_prompt] [no_hello_pin] [try_unseal]
+[ignore_unknown_user] [mfa_poll_prompt] [no_hello_pin] [no_info_prompt] [try_unseal]
 .SH DESCRIPTION
 \f[B]pam_himmelblau\f[R] is a PAM module that authenticates users
 against Microsoft Azure Entra ID using the Himmelblau daemon
@@ -51,6 +51,17 @@ Matching services are configured with
 Disables Linux Hello PIN login for this service (e.g., for
 \f[CR]sudo\f[R] or \f[CR]ssh\f[R]), even if Hello is configured
 globally.
+.IP \(bu 2
+\f[B]no_info_prompt\f[R]
+.PD 0
+.P
+.PD
+Folds any informational text (the configured Entra password prompt and any
+MFA message) into the password prompt itself, so the PAM conversation carries
+a single \f[CR]PAM_PROMPT_ECHO_OFF\f[R] instead of sending a separate
+\f[CR]PAM_TEXT_INFO\f[R] message first.
+Required for PAM consumers that cannot carry a standalone info message during
+authentication, such as the MariaDB \f[CR]auth_pam\f[R] dialog relay.
 .IP \(bu 2
 \f[B]try_unseal\f[R]
 .PD 0

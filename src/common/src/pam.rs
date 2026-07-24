@@ -73,6 +73,7 @@ pub struct Options {
     pub ignore_unknown_user: bool,
     pub mfa_poll_prompt: bool,
     pub no_hello_pin: bool,
+    pub no_info_prompt: bool,
     pub set_authtok: bool,
     pub try_unseal: bool,
     /// Only set by CLI (aad-tool auth-test --force-reauth), not parsed from PAM module arguments.
@@ -99,6 +100,7 @@ impl TryFrom<&Vec<&CStr>> for Options {
             ignore_unknown_user: gopts.contains("ignore_unknown_user") || try_unseal,
             mfa_poll_prompt: gopts.contains("mfa_poll_prompt"),
             no_hello_pin: gopts.contains("no_hello_pin"),
+            no_info_prompt: gopts.contains("no_info_prompt"),
             set_authtok: gopts.contains("set_authtok") || gopts.contains("keyring_authtok"),
             try_unseal,
             force_reauth: false,
