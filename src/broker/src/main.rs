@@ -377,6 +377,7 @@ impl InteractiveSessionBroker {
             ignore_unknown_user: false,
             mfa_poll_prompt: false,
             no_hello_pin: false,
+            no_info_prompt: false,
             set_authtok: false,
             try_unseal: false,
             force_reauth: false,
