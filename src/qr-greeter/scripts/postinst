@@ -3,17 +3,7 @@ set -e
 
 if command -v dconf >/dev/null 2>&1; then
     # Enable extension for GDM user (login screen)
-    debian_major_version=
-    if [ -r /etc/os-release ]; then
-        debian_major_version=$(
-            . /etc/os-release
-            if [ "$ID" = "debian" ]; then
-                echo "$VERSION_ID" | sed 's/[^0-9].*$//'
-            fi
-        )
-    fi
-
-    if [ -n "$debian_major_version" ] && [ "$debian_major_version" -ge 13 ] 2>/dev/null && [ -x /usr/share/gdm/generate-config ]; then
+    if getent passwd Debian-gdm >/dev/null 2>&1 && [ -x /usr/share/gdm/generate-config ]; then
         echo "Enabling Himmelblau QR Greeter GNOME Shell extension for Debian GDM greeter..."
 
         mkdir -p /usr/share/gdm/dconf
@@ -53,7 +43,7 @@ enabled-extensions=['qr-greeter@himmelblau-idm.org']
 EOF
         echo "Created /etc/dconf/db/gdm.d/01-himmelblau-qr-greeter"
     else
-        echo 'Info: gdm user not available; skipping GDM extension enable.' >&2
+        echo 'Info: neither Debian-gdm nor gdm user is available; skipping GDM extension enable.' >&2
     fi
 
     # Enable extension for regular users (lockscreen)
