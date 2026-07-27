@@ -44,6 +44,7 @@ assets = [
   { source = "target/release/qr-greeter-build/qr-greeter@himmelblau-idm.org/security-key-touch.svg", dest = "/usr/share/gnome-shell/extensions/qr-greeter@himmelblau-idm.org/security-key-touch.svg", mode = "644" },
 ]
 post_install_script = "scripts/postinst"
+post_uninstall_script = "scripts/postrm"
 
 [package.metadata.generate-rpm.requires]
 gnome-shell = "*"
