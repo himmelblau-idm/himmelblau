@@ -37,7 +37,7 @@ msgid "Authentication failed in browser flow."
 msgstr "Brauzer orqali autentifikatsiya amalga oshmadi."
 
 msgid "Authentication failed. Please contact your administrator."
-msgstr "Autentifikatsiya amalga oshmadi. Iltimos, administratoringizga murojaat qiling."
+msgstr "Autentifikatsiya muvaffaqiyatsiz yakunlandi. Iltimos, administratoringizga murojaat qiling."
 
 msgid "Authentication failed. Please try again."
 msgstr "Autentifikatsiya amalga oshmadi. Iltimos, qayta urinib ko‘ring."
@@ -49,7 +49,7 @@ msgid "Authentication failed: Authentication method not supported."
 msgstr "Autentifikatsiya amalga oshmadi: autentifikatsiya usuli qoʻllab-quvvatlanmaydi."
 
 msgid "Authentication failed: Configuration error."
-msgstr "Autentifikatsiya muvaffaqiyatsiz tugadi: konfiguratsiya xatosi."
+msgstr "Autentifikatsiya muvaffaqiyatsiz yakunlandi: konfiguratsiya xatosi."
 
 msgid "Authentication failed: Cryptographic error."
 msgstr "Autentifikatsiya muvaffaqiyatsiz tugadi: kriptografik xatolik."
@@ -58,13 +58,13 @@ msgid "Authentication failed: Invalid server response."
 msgstr "Autentifikatsiya amalga oshmadi: server javobi yaroqsiz."
 
 msgid "Authentication failed: Missing required data."
-msgstr "Autentifikatsiya muvaffaqiyatsiz tugadi: Majburiy ma'lumotlar yetishmayapti."
+msgstr "Autentifikatsiya muvaffaqiyatsiz yakunlandi: talab qilingan maʼlumotlar yetishmayapti."
 
 msgid "Authentication failed: Security hardware error."
-msgstr "Autentifikatsiya amalga oshmadi: Xavfsizlik apparat qurilmasida xatolik."
+msgstr "Autentifikatsiya muvaffaqiyatsiz yakunlandi: Xavfsizlik qurilmasida xatolik."
 
 msgid "Authentication failed: Unable to reach authentication server."
-msgstr "Autentifikatsiya muvaffaqiyatsiz tugadi: autentifikatsiya serveriga ulanib bo‘lmadi."
+msgstr "Autentifikatsiya muvaffaqiyatsiz yakunlandi: autentifikatsiya serveriga ulanib bo‘lmadi."
 
 msgid "Authentication failed: {error}"
 msgstr "Autentifikatsiya amalga oshmadi: {error}"
@@ -73,7 +73,7 @@ msgid "Authentication flow completed but token exchange failed. Please try again
 msgstr "Autentifikatsiya jarayoni yakunlandi, ammo token almashinuvi muvaffaqiyatsiz tugadi. Iltimos, qayta urinib ko‘ring."
 
 msgid "Authentication in progress."
-msgstr "Autentifikatsiya davom etmoqda."
+msgstr "Autentifikatsiya jarayonda."
 
 msgid "Authentication incomplete. Please try again."
 msgstr "Autentifikatsiya tugallanmagan. Iltimos, qayta urinib ko‘ring."
@@ -332,7 +332,7 @@ msgid "Too many failed attempts. Your device has been blocked. Reset it."
 msgstr "Juda ko‘p muvaffaqiyatsiz urinishlar. Qurilmangiz bloklandi. Uni qayta sozlang."
 
 msgid "Too many failed user verification attempts."
-msgstr "Foydalanuvchini tekshirishga urinishlar juda ko‘p marta muvaffaqiyatsiz yakunlandi."
+msgstr "Foydalanuvchini tasdiqlashga urinishlar juda ko‘p marta muvaffaqiyatsiz yakunlandi."
 
 msgid "Too many incorrect PIN attempts. You will need to enroll a new Linux Hello PIN."
 msgstr "PIN-kod juda ko‘p marta noto‘g‘ri kiritildi. Yangi Linux Hello PIN-kodini ro‘yxatdan o‘tkazishingiz kerak."
@@ -358,7 +358,7 @@ msgid "Update your password\n"
 "password has expired."
 msgstr "Parolingizni yangilang\n"
 "Parolingizni yangilashingiz kerak, chunki bu\n"
-"birinchi marta tizimga kirayotganingiz yoki\n"
+"tizimga birinchi marta kirayotganingiz yoki\n"
 "parolingiz muddati tugagan."
 
 msgid "Use the Linux Hello PIN for this device."
@@ -395,7 +395,7 @@ msgid "Wrong PIN! {message}"
 msgstr "PIN noto'g'ri! {message}"
 
 msgid "Wrong user verification! {message}"
-msgstr "Foydalanuvchi tekshiruvi notoʻgʻri! {message}"
+msgstr "Foydalanuvchi tasdiqlanmadi. {message}"
 
 msgid "You have {attempts} attempt left."
 msgid_plural "You have {attempts} attempts left."
@@ -413,4 +413,4 @@ msgstr "{code}: {message}\n"
 msgid "{message}\n"
 "No push? Check your mobile device's internet connection."
 msgstr "{message}\n"
-"Push kelmadimi? Mobil qurilmangizning internet aloqasini tekshiring."
+"Bildirishnoma kelmadimi? Mobil qurilmangizning internet aloqasini tekshiring."
