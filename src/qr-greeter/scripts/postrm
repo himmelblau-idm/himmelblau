@@ -1,0 +1,26 @@
+#!/bin/sh
+set -e
+
+case "${1:-}" in
+    remove|purge|0)
+        rm -f /usr/share/gdm/dconf/01-himmelblau-qr-greeter
+        rm -f /etc/dconf/db/gdm.d/01-himmelblau-qr-greeter
+        rm -f /etc/dconf/db/local.d/01-himmelblau-qr-greeter
+
+        if [ -x /usr/share/gdm/generate-config ]; then
+            if /usr/share/gdm/generate-config; then
+                echo "Regenerated Debian GDM greeter dconf defaults."
+            else
+                echo 'Warning: Debian GDM greeter dconf generation failed' >&2
+            fi
+        fi
+
+        if command -v dconf >/dev/null 2>&1; then
+            if dconf update; then
+                echo "Himmelblau QR Greeter GNOME Shell extension dconf settings removed."
+            else
+                echo 'Warning: dconf update failed' >&2
+            fi
+        fi
+        ;;
+esac
