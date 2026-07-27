@@ -1843,6 +1843,17 @@ mod tests {
     }
 
     #[test]
+    fn test_format_mfa_poll_message_omits_qr_for_broker_interactive() {
+        let input = "Using a browser on another device, visit:\nhttps://microsoft.com/devicelogin\nAnd enter the code:\nABC123";
+        let msg = format_mfa_poll_message(input, "broker-interactive", false);
+
+        assert_eq!(
+            msg, input,
+            "pinentry panics on long Assuan payloads, so no QR art may be appended"
+        );
+    }
+
+    #[test]
     fn test_format_mfa_poll_message_keeps_dag_qr_when_push_hint_disabled() {
         let input = "Using a browser on another device, visit:\nhttps://microsoft.com/devicelogin\nAnd enter the code:\nABC123";
         let msg = format_mfa_poll_message(input, "login", false);

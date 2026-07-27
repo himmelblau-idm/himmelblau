@@ -173,9 +173,13 @@ fn extract_https_urls(msg: &str) -> Vec<String> {
     while let Some(start) = rest.find("https://") {
         let candidate = &rest[start..];
         let end = candidate
-            .find(|c: char| c.is_whitespace() || matches!(c, '`' | '"' | '\'' | ')' | ']' | '>' | ','))
+            .find(|c: char| {
+                c.is_whitespace() || matches!(c, '`' | '"' | '\'' | ')' | ']' | '>' | ',')
+            })
             .unwrap_or(candidate.len());
-        let url = candidate[..end].trim_end_matches(['.', ';', ':']).to_string();
+        let url = candidate[..end]
+            .trim_end_matches(['.', ';', ':'])
+            .to_string();
         if !url.is_empty() {
             urls.push(url);
         }
