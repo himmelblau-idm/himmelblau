@@ -52,6 +52,14 @@ use tokio::sync::broadcast;
 use himmelblau::auth::UserToken as UnixUserToken;
 
 const NXCACHE_SIZE: NonZeroUsize = unsafe { NonZeroUsize::new_unchecked(128) };
+const TRY_UNSEAL_CACHE_SIZE: NonZeroUsize = unsafe { NonZeroUsize::new_unchecked(128) };
+const TRY_UNSEAL_FAILURE_COOLDOWN_SECONDS: u64 = 60;
+
+#[derive(Debug)]
+enum TryUnsealCacheState {
+    SuccessUntil(SystemTime),
+    FailureUntil(SystemTime),
+}
 
 #[allow(clippy::large_enum_variant)]
 pub enum AuthSession {
@@ -95,6 +103,7 @@ where
     allow_id_overrides: HashSet<Id>,
     nxset: Mutex<HashSet<Id>>,
     nxcache: Mutex<LruCache<Id, SystemTime>>,
+    try_unseal_cache: Mutex<LruCache<String, TryUnsealCacheState>>,
 }
 
 impl Display for Id {
@@ -370,6 +379,72 @@ mod tests {
         assert!(matches!(result.0, AuthSession::InProgress { .. }));
         assert!(matches!(result.1, PamAuthResponse::Pin));
     }
+
+    #[tokio::test]
+    async fn try_unseal_success_cache_reuses_recent_unseal() {
+        let resolver = setup_resolver().await;
+        let now = SystemTime::now();
+
+        assert_eq!(
+            resolver
+                .check_try_unseal_cache("testuser@example.com", now)
+                .await,
+            None
+        );
+
+        resolver
+            .cache_try_unseal_success("testuser@example.com", now)
+            .await;
+
+        assert_eq!(
+            resolver
+                .check_try_unseal_cache("testuser@example.com", now + Duration::from_secs(1))
+                .await,
+            Some(true)
+        );
+    }
+
+    #[tokio::test]
+    async fn try_unseal_failure_cache_suppresses_recent_retry() {
+        let resolver = setup_resolver().await;
+        let now = SystemTime::now();
+
+        resolver
+            .cache_try_unseal_failure("testuser@example.com", now)
+            .await;
+
+        assert_eq!(
+            resolver
+                .check_try_unseal_cache("testuser@example.com", now + Duration::from_secs(1))
+                .await,
+            Some(false)
+        );
+        assert_eq!(
+            resolver
+                .check_try_unseal_cache(
+                    "testuser@example.com",
+                    now + Duration::from_secs(super::TRY_UNSEAL_FAILURE_COOLDOWN_SECONDS + 1),
+                )
+                .await,
+            None
+        );
+    }
+
+    #[tokio::test]
+    async fn pam_try_unseal_cooldown_suppresses_retry_after_error() {
+        let resolver = setup_resolver().await;
+
+        assert!(resolver
+            .pam_try_unseal("testuser@example.com", "123456")
+            .await
+            .is_err());
+        assert_eq!(
+            resolver
+                .pam_try_unseal("testuser@example.com", "123456")
+                .await,
+            Ok(false)
+        );
+    }
 }
 
 impl<I> Resolver<I>
@@ -467,6 +542,7 @@ where
             allow_id_overrides: allow_id_overrides.into_iter().map(Id::Name).collect(),
             nxset: Mutex::new(HashSet::new()),
             nxcache: Mutex::new(LruCache::new(NXCACHE_SIZE)),
+            try_unseal_cache: Mutex::new(LruCache::new(TRY_UNSEAL_CACHE_SIZE)),
         })
     }
 
@@ -1764,13 +1840,55 @@ where
         }
     }
 
+    async fn check_try_unseal_cache(&self, account_id: &str, now: SystemTime) -> Option<bool> {
+        let mut cache = self.try_unseal_cache.lock().await;
+        match cache.get(account_id) {
+            Some(TryUnsealCacheState::SuccessUntil(until)) if *until > now => {
+                debug!("pam_try_unseal: recently unsealed, skipping");
+                Some(true)
+            }
+            Some(TryUnsealCacheState::FailureUntil(until)) if *until > now => {
+                debug!("pam_try_unseal: recent failed attempt, skipping");
+                Some(false)
+            }
+            Some(_) => {
+                cache.pop(account_id);
+                None
+            }
+            None => None,
+        }
+    }
+
+    async fn cache_try_unseal_success(&self, account_id: &str, now: SystemTime) {
+        let mut cache = self.try_unseal_cache.lock().await;
+        cache.put(
+            account_id.to_string(),
+            TryUnsealCacheState::SuccessUntil(now + Duration::from_secs(self.timeout_seconds)),
+        );
+    }
+
+    async fn cache_try_unseal_failure(&self, account_id: &str, now: SystemTime) {
+        let mut cache = self.try_unseal_cache.lock().await;
+        cache.put(
+            account_id.to_string(),
+            TryUnsealCacheState::FailureUntil(
+                now + Duration::from_secs(TRY_UNSEAL_FAILURE_COOLDOWN_SECONDS),
+            ),
+        );
+    }
+
     /// One-shot PIN-based unseal: runs auth init and, if the daemon
     /// requests a PIN, immediately submits it. Returns Ok(true) on
     /// success, Ok(false) on auth failure, Err(()) on internal error.
     pub async fn pam_try_unseal(&self, account_id: &str, cred: &str) -> Result<bool, ()> {
+        let now = SystemTime::now();
+        if let Some(cached_result) = self.check_try_unseal_cache(account_id, now).await {
+            return Ok(cached_result);
+        }
+
         let (shutdown_tx, _) = broadcast::channel(1);
 
-        let (mut auth_session, init_resp) = self
+        let init_result = self
             .pam_account_authenticate_init(
                 account_id,
                 "try_unseal",
@@ -1778,13 +1896,23 @@ where
                 false,
                 shutdown_tx.subscribe(),
             )
-            .await?;
+            .await;
+
+        let (mut auth_session, init_resp) = match init_result {
+            Ok(result) => result,
+            Err(e) => {
+                debug!("pam_try_unseal: auth init failed");
+                self.cache_try_unseal_failure(account_id, now).await;
+                return Err(e);
+            }
+        };
 
         // Only proceed if the daemon is asking for a PIN.
         match init_resp {
             PamAuthResponse::Pin => {}
             PamAuthResponse::Success => {
                 debug!("pam_try_unseal: already unsealed");
+                self.cache_try_unseal_success(account_id, now).await;
                 return Ok(true);
             }
             _ => {
@@ -1792,6 +1920,7 @@ where
                     "pam_try_unseal: daemon did not request PIN (got {:?})",
                     init_resp
                 );
+                self.cache_try_unseal_failure(account_id, now).await;
                 return Ok(false);
             }
         }
@@ -1803,12 +1932,25 @@ where
                     cred: cred.to_string(),
                 },
             )
-            .await?;
+            .await;
+
+        let step_resp = match step_resp {
+            Ok(step_resp) => step_resp,
+            Err(e) => {
+                debug!("pam_try_unseal: auth step failed");
+                self.cache_try_unseal_failure(account_id, now).await;
+                return Err(e);
+            }
+        };
 
         match step_resp {
-            PamAuthResponse::Success => Ok(true),
+            PamAuthResponse::Success => {
+                self.cache_try_unseal_success(account_id, now).await;
+                Ok(true)
+            }
             _ => {
                 debug!("pam_try_unseal: PIN auth failed (got {:?})", step_resp);
+                self.cache_try_unseal_failure(account_id, now).await;
                 Ok(false)
             }
         }
