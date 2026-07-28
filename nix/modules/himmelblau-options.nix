@@ -382,6 +382,15 @@ in
       example = "/etc/himmelblau/logon.sh";
     };
 
+    logon_script_timeout = mkOption {
+      type = types.nullOr (types.ints.unsigned);
+      default = 60;
+      description = ''
+        The timeout in seconds for the configured logon script. If the script does not finish before this timeout, authentication fails with a hard failure.
+      '';
+      example = 120;
+    };
+
     logon_token_scopes = mkOption {
       type = types.nullOr (types.listOf types.str);
       default = null;
