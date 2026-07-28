@@ -52,6 +52,7 @@ pub const DEFAULT_CONN_TIMEOUT: u64 = 30;
 pub const DEFAULT_REQUEST_TIMEOUT: u64 = 10;
 pub const DEFAULT_LOGON_SCRIPT_TIMEOUT: u64 = 60;
 pub const DEFAULT_CACHE_TIMEOUT: u64 = 300;
+pub const DEFAULT_LOCAL_GROUPS_RECONCILE_INTERVAL: u64 = 300;
 pub const DEFAULT_SELINUX: bool = true;
 pub const DEFAULT_HSM_PIN_PATH: &str = "/var/lib/himmelblaud/hsm-pin";
 pub const DEFAULT_HSM_PIN_PATH_ENC: &str = "/var/lib/himmelblaud/hsm-pin-nopcr.enc";
