@@ -256,6 +256,14 @@ impl BadPinCounter {
     }
 }
 
+pub(crate) fn should_warn_last_hello_pin_attempt(bad_pin_count: u32, retry_count: u32) -> bool {
+    retry_count > 1 && bad_pin_count == retry_count - 1
+}
+
+pub(crate) fn should_block_hello_pin_attempts(bad_pin_count: u32, retry_count: u32) -> bool {
+    bad_pin_count >= retry_count
+}
+
 #[macro_export]
 macro_rules! handle_hello_bad_pin_count {
     ($self:expr, $account_id:expr, $keystore:expr, $ret_fn:expr) => {{
@@ -266,14 +274,11 @@ macro_rules! handle_hello_bad_pin_count {
         let hello_pin_retry_count = $self.config.lock().await.get_hello_pin_retry_count();
         let bad_pin_count = $self.bad_pin_counter.bad_pin_count($account_id).await;
 
-        if bad_pin_count == hello_pin_retry_count {
-            return $ret_fn(
-                &tr("Failed to authenticate with Hello PIN. One more failed attempt will require multi-factor authentication and resetting your Linux Hello PIN.")
-            );
-        }
-
-        // If we've exceeded the bad pin count, delete the Hello key
-        if bad_pin_count > hello_pin_retry_count {
+        // If we've reached the bad pin count, delete the Hello key
+        if $crate::idprovider::common::should_block_hello_pin_attempts(
+            bad_pin_count,
+            hello_pin_retry_count,
+        ) {
             let hello_key_tag = $self.fetch_hello_key_tag($account_id, true);
             $keystore
                 .delete_tagged_hsm_key(&hello_key_tag)
@@ -304,6 +309,15 @@ macro_rules! handle_hello_bad_pin_count {
                 })?;
             return $ret_fn(
                 &tr("Too many incorrect PIN attempts. You will need to enroll a new Linux Hello PIN.")
+            );
+        }
+
+        if $crate::idprovider::common::should_warn_last_hello_pin_attempt(
+            bad_pin_count,
+            hello_pin_retry_count,
+        ) {
+            return $ret_fn(
+                &tr("Failed to authenticate with Hello PIN. One more failed attempt will require multi-factor authentication and will reset your Linux Hello PIN.")
             );
         }
     }};
@@ -445,7 +459,10 @@ macro_rules! impl_himmelblau_offline_auth_init {
         // or cached password for SFA users. If neither option is available,
         // we should respond with a resonable error indicating how to proceed.
         if hello_key.is_some()
-            && $self.bad_pin_counter.bad_pin_count($account_id).await <= hello_pin_retry_count
+            && !$crate::idprovider::common::should_block_hello_pin_attempts(
+                $self.bad_pin_counter.bad_pin_count($account_id).await,
+                hello_pin_retry_count,
+            )
             && !$no_hello_pin
         {
             Ok((AuthRequest::Pin, AuthCredHandler::None))
@@ -604,10 +621,18 @@ macro_rules! impl_himmelblau_offline_auth_step {
                         e
                     })?;
 
-                let pin = PinValue::new(&cred).map_err(|e| {
-                    error!("Failed setting pin value: {:?}", e);
-                    IdpError::Tpm
-                })?;
+                let pin = match PinValue::new(&cred) {
+                    Ok(pin) => pin,
+                    Err(e) => {
+                        error!("Failed setting pin value: {:?}", e);
+                        handle_hello_bad_pin_count!($self, $account_id, $keystore, |msg: &str| {
+                            Ok(AuthResult::Denied(msg.to_string()))
+                        });
+                        return Ok(AuthResult::Denied(tr(
+                            "Failed to authenticate with Hello PIN.",
+                        )));
+                    }
+                };
                 match $tpm.ms_hello_key_load($machine_key, &hello_key, &pin) {
                     Ok((_, win_hello_storage_key)) => {
                         $load_cached_prt!(
@@ -1125,4 +1150,30 @@ macro_rules! impl_setup_hello_totp {
             AuthCacheAction::None,
         ))
     }};
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{should_block_hello_pin_attempts, should_warn_last_hello_pin_attempt};
+
+    #[test]
+    fn hello_pin_retry_count_allows_exactly_configured_failures() {
+        let retry_count = 3;
+
+        assert!(!should_warn_last_hello_pin_attempt(1, retry_count));
+        assert!(!should_block_hello_pin_attempts(1, retry_count));
+
+        assert!(should_warn_last_hello_pin_attempt(2, retry_count));
+        assert!(!should_block_hello_pin_attempts(2, retry_count));
+
+        assert!(!should_warn_last_hello_pin_attempt(3, retry_count));
+        assert!(should_block_hello_pin_attempts(3, retry_count));
+    }
+
+    #[test]
+    fn hello_pin_retry_count_zero_blocks_immediately() {
+        assert!(!should_warn_last_hello_pin_attempt(0, 0));
+        assert!(should_block_hello_pin_attempts(0, 0));
+        assert!(should_block_hello_pin_attempts(1, 0));
+    }
 }
