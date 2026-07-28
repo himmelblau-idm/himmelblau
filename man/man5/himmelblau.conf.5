@@ -348,8 +348,9 @@ PAM_SERVICE \- If the service name matches entries in
 PAM_TTY \- If the terminal name contains "ssh" (fallback check)
 .RE
 
-This option requires the device to be domain-joined, matching the behavior of Microsoft-managed devices. Users can still
-use Hello PIN authentication if it is configured. To require MFA for all logins
+For Microsoft Entra ID, this option requires the device to be domain-joined,
+matching the behavior of Microsoft-managed devices. Users can still use Hello
+PIN authentication if it is configured. To require MFA for all logins
 (including local console), set this option to
 .B false.
 
@@ -360,9 +361,10 @@ When a generic OIDC provider is configured (see
 Password Credentials (ROPC) grant. It is only offered when the provider
 advertises the
 .B password
-grant type in its discovery document; providers that disable this grant fall
-back to the device-authorization (browser) flow. If the provider additionally
-requires MFA, authentication falls back to the device flow automatically.
+grant type in its discovery document and does not require the device to be
+domain-joined; providers that disable this grant fall back to the
+device-authorization (browser) flow. If the provider additionally requires MFA,
+authentication falls back to the device flow automatically.
 
 .P
 Default: true
