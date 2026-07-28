@@ -526,6 +526,15 @@ where
         dbtxn.get_accounts().map_err(|_| ())
     }
 
+    pub async fn refresh_cached_usertoken(
+        &self,
+        account_id: &str,
+    ) -> Result<Option<UserToken>, ()> {
+        let id = Id::Name(account_id.to_string());
+        let (_expired, token) = self.get_cached_usertoken(&id).await?;
+        self.refresh_usertoken(&id, token).await
+    }
+
     async fn get_cached_grouptokens(&self) -> Result<Vec<GroupToken>, ()> {
         let mut dbtxn = self.db.write().await;
         dbtxn.get_groups().map_err(|_| ())

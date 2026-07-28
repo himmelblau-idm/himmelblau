@@ -498,6 +498,17 @@ A comma-separated list of local groups that every Entra ID user should be a memb
 Example: local_groups = sudo,admin
 
 .TP
+.B local_groups_reconcile_interval
+.RE
+The interval in seconds for periodically reconciling configured local group membership for cached Entra ID users. This keeps the configured local sudo group in sync with sudo_groups between login attempts. Set to 0 to disable periodic reconciliation.
+
+.P
+Default: 300
+
+.P
+Example: local_groups_reconcile_interval = 300
+
+.TP
 .B sudo_groups
 .RE
 A comma-separated list of Azure Entra ID group object IDs whose members should be granted

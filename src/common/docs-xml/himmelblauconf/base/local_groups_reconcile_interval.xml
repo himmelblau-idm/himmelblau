@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<parameter name="local_groups_reconcile_interval"
+           section="global"
+           type="u64"
+           rust_type="u64"
+           documented="true"
+           domain_specific="false"
+           order="1810">
+<description>
+The interval in seconds for periodically reconciling configured local group membership for cached Entra ID users. This keeps the configured local sudo group in sync with sudo_groups between login attempts. Set to 0 to disable periodic reconciliation.
+</description>
+<conf_description>Interval (seconds) for local group reconciliation; 0 disables it.</conf_description>
+<default>300</default>
+<default_const>DEFAULT_LOCAL_GROUPS_RECONCILE_INTERVAL</default_const>
+<example>local_groups_reconcile_interval = 300</example>
+</parameter>
