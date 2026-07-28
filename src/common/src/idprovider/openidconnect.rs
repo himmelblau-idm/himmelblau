@@ -1237,6 +1237,51 @@ mod tests {
 
         assert!(mapped.is_empty());
     }
+
+    #[test]
+    fn oidc_local_name_reuses_existing_name_for_same_identity() {
+        let object_id = Uuid::parse_str("0180c9c1-6123-7a21-b520-f839dc963d54").unwrap();
+        let existing = UserToken {
+            name: "alice".to_string(),
+            spn: "oidc:sub:old-subject".to_string(),
+            uuid: object_id,
+            real_gidnumber: Some(1000),
+            gidnumber: 1000,
+            displayname: "Alice".to_string(),
+            shell: None,
+            groups: vec![],
+            tenant_id: None,
+            valid: true,
+        };
+
+        assert_eq!(
+            oidc_local_name_for_identity("alice", object_id, Some(&existing)),
+            "alice"
+        );
+    }
+
+    #[test]
+    fn oidc_local_name_suffixes_conflicting_identity() {
+        let existing_id = Uuid::parse_str("0180c9c1-6123-7a21-b520-f839dc963d54").unwrap();
+        let new_id = Uuid::parse_str("0180c9c1-6123-7a21-b520-f839dc963d55").unwrap();
+        let existing = UserToken {
+            name: "alice".to_string(),
+            spn: "oidc:sub:old-subject".to_string(),
+            uuid: existing_id,
+            real_gidnumber: Some(1000),
+            gidnumber: 1000,
+            displayname: "Alice".to_string(),
+            shell: None,
+            groups: vec![],
+            tenant_id: None,
+            valid: true,
+        };
+
+        assert_eq!(
+            oidc_local_name_for_identity("alice", new_id, Some(&existing)),
+            "alice_0180c9c1"
+        );
+    }
 }
 
 const HIMMELBLAU_OIDC_NAMESPACE: uuid::Uuid = uuid::uuid!("e669513b-1345-4853-96a7-596243184319");
@@ -1435,6 +1480,23 @@ fn oidc_should_prompt_hello_setup(
     has_refresh_token: bool,
 ) -> bool {
     hello_enabled && !no_hello_pin && hello_key_missing && has_refresh_token
+}
+
+fn oidc_local_name_for_identity(
+    requested_name: &str,
+    object_id: Uuid,
+    existing_token: Option<&UserToken>,
+) -> String {
+    match existing_token {
+        Some(existing)
+            if existing.name.eq_ignore_ascii_case(requested_name) && existing.uuid != object_id =>
+        {
+            let suffix: String = object_id.simple().to_string().chars().take(8).collect();
+            format!("{requested_name}_{suffix}")
+        }
+        Some(existing) if existing.uuid == object_id => existing.name.clone(),
+        _ => requested_name.to_string(),
+    }
 }
 
 fn validated_password_cache_action(
@@ -1933,6 +1995,7 @@ impl OidcApplication {
         shell: String,
         idmap: &Mutex<Idmap>,
         tenant_id: &Uuid,
+        existing_token: Option<&UserToken>,
     ) -> Result<UserToken, IdpError> {
         let access_token = token.access_token();
         let userinfo: CoreUserInfoClaims = if let Some(delayed_init) = &*self.client.lock().await {
@@ -1964,19 +2027,21 @@ impl OidcApplication {
             })?;
 
         let subject = userinfo.subject().to_string();
-        let object_id = uuid::Uuid::new_v5(tenant_id, subject.as_bytes());
+        let oidc_identity = format!("oidc:sub:{subject}");
+        let object_id = uuid::Uuid::new_v5(tenant_id, oidc_identity.as_bytes());
+        let local_name = oidc_local_name_for_identity(&account_id, object_id, existing_token);
 
         let idmap_cache = StaticIdCache::new(ID_MAP_CACHE, false).map_err(|e| {
             error!("Failed reading from the idmap cache: {:?}", e);
             IdpError::BadRequest
         })?;
 
-        let (uid, gid) = match idmap_cache.get_user_by_name(&account_id) {
+        let (uid, gid) = match idmap_cache.get_user_by_name(&local_name) {
             Some(user) => (user.uid, user.gid),
             None => {
                 let idmap = idmap.lock().await;
                 let gid = idmap
-                    .gen_to_unix(&tenant_id.to_string(), &account_id)
+                    .gen_to_unix(&tenant_id.to_string(), &oidc_identity)
                     .map_err(|e| {
                         error!("{:?}", e);
                         IdpError::BadRequest
@@ -1994,16 +2059,16 @@ impl OidcApplication {
         let displayname = flip_displayname_comma(&displayname);
 
         Ok(UserToken {
-            name: account_id.to_string(),
-            spn: account_id.to_string(),
+            name: local_name.clone(),
+            spn: oidc_identity.clone(),
             uuid: object_id,
             real_gidnumber: Some(uid),
             gidnumber: gid,
             displayname,
             shell: Some(shell),
             groups: vec![GroupToken {
-                name: account_id.to_string(),
-                spn: account_id.to_string(),
+                name: local_name,
+                spn: oidc_identity,
                 uuid: object_id,
                 gidnumber: gid,
             }],
@@ -2330,7 +2395,7 @@ impl OidcProvider {
         validated_password: Option<Zeroizing<String>>,
     ) -> Result<(AuthResult, AuthCacheAction), IdpError> {
         let has_refresh_token = token.refresh_token().is_some();
-        match self.token_validate(account_id, &token).await {
+        match self.token_validate(account_id, &token, None).await {
             Ok(AuthResult::Success { token: token2 }) => {
                 let hello_enabled = self.config.lock().await.get_enable_hello();
                 let hello_key_missing = self.fetch_hello_key(account_id, keystore).is_err();
@@ -2377,14 +2442,23 @@ impl OidcProvider {
         &self,
         account_id: &str,
         token: &OidcTokenResponse,
+        existing_token: Option<&UserToken>,
     ) -> Result<AuthResult, IdpError> {
         let tenant_id = self.tenant_id().await?;
         let shell = self.config.lock().await.get_shell(None);
         let token2 = self
             .client
-            .user_token_from_oidc(token, shell, self.idmap.as_ref(), &tenant_id)
+            .user_token_from_oidc(
+                token,
+                shell,
+                self.idmap.as_ref(),
+                &tenant_id,
+                existing_token,
+            )
             .await?;
-        if account_id.to_string().to_lowercase() != token2.name.to_string().to_lowercase() {
+        if !account_id.eq_ignore_ascii_case(&token2.name)
+            && !token2.name.starts_with(&format!("{account_id}_"))
+        {
             let msg = tr_fmt(
                 "Authenticated user {uuid} does not match requested user",
                 &[("uuid", token2.uuid.to_string())],
@@ -2806,6 +2880,7 @@ impl IdProvider for OidcProvider {
                     shell,
                     self.idmap.as_ref(),
                     &tenant_id,
+                    Some(old_token),
                 ).await?;
                 tpm.seal_data(&win_hello_storage_key, refresh_token_zeroizing)
                     .map_err(|e| {
@@ -2822,7 +2897,7 @@ impl IdProvider for OidcProvider {
                         })
                     })?;
 
-                match self.token_validate(account_id, &token).await {
+                match self.token_validate(account_id, &token, Some(old_token)).await {
                     Ok(AuthResult::Success { token }) => {
                         if check_hello_totp_enabled!(self) {
                             if !check_hello_totp_setup!(self, account_id, keystore) {
