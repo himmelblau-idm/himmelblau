@@ -16,7 +16,7 @@
    along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
 use crate::config::{IdAttr, JoinType};
-use crate::unix_config::HomeAttr;
+use crate::unix_config::{HomeAttr, NameAttr};
 
 pub const DEFAULT_CONFIG_PATH: &str = "/etc/himmelblau/himmelblau.conf";
 pub const DEFAULT_SOCK_PATH: &str = "/var/run/himmelblaud/socket";
@@ -34,6 +34,7 @@ pub const DEFAULT_USER_MAP_FILE: &str = "/etc/himmelblau/user-map";
 pub const DEFAULT_HOME_PREFIX: &str = "/home/";
 pub const DEFAULT_HOME_ATTR: HomeAttr = HomeAttr::Uuid;
 pub const DEFAULT_HOME_ALIAS: Option<HomeAttr> = Some(HomeAttr::Spn);
+pub const DEFAULT_LOCAL_NAME_ATTR: NameAttr = NameAttr::Spn;
 pub const DEFAULT_USE_ETC_SKEL: bool = false;
 pub const DEFAULT_SHELL: &str = "/bin/bash";
 pub const DEFAULT_ODC_PROVIDER: &str = "odc.officeapps.live.com";

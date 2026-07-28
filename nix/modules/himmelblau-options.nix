@@ -338,6 +338,34 @@ in
       example = false;
     };
 
+    local_name_attr = mkOption {
+      type = types.nullOr (types.enum [ "spn" "onPremisesSamAccountName" ]);
+      default = "spn";
+      description = ''
+        The Entra ID attribute used for the local NSS login name. Available options include:
+
+        - SPN (the user principal name)
+
+        - onPremisesSamAccountName
+        When onPremisesSamAccountName is configured but unavailable for a user, Himmelblau falls back to SPN.
+      '';
+      example = "onPremisesSamAccountName";
+    };
+
+    display_name_attr = mkOption {
+      type = types.nullOr (types.enum [ "displayName" "onPremisesSamAccountName" ]);
+      default = "displayName";
+      description = ''
+        The Entra ID attribute used for the local NSS display name (GECOS), unless an RFC 2307 gecos attribute is present. Available options include:
+
+        - displayName
+
+        - onPremisesSamAccountName
+        When onPremisesSamAccountName is configured but unavailable for a user, Himmelblau falls back to displayName.
+      '';
+      example = "onPremisesSamAccountName";
+    };
+
     local_groups = mkOption {
       type = types.nullOr (types.listOf types.str);
       default = null;
