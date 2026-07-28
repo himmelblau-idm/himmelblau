@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<parameter name="oidc_account_id_claims"
+           section="global"
+           type="string_list"
+           rust_type="Vec&lt;String&gt;"
+           documented="true"
+           domain_specific="false"
+           order="210">
+<description>
+A comma-separated, ordered list of OIDC userinfo claim names to use as the
+Linux account name for generic OIDC providers.
+
+When this option is set, Himmelblau tries each named claim in order and uses
+the first claim that is present as a non-empty string. The claim names are not
+limited to standard OpenID Connect claims; provider-specific userinfo claims
+may also be listed.
+
+If none of the configured claims match a non-empty string claim in userinfo,
+Himmelblau logs a warning and falls back to the default account-name selection:
+.B preferred_username
+first, then
+.B email.
+</description>
+<conf_description>Ordered OIDC userinfo claims used for Linux account names.</conf_description>
+<default></default>
+<example>oidc_account_id_claims = uid,username,preferred_username,email</example>
+</parameter>

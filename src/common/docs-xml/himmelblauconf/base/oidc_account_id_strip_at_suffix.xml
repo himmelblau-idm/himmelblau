@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<parameter name="oidc_account_id_strip_at_suffix"
+           section="global"
+           type="bool"
+           rust_type="bool"
+           documented="true"
+           domain_specific="false"
+           order="211">
+<description>
+A boolean option that removes any suffix beginning with
+.B @
+from the OIDC account name selected by
+.B oidc_account_id_claims
+or by the default
+.B preferred_username
+then
+.B email
+fallback.
+
+This is useful when the selected OIDC claim is scoped, such as
+.B user@example.com,
+but the desired Linux account name is only the local portion.
+Only enable this when the remaining local portion is unique across all accepted
+OIDC issuers/domains; otherwise distinct identities that differ only by suffix
+can collide on the same Linux account name.
+</description>
+<conf_description>Strip @suffix from selected OIDC Linux account names.</conf_description>
+<default>false</default>
+<example>oidc_account_id_strip_at_suffix = true</example>
+</parameter>
