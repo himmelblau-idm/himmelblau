@@ -120,6 +120,52 @@ grant continue to use the device flow.
 Example: oidc_issuer_url = https://login.microsoftonline.com/0656e57d-a8fc-4aa4-8366-8045787115ca/v2.0
 
 .TP
+.B oidc_account_id_claims
+.RE
+A comma-separated, ordered list of OIDC userinfo claim names to use as the
+Linux account name for generic OIDC providers.
+
+When this option is set, Himmelblau tries each named claim in order and uses
+the first claim that is present as a non-empty string. The claim names are not
+limited to standard OpenID Connect claims; provider-specific userinfo claims
+may also be listed.
+
+If none of the configured claims match a non-empty string claim in userinfo,
+Himmelblau logs a warning and falls back to the default account-name selection:
+.B preferred_username
+first, then
+.B email.
+
+.P
+Example: oidc_account_id_claims = uid,username,preferred_username,email
+
+.TP
+.B oidc_account_id_strip_at_suffix
+.RE
+A boolean option that removes any suffix beginning with
+.B @
+from the OIDC account name selected by
+.B oidc_account_id_claims
+or by the default
+.B preferred_username
+then
+.B email
+fallback.
+
+This is useful when the selected OIDC claim is scoped, such as
+.B user@example.com,
+but the desired Linux account name is only the local portion.
+Only enable this when the remaining local portion is unique across all accepted
+OIDC issuers/domains; otherwise distinct identities that differ only by suffix
+can collide on the same Linux account name.
+
+.P
+Default: false
+
+.P
+Example: oidc_account_id_strip_at_suffix = true
+
+.TP
 .B debug
 .RE
 A boolean option that enables debug-level logging. When set to

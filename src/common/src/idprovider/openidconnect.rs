@@ -59,16 +59,18 @@ use openidconnect::core::{
     CoreAuthDisplay, CoreClaimName, CoreClaimType, CoreClient, CoreClientAuthMethod,
     CoreGenderClaim, CoreGrantType, CoreJsonWebKey, CoreJweContentEncryptionAlgorithm,
     CoreJweKeyManagementAlgorithm, CoreJwsSigningAlgorithm, CoreResponseMode, CoreResponseType,
-    CoreSubjectIdentifierType, CoreUserInfoClaims,
+    CoreSubjectIdentifierType,
 };
 use openidconnect::{
-    AdditionalProviderMetadata, AuthType, ClientId, DeviceAuthorizationResponse,
+    AdditionalClaims, AdditionalProviderMetadata, AuthType, ClientId, DeviceAuthorizationResponse,
     DeviceAuthorizationUrl, EmptyAdditionalClaims, EmptyExtraDeviceAuthorizationFields,
     EndpointMaybeSet, EndpointNotSet, EndpointSet, IdTokenFields, IssuerUrl, OAuth2TokenResponse,
-    ProviderMetadata, Scope,
+    ProviderMetadata, Scope, UserInfoClaims,
 };
 use reqwest::Url;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 use tokio::net::UnixStream;
@@ -869,11 +871,11 @@ fn orchestrator_inputs_from_pam_request(
 #[cfg(test)]
 mod tests {
     use super::{
-        auth_request_from_orchestrator_inputs, mfa_from_oidc_device,
+        auth_request_from_orchestrator_inputs, mfa_from_oidc_device, oidc_account_id_from_userinfo,
         oidc_should_prompt_hello_setup, orchestrator_inputs_from_pam_request,
         parse_oidc_mfa_extra_data, ropc_is_invalid_credentials, serialize_oidc_mfa_extra_data,
-        validated_password_cache_action, OidcMfaExtraData, OrchestratorFlowState,
-        OrchestratorInputType, OrchestratorRequiredInput,
+        validated_password_cache_action, OidcMfaExtraData, OidcUserInfoClaims,
+        OrchestratorFlowState, OrchestratorInputType, OrchestratorRequiredInput,
     };
     use crate::idprovider::interface::{AuthCacheAction, AuthRequest, AuthResult};
     use crate::unix_proto::PamAuthRequest;
@@ -919,6 +921,117 @@ mod tests {
         assert!(!oidc_should_prompt_hello_setup(true, true, true, true));
         assert!(!oidc_should_prompt_hello_setup(true, false, false, true));
         assert!(!oidc_should_prompt_hello_setup(true, false, true, false));
+    }
+
+    #[test]
+    fn oidc_account_id_uses_first_matching_configured_claim() {
+        let userinfo = OidcUserInfoClaims::from_json::<reqwest::Error>(
+            br#"{
+                "sub": "24400320",
+                "preferred_username": "preferred@example.com",
+                "email": "email@example.com",
+                "uid": "linuxuser"
+            }"#,
+            None,
+        )
+        .unwrap();
+
+        let claims = vec![
+            "missing".to_string(),
+            "uid".to_string(),
+            "email".to_string(),
+        ];
+
+        assert_eq!(
+            oidc_account_id_from_userinfo(&userinfo, &claims, false).unwrap(),
+            "linuxuser"
+        );
+    }
+
+    #[test]
+    fn oidc_account_id_falls_back_when_configured_claims_miss() {
+        let userinfo = OidcUserInfoClaims::from_json::<reqwest::Error>(
+            br#"{
+                "sub": "24400320",
+                "preferred_username": "preferred@example.com",
+                "email": "email@example.com"
+            }"#,
+            None,
+        )
+        .unwrap();
+
+        let claims = vec!["uid".to_string(), "username".to_string()];
+
+        assert_eq!(
+            oidc_account_id_from_userinfo(&userinfo, &claims, false).unwrap(),
+            "preferred@example.com"
+        );
+    }
+
+    #[test]
+    fn oidc_account_id_fallback_skips_empty_claims() {
+        let userinfo = OidcUserInfoClaims::from_json::<reqwest::Error>(
+            br#"{
+                "sub": "24400320",
+                "preferred_username": "",
+                "email": "email@example.com"
+            }"#,
+            None,
+        )
+        .unwrap();
+
+        assert_eq!(
+            oidc_account_id_from_userinfo(&userinfo, &[], false).unwrap(),
+            "email@example.com"
+        );
+    }
+
+    #[test]
+    fn oidc_account_id_fallback_rejects_empty_claims() {
+        let userinfo = OidcUserInfoClaims::from_json::<reqwest::Error>(
+            br#"{
+                "sub": "24400320",
+                "preferred_username": "",
+                "email": ""
+            }"#,
+            None,
+        )
+        .unwrap();
+
+        assert!(oidc_account_id_from_userinfo(&userinfo, &[], false).is_err());
+    }
+
+    #[test]
+    fn oidc_account_id_strips_at_suffix_when_configured() {
+        let userinfo = OidcUserInfoClaims::from_json::<reqwest::Error>(
+            br#"{
+                "sub": "24400320",
+                "preferred_username": "preferred@example.com",
+                "email": "email@example.com"
+            }"#,
+            None,
+        )
+        .unwrap();
+
+        assert_eq!(
+            oidc_account_id_from_userinfo(&userinfo, &[], true).unwrap(),
+            "preferred"
+        );
+    }
+
+    #[test]
+    fn oidc_account_id_rejects_empty_after_stripping_at_suffix() {
+        let userinfo = OidcUserInfoClaims::from_json::<reqwest::Error>(
+            br#"{
+                "sub": "24400320",
+                "preferred_username": "@example.com",
+                "email": "email@example.com"
+            }"#,
+            None,
+        )
+        .unwrap();
+
+        assert!(oidc_account_id_from_userinfo(&userinfo, &[], true).is_err());
     }
 
     #[test]
@@ -1284,6 +1397,12 @@ type OidcTokenResponse = StandardTokenResponse<
     BasicTokenType,
 >;
 
+#[derive(Debug, Deserialize, Serialize)]
+struct OidcAdditionalUserInfoClaims(HashMap<String, Value>);
+impl AdditionalClaims for OidcAdditionalUserInfoClaims {}
+
+type OidcUserInfoClaims = UserInfoClaims<OidcAdditionalUserInfoClaims, CoreGenderClaim>;
+
 pub trait OidcTokenResponseExt {
     fn into_unix_user_token(self) -> Result<UnixUserToken, MsalError>;
 }
@@ -1435,6 +1554,110 @@ fn oidc_should_prompt_hello_setup(
     has_refresh_token: bool,
 ) -> bool {
     hello_enabled && !no_hello_pin && hello_key_missing && has_refresh_token
+}
+
+fn value_type_name(value: &Value) -> &'static str {
+    match value {
+        Value::Null => "null",
+        Value::Bool(_) => "boolean",
+        Value::Number(_) => "number",
+        Value::String(_) => "string",
+        Value::Array(_) => "array",
+        Value::Object(_) => "object",
+    }
+}
+
+fn oidc_claim_string(userinfo_json: &Value, claim: &str) -> Option<String> {
+    match userinfo_json.get(claim) {
+        Some(Value::String(value)) if !value.is_empty() => Some(value.to_string()),
+        Some(value) => {
+            if matches!(value, Value::String(_)) {
+                warn!(
+                    claim,
+                    "OIDC account ID claim is present but is an empty string"
+                );
+            } else {
+                warn!(
+                    claim,
+                    value_type = value_type_name(value),
+                    "OIDC account ID claim is present but is not a string"
+                );
+            }
+            None
+        }
+        None => None,
+    }
+}
+
+fn oidc_fallback_account_id(userinfo: &OidcUserInfoClaims) -> Option<String> {
+    userinfo
+        .preferred_username()
+        .map(|username| username.to_string())
+        .filter(|username| !username.is_empty())
+        .or_else(|| {
+            userinfo
+                .email()
+                .map(|email| email.to_string())
+                .filter(|email| !email.is_empty())
+        })
+}
+
+fn oidc_account_id_from_userinfo(
+    userinfo: &OidcUserInfoClaims,
+    configured_claims: &[String],
+    strip_at_suffix: bool,
+) -> Result<String, IdpError> {
+    let account_id = if configured_claims.is_empty() {
+        oidc_fallback_account_id(userinfo).ok_or_else(|| {
+            error!("Missing non-empty preferred_username and email claims in userinfo");
+            IdpError::BadRequest
+        })?
+    } else {
+        let userinfo_json = serde_json::to_value(userinfo).map_err(|e| {
+            error!(?e, "Failed to serialize OIDC userinfo claims");
+            IdpError::BadRequest
+        })?;
+
+        let mut configured_account_id = None;
+        for claim in configured_claims {
+            if let Some(account_id) = oidc_claim_string(&userinfo_json, claim) {
+                configured_account_id = Some(account_id);
+                break;
+            }
+        }
+
+        if let Some(account_id) = configured_account_id {
+            account_id
+        } else {
+            warn!(
+                claims = ?configured_claims,
+                "Configured OIDC account ID claims did not match any non-empty string userinfo claim; falling back to preferred_username, then email"
+            );
+
+            oidc_fallback_account_id(userinfo).ok_or_else(|| {
+                error!(
+                    claims = ?configured_claims,
+                    "Configured OIDC account ID claims did not match and fallback preferred_username/email claims are missing or empty"
+                );
+                IdpError::BadRequest
+            })?
+        }
+    };
+
+    if strip_at_suffix {
+        let account_id = account_id
+            .split_once('@')
+            .map(|(local, _)| local.to_string())
+            .unwrap_or(account_id);
+        if account_id.is_empty() {
+            error!("OIDC account ID is empty after stripping @suffix");
+            Err(IdpError::BadRequest)
+        } else {
+            Ok(account_id)
+        }
+    } else {
+        Ok(account_id)
+    }
 }
 
 fn validated_password_cache_action(
@@ -1933,9 +2156,11 @@ impl OidcApplication {
         shell: String,
         idmap: &Mutex<Idmap>,
         tenant_id: &Uuid,
+        account_id_claims: &[String],
+        strip_at_suffix: bool,
     ) -> Result<UserToken, IdpError> {
         let access_token = token.access_token();
-        let userinfo: CoreUserInfoClaims = if let Some(delayed_init) = &*self.client.lock().await {
+        let userinfo: OidcUserInfoClaims = if let Some(delayed_init) = &*self.client.lock().await {
             delayed_init
                 .client
                 .user_info(access_token.clone(), None)
@@ -1954,14 +2179,8 @@ impl OidcApplication {
             return Err(IdpError::BadRequest);
         };
 
-        let account_id = userinfo
-            .preferred_username()
-            .map(|username| username.to_string())
-            .or_else(|| userinfo.email().map(|email| email.to_string()))
-            .ok_or_else(|| {
-                error!("Missing preferred_username and email claims in userinfo");
-                IdpError::BadRequest
-            })?;
+        let account_id =
+            oidc_account_id_from_userinfo(&userinfo, account_id_claims, strip_at_suffix)?;
 
         let subject = userinfo.subject().to_string();
         let object_id = uuid::Uuid::new_v5(tenant_id, subject.as_bytes());
@@ -2379,10 +2598,24 @@ impl OidcProvider {
         token: &OidcTokenResponse,
     ) -> Result<AuthResult, IdpError> {
         let tenant_id = self.tenant_id().await?;
-        let shell = self.config.lock().await.get_shell(None);
+        let (shell, account_id_claims, strip_at_suffix) = {
+            let config = self.config.lock().await;
+            (
+                config.get_shell(None),
+                config.get_oidc_account_id_claims(),
+                config.get_oidc_account_id_strip_at_suffix(),
+            )
+        };
         let token2 = self
             .client
-            .user_token_from_oidc(token, shell, self.idmap.as_ref(), &tenant_id)
+            .user_token_from_oidc(
+                token,
+                shell,
+                self.idmap.as_ref(),
+                &tenant_id,
+                &account_id_claims,
+                strip_at_suffix,
+            )
             .await?;
         if account_id.to_string().to_lowercase() != token2.name.to_string().to_lowercase() {
             let msg = tr_fmt(
@@ -2800,13 +3033,25 @@ impl IdProvider for OidcProvider {
                     }
                 };
                 let tenant_id = self.tenant_id().await?;
-                let shell = self.config.lock().await.get_shell(None);
-                let token2 = self.client.user_token_from_oidc(
-                    &token,
-                    shell,
-                    self.idmap.as_ref(),
-                    &tenant_id,
-                ).await?;
+                let (shell, account_id_claims, strip_at_suffix) = {
+                    let config = self.config.lock().await;
+                    (
+                        config.get_shell(None),
+                        config.get_oidc_account_id_claims(),
+                        config.get_oidc_account_id_strip_at_suffix(),
+                    )
+                };
+                let token2 = self
+                    .client
+                    .user_token_from_oidc(
+                        &token,
+                        shell,
+                        self.idmap.as_ref(),
+                        &tenant_id,
+                        &account_id_claims,
+                        strip_at_suffix,
+                    )
+                    .await?;
                 tpm.seal_data(&win_hello_storage_key, refresh_token_zeroizing)
                     .map_err(|e| {
                         let uuid = token2.uuid.to_string();
