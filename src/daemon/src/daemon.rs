@@ -19,7 +19,7 @@
 #![deny(clippy::needless_pass_by_value)]
 #![deny(clippy::trivially_copy_pass_by_ref)]
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::error::Error;
 use std::fs::metadata;
 use std::io;
@@ -93,6 +93,8 @@ type AsyncTaskRequest = (TaskRequest, oneshot::Sender<TaskOutcome>);
 type IntunePolicyThrottle = Arc<Mutex<HashMap<String, IntunePolicyThrottleState>>>;
 
 const INTUNE_POLICY_THROTTLE_INTERVAL: Duration = Duration::from_secs(30 * 60);
+const LOCAL_GROUPS_TASK_QUEUE_TIMEOUT: Duration = Duration::from_millis(100);
+const LOCAL_GROUPS_TASK_RESPONSE_TIMEOUT: Duration = Duration::from_millis(1000);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum IntunePolicyThrottleState {
@@ -242,6 +244,149 @@ async fn handle_task_client(
             }
         }
     }
+}
+
+async fn is_account_sudoer(
+    cachelayer: &Resolver<HimmelblauMultiProvider>,
+    cfg: &HimmelblauConfig,
+    account_id: &str,
+) -> bool {
+    for sudo_group in cfg.get_sudo_groups() {
+        let sudo_group_uuid = match Uuid::parse_str(&sudo_group) {
+            Ok(uuid) => uuid,
+            Err(e) => {
+                debug!("Failed to parse a sudo group: {}", e);
+                continue;
+            }
+        };
+
+        let members = cachelayer.get_groupmembers(sudo_group_uuid).await;
+        if members.iter().any(|member| member == account_id) {
+            return true;
+        }
+    }
+
+    false
+}
+
+async fn submit_local_groups_task(
+    task_channel_tx: &Sender<AsyncTaskRequest>,
+    account_id: String,
+    is_sudoer: bool,
+) -> Result<(), ()> {
+    let (tx, rx) = oneshot::channel();
+
+    task_channel_tx
+        .send_timeout(
+            (TaskRequest::LocalGroups(account_id, is_sudoer), tx),
+            LOCAL_GROUPS_TASK_QUEUE_TIMEOUT,
+        )
+        .await
+        .map_err(|_| ())?;
+
+    match time::timeout(LOCAL_GROUPS_TASK_RESPONSE_TIMEOUT, rx).await {
+        Ok(Ok(TaskOutcome::Status(0))) => Ok(()),
+        _ => Err(()),
+    }
+}
+
+async fn reconcile_local_groups_once(
+    cachelayer: &Resolver<HimmelblauMultiProvider>,
+    task_channel_tx: &Sender<AsyncTaskRequest>,
+    cfg: &HimmelblauConfig,
+) {
+    let sudo_groups = cfg.get_sudo_groups();
+    if cfg.get_local_groups().is_empty() && sudo_groups.is_empty() {
+        trace!("Skipping local group reconciliation; no local groups configured");
+        return;
+    }
+
+    let sudo_group_ids: HashSet<Uuid> = sudo_groups
+        .iter()
+        .filter_map(|sudo_group| match Uuid::parse_str(sudo_group) {
+            Ok(uuid) => Some(uuid),
+            Err(e) => {
+                debug!("Failed to parse a sudo group: {}", e);
+                None
+            }
+        })
+        .collect();
+
+    let accounts = match cachelayer.get_nssaccounts().await {
+        Ok(accounts) => accounts,
+        Err(()) => {
+            warn!("Unable to fetch cached users for local group reconciliation");
+            return;
+        }
+    };
+
+    for account in accounts {
+        let is_sudoer = if sudo_group_ids.is_empty() {
+            false
+        } else {
+            let token = match cachelayer.refresh_cached_usertoken(&account.name).await {
+                Ok(Some(token)) => token,
+                Ok(None) => {
+                    trace!(
+                        account_id = account.name.as_str(),
+                        "Skipping local group reconciliation for missing user"
+                    );
+                    continue;
+                }
+                Err(()) => {
+                    warn!(
+                        account_id = account.name.as_str(),
+                        "Failed to refresh cached user before local group reconciliation"
+                    );
+                    continue;
+                }
+            };
+
+            token
+                .groups
+                .iter()
+                .any(|group| sudo_group_ids.contains(&group.uuid))
+        };
+
+        if submit_local_groups_task(task_channel_tx, account.name.clone(), is_sudoer)
+            .await
+            .is_err()
+        {
+            warn!(
+                account_id = account.name.as_str(),
+                "Failed to reconcile local groups for cached user"
+            );
+        }
+    }
+}
+
+async fn reconcile_local_groups_periodically(
+    cachelayer: Arc<Resolver<HimmelblauMultiProvider>>,
+    task_channel_tx: Arc<Sender<AsyncTaskRequest>>,
+    cfg: HimmelblauConfig,
+    mut shutdown_rx: broadcast::Receiver<bool>,
+) {
+    let interval_secs = cfg.get_local_groups_reconcile_interval();
+    if interval_secs == 0 {
+        info!("Periodic local group reconciliation disabled");
+        return;
+    }
+
+    let mut interval = time::interval(Duration::from_secs(interval_secs));
+    interval.set_missed_tick_behavior(time::MissedTickBehavior::Delay);
+
+    loop {
+        tokio::select! {
+            _ = shutdown_rx.recv() => {
+                break;
+            }
+            _ = interval.tick() => {
+                reconcile_local_groups_once(&cachelayer, &task_channel_tx, &cfg).await;
+            }
+        }
+    }
+
+    info!("Stopped local group reconciler");
 }
 
 async fn handle_client(
@@ -698,58 +843,21 @@ async fn handle_client(
                                 }
                             };
 
-                            let (tx, rx) = oneshot::channel();
+                            let is_sudoer =
+                                is_account_sudoer(&cachelayer, &cfg, account_id.as_str()).await;
 
-                            let sudo_groups = cfg.get_sudo_groups();
-                            let mut is_sudoer: bool = false;
-
-                            for sudo_group in sudo_groups {
-                                let sudo_group_uuid = match Uuid::parse_str(&sudo_group) {
-                                    Ok(uuid) => uuid,
-                                    Err(e) => {
-                                        debug!("Failed to parse a sudo group: {}", e);
-                                        continue;
-                                    }
-                                };
-
-                                let members = cachelayer.get_groupmembers(sudo_group_uuid).await;
-                                if members.contains(&account_id) {
-                                    is_sudoer = true;
-                                }
-                            }
-
-                            let resp2 = match task_channel_tx
-                                .send_timeout(
-                                    (
-                                        TaskRequest::LocalGroups(account_id.to_string(), is_sudoer),
-                                        tx,
-                                    ),
-                                    Duration::from_millis(100),
-                                )
-                                .await
+                            let resp2 = match submit_local_groups_task(
+                                task_channel_tx,
+                                account_id.to_string(),
+                                is_sudoer,
+                            )
+                            .await
                             {
                                 Ok(()) => {
-                                    // Now wait for the other end OR timeout.
-                                    match time::timeout_at(
-                                        time::Instant::now() + Duration::from_millis(1000),
-                                        rx,
-                                    )
-                                    .await
-                                    {
-                                        Ok(Ok(_)) => {
-                                            trace!("Task completed, returning to pam ...");
-                                            ClientResponse::Ok
-                                        }
-                                        _ => {
-                                            // Timeout or other error.
-                                            ClientResponse::Error
-                                        }
-                                    }
+                                    trace!("Task completed, returning to pam ...");
+                                    ClientResponse::Ok
                                 }
-                                Err(_) => {
-                                    // We could not submit the req. Move on!
-                                    ClientResponse::Error
-                                }
+                                Err(()) => ClientResponse::Error,
                             };
 
                             // Set up subordinate IDs for container support
@@ -1866,6 +1974,20 @@ async fn main() -> ExitCode {
             let (broadcast_tx, mut broadcast_rx) = broadcast::channel(4);
             let mut c_broadcast_rx = broadcast_tx.subscribe();
             let mut d_broadcast_rx = broadcast_tx.subscribe();
+            let local_groups_broadcast_rx = broadcast_tx.subscribe();
+
+            let local_groups_cachelayer = cachelayer.clone();
+            let local_groups_task_channel_tx = task_channel_tx.clone();
+            let local_groups_cfg = cfg.clone();
+            let local_groups_reconciler = tokio::spawn(async move {
+                reconcile_local_groups_periodically(
+                    local_groups_cachelayer,
+                    local_groups_task_channel_tx,
+                    local_groups_cfg,
+                    local_groups_broadcast_rx,
+                )
+                .await;
+            });
 
             let task_b = tokio::spawn(async move {
                 loop {
@@ -2174,6 +2296,7 @@ async fn main() -> ExitCode {
 
             let _ = task_a.await;
             let _ = task_b.await;
+            let _ = local_groups_reconciler.await;
             let _ = task_c.await;
             let _ = task_d.await;
 

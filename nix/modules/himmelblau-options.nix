@@ -337,6 +337,15 @@ in
       example = [ "sudo" "admin" ];
     };
 
+    local_groups_reconcile_interval = mkOption {
+      type = types.nullOr (types.ints.unsigned);
+      default = 300;
+      description = ''
+        The interval in seconds for periodically reconciling configured local group membership for cached Entra ID users. This keeps the configured local sudo group in sync with sudo_groups between login attempts. Set to 0 to disable periodic reconciliation.
+      '';
+      example = 300;
+    };
+
     sudo_groups = mkOption {
       type = types.nullOr (types.listOf types.str);
       default = null;
