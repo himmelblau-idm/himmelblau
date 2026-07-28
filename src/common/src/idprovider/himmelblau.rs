@@ -31,6 +31,7 @@ use crate::i18n::{tr, tr_fmt};
 use crate::idmap_cache::StaticIdCache;
 use crate::idprovider::common::build_online_probe_client;
 use crate::idprovider::common::flip_displayname_comma;
+use crate::idprovider::common::should_block_hello_pin_attempts;
 use crate::idprovider::common::KeyType;
 use crate::idprovider::common::RefreshCacheEntry;
 use crate::idprovider::common::TotpEnrollmentRecord;
@@ -1834,7 +1835,10 @@ impl IdProvider for HimmelblauProvider {
             || hello_key.is_none()
             || !hello_enabled
             || (is_remote_service && !hello_totp_enabled && !allow_remote_hello)
-            || self.bad_pin_counter.bad_pin_count(account_id).await > hello_pin_retry_count
+            || should_block_hello_pin_attempts(
+                self.bad_pin_counter.bad_pin_count(account_id).await,
+                hello_pin_retry_count,
+            )
             || intune_enrollment_required
             || no_hello_pin
             || force_reauth
@@ -2711,10 +2715,19 @@ impl IdProvider for HimmelblauProvider {
                 // `acquire_token_by_hello_for_business_key` CAN (and probably will)
                 // respond with a `RequestFailed` prior to validating the PIN, since
                 // the Nonce request will fail (which is sent prior to validation).
-                let pin = PinValue::new(&$cred).map_err(|e| {
-                    error!("Failed setting pin value: {:?}", e);
-                    IdpError::Tpm
-                })?;
+                let pin = match PinValue::new(&$cred) {
+                    Ok(pin) => pin,
+                    Err(e) => {
+                        error!("Failed setting pin value: {:?}", e);
+                        handle_hello_bad_pin_count!(self, account_id, keystore, |msg: &str| {
+                            Ok((AuthResult::Denied(msg.to_string()), AuthCacheAction::None))
+                        });
+                        return Ok((
+                            AuthResult::Denied(tr("Failed to authenticate with Hello PIN.")),
+                            AuthCacheAction::None,
+                        ));
+                    }
+                };
                 if let Err(e) = tpm.ms_hello_key_load(machine_key, &$hello_key, &pin) {
                     error!("{:?}", e);
                     handle_hello_bad_pin_count!(self, account_id, keystore, |msg: &str| {

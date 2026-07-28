@@ -1056,9 +1056,17 @@ fn handle_pam_auth_response_pin(state: &mut AuthenticateState) -> PamWhatNext {
                 &state.cfg.get_hello_pin_prompt(),
             ));
         match state.msg_printer.prompt_echo_off(&(tr("PIN:") + " ")) {
-            Some(cred) => cred,
+            Some(cred) if !cred.is_empty() => cred,
             None => {
                 debug!("no pin");
+                pam_fail!(
+                    state.msg_printer,
+                    tr("No Entra Id Hello PIN was supplied."),
+                    PamResultCode::PAM_CRED_INSUFFICIENT
+                );
+            }
+            Some(_) => {
+                debug!("empty pin");
                 pam_fail!(
                     state.msg_printer,
                     tr("No Entra Id Hello PIN was supplied."),
