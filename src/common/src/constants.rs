@@ -48,6 +48,7 @@ pub const DRS_APP_ID: &str = "01cb2876-7ebd-4aa4-9cc9-d28bd4d359a9";
 pub const INTUNE_POLICY_TASK_TIMEOUT_SECS: u64 = 300;
 pub const DEFAULT_CONN_TIMEOUT: u64 = 30;
 pub const DEFAULT_REQUEST_TIMEOUT: u64 = 10;
+pub const DEFAULT_LOGON_SCRIPT_TIMEOUT: u64 = 60;
 pub const DEFAULT_CACHE_TIMEOUT: u64 = 300;
 pub const DEFAULT_SELINUX: bool = true;
 pub const DEFAULT_HSM_PIN_PATH: &str = "/var/lib/himmelblaud/hsm-pin";

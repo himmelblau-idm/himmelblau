@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<parameter name="logon_script_timeout"
+           section="global"
+           type="u64"
+           rust_type="u64"
+           documented="true"
+           domain_specific="false"
+           order="2110">
+<description>
+The timeout in seconds for the configured logon script. If the script does not finish before this timeout, authentication fails with a hard failure.
+</description>
+<conf_description>Timeout in seconds for the configured logon script.</conf_description>
+<default>60</default>
+<default_const>DEFAULT_LOGON_SCRIPT_TIMEOUT</default_const>
+<example>logon_script_timeout = 120</example>
+</parameter>

@@ -503,6 +503,17 @@ A script that will execute every time a user logs on. Two environment variables 
 Example: logon_script = /etc/himmelblau/logon.sh
 
 .TP
+.B logon_script_timeout
+.RE
+The timeout in seconds for the configured logon script. If the script does not finish before this timeout, authentication fails with a hard failure.
+
+.P
+Default: 60
+
+.P
+Example: logon_script_timeout = 120
+
+.TP
 .B logon_token_scopes
 .RE
 A comma-separated list of the scopes to be requested for the ACCESS_TOKEN during logon. These scopes

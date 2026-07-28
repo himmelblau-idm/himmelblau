@@ -459,7 +459,9 @@ async fn handle_client(
                                                                 // Now wait for the other end OR timeout.
                                                                 match time::timeout_at(
                                                                     time::Instant::now()
-                                                                        + Duration::from_secs(60),
+                                                                        + Duration::from_secs(
+                                                                            cfg.get_logon_script_timeout(),
+                                                                        ),
                                                                     rx,
                                                                 )
                                                                 .await
@@ -472,8 +474,29 @@ async fn handle_client(
                                                                                 PamAuthResponse::Denied(msg.to_string());
                                                                         }
                                                                     }
-                                                                    _ => {
-                                                                        error!("Execution of logon script failed");
+                                                                    Ok(Ok(_)) => {
+                                                                        let msg = "Logon script returned an unexpected task response";
+                                                                        error!(msg);
+                                                                        resp =
+                                                                            PamAuthResponse::Denied(msg.to_string());
+                                                                    }
+                                                                    Ok(Err(e)) => {
+                                                                        let msg = format!(
+                                                                            "Execution of logon script failed: {:?}",
+                                                                            e
+                                                                        );
+                                                                        error!(msg);
+                                                                        resp =
+                                                                            PamAuthResponse::Denied(msg);
+                                                                    }
+                                                                    Err(e) => {
+                                                                        let msg = format!(
+                                                                            "Execution of logon script timed out: {:?}",
+                                                                            e
+                                                                        );
+                                                                        error!(msg);
+                                                                        resp =
+                                                                            PamAuthResponse::Denied(msg);
                                                                     }
                                                                 }
                                                             }
