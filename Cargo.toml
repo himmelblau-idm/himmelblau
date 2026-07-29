@@ -28,6 +28,7 @@ opentelemetry_sdk-0-31-0 = { package = "opentelemetry_sdk", path = "src/override
 paste-1-0-15 = { package = "paste", path = "src/paste" }
 serde_cbor-0-11-2 = { package = "serde_cbor", path = "src/serde_cbor" }
 webpki-roots-0-26-11 = { package = "webpki-roots", path = "src/overrides/webpki-roots/0.26.11" }
+rsa-0-9-999 = { package = "rsa", path = "src/overrides/rsa/0.9.999" }
 
 [workspace.package]
 version = "3.1.15"
