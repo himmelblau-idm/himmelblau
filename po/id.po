@@ -1,0 +1,415 @@
+# Indonesian translations for Himmelblau.
+# Copyright (C) 2026 Himmelblau contributors
+# This file is distributed under the same license as Himmelblau.
+#
+msgid ""
+msgstr "Project-Id-Version: himmelblau\n"
+"POT-Creation-Date: 2026-07-22 22:33+0000\n"
+"PO-Revision-Date: 2026-07-23 14:39+0000\n"
+"Last-Translator: Automated via Codex <noreply@himmelblau-idm.org>\n"
+"Language-Team: Indonesian\n"
+"Language: id\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Plural-Forms: nplurals=1; plural=0;\n"
+""
+
+msgid "An unexpected error occurred."
+msgstr "Terjadi kesalahan yang tidak terduga."
+
+msgid "Approve sign-in in your authenticator app, then wait..."
+msgstr "Setujui masuk di aplikasi autentikator Anda, lalu tunggu..."
+
+msgid "Authenticated user {user} does not match requested user"
+msgstr "Pengguna yang diautentikasi {user} tidak cocok dengan pengguna yang diminta"
+
+msgid "Authenticated user {uuid} does not match requested user"
+msgstr "Pengguna terautentikasi {uuid} tidak cocok dengan pengguna yang diminta"
+
+msgid "Authentication did not return a refresh token. Please try again."
+msgstr "Autentikasi tidak mengembalikan token penyegaran. Silakan coba lagi."
+
+msgid "Authentication failed (AADSTS{code})"
+msgstr "Autentikasi gagal (AADSTS{code})"
+
+msgid "Authentication failed in browser flow."
+msgstr "Autentikasi gagal dalam alur browser."
+
+msgid "Authentication failed. Please contact your administrator."
+msgstr "Autentikasi gagal. Silakan hubungi administrator Anda."
+
+msgid "Authentication failed. Please try again."
+msgstr "Autentikasi gagal. Silakan coba lagi."
+
+msgid "Authentication failed. Please try signing in again."
+msgstr "Autentikasi gagal. Silakan coba masuk lagi."
+
+msgid "Authentication failed: Authentication method not supported."
+msgstr "Autentikasi gagal: Metode autentikasi tidak didukung."
+
+msgid "Authentication failed: Configuration error."
+msgstr "Autentikasi gagal: Kesalahan konfigurasi."
+
+msgid "Authentication failed: Cryptographic error."
+msgstr "Autentikasi gagal: Terjadi kesalahan kriptografi."
+
+msgid "Authentication failed: Invalid server response."
+msgstr "Autentikasi gagal: Respons server tidak valid."
+
+msgid "Authentication failed: Missing required data."
+msgstr "Autentikasi gagal: Data wajib tidak ada."
+
+msgid "Authentication failed: Security hardware error."
+msgstr "Autentikasi gagal: Kesalahan perangkat keras keamanan."
+
+msgid "Authentication failed: Unable to reach authentication server."
+msgstr "Autentikasi gagal: Tidak dapat menjangkau server autentikasi."
+
+msgid "Authentication failed: {error}"
+msgstr "Autentikasi gagal: {error}"
+
+msgid "Authentication flow completed but token exchange failed. Please try again."
+msgstr "Alur autentikasi selesai, tetapi pertukaran token gagal. Silakan coba lagi."
+
+msgid "Authentication in progress."
+msgstr "Autentikasi sedang berlangsung."
+
+msgid "Authentication incomplete. Please try again."
+msgstr "Autentikasi belum selesai. Silakan coba lagi."
+
+msgid "Authentication service is temporarily unavailable. Please try again shortly."
+msgstr "Layanan autentikasi tidak tersedia untuk sementara. Silakan coba lagi sebentar lagi."
+
+msgid "Authentication service unavailable. Please try again later."
+msgstr "Layanan autentikasi tidak tersedia. Silakan coba lagi nanti."
+
+msgid "Authentication session corrupted. Please try again."
+msgstr "Sesi autentikasi rusak. Silakan coba lagi."
+
+msgid "Authentication session data missing. Please try again."
+msgstr "Data sesi autentikasi tidak ditemukan. Silakan coba lagi."
+
+msgid "Authentication session returned an unexpected state. Please try again."
+msgstr "Sesi autentikasi mengembalikan status yang tidak terduga. Silakan coba lagi."
+
+msgid "Authentication timed out. Please try again."
+msgstr "Autentikasi kehabisan waktu. Silakan coba lagi."
+
+msgid "Browser authentication backend unavailable. Please try again."
+msgstr "Backend autentikasi browser tidak tersedia. Silakan coba lagi."
+
+msgid "Changing the password. Please wait..."
+msgstr "Sedang mengubah kata sandi. Harap tunggu..."
+
+msgid "Chosen password is too short! 8 chars required."
+msgstr "Kata sandi yang dipilih terlalu pendek! Diperlukan 8 karakter."
+
+msgid "Chosen pin is too short! {length} chars required."
+msgstr "PIN yang dipilih terlalu pendek! Diperlukan {length} karakter."
+
+msgid "Cloud Password:"
+msgstr "Kata Sandi Cloud:"
+
+msgid "Code:"
+msgstr "Kode:"
+
+msgid "Confirm PIN:"
+msgstr "Konfirmasi PIN:"
+
+msgid "Confirm password:"
+msgstr "Konfirmasi kata sandi:"
+
+msgid "Consent required. Please contact your administrator."
+msgstr "Diperlukan persetujuan. Silakan hubungi administrator Anda."
+
+msgid "Create a PIN to use in place of passwords."
+msgstr "Buat PIN untuk digunakan sebagai pengganti kata sandi."
+
+msgid "Device enrollment failed. Please contact your administrator."
+msgstr "Pendaftaran perangkat gagal. Silakan hubungi administrator Anda."
+
+msgid "Device has been removed from the domain."
+msgstr "Perangkat telah dihapus dari domain."
+
+msgid "Enable Bluetooth to sign in with your phone."
+msgstr "Aktifkan Bluetooth untuk masuk dengan ponsel Anda."
+
+msgid "Enrolling the Hello PIN. Please wait..."
+msgstr "Mendaftarkan PIN Hello. Harap tunggu..."
+
+msgid "Enter the setup key '{secret}' to enroll a TOTP Authenticator app. Use '{issuer}' for the code name and '{account}' as the label/name."
+msgstr "Masukkan kunci penyiapan '{secret}' untuk mendaftarkan aplikasi Authenticator TOTP. Gunakan '{issuer}' sebagai nama kode dan '{account}' sebagai label/nama."
+
+msgid "Entra Id Fido authentication failed."
+msgstr "Autentikasi FIDO Entra ID gagal."
+
+msgid "Entra Id Password:"
+msgstr "Kata Sandi Entra Id:"
+
+msgid "FIDO authentication not available. Please try a different authentication method."
+msgstr "Autentikasi FIDO tidak tersedia. Silakan coba metode autentikasi lain."
+
+msgid "Failed to authenticate with Hello PIN."
+msgstr "Gagal mengautentikasi dengan PIN Hello."
+
+msgid "Failed to authenticate with Hello PIN. One more failed attempt will require multi-factor authentication and resetting your Linux Hello PIN."
+msgstr "Gagal mengautentikasi dengan PIN Hello. Satu kali percobaan gagal lagi akan memerlukan autentikasi multifaktor dan pengaturan ulang PIN Linux Hello Anda."
+
+msgid "Failed to authenticate with Hello TOTP code."
+msgstr "Gagal mengautentikasi dengan kode Hello TOTP."
+
+msgid "Failed to build regex: {error}"
+msgstr "Gagal membuat regex: {error}"
+
+msgid "Failed to change user password: {msg}"
+msgstr "Gagal mengubah kata sandi pengguna: {msg}"
+
+msgid "Failed to delete CSR key"
+msgstr "Gagal menghapus kunci CSR"
+
+msgid "Failed to delete intune key"
+msgstr "Gagal menghapus kunci Intune"
+
+msgid "Failed to generate QR code"
+msgstr "Gagal membuat kode QR"
+
+msgid "Failed to join domain. Please contact your administrator."
+msgstr "Gagal bergabung dengan domain. Silakan hubungi administrator Anda."
+
+msgid "Failed to provision hello key: {error}\n"
+"{message}"
+msgstr "Gagal menyediakan hello key: {error}\n"
+"{message}"
+
+msgid "Failed to save device configuration. Please contact your administrator."
+msgstr "Gagal menyimpan konfigurasi perangkat. Silakan hubungi administrator Anda."
+
+msgid "Failed to store device credentials. Please contact your administrator."
+msgstr "Gagal menyimpan kredensial perangkat. Hubungi administrator Anda."
+
+msgid "Fido PIN:"
+msgstr "PIN Fido:"
+
+msgid "Himmelblau authentication is starting, please wait..."
+msgstr "Autentikasi Himmelblau sedang dimulai, harap tunggu..."
+
+msgid "Himmelblau authentication service did not become available in time."
+msgstr "Layanan autentikasi Himmelblau tidak tersedia tepat waktu."
+
+msgid "Himmelblau authentication service is unavailable."
+msgstr "Layanan autentikasi Himmelblau tidak tersedia."
+
+msgid "Inputs did not match. Try again."
+msgstr "Input tidak cocok. Coba lagi."
+
+msgid "Invalid credentials"
+msgstr "Kredensial tidak valid"
+
+msgid "Multi-factor authentication required."
+msgstr "Diperlukan autentikasi multifaktor."
+
+msgid "Multi-factor authentication required. Please try signing in again."
+msgstr "Diperlukan autentikasi multifaktor. Silakan coba masuk lagi."
+
+msgid "Network outage detected."
+msgstr "Terdeteksi gangguan jaringan."
+
+msgid "New PIN:"
+msgstr "PIN baru:"
+
+msgid "New password:"
+msgstr "Kata sandi baru:"
+
+msgid "No Entra Id Hello PIN was supplied."
+msgstr "Tidak ada PIN Hello Entra ID yang diberikan."
+
+msgid "No Entra Id Hello confirmation PIN was supplied."
+msgstr "PIN konfirmasi Hello Entra ID tidak diberikan."
+
+msgid "No Entra Id confirmation password was supplied."
+msgstr "Kata sandi konfirmasi Entra ID tidak diberikan."
+
+msgid "No Entra Id password was supplied."
+msgstr "Tidak ada kata sandi Entra ID yang diberikan."
+
+msgid "No Hello TOTP code was supplied."
+msgstr "Tidak ada kode TOTP Hello yang diberikan."
+
+msgid "No input was supplied."
+msgstr "Tidak ada input yang diberikan."
+
+msgid "Offline auth has expired. Please connect to the network to continue."
+msgstr "Autentikasi offline telah kedaluwarsa. Harap sambungkan ke jaringan untuk melanjutkan."
+
+msgid "Open your Authenticator app, and enter the number '{entropy}' to sign in."
+msgstr "Buka aplikasi Authenticator Anda, lalu masukkan nomor '{entropy}' untuk masuk."
+
+msgid "Open your authenticator app and scan this QR code to enroll. Then enter the generated code.\n"
+"{qr}"
+msgstr "Buka aplikasi autentikator Anda dan pindai kode QR ini untuk mendaftar. Kemudian masukkan kode yang dihasilkan.\n"
+"{qr}"
+
+msgid "PIN must not use repeating or predictable sequences. Avoid patterns like '111111', '123456', or '135791'."
+msgstr "PIN tidak boleh menggunakan urutan yang berulang atau mudah ditebak. Hindari pola seperti '111111', '123456', atau '135791'."
+
+msgid "PIN setup failed. Please try signing in again."
+msgstr "Penyiapan PIN gagal. Silakan coba masuk lagi."
+
+msgid "PIN:"
+msgstr "PIN:"
+
+msgid "Password change required. Please contact your administrator."
+msgstr "Perubahan kata sandi diperlukan. Silakan hubungi administrator Anda."
+
+msgid "Password entry required."
+msgstr "Entri kata sandi diperlukan."
+
+msgid "Password reset registration required. Complete setup at https://aka.ms/ssprsetup from another device, then try again."
+msgstr "Pendaftaran pengaturan ulang kata sandi diperlukan. Selesaikan penyiapan di https://aka.ms/ssprsetup dari perangkat lain, lalu coba lagi."
+
+msgid "Please enter your Hello TOTP code from your Authenticator:"
+msgstr "Silakan masukkan kode TOTP Hello dari Authenticator Anda:"
+
+msgid "Please insert your security key."
+msgstr "Silakan masukkan kunci keamanan Anda."
+
+msgid "Please select a device by touching one of them."
+msgstr "Silakan pilih perangkat dengan menyentuh salah satunya."
+
+msgid "Please touch your security key."
+msgstr "Silakan sentuh kunci keamanan Anda."
+
+msgid "Press enter to continue"
+msgstr "Tekan Enter untuk melanjutkan"
+
+msgid "QR/Bluetooth authentication failed."
+msgstr "Autentikasi QR/Bluetooth gagal."
+
+msgid "Scan the QR code to continue sign-in, or open this link on another device:\n"
+"{complete}\n"
+"If you cannot scan, visit:\n"
+"{verification_uri}\n"
+"And enter the code:\n"
+"{user_code}"
+msgstr "Pindai kode QR untuk melanjutkan masuk, atau buka tautan ini di perangkat lain:\n"
+"{complete}\n"
+"Jika Anda tidak dapat memindai, kunjungi:\n"
+"{verification_uri}\n"
+"Dan masukkan kode:\n"
+"{user_code}"
+
+msgid "Scan with your authenticator app"
+msgstr "Pindai dengan aplikasi autentikator Anda"
+
+msgid "Security key and QR/Bluetooth authentication failed."
+msgstr "Autentikasi kunci keamanan dan QR/Bluetooth gagal."
+
+msgid "Security key authentication failed."
+msgstr "Autentikasi kunci keamanan gagal."
+
+msgid "Session data corrupted. Please sign in again."
+msgstr "Data sesi rusak. Silakan masuk lagi."
+
+msgid "Set up a PIN\n"
+"A Hello PIN is a fast, secure way to sign in to your device, apps, and services."
+msgstr "Siapkan PIN\n"
+"PIN Hello adalah cara yang cepat dan aman untuk masuk ke perangkat, aplikasi, dan layanan Anda."
+
+msgid "TOTP Code:"
+msgstr "Kode TOTP:"
+
+msgid "The minimum PIN length is {length} characters."
+msgstr "Panjang PIN minimum adalah {length} karakter."
+
+msgid "This command changes your local Hello PIN, NOT your Entra Id password."
+msgstr "Perintah ini mengubah PIN Hello lokal Anda, BUKAN kata sandi Entra Id Anda."
+
+msgid "Too many failed attempts in one row. Your device has been temporarily blocked. Please unplug it and plug in again."
+msgstr "Terlalu banyak percobaan gagal berturut-turut. Perangkat Anda telah diblokir sementara. Cabut perangkat lalu colokkan kembali."
+
+msgid "Too many failed attempts. Your device has been blocked. Reset it."
+msgstr "Terlalu banyak upaya yang gagal. Perangkat Anda telah diblokir. Setel ulang perangkat Anda."
+
+msgid "Too many failed user verification attempts."
+msgstr "Terlalu banyak upaya verifikasi pengguna yang gagal."
+
+msgid "Too many incorrect PIN attempts. You will need to enroll a new Linux Hello PIN."
+msgstr "Terlalu banyak percobaan PIN yang salah. Anda perlu mendaftarkan PIN Linux Hello baru."
+
+msgid "Try again."
+msgstr "Coba lagi."
+
+msgid "Unexpected authentication step. Please try signing in again."
+msgstr "Langkah autentikasi tidak terduga. Silakan coba masuk lagi."
+
+msgid "Unexpected error occurred."
+msgstr "Terjadi kesalahan yang tidak terduga."
+
+msgid "Unexpected error: {error}"
+msgstr "Terjadi kesalahan tak terduga: {error}"
+
+msgid "Unexpected select device notice"
+msgstr "Pemberitahuan pemilihan perangkat yang tidak terduga"
+
+msgid "Update your password\n"
+"You need to update your password because this is\n"
+"the first time you are signing in, or because your\n"
+"password has expired."
+msgstr "Perbarui kata sandi Anda\n"
+"Anda perlu memperbarui kata sandi karena ini adalah\n"
+"pertama kalinya Anda masuk, atau karena kata sandi\n"
+"Anda telah kedaluwarsa."
+
+msgid "Use the Linux Hello PIN for this device."
+msgstr "Gunakan PIN Linux Hello untuk perangkat ini."
+
+msgid "Use the password for your Office 365 or Microsoft online login."
+msgstr "Gunakan kata sandi untuk login Office 365 atau Microsoft online Anda."
+
+msgid "Using a browser on another device, visit:\n"
+"{verification_uri}\n"
+"And enter the code:\n"
+"{user_code}"
+msgstr "Gunakan browser di perangkat lain, kunjungi:\n"
+"{verification_uri}\n"
+"Lalu masukkan kode:\n"
+"{user_code}"
+
+msgid "Value:"
+msgstr "Nilai:"
+
+msgid "Waiting for browser authentication to complete..."
+msgstr "Menunggu autentikasi browser selesai..."
+
+msgid "We texted your phone {phone}. Please enter the code to sign in:"
+msgstr "Kami telah mengirim SMS ke ponsel Anda {phone}. Masukkan kode untuk masuk:"
+
+msgid "We're calling your office phone {phone}. Please answer it to continue."
+msgstr "Kami sedang menelepon telepon kantor Anda {phone}. Harap jawab untuk melanjutkan."
+
+msgid "We're calling your phone {phone}. Please answer it to continue."
+msgstr "Kami sedang menghubungi ponsel Anda {phone}. Harap jawab panggilan tersebut untuk melanjutkan."
+
+msgid "Wrong PIN! {message}"
+msgstr "PIN salah! {message}"
+
+msgid "Wrong user verification! {message}"
+msgstr "Verifikasi pengguna salah! {message}"
+
+msgid "You have {attempts} attempt left."
+msgid_plural "You have {attempts} attempts left."
+msgstr[0] "Anda memiliki {attempts} percobaan tersisa."
+
+msgid "Your session has expired. Please sign in again."
+msgstr "Sesi Anda telah berakhir. Silakan masuk lagi."
+
+msgid "{code}: {message}\n"
+"If you are now prompted for a password from pam_unix, please disregard the prompt, go back and try again."
+msgstr "{code}: {message}\n"
+"Jika Anda sekarang diminta memasukkan kata sandi dari pam_unix, abaikan permintaan tersebut, kembali, lalu coba lagi."
+
+msgid "{message}\n"
+"No push? Check your mobile device's internet connection."
+msgstr "{message}\n"
+"Tidak ada push? Periksa koneksi internet perangkat seluler Anda."

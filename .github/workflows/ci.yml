@@ -205,6 +205,9 @@ jobs:
       - name: "Run tests"
         run: cargo test
         continue-on-error: false
+      - name: "Check translations"
+        run: scripts/i18n-check
+        continue-on-error: false
 
   license:
     name: License

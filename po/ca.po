@@ -1,0 +1,416 @@
+# Catalan translations for Himmelblau.
+# Copyright (C) 2026 Himmelblau contributors
+# This file is distributed under the same license as Himmelblau.
+#
+msgid ""
+msgstr "Project-Id-Version: himmelblau\n"
+"POT-Creation-Date: 2026-07-22 22:33+0000\n"
+"PO-Revision-Date: 2026-07-23 14:38+0000\n"
+"Last-Translator: Automated via Codex <noreply@himmelblau-idm.org>\n"
+"Language-Team: Catalan\n"
+"Language: ca\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Plural-Forms: nplurals=2; plural=(n != 1);\n"
+""
+
+msgid "An unexpected error occurred."
+msgstr "S'ha produït un error inesperat."
+
+msgid "Approve sign-in in your authenticator app, then wait..."
+msgstr "Aproveu l'inici de sessió a l'aplicació d'autenticació i espereu..."
+
+msgid "Authenticated user {user} does not match requested user"
+msgstr "L'usuari autenticat {user} no coincideix amb l'usuari sol·licitat"
+
+msgid "Authenticated user {uuid} does not match requested user"
+msgstr "L'usuari autenticat {uuid} no coincideix amb l'usuari sol·licitat"
+
+msgid "Authentication did not return a refresh token. Please try again."
+msgstr "L'autenticació no ha retornat un testimoni d'actualització. Torneu-ho a provar."
+
+msgid "Authentication failed (AADSTS{code})"
+msgstr "L'autenticació ha fallat (AADSTS{code})"
+
+msgid "Authentication failed in browser flow."
+msgstr "L'autenticació ha fallat durant el flux del navegador."
+
+msgid "Authentication failed. Please contact your administrator."
+msgstr "L'autenticació ha fallat. Contacteu amb l'administrador."
+
+msgid "Authentication failed. Please try again."
+msgstr "L'autenticació ha fallat. Torneu-ho a provar."
+
+msgid "Authentication failed. Please try signing in again."
+msgstr "L'autenticació ha fallat. Torneu a intentar iniciar sessió."
+
+msgid "Authentication failed: Authentication method not supported."
+msgstr "L'autenticació ha fallat: el mètode d'autenticació no és compatible."
+
+msgid "Authentication failed: Configuration error."
+msgstr "L'autenticació ha fallat: error de configuració."
+
+msgid "Authentication failed: Cryptographic error."
+msgstr "L'autenticació ha fallat: error criptogràfic."
+
+msgid "Authentication failed: Invalid server response."
+msgstr "L'autenticació ha fallat: resposta del servidor no vàlida."
+
+msgid "Authentication failed: Missing required data."
+msgstr "L'autenticació ha fallat: falten dades obligatòries."
+
+msgid "Authentication failed: Security hardware error."
+msgstr "L'autenticació ha fallat: error de maquinari de seguretat."
+
+msgid "Authentication failed: Unable to reach authentication server."
+msgstr "L'autenticació ha fallat: no s'ha pogut contactar amb el servidor d'autenticació."
+
+msgid "Authentication failed: {error}"
+msgstr "L'autenticació ha fallat: {error}"
+
+msgid "Authentication flow completed but token exchange failed. Please try again."
+msgstr "El flux d'autenticació s'ha completat, però l'intercanvi de testimonis ha fallat. Torneu-ho a provar."
+
+msgid "Authentication in progress."
+msgstr "Autenticació en curs."
+
+msgid "Authentication incomplete. Please try again."
+msgstr "L'autenticació no s'ha completat. Torneu-ho a provar."
+
+msgid "Authentication service is temporarily unavailable. Please try again shortly."
+msgstr "El servei d'autenticació no està disponible temporalment. Torneu-ho a provar en uns moments."
+
+msgid "Authentication service unavailable. Please try again later."
+msgstr "El servei d'autenticació no està disponible. Torneu-ho a provar més tard."
+
+msgid "Authentication session corrupted. Please try again."
+msgstr "La sessió d'autenticació és corrupta. Torneu-ho a provar."
+
+msgid "Authentication session data missing. Please try again."
+msgstr "Falten dades de la sessió d'autenticació. Torneu-ho a provar."
+
+msgid "Authentication session returned an unexpected state. Please try again."
+msgstr "La sessió d'autenticació ha retornat un estat inesperat. Torneu-ho a provar."
+
+msgid "Authentication timed out. Please try again."
+msgstr "L'autenticació ha superat el temps d'espera. Torneu-ho a provar."
+
+msgid "Browser authentication backend unavailable. Please try again."
+msgstr "El servei d'autenticació del navegador no està disponible. Torneu-ho a provar."
+
+msgid "Changing the password. Please wait..."
+msgstr "S'està canviant la contrasenya. Espereu..."
+
+msgid "Chosen password is too short! 8 chars required."
+msgstr "La contrasenya triada és massa curta. Calen 8 caràcters com a mínim."
+
+msgid "Chosen pin is too short! {length} chars required."
+msgstr "El PIN triat és massa curt. Calen {length} caràcters com a mínim."
+
+msgid "Cloud Password:"
+msgstr "Contrasenya del núvol:"
+
+msgid "Code:"
+msgstr "Codi:"
+
+msgid "Confirm PIN:"
+msgstr "Confirmeu el PIN:"
+
+msgid "Confirm password:"
+msgstr "Confirmeu la contrasenya:"
+
+msgid "Consent required. Please contact your administrator."
+msgstr "Cal consentiment. Contacteu amb l'administrador."
+
+msgid "Create a PIN to use in place of passwords."
+msgstr "Creeu un PIN per utilitzar-lo en lloc de contrasenyes."
+
+msgid "Device enrollment failed. Please contact your administrator."
+msgstr "El registre del dispositiu ha fallat. Contacteu amb l'administrador."
+
+msgid "Device has been removed from the domain."
+msgstr "El dispositiu ha estat eliminat del domini."
+
+msgid "Enable Bluetooth to sign in with your phone."
+msgstr "Activeu el Bluetooth per iniciar sessió amb el telèfon."
+
+msgid "Enrolling the Hello PIN. Please wait..."
+msgstr "S'està registrant el PIN Hello. Espereu..."
+
+msgid "Enter the setup key '{secret}' to enroll a TOTP Authenticator app. Use '{issuer}' for the code name and '{account}' as the label/name."
+msgstr "Introduïu la clau de configuració «{secret}» per registrar una aplicació d'autenticació TOTP. Utilitzeu «{issuer}» com a nom del codi i «{account}» com a etiqueta/nom."
+
+msgid "Entra Id Fido authentication failed."
+msgstr "L'autenticació FIDO d'Entra Id ha fallat."
+
+msgid "Entra Id Password:"
+msgstr "Contrasenya d'Entra Id:"
+
+msgid "FIDO authentication not available. Please try a different authentication method."
+msgstr "L'autenticació FIDO no està disponible. Proveu un altre mètode d'autenticació."
+
+msgid "Failed to authenticate with Hello PIN."
+msgstr "No s'ha pogut autenticar amb el PIN Hello."
+
+msgid "Failed to authenticate with Hello PIN. One more failed attempt will require multi-factor authentication and resetting your Linux Hello PIN."
+msgstr "No s'ha pogut autenticar amb el PIN Hello. Un intent fallit més requerirà autenticació multifactor i restablir el PIN Hello de Linux."
+
+msgid "Failed to authenticate with Hello TOTP code."
+msgstr "No s'ha pogut autenticar amb el codi TOTP Hello."
+
+msgid "Failed to build regex: {error}"
+msgstr "No s'ha pogut construir l'expressió regular: {error}"
+
+msgid "Failed to change user password: {msg}"
+msgstr "No s'ha pogut canviar la contrasenya de l'usuari: {msg}"
+
+msgid "Failed to delete CSR key"
+msgstr "No s'ha pogut eliminar la clau CSR"
+
+msgid "Failed to delete intune key"
+msgstr "No s'ha pogut eliminar la clau d'Intune"
+
+msgid "Failed to generate QR code"
+msgstr "No s'ha pogut generar el codi QR"
+
+msgid "Failed to join domain. Please contact your administrator."
+msgstr "No s'ha pogut unir al domini. Contacteu amb l'administrador."
+
+msgid "Failed to provision hello key: {error}\n"
+"{message}"
+msgstr "No s'ha pogut aprovisionar la clau Hello: {error}\n"
+"{message}"
+
+msgid "Failed to save device configuration. Please contact your administrator."
+msgstr "No s'ha pogut desar la configuració del dispositiu. Contacteu amb l'administrador."
+
+msgid "Failed to store device credentials. Please contact your administrator."
+msgstr "No s'han pogut emmagatzemar les credencials del dispositiu. Contacteu amb l'administrador."
+
+msgid "Fido PIN:"
+msgstr "PIN FIDO:"
+
+msgid "Himmelblau authentication is starting, please wait..."
+msgstr "S'està iniciant l'autenticació de Himmelblau, espereu..."
+
+msgid "Himmelblau authentication service did not become available in time."
+msgstr "El servei d'autenticació de Himmelblau no ha estat disponible a temps."
+
+msgid "Himmelblau authentication service is unavailable."
+msgstr "El servei d'autenticació de Himmelblau no està disponible."
+
+msgid "Inputs did not match. Try again."
+msgstr "Les entrades no coincideixen. Torneu-ho a provar."
+
+msgid "Invalid credentials"
+msgstr "Credencials no vàlides"
+
+msgid "Multi-factor authentication required."
+msgstr "Cal autenticació multifactor."
+
+msgid "Multi-factor authentication required. Please try signing in again."
+msgstr "Cal autenticació multifactor. Torneu a intentar iniciar sessió."
+
+msgid "Network outage detected."
+msgstr "S'ha detectat una interrupció de la xarxa."
+
+msgid "New PIN:"
+msgstr "PIN nou:"
+
+msgid "New password:"
+msgstr "Contrasenya nova:"
+
+msgid "No Entra Id Hello PIN was supplied."
+msgstr "No s'ha proporcionat cap PIN Hello d'Entra Id."
+
+msgid "No Entra Id Hello confirmation PIN was supplied."
+msgstr "No s'ha proporcionat cap PIN de confirmació Hello d'Entra Id."
+
+msgid "No Entra Id confirmation password was supplied."
+msgstr "No s'ha proporcionat cap contrasenya de confirmació d'Entra Id."
+
+msgid "No Entra Id password was supplied."
+msgstr "No s'ha proporcionat cap contrasenya d'Entra Id."
+
+msgid "No Hello TOTP code was supplied."
+msgstr "No s'ha proporcionat cap codi TOTP Hello."
+
+msgid "No input was supplied."
+msgstr "No s'ha proporcionat cap entrada."
+
+msgid "Offline auth has expired. Please connect to the network to continue."
+msgstr "L'autenticació sense connexió ha caducat. Connecteu-vos a la xarxa per continuar."
+
+msgid "Open your Authenticator app, and enter the number '{entropy}' to sign in."
+msgstr "Obriu l'aplicació d'autenticació i introduïu el número «{entropy}» per iniciar sessió."
+
+msgid "Open your authenticator app and scan this QR code to enroll. Then enter the generated code.\n"
+"{qr}"
+msgstr "Obriu l'aplicació d'autenticació i escanegeu aquest codi QR per registrar-vos. A continuació, introduïu el codi generat.\n"
+"{qr}"
+
+msgid "PIN must not use repeating or predictable sequences. Avoid patterns like '111111', '123456', or '135791'."
+msgstr "El PIN no pot contenir seqüències repetitives o previsibles. Eviteu patrons com «111111», «123456» o «135791»."
+
+msgid "PIN setup failed. Please try signing in again."
+msgstr "La configuració del PIN ha fallat. Torneu a intentar iniciar sessió."
+
+msgid "PIN:"
+msgstr "PIN:"
+
+msgid "Password change required. Please contact your administrator."
+msgstr "Cal canviar la contrasenya. Contacteu amb l'administrador."
+
+msgid "Password entry required."
+msgstr "Cal introduir la contrasenya."
+
+msgid "Password reset registration required. Complete setup at https://aka.ms/ssprsetup from another device, then try again."
+msgstr "Cal completar el registre per al restabliment de contrasenya. Completeu la configuració a https://aka.ms/ssprsetup des d'un altre dispositiu i torneu-ho a provar."
+
+msgid "Please enter your Hello TOTP code from your Authenticator:"
+msgstr "Introduïu el codi TOTP Hello de l'aplicació d'autenticació:"
+
+msgid "Please insert your security key."
+msgstr "Inseriu la clau de seguretat."
+
+msgid "Please select a device by touching one of them."
+msgstr "Seleccioneu un dispositiu tocant-ne un."
+
+msgid "Please touch your security key."
+msgstr "Toqueu la clau de seguretat."
+
+msgid "Press enter to continue"
+msgstr "Premeu Retorn per continuar"
+
+msgid "QR/Bluetooth authentication failed."
+msgstr "L'autenticació per QR/Bluetooth ha fallat."
+
+msgid "Scan the QR code to continue sign-in, or open this link on another device:\n"
+"{complete}\n"
+"If you cannot scan, visit:\n"
+"{verification_uri}\n"
+"And enter the code:\n"
+"{user_code}"
+msgstr "Escanegeu el codi QR per continuar l'inici de sessió, o obriu aquest enllaç en un altre dispositiu:\n"
+"{complete}\n"
+"Si no podeu escanejar, visiteu:\n"
+"{verification_uri}\n"
+"I introduïu el codi:\n"
+"{user_code}"
+
+msgid "Scan with your authenticator app"
+msgstr "Escanegeu amb l'aplicació d'autenticació"
+
+msgid "Security key and QR/Bluetooth authentication failed."
+msgstr "L'autenticació per clau de seguretat i QR/Bluetooth ha fallat."
+
+msgid "Security key authentication failed."
+msgstr "L'autenticació per clau de seguretat ha fallat."
+
+msgid "Session data corrupted. Please sign in again."
+msgstr "Les dades de sessió són corruptes. Torneu a iniciar sessió."
+
+msgid "Set up a PIN\n"
+"A Hello PIN is a fast, secure way to sign in to your device, apps, and services."
+msgstr "Configureu un PIN\n"
+"Un PIN Hello és una manera ràpida i segura d'iniciar sessió al dispositiu, les aplicacions i els serveis."
+
+msgid "TOTP Code:"
+msgstr "Codi TOTP:"
+
+msgid "The minimum PIN length is {length} characters."
+msgstr "La longitud mínima del PIN és de {length} caràcters."
+
+msgid "This command changes your local Hello PIN, NOT your Entra Id password."
+msgstr "Aquesta ordre canvia el PIN Hello local, NO la contrasenya d'Entra Id."
+
+msgid "Too many failed attempts in one row. Your device has been temporarily blocked. Please unplug it and plug in again."
+msgstr "Massa intents fallits seguits. El dispositiu ha estat blocat temporalment. Desconnecteu-lo i torneu-lo a connectar."
+
+msgid "Too many failed attempts. Your device has been blocked. Reset it."
+msgstr "Massa intents fallits. El dispositiu ha estat blocat. Restabliu-lo."
+
+msgid "Too many failed user verification attempts."
+msgstr "Massa intents de verificació d'usuari fallits."
+
+msgid "Too many incorrect PIN attempts. You will need to enroll a new Linux Hello PIN."
+msgstr "Massa intents de PIN incorrectes. Haureu de registrar un PIN Hello de Linux nou."
+
+msgid "Try again."
+msgstr "Torneu-ho a provar."
+
+msgid "Unexpected authentication step. Please try signing in again."
+msgstr "Pas d'autenticació inesperat. Torneu a intentar iniciar sessió."
+
+msgid "Unexpected error occurred."
+msgstr "S'ha produït un error inesperat."
+
+msgid "Unexpected error: {error}"
+msgstr "Error inesperat: {error}"
+
+msgid "Unexpected select device notice"
+msgstr "Avís de selecció de dispositiu inesperat"
+
+msgid "Update your password\n"
+"You need to update your password because this is\n"
+"the first time you are signing in, or because your\n"
+"password has expired."
+msgstr "Actualitzeu la contrasenya\n"
+"Cal que actualitzeu la contrasenya perquè és\n"
+"el primer cop que inicieu sessió, o bé perquè\n"
+"la contrasenya ha caducat."
+
+msgid "Use the Linux Hello PIN for this device."
+msgstr "Utilitzeu el PIN Hello de Linux per a aquest dispositiu."
+
+msgid "Use the password for your Office 365 or Microsoft online login."
+msgstr "Utilitzeu la contrasenya del vostre compte d'Office 365 o d'inici de sessió en línia de Microsoft."
+
+msgid "Using a browser on another device, visit:\n"
+"{verification_uri}\n"
+"And enter the code:\n"
+"{user_code}"
+msgstr "Des d'un navegador en un altre dispositiu, visiteu:\n"
+"{verification_uri}\n"
+"I introduïu el codi:\n"
+"{user_code}"
+
+msgid "Value:"
+msgstr "Valor:"
+
+msgid "Waiting for browser authentication to complete..."
+msgstr "S'està esperant que es completi l'autenticació del navegador..."
+
+msgid "We texted your phone {phone}. Please enter the code to sign in:"
+msgstr "Us hem enviat un missatge de text al telèfon {phone}. Introduïu el codi per iniciar sessió:"
+
+msgid "We're calling your office phone {phone}. Please answer it to continue."
+msgstr "Us estem trucant al telèfon de l'oficina {phone}. Responeu la trucada per continuar."
+
+msgid "We're calling your phone {phone}. Please answer it to continue."
+msgstr "Us estem trucant al telèfon {phone}. Responeu la trucada per continuar."
+
+msgid "Wrong PIN! {message}"
+msgstr "PIN incorrecte! {message}"
+
+msgid "Wrong user verification! {message}"
+msgstr "Verificació d'usuari incorrecta! {message}"
+
+msgid "You have {attempts} attempt left."
+msgid_plural "You have {attempts} attempts left."
+msgstr[0] "Us queda {attempts} intent."
+msgstr[1] "Us queden {attempts} intents."
+
+msgid "Your session has expired. Please sign in again."
+msgstr "La sessió ha caducat. Torneu a iniciar sessió."
+
+msgid "{code}: {message}\n"
+"If you are now prompted for a password from pam_unix, please disregard the prompt, go back and try again."
+msgstr "{code}: {message}\n"
+"Si ara se us demana una contrasenya de pam_unix, ignoreu el missatge, torneu enrere i torneu-ho a provar."
+
+msgid "{message}\n"
+"No push? Check your mobile device's internet connection."
+msgstr "{message}\n"
+"No heu rebut la notificació push? Comproveu la connexió a Internet del dispositiu mòbil."

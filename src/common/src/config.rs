@@ -16,6 +16,7 @@ use crate::constants::DEFAULT_HELLO_TOTP_ENABLED;
    You should have received a copy of the GNU General Public License
    along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
+use crate::i18n::tr;
 use crate::unix_passwd::parse_etc_passwd;
 use configparser::ini::Ini;
 use oauth2::url;

@@ -1,0 +1,416 @@
+# Dutch translations for Himmelblau.
+# Copyright (C) 2026 Himmelblau contributors
+# This file is distributed under the same license as Himmelblau.
+#
+msgid ""
+msgstr "Project-Id-Version: himmelblau\n"
+"POT-Creation-Date: 2026-07-22 22:33+0000\n"
+"PO-Revision-Date: 2026-07-23 14:39+0000\n"
+"Last-Translator: Automated via Codex <noreply@himmelblau-idm.org>\n"
+"Language-Team: Dutch\n"
+"Language: nl\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Plural-Forms: nplurals=2; plural=(n != 1);\n"
+""
+
+msgid "An unexpected error occurred."
+msgstr "Er is een onverwachte fout opgetreden."
+
+msgid "Approve sign-in in your authenticator app, then wait..."
+msgstr "Keur de aanmelding goed in uw authenticator-app en wacht vervolgens..."
+
+msgid "Authenticated user {user} does not match requested user"
+msgstr "Geverifieerde gebruiker {user} komt niet overeen met de gevraagde gebruiker"
+
+msgid "Authenticated user {uuid} does not match requested user"
+msgstr "Geverifieerde gebruiker {uuid} komt niet overeen met de gevraagde gebruiker"
+
+msgid "Authentication did not return a refresh token. Please try again."
+msgstr "Authenticatie heeft geen vernieuwingstoken geretourneerd. Probeer het opnieuw."
+
+msgid "Authentication failed (AADSTS{code})"
+msgstr "Verificatie mislukt (AADSTS{code})"
+
+msgid "Authentication failed in browser flow."
+msgstr "Authenticatie mislukt in browserstroom."
+
+msgid "Authentication failed. Please contact your administrator."
+msgstr "Verificatie mislukt. Neem contact op met uw beheerder."
+
+msgid "Authentication failed. Please try again."
+msgstr "Authenticatie mislukt. Probeer het opnieuw."
+
+msgid "Authentication failed. Please try signing in again."
+msgstr "Verificatie mislukt. Probeer opnieuw in te loggen."
+
+msgid "Authentication failed: Authentication method not supported."
+msgstr "Verificatie mislukt: verificatiemethode wordt niet ondersteund."
+
+msgid "Authentication failed: Configuration error."
+msgstr "Verificatie mislukt: configuratiefout."
+
+msgid "Authentication failed: Cryptographic error."
+msgstr "Verificatie mislukt: cryptografische fout."
+
+msgid "Authentication failed: Invalid server response."
+msgstr "Verificatie mislukt: Ongeldig serverantwoord."
+
+msgid "Authentication failed: Missing required data."
+msgstr "Verificatie mislukt: vereiste gegevens ontbreken."
+
+msgid "Authentication failed: Security hardware error."
+msgstr "Authenticatie mislukt: fout in beveiligingshardware."
+
+msgid "Authentication failed: Unable to reach authentication server."
+msgstr "Authenticatie mislukt: Kan de authenticatieserver niet bereiken."
+
+msgid "Authentication failed: {error}"
+msgstr "Authenticatie mislukt: {error}"
+
+msgid "Authentication flow completed but token exchange failed. Please try again."
+msgstr "De authenticatiestroom is voltooid, maar het uitwisselen van het token is mislukt. Probeer het opnieuw."
+
+msgid "Authentication in progress."
+msgstr "Authenticatie wordt uitgevoerd."
+
+msgid "Authentication incomplete. Please try again."
+msgstr "Authenticatie niet voltooid. Probeer het opnieuw."
+
+msgid "Authentication service is temporarily unavailable. Please try again shortly."
+msgstr "De authenticatieservice is tijdelijk niet beschikbaar. Probeer het binnenkort opnieuw."
+
+msgid "Authentication service unavailable. Please try again later."
+msgstr "Authenticatieservice niet beschikbaar. Probeer het later opnieuw."
+
+msgid "Authentication session corrupted. Please try again."
+msgstr "Authenticatiesessie beschadigd. Probeer het opnieuw."
+
+msgid "Authentication session data missing. Please try again."
+msgstr "Verificatiesessiegegevens ontbreken. Probeer het opnieuw."
+
+msgid "Authentication session returned an unexpected state. Please try again."
+msgstr "De authenticatiesessie heeft een onverwachte status geretourneerd. Probeer het opnieuw."
+
+msgid "Authentication timed out. Please try again."
+msgstr "Authenticatie is verlopen. Probeer het opnieuw."
+
+msgid "Browser authentication backend unavailable. Please try again."
+msgstr "Browserverificatie-backend is niet beschikbaar. Probeer het opnieuw."
+
+msgid "Changing the password. Please wait..."
+msgstr "Het wachtwoord wordt gewijzigd. Even geduld..."
+
+msgid "Chosen password is too short! 8 chars required."
+msgstr "Het gekozen wachtwoord is te kort! 8 tekens vereist."
+
+msgid "Chosen pin is too short! {length} chars required."
+msgstr "Gekozen pincode is te kort! {length} tekens vereist."
+
+msgid "Cloud Password:"
+msgstr "Cloudwachtwoord:"
+
+msgid "Code:"
+msgstr "Code:"
+
+msgid "Confirm PIN:"
+msgstr "Bevestig pincode:"
+
+msgid "Confirm password:"
+msgstr "Bevestig wachtwoord:"
+
+msgid "Consent required. Please contact your administrator."
+msgstr "Toestemming vereist. Neem contact op met uw beheerder."
+
+msgid "Create a PIN to use in place of passwords."
+msgstr "Maak een pincode aan om in plaats van wachtwoorden te gebruiken."
+
+msgid "Device enrollment failed. Please contact your administrator."
+msgstr "Apparaatregistratie is mislukt. Neem contact op met uw beheerder."
+
+msgid "Device has been removed from the domain."
+msgstr "Het apparaat is uit het domein verwijderd."
+
+msgid "Enable Bluetooth to sign in with your phone."
+msgstr "Schakel Bluetooth in om u aan te melden met uw telefoon."
+
+msgid "Enrolling the Hello PIN. Please wait..."
+msgstr "De Hello-pincode wordt geregistreerd. Even geduld..."
+
+msgid "Enter the setup key '{secret}' to enroll a TOTP Authenticator app. Use '{issuer}' for the code name and '{account}' as the label/name."
+msgstr "Voer de installatiesleutel '{secret}' in om een TOTP-authenticator-app te registreren. Gebruik '{issuer}' als codenaam en '{account}' als label/naam."
+
+msgid "Entra Id Fido authentication failed."
+msgstr "Entra ID FIDO-authenticatie is mislukt."
+
+msgid "Entra Id Password:"
+msgstr "Entra ID-wachtwoord:"
+
+msgid "FIDO authentication not available. Please try a different authentication method."
+msgstr "FIDO-verificatie is niet beschikbaar. Probeer een andere verificatiemethode."
+
+msgid "Failed to authenticate with Hello PIN."
+msgstr "Verificatie met Hello-pincode is mislukt."
+
+msgid "Failed to authenticate with Hello PIN. One more failed attempt will require multi-factor authentication and resetting your Linux Hello PIN."
+msgstr "Verificatie met Hello-pincode is mislukt. Bij nog één mislukte poging is meervoudige verificatie vereist en moet u uw Linux Hello-pincode opnieuw instellen."
+
+msgid "Failed to authenticate with Hello TOTP code."
+msgstr "Verificatie met Hello TOTP-code is mislukt."
+
+msgid "Failed to build regex: {error}"
+msgstr "Kan reguliere expressie niet opbouwen: {error}"
+
+msgid "Failed to change user password: {msg}"
+msgstr "Kan gebruikerswachtwoord niet wijzigen: {msg}"
+
+msgid "Failed to delete CSR key"
+msgstr "Verwijderen van CSR-sleutel mislukt"
+
+msgid "Failed to delete intune key"
+msgstr "Verwijderen van Intune-sleutel is mislukt"
+
+msgid "Failed to generate QR code"
+msgstr "Kan geen QR-code genereren"
+
+msgid "Failed to join domain. Please contact your administrator."
+msgstr "Kan geen verbinding maken met het domein. Neem contact op met uw beheerder."
+
+msgid "Failed to provision hello key: {error}\n"
+"{message}"
+msgstr "Inrichten van Hello-sleutel mislukt: {error}\n"
+"{message}"
+
+msgid "Failed to save device configuration. Please contact your administrator."
+msgstr "Kan apparaatconfiguratie niet opslaan. Neem contact op met uw beheerder."
+
+msgid "Failed to store device credentials. Please contact your administrator."
+msgstr "Kan de apparaatreferenties niet opslaan. Neem contact op met uw beheerder."
+
+msgid "Fido PIN:"
+msgstr "Fido-pincode:"
+
+msgid "Himmelblau authentication is starting, please wait..."
+msgstr "Himmelblau-authenticatie wordt gestart, even geduld..."
+
+msgid "Himmelblau authentication service did not become available in time."
+msgstr "De Himmelblau-authenticatieservice is niet op tijd beschikbaar geworden."
+
+msgid "Himmelblau authentication service is unavailable."
+msgstr "De Himmelblau-authenticatieservice is niet beschikbaar."
+
+msgid "Inputs did not match. Try again."
+msgstr "Invoer kwam niet overeen. Probeer het opnieuw."
+
+msgid "Invalid credentials"
+msgstr "Ongeldige aanmeldgegevens"
+
+msgid "Multi-factor authentication required."
+msgstr "Meervoudige verificatie vereist."
+
+msgid "Multi-factor authentication required. Please try signing in again."
+msgstr "Meervoudige verificatie is vereist. Probeer u opnieuw aan te melden."
+
+msgid "Network outage detected."
+msgstr "Netwerkstoring gedetecteerd."
+
+msgid "New PIN:"
+msgstr "Nieuwe pincode:"
+
+msgid "New password:"
+msgstr "Nieuw wachtwoord:"
+
+msgid "No Entra Id Hello PIN was supplied."
+msgstr "Er is geen Entra ID Hello-pincode opgegeven."
+
+msgid "No Entra Id Hello confirmation PIN was supplied."
+msgstr "Er is geen bevestigingspincode voor Entra ID Hello opgegeven."
+
+msgid "No Entra Id confirmation password was supplied."
+msgstr "Er is geen bevestigingswachtwoord voor Entra Id opgegeven."
+
+msgid "No Entra Id password was supplied."
+msgstr "Er is geen Entra ID-wachtwoord opgegeven."
+
+msgid "No Hello TOTP code was supplied."
+msgstr "Er is geen Hello TOTP-code opgegeven."
+
+msgid "No input was supplied."
+msgstr "Er is geen invoer opgegeven."
+
+msgid "Offline auth has expired. Please connect to the network to continue."
+msgstr "Offline verificatie is verlopen. Maak verbinding met het netwerk om door te gaan."
+
+msgid "Open your Authenticator app, and enter the number '{entropy}' to sign in."
+msgstr "Open uw Authenticator-app en voer het nummer '{entropy}' in om u aan te melden."
+
+msgid "Open your authenticator app and scan this QR code to enroll. Then enter the generated code.\n"
+"{qr}"
+msgstr "Open uw authenticator-app en scan deze QR-code om u in te schrijven. Voer daarna de gegenereerde code in.\n"
+"{qr}"
+
+msgid "PIN must not use repeating or predictable sequences. Avoid patterns like '111111', '123456', or '135791'."
+msgstr "De pincode mag geen herhalende of voorspelbare reeksen gebruiken. Vermijd patronen zoals '111111', '123456' of '135791'."
+
+msgid "PIN setup failed. Please try signing in again."
+msgstr "Instellen van pincode is mislukt. Probeer u opnieuw aan te melden."
+
+msgid "PIN:"
+msgstr "Pincode:"
+
+msgid "Password change required. Please contact your administrator."
+msgstr "Wachtwoordwijziging vereist. Neem contact op met uw beheerder."
+
+msgid "Password entry required."
+msgstr "Wachtwoordinvoer vereist."
+
+msgid "Password reset registration required. Complete setup at https://aka.ms/ssprsetup from another device, then try again."
+msgstr "Registratie voor wachtwoordherstel vereist. Voltooi de configuratie op https://aka.ms/ssprsetup vanaf een ander apparaat en probeer het daarna opnieuw."
+
+msgid "Please enter your Hello TOTP code from your Authenticator:"
+msgstr "Voer uw Hello TOTP-code in vanuit uw Authenticator:"
+
+msgid "Please insert your security key."
+msgstr "Plaats uw beveiligingssleutel."
+
+msgid "Please select a device by touching one of them."
+msgstr "Selecteer een apparaat door er een aan te raken."
+
+msgid "Please touch your security key."
+msgstr "Raak uw beveiligingssleutel aan."
+
+msgid "Press enter to continue"
+msgstr "Druk op Enter om door te gaan"
+
+msgid "QR/Bluetooth authentication failed."
+msgstr "QR-/Bluetooth-authenticatie is mislukt."
+
+msgid "Scan the QR code to continue sign-in, or open this link on another device:\n"
+"{complete}\n"
+"If you cannot scan, visit:\n"
+"{verification_uri}\n"
+"And enter the code:\n"
+"{user_code}"
+msgstr "Scan de QR-code om door te gaan met aanmelden, of open deze link op een ander apparaat:\n"
+"{complete}\n"
+"Als u niet kunt scannen, gaat u naar:\n"
+"{verification_uri}\n"
+"En voert u de code in:\n"
+"{user_code}"
+
+msgid "Scan with your authenticator app"
+msgstr "Scan met uw authenticator-app"
+
+msgid "Security key and QR/Bluetooth authentication failed."
+msgstr "Verificatie met beveiligingssleutel en QR/Bluetooth is mislukt."
+
+msgid "Security key authentication failed."
+msgstr "Verificatie met beveiligingssleutel is mislukt."
+
+msgid "Session data corrupted. Please sign in again."
+msgstr "Sessiegegevens beschadigd. Meld u opnieuw aan."
+
+msgid "Set up a PIN\n"
+"A Hello PIN is a fast, secure way to sign in to your device, apps, and services."
+msgstr "Stel een pincode in\n"
+"Een Hello-pincode is een snelle, veilige manier om u aan te melden bij uw apparaat, apps en services."
+
+msgid "TOTP Code:"
+msgstr "TOTP-code:"
+
+msgid "The minimum PIN length is {length} characters."
+msgstr "De minimale pincode is {length} tekens lang."
+
+msgid "This command changes your local Hello PIN, NOT your Entra Id password."
+msgstr "Met deze opdracht wijzigt u uw lokale Hello-pincode, NIET uw Entra ID-wachtwoord."
+
+msgid "Too many failed attempts in one row. Your device has been temporarily blocked. Please unplug it and plug in again."
+msgstr "Te veel mislukte pogingen achter elkaar. Uw apparaat is tijdelijk geblokkeerd. Koppel het los en sluit het opnieuw aan."
+
+msgid "Too many failed attempts. Your device has been blocked. Reset it."
+msgstr "Te veel mislukte pogingen. Uw apparaat is geblokkeerd. Stel het opnieuw in."
+
+msgid "Too many failed user verification attempts."
+msgstr "Te veel mislukte pogingen tot gebruikersverificatie."
+
+msgid "Too many incorrect PIN attempts. You will need to enroll a new Linux Hello PIN."
+msgstr "Te veel onjuiste PIN-pogingen. U moet een nieuwe Linux Hello-PIN registreren."
+
+msgid "Try again."
+msgstr "Probeer het opnieuw."
+
+msgid "Unexpected authentication step. Please try signing in again."
+msgstr "Onverwachte verificatiestap. Probeer opnieuw in te loggen."
+
+msgid "Unexpected error occurred."
+msgstr "Er is een onverwachte fout opgetreden."
+
+msgid "Unexpected error: {error}"
+msgstr "Onverwachte fout: {error}"
+
+msgid "Unexpected select device notice"
+msgstr "Onverwachte melding voor apparaatselectie"
+
+msgid "Update your password\n"
+"You need to update your password because this is\n"
+"the first time you are signing in, or because your\n"
+"password has expired."
+msgstr "Werk uw wachtwoord bij\n"
+"U moet uw wachtwoord bijwerken omdat dit de\n"
+"eerste keer is dat u zich aanmeldt, of omdat uw\n"
+"wachtwoord is verlopen."
+
+msgid "Use the Linux Hello PIN for this device."
+msgstr "Gebruik de Linux Hello-pincode voor dit apparaat."
+
+msgid "Use the password for your Office 365 or Microsoft online login."
+msgstr "Gebruik het wachtwoord voor uw Office 365- of Microsoft-onlineaanmelding."
+
+msgid "Using a browser on another device, visit:\n"
+"{verification_uri}\n"
+"And enter the code:\n"
+"{user_code}"
+msgstr "Open een browser op een ander apparaat en ga naar:\n"
+"{verification_uri}\n"
+"Voer vervolgens de code in:\n"
+"{user_code}"
+
+msgid "Value:"
+msgstr "Waarde:"
+
+msgid "Waiting for browser authentication to complete..."
+msgstr "Wachten tot browserauthenticatie is voltooid..."
+
+msgid "We texted your phone {phone}. Please enter the code to sign in:"
+msgstr "We hebben een sms gestuurd naar uw telefoon {phone}. Voer de code in om u aan te melden:"
+
+msgid "We're calling your office phone {phone}. Please answer it to continue."
+msgstr "We bellen uw kantoortelefoon {phone}. Neem op om door te gaan."
+
+msgid "We're calling your phone {phone}. Please answer it to continue."
+msgstr "We bellen uw telefoon {phone}. Neem op om door te gaan."
+
+msgid "Wrong PIN! {message}"
+msgstr "Onjuiste pincode! {message}"
+
+msgid "Wrong user verification! {message}"
+msgstr "Onjuiste gebruikersverificatie! {message}"
+
+msgid "You have {attempts} attempt left."
+msgid_plural "You have {attempts} attempts left."
+msgstr[0] "U hebt nog {attempts} poging over."
+msgstr[1] "U hebt nog {attempts} pogingen over."
+
+msgid "Your session has expired. Please sign in again."
+msgstr "Uw sessie is verlopen. Meld u opnieuw aan."
+
+msgid "{code}: {message}\n"
+"If you are now prompted for a password from pam_unix, please disregard the prompt, go back and try again."
+msgstr "{code}: {message}\n"
+"Als u nu wordt gevraagd om een wachtwoord van pam_unix, negeer deze prompt dan, ga terug en probeer het opnieuw."
+
+msgid "{message}\n"
+"No push? Check your mobile device's internet connection."
+msgstr "{message}\n"
+"Geen pushmelding? Controleer de internetverbinding van uw mobiele apparaat."

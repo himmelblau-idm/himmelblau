@@ -27,6 +27,7 @@ use crate::constants::DEFAULT_APP_ID;
 use crate::constants::EDGE_BROWSER_CLIENT_ID;
 use crate::constants::ID_MAP_CACHE;
 use crate::db::KeyStoreTxn;
+use crate::i18n::{tr, tr_fmt};
 use crate::idmap_cache::StaticIdCache;
 use crate::idprovider::common::build_online_probe_client;
 use crate::idprovider::common::flip_displayname_comma;
@@ -101,6 +102,17 @@ fn is_unavailable_mfa_method_error(msg: &str, requested_method: &str) -> bool {
     msg.starts_with(&expected_prefix)
 }
 
+fn mfa_flow_uses_push_hint(flow: &MFAAuthContinue) -> bool {
+    flow.get_default_mfa_method_details()
+        .map(|method| {
+            matches!(
+                method.auth_method_id.as_str(),
+                "PhoneAppNotification" | "CompanionAppsNotification"
+            )
+        })
+        .unwrap_or(false)
+}
+
 fn is_mfa_required_for_enrollment(e: &MsalError) -> bool {
     match e {
         MsalError::AcquireTokenFailed(resp) => resp
@@ -122,11 +134,7 @@ fn password_change_required(
     *cred_handler = AuthCredHandler::ChangePassword { old_cred };
     (
         AuthResult::Next(AuthRequest::ChangePassword {
-            msg: "Update your password\n\
-                 You need to update your password because this is\n\
-                 the first time you are signing in, or because your\n\
-                 password has expired."
-                .to_string(),
+            msg: tr("Update your password\nYou need to update your password because this is\nthe first time you are signing in, or because your\npassword has expired."),
         }),
         AuthCacheAction::None,
     )
@@ -141,66 +149,64 @@ fn msal_error_to_user_message(e: &MsalError) -> String {
         | MsalError::InvalidBase64(_)
         | MsalError::InvalidParse(_)
         | MsalError::InvalidRegex(_)
-        | MsalError::FormatError(_) => {
-            "Authentication failed: Invalid server response.".to_string()
-        }
+        | MsalError::FormatError(_) => tr("Authentication failed: Invalid server response."),
         MsalError::AcquireTokenFailed(error_response) => {
             if error_response
                 .error_codes
                 .contains(&PASSWORD_RESET_REGISTRATION_REQUIRED)
             {
-                return "Password reset registration required. Complete setup at https://aka.ms/ssprsetup from another device, then try again.".to_string();
+                return tr("Password reset registration required. Complete setup at https://aka.ms/ssprsetup from another device, then try again.");
             }
             // This case is typically handled separately with error_description,
             // but provide a fallback if it reaches this function.
             error_response.error_description.to_string()
         }
         MsalError::RequestFailed(_) => {
-            "Authentication failed: Unable to reach authentication server.".to_string()
+            tr("Authentication failed: Unable to reach authentication server.")
         }
         MsalError::AuthTypeUnsupported => {
-            "Authentication failed: Authentication method not supported.".to_string()
+            tr("Authentication failed: Authentication method not supported.")
         }
-        MsalError::TPMFail(_) => "Authentication failed: Security hardware error.".to_string(),
-        MsalError::URLFormatFailed(_) => "Authentication failed: Configuration error.".to_string(),
+        MsalError::TPMFail(_) => tr("Authentication failed: Security hardware error."),
+        MsalError::URLFormatFailed(_) => tr("Authentication failed: Configuration error."),
         MsalError::DeviceEnrollmentFail(_) => {
-            "Device enrollment failed. Please contact your administrator.".to_string()
+            tr("Device enrollment failed. Please contact your administrator.")
         }
-        MsalError::CryptoFail(_) => "Authentication failed: Cryptographic error.".to_string(),
-        MsalError::ConfigError(_) => "Authentication failed: Configuration error.".to_string(),
+        MsalError::CryptoFail(_) => tr("Authentication failed: Cryptographic error."),
+        MsalError::ConfigError(_) => tr("Authentication failed: Configuration error."),
         MsalError::MFAPollContinue => {
             // This is an internal state, should not reach the user.
-            "Authentication in progress.".to_string()
+            tr("Authentication in progress.")
         }
         MsalError::AADSTSError(aadsts_err) => {
             if aadsts_err.code == PASSWORD_RESET_REGISTRATION_REQUIRED {
-                return "Password reset registration required. Complete setup at https://aka.ms/ssprsetup from another device, then try again.".to_string();
+                return tr("Password reset registration required. Complete setup at https://aka.ms/ssprsetup from another device, then try again.");
             }
             // AADSTSError has a useful description from Azure AD
             aadsts_err.to_string()
         }
-        MsalError::Missing(_) => "Authentication failed: Missing required data.".to_string(),
+        MsalError::Missing(_) => tr("Authentication failed: Missing required data."),
         MsalError::ChangePassword => {
             // Internal state, should not bubble up to user.
-            "Password change required. Please contact your administrator.".to_string()
+            tr("Password change required. Please contact your administrator.")
         }
         MsalError::PasswordRequired => {
             // Internal state, should not bubble up to user.
-            "Password entry required.".to_string()
+            tr("Password entry required.")
         }
         MsalError::ConsentRequested(_) => {
             // Internal state, should not bubble up to user.
-            "Consent required. Please contact your administrator.".to_string()
+            tr("Consent required. Please contact your administrator.")
         }
         MsalError::AuthCodeReceived(_) => {
             // Internal state, should not bubble up to user.
-            "Authentication in progress.".to_string()
+            tr("Authentication in progress.")
         }
         MsalError::MFARequired => {
             // Internal state, should not bubble up to user.
-            "Multi-factor authentication required.".to_string()
+            tr("Multi-factor authentication required.")
         }
-        _ => "Authentication failed. Please contact your administrator.".to_string(),
+        _ => tr("Authentication failed. Please contact your administrator."),
     }
 }
 
@@ -992,7 +998,8 @@ macro_rules! check_new_device_enrollment_required {
                 return Ok((
                     AuthResult::Denied(
                         msal_error_to_user_message(&MsalError::AcquireTokenFailed($aadsts_err))
-                            + " Failed to delete CSR key",
+                            + " "
+                            + &tr("Failed to delete CSR key"),
                     ),
                     AuthCacheAction::None,
                 ));
@@ -1003,7 +1010,8 @@ macro_rules! check_new_device_enrollment_required {
                 return Ok((
                     AuthResult::Denied(
                         msal_error_to_user_message(&MsalError::AcquireTokenFailed($aadsts_err))
-                            + " Failed to delete intune key",
+                            + " "
+                            + &tr("Failed to delete intune key"),
                     ),
                     AuthCacheAction::None,
                 ));
@@ -1011,7 +1019,8 @@ macro_rules! check_new_device_enrollment_required {
 
             return Ok((
                 AuthResult::Denied(
-                    "Device has been removed from the domain. ".to_string()
+                    tr("Device has been removed from the domain.")
+                        + " "
                         + &msal_error_to_user_message(&MsalError::AcquireTokenFailed($aadsts_err)),
                 ),
                 AuthCacheAction::None,
@@ -1838,7 +1847,7 @@ impl IdProvider for HimmelblauProvider {
                 *state = CacheState::OfflineNextCheck(SystemTime::now() + OFFLINE_NEXT_CHECK);
                 return Ok((
                     AuthRequest::InitDenied {
-                        msg: "Network outage detected.".to_string(),
+                        msg: tr("Network outage detected."),
                     },
                     AuthCredHandler::None,
                 ));
@@ -1900,7 +1909,7 @@ impl IdProvider for HimmelblauProvider {
                                 error!("{:?}", e);
                                 return Ok((
                                     AuthRequest::InitDenied {
-                                        msg: "Authentication service is temporarily unavailable. Please try again shortly.".to_string(),
+                                        msg: tr("Authentication service is temporarily unavailable. Please try again shortly."),
                                     },
                                     AuthCredHandler::None,
                                 ));
@@ -1941,7 +1950,7 @@ impl IdProvider for HimmelblauProvider {
                     if !self.attempt_online(tpm, SystemTime::now()).await {
                         return Ok((
                             AuthRequest::InitDenied {
-                                msg: "Network outage detected.".to_string(),
+                                msg: tr("Network outage detected."),
                             },
                             AuthCredHandler::None,
                         ));
@@ -1965,7 +1974,7 @@ impl IdProvider for HimmelblauProvider {
                     if !self.attempt_online(tpm, SystemTime::now()).await {
                         return Ok((
                             AuthRequest::InitDenied {
-                                msg: "Network outage detected.".to_string(),
+                                msg: tr("Network outage detected."),
                             },
                             AuthCredHandler::None,
                         ));
@@ -2031,6 +2040,7 @@ impl IdProvider for HimmelblauProvider {
                             // Kanidm pam expects a polling_interval in
                             // seconds, not milliseconds.
                             polling_interval: polling_interval / 1000,
+                            show_push_hint: mfa_flow_uses_push_hint(&flow),
                         },
                         AuthCredHandler::MFA {
                             flow: Box::new(flow),
@@ -2068,6 +2078,7 @@ impl IdProvider for HimmelblauProvider {
                         // Kanidm pam expects a polling_interval in
                         // seconds, not milliseconds.
                         polling_interval: polling_interval / 1000,
+                        show_push_hint: false,
                     },
                     AuthCredHandler::MFA {
                         flow: Box::new(flow),
@@ -2123,7 +2134,7 @@ impl IdProvider for HimmelblauProvider {
                         let mut state = self.state.lock().await;
                         *state = CacheState::OfflineNextCheck(SystemTime::now() + OFFLINE_NEXT_CHECK);
                         // Report the network outage to the user via PAM INFO.
-                        return Ok((AuthResult::Denied("Network outage detected.".to_string()), AuthCacheAction::None));
+                        return Ok((AuthResult::Denied(tr("Network outage detected.")), AuthCacheAction::None));
                     },
                     Err(MsalError::AcquireTokenFailed(e)) => {
                         check_new_device_enrollment_required!(e, self, keystore)
@@ -2141,7 +2152,7 @@ impl IdProvider for HimmelblauProvider {
             *state = CacheState::OfflineNextCheck(SystemTime::now() + OFFLINE_NEXT_CHECK);
             // Report the network outage to the user via PAM INFO.
             return Ok((
-                AuthResult::Denied("Network outage detected.".to_string()),
+                AuthResult::Denied(tr("Network outage detected.")),
                 AuthCacheAction::None,
             ));
         }
@@ -2159,7 +2170,7 @@ impl IdProvider for HimmelblauProvider {
                             if let Err(e) = config.write_server_config() {
                                 error!(?e, "Failed to write Intune join configuration.");
                                 return Ok((
-                                    AuthResult::Denied("Failed to save device configuration. Please contact your administrator.".to_string()),
+                                    AuthResult::Denied(tr("Failed to save device configuration. Please contact your administrator.")),
                                     AuthCacheAction::None,
                                 ));
                             }
@@ -2168,7 +2179,7 @@ impl IdProvider for HimmelblauProvider {
                         if let Err(e) = keystore.insert_tagged_hsm_key(&intune_tag, &intune_key) {
                             error!(?e, "Failed inserting the intune key into the keystore.");
                             return Ok((
-                                AuthResult::Denied("Failed to store device credentials. Please contact your administrator.".to_string()),
+                                AuthResult::Denied(tr("Failed to store device credentials. Please contact your administrator.")),
                                 AuthCacheAction::None,
                             ));
                         }
@@ -2269,7 +2280,7 @@ impl IdProvider for HimmelblauProvider {
                         }
                         error!("Failed to join domain: {:?}", e);
                         return Ok((
-                            AuthResult::Denied("Failed to join domain. Please contact your administrator.".to_string()),
+                            AuthResult::Denied(tr("Failed to join domain. Please contact your administrator.")),
                             AuthCacheAction::None,
                         ));
                     }
@@ -2509,7 +2520,7 @@ impl IdProvider for HimmelblauProvider {
                                 SystemTime::now() + OFFLINE_NEXT_CHECK,
                             );
                             return Ok((
-                                AuthResult::Denied("Network outage detected.".to_string()),
+                                AuthResult::Denied(tr("Network outage detected.")),
                                 AuthCacheAction::None,
                             ));
                         }
@@ -2533,7 +2544,7 @@ impl IdProvider for HimmelblauProvider {
                             error!("Failed to initiate reauth MFA flow: {:?}", e);
                             return Ok((
                                 AuthResult::Denied(
-                                    "Your session has expired. Please sign in again.".to_string(),
+                                    tr("Your session has expired. Please sign in again."),
                                 ),
                                 AuthCacheAction::None,
                             ));
@@ -2566,6 +2577,7 @@ impl IdProvider for HimmelblauProvider {
 
                     let msg = flow.msg.clone();
                     let polling_interval = flow.polling_interval.unwrap_or(5000);
+                    let show_push_hint = mfa_flow_uses_push_hint(&flow);
                     *cred_handler = AuthCredHandler::MFA {
                         flow: Box::new(flow),
                         password: None,
@@ -2579,6 +2591,7 @@ impl IdProvider for HimmelblauProvider {
                             // Kanidm pam expects a polling_interval in
                             // seconds, not milliseconds.
                             polling_interval: polling_interval / 1000,
+                            show_push_hint,
                         }),
                         AuthCacheAction::None,
                     ));
@@ -2608,7 +2621,7 @@ impl IdProvider for HimmelblauProvider {
                                 SystemTime::now() + OFFLINE_NEXT_CHECK,
                             );
                             return Ok((
-                                AuthResult::Denied("Network outage detected.".to_string()),
+                                AuthResult::Denied(tr("Network outage detected.")),
                                 AuthCacheAction::None,
                             ));
                         }
@@ -2616,7 +2629,7 @@ impl IdProvider for HimmelblauProvider {
                             error!("Failed to initiate reauth device flow: {:?}", e);
                             return Ok((
                                 AuthResult::Denied(
-                                    "Your session has expired. Please sign in again.".to_string(),
+                                    tr("Your session has expired. Please sign in again."),
                                 ),
                                 AuthCacheAction::None,
                             ));
@@ -2638,6 +2651,7 @@ impl IdProvider for HimmelblauProvider {
                             // Kanidm pam expects a polling_interval in
                             // seconds, not milliseconds.
                             polling_interval: polling_interval / 1000,
+                            show_push_hint: false,
                         }),
                         AuthCacheAction::None,
                     ));
@@ -2673,8 +2687,9 @@ impl IdProvider for HimmelblauProvider {
                         };
                         return Ok((
                             AuthResult::Next(AuthRequest::HelloTOTP {
-                                msg: "Please enter your Hello TOTP code from your Authenticator: "
-                                    .to_string(),
+                                msg: tr(
+                                    "Please enter your Hello TOTP code from your Authenticator:",
+                                ) + " ",
                             }),
                             AuthCacheAction::None,
                         ));
@@ -2706,7 +2721,7 @@ impl IdProvider for HimmelblauProvider {
                         Ok((AuthResult::Denied(msg.to_string()), AuthCacheAction::None))
                     });
                     return Ok((
-                        AuthResult::Denied("Failed to authenticate with Hello PIN.".to_string()),
+                        AuthResult::Denied(tr("Failed to authenticate with Hello PIN.")),
                         AuthCacheAction::None,
                     ));
                 }
@@ -2768,8 +2783,7 @@ impl IdProvider for HimmelblauProvider {
                                         pending_sealed_totp: None,
                                     };
                                     return Ok((AuthResult::Next(AuthRequest::HelloTOTP {
-                                        msg: "Please enter your Hello TOTP code from your Authenticator: "
-                                            .to_string(),
+                                        msg: tr("Please enter your Hello TOTP code from your Authenticator:") + " ",
                                     }), AuthCacheAction::None));
                                 }
                             } else {
@@ -2820,7 +2834,7 @@ impl IdProvider for HimmelblauProvider {
                                         });
                                         return Ok((
                                             AuthResult::Denied(
-                                                "Failed to authenticate with Hello PIN.".to_string(),
+                                                tr("Failed to authenticate with Hello PIN."),
                                             ),
                                             AuthCacheAction::None,
                                         ));
@@ -2863,7 +2877,7 @@ impl IdProvider for HimmelblauProvider {
                                         });
                                         return Ok((
                                             AuthResult::Denied(
-                                                "Failed to authenticate with Hello PIN.".to_string(),
+                                                tr("Failed to authenticate with Hello PIN."),
                                             ),
                                             AuthCacheAction::None,
                                         ));
@@ -2910,7 +2924,7 @@ impl IdProvider for HimmelblauProvider {
                                     });
                                     return Ok((
                                         AuthResult::Denied(
-                                            "Failed to authenticate with Hello PIN.".to_string(),
+                                            tr("Failed to authenticate with Hello PIN."),
                                         ),
                                         AuthCacheAction::None,
                                     ));
@@ -2925,7 +2939,7 @@ impl IdProvider for HimmelblauProvider {
                             });
                             return Ok((
                                 AuthResult::Denied(
-                                    "Failed to authenticate with Hello PIN.".to_string(),
+                                    tr("Failed to authenticate with Hello PIN."),
                                 ),
                                 AuthCacheAction::None,
                             ));
@@ -3055,8 +3069,7 @@ impl IdProvider for HimmelblauProvider {
                                                 pending_sealed_totp: None,
                                             };
                                             return Ok((AuthResult::Next(AuthRequest::HelloTOTP {
-                                                msg: "Please enter your Hello TOTP code from your Authenticator: "
-                                                    .to_string(),
+                                                msg: tr("Please enter your Hello TOTP code from your Authenticator:") + " ",
                                             }), AuthCacheAction::None));
                                         }
                                     } else {
@@ -3113,7 +3126,7 @@ impl IdProvider for HimmelblauProvider {
                                                     error!("Failed to exchange PRT (retry): {:?}", e);
                                                     let err_msg = msal_error_to_user_message(&e);
                                                     return Ok((
-                                                        AuthResult::Denied("Authentication failed. Please try signing in again. ".to_string() + &err_msg),
+                                                        AuthResult::Denied(tr("Authentication failed. Please try signing in again.") + " " + &err_msg),
                                                         AuthCacheAction::None,
                                                     ));
                                                 }
@@ -3153,7 +3166,7 @@ impl IdProvider for HimmelblauProvider {
                             Err(e) => {
                                 error!("Failed to create PublicClientApplication: {:?}", e);
                                 return Ok((
-                                    AuthResult::Denied("Authentication service unavailable. Please try again later.".to_string()),
+                                    AuthResult::Denied(tr("Authentication service unavailable. Please try again later.")),
                                     AuthCacheAction::None,
                                 ));
                             }
@@ -3192,8 +3205,7 @@ impl IdProvider for HimmelblauProvider {
                                             pending_sealed_totp: None,
                                         };
                                         return Ok((AuthResult::Next(AuthRequest::HelloTOTP {
-                                            msg: "Please enter your Hello TOTP code from your Authenticator: "
-                                                .to_string(),
+                                            msg: tr("Please enter your Hello TOTP code from your Authenticator:") + " ",
                                         }), AuthCacheAction::None));
                                     }
                                 } else {
@@ -3310,8 +3322,7 @@ impl IdProvider for HimmelblauProvider {
                                     pending_sealed_totp: None,
                                 };
                                 return Ok((AuthResult::Next(AuthRequest::HelloTOTP {
-                                    msg: "Please enter your Hello TOTP code from your Authenticator: "
-                                        .to_string(),
+                                    msg: tr("Please enter your Hello TOTP code from your Authenticator:") + " ",
                                 }), AuthCacheAction::None));
                             }
                         } else {
@@ -3324,7 +3335,7 @@ impl IdProvider for HimmelblauProvider {
                     Ok(AuthResult::Next(_)) => {
                         debug!("Invalid additional authentication requested with Hello auth.");
                         Ok((
-                            AuthResult::Denied("Unexpected authentication step. Please try signing in again.".to_string()),
+                            AuthResult::Denied(tr("Unexpected authentication step. Please try signing in again.")),
                             AuthCacheAction::None,
                         ))
                     }
@@ -3355,7 +3366,7 @@ impl IdProvider for HimmelblauProvider {
                             None => {
                                 debug!("FIDO challenge missing in MFA response");
                                 return Ok((
-                                    AuthResult::Denied("FIDO authentication not available. Please try a different authentication method.".to_string()),
+                                    AuthResult::Denied(tr("FIDO authentication not available. Please try a different authentication method.")),
                                     AuthCacheAction::None,
                                 ));
                             }
@@ -3366,7 +3377,7 @@ impl IdProvider for HimmelblauProvider {
                             None => {
                                 debug!("FIDO allow list missing in MFA response");
                                 return Ok((
-                                    AuthResult::Denied("FIDO authentication not available. Please try a different authentication method.".to_string()),
+                                    AuthResult::Denied(tr("FIDO authentication not available. Please try a different authentication method.")),
                                     AuthCacheAction::None,
                                 ));
                             }
@@ -3426,6 +3437,7 @@ impl IdProvider for HimmelblauProvider {
                     {
                         let msg = $resp.msg.clone();
                         let polling_interval = $resp.polling_interval.unwrap_or(5000);
+                        let show_push_hint = mfa_flow_uses_push_hint(&$resp);
                         let action = match (
                             self.config.lock().await.get_offline_breakglass_enabled(),
                             password.as_ref(),
@@ -3445,6 +3457,7 @@ impl IdProvider for HimmelblauProvider {
                                 // Kanidm pam expects a polling_interval in
                                 // seconds, not milliseconds.
                                 polling_interval: polling_interval / 1000,
+                                show_push_hint,
                             }),
                             /* Cache the offline password hash for breakglass
                              * conditions, if enabled. */
@@ -3466,10 +3479,7 @@ impl IdProvider for HimmelblauProvider {
                     };
                     Ok((
                         AuthResult::Next(AuthRequest::SetupPin {
-                            msg: format!(
-                                "Set up a PIN\n {}",
-                                "A Hello PIN is a fast, secure way to sign in to your device, apps, and services.",
-                            ),
+                            msg: tr("Set up a PIN\nA Hello PIN is a fast, secure way to sign in to your device, apps, and services."),
                         }),
                         action,
                     ))
@@ -3572,9 +3582,9 @@ impl IdProvider for HimmelblauProvider {
                     None => {
                         error!("Missing enrollment token for Hello PIN setup.");
                         return Ok((
-                            AuthResult::Denied(
-                                "PIN setup failed. Please try signing in again.".to_string(),
-                            ),
+                            AuthResult::Denied(tr(
+                                "PIN setup failed. Please try signing in again.",
+                            )),
                             AuthCacheAction::None,
                         ));
                     }
@@ -3590,9 +3600,15 @@ impl IdProvider for HimmelblauProvider {
                         Err(e) => {
                             return Ok((
                                 AuthResult::Next(AuthRequest::SetupPin {
-                                    msg: format!(
-                                        "Failed to provision hello key: {:?}\n{}",
-                                        e, "Create a PIN to use in place of passwords."
+                                    msg: tr_fmt(
+                                        "Failed to provision hello key: {error}\n{message}",
+                                        &[
+                                            ("error", format!("{e:?}")),
+                                            (
+                                                "message",
+                                                tr("Create a PIN to use in place of passwords."),
+                                            ),
+                                        ],
                                     ),
                                 }),
                                 AuthCacheAction::None,
@@ -3810,7 +3826,7 @@ impl IdProvider for HimmelblauProvider {
                         // This shouldn't happen since we already validated the password
                         error!("Unexpected PasswordRequired error after ROPC validation");
                         return Ok((
-                            AuthResult::Denied("Authentication failed. Please try again.".to_string()),
+                            AuthResult::Denied(tr("Authentication failed. Please try again.")),
                             AuthCacheAction::None,
                         ));
                     },
@@ -3822,7 +3838,7 @@ impl IdProvider for HimmelblauProvider {
 
                 nested_auth_handle_mfa_resp!(flow, cred)
             }
-            (change_password, PamAuthRequest::Password { mut cred }) => {
+            (change_password, PamAuthRequest::Password { cred }) => {
                 let mut reauth_hello_pin: Option<Zeroizing<String>> = None;
                 if let AuthCredHandler::ReauthPassword {
                     reauth_hello_pin: pin,
@@ -3832,8 +3848,8 @@ impl IdProvider for HimmelblauProvider {
                 }
 
                 if let AuthCredHandler::ChangePassword { old_cred } = change_password {
-                    // Report errors, but don't bail out. If the password change fails,
-                    // we'll make another run at it in a moment.
+                    // If the password change fails, show the provider error and
+                    // prompt for another new password while keeping the old password.
                     let _ = net_down_check!(
                         self.client
                             .lock()
@@ -3843,7 +3859,16 @@ impl IdProvider for HimmelblauProvider {
                         Ok(_) => {},
                         Err(e) => {
                             error!("Failed to change user password: {:?}", e);
-                            cred = old_cred.to_string();
+                            *cred_handler = AuthCredHandler::ChangePassword { old_cred: old_cred.to_string() };
+                            return Ok((
+                                AuthResult::Next(
+                                    AuthRequest::ChangePassword { msg: tr_fmt(
+                                        "Failed to change user password: {msg}",
+                                        &[("msg", msal_error_to_user_message(&e))],
+                                    )}
+                                ),
+                                AuthCacheAction::None,
+                            ));
                         }
                     );
                 }
@@ -3929,7 +3954,13 @@ impl IdProvider for HimmelblauProvider {
                                         "Skipping SFA fallback because authentication failed: {:?}",
                                         e
                                     );
-                                    return Ok((AuthResult::Denied(format!("Authentication failed (AADSTS{})", e.code)), AuthCacheAction::None));
+                                    return Ok((
+                                        AuthResult::Denied(tr_fmt(
+                                            "Authentication failed (AADSTS{code})",
+                                            &[("code", e.code.to_string())],
+                                        )),
+                                        AuthCacheAction::None,
+                                    ));
                                 }
                             }
                             // We can only do a password auth for an enrolled device
@@ -3961,10 +3992,7 @@ impl IdProvider for HimmelblauProvider {
                                                 AuthCredHandler::ChangePassword { old_cred: cred };
                                             return Ok((
                                                 AuthResult::Next(AuthRequest::ChangePassword {
-                                                    msg: "Update your password\n\
-                                                         You need to update your password because this is\n\
-                                                         the first time you are signing in, or because your\n\
-                                                         password has expired.".to_string(),
+                                                    msg: tr("Update your password\nYou need to update your password because this is\nthe first time you are signing in, or because your\npassword has expired."),
                                                 }),
                                                 AuthCacheAction::None,
                                             ));
@@ -4032,11 +4060,7 @@ impl IdProvider for HimmelblauProvider {
                                 };
                                 return Ok((
                                     AuthResult::Next(AuthRequest::ChangePassword {
-                                        msg: "Update your password\n\
-                                             You need to update your password because this is\n\
-                                             the first time you are signing in, or because your\n\
-                                             password has expired."
-                                            .to_string(),
+                                        msg: tr("Update your password\nYou need to update your password because this is\nthe first time you are signing in, or because your\npassword has expired."),
                                     }),
                                     AuthCacheAction::None,
                                 ));
@@ -4083,11 +4107,7 @@ impl IdProvider for HimmelblauProvider {
                         };
                         return Ok((
                             AuthResult::Next(AuthRequest::SetupPin {
-                                msg: format!(
-                                    "Set up a PIN\n {}{}",
-                                    "A Hello PIN is a fast, secure way to sign",
-                                    "in to your device, apps, and services."
-                                ),
+                                msg: tr("Set up a PIN\nA Hello PIN is a fast, secure way to sign in to your device, apps, and services."),
                             }),
                             AuthCacheAction::None,
                         ));
@@ -4110,9 +4130,7 @@ impl IdProvider for HimmelblauProvider {
                 if poll_attempt > max_poll_attempts {
                     error!("MFA polling timed out");
                     return Ok((
-                        AuthResult::Denied(
-                            "Authentication timed out. Please try again.".to_string(),
-                        ),
+                        AuthResult::Denied(tr("Authentication timed out. Please try again.")),
                         AuthCacheAction::None,
                     ));
                 }
@@ -4132,11 +4150,7 @@ impl IdProvider for HimmelblauProvider {
                                 };
                                 return Ok((
                                     AuthResult::Next(AuthRequest::ChangePassword {
-                                        msg: "Update your password\n\
-                                             You need to update your password because this is\n\
-                                             the first time you are signing in, or because your\n\
-                                             password has expired."
-                                            .to_string(),
+                                        msg: tr("Update your password\nYou need to update your password because this is\nthe first time you are signing in, or because your\npassword has expired."),
                                     }),
                                     AuthCacheAction::None,
                                 ));
@@ -4156,7 +4170,7 @@ impl IdProvider for HimmelblauProvider {
                                     This may indicate the MFA flow was initiated without ForceMFA.");
                             return Ok((
                                 AuthResult::Denied(
-                                    "Multi-factor authentication required. Please try signing in again.".to_string(),
+                                    tr("Multi-factor authentication required. Please try signing in again."),
                                 ),
                                 AuthCacheAction::None,
                             ));
@@ -4214,11 +4228,7 @@ impl IdProvider for HimmelblauProvider {
                         };
                         return Ok((
                             AuthResult::Next(AuthRequest::SetupPin {
-                                msg: format!(
-                                    "Set up a PIN\n {}{}",
-                                    "A Hello PIN is a fast, secure way to sign",
-                                    "in to your device, apps, and services."
-                                ),
+                                msg: tr("Set up a PIN\nA Hello PIN is a fast, secure way to sign in to your device, apps, and services."),
                             }),
                             AuthCacheAction::None,
                         ));
@@ -4264,11 +4274,7 @@ impl IdProvider for HimmelblauProvider {
                                 };
                                 return Ok((
                                     AuthResult::Next(AuthRequest::ChangePassword {
-                                        msg: "Update your password\n\
-                                             You need to update your password because this is\n\
-                                             the first time you are signing in, or because your\n\
-                                             password has expired."
-                                            .to_string(),
+                                        msg: tr("Update your password\nYou need to update your password because this is\nthe first time you are signing in, or because your\npassword has expired."),
                                     }),
                                     AuthCacheAction::None,
                                 ));
@@ -4315,11 +4321,7 @@ impl IdProvider for HimmelblauProvider {
                         };
                         return Ok((
                             AuthResult::Next(AuthRequest::SetupPin {
-                                msg: format!(
-                                    "Set up a PIN\n {}{}",
-                                    "A Hello PIN is a fast, secure way to sign",
-                                    "in to your device, apps, and services."
-                                ),
+                                msg: tr("Set up a PIN\nA Hello PIN is a fast, secure way to sign in to your device, apps, and services."),
                             }),
                             AuthCacheAction::None,
                         ));
@@ -4813,9 +4815,11 @@ impl HimmelblauProvider {
                         .domains_are_aliases(domain1, domain2)
                         .await;
                     if local1.to_lowercase() != local2.to_lowercase() || !domains_match {
-                        let msg =
-                            format!("Authenticated user {} does not match requested user", uuid);
-                        error!(msg);
+                        let msg = tr_fmt(
+                            "Authenticated user {user} does not match requested user",
+                            &[("user", uuid.to_string())],
+                        );
+                        error!("{}", msg);
                         return Ok(AuthResult::Denied(msg));
                     }
                 }
@@ -5519,11 +5523,12 @@ impl HimmelblauProvider {
 #[cfg(test)]
 mod tests {
     use super::{
-        is_mfa_required_for_enrollment, is_unavailable_mfa_method_error, password_change_required,
-        CONSENT_REQUIRED,
+        is_mfa_required_for_enrollment, is_unavailable_mfa_method_error, mfa_flow_uses_push_hint,
+        password_change_required, CONSENT_REQUIRED,
     };
     use crate::idprovider::interface::{AuthCacheAction, AuthCredHandler, AuthRequest, AuthResult};
     use himmelblau::error::{AADSTSError, ErrorResponse, MsalError, DEVICE_AUTH_FAIL};
+    use himmelblau::{MFAAuthContinue, MfaMethodInfo};
 
     #[test]
     fn unavailable_mfa_method_error_requires_exact_requested_method() {
@@ -5540,6 +5545,33 @@ mod tests {
             "Stored MFA method 'FidoKey' is not available. Available methods: PhoneAppOTP",
             "FidoKey"
         ));
+    }
+
+    fn mfa_flow_with_method(method_id: &str) -> MFAAuthContinue {
+        MFAAuthContinue {
+            mfa_methods: vec![method_id.to_string()],
+            mfa_method_details: vec![MfaMethodInfo {
+                auth_method_id: method_id.to_string(),
+                display: method_id.to_string(),
+                is_default: true,
+            }],
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn mfa_flow_uses_push_hint_only_for_push_methods() {
+        assert!(mfa_flow_uses_push_hint(&mfa_flow_with_method(
+            "PhoneAppNotification"
+        )));
+        assert!(mfa_flow_uses_push_hint(&mfa_flow_with_method(
+            "CompanionAppsNotification"
+        )));
+        assert!(!mfa_flow_uses_push_hint(&mfa_flow_with_method(
+            "PhoneAppOTP"
+        )));
+        assert!(!mfa_flow_uses_push_hint(&mfa_flow_with_method("OneWaySMS")));
+        assert!(!mfa_flow_uses_push_hint(&MFAAuthContinue::default()));
     }
 
     #[test]

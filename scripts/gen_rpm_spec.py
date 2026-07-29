@@ -442,12 +442,19 @@ def rpm_script_section(script_key: str) -> str:
 
     return mapping.get(script_key)
 
-def generate_files_section(metadata, name=None, dirs=[], extras=[]):
+def generate_files_section(metadata, name=None, dirs=None, extras=None, lang_file=None):
+    dirs = dirs or []
+    extras = extras or []
     assets = metadata["generate_rpm"]["assets"]
 
     lines = []
 
-    lines.append("%%files%s" % (" -n %s" % name if name else ""))
+    file_opts = ""
+    if name:
+        file_opts += f" -n {name}"
+    if lang_file:
+        file_opts += f" -f {lang_file}"
+    lines.append(f"%files{file_opts}")
 
     selinux = False
     authselect = False
@@ -814,6 +821,7 @@ make rpm-servicefiles{apparmor_servicefiles_arg}
 export HIMMELBLAU_ALLOW_MISSING_SELINUX=1
 %endif
 %{{cargo_build}} --workspace --exclude himmelblau-fuzz
+scripts/i18n-compile --profile release
 %if !0%{{?suse_version}}
 make authselect
 %endif
@@ -861,6 +869,13 @@ pushd %{{buildroot}}%{{_sbindir}}
 ln -s himmelblaud rchimmelblaud
 ln -s himmelblaud_tasks rchimmelblaud_tasks
 popd
+if [ -d target/release/locale ]; then
+    find target/release/locale -name himmelblau.mo -print | while IFS= read -r mo; do
+        lang="$(basename "$(dirname "$(dirname "$mo")")")"
+        install -D -m 0644 "$mo" "%{{buildroot}}%{{_datadir}}/locale/$lang/LC_MESSAGES/himmelblau.mo"
+    done
+fi
+%find_lang himmelblau || touch himmelblau.lang
 
 # SSHD Config
 install -D -d -m 0755 %{{buildroot}}%{{_sysconfdir}}/ssh/sshd_config.d
@@ -913,7 +928,7 @@ install -D -d -m 0755 %{{buildroot}}%{{_datarootdir}}/gnome-shell/extensions/qr-
 
 {apparmor_scripts_section}
 
-{generate_files_section(himmelblau_metadata, name=None, dirs=["%{_sysconfdir}/himmelblau", "%{_localstatedir}/cache/himmelblau-policies", "%{_unitdir}/display-manager.service.d", "%{_datadir}/doc/himmelblau", "%{_docdir}/himmelblau-selinux", "%{_selinux_docdir}"], extras=["%{_sbindir}/rchimmelblaud", "%{_sbindir}/rchimmelblaud_tasks", "%ghost %dir /var/lib/private/himmelblaud"])}
+{generate_files_section(himmelblau_metadata, name=None, dirs=["%{_sysconfdir}/himmelblau", "%{_localstatedir}/cache/himmelblau-policies", "%{_unitdir}/display-manager.service.d", "%{_datadir}/doc/himmelblau", "%{_docdir}/himmelblau-selinux", "%{_selinux_docdir}"], extras=["%{_sbindir}/rchimmelblaud", "%{_sbindir}/rchimmelblaud_tasks", "%ghost %dir /var/lib/private/himmelblaud"], lang_file="himmelblau.lang")}
 
 {generate_files_section(nss_metadata, name="libnss_himmelblau2", dirs=["%{_tmpfilesdir}"], extras=["%ghost %attr(0755,root,root) /var/cache/nss-himmelblau"])}
 

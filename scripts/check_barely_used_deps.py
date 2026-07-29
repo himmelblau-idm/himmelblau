@@ -137,8 +137,8 @@ class DependencyAnalyzer:
         # Duplicate version tracking (NEW)
         self.package_versions: Dict[str, List[Dict]] = defaultdict(list)
 
-        # Replace directive tracking for managed duplicates
-        self.replace_directives: Dict[str, Dict[str, str]] = {}
+        # Patch directive tracking for managed duplicates
+        self.patch_directives: Dict[str, Dict[str, str]] = {}
 
     def check_tool_availability(self) -> bool:
         """Check if required tools are available, install if needed."""
@@ -206,9 +206,9 @@ class DependencyAnalyzer:
         except Exception as e:
             print(f"Error loading exemptions: {e}", file=sys.stderr)
 
-    def parse_replace_section(self) -> None:
-        """Parse [replace] section from root Cargo.toml to identify managed duplicates."""
-        print("Parsing [replace] section from Cargo.toml...", file=sys.stderr)
+    def parse_patch_section(self) -> None:
+        """Parse [patch.crates-io] entries from root Cargo.toml to identify managed duplicates."""
+        print("Parsing [patch.crates-io] section from Cargo.toml...", file=sys.stderr)
 
         cargo_toml_path = self.workspace_root / "Cargo.toml"
 
@@ -219,45 +219,68 @@ class DependencyAnalyzer:
         try:
             with open(cargo_toml_path, "rb") as f:
                 data = tomli.load(f)
-                replace_section = data.get("replace", {})
+                patch_section = data.get("patch", {}).get("crates-io", {})
 
-                if not replace_section:
-                    print("  No [replace] section found", file=sys.stderr)
+                if not patch_section:
+                    print("  No [patch.crates-io] section found", file=sys.stderr)
                     return
 
-                # Parse each replace directive
-                for key, value in replace_section.items():
-                    # Key format: "crate_name:version"
-                    if ':' not in key:
-                        print(f"  Warning: Invalid replace key format: {key}", file=sys.stderr)
-                        continue
-
-                    crate_name, version = key.rsplit(':', 1)
+                # Parse each patch directive. The alias key may be arbitrary, so the
+                # shim manifest is the source of truth for package name and version.
+                overrides_root = self.workspace_root / "src" / "overrides"
+                for key, value in patch_section.items():
                     override_path = value.get('path') if isinstance(value, dict) else None
 
                     if not override_path:
                         print(f"  Warning: No path specified for {key}", file=sys.stderr)
                         continue
 
+                    full_path = self.workspace_root / override_path
+                    try:
+                        full_path.resolve().relative_to(overrides_root.resolve())
+                    except ValueError:
+                        continue
+
+                    shim_manifest = full_path / "Cargo.toml"
+                    if not shim_manifest.exists():
+                        print(f"  Warning: Missing shim manifest for {key}: {shim_manifest}", file=sys.stderr)
+                        continue
+
+                    try:
+                        with open(shim_manifest, "rb") as shim_file:
+                            shim_data = tomli.load(shim_file)
+                    except Exception as e:
+                        print(f"  Warning: Could not parse shim manifest for {key}: {e}", file=sys.stderr)
+                        continue
+
+                    package = shim_data.get("package", {})
+                    crate_name = package.get("name")
+                    version = package.get("version")
+
+                    if not crate_name or not version:
+                        print(f"  Warning: Missing package name/version in {shim_manifest}", file=sys.stderr)
+                        continue
+
                     # Store in nested dict
-                    if crate_name not in self.replace_directives:
-                        self.replace_directives[crate_name] = {}
+                    if crate_name not in self.patch_directives:
+                        self.patch_directives[crate_name] = {}
 
-                    self.replace_directives[crate_name][version] = override_path
+                    self.patch_directives[crate_name][version] = override_path
 
-                print(f"  Found {len(replace_section)} replace directives", file=sys.stderr)
+                total = sum(len(versions) for versions in self.patch_directives.values())
+                print(f"  Found {total} patch override directives", file=sys.stderr)
 
                 # Validate that override paths exist
                 self._validate_override_paths()
 
         except Exception as e:
-            print(f"  Error parsing [replace] section: {e}", file=sys.stderr)
+            print(f"  Error parsing [patch.crates-io] section: {e}", file=sys.stderr)
 
     def _validate_override_paths(self) -> None:
         """Validate that override paths actually exist."""
         missing_paths = []
 
-        for crate_name, versions in self.replace_directives.items():
+        for crate_name, versions in self.patch_directives.items():
             for version, path in versions.items():
                 full_path = self.workspace_root / path
                 if not full_path.exists():
@@ -967,9 +990,9 @@ class DependencyAnalyzer:
         return results
 
     def _is_managed_duplicate(self, crate_name: str, version: str) -> bool:
-        """Check if a specific version is managed via [replace] directive."""
-        return (crate_name in self.replace_directives and
-                version in self.replace_directives[crate_name])
+        """Check if a specific version is managed via [patch.crates-io]."""
+        return (crate_name in self.patch_directives and
+                version in self.patch_directives[crate_name])
 
     def detect_duplicate_versions(self) -> Tuple[List[Dict], List[Dict]]:
         """Detect crates with multiple versions, categorized by management status.
@@ -993,7 +1016,7 @@ class DependencyAnalyzer:
                 reverse=True
             )
 
-            # Check which versions are managed via [replace]
+            # Check which versions are managed via [patch.crates-io]
             versions_info = [v["version"] for v in versions_sorted]
             managed_versions = [
                 v for v in versions_info
@@ -1211,7 +1234,7 @@ class DependencyAnalyzer:
         if managed_duplicates:
             lines.append("### MANAGED DUPLICATE CRATE VERSIONS (Intentional)")
             lines.append("")
-            lines.append("These are deduplicated via [replace] to a single target version:")
+            lines.append("These versions are managed via [patch.crates-io] shim overrides:")
             lines.append("")
 
             for r in managed_duplicates:
@@ -1219,7 +1242,7 @@ class DependencyAnalyzer:
                 lines.append(f"- {r['crate']} ({r['version_count']} versions: {versions_str})")
                 if r['managed_versions']:
                     managed_str = ", ".join(r['managed_versions'])
-                    lines.append(f"  Managed via [replace]: {managed_str}")
+                    lines.append(f"  Managed via [patch]: {managed_str}")
                 if r['unmanaged_versions']:
                     target_str = ", ".join(r['unmanaged_versions'])
                     lines.append(f"  Target version: {target_str}")
@@ -1365,8 +1388,8 @@ def main():
     # Load exemptions
     analyzer.load_exemptions()
 
-    # Parse [replace] section for managed duplicates
-    analyzer.parse_replace_section()
+    # Parse [patch.crates-io] section for managed duplicates
+    analyzer.parse_patch_section()
 
     # Collect common data
     analyzer.collect_all_deps()

@@ -1,0 +1,416 @@
+# Swedish translations for Himmelblau.
+# Copyright (C) 2026 Himmelblau contributors
+# This file is distributed under the same license as Himmelblau.
+#
+msgid ""
+msgstr "Project-Id-Version: himmelblau\n"
+"POT-Creation-Date: 2026-07-22 22:33+0000\n"
+"PO-Revision-Date: 2026-07-23 14:41+0000\n"
+"Last-Translator: Automated via Codex <noreply@himmelblau-idm.org>\n"
+"Language-Team: Swedish\n"
+"Language: sv\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Plural-Forms: nplurals=2; plural=(n != 1);\n"
+""
+
+msgid "An unexpected error occurred."
+msgstr "Ett oväntat fel inträffade."
+
+msgid "Approve sign-in in your authenticator app, then wait..."
+msgstr "Godkänn inloggningen i din autentiseringsapp och vänta sedan..."
+
+msgid "Authenticated user {user} does not match requested user"
+msgstr "Den autentiserade användaren {user} matchar inte den begärda användaren"
+
+msgid "Authenticated user {uuid} does not match requested user"
+msgstr "Den autentiserade användaren {uuid} matchar inte den begärda användaren"
+
+msgid "Authentication did not return a refresh token. Please try again."
+msgstr "Autentiseringen returnerade ingen uppdateringstoken. Försök igen."
+
+msgid "Authentication failed (AADSTS{code})"
+msgstr "Autentisering misslyckades (AADSTS{code})"
+
+msgid "Authentication failed in browser flow."
+msgstr "Autentisering misslyckades i webbläsarflödet."
+
+msgid "Authentication failed. Please contact your administrator."
+msgstr "Autentiseringen misslyckades. Kontakta administratören."
+
+msgid "Authentication failed. Please try again."
+msgstr "Autentiseringen misslyckades. Försök igen."
+
+msgid "Authentication failed. Please try signing in again."
+msgstr "Autentiseringen misslyckades. Försök att logga in igen."
+
+msgid "Authentication failed: Authentication method not supported."
+msgstr "Autentisering misslyckades: Autentiseringsmetoden stöds inte."
+
+msgid "Authentication failed: Configuration error."
+msgstr "Autentisering misslyckades: Konfigurationsfel."
+
+msgid "Authentication failed: Cryptographic error."
+msgstr "Autentisering misslyckades: kryptografiskt fel."
+
+msgid "Authentication failed: Invalid server response."
+msgstr "Autentisering misslyckades: Ogiltigt serversvar."
+
+msgid "Authentication failed: Missing required data."
+msgstr "Autentiseringen misslyckades: Obligatoriska uppgifter saknas."
+
+msgid "Authentication failed: Security hardware error."
+msgstr "Autentisering misslyckades: Fel på säkerhetshårdvara."
+
+msgid "Authentication failed: Unable to reach authentication server."
+msgstr "Autentisering misslyckades: Det går inte att nå autentiseringsservern."
+
+msgid "Authentication failed: {error}"
+msgstr "Autentisering misslyckades: {error}"
+
+msgid "Authentication flow completed but token exchange failed. Please try again."
+msgstr "Autentiseringsflödet slutfördes men tokenutbytet misslyckades. Försök igen."
+
+msgid "Authentication in progress."
+msgstr "Autentisering pågår."
+
+msgid "Authentication incomplete. Please try again."
+msgstr "Autentiseringen är inte slutförd. Försök igen."
+
+msgid "Authentication service is temporarily unavailable. Please try again shortly."
+msgstr "Autentiseringstjänsten är tillfälligt otillgänglig. Försök igen om en stund."
+
+msgid "Authentication service unavailable. Please try again later."
+msgstr "Autentiseringstjänsten är inte tillgänglig. Försök igen senare."
+
+msgid "Authentication session corrupted. Please try again."
+msgstr "Autentiseringssessionen är skadad. Försök igen."
+
+msgid "Authentication session data missing. Please try again."
+msgstr "Autentiseringssessionens data saknas. Försök igen."
+
+msgid "Authentication session returned an unexpected state. Please try again."
+msgstr "Autentiseringssessionen returnerade ett oväntat tillstånd. Försök igen."
+
+msgid "Authentication timed out. Please try again."
+msgstr "Autentiseringen tog för lång tid. Försök igen."
+
+msgid "Browser authentication backend unavailable. Please try again."
+msgstr "Bakände för webbläsarautentisering är inte tillgänglig. Försök igen."
+
+msgid "Changing the password. Please wait..."
+msgstr "Lösenordet ändras. Vänta..."
+
+msgid "Chosen password is too short! 8 chars required."
+msgstr "Det valda lösenordet är för kort! 8 tecken krävs."
+
+msgid "Chosen pin is too short! {length} chars required."
+msgstr "Vald PIN-kod är för kort! {length} tecken krävs."
+
+msgid "Cloud Password:"
+msgstr "Molnlösenord:"
+
+msgid "Code:"
+msgstr "Kod:"
+
+msgid "Confirm PIN:"
+msgstr "Bekräfta PIN-kod:"
+
+msgid "Confirm password:"
+msgstr "Bekräfta lösenord:"
+
+msgid "Consent required. Please contact your administrator."
+msgstr "Samtycke krävs. Kontakta din administratör."
+
+msgid "Create a PIN to use in place of passwords."
+msgstr "Skapa en PIN-kod att använda i stället för lösenord."
+
+msgid "Device enrollment failed. Please contact your administrator."
+msgstr "Enhetsregistreringen misslyckades. Kontakta din administratör."
+
+msgid "Device has been removed from the domain."
+msgstr "Enheten har tagits bort från domänen."
+
+msgid "Enable Bluetooth to sign in with your phone."
+msgstr "Aktivera Bluetooth för att logga in med din telefon."
+
+msgid "Enrolling the Hello PIN. Please wait..."
+msgstr "Registrerar Hello-PIN-koden. Vänta..."
+
+msgid "Enter the setup key '{secret}' to enroll a TOTP Authenticator app. Use '{issuer}' for the code name and '{account}' as the label/name."
+msgstr "Ange konfigurationsnyckeln '{secret}' för att registrera en TOTP-autentiseringsapp. Använd '{issuer}' som kodnamn och '{account}' som etikett/namn."
+
+msgid "Entra Id Fido authentication failed."
+msgstr "Entra ID FIDO-autentisering misslyckades."
+
+msgid "Entra Id Password:"
+msgstr "Entra ID-lösenord:"
+
+msgid "FIDO authentication not available. Please try a different authentication method."
+msgstr "FIDO-autentisering är inte tillgänglig. Försök med en annan autentiseringsmetod."
+
+msgid "Failed to authenticate with Hello PIN."
+msgstr "Det gick inte att autentisera med Hello PIN."
+
+msgid "Failed to authenticate with Hello PIN. One more failed attempt will require multi-factor authentication and resetting your Linux Hello PIN."
+msgstr "Det gick inte att autentisera med Hello-PIN. Ytterligare ett misslyckat försök kräver multifaktorautentisering och att du återställer din Linux Hello-PIN."
+
+msgid "Failed to authenticate with Hello TOTP code."
+msgstr "Det gick inte att autentisera med Hello TOTP-kod."
+
+msgid "Failed to build regex: {error}"
+msgstr "Det gick inte att skapa reguljärt uttryck: {error}"
+
+msgid "Failed to change user password: {msg}"
+msgstr "Det gick inte att ändra användarens lösenord: {msg}"
+
+msgid "Failed to delete CSR key"
+msgstr "Det gick inte att ta bort CSR-nyckeln"
+
+msgid "Failed to delete intune key"
+msgstr "Det gick inte att ta bort Intune-nyckeln"
+
+msgid "Failed to generate QR code"
+msgstr "Det gick inte att generera QR-koden"
+
+msgid "Failed to join domain. Please contact your administrator."
+msgstr "Det gick inte att ansluta till domänen. Kontakta din administratör."
+
+msgid "Failed to provision hello key: {error}\n"
+"{message}"
+msgstr "Det gick inte att provisionera Hello-nyckel: {error}\n"
+"{message}"
+
+msgid "Failed to save device configuration. Please contact your administrator."
+msgstr "Det gick inte att spara enhetskonfigurationen. Kontakta administratören."
+
+msgid "Failed to store device credentials. Please contact your administrator."
+msgstr "Det gick inte att lagra enhetsautentiseringsuppgifterna. Kontakta administratören."
+
+msgid "Fido PIN:"
+msgstr "FIDO-PIN:"
+
+msgid "Himmelblau authentication is starting, please wait..."
+msgstr "Himmelblau-autentisering startar, vänta..."
+
+msgid "Himmelblau authentication service did not become available in time."
+msgstr "Himmelblau-autentiseringstjänsten blev inte tillgänglig i tid."
+
+msgid "Himmelblau authentication service is unavailable."
+msgstr "Himmelblau-autentiseringstjänsten är inte tillgänglig."
+
+msgid "Inputs did not match. Try again."
+msgstr "Inmatningarna matchade inte. Försök igen."
+
+msgid "Invalid credentials"
+msgstr "Ogiltiga inloggningsuppgifter"
+
+msgid "Multi-factor authentication required."
+msgstr "Multifaktorautentisering krävs."
+
+msgid "Multi-factor authentication required. Please try signing in again."
+msgstr "Multifaktorautentisering krävs. Försök att logga in igen."
+
+msgid "Network outage detected."
+msgstr "Nätverksavbrott har upptäckts."
+
+msgid "New PIN:"
+msgstr "Ny PIN-kod:"
+
+msgid "New password:"
+msgstr "Nytt lösenord:"
+
+msgid "No Entra Id Hello PIN was supplied."
+msgstr "Ingen Entra ID Hello-PIN angavs."
+
+msgid "No Entra Id Hello confirmation PIN was supplied."
+msgstr "Ingen PIN-kod för Entra ID Hello-bekräftelse angavs."
+
+msgid "No Entra Id confirmation password was supplied."
+msgstr "Inget bekräftelselösenord för Entra ID angavs."
+
+msgid "No Entra Id password was supplied."
+msgstr "Inget Entra Id-lösenord angavs."
+
+msgid "No Hello TOTP code was supplied."
+msgstr "Ingen Hello TOTP-kod angavs."
+
+msgid "No input was supplied."
+msgstr "Ingen inmatning angavs."
+
+msgid "Offline auth has expired. Please connect to the network to continue."
+msgstr "Offline-autentiseringen har upphört att gälla. Anslut till nätverket för att fortsätta."
+
+msgid "Open your Authenticator app, and enter the number '{entropy}' to sign in."
+msgstr "Öppna din Authenticator-app och ange numret '{entropy}' för att logga in."
+
+msgid "Open your authenticator app and scan this QR code to enroll. Then enter the generated code.\n"
+"{qr}"
+msgstr "Öppna din autentiseringsapp och skanna den här QR-koden för att registrera dig. Ange sedan den genererade koden.\n"
+"{qr}"
+
+msgid "PIN must not use repeating or predictable sequences. Avoid patterns like '111111', '123456', or '135791'."
+msgstr "PIN-koden får inte innehålla upprepade eller förutsägbara sekvenser. Undvik mönster som '111111', '123456' eller '135791'."
+
+msgid "PIN setup failed. Please try signing in again."
+msgstr "Det gick inte att konfigurera PIN-koden. Försök logga in igen."
+
+msgid "PIN:"
+msgstr "PIN-kod:"
+
+msgid "Password change required. Please contact your administrator."
+msgstr "Lösenordsbyte krävs. Kontakta din administratör."
+
+msgid "Password entry required."
+msgstr "Lösenordsinmatning krävs."
+
+msgid "Password reset registration required. Complete setup at https://aka.ms/ssprsetup from another device, then try again."
+msgstr "Registrering för lösenordsåterställning krävs. Slutför konfigurationen på https://aka.ms/ssprsetup från en annan enhet och försök sedan igen."
+
+msgid "Please enter your Hello TOTP code from your Authenticator:"
+msgstr "Ange din Hello TOTP-kod från din Authenticator:"
+
+msgid "Please insert your security key."
+msgstr "Sätt i din säkerhetsnyckel."
+
+msgid "Please select a device by touching one of them."
+msgstr "Välj en enhet genom att röra vid en av dem."
+
+msgid "Please touch your security key."
+msgstr "Rör vid din säkerhetsnyckel."
+
+msgid "Press enter to continue"
+msgstr "Tryck på Retur för att fortsätta"
+
+msgid "QR/Bluetooth authentication failed."
+msgstr "QR-/Bluetooth-autentiseringen misslyckades."
+
+msgid "Scan the QR code to continue sign-in, or open this link on another device:\n"
+"{complete}\n"
+"If you cannot scan, visit:\n"
+"{verification_uri}\n"
+"And enter the code:\n"
+"{user_code}"
+msgstr "Skanna QR-koden för att fortsätta inloggningen, eller öppna den här länken på en annan enhet:\n"
+"{complete}\n"
+"Om du inte kan skanna, besök:\n"
+"{verification_uri}\n"
+"Och ange koden:\n"
+"{user_code}"
+
+msgid "Scan with your authenticator app"
+msgstr "Skanna med din autentiseringsapp"
+
+msgid "Security key and QR/Bluetooth authentication failed."
+msgstr "Autentisering med säkerhetsnyckel och QR/Bluetooth misslyckades."
+
+msgid "Security key authentication failed."
+msgstr "Autentisering med säkerhetsnyckel misslyckades."
+
+msgid "Session data corrupted. Please sign in again."
+msgstr "Sessionsinformationen är skadad. Logga in igen."
+
+msgid "Set up a PIN\n"
+"A Hello PIN is a fast, secure way to sign in to your device, apps, and services."
+msgstr "Konfigurera en PIN-kod\n"
+"En Hello-PIN är ett snabbt och säkert sätt att logga in på din enhet, dina appar och tjänster."
+
+msgid "TOTP Code:"
+msgstr "TOTP-kod:"
+
+msgid "The minimum PIN length is {length} characters."
+msgstr "PIN-koden måste vara minst {length} tecken lång."
+
+msgid "This command changes your local Hello PIN, NOT your Entra Id password."
+msgstr "Det här kommandot ändrar din lokala Hello-PIN-kod, INTE ditt Entra ID-lösenord."
+
+msgid "Too many failed attempts in one row. Your device has been temporarily blocked. Please unplug it and plug in again."
+msgstr "För många misslyckade försök i rad. Din enhet har blockerats tillfälligt. Koppla ur den och anslut den igen."
+
+msgid "Too many failed attempts. Your device has been blocked. Reset it."
+msgstr "För många misslyckade försök. Din enhet har blockerats. Återställ den."
+
+msgid "Too many failed user verification attempts."
+msgstr "För många misslyckade försök till användarverifiering."
+
+msgid "Too many incorrect PIN attempts. You will need to enroll a new Linux Hello PIN."
+msgstr "För många felaktiga PIN-försök. Du måste registrera en ny Linux Hello-PIN."
+
+msgid "Try again."
+msgstr "Försök igen."
+
+msgid "Unexpected authentication step. Please try signing in again."
+msgstr "Oväntat autentiseringssteg. Försök att logga in igen."
+
+msgid "Unexpected error occurred."
+msgstr "Ett oväntat fel inträffade."
+
+msgid "Unexpected error: {error}"
+msgstr "Oväntat fel: {error}"
+
+msgid "Unexpected select device notice"
+msgstr "Oväntat meddelande om enhetsval"
+
+msgid "Update your password\n"
+"You need to update your password because this is\n"
+"the first time you are signing in, or because your\n"
+"password has expired."
+msgstr "Uppdatera ditt lösenord\n"
+"Du behöver uppdatera ditt lösenord eftersom det är\n"
+"första gången du loggar in, eller eftersom ditt\n"
+"lösenord har upphört att gälla."
+
+msgid "Use the Linux Hello PIN for this device."
+msgstr "Använd Linux Hello-PIN-koden för den här enheten."
+
+msgid "Use the password for your Office 365 or Microsoft online login."
+msgstr "Använd lösenordet för din Office 365- eller Microsoft-inloggning online."
+
+msgid "Using a browser on another device, visit:\n"
+"{verification_uri}\n"
+"And enter the code:\n"
+"{user_code}"
+msgstr "Använd en webbläsare på en annan enhet och gå till:\n"
+"{verification_uri}\n"
+"Ange sedan koden:\n"
+"{user_code}"
+
+msgid "Value:"
+msgstr "Värde:"
+
+msgid "Waiting for browser authentication to complete..."
+msgstr "Väntar på att webbläsarautentiseringen ska slutföras..."
+
+msgid "We texted your phone {phone}. Please enter the code to sign in:"
+msgstr "Vi skickade ett sms till din telefon {phone}. Ange koden för att logga in:"
+
+msgid "We're calling your office phone {phone}. Please answer it to continue."
+msgstr "Vi ringer upp din kontorstelefon {phone}. Svara på samtalet för att fortsätta."
+
+msgid "We're calling your phone {phone}. Please answer it to continue."
+msgstr "Vi ringer till din telefon {phone}. Svara för att fortsätta."
+
+msgid "Wrong PIN! {message}"
+msgstr "Fel PIN-kod! {message}"
+
+msgid "Wrong user verification! {message}"
+msgstr "Felaktig användarverifiering! {message}"
+
+msgid "You have {attempts} attempt left."
+msgid_plural "You have {attempts} attempts left."
+msgstr[0] "Du har {attempts} försök kvar."
+msgstr[1] "Du har {attempts} försök kvar."
+
+msgid "Your session has expired. Please sign in again."
+msgstr "Din session har löpt ut. Logga in igen."
+
+msgid "{code}: {message}\n"
+"If you are now prompted for a password from pam_unix, please disregard the prompt, go back and try again."
+msgstr "{code}: {message}\n"
+"Om du nu blir ombedd att ange ett lösenord av pam_unix, ignorera uppmaningen, gå tillbaka och försök igen."
+
+msgid "{message}\n"
+"No push? Check your mobile device's internet connection."
+msgstr "{message}\n"
+"Ingen pushnotis? Kontrollera internetanslutningen på din mobila enhet."

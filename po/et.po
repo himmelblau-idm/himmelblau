@@ -1,0 +1,415 @@
+# Estonian translations for Himmelblau.
+# Copyright (C) 2026 Himmelblau contributors
+# This file is distributed under the same license as Himmelblau.
+#
+msgid ""
+msgstr "Project-Id-Version: himmelblau\n"
+"POT-Creation-Date: 2026-07-22 22:33+0000\n"
+"PO-Revision-Date: 2026-07-23 14:38+0000\n"
+"Last-Translator: Automated via Codex <noreply@himmelblau-idm.org>\n"
+"Language-Team: Estonian\n"
+"Language: et\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Plural-Forms: nplurals=2; plural=((((n == 1)) && ((0 == 0))) ? 0 : 1);\n"
+""
+
+msgid "An unexpected error occurred."
+msgstr "Ilmnes ootamatu tõrge."
+
+msgid "Approve sign-in in your authenticator app, then wait..."
+msgstr "Kinnitage sisselogimine oma autentimisrakenduses ja seejärel oodake..."
+
+msgid "Authenticated user {user} does not match requested user"
+msgstr "Autenditud kasutaja {user} ei ühti taotletud kasutajaga"
+
+msgid "Authenticated user {uuid} does not match requested user"
+msgstr "Autenditud kasutaja {uuid} ei vasta taotletud kasutajale"
+
+msgid "Authentication did not return a refresh token. Please try again."
+msgstr "Autentimine ei tagastanud värskendustõendit. Palun proovige uuesti."
+
+msgid "Authentication failed (AADSTS{code})"
+msgstr "Autentimine nurjus (AADSTS{code})"
+
+msgid "Authentication failed in browser flow."
+msgstr "Autentimine brauserivoos nurjus."
+
+msgid "Authentication failed. Please contact your administrator."
+msgstr "Autentimine nurjus. Võtke ühendust oma administraatoriga."
+
+msgid "Authentication failed. Please try again."
+msgstr "Autentimine ebaõnnestus. Palun proovige uuesti."
+
+msgid "Authentication failed. Please try signing in again."
+msgstr "Autentimine ebaõnnestus. Proovige uuesti sisse logida."
+
+msgid "Authentication failed: Authentication method not supported."
+msgstr "Autentimine nurjus: autentimismeetodit ei toetata."
+
+msgid "Authentication failed: Configuration error."
+msgstr "Autentimine ebaõnnestus: konfiguratsiooniviga."
+
+msgid "Authentication failed: Cryptographic error."
+msgstr "Autentimine nurjus: krüptograafiline viga."
+
+msgid "Authentication failed: Invalid server response."
+msgstr "Autentimine nurjus: serveri vastus on vigane."
+
+msgid "Authentication failed: Missing required data."
+msgstr "Autentimine nurjus: nõutavad andmed puuduvad."
+
+msgid "Authentication failed: Security hardware error."
+msgstr "Autentimine nurjus: turvariistvara tõrge."
+
+msgid "Authentication failed: Unable to reach authentication server."
+msgstr "Autentimine nurjus: autentimisserveriga ei õnnestunud ühendust saada."
+
+msgid "Authentication failed: {error}"
+msgstr "Autentimine nurjus: {error}"
+
+msgid "Authentication flow completed but token exchange failed. Please try again."
+msgstr "Autentimisvoog lõpetati, kuid lubade vahetus nurjus. Palun proovige uuesti."
+
+msgid "Authentication in progress."
+msgstr "Autentimine on pooleli."
+
+msgid "Authentication incomplete. Please try again."
+msgstr "Autentimine jäi pooleli. Palun proovige uuesti."
+
+msgid "Authentication service is temporarily unavailable. Please try again shortly."
+msgstr "Autentimisteenus pole ajutiselt saadaval. Palun proovige varsti uuesti."
+
+msgid "Authentication service unavailable. Please try again later."
+msgstr "Autentimisteenus pole saadaval. Palun proovige hiljem uuesti."
+
+msgid "Authentication session corrupted. Please try again."
+msgstr "Autentimisseanss on rikutud. Palun proovige uuesti."
+
+msgid "Authentication session data missing. Please try again."
+msgstr "Autentimisseansi andmed puuduvad. Palun proovige uuesti."
+
+msgid "Authentication session returned an unexpected state. Please try again."
+msgstr "Autentimisseanss tagastas ootamatu oleku. Palun proovige uuesti."
+
+msgid "Authentication timed out. Please try again."
+msgstr "Autentimine aegus. Palun proovige uuesti."
+
+msgid "Browser authentication backend unavailable. Please try again."
+msgstr "Brauseri autentimise taustsüsteem pole saadaval. Palun proovige uuesti."
+
+msgid "Changing the password. Please wait..."
+msgstr "Parooli muudetakse. Palun oodake..."
+
+msgid "Chosen password is too short! 8 chars required."
+msgstr "Valitud parool on liiga lühike! Nõutav on 8 märki."
+
+msgid "Chosen pin is too short! {length} chars required."
+msgstr "Valitud PIN-kood on liiga lühike! Nõutav on {length} tähemärki."
+
+msgid "Cloud Password:"
+msgstr "Pilveparool:"
+
+msgid "Code:"
+msgstr "Kood:"
+
+msgid "Confirm PIN:"
+msgstr "Kinnitage PIN-kood:"
+
+msgid "Confirm password:"
+msgstr "Kinnita parool:"
+
+msgid "Consent required. Please contact your administrator."
+msgstr "Vajalik on nõusolek. Võtke ühendust oma administraatoriga."
+
+msgid "Create a PIN to use in place of passwords."
+msgstr "Looge PIN-kood, mida kasutada paroolide asemel."
+
+msgid "Device enrollment failed. Please contact your administrator."
+msgstr "Seadme registreerimine nurjus. Võtke ühendust oma administraatoriga."
+
+msgid "Device has been removed from the domain."
+msgstr "Seade on domeenist eemaldatud."
+
+msgid "Enable Bluetooth to sign in with your phone."
+msgstr "Lubage Bluetooth, et telefoniga sisse logida."
+
+msgid "Enrolling the Hello PIN. Please wait..."
+msgstr "Hello PIN-i registreerimine. Palun oodake..."
+
+msgid "Enter the setup key '{secret}' to enroll a TOTP Authenticator app. Use '{issuer}' for the code name and '{account}' as the label/name."
+msgstr "Sisestage seadistusvõti „{secret}“, et registreerida TOTP autentimisrakendus. Kasutage koodi nimena „{issuer}“ ja sildina/nimena „{account}“."
+
+msgid "Entra Id Fido authentication failed."
+msgstr "Entra ID FIDO autentimine nurjus."
+
+msgid "Entra Id Password:"
+msgstr "Entra ID parool:"
+
+msgid "FIDO authentication not available. Please try a different authentication method."
+msgstr "FIDO autentimine pole saadaval. Proovige mõnda muud autentimismeetodit."
+
+msgid "Failed to authenticate with Hello PIN."
+msgstr "Hello PIN-iga autentimine ebaõnnestus."
+
+msgid "Failed to authenticate with Hello PIN. One more failed attempt will require multi-factor authentication and resetting your Linux Hello PIN."
+msgstr "Hello PIN-iga autentimine nurjus. Veel üks ebaõnnestunud katse nõuab mitmikautentimist ja teie Linux Hello PIN-i lähtestamist."
+
+msgid "Failed to authenticate with Hello TOTP code."
+msgstr "Hello TOTP-koodiga autentimine nurjus."
+
+msgid "Failed to build regex: {error}"
+msgstr "Regulaaravaldise loomine ebaõnnestus: {error}"
+
+msgid "Failed to change user password: {msg}"
+msgstr "Kasutaja parooli muutmine ebaõnnestus: {msg}"
+
+msgid "Failed to delete CSR key"
+msgstr "CSR-võtme kustutamine nurjus"
+
+msgid "Failed to delete intune key"
+msgstr "Intune'i võtme kustutamine nurjus"
+
+msgid "Failed to generate QR code"
+msgstr "QR-koodi loomine ebaõnnestus"
+
+msgid "Failed to join domain. Please contact your administrator."
+msgstr "Domeeniga liitumine nurjus. Võtke ühendust oma administraatoriga."
+
+msgid "Failed to provision hello key: {error}\n"
+"{message}"
+msgstr "Hello-võtme ettevalmistamine nurjus: {error}\n"
+"{message}"
+
+msgid "Failed to save device configuration. Please contact your administrator."
+msgstr "Seadme konfiguratsiooni salvestamine nurjus. Võtke ühendust oma administraatoriga."
+
+msgid "Failed to store device credentials. Please contact your administrator."
+msgstr "Seadme identimisteabe salvestamine nurjus. Võtke ühendust oma administraatoriga."
+
+msgid "Fido PIN:"
+msgstr "Fido PIN-kood:"
+
+msgid "Himmelblau authentication is starting, please wait..."
+msgstr "Himmelblau autentimine käivitub, palun oodake..."
+
+msgid "Himmelblau authentication service did not become available in time."
+msgstr "Himmelblau autentimisteenus ei muutunud õigel ajal kättesaadavaks."
+
+msgid "Himmelblau authentication service is unavailable."
+msgstr "Himmelblau autentimisteenus pole saadaval."
+
+msgid "Inputs did not match. Try again."
+msgstr "Sisestused ei ühtinud. Proovige uuesti."
+
+msgid "Invalid credentials"
+msgstr "Vigased mandaadid"
+
+msgid "Multi-factor authentication required."
+msgstr "Nõutav on mitmeteguriline autentimine."
+
+msgid "Multi-factor authentication required. Please try signing in again."
+msgstr "Nõutav on mitmikautentimine. Proovige uuesti sisse logida."
+
+msgid "Network outage detected."
+msgstr "Tuvastati võrguühenduse katkestus."
+
+msgid "New PIN:"
+msgstr "Uus PIN:"
+
+msgid "New password:"
+msgstr "Uus parool:"
+
+msgid "No Entra Id Hello PIN was supplied."
+msgstr "Entra ID Hello PIN-koodi ei esitatud."
+
+msgid "No Entra Id Hello confirmation PIN was supplied."
+msgstr "Entra ID Hello kinnituse PIN-koodi ei esitatud."
+
+msgid "No Entra Id confirmation password was supplied."
+msgstr "Entra ID kinnituse parooli ei sisestatud."
+
+msgid "No Entra Id password was supplied."
+msgstr "Entra ID parooli ei sisestatud."
+
+msgid "No Hello TOTP code was supplied."
+msgstr "Hello TOTP-koodi ei esitatud."
+
+msgid "No input was supplied."
+msgstr "Sisendit ei esitatud."
+
+msgid "Offline auth has expired. Please connect to the network to continue."
+msgstr "Võrguühenduseta autentimine on aegunud. Jätkamiseks ühenduge võrguga."
+
+msgid "Open your Authenticator app, and enter the number '{entropy}' to sign in."
+msgstr "Avage oma Authenticatori rakendus ja sisestage sisselogimiseks number '{entropy}'."
+
+msgid "Open your authenticator app and scan this QR code to enroll. Then enter the generated code.\n"
+"{qr}"
+msgstr "Avage oma autentimisrakendus ja skannige registreerumiseks see QR-kood. Seejärel sisestage genereeritud kood.\n"
+"{qr}"
+
+msgid "PIN must not use repeating or predictable sequences. Avoid patterns like '111111', '123456', or '135791'."
+msgstr "PIN-kood ei tohi kasutada korduvaid ega ennustatavaid jadasid. Vältige mustreid nagu „111111“, „123456“ või „135791“."
+
+msgid "PIN setup failed. Please try signing in again."
+msgstr "PIN-koodi seadistamine nurjus. Proovige uuesti sisse logida."
+
+msgid "PIN:"
+msgstr "PIN-kood:"
+
+msgid "Password change required. Please contact your administrator."
+msgstr "Parooli muutmine on vajalik. Palun võtke ühendust oma administraatoriga."
+
+msgid "Password entry required."
+msgstr "Parooli sisestamine on nõutav."
+
+msgid "Password reset registration required. Complete setup at https://aka.ms/ssprsetup from another device, then try again."
+msgstr "Parooli lähtestamise registreerimine on nõutav. Viige seadistamine lõpule aadressil https://aka.ms/ssprsetup teisest seadmest ja proovige seejärel uuesti."
+
+msgid "Please enter your Hello TOTP code from your Authenticator:"
+msgstr "Palun sisestage oma autentimisrakendusest pärit Hello TOTP-kood:"
+
+msgid "Please insert your security key."
+msgstr "Palun sisestage oma turvavõti."
+
+msgid "Please select a device by touching one of them."
+msgstr "Valige seade, puudutades üht neist."
+
+msgid "Please touch your security key."
+msgstr "Puudutage oma turvavõtit."
+
+msgid "Press enter to continue"
+msgstr "Jätkamiseks vajutage sisestusklahvi"
+
+msgid "QR/Bluetooth authentication failed."
+msgstr "QR-i/Bluetoothi autentimine ebaõnnestus."
+
+msgid "Scan the QR code to continue sign-in, or open this link on another device:\n"
+"{complete}\n"
+"If you cannot scan, visit:\n"
+"{verification_uri}\n"
+"And enter the code:\n"
+"{user_code}"
+msgstr "Sisselogimise jätkamiseks skannige QR-kood või avage see link teises seadmes:\n"
+"{complete}\n"
+"Kui te ei saa koodi skannida, külastage:\n"
+"{verification_uri}\n"
+"Ja sisestage kood:\n"
+"{user_code}"
+
+msgid "Scan with your authenticator app"
+msgstr "Skannige oma autentimisrakendusega"
+
+msgid "Security key and QR/Bluetooth authentication failed."
+msgstr "Turvavõtmega ning QR-/Bluetoothi kaudu autentimine nurjus."
+
+msgid "Security key authentication failed."
+msgstr "Turvavõtmega autentimine ebaõnnestus."
+
+msgid "Session data corrupted. Please sign in again."
+msgstr "Seansi andmed on rikutud. Palun logige uuesti sisse."
+
+msgid "Set up a PIN\n"
+"A Hello PIN is a fast, secure way to sign in to your device, apps, and services."
+msgstr "Seadistage PIN-kood\n"
+"Hello PIN-kood on kiire ja turvaline viis oma seadmesse, rakendustesse ja teenustesse sisselogimiseks."
+
+msgid "TOTP Code:"
+msgstr "TOTP-kood:"
+
+msgid "The minimum PIN length is {length} characters."
+msgstr "PIN-koodi minimaalne pikkus on {length} märki."
+
+msgid "This command changes your local Hello PIN, NOT your Entra Id password."
+msgstr "See käsk muudab teie kohalikku Hello PIN-koodi, MITTE teie Entra ID parooli."
+
+msgid "Too many failed attempts in one row. Your device has been temporarily blocked. Please unplug it and plug in again."
+msgstr "Liiga palju ebaõnnestunud katseid järjest. Teie seade on ajutiselt blokeeritud. Palun eemaldage see vooluvõrgust ja ühendage uuesti."
+
+msgid "Too many failed attempts. Your device has been blocked. Reset it."
+msgstr "Liiga palju nurjunud katseid. Teie seade on blokeeritud. Lähtestage see."
+
+msgid "Too many failed user verification attempts."
+msgstr "Liiga palju nurjunud kasutaja kinnitamise katseid."
+
+msgid "Too many incorrect PIN attempts. You will need to enroll a new Linux Hello PIN."
+msgstr "Liiga palju valesid PIN-koodi sisestamise katseid. Peate registreerima uue Linux Hello PIN-koodi."
+
+msgid "Try again."
+msgstr "Proovige uuesti."
+
+msgid "Unexpected authentication step. Please try signing in again."
+msgstr "Ootamatu autentimissamm. Palun proovige uuesti sisse logida."
+
+msgid "Unexpected error occurred."
+msgstr "Ilmnes ootamatu tõrge."
+
+msgid "Unexpected error: {error}"
+msgstr "Ootamatu viga: {error}"
+
+msgid "Unexpected select device notice"
+msgstr "Ootamatu seadme valimise teade"
+
+msgid "Update your password\n"
+"You need to update your password because this is\n"
+"the first time you are signing in, or because your\n"
+"password has expired."
+msgstr "Uuendage oma parooli\n"
+"Peate oma parooli uuendama, sest logite sisse\n"
+"esimest korda või teie parool on aegunud."
+
+msgid "Use the Linux Hello PIN for this device."
+msgstr "Kasutage selle seadme Linux Hello PIN-koodi."
+
+msgid "Use the password for your Office 365 or Microsoft online login."
+msgstr "Kasutage oma Office 365 või Microsofti veebisisselogimise parooli."
+
+msgid "Using a browser on another device, visit:\n"
+"{verification_uri}\n"
+"And enter the code:\n"
+"{user_code}"
+msgstr "Avage teises seadmes brauser ja minge aadressile:\n"
+"{verification_uri}\n"
+"Seejärel sisestage kood:\n"
+"{user_code}"
+
+msgid "Value:"
+msgstr "Väärtus:"
+
+msgid "Waiting for browser authentication to complete..."
+msgstr "Oodatakse brauseris autentimise lõpuleviimist..."
+
+msgid "We texted your phone {phone}. Please enter the code to sign in:"
+msgstr "Saatsime teie telefonile {phone} tekstsõnumi. Sisselogimiseks sisestage kood:"
+
+msgid "We're calling your office phone {phone}. Please answer it to continue."
+msgstr "Helistame teie töötelefonile {phone}. Jätkamiseks vastake kõnele."
+
+msgid "We're calling your phone {phone}. Please answer it to continue."
+msgstr "Helistame teie telefonile {phone}. Jätkamiseks vastake kõnele."
+
+msgid "Wrong PIN! {message}"
+msgstr "Vale PIN-kood! {message}"
+
+msgid "Wrong user verification! {message}"
+msgstr "Vale kasutaja kinnitamine! {message}"
+
+msgid "You have {attempts} attempt left."
+msgid_plural "You have {attempts} attempts left."
+msgstr[0] "Teil on jäänud {attempts} katse."
+msgstr[1] "Teil on jäänud {attempts} katset."
+
+msgid "Your session has expired. Please sign in again."
+msgstr "Teie seanss on aegunud. Palun logige uuesti sisse."
+
+msgid "{code}: {message}\n"
+"If you are now prompted for a password from pam_unix, please disregard the prompt, go back and try again."
+msgstr "{code}: {message}\n"
+"Kui teilt küsitakse nüüd pam_unix parooli, palun eirake seda viipa, minge tagasi ja proovige uuesti."
+
+msgid "{message}\n"
+"No push? Check your mobile device's internet connection."
+msgstr "{message}\n"
+"Tõuketeavitust ei tulnud? Kontrollige oma mobiilseadme internetiühendust."

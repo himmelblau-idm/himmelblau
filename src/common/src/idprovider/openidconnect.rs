@@ -19,6 +19,7 @@
 use crate::config::HimmelblauConfig;
 use crate::constants::ID_MAP_CACHE;
 use crate::db::KeyStoreTxn;
+use crate::i18n::{tr, tr_fmt};
 use crate::idmap_cache::StaticIdCache;
 use crate::idprovider::common::build_online_probe_client;
 use crate::idprovider::common::flip_displayname_comma;
@@ -52,7 +53,7 @@ use kanidm_hsm_crypto::PinValue;
 use oauth2::basic::BasicTokenType;
 use oauth2::{
     DeviceAuthorizationResponse as OauthDeviceAuthResponse, EmptyExtraTokenFields,
-    RequestTokenError, StandardTokenResponse,
+    RequestTokenError, ResourceOwnerPassword, ResourceOwnerUsername, StandardTokenResponse,
 };
 use openidconnect::core::{
     CoreAuthDisplay, CoreClaimName, CoreClaimType, CoreClient, CoreClientAuthMethod,
@@ -86,16 +87,20 @@ pub fn mfa_from_oidc_device(
     let expires_in = details.expires_in().as_secs() as u32;
 
     let msg = match details.verification_uri_complete() {
-        Some(complete) => format!(
-            "Scan the QR code to continue sign-in, or open this link on another device:\n{}\nIf you cannot scan, visit:\n{}\nAnd enter the code:\n{}",
-            complete.secret(),
-            details.verification_uri(),
-            details.user_code().secret()
+        Some(complete) => tr_fmt(
+            "Scan the QR code to continue sign-in, or open this link on another device:\n{complete}\nIf you cannot scan, visit:\n{verification_uri}\nAnd enter the code:\n{user_code}",
+            &[
+                ("complete", complete.secret().to_string()),
+                ("verification_uri", details.verification_uri().to_string()),
+                ("user_code", details.user_code().secret().to_string())
+            ],
         ),
-        None => format!(
-            "Using a browser on another device, visit:\n{}\nAnd enter the code:\n{}",
-            details.verification_uri(),
-            details.user_code().secret()
+        None => tr_fmt(
+            "Using a browser on another device, visit:\n{verification_uri}\nAnd enter the code:\n{user_code}",
+            &[
+                ("verification_uri", details.verification_uri().to_string()),
+                ("user_code", details.user_code().secret().to_string()),
+            ],
         ),
     };
 
@@ -742,17 +747,20 @@ fn auth_request_from_orchestrator_inputs(
             "Selected MFAPoll prompt from orchestrator confirmation input"
         );
         return AuthRequest::MFAPoll {
-            msg: input.prompt.clone().unwrap_or_else(|| {
-                "Approve sign-in in your authenticator app, then wait...".to_string()
-            }),
+            msg: input
+                .prompt
+                .clone()
+                .unwrap_or_else(|| tr("Approve sign-in in your authenticator app, then wait...")),
             polling_interval: poll_interval_secs,
+            show_push_hint: false,
         };
     }
 
     debug!("No explicit orchestrator input matched; defaulting to MFAPoll waiting prompt");
     AuthRequest::MFAPoll {
-        msg: "Waiting for browser authentication to complete...".to_string(),
+        msg: tr("Waiting for browser authentication to complete..."),
         polling_interval: poll_interval_secs,
+        show_push_hint: false,
     }
 }
 
@@ -862,14 +870,89 @@ fn orchestrator_inputs_from_pam_request(
 mod tests {
     use super::{
         auth_request_from_orchestrator_inputs, mfa_from_oidc_device,
-        orchestrator_inputs_from_pam_request, parse_oidc_mfa_extra_data,
-        serialize_oidc_mfa_extra_data, OidcMfaExtraData, OrchestratorFlowState,
+        oidc_should_prompt_hello_setup, orchestrator_inputs_from_pam_request,
+        parse_oidc_mfa_extra_data, ropc_is_invalid_credentials, serialize_oidc_mfa_extra_data,
+        validated_password_cache_action, OidcMfaExtraData, OrchestratorFlowState,
         OrchestratorInputType, OrchestratorRequiredInput,
     };
-    use crate::idprovider::interface::AuthRequest;
+    use crate::idprovider::interface::{AuthCacheAction, AuthRequest, AuthResult};
     use crate::unix_proto::PamAuthRequest;
     use oauth2::DeviceAuthorizationResponse;
     use serde_json::json;
+
+    #[test]
+    fn ropc_invalid_credentials_detects_bad_password() {
+        // Keycloak / OneLogin wording for a wrong password.
+        assert!(ropc_is_invalid_credentials(Some(
+            "Invalid user credentials"
+        )));
+        // Case-insensitive matching.
+        assert!(ropc_is_invalid_credentials(Some(
+            "INVALID USER CREDENTIALS"
+        )));
+        // Entra embeds the AADSTS code and message in the description text.
+        assert!(ropc_is_invalid_credentials(Some(
+            "AADSTS50126: Error validating credentials due to invalid username or password."
+        )));
+        assert!(ropc_is_invalid_credentials(Some("Bad credentials")));
+    }
+
+    #[test]
+    fn ropc_invalid_credentials_ignores_mfa_and_unknown() {
+        // Keycloak returns this distinct message when OTP/MFA is required.
+        assert!(!ropc_is_invalid_credentials(Some(
+            "Account is not fully set up"
+        )));
+        assert!(!ropc_is_invalid_credentials(Some(
+            "MFA is required for this user"
+        )));
+        // Missing or unrecognized descriptions must not be treated as bad
+        // credentials (they fall back to the device flow).
+        assert!(!ropc_is_invalid_credentials(None));
+        assert!(!ropc_is_invalid_credentials(Some("something unexpected")));
+    }
+
+    #[test]
+    fn oidc_hello_setup_requires_missing_key_and_refresh_token() {
+        assert!(oidc_should_prompt_hello_setup(true, false, true, true));
+        assert!(!oidc_should_prompt_hello_setup(false, false, true, true));
+        assert!(!oidc_should_prompt_hello_setup(true, true, true, true));
+        assert!(!oidc_should_prompt_hello_setup(true, false, false, true));
+        assert!(!oidc_should_prompt_hello_setup(true, false, true, false));
+    }
+
+    #[test]
+    fn validated_password_cache_action_preserves_setup_pin_next() {
+        let result = AuthResult::Next(AuthRequest::SetupPin {
+            msg: "Set up a PIN".to_string(),
+        });
+
+        match validated_password_cache_action(&result, true, Some("secret")) {
+            AuthCacheAction::PasswordHashUpdate { cred } => assert_eq!(cred, "secret"),
+            AuthCacheAction::None => panic!("expected password hash update"),
+        }
+    }
+
+    #[test]
+    fn validated_password_cache_action_skips_denied_and_disabled() {
+        let denied = AuthResult::Denied("no".to_string());
+        assert!(matches!(
+            validated_password_cache_action(&denied, true, Some("secret")),
+            AuthCacheAction::None
+        ));
+
+        let next = AuthResult::Next(AuthRequest::SetupPin {
+            msg: "Set up a PIN".to_string(),
+        });
+        assert!(matches!(
+            validated_password_cache_action(&next, false, Some("secret")),
+            AuthCacheAction::None
+        ));
+        assert!(matches!(
+            validated_password_cache_action(&next, true, None),
+            AuthCacheAction::None
+        ));
+    }
 
     #[test]
     fn mfa_message_prefers_verification_uri_complete() {
@@ -1039,9 +1122,11 @@ mod tests {
             AuthRequest::MFAPoll {
                 msg,
                 polling_interval,
+                show_push_hint,
             } => {
                 assert_eq!(msg, "Approve in app");
                 assert_eq!(polling_interval, 5);
+                assert!(!show_push_hint);
             }
             _ => panic!("expected MFAPoll request"),
         }
@@ -1303,6 +1388,77 @@ struct OidcDelayedInit {
     http_client: reqwest::Client,
     authorization_endpoint: String,
     openid_configuration_url: String,
+    /// Whether the provider advertises the OAuth2 `password` (ROPC) grant in its
+    /// discovery document. Password-only auth is only offered when this is true.
+    password_grant_supported: bool,
+}
+
+/// Result of an attempted OIDC Resource Owner Password Credentials (ROPC) grant.
+/// The caller only needs to decide between rejecting the login and falling back
+/// to the interactive device flow.
+pub(crate) enum RopcError {
+    /// The provider confidently reported bad credentials; deny the login.
+    InvalidCredentials,
+    /// MFA is required, or the failure could not be confidently classified
+    /// (unknown server error, transport/parse error). Fall back to the device
+    /// flow so a legitimate user can still complete login. The String is for
+    /// logging only.
+    Fallback(String),
+}
+
+/// Classify an OIDC token-endpoint `error_description` as a confident
+/// bad-credential failure. Only a small curated set of provider-specific
+/// phrases counts; everything else (including MFA-required responses and
+/// unrecognized errors) returns false so the caller falls back to the device
+/// flow rather than wrongly rejecting a legitimate user.
+fn ropc_is_invalid_credentials(desc: Option<&str>) -> bool {
+    let d = match desc {
+        Some(d) => d.to_lowercase(),
+        None => return false,
+    };
+    [
+        "invalid user credentials",
+        "invalid username or password",
+        "invalid credentials",
+        "wrong username or password",
+        "incorrect password",
+        "bad credentials",
+    ]
+    .iter()
+    .any(|needle| d.contains(needle))
+}
+
+fn oidc_should_prompt_hello_setup(
+    hello_enabled: bool,
+    no_hello_pin: bool,
+    hello_key_missing: bool,
+    has_refresh_token: bool,
+) -> bool {
+    hello_enabled && !no_hello_pin && hello_key_missing && has_refresh_token
+}
+
+fn validated_password_cache_action(
+    auth_result: &AuthResult,
+    breakglass_enabled: bool,
+    cred: Option<&str>,
+) -> AuthCacheAction {
+    if !breakglass_enabled {
+        return AuthCacheAction::None;
+    }
+
+    if !matches!(
+        auth_result,
+        AuthResult::Success { .. } | AuthResult::Next(AuthRequest::SetupPin { .. })
+    ) {
+        return AuthCacheAction::None;
+    }
+
+    match cred {
+        Some(cred) => AuthCacheAction::PasswordHashUpdate {
+            cred: cred.to_string(),
+        },
+        None => AuthCacheAction::None,
+    }
 }
 
 pub struct OidcApplication {
@@ -1384,6 +1540,13 @@ impl OidcApplication {
                 provider_metadata.issuer().as_str().trim_end_matches('/')
             );
 
+            // Only offer password-only (ROPC) auth if the provider advertises the
+            // `password` grant. If the field is absent, treat it as unsupported.
+            let password_grant_supported = provider_metadata
+                .grant_types_supported()
+                .map(|grants| grants.contains(&CoreGrantType::Password))
+                .unwrap_or(false);
+
             let device_endpoint = provider_metadata
                 .additional_metadata()
                 .device_authorization_endpoint
@@ -1401,6 +1564,7 @@ impl OidcApplication {
                 http_client,
                 authorization_endpoint,
                 openid_configuration_url,
+                password_grant_supported,
             });
         }
         Ok(())
@@ -1439,6 +1603,64 @@ impl OidcApplication {
             Err(MsalError::RequestFailed(
                 "OIDC client not initialized".to_string(),
             ))
+        }
+    }
+
+    /// Whether the provider advertises the OAuth2 `password` (ROPC) grant.
+    /// Returns false if the client has not been initialized yet.
+    #[instrument(level = "debug", skip_all)]
+    pub async fn password_grant_supported(&self) -> bool {
+        match &*self.client.lock().await {
+            Some(delayed_init) => delayed_init.password_grant_supported,
+            None => false,
+        }
+    }
+
+    /// Acquire a token using the OAuth2 Resource Owner Password Credentials
+    /// (ROPC) grant. Uses the openidconnect/oauth2 client's own request builder
+    /// (like `initiate_device_flow`); ROPC has no polling, so no hand-rolled POST
+    /// is needed. Errors are reduced to a reject-vs-fallback decision for the
+    /// caller (see `RopcError`).
+    #[instrument(level = "debug", skip_all)]
+    pub(crate) async fn acquire_token_by_password(
+        &self,
+        username: &str,
+        password: &str,
+    ) -> Result<OidcTokenResponse, RopcError> {
+        let scopes = vec![
+            Scope::new("openid".to_string()),
+            Scope::new("profile".to_string()),
+            Scope::new("email".to_string()),
+            Scope::new("offline_access".to_string()),
+        ];
+        let guard = self.client.lock().await;
+        let delayed_init = guard
+            .as_ref()
+            .ok_or_else(|| RopcError::Fallback("OIDC client not initialized".to_string()))?;
+
+        // Bind the credentials to locals so they outlive the borrowing request.
+        // NOTE: ResourceOwnerPassword owns a plain String and does not zeroize on
+        // drop (oauth2 5.0.0), so this copy of the plaintext is the residual one we
+        // cannot scrub without patching the crate. Callers wrap their own copies in
+        // Zeroizing.
+        let ropc_username = ResourceOwnerUsername::new(username.to_string());
+        let ropc_password = ResourceOwnerPassword::new(password.to_string());
+        let req = delayed_init
+            .client
+            .exchange_password(&ropc_username, &ropc_password)
+            .map_err(|e| RopcError::Fallback(format!("token endpoint unavailable: {e}")))?
+            .add_scopes(scopes);
+
+        match req.request_async(&delayed_init.http_client).await {
+            Ok(token) => Ok(token),
+            Err(RequestTokenError::ServerResponse(resp)) => {
+                if ropc_is_invalid_credentials(resp.error_description().map(|s| s.as_str())) {
+                    Err(RopcError::InvalidCredentials)
+                } else {
+                    Err(RopcError::Fallback(resp.to_string()))
+                }
+            }
+            Err(e) => Err(RopcError::Fallback(format!("{e}"))),
         }
     }
 
@@ -2060,34 +2282,88 @@ impl OidcProvider {
         )))
     }
 
+    async fn initiate_device_or_orchestrator_auth(
+        &self,
+        account_id: &str,
+    ) -> Result<(AuthRequest, AuthCredHandler), IdpError> {
+        let device_flow = self.client.initiate_device_flow().await.map_err(|e| {
+            error!(?e, "Failed to initiate device flow");
+            IdpError::BadRequest
+        })?;
+
+        if let Some(orchestrator_flow) = self
+            .maybe_start_orchestrator_flow(account_id, &device_flow)
+            .await?
+        {
+            return Ok(orchestrator_flow);
+        }
+
+        let (flow, extra_data) = mfa_from_oidc_device(&device_flow)?;
+
+        let extra_data = serialize_oidc_mfa_extra_data(&OidcMfaExtraData::DeviceFlow {
+            dag_json: extra_data,
+        })?;
+
+        let polling_interval = flow.polling_interval.unwrap_or(5000);
+        Ok((
+            AuthRequest::MFAPoll {
+                msg: flow.msg.clone(),
+                polling_interval: polling_interval / 1000,
+                show_push_hint: false,
+            },
+            AuthCredHandler::MFA {
+                flow: Box::new(flow),
+                password: None,
+                extra_data: Some(extra_data),
+                reauth_hello_pin: None,
+            },
+        ))
+    }
+
     async fn finalize_mfa_success(
         &self,
         account_id: &str,
         no_hello_pin: bool,
         cred_handler: &mut AuthCredHandler,
+        keystore: &mut (impl KeyStoreTxn + Send),
         token: OidcTokenResponse,
+        validated_password: Option<Zeroizing<String>>,
     ) -> Result<(AuthResult, AuthCacheAction), IdpError> {
+        let has_refresh_token = token.refresh_token().is_some();
         match self.token_validate(account_id, &token).await {
             Ok(AuthResult::Success { token: token2 }) => {
                 let hello_enabled = self.config.lock().await.get_enable_hello();
-                if !hello_enabled || no_hello_pin {
-                    info!("Skipping Hello enrollment because it is disabled");
-                    return Ok((AuthResult::Success { token: token2 }, AuthCacheAction::None));
-                }
+                let hello_key_missing = self.fetch_hello_key(account_id, keystore).is_err();
 
-                *cred_handler = AuthCredHandler::SetupPin {
-                    token: Box::new(None),
-                };
-                Ok((
+                let result = if oidc_should_prompt_hello_setup(
+                    hello_enabled,
+                    no_hello_pin,
+                    hello_key_missing,
+                    has_refresh_token,
+                ) {
+                    *cred_handler = AuthCredHandler::SetupPin {
+                        token: Box::new(None),
+                    };
                     AuthResult::Next(AuthRequest::SetupPin {
-                        msg: format!(
-                            "Set up a PIN\n {}{}",
-                            "A Hello PIN is a fast, secure way to sign",
-                            "in to your device, apps, and services."
-                        ),
-                    }),
-                    AuthCacheAction::None,
-                ))
+                        msg: tr("Set up a PIN\nA Hello PIN is a fast, secure way to sign in to your device, apps, and services."),
+                    })
+                } else {
+                    if !hello_enabled || no_hello_pin {
+                        info!("Skipping Hello enrollment because it is disabled");
+                    } else if !hello_key_missing {
+                        debug!("Skipping Hello enrollment because Hello is already configured");
+                    } else if !has_refresh_token {
+                        warn!("Skipping Hello enrollment because OIDC response did not include a refresh token");
+                    }
+                    AuthResult::Success { token: token2 }
+                };
+
+                let action = validated_password_cache_action(
+                    &result,
+                    self.config.lock().await.get_offline_breakglass_enabled(),
+                    validated_password.as_ref().map(|c| c.as_str()),
+                );
+                Ok((result, action))
             }
             Ok(auth_result) => Ok((auth_result, AuthCacheAction::None)),
             Err(e) => Err(e),
@@ -2109,9 +2385,9 @@ impl OidcProvider {
             .user_token_from_oidc(token, shell, self.idmap.as_ref(), &tenant_id)
             .await?;
         if account_id.to_string().to_lowercase() != token2.name.to_string().to_lowercase() {
-            let msg = format!(
-                "Authenticated user {} does not match requested user",
-                token2.uuid
+            let msg = tr_fmt(
+                "Authenticated user {uuid} does not match requested user",
+                &[("uuid", token2.uuid.to_string())],
             );
             error!(msg);
             return Ok(AuthResult::Denied(msg));
@@ -2241,7 +2517,7 @@ impl IdProvider for OidcProvider {
             *state = CacheState::OfflineNextCheck(SystemTime::now() + OFFLINE_NEXT_CHECK);
             return Ok((
                 AuthRequest::InitDenied {
-                    msg: "Network outage detected.".to_string(),
+                    msg: tr("Network outage detected."),
                 },
                 AuthCredHandler::None,
             ));
@@ -2275,37 +2551,28 @@ impl IdProvider for OidcProvider {
             || no_hello_pin
             || force_reauth
         {
-            let device_flow = self.client.initiate_device_flow().await.map_err(|e| {
-                error!(?e, "Failed to initiate device flow");
-                IdpError::BadRequest
-            })?;
-
-            if let Some(orchestrator_flow) = self
-                .maybe_start_orchestrator_flow(account_id, &device_flow)
-                .await?
+            // Offer password-only (ROPC) auth in place of the device flow when it
+            // is enabled by config, this is not a remote service, and the provider
+            // advertises the `password` grant. Behaves like the Entra password-only
+            // flow: a successful password can still lead to Hello PIN setup.
+            let console_password_only = self.config.lock().await.get_allow_console_password_only();
+            if console_password_only
+                && !is_remote_service
+                && self.client.password_grant_supported().await
             {
-                return Ok(orchestrator_flow);
+                return Ok((
+                    AuthRequest::Password {
+                        prompt: None,
+                        long_prompt: None,
+                    },
+                    AuthCredHandler::PasswordFirst {
+                        auth_options: vec![],
+                        is_domain_joined: false,
+                    },
+                ));
             }
 
-            let (flow, extra_data) = mfa_from_oidc_device(&device_flow)?;
-
-            let extra_data = serialize_oidc_mfa_extra_data(&OidcMfaExtraData::DeviceFlow {
-                dag_json: extra_data,
-            })?;
-
-            let polling_interval = flow.polling_interval.unwrap_or(5000);
-            Ok((
-                AuthRequest::MFAPoll {
-                    msg: flow.msg.clone(),
-                    polling_interval: polling_interval / 1000,
-                },
-                AuthCredHandler::MFA {
-                    flow: Box::new(flow),
-                    password: None,
-                    extra_data: Some(extra_data),
-                    reauth_hello_pin: None,
-                },
-            ))
+            self.initiate_device_or_orchestrator_auth(account_id).await
         } else {
             // Check if the network is even up prior to sending a PIN prompt,
             // otherwise we duplicate the PIN prompt when the network goes down.
@@ -2339,7 +2606,7 @@ impl IdProvider for OidcProvider {
             let mut state = self.state.lock().await;
             *state = CacheState::OfflineNextCheck(SystemTime::now() + OFFLINE_NEXT_CHECK);
             return Ok((
-                AuthResult::Denied("Network outage detected.".to_string()),
+                AuthResult::Denied(tr("Network outage detected.")),
                 AuthCacheAction::None,
             ));
         }
@@ -2358,7 +2625,7 @@ impl IdProvider for OidcProvider {
                         Ok((AuthResult::Denied(msg.to_string()), AuthCacheAction::None))
                     });
                     return Ok((
-                        AuthResult::Denied("Failed to authenticate with Hello PIN.".to_string()),
+                        AuthResult::Denied(tr("Failed to authenticate with Hello PIN.")),
                         AuthCacheAction::None,
                     ));
                 }
@@ -2394,7 +2661,7 @@ impl IdProvider for OidcProvider {
                                 Ok(_) => {
                                     error!("Invalid refresh cache entry type");
                                     return Ok((
-                                        AuthResult::Denied("Session data corrupted. Please sign in again.".to_string()),
+                                        AuthResult::Denied(tr("Session data corrupted. Please sign in again.")),
                                         AuthCacheAction::None,
                                     ));
                                 }
@@ -2402,7 +2669,7 @@ impl IdProvider for OidcProvider {
                                     error!(?e, "Failed unsealing hello refresh token from TPM");
                                     error!(?e2, "Failed retrieving refresh token from mem cache");
                                     return Ok((
-                                        AuthResult::Denied("Your session has expired. Please sign in again.".to_string()),
+                                        AuthResult::Denied(tr("Your session has expired. Please sign in again.")),
                                         AuthCacheAction::None,
                                     ));
                                 }
@@ -2414,14 +2681,14 @@ impl IdProvider for OidcProvider {
                             Ok(_) => {
                                 error!("Invalid refresh cache entry type");
                                 return Ok((
-                                    AuthResult::Denied("Session data corrupted. Please sign in again.".to_string()),
+                                    AuthResult::Denied(tr("Session data corrupted. Please sign in again.")),
                                     AuthCacheAction::None,
                                 ));
                             }
                             Err(e) => {
                                 error!(?e, "Failed retrieving refresh token from mem cache");
                                 return Ok((
-                                    AuthResult::Denied("Your session has expired. Please sign in again.".to_string()),
+                                    AuthResult::Denied(tr("Your session has expired. Please sign in again.")),
                                     AuthCacheAction::None,
                                 ));
                             }
@@ -2462,8 +2729,7 @@ impl IdProvider for OidcProvider {
                                         pending_sealed_totp: None,
                                     };
                                     return Ok((AuthResult::Next(AuthRequest::HelloTOTP {
-                                        msg: "Please enter your Hello TOTP code from your Authenticator: "
-                                            .to_string(),
+                                        msg: tr("Please enter your Hello TOTP code from your Authenticator:") + " ",
                                     }), AuthCacheAction::None));
                                 }
                             } else {
@@ -2496,7 +2762,7 @@ impl IdProvider for OidcProvider {
                             // online auth at this point and create a new pin.
                             self.bad_pin_counter.reset_bad_pin_count(account_id).await;
                             return Ok((
-                                AuthResult::Denied("Your session has expired. Please sign in again.".to_string()),
+                                AuthResult::Denied(tr("Your session has expired. Please sign in again.")),
                                 AuthCacheAction::None,
                             ));
                         }
@@ -2511,7 +2777,7 @@ impl IdProvider for OidcProvider {
                                 IdpError::Tpm
                             })?;
                     return Ok((
-                        AuthResult::Denied("Your session has expired. Please sign in again.".to_string()),
+                        AuthResult::Denied(tr("Your session has expired. Please sign in again.")),
                         AuthCacheAction::None,
                     ));
                 };
@@ -2528,7 +2794,7 @@ impl IdProvider for OidcProvider {
                     None => {
                         error!("Missing refresh token in OIDC response");
                         return Ok((
-                            AuthResult::Denied("Authentication incomplete. Please try again.".to_string()),
+                            AuthResult::Denied(tr("Authentication incomplete. Please try again.")),
                             AuthCacheAction::None,
                         ));
                     }
@@ -2576,8 +2842,7 @@ impl IdProvider for OidcProvider {
                                     pending_sealed_totp: None,
                                 };
                                 return Ok((AuthResult::Next(AuthRequest::HelloTOTP {
-                                    msg: "Please enter your Hello TOTP code from your Authenticator: "
-                                        .to_string(),
+                                    msg: tr("Please enter your Hello TOTP code from your Authenticator:") + " ",
                                 }), AuthCacheAction::None));
                             }
                         } else {
@@ -2590,7 +2855,7 @@ impl IdProvider for OidcProvider {
                     Ok(AuthResult::Next(_)) => {
                         debug!("Invalid additional authentication requested with Hello auth.");
                         Ok((
-                            AuthResult::Denied("Unexpected authentication step. Please try signing in again.".to_string()),
+                            AuthResult::Denied(tr("Unexpected authentication step. Please try signing in again.")),
                             AuthCacheAction::None,
                         ))
                     }
@@ -2630,6 +2895,52 @@ impl IdProvider for OidcProvider {
 
                 auth_and_validate_hello_key!(hello_key, keytype, cred)
             }
+            (AuthCredHandler::PasswordFirst { .. }, PamAuthRequest::Password { cred }) => {
+                // Wrap the wire-delivered credential so this copy (and the clone
+                // handed to finalize_mfa_success below) is zeroized on drop.
+                let cred = Zeroizing::new(cred);
+                match self
+                    .client
+                    .acquire_token_by_password(account_id, &cred)
+                    .await
+                {
+                    Ok(token) => {
+                        let (res, action) = self
+                            .finalize_mfa_success(
+                                account_id,
+                                no_hello_pin,
+                                cred_handler,
+                                keystore,
+                                token,
+                                Some(cred.clone()),
+                            )
+                            .await?;
+                        Ok((res, action))
+                    }
+                    // Confident bad password: reject rather than dropping the user
+                    // into a device flow.
+                    Err(RopcError::InvalidCredentials) => {
+                        info!("OIDC password authentication failed: invalid credentials");
+                        Ok((
+                            AuthResult::Denied(tr("Invalid credentials")),
+                            AuthCacheAction::None,
+                        ))
+                    }
+                    // MFA required, or an error we can't confidently classify: fall
+                    // back to the device/MFA flow so a legitimate user can still log in.
+                    Err(RopcError::Fallback(msg)) => {
+                        debug!(
+                            %msg,
+                            "OIDC password grant did not complete; falling back to device flow"
+                        );
+                        let (req, handler) = self
+                            .initiate_device_or_orchestrator_auth(account_id)
+                            .await?;
+                        *cred_handler = handler;
+                        Ok((AuthResult::Next(req), AuthCacheAction::None))
+                    }
+                }
+            }
             (_, PamAuthRequest::Pin { cred }) => {
                 let (hello_key, keytype) =
                     self.fetch_hello_key(account_id, keystore).map_err(|e| {
@@ -2653,10 +2964,9 @@ impl IdProvider for OidcProvider {
                     None => {
                         error!("Missing extra_data in OIDC MFA handler");
                         return Ok((
-                            AuthResult::Denied(
-                                "Authentication session data missing. Please try again."
-                                    .to_string(),
-                            ),
+                            AuthResult::Denied(tr(
+                                "Authentication session data missing. Please try again.",
+                            )),
                             AuthCacheAction::None,
                         ));
                     }
@@ -2667,9 +2977,9 @@ impl IdProvider for OidcProvider {
                     Err(_) => {
                         error!("Failed to deserialize OIDC MFA state");
                         return Ok((
-                            AuthResult::Denied(
-                                "Authentication session corrupted. Please try again.".to_string(),
-                            ),
+                            AuthResult::Denied(tr(
+                                "Authentication session corrupted. Please try again.",
+                            )),
                             AuthCacheAction::None,
                         ));
                     }
@@ -2683,8 +2993,7 @@ impl IdProvider for OidcProvider {
                                 error!("Invalid auth step for OIDC device flow MFA handler");
                                 return Ok((
                                     AuthResult::Denied(
-                                        "Unexpected authentication step. Please try signing in again."
-                                            .to_string(),
+                                        tr("Unexpected authentication step. Please try signing in again.")
                                     ),
                                     AuthCacheAction::None,
                                 ));
@@ -2695,9 +3004,9 @@ impl IdProvider for OidcProvider {
                         if poll_attempt > max_poll_attempts {
                             error!("MFA polling timed out");
                             return Ok((
-                                AuthResult::Denied(
-                                    "Authentication timed out. Please try again.".to_string(),
-                                ),
+                                AuthResult::Denied(tr(
+                                    "Authentication timed out. Please try again.",
+                                )),
                                 AuthCacheAction::None,
                             ));
                         }
@@ -2707,10 +3016,9 @@ impl IdProvider for OidcProvider {
                             Err(e) => {
                                 error!(?e, "Failed to deserialize OIDC DAG");
                                 return Ok((
-                                    AuthResult::Denied(
-                                        "Authentication session corrupted. Please try again."
-                                            .to_string(),
-                                    ),
+                                    AuthResult::Denied(tr(
+                                        "Authentication session corrupted. Please try again.",
+                                    )),
                                     AuthCacheAction::None,
                                 ));
                             }
@@ -2722,7 +3030,9 @@ impl IdProvider for OidcProvider {
                                     account_id,
                                     no_hello_pin,
                                     cred_handler,
+                                    keystore,
                                     token,
+                                    None,
                                 )
                                 .await
                             }
@@ -2733,7 +3043,10 @@ impl IdProvider for OidcProvider {
                             Err(e) => {
                                 error!("{:?}", e);
                                 Ok((
-                                    AuthResult::Denied(format!("Authentication failed: {}", e)),
+                                    AuthResult::Denied(tr_fmt(
+                                        "Authentication failed: {error}",
+                                        &[("error", e.to_string())],
+                                    )),
                                     AuthCacheAction::None,
                                 ))
                             }
@@ -2766,8 +3079,7 @@ impl IdProvider for OidcProvider {
                                         error!(?e, "Failed to deserialize orchestrator DAG state");
                                         return Ok((
                                             AuthResult::Denied(
-                                                "Authentication session corrupted. Please try again."
-                                                    .to_string(),
+                                                tr("Authentication session corrupted. Please try again."),
                                             ),
                                             AuthCacheAction::None,
                                         ));
@@ -2794,9 +3106,9 @@ impl IdProvider for OidcProvider {
                                     "Orchestrator MFA polling timed out"
                                 );
                                 return Ok((
-                                    AuthResult::Denied(
-                                        "Authentication timed out. Please try again.".to_string(),
-                                    ),
+                                    AuthResult::Denied(tr(
+                                        "Authentication timed out. Please try again.",
+                                    )),
                                     AuthCacheAction::None,
                                 ));
                             }
@@ -2819,7 +3131,9 @@ impl IdProvider for OidcProvider {
                                                 account_id,
                                                 no_hello_pin,
                                                 cred_handler,
+                                                keystore,
                                                 token,
+                                                None,
                                             )
                                             .await;
                                     }
@@ -2842,9 +3156,9 @@ impl IdProvider for OidcProvider {
                                             "Failed polling DAG token endpoint"
                                         );
                                         return Ok((
-                                            AuthResult::Denied(format!(
-                                                "Authentication failed: {}",
-                                                e
+                                            AuthResult::Denied(tr_fmt(
+                                                "Authentication failed: {error}",
+                                                &[("error", e.to_string())],
                                             )),
                                             AuthCacheAction::None,
                                         ));
@@ -2861,8 +3175,7 @@ impl IdProvider for OidcProvider {
                             Err(_) => {
                                 return Ok((
                                     AuthResult::Denied(
-                                        "Unexpected authentication step. Please try signing in again."
-                                            .to_string(),
+                                        tr("Unexpected authentication step. Please try signing in again."),
                                     ),
                                     AuthCacheAction::None,
                                 ));
@@ -2933,9 +3246,9 @@ impl IdProvider for OidcProvider {
 
                                 if !success {
                                     return Ok((
-                                        AuthResult::Denied(
-                                            "Authentication failed in browser flow.".to_string(),
-                                        ),
+                                        AuthResult::Denied(tr(
+                                            "Authentication failed in browser flow.",
+                                        )),
                                         AuthCacheAction::None,
                                     ));
                                 }
@@ -2957,7 +3270,9 @@ impl IdProvider for OidcProvider {
                                                     account_id,
                                                     no_hello_pin,
                                                     cred_handler,
+                                                    keystore,
                                                     token,
+                                                    None,
                                                 )
                                                 .await;
                                         }
@@ -2978,9 +3293,9 @@ impl IdProvider for OidcProvider {
                                                 "Failed polling DAG token endpoint"
                                             );
                                             return Ok((
-                                                AuthResult::Denied(format!(
-                                                    "Authentication failed: {}",
-                                                    e
+                                                AuthResult::Denied(tr_fmt(
+                                                    "Authentication failed: {error}",
+                                                    &[("error", e.to_string())],
                                                 )),
                                                 AuthCacheAction::None,
                                             ));
@@ -2997,8 +3312,7 @@ impl IdProvider for OidcProvider {
                                         );
                                         return Ok((
                                             AuthResult::Denied(
-                                                "Authentication did not return a refresh token. Please try again."
-                                                    .to_string(),
+                                                tr("Authentication did not return a refresh token. Please try again."),
                                             ),
                                             AuthCacheAction::None,
                                         ));
@@ -3019,7 +3333,9 @@ impl IdProvider for OidcProvider {
                                             account_id,
                                             no_hello_pin,
                                             cred_handler,
+                                            keystore,
                                             token,
+                                            None,
                                         )
                                         .await
                                     }
@@ -3031,8 +3347,7 @@ impl IdProvider for OidcProvider {
                                         );
                                         Ok((
                                             AuthResult::Denied(
-                                                "Authentication flow completed but token exchange failed. Please try again."
-                                                    .to_string(),
+                                                tr("Authentication flow completed but token exchange failed. Please try again."),
                                             ),
                                             AuthCacheAction::None,
                                         ))
@@ -3046,7 +3361,10 @@ impl IdProvider for OidcProvider {
                                     "Orchestrator returned session error during MFA step"
                                 );
                                 Ok((
-                                    AuthResult::Denied(format!("Authentication failed: {}", error)),
+                                    AuthResult::Denied(tr_fmt(
+                                        "Authentication failed: {error}",
+                                        &[("error", error)],
+                                    )),
                                     AuthCacheAction::None,
                                 ))
                             }
@@ -3056,7 +3374,10 @@ impl IdProvider for OidcProvider {
                                     "Orchestrator returned generic error during MFA step"
                                 );
                                 Ok((
-                                    AuthResult::Denied(format!("Authentication failed: {}", error)),
+                                    AuthResult::Denied(tr_fmt(
+                                        "Authentication failed: {error}",
+                                        &[("error", error)],
+                                    )),
                                     AuthCacheAction::None,
                                 ))
                             }
@@ -3068,8 +3389,7 @@ impl IdProvider for OidcProvider {
                                 );
                                 Ok((
                                     AuthResult::Denied(
-                                        "Authentication session returned an unexpected state. Please try again."
-                                            .to_string(),
+                                        tr("Authentication session returned an unexpected state. Please try again."),
                                     ),
                                     AuthCacheAction::None,
                                 ))
@@ -3096,8 +3416,7 @@ impl IdProvider for OidcProvider {
                                 } else {
                                     Ok((
                                         AuthResult::Denied(
-                                            "Browser authentication backend unavailable. Please try again."
-                                                .to_string(),
+                                            tr("Browser authentication backend unavailable. Please try again."),
                                         ),
                                         AuthCacheAction::None,
                                     ))
@@ -3130,9 +3449,9 @@ impl IdProvider for OidcProvider {
             _ => {
                 error!("Invalid auth step");
                 Ok((
-                    AuthResult::Denied(
-                        "Unexpected authentication step. Please try signing in again.".to_string(),
-                    ),
+                    AuthResult::Denied(tr(
+                        "Unexpected authentication step. Please try signing in again.",
+                    )),
                     AuthCacheAction::None,
                 ))
             }

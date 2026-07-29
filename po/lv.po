@@ -1,0 +1,417 @@
+# Latvian translations for Himmelblau.
+# Copyright (C) 2026 Himmelblau contributors
+# This file is distributed under the same license as Himmelblau.
+#
+msgid ""
+msgstr "Project-Id-Version: himmelblau\n"
+"POT-Creation-Date: 2026-07-22 22:33+0000\n"
+"PO-Revision-Date: 2026-07-23 14:39+0000\n"
+"Last-Translator: Automated via Codex <noreply@himmelblau-idm.org>\n"
+"Language-Team: Latvian\n"
+"Language: lv\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Plural-Forms: nplurals=3; plural=(((((((n % 10) == 1)) && (!(((n % 100) == 11)))) || ((((0 == 2)) && (((0 % 10) == 1))) && (!(((0 % 100) == 11))))) || ((!((0 == 2))) && (((0 % 10) == 1)))) ? 1 : (((((n % 10) == 0)) || (((n % 100) >= 11 && (n % 100) <= 19))) || (((0 == 2)) && (((0 % 100) >= 11 && (0 % 100) <= 19)))) ? 0 : 2);\n"
+""
+
+msgid "An unexpected error occurred."
+msgstr "Radās neparedzēta kļūda."
+
+msgid "Approve sign-in in your authenticator app, then wait..."
+msgstr "Apstipriniet pierakstīšanos savā autentifikatora lietotnē, pēc tam uzgaidiet..."
+
+msgid "Authenticated user {user} does not match requested user"
+msgstr "Autentificētais lietotājs {user} neatbilst pieprasītajam lietotājam"
+
+msgid "Authenticated user {uuid} does not match requested user"
+msgstr "Autentificētais lietotājs {uuid} neatbilst pieprasītajam lietotājam"
+
+msgid "Authentication did not return a refresh token. Please try again."
+msgstr "Autentifikācija neatgrieza atsvaidzināšanas pilnvaru. Lūdzu, mēģiniet vēlreiz."
+
+msgid "Authentication failed (AADSTS{code})"
+msgstr "Autentifikācija neizdevās (AADSTS{code})"
+
+msgid "Authentication failed in browser flow."
+msgstr "Autentifikācija pārlūkprogrammas plūsmā neizdevās."
+
+msgid "Authentication failed. Please contact your administrator."
+msgstr "Autentifikācija neizdevās. Lūdzu, sazinieties ar savu administratoru."
+
+msgid "Authentication failed. Please try again."
+msgstr "Autentifikācija neizdevās. Lūdzu, mēģiniet vēlreiz."
+
+msgid "Authentication failed. Please try signing in again."
+msgstr "Autentifikācija neizdevās. Lūdzu, mēģiniet pierakstīties vēlreiz."
+
+msgid "Authentication failed: Authentication method not supported."
+msgstr "Autentifikācija neizdevās: autentifikācijas metode netiek atbalstīta."
+
+msgid "Authentication failed: Configuration error."
+msgstr "Autentifikācija neizdevās: konfigurācijas kļūda."
+
+msgid "Authentication failed: Cryptographic error."
+msgstr "Autentifikācija neizdevās: kriptogrāfiska kļūda."
+
+msgid "Authentication failed: Invalid server response."
+msgstr "Autentifikācija neizdevās: nederīga servera atbilde."
+
+msgid "Authentication failed: Missing required data."
+msgstr "Autentifikācija neizdevās: trūkst nepieciešamo datu."
+
+msgid "Authentication failed: Security hardware error."
+msgstr "Autentifikācija neizdevās: drošības aparatūras kļūda."
+
+msgid "Authentication failed: Unable to reach authentication server."
+msgstr "Autentifikācija neizdevās: neizdevās sasniegt autentifikācijas serveri."
+
+msgid "Authentication failed: {error}"
+msgstr "Autentifikācija neizdevās: {error}"
+
+msgid "Authentication flow completed but token exchange failed. Please try again."
+msgstr "Autentifikācijas plūsma tika pabeigta, bet marķiera apmaiņa neizdevās. Lūdzu, mēģiniet vēlreiz."
+
+msgid "Authentication in progress."
+msgstr "Notiek autentifikācija."
+
+msgid "Authentication incomplete. Please try again."
+msgstr "Autentifikācija nav pabeigta. Lūdzu, mēģiniet vēlreiz."
+
+msgid "Authentication service is temporarily unavailable. Please try again shortly."
+msgstr "Autentifikācijas pakalpojums īslaicīgi nav pieejams. Lūdzu, mēģiniet vēlreiz pēc brīža."
+
+msgid "Authentication service unavailable. Please try again later."
+msgstr "Autentifikācijas pakalpojums nav pieejams. Lūdzu, mēģiniet vēlreiz vēlāk."
+
+msgid "Authentication session corrupted. Please try again."
+msgstr "Autentifikācijas sesija ir bojāta. Lūdzu, mēģiniet vēlreiz."
+
+msgid "Authentication session data missing. Please try again."
+msgstr "Trūkst autentifikācijas sesijas datu. Lūdzu, mēģiniet vēlreiz."
+
+msgid "Authentication session returned an unexpected state. Please try again."
+msgstr "Autentifikācijas sesija atgrieza neparedzētu stāvokli. Lūdzu, mēģiniet vēlreiz."
+
+msgid "Authentication timed out. Please try again."
+msgstr "Autentifikācijai iestājās noildze. Lūdzu, mēģiniet vēlreiz."
+
+msgid "Browser authentication backend unavailable. Please try again."
+msgstr "Pārlūka autentifikācijas aizmugursistēma nav pieejama. Lūdzu, mēģiniet vēlreiz."
+
+msgid "Changing the password. Please wait..."
+msgstr "Notiek paroles maiņa. Lūdzu, uzgaidiet..."
+
+msgid "Chosen password is too short! 8 chars required."
+msgstr "Izvēlētā parole ir pārāk īsa! Nepieciešamas 8 rakstzīmes."
+
+msgid "Chosen pin is too short! {length} chars required."
+msgstr "Izvēlētais PIN kods ir pārāk īss! Nepieciešamas {length} rakstzīmes."
+
+msgid "Cloud Password:"
+msgstr "Mākoņa parole:"
+
+msgid "Code:"
+msgstr "Kods:"
+
+msgid "Confirm PIN:"
+msgstr "Apstipriniet PIN:"
+
+msgid "Confirm password:"
+msgstr "Apstipriniet paroli:"
+
+msgid "Consent required. Please contact your administrator."
+msgstr "Nepieciešama piekrišana. Lūdzu, sazinieties ar administratoru."
+
+msgid "Create a PIN to use in place of passwords."
+msgstr "Izveidojiet PIN kodu, ko izmantot paroļu vietā."
+
+msgid "Device enrollment failed. Please contact your administrator."
+msgstr "Ierīces reģistrācija neizdevās. Lūdzu, sazinieties ar savu administratoru."
+
+msgid "Device has been removed from the domain."
+msgstr "Ierīce ir noņemta no domēna."
+
+msgid "Enable Bluetooth to sign in with your phone."
+msgstr "Ieslēdziet Bluetooth, lai pierakstītos ar tālruni."
+
+msgid "Enrolling the Hello PIN. Please wait..."
+msgstr "Reģistrē Hello PIN. Lūdzu, uzgaidiet..."
+
+msgid "Enter the setup key '{secret}' to enroll a TOTP Authenticator app. Use '{issuer}' for the code name and '{account}' as the label/name."
+msgstr "Ievadiet iestatīšanas atslēgu '{secret}', lai reģistrētu TOTP autentifikatora lietotni. Izmantojiet '{issuer}' kā koda nosaukumu un '{account}' kā etiķeti/nosaukumu."
+
+msgid "Entra Id Fido authentication failed."
+msgstr "Entra ID FIDO autentifikācija neizdevās."
+
+msgid "Entra Id Password:"
+msgstr "Entra ID parole:"
+
+msgid "FIDO authentication not available. Please try a different authentication method."
+msgstr "FIDO autentifikācija nav pieejama. Lūdzu, izmēģiniet citu autentifikācijas metodi."
+
+msgid "Failed to authenticate with Hello PIN."
+msgstr "Neizdevās autentificēties ar Hello PIN."
+
+msgid "Failed to authenticate with Hello PIN. One more failed attempt will require multi-factor authentication and resetting your Linux Hello PIN."
+msgstr "Neizdevās autentificēties ar Hello PIN. Vēl viens neveiksmīgs mēģinājums prasīs daudzfaktoru autentifikāciju un Linux Hello PIN atiestatīšanu."
+
+msgid "Failed to authenticate with Hello TOTP code."
+msgstr "Neizdevās autentificēties ar Hello TOTP kodu."
+
+msgid "Failed to build regex: {error}"
+msgstr "Neizdevās izveidot regulāro izteiksmi: {error}"
+
+msgid "Failed to change user password: {msg}"
+msgstr "Neizdevās mainīt lietotāja paroli: {msg}"
+
+msgid "Failed to delete CSR key"
+msgstr "Neizdevās izdzēst CSR atslēgu"
+
+msgid "Failed to delete intune key"
+msgstr "Neizdevās dzēst Intune atslēgu"
+
+msgid "Failed to generate QR code"
+msgstr "Neizdevās ģenerēt QR kodu"
+
+msgid "Failed to join domain. Please contact your administrator."
+msgstr "Neizdevās pievienoties domēnam. Lūdzu, sazinieties ar savu administratoru."
+
+msgid "Failed to provision hello key: {error}\n"
+"{message}"
+msgstr "Neizdevās nodrošināt Hello atslēgu: {error}\n"
+"{message}"
+
+msgid "Failed to save device configuration. Please contact your administrator."
+msgstr "Neizdevās saglabāt ierīces konfigurāciju. Lūdzu, sazinieties ar savu administratoru."
+
+msgid "Failed to store device credentials. Please contact your administrator."
+msgstr "Neizdevās saglabāt ierīces akreditācijas datus. Lūdzu, sazinieties ar savu administratoru."
+
+msgid "Fido PIN:"
+msgstr "Fido PIN kods:"
+
+msgid "Himmelblau authentication is starting, please wait..."
+msgstr "Tiek sākta Himmelblau autentifikācija, lūdzu, uzgaidiet..."
+
+msgid "Himmelblau authentication service did not become available in time."
+msgstr "Himmelblau autentifikācijas pakalpojums laikus nekļuva pieejams."
+
+msgid "Himmelblau authentication service is unavailable."
+msgstr "Himmelblau autentifikācijas pakalpojums nav pieejams."
+
+msgid "Inputs did not match. Try again."
+msgstr "Ievadītās vērtības nesakrita. Mēģiniet vēlreiz."
+
+msgid "Invalid credentials"
+msgstr "Nederīgi akreditācijas dati"
+
+msgid "Multi-factor authentication required."
+msgstr "Nepieciešama daudzfaktoru autentifikācija."
+
+msgid "Multi-factor authentication required. Please try signing in again."
+msgstr "Nepieciešama daudzfaktoru autentifikācija. Lūdzu, mēģiniet pierakstīties vēlreiz."
+
+msgid "Network outage detected."
+msgstr "Konstatēts tīkla darbības pārtraukums."
+
+msgid "New PIN:"
+msgstr "Jauns PIN kods:"
+
+msgid "New password:"
+msgstr "Jaunā parole:"
+
+msgid "No Entra Id Hello PIN was supplied."
+msgstr "Netika norādīts Entra ID Hello PIN kods."
+
+msgid "No Entra Id Hello confirmation PIN was supplied."
+msgstr "Netika norādīts Entra Id Hello apstiprinājuma PIN."
+
+msgid "No Entra Id confirmation password was supplied."
+msgstr "Netika norādīta Entra ID apstiprinājuma parole."
+
+msgid "No Entra Id password was supplied."
+msgstr "Netika norādīta Entra ID parole."
+
+msgid "No Hello TOTP code was supplied."
+msgstr "Hello TOTP kods netika norādīts."
+
+msgid "No input was supplied."
+msgstr "Netika ievadīta informācija."
+
+msgid "Offline auth has expired. Please connect to the network to continue."
+msgstr "Bezsaistes autentifikācijas termiņš ir beidzies. Lūdzu, izveidojiet savienojumu ar tīklu, lai turpinātu."
+
+msgid "Open your Authenticator app, and enter the number '{entropy}' to sign in."
+msgstr "Atveriet savu lietotni Authenticator un ievadiet skaitli “{entropy}”, lai pierakstītos."
+
+msgid "Open your authenticator app and scan this QR code to enroll. Then enter the generated code.\n"
+"{qr}"
+msgstr "Atveriet autentifikatora lietotni un noskenējiet šo QR kodu, lai reģistrētos. Pēc tam ievadiet ģenerēto kodu.\n"
+"{qr}"
+
+msgid "PIN must not use repeating or predictable sequences. Avoid patterns like '111111', '123456', or '135791'."
+msgstr "PIN nedrīkst izmantot atkārtotas vai paredzamas secības. Izvairieties no tādiem paraugiem kā “111111”, “123456” vai “135791”."
+
+msgid "PIN setup failed. Please try signing in again."
+msgstr "PIN iestatīšana neizdevās. Lūdzu, mēģiniet pierakstīties vēlreiz."
+
+msgid "PIN:"
+msgstr "PIN kods:"
+
+msgid "Password change required. Please contact your administrator."
+msgstr "Nepieciešama paroles maiņa. Lūdzu, sazinieties ar savu administratoru."
+
+msgid "Password entry required."
+msgstr "Nepieciešama paroles ievade."
+
+msgid "Password reset registration required. Complete setup at https://aka.ms/ssprsetup from another device, then try again."
+msgstr "Nepieciešama paroles atiestatīšanas reģistrācija. Pabeidziet iestatīšanu vietnē https://aka.ms/ssprsetup no citas ierīces un pēc tam mēģiniet vēlreiz."
+
+msgid "Please enter your Hello TOTP code from your Authenticator:"
+msgstr "Lūdzu, ievadiet savu Hello TOTP kodu no autentifikatora:"
+
+msgid "Please insert your security key."
+msgstr "Lūdzu, ievietojiet savu drošības atslēgu."
+
+msgid "Please select a device by touching one of them."
+msgstr "Lūdzu, atlasiet ierīci, pieskaroties vienai no tām."
+
+msgid "Please touch your security key."
+msgstr "Lūdzu, pieskarieties savai drošības atslēgai."
+
+msgid "Press enter to continue"
+msgstr "Nospiediet Enter, lai turpinātu"
+
+msgid "QR/Bluetooth authentication failed."
+msgstr "QR/Bluetooth autentifikācija neizdevās."
+
+msgid "Scan the QR code to continue sign-in, or open this link on another device:\n"
+"{complete}\n"
+"If you cannot scan, visit:\n"
+"{verification_uri}\n"
+"And enter the code:\n"
+"{user_code}"
+msgstr "Skenējiet QR kodu, lai turpinātu pierakstīšanos, vai atveriet šo saiti citā ierīcē:\n"
+"{complete}\n"
+"Ja nevarat skenēt, apmeklējiet:\n"
+"{verification_uri}\n"
+"Un ievadiet kodu:\n"
+"{user_code}"
+
+msgid "Scan with your authenticator app"
+msgstr "Skenējiet ar savu autentifikatora lietotni"
+
+msgid "Security key and QR/Bluetooth authentication failed."
+msgstr "Drošības atslēgas un QR/Bluetooth autentifikācija neizdevās."
+
+msgid "Security key authentication failed."
+msgstr "Drošības atslēgas autentifikācija neizdevās."
+
+msgid "Session data corrupted. Please sign in again."
+msgstr "Sesijas dati ir bojāti. Lūdzu, pierakstieties vēlreiz."
+
+msgid "Set up a PIN\n"
+"A Hello PIN is a fast, secure way to sign in to your device, apps, and services."
+msgstr "Iestatiet PIN kodu\n"
+"Hello PIN kods ir ātrs un drošs veids, kā pierakstīties ierīcē, lietotnēs un pakalpojumos."
+
+msgid "TOTP Code:"
+msgstr "TOTP kods:"
+
+msgid "The minimum PIN length is {length} characters."
+msgstr "Minimālais PIN koda garums ir {length} rakstzīmes."
+
+msgid "This command changes your local Hello PIN, NOT your Entra Id password."
+msgstr "Šī komanda maina jūsu lokālo Hello PIN kodu, NEVIS jūsu Entra Id paroli."
+
+msgid "Too many failed attempts in one row. Your device has been temporarily blocked. Please unplug it and plug in again."
+msgstr "Pārāk daudz neveiksmīgu mēģinājumu pēc kārtas. Jūsu ierīce ir īslaicīgi bloķēta. Lūdzu, atvienojiet to un pievienojiet vēlreiz."
+
+msgid "Too many failed attempts. Your device has been blocked. Reset it."
+msgstr "Pārāk daudz neveiksmīgu mēģinājumu. Jūsu ierīce ir bloķēta. Atiestatiet to."
+
+msgid "Too many failed user verification attempts."
+msgstr "Pārāk daudz neveiksmīgu lietotāja verifikācijas mēģinājumu."
+
+msgid "Too many incorrect PIN attempts. You will need to enroll a new Linux Hello PIN."
+msgstr "Pārāk daudz nepareizu PIN mēģinājumu. Jums būs jāreģistrē jauns Linux Hello PIN."
+
+msgid "Try again."
+msgstr "Mēģiniet vēlreiz."
+
+msgid "Unexpected authentication step. Please try signing in again."
+msgstr "Neparedzēts autentifikācijas solis. Lūdzu, mēģiniet pierakstīties vēlreiz."
+
+msgid "Unexpected error occurred."
+msgstr "Radās neparedzēta kļūda."
+
+msgid "Unexpected error: {error}"
+msgstr "Neparedzēta kļūda: {error}"
+
+msgid "Unexpected select device notice"
+msgstr "Negaidīts paziņojums par ierīces izvēli"
+
+msgid "Update your password\n"
+"You need to update your password because this is\n"
+"the first time you are signing in, or because your\n"
+"password has expired."
+msgstr "Atjauniniet savu paroli\n"
+"Jums ir jāatjaunina sava parole, jo šī ir\n"
+"pirmā reize, kad pierakstāties, vai arī jūsu\n"
+"paroles derīguma termiņš ir beidzies."
+
+msgid "Use the Linux Hello PIN for this device."
+msgstr "Izmantojiet šīs ierīces Linux Hello PIN kodu."
+
+msgid "Use the password for your Office 365 or Microsoft online login."
+msgstr "Izmantojiet paroli, ko lietojat Office 365 vai Microsoft tiešsaistes pieteikšanās kontam."
+
+msgid "Using a browser on another device, visit:\n"
+"{verification_uri}\n"
+"And enter the code:\n"
+"{user_code}"
+msgstr "Izmantojot pārlūkprogrammu citā ierīcē, apmeklējiet:\n"
+"{verification_uri}\n"
+"Un ievadiet kodu:\n"
+"{user_code}"
+
+msgid "Value:"
+msgstr "Vērtība:"
+
+msgid "Waiting for browser authentication to complete..."
+msgstr "Gaida, līdz pārlūkā tiks pabeigta autentifikācija..."
+
+msgid "We texted your phone {phone}. Please enter the code to sign in:"
+msgstr "Mēs nosūtījām īsziņu uz jūsu tālruni {phone}. Lūdzu, ievadiet kodu, lai pierakstītos:"
+
+msgid "We're calling your office phone {phone}. Please answer it to continue."
+msgstr "Mēs zvanām uz jūsu darba tālruni {phone}. Lūdzu, atbildiet uz zvanu, lai turpinātu."
+
+msgid "We're calling your phone {phone}. Please answer it to continue."
+msgstr "Mēs zvanām uz jūsu tālruni {phone}. Lūdzu, atbildiet uz zvanu, lai turpinātu."
+
+msgid "Wrong PIN! {message}"
+msgstr "Nepareizs PIN! {message}"
+
+msgid "Wrong user verification! {message}"
+msgstr "Nepareiza lietotāja verifikācija! {message}"
+
+msgid "You have {attempts} attempt left."
+msgid_plural "You have {attempts} attempts left."
+msgstr[0] "Jums ir atlicis {attempts} mēģinājums."
+msgstr[1] "Jums ir atlikuši {attempts} mēģinājumi."
+msgstr[2] "Jums ir atlikuši {attempts} mēģinājumu."
+
+msgid "Your session has expired. Please sign in again."
+msgstr "Jūsu sesija ir beigusies. Lūdzu, pierakstieties vēlreiz."
+
+msgid "{code}: {message}\n"
+"If you are now prompted for a password from pam_unix, please disregard the prompt, go back and try again."
+msgstr "{code}: {message}\n"
+"Ja tagad saņemat pam_unix paroles pieprasījumu, lūdzu, ignorējiet to, atgriezieties un mēģiniet vēlreiz."
+
+msgid "{message}\n"
+"No push? Check your mobile device's internet connection."
+msgstr "{message}\n"
+"Nesaņēmāt pašpiegādes paziņojumu? Pārbaudiet savas mobilās ierīces interneta savienojumu."

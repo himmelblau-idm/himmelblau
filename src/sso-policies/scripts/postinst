@@ -13,6 +13,7 @@ merge_mozilla_policy() {
     POLICY_FILE="$1"
     EXTENSION_URL="$2"
     APP_NAME="$3"
+    EXTENSION_PATTERN="$4"
     POLICY_DIR=$(dirname "$POLICY_FILE")
 
     # Ensure directory exists
@@ -21,26 +22,32 @@ merge_mozilla_policy() {
     if [ -f "$POLICY_FILE" ]; then
         # Check if jq is available for proper JSON merging
         if command -v jq >/dev/null 2>&1; then
-            # Check if the extension URL is already present
-            if jq -e --arg url "$EXTENSION_URL" '.policies.Extensions.Install[]? | select(. == $url)' "$POLICY_FILE" >/dev/null 2>&1; then
+            # Check if the extension URL is already present and no old managed URL remains
+            if jq -e --arg url "$EXTENSION_URL" --arg pattern "$EXTENSION_PATTERN" '
+                (.policies.Extensions.Install[]? | select(. == $url)) and
+                ([.policies.Extensions.Install[]? | select(type == "string" and test($pattern) and . != $url)] | length == 0)
+            ' "$POLICY_FILE" >/dev/null 2>&1; then
                 echo "$APP_NAME SSO extension already configured in $POLICY_FILE"
                 return 0
             fi
 
-            # Merge the extension into existing policy
+            # Replace old managed SSO extension URLs with the current one.
             TEMP_FILE=$(mktemp)
-            jq --arg url "$EXTENSION_URL" '
-                .policies.Extensions.Install = ((.policies.Extensions.Install // []) + [$url] | unique)
+            jq --arg url "$EXTENSION_URL" --arg pattern "$EXTENSION_PATTERN" '
+                .policies.Extensions.Install = (
+                    ([.policies.Extensions.Install[]? | select((type == "string" and test($pattern)) | not)] + [$url])
+                    | unique
+                )
             ' "$POLICY_FILE" > "$TEMP_FILE" && mv "$TEMP_FILE" "$POLICY_FILE"
             echo "Merged $APP_NAME SSO extension into $POLICY_FILE"
         else
             # Without jq, check if our extension is already there
-            if grep -q "$EXTENSION_URL" "$POLICY_FILE" 2>/dev/null; then
+            if grep -Fq "$EXTENSION_URL" "$POLICY_FILE" 2>/dev/null; then
                 echo "$APP_NAME SSO extension already configured in $POLICY_FILE"
                 return 0
             fi
             echo "Warning: jq not found. Cannot safely merge into existing $POLICY_FILE"
-            echo "Please manually add the extension URL to policies.Extensions.Install:"
+            echo "Please manually replace old linux_entra_sso URLs in policies.Extensions.Install with:"
             echo "  $EXTENSION_URL"
         fi
     else
@@ -61,7 +68,7 @@ EOF
 }
 
 # Merge Firefox and Thunderbird policies
-merge_mozilla_policy "/etc/firefox/policies/policies.json" "$FIREFOX_EXTENSION_URL" "Firefox"
-merge_mozilla_policy "/etc/thunderbird/policies/policies.json" "$THUNDERBIRD_EXTENSION_URL" "Thunderbird"
+merge_mozilla_policy "/etc/firefox/policies/policies.json" "$FIREFOX_EXTENSION_URL" "Firefox" "linux_entra_sso-[0-9][0-9.]*\\.xpi$"
+merge_mozilla_policy "/etc/thunderbird/policies/policies.json" "$THUNDERBIRD_EXTENSION_URL" "Thunderbird" "linux_entra_sso-[0-9][0-9.]*\\.thunderbird\\.xpi$"
 
 echo "Himmelblau SSO Mozilla policy configuration complete"

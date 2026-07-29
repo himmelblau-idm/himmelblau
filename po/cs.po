@@ -1,0 +1,415 @@
+# Czech translations for Himmelblau.
+# Copyright (C) 2026 Himmelblau contributors
+# This file is distributed under the same license as Himmelblau.
+#
+msgid ""
+msgstr "Project-Id-Version: himmelblau\n"
+"POT-Creation-Date: 2026-07-22 22:33+0000\n"
+"PO-Revision-Date: 2026-07-23 14:38+0000\n"
+"Last-Translator: Automated via Codex <noreply@himmelblau-idm.org>\n"
+"Language-Team: Czech\n"
+"Language: cs\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Plural-Forms: nplurals=3; plural=(n==1) ? 0 : (n>=2 && n<=4) ? 1 : 2;\n"
+""
+
+msgid "An unexpected error occurred."
+msgstr "Došlo k neočekávané chybě."
+
+msgid "Approve sign-in in your authenticator app, then wait..."
+msgstr "Schvalte přihlášení ve své ověřovací aplikaci a poté počkejte..."
+
+msgid "Authenticated user {user} does not match requested user"
+msgstr "Ověřený uživatel {user} neodpovídá požadovanému uživateli"
+
+msgid "Authenticated user {uuid} does not match requested user"
+msgstr "Ověřený uživatel {uuid} neodpovídá požadovanému uživateli"
+
+msgid "Authentication did not return a refresh token. Please try again."
+msgstr "Ověření nevrátilo obnovovací token. Zkuste to prosím znovu."
+
+msgid "Authentication failed (AADSTS{code})"
+msgstr "Ověření se nezdařilo (AADSTS{code})"
+
+msgid "Authentication failed in browser flow."
+msgstr "Ověření selhalo v toku prohlížeče."
+
+msgid "Authentication failed. Please contact your administrator."
+msgstr "Ověření se nezdařilo. Obraťte se prosím na svého správce."
+
+msgid "Authentication failed. Please try again."
+msgstr "Ověření se nezdařilo. Zkuste to prosím znovu."
+
+msgid "Authentication failed. Please try signing in again."
+msgstr "Ověření se nezdařilo. Zkuste se prosím přihlásit znovu."
+
+msgid "Authentication failed: Authentication method not supported."
+msgstr "Ověření se nezdařilo: Metoda ověření není podporována."
+
+msgid "Authentication failed: Configuration error."
+msgstr "Ověření se nezdařilo: Chyba konfigurace."
+
+msgid "Authentication failed: Cryptographic error."
+msgstr "Ověření se nezdařilo: kryptografická chyba."
+
+msgid "Authentication failed: Invalid server response."
+msgstr "Ověření se nezdařilo: Neplatná odpověď serveru."
+
+msgid "Authentication failed: Missing required data."
+msgstr "Ověření se nezdařilo: Chybí požadovaná data."
+
+msgid "Authentication failed: Security hardware error."
+msgstr "Ověření se nezdařilo: chyba bezpečnostního hardwaru."
+
+msgid "Authentication failed: Unable to reach authentication server."
+msgstr "Ověření selhalo: Nelze se připojit k ověřovacímu serveru."
+
+msgid "Authentication failed: {error}"
+msgstr "Ověření se nezdařilo: {error}"
+
+msgid "Authentication flow completed but token exchange failed. Please try again."
+msgstr "Tok ověřování byl dokončen, ale výměna tokenu selhala. Zkuste to prosím znovu."
+
+msgid "Authentication in progress."
+msgstr "Probíhá ověřování."
+
+msgid "Authentication incomplete. Please try again."
+msgstr "Ověření nebylo dokončeno. Zkuste to prosím znovu."
+
+msgid "Authentication service is temporarily unavailable. Please try again shortly."
+msgstr "Ověřovací služba je dočasně nedostupná. Zkuste to prosím za chvíli znovu."
+
+msgid "Authentication service unavailable. Please try again later."
+msgstr "Ověřovací služba není dostupná. Zkuste to prosím znovu později."
+
+msgid "Authentication session corrupted. Please try again."
+msgstr "Relace ověřování byla poškozena. Zkuste to prosím znovu."
+
+msgid "Authentication session data missing. Please try again."
+msgstr "Chybí data ověřovací relace. Zkuste to prosím znovu."
+
+msgid "Authentication session returned an unexpected state. Please try again."
+msgstr "Ověřovací relace vrátila neočekávaný stav. Zkuste to prosím znovu."
+
+msgid "Authentication timed out. Please try again."
+msgstr "Časový limit ověření vypršel. Zkuste to prosím znovu."
+
+msgid "Browser authentication backend unavailable. Please try again."
+msgstr "Backend ověřování v prohlížeči není dostupný. Zkuste to prosím znovu."
+
+msgid "Changing the password. Please wait..."
+msgstr "Změna hesla. Čekejte prosím..."
+
+msgid "Chosen password is too short! 8 chars required."
+msgstr "Zvolené heslo je příliš krátké! Je vyžadováno 8 znaků."
+
+msgid "Chosen pin is too short! {length} chars required."
+msgstr "Zvolený PIN je příliš krátký! Je vyžadováno {length} znaků."
+
+msgid "Cloud Password:"
+msgstr "Cloudové heslo:"
+
+msgid "Code:"
+msgstr "Kód:"
+
+msgid "Confirm PIN:"
+msgstr "Potvrďte PIN:"
+
+msgid "Confirm password:"
+msgstr "Potvrďte heslo:"
+
+msgid "Consent required. Please contact your administrator."
+msgstr "Je vyžadován souhlas. Obraťte se prosím na svého správce."
+
+msgid "Create a PIN to use in place of passwords."
+msgstr "Vytvořte PIN, který budete používat místo hesel."
+
+msgid "Device enrollment failed. Please contact your administrator."
+msgstr "Registrace zařízení se nezdařila. Obraťte se prosím na správce."
+
+msgid "Device has been removed from the domain."
+msgstr "Zařízení bylo odebráno z domény."
+
+msgid "Enable Bluetooth to sign in with your phone."
+msgstr "Zapněte Bluetooth a přihlaste se pomocí telefonu."
+
+msgid "Enrolling the Hello PIN. Please wait..."
+msgstr "Probíhá registrace PINu Hello. Čekejte prosím..."
+
+msgid "Enter the setup key '{secret}' to enroll a TOTP Authenticator app. Use '{issuer}' for the code name and '{account}' as the label/name."
+msgstr "Zadejte nastavovací klíč '{secret}' pro registraci aplikace TOTP Authenticator. Pro název kódu použijte '{issuer}' a jako štítek/název '{account}'."
+
+msgid "Entra Id Fido authentication failed."
+msgstr "Ověření pomocí Entra ID FIDO se nezdařilo."
+
+msgid "Entra Id Password:"
+msgstr "Heslo pro Entra ID:"
+
+msgid "FIDO authentication not available. Please try a different authentication method."
+msgstr "Ověřování FIDO není k dispozici. Zkuste prosím jiný způsob ověření."
+
+msgid "Failed to authenticate with Hello PIN."
+msgstr "Ověření pomocí PINu Hello se nezdařilo."
+
+msgid "Failed to authenticate with Hello PIN. One more failed attempt will require multi-factor authentication and resetting your Linux Hello PIN."
+msgstr "Ověření pomocí Hello PIN se nezdařilo. Ještě jeden neúspěšný pokus bude vyžadovat vícefaktorové ověření a resetování vašeho PINu pro Linux Hello."
+
+msgid "Failed to authenticate with Hello TOTP code."
+msgstr "Ověření pomocí kódu Hello TOTP se nezdařilo."
+
+msgid "Failed to build regex: {error}"
+msgstr "Nepodařilo se sestavit regulární výraz: {error}"
+
+msgid "Failed to change user password: {msg}"
+msgstr "Nepodařilo se změnit heslo uživatele: {msg}"
+
+msgid "Failed to delete CSR key"
+msgstr "Nepodařilo se odstranit klíč CSR"
+
+msgid "Failed to delete intune key"
+msgstr "Nepodařilo se odstranit klíč Intune"
+
+msgid "Failed to generate QR code"
+msgstr "Nepodařilo se vygenerovat QR kód"
+
+msgid "Failed to join domain. Please contact your administrator."
+msgstr "Nepodařilo se připojit k doméně. Obraťte se prosím na svého správce."
+
+msgid "Failed to provision hello key: {error}\n"
+"{message}"
+msgstr "Nepodařilo se zřídit klíč Hello: {error}\n"
+"{message}"
+
+msgid "Failed to save device configuration. Please contact your administrator."
+msgstr "Nepodařilo se uložit konfiguraci zařízení. Obraťte se prosím na svého správce."
+
+msgid "Failed to store device credentials. Please contact your administrator."
+msgstr "Nepodařilo se uložit přihlašovací údaje zařízení. Obraťte se na správce."
+
+msgid "Fido PIN:"
+msgstr "PIN FIDO:"
+
+msgid "Himmelblau authentication is starting, please wait..."
+msgstr "Ověřování Himmelblau se spouští, čekejte prosím..."
+
+msgid "Himmelblau authentication service did not become available in time."
+msgstr "Služba ověřování Himmelblau nebyla včas dostupná."
+
+msgid "Himmelblau authentication service is unavailable."
+msgstr "Ověřovací služba Himmelblau není dostupná."
+
+msgid "Inputs did not match. Try again."
+msgstr "Zadané údaje se neshodují. Zkuste to znovu."
+
+msgid "Invalid credentials"
+msgstr "Neplatné přihlašovací údaje"
+
+msgid "Multi-factor authentication required."
+msgstr "Je vyžadováno vícefaktorové ověření."
+
+msgid "Multi-factor authentication required. Please try signing in again."
+msgstr "Vyžaduje se vícefaktorové ověření. Zkuste se prosím přihlásit znovu."
+
+msgid "Network outage detected."
+msgstr "Byl zjištěn výpadek sítě."
+
+msgid "New PIN:"
+msgstr "Nový PIN:"
+
+msgid "New password:"
+msgstr "Nové heslo:"
+
+msgid "No Entra Id Hello PIN was supplied."
+msgstr "Nebyl zadán žádný PIN pro Entra ID Hello."
+
+msgid "No Entra Id Hello confirmation PIN was supplied."
+msgstr "Nebyl zadán žádný potvrzovací PIN Entra ID Hello."
+
+msgid "No Entra Id confirmation password was supplied."
+msgstr "Nebylo zadáno žádné potvrzovací heslo Entra ID."
+
+msgid "No Entra Id password was supplied."
+msgstr "Nebylo zadáno žádné heslo Entra ID."
+
+msgid "No Hello TOTP code was supplied."
+msgstr "Nebyl zadán žádný kód Hello TOTP."
+
+msgid "No input was supplied."
+msgstr "Nebyl zadán žádný vstup."
+
+msgid "Offline auth has expired. Please connect to the network to continue."
+msgstr "Platnost offline ověření vypršela. Chcete-li pokračovat, připojte se k síti."
+
+msgid "Open your Authenticator app, and enter the number '{entropy}' to sign in."
+msgstr "Otevřete aplikaci Authenticator a zadejte číslo {entropy}, abyste se přihlásili."
+
+msgid "Open your authenticator app and scan this QR code to enroll. Then enter the generated code.\n"
+"{qr}"
+msgstr "Otevřete aplikaci ověřovatele a naskenujte tento QR kód pro registraci. Poté zadejte vygenerovaný kód.\n"
+"{qr}"
+
+msgid "PIN must not use repeating or predictable sequences. Avoid patterns like '111111', '123456', or '135791'."
+msgstr "PIN nesmí obsahovat opakující se ani předvídatelné posloupnosti. Vyhněte se vzorům jako „111111“, „123456“ nebo „135791“."
+
+msgid "PIN setup failed. Please try signing in again."
+msgstr "Nastavení PINu se nezdařilo. Zkuste se prosím znovu přihlásit."
+
+msgid "PIN:"
+msgstr "PIN:"
+
+msgid "Password change required. Please contact your administrator."
+msgstr "Je vyžadována změna hesla. Obraťte se prosím na správce."
+
+msgid "Password entry required."
+msgstr "Je vyžadováno zadání hesla."
+
+msgid "Password reset registration required. Complete setup at https://aka.ms/ssprsetup from another device, then try again."
+msgstr "Je vyžadována registrace pro resetování hesla. Dokončete nastavení na https://aka.ms/ssprsetup z jiného zařízení a potom to zkuste znovu."
+
+msgid "Please enter your Hello TOTP code from your Authenticator:"
+msgstr "Zadejte prosím svůj kód Hello TOTP z aplikace Authenticator:"
+
+msgid "Please insert your security key."
+msgstr "Vložte prosím svůj bezpečnostní klíč."
+
+msgid "Please select a device by touching one of them."
+msgstr "Vyberte zařízení dotykem jednoho z nich."
+
+msgid "Please touch your security key."
+msgstr "Dotkněte se prosím svého bezpečnostního klíče."
+
+msgid "Press enter to continue"
+msgstr "Pokračujte stisknutím klávesy Enter"
+
+msgid "QR/Bluetooth authentication failed."
+msgstr "Ověření pomocí QR/Bluetooth selhalo."
+
+msgid "Scan the QR code to continue sign-in, or open this link on another device:\n"
+"{complete}\n"
+"If you cannot scan, visit:\n"
+"{verification_uri}\n"
+"And enter the code:\n"
+"{user_code}"
+msgstr "Naskenujte QR kód a pokračujte v přihlášení, nebo otevřete tento odkaz na jiném zařízení:\n"
+"{complete}\n"
+"Pokud nemůžete skenovat, navštivte:\n"
+"{verification_uri}\n"
+"A zadejte kód:\n"
+"{user_code}"
+
+msgid "Scan with your authenticator app"
+msgstr "Naskenujte pomocí aplikace pro ověřování"
+
+msgid "Security key and QR/Bluetooth authentication failed."
+msgstr "Ověření pomocí bezpečnostního klíče a QR/Bluetooth se nezdařilo."
+
+msgid "Security key authentication failed."
+msgstr "Ověření pomocí bezpečnostního klíče selhalo."
+
+msgid "Session data corrupted. Please sign in again."
+msgstr "Data relace jsou poškozena. Přihlaste se prosím znovu."
+
+msgid "Set up a PIN\n"
+"A Hello PIN is a fast, secure way to sign in to your device, apps, and services."
+msgstr "Nastavte si PIN\n"
+"PIN pro Hello je rychlý a bezpečný způsob, jak se přihlašovat k vašemu zařízení, aplikacím a službám."
+
+msgid "TOTP Code:"
+msgstr "Kód TOTP:"
+
+msgid "The minimum PIN length is {length} characters."
+msgstr "Minimální délka kódu PIN je {length} znaků."
+
+msgid "This command changes your local Hello PIN, NOT your Entra Id password."
+msgstr "Tento příkaz změní váš místní PIN Hello, NIKOLI vaše heslo Entra ID."
+
+msgid "Too many failed attempts in one row. Your device has been temporarily blocked. Please unplug it and plug in again."
+msgstr "Příliš mnoho neúspěšných pokusů za sebou. Vaše zařízení bylo dočasně zablokováno. Odpojte jej a znovu připojte."
+
+msgid "Too many failed attempts. Your device has been blocked. Reset it."
+msgstr "Příliš mnoho neúspěšných pokusů. Vaše zařízení bylo zablokováno. Resetujte jej."
+
+msgid "Too many failed user verification attempts."
+msgstr "Příliš mnoho neúspěšných pokusů o ověření uživatele."
+
+msgid "Too many incorrect PIN attempts. You will need to enroll a new Linux Hello PIN."
+msgstr "Příliš mnoho nesprávných pokusů o zadání PINu. Budete si muset zaregistrovat nový PIN pro Linux Hello."
+
+msgid "Try again."
+msgstr "Zkuste to znovu."
+
+msgid "Unexpected authentication step. Please try signing in again."
+msgstr "Neočekávaný krok ověření. Zkuste se prosím přihlásit znovu."
+
+msgid "Unexpected error occurred."
+msgstr "Došlo k neočekávané chybě."
+
+msgid "Unexpected error: {error}"
+msgstr "Neočekávaná chyba: {error}"
+
+msgid "Unexpected select device notice"
+msgstr "Neočekávané oznámení o výběru zařízení"
+
+msgid "Update your password\n"
+"You need to update your password because this is\n"
+"the first time you are signing in, or because your\n"
+"password has expired."
+msgstr "Změňte si heslo\n"
+"Heslo si musíte změnit, protože se přihlašujete poprvé nebo protože platnost vašeho hesla vypršela."
+
+msgid "Use the Linux Hello PIN for this device."
+msgstr "Použijte PIN Linux Hello pro toto zařízení."
+
+msgid "Use the password for your Office 365 or Microsoft online login."
+msgstr "Použijte heslo pro přihlášení k Office 365 nebo online službám Microsoftu."
+
+msgid "Using a browser on another device, visit:\n"
+"{verification_uri}\n"
+"And enter the code:\n"
+"{user_code}"
+msgstr "V prohlížeči na jiném zařízení přejděte na:\n"
+"{verification_uri}\n"
+"A zadejte kód:\n"
+"{user_code}"
+
+msgid "Value:"
+msgstr "Hodnota:"
+
+msgid "Waiting for browser authentication to complete..."
+msgstr "Čeká se na dokončení ověření v prohlížeči..."
+
+msgid "We texted your phone {phone}. Please enter the code to sign in:"
+msgstr "Na telefon {phone} jsme vám poslali SMS. Zadejte prosím kód pro přihlášení:"
+
+msgid "We're calling your office phone {phone}. Please answer it to continue."
+msgstr "Voláme na váš pracovní telefon {phone}. Zvedněte ho prosím, abyste mohli pokračovat."
+
+msgid "We're calling your phone {phone}. Please answer it to continue."
+msgstr "Voláme na váš telefon {phone}. Pro pokračování hovor přijměte."
+
+msgid "Wrong PIN! {message}"
+msgstr "Nesprávný PIN! {message}"
+
+msgid "Wrong user verification! {message}"
+msgstr "Nesprávné ověření uživatele! {message}"
+
+msgid "You have {attempts} attempt left."
+msgid_plural "You have {attempts} attempts left."
+msgstr[0] "Zbývá vám {attempts} pokus."
+msgstr[1] "Zbývají vám {attempts} pokusy."
+msgstr[2] "Zbývá vám {attempts} pokusů."
+
+msgid "Your session has expired. Please sign in again."
+msgstr "Vaše relace vypršela. Přihlaste se prosím znovu."
+
+msgid "{code}: {message}\n"
+"If you are now prompted for a password from pam_unix, please disregard the prompt, go back and try again."
+msgstr "{code}: {message}\n"
+"Pokud se nyní zobrazí výzva k zadání hesla od pam_unix, ignorujte ji, vraťte se zpět a zkuste to znovu."
+
+msgid "{message}\n"
+"No push? Check your mobile device's internet connection."
+msgstr "{message}\n"
+"Nepřišlo push oznámení? Zkontrolujte internetové připojení svého mobilního zařízení."

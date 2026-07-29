@@ -1,0 +1,416 @@
+# Bulgarian translations for Himmelblau.
+# Copyright (C) 2026 Himmelblau contributors
+# This file is distributed under the same license as Himmelblau.
+#
+msgid ""
+msgstr "Project-Id-Version: himmelblau\n"
+"POT-Creation-Date: 2026-07-22 22:33+0000\n"
+"PO-Revision-Date: 2026-07-23 14:37+0000\n"
+"Last-Translator: Automated via Codex <noreply@himmelblau-idm.org>\n"
+"Language-Team: Bulgarian\n"
+"Language: bg\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Plural-Forms: nplurals=2; plural=(n != 1);\n"
+""
+
+msgid "An unexpected error occurred."
+msgstr "Възникна неочаквана грешка."
+
+msgid "Approve sign-in in your authenticator app, then wait..."
+msgstr "Одобрете влизането в приложението си за удостоверяване, след което изчакайте..."
+
+msgid "Authenticated user {user} does not match requested user"
+msgstr "Удостовереният потребител {user} не съответства на заявения потребител"
+
+msgid "Authenticated user {uuid} does not match requested user"
+msgstr "Удостовереният потребител {uuid} не съответства на заявения потребител"
+
+msgid "Authentication did not return a refresh token. Please try again."
+msgstr "Удостоверяването не върна токен за опресняване. Моля, опитайте отново."
+
+msgid "Authentication failed (AADSTS{code})"
+msgstr "Удостоверяването не бе успешно (AADSTS{code})"
+
+msgid "Authentication failed in browser flow."
+msgstr "Удостоверяването в браузърния поток бе неуспешно."
+
+msgid "Authentication failed. Please contact your administrator."
+msgstr "Удостоверяването е неуспешно. Моля, свържете се с вашия администратор."
+
+msgid "Authentication failed. Please try again."
+msgstr "Удостоверяването е неуспешно. Моля, опитайте отново."
+
+msgid "Authentication failed. Please try signing in again."
+msgstr "Удостоверяването е неуспешно. Моля, опитайте да влезете отново."
+
+msgid "Authentication failed: Authentication method not supported."
+msgstr "Удостоверяването е неуспешно: Методът за удостоверяване не се поддържа."
+
+msgid "Authentication failed: Configuration error."
+msgstr "Удостоверяването не бе успешно: Грешка в конфигурацията."
+
+msgid "Authentication failed: Cryptographic error."
+msgstr "Неуспешно удостоверяване: Криптографска грешка."
+
+msgid "Authentication failed: Invalid server response."
+msgstr "Неуспешно удостоверяване: Невалиден отговор от сървъра."
+
+msgid "Authentication failed: Missing required data."
+msgstr "Удостоверяването не бе успешно: липсват задължителни данни."
+
+msgid "Authentication failed: Security hardware error."
+msgstr "Удостоверяването не бе успешно: грешка в хардуера за сигурност."
+
+msgid "Authentication failed: Unable to reach authentication server."
+msgstr "Неуспешно удостоверяване: Сървърът за удостоверяване не е достъпен."
+
+msgid "Authentication failed: {error}"
+msgstr "Неуспешно удостоверяване: {error}"
+
+msgid "Authentication flow completed but token exchange failed. Please try again."
+msgstr "Потокът за удостоверяване завърши, но обменът на токени не бе успешен. Моля, опитайте отново."
+
+msgid "Authentication in progress."
+msgstr "Удостоверяването е в ход."
+
+msgid "Authentication incomplete. Please try again."
+msgstr "Удостоверяването не е завършено. Моля, опитайте отново."
+
+msgid "Authentication service is temporarily unavailable. Please try again shortly."
+msgstr "Услугата за удостоверяване временно не е налична. Моля, опитайте отново след малко."
+
+msgid "Authentication service unavailable. Please try again later."
+msgstr "Услугата за удостоверяване не е налична. Моля, опитайте отново по-късно."
+
+msgid "Authentication session corrupted. Please try again."
+msgstr "Сесията за удостоверяване е повредена. Моля, опитайте отново."
+
+msgid "Authentication session data missing. Please try again."
+msgstr "Данните за сесията за удостоверяване липсват. Моля, опитайте отново."
+
+msgid "Authentication session returned an unexpected state. Please try again."
+msgstr "Сесията за удостоверяване върна неочаквано състояние. Моля, опитайте отново."
+
+msgid "Authentication timed out. Please try again."
+msgstr "Удостоверяването изтече. Моля, опитайте отново."
+
+msgid "Browser authentication backend unavailable. Please try again."
+msgstr "Бекендът за удостоверяване чрез браузър не е наличен. Моля, опитайте отново."
+
+msgid "Changing the password. Please wait..."
+msgstr "Промяна на паролата. Моля, изчакайте..."
+
+msgid "Chosen password is too short! 8 chars required."
+msgstr "Избраната парола е твърде кратка! Необходими са 8 знака."
+
+msgid "Chosen pin is too short! {length} chars required."
+msgstr "Избраният ПИН е твърде кратък! Необходими са {length} знака."
+
+msgid "Cloud Password:"
+msgstr "Парола за облака:"
+
+msgid "Code:"
+msgstr "Код:"
+
+msgid "Confirm PIN:"
+msgstr "Потвърдете ПИН:"
+
+msgid "Confirm password:"
+msgstr "Потвърдете паролата:"
+
+msgid "Consent required. Please contact your administrator."
+msgstr "Изисква се съгласие. Моля, свържете се с вашия администратор."
+
+msgid "Create a PIN to use in place of passwords."
+msgstr "Създайте ПИН код, който да използвате вместо пароли."
+
+msgid "Device enrollment failed. Please contact your administrator."
+msgstr "Неуспешно регистриране на устройството. Моля, свържете се с вашия администратор."
+
+msgid "Device has been removed from the domain."
+msgstr "Устройството е премахнато от домейна."
+
+msgid "Enable Bluetooth to sign in with your phone."
+msgstr "Включете Bluetooth, за да влезете с телефона си."
+
+msgid "Enrolling the Hello PIN. Please wait..."
+msgstr "Регистриране на ПИН кода за здравей. Моля, изчакайте..."
+
+msgid "Enter the setup key '{secret}' to enroll a TOTP Authenticator app. Use '{issuer}' for the code name and '{account}' as the label/name."
+msgstr "Въведете ключа за настройка '{secret}', за да регистрирате приложение за TOTP удостоверяване. Използвайте '{issuer}' като име на кода и '{account}' като етикет/име."
+
+msgid "Entra Id Fido authentication failed."
+msgstr "Неуспешно удостоверяване с Entra ID FIDO."
+
+msgid "Entra Id Password:"
+msgstr "Парола за Entra ID:"
+
+msgid "FIDO authentication not available. Please try a different authentication method."
+msgstr "FIDO удостоверяването не е налично. Моля, опитайте друг метод за удостоверяване."
+
+msgid "Failed to authenticate with Hello PIN."
+msgstr "Неуспешно удостоверяване с Hello PIN."
+
+msgid "Failed to authenticate with Hello PIN. One more failed attempt will require multi-factor authentication and resetting your Linux Hello PIN."
+msgstr "Неуспешно удостоверяване чрез Hello PIN. Още един неуспешен опит ще изисква многофакторно удостоверяване и нулиране на вашия Linux Hello PIN."
+
+msgid "Failed to authenticate with Hello TOTP code."
+msgstr "Неуспешно удостоверяване с Hello TOTP код."
+
+msgid "Failed to build regex: {error}"
+msgstr "Неуспешно създаване на регулярен израз: {error}"
+
+msgid "Failed to change user password: {msg}"
+msgstr "Неуспешна промяна на потребителската парола: {msg}"
+
+msgid "Failed to delete CSR key"
+msgstr "Неуспешно изтриване на CSR ключа"
+
+msgid "Failed to delete intune key"
+msgstr "Неуспешно изтриване на ключа на Intune"
+
+msgid "Failed to generate QR code"
+msgstr "Неуспешно генериране на QR код"
+
+msgid "Failed to join domain. Please contact your administrator."
+msgstr "Неуспешно присъединяване към домейна. Моля, свържете се с вашия администратор."
+
+msgid "Failed to provision hello key: {error}\n"
+"{message}"
+msgstr "Неуспешно осигуряване на ключ за Hello: {error}\n"
+"{message}"
+
+msgid "Failed to save device configuration. Please contact your administrator."
+msgstr "Неуспешно запазване на конфигурацията на устройството. Моля, свържете се с вашия администратор."
+
+msgid "Failed to store device credentials. Please contact your administrator."
+msgstr "Неуспешно съхраняване на идентификационните данни на устройството. Моля, свържете се с вашия администратор."
+
+msgid "Fido PIN:"
+msgstr "FIDO ПИН:"
+
+msgid "Himmelblau authentication is starting, please wait..."
+msgstr "Удостоверяването чрез Himmelblau започва, моля, изчакайте..."
+
+msgid "Himmelblau authentication service did not become available in time."
+msgstr "Услугата за удостоверяване на Himmelblau не стана достъпна навреме."
+
+msgid "Himmelblau authentication service is unavailable."
+msgstr "Услугата за удостоверяване на Himmelblau не е налична."
+
+msgid "Inputs did not match. Try again."
+msgstr "Въведените данни не съвпадат. Опитайте отново."
+
+msgid "Invalid credentials"
+msgstr "Невалидни идентификационни данни"
+
+msgid "Multi-factor authentication required."
+msgstr "Изисква се многофакторно удостоверяване."
+
+msgid "Multi-factor authentication required. Please try signing in again."
+msgstr "Изисква се многофакторно удостоверяване. Моля, опитайте да влезете отново."
+
+msgid "Network outage detected."
+msgstr "Установено е прекъсване на мрежата."
+
+msgid "New PIN:"
+msgstr "Нов ПИН:"
+
+msgid "New password:"
+msgstr "Нова парола:"
+
+msgid "No Entra Id Hello PIN was supplied."
+msgstr "Не е предоставен PIN код за Entra ID Hello."
+
+msgid "No Entra Id Hello confirmation PIN was supplied."
+msgstr "Не беше предоставен PIN код за потвърждение на Entra Id Hello."
+
+msgid "No Entra Id confirmation password was supplied."
+msgstr "Не беше предоставена парола за потвърждение на Entra Id."
+
+msgid "No Entra Id password was supplied."
+msgstr "Не е предоставена парола за Entra Id."
+
+msgid "No Hello TOTP code was supplied."
+msgstr "Не е предоставен код за Hello TOTP."
+
+msgid "No input was supplied."
+msgstr "Не е предоставена входна информация."
+
+msgid "Offline auth has expired. Please connect to the network to continue."
+msgstr "Офлайн удостоверяването е изтекло. Моля, свържете се с мрежата, за да продължите."
+
+msgid "Open your Authenticator app, and enter the number '{entropy}' to sign in."
+msgstr "Отворете приложението Authenticator и въведете числото {entropy}, за да влезете."
+
+msgid "Open your authenticator app and scan this QR code to enroll. Then enter the generated code.\n"
+"{qr}"
+msgstr "Отворете приложението си за удостоверяване и сканирайте този QR код, за да се регистрирате. След това въведете генерирания код.\n"
+"{qr}"
+
+msgid "PIN must not use repeating or predictable sequences. Avoid patterns like '111111', '123456', or '135791'."
+msgstr "ПИН кодът не трябва да използва повтарящи се или предсказуеми последователности. Избягвайте шаблони като „111111“, „123456“ или „135791“."
+
+msgid "PIN setup failed. Please try signing in again."
+msgstr "Настройката на ПИН кода не бе успешна. Моля, опитайте да влезете отново."
+
+msgid "PIN:"
+msgstr "ПИН:"
+
+msgid "Password change required. Please contact your administrator."
+msgstr "Изисква се промяна на паролата. Моля, свържете се с вашия администратор."
+
+msgid "Password entry required."
+msgstr "Необходимо е да въведете парола."
+
+msgid "Password reset registration required. Complete setup at https://aka.ms/ssprsetup from another device, then try again."
+msgstr "Необходима е регистрация за нулиране на паролата. Завършете настройката на https://aka.ms/ssprsetup от друго устройство, след което опитайте отново."
+
+msgid "Please enter your Hello TOTP code from your Authenticator:"
+msgstr "Моля, въведете вашия Hello TOTP код от приложението за удостоверяване:"
+
+msgid "Please insert your security key."
+msgstr "Моля, поставете своя ключ за сигурност."
+
+msgid "Please select a device by touching one of them."
+msgstr "Моля, изберете устройство, като докоснете едно от тях."
+
+msgid "Please touch your security key."
+msgstr "Моля, докоснете своя ключ за сигурност."
+
+msgid "Press enter to continue"
+msgstr "Натиснете Enter, за да продължите"
+
+msgid "QR/Bluetooth authentication failed."
+msgstr "Удостоверяването чрез QR/Bluetooth бе неуспешно."
+
+msgid "Scan the QR code to continue sign-in, or open this link on another device:\n"
+"{complete}\n"
+"If you cannot scan, visit:\n"
+"{verification_uri}\n"
+"And enter the code:\n"
+"{user_code}"
+msgstr "Сканирайте QR кода, за да продължите с влизането, или отворете тази връзка на друго устройство:\n"
+"{complete}\n"
+"Ако не можете да сканирате, посетете:\n"
+"{verification_uri}\n"
+"И въведете кода:\n"
+"{user_code}"
+
+msgid "Scan with your authenticator app"
+msgstr "Сканирайте с приложението си за удостоверяване"
+
+msgid "Security key and QR/Bluetooth authentication failed."
+msgstr "Удостоверяването с ключ за сигурност и QR/Bluetooth е неуспешно."
+
+msgid "Security key authentication failed."
+msgstr "Удостоверяването с ключ за сигурност е неуспешно."
+
+msgid "Session data corrupted. Please sign in again."
+msgstr "Данните за сесията са повредени. Влезте отново."
+
+msgid "Set up a PIN\n"
+"A Hello PIN is a fast, secure way to sign in to your device, apps, and services."
+msgstr "Настройте ПИН код\n"
+"ПИН кодът за Hello е бърз и сигурен начин за влизане в устройството, приложенията и услугите ви."
+
+msgid "TOTP Code:"
+msgstr "TOTP код:"
+
+msgid "The minimum PIN length is {length} characters."
+msgstr "Минималната дължина на ПИН кода е {length} знака."
+
+msgid "This command changes your local Hello PIN, NOT your Entra Id password."
+msgstr "Тази команда променя вашия локален Hello PIN, а НЕ вашата парола за Entra Id."
+
+msgid "Too many failed attempts in one row. Your device has been temporarily blocked. Please unplug it and plug in again."
+msgstr "Твърде много неуспешни опита поред. Вашето устройство е временно блокирано. Моля, изключете го и го включете отново."
+
+msgid "Too many failed attempts. Your device has been blocked. Reset it."
+msgstr "Твърде много неуспешни опити. Вашето устройство е блокирано. Нулирайте го."
+
+msgid "Too many failed user verification attempts."
+msgstr "Твърде много неуспешни опита за потвърждаване на потребителя."
+
+msgid "Too many incorrect PIN attempts. You will need to enroll a new Linux Hello PIN."
+msgstr "Твърде много неправилни опита за въвеждане на PIN. Ще трябва да регистрирате нов PIN за Linux Hello."
+
+msgid "Try again."
+msgstr "Опитайте отново."
+
+msgid "Unexpected authentication step. Please try signing in again."
+msgstr "Неочаквана стъпка при удостоверяване. Моля, опитайте да влезете отново."
+
+msgid "Unexpected error occurred."
+msgstr "Възникна неочаквана грешка."
+
+msgid "Unexpected error: {error}"
+msgstr "Неочаквана грешка: {error}"
+
+msgid "Unexpected select device notice"
+msgstr "Неочаквано известие за избор на устройство"
+
+msgid "Update your password\n"
+"You need to update your password because this is\n"
+"the first time you are signing in, or because your\n"
+"password has expired."
+msgstr "Актуализирайте паролата си\n"
+"Трябва да актуализирате паролата си, защото това е\n"
+"първият път, когато влизате, или защото\n"
+"паролата ви е изтекла."
+
+msgid "Use the Linux Hello PIN for this device."
+msgstr "Използвайте ПИН кода за Linux Hello за това устройство."
+
+msgid "Use the password for your Office 365 or Microsoft online login."
+msgstr "Използвайте паролата за вашия вход в Office 365 или Microsoft онлайн."
+
+msgid "Using a browser on another device, visit:\n"
+"{verification_uri}\n"
+"And enter the code:\n"
+"{user_code}"
+msgstr "С браузър на друго устройство посетете:\n"
+"{verification_uri}\n"
+"И въведете кода:\n"
+"{user_code}"
+
+msgid "Value:"
+msgstr "Стойност:"
+
+msgid "Waiting for browser authentication to complete..."
+msgstr "Изчаква се завършването на удостоверяването в браузъра..."
+
+msgid "We texted your phone {phone}. Please enter the code to sign in:"
+msgstr "Изпратихме SMS на телефона ви {phone}. Моля, въведете кода, за да влезете:"
+
+msgid "We're calling your office phone {phone}. Please answer it to continue."
+msgstr "Обаждаме се на служебния ви телефон {phone}. Моля, отговорете на обаждането, за да продължите."
+
+msgid "We're calling your phone {phone}. Please answer it to continue."
+msgstr "Обаждаме се на вашия телефон {phone}. Моля, отговорете, за да продължите."
+
+msgid "Wrong PIN! {message}"
+msgstr "Грешен ПИН! {message}"
+
+msgid "Wrong user verification! {message}"
+msgstr "Неуспешна проверка на потребителя! {message}"
+
+msgid "You have {attempts} attempt left."
+msgid_plural "You have {attempts} attempts left."
+msgstr[0] "Остава ви {attempts} опит."
+msgstr[1] "Остават ви {attempts} опита."
+
+msgid "Your session has expired. Please sign in again."
+msgstr "Вашата сесия изтече. Моля, влезте отново."
+
+msgid "{code}: {message}\n"
+"If you are now prompted for a password from pam_unix, please disregard the prompt, go back and try again."
+msgstr "{code}: {message}\n"
+"Ако сега получите подкана за парола от pam_unix, моля, игнорирайте подканата, върнете се назад и опитайте отново."
+
+msgid "{message}\n"
+"No push? Check your mobile device's internet connection."
+msgstr "{message}\n"
+"Няма push известие? Проверете интернет връзката на мобилното си устройство."

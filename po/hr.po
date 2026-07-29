@@ -1,0 +1,416 @@
+# Croatian translations for Himmelblau.
+# Copyright (C) 2026 Himmelblau contributors
+# This file is distributed under the same license as Himmelblau.
+#
+msgid ""
+msgstr "Project-Id-Version: himmelblau\n"
+"POT-Creation-Date: 2026-07-22 22:33+0000\n"
+"PO-Revision-Date: 2026-07-23 14:39+0000\n"
+"Last-Translator: Automated via Codex <noreply@himmelblau-idm.org>\n"
+"Language-Team: Croatian\n"
+"Language: hr\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Plural-Forms: nplurals=3; plural=((((((0 == 0)) && (((n % 10) >= 2 && (n % 10) <= 4))) && (!(((n % 100) >= 12 && (n % 100) <= 14)))) || ((((0 % 10) >= 2 && (0 % 10) <= 4)) && (!(((0 % 100) >= 12 && (0 % 100) <= 14))))) ? 1 : (((((0 == 0)) && (((n % 10) == 1))) && (!(((n % 100) == 11)))) || ((((0 % 10) == 1)) && (!(((0 % 100) == 11))))) ? 0 : 2);\n"
+""
+
+msgid "An unexpected error occurred."
+msgstr "Došlo je do neočekivane pogreške."
+
+msgid "Approve sign-in in your authenticator app, then wait..."
+msgstr "Odobrite prijavu u aplikaciji za provjeru autentičnosti, a zatim pričekajte..."
+
+msgid "Authenticated user {user} does not match requested user"
+msgstr "Autentificirani korisnik {user} ne podudara se sa zatraženim korisnikom"
+
+msgid "Authenticated user {uuid} does not match requested user"
+msgstr "Autentificirani korisnik {uuid} ne podudara se sa zatraženim korisnikom"
+
+msgid "Authentication did not return a refresh token. Please try again."
+msgstr "Provjera autentičnosti nije vratila token za osvježavanje. Pokušajte ponovno."
+
+msgid "Authentication failed (AADSTS{code})"
+msgstr "Autentikacija nije uspjela (AADSTS{code})"
+
+msgid "Authentication failed in browser flow."
+msgstr "Autentikacija putem preglednika nije uspjela."
+
+msgid "Authentication failed. Please contact your administrator."
+msgstr "Autentifikacija nije uspjela. Obratite se svom administratoru."
+
+msgid "Authentication failed. Please try again."
+msgstr "Autentifikacija nije uspjela. Pokušajte ponovno."
+
+msgid "Authentication failed. Please try signing in again."
+msgstr "Provjera autentičnosti nije uspjela. Pokušajte se ponovno prijaviti."
+
+msgid "Authentication failed: Authentication method not supported."
+msgstr "Autentifikacija nije uspjela: Metoda autentifikacije nije podržana."
+
+msgid "Authentication failed: Configuration error."
+msgstr "Autentifikacija nije uspjela: pogreška u konfiguraciji."
+
+msgid "Authentication failed: Cryptographic error."
+msgstr "Autentifikacija nije uspjela: kriptografska pogreška."
+
+msgid "Authentication failed: Invalid server response."
+msgstr "Provjera autentičnosti nije uspjela: nevažeći odgovor poslužitelja."
+
+msgid "Authentication failed: Missing required data."
+msgstr "Autentifikacija nije uspjela: Nedostaju obavezni podaci."
+
+msgid "Authentication failed: Security hardware error."
+msgstr "Autentikacija nije uspjela: pogreška sigurnosnog hardvera."
+
+msgid "Authentication failed: Unable to reach authentication server."
+msgstr "Provjera autentičnosti nije uspjela: nije moguće pristupiti poslužitelju za provjeru autentičnosti."
+
+msgid "Authentication failed: {error}"
+msgstr "Provjera autentičnosti nije uspjela: {error}"
+
+msgid "Authentication flow completed but token exchange failed. Please try again."
+msgstr "Tijek provjere autentičnosti je dovršen, ali razmjena tokena nije uspjela. Pokušajte ponovno."
+
+msgid "Authentication in progress."
+msgstr "Autentikacija je u tijeku."
+
+msgid "Authentication incomplete. Please try again."
+msgstr "Autentifikacija nije dovršena. Pokušajte ponovno."
+
+msgid "Authentication service is temporarily unavailable. Please try again shortly."
+msgstr "Usluga autentifikacije privremeno je nedostupna. Pokušajte ponovno uskoro."
+
+msgid "Authentication service unavailable. Please try again later."
+msgstr "Usluga provjere autentičnosti nije dostupna. Pokušajte ponovno kasnije."
+
+msgid "Authentication session corrupted. Please try again."
+msgstr "Sesija autentifikacije je oštećena. Pokušajte ponovno."
+
+msgid "Authentication session data missing. Please try again."
+msgstr "Nedostaju podaci sesije provjere autentičnosti. Pokušajte ponovno."
+
+msgid "Authentication session returned an unexpected state. Please try again."
+msgstr "Sesija autentifikacije vratila je neočekivano stanje. Pokušajte ponovno."
+
+msgid "Authentication timed out. Please try again."
+msgstr "Autentikacija je istekla. Pokušajte ponovno."
+
+msgid "Browser authentication backend unavailable. Please try again."
+msgstr "Pozadinski sustav za autentifikaciju putem preglednika nije dostupan. Pokušajte ponovno."
+
+msgid "Changing the password. Please wait..."
+msgstr "Promjena lozinke. Pričekajte..."
+
+msgid "Chosen password is too short! 8 chars required."
+msgstr "Odabrana lozinka je prekratka! Potrebno je 8 znakova."
+
+msgid "Chosen pin is too short! {length} chars required."
+msgstr "Odabrani PIN je prekratak! Potrebno je {length} znakova."
+
+msgid "Cloud Password:"
+msgstr "Lozinka za oblak:"
+
+msgid "Code:"
+msgstr "Kod:"
+
+msgid "Confirm PIN:"
+msgstr "Potvrdite PIN:"
+
+msgid "Confirm password:"
+msgstr "Potvrdite lozinku:"
+
+msgid "Consent required. Please contact your administrator."
+msgstr "Potreban je pristanak. Obratite se svom administratoru."
+
+msgid "Create a PIN to use in place of passwords."
+msgstr "Izradite PIN koji ćete upotrebljavati umjesto lozinki."
+
+msgid "Device enrollment failed. Please contact your administrator."
+msgstr "Registracija uređaja nije uspjela. Obratite se administratoru."
+
+msgid "Device has been removed from the domain."
+msgstr "Uređaj je uklonjen iz domene."
+
+msgid "Enable Bluetooth to sign in with your phone."
+msgstr "Omogućite Bluetooth da biste se prijavili putem telefona."
+
+msgid "Enrolling the Hello PIN. Please wait..."
+msgstr "Registriranje Hello PIN-a. Pričekajte..."
+
+msgid "Enter the setup key '{secret}' to enroll a TOTP Authenticator app. Use '{issuer}' for the code name and '{account}' as the label/name."
+msgstr "Unesite ključ za postavljanje '{secret}' da biste registrirali aplikaciju za TOTP autentifikaciju. Upotrijebite '{issuer}' kao naziv koda i '{account}' kao oznaku/naziv."
+
+msgid "Entra Id Fido authentication failed."
+msgstr "Autentikacija putem Entra ID FIDO nije uspjela."
+
+msgid "Entra Id Password:"
+msgstr "Entra ID lozinka:"
+
+msgid "FIDO authentication not available. Please try a different authentication method."
+msgstr "FIDO autentifikacija nije dostupna. Pokušajte s drugim načinom autentifikacije."
+
+msgid "Failed to authenticate with Hello PIN."
+msgstr "Autentifikacija pomoću Hello PIN-a nije uspjela."
+
+msgid "Failed to authenticate with Hello PIN. One more failed attempt will require multi-factor authentication and resetting your Linux Hello PIN."
+msgstr "Autentikacija pomoću Hello PIN-a nije uspjela. Još jedan neuspjeli pokušaj zahtijevat će višefaktorsku autentikaciju i ponovno postavljanje vašeg Linux Hello PIN-a."
+
+msgid "Failed to authenticate with Hello TOTP code."
+msgstr "Autentifikacija pomoću Hello TOTP koda nije uspjela."
+
+msgid "Failed to build regex: {error}"
+msgstr "Izrada regularnog izraza nije uspjela: {error}"
+
+msgid "Failed to change user password: {msg}"
+msgstr "Promjena korisničke lozinke nije uspjela: {msg}"
+
+msgid "Failed to delete CSR key"
+msgstr "Brisanje CSR ključa nije uspjelo"
+
+msgid "Failed to delete intune key"
+msgstr "Brisanje ključa za Intune nije uspjelo"
+
+msgid "Failed to generate QR code"
+msgstr "Generiranje QR koda nije uspjelo"
+
+msgid "Failed to join domain. Please contact your administrator."
+msgstr "Pridruživanje domeni nije uspjelo. Obratite se administratoru."
+
+msgid "Failed to provision hello key: {error}\n"
+"{message}"
+msgstr "Nije uspjelo postavljanje Hello ključa: {error}\n"
+"{message}"
+
+msgid "Failed to save device configuration. Please contact your administrator."
+msgstr "Nije uspjelo spremanje konfiguracije uređaja. Obratite se svom administratoru."
+
+msgid "Failed to store device credentials. Please contact your administrator."
+msgstr "Pohranjivanje vjerodajnica uređaja nije uspjelo. Obratite se svom administratoru."
+
+msgid "Fido PIN:"
+msgstr "Fido PIN:"
+
+msgid "Himmelblau authentication is starting, please wait..."
+msgstr "Himmelblau autentifikacija se pokreće, pričekajte..."
+
+msgid "Himmelblau authentication service did not become available in time."
+msgstr "Himmelblau servis za provjeru autentičnosti nije postao dostupan na vrijeme."
+
+msgid "Himmelblau authentication service is unavailable."
+msgstr "Usluga autentifikacije Himmelblau nije dostupna."
+
+msgid "Inputs did not match. Try again."
+msgstr "Unosi se ne podudaraju. Pokušajte ponovno."
+
+msgid "Invalid credentials"
+msgstr "Neispravne vjerodajnice"
+
+msgid "Multi-factor authentication required."
+msgstr "Potrebna je višefaktorska autentifikacija."
+
+msgid "Multi-factor authentication required. Please try signing in again."
+msgstr "Potrebna je višefaktorska autentifikacija. Pokušajte se ponovno prijaviti."
+
+msgid "Network outage detected."
+msgstr "Otkriven je prekid mrežne veze."
+
+msgid "New PIN:"
+msgstr "Novi PIN:"
+
+msgid "New password:"
+msgstr "Nova lozinka:"
+
+msgid "No Entra Id Hello PIN was supplied."
+msgstr "Nije unesen PIN za Entra Id Hello."
+
+msgid "No Entra Id Hello confirmation PIN was supplied."
+msgstr "Nije dostavljen PIN za potvrdu za Entra ID Hello."
+
+msgid "No Entra Id confirmation password was supplied."
+msgstr "Nije navedena lozinka za potvrdu za Entra ID."
+
+msgid "No Entra Id password was supplied."
+msgstr "Nije unesena lozinka za Entra ID."
+
+msgid "No Hello TOTP code was supplied."
+msgstr "Nije naveden Hello TOTP kôd."
+
+msgid "No input was supplied."
+msgstr "Nije unesen nikakav unos."
+
+msgid "Offline auth has expired. Please connect to the network to continue."
+msgstr "Autentikacija izvan mreže je istekla. Povežite se s mrežom za nastavak."
+
+msgid "Open your Authenticator app, and enter the number '{entropy}' to sign in."
+msgstr "Otvorite aplikaciju Authenticator i unesite broj '{entropy}' za prijavu."
+
+msgid "Open your authenticator app and scan this QR code to enroll. Then enter the generated code.\n"
+"{qr}"
+msgstr "Otvorite aplikaciju za autentifikaciju i skenirajte ovaj QR kod za registraciju. Zatim unesite generirani kod.\n"
+"{qr}"
+
+msgid "PIN must not use repeating or predictable sequences. Avoid patterns like '111111', '123456', or '135791'."
+msgstr "PIN ne smije sadržavati ponavljajuće ili predvidljive nizove. Izbjegavajte obrasce poput „111111”, „123456” ili „135791”."
+
+msgid "PIN setup failed. Please try signing in again."
+msgstr "Postavljanje PIN-a nije uspjelo. Pokušajte se ponovno prijaviti."
+
+msgid "PIN:"
+msgstr "PIN:"
+
+msgid "Password change required. Please contact your administrator."
+msgstr "Potrebna je promjena lozinke. Obratite se administratoru."
+
+msgid "Password entry required."
+msgstr "Potreban je unos lozinke."
+
+msgid "Password reset registration required. Complete setup at https://aka.ms/ssprsetup from another device, then try again."
+msgstr "Potrebna je registracija za ponovno postavljanje lozinke. Dovršite postavljanje na https://aka.ms/ssprsetup s drugog uređaja, a zatim pokušajte ponovno."
+
+msgid "Please enter your Hello TOTP code from your Authenticator:"
+msgstr "Unesite svoj Hello TOTP kôd iz aplikacije Authenticator:"
+
+msgid "Please insert your security key."
+msgstr "Umetnite svoj sigurnosni ključ."
+
+msgid "Please select a device by touching one of them."
+msgstr "Odaberite uređaj dodirom jednog od njih."
+
+msgid "Please touch your security key."
+msgstr "Dodirnite svoj sigurnosni ključ."
+
+msgid "Press enter to continue"
+msgstr "Pritisnite Enter za nastavak"
+
+msgid "QR/Bluetooth authentication failed."
+msgstr "QR/Bluetooth autentifikacija nije uspjela."
+
+msgid "Scan the QR code to continue sign-in, or open this link on another device:\n"
+"{complete}\n"
+"If you cannot scan, visit:\n"
+"{verification_uri}\n"
+"And enter the code:\n"
+"{user_code}"
+msgstr "Skenirajte QR kod za nastavak prijave ili otvorite ovu poveznicu na drugom uređaju:\n"
+"{complete}\n"
+"Ako ne možete skenirati, posjetite:\n"
+"{verification_uri}\n"
+"I unesite kod:\n"
+"{user_code}"
+
+msgid "Scan with your authenticator app"
+msgstr "Skenirajte pomoću aplikacije za provjeru autentičnosti"
+
+msgid "Security key and QR/Bluetooth authentication failed."
+msgstr "Autentifikacija sigurnosnim ključem i QR/Bluetooth autentifikacija nisu uspjele."
+
+msgid "Security key authentication failed."
+msgstr "Autentikacija sigurnosnim ključem nije uspjela."
+
+msgid "Session data corrupted. Please sign in again."
+msgstr "Podaci sesije su oštećeni. Prijavite se ponovno."
+
+msgid "Set up a PIN\n"
+"A Hello PIN is a fast, secure way to sign in to your device, apps, and services."
+msgstr "Postavite PIN\n"
+"Hello PIN brz je i siguran način prijave na vaš uređaj, aplikacije i usluge."
+
+msgid "TOTP Code:"
+msgstr "TOTP kod:"
+
+msgid "The minimum PIN length is {length} characters."
+msgstr "Minimalna duljina PIN-a iznosi {length} znakova."
+
+msgid "This command changes your local Hello PIN, NOT your Entra Id password."
+msgstr "Ova naredba mijenja vaš lokalni Hello PIN, NE vašu lozinku za Entra ID."
+
+msgid "Too many failed attempts in one row. Your device has been temporarily blocked. Please unplug it and plug in again."
+msgstr "Previše neuspjelih pokušaja zaredom. Vaš je uređaj privremeno blokiran. Odspojite ga i ponovno ga priključite."
+
+msgid "Too many failed attempts. Your device has been blocked. Reset it."
+msgstr "Previše neuspjelih pokušaja. Vaš je uređaj blokiran. Resetirajte ga."
+
+msgid "Too many failed user verification attempts."
+msgstr "Previše neuspjelih pokušaja provjere korisnika."
+
+msgid "Too many incorrect PIN attempts. You will need to enroll a new Linux Hello PIN."
+msgstr "Previše netočnih pokušaja unosa PIN-a. Morat ćete registrirati novi Linux Hello PIN."
+
+msgid "Try again."
+msgstr "Pokušajte ponovno."
+
+msgid "Unexpected authentication step. Please try signing in again."
+msgstr "Neočekivani korak provjere autentičnosti. Pokušajte se ponovno prijaviti."
+
+msgid "Unexpected error occurred."
+msgstr "Došlo je do neočekivane pogreške."
+
+msgid "Unexpected error: {error}"
+msgstr "Neočekivana pogreška: {error}"
+
+msgid "Unexpected select device notice"
+msgstr "Neočekivana obavijest o odabiru uređaja"
+
+msgid "Update your password\n"
+"You need to update your password because this is\n"
+"the first time you are signing in, or because your\n"
+"password has expired."
+msgstr "Ažurirajte svoju lozinku\n"
+"Morate ažurirati svoju lozinku jer se prijavljujete\n"
+"prvi put ili zato što je vaša lozinka istekla."
+
+msgid "Use the Linux Hello PIN for this device."
+msgstr "Upotrijebite Linux Hello PIN za ovaj uređaj."
+
+msgid "Use the password for your Office 365 or Microsoft online login."
+msgstr "Upotrijebite lozinku za prijavu u Office 365 ili Microsoft online."
+
+msgid "Using a browser on another device, visit:\n"
+"{verification_uri}\n"
+"And enter the code:\n"
+"{user_code}"
+msgstr "Pomoću preglednika na drugom uređaju posjetite:\n"
+"{verification_uri}\n"
+"I unesite kod:\n"
+"{user_code}"
+
+msgid "Value:"
+msgstr "Vrijednost:"
+
+msgid "Waiting for browser authentication to complete..."
+msgstr "Čeka se dovršetak autentifikacije u pregledniku..."
+
+msgid "We texted your phone {phone}. Please enter the code to sign in:"
+msgstr "Poslali smo SMS na vaš telefon {phone}. Unesite kod za prijavu:"
+
+msgid "We're calling your office phone {phone}. Please answer it to continue."
+msgstr "Zovemo vaš uredski telefon {phone}. Javite se kako biste nastavili."
+
+msgid "We're calling your phone {phone}. Please answer it to continue."
+msgstr "Zovemo vaš telefon {phone}. Odgovorite na poziv za nastavak."
+
+msgid "Wrong PIN! {message}"
+msgstr "Pogrešan PIN! {message}"
+
+msgid "Wrong user verification! {message}"
+msgstr "Neispravna provjera korisnika! {message}"
+
+msgid "You have {attempts} attempt left."
+msgid_plural "You have {attempts} attempts left."
+msgstr[0] "Preostao vam je {attempts} pokušaj."
+msgstr[1] "Preostala su vam {attempts} pokušaja."
+msgstr[2] "Preostalo vam je {attempts} pokušaja."
+
+msgid "Your session has expired. Please sign in again."
+msgstr "Vaša sesija je istekla. Prijavite se ponovno."
+
+msgid "{code}: {message}\n"
+"If you are now prompted for a password from pam_unix, please disregard the prompt, go back and try again."
+msgstr "{code}: {message}\n"
+"Ako se sada prikaže upit za lozinku iz pam_unix, zanemarite taj upit, vratite se i pokušajte ponovno."
+
+msgid "{message}\n"
+"No push? Check your mobile device's internet connection."
+msgstr "{message}\n"
+"Nema push obavijesti? Provjerite internetsku vezu svog mobilnog uređaja."

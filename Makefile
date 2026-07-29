@@ -203,8 +203,8 @@ check-licenses: ## Validate dependant licenses comply with GPLv3
 	cargo deny --all-features check licenses
 
 vet: ## Interactive dependency review with AI analysis
-	cargo vet -V >/dev/null || (echo "cargo-vet required" && cargo install cargo-vet)
-	cargo vet regenerate imports
+	/usr/bin/cargo vet -V >/dev/null || (echo "cargo-vet required" && cargo install cargo-vet)
+	/usr/bin/cargo vet regenerate imports
 	@python3 scripts/cargo_vet_review.py --ai-provider claude
 
 sbom: .packaging ## Generate a Software Bill of Materials

@@ -1,0 +1,416 @@
+# Greek translations for Himmelblau.
+# Copyright (C) 2026 Himmelblau contributors
+# This file is distributed under the same license as Himmelblau.
+#
+msgid ""
+msgstr "Project-Id-Version: himmelblau\n"
+"POT-Creation-Date: 2026-07-22 22:33+0000\n"
+"PO-Revision-Date: 2026-07-23 14:38+0000\n"
+"Last-Translator: Automated via Codex <noreply@himmelblau-idm.org>\n"
+"Language-Team: Greek\n"
+"Language: el\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Plural-Forms: nplurals=2; plural=(n != 1);\n"
+""
+
+msgid "An unexpected error occurred."
+msgstr "Παρουσιάστηκε ένα μη αναμενόμενο σφάλμα."
+
+msgid "Approve sign-in in your authenticator app, then wait..."
+msgstr "Εγκρίνετε τη σύνδεση στην εφαρμογή ελέγχου ταυτότητας και, στη συνέχεια, περιμένετε..."
+
+msgid "Authenticated user {user} does not match requested user"
+msgstr "Ο ταυτοποιημένος χρήστης {user} δεν αντιστοιχεί στον ζητούμενο χρήστη"
+
+msgid "Authenticated user {uuid} does not match requested user"
+msgstr "Ο ταυτοποιημένος χρήστης {uuid} δεν αντιστοιχεί στον ζητούμενο χρήστη"
+
+msgid "Authentication did not return a refresh token. Please try again."
+msgstr "Ο έλεγχος ταυτότητας δεν επέστρεψε διακριτικό ανανέωσης. Δοκιμάστε ξανά."
+
+msgid "Authentication failed (AADSTS{code})"
+msgstr "Ο έλεγχος ταυτότητας απέτυχε (AADSTS{code})"
+
+msgid "Authentication failed in browser flow."
+msgstr "Ο έλεγχος ταυτότητας απέτυχε στη ροή του προγράμματος περιήγησης."
+
+msgid "Authentication failed. Please contact your administrator."
+msgstr "Ο έλεγχος ταυτότητας απέτυχε. Επικοινωνήστε με τον διαχειριστή σας."
+
+msgid "Authentication failed. Please try again."
+msgstr "Ο έλεγχος ταυτότητας απέτυχε. Δοκιμάστε ξανά."
+
+msgid "Authentication failed. Please try signing in again."
+msgstr "Η ταυτοποίηση απέτυχε. Δοκιμάστε να συνδεθείτε ξανά."
+
+msgid "Authentication failed: Authentication method not supported."
+msgstr "Αποτυχία ελέγχου ταυτότητας: Η μέθοδος ελέγχου ταυτότητας δεν υποστηρίζεται."
+
+msgid "Authentication failed: Configuration error."
+msgstr "Η ταυτοποίηση απέτυχε: Σφάλμα διαμόρφωσης."
+
+msgid "Authentication failed: Cryptographic error."
+msgstr "Ο έλεγχος ταυτότητας απέτυχε: Κρυπτογραφικό σφάλμα."
+
+msgid "Authentication failed: Invalid server response."
+msgstr "Η ταυτοποίηση απέτυχε: Μη έγκυρη απόκριση διακομιστή."
+
+msgid "Authentication failed: Missing required data."
+msgstr "Ο έλεγχος ταυτότητας απέτυχε: Λείπουν τα απαιτούμενα δεδομένα."
+
+msgid "Authentication failed: Security hardware error."
+msgstr "Ο έλεγχος ταυτότητας απέτυχε: Σφάλμα υλικού ασφαλείας."
+
+msgid "Authentication failed: Unable to reach authentication server."
+msgstr "Η ταυτοποίηση απέτυχε: Δεν είναι δυνατή η πρόσβαση στον διακομιστή ταυτοποίησης."
+
+msgid "Authentication failed: {error}"
+msgstr "Ο έλεγχος ταυτότητας απέτυχε: {error}"
+
+msgid "Authentication flow completed but token exchange failed. Please try again."
+msgstr "Η ροή ελέγχου ταυτότητας ολοκληρώθηκε, αλλά η ανταλλαγή διακριτικού απέτυχε. Δοκιμάστε ξανά."
+
+msgid "Authentication in progress."
+msgstr "Έλεγχος ταυτότητας σε εξέλιξη."
+
+msgid "Authentication incomplete. Please try again."
+msgstr "Ο έλεγχος ταυτότητας δεν ολοκληρώθηκε. Δοκιμάστε ξανά."
+
+msgid "Authentication service is temporarily unavailable. Please try again shortly."
+msgstr "Η υπηρεσία ελέγχου ταυτότητας δεν είναι προσωρινά διαθέσιμη. Δοκιμάστε ξανά σε λίγο."
+
+msgid "Authentication service unavailable. Please try again later."
+msgstr "Η υπηρεσία ελέγχου ταυτότητας δεν είναι διαθέσιμη. Παρακαλώ δοκιμάστε ξανά αργότερα."
+
+msgid "Authentication session corrupted. Please try again."
+msgstr "Η συνεδρία ελέγχου ταυτότητας έχει καταστραφεί. Δοκιμάστε ξανά."
+
+msgid "Authentication session data missing. Please try again."
+msgstr "Λείπουν τα δεδομένα της συνεδρίας ελέγχου ταυτότητας. Δοκιμάστε ξανά."
+
+msgid "Authentication session returned an unexpected state. Please try again."
+msgstr "Η περίοδος λειτουργίας ελέγχου ταυτότητας επέστρεψε μια μη αναμενόμενη κατάσταση. Δοκιμάστε ξανά."
+
+msgid "Authentication timed out. Please try again."
+msgstr "Ο έλεγχος ταυτότητας έληξε λόγω χρονικού ορίου. Δοκιμάστε ξανά."
+
+msgid "Browser authentication backend unavailable. Please try again."
+msgstr "Το backend ελέγχου ταυτότητας μέσω προγράμματος περιήγησης δεν είναι διαθέσιμο. Δοκιμάστε ξανά."
+
+msgid "Changing the password. Please wait..."
+msgstr "Αλλαγή του κωδικού πρόσβασης. Περιμένετε..."
+
+msgid "Chosen password is too short! 8 chars required."
+msgstr "Ο επιλεγμένος κωδικός πρόσβασης είναι πολύ σύντομος! Απαιτούνται 8 χαρακτήρες."
+
+msgid "Chosen pin is too short! {length} chars required."
+msgstr "Το επιλεγμένο PIN είναι πολύ σύντομο! Απαιτούνται {length} χαρακτήρες."
+
+msgid "Cloud Password:"
+msgstr "Κωδικός πρόσβασης cloud:"
+
+msgid "Code:"
+msgstr "Κωδικός:"
+
+msgid "Confirm PIN:"
+msgstr "Επιβεβαιώστε το PIN:"
+
+msgid "Confirm password:"
+msgstr "Επιβεβαίωση κωδικού πρόσβασης:"
+
+msgid "Consent required. Please contact your administrator."
+msgstr "Απαιτείται συγκατάθεση. Επικοινωνήστε με τον διαχειριστή σας."
+
+msgid "Create a PIN to use in place of passwords."
+msgstr "Δημιουργήστε ένα PIN για χρήση αντί για κωδικούς πρόσβασης."
+
+msgid "Device enrollment failed. Please contact your administrator."
+msgstr "Η εγγραφή της συσκευής απέτυχε. Επικοινωνήστε με τον διαχειριστή σας."
+
+msgid "Device has been removed from the domain."
+msgstr "Η συσκευή έχει καταργηθεί από τον τομέα."
+
+msgid "Enable Bluetooth to sign in with your phone."
+msgstr "Ενεργοποιήστε το Bluetooth για να συνδεθείτε με το τηλέφωνό σας."
+
+msgid "Enrolling the Hello PIN. Please wait..."
+msgstr "Γίνεται εγγραφή του PIN Hello. Παρακαλώ περιμένετε..."
+
+msgid "Enter the setup key '{secret}' to enroll a TOTP Authenticator app. Use '{issuer}' for the code name and '{account}' as the label/name."
+msgstr "Εισαγάγετε το κλειδί ρύθμισης '{secret}' για να εγγράψετε μια εφαρμογή ελέγχου ταυτότητας TOTP. Χρησιμοποιήστε το '{issuer}' ως όνομα του κωδικού και το '{account}' ως ετικέτα/όνομα."
+
+msgid "Entra Id Fido authentication failed."
+msgstr "Ο έλεγχος ταυτότητας Entra ID FIDO απέτυχε."
+
+msgid "Entra Id Password:"
+msgstr "Κωδικός πρόσβασης Entra ID:"
+
+msgid "FIDO authentication not available. Please try a different authentication method."
+msgstr "Ο έλεγχος ταυτότητας FIDO δεν είναι διαθέσιμος. Δοκιμάστε μια διαφορετική μέθοδο ελέγχου ταυτότητας."
+
+msgid "Failed to authenticate with Hello PIN."
+msgstr "Απέτυχε ο έλεγχος ταυτότητας με το Hello PIN."
+
+msgid "Failed to authenticate with Hello PIN. One more failed attempt will require multi-factor authentication and resetting your Linux Hello PIN."
+msgstr "Αποτυχία ελέγχου ταυτότητας με το Hello PIN. Μία ακόμη αποτυχημένη προσπάθεια θα απαιτήσει έλεγχο ταυτότητας πολλαπλών παραγόντων και επαναφορά του Linux Hello PIN σας."
+
+msgid "Failed to authenticate with Hello TOTP code."
+msgstr "Δεν ήταν δυνατός ο έλεγχος ταυτότητας με τον κωδικό Hello TOTP."
+
+msgid "Failed to build regex: {error}"
+msgstr "Αποτυχία δημιουργίας κανονικής έκφρασης: {error}"
+
+msgid "Failed to change user password: {msg}"
+msgstr "Αποτυχία αλλαγής κωδικού πρόσβασης χρήστη: {msg}"
+
+msgid "Failed to delete CSR key"
+msgstr "Αποτυχία διαγραφής κλειδιού CSR"
+
+msgid "Failed to delete intune key"
+msgstr "Αποτυχία διαγραφής του κλειδιού Intune"
+
+msgid "Failed to generate QR code"
+msgstr "Η δημιουργία του κωδικού QR απέτυχε"
+
+msgid "Failed to join domain. Please contact your administrator."
+msgstr "Αποτυχία σύνδεσης στον τομέα. Επικοινωνήστε με τον διαχειριστή σας."
+
+msgid "Failed to provision hello key: {error}\n"
+"{message}"
+msgstr "Αποτυχία παροχής κλειδιού Hello: {error}\n"
+"{message}"
+
+msgid "Failed to save device configuration. Please contact your administrator."
+msgstr "Απέτυχε η αποθήκευση της διαμόρφωσης της συσκευής. Επικοινωνήστε με τον διαχειριστή σας."
+
+msgid "Failed to store device credentials. Please contact your administrator."
+msgstr "Αποτυχία αποθήκευσης των διαπιστευτηρίων της συσκευής. Επικοινωνήστε με τον διαχειριστή σας."
+
+msgid "Fido PIN:"
+msgstr "PIN FIDO:"
+
+msgid "Himmelblau authentication is starting, please wait..."
+msgstr "Ο έλεγχος ταυτότητας Himmelblau ξεκινά, παρακαλώ περιμένετε..."
+
+msgid "Himmelblau authentication service did not become available in time."
+msgstr "Η υπηρεσία ελέγχου ταυτότητας Himmelblau δεν έγινε διαθέσιμη εγκαίρως."
+
+msgid "Himmelblau authentication service is unavailable."
+msgstr "Η υπηρεσία ελέγχου ταυτότητας Himmelblau δεν είναι διαθέσιμη."
+
+msgid "Inputs did not match. Try again."
+msgstr "Οι καταχωρίσεις δεν ταιριάζουν. Δοκιμάστε ξανά."
+
+msgid "Invalid credentials"
+msgstr "Μη έγκυρα διαπιστευτήρια"
+
+msgid "Multi-factor authentication required."
+msgstr "Απαιτείται έλεγχος ταυτότητας πολλαπλών παραγόντων."
+
+msgid "Multi-factor authentication required. Please try signing in again."
+msgstr "Απαιτείται έλεγχος ταυτότητας πολλαπλών παραγόντων. Δοκιμάστε να συνδεθείτε ξανά."
+
+msgid "Network outage detected."
+msgstr "Εντοπίστηκε διακοπή δικτύου."
+
+msgid "New PIN:"
+msgstr "Νέο PIN:"
+
+msgid "New password:"
+msgstr "Νέος κωδικός πρόσβασης:"
+
+msgid "No Entra Id Hello PIN was supplied."
+msgstr "Δεν δόθηκε PIN για το Entra ID Hello."
+
+msgid "No Entra Id Hello confirmation PIN was supplied."
+msgstr "Δεν δόθηκε PIN επιβεβαίωσης για το Entra Id Hello."
+
+msgid "No Entra Id confirmation password was supplied."
+msgstr "Δεν δόθηκε κωδικός πρόσβασης επιβεβαίωσης Entra ID."
+
+msgid "No Entra Id password was supplied."
+msgstr "Δεν δόθηκε κωδικός πρόσβασης Entra ID."
+
+msgid "No Hello TOTP code was supplied."
+msgstr "Δεν δόθηκε κωδικός Hello TOTP."
+
+msgid "No input was supplied."
+msgstr "Δεν δόθηκαν δεδομένα εισόδου."
+
+msgid "Offline auth has expired. Please connect to the network to continue."
+msgstr "Ο έλεγχος ταυτότητας εκτός σύνδεσης έχει λήξει. Συνδεθείτε στο δίκτυο για να συνεχίσετε."
+
+msgid "Open your Authenticator app, and enter the number '{entropy}' to sign in."
+msgstr "Ανοίξτε την εφαρμογή Authenticator και εισαγάγετε τον αριθμό '{entropy}' για να συνδεθείτε."
+
+msgid "Open your authenticator app and scan this QR code to enroll. Then enter the generated code.\n"
+"{qr}"
+msgstr "Ανοίξτε την εφαρμογή ελέγχου ταυτότητας και σαρώστε αυτόν τον κωδικό QR για να εγγραφείτε. Στη συνέχεια, εισαγάγετε τον κωδικό που δημιουργήθηκε.\n"
+"{qr}"
+
+msgid "PIN must not use repeating or predictable sequences. Avoid patterns like '111111', '123456', or '135791'."
+msgstr "Το PIN δεν πρέπει να χρησιμοποιεί επαναλαμβανόμενες ή προβλέψιμες ακολουθίες. Αποφύγετε μοτίβα όπως '111111', '123456' ή '135791'."
+
+msgid "PIN setup failed. Please try signing in again."
+msgstr "Η ρύθμιση του PIN απέτυχε. Δοκιμάστε να συνδεθείτε ξανά."
+
+msgid "PIN:"
+msgstr "PIN:"
+
+msgid "Password change required. Please contact your administrator."
+msgstr "Απαιτείται αλλαγή κωδικού πρόσβασης. Επικοινωνήστε με τον διαχειριστή σας."
+
+msgid "Password entry required."
+msgstr "Απαιτείται εισαγωγή κωδικού πρόσβασης."
+
+msgid "Password reset registration required. Complete setup at https://aka.ms/ssprsetup from another device, then try again."
+msgstr "Απαιτείται εγγραφή για επαναφορά κωδικού πρόσβασης. Ολοκληρώστε τη ρύθμιση στη διεύθυνση https://aka.ms/ssprsetup από άλλη συσκευή και, στη συνέχεια, δοκιμάστε ξανά."
+
+msgid "Please enter your Hello TOTP code from your Authenticator:"
+msgstr "Παρακαλώ εισαγάγετε τον κωδικό Hello TOTP από το Authenticator σας:"
+
+msgid "Please insert your security key."
+msgstr "Εισαγάγετε το κλειδί ασφαλείας σας."
+
+msgid "Please select a device by touching one of them."
+msgstr "Παρακαλώ επιλέξτε μια συσκευή αγγίζοντας μία από αυτές."
+
+msgid "Please touch your security key."
+msgstr "Παρακαλώ αγγίξτε το κλειδί ασφαλείας σας."
+
+msgid "Press enter to continue"
+msgstr "Πατήστε Enter για να συνεχίσετε"
+
+msgid "QR/Bluetooth authentication failed."
+msgstr "Ο έλεγχος ταυτότητας μέσω QR/Bluetooth απέτυχε."
+
+msgid "Scan the QR code to continue sign-in, or open this link on another device:\n"
+"{complete}\n"
+"If you cannot scan, visit:\n"
+"{verification_uri}\n"
+"And enter the code:\n"
+"{user_code}"
+msgstr "Σαρώστε τον κωδικό QR για να συνεχίσετε τη σύνδεση ή ανοίξτε αυτόν τον σύνδεσμο σε άλλη συσκευή:\n"
+"{complete}\n"
+"Εάν δεν μπορείτε να σαρώσετε, επισκεφθείτε:\n"
+"{verification_uri}\n"
+"Και εισαγάγετε τον κωδικό:\n"
+"{user_code}"
+
+msgid "Scan with your authenticator app"
+msgstr "Σαρώστε με την εφαρμογή ελέγχου ταυτότητας"
+
+msgid "Security key and QR/Bluetooth authentication failed."
+msgstr "Απέτυχε ο έλεγχος ταυτότητας με κλειδί ασφαλείας και QR/Bluetooth."
+
+msgid "Security key authentication failed."
+msgstr "Ο έλεγχος ταυτότητας με κλειδί ασφαλείας απέτυχε."
+
+msgid "Session data corrupted. Please sign in again."
+msgstr "Τα δεδομένα της συνεδρίας έχουν καταστραφεί. Συνδεθείτε ξανά."
+
+msgid "Set up a PIN\n"
+"A Hello PIN is a fast, secure way to sign in to your device, apps, and services."
+msgstr "Ρυθμίστε ένα PIN\n"
+"Το PIN του Hello είναι ένας γρήγορος και ασφαλής τρόπος για να συνδέεστε στη συσκευή, τις εφαρμογές και τις υπηρεσίες σας."
+
+msgid "TOTP Code:"
+msgstr "Κωδικός TOTP:"
+
+msgid "The minimum PIN length is {length} characters."
+msgstr "Το ελάχιστο μήκος του PIN είναι {length} χαρακτήρες."
+
+msgid "This command changes your local Hello PIN, NOT your Entra Id password."
+msgstr "Αυτή η εντολή αλλάζει το τοπικό Hello PIN σας, ΟΧΙ τον κωδικό πρόσβασής σας στο Entra Id."
+
+msgid "Too many failed attempts in one row. Your device has been temporarily blocked. Please unplug it and plug in again."
+msgstr "Πάρα πολλές αποτυχημένες προσπάθειες στη σειρά. Η συσκευή σας έχει αποκλειστεί προσωρινά. Αποσυνδέστε την και συνδέστε την ξανά."
+
+msgid "Too many failed attempts. Your device has been blocked. Reset it."
+msgstr "Πάρα πολλές αποτυχημένες προσπάθειες. Η συσκευή σας έχει αποκλειστεί. Επαναφέρετέ την."
+
+msgid "Too many failed user verification attempts."
+msgstr "Πάρα πολλές αποτυχημένες προσπάθειες επαλήθευσης χρήστη."
+
+msgid "Too many incorrect PIN attempts. You will need to enroll a new Linux Hello PIN."
+msgstr "Πάρα πολλές εσφαλμένες προσπάθειες PIN. Θα χρειαστεί να εγγράψετε ένα νέο Linux Hello PIN."
+
+msgid "Try again."
+msgstr "Δοκιμάστε ξανά."
+
+msgid "Unexpected authentication step. Please try signing in again."
+msgstr "Μη αναμενόμενο βήμα ελέγχου ταυτότητας. Δοκιμάστε να συνδεθείτε ξανά."
+
+msgid "Unexpected error occurred."
+msgstr "Παρουσιάστηκε απρόσμενο σφάλμα."
+
+msgid "Unexpected error: {error}"
+msgstr "Μη αναμενόμενο σφάλμα: {error}"
+
+msgid "Unexpected select device notice"
+msgstr "Απροσδόκητη ειδοποίηση επιλογής συσκευής"
+
+msgid "Update your password\n"
+"You need to update your password because this is\n"
+"the first time you are signing in, or because your\n"
+"password has expired."
+msgstr "Ενημερώστε τον κωδικό πρόσβασής σας\n"
+"Πρέπει να ενημερώσετε τον κωδικό πρόσβασής σας επειδή αυτή είναι\n"
+"η πρώτη φορά που συνδέεστε ή επειδή ο\n"
+"κωδικός πρόσβασής σας έχει λήξει."
+
+msgid "Use the Linux Hello PIN for this device."
+msgstr "Χρησιμοποιήστε το PIN του Linux Hello για αυτήν τη συσκευή."
+
+msgid "Use the password for your Office 365 or Microsoft online login."
+msgstr "Χρησιμοποιήστε τον κωδικό πρόσβασης για τη σύνδεσή σας στο Office 365 ή στο Microsoft online."
+
+msgid "Using a browser on another device, visit:\n"
+"{verification_uri}\n"
+"And enter the code:\n"
+"{user_code}"
+msgstr "Χρησιμοποιώντας ένα πρόγραμμα περιήγησης σε άλλη συσκευή, επισκεφθείτε:\n"
+"{verification_uri}\n"
+"Και εισαγάγετε τον κωδικό:\n"
+"{user_code}"
+
+msgid "Value:"
+msgstr "Τιμή:"
+
+msgid "Waiting for browser authentication to complete..."
+msgstr "Αναμονή για την ολοκλήρωση του ελέγχου ταυτότητας στο πρόγραμμα περιήγησης..."
+
+msgid "We texted your phone {phone}. Please enter the code to sign in:"
+msgstr "Στείλαμε SMS στο τηλέφωνό σας {phone}. Εισαγάγετε τον κωδικό για να συνδεθείτε:"
+
+msgid "We're calling your office phone {phone}. Please answer it to continue."
+msgstr "Καλούμε το τηλέφωνο του γραφείου σας {phone}. Παρακαλούμε απαντήστε για να συνεχίσετε."
+
+msgid "We're calling your phone {phone}. Please answer it to continue."
+msgstr "Καλούμε το τηλέφωνό σας {phone}. Παρακαλούμε απαντήστε στην κλήση για να συνεχίσετε."
+
+msgid "Wrong PIN! {message}"
+msgstr "Λάθος PIN! {message}"
+
+msgid "Wrong user verification! {message}"
+msgstr "Εσφαλμένη επαλήθευση χρήστη! {message}"
+
+msgid "You have {attempts} attempt left."
+msgid_plural "You have {attempts} attempts left."
+msgstr[0] "Σας απομένει {attempts} προσπάθεια."
+msgstr[1] "Σας απομένουν {attempts} προσπάθειες."
+
+msgid "Your session has expired. Please sign in again."
+msgstr "Η συνεδρία σας έχει λήξει. Συνδεθείτε ξανά."
+
+msgid "{code}: {message}\n"
+"If you are now prompted for a password from pam_unix, please disregard the prompt, go back and try again."
+msgstr "{code}: {message}\n"
+"Εάν σας ζητηθεί τώρα κωδικός πρόσβασης από το pam_unix, αγνοήστε την προτροπή, επιστρέψτε και δοκιμάστε ξανά."
+
+msgid "{message}\n"
+"No push? Check your mobile device's internet connection."
+msgstr "{message}\n"
+"Δεν λάβατε ειδοποίηση push; Ελέγξτε τη σύνδεση του κινητού σας στο διαδίκτυο."

@@ -1,0 +1,432 @@
+# French translations for Himmelblau.
+# Copyright (C) 2026 Himmelblau contributors
+# This file is distributed under the same license as Himmelblau.
+#
+msgid ""
+msgstr ""
+"Project-Id-Version: himmelblau\n"
+"POT-Creation-Date: 2026-07-22 22:33+0000\n"
+"PO-Revision-Date: 2026-07-23 14:37+0000\n"
+"Last-Translator: Automated via Codex <noreply@himmelblau-idm.org>\n"
+"Language-Team: French\n"
+"Language: fr\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Plural-Forms: nplurals=2; plural=(n > 1);\n"
+
+msgid "An unexpected error occurred."
+msgstr "Une erreur inattendue s’est produite."
+
+msgid "Approve sign-in in your authenticator app, then wait..."
+msgstr "Approuvez la connexion dans votre application d’authentification, puis patientez..."
+
+msgid "Authenticated user {user} does not match requested user"
+msgstr "L’utilisateur authentifié {user} ne correspond pas à l’utilisateur demandé"
+
+msgid "Authenticated user {uuid} does not match requested user"
+msgstr "L'utilisateur authentifié {uuid} ne correspond pas à l'utilisateur demandé"
+
+msgid "Authentication did not return a refresh token. Please try again."
+msgstr "L’authentification n’a pas renvoyé de jeton d’actualisation. Veuillez réessayer."
+
+msgid "Authentication failed (AADSTS{code})"
+msgstr "Échec de l’authentification (AADSTS{code})"
+
+msgid "Authentication failed in browser flow."
+msgstr "L’authentification a échoué dans le flux du navigateur."
+
+msgid "Authentication failed. Please contact your administrator."
+msgstr "Échec de l’authentification. Veuillez contacter votre administrateur."
+
+msgid "Authentication failed. Please try again."
+msgstr "L’authentification a échoué. Veuillez réessayer."
+
+msgid "Authentication failed. Please try signing in again."
+msgstr "Échec de l’authentification. Veuillez réessayer de vous connecter."
+
+msgid "Authentication failed: Authentication method not supported."
+msgstr "Échec de l’authentification : méthode d’authentification non prise en charge."
+
+msgid "Authentication failed: Configuration error."
+msgstr "Échec de l’authentification : erreur de configuration."
+
+msgid "Authentication failed: Cryptographic error."
+msgstr "Échec de l’authentification : erreur cryptographique."
+
+msgid "Authentication failed: Invalid server response."
+msgstr "Échec de l’authentification : réponse du serveur non valide."
+
+msgid "Authentication failed: Missing required data."
+msgstr "Échec de l’authentification : données requises manquantes."
+
+msgid "Authentication failed: Security hardware error."
+msgstr "Échec de l’authentification : erreur du matériel de sécurité."
+
+msgid "Authentication failed: Unable to reach authentication server."
+msgstr "Échec de l’authentification : impossible de joindre le serveur d’authentification."
+
+msgid "Authentication failed: {error}"
+msgstr "Échec de l’authentification : {error}"
+
+msgid "Authentication flow completed but token exchange failed. Please try again."
+msgstr "Le flux d’authentification est terminé, mais l’échange de jetons a échoué. Veuillez réessayer."
+
+msgid "Authentication in progress."
+msgstr "Authentification en cours."
+
+msgid "Authentication incomplete. Please try again."
+msgstr "Authentification incomplète. Veuillez réessayer."
+
+msgid "Authentication service is temporarily unavailable. Please try again shortly."
+msgstr "Le service d’authentification est temporairement indisponible. Veuillez réessayer dans quelques instants."
+
+msgid "Authentication service unavailable. Please try again later."
+msgstr "Service d’authentification indisponible. Veuillez réessayer plus tard."
+
+msgid "Authentication session corrupted. Please try again."
+msgstr "La session d’authentification est corrompue. Veuillez réessayer."
+
+msgid "Authentication session data missing. Please try again."
+msgstr "Les données de session d’authentification sont manquantes. Veuillez réessayer."
+
+msgid "Authentication session returned an unexpected state. Please try again."
+msgstr "La session d’authentification a renvoyé un état inattendu. Veuillez réessayer."
+
+msgid "Authentication timed out. Please try again."
+msgstr "L’authentification a expiré. Veuillez réessayer."
+
+msgid "Browser authentication backend unavailable. Please try again."
+msgstr "Le backend d’authentification du navigateur est indisponible. Veuillez réessayer."
+
+msgid "Changing the password. Please wait..."
+msgstr "Modification du mot de passe. Veuillez patienter..."
+
+msgid "Chosen password is too short! 8 chars required."
+msgstr "Le mot de passe choisi est trop court ! 8 caractères sont requis."
+
+msgid "Chosen pin is too short! {length} chars required."
+msgstr "Le code PIN choisi est trop court ! {length} caractères requis."
+
+msgid "Cloud Password:"
+msgstr "Mot de passe cloud :"
+
+msgid "Code:"
+msgstr "Code :"
+
+msgid "Confirm PIN:"
+msgstr "Confirmez le code PIN :"
+
+msgid "Confirm password:"
+msgstr "Confirmez le mot de passe :"
+
+msgid "Consent required. Please contact your administrator."
+msgstr "Consentement requis. Veuillez contacter votre administrateur."
+
+msgid "Create a PIN to use in place of passwords."
+msgstr "Créez un code PIN à utiliser à la place des mots de passe."
+
+msgid "Device enrollment failed. Please contact your administrator."
+msgstr "L’inscription de l’appareil a échoué. Veuillez contacter votre administrateur."
+
+msgid "Device has been removed from the domain."
+msgstr "L’appareil a été retiré du domaine."
+
+msgid "Enable Bluetooth to sign in with your phone."
+msgstr "Activez le Bluetooth pour vous connecter avec votre téléphone."
+
+msgid "Enrolling the Hello PIN. Please wait..."
+msgstr "Inscription du code PIN Hello en cours. Veuillez patienter..."
+
+msgid "Enter the setup key '{secret}' to enroll a TOTP Authenticator app. Use '{issuer}' for the code name and '{account}' as the label/name."
+msgstr "Saisissez la clé de configuration « {secret} » pour inscrire une application d’authentification TOTP. Utilisez « {issuer} » comme nom du code et « {account} » comme libellé/nom."
+
+msgid "Entra Id Fido authentication failed."
+msgstr "L’authentification FIDO Entra ID a échoué."
+
+msgid "Entra Id Password:"
+msgstr "Mot de passe Entra ID :"
+
+msgid "FIDO authentication not available. Please try a different authentication method."
+msgstr "L’authentification FIDO n’est pas disponible. Veuillez essayer une autre méthode d’authentification."
+
+msgid "Failed to authenticate with Hello PIN."
+msgstr "Échec de l’authentification avec le code PIN Hello."
+
+msgid "Failed to authenticate with Hello PIN. One more failed attempt will require multi-factor authentication and resetting your Linux Hello PIN."
+msgstr "Échec de l’authentification avec le code PIN Hello. Une nouvelle tentative échouée nécessitera une authentification multifacteur et la réinitialisation de votre code PIN Linux Hello."
+
+msgid "Failed to authenticate with Hello TOTP code."
+msgstr "Échec de l’authentification avec le code TOTP Hello."
+
+msgid "Failed to build regex: {error}"
+msgstr "Échec de la création de l’expression régulière : {error}"
+
+msgid "Failed to change user password: {msg}"
+msgstr "Échec de la modification du mot de passe utilisateur : {msg}"
+
+msgid "Failed to delete CSR key"
+msgstr "Échec de la suppression de la clé CSR"
+
+msgid "Failed to delete intune key"
+msgstr "Échec de la suppression de la clé Intune"
+
+msgid "Failed to generate QR code"
+msgstr "Échec de la génération du code QR"
+
+msgid "Failed to join domain. Please contact your administrator."
+msgstr "Échec de la jonction au domaine. Veuillez contacter votre administrateur."
+
+msgid ""
+"Failed to provision hello key: {error}\n"
+"{message}"
+msgstr ""
+"Échec de la configuration de la clé hello : {error}\n"
+"{message}"
+
+msgid "Failed to save device configuration. Please contact your administrator."
+msgstr "Échec de l’enregistrement de la configuration de l’appareil. Veuillez contacter votre administrateur."
+
+msgid "Failed to store device credentials. Please contact your administrator."
+msgstr "Impossible d’enregistrer les informations d’identification de l’appareil. Veuillez contacter votre administrateur."
+
+msgid "Fido PIN:"
+msgstr "Code PIN FIDO :"
+
+msgid "Himmelblau authentication is starting, please wait..."
+msgstr "L’authentification Himmelblau démarre, veuillez patienter..."
+
+msgid "Himmelblau authentication service did not become available in time."
+msgstr "Le service d’authentification Himmelblau n’est pas devenu disponible à temps."
+
+msgid "Himmelblau authentication service is unavailable."
+msgstr "Le service d’authentification Himmelblau est indisponible."
+
+msgid "Inputs did not match. Try again."
+msgstr "Les saisies ne correspondent pas. Réessayez."
+
+msgid "Invalid credentials"
+msgstr "Identifiants invalides"
+
+msgid "Multi-factor authentication required."
+msgstr "Authentification multifacteur requise."
+
+msgid "Multi-factor authentication required. Please try signing in again."
+msgstr "Authentification multifacteur requise. Veuillez réessayer de vous connecter."
+
+msgid "Network outage detected."
+msgstr "Panne réseau détectée."
+
+msgid "New PIN:"
+msgstr "Nouveau code PIN :"
+
+msgid "New password:"
+msgstr "Nouveau mot de passe :"
+
+msgid "No Entra Id Hello PIN was supplied."
+msgstr "Aucun code PIN Hello Entra ID n’a été fourni."
+
+msgid "No Entra Id Hello confirmation PIN was supplied."
+msgstr "Aucun code PIN de confirmation Entra ID Hello n’a été fourni."
+
+msgid "No Entra Id confirmation password was supplied."
+msgstr "Aucun mot de passe de confirmation Entra ID n’a été fourni."
+
+msgid "No Entra Id password was supplied."
+msgstr "Aucun mot de passe Entra ID n’a été fourni."
+
+msgid "No Hello TOTP code was supplied."
+msgstr "Aucun code TOTP Hello n’a été fourni."
+
+msgid "No input was supplied."
+msgstr "Aucune entrée n’a été fournie."
+
+msgid "Offline auth has expired. Please connect to the network to continue."
+msgstr "L’authentification hors ligne a expiré. Veuillez vous connecter au réseau pour continuer."
+
+msgid "Open your Authenticator app, and enter the number '{entropy}' to sign in."
+msgstr "Ouvrez votre application Authenticator, puis saisissez le nombre « {entropy} » pour vous connecter."
+
+msgid ""
+"Open your authenticator app and scan this QR code to enroll. Then enter the generated code.\n"
+"{qr}"
+msgstr ""
+"Ouvrez votre application d'authentification et scannez ce code QR pour vous inscrire. Saisissez ensuite le code généré.\n"
+"{qr}"
+
+msgid "PIN must not use repeating or predictable sequences. Avoid patterns like '111111', '123456', or '135791'."
+msgstr "Le PIN ne doit pas utiliser de séquences répétitives ou prévisibles. Évitez les motifs comme « 111111 », « 123456 » ou « 135791 »."
+
+msgid "PIN setup failed. Please try signing in again."
+msgstr "La configuration du code PIN a échoué. Veuillez réessayer de vous connecter."
+
+msgid "PIN:"
+msgstr "Code PIN :"
+
+msgid "Password change required. Please contact your administrator."
+msgstr "Changement de mot de passe requis. Veuillez contacter votre administrateur."
+
+msgid "Password entry required."
+msgstr "Saisie du mot de passe requise."
+
+msgid "Password reset registration required. Complete setup at https://aka.ms/ssprsetup from another device, then try again."
+msgstr "L’inscription à la réinitialisation du mot de passe est requise. Terminez la configuration sur https://aka.ms/ssprsetup depuis un autre appareil, puis réessayez."
+
+msgid "Please enter your Hello TOTP code from your Authenticator:"
+msgstr "Veuillez saisir votre code TOTP Hello depuis votre Authenticator :"
+
+msgid "Please insert your security key."
+msgstr "Veuillez insérer votre clé de sécurité."
+
+msgid "Please select a device by touching one of them."
+msgstr "Veuillez sélectionner un appareil en touchant l’un d’eux."
+
+msgid "Please touch your security key."
+msgstr "Veuillez toucher votre clé de sécurité."
+
+msgid "Press enter to continue"
+msgstr "Appuyez sur Entrée pour continuer"
+
+msgid "QR/Bluetooth authentication failed."
+msgstr "L’authentification QR/Bluetooth a échoué."
+
+msgid ""
+"Scan the QR code to continue sign-in, or open this link on another device:\n"
+"{complete}\n"
+"If you cannot scan, visit:\n"
+"{verification_uri}\n"
+"And enter the code:\n"
+"{user_code}"
+msgstr ""
+"Scannez le code QR pour continuer la connexion, ou ouvrez ce lien sur un autre appareil :\n"
+"{complete}\n"
+"Si vous ne pouvez pas scanner, rendez-vous sur :\n"
+"{verification_uri}\n"
+"Saisissez ensuite le code :\n"
+"{user_code}"
+
+msgid "Scan with your authenticator app"
+msgstr "Scannez avec votre application d’authentification"
+
+msgid "Security key and QR/Bluetooth authentication failed."
+msgstr "L’authentification par clé de sécurité et par QR/Bluetooth a échoué."
+
+msgid "Security key authentication failed."
+msgstr "L’authentification par clé de sécurité a échoué."
+
+msgid "Session data corrupted. Please sign in again."
+msgstr "Les données de session sont corrompues. Veuillez vous reconnecter."
+
+msgid ""
+"Set up a PIN\n"
+"A Hello PIN is a fast, secure way to sign in to your device, apps, and services."
+msgstr ""
+"Configurez un code PIN\n"
+"Un code PIN Hello est un moyen rapide et sécurisé de vous connecter à votre appareil, à vos applications et à vos services."
+
+msgid "TOTP Code:"
+msgstr "Code TOTP :"
+
+msgid "The minimum PIN length is {length} characters."
+msgstr "La longueur minimale du code PIN est de {length} caractères."
+
+msgid "This command changes your local Hello PIN, NOT your Entra Id password."
+msgstr "Cette commande modifie votre code PIN Hello local, PAS votre mot de passe Entra ID."
+
+msgid "Too many failed attempts in one row. Your device has been temporarily blocked. Please unplug it and plug in again."
+msgstr "Trop de tentatives échouées consécutives. Votre appareil a été temporairement bloqué. Veuillez le débrancher, puis le rebrancher."
+
+msgid "Too many failed attempts. Your device has been blocked. Reset it."
+msgstr "Trop de tentatives ont échoué. Votre appareil a été bloqué. Réinitialisez-le."
+
+msgid "Too many failed user verification attempts."
+msgstr "Trop de tentatives de vérification utilisateur ont échoué."
+
+msgid "Too many incorrect PIN attempts. You will need to enroll a new Linux Hello PIN."
+msgstr "Trop de tentatives de saisie du code PIN incorrectes. Vous devez enregistrer un nouveau code PIN Linux Hello."
+
+msgid "Try again."
+msgstr "Réessayez."
+
+msgid "Unexpected authentication step. Please try signing in again."
+msgstr "Étape d’authentification inattendue. Veuillez réessayer de vous connecter."
+
+msgid "Unexpected error occurred."
+msgstr "Une erreur inattendue s’est produite."
+
+msgid "Unexpected error: {error}"
+msgstr "Erreur inattendue : {error}"
+
+msgid "Unexpected select device notice"
+msgstr "Avis inattendu de sélection d’appareil"
+
+msgid ""
+"Update your password\n"
+"You need to update your password because this is\n"
+"the first time you are signing in, or because your\n"
+"password has expired."
+msgstr ""
+"Mettez à jour votre mot de passe\n"
+"Vous devez mettre à jour votre mot de passe car c'est\n"
+"la première fois que vous vous connectez, ou car votre\n"
+"mot de passe a expiré."
+
+msgid "Use the Linux Hello PIN for this device."
+msgstr "Utilisez le code PIN Linux Hello pour cet appareil."
+
+msgid "Use the password for your Office 365 or Microsoft online login."
+msgstr "Utilisez le mot de passe associé à votre connexion Office 365 ou Microsoft en ligne."
+
+msgid ""
+"Using a browser on another device, visit:\n"
+"{verification_uri}\n"
+"And enter the code:\n"
+"{user_code}"
+msgstr ""
+"Sur un autre appareil, utilisez un navigateur pour accéder à :\n"
+"{verification_uri}\n"
+"Saisissez ensuite le code :\n"
+"{user_code}"
+
+msgid "Value:"
+msgstr "Valeur :"
+
+msgid "Waiting for browser authentication to complete..."
+msgstr "En attente de la fin de l’authentification dans le navigateur..."
+
+msgid "We texted your phone {phone}. Please enter the code to sign in:"
+msgstr "Nous avons envoyé un SMS à votre téléphone {phone}. Veuillez saisir le code pour vous connecter :"
+
+msgid "We're calling your office phone {phone}. Please answer it to continue."
+msgstr "Nous appelons votre téléphone professionnel {phone}. Veuillez répondre pour continuer."
+
+msgid "We're calling your phone {phone}. Please answer it to continue."
+msgstr "Nous appelons votre téléphone {phone}. Veuillez répondre pour continuer."
+
+msgid "Wrong PIN! {message}"
+msgstr "Code PIN incorrect ! {message}"
+
+msgid "Wrong user verification! {message}"
+msgstr "Vérification utilisateur incorrecte ! {message}"
+
+msgid "You have {attempts} attempt left."
+msgid_plural "You have {attempts} attempts left."
+msgstr[0] "Il vous reste {attempts} tentative."
+msgstr[1] "Il vous reste {attempts} tentatives."
+
+msgid "Your session has expired. Please sign in again."
+msgstr "Votre session a expiré. Veuillez vous reconnecter."
+
+msgid ""
+"{code}: {message}\n"
+"If you are now prompted for a password from pam_unix, please disregard the prompt, go back and try again."
+msgstr ""
+"{code}: {message}\n"
+"Si pam_unix vous demande maintenant un mot de passe, veuillez ignorer cette invite, revenir en arrière et réessayer."
+
+msgid ""
+"{message}\n"
+"No push? Check your mobile device's internet connection."
+msgstr ""
+"{message}\n"
+"Pas de notification push ? Vérifiez la connexion internet de votre appareil mobile."

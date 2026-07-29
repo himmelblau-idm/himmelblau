@@ -1,0 +1,416 @@
+# Hungarian translations for Himmelblau.
+# Copyright (C) 2026 Himmelblau contributors
+# This file is distributed under the same license as Himmelblau.
+#
+msgid ""
+msgstr "Project-Id-Version: himmelblau\n"
+"POT-Creation-Date: 2026-07-22 22:33+0000\n"
+"PO-Revision-Date: 2026-07-23 14:39+0000\n"
+"Last-Translator: Automated via Codex <noreply@himmelblau-idm.org>\n"
+"Language-Team: Hungarian\n"
+"Language: hu\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Plural-Forms: nplurals=2; plural=(n != 1);\n"
+""
+
+msgid "An unexpected error occurred."
+msgstr "Váratlan hiba történt."
+
+msgid "Approve sign-in in your authenticator app, then wait..."
+msgstr "Hagyja jóvá a bejelentkezést a hitelesítő alkalmazásban, majd várjon..."
+
+msgid "Authenticated user {user} does not match requested user"
+msgstr "A hitelesített felhasználó ({user}) nem egyezik a kért felhasználóval"
+
+msgid "Authenticated user {uuid} does not match requested user"
+msgstr "A hitelesített felhasználó {uuid} nem egyezik a kért felhasználóval"
+
+msgid "Authentication did not return a refresh token. Please try again."
+msgstr "A hitelesítés nem adott vissza frissítési tokent. Kérjük, próbálja újra."
+
+msgid "Authentication failed (AADSTS{code})"
+msgstr "A hitelesítés sikertelen (AADSTS{code})"
+
+msgid "Authentication failed in browser flow."
+msgstr "A hitelesítés sikertelen volt a böngészős folyamat során."
+
+msgid "Authentication failed. Please contact your administrator."
+msgstr "A hitelesítés sikertelen. Kérjük, forduljon a rendszergazdához."
+
+msgid "Authentication failed. Please try again."
+msgstr "A hitelesítés sikertelen. Kérjük, próbálja újra."
+
+msgid "Authentication failed. Please try signing in again."
+msgstr "A hitelesítés sikertelen. Kérjük, próbáljon meg újra bejelentkezni."
+
+msgid "Authentication failed: Authentication method not supported."
+msgstr "Sikertelen hitelesítés: A hitelesítési módszer nem támogatott."
+
+msgid "Authentication failed: Configuration error."
+msgstr "Sikertelen hitelesítés: konfigurációs hiba."
+
+msgid "Authentication failed: Cryptographic error."
+msgstr "A hitelesítés sikertelen: kriptográfiai hiba."
+
+msgid "Authentication failed: Invalid server response."
+msgstr "A hitelesítés sikertelen: érvénytelen kiszolgálói válasz."
+
+msgid "Authentication failed: Missing required data."
+msgstr "A hitelesítés sikertelen: Hiányoznak a szükséges adatok."
+
+msgid "Authentication failed: Security hardware error."
+msgstr "A hitelesítés sikertelen: biztonsági hardverhiba."
+
+msgid "Authentication failed: Unable to reach authentication server."
+msgstr "Hitelesítés sikertelen: Nem sikerült elérni a hitelesítési kiszolgálót."
+
+msgid "Authentication failed: {error}"
+msgstr "A hitelesítés sikertelen: {error}"
+
+msgid "Authentication flow completed but token exchange failed. Please try again."
+msgstr "A hitelesítési folyamat befejeződött, de a tokencsere sikertelen. Kérjük, próbálja újra."
+
+msgid "Authentication in progress."
+msgstr "Hitelesítés folyamatban."
+
+msgid "Authentication incomplete. Please try again."
+msgstr "A hitelesítés nem fejeződött be. Kérjük, próbálja újra."
+
+msgid "Authentication service is temporarily unavailable. Please try again shortly."
+msgstr "A hitelesítési szolgáltatás átmenetileg nem érhető el. Kérjük, próbálja újra rövidesen."
+
+msgid "Authentication service unavailable. Please try again later."
+msgstr "A hitelesítési szolgáltatás nem érhető el. Kérjük, próbálja újra később."
+
+msgid "Authentication session corrupted. Please try again."
+msgstr "A hitelesítési munkamenet megsérült. Kérjük, próbálja újra."
+
+msgid "Authentication session data missing. Please try again."
+msgstr "Hiányoznak a hitelesítési munkamenet adatai. Kérjük, próbálja meg újra."
+
+msgid "Authentication session returned an unexpected state. Please try again."
+msgstr "A hitelesítési munkamenet váratlan állapotot adott vissza. Kérjük, próbálja újra."
+
+msgid "Authentication timed out. Please try again."
+msgstr "A hitelesítés időtúllépés miatt megszakadt. Kérjük, próbálja újra."
+
+msgid "Browser authentication backend unavailable. Please try again."
+msgstr "A böngészős hitelesítési háttérrendszer nem érhető el. Kérjük, próbálja újra."
+
+msgid "Changing the password. Please wait..."
+msgstr "Jelszó módosítása. Kérjük, várjon..."
+
+msgid "Chosen password is too short! 8 chars required."
+msgstr "A választott jelszó túl rövid! 8 karakter szükséges."
+
+msgid "Chosen pin is too short! {length} chars required."
+msgstr "A kiválasztott PIN túl rövid! {length} karakter szükséges."
+
+msgid "Cloud Password:"
+msgstr "Felhőbeli jelszó:"
+
+msgid "Code:"
+msgstr "Kód:"
+
+msgid "Confirm PIN:"
+msgstr "PIN-kód megerősítése:"
+
+msgid "Confirm password:"
+msgstr "Jelszó megerősítése:"
+
+msgid "Consent required. Please contact your administrator."
+msgstr "Hozzájárulás szükséges. Kérjük, forduljon a rendszergazdához."
+
+msgid "Create a PIN to use in place of passwords."
+msgstr "Hozzon létre egy PIN-kódot, amelyet jelszavak helyett használhat."
+
+msgid "Device enrollment failed. Please contact your administrator."
+msgstr "Az eszköz regisztrációja sikertelen. Kérjük, forduljon a rendszergazdához."
+
+msgid "Device has been removed from the domain."
+msgstr "Az eszközt eltávolították a tartományból."
+
+msgid "Enable Bluetooth to sign in with your phone."
+msgstr "Kapcsolja be a Bluetooth-t a telefonnal történő bejelentkezéshez."
+
+msgid "Enrolling the Hello PIN. Please wait..."
+msgstr "A Hello PIN regisztrálása folyamatban. Kérjük, várjon..."
+
+msgid "Enter the setup key '{secret}' to enroll a TOTP Authenticator app. Use '{issuer}' for the code name and '{account}' as the label/name."
+msgstr "Adja meg a(z) '{secret}' beállítási kulcsot egy TOTP-hitelesítő alkalmazás regisztrálásához. A kódnévhez használja a(z) '{issuer}' értéket, címkeként/névként pedig a(z) '{account}' értéket."
+
+msgid "Entra Id Fido authentication failed."
+msgstr "Az Entra Id Fido-hitelesítés sikertelen."
+
+msgid "Entra Id Password:"
+msgstr "Entra ID jelszó:"
+
+msgid "FIDO authentication not available. Please try a different authentication method."
+msgstr "A FIDO-hitelesítés nem érhető el. Próbáljon meg egy másik hitelesítési módszert."
+
+msgid "Failed to authenticate with Hello PIN."
+msgstr "Nem sikerült hitelesíteni a Hello PIN-kóddal."
+
+msgid "Failed to authenticate with Hello PIN. One more failed attempt will require multi-factor authentication and resetting your Linux Hello PIN."
+msgstr "Nem sikerült a hitelesítés a Hello PIN-kóddal. Még egy sikertelen próbálkozás után többtényezős hitelesítésre és a Linux Hello PIN-kód alaphelyzetbe állítására lesz szükség."
+
+msgid "Failed to authenticate with Hello TOTP code."
+msgstr "Nem sikerült hitelesíteni a Hello TOTP-kóddal."
+
+msgid "Failed to build regex: {error}"
+msgstr "Nem sikerült létrehozni a reguláris kifejezést: {error}"
+
+msgid "Failed to change user password: {msg}"
+msgstr "Nem sikerült módosítani a felhasználói jelszót: {msg}"
+
+msgid "Failed to delete CSR key"
+msgstr "Nem sikerült törölni a CSR-kulcsot"
+
+msgid "Failed to delete intune key"
+msgstr "Nem sikerült törölni az Intune-kulcsot"
+
+msgid "Failed to generate QR code"
+msgstr "Nem sikerült létrehozni a QR-kódot"
+
+msgid "Failed to join domain. Please contact your administrator."
+msgstr "Nem sikerült csatlakozni a tartományhoz. Kérjük, forduljon a rendszergazdához."
+
+msgid "Failed to provision hello key: {error}\n"
+"{message}"
+msgstr "Nem sikerült kiépíteni a Hello-kulcsot: {error}\n"
+"{message}"
+
+msgid "Failed to save device configuration. Please contact your administrator."
+msgstr "Nem sikerült menteni az eszközkonfigurációt. Kérjük, forduljon a rendszergazdához."
+
+msgid "Failed to store device credentials. Please contact your administrator."
+msgstr "Nem sikerült tárolni az eszköz hitelesítő adatait. Kérjük, lépjen kapcsolatba a rendszergazdával."
+
+msgid "Fido PIN:"
+msgstr "Fido PIN-kód:"
+
+msgid "Himmelblau authentication is starting, please wait..."
+msgstr "A Himmelblau-hitelesítés indul, kérjük, várjon..."
+
+msgid "Himmelblau authentication service did not become available in time."
+msgstr "A Himmelblau hitelesítési szolgáltatás nem vált időben elérhetővé."
+
+msgid "Himmelblau authentication service is unavailable."
+msgstr "A Himmelblau hitelesítési szolgáltatás nem érhető el."
+
+msgid "Inputs did not match. Try again."
+msgstr "A beírt adatok nem egyeztek. Próbálja újra."
+
+msgid "Invalid credentials"
+msgstr "Érvénytelen hitelesítő adatok"
+
+msgid "Multi-factor authentication required."
+msgstr "Többtényezős hitelesítés szükséges."
+
+msgid "Multi-factor authentication required. Please try signing in again."
+msgstr "Többtényezős hitelesítés szükséges. Kérjük, próbáljon meg újra bejelentkezni."
+
+msgid "Network outage detected."
+msgstr "Hálózati kimaradás észlelve."
+
+msgid "New PIN:"
+msgstr "Új PIN-kód:"
+
+msgid "New password:"
+msgstr "Új jelszó:"
+
+msgid "No Entra Id Hello PIN was supplied."
+msgstr "Nem lett megadva Entra ID Hello PIN."
+
+msgid "No Entra Id Hello confirmation PIN was supplied."
+msgstr "Nem lett megadva az Entra ID Hello megerősítő PIN-kódja."
+
+msgid "No Entra Id confirmation password was supplied."
+msgstr "Nem lett megadva Entra ID megerősítő jelszó."
+
+msgid "No Entra Id password was supplied."
+msgstr "Nem lett megadva Entra ID-jelszó."
+
+msgid "No Hello TOTP code was supplied."
+msgstr "Nem lett megadva Hello TOTP-kód."
+
+msgid "No input was supplied."
+msgstr "Nem adott meg bemenetet."
+
+msgid "Offline auth has expired. Please connect to the network to continue."
+msgstr "Az offline hitelesítés lejárt. A folytatáshoz csatlakozzon a hálózathoz."
+
+msgid "Open your Authenticator app, and enter the number '{entropy}' to sign in."
+msgstr "Nyissa meg az Authenticator alkalmazást, és adja meg a(z) '{entropy}' számot a bejelentkezéshez."
+
+msgid "Open your authenticator app and scan this QR code to enroll. Then enter the generated code.\n"
+"{qr}"
+msgstr "Nyissa meg a hitelesítő alkalmazást, és olvassa be ezt a QR-kódot a regisztrációhoz. Ezután adja meg a generált kódot.\n"
+"{qr}"
+
+msgid "PIN must not use repeating or predictable sequences. Avoid patterns like '111111', '123456', or '135791'."
+msgstr "A PIN-kód nem állhat ismétlődő vagy kiszámítható számsorozatokból. Kerülje az olyan mintákat, mint az 111111, 123456 vagy 135791."
+
+msgid "PIN setup failed. Please try signing in again."
+msgstr "A PIN beállítása nem sikerült. Próbáljon meg újra bejelentkezni."
+
+msgid "PIN:"
+msgstr "PIN:"
+
+msgid "Password change required. Please contact your administrator."
+msgstr "Jelszómódosítás szükséges. Kérjük, forduljon a rendszergazdához."
+
+msgid "Password entry required."
+msgstr "Jelszó megadása szükséges."
+
+msgid "Password reset registration required. Complete setup at https://aka.ms/ssprsetup from another device, then try again."
+msgstr "Jelszó-visszaállítási regisztráció szükséges. Végezze el a beállítást a https://aka.ms/ssprsetup címen egy másik eszközről, majd próbálja újra."
+
+msgid "Please enter your Hello TOTP code from your Authenticator:"
+msgstr "Kérjük, adja meg a Hitelesítő alkalmazásban megjelenő Hello TOTP-kódját:"
+
+msgid "Please insert your security key."
+msgstr "Kérjük, helyezze be a biztonsági kulcsát."
+
+msgid "Please select a device by touching one of them."
+msgstr "Kérjük, válasszon ki egy eszközt az egyik megérintésével."
+
+msgid "Please touch your security key."
+msgstr "Kérjük, érintse meg a biztonsági kulcsát."
+
+msgid "Press enter to continue"
+msgstr "Nyomja meg az Enter billentyűt a folytatáshoz"
+
+msgid "QR/Bluetooth authentication failed."
+msgstr "A QR-/Bluetooth-hitelesítés sikertelen volt."
+
+msgid "Scan the QR code to continue sign-in, or open this link on another device:\n"
+"{complete}\n"
+"If you cannot scan, visit:\n"
+"{verification_uri}\n"
+"And enter the code:\n"
+"{user_code}"
+msgstr "Olvassa be a QR-kódot a bejelentkezés folytatásához, vagy nyissa meg ezt a hivatkozást egy másik eszközön:\n"
+"{complete}\n"
+"Ha nem tudja beolvasni, keresse fel:\n"
+"{verification_uri}\n"
+"És adja meg a kódot:\n"
+"{user_code}"
+
+msgid "Scan with your authenticator app"
+msgstr "Olvassa be a hitelesítő alkalmazással"
+
+msgid "Security key and QR/Bluetooth authentication failed."
+msgstr "A biztonsági kulcsos és a QR-/Bluetooth-hitelesítés sikertelen volt."
+
+msgid "Security key authentication failed."
+msgstr "A biztonsági kulcsos hitelesítés sikertelen volt."
+
+msgid "Session data corrupted. Please sign in again."
+msgstr "A munkamenet adatai megsérültek. Kérjük, jelentkezzen be újra."
+
+msgid "Set up a PIN\n"
+"A Hello PIN is a fast, secure way to sign in to your device, apps, and services."
+msgstr "Állítson be PIN-kódot\n"
+"A Hello PIN-kód gyors és biztonságos módja annak, hogy bejelentkezzen eszközére, alkalmazásaiba és szolgáltatásaiba."
+
+msgid "TOTP Code:"
+msgstr "TOTP-kód:"
+
+msgid "The minimum PIN length is {length} characters."
+msgstr "A PIN-kód minimális hossza {length} karakter."
+
+msgid "This command changes your local Hello PIN, NOT your Entra Id password."
+msgstr "Ez a parancs a helyi Hello PIN-kódját módosítja, NEM az Entra ID-jelszavát."
+
+msgid "Too many failed attempts in one row. Your device has been temporarily blocked. Please unplug it and plug in again."
+msgstr "Túl sok sikertelen próbálkozás történt egymás után. Az eszköz ideiglenesen le lett tiltva. Kérjük, húzza ki, majd csatlakoztassa újra."
+
+msgid "Too many failed attempts. Your device has been blocked. Reset it."
+msgstr "Túl sok sikertelen próbálkozás. Az eszköze le lett tiltva. Állítsa alaphelyzetbe."
+
+msgid "Too many failed user verification attempts."
+msgstr "Túl sok sikertelen felhasználó-ellenőrzési kísérlet történt."
+
+msgid "Too many incorrect PIN attempts. You will need to enroll a new Linux Hello PIN."
+msgstr "Túl sok helytelen PIN-kód próbálkozás történt. Új Linux Hello PIN-kódot kell regisztrálnia."
+
+msgid "Try again."
+msgstr "Próbálja újra."
+
+msgid "Unexpected authentication step. Please try signing in again."
+msgstr "Váratlan hitelesítési lépés. Próbáljon meg újra bejelentkezni."
+
+msgid "Unexpected error occurred."
+msgstr "Váratlan hiba történt."
+
+msgid "Unexpected error: {error}"
+msgstr "Váratlan hiba: {error}"
+
+msgid "Unexpected select device notice"
+msgstr "Váratlan eszközválasztási értesítés"
+
+msgid "Update your password\n"
+"You need to update your password because this is\n"
+"the first time you are signing in, or because your\n"
+"password has expired."
+msgstr "Frissítse a jelszavát\n"
+"Frissítenie kell a jelszavát, mert most\n"
+"jelentkezik be először, vagy mert\n"
+"a jelszava lejárt."
+
+msgid "Use the Linux Hello PIN for this device."
+msgstr "Használja a Linux Hello PIN-kódot ehhez az eszközhöz."
+
+msgid "Use the password for your Office 365 or Microsoft online login."
+msgstr "Használja az Office 365- vagy Microsoft online bejelentkezéshez tartozó jelszavát."
+
+msgid "Using a browser on another device, visit:\n"
+"{verification_uri}\n"
+"And enter the code:\n"
+"{user_code}"
+msgstr "Egy másik eszköz böngészőjében nyissa meg:\n"
+"{verification_uri}\n"
+"Majd adja meg a kódot:\n"
+"{user_code}"
+
+msgid "Value:"
+msgstr "Érték:"
+
+msgid "Waiting for browser authentication to complete..."
+msgstr "Várakozás a böngészős hitelesítés befejezésére..."
+
+msgid "We texted your phone {phone}. Please enter the code to sign in:"
+msgstr "SMS-t küldtünk a(z) {phone} telefonszámra. A bejelentkezéshez adja meg a kódot:"
+
+msgid "We're calling your office phone {phone}. Please answer it to continue."
+msgstr "Hívjuk az irodai telefonját ({phone}). Kérjük, vegye fel a folytatáshoz."
+
+msgid "We're calling your phone {phone}. Please answer it to continue."
+msgstr "Hívjuk a(z) {phone} telefonszámot. A folytatáshoz kérjük, fogadja a hívást."
+
+msgid "Wrong PIN! {message}"
+msgstr "Hibás PIN-kód! {message}"
+
+msgid "Wrong user verification! {message}"
+msgstr "Hibás felhasználói ellenőrzés! {message}"
+
+msgid "You have {attempts} attempt left."
+msgid_plural "You have {attempts} attempts left."
+msgstr[0] "Még {attempts} próbálkozása maradt."
+msgstr[1] "Még {attempts} próbálkozása maradt."
+
+msgid "Your session has expired. Please sign in again."
+msgstr "A munkamenete lejárt. Kérjük, jelentkezzen be újra."
+
+msgid "{code}: {message}\n"
+"If you are now prompted for a password from pam_unix, please disregard the prompt, go back and try again."
+msgstr "{code}: {message}\n"
+"Ha most a pam_unix jelszót kér Öntől, hagyja figyelmen kívül a kérést, lépjen vissza, és próbálja újra."
+
+msgid "{message}\n"
+"No push? Check your mobile device's internet connection."
+msgstr "{message}\n"
+"Nem érkezik push értesítés? Ellenőrizze mobileszköze internetkapcsolatát."

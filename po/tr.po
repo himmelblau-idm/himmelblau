@@ -1,0 +1,415 @@
+# Turkish translations for Himmelblau.
+# Copyright (C) 2026 Himmelblau contributors
+# This file is distributed under the same license as Himmelblau.
+#
+msgid ""
+msgstr "Project-Id-Version: himmelblau\n"
+"POT-Creation-Date: 2026-07-22 22:33+0000\n"
+"PO-Revision-Date: 2026-07-23 14:41+0000\n"
+"Last-Translator: Automated via Codex <noreply@himmelblau-idm.org>\n"
+"Language-Team: Turkish\n"
+"Language: tr\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Plural-Forms: nplurals=2; plural=(n != 1);\n"
+""
+
+msgid "An unexpected error occurred."
+msgstr "Beklenmeyen bir hata oluştu."
+
+msgid "Approve sign-in in your authenticator app, then wait..."
+msgstr "Kimlik doğrulayıcı uygulamanızda oturum açmayı onaylayın, ardından bekleyin..."
+
+msgid "Authenticated user {user} does not match requested user"
+msgstr "Kimliği doğrulanan kullanıcı {user}, istenen kullanıcıyla eşleşmiyor"
+
+msgid "Authenticated user {uuid} does not match requested user"
+msgstr "Kimliği doğrulanan kullanıcı {uuid}, istenen kullanıcıyla eşleşmiyor"
+
+msgid "Authentication did not return a refresh token. Please try again."
+msgstr "Kimlik doğrulama bir yenileme belirteci döndürmedi. Lütfen tekrar deneyin."
+
+msgid "Authentication failed (AADSTS{code})"
+msgstr "Kimlik doğrulama başarısız oldu (AADSTS{code})"
+
+msgid "Authentication failed in browser flow."
+msgstr "Tarayıcı akışında kimlik doğrulama başarısız oldu."
+
+msgid "Authentication failed. Please contact your administrator."
+msgstr "Kimlik doğrulama başarısız oldu. Lütfen yöneticinizle iletişime geçin."
+
+msgid "Authentication failed. Please try again."
+msgstr "Kimlik doğrulama başarısız oldu. Lütfen tekrar deneyin."
+
+msgid "Authentication failed. Please try signing in again."
+msgstr "Kimlik doğrulama başarısız oldu. Lütfen tekrar oturum açmayı deneyin."
+
+msgid "Authentication failed: Authentication method not supported."
+msgstr "Kimlik doğrulama başarısız oldu: Kimlik doğrulama yöntemi desteklenmiyor."
+
+msgid "Authentication failed: Configuration error."
+msgstr "Kimlik doğrulama başarısız: Yapılandırma hatası."
+
+msgid "Authentication failed: Cryptographic error."
+msgstr "Kimlik doğrulama başarısız oldu: Kriptografik hata."
+
+msgid "Authentication failed: Invalid server response."
+msgstr "Kimlik doğrulama başarısız oldu: Geçersiz sunucu yanıtı."
+
+msgid "Authentication failed: Missing required data."
+msgstr "Kimlik doğrulama başarısız oldu: Gerekli veriler eksik."
+
+msgid "Authentication failed: Security hardware error."
+msgstr "Kimlik doğrulama başarısız oldu: Güvenlik donanımı hatası."
+
+msgid "Authentication failed: Unable to reach authentication server."
+msgstr "Kimlik doğrulama başarısız oldu: Kimlik doğrulama sunucusuna ulaşılamıyor."
+
+msgid "Authentication failed: {error}"
+msgstr "Kimlik doğrulama başarısız oldu: {error}"
+
+msgid "Authentication flow completed but token exchange failed. Please try again."
+msgstr "Kimlik doğrulama akışı tamamlandı ancak belirteç değişimi başarısız oldu. Lütfen tekrar deneyin."
+
+msgid "Authentication in progress."
+msgstr "Kimlik doğrulama devam ediyor."
+
+msgid "Authentication incomplete. Please try again."
+msgstr "Kimlik doğrulama tamamlanmadı. Lütfen tekrar deneyin."
+
+msgid "Authentication service is temporarily unavailable. Please try again shortly."
+msgstr "Kimlik doğrulama hizmeti geçici olarak kullanılamıyor. Lütfen kısa süre sonra tekrar deneyin."
+
+msgid "Authentication service unavailable. Please try again later."
+msgstr "Kimlik doğrulama hizmeti kullanılamıyor. Lütfen daha sonra tekrar deneyin."
+
+msgid "Authentication session corrupted. Please try again."
+msgstr "Kimlik doğrulama oturumu bozuldu. Lütfen tekrar deneyin."
+
+msgid "Authentication session data missing. Please try again."
+msgstr "Kimlik doğrulama oturumu verileri eksik. Lütfen tekrar deneyin."
+
+msgid "Authentication session returned an unexpected state. Please try again."
+msgstr "Kimlik doğrulama oturumu beklenmeyen bir durum döndürdü. Lütfen tekrar deneyin."
+
+msgid "Authentication timed out. Please try again."
+msgstr "Kimlik doğrulama zaman aşımına uğradı. Lütfen tekrar deneyin."
+
+msgid "Browser authentication backend unavailable. Please try again."
+msgstr "Tarayıcı kimlik doğrulama arka ucu kullanılamıyor. Lütfen tekrar deneyin."
+
+msgid "Changing the password. Please wait..."
+msgstr "Parola değiştiriliyor. Lütfen bekleyin..."
+
+msgid "Chosen password is too short! 8 chars required."
+msgstr "Seçilen parola çok kısa! 8 karakter gerekli."
+
+msgid "Chosen pin is too short! {length} chars required."
+msgstr "Seçilen PIN çok kısa! {length} karakter gerekli."
+
+msgid "Cloud Password:"
+msgstr "Bulut Parolası:"
+
+msgid "Code:"
+msgstr "Kod:"
+
+msgid "Confirm PIN:"
+msgstr "PIN'i onaylayın:"
+
+msgid "Confirm password:"
+msgstr "Parolayı onaylayın:"
+
+msgid "Consent required. Please contact your administrator."
+msgstr "Onay gerekiyor. Lütfen yöneticinizle iletişime geçin."
+
+msgid "Create a PIN to use in place of passwords."
+msgstr "Parolalar yerine kullanmak üzere bir PIN oluşturun."
+
+msgid "Device enrollment failed. Please contact your administrator."
+msgstr "Cihaz kaydı başarısız oldu. Lütfen yöneticinizle iletişime geçin."
+
+msgid "Device has been removed from the domain."
+msgstr "Cihaz etki alanından kaldırıldı."
+
+msgid "Enable Bluetooth to sign in with your phone."
+msgstr "Telefonunuzla oturum açmak için Bluetooth'u etkinleştirin."
+
+msgid "Enrolling the Hello PIN. Please wait..."
+msgstr "Hello PIN kaydediliyor. Lütfen bekleyin..."
+
+msgid "Enter the setup key '{secret}' to enroll a TOTP Authenticator app. Use '{issuer}' for the code name and '{account}' as the label/name."
+msgstr "TOTP Kimlik Doğrulayıcı uygulamasını kaydetmek için '{secret}' kurulum anahtarını girin. Kod adı için '{issuer}', etiket/ad için '{account}' kullanın."
+
+msgid "Entra Id Fido authentication failed."
+msgstr "Entra ID FIDO kimlik doğrulaması başarısız oldu."
+
+msgid "Entra Id Password:"
+msgstr "Entra ID Parolası:"
+
+msgid "FIDO authentication not available. Please try a different authentication method."
+msgstr "FIDO kimlik doğrulaması kullanılamıyor. Lütfen farklı bir kimlik doğrulama yöntemi deneyin."
+
+msgid "Failed to authenticate with Hello PIN."
+msgstr "Hello PIN ile kimlik doğrulanamadı."
+
+msgid "Failed to authenticate with Hello PIN. One more failed attempt will require multi-factor authentication and resetting your Linux Hello PIN."
+msgstr "Hello PIN ile kimlik doğrulama başarısız oldu. Bir kez daha başarısız deneme, çok faktörlü kimlik doğrulama ve Linux Hello PIN'inizi sıfırlamanızı gerektirecektir."
+
+msgid "Failed to authenticate with Hello TOTP code."
+msgstr "Hello TOTP koduyla kimlik doğrulaması başarısız oldu."
+
+msgid "Failed to build regex: {error}"
+msgstr "Regex oluşturulamadı: {error}"
+
+msgid "Failed to change user password: {msg}"
+msgstr "Kullanıcı parolası değiştirilemedi: {msg}"
+
+msgid "Failed to delete CSR key"
+msgstr "CSR anahtarı silinemedi"
+
+msgid "Failed to delete intune key"
+msgstr "Intune anahtarı silinemedi"
+
+msgid "Failed to generate QR code"
+msgstr "QR kodu oluşturulamadı"
+
+msgid "Failed to join domain. Please contact your administrator."
+msgstr "Etki alanına katılınamadı. Lütfen yöneticinizle iletişime geçin."
+
+msgid "Failed to provision hello key: {error}\n"
+"{message}"
+msgstr "Hello anahtarı sağlanamadı: {error}\n"
+"{message}"
+
+msgid "Failed to save device configuration. Please contact your administrator."
+msgstr "Cihaz yapılandırması kaydedilemedi. Lütfen yöneticinizle iletişime geçin."
+
+msgid "Failed to store device credentials. Please contact your administrator."
+msgstr "Cihaz kimlik bilgileri depolanamadı. Lütfen yöneticinizle iletişime geçin."
+
+msgid "Fido PIN:"
+msgstr "FIDO PIN:"
+
+msgid "Himmelblau authentication is starting, please wait..."
+msgstr "Himmelblau kimlik doğrulaması başlatılıyor, lütfen bekleyin..."
+
+msgid "Himmelblau authentication service did not become available in time."
+msgstr "Himmelblau kimlik doğrulama hizmeti zamanında kullanılabilir hale gelmedi."
+
+msgid "Himmelblau authentication service is unavailable."
+msgstr "Himmelblau kimlik doğrulama hizmeti kullanılamıyor."
+
+msgid "Inputs did not match. Try again."
+msgstr "Girişler eşleşmedi. Tekrar deneyin."
+
+msgid "Invalid credentials"
+msgstr "Geçersiz kimlik bilgileri"
+
+msgid "Multi-factor authentication required."
+msgstr "Çok faktörlü kimlik doğrulaması gerekli."
+
+msgid "Multi-factor authentication required. Please try signing in again."
+msgstr "Çok faktörlü kimlik doğrulaması gerekli. Lütfen tekrar oturum açmayı deneyin."
+
+msgid "Network outage detected."
+msgstr "Ağ kesintisi algılandı."
+
+msgid "New PIN:"
+msgstr "Yeni PIN:"
+
+msgid "New password:"
+msgstr "Yeni parola:"
+
+msgid "No Entra Id Hello PIN was supplied."
+msgstr "Entra Id Hello PIN'i sağlanmadı."
+
+msgid "No Entra Id Hello confirmation PIN was supplied."
+msgstr "Entra ID Hello onay PIN'i sağlanmadı."
+
+msgid "No Entra Id confirmation password was supplied."
+msgstr "Entra Id onay parolası sağlanmadı."
+
+msgid "No Entra Id password was supplied."
+msgstr "Entra ID parolası sağlanmadı."
+
+msgid "No Hello TOTP code was supplied."
+msgstr "Hello TOTP kodu sağlanmadı."
+
+msgid "No input was supplied."
+msgstr "Giriş sağlanmadı."
+
+msgid "Offline auth has expired. Please connect to the network to continue."
+msgstr "Çevrimdışı kimlik doğrulamanın süresi doldu. Devam etmek için lütfen ağa bağlanın."
+
+msgid "Open your Authenticator app, and enter the number '{entropy}' to sign in."
+msgstr "Authenticator uygulamanızı açın ve oturum açmak için '{entropy}' numarasını girin."
+
+msgid "Open your authenticator app and scan this QR code to enroll. Then enter the generated code.\n"
+"{qr}"
+msgstr "Kimlik doğrulayıcı uygulamanızı açın ve kaydolmak için bu QR kodunu tarayın. Ardından oluşturulan kodu girin.\n"
+"{qr}"
+
+msgid "PIN must not use repeating or predictable sequences. Avoid patterns like '111111', '123456', or '135791'."
+msgstr "PIN, tekrarlayan veya tahmin edilebilir diziler kullanmamalıdır. '111111', '123456' veya '135791' gibi desenlerden kaçının."
+
+msgid "PIN setup failed. Please try signing in again."
+msgstr "PIN kurulumu başarısız oldu. Lütfen tekrar oturum açmayı deneyin."
+
+msgid "PIN:"
+msgstr "PIN:"
+
+msgid "Password change required. Please contact your administrator."
+msgstr "Parola değişikliği gerekiyor. Lütfen yöneticinizle iletişime geçin."
+
+msgid "Password entry required."
+msgstr "Parola girişi gerekli."
+
+msgid "Password reset registration required. Complete setup at https://aka.ms/ssprsetup from another device, then try again."
+msgstr "Parola sıfırlama kaydı gerekli. Kurulumu başka bir cihazdan https://aka.ms/ssprsetup adresinde tamamlayın, ardından tekrar deneyin."
+
+msgid "Please enter your Hello TOTP code from your Authenticator:"
+msgstr "Lütfen Authenticator uygulamanızdan Hello TOTP kodunuzu girin:"
+
+msgid "Please insert your security key."
+msgstr "Lütfen güvenlik anahtarınızı takın."
+
+msgid "Please select a device by touching one of them."
+msgstr "Lütfen cihazlardan birine dokunarak bir cihaz seçin."
+
+msgid "Please touch your security key."
+msgstr "Lütfen güvenlik anahtarınıza dokunun."
+
+msgid "Press enter to continue"
+msgstr "Devam etmek için Enter tuşuna basın"
+
+msgid "QR/Bluetooth authentication failed."
+msgstr "QR/Bluetooth kimlik doğrulaması başarısız oldu."
+
+msgid "Scan the QR code to continue sign-in, or open this link on another device:\n"
+"{complete}\n"
+"If you cannot scan, visit:\n"
+"{verification_uri}\n"
+"And enter the code:\n"
+"{user_code}"
+msgstr "Oturum açmaya devam etmek için QR kodunu tarayın veya bu bağlantıyı başka bir cihazda açın:\n"
+"{complete}\n"
+"Taratamıyorsanız şu adresi ziyaret edin:\n"
+"{verification_uri}\n"
+"Ve kodu girin:\n"
+"{user_code}"
+
+msgid "Scan with your authenticator app"
+msgstr "Kimlik doğrulama uygulamanızla tarayın"
+
+msgid "Security key and QR/Bluetooth authentication failed."
+msgstr "Güvenlik anahtarı ve QR/Bluetooth kimlik doğrulaması başarısız oldu."
+
+msgid "Security key authentication failed."
+msgstr "Güvenlik anahtarı kimlik doğrulaması başarısız oldu."
+
+msgid "Session data corrupted. Please sign in again."
+msgstr "Oturum verileri bozuldu. Lütfen tekrar oturum açın."
+
+msgid "Set up a PIN\n"
+"A Hello PIN is a fast, secure way to sign in to your device, apps, and services."
+msgstr "PIN ayarlayın\n"
+"Hello PIN, cihazınızda, uygulamalarınızda ve hizmetlerinizde oturum açmanın hızlı ve güvenli bir yoludur."
+
+msgid "TOTP Code:"
+msgstr "TOTP Kodu:"
+
+msgid "The minimum PIN length is {length} characters."
+msgstr "Minimum PIN uzunluğu {length} karakterdir."
+
+msgid "This command changes your local Hello PIN, NOT your Entra Id password."
+msgstr "Bu komut yerel Hello PIN’inizi değiştirir, Entra Id parolanızı DEĞİL."
+
+msgid "Too many failed attempts in one row. Your device has been temporarily blocked. Please unplug it and plug in again."
+msgstr "Art arda çok fazla başarısız deneme yapıldı. Cihazınız geçici olarak engellendi. Lütfen cihazın bağlantısını kesip tekrar bağlayın."
+
+msgid "Too many failed attempts. Your device has been blocked. Reset it."
+msgstr "Çok fazla başarısız deneme. Cihazınız engellendi. Cihazı sıfırlayın."
+
+msgid "Too many failed user verification attempts."
+msgstr "Çok fazla başarısız kullanıcı doğrulama denemesi yapıldı."
+
+msgid "Too many incorrect PIN attempts. You will need to enroll a new Linux Hello PIN."
+msgstr "Çok fazla hatalı PIN denemesi yapıldı. Yeni bir Linux Hello PIN’i kaydetmeniz gerekiyor."
+
+msgid "Try again."
+msgstr "Tekrar deneyin."
+
+msgid "Unexpected authentication step. Please try signing in again."
+msgstr "Beklenmeyen bir kimlik doğrulama adımı. Lütfen yeniden oturum açmayı deneyin."
+
+msgid "Unexpected error occurred."
+msgstr "Beklenmeyen bir hata oluştu."
+
+msgid "Unexpected error: {error}"
+msgstr "Beklenmeyen hata: {error}"
+
+msgid "Unexpected select device notice"
+msgstr "Beklenmeyen cihaz seçme bildirimi"
+
+msgid "Update your password\n"
+"You need to update your password because this is\n"
+"the first time you are signing in, or because your\n"
+"password has expired."
+msgstr "Parolanızı güncelleyin\n"
+"Parolanızı güncellemeniz gerekiyor çünkü bu ilk\n"
+"oturum açışınız veya parolanızın süresi dolmuş."
+
+msgid "Use the Linux Hello PIN for this device."
+msgstr "Bu cihaz için Linux Hello PIN'ini kullanın."
+
+msgid "Use the password for your Office 365 or Microsoft online login."
+msgstr "Office 365 veya Microsoft çevrim içi oturum açma parolanızı kullanın."
+
+msgid "Using a browser on another device, visit:\n"
+"{verification_uri}\n"
+"And enter the code:\n"
+"{user_code}"
+msgstr "Başka bir cihazdaki tarayıcıyı kullanarak şu adresi ziyaret edin:\n"
+"{verification_uri}\n"
+"Ve şu kodu girin:\n"
+"{user_code}"
+
+msgid "Value:"
+msgstr "Değer:"
+
+msgid "Waiting for browser authentication to complete..."
+msgstr "Tarayıcı kimlik doğrulamasının tamamlanması bekleniyor..."
+
+msgid "We texted your phone {phone}. Please enter the code to sign in:"
+msgstr "{phone} numaralı telefonunuza kısa mesaj gönderdik. Oturum açmak için lütfen kodu girin:"
+
+msgid "We're calling your office phone {phone}. Please answer it to continue."
+msgstr "Ofis telefonunuzu {phone} arıyoruz. Devam etmek için lütfen yanıtlayın."
+
+msgid "We're calling your phone {phone}. Please answer it to continue."
+msgstr "{phone} numaralı telefonunuzu arıyoruz. Devam etmek için lütfen yanıtlayın."
+
+msgid "Wrong PIN! {message}"
+msgstr "Yanlış PIN! {message}"
+
+msgid "Wrong user verification! {message}"
+msgstr "Hatalı kullanıcı doğrulaması! {message}"
+
+msgid "You have {attempts} attempt left."
+msgid_plural "You have {attempts} attempts left."
+msgstr[0] "{attempts} deneme hakkınız kaldı."
+msgstr[1] "{attempts} deneme hakkınız kaldı."
+
+msgid "Your session has expired. Please sign in again."
+msgstr "Oturumunuzun süresi doldu. Lütfen tekrar oturum açın."
+
+msgid "{code}: {message}\n"
+"If you are now prompted for a password from pam_unix, please disregard the prompt, go back and try again."
+msgstr "{code}: {message}\n"
+"Şimdi pam_unix tarafından parola istenirse lütfen bu istemi dikkate almayın, geri dönün ve tekrar deneyin."
+
+msgid "{message}\n"
+"No push? Check your mobile device's internet connection."
+msgstr "{message}\n"
+"Bildirim gelmedi mi? Mobil cihazınızın internet bağlantısını kontrol edin."

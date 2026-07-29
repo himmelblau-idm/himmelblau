@@ -61,6 +61,17 @@ in
         
         If this option is not set, Himmelblau defaults to its native Microsoft Entra ID
         authentication flow.
+        
+        If
+        **allow_console_password_only**
+        is enabled and the OIDC provider advertises the
+        **password**
+        grant type in its discovery document, local console logins are offered
+        password-only (single-factor) authentication via the Resource Owner Password
+        Credentials (ROPC) grant instead of the device-authorization (browser) flow.
+        Providers that do not advertise the
+        **password**
+        grant continue to use the device flow.
       '';
       example = "https://login.microsoftonline.com/0656e57d-a8fc-4aa4-8366-8045787115ca/v2.0";
     };
@@ -229,6 +240,16 @@ in
         use Hello PIN authentication if it is configured. To require MFA for all logins
         (including local console), set this option to
         **false.**
+        
+        When a generic OIDC provider is configured (see
+        **oidc_issuer_url**
+        ), this option also enables password-only login using the OIDC Resource Owner
+        Password Credentials (ROPC) grant. It is only offered when the provider
+        advertises the
+        **password**
+        grant type in its discovery document; providers that disable this grant fall
+        back to the device-authorization (browser) flow. If the provider additionally
+        requires MFA, authentication falls back to the device flow automatically.
       '';
       example = false;
     };

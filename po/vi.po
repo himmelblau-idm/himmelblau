@@ -1,0 +1,415 @@
+# Vietnamese translations for Himmelblau.
+# Copyright (C) 2026 Himmelblau contributors
+# This file is distributed under the same license as Himmelblau.
+#
+msgid ""
+msgstr "Project-Id-Version: himmelblau\n"
+"POT-Creation-Date: 2026-07-22 22:33+0000\n"
+"PO-Revision-Date: 2026-07-23 14:41+0000\n"
+"Last-Translator: Automated via Codex <noreply@himmelblau-idm.org>\n"
+"Language-Team: Vietnamese\n"
+"Language: vi\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Plural-Forms: nplurals=1; plural=0;\n"
+""
+
+msgid "An unexpected error occurred."
+msgstr "Đã xảy ra lỗi không mong muốn."
+
+msgid "Approve sign-in in your authenticator app, then wait..."
+msgstr "Phê duyệt đăng nhập trong ứng dụng xác thực của bạn, rồi chờ..."
+
+msgid "Authenticated user {user} does not match requested user"
+msgstr "Người dùng đã xác thực {user} không khớp với người dùng được yêu cầu"
+
+msgid "Authenticated user {uuid} does not match requested user"
+msgstr "Người dùng đã xác thực {uuid} không khớp với người dùng được yêu cầu"
+
+msgid "Authentication did not return a refresh token. Please try again."
+msgstr "Xác thực không trả về mã thông báo làm mới. Vui lòng thử lại."
+
+msgid "Authentication failed (AADSTS{code})"
+msgstr "Xác thực không thành công (AADSTS{code})"
+
+msgid "Authentication failed in browser flow."
+msgstr "Xác thực không thành công trong luồng trình duyệt."
+
+msgid "Authentication failed. Please contact your administrator."
+msgstr "Xác thực không thành công. Vui lòng liên hệ với quản trị viên của bạn."
+
+msgid "Authentication failed. Please try again."
+msgstr "Xác thực không thành công. Vui lòng thử lại."
+
+msgid "Authentication failed. Please try signing in again."
+msgstr "Xác thực không thành công. Vui lòng thử đăng nhập lại."
+
+msgid "Authentication failed: Authentication method not supported."
+msgstr "Xác thực không thành công: Phương thức xác thực không được hỗ trợ."
+
+msgid "Authentication failed: Configuration error."
+msgstr "Xác thực không thành công: Lỗi cấu hình."
+
+msgid "Authentication failed: Cryptographic error."
+msgstr "Xác thực không thành công: Lỗi mật mã."
+
+msgid "Authentication failed: Invalid server response."
+msgstr "Xác thực không thành công: Phản hồi từ máy chủ không hợp lệ."
+
+msgid "Authentication failed: Missing required data."
+msgstr "Xác thực không thành công: Thiếu dữ liệu bắt buộc."
+
+msgid "Authentication failed: Security hardware error."
+msgstr "Xác thực không thành công: Lỗi phần cứng bảo mật."
+
+msgid "Authentication failed: Unable to reach authentication server."
+msgstr "Xác thực thất bại: Không thể kết nối đến máy chủ xác thực."
+
+msgid "Authentication failed: {error}"
+msgstr "Xác thực thất bại: {error}"
+
+msgid "Authentication flow completed but token exchange failed. Please try again."
+msgstr "Luồng xác thực đã hoàn tất nhưng quá trình trao đổi mã thông báo không thành công. Vui lòng thử lại."
+
+msgid "Authentication in progress."
+msgstr "Đang tiến hành xác thực."
+
+msgid "Authentication incomplete. Please try again."
+msgstr "Xác thực chưa hoàn tất. Vui lòng thử lại."
+
+msgid "Authentication service is temporarily unavailable. Please try again shortly."
+msgstr "Dịch vụ xác thực tạm thời không khả dụng. Vui lòng thử lại sau ít phút."
+
+msgid "Authentication service unavailable. Please try again later."
+msgstr "Dịch vụ xác thực không khả dụng. Vui lòng thử lại sau."
+
+msgid "Authentication session corrupted. Please try again."
+msgstr "Phiên xác thực bị hỏng. Vui lòng thử lại."
+
+msgid "Authentication session data missing. Please try again."
+msgstr "Thiếu dữ liệu phiên xác thực. Vui lòng thử lại."
+
+msgid "Authentication session returned an unexpected state. Please try again."
+msgstr "Phiên xác thực đã trả về trạng thái không mong muốn. Vui lòng thử lại."
+
+msgid "Authentication timed out. Please try again."
+msgstr "Xác thực đã hết thời gian chờ. Vui lòng thử lại."
+
+msgid "Browser authentication backend unavailable. Please try again."
+msgstr "Phần phụ trợ xác thực bằng trình duyệt không khả dụng. Vui lòng thử lại."
+
+msgid "Changing the password. Please wait..."
+msgstr "Đang thay đổi mật khẩu. Vui lòng chờ..."
+
+msgid "Chosen password is too short! 8 chars required."
+msgstr "Mật khẩu đã chọn quá ngắn! Yêu cầu 8 ký tự."
+
+msgid "Chosen pin is too short! {length} chars required."
+msgstr "Mã PIN đã chọn quá ngắn! Cần {length} ký tự."
+
+msgid "Cloud Password:"
+msgstr "Mật khẩu đám mây:"
+
+msgid "Code:"
+msgstr "Mã:"
+
+msgid "Confirm PIN:"
+msgstr "Xác nhận mã PIN:"
+
+msgid "Confirm password:"
+msgstr "Xác nhận mật khẩu:"
+
+msgid "Consent required. Please contact your administrator."
+msgstr "Cần có sự đồng ý. Vui lòng liên hệ với quản trị viên của bạn."
+
+msgid "Create a PIN to use in place of passwords."
+msgstr "Tạo mã PIN để sử dụng thay cho mật khẩu."
+
+msgid "Device enrollment failed. Please contact your administrator."
+msgstr "Đăng ký thiết bị không thành công. Vui lòng liên hệ với quản trị viên của bạn."
+
+msgid "Device has been removed from the domain."
+msgstr "Thiết bị đã bị xóa khỏi miền."
+
+msgid "Enable Bluetooth to sign in with your phone."
+msgstr "Bật Bluetooth để đăng nhập bằng điện thoại của bạn."
+
+msgid "Enrolling the Hello PIN. Please wait..."
+msgstr "Đang đăng ký mã PIN Hello. Vui lòng chờ..."
+
+msgid "Enter the setup key '{secret}' to enroll a TOTP Authenticator app. Use '{issuer}' for the code name and '{account}' as the label/name."
+msgstr "Nhập khóa thiết lập '{secret}' để đăng ký ứng dụng xác thực TOTP. Sử dụng '{issuer}' làm tên mã và '{account}' làm nhãn/tên."
+
+msgid "Entra Id Fido authentication failed."
+msgstr "Xác thực FIDO của Entra ID không thành công."
+
+msgid "Entra Id Password:"
+msgstr "Mật khẩu Entra ID:"
+
+msgid "FIDO authentication not available. Please try a different authentication method."
+msgstr "Xác thực FIDO không khả dụng. Vui lòng thử phương thức xác thực khác."
+
+msgid "Failed to authenticate with Hello PIN."
+msgstr "Không thể xác thực bằng mã PIN Hello."
+
+msgid "Failed to authenticate with Hello PIN. One more failed attempt will require multi-factor authentication and resetting your Linux Hello PIN."
+msgstr "Không xác thực được bằng Hello PIN. Thêm một lần thử không thành công nữa sẽ yêu cầu xác thực đa yếu tố và đặt lại Linux Hello PIN của bạn."
+
+msgid "Failed to authenticate with Hello TOTP code."
+msgstr "Không thể xác thực bằng mã Hello TOTP."
+
+msgid "Failed to build regex: {error}"
+msgstr "Không thể tạo biểu thức chính quy: {error}"
+
+msgid "Failed to change user password: {msg}"
+msgstr "Không thể thay đổi mật khẩu người dùng: {msg}"
+
+msgid "Failed to delete CSR key"
+msgstr "Không thể xóa khóa CSR"
+
+msgid "Failed to delete intune key"
+msgstr "Không thể xóa khóa Intune"
+
+msgid "Failed to generate QR code"
+msgstr "Không thể tạo mã QR"
+
+msgid "Failed to join domain. Please contact your administrator."
+msgstr "Không thể tham gia miền. Vui lòng liên hệ với quản trị viên của bạn."
+
+msgid "Failed to provision hello key: {error}\n"
+"{message}"
+msgstr "Không thể cấp phát khóa hello: {error}\n"
+"{message}"
+
+msgid "Failed to save device configuration. Please contact your administrator."
+msgstr "Không thể lưu cấu hình thiết bị. Vui lòng liên hệ với quản trị viên của bạn."
+
+msgid "Failed to store device credentials. Please contact your administrator."
+msgstr "Không thể lưu thông tin xác thực của thiết bị. Vui lòng liên hệ với quản trị viên của bạn."
+
+msgid "Fido PIN:"
+msgstr "Mã PIN Fido:"
+
+msgid "Himmelblau authentication is starting, please wait..."
+msgstr "Xác thực Himmelblau đang bắt đầu, vui lòng chờ..."
+
+msgid "Himmelblau authentication service did not become available in time."
+msgstr "Dịch vụ xác thực Himmelblau không khả dụng kịp thời."
+
+msgid "Himmelblau authentication service is unavailable."
+msgstr "Dịch vụ xác thực Himmelblau không khả dụng."
+
+msgid "Inputs did not match. Try again."
+msgstr "Thông tin nhập vào không khớp. Vui lòng thử lại."
+
+msgid "Invalid credentials"
+msgstr "Thông tin đăng nhập không hợp lệ"
+
+msgid "Multi-factor authentication required."
+msgstr "Yêu cầu xác thực đa yếu tố."
+
+msgid "Multi-factor authentication required. Please try signing in again."
+msgstr "Yêu cầu xác thực đa yếu tố. Vui lòng thử đăng nhập lại."
+
+msgid "Network outage detected."
+msgstr "Đã phát hiện gián đoạn mạng."
+
+msgid "New PIN:"
+msgstr "Mã PIN mới:"
+
+msgid "New password:"
+msgstr "Mật khẩu mới:"
+
+msgid "No Entra Id Hello PIN was supplied."
+msgstr "Không có mã PIN Entra Id Hello nào được cung cấp."
+
+msgid "No Entra Id Hello confirmation PIN was supplied."
+msgstr "Không có mã PIN xác nhận Entra ID Hello nào được cung cấp."
+
+msgid "No Entra Id confirmation password was supplied."
+msgstr "Không có mật khẩu xác nhận Entra ID nào được cung cấp."
+
+msgid "No Entra Id password was supplied."
+msgstr "Không có mật khẩu Entra ID nào được cung cấp."
+
+msgid "No Hello TOTP code was supplied."
+msgstr "Không có mã TOTP Hello nào được cung cấp."
+
+msgid "No input was supplied."
+msgstr "Không có dữ liệu nhập nào được cung cấp."
+
+msgid "Offline auth has expired. Please connect to the network to continue."
+msgstr "Xác thực ngoại tuyến đã hết hạn. Vui lòng kết nối mạng để tiếp tục."
+
+msgid "Open your Authenticator app, and enter the number '{entropy}' to sign in."
+msgstr "Mở ứng dụng Authenticator của bạn và nhập số '{entropy}' để đăng nhập."
+
+msgid "Open your authenticator app and scan this QR code to enroll. Then enter the generated code.\n"
+"{qr}"
+msgstr "Mở ứng dụng xác thực của bạn và quét mã QR này để đăng ký. Sau đó nhập mã được tạo.\n"
+"{qr}"
+
+msgid "PIN must not use repeating or predictable sequences. Avoid patterns like '111111', '123456', or '135791'."
+msgstr "Mã PIN không được sử dụng các chuỗi lặp lại hoặc dễ đoán. Tránh các mẫu như '111111', '123456' hoặc '135791'."
+
+msgid "PIN setup failed. Please try signing in again."
+msgstr "Thiết lập mã PIN không thành công. Vui lòng thử đăng nhập lại."
+
+msgid "PIN:"
+msgstr "Mã PIN:"
+
+msgid "Password change required. Please contact your administrator."
+msgstr "Yêu cầu thay đổi mật khẩu. Vui lòng liên hệ với quản trị viên của bạn."
+
+msgid "Password entry required."
+msgstr "Yêu cầu nhập mật khẩu."
+
+msgid "Password reset registration required. Complete setup at https://aka.ms/ssprsetup from another device, then try again."
+msgstr "Yêu cầu đăng ký đặt lại mật khẩu. Hoàn tất thiết lập tại https://aka.ms/ssprsetup từ một thiết bị khác, sau đó thử lại."
+
+msgid "Please enter your Hello TOTP code from your Authenticator:"
+msgstr "Vui lòng nhập mã Hello TOTP từ ứng dụng Authenticator của bạn:"
+
+msgid "Please insert your security key."
+msgstr "Vui lòng cắm khóa bảo mật của bạn."
+
+msgid "Please select a device by touching one of them."
+msgstr "Vui lòng chọn một thiết bị bằng cách chạm vào một trong số đó."
+
+msgid "Please touch your security key."
+msgstr "Vui lòng chạm vào khóa bảo mật của bạn."
+
+msgid "Press enter to continue"
+msgstr "Nhấn Enter để tiếp tục"
+
+msgid "QR/Bluetooth authentication failed."
+msgstr "Xác thực QR/Bluetooth không thành công."
+
+msgid "Scan the QR code to continue sign-in, or open this link on another device:\n"
+"{complete}\n"
+"If you cannot scan, visit:\n"
+"{verification_uri}\n"
+"And enter the code:\n"
+"{user_code}"
+msgstr "Quét mã QR để tiếp tục đăng nhập, hoặc mở liên kết này trên thiết bị khác:\n"
+"{complete}\n"
+"Nếu bạn không thể quét, hãy truy cập:\n"
+"{verification_uri}\n"
+"Và nhập mã:\n"
+"{user_code}"
+
+msgid "Scan with your authenticator app"
+msgstr "Quét bằng ứng dụng xác thực của bạn"
+
+msgid "Security key and QR/Bluetooth authentication failed."
+msgstr "Xác thực bằng khóa bảo mật và QR/Bluetooth không thành công."
+
+msgid "Security key authentication failed."
+msgstr "Xác thực bằng khóa bảo mật không thành công."
+
+msgid "Session data corrupted. Please sign in again."
+msgstr "Dữ liệu phiên bị hỏng. Vui lòng đăng nhập lại."
+
+msgid "Set up a PIN\n"
+"A Hello PIN is a fast, secure way to sign in to your device, apps, and services."
+msgstr "Thiết lập mã PIN\n"
+"Mã PIN Hello là cách nhanh chóng và an toàn để đăng nhập vào thiết bị, ứng dụng và dịch vụ của bạn."
+
+msgid "TOTP Code:"
+msgstr "Mã TOTP:"
+
+msgid "The minimum PIN length is {length} characters."
+msgstr "Độ dài tối thiểu của mã PIN là {length} ký tự."
+
+msgid "This command changes your local Hello PIN, NOT your Entra Id password."
+msgstr "Lệnh này thay đổi mã PIN Hello cục bộ của bạn, KHÔNG PHẢI mật khẩu Entra Id của bạn."
+
+msgid "Too many failed attempts in one row. Your device has been temporarily blocked. Please unplug it and plug in again."
+msgstr "Có quá nhiều lần thử không thành công liên tiếp. Thiết bị của bạn đã tạm thời bị chặn. Vui lòng rút thiết bị ra rồi cắm lại."
+
+msgid "Too many failed attempts. Your device has been blocked. Reset it."
+msgstr "Quá nhiều lần thử không thành công. Thiết bị của bạn đã bị chặn. Hãy đặt lại thiết bị."
+
+msgid "Too many failed user verification attempts."
+msgstr "Quá nhiều lần xác minh người dùng không thành công."
+
+msgid "Too many incorrect PIN attempts. You will need to enroll a new Linux Hello PIN."
+msgstr "Quá nhiều lần nhập sai mã PIN. Bạn cần đăng ký mã PIN Linux Hello mới."
+
+msgid "Try again."
+msgstr "Hãy thử lại."
+
+msgid "Unexpected authentication step. Please try signing in again."
+msgstr "Bước xác thực không mong muốn. Vui lòng thử đăng nhập lại."
+
+msgid "Unexpected error occurred."
+msgstr "Đã xảy ra lỗi không mong muốn."
+
+msgid "Unexpected error: {error}"
+msgstr "Đã xảy ra lỗi không mong muốn: {error}"
+
+msgid "Unexpected select device notice"
+msgstr "Thông báo chọn thiết bị không mong muốn"
+
+msgid "Update your password\n"
+"You need to update your password because this is\n"
+"the first time you are signing in, or because your\n"
+"password has expired."
+msgstr "Cập nhật mật khẩu của bạn\n"
+"Bạn cần cập nhật mật khẩu vì đây là\n"
+"lần đầu tiên bạn đăng nhập, hoặc vì\n"
+"mật khẩu của bạn đã hết hạn."
+
+msgid "Use the Linux Hello PIN for this device."
+msgstr "Sử dụng mã PIN Linux Hello cho thiết bị này."
+
+msgid "Use the password for your Office 365 or Microsoft online login."
+msgstr "Sử dụng mật khẩu cho tài khoản đăng nhập Office 365 hoặc Microsoft trực tuyến của bạn."
+
+msgid "Using a browser on another device, visit:\n"
+"{verification_uri}\n"
+"And enter the code:\n"
+"{user_code}"
+msgstr "Sử dụng trình duyệt trên thiết bị khác, truy cập:\n"
+"{verification_uri}\n"
+"Và nhập mã:\n"
+"{user_code}"
+
+msgid "Value:"
+msgstr "Giá trị:"
+
+msgid "Waiting for browser authentication to complete..."
+msgstr "Đang chờ xác thực trên trình duyệt hoàn tất..."
+
+msgid "We texted your phone {phone}. Please enter the code to sign in:"
+msgstr "Chúng tôi đã nhắn tin đến điện thoại của bạn {phone}. Vui lòng nhập mã để đăng nhập:"
+
+msgid "We're calling your office phone {phone}. Please answer it to continue."
+msgstr "Chúng tôi đang gọi tới điện thoại văn phòng của bạn {phone}. Vui lòng trả lời cuộc gọi để tiếp tục."
+
+msgid "We're calling your phone {phone}. Please answer it to continue."
+msgstr "Chúng tôi đang gọi đến điện thoại của bạn {phone}. Vui lòng trả lời cuộc gọi để tiếp tục."
+
+msgid "Wrong PIN! {message}"
+msgstr "Sai mã PIN! {message}"
+
+msgid "Wrong user verification! {message}"
+msgstr "Xác minh người dùng không đúng! {message}"
+
+msgid "You have {attempts} attempt left."
+msgid_plural "You have {attempts} attempts left."
+msgstr[0] "Bạn còn {attempts} lần thử."
+
+msgid "Your session has expired. Please sign in again."
+msgstr "Phiên của bạn đã hết hạn. Vui lòng đăng nhập lại."
+
+msgid "{code}: {message}\n"
+"If you are now prompted for a password from pam_unix, please disregard the prompt, go back and try again."
+msgstr "{code}: {message}\n"
+"Nếu bây giờ bạn được yêu cầu nhập mật khẩu từ pam_unix, vui lòng bỏ qua lời nhắc đó, quay lại và thử lại."
+
+msgid "{message}\n"
+"No push? Check your mobile device's internet connection."
+msgstr "{message}\n"
+"Không nhận được thông báo đẩy? Hãy kiểm tra kết nối Internet trên thiết bị di động của bạn."

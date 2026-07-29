@@ -1,0 +1,416 @@
+# Hebrew translations for Himmelblau.
+# Copyright (C) 2026 Himmelblau contributors
+# This file is distributed under the same license as Himmelblau.
+#
+msgid ""
+msgstr "Project-Id-Version: himmelblau\n"
+"POT-Creation-Date: 2026-07-22 22:33+0000\n"
+"PO-Revision-Date: 2026-07-23 14:38+0000\n"
+"Last-Translator: Automated via Codex <noreply@himmelblau-idm.org>\n"
+"Language-Team: Hebrew\n"
+"Language: he\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Plural-Forms: nplurals=2; plural=(n != 1);\n"
+""
+
+msgid "An unexpected error occurred."
+msgstr "אירעה שגיאה בלתי צפויה."
+
+msgid "Approve sign-in in your authenticator app, then wait..."
+msgstr "יש לאשר את הכניסה באפליקציית האימות שלך, ולאחר מכן להמתין..."
+
+msgid "Authenticated user {user} does not match requested user"
+msgstr "המשתמש המאומת {user} אינו תואם למשתמש המבוקש"
+
+msgid "Authenticated user {uuid} does not match requested user"
+msgstr "המשתמש המאומת {uuid} אינו תואם למשתמש המבוקש"
+
+msgid "Authentication did not return a refresh token. Please try again."
+msgstr "האימות לא החזיר אסימון רענון. נא לנסות שוב."
+
+msgid "Authentication failed (AADSTS{code})"
+msgstr "האימות נכשל (AADSTS{code})"
+
+msgid "Authentication failed in browser flow."
+msgstr "האימות בתהליך הדפדפן נכשל."
+
+msgid "Authentication failed. Please contact your administrator."
+msgstr "האימות נכשל. נא לפנות למנהל המערכת שלך."
+
+msgid "Authentication failed. Please try again."
+msgstr "האימות נכשל. אנא נסו שוב."
+
+msgid "Authentication failed. Please try signing in again."
+msgstr "האימות נכשל. אנא נסו להיכנס שוב."
+
+msgid "Authentication failed: Authentication method not supported."
+msgstr "האימות נכשל: שיטת האימות אינה נתמכת."
+
+msgid "Authentication failed: Configuration error."
+msgstr "האימות נכשל: שגיאת תצורה."
+
+msgid "Authentication failed: Cryptographic error."
+msgstr "האימות נכשל: שגיאה קריפטוגרפית."
+
+msgid "Authentication failed: Invalid server response."
+msgstr "האימות נכשל: תגובת השרת אינה תקינה."
+
+msgid "Authentication failed: Missing required data."
+msgstr "האימות נכשל: חסרים נתונים נדרשים."
+
+msgid "Authentication failed: Security hardware error."
+msgstr "האימות נכשל: שגיאת חומרת אבטחה."
+
+msgid "Authentication failed: Unable to reach authentication server."
+msgstr "האימות נכשל: לא ניתן להגיע לשרת האימות."
+
+msgid "Authentication failed: {error}"
+msgstr "האימות נכשל: {error}"
+
+msgid "Authentication flow completed but token exchange failed. Please try again."
+msgstr "זרימת האימות הושלמה, אך החלפת האסימון נכשלה. אנא נסה שוב."
+
+msgid "Authentication in progress."
+msgstr "האימות מתבצע."
+
+msgid "Authentication incomplete. Please try again."
+msgstr "האימות לא הושלם. נא לנסות שוב."
+
+msgid "Authentication service is temporarily unavailable. Please try again shortly."
+msgstr "שירות האימות אינו זמין באופן זמני. אנא נסה שוב בעוד זמן קצר."
+
+msgid "Authentication service unavailable. Please try again later."
+msgstr "שירות האימות אינו זמין. נסה שוב מאוחר יותר."
+
+msgid "Authentication session corrupted. Please try again."
+msgstr "הפעלת האימות נפגמה. אנא נסה שוב."
+
+msgid "Authentication session data missing. Please try again."
+msgstr "נתוני הפעלת האימות חסרים. נסה שוב."
+
+msgid "Authentication session returned an unexpected state. Please try again."
+msgstr "תהליך האימות החזיר מצב בלתי צפוי. יש לנסות שוב."
+
+msgid "Authentication timed out. Please try again."
+msgstr "האימות פג הזמן. נסה שוב."
+
+msgid "Browser authentication backend unavailable. Please try again."
+msgstr "מנגנון האימות בדפדפן אינו זמין. אנא נסה שוב."
+
+msgid "Changing the password. Please wait..."
+msgstr "משנה את הסיסמה. נא להמתין..."
+
+msgid "Chosen password is too short! 8 chars required."
+msgstr "הסיסמה שנבחרה קצרה מדי! נדרשים 8 תווים."
+
+msgid "Chosen pin is too short! {length} chars required."
+msgstr "קוד ה-PIN שנבחר קצר מדי! נדרשים {length} תווים."
+
+msgid "Cloud Password:"
+msgstr "סיסמת ענן:"
+
+msgid "Code:"
+msgstr "קוד:"
+
+msgid "Confirm PIN:"
+msgstr "אישור קוד PIN:"
+
+msgid "Confirm password:"
+msgstr "אשר את הסיסמה:"
+
+msgid "Consent required. Please contact your administrator."
+msgstr "נדרשת הסכמה. אנא פנו למנהל המערכת."
+
+msgid "Create a PIN to use in place of passwords."
+msgstr "צור/צרי קוד PIN לשימוש במקום סיסמאות."
+
+msgid "Device enrollment failed. Please contact your administrator."
+msgstr "רישום המכשיר נכשל. יש לפנות למנהל המערכת."
+
+msgid "Device has been removed from the domain."
+msgstr "המכשיר הוסר מהדומיין."
+
+msgid "Enable Bluetooth to sign in with your phone."
+msgstr "הפעל Bluetooth כדי להיכנס באמצעות הטלפון שלך."
+
+msgid "Enrolling the Hello PIN. Please wait..."
+msgstr "רושם את ה-PIN של Hello. נא להמתין..."
+
+msgid "Enter the setup key '{secret}' to enroll a TOTP Authenticator app. Use '{issuer}' for the code name and '{account}' as the label/name."
+msgstr "הזן את מפתח ההגדרה '{secret}' כדי לרשום יישום אימות TOTP. השתמש ב-'{issuer}' כשם הקוד וב-'{account}' כתווית/שם."
+
+msgid "Entra Id Fido authentication failed."
+msgstr "אימות FIDO של Entra ID נכשל."
+
+msgid "Entra Id Password:"
+msgstr "סיסמת Entra ID:"
+
+msgid "FIDO authentication not available. Please try a different authentication method."
+msgstr "אימות FIDO אינו זמין. נסה שיטת אימות אחרת."
+
+msgid "Failed to authenticate with Hello PIN."
+msgstr "האימות באמצעות PIN של Hello נכשל."
+
+msgid "Failed to authenticate with Hello PIN. One more failed attempt will require multi-factor authentication and resetting your Linux Hello PIN."
+msgstr "האימות באמצעות קוד ה-PIN של Hello נכשל. ניסיון כושל נוסף יחייב אימות רב-גורמי ואיפוס קוד ה-PIN של Linux Hello."
+
+msgid "Failed to authenticate with Hello TOTP code."
+msgstr "האימות באמצעות קוד Hello TOTP נכשל."
+
+msgid "Failed to build regex: {error}"
+msgstr "בניית הביטוי הרגולרי נכשלה: {error}"
+
+msgid "Failed to change user password: {msg}"
+msgstr "שינוי סיסמת המשתמש נכשל: {msg}"
+
+msgid "Failed to delete CSR key"
+msgstr "מחיקת מפתח ה-CSR נכשלה"
+
+msgid "Failed to delete intune key"
+msgstr "מחיקת מפתח Intune נכשלה"
+
+msgid "Failed to generate QR code"
+msgstr "יצירת קוד ה-QR נכשלה"
+
+msgid "Failed to join domain. Please contact your administrator."
+msgstr "ההצטרפות לדומיין נכשלה. נא לפנות למנהל המערכת שלך."
+
+msgid "Failed to provision hello key: {error}\n"
+"{message}"
+msgstr "נכשלה הקצאת מפתח Hello: {error}\n"
+"{message}"
+
+msgid "Failed to save device configuration. Please contact your administrator."
+msgstr "שמירת תצורת המכשיר נכשלה. פנה למנהל המערכת שלך."
+
+msgid "Failed to store device credentials. Please contact your administrator."
+msgstr "שמירת פרטי האימות של המכשיר נכשלה. יש לפנות למנהל המערכת."
+
+msgid "Fido PIN:"
+msgstr "קוד PIN של Fido:"
+
+msgid "Himmelblau authentication is starting, please wait..."
+msgstr "אימות Himmelblau מתחיל, נא להמתין..."
+
+msgid "Himmelblau authentication service did not become available in time."
+msgstr "שירות האימות של Himmelblau לא הפך לזמין בזמן."
+
+msgid "Himmelblau authentication service is unavailable."
+msgstr "שירות האימות של Himmelblau אינו זמין."
+
+msgid "Inputs did not match. Try again."
+msgstr "הקלטים לא תאמו. נסה שוב."
+
+msgid "Invalid credentials"
+msgstr "פרטי ההתחברות שגויים"
+
+msgid "Multi-factor authentication required."
+msgstr "נדרש אימות רב-גורמי."
+
+msgid "Multi-factor authentication required. Please try signing in again."
+msgstr "נדרש אימות רב-שלבי. נסה להיכנס שוב."
+
+msgid "Network outage detected."
+msgstr "זוהתה תקלה ברשת."
+
+msgid "New PIN:"
+msgstr "קוד PIN חדש:"
+
+msgid "New password:"
+msgstr "סיסמה חדשה:"
+
+msgid "No Entra Id Hello PIN was supplied."
+msgstr "לא סופק PIN של Entra Id Hello."
+
+msgid "No Entra Id Hello confirmation PIN was supplied."
+msgstr "לא סופק קוד ה-PIN לאישור של Entra Id Hello."
+
+msgid "No Entra Id confirmation password was supplied."
+msgstr "לא סופקה סיסמת אישור עבור Entra ID."
+
+msgid "No Entra Id password was supplied."
+msgstr "לא סופקה סיסמת Entra ID."
+
+msgid "No Hello TOTP code was supplied."
+msgstr "לא סופק קוד Hello TOTP."
+
+msgid "No input was supplied."
+msgstr "לא סופק קלט."
+
+msgid "Offline auth has expired. Please connect to the network to continue."
+msgstr "פג תוקף האימות הלא מקוון. נא להתחבר לרשת כדי להמשיך."
+
+msgid "Open your Authenticator app, and enter the number '{entropy}' to sign in."
+msgstr "יש לפתוח את אפליקציית המאמת ולהזין את המספר '{entropy}' כדי להיכנס."
+
+msgid "Open your authenticator app and scan this QR code to enroll. Then enter the generated code.\n"
+"{qr}"
+msgstr "פתח את אפליקציית המאמת וסרוק את קוד ה-QR הזה כדי להירשם. לאחר מכן הזן את הקוד שנוצר.\n"
+"{qr}"
+
+msgid "PIN must not use repeating or predictable sequences. Avoid patterns like '111111', '123456', or '135791'."
+msgstr "אין להשתמש ב-PIN ברצפים חוזרים או צפויים. יש להימנע מתבניות כגון '111111', '123456' או '135791'."
+
+msgid "PIN setup failed. Please try signing in again."
+msgstr "הגדרת ה-PIN נכשלה. נא לנסות להיכנס שוב."
+
+msgid "PIN:"
+msgstr "קוד PIN:"
+
+msgid "Password change required. Please contact your administrator."
+msgstr "נדרש שינוי סיסמה. נא לפנות למנהל המערכת."
+
+msgid "Password entry required."
+msgstr "נדרשת הזנת סיסמה."
+
+msgid "Password reset registration required. Complete setup at https://aka.ms/ssprsetup from another device, then try again."
+msgstr "נדרש רישום לאיפוס סיסמה. יש להשלים את ההגדרה בכתובת https://aka.ms/ssprsetup ממכשיר אחר, ולאחר מכן לנסות שוב."
+
+msgid "Please enter your Hello TOTP code from your Authenticator:"
+msgstr "נא להזין את קוד ה-TOTP של Hello מהמאמת שלך:"
+
+msgid "Please insert your security key."
+msgstr "אנא הכנס את מפתח האבטחה שלך."
+
+msgid "Please select a device by touching one of them."
+msgstr "יש לבחור מכשיר באמצעות נגיעה באחד מהם."
+
+msgid "Please touch your security key."
+msgstr "נא לגעת במפתח האבטחה שלך."
+
+msgid "Press enter to continue"
+msgstr "הקש Enter כדי להמשיך"
+
+msgid "QR/Bluetooth authentication failed."
+msgstr "אימות באמצעות QR/Bluetooth נכשל."
+
+msgid "Scan the QR code to continue sign-in, or open this link on another device:\n"
+"{complete}\n"
+"If you cannot scan, visit:\n"
+"{verification_uri}\n"
+"And enter the code:\n"
+"{user_code}"
+msgstr "סרוק את קוד ה-QR כדי להמשיך בכניסה, או פתח את הקישור הזה במכשיר אחר:\n"
+"{complete}\n"
+"אם אינך יכול לסרוק, בקר בכתובת:\n"
+"{verification_uri}\n"
+"והזן את הקוד:\n"
+"{user_code}"
+
+msgid "Scan with your authenticator app"
+msgstr "סרוק באמצעות אפליקציית האימות שלך"
+
+msgid "Security key and QR/Bluetooth authentication failed."
+msgstr "האימות באמצעות מפתח אבטחה ו-QR/Bluetooth נכשל."
+
+msgid "Security key authentication failed."
+msgstr "אימות באמצעות מפתח אבטחה נכשל."
+
+msgid "Session data corrupted. Please sign in again."
+msgstr "נתוני ההפעלה נפגמו. נא להיכנס שוב."
+
+msgid "Set up a PIN\n"
+"A Hello PIN is a fast, secure way to sign in to your device, apps, and services."
+msgstr "הגדרת PIN\n"
+"PIN של Hello הוא דרך מהירה ומאובטחת להיכנס למכשיר, לאפליקציות ולשירותים שלך."
+
+msgid "TOTP Code:"
+msgstr "קוד TOTP:"
+
+msgid "The minimum PIN length is {length} characters."
+msgstr "אורך ה-PIN המינימלי הוא {length} תווים."
+
+msgid "This command changes your local Hello PIN, NOT your Entra Id password."
+msgstr "פקודה זו משנה את קוד ה-PIN המקומי שלך עבור Hello, ולא את סיסמת Entra Id שלך."
+
+msgid "Too many failed attempts in one row. Your device has been temporarily blocked. Please unplug it and plug in again."
+msgstr "יותר מדי ניסיונות כושלים ברצף. המכשיר שלך נחסם באופן זמני. נא לנתק אותו ולחבר אותו שוב."
+
+msgid "Too many failed attempts. Your device has been blocked. Reset it."
+msgstr "יותר מדי ניסיונות כושלים. המכשיר שלך נחסם. אפס אותו."
+
+msgid "Too many failed user verification attempts."
+msgstr "יותר מדי ניסיונות כושלים לאימות המשתמש."
+
+msgid "Too many incorrect PIN attempts. You will need to enroll a new Linux Hello PIN."
+msgstr "יותר מדי ניסיונות PIN שגויים. יהיה עליך לרשום PIN חדש עבור Linux Hello."
+
+msgid "Try again."
+msgstr "נסה שוב."
+
+msgid "Unexpected authentication step. Please try signing in again."
+msgstr "שלב אימות בלתי צפוי. נא לנסות להיכנס שוב."
+
+msgid "Unexpected error occurred."
+msgstr "אירעה שגיאה בלתי צפויה."
+
+msgid "Unexpected error: {error}"
+msgstr "שגיאה בלתי צפויה: {error}"
+
+msgid "Unexpected select device notice"
+msgstr "הודעה בלתי צפויה לבחירת מכשיר"
+
+msgid "Update your password\n"
+"You need to update your password because this is\n"
+"the first time you are signing in, or because your\n"
+"password has expired."
+msgstr "עדכון הסיסמה שלך\n"
+"יש לעדכן את הסיסמה שלך מכיוון שזו הפעם\n"
+"הראשונה שבה מתבצעת כניסה לחשבון, או מכיוון\n"
+"שתוקף הסיסמה שלך פג."
+
+msgid "Use the Linux Hello PIN for this device."
+msgstr "השתמש בקוד ה-PIN של Linux Hello עבור מכשיר זה."
+
+msgid "Use the password for your Office 365 or Microsoft online login."
+msgstr "השתמש בסיסמה עבור הכניסה שלך ל-Office 365 או ל-Microsoft Online."
+
+msgid "Using a browser on another device, visit:\n"
+"{verification_uri}\n"
+"And enter the code:\n"
+"{user_code}"
+msgstr "באמצעות דפדפן במכשיר אחר, בקר בכתובת:\n"
+"{verification_uri}\n"
+"והזן את הקוד:\n"
+"{user_code}"
+
+msgid "Value:"
+msgstr "ערך:"
+
+msgid "Waiting for browser authentication to complete..."
+msgstr "ממתין להשלמת האימות בדפדפן..."
+
+msgid "We texted your phone {phone}. Please enter the code to sign in:"
+msgstr "שלחנו הודעת טקסט לטלפון שלך {phone}. נא להזין את הקוד כדי להיכנס:"
+
+msgid "We're calling your office phone {phone}. Please answer it to continue."
+msgstr "אנחנו מתקשרים לטלפון המשרדי שלך {phone}. יש לענות לשיחה כדי להמשיך."
+
+msgid "We're calling your phone {phone}. Please answer it to continue."
+msgstr "אנחנו מתקשרים לטלפון שלך {phone}. יש לענות לשיחה כדי להמשיך."
+
+msgid "Wrong PIN! {message}"
+msgstr "קוד PIN שגוי! {message}"
+
+msgid "Wrong user verification! {message}"
+msgstr "אימות משתמש שגוי! {message}"
+
+msgid "You have {attempts} attempt left."
+msgid_plural "You have {attempts} attempts left."
+msgstr[0] "נותר לך {attempts} ניסיון."
+msgstr[1] "נותרו לך {attempts} ניסיונות."
+
+msgid "Your session has expired. Please sign in again."
+msgstr "פג תוקף ההפעלה שלך. אנא היכנס שוב."
+
+msgid "{code}: {message}\n"
+"If you are now prompted for a password from pam_unix, please disregard the prompt, go back and try again."
+msgstr "{code}: {message}\n"
+"אם כעת מוצגת בקשה להזין סיסמה מ-pam_unix, אנא התעלמו מהבקשה, חזרו אחורה ונסו שוב."
+
+msgid "{message}\n"
+"No push? Check your mobile device's internet connection."
+msgstr "{message}\n"
+"אין דחיפה? בדוק את חיבור האינטרנט של המכשיר הנייד שלך."

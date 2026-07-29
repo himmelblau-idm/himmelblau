@@ -1,0 +1,417 @@
+# Romanian translations for Himmelblau.
+# Copyright (C) 2026 Himmelblau contributors
+# This file is distributed under the same license as Himmelblau.
+#
+msgid ""
+msgstr "Project-Id-Version: himmelblau\n"
+"POT-Creation-Date: 2026-07-22 22:33+0000\n"
+"PO-Revision-Date: 2026-07-23 14:40+0000\n"
+"Last-Translator: Automated via Codex <noreply@himmelblau-idm.org>\n"
+"Language-Team: Romanian\n"
+"Language: ro\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Plural-Forms: nplurals=3; plural=n==1 ? 0 : (n==0 || (n%100 > 0 && n%100 < 20)) ? 1 : 2;\n"
+""
+
+msgid "An unexpected error occurred."
+msgstr "A apărut o eroare neașteptată."
+
+msgid "Approve sign-in in your authenticator app, then wait..."
+msgstr "Aprobați conectarea în aplicația dvs. de autentificare, apoi așteptați..."
+
+msgid "Authenticated user {user} does not match requested user"
+msgstr "Utilizatorul autentificat {user} nu corespunde utilizatorului solicitat"
+
+msgid "Authenticated user {uuid} does not match requested user"
+msgstr "Utilizatorul autentificat {uuid} nu corespunde utilizatorului solicitat"
+
+msgid "Authentication did not return a refresh token. Please try again."
+msgstr "Autentificarea nu a returnat un token de reîmprospătare. Încercați din nou."
+
+msgid "Authentication failed (AADSTS{code})"
+msgstr "Autentificarea a eșuat (AADSTS{code})"
+
+msgid "Authentication failed in browser flow."
+msgstr "Autentificarea în fluxul din browser a eșuat."
+
+msgid "Authentication failed. Please contact your administrator."
+msgstr "Autentificarea a eșuat. Vă rugăm să contactați administratorul."
+
+msgid "Authentication failed. Please try again."
+msgstr "Autentificarea a eșuat. Vă rugăm să încercați din nou."
+
+msgid "Authentication failed. Please try signing in again."
+msgstr "Autentificarea a eșuat. Vă rugăm să încercați să vă conectați din nou."
+
+msgid "Authentication failed: Authentication method not supported."
+msgstr "Autentificarea a eșuat: Metoda de autentificare nu este acceptată."
+
+msgid "Authentication failed: Configuration error."
+msgstr "Autentificare eșuată: eroare de configurare."
+
+msgid "Authentication failed: Cryptographic error."
+msgstr "Autentificare eșuată: eroare criptografică."
+
+msgid "Authentication failed: Invalid server response."
+msgstr "Autentificarea a eșuat: răspuns nevalid de la server."
+
+msgid "Authentication failed: Missing required data."
+msgstr "Autentificarea a eșuat: Lipsesc datele obligatorii."
+
+msgid "Authentication failed: Security hardware error."
+msgstr "Autentificarea a eșuat: eroare a hardware-ului de securitate."
+
+msgid "Authentication failed: Unable to reach authentication server."
+msgstr "Autentificarea a eșuat: Serverul de autentificare nu poate fi accesat."
+
+msgid "Authentication failed: {error}"
+msgstr "Autentificare eșuată: {error}"
+
+msgid "Authentication flow completed but token exchange failed. Please try again."
+msgstr "Fluxul de autentificare s-a finalizat, dar schimbul de tokenuri a eșuat. Vă rugăm să încercați din nou."
+
+msgid "Authentication in progress."
+msgstr "Autentificare în curs."
+
+msgid "Authentication incomplete. Please try again."
+msgstr "Autentificarea este incompletă. Vă rugăm să încercați din nou."
+
+msgid "Authentication service is temporarily unavailable. Please try again shortly."
+msgstr "Serviciul de autentificare este temporar indisponibil. Vă rugăm să încercați din nou în scurt timp."
+
+msgid "Authentication service unavailable. Please try again later."
+msgstr "Serviciul de autentificare nu este disponibil. Vă rugăm să încercați din nou mai târziu."
+
+msgid "Authentication session corrupted. Please try again."
+msgstr "Sesiunea de autentificare este coruptă. Încercați din nou."
+
+msgid "Authentication session data missing. Please try again."
+msgstr "Datele sesiunii de autentificare lipsesc. Încercați din nou."
+
+msgid "Authentication session returned an unexpected state. Please try again."
+msgstr "Sesiunea de autentificare a returnat o stare neașteptată. Vă rugăm să încercați din nou."
+
+msgid "Authentication timed out. Please try again."
+msgstr "Autentificarea a expirat. Vă rugăm să încercați din nou."
+
+msgid "Browser authentication backend unavailable. Please try again."
+msgstr "Serviciul de autentificare prin browser nu este disponibil. Încercați din nou."
+
+msgid "Changing the password. Please wait..."
+msgstr "Se schimbă parola. Vă rugăm să așteptați..."
+
+msgid "Chosen password is too short! 8 chars required."
+msgstr "Parola aleasă este prea scurtă! Sunt necesare 8 caractere."
+
+msgid "Chosen pin is too short! {length} chars required."
+msgstr "PIN-ul ales este prea scurt! Sunt necesare {length} caractere."
+
+msgid "Cloud Password:"
+msgstr "Parola cloud:"
+
+msgid "Code:"
+msgstr "Cod:"
+
+msgid "Confirm PIN:"
+msgstr "Confirmați PIN-ul:"
+
+msgid "Confirm password:"
+msgstr "Confirmați parola:"
+
+msgid "Consent required. Please contact your administrator."
+msgstr "Este necesar consimțământul. Vă rugăm să contactați administratorul."
+
+msgid "Create a PIN to use in place of passwords."
+msgstr "Creați un PIN pentru a-l utiliza în locul parolelor."
+
+msgid "Device enrollment failed. Please contact your administrator."
+msgstr "Înregistrarea dispozitivului a eșuat. Vă rugăm să contactați administratorul."
+
+msgid "Device has been removed from the domain."
+msgstr "Dispozitivul a fost eliminat din domeniu."
+
+msgid "Enable Bluetooth to sign in with your phone."
+msgstr "Activați Bluetooth pentru a vă autentifica cu telefonul."
+
+msgid "Enrolling the Hello PIN. Please wait..."
+msgstr "Se înregistrează PIN-ul Hello. Vă rugăm să așteptați..."
+
+msgid "Enter the setup key '{secret}' to enroll a TOTP Authenticator app. Use '{issuer}' for the code name and '{account}' as the label/name."
+msgstr "Introduceți cheia de configurare „{secret}” pentru a înregistra o aplicație de autentificare TOTP. Folosiți „{issuer}” ca nume al codului și „{account}” ca etichetă/nume."
+
+msgid "Entra Id Fido authentication failed."
+msgstr "Autentificarea Entra ID FIDO a eșuat."
+
+msgid "Entra Id Password:"
+msgstr "Parolă Entra ID:"
+
+msgid "FIDO authentication not available. Please try a different authentication method."
+msgstr "Autentificarea FIDO nu este disponibilă. Încercați o altă metodă de autentificare."
+
+msgid "Failed to authenticate with Hello PIN."
+msgstr "Autentificarea cu PIN-ul Hello a eșuat."
+
+msgid "Failed to authenticate with Hello PIN. One more failed attempt will require multi-factor authentication and resetting your Linux Hello PIN."
+msgstr "Autentificarea cu PIN-ul Hello a eșuat. Încă o încercare eșuată va necesita autentificare multifactor și resetarea PIN-ului Linux Hello."
+
+msgid "Failed to authenticate with Hello TOTP code."
+msgstr "Autentificarea cu codul Hello TOTP a eșuat."
+
+msgid "Failed to build regex: {error}"
+msgstr "Nu s-a putut construi expresia regulată: {error}"
+
+msgid "Failed to change user password: {msg}"
+msgstr "Nu s-a reușit schimbarea parolei utilizatorului: {msg}"
+
+msgid "Failed to delete CSR key"
+msgstr "Nu s-a reușit ștergerea cheii CSR"
+
+msgid "Failed to delete intune key"
+msgstr "Nu s-a putut șterge cheia Intune"
+
+msgid "Failed to generate QR code"
+msgstr "Nu s-a putut genera codul QR"
+
+msgid "Failed to join domain. Please contact your administrator."
+msgstr "Nu s-a putut alătura domeniului. Contactați administratorul."
+
+msgid "Failed to provision hello key: {error}\n"
+"{message}"
+msgstr "Nu s-a putut configura cheia Hello: {error}\n"
+"{message}"
+
+msgid "Failed to save device configuration. Please contact your administrator."
+msgstr "Nu s-a putut salva configurația dispozitivului. Vă rugăm să contactați administratorul."
+
+msgid "Failed to store device credentials. Please contact your administrator."
+msgstr "Nu s-au putut stoca acreditările dispozitivului. Contactați administratorul."
+
+msgid "Fido PIN:"
+msgstr "PIN Fido:"
+
+msgid "Himmelblau authentication is starting, please wait..."
+msgstr "Autentificarea Himmelblau pornește, vă rugăm să așteptați..."
+
+msgid "Himmelblau authentication service did not become available in time."
+msgstr "Serviciul de autentificare Himmelblau nu a devenit disponibil la timp."
+
+msgid "Himmelblau authentication service is unavailable."
+msgstr "Serviciul de autentificare Himmelblau nu este disponibil."
+
+msgid "Inputs did not match. Try again."
+msgstr "Datele introduse nu se potrivesc. Încercați din nou."
+
+msgid "Invalid credentials"
+msgstr "Acreditări nevalide"
+
+msgid "Multi-factor authentication required."
+msgstr "Este necesară autentificarea cu mai mulți factori."
+
+msgid "Multi-factor authentication required. Please try signing in again."
+msgstr "Este necesară autentificarea multifactor. Încercați să vă conectați din nou."
+
+msgid "Network outage detected."
+msgstr "S-a detectat o întrerupere a rețelei."
+
+msgid "New PIN:"
+msgstr "PIN nou:"
+
+msgid "New password:"
+msgstr "Parolă nouă:"
+
+msgid "No Entra Id Hello PIN was supplied."
+msgstr "Nu a fost furnizat niciun PIN Entra ID Hello."
+
+msgid "No Entra Id Hello confirmation PIN was supplied."
+msgstr "Nu a fost furnizat niciun PIN de confirmare Entra Id Hello."
+
+msgid "No Entra Id confirmation password was supplied."
+msgstr "Nu a fost furnizată nicio parolă de confirmare Entra ID."
+
+msgid "No Entra Id password was supplied."
+msgstr "Nu a fost furnizată nicio parolă Entra ID."
+
+msgid "No Hello TOTP code was supplied."
+msgstr "Nu a fost furnizat niciun cod TOTP Hello."
+
+msgid "No input was supplied."
+msgstr "Nu a fost furnizată nicio intrare."
+
+msgid "Offline auth has expired. Please connect to the network to continue."
+msgstr "Autentificarea offline a expirat. Conectați-vă la rețea pentru a continua."
+
+msgid "Open your Authenticator app, and enter the number '{entropy}' to sign in."
+msgstr "Deschideți aplicația Authenticator și introduceți numărul „{entropy}” pentru a vă conecta."
+
+msgid "Open your authenticator app and scan this QR code to enroll. Then enter the generated code.\n"
+"{qr}"
+msgstr "Deschideți aplicația de autentificare și scanați acest cod QR pentru a vă înrola. Apoi introduceți codul generat.\n"
+"{qr}"
+
+msgid "PIN must not use repeating or predictable sequences. Avoid patterns like '111111', '123456', or '135791'."
+msgstr "PIN-ul nu trebuie să utilizeze secvențe repetitive sau previzibile. Evitați tipare precum '111111', '123456' sau '135791'."
+
+msgid "PIN setup failed. Please try signing in again."
+msgstr "Configurarea codului PIN a eșuat. Încercați să vă conectați din nou."
+
+msgid "PIN:"
+msgstr "PIN:"
+
+msgid "Password change required. Please contact your administrator."
+msgstr "Este necesară schimbarea parolei. Contactați administratorul."
+
+msgid "Password entry required."
+msgstr "Este necesară introducerea parolei."
+
+msgid "Password reset registration required. Complete setup at https://aka.ms/ssprsetup from another device, then try again."
+msgstr "Este necesară înregistrarea pentru resetarea parolei. Finalizați configurarea la https://aka.ms/ssprsetup de pe alt dispozitiv, apoi încercați din nou."
+
+msgid "Please enter your Hello TOTP code from your Authenticator:"
+msgstr "Introduceți codul Hello TOTP din aplicația Authenticator:"
+
+msgid "Please insert your security key."
+msgstr "Vă rugăm să introduceți cheia de securitate."
+
+msgid "Please select a device by touching one of them."
+msgstr "Selectați un dispozitiv atingând unul dintre ele."
+
+msgid "Please touch your security key."
+msgstr "Atingeți cheia de securitate."
+
+msgid "Press enter to continue"
+msgstr "Apăsați Enter pentru a continua"
+
+msgid "QR/Bluetooth authentication failed."
+msgstr "Autentificarea prin QR/Bluetooth a eșuat."
+
+msgid "Scan the QR code to continue sign-in, or open this link on another device:\n"
+"{complete}\n"
+"If you cannot scan, visit:\n"
+"{verification_uri}\n"
+"And enter the code:\n"
+"{user_code}"
+msgstr "Scanați codul QR pentru a continua conectarea sau deschideți acest link pe alt dispozitiv:\n"
+"{complete}\n"
+"Dacă nu puteți scana, accesați:\n"
+"{verification_uri}\n"
+"Și introduceți codul:\n"
+"{user_code}"
+
+msgid "Scan with your authenticator app"
+msgstr "Scanați cu aplicația de autentificare"
+
+msgid "Security key and QR/Bluetooth authentication failed."
+msgstr "Autentificarea cu cheia de securitate și prin QR/Bluetooth a eșuat."
+
+msgid "Security key authentication failed."
+msgstr "Autentificarea cu cheia de securitate a eșuat."
+
+msgid "Session data corrupted. Please sign in again."
+msgstr "Datele sesiunii sunt corupte. Vă rugăm să vă autentificați din nou."
+
+msgid "Set up a PIN\n"
+"A Hello PIN is a fast, secure way to sign in to your device, apps, and services."
+msgstr "Configurați un PIN\n"
+"Un PIN Hello este o modalitate rapidă și sigură de a vă conecta la dispozitiv, aplicații și servicii."
+
+msgid "TOTP Code:"
+msgstr "Cod TOTP:"
+
+msgid "The minimum PIN length is {length} characters."
+msgstr "Lungimea minimă a PIN-ului este de {length} caractere."
+
+msgid "This command changes your local Hello PIN, NOT your Entra Id password."
+msgstr "Această comandă schimbă codul PIN Hello local, NU parola Entra Id."
+
+msgid "Too many failed attempts in one row. Your device has been temporarily blocked. Please unplug it and plug in again."
+msgstr "Prea multe încercări eșuate la rând. Dispozitivul dvs. a fost blocat temporar. Vă rugăm să îl deconectați și să îl conectați din nou."
+
+msgid "Too many failed attempts. Your device has been blocked. Reset it."
+msgstr "Prea multe încercări eșuate. Dispozitivul dvs. a fost blocat. Resetați-l."
+
+msgid "Too many failed user verification attempts."
+msgstr "Prea multe încercări eșuate de verificare a utilizatorului."
+
+msgid "Too many incorrect PIN attempts. You will need to enroll a new Linux Hello PIN."
+msgstr "Prea multe încercări incorecte de introducere a PIN-ului. Va trebui să înregistrați un nou PIN Linux Hello."
+
+msgid "Try again."
+msgstr "Încercați din nou."
+
+msgid "Unexpected authentication step. Please try signing in again."
+msgstr "Pas de autentificare neașteptat. Încercați să vă conectați din nou."
+
+msgid "Unexpected error occurred."
+msgstr "A apărut o eroare neașteptată."
+
+msgid "Unexpected error: {error}"
+msgstr "Eroare neașteptată: {error}"
+
+msgid "Unexpected select device notice"
+msgstr "Notificare neașteptată privind selectarea dispozitivului"
+
+msgid "Update your password\n"
+"You need to update your password because this is\n"
+"the first time you are signing in, or because your\n"
+"password has expired."
+msgstr "Actualizați-vă parola\n"
+"Trebuie să vă actualizați parola deoarece aceasta este\n"
+"prima dată când vă conectați sau deoarece\n"
+"parola dvs. a expirat."
+
+msgid "Use the Linux Hello PIN for this device."
+msgstr "Utilizați PIN-ul Linux Hello pentru acest dispozitiv."
+
+msgid "Use the password for your Office 365 or Microsoft online login."
+msgstr "Folosiți parola pentru conectarea la Office 365 sau la contul Microsoft online."
+
+msgid "Using a browser on another device, visit:\n"
+"{verification_uri}\n"
+"And enter the code:\n"
+"{user_code}"
+msgstr "Folosind un browser pe alt dispozitiv, accesați:\n"
+"{verification_uri}\n"
+"Și introduceți codul:\n"
+"{user_code}"
+
+msgid "Value:"
+msgstr "Valoare:"
+
+msgid "Waiting for browser authentication to complete..."
+msgstr "Se așteaptă finalizarea autentificării în browser..."
+
+msgid "We texted your phone {phone}. Please enter the code to sign in:"
+msgstr "Am trimis un mesaj pe telefonul dvs. {phone}. Introduceți codul pentru a vă autentifica:"
+
+msgid "We're calling your office phone {phone}. Please answer it to continue."
+msgstr "Vă apelăm telefonul de la birou {phone}. Vă rugăm să răspundeți pentru a continua."
+
+msgid "We're calling your phone {phone}. Please answer it to continue."
+msgstr "Vă apelăm la numărul de telefon {phone}. Vă rugăm să răspundeți pentru a continua."
+
+msgid "Wrong PIN! {message}"
+msgstr "PIN greșit! {message}"
+
+msgid "Wrong user verification! {message}"
+msgstr "Verificare utilizator incorectă! {message}"
+
+msgid "You have {attempts} attempt left."
+msgid_plural "You have {attempts} attempts left."
+msgstr[0] "Mai aveți {attempts} încercare rămasă."
+msgstr[1] "Mai aveți {attempts} încercări rămase."
+msgstr[2] "Mai aveți {attempts} de încercări rămase."
+
+msgid "Your session has expired. Please sign in again."
+msgstr "Sesiunea dvs. a expirat. Vă rugăm să vă conectați din nou."
+
+msgid "{code}: {message}\n"
+"If you are now prompted for a password from pam_unix, please disregard the prompt, go back and try again."
+msgstr "{code}: {message}\n"
+"Dacă vi se solicită acum o parolă de către pam_unix, vă rugăm să ignorați solicitarea, să reveniți și să încercați din nou."
+
+msgid "{message}\n"
+"No push? Check your mobile device's internet connection."
+msgstr "{message}\n"
+"Nu primiți notificarea push? Verificați conexiunea la internet a dispozitivului mobil."

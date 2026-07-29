@@ -1,0 +1,361 @@
+#!/usr/bin/env python3
+import argparse
+import ast
+import datetime
+import importlib.machinery
+import importlib.util
+import pathlib
+import shutil
+import subprocess
+import tempfile
+from dataclasses import dataclass, field
+
+ROOT = pathlib.Path(__file__).resolve().parents[1]
+PO_DIR = ROOT / "po"
+POT_FILE = PO_DIR / "himmelblau.pot"
+TRANSLATE_SCRIPT = ROOT / "scripts" / "i18n-translate"
+AUTOMATED_TRANSLATOR = "Automated via Codex <noreply@himmelblau-idm.org>"
+
+
+@dataclass
+class PoEntry:
+    comments: list[str] = field(default_factory=list)
+    msgid: str = ""
+    msgid_plural: str | None = None
+    msgstrs: dict[str, str] = field(default_factory=dict)
+
+
+def load_translate_helpers():
+    loader = importlib.machinery.SourceFileLoader("i18n_translate", str(TRANSLATE_SCRIPT))
+    spec = importlib.util.spec_from_loader(loader.name, loader)
+    if spec is None:
+        raise SystemExit(f"failed to load {TRANSLATE_SCRIPT.relative_to(ROOT)}")
+    module = importlib.util.module_from_spec(spec)
+    loader.exec_module(module)
+    return module
+
+
+def po_quote(value: str) -> str:
+    return (
+        '"'
+        + value.replace("\\", "\\\\")
+        .replace('"', '\\"')
+        .replace("\n", '\\n"\n"')
+        + '"'
+    )
+
+
+def parse_po(path: pathlib.Path) -> list[PoEntry]:
+    entries: list[PoEntry] = []
+    current = PoEntry()
+    active: str | None = None
+    seen_directive = False
+
+    def finish() -> None:
+        nonlocal current, active, seen_directive
+        if seen_directive or current.comments:
+            entries.append(current)
+        current = PoEntry()
+        active = None
+        seen_directive = False
+
+    for raw in path.read_text(encoding="utf-8").splitlines():
+        line = raw.strip()
+
+        if not line:
+            finish()
+            continue
+
+        if line.startswith("#"):
+            if not line.startswith("#:"):
+                current.comments.append(raw)
+            continue
+
+        if line.startswith("msgid "):
+            active = "msgid"
+            current.msgid = ast.literal_eval(line[6:])
+            seen_directive = True
+        elif line.startswith("msgid_plural "):
+            active = "msgid_plural"
+            current.msgid_plural = ast.literal_eval(line[13:])
+            seen_directive = True
+        elif line.startswith("msgstr"):
+            key, value = line.split(" ", 1)
+            active = key
+            current.msgstrs[key] = ast.literal_eval(value)
+            seen_directive = True
+        elif line.startswith('"') and active:
+            value = ast.literal_eval(line)
+            if active == "msgid":
+                current.msgid += value
+            elif active == "msgid_plural":
+                current.msgid_plural = (current.msgid_plural or "") + value
+            else:
+                current.msgstrs[active] = current.msgstrs.get(active, "") + value
+
+    if seen_directive or current.comments:
+        finish()
+
+    return entries
+
+
+def write_po(path: pathlib.Path, entries: list[PoEntry]) -> None:
+    lines: list[str] = []
+    for entry in entries:
+        lines.extend(entry.comments)
+        lines.append(f"msgid {po_quote(entry.msgid)}")
+        if entry.msgid_plural is None:
+            lines.append(f"msgstr {po_quote(entry.msgstrs.get('msgstr', ''))}")
+        else:
+            lines.append(f"msgid_plural {po_quote(entry.msgid_plural)}")
+            plural_keys = sorted(
+                (key for key in entry.msgstrs if key.startswith("msgstr[")),
+                key=lambda key: int(key.removeprefix("msgstr[").removesuffix("]")),
+            )
+            for key in plural_keys:
+                lines.append(f"{key} {po_quote(entry.msgstrs.get(key, ''))}")
+        lines.append("")
+
+    path.write_text("\n".join(lines), encoding="utf-8")
+
+
+def update_header(entry: PoEntry) -> None:
+    header = entry.msgstrs.get("msgstr", "")
+    if not header:
+        return
+
+    now = datetime.datetime.now(datetime.timezone.utc)
+    replacements = {
+        "PO-Revision-Date": now.strftime("%Y-%m-%d %H:%M+0000"),
+        "Last-Translator": AUTOMATED_TRANSLATOR,
+    }
+
+    updated_lines = []
+    seen = set()
+    for raw in header.splitlines():
+        if ":" not in raw:
+            updated_lines.append(raw)
+            continue
+        key, _value = raw.split(":", 1)
+        if key in replacements:
+            updated_lines.append(f"{key}: {replacements[key]}")
+            seen.add(key)
+        else:
+            updated_lines.append(raw)
+
+    for key, value in replacements.items():
+        if key not in seen:
+            updated_lines.append(f"{key}: {value}")
+
+    entry.msgstrs["msgstr"] = "".join(f"{line}\n" for line in updated_lines)
+
+
+def gettext_command(args: list[str]) -> None:
+    result = subprocess.run(args, cwd=ROOT)
+    if result.returncode != 0:
+        raise SystemExit(f"{args[0]} failed with exit code {result.returncode}")
+
+
+def merge_catalog(path: pathlib.Path, dry_run: bool) -> pathlib.Path:
+    if dry_run:
+        tmp = tempfile.NamedTemporaryFile(
+            prefix=f"{path.stem}.", suffix=".po", dir="/tmp", delete=False
+        )
+        tmp.close()
+        work_path = pathlib.Path(tmp.name)
+        shutil.copy2(path, work_path)
+    else:
+        work_path = path
+
+    gettext_command(
+        [
+            "msgmerge",
+            "--update",
+            "--backup=off",
+            "--quiet",
+            "--no-location",
+            "--no-wrap",
+            "--no-fuzzy-matching",
+            str(work_path),
+            str(POT_FILE),
+        ]
+    )
+
+    with tempfile.NamedTemporaryFile(
+        prefix=f"{path.stem}.", suffix=".po", dir="/tmp", delete=False
+    ) as tmp:
+        cleaned_path = pathlib.Path(tmp.name)
+
+    gettext_command(
+        [
+            "msgattrib",
+            "--no-obsolete",
+            "--no-location",
+            "--no-wrap",
+            "-o",
+            str(cleaned_path),
+            str(work_path),
+        ]
+    )
+
+    if dry_run:
+        work_path.unlink(missing_ok=True)
+        return cleaned_path
+
+    shutil.move(str(cleaned_path), path)
+    return path
+
+
+def empty_entries(entries: list[PoEntry]) -> list[PoEntry]:
+    result = []
+    for entry in entries:
+        if not entry.msgid:
+            continue
+        keys = (
+            sorted(entry.msgstrs)
+            if entry.msgid_plural is not None
+            else ["msgstr"]
+        )
+        if any(entry.msgstrs.get(key, "") == "" for key in keys):
+            result.append(entry)
+    return result
+
+
+def translate_missing(
+    path: pathlib.Path,
+    entries: list[PoEntry],
+    helpers,
+) -> tuple[int, int]:
+    language_code = helpers.canonical_language_code(path.stem)
+    metadata = helpers.get_language_metadata(language_code)
+    language_name = metadata["name"]
+    nplurals = helpers.get_nplurals(metadata["plural_forms"])
+    missing = empty_entries(entries)
+    failed = 0
+
+    for index, entry in enumerate(missing, 1):
+        preview = entry.msgid[:60] + ("..." if len(entry.msgid) > 60 else "")
+        print(f"  [{index}/{len(missing)}] {preview}", flush=True)
+        translation = helpers.translate_entry_with_retry(
+            {
+                "msgid": entry.msgid,
+                "msgid_plural": entry.msgid_plural,
+            },
+            language_code,
+            language_name,
+            nplurals,
+        )
+        if translation is None:
+            failed += 1
+            continue
+        entry.msgstrs.update(translation)
+
+    if missing and failed < len(missing) and entries:
+        update_header(entries[0])
+
+    return len(missing) - failed, failed
+
+
+def selected_po_files(languages: list[str], helpers) -> list[pathlib.Path]:
+    if not languages:
+        return sorted(PO_DIR.glob("*.po"))
+
+    result = []
+    for language in languages:
+        language = helpers.canonical_language_code(language)
+        path = PO_DIR / f"{language}.po"
+        if not path.exists():
+            raise SystemExit(f"{path.relative_to(ROOT)} does not exist")
+        result.append(path)
+    return result
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(
+        description="Merge po/*.po with po/himmelblau.pot and translate missing entries."
+    )
+    parser.add_argument(
+        "--language",
+        action="append",
+        default=[],
+        help="Limit updates to a locale, such as fr or sr@latin. May be repeated.",
+    )
+    parser.add_argument(
+        "--merge-only",
+        action="store_true",
+        help="Only merge missing entries; leave new msgstr values empty.",
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Report missing entry counts without modifying po files.",
+    )
+    parser.add_argument(
+        "--update-pot",
+        action="store_true",
+        help="Run scripts/i18n-update-pot before merging catalogs.",
+    )
+    parser.add_argument(
+        "--no-validate",
+        dest="validate",
+        action="store_false",
+        default=True,
+        help="Skip scripts/i18n-check after updating catalogs.",
+    )
+    args = parser.parse_args()
+
+    helpers = load_translate_helpers()
+
+    if args.update_pot:
+        gettext_command([str(ROOT / "scripts" / "i18n-update-pot")])
+
+    if not POT_FILE.exists():
+        raise SystemExit("po/himmelblau.pot does not exist; run scripts/i18n-update-pot first")
+
+    if not args.dry_run and not args.merge_only and not helpers.check_codex_available():
+        raise SystemExit("codex CLI not found; use --merge-only or install codex")
+
+    po_files = selected_po_files(args.language, helpers)
+    total_translated = 0
+    total_failed = 0
+
+    for po in po_files:
+        print(f"Updating {po.relative_to(ROOT)}", flush=True)
+        merged_path = merge_catalog(po, args.dry_run)
+        entries = parse_po(merged_path)
+        missing = empty_entries(entries)
+
+        if args.dry_run:
+            print(f"  missing entries: {len(missing)}")
+            merged_path.unlink(missing_ok=True)
+            continue
+
+        if args.merge_only:
+            print(f"  merged entries requiring translation: {len(missing)}")
+            continue
+
+        if not missing:
+            print("  no missing translations")
+            continue
+
+        translated, failed = translate_missing(po, entries, helpers)
+        total_translated += translated
+        total_failed += failed
+        write_po(po, entries)
+        print(f"  translated: {translated}, failed: {failed}")
+
+    if args.validate and not args.dry_run:
+        gettext_command([str(ROOT / "scripts" / "i18n-check")])
+
+    if total_failed:
+        print(f"completed with {total_failed} failed translations")
+        return 1
+
+    if not args.dry_run and not args.merge_only:
+        print(f"translated {total_translated} missing entries")
+
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

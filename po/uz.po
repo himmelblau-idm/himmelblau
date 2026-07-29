@@ -1,0 +1,416 @@
+# Uzbek translations for Himmelblau.
+# Copyright (C) 2026 Himmelblau contributors
+# This file is distributed under the same license as Himmelblau.
+#
+msgid ""
+msgstr "Project-Id-Version: himmelblau\n"
+"POT-Creation-Date: 2026-07-22 22:33+0000\n"
+"PO-Revision-Date: 2026-07-23 14:41+0000\n"
+"Last-Translator: Automated via Codex <noreply@himmelblau-idm.org>\n"
+"Language-Team: Uzbek\n"
+"Language: uz\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Plural-Forms: nplurals=2; plural=(n != 1);\n"
+""
+
+msgid "An unexpected error occurred."
+msgstr "Kutilmagan xatolik yuz berdi."
+
+msgid "Approve sign-in in your authenticator app, then wait..."
+msgstr "Autentifikator ilovangizda kirishni tasdiqlang, keyin kuting..."
+
+msgid "Authenticated user {user} does not match requested user"
+msgstr "Autentifikatsiyadan o‘tgan foydalanuvchi {user} so‘ralgan foydalanuvchiga mos kelmaydi"
+
+msgid "Authenticated user {uuid} does not match requested user"
+msgstr "Autentifikatsiyadan o‘tgan foydalanuvchi {uuid} so‘ralgan foydalanuvchiga mos kelmaydi"
+
+msgid "Authentication did not return a refresh token. Please try again."
+msgstr "Autentifikatsiya yangilash tokenini qaytarmadi. Iltimos, qayta urinib ko‘ring."
+
+msgid "Authentication failed (AADSTS{code})"
+msgstr "Autentifikatsiya muvaffaqiyatsiz tugadi (AADSTS{code})"
+
+msgid "Authentication failed in browser flow."
+msgstr "Brauzer orqali autentifikatsiya amalga oshmadi."
+
+msgid "Authentication failed. Please contact your administrator."
+msgstr "Autentifikatsiya muvaffaqiyatsiz yakunlandi. Iltimos, administratoringizga murojaat qiling."
+
+msgid "Authentication failed. Please try again."
+msgstr "Autentifikatsiya amalga oshmadi. Iltimos, qayta urinib ko‘ring."
+
+msgid "Authentication failed. Please try signing in again."
+msgstr "Autentifikatsiya muvaffaqiyatsiz yakunlandi. Iltimos, qayta kiring."
+
+msgid "Authentication failed: Authentication method not supported."
+msgstr "Autentifikatsiya amalga oshmadi: autentifikatsiya usuli qoʻllab-quvvatlanmaydi."
+
+msgid "Authentication failed: Configuration error."
+msgstr "Autentifikatsiya muvaffaqiyatsiz yakunlandi: konfiguratsiya xatosi."
+
+msgid "Authentication failed: Cryptographic error."
+msgstr "Autentifikatsiya muvaffaqiyatsiz tugadi: kriptografik xatolik."
+
+msgid "Authentication failed: Invalid server response."
+msgstr "Autentifikatsiya amalga oshmadi: server javobi yaroqsiz."
+
+msgid "Authentication failed: Missing required data."
+msgstr "Autentifikatsiya muvaffaqiyatsiz yakunlandi: talab qilingan maʼlumotlar yetishmayapti."
+
+msgid "Authentication failed: Security hardware error."
+msgstr "Autentifikatsiya muvaffaqiyatsiz yakunlandi: Xavfsizlik qurilmasida xatolik."
+
+msgid "Authentication failed: Unable to reach authentication server."
+msgstr "Autentifikatsiya muvaffaqiyatsiz yakunlandi: autentifikatsiya serveriga ulanib bo‘lmadi."
+
+msgid "Authentication failed: {error}"
+msgstr "Autentifikatsiya amalga oshmadi: {error}"
+
+msgid "Authentication flow completed but token exchange failed. Please try again."
+msgstr "Autentifikatsiya jarayoni yakunlandi, ammo token almashinuvi muvaffaqiyatsiz tugadi. Iltimos, qayta urinib ko‘ring."
+
+msgid "Authentication in progress."
+msgstr "Autentifikatsiya jarayonda."
+
+msgid "Authentication incomplete. Please try again."
+msgstr "Autentifikatsiya tugallanmagan. Iltimos, qayta urinib ko‘ring."
+
+msgid "Authentication service is temporarily unavailable. Please try again shortly."
+msgstr "Autentifikatsiya xizmati vaqtincha mavjud emas. Iltimos, birozdan keyin qayta urinib ko‘ring."
+
+msgid "Authentication service unavailable. Please try again later."
+msgstr "Autentifikatsiya xizmati mavjud emas. Iltimos, keyinroq qayta urinib ko‘ring."
+
+msgid "Authentication session corrupted. Please try again."
+msgstr "Autentifikatsiya seansi buzilgan. Iltimos, qayta urinib ko‘ring."
+
+msgid "Authentication session data missing. Please try again."
+msgstr "Autentifikatsiya sessiyasi maʼlumotlari topilmadi. Iltimos, qayta urinib ko‘ring."
+
+msgid "Authentication session returned an unexpected state. Please try again."
+msgstr "Autentifikatsiya seansi kutilmagan holatni qaytardi. Iltimos, qayta urinib ko‘ring."
+
+msgid "Authentication timed out. Please try again."
+msgstr "Autentifikatsiya vaqti tugadi. Iltimos, qayta urinib ko‘ring."
+
+msgid "Browser authentication backend unavailable. Please try again."
+msgstr "Brauzer autentifikatsiya bekendi mavjud emas. Iltimos, qayta urinib ko‘ring."
+
+msgid "Changing the password. Please wait..."
+msgstr "Parol o‘zgartirilmoqda. Iltimos, kuting..."
+
+msgid "Chosen password is too short! 8 chars required."
+msgstr "Tanlangan parol juda qisqa! 8 ta belgi talab qilinadi."
+
+msgid "Chosen pin is too short! {length} chars required."
+msgstr "Tanlangan PIN juda qisqa! {length} ta belgi talab qilinadi."
+
+msgid "Cloud Password:"
+msgstr "Bulut paroli:"
+
+msgid "Code:"
+msgstr "Kod:"
+
+msgid "Confirm PIN:"
+msgstr "PIN-kodni tasdiqlang:"
+
+msgid "Confirm password:"
+msgstr "Parolni tasdiqlang:"
+
+msgid "Consent required. Please contact your administrator."
+msgstr "Rozilik talab qilinadi. Iltimos, administratoringiz bilan bog‘laning."
+
+msgid "Create a PIN to use in place of passwords."
+msgstr "Parollar o‘rniga foydalanish uchun PIN yarating."
+
+msgid "Device enrollment failed. Please contact your administrator."
+msgstr "Qurilmani roʻyxatdan oʻtkazib boʻlmadi. Administratoringizga murojaat qiling."
+
+msgid "Device has been removed from the domain."
+msgstr "Qurilma domendan olib tashlandi."
+
+msgid "Enable Bluetooth to sign in with your phone."
+msgstr "Telefoningiz orqali tizimga kirish uchun Bluetooth’ni yoqing."
+
+msgid "Enrolling the Hello PIN. Please wait..."
+msgstr "Hello PIN ro‘yxatdan o‘tkazilmoqda. Iltimos, kuting..."
+
+msgid "Enter the setup key '{secret}' to enroll a TOTP Authenticator app. Use '{issuer}' for the code name and '{account}' as the label/name."
+msgstr "TOTP autentifikator ilovasini roʻyxatdan oʻtkazish uchun “{secret}” sozlash kalitini kiriting. Kod nomi uchun “{issuer}” dan, yorliq/nom sifatida esa “{account}” dan foydalaning."
+
+msgid "Entra Id Fido authentication failed."
+msgstr "Entra ID FIDO autentifikatsiyasi muvaffaqiyatsiz tugadi."
+
+msgid "Entra Id Password:"
+msgstr "Entra ID paroli:"
+
+msgid "FIDO authentication not available. Please try a different authentication method."
+msgstr "FIDO autentifikatsiyasi mavjud emas. Iltimos, boshqa autentifikatsiya usulini sinab ko‘ring."
+
+msgid "Failed to authenticate with Hello PIN."
+msgstr "Hello PIN orqali autentifikatsiyadan o‘tib bo‘lmadi."
+
+msgid "Failed to authenticate with Hello PIN. One more failed attempt will require multi-factor authentication and resetting your Linux Hello PIN."
+msgstr "Hello PIN orqali autentifikatsiyadan o‘tib bo‘lmadi. Yana bitta muvaffaqiyatsiz urinish ko‘p faktorli autentifikatsiyani va Linux Hello PIN kodingizni qayta sozlashni talab qiladi."
+
+msgid "Failed to authenticate with Hello TOTP code."
+msgstr "Hello TOTP kodi bilan autentifikatsiyadan o‘tib bo‘lmadi."
+
+msgid "Failed to build regex: {error}"
+msgstr "Regex yaratib bo'lmadi: {error}"
+
+msgid "Failed to change user password: {msg}"
+msgstr "Foydalanuvchi parolini o‘zgartirib bo‘lmadi: {msg}"
+
+msgid "Failed to delete CSR key"
+msgstr "CSR kalitini o‘chirib bo‘lmadi"
+
+msgid "Failed to delete intune key"
+msgstr "Intune kalitini o‘chirib bo‘lmadi"
+
+msgid "Failed to generate QR code"
+msgstr "QR kodni yaratib bo‘lmadi"
+
+msgid "Failed to join domain. Please contact your administrator."
+msgstr "Domenga qo‘shilib bo‘lmadi. Iltimos, administratoringizga murojaat qiling."
+
+msgid "Failed to provision hello key: {error}\n"
+"{message}"
+msgstr "Hello kalitini tayyorlab bo‘lmadi: {error}\n"
+"{message}"
+
+msgid "Failed to save device configuration. Please contact your administrator."
+msgstr "Qurilma konfiguratsiyasini saqlab bo‘lmadi. Iltimos, administratoringizga murojaat qiling."
+
+msgid "Failed to store device credentials. Please contact your administrator."
+msgstr "Qurilma hisob maʼlumotlarini saqlab boʻlmadi. Iltimos, administratoringizga murojaat qiling."
+
+msgid "Fido PIN:"
+msgstr "Fido PIN-kodi:"
+
+msgid "Himmelblau authentication is starting, please wait..."
+msgstr "Himmelblau autentifikatsiyasi boshlanmoqda, iltimos kuting..."
+
+msgid "Himmelblau authentication service did not become available in time."
+msgstr "Himmelblau autentifikatsiya xizmati o‘z vaqtida mavjud bo‘lmadi."
+
+msgid "Himmelblau authentication service is unavailable."
+msgstr "Himmelblau autentifikatsiya xizmati mavjud emas."
+
+msgid "Inputs did not match. Try again."
+msgstr "Kiritilgan ma'lumotlar mos kelmadi. Qayta urinib ko'ring."
+
+msgid "Invalid credentials"
+msgstr "Hisob ma’lumotlari noto‘g‘ri"
+
+msgid "Multi-factor authentication required."
+msgstr "Ko‘p faktorli autentifikatsiya talab qilinadi."
+
+msgid "Multi-factor authentication required. Please try signing in again."
+msgstr "Ko‘p faktorli autentifikatsiya talab qilinadi. Iltimos, tizimga qayta kirishga urinib ko‘ring."
+
+msgid "Network outage detected."
+msgstr "Tarmoq uzilishi aniqlandi."
+
+msgid "New PIN:"
+msgstr "Yangi PIN:"
+
+msgid "New password:"
+msgstr "Yangi parol:"
+
+msgid "No Entra Id Hello PIN was supplied."
+msgstr "Entra Id Hello PIN kiritilmadi."
+
+msgid "No Entra Id Hello confirmation PIN was supplied."
+msgstr "Entra ID Hello tasdiqlash PIN-kodi kiritilmadi."
+
+msgid "No Entra Id confirmation password was supplied."
+msgstr "Entra Id tasdiqlash paroli taqdim etilmadi."
+
+msgid "No Entra Id password was supplied."
+msgstr "Entra ID paroli kiritilmadi."
+
+msgid "No Hello TOTP code was supplied."
+msgstr "Hello TOTP kodi kiritilmadi."
+
+msgid "No input was supplied."
+msgstr "Hech qanday maʼlumot kiritilmadi."
+
+msgid "Offline auth has expired. Please connect to the network to continue."
+msgstr "Oflayn autentifikatsiya muddati tugadi. Davom etish uchun tarmoqqa ulaning."
+
+msgid "Open your Authenticator app, and enter the number '{entropy}' to sign in."
+msgstr "Authenticator ilovasini oching va kirish uchun \"{entropy}\" raqamini kiriting."
+
+msgid "Open your authenticator app and scan this QR code to enroll. Then enter the generated code.\n"
+"{qr}"
+msgstr "Autentifikator ilovasini oching va ro‘yxatdan o‘tish uchun ushbu QR-kodni skanerlang. So‘ng yaratilgan kodni kiriting.\n"
+"{qr}"
+
+msgid "PIN must not use repeating or predictable sequences. Avoid patterns like '111111', '123456', or '135791'."
+msgstr "PIN takrorlanuvchi yoki oldindan taxmin qilinadigan ketma-ketliklardan foydalanmasligi kerak. “111111”, “123456” yoki “135791” kabi andozalardan saqlaning."
+
+msgid "PIN setup failed. Please try signing in again."
+msgstr "PIN sozlash amalga oshmadi. Iltimos, qayta kiring."
+
+msgid "PIN:"
+msgstr "PIN:"
+
+msgid "Password change required. Please contact your administrator."
+msgstr "Parolni o‘zgartirish talab qilinadi. Iltimos, administratoringizga murojaat qiling."
+
+msgid "Password entry required."
+msgstr "Parolni kiritish talab qilinadi."
+
+msgid "Password reset registration required. Complete setup at https://aka.ms/ssprsetup from another device, then try again."
+msgstr "Parolni tiklash uchun ro‘yxatdan o‘tish talab qilinadi. Boshqa qurilmadan https://aka.ms/ssprsetup manzilida sozlashni yakunlang, so‘ng qayta urinib ko‘ring."
+
+msgid "Please enter your Hello TOTP code from your Authenticator:"
+msgstr "Authenticator ilovangizdan Hello TOTP kodingizni kiriting:"
+
+msgid "Please insert your security key."
+msgstr "Iltimos, xavfsizlik kalitingizni kiriting."
+
+msgid "Please select a device by touching one of them."
+msgstr "Iltimos, qurilmalardan biriga tegish orqali qurilmani tanlang."
+
+msgid "Please touch your security key."
+msgstr "Iltimos, xavfsizlik kalitingizga teging."
+
+msgid "Press enter to continue"
+msgstr "Davom etish uchun Enter tugmasini bosing"
+
+msgid "QR/Bluetooth authentication failed."
+msgstr "QR/Bluetooth orqali autentifikatsiya amalga oshmadi."
+
+msgid "Scan the QR code to continue sign-in, or open this link on another device:\n"
+"{complete}\n"
+"If you cannot scan, visit:\n"
+"{verification_uri}\n"
+"And enter the code:\n"
+"{user_code}"
+msgstr "Kirishni davom ettirish uchun QR kodni skanerlang yoki ushbu havolani boshqa qurilmada oching:\n"
+"{complete}\n"
+"Agar skanerlay olmasangiz, tashrif buyuring:\n"
+"{verification_uri}\n"
+"Va kodni kiriting:\n"
+"{user_code}"
+
+msgid "Scan with your authenticator app"
+msgstr "Autentifikator ilovangiz bilan skanerlang"
+
+msgid "Security key and QR/Bluetooth authentication failed."
+msgstr "Xavfsizlik kaliti va QR/Bluetooth orqali autentifikatsiya muvaffaqiyatsiz yakunlandi."
+
+msgid "Security key authentication failed."
+msgstr "Xavfsizlik kaliti orqali autentifikatsiya amalga oshmadi."
+
+msgid "Session data corrupted. Please sign in again."
+msgstr "Sessiya maʼlumotlari buzilgan. Iltimos, qayta tizimga kiring."
+
+msgid "Set up a PIN\n"
+"A Hello PIN is a fast, secure way to sign in to your device, apps, and services."
+msgstr "PIN kodni sozlash\n"
+"Hello PIN — qurilmangiz, ilovalaringiz va xizmatlaringizga kirishning tez va xavfsiz usuli."
+
+msgid "TOTP Code:"
+msgstr "TOTP kodi:"
+
+msgid "The minimum PIN length is {length} characters."
+msgstr "Minimal PIN uzunligi {length} ta belgidan iborat."
+
+msgid "This command changes your local Hello PIN, NOT your Entra Id password."
+msgstr "Bu buyruq Entra ID parolingizni EMAS, mahalliy Hello PIN kodingizni o‘zgartiradi."
+
+msgid "Too many failed attempts in one row. Your device has been temporarily blocked. Please unplug it and plug in again."
+msgstr "Ketma-ket juda ko‘p muvaffaqiyatsiz urinishlar amalga oshirildi. Qurilmangiz vaqtincha bloklandi. Iltimos, uni uzib, qayta ulang."
+
+msgid "Too many failed attempts. Your device has been blocked. Reset it."
+msgstr "Juda ko‘p muvaffaqiyatsiz urinishlar. Qurilmangiz bloklandi. Uni qayta sozlang."
+
+msgid "Too many failed user verification attempts."
+msgstr "Foydalanuvchini tasdiqlashga urinishlar juda ko‘p marta muvaffaqiyatsiz yakunlandi."
+
+msgid "Too many incorrect PIN attempts. You will need to enroll a new Linux Hello PIN."
+msgstr "PIN-kod juda ko‘p marta noto‘g‘ri kiritildi. Yangi Linux Hello PIN-kodini ro‘yxatdan o‘tkazishingiz kerak."
+
+msgid "Try again."
+msgstr "Qayta urinib ko‘ring."
+
+msgid "Unexpected authentication step. Please try signing in again."
+msgstr "Kutilmagan autentifikatsiya bosqichi. Iltimos, tizimga qayta kirishga urinib ko‘ring."
+
+msgid "Unexpected error occurred."
+msgstr "Kutilmagan xatolik yuz berdi."
+
+msgid "Unexpected error: {error}"
+msgstr "Kutilmagan xatolik: {error}"
+
+msgid "Unexpected select device notice"
+msgstr "Kutilmagan qurilmani tanlash xabarnomasi"
+
+msgid "Update your password\n"
+"You need to update your password because this is\n"
+"the first time you are signing in, or because your\n"
+"password has expired."
+msgstr "Parolingizni yangilang\n"
+"Parolingizni yangilashingiz kerak, chunki bu\n"
+"tizimga birinchi marta kirayotganingiz yoki\n"
+"parolingiz muddati tugagan."
+
+msgid "Use the Linux Hello PIN for this device."
+msgstr "Ushbu qurilma uchun Linux Hello PIN kodidan foydalaning."
+
+msgid "Use the password for your Office 365 or Microsoft online login."
+msgstr "Office 365 yoki Microsoft onlayn hisobingiz parolidan foydalaning."
+
+msgid "Using a browser on another device, visit:\n"
+"{verification_uri}\n"
+"And enter the code:\n"
+"{user_code}"
+msgstr "Boshqa qurilmadagi brauzerdan foydalanib, quyidagi manzilga o‘ting:\n"
+"{verification_uri}\n"
+"Va kodni kiriting:\n"
+"{user_code}"
+
+msgid "Value:"
+msgstr "Qiymat:"
+
+msgid "Waiting for browser authentication to complete..."
+msgstr "Brauzer autentifikatsiyasi yakunlanishi kutilmoqda..."
+
+msgid "We texted your phone {phone}. Please enter the code to sign in:"
+msgstr "{phone} telefon raqamingizga SMS yubordik. Tizimga kirish uchun kodni kiriting:"
+
+msgid "We're calling your office phone {phone}. Please answer it to continue."
+msgstr "Ofis telefoningizga qo'ng'iroq qilyapmiz: {phone}. Davom etish uchun javob bering."
+
+msgid "We're calling your phone {phone}. Please answer it to continue."
+msgstr "{phone} telefoningizga qo‘ng‘iroq qilmoqdamiz. Davom etish uchun javob bering."
+
+msgid "Wrong PIN! {message}"
+msgstr "PIN noto'g'ri! {message}"
+
+msgid "Wrong user verification! {message}"
+msgstr "Foydalanuvchi tasdiqlanmadi. {message}"
+
+msgid "You have {attempts} attempt left."
+msgid_plural "You have {attempts} attempts left."
+msgstr[0] "Sizda {attempts} ta urinish qoldi."
+msgstr[1] "Sizda {attempts} ta urinish qoldi."
+
+msgid "Your session has expired. Please sign in again."
+msgstr "Sessiyangiz muddati tugadi. Iltimos, qaytadan tizimga kiring."
+
+msgid "{code}: {message}\n"
+"If you are now prompted for a password from pam_unix, please disregard the prompt, go back and try again."
+msgstr "{code}: {message}\n"
+"Agar endi pam_unix tomonidan parol kiritish so‘ralsa, iltimos, bu so‘rovni e’tiborsiz qoldiring, orqaga qayting va qayta urinib ko‘ring."
+
+msgid "{message}\n"
+"No push? Check your mobile device's internet connection."
+msgstr "{message}\n"
+"Bildirishnoma kelmadimi? Mobil qurilmangizning internet aloqasini tekshiring."

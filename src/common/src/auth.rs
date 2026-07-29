@@ -18,6 +18,7 @@
 use crate::client_sync::DaemonClientBlocking;
 use crate::config::HimmelblauConfig;
 use crate::hello_pin_complexity::{is_simple_pin, meets_intune_pin_policy};
+use crate::i18n::{self, tr, tr_fmt, trn_fmt};
 use crate::unix_proto::{ClientRequest, ClientResponse, PamAuthRequest, PamAuthResponse};
 use regex::{Match, Regex};
 use std::io::{self, ErrorKind, Write};
@@ -75,7 +76,7 @@ pub trait MessagePrinter: Send + Sync {
 }
 
 pub const DAEMON_START_WAIT_MESSAGE: &str = "Himmelblau authentication is starting, please wait...";
-pub const DAEMON_START_WAIT_TIMEOUT: Duration = Duration::from_secs(20);
+pub const DAEMON_START_WAIT_TIMEOUT: Duration = Duration::from_secs(1);
 pub const DAEMON_START_WAIT_INTERVAL: Duration = Duration::from_millis(250);
 
 #[derive(Default)]
@@ -117,14 +118,14 @@ async fn fido_status_check(
                 break;
             }
             Ok(StatusUpdate::SelectDeviceNotice) => {
-                msg_printer.print_text("Please select a device by touching one of them.");
+                msg_printer.print_text(&tr("Please select a device by touching one of them."));
             }
             Ok(StatusUpdate::PresenceRequired) => {
                 // "[FIDO_TOUCH] " prefix must match FIDO_TOUCH_PREFIX in qr-greeter extension.js
                 msg_printer.print_text(&format!("[FIDO_TOUCH] {}", presence_prompt));
             }
             Ok(StatusUpdate::PinUvError(StatusPinUv::PinRequired(sender))) => {
-                match msg_printer.prompt_echo_off("Fido PIN: ") {
+                match msg_printer.prompt_echo_off(&(tr("Fido PIN:") + " ")) {
                     Some(pin) => {
                         sender.send(Pin::new(&pin)).expect("Failed to send PIN");
                         continue;
@@ -135,14 +136,17 @@ async fn fido_status_check(
                 }
             }
             Ok(StatusUpdate::PinUvError(StatusPinUv::InvalidPin(sender, attempts))) => {
-                let msg = format!(
-                    "Wrong PIN! {}",
-                    attempts.map_or("Try again.".to_string(), |a| format!(
-                        "You have {a} attempts left."
-                    ))
-                );
+                let detail = attempts.map_or(tr("Try again."), |a| {
+                    trn_fmt(
+                        "You have {attempts} attempt left.",
+                        "You have {attempts} attempts left.",
+                        u32::from(a),
+                        &[("attempts", a.to_string())],
+                    )
+                });
+                let msg = tr_fmt("Wrong PIN! {message}", &[("message", detail)]);
                 msg_printer.print_text(&msg);
-                match msg_printer.prompt_echo_off("Fido PIN: ") {
+                match msg_printer.prompt_echo_off(&(tr("Fido PIN:") + " ")) {
                     Some(pin) => {
                         sender.send(Pin::new(&pin)).expect("Failed to send PIN");
                         continue;
@@ -153,36 +157,42 @@ async fn fido_status_check(
                 }
             }
             Ok(StatusUpdate::PinUvError(StatusPinUv::PinAuthBlocked)) => {
-                let msg = "Too many failed attempts in one row. Your device has been temporarily blocked. Please unplug it and plug in again.";
-                msg_printer.print_error(msg);
+                msg_printer.print_error(&tr("Too many failed attempts in one row. Your device has been temporarily blocked. Please unplug it and plug in again."));
                 break;
             }
             Ok(StatusUpdate::PinUvError(StatusPinUv::PinBlocked)) => {
-                let msg = "Too many failed attempts. Your device has been blocked. Reset it.";
-                msg_printer.print_error(msg);
+                msg_printer.print_error(&tr(
+                    "Too many failed attempts. Your device has been blocked. Reset it.",
+                ));
                 break;
             }
             Ok(StatusUpdate::PinUvError(StatusPinUv::InvalidUv(attempts))) => {
-                let msg = format!(
-                    "Wrong UV! {}",
-                    attempts.map_or("Try again.".to_string(), |a| format!(
-                        "You have {a} attempts left."
-                    ))
-                );
+                let detail = attempts.map_or(tr("Try again."), |a| {
+                    trn_fmt(
+                        "You have {attempts} attempt left.",
+                        "You have {attempts} attempts left.",
+                        u32::from(a),
+                        &[("attempts", a.to_string())],
+                    )
+                });
+                let msg = tr_fmt("Wrong user verification! {message}", &[("message", detail)]);
                 msg_printer.print_error(&msg);
                 continue;
             }
             Ok(StatusUpdate::PinUvError(StatusPinUv::UvBlocked)) => {
-                msg_printer.print_error("Too many failed UV-attempts.");
+                msg_printer.print_error(&tr("Too many failed user verification attempts."));
                 break;
             }
             Ok(StatusUpdate::PinUvError(e)) => {
-                let msg = format!("Unexpected error: {:?}", e);
+                let msg = tr_fmt(
+                    "Unexpected error: {error}",
+                    &[("error", format!("{:?}", e))],
+                );
                 msg_printer.print_error(&msg);
                 break;
             }
             Ok(StatusUpdate::SelectResultNotice(_, _)) => {
-                msg_printer.print_error("Unexpected select device notice");
+                msg_printer.print_error(&tr("Unexpected select device notice"));
                 break;
             }
             Err(RecvError) => {
@@ -603,10 +613,12 @@ pub fn fido_auth_with_qr_bluetooth(
 #[macro_export]
 macro_rules! pam_fail {
     ($msg_printer:expr, $msg:expr, $ret:expr) => {{
-        $msg_printer.print_text(&format!(
-            "{:?}: {} \nIf you are now prompted for a password from pam_unix, please disregard the prompt, go back and try again.",
-            $ret,
-            $msg
+        $msg_printer.print_text(&$crate::i18n::tr_fmt(
+            "{code}: {message}\nIf you are now prompted for a password from pam_unix, please disregard the prompt, go back and try again.",
+            &[
+                ("code", format!("{:?}", $ret)),
+                ("message", $crate::i18n::translate_external_message(&$msg)),
+            ],
         ));
 
         thread::sleep(Duration::from_secs(2));
@@ -621,12 +633,12 @@ fn hello_totp_urldecode_match(m: Option<Match>) -> Result<String, String> {
             Ok(c) => Ok(c.to_string()),
             Err(ref e) => {
                 debug!("Failed to decode parameter {:?}: {:?}", c, e);
-                Err("Failed to generate QR code".to_string())
+                Err(tr("Failed to generate QR code"))
             }
         },
         None => {
             debug!("Failed to capture parameter from TOTP url");
-            Err("Failed to generate QR code".to_string())
+            Err(tr("Failed to generate QR code"))
         }
     }
 }
@@ -634,7 +646,7 @@ fn hello_totp_urldecode_match(m: Option<Match>) -> Result<String, String> {
 fn hello_totp_enroll_fallback_msg(url: &str) -> Result<String, String> {
     let totp_regex = Regex::new(r"otpauth://([ht]otp)/([^:?]+):?([^\?]+)\?secret=([0-9A-Za-z]+)(?:.*(?:<?counter=)([0-9]+))?").map_err(|e| {
         debug!(?e, "Failed to build regex");
-        format!("Failed to build regex: {}", e)
+        tr_fmt("Failed to build regex: {error}", &[("error", e.to_string())])
     })?;
 
     match totp_regex.captures(url) {
@@ -643,19 +655,24 @@ fn hello_totp_enroll_fallback_msg(url: &str) -> Result<String, String> {
                 Some(c) => Ok(c.as_str().to_string()),
                 None => {
                     debug!("Failed to capture secret from TOTP url {}", url);
-                    Err("Failed to generate QR code".to_string())
+                    Err(tr("Failed to generate QR code"))
                 }
             }?;
             let issuer = hello_totp_urldecode_match(cap.get(2))?;
             let acct = hello_totp_urldecode_match(cap.get(3))?;
-            let fallback_msg = format!(
-                "Enter the setup key '{}' to enroll a TOTP Authenticator app. Use '{}' for the code name and '{}' as the label/name.",
-                secret, issuer, acct);
+            let fallback_msg = tr_fmt(
+                "Enter the setup key '{secret}' to enroll a TOTP Authenticator app. Use '{issuer}' for the code name and '{account}' as the label/name.",
+                &[
+                    ("secret", secret),
+                    ("issuer", issuer),
+                    ("account", acct),
+                ],
+            );
             Ok(fallback_msg)
         }
         None => {
             debug!("Failed to parse TOTP url {}", url);
-            Err("Failed to generate QR code".to_string())
+            Err(tr("Failed to generate QR code"))
         }
     }
 }
@@ -664,37 +681,9 @@ fn handle_pam_auth_response_mfapoll(
     state: &mut AuthenticateState,
     msg: &str,
     polling_interval: u32,
+    show_push_hint: bool,
 ) -> PamWhatNext {
-    // Suggest users connect mobile devices to the internet, except when
-    // polling a DAG.
-    let msg = if !msg.contains("https://microsoft.com/devicelogin") && !msg.trim().is_empty() {
-        format!(
-            "{}\nNo push? Check your mobile device's internet connection.",
-            msg
-        )
-    } else if state.service != "gdm-password" {
-        lazy_static! {
-            // Avoid compiling a new Regex every time with a lazy_static ref
-            static ref RE: Option<Regex> =
-                Regex::new(r#"(?i)\bhttps?://[^\s<>"']+[^\s<>"'\]\[)\(\}\{.,;:!?]"#).ok();
-        }
-        // In case of any failure matching for URLs or generating the QR the
-        // plain message will be returned
-        if let Some(qr) = RE
-            .as_ref()
-            .and_then(|re| {
-                re.captures(msg)
-                    .and_then(|cap| cap.get(0).map(|x| x.as_str()))
-            })
-            .and_then(|url| generate_unicode_qr(url).ok())
-        {
-            format!("{}\n{}", msg, qr)
-        } else {
-            msg.to_string()
-        }
-    } else {
-        msg.to_string()
-    };
+    let msg = format_mfa_poll_message(msg, &state.service, show_push_hint);
     if !msg.trim().is_empty() {
         state.msg_printer.print_text(&msg);
     }
@@ -705,7 +694,9 @@ fn handle_pam_auth_response_mfapoll(
     // honoured during PAM authentication. Some other PAM consumers, such as
     // Cockpit, also need an input prompt before they display the message.
     if should_prompt_mfa_poll(&state.service, &state.opts, &state.cfg, &msg) {
-        state.msg_printer.prompt_echo_off("Press enter to continue");
+        state
+            .msg_printer
+            .prompt_echo_off(&tr("Press enter to continue"));
     }
 
     // Do not allow concurrent MFA polling
@@ -713,7 +704,7 @@ fn handle_pam_auth_response_mfapoll(
         error!("MFA poll already in progress");
         pam_fail!(
             state.msg_printer,
-            "Unexpected error occurred.",
+            tr("Unexpected error occurred."),
             PamResultCode::PAM_SYSTEM_ERR
         );
     }
@@ -731,6 +722,37 @@ fn handle_pam_auth_response_mfapoll(
         poll_attempt: state.poll_attempt as u32,
     });
     PamWhatNext::Next(next)
+}
+
+fn format_mfa_poll_message(msg: &str, service: &str, show_push_hint: bool) -> String {
+    if show_push_hint && !msg.trim().is_empty() {
+        tr_fmt(
+            "{message}\nNo push? Check your mobile device's internet connection.",
+            &[("message", i18n::translate_external_message(msg))],
+        )
+    } else if service != "gdm-password" {
+        lazy_static! {
+            // Avoid compiling a new Regex every time with a lazy_static ref
+            static ref RE: Option<Regex> =
+                Regex::new(r#"(?i)\bhttps?://[^\s<>"']+[^\s<>"'\]\[)\(\}\{.,;:!?]"#).ok();
+        }
+        // In case of any failure matching for URLs or generating the QR the
+        // plain message will be returned
+        if let Some(qr) = RE
+            .as_ref()
+            .and_then(|re| {
+                re.captures(msg)
+                    .and_then(|cap| cap.get(0).map(|x| x.as_str()))
+            })
+            .and_then(|url| generate_unicode_qr(url).ok())
+        {
+            format!("{}\n{}", i18n::translate_external_message(msg), qr)
+        } else {
+            i18n::translate_external_message(msg)
+        }
+    } else {
+        i18n::translate_external_message(msg)
+    }
 }
 
 fn handle_pam_auth_response_mfapollwait(state: &mut AuthenticateState) -> PamWhatNext {
@@ -814,22 +836,24 @@ fn handle_pam_auth_response_password(
         }
 
         let prompt = match prompt.filter(|prompt| !prompt.trim().is_empty()) {
-            Some(prompt) => prompt,
-            None if state.cfg.get_oidc_issuer_url().is_some() => "Cloud Password:",
+            Some(prompt) => i18n::translate_external_message(prompt),
+            None if state.cfg.get_oidc_issuer_url().is_some() => tr("Cloud Password:"),
             None => {
                 state
                     .msg_printer
-                    .print_text(&state.cfg.get_entra_id_password_prompt());
-                "Entra Id Password:"
+                    .print_text(&i18n::translate_external_message(
+                        &state.cfg.get_entra_id_password_prompt(),
+                    ));
+                tr("Entra Id Password:")
             }
         };
-        match state.msg_printer.prompt_echo_off(prompt) {
+        match state.msg_printer.prompt_echo_off(&prompt) {
             Some(cred) => cred,
             None => {
                 debug!("no password");
                 pam_fail!(
                     state.msg_printer,
-                    "No Entra Id password was supplied.",
+                    tr("No Entra Id password was supplied."),
                     PamResultCode::PAM_CRED_INSUFFICIENT
                 );
             }
@@ -846,18 +870,20 @@ fn handle_pam_auth_response_input(
     msg: &str,
     echo_on: bool,
 ) -> PamWhatNext {
-    state.msg_printer.print_text(msg);
+    state
+        .msg_printer
+        .print_text(&i18n::translate_external_message(msg));
     let cred = match if echo_on {
-        state.msg_printer.prompt_echo_on("Value: ")
+        state.msg_printer.prompt_echo_on(&(tr("Value:") + " "))
     } else {
-        state.msg_printer.prompt_echo_off("Code: ")
+        state.msg_printer.prompt_echo_off(&(tr("Code:") + " "))
     } {
         Some(cred) => cred,
         None => {
             debug!("no input");
             pam_fail!(
                 state.msg_printer,
-                "No input was supplied.",
+                tr("No input was supplied."),
                 PamResultCode::PAM_CRED_INSUFFICIENT
             );
         }
@@ -904,7 +930,10 @@ fn handle_pam_auth_response_hellototp(state: &AuthenticateState, msg: &str) -> P
     if msg.starts_with("otpauth://") && state.service != "gdm-password" {
         match generate_unicode_qr(msg) {
             Ok(qr) => {
-                let msg = format!("Open your authenticator app and scan this QR code to enroll. Then enter the generated code.\n{}", &qr);
+                let msg = tr_fmt(
+                    "Open your authenticator app and scan this QR code to enroll. Then enter the generated code.\n{qr}",
+                    &[("qr", qr)],
+                );
                 state.msg_printer.print_text(&msg);
             }
             Err(e) => {
@@ -919,16 +948,18 @@ fn handle_pam_auth_response_hellototp(state: &AuthenticateState, msg: &str) -> P
             }
         };
     } else {
-        state.msg_printer.print_text(msg);
+        state
+            .msg_printer
+            .print_text(&i18n::translate_external_message(msg));
     };
 
-    let cred = match state.msg_printer.prompt_echo_off("TOTP Code: ") {
+    let cred = match state.msg_printer.prompt_echo_off(&(tr("TOTP Code:") + " ")) {
         Some(cred) => cred,
         None => {
             debug!("no hello totp code");
             pam_fail!(
                 state.msg_printer,
-                "No Hello TOTP code was supplied.",
+                tr("No Hello TOTP code was supplied."),
                 PamResultCode::PAM_CRED_INSUFFICIENT
             );
         }
@@ -941,30 +972,35 @@ fn handle_pam_auth_response_hellototp(state: &AuthenticateState, msg: &str) -> P
 
 fn handle_pam_auth_response_setup_pin(state: &AuthenticateState, msg: &str) -> PamWhatNext {
     let msg = format!(
-        "{}\nThe minimum PIN length is {} characters.",
-        msg,
-        state.cfg.get_hello_pin_min_length()
+        "{}\n{}",
+        i18n::translate_external_message(msg),
+        tr_fmt(
+            "The minimum PIN length is {length} characters.",
+            &[("length", state.cfg.get_hello_pin_min_length().to_string())]
+        )
     );
 
     let mut pin;
     let mut confirm;
     loop {
         state.msg_printer.print_text(&msg);
-        pin = match state.msg_printer.prompt_echo_off("New PIN: ") {
+        pin = match state.msg_printer.prompt_echo_off(&(tr("New PIN:") + " ")) {
             Some(cred) => {
                 if cred.len() < state.cfg.get_hello_pin_min_length() {
-                    state.msg_printer.print_text(&format!(
-                        "Chosen pin is too short! {} chars required.",
-                        state.cfg.get_hello_pin_min_length()
+                    state.msg_printer.print_text(&tr_fmt(
+                        "Chosen pin is too short! {length} chars required.",
+                        &[("length", state.cfg.get_hello_pin_min_length().to_string())],
                     ));
                     thread::sleep(Duration::from_secs(2));
                     continue;
                 } else if is_simple_pin(&cred) {
-                    state.msg_printer.print_text("PIN must not use repeating or predictable sequences. Avoid patterns like '111111', '123456', or '135791'.");
+                    state.msg_printer.print_text(&tr("PIN must not use repeating or predictable sequences. Avoid patterns like '111111', '123456', or '135791'."));
                     thread::sleep(Duration::from_secs(2));
                     continue;
                 } else if let Err(msg) = meets_intune_pin_policy(&cred) {
-                    state.msg_printer.print_text(&msg);
+                    state
+                        .msg_printer
+                        .print_text(&i18n::translate_external_message(&msg));
                     thread::sleep(Duration::from_secs(2));
                     continue;
                 }
@@ -974,7 +1010,7 @@ fn handle_pam_auth_response_setup_pin(state: &AuthenticateState, msg: &str) -> P
                 debug!("no pin");
                 pam_fail!(
                     state.msg_printer,
-                    "No Entra Id Hello PIN was supplied.",
+                    tr("No Entra Id Hello PIN was supplied."),
                     PamResultCode::PAM_CRED_INSUFFICIENT
                 );
             }
@@ -982,13 +1018,16 @@ fn handle_pam_auth_response_setup_pin(state: &AuthenticateState, msg: &str) -> P
 
         state.msg_printer.print_text(&msg);
 
-        confirm = match state.msg_printer.prompt_echo_off("Confirm PIN: ") {
+        confirm = match state
+            .msg_printer
+            .prompt_echo_off(&(tr("Confirm PIN:") + " "))
+        {
             Some(cred) => cred,
             None => {
                 debug!("no confirmation pin");
                 pam_fail!(
                     state.msg_printer,
-                    "No Entra Id Hello confirmation PIN was supplied.",
+                    tr("No Entra Id Hello confirmation PIN was supplied."),
                     PamResultCode::PAM_CRED_INSUFFICIENT
                 );
             }
@@ -999,14 +1038,14 @@ fn handle_pam_auth_response_setup_pin(state: &AuthenticateState, msg: &str) -> P
         } else {
             state
                 .msg_printer
-                .print_text("Inputs did not match. Try again.");
+                .print_text(&tr("Inputs did not match. Try again."));
             thread::sleep(Duration::from_secs(2));
         }
     }
 
     state
         .msg_printer
-        .print_text("Enrolling the Hello PIN. Please wait...");
+        .print_text(&tr("Enrolling the Hello PIN. Please wait..."));
 
     // Now setup the request for the next loop.
     let req = ClientRequest::PamAuthenticateStep(PamAuthRequest::SetupPin { pin });
@@ -1024,14 +1063,16 @@ fn handle_pam_auth_response_pin(state: &mut AuthenticateState) -> PamWhatNext {
     } else {
         state
             .msg_printer
-            .print_text(&state.cfg.get_hello_pin_prompt());
-        match state.msg_printer.prompt_echo_off("PIN: ") {
+            .print_text(&i18n::translate_external_message(
+                &state.cfg.get_hello_pin_prompt(),
+            ));
+        match state.msg_printer.prompt_echo_off(&(tr("PIN:") + " ")) {
             Some(cred) => cred,
             None => {
                 debug!("no pin");
                 pam_fail!(
                     state.msg_printer,
-                    "No Entra Id Hello PIN was supplied.",
+                    tr("No Entra Id Hello PIN was supplied."),
                     PamResultCode::PAM_CRED_INSUFFICIENT
                 );
             }
@@ -1087,7 +1128,7 @@ fn handle_pam_auth_response_fido(
         if has_cross_device && bt_off && is_graphical {
             state
                 .msg_printer
-                .print_text("Enable Bluetooth to sign in with your phone.");
+                .print_text(&tr("Enable Bluetooth to sign in with your phone."));
             for _ in 0..30 {
                 std::thread::sleep(std::time::Duration::from_secs(1));
                 if matches!(check_bluetooth(), BluetoothState::PoweredOn) {
@@ -1118,7 +1159,7 @@ fn handle_pam_auth_response_fido(
             Err(e) => {
                 pam_fail!(
                     state.msg_printer,
-                    "Security key and QR/Bluetooth authentication failed.",
+                    tr("Security key and QR/Bluetooth authentication failed."),
                     e
                 );
             }
@@ -1133,7 +1174,11 @@ fn handle_pam_auth_response_fido(
         ) {
             Ok(assertion) => assertion,
             Err(e) => {
-                pam_fail!(state.msg_printer, "QR/Bluetooth authentication failed.", e);
+                pam_fail!(
+                    state.msg_printer,
+                    tr("QR/Bluetooth authentication failed."),
+                    e
+                );
             }
         }
     } else {
@@ -1148,7 +1193,11 @@ fn handle_pam_auth_response_fido(
         ) {
             Ok(assertion) => assertion,
             Err(e) => {
-                pam_fail!(state.msg_printer, "Security key authentication failed.", e);
+                pam_fail!(
+                    state.msg_printer,
+                    tr("Security key authentication failed."),
+                    e
+                );
             }
         }
     };
@@ -1162,14 +1211,19 @@ fn handle_pam_auth_response_change_password(state: &AuthenticateState, msg: &str
     let mut password;
     let mut confirm;
     loop {
-        state.msg_printer.print_text(msg);
-        password = match state.msg_printer.prompt_echo_off("New password: ") {
+        state
+            .msg_printer
+            .print_text(&i18n::translate_external_message(msg));
+        password = match state
+            .msg_printer
+            .prompt_echo_off(&(tr("New password:") + " "))
+        {
             Some(cred) => {
                 // Entra Id requires a minimum password length of 8 characters
                 if cred.len() < 8 {
                     state
                         .msg_printer
-                        .print_text("Chosen password is too short! 8 chars required.");
+                        .print_text(&tr("Chosen password is too short! 8 chars required."));
                     continue;
                 }
                 cred
@@ -1178,21 +1232,26 @@ fn handle_pam_auth_response_change_password(state: &AuthenticateState, msg: &str
                 debug!("no password");
                 pam_fail!(
                     state.msg_printer,
-                    "No Entra Id password was supplied.",
+                    tr("No Entra Id password was supplied."),
                     PamResultCode::PAM_CRED_INSUFFICIENT
                 );
             }
         };
 
-        state.msg_printer.print_text(msg);
+        state
+            .msg_printer
+            .print_text(&i18n::translate_external_message(msg));
 
-        confirm = match state.msg_printer.prompt_echo_off("Confirm password: ") {
+        confirm = match state
+            .msg_printer
+            .prompt_echo_off(&(tr("Confirm password:") + " "))
+        {
             Some(cred) => cred,
             None => {
                 debug!("no confirmation password");
                 pam_fail!(
                     state.msg_printer,
-                    "No Entra Id confirmation password was supplied.",
+                    tr("No Entra Id confirmation password was supplied."),
                     PamResultCode::PAM_CRED_INSUFFICIENT
                 );
             }
@@ -1203,14 +1262,14 @@ fn handle_pam_auth_response_change_password(state: &AuthenticateState, msg: &str
         } else {
             state
                 .msg_printer
-                .print_text("Inputs did not match. Try again.");
+                .print_text(&tr("Inputs did not match. Try again."));
             thread::sleep(Duration::from_secs(2));
         }
     }
 
     state
         .msg_printer
-        .print_text("Changing the password. Please wait...");
+        .print_text(&tr("Changing the password. Please wait..."));
 
     // Now setup the request for the next loop.
     let next = ClientRequest::PamAuthenticateStep(PamAuthRequest::Password { cred: password });
@@ -1234,20 +1293,20 @@ fn authenticate_request_response(
             error!(?err, "PAM_IGNORE");
             pam_fail!(
                 state.msg_printer,
-                "An unexpected error occurred.",
+                tr("An unexpected error occurred."),
                 PamResultCode::PAM_IGNORE
             );
         }
     };
 
     let response = match cli_res {
-        ClientResponse::PamAuthenticateStepResponse(res) => res,
+        ClientResponse::PamAuthenticateStepResponse(res) => res.translate_user_visible(),
         _ => {
             // unexpected response.
             error!(err = ?cli_res, "PAM_IGNORE, unexpected resolver response");
             pam_fail!(
                 state.msg_printer,
-                "An unexpected error occurred.",
+                tr("An unexpected error occurred."),
                 PamResultCode::PAM_IGNORE
             );
         }
@@ -1269,7 +1328,8 @@ fn authenticate_request_response(
         PamAuthResponse::MFAPoll {
             msg,
             polling_interval,
-        } => handle_pam_auth_response_mfapoll(state, &msg, polling_interval),
+            show_push_hint,
+        } => handle_pam_auth_response_mfapoll(state, &msg, polling_interval, show_push_hint),
         PamAuthResponse::MFAPollWait => handle_pam_auth_response_mfapollwait(state),
         PamAuthResponse::SetupPin { msg } => handle_pam_auth_response_setup_pin(state, &msg),
         PamAuthResponse::Pin => handle_pam_auth_response_pin(state),
@@ -1342,21 +1402,23 @@ where
             Err(err) => {
                 if !daemon_connect_error_is_retryable(&err) {
                     error!(?err, "himmelblaud socket connection failed");
-                    msg_printer.print_error("Himmelblau authentication service is unavailable.");
+                    msg_printer
+                        .print_error(&tr("Himmelblau authentication service is unavailable."));
                     return Err(PamResultCode::PAM_IGNORE);
                 }
 
                 if !announced {
-                    msg_printer.print_text(DAEMON_START_WAIT_MESSAGE);
+                    msg_printer
+                        .print_text(&tr("Himmelblau authentication is starting, please wait..."));
                     announced = true;
                 }
 
                 let elapsed = started.elapsed();
                 if elapsed >= timeout {
                     error!(?err, "timed out waiting for himmelblaud socket");
-                    msg_printer.print_error(
+                    msg_printer.print_error(&tr(
                         "Himmelblau authentication service did not become available in time.",
-                    );
+                    ));
                     return Err(PamResultCode::PAM_IGNORE);
                 }
 
@@ -1390,6 +1452,7 @@ pub fn authenticate_with_client(
     opts: Options,
     msg_printer: Arc<dyn MessagePrinter>,
 ) -> PamResultCode {
+    i18n::init();
     let mut state = AuthenticateState {
         daemon_client,
         authtok,
@@ -1427,6 +1490,7 @@ pub fn authenticate(
     opts: Options,
     msg_printer: Arc<dyn MessagePrinter>,
 ) -> PamResultCode {
+    i18n::init();
     let daemon_client = match wait_for_daemon_client(cfg.get_socket_path().as_str(), &msg_printer) {
         Ok(dc) => dc,
         Err(code) => return code,
@@ -1753,5 +1817,46 @@ mod tests {
             &cfg,
             "Approve sign-in"
         ));
+    }
+
+    #[test]
+    fn test_format_mfa_poll_message_adds_push_hint_when_enabled() {
+        let msg = format_mfa_poll_message("Approve sign-in", "login", true);
+
+        assert!(msg.contains("Approve sign-in"));
+        assert!(msg.contains("No push? Check your mobile device's internet connection."));
+    }
+
+    #[test]
+    fn test_format_mfa_poll_message_suppresses_push_hint_when_disabled() {
+        let msg = format_mfa_poll_message(
+            "Waiting for browser authentication to complete...",
+            "login",
+            false,
+        );
+
+        assert_eq!(msg, "Waiting for browser authentication to complete...");
+        assert!(!msg.contains("No push?"));
+    }
+
+    #[test]
+    fn test_format_mfa_poll_message_does_not_add_push_hint_to_empty_message() {
+        let msg = format_mfa_poll_message("   ", "login", true);
+
+        assert_eq!(msg, "   ");
+        assert!(!msg.contains("No push?"));
+    }
+
+    #[test]
+    fn test_format_mfa_poll_message_keeps_dag_qr_when_push_hint_disabled() {
+        let input = "Using a browser on another device, visit:\nhttps://microsoft.com/devicelogin\nAnd enter the code:\nABC123";
+        let msg = format_mfa_poll_message(input, "login", false);
+
+        assert!(msg.contains(input));
+        assert!(!msg.contains("No push?"));
+        assert!(
+            msg.len() > input.len(),
+            "DAG message should still include generated QR content"
+        );
     }
 }

@@ -1,0 +1,416 @@
+# Pakistani Urdu translations for Himmelblau.
+# Copyright (C) 2026 Himmelblau contributors
+# This file is distributed under the same license as Himmelblau.
+#
+msgid ""
+msgstr "Project-Id-Version: himmelblau\n"
+"POT-Creation-Date: 2026-07-22 22:33+0000\n"
+"PO-Revision-Date: 2026-07-23 14:41+0000\n"
+"Last-Translator: Automated via Codex <noreply@himmelblau-idm.org>\n"
+"Language-Team: Pakistani Urdu\n"
+"Language: ur_PK\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Plural-Forms: nplurals=2; plural=(n != 1);\n"
+""
+
+msgid "An unexpected error occurred."
+msgstr "ایک غیر متوقع خرابی پیش آ گئی۔"
+
+msgid "Approve sign-in in your authenticator app, then wait..."
+msgstr "اپنی توثیقی ایپ میں سائن اِن کی منظوری دیں، پھر انتظار کریں..."
+
+msgid "Authenticated user {user} does not match requested user"
+msgstr "تصدیق شدہ صارف {user} درخواست کردہ صارف سے مطابقت نہیں رکھتا"
+
+msgid "Authenticated user {uuid} does not match requested user"
+msgstr "توثیق شدہ صارف {uuid} درخواست کردہ صارف سے مطابقت نہیں رکھتا"
+
+msgid "Authentication did not return a refresh token. Please try again."
+msgstr "تصدیق نے ریفریش ٹوکن واپس نہیں کیا۔ براہ کرم دوبارہ کوشش کریں۔"
+
+msgid "Authentication failed (AADSTS{code})"
+msgstr "توثیق ناکام ہوگئی (AADSTS{code})"
+
+msgid "Authentication failed in browser flow."
+msgstr "براؤزر فلو میں توثیق ناکام ہو گئی۔"
+
+msgid "Authentication failed. Please contact your administrator."
+msgstr "توثیق ناکام ہو گئی۔ براہِ کرم اپنے منتظم سے رابطہ کریں۔"
+
+msgid "Authentication failed. Please try again."
+msgstr "تصدیق ناکام ہو گئی۔ براہ کرم دوبارہ کوشش کریں۔"
+
+msgid "Authentication failed. Please try signing in again."
+msgstr "تصدیق ناکام ہو گئی۔ براہِ کرم دوبارہ سائن اِن کرنے کی کوشش کریں۔"
+
+msgid "Authentication failed: Authentication method not supported."
+msgstr "توثیق ناکام ہو گئی: توثیق کا طریقہ معاونت یافتہ نہیں ہے۔"
+
+msgid "Authentication failed: Configuration error."
+msgstr "توثیق ناکام ہو گئی: کنفیگریشن کی خرابی۔"
+
+msgid "Authentication failed: Cryptographic error."
+msgstr "توثیق ناکام ہو گئی: رمزنگاری کی خرابی۔"
+
+msgid "Authentication failed: Invalid server response."
+msgstr "تصدیق ناکام ہو گئی: سرور کا جواب غلط ہے۔"
+
+msgid "Authentication failed: Missing required data."
+msgstr "تصدیق ناکام ہو گئی: مطلوبہ ڈیٹا موجود نہیں ہے۔"
+
+msgid "Authentication failed: Security hardware error."
+msgstr "تصدیق ناکام ہو گئی: سیکیورٹی ہارڈویئر میں خرابی۔"
+
+msgid "Authentication failed: Unable to reach authentication server."
+msgstr "توثیق ناکام ہو گئی: توثیقی سرور تک رسائی حاصل نہیں ہو سکی۔"
+
+msgid "Authentication failed: {error}"
+msgstr "توثیق ناکام ہو گئی: {error}"
+
+msgid "Authentication flow completed but token exchange failed. Please try again."
+msgstr "توثیق کا عمل مکمل ہو گیا، لیکن ٹوکن کا تبادلہ ناکام ہو گیا۔ براہ کرم دوبارہ کوشش کریں۔"
+
+msgid "Authentication in progress."
+msgstr "توثیق جاری ہے۔"
+
+msgid "Authentication incomplete. Please try again."
+msgstr "تصدیق مکمل نہیں ہوئی۔ براہ کرم دوبارہ کوشش کریں۔"
+
+msgid "Authentication service is temporarily unavailable. Please try again shortly."
+msgstr "توثیقی خدمت عارضی طور پر دستیاب نہیں ہے۔ براہ کرم کچھ دیر بعد دوبارہ کوشش کریں۔"
+
+msgid "Authentication service unavailable. Please try again later."
+msgstr "تصدیق کاری کی سروس دستیاب نہیں ہے۔ براہ کرم بعد میں دوبارہ کوشش کریں۔"
+
+msgid "Authentication session corrupted. Please try again."
+msgstr "تصدیقی سیشن خراب ہو گیا ہے۔ براہِ کرم دوبارہ کوشش کریں۔"
+
+msgid "Authentication session data missing. Please try again."
+msgstr "توثیقی سیشن کا ڈیٹا موجود نہیں ہے۔ براہِ کرم دوبارہ کوشش کریں۔"
+
+msgid "Authentication session returned an unexpected state. Please try again."
+msgstr "تصدیقی سیشن سے غیر متوقع حالت موصول ہوئی۔ براہ کرم دوبارہ کوشش کریں۔"
+
+msgid "Authentication timed out. Please try again."
+msgstr "توثیق کا وقت ختم ہو گیا۔ براہِ کرم دوبارہ کوشش کریں۔"
+
+msgid "Browser authentication backend unavailable. Please try again."
+msgstr "براؤزر کی توثیق کا بیک اینڈ دستیاب نہیں ہے۔ براہِ کرم دوبارہ کوشش کریں۔"
+
+msgid "Changing the password. Please wait..."
+msgstr "پاس ورڈ تبدیل کیا جا رہا ہے۔ براہِ کرم انتظار کریں..."
+
+msgid "Chosen password is too short! 8 chars required."
+msgstr "منتخب کردہ پاس ورڈ بہت چھوٹا ہے! 8 حروف درکار ہیں۔"
+
+msgid "Chosen pin is too short! {length} chars required."
+msgstr "منتخب کردہ PIN بہت مختصر ہے! {length} حروف درکار ہیں۔"
+
+msgid "Cloud Password:"
+msgstr "کلاؤڈ پاس ورڈ:"
+
+msgid "Code:"
+msgstr "کوڈ:"
+
+msgid "Confirm PIN:"
+msgstr "پن کی تصدیق کریں:"
+
+msgid "Confirm password:"
+msgstr "پاس ورڈ کی تصدیق کریں:"
+
+msgid "Consent required. Please contact your administrator."
+msgstr "رضامندی درکار ہے۔ براہِ کرم اپنے منتظم سے رابطہ کریں۔"
+
+msgid "Create a PIN to use in place of passwords."
+msgstr "پاس ورڈز کی جگہ استعمال کرنے کے لیے ایک PIN بنائیں۔"
+
+msgid "Device enrollment failed. Please contact your administrator."
+msgstr "ڈیوائس کا اندراج ناکام ہو گیا۔ براہ کرم اپنے منتظم سے رابطہ کریں۔"
+
+msgid "Device has been removed from the domain."
+msgstr "ڈیوائس کو ڈومین سے ہٹا دیا گیا ہے۔"
+
+msgid "Enable Bluetooth to sign in with your phone."
+msgstr "اپنے فون سے سائن اِن کرنے کے لیے بلوٹوتھ فعال کریں۔"
+
+msgid "Enrolling the Hello PIN. Please wait..."
+msgstr "Hello PIN کا اندراج کیا جا رہا ہے۔ براہِ کرم انتظار کریں..."
+
+msgid "Enter the setup key '{secret}' to enroll a TOTP Authenticator app. Use '{issuer}' for the code name and '{account}' as the label/name."
+msgstr "TOTP Authenticator ایپ کو enroll کرنے کے لیے setup key '{secret}' درج کریں۔ code name کے لیے '{issuer}' اور label/name کے طور پر '{account}' استعمال کریں۔"
+
+msgid "Entra Id Fido authentication failed."
+msgstr "Entra ID FIDO کی تصدیق ناکام ہو گئی۔"
+
+msgid "Entra Id Password:"
+msgstr "Entra ID پاس ورڈ:"
+
+msgid "FIDO authentication not available. Please try a different authentication method."
+msgstr "FIDO توثیق دستیاب نہیں ہے۔ براہِ کرم توثیق کا کوئی دوسرا طریقہ آزمائیں۔"
+
+msgid "Failed to authenticate with Hello PIN."
+msgstr "Hello PIN کے ذریعے تصدیق نہیں ہو سکی۔"
+
+msgid "Failed to authenticate with Hello PIN. One more failed attempt will require multi-factor authentication and resetting your Linux Hello PIN."
+msgstr "Hello PIN کے ذریعے توثیق نہیں ہو سکی۔ ایک اور ناکام کوشش کی صورت میں کثیر العوامل توثیق اور آپ کے Linux Hello PIN کو دوبارہ ترتیب دینا ضروری ہوگا۔"
+
+msgid "Failed to authenticate with Hello TOTP code."
+msgstr "Hello TOTP کوڈ کے ساتھ توثیق کرنے میں ناکامی ہوئی۔"
+
+msgid "Failed to build regex: {error}"
+msgstr "ریگولر ایکسپریشن بنانے میں ناکامی: {error}"
+
+msgid "Failed to change user password: {msg}"
+msgstr "صارف کا پاس ورڈ تبدیل کرنے میں ناکامی: {msg}"
+
+msgid "Failed to delete CSR key"
+msgstr "CSR کلید حذف کرنے میں ناکامی ہوئی"
+
+msgid "Failed to delete intune key"
+msgstr "Intune کلید حذف کرنے میں ناکامی ہوئی"
+
+msgid "Failed to generate QR code"
+msgstr "QR کوڈ بنانے میں ناکامی ہوئی"
+
+msgid "Failed to join domain. Please contact your administrator."
+msgstr "ڈومین میں شامل ہونے میں ناکامی ہوئی۔ براہِ کرم اپنے منتظم سے رابطہ کریں۔"
+
+msgid "Failed to provision hello key: {error}\n"
+"{message}"
+msgstr "Hello key کو پروویژن کرنے میں ناکامی: {error}\n"
+"{message}"
+
+msgid "Failed to save device configuration. Please contact your administrator."
+msgstr "آلہ کی کنفیگریشن محفوظ کرنے میں ناکامی ہوئی۔ براہ کرم اپنے منتظم سے رابطہ کریں۔"
+
+msgid "Failed to store device credentials. Please contact your administrator."
+msgstr "ڈیوائس کی اسناد محفوظ نہیں کی جا سکیں۔ براہِ کرم اپنے منتظم سے رابطہ کریں۔"
+
+msgid "Fido PIN:"
+msgstr "FIDO پن:"
+
+msgid "Himmelblau authentication is starting, please wait..."
+msgstr "Himmelblau کی توثیق شروع ہو رہی ہے، براہِ کرم انتظار کریں..."
+
+msgid "Himmelblau authentication service did not become available in time."
+msgstr "Himmelblau توثیقی خدمت وقت پر دستیاب نہیں ہو سکی۔"
+
+msgid "Himmelblau authentication service is unavailable."
+msgstr "Himmelblau کی توثیقی سروس دستیاب نہیں ہے۔"
+
+msgid "Inputs did not match. Try again."
+msgstr "درج کردہ معلومات مماثل نہیں ہیں۔ دوبارہ کوشش کریں۔"
+
+msgid "Invalid credentials"
+msgstr "غلط اسناد"
+
+msgid "Multi-factor authentication required."
+msgstr "ملٹی فیکٹر توثیق درکار ہے۔"
+
+msgid "Multi-factor authentication required. Please try signing in again."
+msgstr "کثیر عنصری توثیق درکار ہے۔ براہ کرم دوبارہ سائن اِن کرنے کی کوشش کریں۔"
+
+msgid "Network outage detected."
+msgstr "نیٹ ورک کی بندش کا پتہ چلا ہے۔"
+
+msgid "New PIN:"
+msgstr "نیا PIN:"
+
+msgid "New password:"
+msgstr "نیا پاس ورڈ:"
+
+msgid "No Entra Id Hello PIN was supplied."
+msgstr "کوئی Entra Id Hello PIN فراہم نہیں کیا گیا۔"
+
+msgid "No Entra Id Hello confirmation PIN was supplied."
+msgstr "Entra Id Hello کا تصدیقی PIN فراہم نہیں کیا گیا۔"
+
+msgid "No Entra Id confirmation password was supplied."
+msgstr "کوئی Entra ID تصدیقی پاس ورڈ فراہم نہیں کیا گیا۔"
+
+msgid "No Entra Id password was supplied."
+msgstr "Entra ID کا کوئی پاس ورڈ فراہم نہیں کیا گیا۔"
+
+msgid "No Hello TOTP code was supplied."
+msgstr "ہیلو TOTP کوڈ فراہم نہیں کیا گیا۔"
+
+msgid "No input was supplied."
+msgstr "کوئی اِن پٹ فراہم نہیں کیا گیا۔"
+
+msgid "Offline auth has expired. Please connect to the network to continue."
+msgstr "آف لائن تصدیق کی میعاد ختم ہو چکی ہے۔ جاری رکھنے کے لیے براہ کرم نیٹ ورک سے منسلک ہوں۔"
+
+msgid "Open your Authenticator app, and enter the number '{entropy}' to sign in."
+msgstr "اپنی Authenticator ایپ کھولیں، اور سائن ان کرنے کے لیے نمبر '{entropy}' درج کریں۔"
+
+msgid "Open your authenticator app and scan this QR code to enroll. Then enter the generated code.\n"
+"{qr}"
+msgstr "اپنی authenticator ایپ کھولیں اور اندراج کے لیے یہ QR کوڈ اسکین کریں۔ پھر تیار کردہ کوڈ درج کریں۔\n"
+"{qr}"
+
+msgid "PIN must not use repeating or predictable sequences. Avoid patterns like '111111', '123456', or '135791'."
+msgstr "پن میں دہرائی جانے والی یا آسانی سے اندازہ لگائی جانے والی ترتیب استعمال نہیں ہونی چاہیے۔ '111111'، '123456'، یا '135791' جیسے نمونوں سے گریز کریں۔"
+
+msgid "PIN setup failed. Please try signing in again."
+msgstr "PIN سیٹ اپ ناکام ہو گیا۔ براہ کرم دوبارہ سائن اِن کرنے کی کوشش کریں۔"
+
+msgid "PIN:"
+msgstr "پن:"
+
+msgid "Password change required. Please contact your administrator."
+msgstr "پاس ورڈ تبدیل کرنا ضروری ہے۔ براہ کرم اپنے منتظم سے رابطہ کریں۔"
+
+msgid "Password entry required."
+msgstr "پاس ورڈ درج کرنا ضروری ہے۔"
+
+msgid "Password reset registration required. Complete setup at https://aka.ms/ssprsetup from another device, then try again."
+msgstr "پاس ورڈ دوبارہ ترتیب دینے کے لیے رجسٹریشن درکار ہے۔ کسی دوسرے آلے سے https://aka.ms/ssprsetup پر سیٹ اپ مکمل کریں، پھر دوبارہ کوشش کریں۔"
+
+msgid "Please enter your Hello TOTP code from your Authenticator:"
+msgstr "براہِ کرم اپنے Authenticator سے اپنا Hello TOTP کوڈ درج کریں:"
+
+msgid "Please insert your security key."
+msgstr "براہِ کرم اپنی سیکیورٹی کلید داخل کریں۔"
+
+msgid "Please select a device by touching one of them."
+msgstr "براہِ کرم ان میں سے کسی ایک کو چھو کر ایک ڈیوائس منتخب کریں۔"
+
+msgid "Please touch your security key."
+msgstr "براہ کرم اپنی سیکیورٹی کی کو چھوئیں۔"
+
+msgid "Press enter to continue"
+msgstr "جاری رکھنے کے لیے Enter دبائیں"
+
+msgid "QR/Bluetooth authentication failed."
+msgstr "QR/بلوٹوتھ توثیق ناکام ہو گئی۔"
+
+msgid "Scan the QR code to continue sign-in, or open this link on another device:\n"
+"{complete}\n"
+"If you cannot scan, visit:\n"
+"{verification_uri}\n"
+"And enter the code:\n"
+"{user_code}"
+msgstr "سائن اِن جاری رکھنے کے لیے QR کوڈ اسکین کریں، یا یہ لنک کسی دوسرے ڈیوائس پر کھولیں:\n"
+"{complete}\n"
+"اگر آپ اسکین نہیں کر سکتے، تو یہاں جائیں:\n"
+"{verification_uri}\n"
+"اور یہ کوڈ درج کریں:\n"
+"{user_code}"
+
+msgid "Scan with your authenticator app"
+msgstr "اپنی توثیق کار ایپ سے اسکین کریں"
+
+msgid "Security key and QR/Bluetooth authentication failed."
+msgstr "سیکیورٹی کلید اور QR/Bluetooth توثیق ناکام ہو گئی۔"
+
+msgid "Security key authentication failed."
+msgstr "سیکیورٹی کلید کی توثیق ناکام ہو گئی۔"
+
+msgid "Session data corrupted. Please sign in again."
+msgstr "سیشن کا ڈیٹا خراب ہو گیا ہے۔ براہِ کرم دوبارہ سائن اِن کریں۔"
+
+msgid "Set up a PIN\n"
+"A Hello PIN is a fast, secure way to sign in to your device, apps, and services."
+msgstr "PIN سیٹ اپ کریں\n"
+"Hello PIN آپ کے آلے، ایپس اور سروسز میں سائن اِن کرنے کا ایک تیز اور محفوظ طریقہ ہے۔"
+
+msgid "TOTP Code:"
+msgstr "TOTP کوڈ:"
+
+msgid "The minimum PIN length is {length} characters."
+msgstr "PIN کی کم از کم لمبائی {length} حروف ہے۔"
+
+msgid "This command changes your local Hello PIN, NOT your Entra Id password."
+msgstr "یہ کمانڈ آپ کا مقامی Hello PIN تبدیل کرتی ہے، آپ کا Entra Id پاس ورڈ نہیں۔"
+
+msgid "Too many failed attempts in one row. Your device has been temporarily blocked. Please unplug it and plug in again."
+msgstr "مسلسل بہت زیادہ ناکام کوششیں ہوئیں۔ آپ کا آلہ عارضی طور پر بلاک کر دیا گیا ہے۔ براہ کرم اسے ان پلگ کریں اور دوبارہ پلگ اِن کریں۔"
+
+msgid "Too many failed attempts. Your device has been blocked. Reset it."
+msgstr "بہت زیادہ ناکام کوششیں ہو چکی ہیں۔ آپ کا آلہ بلاک کر دیا گیا ہے۔ اسے ری سیٹ کریں۔"
+
+msgid "Too many failed user verification attempts."
+msgstr "صارف کی توثیق کی بہت زیادہ ناکام کوششیں ہو چکی ہیں۔"
+
+msgid "Too many incorrect PIN attempts. You will need to enroll a new Linux Hello PIN."
+msgstr "بہت زیادہ غلط PIN کوششیں کی گئی ہیں۔ آپ کو ایک نیا Linux Hello PIN رجسٹر کرنا ہوگا۔"
+
+msgid "Try again."
+msgstr "دوبارہ کوشش کریں۔"
+
+msgid "Unexpected authentication step. Please try signing in again."
+msgstr "غیر متوقع تصدیقی مرحلہ۔ براہ کرم دوبارہ سائن اِن کرنے کی کوشش کریں۔"
+
+msgid "Unexpected error occurred."
+msgstr "ایک غیر متوقع خرابی پیش آ گئی۔"
+
+msgid "Unexpected error: {error}"
+msgstr "غیر متوقع خرابی: {error}"
+
+msgid "Unexpected select device notice"
+msgstr "غیر متوقع ڈیوائس منتخب کرنے کا نوٹس"
+
+msgid "Update your password\n"
+"You need to update your password because this is\n"
+"the first time you are signing in, or because your\n"
+"password has expired."
+msgstr "اپنا پاس ورڈ اپ ڈیٹ کریں\n"
+"آپ کو اپنا پاس ورڈ اپ ڈیٹ کرنا ہوگا کیونکہ یہ\n"
+"آپ کے سائن ان کرنے کا پہلا موقع ہے، یا کیونکہ آپ کے\n"
+"پاس ورڈ کی میعاد ختم ہو چکی ہے۔"
+
+msgid "Use the Linux Hello PIN for this device."
+msgstr "اس ڈیوائس کے لیے Linux Hello PIN استعمال کریں۔"
+
+msgid "Use the password for your Office 365 or Microsoft online login."
+msgstr "اپنے Office 365 یا Microsoft آن لائن لاگ اِن کا پاس ورڈ استعمال کریں۔"
+
+msgid "Using a browser on another device, visit:\n"
+"{verification_uri}\n"
+"And enter the code:\n"
+"{user_code}"
+msgstr "کسی دوسرے آلے پر براؤزر استعمال کرتے ہوئے، ملاحظہ کریں:\n"
+"{verification_uri}\n"
+"اور کوڈ درج کریں:\n"
+"{user_code}"
+
+msgid "Value:"
+msgstr "قدر:"
+
+msgid "Waiting for browser authentication to complete..."
+msgstr "براؤزر کی توثیق مکمل ہونے کا انتظار کیا جا رہا ہے..."
+
+msgid "We texted your phone {phone}. Please enter the code to sign in:"
+msgstr "ہم نے آپ کے فون {phone} پر پیغام بھیجا ہے۔ براہ کرم سائن اِن کرنے کے لیے کوڈ درج کریں:"
+
+msgid "We're calling your office phone {phone}. Please answer it to continue."
+msgstr "ہم آپ کے دفتر کے فون {phone} پر کال کر رہے ہیں۔ جاری رکھنے کے لیے براہِ کرم کال کا جواب دیں۔"
+
+msgid "We're calling your phone {phone}. Please answer it to continue."
+msgstr "ہم آپ کے فون {phone} پر کال کر رہے ہیں۔ جاری رکھنے کے لیے براہِ کرم کال کا جواب دیں۔"
+
+msgid "Wrong PIN! {message}"
+msgstr "غلط PIN! {message}"
+
+msgid "Wrong user verification! {message}"
+msgstr "صارف کی توثیق غلط ہے! {message}"
+
+msgid "You have {attempts} attempt left."
+msgid_plural "You have {attempts} attempts left."
+msgstr[0] "آپ کے پاس {attempts} کوشش باقی ہے۔"
+msgstr[1] "آپ کے پاس {attempts} کوششیں باقی ہیں۔"
+
+msgid "Your session has expired. Please sign in again."
+msgstr "آپ کا سیشن ختم ہو گیا ہے۔ براہِ کرم دوبارہ سائن اِن کریں۔"
+
+msgid "{code}: {message}\n"
+"If you are now prompted for a password from pam_unix, please disregard the prompt, go back and try again."
+msgstr "{code}: {message}\n"
+"اگر اب pam_unix کی جانب سے آپ سے پاس ورڈ طلب کیا جائے، تو براہِ کرم اس درخواست کو نظر انداز کریں، واپس جائیں اور دوبارہ کوشش کریں۔"
+
+msgid "{message}\n"
+"No push? Check your mobile device's internet connection."
+msgstr "{message}\n"
+"پش نوٹیفکیشن نہیں ملی؟ اپنے موبائل ڈیوائس کا انٹرنیٹ کنکشن چیک کریں۔"

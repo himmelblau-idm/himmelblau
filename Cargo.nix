@@ -3146,9 +3146,9 @@ rec {
       };
       "cmov" = rec {
         crateName = "cmov";
-        version = "0.5.2";
+        version = "0.5.4";
         edition = "2024";
-        sha256 = "1hsxwpms8k75wwyv7rppw8gbj13nnj8r9mplv4givmijpbnmh1yy";
+        sha256 = "0yh22sqdvcdrfbhvnja4kaq5dyklpb4s70w5r6rplfdw4jna17hc";
         authors = [
           "RustCrypto Developers"
         ];
@@ -6568,6 +6568,57 @@ rec {
         };
         resolvedDefaultFeatures = [ "std" ];
       };
+      "gettext-rs" = rec {
+        crateName = "gettext-rs";
+        version = "0.7.7";
+        edition = "2015";
+        sha256 = "1prb49j0d33kam9ww0pi5bbr95726ks37s0xjs3fw3vz3gf5fn2x";
+        libName = "gettextrs";
+        authors = [
+          "Konstantin Salikhov <koka58@yandex.ru>"
+          "Alexander Batischev <eual.jp@gmail.com>"
+        ];
+        dependencies = [
+          {
+            name = "gettext-sys";
+            packageId = "gettext-sys";
+          }
+          {
+            name = "locale_config";
+            packageId = "locale_config";
+          }
+        ];
+        features = {
+          "gettext-system" = [ "gettext-sys/gettext-system" ];
+        };
+        resolvedDefaultFeatures = [ "gettext-system" ];
+      };
+      "gettext-sys" = rec {
+        crateName = "gettext-sys";
+        version = "0.26.0";
+        edition = "2015";
+        links = "gettext";
+        sha256 = "1scfknchxmmdfl3w3ik8bnb9rlq3gl3kwaq34gw0zryp1nmmka2f";
+        libName = "gettext_sys";
+        libPath = "lib.rs";
+        authors = [
+          "Brian Olsen <brian@maven-group.org>"
+          "Alexander Batischev <eual.jp@gmail.com>"
+        ];
+        buildDependencies = [
+          {
+            name = "cc";
+            packageId = "cc";
+          }
+          {
+            name = "temp-dir";
+            packageId = "temp-dir";
+          }
+        ];
+        features = {
+        };
+        resolvedDefaultFeatures = [ "gettext-system" ];
+      };
       "ghash" = rec {
         crateName = "ghash";
         version = "0.5.1";
@@ -7353,6 +7404,12 @@ rec {
           {
             name = "futures";
             packageId = "futures";
+          }
+          {
+            name = "gettext-rs";
+            packageId = "gettext-rs";
+            rename = "gettextrs";
+            features = [ "gettext-system" ];
           }
           {
             name = "hashbrown";
@@ -10418,6 +10475,42 @@ rec {
           "unicode-xid" = [ "dep:unicode-xid" ];
         };
       };
+      "locale_config" = rec {
+        crateName = "locale_config";
+        version = "0.3.0";
+        edition = "2015";
+        sha256 = "0d399alr1i7h7yji4vydbdbzd8hp0xaykr7h4rn3yj7l2rdw7lh8";
+        authors = [
+          "Jan Hudec <bulb@ucw.cz>"
+        ];
+        dependencies = [
+          {
+            name = "lazy_static";
+            packageId = "lazy_static";
+          }
+          {
+            name = "objc";
+            packageId = "objc";
+            target = { target, features }: ("macos" == target."os" or null);
+          }
+          {
+            name = "objc-foundation";
+            packageId = "objc-foundation";
+            target = { target, features }: ("macos" == target."os" or null);
+          }
+          {
+            name = "regex";
+            packageId = "regex";
+          }
+          {
+            name = "winapi";
+            packageId = "winapi";
+            target = { target, features }: (target."windows" or false);
+            features = [ "winnls" ];
+          }
+        ];
+
+      };
       "lock_api" = rec {
         crateName = "lock_api";
         version = "0.4.12";
@@ -11503,6 +11596,28 @@ rec {
           "ureq" = [ "dep:ureq" ];
         };
         resolvedDefaultFeatures = [ "default" "reqwest" "rustls-tls" ];
+      };
+      "objc" = rec {
+        crateName = "objc";
+        version = "0.2.7";
+        edition = "2021";
+        src = lib.cleanSourceWith { filter = sourceFilter;  src = ./src/overrides/objc/0.2.7; };
+        authors = [
+          "David Mulder <dmulder@suse.com>"
+        ];
+        features = {
+        };
+      };
+      "objc-foundation" = rec {
+        crateName = "objc-foundation";
+        version = "0.1.1";
+        edition = "2021";
+        src = lib.cleanSourceWith { filter = sourceFilter;  src = ./src/overrides/objc-foundation/0.1.1; };
+        libName = "objc_foundation";
+        authors = [
+          "David Mulder <dmulder@suse.com>"
+        ];
+
       };
       "objc2" = rec {
         crateName = "objc2";
@@ -17533,6 +17648,23 @@ rec {
         };
         resolvedDefaultFeatures = [ "default" ];
       };
+      "temp-dir" = rec {
+        crateName = "temp-dir";
+        version = "0.1.16";
+        edition = "2021";
+        src = lib.cleanSourceWith { filter = sourceFilter;  src = ./src/overrides/temp-dir/0.1.16; };
+        libName = "temp_dir";
+        authors = [
+          "David Mulder <dmulder@suse.com>"
+        ];
+        dependencies = [
+          {
+            name = "tempfile";
+            packageId = "tempfile";
+          }
+        ];
+
+      };
       "tempfile" = rec {
         crateName = "tempfile";
         version = "3.27.0";
@@ -20063,7 +20195,7 @@ rec {
         ];
         features = {
         };
-        resolvedDefaultFeatures = [ "handleapi" "hidclass" "hidpi" "hidusage" "setupapi" ];
+        resolvedDefaultFeatures = [ "handleapi" "hidclass" "hidpi" "hidusage" "setupapi" "winnls" ];
       };
       "winapi-util" = rec {
         crateName = "winapi-util";

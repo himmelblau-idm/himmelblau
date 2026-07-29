@@ -274,6 +274,8 @@ def generate_rust_code(params: List[Parameter], sections: Dict[str, Section]) ->
 
         elif param.param_type == 'string' and param.rust_type == 'String':
             default_expr = param.default_const if param.default_const else f'DEFAULT_{param.name.upper()}'
+            if param.name.endswith('_prompt'):
+                default_expr = f'tr({default_expr})'
             if param.domain_specific:
                 lines.append(_gen_domain_specific_string(param, default_expr))
             else:

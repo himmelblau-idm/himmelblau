@@ -3,7 +3,27 @@ set -e
 
 if command -v dconf >/dev/null 2>&1; then
     # Enable extension for GDM user (login screen)
-    if getent passwd gdm >/dev/null 2>&1; then
+    if getent passwd Debian-gdm >/dev/null 2>&1; then
+        echo "Enabling Himmelblau QR Greeter GNOME Shell extension for Debian GDM greeter..."
+
+        if [ -x /usr/share/gdm/generate-config ]; then
+            mkdir -p /usr/share/gdm/dconf
+
+            cat > /usr/share/gdm/dconf/01-himmelblau-qr-greeter << 'EOF'
+[org/gnome/shell]
+enabled-extensions=['qr-greeter@himmelblau-idm.org']
+EOF
+            echo "Created /usr/share/gdm/dconf/01-himmelblau-qr-greeter"
+
+            if /usr/share/gdm/generate-config; then
+                echo "Regenerated Debian GDM greeter dconf defaults."
+            else
+                echo 'Warning: Debian GDM greeter dconf generation failed' >&2
+            fi
+        else
+            echo 'Info: Debian-gdm user is available but /usr/share/gdm/generate-config is not executable; skipping Debian GDM extension enable.' >&2
+        fi
+    elif getent passwd gdm >/dev/null 2>&1; then
         echo "Enabling Himmelblau QR Greeter GNOME Shell extension for GDM user..."
 
         # Create /etc/dconf/profile/gdm if it doesn't exist
@@ -27,7 +47,7 @@ enabled-extensions=['qr-greeter@himmelblau-idm.org']
 EOF
         echo "Created /etc/dconf/db/gdm.d/01-himmelblau-qr-greeter"
     else
-        echo 'Info: gdm user not available; skipping GDM extension enable.' >&2
+        echo 'Info: neither Debian-gdm nor gdm user is available; skipping GDM extension enable.' >&2
     fi
 
     # Enable extension for regular users (lockscreen)
