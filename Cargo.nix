@@ -1510,7 +1510,7 @@ rec {
           "ring-io" = [ "dep:untrusted" ];
           "ring-sig-verify" = [ "dep:untrusted" ];
         };
-        resolvedDefaultFeatures = [ "aws-lc-sys" "prebuilt-nasm" ];
+        resolvedDefaultFeatures = [ "alloc" "aws-lc-sys" "prebuilt-nasm" ];
       };
       "aws-lc-sys" = rec {
         crateName = "aws-lc-sys";
@@ -9537,20 +9537,10 @@ rec {
         authors = [
           "Marvin Löbel <loebel.marvin@gmail.com>"
         ];
-        dependencies = [
-          {
-            name = "spin";
-            packageId = "spin";
-            optional = true;
-            usesDefaultFeatures = false;
-            features = [ "once" ];
-          }
-        ];
         features = {
           "spin" = [ "dep:spin" ];
           "spin_no_std" = [ "spin" ];
         };
-        resolvedDefaultFeatures = [ "spin" "spin_no_std" ];
       };
       "lber" = rec {
         crateName = "lber";
@@ -10035,20 +10025,6 @@ rec {
           }
         ];
 
-      };
-      "libm" = rec {
-        crateName = "libm";
-        version = "0.2.15";
-        edition = "2021";
-        sha256 = "1plpzf0p829viazdj57yw5dhmlr8ywf3apayxc2f2bq5a6mvryzr";
-        authors = [
-          "Jorge Aparicio <jorge@japaric.io>"
-        ];
-        features = {
-          "default" = [ "arch" ];
-          "unstable" = [ "unstable-intrinsics" "unstable-float" ];
-        };
-        resolvedDefaultFeatures = [ "arch" "default" ];
       };
       "libnss" = rec {
         crateName = "libnss";
@@ -11237,81 +11213,6 @@ rec {
         };
         resolvedDefaultFeatures = [ "default" "std" ];
       };
-      "num-bigint-dig" = rec {
-        crateName = "num-bigint-dig";
-        version = "0.8.6";
-        edition = "2021";
-        sha256 = "1dxh3d8pzjc5k0kpy8gy2qhhhqs7zw8a7m564zl3ib8gcjkdsqg6";
-        libName = "num_bigint_dig";
-        authors = [
-          "dignifiedquire <dignifiedquire@gmail.com>"
-          "The Rust Project Developers"
-        ];
-        dependencies = [
-          {
-            name = "lazy_static";
-            packageId = "lazy_static";
-            usesDefaultFeatures = false;
-            features = [ "spin_no_std" ];
-          }
-          {
-            name = "libm";
-            packageId = "libm";
-          }
-          {
-            name = "num-integer";
-            packageId = "num-integer";
-            usesDefaultFeatures = false;
-            features = [ "i128" ];
-          }
-          {
-            name = "num-iter";
-            packageId = "num-iter";
-            usesDefaultFeatures = false;
-          }
-          {
-            name = "num-traits";
-            packageId = "num-traits";
-            usesDefaultFeatures = false;
-            features = [ "i128" ];
-          }
-          {
-            name = "rand";
-            packageId = "rand 0.8.6";
-            optional = true;
-            usesDefaultFeatures = false;
-          }
-          {
-            name = "smallvec";
-            packageId = "smallvec";
-            usesDefaultFeatures = false;
-          }
-          {
-            name = "zeroize";
-            packageId = "zeroize";
-            optional = true;
-            usesDefaultFeatures = false;
-          }
-        ];
-        devDependencies = [
-          {
-            name = "rand";
-            packageId = "rand 0.8.6";
-            features = [ "small_rng" ];
-          }
-        ];
-        features = {
-          "arbitrary" = [ "dep:arbitrary" ];
-          "default" = [ "std" "u64_digit" ];
-          "fuzz" = [ "arbitrary" "smallvec/arbitrary" ];
-          "prime" = [ "rand/std_rng" ];
-          "rand" = [ "dep:rand" ];
-          "serde" = [ "dep:serde" ];
-          "std" = [ "num-integer/std" "num-traits/std" "smallvec/write" "rand/std" "serde/std" ];
-          "zeroize" = [ "dep:zeroize" ];
-        };
-        resolvedDefaultFeatures = [ "i128" "prime" "rand" "u64_digit" "zeroize" ];
-      };
       "num-conv" = rec {
         crateName = "num-conv";
         version = "0.2.2";
@@ -11372,40 +11273,6 @@ rec {
         };
         resolvedDefaultFeatures = [ "i128" "std" ];
       };
-      "num-iter" = rec {
-        crateName = "num-iter";
-        version = "0.1.45";
-        edition = "2018";
-        sha256 = "1gzm7vc5g9qsjjl3bqk9rz1h6raxhygbrcpbfl04swlh0i506a8l";
-        libName = "num_iter";
-        authors = [
-          "The Rust Project Developers"
-        ];
-        dependencies = [
-          {
-            name = "num-integer";
-            packageId = "num-integer";
-            usesDefaultFeatures = false;
-            features = [ "i128" ];
-          }
-          {
-            name = "num-traits";
-            packageId = "num-traits";
-            usesDefaultFeatures = false;
-            features = [ "i128" ];
-          }
-        ];
-        buildDependencies = [
-          {
-            name = "autocfg";
-            packageId = "autocfg";
-          }
-        ];
-        features = {
-          "default" = [ "std" ];
-          "std" = [ "num-integer/std" "num-traits/std" ];
-        };
-      };
       "num-traits" = rec {
         crateName = "num-traits";
         version = "0.2.19";
@@ -11414,13 +11281,6 @@ rec {
         libName = "num_traits";
         authors = [
           "The Rust Project Developers"
-        ];
-        dependencies = [
-          {
-            name = "libm";
-            packageId = "libm";
-            optional = true;
-          }
         ];
         buildDependencies = [
           {
@@ -11432,7 +11292,7 @@ rec {
           "default" = [ "std" ];
           "libm" = [ "dep:libm" ];
         };
-        resolvedDefaultFeatures = [ "default" "i128" "libm" "std" ];
+        resolvedDefaultFeatures = [ "default" "i128" "std" ];
       };
       "num_enum" = rec {
         crateName = "num_enum";
@@ -13425,7 +13285,7 @@ rec {
           "std" = [ "der/std" "alloc" ];
           "zeroize" = [ "der/zeroize" ];
         };
-        resolvedDefaultFeatures = [ "alloc" "pem" "pkcs8" "std" "zeroize" ];
+        resolvedDefaultFeatures = [ "alloc" "pem" "std" "zeroize" ];
       };
       "pkcs8" = rec {
         crateName = "pkcs8";
@@ -14879,116 +14739,61 @@ rec {
       };
       "rsa" = rec {
         crateName = "rsa";
-        version = "0.9.10";
+        version = "0.9.999";
         edition = "2021";
-        sha256 = "0bdikdwhcvl1gfh4637m5rdw3fgcl752aiygvzmwlgc8yl1kymxq";
+        src = lib.cleanSourceWith { filter = sourceFilter;  src = ./src/overrides/rsa/0.9.999; };
         authors = [
-          "RustCrypto Developers"
-          "dignifiedquire <dignifiedquire@gmail.com>"
+          "David Mulder <dmulder@suse.com>"
         ];
         dependencies = [
           {
-            name = "const-oid";
-            packageId = "const-oid 0.9.6";
+            name = "aws-lc-rs";
+            packageId = "aws-lc-rs";
             usesDefaultFeatures = false;
+            features = [ "alloc" "aws-lc-sys" ];
           }
           {
-            name = "digest";
-            packageId = "digest 0.10.7";
-            usesDefaultFeatures = false;
-            features = [ "alloc" "oid" ];
-          }
-          {
-            name = "num-bigint-dig";
-            packageId = "num-bigint-dig";
-            rename = "num-bigint";
-            usesDefaultFeatures = false;
-            features = [ "i128" "prime" "zeroize" ];
-          }
-          {
-            name = "num-integer";
-            packageId = "num-integer";
-            usesDefaultFeatures = false;
-          }
-          {
-            name = "num-traits";
-            packageId = "num-traits";
-            usesDefaultFeatures = false;
-            features = [ "libm" ];
+            name = "num-bigint";
+            packageId = "num-bigint";
           }
           {
             name = "pkcs1";
             packageId = "pkcs1";
-            usesDefaultFeatures = false;
-            features = [ "alloc" "pkcs8" ];
+            rename = "pkcs1_crate";
+            features = [ "pem" "std" ];
           }
           {
             name = "pkcs8";
             packageId = "pkcs8";
-            usesDefaultFeatures = false;
-            features = [ "alloc" ];
+            features = [ "pem" "std" ];
           }
           {
-            name = "rand_core";
-            packageId = "rand_core 0.6.4";
-            usesDefaultFeatures = false;
+            name = "sha1";
+            packageId = "sha1";
           }
           {
             name = "sha2";
             packageId = "sha2 0.10.9";
-            optional = true;
-            usesDefaultFeatures = false;
-            features = [ "oid" ];
           }
           {
             name = "signature";
             packageId = "signature";
-            usesDefaultFeatures = false;
-            features = [ "alloc" "digest" "rand_core" ];
+            rename = "signature_crate";
+            features = [ "alloc" "digest" "rand_core" "std" ];
           }
           {
             name = "spki";
             packageId = "spki";
-            usesDefaultFeatures = false;
-            features = [ "alloc" ];
-          }
-          {
-            name = "subtle";
-            packageId = "subtle";
-            usesDefaultFeatures = false;
+            features = [ "alloc" "std" ];
           }
           {
             name = "zeroize";
             packageId = "zeroize";
-            features = [ "alloc" ];
-          }
-        ];
-        devDependencies = [
-          {
-            name = "rand_core";
-            packageId = "rand_core 0.6.4";
-            usesDefaultFeatures = false;
-          }
-          {
-            name = "sha2";
-            packageId = "sha2 0.10.9";
-            usesDefaultFeatures = false;
-            features = [ "oid" ];
           }
         ];
         features = {
-          "default" = [ "std" "pem" "u64_digit" ];
-          "getrandom" = [ "rand_core/getrandom" ];
-          "nightly" = [ "num-bigint/nightly" ];
-          "pem" = [ "pkcs1/pem" "pkcs8/pem" ];
-          "pkcs5" = [ "pkcs8/encryption" ];
-          "serde" = [ "dep:serde" "num-bigint/serde" ];
-          "sha1" = [ "dep:sha1" ];
-          "sha2" = [ "dep:sha2" ];
-          "std" = [ "digest/std" "pkcs1/std" "pkcs8/std" "rand_core/std" "signature/std" ];
-          "u64_digit" = [ "num-bigint/u64_digit" ];
         };
-        resolvedDefaultFeatures = [ "default" "pem" "sha2" "std" "u64_digit" ];
+        resolvedDefaultFeatures = [ "default" "pem" "sha2" ];
       };
       "rtoolbox" = rec {
         crateName = "rtoolbox";

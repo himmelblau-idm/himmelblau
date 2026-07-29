@@ -1,0 +1,33 @@
+[package]
+name = "rsa"
+version = "0.9.999"
+authors.workspace = true
+rust-version.workspace = true
+edition.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[features]
+default = []
+getrandom = []
+hazmat = []
+nightly = []
+pem = []
+pkcs5 = []
+serde = []
+std = []
+u64_digit = []
+sha1 = []
+sha2 = []
+
+[dependencies]
+aws-lc-rs = { version = "^1.16", default-features = false, features = ["alloc", "aws-lc-sys"] }
+num-bigint = "0.4"
+pkcs1_crate = { package = "pkcs1", version = "0.7", features = ["pem", "std"] }
+pkcs8 = { version = "0.10", features = ["pem", "std"] }
+sha1 = "0.10"
+sha2 = "0.10"
+signature_crate = { package = "signature", version = "2.2", features = ["alloc", "digest", "rand_core", "std"] }
+spki = { version = "0.7", features = ["alloc", "std"] }
+zeroize = "1"
