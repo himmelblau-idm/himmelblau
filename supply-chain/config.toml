@@ -157,6 +157,9 @@ audit-as-crates-io = true
 [policy."reqwest:0.12.24"]
 audit-as-crates-io = true
 
+[policy."rsa:0.9.999"]
+audit-as-crates-io = true
+
 [policy."rustls-platform-verifier-android:0.1.1"]
 audit-as-crates-io = true
 
@@ -742,10 +745,6 @@ criteria = "safe-to-deploy"
 
 [[exemptions.notify-types]]
 version = "2.0.0"
-criteria = "safe-to-deploy"
-
-[[exemptions.num-bigint-dig]]
-version = "0.8.6"
 criteria = "safe-to-deploy"
 
 [[exemptions.num_enum]]
