@@ -884,6 +884,62 @@ mod tests {
     use serde_json::json;
 
     #[test]
+    fn oidc_group_claims_extract_keycloak_groups_and_roles() {
+        let claims = json!({
+            "groups": ["/linux-users", "/admins"],
+            "realm_access": {
+                "roles": ["offline_access", "uma_authorization"]
+            },
+            "resource_access": {
+                "himmelblau": {
+                    "roles": ["login"]
+                },
+                "account": {
+                    "roles": ["manage-account"]
+                }
+            }
+        });
+
+        assert_eq!(
+            super::oidc_group_claims_from_value(&claims),
+            vec![
+                "/admins",
+                "/linux-users",
+                "login",
+                "manage-account",
+                "offline_access",
+                "uma_authorization",
+            ]
+        );
+    }
+
+    #[test]
+    fn oidc_group_claims_accept_single_string_group() {
+        let claims = json!({
+            "groups": " /linux-users "
+        });
+
+        assert_eq!(
+            super::oidc_group_claims_from_value(&claims),
+            vec!["/linux-users"]
+        );
+    }
+
+    #[test]
+    fn oidc_group_claims_reject_unsafe_group_names() {
+        let claims = json!({
+            "groups": [
+                "valid",
+                "bad:group",
+                "bad\ngroup",
+                "   "
+            ]
+        });
+
+        assert_eq!(super::oidc_group_claims_from_value(&claims), vec!["valid"]);
+    }
+
+    #[test]
     fn ropc_invalid_credentials_detects_bad_password() {
         // Keycloak / OneLogin wording for a wrong password.
         assert!(ropc_is_invalid_credentials(Some(
@@ -1685,6 +1741,119 @@ fn validated_password_cache_action(
     }
 }
 
+fn oidc_extract_claim_string(value: &str) -> Option<String> {
+    let value = value.trim();
+    if value.is_empty() || value.contains(':') || value.chars().any(char::is_control) {
+        None
+    } else {
+        Some(value.to_string())
+    }
+}
+
+fn oidc_claim_strings(value: Option<&Value>) -> Vec<String> {
+    match value {
+        Some(Value::String(group)) => oidc_extract_claim_string(group).into_iter().collect(),
+        Some(Value::Array(groups)) => groups
+            .iter()
+            .filter_map(|group| group.as_str().and_then(oidc_extract_claim_string))
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+
+fn oidc_group_claims_from_value(claims: &Value) -> Vec<String> {
+    let mut groups = oidc_claim_strings(claims.get("groups"));
+
+    if let Some(Value::Object(realm_access)) = claims.get("realm_access") {
+        groups.extend(oidc_claim_strings(realm_access.get("roles")));
+    }
+
+    if let Some(Value::Object(resource_access)) = claims.get("resource_access") {
+        for resource in resource_access.values() {
+            if let Value::Object(resource_claims) = resource {
+                groups.extend(oidc_claim_strings(resource_claims.get("roles")));
+            }
+        }
+    }
+
+    groups.sort();
+    groups.dedup();
+    groups
+}
+
+async fn oidc_userinfo_from_claims(
+    delayed_init: &OidcDelayedInit,
+    access_token: &openidconnect::AccessToken,
+) -> Result<(OidcUserInfoClaims, Vec<String>), IdpError> {
+    let Some(userinfo_url) = delayed_init.client.user_info_url() else {
+        error!("OIDC client missing userinfo endpoint URL");
+        return Err(IdpError::BadRequest);
+    };
+
+    let bytes = delayed_init
+        .http_client
+        .get(userinfo_url.as_str())
+        .bearer_auth(access_token.secret())
+        .send()
+        .await
+        .map_err(|e| {
+            error!(?e, "Error calling userinfo endpoint");
+            IdpError::BadRequest
+        })?
+        .error_for_status()
+        .map_err(|e| {
+            error!(?e, "Error calling userinfo endpoint");
+            IdpError::BadRequest
+        })?
+        .bytes()
+        .await
+        .map_err(|e| {
+            error!(?e, "Error reading userinfo response");
+            IdpError::BadRequest
+        })?;
+
+    let userinfo = OidcUserInfoClaims::from_json::<reqwest::Error>(&bytes, None).map_err(|e| {
+        error!(?e, "Error parsing userinfo claims");
+        IdpError::BadRequest
+    })?;
+
+    let group_claims = serde_json::from_slice::<Value>(&bytes)
+        .map(|claims| oidc_group_claims_from_value(&claims))
+        .map_err(|e| {
+            error!(?e, "Error parsing userinfo group claims");
+            IdpError::BadRequest
+        })?;
+
+    Ok((userinfo, group_claims))
+}
+
+fn oidc_group_tokens_from_claims(
+    group_claims: Vec<String>,
+    idmap: &Idmap,
+    tenant_id: &Uuid,
+) -> Vec<GroupToken> {
+    group_claims
+        .into_iter()
+        .filter_map(|group| {
+            let uuid = Uuid::new_v5(tenant_id, group.as_bytes());
+            let gidnumber = match idmap.gen_to_unix(&tenant_id.to_string(), &group) {
+                Ok(gidnumber) => gidnumber,
+                Err(e) => {
+                    error!(?e, group = %group, "Failed mapping OIDC group claim");
+                    return None;
+                }
+            };
+
+            Some(GroupToken {
+                name: group.clone(),
+                spn: group,
+                uuid,
+                gidnumber,
+            })
+        })
+        .collect()
+}
+
 pub struct OidcApplication {
     client: Mutex<Option<OidcDelayedInit>>,
 }
@@ -2161,24 +2330,15 @@ impl OidcApplication {
         strip_at_suffix: bool,
     ) -> Result<UserToken, IdpError> {
         let access_token = token.access_token();
-        let userinfo: OidcUserInfoClaims = if let Some(delayed_init) = &*self.client.lock().await {
-            delayed_init
-                .client
-                .user_info(access_token.clone(), None)
-                .map_err(|e| {
-                    error!(?e, "Error building userinfo request");
-                    IdpError::BadRequest
-                })?
-                .request_async(&delayed_init.http_client)
-                .await
-                .map_err(|e| {
-                    error!(?e, "Error calling userinfo endpoint");
-                    IdpError::BadRequest
-                })?
-        } else {
-            error!("OIDC client not initialized");
-            return Err(IdpError::BadRequest);
-        };
+        let (userinfo, mut group_claims): (OidcUserInfoClaims, Vec<String>) =
+            if let Some(delayed_init) = &*self.client.lock().await {
+                oidc_userinfo_from_claims(delayed_init, access_token).await?
+            } else {
+                error!("OIDC client not initialized");
+                return Err(IdpError::BadRequest);
+            };
+        group_claims.sort();
+        group_claims.dedup();
 
         let account_id =
             oidc_account_id_from_userinfo(&userinfo, account_id_claims, strip_at_suffix)?;
@@ -2191,10 +2351,12 @@ impl OidcApplication {
             IdpError::BadRequest
         })?;
 
+        let idmap = idmap.lock().await;
+        let oidc_groups = oidc_group_tokens_from_claims(group_claims, &idmap, tenant_id);
+
         let (uid, gid) = match idmap_cache.get_user_by_name(&account_id) {
             Some(user) => (user.uid, user.gid),
             None => {
-                let idmap = idmap.lock().await;
                 let gid = idmap
                     .gen_to_unix(&tenant_id.to_string(), &account_id)
                     .map_err(|e| {
@@ -2213,6 +2375,14 @@ impl OidcApplication {
 
         let displayname = flip_displayname_comma(&displayname);
 
+        let mut groups = vec![GroupToken {
+            name: account_id.to_string(),
+            spn: account_id.to_string(),
+            uuid: object_id,
+            gidnumber: gid,
+        }];
+        groups.extend(oidc_groups);
+
         Ok(UserToken {
             name: account_id.to_string(),
             spn: account_id.to_string(),
@@ -2221,12 +2391,7 @@ impl OidcApplication {
             gidnumber: gid,
             displayname,
             shell: Some(shell),
-            groups: vec![GroupToken {
-                name: account_id.to_string(),
-                spn: account_id.to_string(),
-                uuid: object_id,
-                gidnumber: gid,
-            }],
+            groups,
             tenant_id: Some(*tenant_id),
             valid: true,
         })
