@@ -15,6 +15,7 @@
    You should have received a copy of the GNU General Public License
    along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
+use crate::reserved_ids::{is_systemd_dynamic_id, SYSTEMD_DYNAMIC_ID_MAX, SYSTEMD_DYNAMIC_ID_MIN};
 use rusqlite::{params, Connection, OpenFlags, Result};
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
@@ -36,6 +37,35 @@ pub struct StaticGroup {
 pub struct StaticIdCache {
     conn: Option<Connection>,
     writable: bool,
+}
+
+/// Reject a cached user whose UID or GID lands in systemd's dynamic user
+/// range. The cache is populated from directory supplied rfc2307 attributes
+/// (`aad-tool enumerate`) and from `aad-tool idmap user-add`, and it is
+/// consulted before those attributes are re-read, so a cache poisoned before
+/// this check existed must not be trusted. See GHSA-6gp8-pp9v-gx45.
+fn static_user_is_safe(user: &StaticUser) -> bool {
+    if is_systemd_dynamic_id(user.uid) || is_systemd_dynamic_id(user.gid) {
+        error!(
+            "Ignoring cached idmap entry for user {:?} (uid {}, gid {}): {}-{} is reserved for systemd dynamic users",
+            user.name, user.uid, user.gid, SYSTEMD_DYNAMIC_ID_MIN, SYSTEMD_DYNAMIC_ID_MAX
+        );
+        return false;
+    }
+    true
+}
+
+/// Reject a cached group whose GID lands in systemd's dynamic user range.
+/// See [`static_user_is_safe`] and GHSA-6gp8-pp9v-gx45.
+fn static_group_is_safe(group: &StaticGroup) -> bool {
+    if is_systemd_dynamic_id(group.gid) {
+        error!(
+            "Ignoring cached idmap entry for group {:?} (gid {}): {}-{} is reserved for systemd dynamic users",
+            group.name, group.gid, SYSTEMD_DYNAMIC_ID_MIN, SYSTEMD_DYNAMIC_ID_MAX
+        );
+        return false;
+    }
+    true
 }
 
 impl StaticIdCache {
@@ -122,11 +152,17 @@ impl StaticIdCache {
         let mut rows = stmt.query([name]).ok()?;
         let row = rows.next().ok().flatten()?;
 
-        Some(StaticUser {
+        let user = StaticUser {
             name: row.get(0).ok()?,
             uid: row.get(1).ok()?,
             gid: row.get(2).ok()?,
-        })
+        };
+
+        if !static_user_is_safe(&user) {
+            return None;
+        }
+
+        Some(user)
     }
 
     pub fn get_group_by_name(&self, name: &str) -> Option<StaticGroup> {
@@ -139,10 +175,16 @@ impl StaticIdCache {
         let mut rows = stmt.query([name]).ok()?;
         let row = rows.next().ok().flatten()?;
 
-        Some(StaticGroup {
+        let group = StaticGroup {
             name: row.get(0).ok()?,
             gid: row.get(1).ok()?,
-        })
+        };
+
+        if !static_group_is_safe(&group) {
+            return None;
+        }
+
+        Some(group)
     }
 
     pub fn list_users(&self) -> Vec<StaticUser> {
@@ -165,6 +207,9 @@ impl StaticIdCache {
             })
         }) {
             for user in mapped.flatten() {
+                if !static_user_is_safe(&user) {
+                    continue;
+                }
                 users.push(user);
             }
         }
@@ -191,6 +236,9 @@ impl StaticIdCache {
             })
         }) {
             for group in mapped.flatten() {
+                if !static_group_is_safe(&group) {
+                    continue;
+                }
                 groups.push(group);
             }
         }

@@ -37,6 +37,7 @@ use crate::idprovider::common::{BadPinCounter, RefreshCache};
 use crate::idprovider::common::PRT_REFRESH_AGE;
 use crate::idprovider::interface::{tpm, UserTokenState};
 use crate::idprovider::openidconnect::OidcProvider;
+use crate::reserved_ids::{is_systemd_dynamic_id, SYSTEMD_DYNAMIC_ID_MAX, SYSTEMD_DYNAMIC_ID_MIN};
 use crate::tpm::confidential_client_creds;
 use crate::unix_proto::PamAuthRequest;
 use crate::user_map::UserMap;
@@ -4796,13 +4797,29 @@ impl HimmelblauProvider {
                                     IdpError::BadRequest
                                 })?,
                             IdAttr::Rfc2307 => match posix_attrs.get("uidNumber") {
-                                Some(uid_number) => uid_number.parse::<u32>().map_err(|e| {
-                                    error!(
-                                        "Invalid uidNumber ('{}') synced from on-prem AD: {:?}",
-                                        uid_number, e
-                                    );
-                                    IdpError::BadRequest
-                                })?,
+                                Some(uid_number) => {
+                                    let uid_number = uid_number.parse::<u32>().map_err(|e| {
+                                        error!(
+                                            "Invalid uidNumber ('{}') synced from on-prem AD: {:?}",
+                                            uid_number, e
+                                        );
+                                        IdpError::BadRequest
+                                    })?;
+                                    // Never hand a directory identity the UID of a
+                                    // systemd dynamic user (such as himmelblaud
+                                    // itself). See GHSA-6gp8-pp9v-gx45.
+                                    if is_systemd_dynamic_id(uid_number) {
+                                        error!(
+                                            "Refusing uidNumber {} for user {}: {}-{} is reserved for systemd dynamic users",
+                                            uid_number,
+                                            uuid,
+                                            SYSTEMD_DYNAMIC_ID_MIN,
+                                            SYSTEMD_DYNAMIC_ID_MAX
+                                        );
+                                        return Err(IdpError::BadRequest);
+                                    }
+                                    uid_number
+                                }
                                 None => {
                                     error!(
                                         "User {} has no uidNumber defined in the directory!",
@@ -4815,13 +4832,26 @@ impl HimmelblauProvider {
 
                         // Utilize the existing primary group if set
                         let gidnumber = if let Some(gid_number) = posix_attrs.get("gidNumber") {
-                            gid_number.parse::<u32>().map_err(|e| {
+                            let gid_number = gid_number.parse::<u32>().map_err(|e| {
                                 error!(
                                     "Invalid gidNumber ('{}') synced from on-prem AD: {:?}",
                                     gid_number, e
                                 );
                                 IdpError::BadRequest
-                            })?
+                            })?;
+                            // Never hand a directory identity the GID of a systemd
+                            // dynamic user. See GHSA-6gp8-pp9v-gx45.
+                            if is_systemd_dynamic_id(gid_number) {
+                                error!(
+                                    "Refusing gidNumber {} for user {}: {}-{} is reserved for systemd dynamic users",
+                                    gid_number,
+                                    uuid,
+                                    SYSTEMD_DYNAMIC_ID_MIN,
+                                    SYSTEMD_DYNAMIC_ID_MAX
+                                );
+                                return Err(IdpError::BadRequest);
+                            }
+                            gid_number
                         } else {
                             // Otherwise add a fake primary group
                             groups.push(GroupToken {
@@ -4941,13 +4971,27 @@ impl HimmelblauProvider {
                     )
                     .map_err(|e| anyhow!("Failed fetching gid for {}: {:?}", name, e))?,
                 IdAttr::Rfc2307 => match value.extension_attrs.get("gidNumber") {
-                    Some(gid_number) => gid_number.parse::<u32>().map_err(|e| {
-                        anyhow!(
-                            "Invalid gidNumber ('{}') synced from on-prem AD: {:?}",
-                            gid_number,
-                            e
-                        )
-                    })?,
+                    Some(gid_number) => {
+                        let gid_number = gid_number.parse::<u32>().map_err(|e| {
+                            anyhow!(
+                                "Invalid gidNumber ('{}') synced from on-prem AD: {:?}",
+                                gid_number,
+                                e
+                            )
+                        })?;
+                        // Never hand a directory group the GID of a systemd
+                        // dynamic user. See GHSA-6gp8-pp9v-gx45.
+                        if is_systemd_dynamic_id(gid_number) {
+                            return Err(anyhow!(
+                                "Refusing gidNumber {} for group {}: {}-{} is reserved for systemd dynamic users",
+                                gid_number,
+                                name,
+                                SYSTEMD_DYNAMIC_ID_MIN,
+                                SYSTEMD_DYNAMIC_ID_MAX
+                            ));
+                        }
+                        gid_number
+                    }
                     None => match rfc2307_group_fallback_map {
                         Some(IdAttr::Uuid) => self
                             .idmap
