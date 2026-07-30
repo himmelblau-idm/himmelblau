@@ -75,9 +75,9 @@ fix_pam_config_account_line() {
 
     [ -f "$pc" ] || return 1
 
-    # Detect the known-bad pam-config output:
-    #   account required pam_himmelblau.so ignore_unknown_user
-    if ! grep -Eq '^[[:space:]]*account[[:space:]]+required[[:space:]]+pam_himmelblau\.so([[:space:]]+|$).*ignore_unknown_user' "$pc"; then
+    # Detect legacy/simple pam-config output:
+    #   account required|sufficient pam_himmelblau.so ignore_unknown_user
+    if ! grep -Eq '^[[:space:]]*account[[:space:]]+(required|sufficient)[[:space:]]+pam_himmelblau\.so([[:space:]]+|$).*ignore_unknown_user' "$pc"; then
         return 0
     fi
 
@@ -87,9 +87,10 @@ fix_pam_config_account_line() {
         chmod --reference="$pc" "$plain" || :
     fi
 
-    # Fix required -> sufficient in the self-managed file
+    # Make explicit himmelblau account denials terminal while preserving
+    # PAM_IGNORE fall-through for local users.
     sed -i -E \
-        's/^([[:space:]]*account[[:space:]]+)required([[:space:]]+pam_himmelblau\.so([[:space:]]+|$).*ignore_unknown_user)/\1sufficient\2/' \
+        's#^([[:space:]]*account[[:space:]]+)(required|sufficient)([[:space:]]+pam_himmelblau\.so([[:space:]]+|$).*ignore_unknown_user)#\1[success=end auth_err=die default=ignore]\3#' \
         "$plain" || return 1
 
     return 0

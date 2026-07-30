@@ -325,8 +325,7 @@ Setup PAM
     auth        required      pam_deny.so
 
     # vim /etc/pam.d/common-account
-    account    [default=1 ignore=ignore success=ok] pam_localuser.so
-    account    sufficient    pam_himmelblau.so ignore_unknown_user
+    account    [success=end auth_err=die default=ignore] pam_himmelblau.so ignore_unknown_user
     account    sufficient    pam_unix.so
     account    required      pam_deny.so
 
