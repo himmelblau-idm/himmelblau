@@ -4,13 +4,125 @@ set -euo pipefail
 # Accept %u/%U style invocations; take the first URL-like arg.
 URL=""
 for a in "$@"; do
-  case "$a" in
+  case "${a,,}" in
     http://*|https://*) URL="$a"; break ;;
   esac
 done
 [[ -n "$URL" ]] || exit 0  # nothing to do
 
 O365_LAUNCHER="/usr/bin/o365-multi"
+
+# The launcher hands --url to an Electron app whose window exposes Node's
+# require() to page scripts, so loading an untrusted page there is remote code
+# execution as the desktop user. Only origins on these lists may be opened that
+# way; everything else goes to the browser. The file= query parameter below is
+# attacker controlled and is used solely to pick an app profile -- it is never
+# evidence that a URL is trusted.
+
+# Hosts that must match exactly.
+O365_ALLOWED_HOSTS=(
+  outlook.office.com
+  outlook.office365.com
+  outlook.live.com
+  teams.microsoft.com
+  www.office.com
+  m365.cloud.microsoft
+  word.cloud.microsoft
+  excel.cloud.microsoft
+  powerpoint.cloud.microsoft
+  onedrive.live.com
+  # GCC High / DoD
+  outlook.office365.us
+  gov.teams.microsoft.us
+  dod.teams.microsoft.us
+  # 21Vianet (China)
+  partner.outlook.cn
+  teams.microsoft.cn
+)
+
+# Parent domains under which exactly one tenant label is accepted, e.g.
+# contoso.sharepoint.com. Nested subdomains are not accepted.
+O365_ALLOWED_TENANT_DOMAINS=(
+  sharepoint.com
+  officeapps.live.com
+  # GCC High / DoD
+  sharepoint.us
+  sharepoint-mil.us
+  # 21Vianet (China)
+  sharepoint.cn
+  # Germany
+  sharepoint.de
+)
+
+# Echo the lowercase host of $1 when it is unambiguously an https origin,
+# otherwise fail. Everything ambiguous is rejected rather than guessed at.
+https_origin_host() {
+  local url="$1" authority host
+
+  # The scheme must be exactly https.
+  case "${url,,}" in
+    https://*) ;;
+    *) return 1 ;;
+  esac
+
+  # The authority ends at the first '/', '?' or '#'.
+  authority="${url:8}"
+  authority="${authority%%[/?#]*}"
+
+  # Reject userinfo (https://word.cloud.microsoft@evil.example/). Browsers also
+  # normalize a backslash to '/', which would end the authority early; rather
+  # than replicate that, the host pattern below rejects the backslash outright.
+  if [[ "$authority" == *@* ]]; then
+    return 1
+  fi
+
+  host="$authority"
+  # An https origin has no port or port 443.
+  if [[ "$host" == *:* ]]; then
+    [[ "${host##*:}" == "443" ]] || return 1
+    host="${host%:*}"
+  fi
+
+  host="${host,,}"
+  host="${host%.}"  # trailing root label
+
+  # A plain dotted DNS name and nothing else. This rejects percent-encoding,
+  # IPv6 literals, embedded whitespace or control characters, and non-ASCII
+  # homographs before any comparison happens.
+  [[ "$host" =~ ^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$ ]] || return 1
+
+  printf '%s' "$host"
+}
+
+host_is_allowed() {
+  local host="$1" allowed tenant
+
+  for allowed in "${O365_ALLOWED_HOSTS[@]}"; do
+    if [[ "$host" == "$allowed" ]]; then
+      return 0
+    fi
+  done
+
+  for allowed in "${O365_ALLOWED_TENANT_DOMAINS[@]}"; do
+    # The leading '.' anchors the match on a label boundary, so neither
+    # evilsharepoint.com nor sharepoint.com.evil.example can match.
+    if [[ "$host" != *".$allowed" ]]; then
+      continue
+    fi
+    tenant="${host%".$allowed"}"
+    # Exactly one tenant label.
+    if [[ -n "$tenant" && "$tenant" != *.* ]]; then
+      return 0
+    fi
+  done
+
+  return 1
+}
+
+HOST="$(https_origin_host "$URL" || true)"
+if [[ -z "$HOST" ]] || ! host_is_allowed "$HOST"; then
+  exec xdg-open "$URL"
+fi
 
 urldecode() {
   # POSIX-safe URL decode
