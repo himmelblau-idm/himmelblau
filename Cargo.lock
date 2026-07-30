@@ -2661,9 +2661,9 @@ dependencies = [
 
 [[package]]
 name = "libhimmelblau"
-version = "0.8.25"
+version = "0.8.27"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7b31aa9faf50d11844eff6abeb52d3bb8b8d2ef8494dce891cba01285066da81"
+checksum = "aa0c3990110cfb28f4e235ab0cb8e1d4796e74fa99c8f256c3fccd18994dc02b"
 dependencies = [
  "base64 0.22.1",
  "cbindgen",
@@ -4599,9 +4599,9 @@ dependencies = [
 
 [[package]]
 name = "spin"
-version = "0.9.8"
+version = "0.9.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6980e8d7511241f8acf4aebddbb1ff938df5eebe98691418c4468d0b72a96a67"
+checksum = "3763264f6b73151db08c50ff20d7d8a0b8796e021cdea7ceedad07b80155fa0e"
 
 [[package]]
 name = "spki"
