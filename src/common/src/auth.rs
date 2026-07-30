@@ -820,21 +820,36 @@ fn handle_pam_auth_response_password(
     let cred = if let Some(cred) = consume_authtok {
         cred
     } else {
-        if let Some(long_prompt) = long_prompt.filter(|prompt| !prompt.trim().is_empty()) {
-            state.msg_printer.print_text(long_prompt);
+        let fold = state.opts.no_info_prompt;
+        let long_prompt = long_prompt.filter(|prompt| !prompt.trim().is_empty());
+
+        // The info text is normally sent as a standalone PAM_TEXT_INFO before the
+        // prompt. With no_info_prompt it is folded into the single password prompt
+        // instead, for PAM clients that cannot carry a separate info message during
+        // authentication (e.g. MariaDB's auth_pam dialog).
+        if !fold {
+            if let Some(long_prompt) = long_prompt {
+                state.msg_printer.print_text(long_prompt);
+            }
         }
 
         let prompt = match prompt.filter(|prompt| !prompt.trim().is_empty()) {
             Some(prompt) => i18n::translate_external_message(prompt),
             None if state.cfg.get_oidc_issuer_url().is_some() => tr("Cloud Password:"),
             None => {
-                state
-                    .msg_printer
-                    .print_text(&i18n::translate_external_message(
-                        &state.cfg.get_entra_id_password_prompt(),
-                    ));
-                tr("Entra Id Password:")
+                let info =
+                    i18n::translate_external_message(&state.cfg.get_entra_id_password_prompt());
+                if fold {
+                    format!("{}\n{}", info, tr("Entra Id Password:"))
+                } else {
+                    state.msg_printer.print_text(&info);
+                    tr("Entra Id Password:")
+                }
             }
+        };
+        let prompt = match (fold, long_prompt) {
+            (true, Some(long_prompt)) => format!("{}\n{}", long_prompt, prompt),
+            _ => prompt,
         };
         match state.msg_printer.prompt_echo_off(&prompt) {
             Some(cred) => cred,
@@ -1557,6 +1572,7 @@ mod tests {
     struct RecordingPrinter {
         text: Mutex<Vec<String>>,
         error: Mutex<Vec<String>>,
+        prompts: Mutex<Vec<String>>,
     }
 
     impl MessagePrinter for RecordingPrinter {
@@ -1572,8 +1588,9 @@ mod tests {
             None
         }
 
-        fn prompt_echo_off(&self, _prompt: &str) -> Option<String> {
-            None
+        fn prompt_echo_off(&self, prompt: &str) -> Option<String> {
+            self.prompts.lock().unwrap().push(prompt.to_string());
+            Some("hunter2".to_string())
         }
     }
 
@@ -1854,6 +1871,78 @@ mod tests {
         assert!(
             msg.len() > input.len(),
             "DAG message should still include generated QR content"
+        );
+    }
+
+    fn test_password_state(
+        printer: Arc<RecordingPrinter>,
+    ) -> (AuthenticateState, std::os::unix::net::UnixListener) {
+        let socket_path = format!("/tmp/himmelblau_auth_test_sock_{}", uuid::Uuid::new_v4());
+        let listener = std::os::unix::net::UnixListener::bind(&socket_path)
+            .expect("Failed to bind test socket");
+        let daemon_client =
+            DaemonClientBlocking::new(&socket_path).expect("Failed to connect test socket");
+        (
+            AuthenticateState {
+                daemon_client,
+                authtok: None,
+                cfg: test_config(""),
+                account_id: "user@example.com".to_string(),
+                service: "mariadb".to_string(),
+                opts: Options::default(),
+                msg_printer: printer,
+                poll_attempt: 0,
+                polling_interval: 0,
+            },
+            listener,
+        )
+    }
+
+    // no_info_prompt folds the info text into a single PAM_PROMPT_ECHO_OFF.
+    #[test]
+    fn test_no_info_prompt_folds_info_into_single_prompt() {
+        let printer = Arc::new(RecordingPrinter::default());
+        let (mut state, _listener) = test_password_state(printer.clone());
+        state.opts.no_info_prompt = true;
+
+        let next = handle_pam_auth_response_password(&mut state, None, Some("MFA required"));
+
+        assert!(
+            printer.text.lock().unwrap().is_empty(),
+            "no standalone info text should be emitted when folding"
+        );
+        let prompts = printer.prompts.lock().unwrap();
+        assert_eq!(prompts.len(), 1, "folding must produce a single prompt");
+        assert!(prompts[0].starts_with("MFA required"));
+        assert!(prompts[0].contains(&state.cfg.get_entra_id_password_prompt()));
+        assert!(prompts[0].contains("Entra Id Password:"));
+        match next {
+            PamWhatNext::Next(ClientRequest::PamAuthenticateStep(PamAuthRequest::Password {
+                cred,
+            })) => assert_eq!(cred, "hunter2"),
+            _ => panic!("expected a password step request"),
+        }
+    }
+
+    // Default (no_info_prompt unset) keeps the upstream behavior: info as separate text.
+    #[test]
+    fn test_default_sends_info_as_separate_text() {
+        let printer = Arc::new(RecordingPrinter::default());
+        let (mut state, _listener) = test_password_state(printer.clone());
+
+        let _ = handle_pam_auth_response_password(&mut state, None, Some("MFA required"));
+
+        let text = printer.text.lock().unwrap();
+        assert!(text.iter().any(|t| t.contains("MFA required")));
+        assert!(text
+            .iter()
+            .any(|t| t.contains(&state.cfg.get_entra_id_password_prompt())));
+        let prompts = printer.prompts.lock().unwrap();
+        assert_eq!(prompts.len(), 1);
+        assert!(prompts[0].contains("Entra Id Password:"));
+        assert!(
+            !prompts[0].contains("MFA required"),
+            "info must not be folded into the prompt by default"
         );
     }
 }
