@@ -115,17 +115,57 @@ fn insert_module_line(
     module_line: &str,
     after_pred: Option<&dyn Fn(&str) -> bool>,
     before_pred: Option<&dyn Fn(&str) -> bool>,
+    replace_same_options: bool,
     dry_run: bool,
 ) -> anyhow::Result<()> {
     let original = std::fs::read_to_string(pam_file)?;
     let mut lines: Vec<String> = original.lines().map(|l| l.to_string()).collect();
 
-    if lines.iter().any(|l| {
-        l.contains("pam_himmelblau.so")
-            && l.trim_start()
-                .starts_with(module_line.split_whitespace().next().unwrap_or(""))
+    // Extract the options that follow "pam_himmelblau.so" in the desired module_line.
+    let desired_opts: std::collections::HashSet<&str> = module_line
+        .split("pam_himmelblau.so")
+        .nth(1)
+        .unwrap_or("")
+        .split_whitespace()
+        .collect();
+    let stack_type = module_line.split_whitespace().next().unwrap_or("");
+    let normalized_module_line = module_line.split_whitespace().collect::<Vec<_>>().join(" ");
+
+    if let Some(existing_index) = lines.iter().position(|l| {
+        if !l.contains("pam_himmelblau.so") || !l.trim_start().starts_with(stack_type) {
+            return false;
+        }
+        let existing_opts: std::collections::HashSet<&str> = l
+            .split("pam_himmelblau.so")
+            .nth(1)
+            .unwrap_or("")
+            .split_whitespace()
+            .collect();
+        existing_opts == desired_opts
     }) {
-        debug!("{} already contains pam_himmelblau; skipping", pam_file);
+        if !replace_same_options
+            || lines[existing_index]
+                .split_whitespace()
+                .collect::<Vec<_>>()
+                .join(" ")
+                == normalized_module_line
+        {
+            debug!("{} already contains pam_himmelblau; skipping", pam_file);
+            return Ok(());
+        }
+
+        lines[existing_index] = module_line.to_string();
+
+        if dry_run {
+            println!("[{}] (dry run):", pam_file);
+            for line in &lines {
+                println!("{}", line);
+            }
+        } else {
+            std::fs::write(pam_file, lines.join("\n") + "\n")?;
+            info!("Modified {}", pam_file);
+        }
+
         return Ok(());
     }
 
@@ -261,6 +301,7 @@ fn configure_pam(
             None,
             // pam_himmelblau should always come first on the auth stack
             Some(&|_: &str| true),
+            false,
             dry_run,
         )?;
     }
@@ -269,12 +310,13 @@ fn configure_pam(
     for account_file in &account_files {
         insert_module_line(
             account_file,
-            "account\tsufficient\tpam_himmelblau.so ignore_unknown_user",
+            "account\t[success=end auth_err=die default=ignore]\tpam_himmelblau.so ignore_unknown_user",
             None,
             Some(&|l: &str| {
                 (l.contains("pam_unix.so") && l.contains("account"))
                     || (l.contains("pam_faillock.so") && l.contains("account"))
             }),
+            true,
             dry_run,
         )?;
     }
@@ -286,6 +328,7 @@ fn configure_pam(
             "session\toptional\tpam_himmelblau.so",
             None,
             None,
+            false,
             dry_run,
         )?;
     }
@@ -301,6 +344,7 @@ fn configure_pam(
                     || (l.contains("pam_cracklib.so") && l.contains("password"))
                     || (l.contains("pam_pwquality.so") && l.contains("password"))
             }),
+            false,
             dry_run,
         )?;
     }
@@ -2204,5 +2248,135 @@ async fn main() -> ExitCode {
             println!("himmelblau {}", env!("CARGO_PKG_VERSION"));
             ExitCode::SUCCESS
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::insert_module_line;
+    use std::fs;
+    use std::path::PathBuf;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    const ACCOUNT_LINE: &str =
+        "account\t[success=end auth_err=die default=ignore]\tpam_himmelblau.so ignore_unknown_user";
+
+    fn temp_pam_file(name: &str, content: &str) -> anyhow::Result<PathBuf> {
+        let nanos = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
+        let path = std::env::temp_dir().join(format!(
+            "aad-tool-{}-{}-{}.pam",
+            name,
+            std::process::id(),
+            nanos
+        ));
+        fs::write(&path, content)?;
+        Ok(path)
+    }
+
+    fn read_to_string(path: &PathBuf) -> anyhow::Result<String> {
+        Ok(fs::read_to_string(path)?)
+    }
+
+    fn remove_temp_file(path: &PathBuf) -> anyhow::Result<()> {
+        match fs::remove_file(path) {
+            Ok(()) => Ok(()),
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(err) => Err(err.into()),
+        }
+    }
+
+    #[test]
+    fn replaces_legacy_sufficient_account_line() -> anyhow::Result<()> {
+        let path = temp_pam_file(
+            "legacy-sufficient",
+            "account sufficient pam_himmelblau.so ignore_unknown_user\naccount required pam_unix.so\n",
+        )?;
+
+        insert_module_line(
+            path.to_str().unwrap_or_default(),
+            ACCOUNT_LINE,
+            None,
+            None,
+            true,
+            false,
+        )?;
+
+        let content = read_to_string(&path)?;
+        assert_eq!(
+            content,
+            format!("{}\naccount required pam_unix.so\n", ACCOUNT_LINE)
+        );
+        remove_temp_file(&path)
+    }
+
+    #[test]
+    fn replaces_legacy_required_account_line() -> anyhow::Result<()> {
+        let path = temp_pam_file(
+            "legacy-required",
+            "account required pam_himmelblau.so ignore_unknown_user\naccount required pam_unix.so\n",
+        )?;
+
+        insert_module_line(
+            path.to_str().unwrap_or_default(),
+            ACCOUNT_LINE,
+            None,
+            None,
+            true,
+            false,
+        )?;
+
+        let content = read_to_string(&path)?;
+        assert_eq!(
+            content,
+            format!("{}\naccount required pam_unix.so\n", ACCOUNT_LINE)
+        );
+        remove_temp_file(&path)
+    }
+
+    #[test]
+    fn skips_already_correct_account_line() -> anyhow::Result<()> {
+        let existing = concat!(
+            "account   [success=end auth_err=die default=ignore]   ",
+            "pam_himmelblau.so   ignore_unknown_user\n",
+            "account required pam_unix.so\n"
+        );
+        let path = temp_pam_file("already-correct", existing)?;
+
+        insert_module_line(
+            path.to_str().unwrap_or_default(),
+            ACCOUNT_LINE,
+            None,
+            None,
+            true,
+            false,
+        )?;
+
+        let content = read_to_string(&path)?;
+        assert_eq!(content, existing);
+        remove_temp_file(&path)
+    }
+
+    #[test]
+    fn non_replacement_mode_keeps_legacy_line() -> anyhow::Result<()> {
+        let path = temp_pam_file(
+            "legacy-auth",
+            "auth required pam_himmelblau.so ignore_unknown_user set_authtok\nauth required pam_unix.so\n",
+        )?;
+
+        insert_module_line(
+            path.to_str().unwrap_or_default(),
+            "auth\tsufficient\tpam_himmelblau.so ignore_unknown_user set_authtok",
+            None,
+            None,
+            false,
+            false,
+        )?;
+
+        let content = read_to_string(&path)?;
+        assert_eq!(
+            content,
+            "auth required pam_himmelblau.so ignore_unknown_user set_authtok\nauth required pam_unix.so\n"
+        );
+        remove_temp_file(&path)
     }
 }
