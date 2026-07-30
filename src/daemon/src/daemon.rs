@@ -214,6 +214,24 @@ async fn handle_task_client(
     }
 }
 
+/// Authorize a Hello PIN change against the credentials of the connecting peer.
+///
+/// The main daemon socket is world-connectable by design — NSS lookups and PAM
+/// entry points that run in the user's own context must be able to reach it.
+/// `PamChangeAuthToken` therefore cannot rely on socket permissions for
+/// authorization, and the bearer token it carries is caller-supplied and never
+/// signature-verified. Bind the request to the peer instead.
+///
+/// * `peer_uid` — the SO_PEERCRED uid of the connection.
+/// * `target_uid` — the resolved POSIX uid of the account being changed, or
+///   `None` when the account could not be resolved.
+///
+/// root is allowed because `chauthtok` normally runs from a setuid-root helper
+/// (`passwd`, `login`, `sshd`). Any other peer may only change its own PIN.
+fn peer_may_change_hello_pin(peer_uid: u32, target_uid: Option<u32>) -> bool {
+    peer_uid == 0 || target_uid == Some(peer_uid)
+}
+
 async fn handle_client(
     sock: UnixStream,
     cachelayer: Arc<Resolver<HimmelblauMultiProvider>>,
@@ -770,6 +788,36 @@ async fn handle_client(
                 let span = span!(Level::INFO, "sm_chauthtok req");
                 async {
                     trace!("sm_chauthtok req");
+
+                    // Bind this request to the connecting peer (GHSA-6gp8-pp9v-gx45).
+                    // Without this, any local user can enroll a Hello PIN for any
+                    // cached account, because the only other check is an `spn`
+                    // comparison against an unverified JWT payload.
+                    //
+                    // Compare UIDs, not names: `NssUser::name` follows the
+                    // `uid_attr_map` setting (spn vs. name), while `NssUser::uid`
+                    // is always the account's gidnumber — the POSIX uid the peer
+                    // actually runs as.
+                    let target_uid = if ucred.uid() == 0 {
+                        None // not consulted; root is always authorized
+                    } else {
+                        cachelayer
+                            .get_nssaccount_name(&account_id)
+                            .await
+                            .ok()
+                            .flatten()
+                            .map(|nss_user| nss_user.uid)
+                    };
+                    if !peer_may_change_hello_pin(ucred.uid(), target_uid) {
+                        error!(
+                            "Refusing Hello PIN change for {}: uid {} is neither root \
+                             nor the owner of that account",
+                            account_id,
+                            ucred.uid()
+                        );
+                        return ClientResponse::Error;
+                    }
+
                     let token = UnixUserToken {
                         token_type: "Bearer".to_string(),
                         scope: None,
@@ -957,6 +1005,32 @@ fn spawn_intune_policy_application(
             }
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn hello_pin_change_allows_root() {
+        assert!(peer_may_change_hello_pin(0, None));
+        assert!(peer_may_change_hello_pin(0, Some(1000)));
+    }
+
+    #[test]
+    fn hello_pin_change_allows_account_owner() {
+        assert!(peer_may_change_hello_pin(1000, Some(1000)));
+    }
+
+    #[test]
+    fn hello_pin_change_denies_other_users() {
+        assert!(!peer_may_change_hello_pin(1000, Some(1001)));
+    }
+
+    #[test]
+    fn hello_pin_change_denies_unresolvable_account() {
+        assert!(!peer_may_change_hello_pin(1000, None));
+    }
 }
 
 async fn process_etc_passwd_group(
