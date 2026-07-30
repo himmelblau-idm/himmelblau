@@ -356,6 +356,29 @@ fn user_has_subid_entry(username: &str, subid_file: &Path) -> bool {
     }
 }
 
+/// Reject account names that could forge additional records in a subid file.
+///
+/// /etc/subuid and /etc/subgid are newline separated `name:start:count`
+/// records. An account name containing the field separator (`:`) or a record
+/// separator (any control character, which covers `\n`, `\r` and NUL) would
+/// let a single delegation request write arbitrary *additional* delegations,
+/// e.g. `padding:1:2\nattacker:0:65536\npad` grants host UID 0 to `attacker`.
+/// See GHSA-x259-23ph-65m5.
+fn validate_subid_username(username: &str) -> Result<(), String> {
+    if username.is_empty() {
+        return Err("Refusing subordinate ID entry for an empty account name".to_string());
+    }
+
+    if let Some(c) = username.chars().find(|c| *c == ':' || c.is_control()) {
+        return Err(format!(
+            "Refusing subordinate ID entry for account name {:?}: illegal character {:?}",
+            username, c
+        ));
+    }
+
+    Ok(())
+}
+
 /// Add a subordinate ID entry to /etc/subuid or /etc/subgid
 /// Format: username:start:count
 fn add_subid_entry(
@@ -364,6 +387,9 @@ fn add_subid_entry(
     count: u32,
     subid_file: &Path,
 ) -> Result<(), String> {
+    // Never interpolate an unvalidated name into a subid record.
+    validate_subid_username(username)?;
+
     // Check if user already has an entry
     if user_has_subid_entry(username, subid_file) {
         debug!(
@@ -748,14 +774,17 @@ async fn handle_tasks(stream: UnixStream, cfg: &HimmelblauConfig) {
             }
             Some(Ok(TaskRequest::SubordinateIds(username, start, count))) => {
                 debug!(
-                    "Received task -> SubordinateIds({}, {}, {})",
+                    "Received task -> SubordinateIds({:?}, {}, {})",
                     username, start, count
                 );
 
                 let resp = match setup_subordinate_ids(&username, start, count) {
                     Ok(()) => TaskResponse::Success(0),
                     Err(msg) => {
-                        error!("Failed to setup subordinate IDs for {}: {}", username, msg);
+                        error!(
+                            "Failed to setup subordinate IDs for {:?}: {}",
+                            username, msg
+                        );
                         TaskResponse::Error(msg)
                     }
                 };
@@ -939,4 +968,79 @@ async fn main() -> ExitCode {
             ExitCode::SUCCESS
         })
         .await
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+
+    use super::*;
+
+    /// The exact payload from GHSA-x259-23ph-65m5.
+    const ADVISORY_PAYLOAD: &str = "padding:100000:65536\nattacker:0:65536\npadding";
+
+    #[test]
+    fn validate_subid_username_accepts_legitimate_names() {
+        for username in [
+            "user",
+            "user@example.com",
+            "first.last-1_2@contoso.com",
+            "user+alias@example.com",
+            "jos\u{e9}@example.com",
+        ] {
+            assert!(
+                validate_subid_username(username).is_ok(),
+                "expected {:?} to be accepted",
+                username
+            );
+        }
+    }
+
+    #[test]
+    fn validate_subid_username_rejects_record_forging_names() {
+        for username in [
+            "",
+            "attacker:0:65536",
+            ADVISORY_PAYLOAD,
+            "victim\nroot",
+            "victim\r\nroot",
+            "victim\0root",
+        ] {
+            assert!(
+                validate_subid_username(username).is_err(),
+                "expected {:?} to be rejected",
+                username
+            );
+        }
+    }
+
+    #[test]
+    fn add_subid_entry_rejects_payload_and_leaves_file_untouched() {
+        let subid_file = tempfile::NamedTempFile::new().expect("failed to create temp subid file");
+        let path = subid_file.path();
+
+        let before = fs::read(path).unwrap_or_default();
+
+        assert!(add_subid_entry(ADVISORY_PAYLOAD, 100000, 65536, path).is_err());
+
+        let after = fs::read(path).unwrap_or_default();
+        assert_eq!(before, after, "subid file must not be modified");
+    }
+
+    #[test]
+    fn add_subid_entry_appends_a_single_record_for_a_valid_name() {
+        let subid_file = tempfile::NamedTempFile::new().expect("failed to create temp subid file");
+        let path = subid_file.path();
+
+        assert!(add_subid_entry("user@example.com", 2100000000, 65536, path).is_ok());
+
+        let contents = fs::read_to_string(path).unwrap_or_default();
+        assert_eq!(contents, "user@example.com:2100000000:65536\n");
+
+        // A second call for the same user must not duplicate the record.
+        assert!(add_subid_entry("user@example.com", 2100000000, 65536, path).is_ok());
+
+        let contents = fs::read_to_string(path).unwrap_or_default();
+        assert_eq!(contents, "user@example.com:2100000000:65536\n");
+    }
 }

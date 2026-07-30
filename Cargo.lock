@@ -2161,6 +2161,7 @@ dependencies = [
  "serde_json",
  "sketching",
  "systemd-journal-logger",
+ "tempfile",
  "tokio",
  "tokio-util",
  "tracing",
