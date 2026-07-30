@@ -5,7 +5,7 @@ Auth: auth     sufficient    pam_himmelblau.so    ignore_unknown_user set_authto
 Auth-Priority: 800
 
 # Account stack
-Account: account        sufficient      pam_himmelblau.so    ignore_unknown_user
+Account: account        [success=end auth_err=die default=ignore]      pam_himmelblau.so    ignore_unknown_user
 Account-Priority: 300
 
 # Password stack
