@@ -51,6 +51,9 @@ use himmelblau_unix_common::constants::{
 use himmelblau_unix_common::db::{Cache, CacheTxn, Db, KeyStoreTxn};
 use himmelblau_unix_common::idmap_cache::{StaticGroup, StaticIdCache, StaticUser};
 use himmelblau_unix_common::pam::{Options, PamResultCode};
+use himmelblau_unix_common::reserved_ids::{
+    is_systemd_dynamic_id, SYSTEMD_DYNAMIC_ID_MAX, SYSTEMD_DYNAMIC_ID_MIN,
+};
 use himmelblau_unix_common::tpm::{confidential_client_creds, open_tpm};
 use himmelblau_unix_common::tpm_init;
 use himmelblau_unix_common::unix_config::HsmType;
@@ -1894,6 +1897,15 @@ async fn main() -> ExitCode {
             for user in users {
                 if let Some(uid) = user.uid {
                     let gid = user.gid.unwrap_or(uid);
+                    // Never cache a directory identity into systemd's dynamic
+                    // user range. See GHSA-6gp8-pp9v-gx45.
+                    if is_systemd_dynamic_id(uid) || is_systemd_dynamic_id(gid) {
+                        warn!(
+                            "Skipping user {} (uid {}, gid {}): {}-{} is reserved for systemd dynamic users",
+                            user.upn, uid, gid, SYSTEMD_DYNAMIC_ID_MIN, SYSTEMD_DYNAMIC_ID_MAX
+                        );
+                        continue;
+                    }
                     let cache_user = StaticUser {
                         name: user.upn.clone(),
                         uid,
@@ -1912,6 +1924,15 @@ async fn main() -> ExitCode {
 
             for group in groups {
                 if let Some(gid) = group.gid {
+                    // Never cache a directory group into systemd's dynamic
+                    // user range. See GHSA-6gp8-pp9v-gx45.
+                    if is_systemd_dynamic_id(gid) {
+                        warn!(
+                            "Skipping group {} (gid {}): {}-{} is reserved for systemd dynamic users",
+                            group.displayname, gid, SYSTEMD_DYNAMIC_ID_MIN, SYSTEMD_DYNAMIC_ID_MAX
+                        );
+                        continue;
+                    }
                     let cache_group = StaticGroup {
                         name: group.displayname.clone(),
                         gid,
@@ -1943,6 +1964,20 @@ async fn main() -> ExitCode {
             gecos,
         }) => {
             debug!("Starting user set posix attrs tool ...");
+
+            // Refuse to publish an identity into systemd's dynamic user range.
+            // See GHSA-6gp8-pp9v-gx45.
+            for (attr, val) in [("uidNumber", uid), ("gidNumber", gid)] {
+                if let Some(val) = val {
+                    if is_systemd_dynamic_id(val) {
+                        error!(
+                            "Refusing to set {} to {}: {}-{} is reserved for systemd dynamic users",
+                            attr, val, SYSTEMD_DYNAMIC_ID_MIN, SYSTEMD_DYNAMIC_ID_MAX
+                        );
+                        return ExitCode::FAILURE;
+                    }
+                }
+            }
 
             let (graph, access_token) = match obtain_access_token!(
                 account_id,
@@ -1995,6 +2030,16 @@ async fn main() -> ExitCode {
         }) => {
             debug!("Starting group set posix attrs tool ...");
 
+            // Refuse to publish a group into systemd's dynamic user range.
+            // See GHSA-6gp8-pp9v-gx45.
+            if is_systemd_dynamic_id(gid) {
+                error!(
+                    "Refusing to set gidNumber to {}: {}-{} is reserved for systemd dynamic users",
+                    gid, SYSTEMD_DYNAMIC_ID_MIN, SYSTEMD_DYNAMIC_ID_MAX
+                );
+                return ExitCode::FAILURE;
+            }
+
             let (graph, access_token) = match obtain_access_token!(
                 account_id,
                 vec!["https://graph.microsoft.com/Group.ReadWrite.All"],
@@ -2043,6 +2088,16 @@ async fn main() -> ExitCode {
                 } => {
                     trace!("Configuring id user mapping ...");
 
+                    // Never map an account into systemd's dynamic user range.
+                    // See GHSA-6gp8-pp9v-gx45.
+                    if is_systemd_dynamic_id(uid) || is_systemd_dynamic_id(gid) {
+                        error!(
+                            "Refusing to map {} to uid {}, gid {}: {}-{} is reserved for systemd dynamic users",
+                            account_id, uid, gid, SYSTEMD_DYNAMIC_ID_MIN, SYSTEMD_DYNAMIC_ID_MAX
+                        );
+                        return ExitCode::FAILURE;
+                    }
+
                     let cache = match StaticIdCache::new(ID_MAP_CACHE, true) {
                         Ok(cache) => cache,
                         Err(e) => {
@@ -2071,6 +2126,16 @@ async fn main() -> ExitCode {
                     gid,
                 } => {
                     trace!("Configuring id group mapping ...");
+
+                    // Never map a group into systemd's dynamic user range.
+                    // See GHSA-6gp8-pp9v-gx45.
+                    if is_systemd_dynamic_id(gid) {
+                        error!(
+                            "Refusing to map {} to gid {}: {}-{} is reserved for systemd dynamic users",
+                            object_id, gid, SYSTEMD_DYNAMIC_ID_MIN, SYSTEMD_DYNAMIC_ID_MAX
+                        );
+                        return ExitCode::FAILURE;
+                    }
 
                     let cache = match StaticIdCache::new(ID_MAP_CACHE, true) {
                         Ok(cache) => cache,

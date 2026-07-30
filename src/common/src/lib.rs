@@ -59,6 +59,8 @@ pub mod pam;
 #[cfg(target_family = "unix")]
 pub mod policy_cache;
 #[cfg(target_family = "unix")]
+pub mod reserved_ids;
+#[cfg(target_family = "unix")]
 pub mod resolver;
 #[cfg(target_family = "unix")]
 pub mod tpm;
