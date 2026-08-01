@@ -139,7 +139,7 @@ himmelblau_unix_common = { path = "src/common" }
 libhimmelblau = { version = "0.8.25", features = ["broker", "changepassword", "on_behalf_of", "mfa_method_selection", "optional_mfa", "intune_portal_vers_selection", "redirect_uri", "pop_support", "ipvers", "set_timeout"] }
 clap = { version = "^4.6", features = ["derive", "env"] }
 clap_complete = "^4.6.2"
-reqwest = { version = "^0.12.24", features = ["json"] }
+reqwest = { version = "^0.13.1", features = ["json"] }
 anyhow = "^1.0.102"
 tokio = { version = "^1.52.2", features = ["rt", "macros", "sync", "time", "net", "io-util", "signal", "rt-multi-thread"] }
 tokio-util = { version = "^0.7.18", features = ["codec"] }
@@ -160,7 +160,7 @@ libkrimes = { version = "0.1.0", features = ["keyring"] }
 # Kanidm deps
 argon2 = { version = "0.5.2", features = ["alloc"] }
 base32 = "^0.5.0"
-base64 = "^0.22.0"
+base64 = "^0.23.0"
 base64urlsafedata = "0.5.5"
 hex = "^0.4.3"
 num_enum = "^0.7.6"
@@ -174,7 +174,7 @@ webauthn-rs-proto = "0.5.0"
 kanidm_proto = "1.8.1"
 openssl-sys = "^0.9"
 openssl = "^0.10.80"
-rand = "^0.9.4"
+rand = "^0.10.2"
 tss-esapi = "^7.2.0"
 sketching = "1.10.0"
 tracing-forest = "^0.1.6"
