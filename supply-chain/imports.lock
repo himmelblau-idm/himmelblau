@@ -48,8 +48,8 @@ user-login = "epage"
 user-name = "Ed Page"
 
 [[publisher.anyhow]]
-version = "1.0.103"
-when = "2026-06-25"
+version = "1.0.104"
+when = "2026-07-18"
 user-id = 3618
 user-login = "dtolnay"
 user-name = "David Tolnay"
@@ -62,8 +62,8 @@ user-login = "fitzgen"
 user-name = "Nick Fitzgerald"
 
 [[publisher.async-trait]]
-version = "0.1.89"
-when = "2025-08-14"
+version = "0.1.91"
+when = "2026-07-18"
 user-id = 3618
 user-login = "dtolnay"
 user-name = "David Tolnay"
@@ -83,8 +83,8 @@ user-login = "Firstyear"
 user-name = "Firstyear"
 
 [[publisher.bytes]]
-version = "1.12.0"
-when = "2026-06-18"
+version = "1.12.1"
+when = "2026-07-08"
 user-id = 6741
 user-login = "Darksonn"
 user-name = "Alice Ryhl"
@@ -103,22 +103,22 @@ user-login = "emilio"
 user-name = "Emilio Cobos Álvarez"
 
 [[publisher.clap]]
-version = "4.6.1"
-when = "2026-04-15"
+version = "4.6.5"
+when = "2026-07-31"
 user-id = 6743
 user-login = "epage"
 user-name = "Ed Page"
 
 [[publisher.clap_builder]]
-version = "4.6.0"
-when = "2026-03-12"
+version = "4.6.5"
+when = "2026-07-31"
 user-id = 6743
 user-login = "epage"
 user-name = "Ed Page"
 
 [[publisher.clap_derive]]
-version = "4.6.1"
-when = "2026-04-15"
+version = "4.6.4"
+when = "2026-07-21"
 user-id = 6743
 user-login = "epage"
 user-name = "Ed Page"
@@ -455,8 +455,8 @@ user-login = "Firstyear"
 user-name = "Firstyear"
 
 [[publisher.libc]]
-version = "0.2.186"
-when = "2026-04-23"
+version = "0.2.189"
+when = "2026-07-21"
 user-id = 55123
 user-login = "rust-lang-owner"
 
@@ -468,8 +468,8 @@ user-login = "fitzgen"
 user-name = "Nick Fitzgerald"
 
 [[publisher.libhimmelblau]]
-version = "0.8.25"
-when = "2026-07-01"
+version = "0.8.27"
+when = "2026-07-29"
 user-id = 247655
 user-login = "dmulder"
 user-name = "David Mulder"
@@ -629,15 +629,15 @@ user-login = "dtolnay"
 user-name = "David Tolnay"
 
 [[publisher.regex]]
-version = "1.12.4"
-when = "2026-06-09"
+version = "1.13.1"
+when = "2026-07-15"
 user-id = 189
 user-login = "BurntSushi"
 user-name = "Andrew Gallant"
 
 [[publisher.regex-automata]]
-version = "0.4.13"
-when = "2025-10-13"
+version = "0.4.16"
+when = "2026-07-15"
 user-id = 189
 user-login = "BurntSushi"
 user-name = "Andrew Gallant"
@@ -671,8 +671,8 @@ user-login = "sunfishcode"
 user-name = "Dan Gohman"
 
 [[publisher.rustls]]
-version = "0.23.41"
-when = "2026-06-22"
+version = "0.23.42"
+when = "2026-07-13"
 user-id = 4556
 user-login = "djc"
 user-name = "Dirkjan Ochtman"
@@ -699,8 +699,8 @@ user-login = "Amanieu"
 user-name = "Amanieu d'Antras"
 
 [[publisher.serde]]
-version = "1.0.228"
-when = "2025-09-27"
+version = "1.0.229"
+when = "2026-07-18"
 user-id = 3618
 user-login = "dtolnay"
 user-name = "David Tolnay"
@@ -720,22 +720,22 @@ user-login = "Firstyear"
 user-name = "Firstyear"
 
 [[publisher.serde_core]]
-version = "1.0.228"
-when = "2025-09-27"
+version = "1.0.229"
+when = "2026-07-18"
 user-id = 3618
 user-login = "dtolnay"
 user-name = "David Tolnay"
 
 [[publisher.serde_derive]]
-version = "1.0.228"
-when = "2025-09-27"
+version = "1.0.229"
+when = "2026-07-18"
 user-id = 3618
 user-login = "dtolnay"
 user-name = "David Tolnay"
 
 [[publisher.serde_json]]
-version = "1.0.150"
-when = "2026-05-21"
+version = "1.0.151"
+when = "2026-07-20"
 user-id = 3618
 user-login = "dtolnay"
 user-name = "David Tolnay"
@@ -803,6 +803,13 @@ user-id = 3618
 user-login = "dtolnay"
 user-name = "David Tolnay"
 
+[[publisher.syn]]
+version = "3.0.3"
+when = "2026-07-22"
+user-id = 3618
+user-login = "dtolnay"
+user-name = "David Tolnay"
+
 [[publisher.target-lexicon]]
 version = "0.12.16"
 when = "2024-07-30"
@@ -832,8 +839,8 @@ user-login = "dtolnay"
 user-name = "David Tolnay"
 
 [[publisher.tokio]]
-version = "1.52.3"
-when = "2026-05-08"
+version = "1.53.1"
+when = "2026-07-20"
 user-id = 6741
 user-login = "Darksonn"
 user-name = "Alice Ryhl"
@@ -846,8 +853,8 @@ user-login = "Darksonn"
 user-name = "Alice Ryhl"
 
 [[publisher.tokio-util]]
-version = "0.7.18"
-when = "2026-01-04"
+version = "0.7.19"
+when = "2026-07-21"
 user-id = 6741
 user-login = "Darksonn"
 user-name = "Alice Ryhl"
