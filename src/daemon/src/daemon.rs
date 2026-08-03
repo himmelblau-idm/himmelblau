@@ -93,6 +93,7 @@ type AsyncTaskRequest = (TaskRequest, oneshot::Sender<TaskOutcome>);
 type IntunePolicyThrottle = Arc<Mutex<HashMap<String, IntunePolicyThrottleState>>>;
 
 const INTUNE_POLICY_THROTTLE_INTERVAL: Duration = Duration::from_secs(30 * 60);
+const KINIT_AUTH_SERVICE: &str = "aad-tool-kinit";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum IntunePolicyThrottleState {
@@ -262,6 +263,7 @@ async fn handle_client(
 
     let mut reqs = Framed::new(sock, ClientCodec);
     let mut pam_auth_session_state = None;
+    let mut kinit_authorized_account = None;
 
     // Setup a broadcast channel so that if we have an unexpected disconnection, we can
     // tell consumers to stop work.
@@ -383,6 +385,11 @@ async fn handle_client(
                     trace!("pam authenticate step");
                     match &mut pam_auth_session_state {
                         Some(auth_session) => {
+                            let auth_service = match auth_session {
+                                AuthSession::InProgress { service, .. } => Some(service.clone()),
+                                _ => None,
+                            };
+                            let is_kinit_auth = auth_service.as_deref() == Some(KINIT_AUTH_SERVICE);
                             match cachelayer
                                 .pam_account_authenticate_step(auth_session, pam_next_req)
                                 .await
@@ -395,7 +402,17 @@ async fn handle_client(
                                             let account_id = account_id.to_lowercase();
                                             match resp {
                                                 PamAuthResponse::Success => {
-                                                    if cfg.get_logon_script().is_some() {
+                                                    if let Some(service) = auth_service.as_deref() {
+                                                        kinit_authorized_account =
+                                                            kinit_authorization_from_auth_success(
+                                                                service,
+                                                                &account_id,
+                                                            );
+                                                    }
+
+                                                    if !is_kinit_auth
+                                                        && cfg.get_logon_script().is_some()
+                                                    {
                                                         let scopes = cfg.get_logon_token_scopes();
                                                         let domain = split_username(&account_id)
                                                             .map(|(_, domain)| domain);
@@ -463,7 +480,9 @@ async fn handle_client(
                                                     }
 
                                                     // Initialize the user Kerberos ccache
-                                                    if cfg.get_enable_kerberos_cache() {
+                                                    if !is_kinit_auth
+                                                        && cfg.get_enable_kerberos_cache()
+                                                    {
                                                         if let Some((uid, gid, tgt_cloud, tgt_ad, top_level_names, tenant_id)) =
                                                             cachelayer
                                                                 .get_user_tgts(Id::Name(
@@ -880,6 +899,150 @@ async fn handle_client(
                     ClientResponse::Error
                 }
             }
+            ClientRequest::Kinit(account_id) => {
+                let span = span!(Level::INFO, "kinit");
+                async {
+                    let account_id = account_id.to_lowercase();
+                    trace!("kinit requested for {}", account_id);
+
+                    if !is_kinit_request_authorized(
+                        kinit_authorized_account.as_deref(),
+                        &account_id,
+                    ) {
+                        warn!(
+                            "kinit: request for {} denied; no matching successful authentication on this connection",
+                            account_id
+                        );
+                        return ClientResponse::NotAuthenticated;
+                    }
+
+                    let Some((_uid, _gid, tgt_cloud, tgt_ad, top_level_names, tenant_id)) =
+                        cachelayer
+                            .get_user_tgts(Id::Name(account_id.to_string()))
+                            .await
+                    else {
+                        error!("kinit: failed to fetch Kerberos tickets for {}", account_id);
+                        return ClientResponse::Error;
+                    };
+
+                    let (tx, rx) = oneshot::channel();
+                    match task_channel_tx
+                        .send_timeout(
+                            (
+                                TaskRequest::KerberosConfig(top_level_names, tenant_id),
+                                tx,
+                            ),
+                            Duration::from_millis(100),
+                        )
+                        .await
+                    {
+                        Ok(()) => {
+                            match time::timeout_at(
+                                time::Instant::now() + Duration::from_secs(60),
+                                rx,
+                            )
+                            .await
+                            {
+                                Ok(Ok(TaskOutcome::Status(0))) => {}
+                                Ok(Ok(TaskOutcome::Status(status))) => {
+                                    error!(
+                                        "kinit: Kerberos config failed for {}: Status code: {}",
+                                        account_id, status
+                                    );
+                                    return ClientResponse::Error;
+                                }
+                                Ok(Ok(TaskOutcome::NonCompliant(_))) => {
+                                    error!("kinit: unexpected NonCompliant task outcome");
+                                    return ClientResponse::Error;
+                                }
+                                Ok(Err(e)) => {
+                                    error!(
+                                        "kinit: Kerberos config failed for {}: {:?}",
+                                        account_id, e
+                                    );
+                                    return ClientResponse::Error;
+                                }
+                                Err(e) => {
+                                    error!(
+                                        "kinit: Kerberos config timed out for {}: {:?}",
+                                        account_id, e
+                                    );
+                                    return ClientResponse::Error;
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            error!("kinit: Kerberos config failed for {}: {:?}", account_id, e);
+                            return ClientResponse::Error;
+                        }
+                    }
+
+                    let (tx, rx) = oneshot::channel();
+                    match task_channel_tx
+                        .send_timeout(
+                            (
+                                TaskRequest::KerberosTGTs(
+                                    ucred.uid(),
+                                    ucred.gid(),
+                                    tgt_cloud,
+                                    tgt_ad,
+                                ),
+                                tx,
+                            ),
+                            Duration::from_millis(100),
+                        )
+                        .await
+                    {
+                        Ok(()) => {
+                            match time::timeout_at(
+                                time::Instant::now() + Duration::from_secs(60),
+                                rx,
+                            )
+                            .await
+                            {
+                                Ok(Ok(TaskOutcome::Status(0))) => {
+                                    kinit_authorized_account = None;
+                                    ClientResponse::Ok
+                                }
+                                Ok(Ok(TaskOutcome::Status(status))) => {
+                                    error!(
+                                        "kinit: credential cache load failed for {}: Status code: {}",
+                                        account_id, status
+                                    );
+                                    ClientResponse::Error
+                                }
+                                Ok(Ok(TaskOutcome::NonCompliant(_))) => {
+                                    error!("kinit: unexpected NonCompliant task outcome");
+                                    ClientResponse::Error
+                                }
+                                Ok(Err(e)) => {
+                                    error!(
+                                        "kinit: credential cache load failed for {}: {:?}",
+                                        account_id, e
+                                    );
+                                    ClientResponse::Error
+                                }
+                                Err(e) => {
+                                    error!(
+                                        "kinit: credential cache load timed out for {}: {:?}",
+                                        account_id, e
+                                    );
+                                    ClientResponse::Error
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            error!(
+                                "kinit: credential cache load failed for {}: {:?}",
+                                account_id, e
+                            );
+                            ClientResponse::Error
+                        }
+                    }
+                }
+                .instrument(span)
+                .await
+            }
             ClientRequest::ComplianceCheck => {
                 let span = span!(Level::INFO, "compliance check");
                 async {
@@ -1062,6 +1225,19 @@ fn should_start_intune_policy_application(
 
 fn intune_policy_throttle_key(account_id: &str) -> String {
     account_id.to_lowercase()
+}
+
+fn kinit_authorization_from_auth_success(service: &str, account_id: &str) -> Option<String> {
+    if service == KINIT_AUTH_SERVICE {
+        Some(account_id.to_lowercase())
+    } else {
+        None
+    }
+}
+
+fn is_kinit_request_authorized(authorized_account: Option<&str>, account_id: &str) -> bool {
+    let account_id = account_id.to_lowercase();
+    authorized_account == Some(account_id.as_str())
 }
 
 async fn start_intune_policy_application(
@@ -1259,6 +1435,44 @@ mod tests {
     use super::*;
 
     const ACCOUNT_ID: &str = "user@example.com";
+
+    #[test]
+    fn kinit_authz_rejects_without_prior_auth() {
+        assert!(!is_kinit_request_authorized(None, ACCOUNT_ID));
+    }
+
+    #[test]
+    fn kinit_authz_rejects_different_account() {
+        assert!(!is_kinit_request_authorized(
+            Some("other@example.com"),
+            ACCOUNT_ID,
+        ));
+    }
+
+    #[test]
+    fn kinit_authz_allows_same_account() {
+        assert!(is_kinit_request_authorized(Some(ACCOUNT_ID), ACCOUNT_ID));
+    }
+
+    #[test]
+    fn kinit_authz_normalizes_requested_account() {
+        assert!(is_kinit_request_authorized(
+            Some(ACCOUNT_ID),
+            "User@Example.com",
+        ));
+    }
+
+    #[test]
+    fn kinit_authz_only_created_by_kinit_auth_service() {
+        assert_eq!(
+            kinit_authorization_from_auth_success(KINIT_AUTH_SERVICE, "User@Example.com"),
+            Some(ACCOUNT_ID.to_string())
+        );
+        assert_eq!(
+            kinit_authorization_from_auth_success("login", ACCOUNT_ID),
+            None
+        );
+    }
 
     #[test]
     fn intune_policy_throttle_allows_first_run_and_marks_in_flight() {

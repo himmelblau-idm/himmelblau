@@ -1455,6 +1455,27 @@ pub fn authenticate_with_client(
     opts: Options,
     msg_printer: Arc<dyn MessagePrinter>,
 ) -> PamResultCode {
+    authenticate_with_client_for_reuse(
+        daemon_client,
+        authtok,
+        cfg,
+        account_id,
+        service,
+        opts,
+        msg_printer,
+    )
+    .0
+}
+
+pub fn authenticate_with_client_for_reuse(
+    daemon_client: DaemonClientBlocking,
+    authtok: Option<String>,
+    cfg: HimmelblauConfig,
+    account_id: &str,
+    service: &str,
+    opts: Options,
+    msg_printer: Arc<dyn MessagePrinter>,
+) -> (PamResultCode, DaemonClientBlocking) {
     i18n::init();
     let mut state = AuthenticateState {
         daemon_client,
@@ -1480,7 +1501,7 @@ pub fn authenticate_with_client(
         let res = authenticate_request_response(&mut state, &req);
         match res {
             PamWhatNext::Next(next_request) => req = next_request,
-            PamWhatNext::Finish(pam_result_code) => return pam_result_code,
+            PamWhatNext::Finish(pam_result_code) => return (pam_result_code, state.daemon_client),
         }
     }
 }
