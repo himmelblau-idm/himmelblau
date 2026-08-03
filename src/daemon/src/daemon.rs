@@ -383,6 +383,11 @@ async fn handle_client(
                     trace!("pam authenticate step");
                     match &mut pam_auth_session_state {
                         Some(auth_session) => {
+                            let is_kinit_auth = matches!(
+                                auth_session,
+                                AuthSession::InProgress { service, .. }
+                                    if service == "aad-tool-kinit"
+                            );
                             match cachelayer
                                 .pam_account_authenticate_step(auth_session, pam_next_req)
                                 .await
@@ -395,7 +400,9 @@ async fn handle_client(
                                             let account_id = account_id.to_lowercase();
                                             match resp {
                                                 PamAuthResponse::Success => {
-                                                    if cfg.get_logon_script().is_some() {
+                                                    if !is_kinit_auth
+                                                        && cfg.get_logon_script().is_some()
+                                                    {
                                                         let scopes = cfg.get_logon_token_scopes();
                                                         let domain = split_username(&account_id)
                                                             .map(|(_, domain)| domain);
@@ -463,7 +470,9 @@ async fn handle_client(
                                                     }
 
                                                     // Initialize the user Kerberos ccache
-                                                    if cfg.get_enable_kerberos_cache() {
+                                                    if !is_kinit_auth
+                                                        && cfg.get_enable_kerberos_cache()
+                                                    {
                                                         if let Some((uid, gid, tgt_cloud, tgt_ad, top_level_names, tenant_id)) =
                                                             cachelayer
                                                                 .get_user_tgts(Id::Name(
@@ -879,6 +888,136 @@ async fn handle_client(
                 } else {
                     ClientResponse::Error
                 }
+            }
+            ClientRequest::Kinit(account_id) => {
+                let span = span!(Level::INFO, "kinit");
+                async {
+                    let account_id = account_id.to_lowercase();
+                    trace!("kinit requested for {}", account_id);
+
+                    let Some((_uid, _gid, tgt_cloud, tgt_ad, top_level_names, tenant_id)) =
+                        cachelayer
+                            .get_user_tgts(Id::Name(account_id.to_string()))
+                            .await
+                    else {
+                        error!("kinit: failed to fetch Kerberos tickets for {}", account_id);
+                        return ClientResponse::Error;
+                    };
+
+                    let (tx, rx) = oneshot::channel();
+                    match task_channel_tx
+                        .send_timeout(
+                            (
+                                TaskRequest::KerberosConfig(top_level_names, tenant_id),
+                                tx,
+                            ),
+                            Duration::from_millis(100),
+                        )
+                        .await
+                    {
+                        Ok(()) => {
+                            match time::timeout_at(
+                                time::Instant::now() + Duration::from_secs(60),
+                                rx,
+                            )
+                            .await
+                            {
+                                Ok(Ok(TaskOutcome::Status(0))) => {}
+                                Ok(Ok(TaskOutcome::Status(status))) => {
+                                    error!(
+                                        "kinit: Kerberos config failed for {}: Status code: {}",
+                                        account_id, status
+                                    );
+                                    return ClientResponse::Error;
+                                }
+                                Ok(Ok(TaskOutcome::NonCompliant(_))) => {
+                                    error!("kinit: unexpected NonCompliant task outcome");
+                                    return ClientResponse::Error;
+                                }
+                                Ok(Err(e)) => {
+                                    error!(
+                                        "kinit: Kerberos config failed for {}: {:?}",
+                                        account_id, e
+                                    );
+                                    return ClientResponse::Error;
+                                }
+                                Err(e) => {
+                                    error!(
+                                        "kinit: Kerberos config timed out for {}: {:?}",
+                                        account_id, e
+                                    );
+                                    return ClientResponse::Error;
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            error!("kinit: Kerberos config failed for {}: {:?}", account_id, e);
+                            return ClientResponse::Error;
+                        }
+                    }
+
+                    let (tx, rx) = oneshot::channel();
+                    match task_channel_tx
+                        .send_timeout(
+                            (
+                                TaskRequest::KerberosTGTs(
+                                    ucred.uid(),
+                                    ucred.gid(),
+                                    tgt_cloud,
+                                    tgt_ad,
+                                ),
+                                tx,
+                            ),
+                            Duration::from_millis(100),
+                        )
+                        .await
+                    {
+                        Ok(()) => {
+                            match time::timeout_at(
+                                time::Instant::now() + Duration::from_secs(60),
+                                rx,
+                            )
+                            .await
+                            {
+                                Ok(Ok(TaskOutcome::Status(0))) => ClientResponse::Ok,
+                                Ok(Ok(TaskOutcome::Status(status))) => {
+                                    error!(
+                                        "kinit: credential cache load failed for {}: Status code: {}",
+                                        account_id, status
+                                    );
+                                    ClientResponse::Error
+                                }
+                                Ok(Ok(TaskOutcome::NonCompliant(_))) => {
+                                    error!("kinit: unexpected NonCompliant task outcome");
+                                    ClientResponse::Error
+                                }
+                                Ok(Err(e)) => {
+                                    error!(
+                                        "kinit: credential cache load failed for {}: {:?}",
+                                        account_id, e
+                                    );
+                                    ClientResponse::Error
+                                }
+                                Err(e) => {
+                                    error!(
+                                        "kinit: credential cache load timed out for {}: {:?}",
+                                        account_id, e
+                                    );
+                                    ClientResponse::Error
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            error!(
+                                "kinit: credential cache load failed for {}: {:?}",
+                                account_id, e
+                            );
+                            ClientResponse::Error
+                        }
+                    }
+                }
+                .instrument(span)
+                .await
             }
             ClientRequest::ComplianceCheck => {
                 let span = span!(Level::INFO, "compliance check");
