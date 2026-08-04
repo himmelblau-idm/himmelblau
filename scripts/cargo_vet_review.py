@@ -10,7 +10,7 @@ Automates the cargo vet workflow by:
 5. Facilitating the certification process
 
 Usage:
-  python scripts/cargo_vet_review.py [--ai-provider gemini|claude] [--no-ai]
+  python scripts/cargo_vet_review.py [--ai-provider codex|gemini|claude] [--no-ai]
 """
 
 import argparse
@@ -28,6 +28,9 @@ from enum import Enum
 from html.parser import HTMLParser
 from pathlib import Path
 from typing import Optional
+
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 
 class RiskLevel(Enum):
@@ -61,7 +64,7 @@ class DiffAnalysis:
     recommendation: str = ""
     risk_score: RiskLevel = RiskLevel.LOW
     trust_suggestion: Optional[str] = None
-    claude_analysis: Optional[str] = None  # AI-powered analysis
+    ai_analysis: Optional[str] = None  # AI-powered analysis
 
 
 class DiffRsParser(HTMLParser):
@@ -854,6 +857,31 @@ Keep your response focused and actionable.
                 if result.returncode == 0 and result.stdout and len(result.stdout.strip()) > 10:
                     return result.stdout.strip()
 
+            elif self.provider == 'codex':
+                with tempfile.NamedTemporaryFile(mode="w+", suffix=".txt", delete=False) as output:
+                    output_file = output.name
+
+                try:
+                    result = subprocess.run(
+                        [
+                            self.cli_path,
+                            "exec",
+                            "--cd", str(PROJECT_ROOT),
+                            "--sandbox", "read-only",
+                            "--dangerously-bypass-approvals-and-sandbox",
+                            "--output-last-message", output_file,
+                            "-",
+                        ],
+                        input=prompt, capture_output=True, text=True, timeout=180,
+                    )
+                    if result.returncode == 0:
+                        with open(output_file, "r", encoding="utf-8") as f:
+                            output_text = f.read().strip()
+                        if len(output_text) > 10:
+                            return output_text
+                finally:
+                    if os.path.exists(output_file):
+                        os.unlink(output_file)
 
             # If all methods failed, print debug info
             print(f"    Warning: All {self.provider} invocation methods failed")
@@ -986,8 +1014,9 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  %(prog)s                    # Interactive review with Gemini AI analysis
+  %(prog)s                    # Interactive review with Codex AI analysis
   %(prog)s --ai-provider claude # Use Claude AI instead
+  %(prog)s --ai-provider gemini # Use Gemini AI instead
   %(prog)s --no-ai            # Review without AI (pattern matching only)
   %(prog)s --skip-large 5000  # Skip diffs larger than 5000 lines
   %(prog)s --dry-run          # Analyze without certifying
@@ -1019,15 +1048,15 @@ Examples:
     parser.add_argument(
         "--ai-provider",
         type=str,
-        default="gemini",
-        choices=["gemini", "claude"],
-        help="The AI provider to use for analysis (default: gemini)",
+        default="codex",
+        choices=["codex", "gemini", "claude"],
+        help="The AI provider to use for analysis (default: codex)",
     )
     parser.add_argument(
         "--ai-provider-path",
         type=str,
         default=None,
-        help="Path to the AI provider's CLI binary (e.g., /path/to/gemini)",
+        help="Path to the AI provider's CLI binary (e.g., /path/to/codex)",
     )
     parser.add_argument(
         "--no-ai",
@@ -1171,7 +1200,7 @@ Examples:
                 is_full_crate=is_full_crate,
                 verbose=args.verbose,
             )
-            analysis.claude_analysis = ai_result
+            analysis.ai_analysis = ai_result
 
         analyses.append(analysis)
 
@@ -1203,14 +1232,14 @@ Examples:
             print_color("    No pattern-based concerns found in added code.", "green")
 
         # AI analysis output
-        if analysis.claude_analysis:
+        if analysis.ai_analysis:
             print()
             print_color("-" * 50, "magenta")
             print_color("AI ANALYSIS", "bold")
             print_color("-" * 50, "magenta")
             print()
             # Indent the response
-            for line in analysis.claude_analysis.split('\n'):
+            for line in analysis.ai_analysis.split('\n'):
                 print(f"    {line}")
             print()
 
@@ -1233,7 +1262,7 @@ Examples:
                 print(f"      [t] Trust publisher '{item.trust_note}'")
             if use_ai:
                 print("      [a] Re-run AI analysis")
-            if analysis.claude_analysis:
+            if analysis.ai_analysis:
                 print("      [r] Re-display AI analysis")
             print("      [s] Skip to next crate")
             print("      [q] Quit")
@@ -1297,7 +1326,7 @@ Examples:
                         verbose=True,  # Always verbose on re-run for debugging
                     )
                     if ai_result:
-                        analysis.claude_analysis = ai_result
+                        analysis.ai_analysis = ai_result
                         print()
                         print_color("-" * 50, "magenta")
                         print_color("AI ANALYSIS (refreshed)", "bold")
@@ -1308,13 +1337,13 @@ Examples:
                         print()
                     else:
                         print_color("    AI analysis failed", "red")
-                elif choice == 'r' and analysis.claude_analysis:
+                elif choice == 'r' and analysis.ai_analysis:
                     print()
                     print_color("-" * 50, "magenta")
                     print_color("AI ANALYSIS", "bold")
                     print_color("-" * 50, "magenta")
                     print()
-                    for line in analysis.claude_analysis.split('\n'):
+                    for line in analysis.ai_analysis.split('\n'):
                         print(f"    {line}")
                     print()
                 elif choice == 's':
@@ -1346,7 +1375,8 @@ Examples:
                     for f in a.findings
                 ],
                 "recommendation": a.recommendation,
-                "claude_analysis": a.claude_analysis,
+                "ai_analysis": a.ai_analysis,
+                "claude_analysis": a.ai_analysis,
             })
         print(json.dumps(output, indent=2))
 
@@ -1360,7 +1390,7 @@ Examples:
     print(f"  Skipped: {len(items) - len(analyses)} crates (too large or fetch failed)")
 
     if use_ai:
-        ai_analyzed = sum(1 for a in analyses if a.claude_analysis)
+        ai_analyzed = sum(1 for a in analyses if a.ai_analysis)
         print(f"  AI-analyzed: {ai_analyzed} crates")
 
     # Count full crate reviews vs diffs
