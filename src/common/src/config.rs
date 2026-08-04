@@ -34,8 +34,8 @@ use crate::constants::{
     DEFAULT_CONSOLE_PASSWORD_ONLY, DEFAULT_DB_PATH, DEFAULT_FIDO_TIMEOUT, DEFAULT_HELLO_ENABLED,
     DEFAULT_HELLO_PIN_MIN_LEN, DEFAULT_HELLO_PIN_RETRY_COUNT, DEFAULT_HOME_ALIAS,
     DEFAULT_HOME_ATTR, DEFAULT_HOME_PREFIX, DEFAULT_HSM_PIN_PATH, DEFAULT_ID_ATTR_MAP,
-    DEFAULT_JOIN_TYPE, DEFAULT_MFA_POLL_PROMPT_SERVICES, DEFAULT_ODC_PROVIDER,
-    DEFAULT_OFFLINE_BREAKGLASS_TTL, DEFAULT_ORCHESTRATOR_SOCK_PATH,
+    DEFAULT_JOIN_TYPE, DEFAULT_LOCAL_GROUPS_RECONCILE_INTERVAL, DEFAULT_MFA_POLL_PROMPT_SERVICES,
+    DEFAULT_ODC_PROVIDER, DEFAULT_OFFLINE_BREAKGLASS_TTL, DEFAULT_ORCHESTRATOR_SOCK_PATH,
     DEFAULT_PASSWORD_ONLY_REMOTE_SERVICES_DENY_LIST, DEFAULT_POLICIES_DB_DIR,
     DEFAULT_REQUEST_TIMEOUT, DEFAULT_SELINUX, DEFAULT_SFA_FALLBACK_ENABLED, DEFAULT_SHELL,
     DEFAULT_SOCK_PATH, DEFAULT_TASK_SOCK_PATH, DEFAULT_TPM_TCTI_NAME, DEFAULT_USER_MAP_FILE,
@@ -1636,6 +1636,24 @@ mod tests {
         assert_eq!(config.get_local_groups(), expected_groups);
         let config_empty = create_empty_config();
         assert_eq!(config_empty.get_local_groups(), Vec::<String>::new());
+    }
+
+    #[test]
+    fn test_get_local_groups_reconcile_interval() {
+        let config_data = r#"
+        [global]
+        local_groups_reconcile_interval = 0
+        "#;
+
+        let temp_file = create_temp_config(config_data);
+        let config = HimmelblauConfig::new(Some(&temp_file)).unwrap();
+
+        assert_eq!(config.get_local_groups_reconcile_interval(), 0);
+        let config_empty = create_empty_config();
+        assert_eq!(
+            config_empty.get_local_groups_reconcile_interval(),
+            DEFAULT_LOCAL_GROUPS_RECONCILE_INTERVAL
+        );
     }
 
     #[test]
