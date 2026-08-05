@@ -190,6 +190,7 @@ pub enum ClientRequest {
     OfflineBreakGlass(Option<u64>),
     Status,
     ComplianceCheck,
+    Kinit(String),
 }
 
 impl ClientRequest {
@@ -225,6 +226,7 @@ impl ClientRequest {
             ClientRequest::OfflineBreakGlass(ttl) => format!("OfflineBreakGlass({:?})", ttl),
             ClientRequest::Status => "Status".to_string(),
             ClientRequest::ComplianceCheck => "ComplianceCheck".to_string(),
+            ClientRequest::Kinit(account_id) => format!("Kinit({})", account_id),
         }
     }
 }

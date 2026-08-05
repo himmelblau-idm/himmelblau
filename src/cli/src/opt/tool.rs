@@ -16,8 +16,8 @@
    along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
 use clap::Subcommand;
-use libc::uid_t;
 use libc::gid_t;
+use libc::uid_t;
 
 #[derive(Debug, Subcommand)]
 pub enum IdmapOpt {
@@ -48,7 +48,7 @@ pub enum IdmapOpt {
     Clear {
         #[clap(short, long)]
         debug: bool,
-    }
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -179,7 +179,7 @@ pub enum ApplicationOpt {
         client_id: String,
         #[clap(long = "schema-app-object-id")]
         schema_app_object_id: String,
-    }
+    },
 }
 
 #[derive(Debug, Subcommand)]
@@ -500,6 +500,122 @@ pub enum HimmelblauUnixOpt {
     /// need to be preserved.
     #[clap(subcommand)]
     Idmap(IdmapOpt),
+
+    /// Acquire Kerberos tickets for an Entra ID user.
+    ///
+    /// This mirrors the common MIT kinit invocation shape for Himmelblau-managed
+    /// Kerberos tickets. The principal is an Entra ID account name or UPN accepted
+    /// by the configured Himmelblau name mapper. On success, himmelblaud updates
+    /// the user's Kerberos credential caches through the normal authentication path.
+    ///
+    /// Examples:
+    ///     aad-tool kinit admin@example.com
+    ///     aad-tool kinit --force-reauth admin@example.com
+    ///     aad-tool kinit -C admin@example.com
+    #[command(verbatim_doc_comment)]
+    Kinit {
+        #[clap(short, long)]
+        debug: bool,
+        /// Verbose output.
+        #[clap(short = 'V', long = "verbose")]
+        verbose: bool,
+        /// Request forwardable tickets.
+        ///
+        /// Accepted for MIT kinit command-line compatibility. Himmelblau obtains
+        /// Kerberos tickets from Entra ID and does not currently expose the
+        /// forwardable ticket flag.
+        #[clap(short = 'f', long = "forwardable")]
+        forwardable: bool,
+        /// Validate the user through the daemon but do not request forwardable tickets.
+        ///
+        /// Accepted for MIT kinit command-line compatibility. Himmelblau obtains
+        /// Kerberos tickets from Entra ID and does not currently expose the
+        /// forwardable ticket flag.
+        #[clap(short = 'F', long = "not-forwardable")]
+        not_forwardable: bool,
+        /// Request proxiable tickets.
+        ///
+        /// Unsupported MIT kinit compatibility option.
+        #[clap(short = 'p', long = "proxiable")]
+        proxiable: bool,
+        /// Do not request proxiable tickets.
+        ///
+        /// Unsupported MIT kinit compatibility option.
+        #[clap(short = 'P', long = "not-proxiable")]
+        not_proxiable: bool,
+        /// Request tickets restricted to local addresses.
+        ///
+        /// Unsupported MIT kinit compatibility option.
+        #[clap(short = 'a', long = "addresses")]
+        request_addresses: bool,
+        /// Request addressless tickets.
+        ///
+        /// Accepted for MIT kinit command-line compatibility. Himmelblau obtains
+        /// Kerberos tickets from Entra ID and does not currently expose address
+        /// restrictions.
+        #[clap(short = 'A', long = "no-addresses")]
+        no_addresses: bool,
+        /// Request canonicalization.
+        ///
+        /// Accepted for MIT kinit command-line compatibility. Himmelblau always
+        /// resolves the supplied name through its configured Entra ID mapping.
+        #[clap(short = 'C', long = "canonicalize")]
+        canonicalize: bool,
+        /// Force a full re-authentication (MFA/FIDO/password), bypassing the cached
+        /// Hello key.
+        #[clap(long)]
+        force_reauth: bool,
+        /// Do not use the cached Hello key; require an online authentication flow.
+        #[clap(long)]
+        no_hello_pin: bool,
+        /// Unsupported MIT kinit credential cache option.
+        #[clap(short = 'c', long = "cache", value_name = "CACHE_NAME")]
+        cache: Option<String>,
+        /// Unsupported MIT kinit lifetime option.
+        #[clap(short = 'l', long = "lifetime", value_name = "LIFETIME")]
+        lifetime: Option<String>,
+        /// Unsupported MIT kinit renewable lifetime option.
+        #[clap(short = 'r', long = "renewable-life", value_name = "LIFETIME")]
+        renewable_life: Option<String>,
+        /// Unsupported MIT kinit start time option.
+        #[clap(short = 's', long = "start-time", value_name = "START_TIME")]
+        start_time: Option<String>,
+        /// Unsupported MIT kinit service option.
+        #[clap(short = 'S', long = "service", value_name = "SERVICE_NAME")]
+        service_name: Option<String>,
+        /// Unsupported MIT kinit keytab option.
+        #[clap(short = 'k', long = "keytab")]
+        keytab: bool,
+        /// Unsupported MIT kinit client keytab option.
+        #[clap(short = 'i', long = "client-keytab", value_name = "KEYTAB")]
+        client_keytab: Option<String>,
+        /// Unsupported MIT kinit anonymous option.
+        #[clap(short = 'n', long = "anonymous")]
+        anonymous: bool,
+        /// Unsupported MIT kinit enterprise principal option.
+        #[clap(short = 'E', long = "enterprise")]
+        enterprise: bool,
+        /// Unsupported MIT kinit validate option.
+        #[clap(short = 'v', long = "validate")]
+        validate: bool,
+        /// Unsupported MIT kinit renew option.
+        #[clap(short = 'R', long = "renew")]
+        renew: bool,
+        /// Unsupported MIT kinit keytab name option.
+        #[clap(short = 't', long = "keytab-file", value_name = "KEYTAB")]
+        keytab_file: Option<String>,
+        /// Unsupported MIT kinit input credential cache option.
+        #[clap(short = 'I', long = "input-cache", value_name = "CACHE_NAME")]
+        input_cache: Option<String>,
+        /// Unsupported MIT kinit FAST armor cache option.
+        #[clap(short = 'T', long = "armor-cache", value_name = "CACHE_NAME")]
+        armor_cache: Option<String>,
+        /// Unsupported MIT kinit pre-authentication attribute option.
+        #[clap(short = 'X', long = "preauth-attr", value_name = "ATTR=VALUE")]
+        preauth_attrs: Vec<String>,
+        /// Entra ID account name or UPN to authenticate.
+        principal: String,
+    },
     /// Activate or deactivate Himmelblau's offline breakglass mode.
     ///
     /// This command enables temporary offline password authentication when Azure Entra ID
@@ -560,7 +676,7 @@ pub enum HimmelblauUnixOpt {
     Version {
         #[clap(short, long)]
         debug: bool,
-    }
+    },
 }
 
 #[derive(Debug, clap::Parser)]

@@ -108,6 +108,44 @@ struct Token {
     response: BrokerTokenResponse,
 }
 
+async fn authenticate_account(
+    cfg: HimmelblauConfig,
+    account_id: String,
+    service: &str,
+    opts: Options,
+) -> Result<String, ExitCode> {
+    let account_id = match cfg.map_name_to_upn(&account_id) {
+        Some(upn) => upn,
+        None => {
+            error!("'{}' is not a valid directory user", account_id);
+            return Err(ExitCode::FAILURE);
+        }
+    };
+
+    let msg_printer = Arc::new(SimpleMessagePrinter::default());
+    match authenticate_async(
+        None,
+        cfg,
+        account_id.clone(),
+        service.to_string(),
+        opts,
+        msg_printer,
+    )
+    .await
+    {
+        PamResultCode::PAM_SUCCESS => Ok(account_id),
+        e => {
+            error!("Authentication failed: {:?}", e);
+            Err(ExitCode::FAILURE)
+        }
+    }
+}
+
+fn unsupported_kinit_option(name: &str) -> ExitCode {
+    error!("aad-tool kinit does not support {}", name);
+    ExitCode::FAILURE
+}
+
 #[instrument(skip(after_pred, before_pred))]
 fn insert_module_line(
     pam_file: &str,
@@ -691,6 +729,35 @@ async fn main() -> ExitCode {
             debug,
             account_id: _,
             force_reauth: _,
+        } => debug,
+        HimmelblauUnixOpt::Kinit {
+            debug,
+            verbose: _,
+            forwardable: _,
+            not_forwardable: _,
+            proxiable: _,
+            not_proxiable: _,
+            request_addresses: _,
+            no_addresses: _,
+            canonicalize: _,
+            force_reauth: _,
+            no_hello_pin: _,
+            cache: _,
+            lifetime: _,
+            renewable_life: _,
+            start_time: _,
+            service_name: _,
+            keytab: _,
+            client_keytab: _,
+            anonymous: _,
+            enterprise: _,
+            validate: _,
+            renew: _,
+            keytab_file: _,
+            input_cache: _,
+            armor_cache: _,
+            preauth_attrs: _,
+            principal: _,
         } => debug,
         HimmelblauUnixOpt::CacheClear {
             debug,
@@ -1647,34 +1714,136 @@ async fn main() -> ExitCode {
                 }
             };
 
-            // Map the name
-            let account_id = match cfg.map_name_to_upn(&account_id) {
-                Some(upn) => upn,
-                None => {
-                    error!("'{}' is not a valid directory user", account_id);
+            let opts = Options {
+                force_reauth,
+                ..Default::default()
+            };
+            match authenticate_account(cfg, account_id, "aad-tool", opts).await {
+                Ok(_) => ExitCode::SUCCESS,
+                Err(code) => code,
+            }
+        }
+        HimmelblauUnixOpt::Kinit {
+            debug: _,
+            verbose: _,
+            forwardable: _,
+            not_forwardable: _,
+            proxiable,
+            not_proxiable,
+            request_addresses,
+            no_addresses: _,
+            canonicalize: _,
+            force_reauth,
+            no_hello_pin,
+            cache,
+            lifetime,
+            renewable_life,
+            start_time,
+            service_name,
+            keytab,
+            client_keytab,
+            anonymous,
+            enterprise,
+            validate,
+            renew,
+            keytab_file,
+            input_cache,
+            armor_cache,
+            preauth_attrs,
+            principal,
+        } => {
+            debug!("Starting Kerberos ticket initialization tool ...");
+
+            if proxiable {
+                return unsupported_kinit_option("--proxiable");
+            }
+            if not_proxiable {
+                return unsupported_kinit_option("--not-proxiable");
+            }
+            if request_addresses {
+                return unsupported_kinit_option("--addresses");
+            }
+            if validate {
+                return unsupported_kinit_option("--validate");
+            }
+            if renew {
+                return unsupported_kinit_option("--renew");
+            }
+            if keytab_file.is_some() {
+                return unsupported_kinit_option("--keytab-file");
+            }
+            if input_cache.is_some() {
+                return unsupported_kinit_option("--input-cache");
+            }
+            if armor_cache.is_some() {
+                return unsupported_kinit_option("--armor-cache");
+            }
+            if !preauth_attrs.is_empty() {
+                return unsupported_kinit_option("--preauth-attr");
+            }
+            if cache.is_some() {
+                return unsupported_kinit_option("--cache");
+            }
+            if lifetime.is_some() {
+                return unsupported_kinit_option("--lifetime");
+            }
+            if renewable_life.is_some() {
+                return unsupported_kinit_option("--renewable-life");
+            }
+            if start_time.is_some() {
+                return unsupported_kinit_option("--start-time");
+            }
+            if service_name.is_some() {
+                return unsupported_kinit_option("--service");
+            }
+            if keytab {
+                return unsupported_kinit_option("--keytab");
+            }
+            if client_keytab.is_some() {
+                return unsupported_kinit_option("--client-keytab");
+            }
+            if anonymous {
+                return unsupported_kinit_option("--anonymous");
+            }
+            if enterprise {
+                return unsupported_kinit_option("--enterprise");
+            }
+
+            let cfg = match HimmelblauConfig::new(Some(DEFAULT_CONFIG_PATH)) {
+                Ok(c) => c,
+                Err(_e) => {
+                    error!("Failed to parse {}", DEFAULT_CONFIG_PATH);
                     return ExitCode::FAILURE;
                 }
             };
 
             let opts = Options {
                 force_reauth,
+                no_hello_pin,
                 ..Default::default()
             };
-            let msg_printer = Arc::new(SimpleMessagePrinter::default());
-            match authenticate_async(
-                None,
-                cfg,
-                account_id,
-                "aad-tool".to_string(),
-                opts,
-                msg_printer,
+            let account_id =
+                match authenticate_account(cfg.clone(), principal, "aad-tool-kinit", opts).await {
+                    Ok(account_id) => account_id,
+                    Err(code) => return code,
+                };
+
+            match call_daemon(
+                &cfg.get_socket_path(),
+                ClientRequest::Kinit(account_id),
+                cfg.get_unix_sock_timeout(),
             )
             .await
             {
-                PamResultCode::PAM_SUCCESS => return ExitCode::SUCCESS,
-                e => {
-                    error!("Authentication failed: {:?}", e);
-                    return ExitCode::FAILURE;
+                Ok(ClientResponse::Ok) => ExitCode::SUCCESS,
+                Ok(r) => {
+                    error!("Error: unexpected response -> {:?}", r);
+                    ExitCode::FAILURE
+                }
+                Err(e) => {
+                    error!("Error -> {:?}", e);
+                    error!("Is himmelblaud running? Kerberos tickets were NOT initialized.");
+                    ExitCode::FAILURE
                 }
             }
         }
