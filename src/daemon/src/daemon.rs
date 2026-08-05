@@ -413,6 +413,9 @@ async fn handle_client(
                                             let account_id = account_id.to_lowercase();
                                             match resp {
                                                 PamAuthResponse::Success => {
+                                                    let is_oidc_auth =
+                                                        cfg.get_oidc_issuer_url().is_some();
+
                                                     if cfg.get_logon_script().is_some() {
                                                         let scopes = cfg.get_logon_token_scopes();
                                                         let domain = split_username(&account_id)
@@ -481,7 +484,9 @@ async fn handle_client(
                                                     }
 
                                                     // Initialize the user Kerberos ccache
-                                                    if cfg.get_enable_kerberos_cache() {
+                                                    if cfg.get_enable_kerberos_cache()
+                                                        && !is_oidc_auth
+                                                    {
                                                         if let Some((uid, gid, tgt_cloud, tgt_ad, top_level_names, tenant_id)) =
                                                             cachelayer
                                                                 .get_user_tgts(Id::Name(
@@ -580,7 +585,9 @@ async fn handle_client(
                                                     }
 
                                                     // Fetch the user Profile picture
-                                                    if cfg.get_fetch_profile_picture() {
+                                                    if cfg.get_fetch_profile_picture()
+                                                        && !is_oidc_auth
+                                                    {
                                                         if let Some(token) = cachelayer
                                                             .get_user_accesstoken(
                                                                 Id::Name(account_id.to_string()),
