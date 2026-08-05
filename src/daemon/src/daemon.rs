@@ -381,6 +381,9 @@ async fn handle_client(
                                             let account_id = account_id.to_lowercase();
                                             match resp {
                                                 PamAuthResponse::Success => {
+                                                    let is_oidc_auth =
+                                                        cfg.get_oidc_issuer_url().is_some();
+
                                                     if cfg.get_logon_script().is_some() {
                                                         let scopes = cfg.get_logon_token_scopes();
                                                         let domain = split_username(&account_id)
@@ -447,114 +450,62 @@ async fn handle_client(
                                                     }
 
                                                     // Initialize the user Kerberos ccache
-                                                    if let Some((uid, gid, tgt_cloud, tgt_ad, top_level_names, tenant_id)) =
-                                                        cachelayer
-                                                            .get_user_tgts(Id::Name(
-                                                                account_id.to_string(),
-                                                            ))
-                                                            .await
-                                                    {
-                                                        let (tx, rx) = oneshot::channel();
-                                                        match task_channel_tx
-                                                            .send_timeout(
-                                                                (
-                                                                    TaskRequest::KerberosConfig(top_level_names, tenant_id),
-                                                                    tx,
-                                                                ),
-                                                                Duration::from_millis(100),
-                                                            )
-                                                            .await
-                                                        {
-                                                            Ok(()) => {
-                                                                // Now wait for the other end OR timeout.
-                                                                match time::timeout_at(
-                                                                    time::Instant::now()
-                                                                        + Duration::from_secs(60),
-                                                                    rx,
-                                                                )
+                                                    if !is_oidc_auth {
+                                                        if let Some((uid, gid, tgt_cloud, tgt_ad, top_level_names, tenant_id)) =
+                                                            cachelayer
+                                                                .get_user_tgts(Id::Name(
+                                                                    account_id.to_string(),
+                                                                ))
                                                                 .await
-                                                                {
-                                                                    Ok(Ok(status)) => {
-                                                                        if status != 0 {
-                                                                            error!("Kerberos config failed for {}: Status code: {}", account_id, status);
-                                                                        }
-                                                                    }
-                                                                    Ok(Err(e)) => {
-                                                                        error!("Kerberos config failed for {}: {:?}", account_id, e);
-                                                                    }
-                                                                    Err(e) => {
-                                                                        error!("Kerberos config failed for {}: {:?}", account_id, e);
-                                                                    }
-                                                                }
-                                                            }
-                                                            Err(e) => {
-                                                                error!("Kerberos config failed for {}: {:?}", account_id, e);
-                                                            }
-                                                        }
-
-                                                        let (tx, rx) = oneshot::channel();
-
-                                                        match task_channel_tx
-                                                            .send_timeout(
-                                                                (
-                                                                    TaskRequest::KerberosTGTs(
-                                                                        uid,
-                                                                        gid,
-                                                                        tgt_cloud,
-                                                                        tgt_ad,
+                                                        {
+                                                            let (tx, rx) = oneshot::channel();
+                                                            match task_channel_tx
+                                                                .send_timeout(
+                                                                    (
+                                                                        TaskRequest::KerberosConfig(top_level_names, tenant_id),
+                                                                        tx,
                                                                     ),
-                                                                    tx,
-                                                                ),
-                                                                Duration::from_millis(100),
-                                                            )
-                                                            .await
-                                                        {
-                                                            Ok(()) => {
-                                                                // Now wait for the other end OR timeout.
-                                                                match time::timeout_at(
-                                                                    time::Instant::now()
-                                                                        + Duration::from_secs(60),
-                                                                    rx,
+                                                                    Duration::from_millis(100),
                                                                 )
                                                                 .await
-                                                                {
-                                                                    Ok(Ok(status)) => {
-                                                                        if status != 0 {
-                                                                            error!("Kerberos credential cache load failed for {}: Status code: {}", account_id, status);
+                                                            {
+                                                                Ok(()) => {
+                                                                    // Now wait for the other end OR timeout.
+                                                                    match time::timeout_at(
+                                                                        time::Instant::now()
+                                                                            + Duration::from_secs(60),
+                                                                        rx,
+                                                                    )
+                                                                    .await
+                                                                    {
+                                                                        Ok(Ok(status)) => {
+                                                                            if status != 0 {
+                                                                                error!("Kerberos config failed for {}: Status code: {}", account_id, status);
+                                                                            }
+                                                                        }
+                                                                        Ok(Err(e)) => {
+                                                                            error!("Kerberos config failed for {}: {:?}", account_id, e);
+                                                                        }
+                                                                        Err(e) => {
+                                                                            error!("Kerberos config failed for {}: {:?}", account_id, e);
                                                                         }
                                                                     }
-                                                                    Ok(Err(e)) => {
-                                                                        error!("Kerberos credential cache load failed for {}: {:?}", account_id, e);
-                                                                    }
-                                                                    Err(e) => {
-                                                                        error!("Kerberos credential cache load failed for {}: {:?}", account_id, e);
-                                                                    }
+                                                                }
+                                                                Err(e) => {
+                                                                    error!("Kerberos config failed for {}: {:?}", account_id, e);
                                                                 }
                                                             }
-                                                            Err(e) => {
-                                                                error!("Kerberos credential cache load failed for {}: {:?}", account_id, e);
-                                                            }
-                                                        }
-                                                    }
 
-                                                    // Fetch the user Profile picture
-                                                    if let Some(token) = cachelayer
-                                                        .get_user_accesstoken(
-                                                            Id::Name(account_id.to_string()),
-                                                            vec![],
-                                                            None,
-                                                        )
-                                                        .await
-                                                    {
-                                                        if let Some(access_token) = &token.access_token {
                                                             let (tx, rx) = oneshot::channel();
 
                                                             match task_channel_tx
                                                                 .send_timeout(
                                                                     (
-                                                                        TaskRequest::LoadProfilePhoto(
-                                                                            account_id.to_string(),
-                                                                            access_token.to_string(),
+                                                                        TaskRequest::KerberosTGTs(
+                                                                            uid,
+                                                                            gid,
+                                                                            tgt_cloud,
+                                                                            tgt_ad,
                                                                         ),
                                                                         tx,
                                                                     ),
@@ -571,23 +522,79 @@ async fn handle_client(
                                                                     )
                                                                     .await
                                                                     {
-                                                                        Ok(_) => {
-                                                                            info!("Fetching user profile picture succeeded");
+                                                                        Ok(Ok(status)) => {
+                                                                            if status != 0 {
+                                                                                error!("Kerberos credential cache load failed for {}: Status code: {}", account_id, status);
+                                                                            }
                                                                         }
-                                                                        _ => {
-                                                                            error!("Fetching user profile picture failed");
+                                                                        Ok(Err(e)) => {
+                                                                            error!("Kerberos credential cache load failed for {}: {:?}", account_id, e);
+                                                                        }
+                                                                        Err(e) => {
+                                                                            error!("Kerberos credential cache load failed for {}: {:?}", account_id, e);
                                                                         }
                                                                     }
                                                                 }
-                                                                Err(_) => {
-                                                                    error!("Fetching user profile picture failed");
+                                                                Err(e) => {
+                                                                    error!("Kerberos credential cache load failed for {}: {:?}", account_id, e);
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+
+                                                    // Fetch the user Profile picture
+                                                    if !is_oidc_auth {
+                                                        if let Some(token) = cachelayer
+                                                            .get_user_accesstoken(
+                                                                Id::Name(account_id.to_string()),
+                                                                vec![],
+                                                                None,
+                                                            )
+                                                            .await
+                                                        {
+                                                            if let Some(access_token) = &token.access_token {
+                                                                let (tx, rx) = oneshot::channel();
+
+                                                                match task_channel_tx
+                                                                    .send_timeout(
+                                                                        (
+                                                                            TaskRequest::LoadProfilePhoto(
+                                                                                account_id.to_string(),
+                                                                                access_token.to_string(),
+                                                                            ),
+                                                                            tx,
+                                                                        ),
+                                                                        Duration::from_millis(100),
+                                                                    )
+                                                                    .await
+                                                                {
+                                                                    Ok(()) => {
+                                                                        // Now wait for the other end OR timeout.
+                                                                        match time::timeout_at(
+                                                                            time::Instant::now()
+                                                                                + Duration::from_secs(60),
+                                                                            rx,
+                                                                        )
+                                                                        .await
+                                                                        {
+                                                                            Ok(_) => {
+                                                                                info!("Fetching user profile picture succeeded");
+                                                                            }
+                                                                            _ => {
+                                                                                error!("Fetching user profile picture failed");
+                                                                            }
+                                                                        }
+                                                                    }
+                                                                    Err(_) => {
+                                                                        error!("Fetching user profile picture failed");
+                                                                    }
                                                                 }
                                                             }
                                                         }
                                                     }
 
                                                     // Apply Intune policies
-                                                    if cfg.get_apply_policy() {
+                                                    if !is_oidc_auth && cfg.get_apply_policy() {
                                                         spawn_intune_policy_application(
                                                             cachelayer.clone(),
                                                             cfg.clone(),
