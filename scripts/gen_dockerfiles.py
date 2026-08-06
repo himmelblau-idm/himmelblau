@@ -580,24 +580,14 @@ RUST_INSTALL_NATIVE = """\
 RUN --mount=type=cache,target=/root/.cargo/registry curl https://sh.rustup.rs -sSf | sh -s -- -y && echo 1.93.1 && \\
     cargo install cargo-deb cargo-generate-rpm"""
 
-# Rust install: emulated (arm64) — only install Rust itself, skip packaging tools
-# cargo-deb and cargo-generate-rpm are cross-compiled in a separate amd64 stage
+# Rust install: emulated (arm64) — install Rust and packaging tools natively.
+# This is slower than cross-compiling the packaging tools, but avoids copying
+# dynamically linked Debian tooling into Fedora/Rocky/SUSE/Amazon containers.
 # CFLAGS=-O2: prevent gcc segfaults under QEMU emulation (gcc -O3 triggers QEMU bugs)
 RUST_INSTALL_EMULATED = """\
 ENV CFLAGS="-O2" CXXFLAGS="-O2"
-RUN --mount=type=cache,target=/root/.cargo/registry curl https://sh.rustup.rs -sSf | sh -s -- -y && echo 1.93.1
-COPY --from=tooling /usr/local/cargo/bin/cargo-deb /root/.cargo/bin/cargo-deb
-COPY --from=tooling /usr/local/cargo/bin/cargo-generate-rpm /root/.cargo/bin/cargo-generate-rpm"""
-
-# Cross-compilation stage: build cargo-deb and cargo-generate-rpm for aarch64 on amd64
-TOOLING_STAGE_TPL = """\
-FROM --platform=linux/amd64 rust:latest AS tooling
-RUN apt-get update && apt-get install -y gcc-aarch64-linux-gnu && rm -rf /var/lib/apt/lists/*
-RUN rustup target add aarch64-unknown-linux-gnu
-ENV CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc
-RUN cargo install --target aarch64-unknown-linux-gnu cargo-deb cargo-generate-rpm
-
-"""
+RUN --mount=type=cache,target=/root/.cargo/registry curl https://sh.rustup.rs -sSf | sh -s -- -y && echo 1.93.1 && \\
+    cargo install cargo-deb cargo-generate-rpm"""
 
 # Ubuntu codename mapping (used for multiarch apt sources)
 UBUNTU_CODENAMES = {
@@ -783,9 +773,11 @@ def render(
         rust_install = ""
         tooling_stage = ""
     elif arch != "amd64":
-        # arm64 RPM/zypper: cross-compile packaging tools on amd64, copy into arm64 stage
+        # arm64 RPM/zypper: run under QEMU and compile packaging tools natively
+        # inside the target distro image. Cross-built tools from a Debian
+        # tooling stage can fail to execute on RPM-family images.
         rust_install = RUST_INSTALL_EMULATED
-        tooling_stage = TOOLING_STAGE_TPL
+        tooling_stage = ""
     else:
         # amd64: compile packaging tools natively
         rust_install = RUST_INSTALL_NATIVE
