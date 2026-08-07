@@ -267,6 +267,7 @@ in
           path = [
             pkgs.shadow
             pkgs.bash
+            pkgs.util-linux
           ];
           unitConfig = {
             ConditionPathExists = "/var/run/himmelblaud/task_sock";
@@ -277,7 +278,9 @@ in
             WatchdogSec = "120s";
             User = "root";
             ProtectSystem = "strict";
-            ReadWritePaths = "/home /var/run/himmelblaud /tmp /etc/krb5.conf.d /etc /var/lib /var/cache/nss-himmelblau";
+            CacheDirectory = "himmelblau-policies"; # /var/cache/himmelblau-policies
+            ReadWritePaths =
+              "/home /var/run/himmelblaud /tmp /etc/krb5.conf.d /etc /var/lib /var/cache/nss-himmelblau /var/cache/himmelblau-policies";
             RestrictAddressFamilies = ["AF_UNIX" "AF_INET" "AF_INET6"];
           };
         };
