@@ -1048,9 +1048,9 @@ Default: both
 Example: ip_version = ipv4-only
 
 .TP
-.B orchestrator_enabled
+.B experimental_orchestrator_enabled
 .RE
-Enable use of the optional himmelblaud-orchestrator backend for browser-driven
+Enable the experimental optional himmelblaud-orchestrator backend for browser-driven
 OIDC authentication flows.
 
 When enabled, OIDC interactive authentication can be delegated to the
@@ -1062,7 +1062,7 @@ an error, Himmelblau falls back to the built-in device authorization grant
 Default: false
 
 .P
-Example: orchestrator_enabled = true
+Example: experimental_orchestrator_enabled = true
 
 .TP
 .B orchestrator_socket

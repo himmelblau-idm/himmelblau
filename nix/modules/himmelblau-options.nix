@@ -838,11 +838,11 @@ in
       example = "ipv4-only";
     };
 
-    orchestrator_enabled = mkOption {
+    experimental_orchestrator_enabled = mkOption {
       type = types.nullOr (types.bool);
       default = false;
       description = ''
-        Enable use of the optional himmelblaud-orchestrator backend for browser-driven
+        Enable the experimental optional himmelblaud-orchestrator backend for browser-driven
         OIDC authentication flows.
         
         When enabled, OIDC interactive authentication can be delegated to the
