@@ -772,7 +772,7 @@ impl<'a> CacheTxn for DbTxn<'a> {
 
         if updated == 0 {
             let mut stmt = self.conn
-                .prepare("INSERT INTO account_t (uuid, name, spn, gidnumber, token, expiry) VALUES (:uuid, :name, :spn, :gidnumber, :token, :expiry) ON CONFLICT(uuid) DO UPDATE SET name=excluded.name, spn=excluded.name, gidnumber=excluded.gidnumber, token=excluded.token, expiry=excluded.expiry")
+                .prepare("INSERT INTO account_t (uuid, name, spn, gidnumber, token, expiry) VALUES (:uuid, :name, :spn, :gidnumber, :token, :expiry) ON CONFLICT(uuid) DO UPDATE SET name=excluded.name, spn=excluded.spn, gidnumber=excluded.gidnumber, token=excluded.token, expiry=excluded.expiry")
                 .map_err(|e| {
                     self.sqlite_error("prepare", &e)
                 })?;
