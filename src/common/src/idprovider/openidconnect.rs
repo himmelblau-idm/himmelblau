@@ -2564,7 +2564,7 @@ impl OidcProvider {
         let (enabled, socket_path, provider, timeout_secs, poll_interval_secs) = {
             let cfg = self.config.lock().await;
             (
-                cfg.get_orchestrator_enabled(),
+                cfg.get_experimental_orchestrator_enabled(),
                 cfg.get_orchestrator_socket(),
                 cfg.get_orchestrator_provider(),
                 cfg.get_orchestrator_timeout_secs(),

@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<parameter name="orchestrator_enabled"
+<parameter name="experimental_orchestrator_enabled"
            section="global"
            type="bool"
            rust_type="bool"
@@ -7,7 +7,7 @@
            domain_specific="false"
            order="5200">
 <description>
-Enable use of the optional himmelblaud-orchestrator backend for browser-driven
+Enable the experimental optional himmelblaud-orchestrator backend for browser-driven
 OIDC authentication flows.
 
 When enabled, OIDC interactive authentication can be delegated to the
@@ -15,7 +15,7 @@ orchestrator over a Unix socket. If the orchestrator is unavailable or returns
 an error, Himmelblau falls back to the built-in device authorization grant
 (DAG) flow.
 </description>
-<conf_description>Enable optional browser-driven OIDC login orchestration via himmelblaud-orchestrator.</conf_description>
+<conf_description>Enable the experimental optional browser-driven OIDC login orchestration via himmelblaud-orchestrator.</conf_description>
 <default>false</default>
-<example>orchestrator_enabled = true</example>
+<example>experimental_orchestrator_enabled = true</example>
 </parameter>
