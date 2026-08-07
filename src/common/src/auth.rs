@@ -43,8 +43,10 @@ use authenticator::{
 use base64::engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD};
 use base64::Engine;
 use libwebauthn::ops::webauthn::{GetAssertionRequest, UserVerificationRequirement as CableUvReq};
-use libwebauthn::transport::cable::qr_code_device::{CableQrCodeDevice, QrCodeOperationHint};
-use libwebauthn::transport::Device;
+use libwebauthn::transport::cable::qr_code_device::{
+    CableQrCodeDevice, CableTransports, QrCodeOperationHint,
+};
+use libwebauthn::transport::{ChannelSettings, Device};
 use libwebauthn::webauthn::WebAuthn;
 use rpassword::prompt_password;
 use serde_json::{json, to_string as json_to_string};
@@ -415,11 +417,14 @@ async fn qr_bluetooth_fido_auth(
     let mut device = match device {
         Some(d) => d,
         None => {
-            let d = CableQrCodeDevice::new_transient(QrCodeOperationHint::GetAssertionRequest)
-                .map_err(|e| {
-                    error!("Failed to create QR/Bluetooth device: {:?}", e);
-                    PamResultCode::PAM_CRED_INSUFFICIENT
-                })?;
+            let d = CableQrCodeDevice::new_transient(
+                QrCodeOperationHint::GetAssertionRequest,
+                CableTransports::CloudAssistedOnly,
+            )
+            .map_err(|e| {
+                error!("Failed to create QR/Bluetooth device: {:?}", e);
+                PamResultCode::PAM_CRED_INSUFFICIENT
+            })?;
             let qr_url = d.qr_code.to_string();
             // Combine into single print_text to avoid GDM per-message delay.
             msg_printer.print_text(&format!("[QR_BT_LABEL] {}\n[QR_BT] {}", qr_prompt, qr_url));
@@ -428,10 +433,13 @@ async fn qr_bluetooth_fido_auth(
     };
 
     // Wait for the phone to scan the QR and establish a BLE tunnel.
-    let mut channel = device.channel().await.map_err(|e| {
-        error!("QR/Bluetooth channel establishment failed: {:?}", e);
-        PamResultCode::PAM_CRED_INSUFFICIENT
-    })?;
+    let mut channel = device
+        .channel(ChannelSettings::default())
+        .await
+        .map_err(|e| {
+            error!("QR/Bluetooth channel establishment failed: {:?}", e);
+            PamResultCode::PAM_CRED_INSUFFICIENT
+        })?;
 
     // Empty allowList forces the phone to use a discoverable credential,
     // which includes userHandle (required by Entra to identify the user).
@@ -439,7 +447,7 @@ async fn qr_bluetooth_fido_auth(
         relying_party_id: "login.microsoft.com".to_string(),
         challenge: fido_challenge.as_bytes().to_vec(),
         origin: "https://login.microsoft.com".to_string(),
-        cross_origin: None,
+        top_origin: None,
         allow: vec![],
         extensions: None,
         user_verification: CableUvReq::Preferred,
@@ -518,8 +526,11 @@ pub fn fido_auth_with_qr_bluetooth(
     // (FIDO_INSERT + QR_BT_LABEL + QR_BT) in a single print_text call
     // from within fido_auth. This avoids concurrent PAM conversation
     // calls that block each other for ~2.5s each in GDM.
-    let cable_device = CableQrCodeDevice::new_transient(QrCodeOperationHint::GetAssertionRequest)
-        .map_err(|e| {
+    let cable_device = CableQrCodeDevice::new_transient(
+        QrCodeOperationHint::GetAssertionRequest,
+        CableTransports::CloudAssistedOnly,
+    )
+    .map_err(|e| {
         error!("Failed to create QR/Bluetooth device: {:?}", e);
         PamResultCode::PAM_CRED_INSUFFICIENT
     })?;
