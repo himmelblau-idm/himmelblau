@@ -394,6 +394,11 @@ who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
 delta = "0.11.1 -> 0.11.3"
 
+[[audits.event-listener]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+delta = "5.4.0 -> 5.4.2"
+
 [[audits.find-msvc-tools]]
 who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
@@ -1163,6 +1168,11 @@ delta = "0.11.0-rc.5 -> 0.11.0"
 who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
 delta = "1.3.0 -> 2.0.1"
+
+[[audits.spin]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+delta = "0.9.8 -> 0.9.9"
 
 [[audits.sshkeys]]
 who = "David Mulder <dmulder@samba.org>"
