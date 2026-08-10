@@ -6722,9 +6722,9 @@ rec {
       };
       "gettext-rs" = rec {
         crateName = "gettext-rs";
-        version = "0.7.7";
+        version = "0.8.0";
         edition = "2015";
-        sha256 = "1prb49j0d33kam9ww0pi5bbr95726ks37s0xjs3fw3vz3gf5fn2x";
+        sha256 = "100x1fc5k1hv89qipmd6maw67mkkpki31qcczbyiayq7ikxf7xcx";
         libName = "gettextrs";
         authors = [
           "Konstantin Salikhov <koka58@yandex.ru>"

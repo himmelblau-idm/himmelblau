@@ -38,7 +38,7 @@ fn locale_dir() -> PathBuf {
 
 pub fn init() {
     INIT.call_once(|| {
-        let _ = setlocale(LocaleCategory::LcMessages, "");
+        let _ = unsafe { setlocale(LocaleCategory::LcMessages, "") };
         let _ = bindtextdomain(DOMAIN, locale_dir());
         let _ = bind_textdomain_codeset(DOMAIN, "UTF-8");
         let _ = textdomain(DOMAIN);
