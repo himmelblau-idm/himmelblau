@@ -84,6 +84,17 @@ Download the DEB packages and install:
 sudo apt install ./himmelblau_<version>.deb ./himmelblau-sshd-config_<version>.deb ./himmelblau-sso_<version>.deb ./nss-himmelblau_<version>.deb ./pam-himmelblau_<version>.deb
 ```
 
+### Arch Linux
+
+Arch packages are not published yet. Build one from this repository and install it with pacman:
+
+```shell
+make arch
+sudo pacman -U ./packaging/himmelblau-*.pkg.tar.zst
+```
+
+Everything is shipped in a single `himmelblau` package.
+
 ### NixOS
 
 Himmelblau provides multiple packages and a module:
