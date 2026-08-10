@@ -9,6 +9,7 @@ This follows a config-driven pattern inspired by Samba's bootstrap/config.py:
 - deb family => cargo deb chain with per-package feature flags and --deb-revision=<distro>
 - rpm/zypper family => cargo build + strip + cargo generate-rpm chain
 - ebuild family => generates Gentoo ebuild file via gen_ebuild.py
+- arch family => makepkg via scripts/package_arch.py (platform/arch/PKGBUILD)
 """
 
 import argparse
@@ -85,6 +86,31 @@ RUN dnf -y update && dnf -y install \\\n    {pkgs} \\\n && dnf clean all\n"""
 ZYPPER_BOOTSTRAP = """\
 RUN zypper --non-interactive refresh && \\\n    zypper --non-interactive update && \\\n    zypper --non-interactive install --no-recommends \\\n        {pkgs} && \\\n    zypper clean --all\n"""
 
+PACMAN_BOOTSTRAP = """\
+RUN pacman -Syu --noconfirm && \\\n    pacman -S --noconfirm --needed \\\n        {pkgs} && \\\n    pacman -Scc --noconfirm\n"""
+
+# base-devel provides makepkg and the compiler toolchain. The Arch repos carry
+# a current rustc, so no rustup toolchain is installed for this family.
+ARCH_PKGS = [
+    "base-devel",
+    "clang",
+    "cmake",
+    "dbus",
+    "gettext",
+    "git",
+    "krb5",
+    "libcap",
+    "libunistring",
+    "openssl",
+    "pam",
+    "pcre2",
+    "python",
+    "rust",
+    "sqlite",
+    "systemd",
+    "tpm2-tss",
+]
+
 FAMILIES = {
     "deb": {
         "bootstrap": APT_BOOTSTRAP,
@@ -105,6 +131,11 @@ FAMILIES = {
         # Minimal bootstrap for ebuild generation - just needs Python (in base image)
         "bootstrap": "# No additional packages needed - Python is in the base image",
         "pkgs": [],
+        "env": None,
+    },
+    "arch": {
+        "bootstrap": PACMAN_BOOTSTRAP,
+        "pkgs": ARCH_PKGS,
         "env": None,
     },
 }
@@ -195,6 +226,11 @@ def build_rpm_final_cmd(features: list, selinux: bool, apparmor: bool) -> str:
 def build_gentoo_final_cmd(features: list, repo_root: Path) -> str:
     """Build command for Gentoo - generates an ebuild file."""
     return f'CMD ["/bin/sh", "-c", "{GEN_MANPAGE} && python3 scripts/gen_ebuild.py --out ./packaging/"]'
+
+
+def build_arch_final_cmd() -> str:
+    """Build command for Arch - runs makepkg on platform/arch/PKGBUILD."""
+    return 'CMD ["/bin/sh", "-c", "python3 scripts/package_arch.py --out ./packaging/"]'
 
 
 # ---- Distro targets ----------------------------------------------------------
@@ -402,6 +438,15 @@ DISTS = {
     "gentoo": {
         "family": "ebuild",
         "image": "python:3.11-slim",
+        "extra_prep": [],
+        "tpm": True,
+        "selinux": False,
+    },
+    # ---- Arch Linux family ----
+    # Containerized makepkg; produces himmelblau-*.pkg.tar.zst in ./packaging/
+    "arch": {
+        "family": "arch",
+        "image": "archlinux:base-devel",
         "extra_prep": [],
         "tpm": True,
         "selinux": False,
@@ -701,6 +746,8 @@ def render(
         # Ebuild generation - lightweight, just runs gen_ebuild.py
         repo_root = Path(__file__).parent.parent.resolve()
         final_cmd = build_gentoo_final_cmd(features, repo_root)
+    elif dist_cfg["family"] == "arch":
+        final_cmd = build_arch_final_cmd()
     else:
         final_cmd = build_rpm_final_cmd(features, selinux, bool(dist_cfg.get("apparmor", False)))
 
@@ -732,7 +779,12 @@ def render(
         return df
 
     # Select Rust install method and tooling stage based on architecture
-    if arch != "amd64":
+    if dist_cfg["family"] == "arch":
+        # Arch installs rust with pacman and packages with makepkg, so it needs
+        # neither a rustup toolchain nor cargo-deb/cargo-generate-rpm.
+        rust_install = ""
+        tooling_stage = ""
+    elif arch != "amd64":
         # arm64 RPM/zypper: cross-compile packaging tools on amd64, copy into arm64 stage
         rust_install = RUST_INSTALL_EMULATED
         tooling_stage = TOOLING_STAGE_TPL
