@@ -14,6 +14,10 @@ updates:
       interval: "monthly"
     commit-message:
       prefix: "deps(rust)"
+    ignore:
+      - dependency-name: "der"
+        versions:
+          - "0.8.1"
     groups:
       all-cargo-updates:
         patterns:
@@ -27,6 +31,10 @@ updates:
       interval: "monthly"
     commit-message:
       prefix: "deps(rust)"
+    ignore:
+      - dependency-name: "der"
+        versions:
+          - "0.8.1"
     groups:
       all-cargo-updates:
         patterns:
