@@ -76,6 +76,51 @@ in
       example = "https://login.microsoftonline.com/0656e57d-a8fc-4aa4-8366-8045787115ca/v2.0";
     };
 
+    oidc_account_id_claims = mkOption {
+      type = types.nullOr (types.listOf types.str);
+      default = null;
+      description = ''
+        A comma-separated, ordered list of OIDC userinfo claim names to use as the
+        Linux account name for generic OIDC providers.
+        
+        When this option is set, Himmelblau tries each named claim in order and uses
+        the first claim that is present as a non-empty string. The claim names are not
+        limited to standard OpenID Connect claims; provider-specific userinfo claims
+        may also be listed.
+        
+        If none of the configured claims match a non-empty string claim in userinfo,
+        Himmelblau logs a warning and falls back to the default account-name selection:
+        **preferred_username**
+        first, then
+        **email.**
+      '';
+      example = [ "uid" "username" "preferred_username" "email" ];
+    };
+
+    oidc_account_id_strip_at_suffix = mkOption {
+      type = types.nullOr (types.bool);
+      default = false;
+      description = ''
+        A boolean option that removes any suffix beginning with
+        **@**
+        from the OIDC account name selected by
+        **oidc_account_id_claims**
+        or by the default
+        **preferred_username**
+        then
+        **email**
+        fallback.
+        
+        This is useful when the selected OIDC claim is scoped, such as
+        **user@example.com,**
+        but the desired Linux account name is only the local portion.
+        Only enable this when the remaining local portion is unique across all accepted
+        OIDC issuers/domains; otherwise distinct identities that differ only by suffix
+        can collide on the same Linux account name.
+      '';
+      example = true;
+    };
+
     debug = mkOption {
       type = types.nullOr (types.bool);
       default = false;
@@ -91,9 +136,11 @@ in
       type = types.nullOr (types.listOf types.str);
       default = null;
       description = ''
-        A comma-separated list of Entra Id Users and Groups permitted to access the system. Users should be specified by UPN. Groups MUST be specified using their Object ID GUID. Group names may not be used because these names are not guaranteed to be unique in Entra Id.
+        A comma-separated list of users and groups permitted to access the system.
+        For Entra ID, users should be specified by UPN. Entra ID groups MUST be specified using their Object ID GUID. Group names may not be used because these names are not guaranteed to be unique in Entra ID.
+        For generic OIDC providers, group and role entries may be specified by the exact value emitted in the userinfo groups, realm_access.roles, or resource_access roles claim.
         
-        If not set, all Entra ID users are permitted to authenticate.
+        If not set, all users are permitted to authenticate.
         
         This restriction is enforced during PAM account management: a user who is not
         permitted causes pam_himmelblau to return PAM_AUTH_ERR from its account phase.
