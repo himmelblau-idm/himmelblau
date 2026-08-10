@@ -15,7 +15,7 @@ PAM (both system-auth and password-auth):
 - Adds at the top of each stack:
     `auth     sufficient   pam_himmelblau.so ignore_unknown_user`
 - Adds:
-    `account  [success=end auth_err=die default=ignore] pam_himmelblau.so ignore_unknown_user`
+    `account  [success=ok auth_err=die default=ignore] pam_himmelblau.so ignore_unknown_user`
 - Adds:
     `password sufficient   pam_himmelblau.so ignore_unknown_user`
 - Adds:
