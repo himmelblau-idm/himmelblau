@@ -2212,6 +2212,113 @@ rec {
           "tracing" = [ "dep:tracing" ];
         };
       };
+      "bluer" = rec {
+        crateName = "bluer";
+        version = "0.17.4";
+        edition = "2021";
+        sha256 = "00d9n6gx05kr8yr08nyzcpsmay41961sdvmhr2an86b0bhpi2s5g";
+        authors = [
+          "Sebastian Urban <surban@surban.net>"
+          "BlueR contributors"
+          "Attila Dusnoki <adusnoki@inf.u-szeged.hu>"
+          "Ben Stern <bstern@fortian.com>"
+          "Dejan Bosanac <dbosanac@redhat.com>"
+        ];
+        dependencies = [
+          {
+            name = "futures";
+            packageId = "futures";
+          }
+          {
+            name = "hex";
+            packageId = "hex";
+          }
+          {
+            name = "libc";
+            packageId = "libc";
+          }
+          {
+            name = "log";
+            packageId = "log";
+          }
+          {
+            name = "macaddr";
+            packageId = "macaddr";
+          }
+          {
+            name = "nix";
+            packageId = "nix";
+            usesDefaultFeatures = false;
+            features = [ "ioctl" ];
+          }
+          {
+            name = "num-derive";
+            packageId = "num-derive";
+          }
+          {
+            name = "num-traits";
+            packageId = "num-traits";
+          }
+          {
+            name = "serde";
+            packageId = "serde";
+            optional = true;
+            features = [ "derive" ];
+          }
+          {
+            name = "strum";
+            packageId = "strum";
+            features = [ "derive" ];
+          }
+          {
+            name = "tokio";
+            packageId = "tokio";
+            features = [ "net" "io-util" ];
+          }
+          {
+            name = "uuid";
+            packageId = "uuid";
+            features = [ "v4" ];
+          }
+        ];
+        buildDependencies = [
+          {
+            name = "serde";
+            packageId = "serde";
+            features = [ "derive" ];
+          }
+          {
+            name = "serde_json";
+            packageId = "serde_json";
+          }
+          {
+            name = "uuid";
+            packageId = "uuid";
+          }
+        ];
+        devDependencies = [
+          {
+            name = "tokio";
+            packageId = "tokio";
+            features = [ "io-std" "io-util" "rt-multi-thread" "signal" ];
+          }
+        ];
+        features = {
+          "bluetoothd" = [ "dbus" "dbus-tokio" "dbus-crossroads" "pin-project" "tokio/rt" "tokio/sync" "tokio/macros" "tokio-stream" "lazy_static" "custom_debug" "displaydoc" ];
+          "custom_debug" = [ "dep:custom_debug" ];
+          "dbus" = [ "dep:dbus" ];
+          "dbus-crossroads" = [ "dep:dbus-crossroads" ];
+          "dbus-tokio" = [ "dep:dbus-tokio" ];
+          "displaydoc" = [ "dep:displaydoc" ];
+          "full" = [ "bluetoothd" "id" "l2cap" "rfcomm" "mesh" "serde" ];
+          "lazy_static" = [ "dep:lazy_static" ];
+          "mesh" = [ "bluetoothd" ];
+          "pin-project" = [ "dep:pin-project" ];
+          "serde" = [ "uuid/serde" "dep:serde" ];
+          "tokio-stream" = [ "dep:tokio-stream" ];
+        };
+        resolvedDefaultFeatures = [ "l2cap" ];
+      };
       "bluez-async" = rec {
         crateName = "bluez-async";
         version = "0.8.2";
@@ -2770,6 +2877,16 @@ rec {
           "core" = [ "dep:core" ];
           "rustc-dep-of-std" = [ "core" "compiler_builtins" ];
         };
+      };
+      "cfg_aliases" = rec {
+        crateName = "cfg_aliases";
+        version = "0.2.1";
+        edition = "2018";
+        sha256 = "092pxdc1dbgjb6qvh83gk56rkic2n2ybm4yvy76cgynmzi3zwfk1";
+        authors = [
+          "Zicklag <zicklag@katharostech.com>"
+        ];
+
       };
       "chacha20" = rec {
         crateName = "chacha20";
@@ -10167,16 +10284,22 @@ rec {
       };
       "libwebauthn" = rec {
         crateName = "libwebauthn";
-        version = "0.3.0";
+        version = "0.9.0";
         edition = "2021";
-        sha256 = "0rvibjd40znw9nfqzkmx640xbg35qa6i7jw7k6083ypy0vglvxy2";
+        sha256 = "011jnannrgmkxrfrzh1lwysgdgaywmdkqs75cr473afq9h4ml44y";
         authors = [
-          "Alfie Fresta <alfie.fresta@gmail.com>"
+          "Alfie Fresta <afresta@noentropy.org>"
+          "Martin Sirringhaus <martin.sirringhaus@suse.com>"
+          "Isaiah Inuwa <isaiah.inuwa@gmail.com>"
         ];
         dependencies = [
           {
             name = "aes";
             packageId = "aes";
+          }
+          {
+            name = "aes-gcm";
+            packageId = "aes-gcm";
           }
           {
             name = "async-trait";
@@ -10189,6 +10312,12 @@ rec {
           {
             name = "bitflags";
             packageId = "bitflags 2.9.1";
+          }
+          {
+            name = "bluer";
+            packageId = "bluer";
+            usesDefaultFeatures = false;
+            features = [ "l2cap" ];
           }
           {
             name = "btleplug";
@@ -10220,6 +10349,16 @@ rec {
             packageId = "dbus";
           }
           {
+            name = "der";
+            packageId = "der 0.7.10";
+            usesDefaultFeatures = false;
+            features = [ "alloc" "derive" "oid" ];
+          }
+          {
+            name = "flate2";
+            packageId = "flate2";
+          }
+          {
             name = "futures";
             packageId = "futures";
           }
@@ -10244,6 +10383,16 @@ rec {
           {
             name = "hmac";
             packageId = "hmac 0.12.1";
+          }
+          {
+            name = "http";
+            packageId = "http";
+          }
+          {
+            name = "icu_normalizer";
+            packageId = "icu_normalizer";
+            usesDefaultFeatures = false;
+            features = [ "compiled_data" ];
           }
           {
             name = "idna";
@@ -10273,6 +10422,10 @@ rec {
             name = "p256";
             packageId = "p256";
             features = [ "ecdh" "arithmetic" "serde" ];
+          }
+          {
+            name = "publicsuffix";
+            packageId = "publicsuffix";
           }
           {
             name = "rand";
@@ -10322,6 +10475,12 @@ rec {
             features = [ "use-p256" ];
           }
           {
+            name = "spki";
+            packageId = "spki";
+            usesDefaultFeatures = false;
+            features = [ "alloc" ];
+          }
+          {
             name = "text_io";
             packageId = "text_io";
           }
@@ -10356,6 +10515,10 @@ rec {
             packageId = "tungstenite";
           }
           {
+            name = "url";
+            packageId = "url";
+          }
+          {
             name = "uuid";
             packageId = "uuid";
             features = [ "serde" "v4" ];
@@ -10364,15 +10527,21 @@ rec {
             name = "x509-parser";
             packageId = "x509-parser";
           }
+          {
+            name = "zeroize";
+            packageId = "zeroize";
+            features = [ "derive" ];
+          }
         ];
         features = {
           "apdu" = [ "dep:apdu" ];
           "apdu-core" = [ "dep:apdu-core" ];
-          "libnfc" = [ "nfc" "nfc1-sys" "nfc1" ];
           "nfc" = [ "apdu-core" "apdu" ];
+          "nfc-backend-libnfc" = [ "nfc" "nfc1-sys" "nfc1" ];
+          "nfc-backend-pcsc" = [ "nfc" "dep:pcsc" ];
           "nfc1" = [ "dep:nfc1" ];
           "nfc1-sys" = [ "dep:nfc1-sys" ];
-          "pcsc" = [ "nfc" "dep:pcsc" ];
+          "reqwest-related-origins-source" = [ "dep:reqwest" ];
         };
         resolvedDefaultFeatures = [ "default" ];
       };
@@ -10584,6 +10753,21 @@ rec {
           "Jonathan Reem <jonathan.reem@gmail.com>"
         ];
 
+      };
+      "macaddr" = rec {
+        crateName = "macaddr";
+        version = "1.0.1";
+        edition = "2018";
+        sha256 = "1n5jxn79krlql810c4w3hdkvyqc01141dc5y6fr9sxff2yy0pvms";
+        authors = [
+          "svartalf <self@svartalf.info>"
+        ];
+        features = {
+          "default" = [ "std" ];
+          "serde" = [ "dep:serde" ];
+          "serde_std" = [ "std" "serde/std" ];
+        };
+        resolvedDefaultFeatures = [ "default" "std" ];
       };
       "malloced" = rec {
         crateName = "malloced";
@@ -10939,6 +11123,53 @@ rec {
           "Jonathan Reem <jonathan.reem@gmail.com>"
         ];
 
+      };
+      "nix" = rec {
+        crateName = "nix";
+        version = "0.29.0";
+        edition = "2021";
+        sha256 = "0ikvn7s9r2lrfdm3mx1h7nbfjvcc6s9vxdzw7j5xfkd2qdnp9qki";
+        authors = [
+          "The nix-rust Project Developers"
+        ];
+        dependencies = [
+          {
+            name = "bitflags";
+            packageId = "bitflags 2.9.1";
+          }
+          {
+            name = "cfg-if";
+            packageId = "cfg-if";
+          }
+          {
+            name = "libc";
+            packageId = "libc";
+            features = [ "extra_traits" ];
+          }
+        ];
+        buildDependencies = [
+          {
+            name = "cfg_aliases";
+            packageId = "cfg_aliases";
+          }
+        ];
+        features = {
+          "aio" = [ "pin-utils" ];
+          "dir" = [ "fs" ];
+          "memoffset" = [ "dep:memoffset" ];
+          "mount" = [ "uio" ];
+          "mqueue" = [ "fs" ];
+          "net" = [ "socket" ];
+          "pin-utils" = [ "dep:pin-utils" ];
+          "ptrace" = [ "process" ];
+          "sched" = [ "process" ];
+          "signal" = [ "process" ];
+          "socket" = [ "memoffset" ];
+          "ucontext" = [ "signal" ];
+          "user" = [ "feature" ];
+          "zerocopy" = [ "fs" "uio" ];
+        };
+        resolvedDefaultFeatures = [ "ioctl" ];
       };
       "nom 7.1.3" = rec {
         crateName = "nom";
@@ -17338,6 +17569,69 @@ rec {
         authors = [
           "Danny Guo <danny@dannyguo.com>"
           "maxbachmann <oss@maxbachmann.de>"
+        ];
+
+      };
+      "strum" = rec {
+        crateName = "strum";
+        version = "0.26.3";
+        edition = "2018";
+        sha256 = "01lgl6jvrf4j28v5kmx9bp480ygf1nhvac8b4p7rcj9hxw50zv4g";
+        authors = [
+          "Peter Glotfelty <peter.glotfelty@microsoft.com>"
+        ];
+        dependencies = [
+          {
+            name = "strum_macros";
+            packageId = "strum_macros";
+            optional = true;
+          }
+        ];
+        devDependencies = [
+          {
+            name = "strum_macros";
+            packageId = "strum_macros";
+          }
+        ];
+        features = {
+          "default" = [ "std" ];
+          "derive" = [ "strum_macros" ];
+          "phf" = [ "dep:phf" ];
+          "strum_macros" = [ "dep:strum_macros" ];
+        };
+        resolvedDefaultFeatures = [ "default" "derive" "std" "strum_macros" ];
+      };
+      "strum_macros" = rec {
+        crateName = "strum_macros";
+        version = "0.26.4";
+        edition = "2018";
+        sha256 = "1gl1wmq24b8md527cpyd5bw9rkbqldd7k1h38kf5ajd2ln2ywssc";
+        procMacro = true;
+        authors = [
+          "Peter Glotfelty <peter.glotfelty@microsoft.com>"
+        ];
+        dependencies = [
+          {
+            name = "heck";
+            packageId = "heck";
+          }
+          {
+            name = "proc-macro2";
+            packageId = "proc-macro2";
+          }
+          {
+            name = "quote";
+            packageId = "quote";
+          }
+          {
+            name = "rustversion";
+            packageId = "rustversion";
+          }
+          {
+            name = "syn";
+            packageId = "syn 2.0.117";
+            features = [ "parsing" "extra-traits" ];
+          }
         ];
 
       };
