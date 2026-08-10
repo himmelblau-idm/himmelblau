@@ -71,7 +71,7 @@ use kanidm_hsm_crypto::{
 };
 use libc::getpwnam;
 use libkrimes::proto::KerberosCredentials;
-use rand::Rng;
+use rand::RngExt;
 use reqwest::Url;
 use std::collections::HashMap;
 use std::ffi::CString;
