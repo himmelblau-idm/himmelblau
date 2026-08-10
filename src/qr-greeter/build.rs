@@ -149,7 +149,6 @@ fn detect_from_pacman_installed() -> Option<u32> {
 
     if output.status.success() {
         let version_str = String::from_utf8_lossy(&output.stdout);
-        // Output format: "gnome-shell 1:47.2-1"
         let version_part = version_str.split_whitespace().nth(1)?;
         return parse_major_version(version_part);
     }
@@ -165,7 +164,6 @@ fn detect_from_pacman_repo() -> Option<u32> {
 
     if output.status.success() {
         let info_str = String::from_utf8_lossy(&output.stdout);
-        // Parse "Version : 1:47.2-1" from pacman info output
         for line in info_str.lines() {
             if line.trim_start().starts_with("Version") {
                 if let Some((_, version_part)) = line.split_once(':') {

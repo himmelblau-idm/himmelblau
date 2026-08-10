@@ -37,8 +37,8 @@ Prefer `make` targets over ad-hoc manual commands when guiding users.
 Common targets:
 
 - `make` / `make all` — auto-detect host distro and build packages for this host
-- `make install` — install packages from `./packaging/` (apt/dnf/yum/zypper/pacman auto-detected)
-- `make uninstall` — uninstall Himmelblau packages (apt/dnf/yum/zypper/pacman auto-detected)
+- `make install` — install packages from `./packaging/` (apt/dnf/yum/zypper auto-detected)
+- `make uninstall` — uninstall Himmelblau packages (apt/dnf/yum/zypper auto-detected)
 - `make test` — run cargo tests in a container
 - `make test-selinux` — ensure SELinux policy builds
 - `make clean` — remove cargo artifacts
@@ -53,8 +53,7 @@ Common targets:
 
 Per-distro targets (build only one):
 `make ubuntu22.04`, `ubuntu24.04`, `debian12`, `debian13`, `rocky8`, `rocky9`, `rocky10`,
-`tumbleweed`, `rawhide`, `fedora43`, `fedora44`, `sle15sp6`, `sle15sp7`, `sle16`, `gentoo`,
-`arch`.
+`tumbleweed`, `rawhide`, `fedora43`, `fedora44`, `sle15sp6`, `sle15sp7`, `sle16`, `gentoo`.
 
 Tips / conventions:
 

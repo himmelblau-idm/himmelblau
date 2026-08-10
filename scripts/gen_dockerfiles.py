@@ -89,8 +89,6 @@ RUN zypper --non-interactive refresh && \\\n    zypper --non-interactive update 
 PACMAN_BOOTSTRAP = """\
 RUN pacman -Syu --noconfirm && \\\n    pacman -S --noconfirm --needed \\\n        {pkgs} && \\\n    pacman -Scc --noconfirm\n"""
 
-# base-devel provides makepkg and the compiler toolchain. The Arch repos carry
-# a current rustc, so no rustup toolchain is installed for this family.
 ARCH_PKGS = [
     "base-devel",
     "clang",
