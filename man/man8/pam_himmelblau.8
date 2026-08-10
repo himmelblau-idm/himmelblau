@@ -92,7 +92,7 @@ auth        required      pam_deny.so
 Configure \f[CR]/etc/pam.d/common\-account\f[R] in a similar manner.
 .IP
 .EX
-account    [success=end auth_err=die default=ignore] pam_himmelblau.so ignore_unknown_user
+account    [success=ok auth_err=die default=ignore] pam_himmelblau.so ignore_unknown_user
 account    sufficient    pam_unix.so
 account    required      pam_deny.so
 .EE
