@@ -547,10 +547,6 @@ criteria = "safe-to-deploy"
 version = "4.1.0"
 criteria = "safe-to-deploy"
 
-[[exemptions.futf]]
-version = "0.1.5"
-criteria = "safe-to-deploy"
-
 [[exemptions.futures-lite]]
 version = "2.6.0"
 criteria = "safe-to-deploy"
@@ -689,10 +685,6 @@ criteria = "safe-to-deploy"
 
 [[exemptions.libudev-sys]]
 version = "0.1.4"
-criteria = "safe-to-deploy"
-
-[[exemptions.mac]]
-version = "0.1.1"
 criteria = "safe-to-deploy"
 
 [[exemptions.malloced]]
