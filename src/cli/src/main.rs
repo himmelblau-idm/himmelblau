@@ -310,7 +310,7 @@ fn configure_pam(
     for account_file in &account_files {
         insert_module_line(
             account_file,
-            "account\t[success=end auth_err=die default=ignore]\tpam_himmelblau.so ignore_unknown_user",
+            "account\t[success=ok auth_err=die default=ignore]\tpam_himmelblau.so ignore_unknown_user",
             None,
             Some(&|l: &str| {
                 (l.contains("pam_unix.so") && l.contains("account"))
@@ -2310,7 +2310,7 @@ mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
 
     const ACCOUNT_LINE: &str =
-        "account\t[success=end auth_err=die default=ignore]\tpam_himmelblau.so ignore_unknown_user";
+        "account\t[success=ok auth_err=die default=ignore]\tpam_himmelblau.so ignore_unknown_user";
 
     fn temp_pam_file(name: &str, content: &str) -> anyhow::Result<PathBuf> {
         let nanos = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
@@ -2387,7 +2387,7 @@ mod tests {
     #[test]
     fn skips_already_correct_account_line() -> anyhow::Result<()> {
         let existing = concat!(
-            "account   [success=end auth_err=die default=ignore]   ",
+            "account   [success=ok auth_err=die default=ignore]   ",
             "pam_himmelblau.so   ignore_unknown_user\n",
             "account required pam_unix.so\n"
         );
@@ -2404,6 +2404,34 @@ mod tests {
 
         let content = read_to_string(&path)?;
         assert_eq!(content, existing);
+        remove_temp_file(&path)
+    }
+
+    #[test]
+    fn replaces_success_end_account_line() -> anyhow::Result<()> {
+        let path = temp_pam_file(
+            "success-end",
+            concat!(
+                "account [success=end auth_err=die default=ignore] ",
+                "pam_himmelblau.so ignore_unknown_user\n",
+                "account required pam_unix.so\n"
+            ),
+        )?;
+
+        insert_module_line(
+            path.to_str().unwrap_or_default(),
+            ACCOUNT_LINE,
+            None,
+            None,
+            true,
+            false,
+        )?;
+
+        let content = read_to_string(&path)?;
+        assert_eq!(
+            content,
+            format!("{}\naccount required pam_unix.so\n", ACCOUNT_LINE)
+        );
         remove_temp_file(&path)
     }
 
