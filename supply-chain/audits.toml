@@ -607,6 +607,11 @@ version = "0.8.2"
 [[audits.libwebauthn]]
 who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
+version = "0.9.0"
+
+[[audits.libwebauthn]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
 delta = "0.2.2 -> 0.3.0"
 
 [[audits.locale_config]]
@@ -653,6 +658,11 @@ version = "0.36.1"
 who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
 delta = "0.7.3 -> 0.8.4"
+
+[[audits.nix]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+version = "0.15.0"
 
 [[audits.nom]]
 who = "David Mulder <dmulder@samba.org>"
