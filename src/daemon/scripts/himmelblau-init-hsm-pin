@@ -11,11 +11,18 @@ CRED=/var/lib/private/himmelblaud/hsm-pin-nopcr.enc
 SRK_HANDLE=0x81000001
 
 gen_pin_hex() {
+    local _pin
     if command -v openssl >/dev/null 2>&1; then
-        openssl rand -hex 24 | tr -d '\n'
+        _pin=$(openssl rand -hex 24) || return 1
     else
-        head -c 24 /dev/urandom | od -An -t x1 | tr -d ' \n'
+        _pin=$(head -c 24 /dev/urandom | od -An -t x1 | tr -d ' \n') || return 1
     fi
+    _pin=$(printf '%s' "$_pin" | tr -d '\n ')
+    if [ "${#_pin}" -ne 48 ]; then
+        echo "ERROR: gen_pin_hex produced ${#_pin} characters (expected 48)" >&2
+        return 1
+    fi
+    printf '%s' "$_pin"
 }
 
 # Returns 0 if the TPM2 SRK is provisioned at the standard persistent handle
@@ -135,21 +142,24 @@ if [ -f "$CRED" ]; then
         rm -f "$LEGACY"
     fi
 
-    # Decrypt the existing credential to validate it.  If decryption fails or
-    # the PIN is shorter than 48 hex characters (< 24 raw bytes, which would
-    # cause AuthValueTooShort at daemon start), discard it and fall through to
-    # recreation below.
+    # Decrypt the existing credential to validate it.
+    # - Decrypt fails: likely a transient/environmental issue (TPM state, machine
+    #   key rotation).  Preserve the credential and abort — do NOT auto-delete,
+    #   because replacing the HSM PIN can make existing cached keys unusable.
+    # - Decrypt succeeds but plaintext < 24 bytes: credential is demonstrably
+    #   invalid (AuthValue::try_from requires ≥ 24 raw bytes); safe to replace.
+    # - Decrypt succeeds and plaintext ≥ 24 bytes: credential is valid; keep it.
     if HSM_PIN_CHECK=$(systemd-creds decrypt --name=hsm-pin "$CRED" - 2>/dev/null); then
-        if [ "${#HSM_PIN_CHECK}" -lt 48 ]; then
-            echo "WARNING: Existing HSM PIN is too short (${#HSM_PIN_CHECK} chars, need >=48). Recreating..."
+        if [ "${#HSM_PIN_CHECK}" -lt 24 ]; then
+            echo "WARNING: Existing HSM PIN is too short (${#HSM_PIN_CHECK} bytes, need >=24). Recreating..."
             unset HSM_PIN_CHECK
             rm -f "$CRED"
         else
             unset HSM_PIN_CHECK
         fi
     else
-        echo "WARNING: Could not decrypt existing HSM PIN credential. Recreating..."
-        rm -f "$CRED"
+        echo "ERROR: Could not decrypt existing HSM PIN credential. Leaving it intact and aborting."
+        exit 1
     fi
 fi
 
@@ -190,7 +200,10 @@ elif [ -f "$LEGACY1" ]; then
     HSM_PIN=$(systemd-creds decrypt --name=hsm-pin "$LEGACY1")
 else
     echo "Generating new HSM-PIN"
-    HSM_PIN=$(gen_pin_hex)
+    if ! HSM_PIN=$(gen_pin_hex); then
+        echo "ERROR: Failed to generate a valid HSM PIN. Aborting."
+        exit 1
+    fi
 fi
 
 # Choose the strongest key binding available:
