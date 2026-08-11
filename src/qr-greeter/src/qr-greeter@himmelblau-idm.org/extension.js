@@ -309,7 +309,7 @@ export default class QrGreeterExtension extends Extension {
                     this._totpTempFile = tempFilePath;
                     activeTotpTempFiles.add(tempFilePath);
                     const fileUri = `file://${tempFilePath}`;
-                    this._qrContainer.set_style(`-st-background-image: url('${fileUri}'); -st-background-size: contain; background-repeat: no-repeat; background-position: center;`);
+                    this._qrContainer.set_style(`background-image: url('${fileUri}'); background-size: contain; background-repeat: no-repeat; background-position: center;`);
                     this._qrContainer.show();
                     this._qrLabel.set_text(this._qrBtLabel || "Scan with your authenticator app");
                     this._qrLabel.show();
@@ -338,14 +338,14 @@ export default class QrGreeterExtension extends Extension {
                     const baseLayer = new St.Widget({
                         width: 160,
                         height: 80,
-                        style: `-st-background-image: url('file://${svgPath}'); -st-background-size: contain; background-repeat: no-repeat; background-position: center;`,
+                        style: `background-image: url('file://${svgPath}'); background-size: contain; background-repeat: no-repeat; background-position: center;`,
                     });
 
                     const touchLayer = new St.Widget({
                         width: 160,
                         height: 80,
                         opacity: 0,
-                        style: `-st-background-image: url('file://${touchSvgPath}'); -st-background-size: contain; background-repeat: no-repeat; background-position: center;`,
+                        style: `background-image: url('file://${touchSvgPath}'); background-size: contain; background-repeat: no-repeat; background-position: center;`,
                     });
 
                     container.add_child(baseLayer);
@@ -412,7 +412,7 @@ export default class QrGreeterExtension extends Extension {
                     this._totpTempFile = tempFilePath; // Track for cleanup on this instance
                     activeTotpTempFiles.add(tempFilePath); // Track globally for extension disable
                     const fileUri = `file://${tempFilePath}`;
-                    this._qrContainer.set_style(`-st-background-image: url('${fileUri}'); -st-background-size: contain; background-repeat: no-repeat; background-position: center;`);
+                    this._qrContainer.set_style(`background-image: url('${fileUri}'); background-size: contain; background-repeat: no-repeat; background-position: center;`);
                     this._qrContainer.show();
                     this._qrLabel.set_text(isTotpQr ? "Scan with your phone to set up TOTP" : "Scan with your phone to set up Hello TOTP");
                     this._qrLabel.show();
@@ -447,7 +447,7 @@ export default class QrGreeterExtension extends Extension {
                             this._totpTempFile = tempFilePath;
                             activeTotpTempFiles.add(tempFilePath);
                             const fileUri = `file://${tempFilePath}`;
-                            this._qrContainer.set_style(`-st-background-image: url('${fileUri}'); -st-background-size: contain; background-repeat: no-repeat; background-position: center;`);
+                            this._qrContainer.set_style(`background-image: url('${fileUri}'); background-size: contain; background-repeat: no-repeat; background-position: center;`);
                             this._qrContainer.show();
                             if (selection.usedComplete) {
                                 this._qrLabel.set_text("Scan to continue sign-in");
