@@ -529,6 +529,11 @@ who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
 delta = "0.3.3 -> 0.4.1"
 
+[[audits.getrandom]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+delta = "0.4.2 -> 0.4.3"
+
 [[audits.gettext-rs]]
 who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"

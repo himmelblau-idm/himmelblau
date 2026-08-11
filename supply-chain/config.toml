@@ -142,22 +142,19 @@ audit-as-crates-io = true
 [policy."opentelemetry_sdk:0.31.0"]
 audit-as-crates-io = true
 
-[policy."portable-atomic:1.13.1"]
-audit-as-crates-io = true
-
-[policy."r-efi:6.0.0"]
-audit-as-crates-io = true
-
 [policy.paste]
 audit-as-crates-io = true
 
 [policy."pastey:0.1.1"]
 audit-as-crates-io = true
 
+[policy."portable-atomic:1.13.1"]
+audit-as-crates-io = true
+
 [policy."quinn:0.11.8"]
 audit-as-crates-io = true
 
-[policy."r-efi:5.2.0"]
+[policy."r-efi:6.0.0"]
 audit-as-crates-io = true
 
 [policy."redox_syscall:0.5.12"]
@@ -209,12 +206,6 @@ audit-as-crates-io = true
 audit-as-crates-io = true
 
 [policy."wasi:0.11.0+wasi-snapshot-preview1"]
-audit-as-crates-io = true
-
-[policy."wasip2:1.0.2+wasi-0.2.9"]
-audit-as-crates-io = true
-
-[policy."wasip3:0.4.0+wasi-0.3.0-rc-2026-01-06"]
 audit-as-crates-io = true
 
 [policy."wasm-bindgen-futures:0.4.50"]
@@ -901,7 +892,7 @@ version = "0.11.8"
 criteria = "safe-to-deploy"
 
 [[exemptions.r-efi]]
-version = "5.2.0"
+version = "6.0.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.redox_syscall]]
