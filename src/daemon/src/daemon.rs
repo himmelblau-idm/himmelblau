@@ -1653,8 +1653,7 @@ async fn main() -> ExitCode {
 
             let cfg_path: PathBuf = PathBuf::from(cfg_path_str);
 
-            if !cfg_path.exists() {
-                // there's no point trying to start up if we can't read a usable config!
+            if cfg.get_effective_config_paths().is_empty() {
                 error!(
                     "Client config missing from {} - cannot start up. Quitting.",
                     cfg_path_str
@@ -1662,25 +1661,27 @@ async fn main() -> ExitCode {
                 let diag = kanidm_lib_file_permissions::diagnose_path(cfg_path.as_ref());
                 info!(%diag);
                 return ExitCode::FAILURE
-            } else {
-                let cfg_meta = match metadata(&cfg_path) {
+            }
+
+            for effective_path in cfg.get_effective_config_paths() {
+                let cfg_meta = match metadata(effective_path) {
                     Ok(v) => v,
                     Err(e) => {
-                        error!("Unable to read metadata for {} - {:?}", cfg_path_str, e);
-                        let diag = kanidm_lib_file_permissions::diagnose_path(cfg_path.as_ref());
+                        error!("Unable to read metadata for {} - {:?}", effective_path.display(), e);
+                        let diag = kanidm_lib_file_permissions::diagnose_path(effective_path.as_ref());
                         info!(%diag);
                         return ExitCode::FAILURE
                     }
                 };
                 if !kanidm_lib_file_permissions::readonly(&cfg_meta) {
                     warn!("permissions on {} may not be secure. Should be readonly to running uid. This could be a security risk ...",
-                        cfg_path_str
+                        effective_path.display()
                         );
                 }
 
                 if cfg_meta.uid() == cuid || cfg_meta.uid() == ceuid {
                     warn!("WARNING: {} owned by the current uid, which may allow file permission changes. This could be a security risk ...",
-                        cfg_path_str
+                        effective_path.display()
                     );
                 }
             }
@@ -1689,7 +1690,7 @@ async fn main() -> ExitCode {
                 eprintln!("###################################");
                 eprintln!("Dumping configs:\n###################################");
                 eprintln!("###################################");
-                eprintln!("Config (from {:#?})", &cfg_path);
+                eprintln!("Config (from {:#?})", cfg.get_effective_config_paths());
                 eprintln!("{:?}", cfg);
                 return ExitCode::SUCCESS;
             }

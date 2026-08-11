@@ -19,6 +19,8 @@ use crate::config::{IdAttr, JoinType};
 use crate::unix_config::HomeAttr;
 
 pub const DEFAULT_CONFIG_PATH: &str = "/etc/himmelblau/himmelblau.conf";
+pub const RUNTIME_CONFIG_PATH: &str = "/run/himmelblau/himmelblau.conf";
+pub const VENDOR_CONFIG_PATH: &str = "/usr/lib/himmelblau/himmelblau.conf";
 pub const DEFAULT_SOCK_PATH: &str = "/var/run/himmelblaud/socket";
 pub const DEFAULT_TASK_SOCK_PATH: &str = "/var/run/himmelblaud/task_sock";
 pub const DEFAULT_BROKER_SOCK_PATH: &str = "/var/run/himmelblaud/broker_sock";
