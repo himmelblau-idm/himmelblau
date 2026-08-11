@@ -20,11 +20,13 @@ use crate::i18n::tr;
 use crate::unix_passwd::parse_etc_passwd;
 use configparser::ini::Ini;
 use oauth2::url;
+use std::collections::BTreeMap;
+use std::ffi::{OsStr, OsString};
 use std::fmt;
-use std::fs::File;
+use std::fs::{self, File};
 use std::io::Error;
 use std::io::Read;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use tracing::{debug, error};
 
@@ -40,7 +42,7 @@ use crate::constants::{
     DEFAULT_REQUEST_TIMEOUT, DEFAULT_SELINUX, DEFAULT_SFA_FALLBACK_ENABLED, DEFAULT_SHELL,
     DEFAULT_SOCK_PATH, DEFAULT_TASK_SOCK_PATH, DEFAULT_TPM_TCTI_NAME, DEFAULT_USER_MAP_FILE,
     DEFAULT_USE_ETC_SKEL, MAPPED_NAME_CACHE, NSS_IGNORE_EXACT, NSS_IGNORE_PREFIX,
-    SERVER_CONFIG_PATH,
+    RUNTIME_CONFIG_PATH, SERVER_CONFIG_PATH, VENDOR_CONFIG_PATH,
 };
 use crate::mapping::{MappedNameCache, Mode};
 use crate::unix_config::{HomeAttr, HsmType};
@@ -191,6 +193,7 @@ async fn request_federation_provider(
 pub struct HimmelblauConfig {
     config: Ini,
     filename: String,
+    effective_config_paths: Vec<PathBuf>,
 }
 
 fn str_to_home_attr(attrib: &str) -> HomeAttr {
@@ -220,6 +223,128 @@ fn match_bool(val: Option<String>, default: bool) -> bool {
     }
 }
 
+fn path_exists(path: &Path) -> Result<bool, String> {
+    match fs::symlink_metadata(path) {
+        Ok(_) => Ok(true),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(format!("failed to inspect {}: {}", path.display(), error)),
+    }
+}
+
+fn symlink_points_to_dev_null(path: &Path) -> bool {
+    matches!(fs::read_link(path), Ok(target) if target == Path::new("/dev/null"))
+}
+
+fn is_mask(path: &Path) -> Result<bool, String> {
+    let metadata = fs::symlink_metadata(path)
+        .map_err(|error| format!("failed to inspect {}: {}", path.display(), error))?;
+
+    if metadata.file_type().is_symlink() {
+        return Ok(symlink_points_to_dev_null(path));
+    }
+
+    Ok(metadata.is_file() && metadata.len() == 0)
+}
+
+fn drop_in_dir(config_path: &Path) -> PathBuf {
+    let mut path = config_path.as_os_str().to_os_string();
+    path.push(".d");
+    PathBuf::from(path)
+}
+
+fn collect_drop_ins(config_paths: &[PathBuf]) -> Result<BTreeMap<OsString, PathBuf>, String> {
+    let mut drop_ins = BTreeMap::new();
+
+    for config_path in config_paths {
+        let directory = drop_in_dir(config_path);
+        let entries = match fs::read_dir(&directory) {
+            Ok(entries) => entries,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(error) => {
+                return Err(format!(
+                    "failed to read drop-in directory {}: {}",
+                    directory.display(),
+                    error
+                ))
+            }
+        };
+
+        for entry in entries {
+            let entry = entry.map_err(|error| {
+                format!(
+                    "failed to read drop-in directory {}: {}",
+                    directory.display(),
+                    error
+                )
+            })?;
+            let path = entry.path();
+            if path.extension() != Some(OsStr::new("conf")) {
+                continue;
+            }
+
+            let file_type = entry.file_type().map_err(|error| {
+                format!("failed to inspect drop-in {}: {}", path.display(), error)
+            })?;
+            let is_config_file = file_type.is_file()
+                || (file_type.is_symlink()
+                    && (symlink_points_to_dev_null(&path)
+                        || fs::metadata(&path)
+                            .map(|metadata| metadata.is_file())
+                            .unwrap_or(false)));
+            if is_config_file {
+                drop_ins.insert(entry.file_name(), path);
+            }
+        }
+    }
+
+    Ok(drop_ins)
+}
+
+fn load_config_file(config: &mut Ini, path: &Path) -> Result<(), String> {
+    let filename = path
+        .to_str()
+        .ok_or_else(|| format!("configuration path is not valid UTF-8: {}", path.display()))?;
+    config
+        .load_and_append(filename)
+        .map(|_| ())
+        .map_err(|error| {
+            format!(
+                "failed to read config from {} - cannot start up: {} Quitting.",
+                path.display(),
+                error
+            )
+        })
+}
+
+fn load_config_hierarchy(
+    config: &mut Ini,
+    config_paths: &[PathBuf],
+) -> Result<Vec<PathBuf>, String> {
+    let mut effective_config_paths = Vec::new();
+    let mut main_config = None;
+    for path in config_paths {
+        if path_exists(path)? {
+            main_config = Some(path);
+        }
+    }
+
+    if let Some(path) = main_config {
+        effective_config_paths.push(path.clone());
+        if !is_mask(path)? {
+            load_config_file(config, path)?;
+        }
+    }
+
+    for path in collect_drop_ins(config_paths)?.values() {
+        effective_config_paths.push(path.clone());
+        if !is_mask(path)? {
+            load_config_file(config, path)?;
+        }
+    }
+
+    Ok(effective_config_paths)
+}
+
 impl HimmelblauConfig {
     pub fn new(config_path: Option<&str>) -> Result<HimmelblauConfig, String> {
         let mut sconfig = Ini::new();
@@ -228,18 +353,17 @@ impl HimmelblauConfig {
             filename = config_path.to_string();
         }
         let cfg_path: PathBuf = PathBuf::from(filename.clone());
-        if cfg_path.exists() {
-            match sconfig.load(filename.clone()) {
-                Ok(l) => l,
-                Err(e) => {
-                    return Err(format!(
-                        "failed to read config from {} - cannot start up: {} Quitting.",
-                        filename.clone(),
-                        e
-                    ))
-                }
-            };
-        }
+        let config_paths = if filename == DEFAULT_CONFIG_PATH {
+            vec![
+                PathBuf::from(VENDOR_CONFIG_PATH),
+                PathBuf::from(RUNTIME_CONFIG_PATH),
+                cfg_path,
+            ]
+        } else {
+            vec![cfg_path]
+        };
+        let effective_config_paths = load_config_hierarchy(&mut sconfig, &config_paths)?;
+
         // Apply server generated config (generated during domain join)
         let srv_cfg_path: PathBuf = PathBuf::from(SERVER_CONFIG_PATH.to_string());
         if srv_cfg_path.exists() {
@@ -253,6 +377,7 @@ impl HimmelblauConfig {
         Ok(HimmelblauConfig {
             config: sconfig,
             filename,
+            effective_config_paths,
         })
     }
 
@@ -553,6 +678,10 @@ impl HimmelblauConfig {
 
     pub fn get_config_file(&self) -> String {
         self.filename.clone()
+    }
+
+    pub fn get_effective_config_paths(&self) -> &[PathBuf] {
+        &self.effective_config_paths
     }
 
     pub fn get_id_attr_map(&self) -> IdAttr {
@@ -895,6 +1024,8 @@ mod tests {
     use super::*;
     use std::env;
     use std::fs;
+    #[cfg(unix)]
+    use std::os::unix::fs::symlink;
 
     // Helper function to create temporary configuration files
     fn create_temp_config(contents: &str) -> String {
@@ -914,6 +1045,111 @@ mod tests {
     fn create_empty_config() -> HimmelblauConfig {
         let temp_file = create_temp_config("");
         HimmelblauConfig::new(Some(&temp_file)).unwrap()
+    }
+
+    #[cfg(unix)]
+    fn write_temp_config(path: &Path, contents: &str) {
+        fs::create_dir_all(path.parent().unwrap()).expect("Failed to create config directory");
+        fs::write(path, contents).expect("Failed to write temporary config file");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_load_config_hierarchy_precedence_and_masking() {
+        let root = env::temp_dir().join(format!(
+            "himmelblau_test_config_hierarchy_{}",
+            uuid::Uuid::new_v4()
+        ));
+        let vendor = root.join("usr/lib/himmelblau/himmelblau.conf");
+        let runtime = root.join("run/himmelblau/himmelblau.conf");
+        let local = root.join("etc/himmelblau/himmelblau.conf");
+
+        write_temp_config(
+            &vendor,
+            "[global]\nvalue = vendor-main\nmain_only = ignored\n",
+        );
+        write_temp_config(&runtime, "[global]\nvalue = runtime-main\n");
+
+        let mut main_config = Ini::new();
+        let effective_config_paths = load_config_hierarchy(
+            &mut main_config,
+            &[vendor.clone(), runtime.clone(), local.clone()],
+        )
+        .unwrap();
+        assert_eq!(effective_config_paths, vec![runtime.clone()]);
+        assert_eq!(
+            main_config.get("global", "value").as_deref(),
+            Some("runtime-main")
+        );
+        assert_eq!(main_config.get("global", "main_only"), None);
+
+        write_temp_config(&local, "");
+
+        write_temp_config(
+            &drop_in_dir(&vendor).join("10-masked.conf"),
+            "[global]\nmasked = no\n",
+        );
+        let masked_drop_in = drop_in_dir(&local).join("10-masked.conf");
+        fs::create_dir_all(masked_drop_in.parent().unwrap())
+            .expect("Failed to create local drop-in directory");
+        symlink("/dev/null", masked_drop_in).expect("Failed to create drop-in mask");
+
+        write_temp_config(
+            &drop_in_dir(&local).join("20-local.conf"),
+            "[global]\nvalue = local-drop-in\nlocal_only = retained\n",
+        );
+        write_temp_config(
+            &drop_in_dir(&vendor).join("30-late.conf"),
+            "[global]\nvalue = vendor-late\n",
+        );
+        write_temp_config(
+            &drop_in_dir(&runtime).join("30-late.conf"),
+            "[global]\nvalue = runtime-late\n",
+        );
+        let linked_drop_in = root.join("linked.conf");
+        write_temp_config(&linked_drop_in, "[global]\nlinked = loaded\n");
+        symlink(linked_drop_in, drop_in_dir(&vendor).join("35-linked.conf"))
+            .expect("Failed to create regular-file drop-in symlink");
+
+        let directory_target = root.join("directory-target");
+        fs::create_dir_all(&directory_target).expect("Failed to create symlink target directory");
+        symlink(
+            directory_target,
+            drop_in_dir(&vendor).join("36-directory.conf"),
+        )
+        .expect("Failed to create directory drop-in symlink");
+        symlink(
+            root.join("missing.conf"),
+            drop_in_dir(&vendor).join("37-broken.conf"),
+        )
+        .expect("Failed to create broken drop-in symlink");
+
+        write_temp_config(
+            &drop_in_dir(&local).join("40-ignored.ini"),
+            "[global]\nvalue = wrong-suffix\n",
+        );
+        write_temp_config(
+            &drop_in_dir(&local).join("50-nested.conf.d/60-ignored.conf"),
+            "[global]\nvalue = nested\n",
+        );
+
+        let mut config = Ini::new();
+        let _effective_config_paths =
+            load_config_hierarchy(&mut config, &[vendor, runtime, local]).unwrap();
+
+        assert_eq!(
+            config.get("global", "value").as_deref(),
+            Some("runtime-late")
+        );
+        assert_eq!(
+            config.get("global", "local_only").as_deref(),
+            Some("retained")
+        );
+        assert_eq!(config.get("global", "main_only"), None);
+        assert_eq!(config.get("global", "masked"), None);
+        assert_eq!(config.get("global", "linked").as_deref(), Some("loaded"));
+
+        fs::remove_dir_all(root).expect("Failed to remove config hierarchy");
     }
 
     #[test]
