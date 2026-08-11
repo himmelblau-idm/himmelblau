@@ -140,6 +140,41 @@ fn detect_from_apt_cache() -> Option<u32> {
     None
 }
 
+/// Detect GNOME version from installed pacman package (Arch Linux)
+fn detect_from_pacman_installed() -> Option<u32> {
+    let output = Command::new("pacman")
+        .args(["-Q", "gnome-shell"])
+        .output()
+        .ok()?;
+
+    if output.status.success() {
+        let version_str = String::from_utf8_lossy(&output.stdout);
+        let version_part = version_str.split_whitespace().nth(1)?;
+        return parse_major_version(version_part);
+    }
+    None
+}
+
+/// Detect GNOME version from pacman sync DB (Arch Linux)
+fn detect_from_pacman_repo() -> Option<u32> {
+    let output = Command::new("pacman")
+        .args(["-Si", "gnome-shell"])
+        .output()
+        .ok()?;
+
+    if output.status.success() {
+        let info_str = String::from_utf8_lossy(&output.stdout);
+        for line in info_str.lines() {
+            if line.trim_start().starts_with("Version") {
+                if let Some((_, version_part)) = line.split_once(':') {
+                    return parse_major_version(version_part);
+                }
+            }
+        }
+    }
+    None
+}
+
 /// Read /etc/os-release and return key-value pairs
 fn read_os_release() -> Option<std::collections::HashMap<String, String>> {
     let content = fs::read_to_string("/etc/os-release").ok()?;
@@ -172,6 +207,8 @@ fn infer_from_os_release() -> Option<u32> {
         "opensuse-tumbleweed" => return Some(47),
         // Fedora Rawhide - rolling release, always latest
         "fedora" if pretty_name.to_lowercase().contains("rawhide") => return Some(47),
+        // Arch Linux - rolling release, always latest
+        "arch" => return Some(47),
         _ => {}
     }
 
@@ -276,6 +313,11 @@ fn infer_from_os_release() -> Option<u32> {
         return detect_from_zypper_repo();
     }
 
+    if id_like.contains("arch") {
+        // Unknown Arch derivative - rolling release, assume modern
+        return Some(47);
+    }
+
     None
 }
 
@@ -316,6 +358,13 @@ fn detect_gnome_version() -> Option<u32> {
         );
         return Some(v);
     }
+    if let Some(v) = detect_from_pacman_installed() {
+        println!(
+            "cargo:warning=Detected GNOME version from installed pacman package: {}",
+            v
+        );
+        return Some(v);
+    }
 
     // Strategy 4: Try querying package repositories (works without package installed)
     if let Some(v) = detect_from_dnf_repo() {
@@ -331,6 +380,13 @@ fn detect_gnome_version() -> Option<u32> {
     }
     if let Some(v) = detect_from_apt_cache() {
         println!("cargo:warning=Detected GNOME version from APT cache: {}", v);
+        return Some(v);
+    }
+    if let Some(v) = detect_from_pacman_repo() {
+        println!(
+            "cargo:warning=Detected GNOME version from pacman sync DB: {}",
+            v
+        );
         return Some(v);
     }
 
