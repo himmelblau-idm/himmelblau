@@ -57,7 +57,7 @@ tokio = { version = "^1.50.0", features = ["rt", "macros", "sync", "time", "net"
 tokio-util = { version = "^0.7.18", features = ["codec"] }
 async-trait = "^0.1.89"
 himmelblau_policies = { path = "src/policies" }
-pem = "^3.0.6"
+pem = "^4.0.0"
 chrono = "^0.4.44"
 os-release = "^0.1.0"
 jsonwebtoken = "^9.2.0"
@@ -72,7 +72,7 @@ libkrimes = { version = "0.1.0", features = ["keyring"] }
 # Kanidm deps
 argon2 = { version = "0.5.2", features = ["alloc"] }
 base32 = "^0.5.0"
-base64 = "^0.22.0"
+base64 = "^0.23.1"
 base64urlsafedata = "0.5.5"
 hex = "^0.4.3"
 num_enum = "^0.7.6"
