@@ -51,7 +51,7 @@ use tokio::sync::broadcast;
 
 use himmelblau::auth::UserToken as UnixUserToken;
 
-const NXCACHE_SIZE: NonZeroUsize = unsafe { NonZeroUsize::new_unchecked(128) };
+const NXCACHE_SIZE: NonZeroUsize = NonZeroUsize::new(128).unwrap();
 
 #[allow(clippy::large_enum_variant)]
 pub enum AuthSession {

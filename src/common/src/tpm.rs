@@ -85,13 +85,10 @@ pub fn decrypt_hsm_pin(hsm_pin_path: &str) -> Result<Zeroizing<Vec<u8>>, Box<dyn
         .spawn()?;
 
     let mut stdout = child.stdout.take().ok_or({
-        std::io::Error::new(
-            std::io::ErrorKind::Other,
-            format!(
-                "Failed decrypting HSM PIN from {}",
-                validated_path.display()
-            ),
-        )
+        std::io::Error::other(format!(
+            "Failed decrypting HSM PIN from {}",
+            validated_path.display()
+        ))
     })?;
     let mut buf = Vec::new();
     stdout.read_to_end(&mut buf)?;
@@ -101,14 +98,11 @@ pub fn decrypt_hsm_pin(hsm_pin_path: &str) -> Result<Zeroizing<Vec<u8>>, Box<dyn
     if !status.success() {
         let code = status.code().unwrap_or(-1);
         buf.zeroize();
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::Other,
-            format!(
-                "Failed decrypting HSM PIN from {}: {}",
-                validated_path.display(),
-                code
-            ),
-        )
+        return Err(std::io::Error::other(format!(
+            "Failed decrypting HSM PIN from {}: {}",
+            validated_path.display(),
+            code
+        ))
         .into());
     }
 
@@ -142,7 +136,7 @@ pub async fn write_hsm_pin(hsm_pin_path: &str) -> Result<(), Box<dyn Error>> {
     if !validated_path.exists() {
         let new_pin = AuthValue::generate().map_err(|hsm_err| {
             error!(?hsm_err, "Unable to generate new pin");
-            std::io::Error::new(std::io::ErrorKind::Other, "Unable to generate new pin")
+            std::io::Error::other("Unable to generate new pin")
         })?;
 
         std::fs::write(&validated_path, new_pin)?;

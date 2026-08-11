@@ -6602,7 +6602,7 @@ rec {
         dependencies = [
           {
             name = "getrandom";
-            packageId = "getrandom 0.4.1";
+            packageId = "getrandom 0.4.3";
           }
         ];
         features = {
@@ -6621,7 +6621,7 @@ rec {
         dependencies = [
           {
             name = "getrandom";
-            packageId = "getrandom 0.4.1";
+            packageId = "getrandom 0.4.3";
           }
         ];
         features = {
@@ -6630,11 +6630,11 @@ rec {
         };
         resolvedDefaultFeatures = [ "std" ];
       };
-      "getrandom 0.4.1" = rec {
+      "getrandom 0.4.3" = rec {
         crateName = "getrandom";
-        version = "0.4.1";
+        version = "0.4.3";
         edition = "2024";
-        sha256 = "1v7fm84f2jh6x7w3bd2ncl3sw29wnb0rhg7xya1pd30i02cg77hk";
+        sha256 = "16b0202fkdwz3p2cyll82dv24ljbn0wiyy829v4lwbkbflyqh3ih";
         authors = [
           "The Rand Project Developers"
         ];
@@ -6701,17 +6701,6 @@ rec {
             name = "rand_core";
             packageId = "rand_core 0.10.0";
             optional = true;
-          }
-          {
-            name = "wasip2";
-            packageId = "wasip2";
-            usesDefaultFeatures = false;
-            target = { target, features }: (("wasm32" == target."arch" or null) && ("wasi" == target."os" or null) && ("p2" == target."env" or null));
-          }
-          {
-            name = "wasip3";
-            packageId = "wasip3";
-            target = { target, features }: (("wasm32" == target."arch" or null) && ("wasi" == target."os" or null) && ("p3" == target."env" or null));
           }
         ];
         features = {
@@ -14157,14 +14146,13 @@ rec {
       };
       "r-efi" = rec {
         crateName = "r-efi";
-        version = "5.2.0";
-        edition = "2021";
-        src = lib.cleanSourceWith { filter = sourceFilter;  src = ./src/overrides/r-efi/5.2.0; };
+        version = "6.0.0";
+        edition = "2018";
+        sha256 = "1gyrl2k5fyzj9k7kchg2n296z5881lg7070msabid09asp3wkp7q";
         libName = "r_efi";
-        authors = [
-          "David Mulder <dmulder@suse.com>"
-        ];
         features = {
+          "core" = [ "dep:core" ];
+          "rustc-dep-of-std" = [ "core" ];
         };
       };
       "rand 0.10.2" = rec {
@@ -14186,7 +14174,7 @@ rec {
           }
           {
             name = "getrandom";
-            packageId = "getrandom 0.4.1";
+            packageId = "getrandom 0.4.3";
             optional = true;
           }
           {
@@ -17881,7 +17869,7 @@ rec {
           }
           {
             name = "getrandom";
-            packageId = "getrandom 0.4.1";
+            packageId = "getrandom 0.3.3";
             optional = true;
             usesDefaultFeatures = false;
             target = { target, features }: ((target."unix" or false) || (target."windows" or false) || ("wasi" == target."os" or null));
@@ -20047,7 +20035,7 @@ rec {
         dependencies = [
           {
             name = "getrandom";
-            packageId = "getrandom 0.4.1";
+            packageId = "getrandom 0.4.3";
             optional = true;
             target = { target, features }: (!(("wasm32" == target."arch" or null) && (("unknown" == target."os" or null) || ("none" == target."os" or null))));
           }
@@ -20239,28 +20227,6 @@ rec {
         features = {
         };
         resolvedDefaultFeatures = [ "default" ];
-      };
-      "wasip2" = rec {
-        crateName = "wasip2";
-        version = "1.0.2+wasi-0.2.9";
-        edition = "2021";
-        src = lib.cleanSourceWith { filter = sourceFilter;  src = ./src/overrides/wasip2/1.0.2+wasi-0.2.9; };
-        authors = [
-          "David Mulder <dmulder@suse.com>"
-        ];
-        features = {
-        };
-      };
-      "wasip3" = rec {
-        crateName = "wasip3";
-        version = "0.4.0+wasi-0.3.0-rc-2026-01-06";
-        edition = "2021";
-        src = lib.cleanSourceWith { filter = sourceFilter;  src = ./src/overrides/wasip3/0.4.0+wasi-0.3.0-rc-2026-01-06; };
-        authors = [
-          "David Mulder <dmulder@suse.com>"
-        ];
-        features = {
-        };
       };
       "wasm-bindgen" = rec {
         crateName = "wasm-bindgen";
