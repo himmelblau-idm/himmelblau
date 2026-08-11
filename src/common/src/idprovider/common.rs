@@ -670,6 +670,13 @@ macro_rules! impl_himmelblau_offline_auth_step {
                         if check_hello_totp_setup!($self, $account_id, $keystore)
                             && check_hello_totp_enabled!($self)
                         {
+                            // Store the PIN credential in the handler so the
+                            // subsequent HelloTOTP step can use it to unseal
+                            // the TOTP secret from the TPM.
+                            *$cred_handler = AuthCredHandler::HelloTOTP {
+                                cred,
+                                pending_sealed_totp: None,
+                            };
                             Ok(AuthResult::Next(AuthRequest::HelloTOTP {
                                 msg: tr(
                                     "Please enter your Hello TOTP code from your Authenticator:",
