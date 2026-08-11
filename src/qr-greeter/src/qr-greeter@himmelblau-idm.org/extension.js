@@ -66,10 +66,16 @@ function qrCodeToSvg(qr, border, lightColor, darkColor) {
     return svg;
 }
 
-// Write SVG to a temporary file with restrictive permissions and return the file path
+// Write SVG under XDG_RUNTIME_DIR (or a 0700 TMPDIR subdir) as 0600.
 function writeSvgToTempFile(svgContent) {
-    const tempDir = GLib.get_tmp_dir();
-    const tempPath = GLib.build_filenamev([tempDir, `himmelblau-totp-qr-${GLib.get_monotonic_time()}.svg`]);
+    let runtimeDir = GLib.getenv('XDG_RUNTIME_DIR');
+    if (runtimeDir) {
+        runtimeDir = GLib.build_filenamev([runtimeDir, 'himmelblau-qr']);
+    } else {
+        runtimeDir = GLib.build_filenamev([GLib.get_tmp_dir(), `himmelblau-qr-${GLib.get_user_name()}`]);
+    }
+    GLib.mkdir_with_parents(runtimeDir, 0o700);
+    const tempPath = GLib.build_filenamev([runtimeDir, `himmelblau-totp-qr-${GLib.get_monotonic_time()}.svg`]);
     const file = Gio.File.new_for_path(tempPath);
     let outputStream = null;
     try {
