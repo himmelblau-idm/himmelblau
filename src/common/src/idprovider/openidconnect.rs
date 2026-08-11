@@ -3366,10 +3366,10 @@ impl IdProvider for OidcProvider {
             }
             (_, PamAuthRequest::Pin { cred }) => {
                 let (hello_key, keytype) =
-                    self.fetch_hello_key(account_id, keystore).map_err(|e| {
-                        error!("Online authentication failed. Hello key missing.");
-                        e
-                    })?;
+                    self.fetch_hello_key(account_id, keystore)
+                        .inspect_err(|_| {
+                            error!("Online authentication failed. Hello key missing.");
+                        })?;
 
                 auth_and_validate_hello_key!(hello_key, keytype, cred)
             }

@@ -23,7 +23,7 @@ use std::collections::HashMap;
 use std::error::Error;
 use std::fs::metadata;
 use std::io;
-use std::io::{Error as IoError, ErrorKind};
+use std::io::Error as IoError;
 use std::os::unix::fs::MetadataExt;
 use std::os::unix::io::FromRawFd;
 use std::path::{Path, PathBuf};
@@ -127,7 +127,7 @@ impl Encoder<ClientResponse> for ClientCodec {
         trace!("Attempting to send response -> {:?} ...", msg);
         let data = serde_json::to_vec(&msg).map_err(|e| {
             error!("socket encoding error -> {:?}", e);
-            io::Error::new(io::ErrorKind::Other, "JSON encode error")
+            io::Error::other("JSON encode error")
         })?;
         dst.put(data.as_slice());
         Ok(())
@@ -163,7 +163,7 @@ impl Encoder<TaskRequest> for TaskCodec {
         );
         let data = serde_json::to_vec(&msg).map_err(|e| {
             error!("socket encoding error -> {:?}", e);
-            io::Error::new(io::ErrorKind::Other, "JSON encode error")
+            io::Error::other("JSON encode error")
         })?;
         dst.put(data.as_slice());
         Ok(())
@@ -213,7 +213,7 @@ async fn handle_task_client(
                     .await;
             }
             // now return the error.
-            return Err(Box::new(IoError::new(ErrorKind::Other, "oh no!")));
+            return Err(Box::new(IoError::other("oh no!")));
         }
 
         match reqs.next().await {
@@ -238,7 +238,7 @@ async fn handle_task_client(
             }
             other => {
                 error!("Error -> {:?}", other);
-                return Err(Box::new(IoError::new(ErrorKind::Other, "oh no!")));
+                return Err(Box::new(IoError::other("oh no!")));
             }
         }
     }
@@ -272,8 +272,7 @@ async fn handle_client(
     trace!("Accepted connection");
 
     let Ok(ucred) = sock.peer_cred() else {
-        return Err(Box::new(IoError::new(
-            ErrorKind::Other,
+        return Err(Box::new(IoError::other(
             "Unable to verify peer credentials.",
         )));
     };

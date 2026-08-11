@@ -131,9 +131,7 @@ pub fn collect_systemd_fds() -> SystemdFds {
 /// of the FD (received via `SCM_RIGHTS`).
 pub fn store_prts_to_fdstore(data: &[u8]) -> io::Result<()> {
     let opts = MemfdOptions::default().allow_sealing(true);
-    let mfd = opts
-        .create("himmelblau-prt")
-        .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+    let mfd = opts.create("himmelblau-prt").map_err(io::Error::other)?;
 
     // Write PRT data into the memfd
     mfd.as_file().write_all(data)?;
@@ -145,7 +143,7 @@ pub fn store_prts_to_fdstore(data: &[u8]) -> io::Result<()> {
         FileSeal::SealWrite,
         FileSeal::SealSeal,
     ])
-    .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+    .map_err(io::Error::other)?;
 
     debug!("Created sealed memfd with {} bytes of PRT data", data.len());
 

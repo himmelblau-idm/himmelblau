@@ -72,7 +72,6 @@ opentelemetry_sdk-0-31-0 = { package = "opentelemetry_sdk", path = "src/override
 paste-1-0-15 = { package = "paste", path = "src/overrides/paste" }
 pastey-0-1-1 = { package = "pastey", path = "src/overrides/pastey/0.1.1" }
 quinn-0-11-8 = { package = "quinn", path = "src/overrides/quinn/0.11.8" }
-r-efi-5-2-0 = { package = "r-efi", path = "src/overrides/r-efi/5.2.0" }
 redox_syscall-0-5-12 = { package = "redox_syscall", path = "src/overrides/redox_syscall/0.5.12" }
 reqwest-0-12-24 = { package = "reqwest", path = "src/overrides/reqwest/0.12.24" }
 rsa-0-9-999 = { package = "rsa", path = "src/overrides/rsa/0.9.999" }
@@ -93,8 +92,6 @@ toml_datetime-0-6-11 = { package = "toml_datetime", path = "src/overrides/toml_d
 uds_windows-1-1-0 = { package = "uds_windows", path = "src/overrides/uds_windows/1.1.0" }
 valuable-0-1-1 = { package = "valuable", path = "src/overrides/valuable/0.1.1" }
 wasi-0-11-0-wasi-snapshot-preview1 = { package = "wasi", path = "src/overrides/wasi/0.11.0+wasi-snapshot-preview1" }
-wasip2-1-0-2-wasi-0-2-9 = { package = "wasip2", path = "src/overrides/wasip2/1.0.2+wasi-0.2.9" }
-wasip3-0-4-0-wasi-0-3-0-rc-2026-01-06 = { package = "wasip3", path = "src/overrides/wasip3/0.4.0+wasi-0.3.0-rc-2026-01-06" }
 wasm-bindgen-0-2-100 = { package = "wasm-bindgen", path = "src/overrides/wasm-bindgen/0.2.100" }
 wasm-bindgen-futures-0-4-50 = { package = "wasm-bindgen-futures", path = "src/overrides/wasm-bindgen-futures/0.4.50" }
 web-sys-0-3-77 = { package = "web-sys", path = "src/overrides/web-sys/0.3.77" }
@@ -120,7 +117,7 @@ version = "4.0.0"
 authors = [
     "David Mulder <dmulder@suse.com>"
 ]
-rust-version = "1.73"
+rust-version = "1.85"
 edition = "2021"
 license = "GPL-3.0-or-later"
 homepage = "https://github.com/himmelblau-idm/himmelblau"
