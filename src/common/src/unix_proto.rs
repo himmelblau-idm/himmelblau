@@ -18,10 +18,6 @@ fn default_true() -> bool {
     true
 }
 
-fn is_true(value: &bool) -> bool {
-    *value
-}
-
 #[derive(Serialize, Deserialize, Debug)]
 pub struct NssUser {
     pub name: String,
@@ -68,7 +64,10 @@ pub enum PamAuthResponse {
         /// Seconds between polling attempts.
         polling_interval: u32,
         /// Whether PAM should append push-notification troubleshooting text.
-        #[serde(default = "default_true", skip_serializing_if = "is_true")]
+        #[serde(
+            default = "default_true",
+            skip_serializing_if = "std::clone::Clone::clone"
+        )]
         show_push_hint: bool,
     },
     MFAPollWait,
