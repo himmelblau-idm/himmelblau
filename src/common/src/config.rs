@@ -34,16 +34,16 @@ use crate::constants::{
     DEFAULT_CONSOLE_PASSWORD_ONLY, DEFAULT_DB_PATH, DEFAULT_FIDO_TIMEOUT, DEFAULT_HELLO_ENABLED,
     DEFAULT_HELLO_PIN_MIN_LEN, DEFAULT_HELLO_PIN_RETRY_COUNT, DEFAULT_HOME_ALIAS,
     DEFAULT_HOME_ATTR, DEFAULT_HOME_PREFIX, DEFAULT_HSM_PIN_PATH, DEFAULT_ID_ATTR_MAP,
-    DEFAULT_JOIN_TYPE, DEFAULT_LOGON_SCRIPT_TIMEOUT, DEFAULT_MFA_POLL_PROMPT_SERVICES,
-    DEFAULT_ODC_PROVIDER, DEFAULT_OFFLINE_BREAKGLASS_TTL, DEFAULT_ORCHESTRATOR_SOCK_PATH,
-    DEFAULT_PASSWORD_ONLY_REMOTE_SERVICES_DENY_LIST, DEFAULT_POLICIES_DB_DIR,
-    DEFAULT_REQUEST_TIMEOUT, DEFAULT_SELINUX, DEFAULT_SFA_FALLBACK_ENABLED, DEFAULT_SHELL,
-    DEFAULT_SOCK_PATH, DEFAULT_TASK_SOCK_PATH, DEFAULT_TPM_TCTI_NAME, DEFAULT_USER_MAP_FILE,
-    DEFAULT_USE_ETC_SKEL, MAPPED_NAME_CACHE, NSS_IGNORE_EXACT, NSS_IGNORE_PREFIX,
-    SERVER_CONFIG_PATH,
+    DEFAULT_JOIN_TYPE, DEFAULT_LOCAL_NAME_ATTR, DEFAULT_LOGON_SCRIPT_TIMEOUT,
+    DEFAULT_MFA_POLL_PROMPT_SERVICES, DEFAULT_ODC_PROVIDER, DEFAULT_OFFLINE_BREAKGLASS_TTL,
+    DEFAULT_ORCHESTRATOR_SOCK_PATH, DEFAULT_PASSWORD_ONLY_REMOTE_SERVICES_DENY_LIST,
+    DEFAULT_POLICIES_DB_DIR, DEFAULT_REQUEST_TIMEOUT, DEFAULT_SELINUX,
+    DEFAULT_SFA_FALLBACK_ENABLED, DEFAULT_SHELL, DEFAULT_SOCK_PATH, DEFAULT_TASK_SOCK_PATH,
+    DEFAULT_TPM_TCTI_NAME, DEFAULT_USER_MAP_FILE, DEFAULT_USE_ETC_SKEL, MAPPED_NAME_CACHE,
+    NSS_IGNORE_EXACT, NSS_IGNORE_PREFIX, SERVER_CONFIG_PATH,
 };
 use crate::mapping::{MappedNameCache, Mode};
-use crate::unix_config::{HomeAttr, HsmType};
+use crate::unix_config::{HomeAttr, HsmType, NameAttr};
 use himmelblau::auth::IpVersion;
 use himmelblau::error::MsalError;
 use idmap::{DEFAULT_IDMAP_RANGE, DEFAULT_SUBID_RANGE};
@@ -204,6 +204,14 @@ fn str_to_home_attr(attrib: &str) -> HomeAttr {
     HomeAttr::Uuid // Default to Uuid if the attrib can't be parsed
 }
 
+fn str_to_local_name_attr(attrib: &str) -> Option<NameAttr> {
+    match attrib.trim().to_lowercase().as_str() {
+        "spn" | "upn" | "userprincipalname" => Some(NameAttr::Spn),
+        "onpremisessamaccountname" | "samaccountname" => Some(NameAttr::OnPremisesSamAccountName),
+        _ => None,
+    }
+}
+
 fn match_bool(val: Option<String>, default: bool) -> bool {
     match val {
         Some(val) => match val.to_lowercase().as_str() {
@@ -304,6 +312,31 @@ impl HimmelblauConfig {
             None => match self.config.get("global", "home_alias") {
                 Some(val) => Some(str_to_home_attr(&val)),
                 None => DEFAULT_HOME_ALIAS,
+            },
+        }
+    }
+
+    pub fn get_local_name_attr(&self, domain: Option<&str>) -> NameAttr {
+        match domain {
+            Some(domain) => match self.config.get(domain, "local_name_attr") {
+                Some(val) => str_to_local_name_attr(&val).unwrap_or_else(|| {
+                    error!("Unrecognized local_name_attr choice: {}", val);
+                    DEFAULT_LOCAL_NAME_ATTR
+                }),
+                None => match self.config.get("global", "local_name_attr") {
+                    Some(val) => str_to_local_name_attr(&val).unwrap_or_else(|| {
+                        error!("Unrecognized local_name_attr choice: {}", val);
+                        DEFAULT_LOCAL_NAME_ATTR
+                    }),
+                    None => DEFAULT_LOCAL_NAME_ATTR,
+                },
+            },
+            None => match self.config.get("global", "local_name_attr") {
+                Some(val) => str_to_local_name_attr(&val).unwrap_or_else(|| {
+                    error!("Unrecognized local_name_attr choice: {}", val);
+                    DEFAULT_LOCAL_NAME_ATTR
+                }),
+                None => DEFAULT_LOCAL_NAME_ATTR,
             },
         }
     }
@@ -1167,6 +1200,40 @@ mod tests {
         assert_eq!(config.get_home_attr(Some("example.com")), HomeAttr::Spn);
         let config_empty = create_empty_config();
         assert_eq!(config_empty.get_home_attr(None), HomeAttr::Uuid);
+    }
+
+    #[test]
+    fn test_get_local_name_attr() {
+        let config_data = r#"
+        [global]
+        local_name_attr = onPremisesSamAccountName
+
+        [example.com]
+        local_name_attr = spn
+        "#;
+
+        let temp_file = create_temp_config(config_data);
+        let config = HimmelblauConfig::new(Some(&temp_file)).unwrap();
+
+        assert_eq!(
+            config.get_local_name_attr(None),
+            NameAttr::OnPremisesSamAccountName
+        );
+        assert_eq!(
+            config.get_local_name_attr(Some("example.com")),
+            NameAttr::Spn
+        );
+
+        let config_invalid = r#"
+        [global]
+        local_name_attr = invalid
+        "#;
+        let temp_file_invalid = create_temp_config(config_invalid);
+        let config_invalid = HimmelblauConfig::new(Some(&temp_file_invalid)).unwrap();
+        assert_eq!(
+            config_invalid.get_local_name_attr(None),
+            DEFAULT_LOCAL_NAME_ATTR
+        );
     }
 
     #[test]

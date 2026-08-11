@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<parameter name="local_name_attr"
+           section="global"
+           type="enum"
+           rust_type="NameAttr"
+           documented="true"
+           domain_specific="true"
+           order="1710">
+<description>
+The Entra ID attribute used for the local NSS login name. Available options include:
+.RS
+.IP
+\- SPN (the user principal name)
+.IP
+\- onPremisesSamAccountName
+.RE
+When onPremisesSamAccountName is configured but unavailable for a user, Himmelblau falls back to SPN.
+</description>
+<conf_description>Attribute used for local NSS login names.</conf_description>
+<default>spn</default>
+<default_const>DEFAULT_LOCAL_NAME_ATTR</default_const>
+<example>local_name_attr = onPremisesSamAccountName</example>
+<enum_values>
+  <value rust="NameAttr::Spn">spn</value>
+  <value rust="NameAttr::OnPremisesSamAccountName">onPremisesSamAccountName</value>
+</enum_values>
+<handler>get_local_name_attr</handler>
+</parameter>
