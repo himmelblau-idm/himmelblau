@@ -125,9 +125,9 @@ if [ -e /dev/tpmrm0 ] || [ -e /dev/tpm0 ]; then
     fi
 fi
 
-# If the encrypted credential already exists, check if it needs upgrading to
-# TPM-bound encryption. This handles the case where the credential was created
-# during cloud-init or before the SRK was provisioned.
+# If the encrypted credential already exists, validate it and optionally upgrade
+# it to TPM-bound encryption. This handles the case where the credential was
+# created during cloud-init or before the SRK was provisioned.
 if [ -f "$CRED" ]; then
     # Clean up any stale legacy plaintext file
     if [ -f "$LEGACY" ]; then
@@ -135,6 +135,24 @@ if [ -f "$CRED" ]; then
         rm -f "$LEGACY"
     fi
 
+    # Decrypt the existing credential to validate it.  If decryption fails or
+    # the PIN is shorter than 48 hex characters (< 24 raw bytes, which would
+    # cause AuthValueTooShort at daemon start), discard it and fall through to
+    # recreation below.
+    if HSM_PIN_CHECK=$(systemd-creds decrypt --name=hsm-pin "$CRED" - 2>/dev/null); then
+        if [ "${#HSM_PIN_CHECK}" -lt 48 ]; then
+            echo "WARNING: Existing HSM PIN is too short (${#HSM_PIN_CHECK} chars, need >=48). Recreating..."
+            rm -f "$CRED"
+        fi
+    else
+        echo "WARNING: Could not decrypt existing HSM PIN credential. Recreating..."
+        rm -f "$CRED"
+    fi
+fi
+
+# If the credential is still present after validation it is good — optionally
+# upgrade it to TPM-bound encryption then exit.
+if [ -f "$CRED" ]; then
     # If a TPM is present and the SRK is now provisioned (including via
     # self-provisioning above), try to upgrade the credential to TPM-bound.
     if [ -e /dev/tpmrm0 ] || [ -e /dev/tpm0 ]; then
@@ -156,7 +174,7 @@ if [ -f "$CRED" ]; then
         fi
     fi
 
-    echo "HSM PIN credential already exists, skipping initialization"
+    echo "HSM PIN credential already exists and is valid, skipping initialization"
     exit 0
 fi
 
