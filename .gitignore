@@ -46,4 +46,9 @@ platform/opensuse/himmelblau-compliance-check.timer
 platform/el/authselect
 scripts/__pycache__
 
+# makepkg artifacts, when building in place instead of with `make arch`
+platform/arch/pkg/
+platform/arch/src/
+platform/arch/*.pkg.tar.*
+
 .claude/
