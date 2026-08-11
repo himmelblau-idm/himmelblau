@@ -142,6 +142,9 @@ audit-as-crates-io = true
 [policy."opentelemetry_sdk:0.31.0"]
 audit-as-crates-io = true
 
+[policy."portable-atomic:1.13.1"]
+audit-as-crates-io = true
+
 [policy.paste]
 audit-as-crates-io = true
 

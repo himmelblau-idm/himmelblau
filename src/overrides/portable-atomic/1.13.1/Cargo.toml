@@ -1,0 +1,21 @@
+[package]
+name = "portable-atomic"
+version = "1.13.1"
+authors.workspace = true
+rust-version.workspace = true
+edition.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[features]
+default = []
+disable-fiq = []
+fallback = []
+float = []
+force-amo = []
+require-cas = []
+s-mode = []
+std = []
+unsafe-assume-privileged = []
+unsafe-assume-single-core = []
