@@ -74,6 +74,7 @@ paste-1-0-15 = { package = "paste", path = "src/overrides/paste" }
 pastey-0-1-1 = { package = "pastey", path = "src/overrides/pastey/0.1.1" }
 portable-atomic-1-13-1 = { package = "portable-atomic", path = "src/overrides/portable-atomic/1.13.1" }
 quinn-0-11-8 = { package = "quinn", path = "src/overrides/quinn/0.11.8" }
+r-efi-6-0-0 = { package = "r-efi", path = "src/overrides/r-efi/6.0.0" }
 redox_syscall-0-5-12 = { package = "redox_syscall", path = "src/overrides/redox_syscall/0.5.12" }
 reqwest-0-12-24 = { package = "reqwest", path = "src/overrides/reqwest/0.12.24" }
 rsa-0-9-999 = { package = "rsa", path = "src/overrides/rsa/0.9.999" }
