@@ -142,7 +142,10 @@ if [ -f "$CRED" ]; then
     if HSM_PIN_CHECK=$(systemd-creds decrypt --name=hsm-pin "$CRED" - 2>/dev/null); then
         if [ "${#HSM_PIN_CHECK}" -lt 48 ]; then
             echo "WARNING: Existing HSM PIN is too short (${#HSM_PIN_CHECK} chars, need >=48). Recreating..."
+            unset HSM_PIN_CHECK
             rm -f "$CRED"
+        else
+            unset HSM_PIN_CHECK
         fi
     else
         echo "WARNING: Could not decrypt existing HSM PIN credential. Recreating..."
