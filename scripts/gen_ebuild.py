@@ -311,7 +311,7 @@ def _fallback_install() -> str:
 \tsystemd_dounit platform/opensuse/himmelblaud-tasks.service
 
 \t# Install configuration
-\tinsinto /etc/himmelblau
+\tinsinto /usr/lib/himmelblau
 \tdoins target/config/himmelblau.conf.example"""
 
 
@@ -374,7 +374,7 @@ src_install() {{
 
 pkg_postinst() {{
 \tewarn "After installation, you need to:"
-\tewarn "  1. Configure /etc/himmelblau/himmelblau.conf"
+\tewarn "  1. Override /usr/lib/himmelblau/himmelblau.conf with your own configuration if needed"
 \tewarn "  2. Enable the himmelblaud service: systemctl enable --now himmelblaud"
 \tewarn "  3. Configure PAM and NSS (see documentation)"
 }}

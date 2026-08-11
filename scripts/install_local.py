@@ -279,7 +279,7 @@ def install_fallback(repo_root: Path, destdir: Path):
         ("target/release/libpam_himmelblau.so", "/usr/lib64/security/pam_himmelblau.so", "755"),
         ("platform/opensuse/himmelblaud.service", "/usr/lib/systemd/system/himmelblaud.service", "644"),
         ("platform/opensuse/himmelblaud-tasks.service", "/usr/lib/systemd/system/himmelblaud-tasks.service", "644"),
-        ("target/config/himmelblau.conf.example", "/etc/himmelblau/himmelblau.conf", "644"),
+        ("target/config/himmelblau.conf.example", "/usr/lib/himmelblau/himmelblau.conf", "644"),
     ]
 
     for src, dest, mode in fallback_assets:
@@ -316,7 +316,7 @@ def main():
 
     print("\nInstall complete.")
     print("Next steps:")
-    print("  1. Edit /etc/himmelblau/himmelblau.conf")
+    print("  1. Override settings in /etc/himmelblau/himmelblau.conf if needed")
     print("  2. systemctl enable --now himmelblaud")
 
 
