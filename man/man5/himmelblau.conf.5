@@ -3,11 +3,14 @@
 himmelblau.conf \- Configuration file for Himmelblau, enabling Azure Entra ID authentication on Linux.
 
 .SH SYNOPSIS
+.B /usr/lib/himmelblau/himmelblau.conf
+.br
+.B /run/himmelblau/himmelblau.conf
+.br
 .B /etc/himmelblau/himmelblau.conf
 
 .SH HOW CONFIGURATION CHANGES ARE APPLIED
-Changes to the configuration file
-.B /etc/himmelblau/himmelblau.conf
+Changes to any of the configuration files described below
 only take effect after restarting the Himmelblau daemons. This includes the
 .B himmelblaud
 daemon, which handles authentication, and the
@@ -37,6 +40,29 @@ While Himmelblau is designed to be highly configurable, it can normally be used 
 
 .P
 Himmelblau has many capabilities, but most are enabled by default and configured automatically at install time. The options documented below allow administrators to customize behavior for specific environments or requirements.
+
+.SH CONFIGURATION PRECEDENCE
+Himmelblau looks for the main configuration file in the following locations, from lowest to highest priority:
+.IP \[bu] 2
+.B /usr/lib/himmelblau/himmelblau.conf
+.IP \[bu] 2
+.B /run/himmelblau/himmelblau.conf
+.IP \[bu] 2
+.B /etc/himmelblau/himmelblau.conf
+.P
+Only the highest-priority main file that exists is parsed. An empty higher-priority file or a symbolic link to
+.B /dev/null
+masks lower-priority main files.
+.P
+Drop-in files ending in
+.B .conf
+are read from directories formed by appending
+.B .d
+to each path above, for example
+.BR /etc/himmelblau/himmelblau.conf.d/ .
+Files with the same basename override each other according to the hierarchy priority. The remaining files are parsed in lexicographic basename order after the main file, so later names have higher priority. Empty files and symbolic links to
+.B /dev/null
+mask same-named drop-ins at lower priorities. Drop-ins are still parsed when the main file is masked, and drop-in directories are not recursive.
 
 .SH FILE FORMAT
 The file consists of sections headed by a name enclosed in square brackets. Each section contains parameters and their values in the format:
