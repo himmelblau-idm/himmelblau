@@ -51,6 +51,7 @@ all: .packaging dockerfiles ## Auto-detect host distro and build packages just f
 	    esac ;; \
 	  opensuse-tumbleweed) TARGET="tumbleweed" ;; \
 	  gentoo)         TARGET="gentoo" ;; \
+	  arch|archlinux) TARGET="arch" ;; \
 	  amzn)          case "$$VER" in 2023) TARGET="amzn2023" ;; esac ;; \
 	esac; \
 	\
@@ -126,7 +127,8 @@ DEB_TARGETS := ubuntu22.04 ubuntu24.04 ubuntu25.10 ubuntu26.04 debian12 debian13
 RPM_TARGETS := rocky8 rocky9 rocky10 tumbleweed rawhide fedora43 fedora44 amzn2023
 SLE_TARGETS := sle15sp6 sle15sp7 sle16
 GENTOO_TARGETS := gentoo
-ALL_PACKAGE_TARGETS := $(DEB_TARGETS) $(RPM_TARGETS) $(SLE_TARGETS) $(GENTOO_TARGETS)
+ARCH_TARGETS := arch
+ALL_PACKAGE_TARGETS := $(DEB_TARGETS) $(RPM_TARGETS) $(SLE_TARGETS) $(GENTOO_TARGETS) $(ARCH_TARGETS)
 
 # ARM64 (aarch64) targets — rocky8 excluded (EOL, no aarch64 builds)
 DEB_ARM64_TARGETS := $(addprefix arm64-,$(DEB_TARGETS))
@@ -134,7 +136,7 @@ RPM_ARM64_TARGETS := $(addprefix arm64-,$(filter-out rocky8,$(RPM_TARGETS)))
 SLE_ARM64_TARGETS := $(addprefix arm64-,$(SLE_TARGETS))
 ALL_ARM64_TARGETS := $(DEB_ARM64_TARGETS) $(RPM_ARM64_TARGETS) $(SLE_ARM64_TARGETS)
 
-install: ## Install packages from ./packaging onto this host (apt/dnf/yum/zypper auto-detected)
+install: ## Install packages from ./packaging onto this host (apt/dnf/yum/zypper/pacman auto-detected)
 	@set -euo pipefail; \
 	. /etc/os-release; \
 	ID="$${ID}"; VER="$${VERSION_ID}"; \
@@ -148,18 +150,25 @@ install: ## Install packages from ./packaging onto this host (apt/dnf/yum/zypper
 		                            (command -v zypper >/dev/null && zypper --non-interactive --no-gpg-checks in ./packaging/*.rpm)';; \
 	  gentoo) \
 		PKGTYPE="gentoo"; INSTALL_CMD='python3 scripts/install_local.py --no-build --destdir $(DESTDIR)/';; \
+	  arch|archlinux|manjaro) \
+		PKGTYPE="arch"; INSTALL_CMD='pacman -U --noconfirm ./packaging/himmelblau-*.pkg.tar.zst';; \
 	esac; \
+	if [ -z "$$PKGTYPE" ] && command -v pacman >/dev/null 2>&1; then \
+		PKGTYPE="arch"; INSTALL_CMD='pacman -U --noconfirm ./packaging/himmelblau-*.pkg.tar.zst'; \
+	fi; \
 	if [ -z "$$PKGTYPE" ]; then echo "Error: unknown distro family for install"; exit 2; fi; \
 	if [ "$$PKGTYPE" = "deb" ]; then \
 	  ls ./packaging/*.deb >/dev/null 2>&1 || { echo "Error: no .deb packages in ./packaging/ — run 'make' first"; exit 4; }; \
 	elif [ "$$PKGTYPE" = "rpm" ]; then \
 	  ls ./packaging/*.rpm >/dev/null 2>&1 || { echo "Error: no .rpm packages in ./packaging/ — run 'make' first"; exit 4; }; \
+	elif [ "$$PKGTYPE" = "arch" ]; then \
+	  ls ./packaging/himmelblau-*.pkg.tar.zst >/dev/null 2>&1 || { echo "Error: no Arch packages in ./packaging/ — run 'make arch' first"; exit 4; }; \
 	fi; \
 	echo "Installing..."; \
 	sh -c "$$INSTALL_CMD"; \
 	echo "Install complete."
 
-uninstall: ## Uninstall Himmelblau packages from this host (apt/dnf/yum/zypper auto-detected)
+uninstall: ## Uninstall Himmelblau packages from this host (apt/dnf/yum/zypper/pacman auto-detected)
 	@set -e; \
 	PM=""; PKGTYPE=""; \
 	if command -v apt-get >/dev/null 2>&1; then \
@@ -170,10 +179,16 @@ uninstall: ## Uninstall Himmelblau packages from this host (apt/dnf/yum/zypper a
 		PKGTYPE="rpm"; PM="sudo yum remove -y"; \
 	elif command -v zypper >/dev/null 2>&1; then \
 		PKGTYPE="rpm"; PM="sudo zypper rm -y"; \
+	elif command -v pacman >/dev/null 2>&1; then \
+		PKGTYPE="arch"; PM="sudo pacman -Rns --noconfirm"; \
 	else \
-		echo "Error: no supported package manager found (apt/dnf/yum/zypper)."; exit 2; \
+		echo "Error: no supported package manager found (apt/dnf/yum/zypper/pacman)."; exit 2; \
 	fi; \
-	pkgs="himmelblau himmelblau-orchestrator himmelblau-apparmor himmelblau-broker himmelblau-qr-greeter himmelblau-selinux himmelblau-sshd-config himmelblau-sso himmelblau-sso-policies nss-himmelblau pam-himmelblau"; \
+	if [ "$$PKGTYPE" = "arch" ]; then \
+		pkgs="himmelblau"; \
+	else \
+		pkgs="himmelblau himmelblau-orchestrator himmelblau-apparmor himmelblau-broker himmelblau-qr-greeter himmelblau-selinux himmelblau-sshd-config himmelblau-sso himmelblau-sso-policies nss-himmelblau pam-himmelblau"; \
+	fi; \
 	echo "Removing: $$pkgs"; \
 	$$PM $$pkgs; \
 	echo "Uninstall complete."
@@ -196,7 +211,7 @@ rpm-servicefiles:
 authselect:
 	python3 ./scripts/gen_authselect.py --root=./ --aad-tool=./target/release/aad-tool --output-dir=./platform/el/authselect/
 
-.PHONY: package deb rpm $(DEB_TARGETS) $(RPM_TARGETS) ${SLE_TARGETS} $(GENTOO_TARGETS) dockerfiles dockerfiles-arm64 orchestrator-container deb-servicefiles rpm-servicefiles authselect conf-examples install uninstall help sbom man arm64 deb-arm64 rpm-arm64 $(ALL_ARM64_TARGETS)
+.PHONY: package deb rpm $(DEB_TARGETS) $(RPM_TARGETS) ${SLE_TARGETS} $(GENTOO_TARGETS) $(ARCH_TARGETS) dockerfiles dockerfiles-arm64 orchestrator-container deb-servicefiles rpm-servicefiles authselect conf-examples install uninstall help sbom man arm64 deb-arm64 rpm-arm64 $(ALL_ARM64_TARGETS)
 
 check-licenses: ## Validate dependant licenses comply with GPLv3
 	cargo deny -V >/dev/null || (echo "cargo-deny required" && cargo install cargo-deny)
@@ -383,6 +398,16 @@ $(GENTOO_TARGETS): %: .packaging dockerfiles
 	cargo build --release --features tpm
 	strip -s target/release/*.so 2>/dev/null || true
 	strip -s target/release/aad-tool target/release/himmelblaud target/release/himmelblaud_tasks target/release/broker target/release/linux-entra-sso 2>/dev/null || true
+
+$(ARCH_TARGETS): %: .packaging dockerfiles
+	@echo "Building $@ package"
+	mkdir -p target/$@
+	$(DOCKER) build $(LIBHIMMELBLAU_BUILD_ARG) -t himmelblau-$@-build -f images/Dockerfile.$@ .
+	$(DOCKER) run --rm --security-opt label=disable \
+		-v $(CURDIR):/himmelblau \
+		-v $(CURDIR)/target/$@:/himmelblau/target \
+		$(LIBHIMMELBLAU_MOUNT) \
+		himmelblau-$@-build
 
 # ---- ARM64 (aarch64) build targets -------------------------------------------
 # Uses docker buildx with QEMU emulation to build natively for arm64.
