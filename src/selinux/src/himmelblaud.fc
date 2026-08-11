@@ -6,7 +6,9 @@
 /usr/sbin/himmelblaud_tasks  --  gen_context(system_u:object_r:himmelblaud_tasks_exec_t,s0)
 /usr/sbin/himmelblaud-orchestrator --  gen_context(system_u:object_r:himmelblaud_orchestrator_exec_t,s0)
 
-# Config
+# Config (vendor, ephemeral, and local)
+/usr/lib/himmelblau(/.*)?                gen_context(system_u:object_r:himmelblau_etc_t,s0)
+/run/himmelblau(/.*)?                    gen_context(system_u:object_r:himmelblau_etc_t,s0)
 /etc/himmelblau(/.*)?                    gen_context(system_u:object_r:himmelblau_etc_t,s0)
 
 # Runtime (both paths for compatibility - /var/run may be symlink or separate on older systems)

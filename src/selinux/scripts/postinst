@@ -39,6 +39,7 @@ if command -v selinuxenabled >/dev/null 2>&1 && selinuxenabled; then
         restorecon -Fv /usr/sbin/himmelblaud /usr/sbin/himmelblaud_tasks 2>/dev/null || :
 
         # Relabel existing dirs (may not exist on fresh install)
+        [ -d /usr/lib/himmelblau ]            && restorecon -RFv /usr/lib/himmelblau || :
         [ -d /etc/himmelblau ]                && restorecon -RFv /etc/himmelblau || :
         [ -d /run/himmelblaud ]               && restorecon -RFv /run/himmelblaud || :
         [ -d /var/run/himmelblaud ]           && restorecon -RFv /var/run/himmelblaud || :
