@@ -14126,12 +14126,13 @@ rec {
       "r-efi" = rec {
         crateName = "r-efi";
         version = "6.0.0";
-        edition = "2018";
-        sha256 = "1gyrl2k5fyzj9k7kchg2n296z5881lg7070msabid09asp3wkp7q";
+        edition = "2021";
+        src = lib.cleanSourceWith { filter = sourceFilter;  src = ./src/overrides/r-efi/6.0.0; };
         libName = "r_efi";
+        authors = [
+          "David Mulder <dmulder@suse.com>"
+        ];
         features = {
-          "core" = [ "dep:core" ];
-          "rustc-dep-of-std" = [ "core" ];
         };
       };
       "rand 0.10.2" = rec {
