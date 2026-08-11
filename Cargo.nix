@@ -13712,13 +13712,13 @@ rec {
       "portable-atomic" = rec {
         crateName = "portable-atomic";
         version = "1.13.1";
-        edition = "2018";
-        sha256 = "0j8vlar3n5acyigq8q6f4wjx3k3s5yz0rlpqrv76j73gi5qr8fn3";
+        edition = "2021";
+        src = lib.cleanSourceWith { filter = sourceFilter;  src = ./src/overrides/portable-atomic/1.13.1; };
         libName = "portable_atomic";
+        authors = [
+          "David Mulder <dmulder@suse.com>"
+        ];
         features = {
-          "critical-section" = [ "dep:critical-section" ];
-          "default" = [ "fallback" ];
-          "serde" = [ "dep:serde" ];
         };
         resolvedDefaultFeatures = [ "fallback" ];
       };
