@@ -43,6 +43,9 @@ audit-as-crates-io = true
 [policy."base64:0.21.7"]
 audit-as-crates-io = true
 
+[policy."bs58:0.5.1"]
+audit-as-crates-io = true
+
 [policy."cbindgen:0.29.2"]
 audit-as-crates-io = true
 
