@@ -2495,32 +2495,11 @@ rec {
         crateName = "bs58";
         version = "0.5.1";
         edition = "2021";
-        sha256 = "1x3v51n5n2s3l0rgrsn142akdf331n2qsa75pscw71fi848vm25z";
-        dependencies = [
-          {
-            name = "tinyvec";
-            packageId = "tinyvec";
-            optional = true;
-            usesDefaultFeatures = false;
-            features = [ "grab_spare_slice" ];
-          }
-        ];
-        devDependencies = [
-          {
-            name = "tinyvec";
-            packageId = "tinyvec";
-            features = [ "rustc_1_55" ];
-          }
+        src = lib.cleanSourceWith { filter = sourceFilter;  src = ./src/overrides/bs58/0.5.1; };
+        authors = [
+          "David Mulder <dmulder@suse.com>"
         ];
         features = {
-          "alloc" = [ "tinyvec?/alloc" ];
-          "cb58" = [ "sha2" ];
-          "check" = [ "sha2" ];
-          "default" = [ "std" ];
-          "sha2" = [ "dep:sha2" ];
-          "smallvec" = [ "dep:smallvec" ];
-          "std" = [ "alloc" "tinyvec?/std" ];
-          "tinyvec" = [ "dep:tinyvec" ];
         };
         resolvedDefaultFeatures = [ "alloc" "std" ];
       };
@@ -18148,46 +18127,6 @@ rec {
           "zerovec" = [ "dep:zerovec" ];
         };
         resolvedDefaultFeatures = [ "alloc" "zerovec" ];
-      };
-      "tinyvec" = rec {
-        crateName = "tinyvec";
-        version = "1.11.0";
-        edition = "2018";
-        sha256 = "1wvycrghzmaysnw34kzwnf0mfx6r75045s24r214wnnjadqfcq9y";
-        authors = [
-          "Lokathor <zefria@gmail.com>"
-        ];
-        dependencies = [
-          {
-            name = "tinyvec_macros";
-            packageId = "tinyvec_macros";
-            optional = true;
-          }
-        ];
-        features = {
-          "alloc" = [ "tinyvec_macros" ];
-          "arbitrary" = [ "dep:arbitrary" ];
-          "borsh" = [ "dep:borsh" ];
-          "defmt" = [ "dep:defmt" ];
-          "generic-array" = [ "dep:generic-array" ];
-          "latest_stable_rust" = [ "rustc_1_61" ];
-          "real_blackbox" = [ "criterion/real_blackbox" ];
-          "rustc_1_61" = [ "rustc_1_57" ];
-          "serde" = [ "dep:serde_core" ];
-          "std" = [ "alloc" ];
-          "tinyvec_macros" = [ "dep:tinyvec_macros" ];
-        };
-        resolvedDefaultFeatures = [ "alloc" "grab_spare_slice" "std" "tinyvec_macros" ];
-      };
-      "tinyvec_macros" = rec {
-        crateName = "tinyvec_macros";
-        version = "0.1.1";
-        edition = "2018";
-        sha256 = "081gag86208sc3y6sdkshgw3vysm5d34p431dzw0bshz66ncng0z";
-        authors = [
-          "Soveu <marx.tomasz@gmail.com>"
-        ];
-
       };
       "tls_codec" = rec {
         crateName = "tls_codec";

@@ -28,6 +28,7 @@ anstyle-wincon-3-0-8 = { package = "anstyle-wincon", path = "src/overrides/ansty
 assert_hex-0-4-1 = { package = "assert_hex", path = "src/overrides/assert_hex/0.4.1" }
 atomic-polyfill-1-0-3 = { package = "atomic-polyfill", path = "src/overrides/atomic-polyfill/1.0.3" }
 base64-0-21-7 = { package = "base64", path = "src/overrides/base64/0.21.7" }
+bs58-0-5-1 = { package = "bs58", path = "src/overrides/bs58/0.5.1" }
 cbindgen-0-29-2 = { package = "cbindgen", path = "src/overrides/cbindgen/0.29.2" }
 const-oid-0-9-6 = { package = "const-oid", path = "src/overrides/const-oid/0.9.6" }
 core-foundation-0-10-1 = { package = "core-foundation", path = "src/overrides/core-foundation/0.10.1" }
