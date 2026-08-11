@@ -167,13 +167,14 @@ type_transition init_t himmelblaud_orchestrator_exec_t:process himmelblaud_orche
 require {
 	class dir { add_name create getattr mounton open read remove_name rmdir search setattr write };
 	class file { append create getattr lock map open read setattr unlink write };
-	class lnk_file { create read unlink };
+	class lnk_file { create getattr read unlink };
 	class sock_file { create getattr setattr write unlink };
 }
 
 # himmelblaud_t (main daemon) permissions
 allow himmelblaud_t himmelblau_etc_t:dir { getattr open read search };
 allow himmelblaud_t himmelblau_etc_t:file { getattr open read };
+allow himmelblaud_t himmelblau_etc_t:lnk_file { getattr read };
 allow himmelblaud_t himmelblau_nss_cache_t:dir { add_name getattr mounton open read remove_name search setattr write };
 allow himmelblaud_t himmelblau_nss_cache_t:file { create getattr lock open read setattr unlink write };
 allow himmelblaud_t himmelblau_var_cache_t:dir { add_name create getattr open read remove_name rename rmdir search setattr write };
@@ -188,6 +189,7 @@ allow himmelblaud_t himmelblau_var_run_t:sock_file { create getattr setattr writ
 # himmelblaud_orchestrator_t permissions
 allow himmelblaud_orchestrator_t himmelblau_etc_t:dir { getattr open read search };
 allow himmelblaud_orchestrator_t himmelblau_etc_t:file { getattr open read };
+allow himmelblaud_orchestrator_t himmelblau_etc_t:lnk_file { getattr read };
 allow himmelblaud_orchestrator_t himmelblau_var_cache_t:dir { add_name create getattr open read remove_name rename rmdir search setattr write };
 allow himmelblaud_orchestrator_t himmelblau_var_cache_t:file { create getattr lock open read setattr unlink write };
 allow himmelblaud_orchestrator_t himmelblau_var_cache_t:lnk_file { getattr read };
@@ -529,6 +531,7 @@ optional {
 # himmelblaud_tasks_t (tasks daemon) permissions
 allow himmelblaud_tasks_t himmelblau_etc_t:dir { getattr open read search };
 allow himmelblaud_tasks_t himmelblau_etc_t:file { getattr open read };
+allow himmelblaud_tasks_t himmelblau_etc_t:lnk_file { getattr read };
 allow himmelblaud_tasks_t himmelblau_nss_cache_t:dir { add_name getattr open read remove_name search write };
 allow himmelblaud_tasks_t himmelblau_nss_cache_t:file { create getattr lock open read setattr unlink write };
 allow himmelblaud_tasks_t himmelblau_var_cache_t:dir { add_name create getattr open read remove_name rename rmdir search setattr write };
@@ -855,6 +858,7 @@ allow himmelblaud_tasks_exec_t fs_t:filesystem associate;
 allow himmelblaud_orchestrator_exec_t fs_t:filesystem associate;
 
 # Allow our types to associate with tmpfs (for /run, /var/cache/private, etc.)
+allow himmelblau_etc_t tmpfs_t:filesystem associate;
 allow himmelblau_var_run_t tmpfs_t:filesystem associate;
 allow himmelblau_var_cache_t tmpfs_t:filesystem associate;
 allow himmelblau_nss_cache_t tmpfs_t:filesystem associate;
@@ -874,6 +878,7 @@ require {
 
 allow init_t himmelblau_etc_t:dir { getattr open read search };
 allow init_t himmelblau_etc_t:file { getattr open read };
+allow init_t himmelblau_etc_t:lnk_file { getattr read };
 allow init_t himmelblau_nss_cache_t:dir { add_name getattr mounton open read remove_name search setattr write };
 allow init_t himmelblau_nss_cache_t:file { create getattr lock open read setattr unlink write };
 allow init_t himmelblau_var_cache_t:dir { add_name create getattr open read remove_name rename reparent rmdir search setattr write };
@@ -981,6 +986,7 @@ optional {
 	}
 	allow useradd_t himmelblau_etc_t:dir { getattr open read search };
 	allow useradd_t himmelblau_etc_t:file { getattr open read };
+	allow useradd_t himmelblau_etc_t:lnk_file { getattr read };
 	allow useradd_t himmelblau_nss_cache_t:dir { getattr open read search setattr };
 	allow useradd_t himmelblau_nss_cache_t:file { getattr lock open read };
 	allow useradd_t himmelblau_var_cache_t:dir { getattr open read search };
@@ -998,6 +1004,7 @@ optional {
 	}
 	allow local_login_t himmelblau_etc_t:dir { getattr open read search };
 	allow local_login_t himmelblau_etc_t:file { getattr open read };
+	allow local_login_t himmelblau_etc_t:lnk_file { getattr read };
 	allow local_login_t himmelblau_nss_cache_t:dir { add_name getattr open read remove_name search setattr write };
 	allow local_login_t himmelblau_nss_cache_t:file { create getattr lock open read setattr unlink write };
 	allow local_login_t himmelblau_var_cache_t:dir { getattr open read search };
@@ -1016,6 +1023,7 @@ optional {
 	}
 	allow accountsd_t himmelblau_etc_t:dir { getattr open read search };
 	allow accountsd_t himmelblau_etc_t:file { getattr open read };
+	allow accountsd_t himmelblau_etc_t:lnk_file { getattr read };
 	allow accountsd_t himmelblau_nss_cache_t:dir { getattr search };
 	allow accountsd_t himmelblau_nss_cache_t:file { getattr lock open read write };
 	allow accountsd_t himmelblau_var_cache_t:dir { getattr open read search };
@@ -1046,7 +1054,9 @@ optional {
 		type init_t;
 		class unix_stream_socket connectto;
 	}
+	allow chkpwd_t himmelblau_etc_t:dir { getattr open read search };
 	allow chkpwd_t himmelblau_etc_t:file { getattr open read };
+	allow chkpwd_t himmelblau_etc_t:lnk_file { getattr read };
 	allow chkpwd_t himmelblau_nss_cache_t:dir { add_name remove_name write };
 	allow chkpwd_t himmelblau_nss_cache_t:file { create getattr lock open read setattr unlink write };
 	allow chkpwd_t himmelblau_var_cache_t:file { getattr open read };
@@ -1066,6 +1076,7 @@ optional {
 	}
 	allow colord_t himmelblau_etc_t:dir { getattr open read search };
 	allow colord_t himmelblau_etc_t:file { getattr open read };
+	allow colord_t himmelblau_etc_t:lnk_file { getattr read };
 	allow colord_t himmelblau_nss_cache_t:dir { getattr search };
 	allow colord_t himmelblau_nss_cache_t:file { getattr lock open read };
 	allow colord_t himmelblau_var_cache_t:lnk_file read;
@@ -1080,8 +1091,9 @@ optional {
 	require {
 		type cupsd_t;
 	}
-	allow cupsd_t himmelblau_etc_t:dir search;
+	allow cupsd_t himmelblau_etc_t:dir { getattr open read search };
 	allow cupsd_t himmelblau_etc_t:file { getattr open read };
+	allow cupsd_t himmelblau_etc_t:lnk_file { getattr read };
 	allow cupsd_t himmelblau_nss_cache_t:dir { add_name getattr open read remove_name search write };
 	allow cupsd_t himmelblau_nss_cache_t:file { create getattr lock open read setattr unlink write };
 	allow cupsd_t himmelblau_var_cache_t:dir search;
@@ -1100,6 +1112,7 @@ optional {
 	}
 	allow NetworkManager_t himmelblau_etc_t:dir { getattr open read search };
 	allow NetworkManager_t himmelblau_etc_t:file { getattr open read };
+	allow NetworkManager_t himmelblau_etc_t:lnk_file { getattr read };
 	allow NetworkManager_t himmelblau_nss_cache_t:dir { add_name getattr open read remove_name search write };
 	allow NetworkManager_t himmelblau_nss_cache_t:file { create getattr lock open read setattr unlink write };
 	allow NetworkManager_t himmelblau_var_cache_t:dir { getattr open read search };
@@ -1118,6 +1131,7 @@ optional {
 	}
 	allow policykit_t himmelblau_etc_t:dir { getattr open read search };
 	allow policykit_t himmelblau_etc_t:file { getattr open read };
+	allow policykit_t himmelblau_etc_t:lnk_file { getattr read };
 	allow policykit_t himmelblau_nss_cache_t:dir { getattr search };
 	allow policykit_t himmelblau_nss_cache_t:file { getattr lock open read };
 	allow policykit_t himmelblau_var_cache_t:lnk_file read;
@@ -1135,8 +1149,9 @@ optional {
 	require {
 		type policykit_auth_t;
 	}
-	allow policykit_auth_t himmelblau_etc_t:dir { search getattr };
+	allow policykit_auth_t himmelblau_etc_t:dir { getattr open read search };
 	allow policykit_auth_t himmelblau_etc_t:file { getattr open read };
+	allow policykit_auth_t himmelblau_etc_t:lnk_file { getattr read };
 	allow policykit_auth_t himmelblau_nss_cache_t:dir { search getattr };
 	allow policykit_auth_t himmelblau_nss_cache_t:file { getattr open read lock };
 	allow policykit_auth_t himmelblau_var_cache_t:lnk_file read;
@@ -1187,6 +1202,7 @@ optional {
 	}
 	allow sshd_session_t himmelblau_etc_t:dir { getattr open read search };
 	allow sshd_session_t himmelblau_etc_t:file { getattr open read };
+	allow sshd_session_t himmelblau_etc_t:lnk_file { getattr read };
 	allow sshd_session_t himmelblau_var_cache_t:dir search;
 	allow sshd_session_t himmelblau_var_cache_t:file { getattr open read };
 	allow sshd_session_t himmelblau_var_cache_t:lnk_file read;
@@ -1203,8 +1219,9 @@ optional {
 	require {
 		type systemd_logind_t;
 	}
-	allow systemd_logind_t himmelblau_etc_t:dir search;
+	allow systemd_logind_t himmelblau_etc_t:dir { getattr open read search };
 	allow systemd_logind_t himmelblau_etc_t:file { getattr open read };
+	allow systemd_logind_t himmelblau_etc_t:lnk_file { getattr read };
 	allow systemd_logind_t himmelblau_nss_cache_t:dir { getattr search };
 	allow systemd_logind_t himmelblau_nss_cache_t:file { getattr lock open read write };
 	allow systemd_logind_t himmelblau_var_cache_t:dir search;
@@ -1221,7 +1238,9 @@ optional {
 	require {
 		type systemd_user_runtimedir_t;
 	}
+	allow systemd_user_runtimedir_t himmelblau_etc_t:dir { getattr open read search };
 	allow systemd_user_runtimedir_t himmelblau_etc_t:file { getattr open read };
+	allow systemd_user_runtimedir_t himmelblau_etc_t:lnk_file { getattr read };
 	allow systemd_user_runtimedir_t himmelblau_nss_cache_t:dir { add_name getattr open read remove_name search };
 	allow systemd_user_runtimedir_t himmelblau_nss_cache_t:file { create getattr lock open read setattr unlink write };
 	allow systemd_user_runtimedir_t himmelblau_var_cache_t:file { getattr open read };
@@ -1240,6 +1259,7 @@ optional {
 	}
 	allow xdm_t himmelblau_etc_t:dir { getattr open read search };
 	allow xdm_t himmelblau_etc_t:file { getattr open read };
+	allow xdm_t himmelblau_etc_t:lnk_file { getattr read };
 	allow xdm_t himmelblau_nss_cache_t:dir { add_name getattr open read remove_name search };
 	allow xdm_t himmelblau_nss_cache_t:file { create getattr lock open read setattr unlink write };
 	allow xdm_t himmelblau_var_cache_t:dir { getattr open read search };
@@ -1301,6 +1321,7 @@ optional {
 
 	allow unconfined_t himmelblau_etc_t:dir { add_name create getattr open read remove_name search write setattr relabelto relabelfrom };
 	allow unconfined_t himmelblau_etc_t:file { append create getattr open read rename setattr unlink write relabelto relabelfrom };
+	allow unconfined_t himmelblau_etc_t:lnk_file { create getattr read unlink };
 	allow unconfined_t himmelblaud_tasks_t:key { link read search view };
 }
 
@@ -1330,8 +1351,9 @@ optional {
 	require {
 		type auditd_t;
 	}
-	allow auditd_t himmelblau_etc_t:dir search;
+	allow auditd_t himmelblau_etc_t:dir { getattr open read search };
 	allow auditd_t himmelblau_etc_t:file { getattr open read };
+	allow auditd_t himmelblau_etc_t:lnk_file { getattr read };
 	allow auditd_t himmelblau_var_cache_t:dir search;
 	allow auditd_t himmelblau_var_cache_t:lnk_file read;
 	allow auditd_t himmelblau_nss_cache_t:dir { getattr search setattr };
@@ -1349,7 +1371,7 @@ optional {
 	require {
 		type systemd_userdbd_t;
 	}
-	allow systemd_userdbd_t himmelblau_etc_t:dir search;
+	allow systemd_userdbd_t himmelblau_etc_t:dir { getattr open read search };
 	allow systemd_userdbd_t himmelblau_var_run_t:dir search;
 	allow systemd_userdbd_t himmelblau_var_run_t:sock_file write;
 	allow systemd_userdbd_t himmelblau_nss_cache_t:dir { add_name getattr remove_name search write };
@@ -1358,6 +1380,7 @@ optional {
 	allow systemd_userdbd_t himmelblau_var_cache_t:file { getattr open read };
 	allow systemd_userdbd_t himmelblau_var_cache_t:lnk_file read;
 	allow systemd_userdbd_t himmelblau_etc_t:file { getattr open read };
+	allow systemd_userdbd_t himmelblau_etc_t:lnk_file { getattr read };
 	allow systemd_userdbd_t himmelblaud_t:unix_stream_socket connectto;
 	allow himmelblaud_tasks_t systemd_userdbd_t:unix_stream_socket connectto;
 }
@@ -1388,6 +1411,7 @@ optional {
 	}
 	allow snapperd_t himmelblau_etc_t:dir { getattr open read search };
 	allow snapperd_t himmelblau_etc_t:file { getattr open read };
+	allow snapperd_t himmelblau_etc_t:lnk_file { getattr read };
 	allow snapperd_t himmelblau_var_cache_t:dir { getattr open read search };
 	allow snapperd_t himmelblau_var_cache_t:file { getattr open read };
 	allow snapperd_t himmelblau_var_cache_t:lnk_file read;

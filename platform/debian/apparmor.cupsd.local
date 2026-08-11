@@ -3,8 +3,18 @@
 # CUPS performs NSS lookups and can load nss_himmelblau. Match the SELinux
 # cupsd_t allowances for Himmelblau config, cache, and daemon socket access.
 
+/usr/lib/himmelblau/ r,
+/usr/lib/himmelblau/himmelblau.conf r,
+/usr/lib/himmelblau/himmelblau.conf.d/ r,
+/usr/lib/himmelblau/himmelblau.conf.d/*.conf r,
+@{run}/himmelblau/ r,
+@{run}/himmelblau/himmelblau.conf r,
+@{run}/himmelblau/himmelblau.conf.d/ r,
+@{run}/himmelblau/himmelblau.conf.d/*.conf r,
 /etc/himmelblau/ r,
 /etc/himmelblau/himmelblau.conf r,
+/etc/himmelblau/himmelblau.conf.d/ r,
+/etc/himmelblau/himmelblau.conf.d/*.conf r,
 /var/cache/private/himmelblaud/ r,
 /var/cache/private/himmelblaud/himmelblau.conf r,
 /var/cache/nss-himmelblau/ rw,
