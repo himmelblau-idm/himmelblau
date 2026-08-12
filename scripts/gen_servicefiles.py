@@ -40,6 +40,7 @@ MINVER = {
     "ProtectKernelLogs": 244,
     "ProtectControlGroups": 232,
     "MemoryDenyWriteExecute": 231,
+    "InaccessiblePaths": 231,
     "CacheRuntimeStateDirs": 235,  # CacheDirectory/RuntimeDirectory/StateDirectory
     "ConditionPathExists": 12,
     "LoadCredentialEncrypted": 250,
@@ -266,6 +267,27 @@ WantedBy=multi-user.target
     rw_paths = "/home /run/himmelblaud /tmp /etc/krb5.conf.d /etc /var/lib /var/cache/nss-himmelblau /var/cache/himmelblau-policies"
     rw_line = f"ReadWritePaths={rw_paths}" if rw_paths_available else ""
 
+    # Intune CustomCompliance discovery scripts commonly shell out to `mokutil`
+    # (Microsoft's stock Secure Boot compliance script runs `mokutil --db`).
+    #
+    # mokutil's mok_get_variable() reads /sys/firmware/efi/mok-variables/<name>
+    # first and only falls back to efivarfs if that open() fails. Those files are
+    # mode 0400 root:root, so this unit (User=root) opens them successfully - but
+    # the kernel's efi_mokvar_sysfs_read() returns 0 rather than -EPERM when the
+    # reader lacks CAP_SYS_ADMIN, which our CapabilityBoundingSet drops. mokutil's
+    # read loop has no ssz==0 guard, so it spins at 100% CPU forever, blocks the
+    # task daemon's watchdog pings, and WatchdogSec SIGABRTs the whole service.
+    #
+    # Hiding the directory makes that open() fail so mokutil takes its normal
+    # efivarfs fallback - the same path unprivileged callers already use. This is
+    # preferable to granting CAP_SYS_ADMIN, and does not affect `mokutil
+    # --sb-state`, which uses efi_get_variable() and never touches mok-variables.
+    tasks_inaccessible = (
+        "InaccessiblePaths=-/sys/firmware/efi/mok-variables"
+        if supported("InaccessiblePaths")
+        else ""
+    )
+
     tasks_unit = f"""\
 # You should not need to edit this file. Instead, use a drop-in file:
 #   systemctl edit himmelblaud-tasks.service
@@ -299,6 +321,7 @@ AmbientCapabilities=CAP_SETUID CAP_SETGID
 {rw_line}
 {os.linesep.join([h for h in tasks_hardening if not h.startswith('ProtectSystem=')])}
 {tasks_private_devices}
+{tasks_inaccessible}
 
 [Install]
 WantedBy=multi-user.target
