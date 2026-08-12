@@ -1295,9 +1295,9 @@ rec {
       };
       "async-trait" = rec {
         crateName = "async-trait";
-        version = "0.1.91";
+        version = "0.1.92";
         edition = "2021";
-        sha256 = "1v3cm8mzg66037wm392p1vsdx0lq8bid6y2ivr7z03lpfx0xqdmf";
+        sha256 = "0rqn5iga1hlv2lm8xzav1zhar46jb4dvx89i6kfv93kb53maxxl2";
         procMacro = true;
         libName = "async_trait";
         authors = [
@@ -2790,9 +2790,9 @@ rec {
       };
       "cc" = rec {
         crateName = "cc";
-        version = "1.4.1";
+        version = "1.4.2";
         edition = "2021";
-        sha256 = "0dniydgf5lv8dh4mr6n1gvas9albqmp0kyh557wkcij6jacw8rlh";
+        sha256 = "0zi7dyd4jaflww22jd3701869jrv4p47f9xlslw7h60pk4a2w9jx";
         dependencies = [
           {
             name = "find-msvc-tools";
@@ -9828,9 +9828,9 @@ rec {
       };
       "libhimmelblau" = rec {
         crateName = "libhimmelblau";
-        version = "0.8.29";
+        version = "0.8.30";
         edition = "2021";
-        sha256 = "1q1x203qzm56hnl2rdyb8psppz3hc88hc499xxhqanjn5hy5pb17";
+        sha256 = "1v4kwsiplpgws93pp6715w6ncc6dkc2rs0mxjzi3gwyf2855545i";
         libName = "himmelblau";type = [ "rlib" "cdylib" ];
         authors = [
           "David Mulder <dmulder@suse.com>"
@@ -17849,7 +17849,7 @@ rec {
           }
           {
             name = "getrandom";
-            packageId = "getrandom 0.3.3";
+            packageId = "getrandom 0.4.3";
             optional = true;
             usesDefaultFeatures = false;
             target = { target, features }: ((target."unix" or false) || (target."windows" or false) || ("wasi" == target."os" or null));
