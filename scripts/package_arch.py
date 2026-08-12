@@ -128,6 +128,9 @@ def main() -> int:
     out.mkdir(parents=True, exist_ok=True)
     pkgdest = BUILD_ROOT / "pkgdest"
 
+    for stale in (*pkgdest.glob("himmelblau-*.pkg.tar.*"), *out.glob("himmelblau-*.pkg.tar.*")):
+        stale.unlink()
+
     if os.geteuid() == 0:
         builder = create_builder_user(repo.stat().st_uid)
         env = makepkg_env(repo, pkgdest, Path(builder.pw_dir))
@@ -146,9 +149,9 @@ def main() -> int:
         print(f"error: makepkg produced no package in {pkgdest}", file=sys.stderr)
         return 1
 
-    for package in packages:
-        print(f"copying {package.name} to {out}")
-        shutil.copy2(package, out / package.name)
+    package = packages[-1]
+    print(f"copying {package.name} to {out}")
+    shutil.copy2(package, out / package.name)
 
     return 0
 
