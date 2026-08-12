@@ -27,6 +27,7 @@ os-release = "0.1.0"
 semver = "1.0.28"
 libhimmelblau.workspace = true
 tempfile = "3.27.0"
+libc = { workspace = true }
 
 [package.metadata.cargo-machete]
 ignored = ["libhimmelblau"]
