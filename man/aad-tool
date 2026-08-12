@@ -12,5 +12,15 @@ for arg in "$@"; do
   fi
 done
 
+# The committed man page has its own SUPPORT section. Remove the root-help CTA
+# from help2man's input so regenerating the page does not duplicate the text.
+if [[ ${#args[@]} -eq 1 && ( "${args[0]}" == "--help" || "${args[0]}" == "-h" || "${args[0]}" == "help" ) ]]; then
+  ../target/debug/aad-tool "${args[@]}" \
+    | sed \
+      -e '/^Support Himmelblau: Financial support helps keep cloud identity for Linux open\.$/d' \
+      -e '/^Learn more: https:\/\/himmelblau-idm\.org\/donations\/$/d'
+  exit
+fi
+
 # Call the command with modified arguments
 ../target/debug/aad-tool "${args[@]}"

@@ -2,7 +2,7 @@
 
 [![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/himmelblau-idm/himmelblau/badge)](https://scorecard.dev/viewer/?uri=github.com/himmelblau-idm/himmelblau) [![OpenSSF Best Practices](https://www.bestpractices.dev/projects/11235/badge)](https://www.bestpractices.dev/projects/11235)
 
-[![Donate to Our Collective](https://opencollective.com/yourproject/donate/button.png?color=blue)](https://opencollective.com/himmelblau)
+[![Support Himmelblau](https://opencollective.com/himmelblau/donate/button.png?color=blue)](https://himmelblau-idm.org/donations/)
 
 # Himmelblau
 
@@ -32,11 +32,11 @@ or on the [Samba Technical community matrix channel](https://matrix.to/#/#samba-
 
 ## 💙 Support Himmelblau
 
-Himmelblau is developed and maintained by [SUSE Linux](https://www.suse.com), but the **project’s operating expenses**—including hosting, domain registration, and tooling—are funded by the **community**.
+Himmelblau is developed and maintained with significant support from [SUSE Linux](https://www.suse.com). Community financial support helps sustain project infrastructure, maintenance, and ongoing development.
 
-These costs currently run about **$30–$50 per month**, and while we have a few months of runway, **your support helps keep the project sustainable**. Even small contributions go a long way toward ensuring Himmelblau continues to grow and support Entra ID on Linux.
+Your support helps keep cloud identity for Linux open and available to everyone.
 
-👉 [Become a backer or sponsor](https://himmelblau-idm.org/backers.html)
+👉 [Sponsor Himmelblau or support a development priority](https://himmelblau-idm.org/donations/)
 
 ## Installing
 

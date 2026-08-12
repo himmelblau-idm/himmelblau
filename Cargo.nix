@@ -334,7 +334,10 @@ rec {
             features = [ "v4" "v5" ];
           }
         ];
-
+        features = {
+          "default" = [ "donation-messages" ];
+        };
+        resolvedDefaultFeatures = [ "default" "donation-messages" ];
       };
       "adler2" = rec {
         crateName = "adler2";
