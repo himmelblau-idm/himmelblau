@@ -75,17 +75,18 @@ function extractUserCode(message) {
     return null;
 }
 
-// Generate SVG content from a QR code, with an optional user code overlay
-// rendered as a dark strip appended below the QR code (including its border /
-// quiet-zone), so the QR modules and their quiet-zone remain unchanged for scanning.
-function qrCodeToSvg(qr, border, lightColor, darkColor, userCode = null) {
+// Generate SVG content from a QR code.
+//
+// The SVG must never contain a <text> element. GNOME rasterizes CSS background
+// images out of process in the glycin sandbox, and any text makes librsvg pull
+// in pango/fontconfig; when fontconfig has no usable cache it calls symlink(),
+// which the sandbox's seccomp filter answers with SIGSYS. The loader dies and
+// the greeter shows an empty container instead of the QR code. The device code
+// is rendered as a separate St.Label, in process, where fonts are already up.
+function qrCodeToSvg(qr, border, lightColor, darkColor) {
     const qrSize = qr.size + border * 2;
-    // 6 extra SVG units give ~15 rendered px at typical scale - comfortably readable.
-    // 0 when no user code is needed (TOTP enrollment QR).
-    const labelRows = userCode ? 6 : 0;
-    const totalHeight = qrSize + labelRows;
     let svg = `<?xml version="1.0" encoding="UTF-8"?>\n`;
-    svg += `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${qrSize} ${totalHeight}" width="${qrSize * 4}" height="${totalHeight * 4}">`;
+    svg += `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${qrSize} ${qrSize}" width="${qrSize * 4}" height="${qrSize * 4}">`;
     svg += `<rect width="100%" height="100%" fill="${lightColor}"/>`;
     svg += `<path d="`;
     for (let y = 0; y < qr.size; y++) {
@@ -96,23 +97,6 @@ function qrCodeToSvg(qr, border, lightColor, darkColor, userCode = null) {
         }
     }
     svg += `" fill="${darkColor}"/>`;
-    if (userCode) {
-        const stripY = qrSize;
-        const stripH = labelRows;
-        // Dark background strip appended below the QR code
-        svg += `<rect x="0" y="${stripY}" width="${qrSize}" height="${stripH}" fill="${darkColor}"/>`;
-        // Centered white monospace text.
-        // 0.65: font-size as fraction of strip height - fills ~65% leaving breathing room.
-        // 0.72: text baseline position within the strip - visually centered with descender space.
-        const fontSize = stripH * 0.65;
-        svg += `<text x="${qrSize / 2}" y="${stripY + stripH * 0.72}" `;
-        svg += `font-family="monospace" font-size="${fontSize}" font-weight="bold" `;
-        svg += `fill="${lightColor}" text-anchor="middle">`;
-        // userCode only contains [A-Z0-9-] (guaranteed by extractUserCode regex),
-        // so no XML entity escaping is needed here.
-        svg += userCode;
-        svg += `</text>`;
-    }
     svg += `</svg>`;
     return svg;
 }
@@ -284,6 +268,15 @@ export default class QrGreeterExtension extends Extension {
                 this._qrContainer = qrContainer;
                 vbox.add_child(qrContainer);
 
+                const qrCodeLabel = new St.Label({
+                    text: "",
+                    style_class: 'qr-user-code',
+                    x_align: Clutter.ActorAlign.CENTER
+                });
+                qrCodeLabel.hide();
+                this._qrCodeLabel = qrCodeLabel;
+                vbox.add_child(qrCodeLabel);
+
                 const qrLabel = new St.Label({
                     text: "Scan with your phone",
                     style_class: 'qr-instruction-label'
@@ -311,11 +304,13 @@ export default class QrGreeterExtension extends Extension {
                     const fileUri = `file://${tempFilePath}`;
                     this._qrContainer.set_style(`background-image: url('${fileUri}'); background-size: contain; background-repeat: no-repeat; background-position: center;`);
                     this._qrContainer.show();
+                    if (this._qrCodeLabel) this._qrCodeLabel.hide();
                     this._qrLabel.set_text(this._qrBtLabel || "Scan with your authenticator app");
                     this._qrLabel.show();
                 } catch (e) {
                     console.error("Himmelblau QR Greeter: Failed to generate QR code:", e);
                     if (this._qrContainer) this._qrContainer.hide();
+                    if (this._qrCodeLabel) this._qrCodeLabel.hide();
                     if (this._qrLabel) this._qrLabel.hide();
                 }
                 this._qrBtActive = true;
@@ -386,6 +381,7 @@ export default class QrGreeterExtension extends Extension {
                 this._fidoIcon.show();
                 if (!this._qrBtActive) {
                     if (this._qrContainer) this._qrContainer.hide();
+                    if (this._qrCodeLabel) this._qrCodeLabel.hide();
                     if (this._qrLabel) this._qrLabel.hide();
                 }
                 return;
@@ -414,6 +410,7 @@ export default class QrGreeterExtension extends Extension {
                     const fileUri = `file://${tempFilePath}`;
                     this._qrContainer.set_style(`background-image: url('${fileUri}'); background-size: contain; background-repeat: no-repeat; background-position: center;`);
                     this._qrContainer.show();
+                    if (this._qrCodeLabel) this._qrCodeLabel.hide();
                     this._qrLabel.set_text(isTotpQr ? "Scan with your phone to set up TOTP" : "Scan with your phone to set up Hello TOTP");
                     this._qrLabel.show();
                     // Replace the verbose message with a simple instruction
@@ -423,6 +420,7 @@ export default class QrGreeterExtension extends Extension {
                 } catch (e) {
                     console.error("Himmelblau QR Greeter: Failed to generate TOTP QR code:", e);
                     if (this._qrContainer) this._qrContainer.hide();
+                    if (this._qrCodeLabel) this._qrCodeLabel.hide();
                     if (this._qrLabel) this._qrLabel.hide();
                 }
             } else {
@@ -442,13 +440,21 @@ export default class QrGreeterExtension extends Extension {
                         try {
                             const userCode = extractUserCode(message);
                             const qr = QrCode.encodeText(selection.url, Ecc.MEDIUM);
-                            const svgContent = qrCodeToSvg(qr, 2, '#ffffff', '#000000', userCode);
+                            const svgContent = qrCodeToSvg(qr, 2, '#ffffff', '#000000');
                             const tempFilePath = writeSvgToTempFile(svgContent);
                             this._totpTempFile = tempFilePath;
                             activeTotpTempFiles.add(tempFilePath);
                             const fileUri = `file://${tempFilePath}`;
                             this._qrContainer.set_style(`background-image: url('${fileUri}'); background-size: contain; background-repeat: no-repeat; background-position: center;`);
                             this._qrContainer.show();
+                            if (this._qrCodeLabel) {
+                                if (userCode) {
+                                    this._qrCodeLabel.set_text(userCode);
+                                    this._qrCodeLabel.show();
+                                } else {
+                                    this._qrCodeLabel.hide();
+                                }
+                            }
                             if (selection.usedComplete) {
                                 this._qrLabel.set_text("Scan to continue sign-in");
                             } else {
@@ -464,6 +470,7 @@ export default class QrGreeterExtension extends Extension {
 
                 if (!qrDisplayed) {
                     if (this._qrContainer) this._qrContainer.hide();
+                    if (this._qrCodeLabel) this._qrCodeLabel.hide();
                     if (this._qrLabel) this._qrLabel.hide();
                 }
             }
