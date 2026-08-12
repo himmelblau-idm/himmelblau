@@ -4,9 +4,9 @@
 
 .qr-code-container {
     width: 128px;
-    height: 156px;
+    height: 128px;
     max-width: 128px;
-    max-height: 156px;
+    max-height: 128px;
     margin-left: auto;
     margin-right: auto;
 
@@ -18,6 +18,21 @@
     border-radius: 6px;
     box-shadow: 0 0 8px rgba(0,0,0,0.3);
     overflow: hidden;
+}
+
+.qr-user-code {
+    width: 128px;
+    margin-left: auto;
+    margin-right: auto;
+    padding: 3px 0;
+
+    background-color: #000000;
+    color: #ffffff;
+    font-family: monospace;
+    font-size: 11pt;
+    font-weight: bold;
+    text-align: center;
+    border-radius: 4px;
 }
 
 .qr-instruction-label {
