@@ -62,8 +62,8 @@ user-login = "fitzgen"
 user-name = "Nick Fitzgerald"
 
 [[publisher.async-trait]]
-version = "0.1.91"
-when = "2026-07-18"
+version = "0.1.92"
+when = "2026-08-08"
 user-id = 3618
 user-login = "dtolnay"
 user-name = "David Tolnay"
@@ -468,8 +468,8 @@ user-login = "fitzgen"
 user-name = "Nick Fitzgerald"
 
 [[publisher.libhimmelblau]]
-version = "0.8.29"
-when = "2026-08-07"
+version = "0.8.30"
+when = "2026-08-12"
 user-id = 247655
 user-login = "dmulder"
 user-name = "David Mulder"
