@@ -7440,6 +7440,10 @@ rec {
             packageId = "himmelblau_unix_common";
           }
           {
+            name = "libc";
+            packageId = "libc";
+          }
+          {
             name = "libhimmelblau";
             packageId = "libhimmelblau";
             features = [ "broker" "changepassword" "on_behalf_of" "mfa_method_selection" "optional_mfa" "intune_portal_vers_selection" "redirect_uri" "pop_support" "ipvers" "set_timeout" ];
