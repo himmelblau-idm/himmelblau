@@ -51,9 +51,13 @@ all: .packaging dockerfiles ## Auto-detect host distro and build packages just f
 	    esac ;; \
 	  opensuse-tumbleweed) TARGET="tumbleweed" ;; \
 	  gentoo)         TARGET="gentoo" ;; \
-	  arch|archlinux) TARGET="arch" ;; \
+	  arch|archlinux|manjaro) TARGET="arch" ;; \
 	  amzn)          case "$$VER" in 2023) TARGET="amzn2023" ;; esac ;; \
 	esac; \
+	\
+	if [ -z "$$TARGET" ] && command -v pacman >/dev/null 2>&1; then \
+	  TARGET="arch"; \
+	fi; \
 	\
 	if [ -z "$$TARGET" ]; then \
 	  echo "Error: unsupported or unmapped distro: $$ID $$VER"; \
