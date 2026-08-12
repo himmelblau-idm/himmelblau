@@ -377,6 +377,8 @@ pkg_postinst() {{
 \tewarn "  1. Override /usr/lib/himmelblau/himmelblau.conf with your own configuration if needed"
 \tewarn "  2. Enable the himmelblaud service: systemctl enable --now himmelblaud"
 \tewarn "  3. Configure PAM and NSS (see documentation)"
+\teinfo "Support Himmelblau: Financial support helps keep cloud identity for Linux open."
+\teinfo "Learn more: https://himmelblau-idm.org/donations/"
 }}
 """
 

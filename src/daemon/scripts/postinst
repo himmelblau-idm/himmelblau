@@ -154,3 +154,6 @@ elif command -v systemctl >/dev/null 2>&1; then
     # Globally enable user timer for compliance checks (does not start existing sessions)
     systemctl --global enable himmelblau-compliance-check.timer 2>/dev/null || true
 fi
+
+echo "Support Himmelblau: Financial support helps keep cloud identity for Linux open."
+echo "Learn more: https://himmelblau-idm.org/donations/"
