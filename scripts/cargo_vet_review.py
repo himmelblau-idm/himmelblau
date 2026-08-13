@@ -4,13 +4,13 @@ Cargo Vet Review Assistant
 
 Automates the cargo vet workflow by:
 1. Parsing `cargo vet` output to identify unvetted dependencies
-2. Fetching diffs from diff.rs or using local mode
+2. Fetching published crate sources and generating local diffs
 3. Analyzing changes for security concerns (pattern matching + AI)
 4. Providing educated suggestions about safety
 5. Facilitating the certification process
 
 Usage:
-  python scripts/cargo_vet_review.py [--ai-provider gemini|claude] [--no-ai]
+  python scripts/cargo_vet_review.py [--ai-provider codex|gemini|claude] [--no-ai]
 """
 
 import argparse
@@ -20,14 +20,16 @@ import re
 import shutil
 import subprocess
 import sys
+import tarfile
 import tempfile
 import urllib.request
-import urllib.error
 from dataclasses import dataclass, field
 from enum import Enum
-from html.parser import HTMLParser
 from pathlib import Path
 from typing import Optional
+
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 
 class RiskLevel(Enum):
@@ -61,34 +63,16 @@ class DiffAnalysis:
     recommendation: str = ""
     risk_score: RiskLevel = RiskLevel.LOW
     trust_suggestion: Optional[str] = None
-    claude_analysis: Optional[str] = None  # AI-powered analysis
+    ai_analysis: Optional[str] = None  # AI-powered analysis
 
 
-class DiffRsParser(HTMLParser):
-    """Parse diff.rs HTML to extract the actual diff content."""
-    def __init__(self):
-        super().__init__()
-        self.in_code = False
-        self.in_pre = False
-        self.diff_content = []
-        self.current_file = ""
-
-    def handle_starttag(self, tag, attrs):
-        attrs_dict = dict(attrs)
-        if tag == "pre":
-            self.in_pre = True
-        elif tag == "code" and self.in_pre:
-            self.in_code = True
-
-    def handle_endtag(self, tag):
-        if tag == "code":
-            self.in_code = False
-        elif tag == "pre":
-            self.in_pre = False
-
-    def handle_data(self, data):
-        if self.in_code:
-            self.diff_content.append(data)
+@dataclass
+class FetchedDiff:
+    """A locally generated crate diff and the source paths used to create it."""
+    diff: str
+    old_source: Optional[Path]
+    new_source: Path
+    cache_hit: bool
 
 
 class SecurityAnalyzer:
@@ -391,13 +375,12 @@ class SecurityAnalyzer:
         if build_findings:
             recommendations.append("Build script changes detected - verify no malicious build-time behavior.")
 
-        # Add diff URL for easy review
+        # Point reviewers at the local diff/source flow used by this script.
         if analysis.old_version:
-            diff_url = f"https://diff.rs/{analysis.crate_name}/{analysis.old_version}/{analysis.new_version}"
-            recommendations.append(f"Review diff: {diff_url}")
+            recommendations.append("Review the locally generated crate package diff before certifying.")
         else:
             crate_url = f"https://crates.io/crates/{analysis.crate_name}/{analysis.new_version}"
-            recommendations.append(f"Review crate: {crate_url}")
+            recommendations.append(f"Review the published crate package and metadata: {crate_url}")
 
         return "\n".join(f"  - {r}" for r in recommendations)
 
@@ -490,180 +473,236 @@ class CargoVetParser:
 
 
 class DiffFetcher:
-    """Fetch diffs from diff.rs or locally via cargo vet."""
+    """Fetch published crate sources and generate local diffs."""
 
-    def fetch_from_diff_rs(self, crate: str, old_ver: str, new_ver: str, verbose: bool = False) -> Optional[str]:
-        """Fetch diff from diff.rs website."""
-        url = f"https://diff.rs/{crate}/{old_ver}/{new_ver}/"
+    def __init__(self, source_cache_dir: Optional[str] = None):
+        if source_cache_dir:
+            base_cache = Path(source_cache_dir).expanduser()
+        else:
+            xdg_cache = os.environ.get("XDG_CACHE_HOME")
+            base_cache = Path(xdg_cache).expanduser() if xdg_cache else Path.home() / ".cache"
+            base_cache = base_cache / "cargo-vet-review"
 
+        self.source_cache_dir = base_cache
+        self.extracted_dir = self.source_cache_dir / "src"
+        self.crate_archive_dir = self.source_cache_dir / "crates"
+
+    def fetch(self, crate: str, old_ver: Optional[str], new_ver: str, verbose: bool = False) -> Optional[FetchedDiff]:
+        """Fetch published crate sources and generate a unified local diff."""
         try:
-            if verbose:
-                print(f"    Debug: Fetching from {url}")
+            new_source, new_cache_hit = self._ensure_source(crate, new_ver, verbose)
+            old_source = None
+            cache_hit = new_cache_hit
 
-            req = urllib.request.Request(url, headers={
-                'User-Agent': 'cargo-vet-review/1.0 (security audit tool)',
-                'Accept': 'text/html',
-            })
-            with urllib.request.urlopen(req, timeout=60) as response:
-                html = response.read().decode('utf-8')
-
-            if verbose:
-                print(f"    Debug: Got {len(html)} bytes of HTML")
-
-            # Parse HTML to extract diff
-            parser = DiffRsParser()
-            parser.feed(html)
-
-            if verbose:
-                print(f"    Debug: Parsed {len(parser.diff_content)} content blocks")
-
-            if parser.diff_content:
-                return '\n'.join(parser.diff_content)
-
-            # If parsing failed, return None to fall back to local mode
-            if verbose:
-                print("    Debug: No content extracted from HTML")
-            return None
-
-        except (urllib.error.URLError, urllib.error.HTTPError) as e:
-            print(f"    Warning: Could not fetch from diff.rs: {e}")
-            return None
-        except Exception as e:
-            print(f"    Warning: Error fetching from diff.rs: {e}")
-            return None
-
-    def fetch_local(self, crate: str, old_ver: Optional[str], new_ver: str, verbose: bool = False) -> Optional[str]:
-        """Fetch diff using cargo vet's local mode."""
-        timeout = 60
-        cmd: list[str] = []
-        try:
             if old_ver:
-                cmd = ["cargo", "vet", "diff", crate, old_ver, new_ver, "--mode=local"]
-                timeout = 60  # Diffs are usually fast
+                old_source, old_cache_hit = self._ensure_source(crate, old_ver, verbose)
+                cache_hit = new_cache_hit and old_cache_hit
+                diff = self._git_diff_no_index(old_source, new_source, old_source, new_source, verbose)
             else:
-                cmd = ["cargo", "vet", "inspect", crate, new_ver, "--mode=local"]
-                timeout = 180  # Full crate downloads can be slow
+                with tempfile.TemporaryDirectory(prefix="cargo-vet-review-empty-") as empty_dir:
+                    empty_source = Path(empty_dir)
+                    diff = self._git_diff_no_index(empty_source, new_source, empty_source, new_source, verbose)
 
-            if verbose:
-                print(f"    Debug: Running command: {' '.join(cmd)}")
-
-            # For inspect (new crate), first check if the cache already exists
-            if not old_ver:
-                cache_dir = Path.home() / ".cache" / "cargo-vet" / "src" / f"{crate}-{new_ver}"
-                if cache_dir.exists():
-                    if verbose:
-                        print(f"    Debug: Cache already exists at {cache_dir}")
-                    return self._generate_inspect_diff(cache_dir, crate, new_ver, verbose)
-
-            # cargo vet inspect/diff --mode=local prompts "(press ENTER to inspect locally)"
-            # and then opens an interactive shell. We need to:
-            # 1. Send ENTER to proceed past the prompt
-            # 2. Immediately send 'exit' to close the nested shell
-            # 3. Read the source files directly from the cache
-            result = subprocess.run(
-                cmd,
-                input="\nexit\n",  # ENTER to proceed, then exit the shell
-                capture_output=True,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
-                timeout=timeout,
+            return FetchedDiff(
+                diff=diff,
+                old_source=old_source,
+                new_source=new_source,
+                cache_hit=cache_hit,
             )
-
+        except Exception as e:
+            print(f"    Warning: Could not generate local crate diff: {e}")
             if verbose:
-                print(f"    Debug: Command returned {result.returncode}")
-                if result.stderr:
-                    print(f"    Debug: stderr: {result.stderr[:200]}")
+                import traceback
+                traceback.print_exc()
+            return None
 
-            # For 'inspect' command, the source is downloaded to ~/.cache/cargo-vet/src/{crate}-{version}/
-            # We need to generate a diff-like output from the source files
-            if not old_ver:
-                cache_dir = Path.home() / ".cache" / "cargo-vet" / "src" / f"{crate}-{new_ver}"
-                if cache_dir.exists():
-                    if verbose:
-                        print(f"    Debug: Reading source from {cache_dir}")
-                    return self._generate_inspect_diff(cache_dir, crate, new_ver, verbose)
-                else:
-                    if verbose:
-                        print(f"    Debug: Cache dir not found: {cache_dir}")
-                    # Fall back to stdout if available
-                    if result.stdout:
-                        return result.stdout
+    def _ensure_source(self, crate: str, version: str, verbose: bool = False) -> tuple[Path, bool]:
+        """Return an extracted source directory for a published crate version."""
+        managed_source = self.extracted_dir / f"{crate}-{version}"
+        if managed_source.exists():
+            if verbose:
+                print(f"    Debug: Using cached extracted source {managed_source}")
+            return managed_source, True
 
-            if result.returncode == 0:
-                return result.stdout
+        cargo_source = self._find_cargo_registry_source(crate, version)
+        if cargo_source:
+            if verbose:
+                print(f"    Debug: Using Cargo registry source {cargo_source}")
+            return cargo_source, True
+
+        archive = self._find_cargo_registry_archive(crate, version)
+        cache_hit = True
+        if archive:
+            if verbose:
+                print(f"    Debug: Using Cargo registry archive {archive}")
+        else:
+            archive = self.crate_archive_dir / f"{crate}-{version}.crate"
+            if archive.exists():
+                if verbose:
+                    print(f"    Debug: Using cached downloaded archive {archive}")
             else:
-                # cargo vet diff sometimes returns non-zero but still produces output
-                if result.stdout:
-                    return result.stdout
-                print(f"    Warning: cargo vet command failed: {result.stderr}")
-                return None
+                archive = self._download_crate(crate, version, verbose)
+                cache_hit = False
 
-        except subprocess.TimeoutExpired:
-            print(f"    Warning: cargo vet command timed out ({timeout}s)")
+        self._extract_crate_archive(archive, managed_source, crate, version, verbose)
+        return managed_source, cache_hit
+
+    def _cargo_home(self) -> Path:
+        return Path(os.environ.get("CARGO_HOME", Path.home() / ".cargo")).expanduser()
+
+    def _find_cargo_registry_source(self, crate: str, version: str) -> Optional[Path]:
+        registry_src = self._cargo_home() / "registry" / "src"
+        if not registry_src.exists():
             return None
-        except FileNotFoundError:
-            print("    Error: cargo-vet not found. Install with: cargo install cargo-vet")
+
+        crate_dir = f"{crate}-{version}"
+        for registry_root in registry_src.iterdir():
+            candidate = registry_root / crate_dir
+            if candidate.is_dir():
+                return candidate
+        return None
+
+    def _find_cargo_registry_archive(self, crate: str, version: str) -> Optional[Path]:
+        registry_cache = self._cargo_home() / "registry" / "cache"
+        if not registry_cache.exists():
             return None
 
-    def _generate_inspect_diff(self, cache_dir: Path, crate: str, version: str, verbose: bool = False) -> str:
-        """Generate a unified diff-like output for a full crate inspection.
+        archive_name = f"{crate}-{version}.crate"
+        for registry_root in registry_cache.iterdir():
+            candidate = registry_root / archive_name
+            if candidate.is_file():
+                return candidate
+        return None
 
-        This creates output similar to what 'git diff' would show, treating all
-        files as new additions. This allows the security analyzer to process
-        the crate source using the same logic as version diffs.
-        """
-        diff_lines = []
+    def _download_crate(self, crate: str, version: str, verbose: bool = False) -> Path:
+        self.crate_archive_dir.mkdir(parents=True, exist_ok=True)
+        archive = self.crate_archive_dir / f"{crate}-{version}.crate"
+        url = f"https://crates.io/api/v1/crates/{crate}/{version}/download"
+        if verbose:
+            print(f"    Debug: Downloading {url}")
 
-        # Find all source files (prioritize important files)
-        important_files = ['Cargo.toml', 'build.rs', 'src/lib.rs', 'src/main.rs']
-        all_files = []
+        req = urllib.request.Request(url, headers={
+            "User-Agent": "cargo-vet-review/1.0 (security audit tool)",
+        })
+        with urllib.request.urlopen(req, timeout=120) as response:
+            data = response.read()
+        archive.write_bytes(data)
+        return archive
 
-        for pattern in ['**/*.rs', '**/*.toml', '**/build.rs']:
-            all_files.extend(cache_dir.glob(pattern))
+    def _extract_crate_archive(
+        self,
+        archive: Path,
+        destination: Path,
+        crate: str,
+        version: str,
+        verbose: bool = False,
+    ) -> None:
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(prefix="cargo-vet-review-extract-") as tmp:
+            tmp_path = Path(tmp)
+            root_name = f"{crate}-{version}"
 
-        # Remove duplicates and sort (important files first)
-        seen = set()
-        sorted_files = []
+            with tarfile.open(archive, "r:gz") as tar:
+                self._safe_extract(tar, tmp_path)
 
-        for important in important_files:
-            full_path = cache_dir / important
-            if full_path.exists() and full_path not in seen:
-                sorted_files.append(full_path)
-                seen.add(full_path)
+            extracted_root = tmp_path / root_name
+            if not extracted_root.is_dir():
+                entries = [p for p in tmp_path.iterdir() if p.is_dir()]
+                if len(entries) == 1:
+                    extracted_root = entries[0]
+                else:
+                    raise RuntimeError(f"archive {archive} did not contain expected root {root_name}")
 
-        for f in sorted(all_files):
-            if f not in seen and f.is_file():
-                sorted_files.append(f)
-                seen.add(f)
+            if destination.exists():
+                shutil.rmtree(destination)
+            shutil.move(str(extracted_root), str(destination))
 
         if verbose:
-            print(f"    Debug: Found {len(sorted_files)} source files")
+            print(f"    Debug: Extracted {archive} to {destination}")
 
-        for file_path in sorted_files:
+    def _safe_extract(self, tar: tarfile.TarFile, destination: Path) -> None:
+        destination = destination.resolve()
+        for member in tar.getmembers():
+            member_path = destination / member.name
             try:
-                rel_path = file_path.relative_to(cache_dir)
-                content = file_path.read_text(encoding='utf-8', errors='replace')
-                lines = content.split('\n')
+                member_path.resolve().relative_to(destination)
+            except ValueError as e:
+                raise RuntimeError(f"unsafe path in crate archive: {member.name}") from e
+        try:
+            tar.extractall(destination, filter="data")
+        except TypeError:
+            tar.extractall(destination)
 
-                # Generate unified diff header (treating as new file)
-                diff_lines.append(f"diff --git a/{rel_path} b/{rel_path}")
-                diff_lines.append(f"new file mode 100644")
-                diff_lines.append(f"--- /dev/null")
-                diff_lines.append(f"+++ b/{rel_path}")
-                diff_lines.append(f"@@ -0,0 +1,{len(lines)} @@")
+    def _git_diff_no_index(
+        self,
+        old_source: Path,
+        new_source: Path,
+        old_display_root: Path,
+        new_display_root: Path,
+        verbose: bool = False,
+    ) -> str:
+        cmd = [
+            "git",
+            "diff",
+            "--no-index",
+            "--no-ext-diff",
+            "--",
+            str(old_source),
+            str(new_source),
+        ]
+        if verbose:
+            print(f"    Debug: Running command: {' '.join(cmd)}")
 
-                # Add all lines as additions
-                for line in lines:
-                    diff_lines.append(f"+{line}")
-                diff_lines.append("")  # Empty line between files
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=120,
+        )
 
-            except Exception as e:
-                if verbose:
-                    print(f"    Debug: Could not read {file_path}: {e}")
+        if result.returncode not in (0, 1):
+            raise RuntimeError(result.stderr.strip() or f"git diff failed with code {result.returncode}")
+
+        return self._normalize_diff_paths(result.stdout, old_display_root, new_display_root)
+
+    def _normalize_diff_paths(self, diff: str, old_root: Path, new_root: Path) -> str:
+        old_root_str = str(old_root)
+        new_root_str = str(new_root)
+        normalized = []
+
+        for line in diff.splitlines():
+            if line.startswith("diff --git "):
+                match = re.match(r"diff --git a/(.+) b/(.+)$", line)
+                if match:
+                    old_rel = self._relative_diff_path(match.group(1), old_root_str, new_root_str)
+                    new_rel = self._relative_diff_path(match.group(2), new_root_str, old_root_str)
+                    normalized.append(f"diff --git a/{old_rel} b/{new_rel}")
+                    continue
+            elif line.startswith("--- a/"):
+                normalized.append(f"--- a/{self._relative_diff_path(line[6:], old_root_str, new_root_str)}")
+                continue
+            elif line.startswith("+++ b/"):
+                normalized.append(f"+++ b/{self._relative_diff_path(line[6:], new_root_str, old_root_str)}")
                 continue
 
-        return '\n'.join(diff_lines)
+            normalized.append(line)
+
+        return "\n".join(normalized)
+
+    def _relative_diff_path(self, path: str, *roots: str) -> str:
+        for root in roots:
+            candidates = {root.rstrip("/"), root.lstrip("/").rstrip("/")}
+            for candidate in candidates:
+                if not candidate:
+                    continue
+                if path == candidate:
+                    return Path(path).name
+                root_prefix = candidate + "/"
+                if path.startswith(root_prefix):
+                    return path[len(root_prefix):]
+        return path
 
 
 class AIAnalyzer:
@@ -854,6 +893,31 @@ Keep your response focused and actionable.
                 if result.returncode == 0 and result.stdout and len(result.stdout.strip()) > 10:
                     return result.stdout.strip()
 
+            elif self.provider == 'codex':
+                with tempfile.NamedTemporaryFile(mode="w+", suffix=".txt", delete=False) as output:
+                    output_file = output.name
+
+                try:
+                    result = subprocess.run(
+                        [
+                            self.cli_path,
+                            "exec",
+                            "--cd", str(PROJECT_ROOT),
+                            "--sandbox", "read-only",
+                            "--dangerously-bypass-approvals-and-sandbox",
+                            "--output-last-message", output_file,
+                            "-",
+                        ],
+                        input=prompt, capture_output=True, text=True, timeout=180,
+                    )
+                    if result.returncode == 0:
+                        with open(output_file, "r", encoding="utf-8") as f:
+                            output_text = f.read().strip()
+                        if len(output_text) > 10:
+                            return output_text
+                finally:
+                    if os.path.exists(output_file):
+                        os.unlink(output_file)
 
             # If all methods failed, print debug info
             print(f"    Warning: All {self.provider} invocation methods failed")
@@ -890,30 +954,6 @@ def print_color(text: str, color: str):
         'bold': '\033[1m',
     }
     print(f"{colors.get(color, '')}{text}{colors['reset']}")
-
-
-def generate_diff_url(crate_name: str, old_version: Optional[str], new_version: str) -> str:
-    """Generate a diff.rs URL for reviewing changes.
-
-    Note: File-specific URLs don't work reliably because browsers decode %2F
-    in the URL bar, which breaks diff.rs links. So we only generate base URLs.
-
-    For full crate reviews (no old_version), we use the same version twice
-    which shows the entire crate as "new" code on diff.rs.
-
-    Args:
-        crate_name: Name of the crate
-        old_version: Previous version (None for full crate review)
-        new_version: New version being reviewed
-
-    Returns:
-        URL to diff.rs for reviewing
-    """
-    if old_version:
-        return f"https://diff.rs/{crate_name}/{old_version}/{new_version}"
-    else:
-        # For full crate review, use same version twice to show all code as "new"
-        return f"https://diff.rs/{crate_name}/{new_version}/{new_version}"
 
 
 def print_finding(finding: SecurityFinding):
@@ -986,8 +1026,9 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  %(prog)s                    # Interactive review with Gemini AI analysis
+  %(prog)s                    # Interactive review with Codex AI analysis
   %(prog)s --ai-provider claude # Use Claude AI instead
+  %(prog)s --ai-provider gemini # Use Gemini AI instead
   %(prog)s --no-ai            # Review without AI (pattern matching only)
   %(prog)s --skip-large 5000  # Skip diffs larger than 5000 lines
   %(prog)s --dry-run          # Analyze without certifying
@@ -1019,20 +1060,26 @@ Examples:
     parser.add_argument(
         "--ai-provider",
         type=str,
-        default="gemini",
-        choices=["gemini", "claude"],
-        help="The AI provider to use for analysis (default: gemini)",
+        default="codex",
+        choices=["codex", "gemini", "claude"],
+        help="The AI provider to use for analysis (default: codex)",
     )
     parser.add_argument(
         "--ai-provider-path",
         type=str,
         default=None,
-        help="Path to the AI provider's CLI binary (e.g., /path/to/gemini)",
+        help="Path to the AI provider's CLI binary (e.g., /path/to/codex)",
     )
     parser.add_argument(
         "--no-ai",
         action="store_true",
         help="Disable AI analysis (use pattern matching only)",
+    )
+    parser.add_argument(
+        "--source-cache-dir",
+        type=str,
+        default=None,
+        help="Directory for downloaded/extracted crate sources (default: XDG cache)",
     )
     parser.add_argument(
         "--verbose", "-v",
@@ -1085,7 +1132,7 @@ Examples:
     ai_analyzer = None
     if not args.no_ai:
         ai_analyzer = AIAnalyzer(provider=args.ai_provider, path=args.ai_provider_path)
-    fetcher = DiffFetcher()
+    fetcher = DiffFetcher(source_cache_dir=args.source_cache_dir)
     analyses = []
 
     # Check AI availability
@@ -1114,10 +1161,6 @@ Examples:
         print(f"    Size: {item.audit_size}")
         print(f"    Type: {review_type}")
 
-        # Show diff URL prominently
-        diff_url = generate_diff_url(item.crate_name, item.old_version, item.new_version)
-        print_color(f"    Review: {diff_url}", "cyan")
-
         if item.trust_note:
             print_color(f"    Trust suggestion: cargo vet trust {item.crate_name} {item.trust_note}", "cyan")
         print()
@@ -1131,15 +1174,17 @@ Examples:
             print(f"    Consider: cargo vet trust {item.crate_name} {item.trust_note or item.publisher}")
             continue
 
-        # Fetch diff using cargo vet (gets ALL files, unlike diff.rs which only shows one)
-        print("    Fetching source changes...")
-        diff_content = fetcher.fetch_local(
+        print("    Fetching published crate sources and generating local diff...")
+        fetched_diff = fetcher.fetch(
             item.crate_name, item.old_version, item.new_version, verbose=args.verbose
         )
 
-        if not diff_content:
+        if not fetched_diff or not fetched_diff.diff:
             print_color("    Could not fetch source content", "red")
             continue
+
+        diff_content = fetched_diff.diff
+        print_color(f"    Source: {fetched_diff.new_source}", "cyan")
 
         # Pattern-based analysis
         print("    Running pattern-based security analysis...")
@@ -1171,7 +1216,7 @@ Examples:
                 is_full_crate=is_full_crate,
                 verbose=args.verbose,
             )
-            analysis.claude_analysis = ai_result
+            analysis.ai_analysis = ai_result
 
         analyses.append(analysis)
 
@@ -1203,14 +1248,14 @@ Examples:
             print_color("    No pattern-based concerns found in added code.", "green")
 
         # AI analysis output
-        if analysis.claude_analysis:
+        if analysis.ai_analysis:
             print()
             print_color("-" * 50, "magenta")
             print_color("AI ANALYSIS", "bold")
             print_color("-" * 50, "magenta")
             print()
             # Indent the response
-            for line in analysis.claude_analysis.split('\n'):
+            for line in analysis.ai_analysis.split('\n'):
                 print(f"    {line}")
             print()
 
@@ -1228,12 +1273,12 @@ Examples:
             print("      [c] Certify this crate")
             print("      [v] View full diff in pager (less)")
             print("      [d] View diff inline (first 200 lines)")
-            print("      [u] Show diff.rs URL")
+            print("      [p] Show local source paths")
             if item.trust_note:
                 print(f"      [t] Trust publisher '{item.trust_note}'")
             if use_ai:
                 print("      [a] Re-run AI analysis")
-            if analysis.claude_analysis:
+            if analysis.ai_analysis:
                 print("      [r] Re-display AI analysis")
             print("      [s] Skip to next crate")
             print("      [q] Quit")
@@ -1275,13 +1320,12 @@ Examples:
                     if len(diff_content.split('\n')) > 200:
                         print_color(f"\n    ... [{len(diff_content.split(chr(10))) - 200} more lines, use 'v' to view all]", "yellow")
                     print()
-                elif choice == 'u':
-                    # Show URL for manual access
-                    if item.old_version:
-                        url = f"https://diff.rs/{item.crate_name}/{item.old_version}/{item.new_version}/"
-                    else:
-                        url = f"https://crates.io/crates/{item.crate_name}/{item.new_version}"
-                    print(f"\n    URL: {url}\n")
+                elif choice == 'p':
+                    print()
+                    if fetched_diff.old_source:
+                        print(f"    Old source: {fetched_diff.old_source}")
+                    print(f"    New source: {fetched_diff.new_source}")
+                    print()
                 elif choice == 't' and item.trust_note:
                     subprocess.run(["cargo", "vet", "trust", item.crate_name, item.trust_note])
                     break
@@ -1297,7 +1341,7 @@ Examples:
                         verbose=True,  # Always verbose on re-run for debugging
                     )
                     if ai_result:
-                        analysis.claude_analysis = ai_result
+                        analysis.ai_analysis = ai_result
                         print()
                         print_color("-" * 50, "magenta")
                         print_color("AI ANALYSIS (refreshed)", "bold")
@@ -1308,13 +1352,13 @@ Examples:
                         print()
                     else:
                         print_color("    AI analysis failed", "red")
-                elif choice == 'r' and analysis.claude_analysis:
+                elif choice == 'r' and analysis.ai_analysis:
                     print()
                     print_color("-" * 50, "magenta")
                     print_color("AI ANALYSIS", "bold")
                     print_color("-" * 50, "magenta")
                     print()
-                    for line in analysis.claude_analysis.split('\n'):
+                    for line in analysis.ai_analysis.split('\n'):
                         print(f"    {line}")
                     print()
                 elif choice == 's':
@@ -1346,7 +1390,8 @@ Examples:
                     for f in a.findings
                 ],
                 "recommendation": a.recommendation,
-                "claude_analysis": a.claude_analysis,
+                "ai_analysis": a.ai_analysis,
+                "claude_analysis": a.ai_analysis,
             })
         print(json.dumps(output, indent=2))
 
@@ -1360,7 +1405,7 @@ Examples:
     print(f"  Skipped: {len(items) - len(analyses)} crates (too large or fetch failed)")
 
     if use_ai:
-        ai_analyzed = sum(1 for a in analyses if a.claude_analysis)
+        ai_analyzed = sum(1 for a in analyses if a.ai_analysis)
         print(f"  AI-analyzed: {ai_analyzed} crates")
 
     # Count full crate reviews vs diffs
