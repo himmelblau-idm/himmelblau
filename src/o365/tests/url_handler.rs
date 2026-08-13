@@ -77,7 +77,8 @@ impl Harness {
         let log = self.dir.join("calls.log");
         let _ = fs::remove_file(&log);
 
-        let out = Command::new(self.dir.join("o365-url-handler"))
+        let out = Command::new("bash")
+            .arg(self.dir.join("o365-url-handler"))
             .args(args)
             // The stubs shadow anything of the same name on the real PATH.
             .env(

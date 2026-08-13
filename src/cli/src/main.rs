@@ -2433,6 +2433,8 @@ async fn main() -> ExitCode {
 #[cfg(test)]
 mod tests {
     use super::insert_module_line;
+    use super::HimmelblauUnixParser;
+    use clap::CommandFactory;
     use std::fs;
     use std::path::PathBuf;
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -2585,5 +2587,34 @@ mod tests {
             "auth required pam_himmelblau.so ignore_unknown_user set_authtok\nauth required pam_unix.so\n"
         );
         remove_temp_file(&path)
+    }
+
+    const DONATIONS_URL: &str = "https://himmelblau-idm.org/donations/";
+
+    #[test]
+    fn donation_message_matches_feature_setting() {
+        let help = HimmelblauUnixParser::command()
+            .render_long_help()
+            .to_string();
+
+        #[cfg(feature = "donation-messages")]
+        assert_eq!(help.matches(DONATIONS_URL).count(), 1);
+
+        #[cfg(not(feature = "donation-messages"))]
+        assert!(!help.contains(DONATIONS_URL));
+    }
+
+    #[test]
+    fn donation_message_is_not_in_subcommand_help() {
+        let command = HimmelblauUnixParser::command();
+        let mut status = command
+            .find_subcommand("status")
+            .expect("status subcommand must exist")
+            .clone();
+
+        assert!(!status
+            .render_long_help()
+            .to_string()
+            .contains(DONATIONS_URL));
     }
 }

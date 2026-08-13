@@ -565,6 +565,10 @@ pub enum HimmelblauUnixOpt {
 
 #[derive(Debug, clap::Parser)]
 #[clap(about = "Himmelblau Management Utility")]
+#[cfg_attr(
+    feature = "donation-messages",
+    clap(after_help = "Support Himmelblau: Financial support helps keep cloud identity for Linux open.\nLearn more: https://himmelblau-idm.org/donations/")
+)]
 pub struct HimmelblauUnixParser {
     #[clap(subcommand)]
     pub commands: HimmelblauUnixOpt,

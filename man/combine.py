@@ -70,6 +70,10 @@ for file in man_files:
 """
 
 combined_lines.extend([
+    ".SH SUPPORT",
+    "Financial support helps sustain Himmelblau project infrastructure, maintenance, and ongoing development while keeping cloud identity for Linux open and available to everyone.",
+    ".PP",
+    "Learn more: https://himmelblau-idm.org/donations/",
     ".SH SEE ALSO",
     ".BR himmelblau.conf (5),",
     ".BR himmelblaud (8),",
