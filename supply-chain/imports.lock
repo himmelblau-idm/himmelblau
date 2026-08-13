@@ -44,8 +44,8 @@ user-login = "epage"
 user-name = "Ed Page"
 
 [[publisher.anyhow]]
-version = "1.0.103"
-when = "2026-06-25"
+version = "1.0.104"
+when = "2026-07-18"
 user-id = 3618
 user-login = "dtolnay"
 user-name = "David Tolnay"
@@ -58,8 +58,8 @@ user-login = "fitzgen"
 user-name = "Nick Fitzgerald"
 
 [[publisher.async-trait]]
-version = "0.1.89"
-when = "2025-08-14"
+version = "0.1.92"
+when = "2026-08-08"
 user-id = 3618
 user-login = "dtolnay"
 user-name = "David Tolnay"
@@ -86,8 +86,8 @@ user-login = "fitzgen"
 user-name = "Nick Fitzgerald"
 
 [[publisher.bytes]]
-version = "1.12.0"
-when = "2026-06-18"
+version = "1.12.1"
+when = "2026-07-08"
 user-id = 6741
 user-login = "Darksonn"
 user-name = "Alice Ryhl"
@@ -100,29 +100,29 @@ user-login = "emilio"
 user-name = "Emilio Cobos Álvarez"
 
 [[publisher.clap]]
-version = "4.6.1"
-when = "2026-04-15"
+version = "4.6.6"
+when = "2026-08-06"
 user-id = 6743
 user-login = "epage"
 user-name = "Ed Page"
 
 [[publisher.clap_builder]]
-version = "4.6.0"
-when = "2026-03-12"
+version = "4.6.6"
+when = "2026-08-06"
 user-id = 6743
 user-login = "epage"
 user-name = "Ed Page"
 
 [[publisher.clap_complete]]
-version = "4.6.6"
-when = "2026-06-30"
+version = "4.6.9"
+when = "2026-08-06"
 user-id = 6743
 user-login = "epage"
 user-name = "Ed Page"
 
 [[publisher.clap_derive]]
-version = "4.6.1"
-when = "2026-04-15"
+version = "4.6.4"
+when = "2026-07-21"
 user-id = 6743
 user-login = "epage"
 user-name = "Ed Page"
@@ -416,8 +416,8 @@ user-login = "yaleman"
 user-name = "James Hodgkinson"
 
 [[publisher.libc]]
-version = "0.2.186"
-when = "2026-04-23"
+version = "0.2.189"
+when = "2026-07-21"
 user-id = 55123
 user-login = "rust-lang-owner"
 
@@ -429,8 +429,8 @@ user-login = "fitzgen"
 user-name = "Nick Fitzgerald"
 
 [[publisher.libhimmelblau]]
-version = "0.8.25"
-when = "2026-07-01"
+version = "0.8.31"
+when = "2026-08-13"
 user-id = 247655
 user-login = "dmulder"
 user-name = "David Mulder"
@@ -589,15 +589,15 @@ user-login = "dtolnay"
 user-name = "David Tolnay"
 
 [[publisher.regex]]
-version = "1.12.4"
-when = "2026-06-09"
+version = "1.13.1"
+when = "2026-07-15"
 user-id = 189
 user-login = "BurntSushi"
 user-name = "Andrew Gallant"
 
 [[publisher.regex-automata]]
-version = "0.4.13"
-when = "2025-10-13"
+version = "0.4.18"
+when = "2026-08-04"
 user-id = 189
 user-login = "BurntSushi"
 user-name = "Andrew Gallant"
@@ -631,8 +631,8 @@ user-login = "sunfishcode"
 user-name = "Dan Gohman"
 
 [[publisher.rustls]]
-version = "0.23.41"
-when = "2026-06-22"
+version = "0.23.42"
+when = "2026-07-13"
 user-id = 4556
 user-login = "djc"
 user-name = "Dirkjan Ochtman"
@@ -658,6 +658,13 @@ user-id = 2915
 user-login = "Amanieu"
 user-name = "Amanieu d'Antras"
 
+[[publisher.serde]]
+version = "1.0.229"
+when = "2026-07-18"
+user-id = 3618
+user-login = "dtolnay"
+user-name = "David Tolnay"
+
 [[publisher.serde_bytes]]
 version = "0.11.17"
 when = "2025-03-09"
@@ -673,22 +680,22 @@ user-login = "Firstyear"
 user-name = "Firstyear"
 
 [[publisher.serde_core]]
-version = "1.0.228"
-when = "2025-09-27"
+version = "1.0.229"
+when = "2026-07-18"
 user-id = 3618
 user-login = "dtolnay"
 user-name = "David Tolnay"
 
 [[publisher.serde_derive]]
-version = "1.0.228"
-when = "2025-09-27"
+version = "1.0.229"
+when = "2026-07-18"
 user-id = 3618
 user-login = "dtolnay"
 user-name = "David Tolnay"
 
 [[publisher.serde_json]]
-version = "1.0.150"
-when = "2026-05-21"
+version = "1.0.151"
+when = "2026-07-20"
 user-id = 3618
 user-login = "dtolnay"
 user-name = "David Tolnay"
@@ -756,6 +763,13 @@ user-id = 3618
 user-login = "dtolnay"
 user-name = "David Tolnay"
 
+[[publisher.syn]]
+version = "3.0.3"
+when = "2026-07-22"
+user-id = 3618
+user-login = "dtolnay"
+user-name = "David Tolnay"
+
 [[publisher.target-lexicon]]
 version = "0.12.16"
 when = "2024-07-30"
@@ -806,8 +820,8 @@ user-login = "Darksonn"
 user-name = "Alice Ryhl"
 
 [[publisher.tokio-util]]
-version = "0.7.18"
-when = "2026-01-04"
+version = "0.7.19"
+when = "2026-07-21"
 user-id = 6741
 user-login = "Darksonn"
 user-name = "Alice Ryhl"
@@ -1940,12 +1954,6 @@ criteria = "safe-to-deploy"
 version = "0.2.4"
 notes = "Implements a concurrency primitive with atomics, and is not obviously incorrect"
 
-[[audits.bytecode-alliance.audits.utf-8]]
-who = "Chris Fallin <chris@cfallin.org>"
-criteria = "safe-to-deploy"
-version = "0.7.6"
-notes = "Small library that uses `unsafe` only around `str::from_utf8_unchecked` after explicitly verifying UTF-8."
-
 [[audits.bytecode-alliance.audits.vcpkg]]
 who = "Pat Hickey <phickey@fastly.com>"
 criteria = "safe-to-deploy"
@@ -2763,6 +2771,16 @@ See https://crrev.com/c/6323349 for more audit notes.
 """
 aggregated-from = "https://chromium.googlesource.com/chromium/src/+/main/third_party/rust/chromium_crates_io/supply-chain/audits.toml?format=TEXT"
 
+[[audits.himmelblau.audits.base64]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+delta = "0.22.1 -> 0.23.0"
+
+[[audits.himmelblau.audits.base64]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+delta = "0.23.0 -> 0.23.1"
+
 [[audits.himmelblau.audits.bitfield]]
 who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
@@ -2792,6 +2810,21 @@ delta = "1.2.60 -> 1.2.61"
 who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
 delta = "1.2.61 -> 1.2.65"
+
+[[audits.himmelblau.audits.cc]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+delta = "1.2.65 -> 1.4.0"
+
+[[audits.himmelblau.audits.cc]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+delta = "1.4.0 -> 1.4.1"
+
+[[audits.himmelblau.audits.cc]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+delta = "1.4.1 -> 1.4.2"
 
 [[audits.himmelblau.audits.cesu8]]
 who = "David Mulder <dmulder@samba.org>"
@@ -2823,12 +2856,37 @@ who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
 delta = "0.9.10 -> 0.9.11"
 
+[[audits.himmelblau.audits.dbus]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+delta = "0.9.11 -> 0.9.12"
+
 [[audits.himmelblau.audits.der]]
 who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
 delta = "0.8.0-rc.10 -> 0.8.0"
 
+[[audits.himmelblau.audits.ego-tree]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+delta = "0.10.0 -> 0.11.0"
+
+[[audits.himmelblau.audits.find-msvc-tools]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+delta = "0.1.9 -> 0.1.10"
+
 [[audits.himmelblau.audits.futures]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+delta = "0.3.31 -> 0.3.32"
+
+[[audits.himmelblau.audits.futures]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+delta = "0.3.32 -> 0.3.33"
+
+[[audits.himmelblau.audits.futures-channel]]
 who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
 delta = "0.3.31 -> 0.3.32"
@@ -2836,9 +2894,19 @@ delta = "0.3.31 -> 0.3.32"
 [[audits.himmelblau.audits.futures-channel]]
 who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
+delta = "0.3.32 -> 0.3.33"
+
+[[audits.himmelblau.audits.futures-core]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
 delta = "0.3.31 -> 0.3.32"
 
 [[audits.himmelblau.audits.futures-core]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+delta = "0.3.32 -> 0.3.33"
+
+[[audits.himmelblau.audits.futures-executor]]
 who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
 delta = "0.3.31 -> 0.3.32"
@@ -2846,9 +2914,19 @@ delta = "0.3.31 -> 0.3.32"
 [[audits.himmelblau.audits.futures-executor]]
 who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
+delta = "0.3.32 -> 0.3.33"
+
+[[audits.himmelblau.audits.futures-io]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
 delta = "0.3.31 -> 0.3.32"
 
 [[audits.himmelblau.audits.futures-io]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+delta = "0.3.32 -> 0.3.33"
+
+[[audits.himmelblau.audits.futures-macro]]
 who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
 delta = "0.3.31 -> 0.3.32"
@@ -2856,9 +2934,19 @@ delta = "0.3.31 -> 0.3.32"
 [[audits.himmelblau.audits.futures-macro]]
 who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
+delta = "0.3.32 -> 0.3.33"
+
+[[audits.himmelblau.audits.futures-sink]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
 delta = "0.3.31 -> 0.3.32"
 
 [[audits.himmelblau.audits.futures-sink]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+delta = "0.3.32 -> 0.3.33"
+
+[[audits.himmelblau.audits.futures-task]]
 who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
 delta = "0.3.31 -> 0.3.32"
@@ -2866,12 +2954,17 @@ delta = "0.3.31 -> 0.3.32"
 [[audits.himmelblau.audits.futures-task]]
 who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
-delta = "0.3.31 -> 0.3.32"
+delta = "0.3.32 -> 0.3.33"
 
 [[audits.himmelblau.audits.futures-util]]
 who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
 delta = "0.3.31 -> 0.3.32"
+
+[[audits.himmelblau.audits.futures-util]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+delta = "0.3.32 -> 0.3.33"
 
 [[audits.himmelblau.audits.getrandom]]
 who = "David Mulder <dmulder@samba.org>"
@@ -2892,6 +2985,11 @@ version = "0.4.2"
 who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
 version = "0.36.1"
+
+[[audits.himmelblau.audits.html5ever]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+delta = "0.36.1 -> 0.39.0"
 
 [[audits.himmelblau.audits.id-arena]]
 who = "David Mulder <dmulder@samba.org>"
@@ -2918,10 +3016,25 @@ who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
 delta = "0.16.4 -> 0.18.0"
 
+[[audits.himmelblau.audits.lru]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+delta = "0.18.0 -> 0.18.1"
+
+[[audits.himmelblau.audits.lru]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+delta = "0.18.1 -> 0.18.2"
+
 [[audits.himmelblau.audits.markup5ever]]
 who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
 version = "0.36.1"
+
+[[audits.himmelblau.audits.markup5ever]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+delta = "0.36.1 -> 0.39.0"
 
 [[audits.himmelblau.audits.num-conv]]
 who = "David Mulder <dmulder@samba.org>"
@@ -3028,6 +3141,11 @@ who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
 version = "1.13.1"
 
+[[audits.himmelblau.audits.rand]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+delta = "0.9.4 -> 0.9.5"
+
 [[audits.himmelblau.audits.regex-syntax]]
 who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
@@ -3053,6 +3171,11 @@ who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
 delta = "2.1.1 -> 2.1.2"
 
+[[audits.himmelblau.audits.rustls]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+delta = "0.23.42 -> 0.23.43"
+
 [[audits.himmelblau.audits.rustls-native-certs]]
 who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
@@ -3072,6 +3195,11 @@ version = "0.1.1"
 who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
 version = "0.25.0"
+
+[[audits.himmelblau.audits.scraper]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+delta = "0.25.0 -> 0.27.0"
 
 [[audits.himmelblau.audits.sd-notify]]
 who = "David Mulder <dmulder@samba.org>"
@@ -3093,6 +3221,11 @@ who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
 delta = "0.26.0 -> 0.33.0"
 
+[[audits.himmelblau.audits.selectors]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+delta = "0.33.0 -> 0.38.0"
+
 [[audits.himmelblau.audits.semver]]
 who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
@@ -3107,6 +3240,11 @@ delta = "0.4.0 -> 0.4.3"
 who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
 delta = "1.3.0 -> 2.0.1"
+
+[[audits.himmelblau.audits.spin]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+delta = "0.9.8 -> 0.9.9"
 
 [[audits.himmelblau.audits.string_cache]]
 who = "David Mulder <dmulder@samba.org>"
@@ -3123,6 +3261,11 @@ who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
 version = "3.3.0"
 
+[[audits.himmelblau.audits.tendril]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+delta = "0.4.3 -> 0.5.1"
+
 [[audits.himmelblau.audits.time]]
 who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
@@ -3132,6 +3275,11 @@ delta = "0.3.44 -> 0.3.47"
 who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
 delta = "0.3.47 -> 0.3.51"
+
+[[audits.himmelblau.audits.time]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+delta = "0.3.51 -> 0.3.55"
 
 [[audits.himmelblau.audits.time-core]]
 who = "David Mulder <dmulder@samba.org>"
@@ -3147,6 +3295,11 @@ delta = "0.2.22 -> 0.2.27"
 who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
 delta = "0.2.27 -> 0.2.30"
+
+[[audits.himmelblau.audits.time-macros]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+delta = "0.2.30 -> 0.2.32"
 
 [[audits.himmelblau.audits.toml_parser]]
 who = "David Mulder <dmulder@samba.org>"
@@ -3218,6 +3371,11 @@ who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
 delta = "1.23.1 -> 1.23.4"
 
+[[audits.himmelblau.audits.uuid]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+delta = "1.23.4 -> 1.24.0"
+
 [[audits.himmelblau.audits.uzers]]
 who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
@@ -3248,6 +3406,11 @@ who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
 delta = "5.15.0 -> 5.16.0"
 
+[[audits.himmelblau.audits.zbus]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+delta = "5.16.0 -> 5.18.0"
+
 [[audits.himmelblau.audits.zbus_macros]]
 who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
@@ -3263,10 +3426,20 @@ who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
 delta = "5.15.0 -> 5.16.0"
 
+[[audits.himmelblau.audits.zbus_macros]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+delta = "5.16.0 -> 5.18.0"
+
 [[audits.himmelblau.audits.zbus_names]]
 who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
 delta = "4.3.1 -> 4.3.2"
+
+[[audits.himmelblau.audits.zbus_names]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+delta = "4.3.2 -> 4.3.4"
 
 [[audits.himmelblau.audits.zeroize]]
 who = "David Mulder <dmulder@samba.org>"
@@ -3293,6 +3466,11 @@ who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
 delta = "5.11.0 -> 5.12.0"
 
+[[audits.himmelblau.audits.zvariant]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+delta = "5.12.0 -> 5.13.1"
+
 [[audits.himmelblau.audits.zvariant_derive]]
 who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
@@ -3308,6 +3486,11 @@ who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
 delta = "5.11.0 -> 5.12.0"
 
+[[audits.himmelblau.audits.zvariant_derive]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+delta = "5.12.0 -> 5.13.1"
+
 [[audits.himmelblau.audits.zvariant_utils]]
 who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
@@ -3317,6 +3500,11 @@ delta = "3.3.0 -> 3.3.1"
 who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
 delta = "3.3.1 -> 3.4.0"
+
+[[audits.himmelblau.audits.zvariant_utils]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+delta = "3.4.0 -> 3.5.0"
 
 [[audits.isrg.audits.base64]]
 who = "Tim Geoghegan <timg@letsencrypt.org>"
@@ -3802,6 +3990,13 @@ criteria = "safe-to-deploy"
 delta = "0.35.0 -> 0.36.0"
 aggregated-from = "https://hg.mozilla.org/mozilla-central/raw-file/tip/supply-chain/audits.toml"
 
+[[audits.mozilla.audits.cssparser]]
+who = "Nico Burns <nico@nicoburns.com>"
+criteria = "safe-to-deploy"
+delta = "0.36.0 -> 0.37.0"
+notes = "First-party code"
+aggregated-from = "https://hg.mozilla.org/mozilla-central/raw-file/tip/supply-chain/audits.toml"
+
 [[audits.mozilla.audits.cssparser-macros]]
 who = "Emilio Cobos Álvarez <emilio@crisal.io>"
 criteria = "safe-to-deploy"
@@ -3816,6 +4011,13 @@ aggregated-from = "https://hg.mozilla.org/mozilla-central/raw-file/tip/supply-ch
 who = "Mike Hommey <mh+mozilla@glandium.org>"
 criteria = "safe-to-deploy"
 delta = "0.6.0 -> 0.6.1"
+aggregated-from = "https://hg.mozilla.org/mozilla-central/raw-file/tip/supply-chain/audits.toml"
+
+[[audits.mozilla.audits.cssparser-macros]]
+who = "Nico Burns <nico@nicoburns.com>"
+criteria = "safe-to-deploy"
+delta = "0.6.1 -> 0.7.0"
+notes = "First party code"
 aggregated-from = "https://hg.mozilla.org/mozilla-central/raw-file/tip/supply-chain/audits.toml"
 
 [[audits.mozilla.audits.deranged]]
