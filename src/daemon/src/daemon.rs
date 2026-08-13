@@ -807,7 +807,7 @@ async fn handle_client(
                                                     }
 
                                                     // Apply Intune policies
-                                                    if cfg.get_apply_policy() {
+                                                    if !is_oidc_auth && cfg.get_apply_policy() {
                                                         spawn_intune_policy_application_if_due(
                                                             cachelayer.clone(),
                                                             cfg.clone(),
@@ -1070,8 +1070,8 @@ async fn handle_client(
                 async {
                     trace!("compliance check requested");
 
-                    if !cfg.get_apply_policy() {
-                        warn!("compliance check: apply_policy is disabled in config");
+                    if !cfg.get_apply_policy() || cfg.get_oidc_issuer_url().is_some() {
+                        warn!("compliance check: unavailable for current configuration");
                         return ClientResponse::Error;
                     }
 
