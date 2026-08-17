@@ -12,6 +12,7 @@ _configure_nss() {
     sed -i '/^passwd:/ {/himmelblau/! s/$/ himmelblau/}' "$conf"
     sed -i '/^group:/ {/himmelblau/! s/$/ himmelblau/}' "$conf"
     sed -i '/^shadow:/ {/himmelblau/! s/$/ himmelblau/}' "$conf"
+    sed -i '/^initgroups:/ {/himmelblau/! s/$/ himmelblau/}' "$conf"
 }
 
 _configure_pam() {

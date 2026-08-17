@@ -23,6 +23,12 @@ use std::fs::File;
 use std::io::Read;
 use uuid::Uuid;
 
+// NSS status codes from <nss.h>.
+const NSS_STATUS_SUCCESS: libc::c_int = 1;
+const NSS_STATUS_NOTFOUND: libc::c_int = 0;
+const NSS_STATUS_UNAVAIL: libc::c_int = -1;
+const NSS_STATUS_TRYAGAIN: libc::c_int = -2;
+
 struct HimmelblauPasswd;
 libnss_passwd_hooks!(himmelblau, HimmelblauPasswd);
 
@@ -502,6 +508,113 @@ fn mapped_shadow_from_nssuser(
     shadow
 }
 
+fn initgroups_member_matches(
+    member: &str,
+    c_user: &str,
+    account_id: &str,
+    cfg: &HimmelblauConfig,
+) -> bool {
+    member.eq_ignore_ascii_case(c_user)
+        || member.eq_ignore_ascii_case(account_id)
+        || cfg.map_upn_to_name(member).eq_ignore_ascii_case(c_user)
+}
+
+fn fallback_initgroups_gids(
+    daemon_client: &mut DaemonClientBlocking,
+    cfg: &HimmelblauConfig,
+    c_user: &str,
+    account_id: &str,
+) -> Option<Vec<libc::gid_t>> {
+    match daemon_client.call_and_wait(&ClientRequest::NssGroups, cfg.get_unix_sock_timeout()) {
+        Ok(ClientResponse::NssGroups(groups)) => {
+            let gids = groups
+                .into_iter()
+                .filter(|group| {
+                    group
+                        .members
+                        .iter()
+                        .any(|member| initgroups_member_matches(member, c_user, account_id, cfg))
+                })
+                .map(|group| group.gid)
+                .collect();
+            Some(gids)
+        }
+        Ok(_) | Err(_) => None,
+    }
+}
+
+unsafe fn append_initgroups_gids(
+    gids: impl IntoIterator<Item = libc::gid_t>,
+    primary_gid: libc::gid_t,
+    start: &mut libc::c_long,
+    size: &mut libc::c_long,
+    groupsp: &mut *mut libc::gid_t,
+    limit: libc::c_long,
+    errnop: &mut libc::c_int,
+) -> Result<usize, libc::c_int> {
+    let mut cur_start = *start;
+    let mut cur_size = *size;
+    let mut groups = *groupsp;
+    if cur_start < 0 || cur_size < 0 || cur_start > cur_size || (cur_size > 0 && groups.is_null()) {
+        *errnop = libc::EINVAL;
+        return Err(NSS_STATUS_UNAVAIL);
+    }
+
+    let mut added = 0;
+    for gid in gids {
+        // Skip primary GID, glibc already includes it.
+        if gid == primary_gid {
+            continue;
+        }
+        // Skip duplicates already in the array.
+        let already_present = (0..cur_start).any(|i| *groups.offset(i as isize) == gid);
+        if already_present {
+            continue;
+        }
+        // Hard cap reached, stop adding, don't signal an error, like
+        // glibc's add_group() does.
+        if limit > 0 && cur_start >= limit {
+            break;
+        }
+        // Grow the array if needed.
+        if cur_start >= cur_size {
+            let new_size = if limit > 0 {
+                std::cmp::min(limit, std::cmp::max(16, cur_size.saturating_mul(2)))
+            } else {
+                std::cmp::max(16, cur_size.saturating_mul(2))
+            };
+            let alloc_bytes = match usize::try_from(new_size)
+                .ok()
+                .and_then(|n| n.checked_mul(std::mem::size_of::<libc::gid_t>()))
+            {
+                Some(b) if b > 0 => b,
+                _ => {
+                    *errnop = libc::ENOMEM;
+                    *start = cur_start;
+                    return Err(NSS_STATUS_TRYAGAIN);
+                }
+            };
+            let new_groups =
+                libc::realloc(groups as *mut libc::c_void, alloc_bytes) as *mut libc::gid_t;
+            if new_groups.is_null() {
+                *errnop = libc::ENOMEM;
+                *start = cur_start;
+                return Err(NSS_STATUS_TRYAGAIN);
+            }
+            groups = new_groups;
+            *groupsp = groups;
+            cur_size = new_size;
+            *size = cur_size;
+        }
+        *groups.offset(cur_start as isize) = gid;
+        cur_start += 1;
+        added += 1;
+    }
+
+    *start = cur_start;
+    Ok(added)
+}
+
 /// Implement the glibc "initgroups_dyn" NSS interface.
 ///
 /// When glibc needs the supplementary groups for a user (e.g. via
@@ -510,13 +623,17 @@ fn mapped_shadow_from_nssuser(
 /// groups via getgrent_r(), which can be very slow for Entra ID users
 /// who may belong to hundreds of groups.
 ///
-/// This function sends a single targeted "NssInitgroups" request to the
-/// daemon and populates the GID array directly.
+/// This function first sends a targeted "NssInitgroups" request to the
+/// daemon. If that path cannot append any supplemental groups, it falls
+/// back to the pre-fast-path behavior of enumerating cached NSS groups
+/// and selecting the groups that list this user as a member.
 ///
 /// # Safety
 ///
-/// Called by glibc's NSS machinery. All pointer arguments must be valid
-/// and writable. The "groupsp" array may be realloc'd.
+/// Called by glibc's NSS machinery. All pointer arguments must be valid,
+/// aligned, writable, and non-overlapping for the duration of this call.
+/// When non-null, `*groupsp` must point to at least `*size` entries in an
+/// allocation compatible with `realloc`; the array may be reallocated.
 #[no_mangle]
 pub unsafe extern "C" fn _nss_himmelblau_initgroups_dyn(
     user: *const libc::c_char,
@@ -527,12 +644,6 @@ pub unsafe extern "C" fn _nss_himmelblau_initgroups_dyn(
     limit: libc::c_long,
     errnop: *mut libc::c_int,
 ) -> libc::c_int {
-    // NSS status codes (from <nss.h>)
-    const NSS_STATUS_SUCCESS: libc::c_int = 1;
-    const NSS_STATUS_NOTFOUND: libc::c_int = 0;
-    const NSS_STATUS_UNAVAIL: libc::c_int = -1;
-    const NSS_STATUS_TRYAGAIN: libc::c_int = -2;
-
     // Validate all pointer arguments before any dereference.
     if user.is_null() || start.is_null() || size.is_null() || groupsp.is_null() || errnop.is_null()
     {
@@ -542,6 +653,13 @@ pub unsafe extern "C" fn _nss_himmelblau_initgroups_dyn(
     if should_skip_daemon_call() {
         return NSS_STATUS_UNAVAIL;
     }
+
+    // Keep raw pointer handling at the FFI boundary. The helper receives
+    // references so it cannot dereference unchecked state pointers.
+    let start = &mut *start;
+    let size = &mut *size;
+    let groupsp = &mut *groupsp;
+    let errnop = &mut *errnop;
 
     let c_user = match std::ffi::CStr::from_ptr(user).to_str() {
         Ok(s) => s,
@@ -564,80 +682,55 @@ pub unsafe extern "C" fn _nss_himmelblau_initgroups_dyn(
             None => return NSS_STATUS_NOTFOUND,
         },
     };
-    let req = ClientRequest::NssInitgroups(account_id);
+    let req = ClientRequest::NssInitgroups(account_id.clone());
 
     let mut daemon_client = match DaemonClientBlocking::new(cfg.get_socket_path().as_str()) {
         Ok(dc) => dc,
         Err(_) => return NSS_STATUS_UNAVAIL,
     };
 
-    let gids = match daemon_client.call_and_wait(&req, cfg.get_unix_sock_timeout()) {
-        Ok(ClientResponse::NssInitgroups(Some(g))) => g,
-        // User not found in himmelblau: let glibc try the next
-        // nsswitch source so that local groups are preserved.
-        Ok(ClientResponse::NssInitgroups(None)) => return NSS_STATUS_NOTFOUND,
-        Ok(_) | Err(_) => return NSS_STATUS_UNAVAIL,
-    };
+    let (fast_gids, reconnect_for_fallback) =
+        match daemon_client.call_and_wait(&req, cfg.get_unix_sock_timeout()) {
+            Ok(ClientResponse::NssInitgroups(Some(g))) => (Some(g), false),
+            // User not found in himmelblau: let glibc try the next
+            // nsswitch source so that local groups are preserved.
+            Ok(ClientResponse::NssInitgroups(None)) => return NSS_STATUS_NOTFOUND,
+            Ok(_) | Err(_) => (None, true),
+        };
 
-    let mut cur_start = *start;
-    let mut cur_size = *size;
-    let mut groups = *groupsp;
-    if cur_start < 0 || cur_size < 0 || cur_start > cur_size || (cur_size > 0 && groups.is_null()) {
-        *errnop = libc::EINVAL;
-        return NSS_STATUS_UNAVAIL;
+    if let Some(gids) = fast_gids {
+        match append_initgroups_gids(gids, primary_gid, start, size, groupsp, limit, errnop) {
+            Ok(0) => {}
+            Ok(_) => return NSS_STATUS_SUCCESS,
+            Err(status) => return status,
+        }
     }
 
-    for gid in gids {
-        // Skip primary GID, glibc already includes it
-        if gid == primary_gid {
-            continue;
-        }
-        // Skip duplicates already in the array
-        let already_present = (0..cur_start).any(|i| *groups.offset(i as isize) == gid);
-        if already_present {
-            continue;
-        }
-        // Hard cap reached, stop adding, don't signal an error, like
-        // glibc's add_group() does.
-        if limit > 0 && cur_start >= limit {
-            break;
-        }
-        // Grow the array if needed
-        if cur_start >= cur_size {
-            let new_size = if limit > 0 {
-                std::cmp::min(limit, std::cmp::max(16, cur_size.saturating_mul(2)))
-            } else {
-                std::cmp::max(16, cur_size.saturating_mul(2))
-            };
-            let alloc_bytes = match usize::try_from(new_size)
-                .ok()
-                .and_then(|n| n.checked_mul(std::mem::size_of::<libc::gid_t>()))
-            {
-                Some(b) if b > 0 => b,
-                _ => {
-                    *errnop = libc::ENOMEM;
-                    *start = cur_start;
-                    return NSS_STATUS_TRYAGAIN;
-                }
-            };
-            let new_groups =
-                libc::realloc(groups as *mut libc::c_void, alloc_bytes) as *mut libc::gid_t;
-            if new_groups.is_null() {
-                *errnop = libc::ENOMEM;
-                *start = cur_start;
-                return NSS_STATUS_TRYAGAIN;
-            }
-            groups = new_groups;
-            *groupsp = groups;
-            cur_size = new_size;
-            *size = cur_size;
-        }
-        *groups.offset(cur_start as isize) = gid;
-        cur_start += 1;
+    if reconnect_for_fallback {
+        daemon_client = match DaemonClientBlocking::new(cfg.get_socket_path().as_str()) {
+            Ok(dc) => dc,
+            Err(_) => return NSS_STATUS_UNAVAIL,
+        };
     }
+    let fallback_gids =
+        match fallback_initgroups_gids(&mut daemon_client, &cfg, c_user, &account_id) {
+            Some(gids) => gids,
+            None => return NSS_STATUS_UNAVAIL,
+        };
 
-    *start = cur_start;
-    NSS_STATUS_SUCCESS
+    match append_initgroups_gids(
+        fallback_gids,
+        primary_gid,
+        start,
+        size,
+        groupsp,
+        limit,
+        errnop,
+    ) {
+        Ok(0) => NSS_STATUS_NOTFOUND,
+        Ok(_) => NSS_STATUS_SUCCESS,
+        Err(status) => status,
+    }
 }
 
 struct HimmelblauShadow;
@@ -846,6 +939,10 @@ mod tests {
     use super::*;
     use std::fs;
 
+    unsafe fn collect_groups(groups: *mut libc::gid_t, len: libc::c_long) -> Vec<libc::gid_t> {
+        (0..len).map(|idx| *groups.offset(idx as isize)).collect()
+    }
+
     fn create_temp_config(contents: &str) -> Result<String, String> {
         let file_path = format!(
             "/tmp/himmelblau_nss_test_config_{}.ini",
@@ -879,6 +976,149 @@ mod tests {
             homedir: "/home/test".to_string(),
             shell: "/bin/bash".to_string(),
         }
+    }
+
+    #[test]
+    fn initgroups_member_matching_accepts_raw_and_mapped_names() -> Result<(), String> {
+        let cfg = test_config()?;
+
+        assert!(initgroups_member_matches(
+            "alice@contoso.com",
+            "alice",
+            "alice@contoso.com",
+            &cfg
+        ));
+        assert!(initgroups_member_matches(
+            "alice@contoso.com",
+            "alice@contoso.com",
+            "alice@contoso.com",
+            &cfg
+        ));
+        assert!(initgroups_member_matches(
+            "ALICE@contoso.com",
+            "alice",
+            "alice@contoso.com",
+            &cfg
+        ));
+        assert!(!initgroups_member_matches(
+            "bob@contoso.com",
+            "alice",
+            "alice@contoso.com",
+            &cfg
+        ));
+
+        Ok(())
+    }
+
+    #[test]
+    fn append_initgroups_gids_skips_primary_and_duplicates() {
+        unsafe {
+            let mut err = 0;
+            let mut start: libc::c_long = 1;
+            let mut size: libc::c_long = 2;
+            let groups =
+                libc::calloc(size as usize, std::mem::size_of::<libc::gid_t>()) as *mut libc::gid_t;
+            assert!(!groups.is_null());
+            *groups = 1000;
+            let mut groupsp = groups;
+
+            let added = append_initgroups_gids(
+                vec![1000, 2000, 2000, 3000],
+                1000,
+                &mut start,
+                &mut size,
+                &mut groupsp,
+                0,
+                &mut err,
+            )
+            .expect("append should succeed");
+
+            assert_eq!(added, 2);
+            assert_eq!(start, 3);
+            assert!(size >= 3);
+            assert_eq!(collect_groups(groupsp, start), vec![1000, 2000, 3000]);
+            libc::free(groupsp as *mut libc::c_void);
+        }
+    }
+
+    #[test]
+    fn append_initgroups_gids_reports_zero_added() {
+        unsafe {
+            let mut err = 0;
+            let mut start: libc::c_long = 1;
+            let mut size: libc::c_long = 1;
+            let groups =
+                libc::calloc(size as usize, std::mem::size_of::<libc::gid_t>()) as *mut libc::gid_t;
+            assert!(!groups.is_null());
+            *groups = 1000;
+            let mut groupsp = groups;
+
+            let added = append_initgroups_gids(
+                vec![1000],
+                1000,
+                &mut start,
+                &mut size,
+                &mut groupsp,
+                0,
+                &mut err,
+            )
+            .expect("append should succeed");
+
+            assert_eq!(added, 0);
+            assert_eq!(start, 1);
+            assert_eq!(size, 1);
+            assert_eq!(collect_groups(groupsp, start), vec![1000]);
+            libc::free(groupsp as *mut libc::c_void);
+        }
+    }
+
+    #[test]
+    fn append_initgroups_gids_respects_limit() {
+        unsafe {
+            let mut err = 0;
+            let mut start: libc::c_long = 0;
+            let mut size: libc::c_long = 0;
+            let mut groupsp: *mut libc::gid_t = std::ptr::null_mut();
+
+            let added = append_initgroups_gids(
+                vec![2000, 3000],
+                1000,
+                &mut start,
+                &mut size,
+                &mut groupsp,
+                1,
+                &mut err,
+            )
+            .expect("append should succeed");
+
+            assert_eq!(added, 1);
+            assert_eq!(start, 1);
+            assert_eq!(size, 1);
+            assert_eq!(collect_groups(groupsp, start), vec![2000]);
+            libc::free(groupsp as *mut libc::c_void);
+        }
+    }
+
+    #[test]
+    fn initgroups_dyn_rejects_null_groups_pointer() {
+        let user = std::ffi::CString::new("alice").expect("valid user name");
+        let mut start: libc::c_long = 0;
+        let mut size: libc::c_long = 0;
+        let mut err = 0;
+
+        let status = unsafe {
+            _nss_himmelblau_initgroups_dyn(
+                user.as_ptr(),
+                1000,
+                &mut start,
+                &mut size,
+                std::ptr::null_mut(),
+                0,
+                &mut err,
+            )
+        };
+
+        assert_eq!(status, NSS_STATUS_UNAVAIL);
     }
 
     #[test]
