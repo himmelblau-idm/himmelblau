@@ -939,6 +939,10 @@ mod tests {
     use super::*;
     use std::fs;
 
+    unsafe fn collect_groups(groups: *mut libc::gid_t, len: libc::c_long) -> Vec<libc::gid_t> {
+        (0..len).map(|idx| *groups.offset(idx as isize)).collect()
+    }
+
     fn create_temp_config(contents: &str) -> Result<String, String> {
         let file_path = format!(
             "/tmp/himmelblau_nss_test_config_{}.ini",
@@ -972,6 +976,149 @@ mod tests {
             homedir: "/home/test".to_string(),
             shell: "/bin/bash".to_string(),
         }
+    }
+
+    #[test]
+    fn initgroups_member_matching_accepts_raw_and_mapped_names() -> Result<(), String> {
+        let cfg = test_config()?;
+
+        assert!(initgroups_member_matches(
+            "alice@contoso.com",
+            "alice",
+            "alice@contoso.com",
+            &cfg
+        ));
+        assert!(initgroups_member_matches(
+            "alice@contoso.com",
+            "alice@contoso.com",
+            "alice@contoso.com",
+            &cfg
+        ));
+        assert!(initgroups_member_matches(
+            "ALICE@contoso.com",
+            "alice",
+            "alice@contoso.com",
+            &cfg
+        ));
+        assert!(!initgroups_member_matches(
+            "bob@contoso.com",
+            "alice",
+            "alice@contoso.com",
+            &cfg
+        ));
+
+        Ok(())
+    }
+
+    #[test]
+    fn append_initgroups_gids_skips_primary_and_duplicates() {
+        unsafe {
+            let mut err = 0;
+            let mut start: libc::c_long = 1;
+            let mut size: libc::c_long = 2;
+            let groups =
+                libc::calloc(size as usize, std::mem::size_of::<libc::gid_t>()) as *mut libc::gid_t;
+            assert!(!groups.is_null());
+            *groups = 1000;
+            let mut groupsp = groups;
+
+            let added = append_initgroups_gids(
+                vec![1000, 2000, 2000, 3000],
+                1000,
+                &mut start,
+                &mut size,
+                &mut groupsp,
+                0,
+                &mut err,
+            )
+            .expect("append should succeed");
+
+            assert_eq!(added, 2);
+            assert_eq!(start, 3);
+            assert!(size >= 3);
+            assert_eq!(collect_groups(groupsp, start), vec![1000, 2000, 3000]);
+            libc::free(groupsp as *mut libc::c_void);
+        }
+    }
+
+    #[test]
+    fn append_initgroups_gids_reports_zero_added() {
+        unsafe {
+            let mut err = 0;
+            let mut start: libc::c_long = 1;
+            let mut size: libc::c_long = 1;
+            let groups =
+                libc::calloc(size as usize, std::mem::size_of::<libc::gid_t>()) as *mut libc::gid_t;
+            assert!(!groups.is_null());
+            *groups = 1000;
+            let mut groupsp = groups;
+
+            let added = append_initgroups_gids(
+                vec![1000],
+                1000,
+                &mut start,
+                &mut size,
+                &mut groupsp,
+                0,
+                &mut err,
+            )
+            .expect("append should succeed");
+
+            assert_eq!(added, 0);
+            assert_eq!(start, 1);
+            assert_eq!(size, 1);
+            assert_eq!(collect_groups(groupsp, start), vec![1000]);
+            libc::free(groupsp as *mut libc::c_void);
+        }
+    }
+
+    #[test]
+    fn append_initgroups_gids_respects_limit() {
+        unsafe {
+            let mut err = 0;
+            let mut start: libc::c_long = 0;
+            let mut size: libc::c_long = 0;
+            let mut groupsp: *mut libc::gid_t = std::ptr::null_mut();
+
+            let added = append_initgroups_gids(
+                vec![2000, 3000],
+                1000,
+                &mut start,
+                &mut size,
+                &mut groupsp,
+                1,
+                &mut err,
+            )
+            .expect("append should succeed");
+
+            assert_eq!(added, 1);
+            assert_eq!(start, 1);
+            assert_eq!(size, 1);
+            assert_eq!(collect_groups(groupsp, start), vec![2000]);
+            libc::free(groupsp as *mut libc::c_void);
+        }
+    }
+
+    #[test]
+    fn initgroups_dyn_rejects_null_groups_pointer() {
+        let user = std::ffi::CString::new("alice").expect("valid user name");
+        let mut start: libc::c_long = 0;
+        let mut size: libc::c_long = 0;
+        let mut err = 0;
+
+        let status = unsafe {
+            _nss_himmelblau_initgroups_dyn(
+                user.as_ptr(),
+                1000,
+                &mut start,
+                &mut size,
+                std::ptr::null_mut(),
+                0,
+                &mut err,
+            )
+        };
+
+        assert_eq!(status, NSS_STATUS_UNAVAIL);
     }
 
     #[test]
