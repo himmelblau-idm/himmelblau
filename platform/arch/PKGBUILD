@@ -214,6 +214,8 @@ package() {
     "$pkgdir/etc/apparmor.d/himmelblau-orchestrator-container"
   install -Dm644 platform/debian/apparmor.crun.local \
     "$pkgdir/etc/apparmor.d/local/crun"
+  install -Dm644 platform/debian/apparmor.runc.local \
+    "$pkgdir/etc/apparmor.d/local/runc"
   install -Dm644 platform/debian/apparmor.cupsd.local \
     "$pkgdir/etc/apparmor.d/local/usr.sbin.cupsd"
   install -Dm644 platform/debian/apparmor.unix-chkpwd.local \
