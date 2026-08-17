@@ -1823,6 +1823,7 @@ impl IdProvider for HimmelblauProvider {
                 .iter()
                 .any(|s| !s.is_empty() && service.contains(s));
         let hello_totp_enabled = check_hello_totp_enabled!(self);
+        let console_password_only = self.config.lock().await.get_allow_console_password_only();
         let allow_remote_hello = self.config.lock().await.get_allow_remote_hello();
         // Skip Hello authentication if it is disabled by config
         let hello_enabled = self.config.lock().await.get_enable_hello();
@@ -1858,7 +1859,6 @@ impl IdProvider for HimmelblauProvider {
             // For local terminal authentication (GDM, etc.), don't force MFA
             // to allow natural passwordless flow without prematurely triggering
             // MFA notifications.
-            let console_password_only = self.config.lock().await.get_allow_console_password_only();
             debug!(
                 "Service '{}' remote_service={} console_password_only={}",
                 service, is_remote_service, console_password_only
@@ -2158,6 +2158,20 @@ impl IdProvider for HimmelblauProvider {
                 AuthCacheAction::None,
             ));
         }
+
+        let remote_services = self
+            .config
+            .lock()
+            .await
+            .get_password_only_remote_services_deny_list();
+        let is_remote_service = service.starts_with("remote:")
+            || remote_services
+                .iter()
+                .any(|s| !s.is_empty() && service.contains(s));
+        let hello_totp_enabled = check_hello_totp_enabled!(self);
+        let console_password_only = self.config.lock().await.get_allow_console_password_only();
+        let require_hello_totp =
+            hello_totp_enabled && (is_remote_service || !console_password_only);
 
         macro_rules! intune_enroll {
             ($token:ident) => {
@@ -2661,7 +2675,7 @@ impl IdProvider for HimmelblauProvider {
             }};
         }
         macro_rules! sspr_demand_hello_fallback {
-            ($cred:ident) => {{
+            ($cred:ident, $require_hello_totp:expr) => {{
                 // Hello authentication already succeeded,
                 // but SSPR demand was sent. Proceed and permit
                 // this authentication so the user has the opportunity
@@ -2670,7 +2684,7 @@ impl IdProvider for HimmelblauProvider {
                     "AADSTS{} (SSPR required) encountered; permitting auth via local Hello Pin",
                     PASSWORD_RESET_REGISTRATION_REQUIRED
                 );
-                if check_hello_totp_enabled!(self) {
+                if $require_hello_totp {
                     if !check_hello_totp_setup!(self, account_id, keystore) {
                         return impl_setup_hello_totp!(
                             self,
@@ -2707,7 +2721,7 @@ impl IdProvider for HimmelblauProvider {
             }};
         }
         macro_rules! auth_and_validate_hello_key {
-            ($hello_key:ident, $keytype:ident, $cred:ident) => {{
+            ($hello_key:ident, $keytype:ident, $cred:ident, $require_hello_totp:expr) => {{
                 // CRITICAL: Validate that we can load the key, otherwise the offline
                 // fallback will allow the user to authenticate with a bad PIN here.
                 // `acquire_token_by_hello_for_business_key` CAN (and probably will)
@@ -2776,7 +2790,7 @@ impl IdProvider for HimmelblauProvider {
                             let mut state = self.state.lock().await;
                             *state =
                                 CacheState::OfflineNextCheck(SystemTime::now() + OFFLINE_NEXT_CHECK);
-                            if check_hello_totp_enabled!(self) {
+                            if $require_hello_totp {
                                 if !check_hello_totp_setup!(self, account_id, keystore) {
                                     return impl_setup_hello_totp!(
                                         self,
@@ -2807,7 +2821,7 @@ impl IdProvider for HimmelblauProvider {
                             }
                         }
                         Err(ref e) if is_sspr_required(e) => {
-                            sspr_demand_hello_fallback!($cred)
+                            sspr_demand_hello_fallback!($cred, $require_hello_totp)
                         }
                         Err(MsalError::AcquireTokenFailed(e)) => {
                             if e.error_codes.contains(&CONSENT_REQUIRED) {
@@ -3062,7 +3076,7 @@ impl IdProvider for HimmelblauProvider {
                                     let mut state = self.state.lock().await;
                                     *state =
                                         CacheState::OfflineNextCheck(SystemTime::now() + OFFLINE_NEXT_CHECK);
-                                    if check_hello_totp_enabled!(self) {
+                                    if $require_hello_totp {
                                         if !check_hello_totp_setup!(self, account_id, keystore) {
                                             return impl_setup_hello_totp!(
                                                 self,
@@ -3093,7 +3107,7 @@ impl IdProvider for HimmelblauProvider {
                                     }
                                 }
                                 Err(ref e) if is_sspr_required(e) => {
-                                    sspr_demand_hello_fallback!($cred)
+                                    sspr_demand_hello_fallback!($cred, $require_hello_totp)
                                 }
                                 Err(MsalError::AcquireTokenFailed(e)) => {
                                     if e.error_codes.contains(&CONSENT_REQUIRED) {
@@ -3198,7 +3212,7 @@ impl IdProvider for HimmelblauProvider {
                                 let mut state = self.state.lock().await;
                                 *state =
                                     CacheState::OfflineNextCheck(SystemTime::now() + OFFLINE_NEXT_CHECK);
-                                if check_hello_totp_enabled!(self) {
+                                if $require_hello_totp {
                                     if !check_hello_totp_setup!(self, account_id, keystore) {
                                         return impl_setup_hello_totp!(
                                             self,
@@ -3229,7 +3243,7 @@ impl IdProvider for HimmelblauProvider {
                                 }
                             }
                             Err(ref e) if is_sspr_required(e) => {
-                                sspr_demand_hello_fallback!($cred)
+                                sspr_demand_hello_fallback!($cred, $require_hello_totp)
                             }
                             Err(e) => {
                                 error!("Failed to exchange refresh token for access token: {:?}", e);
@@ -3315,7 +3329,7 @@ impl IdProvider for HimmelblauProvider {
 
                 match self.token_validate(account_id, &token, None).await {
                     Ok(AuthResult::Success { token }) => {
-                        if check_hello_totp_enabled!(self) {
+                        if $require_hello_totp {
                             if !check_hello_totp_setup!(self, account_id, keystore) {
                                 return impl_setup_hello_totp!(
                                     self,
@@ -3647,7 +3661,7 @@ impl IdProvider for HimmelblauProvider {
                         IdpError::Tpm
                     })?;
 
-                auth_and_validate_hello_key!(hello_key, keytype, pin)
+                auth_and_validate_hello_key!(hello_key, keytype, pin, require_hello_totp)
             }
             (_, PamAuthRequest::Pin { cred }) => {
                 let (hello_key, keytype) =
@@ -3656,7 +3670,7 @@ impl IdProvider for HimmelblauProvider {
                             error!("Online authentication failed. Hello key missing.");
                         })?;
 
-                auth_and_validate_hello_key!(hello_key, keytype, cred)
+                auth_and_validate_hello_key!(hello_key, keytype, cred, require_hello_totp)
             }
             // Sign-in frequency optimization: Password-first flow for console logins.
             // This handler validates password via ROPC, then checks PRT for sign-in

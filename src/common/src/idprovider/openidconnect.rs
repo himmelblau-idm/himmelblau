@@ -2939,6 +2939,7 @@ impl IdProvider for OidcProvider {
                 .iter()
                 .any(|s| !s.is_empty() && service.contains(s));
         let hello_totp_enabled = check_hello_totp_enabled!(self);
+        let console_password_only = self.config.lock().await.get_allow_console_password_only();
         let allow_remote_hello = self.config.lock().await.get_allow_remote_hello();
         // Skip Hello authentication if it is disabled by config
         let hello_enabled = self.config.lock().await.get_enable_hello();
@@ -2957,7 +2958,6 @@ impl IdProvider for OidcProvider {
             // is enabled by config, this is not a remote service, and the provider
             // advertises the `password` grant. Behaves like the Entra password-only
             // flow: a successful password can still lead to Hello PIN setup.
-            let console_password_only = self.config.lock().await.get_allow_console_password_only();
             if console_password_only
                 && !is_remote_service
                 && self.client.password_grant_supported().await
@@ -2992,7 +2992,7 @@ impl IdProvider for OidcProvider {
         &self,
         account_id: &str,
         old_token: &UserToken,
-        _service: &str,
+        service: &str,
         no_hello_pin: bool,
         cred_handler: &mut AuthCredHandler,
         pam_next_req: PamAuthRequest,
@@ -3013,8 +3013,22 @@ impl IdProvider for OidcProvider {
             ));
         }
 
+        let remote_services = self
+            .config
+            .lock()
+            .await
+            .get_password_only_remote_services_deny_list();
+        let is_remote_service = service.starts_with("remote:")
+            || remote_services
+                .iter()
+                .any(|s| !s.is_empty() && service.contains(s));
+        let hello_totp_enabled = check_hello_totp_enabled!(self);
+        let console_password_only = self.config.lock().await.get_allow_console_password_only();
+        let require_hello_totp =
+            hello_totp_enabled && (is_remote_service || !console_password_only);
+
         macro_rules! auth_and_validate_hello_key {
-            ($hello_key:ident, $keytype:ident, $cred:ident) => {{
+            ($hello_key:ident, $keytype:ident, $cred:ident, $require_hello_totp:expr) => {{
                 // CRITICAL: Validate that we can load the key, otherwise the offline
                 // fallback will allow the user to authenticate with a bad PIN here.
                 let pin = match PinValue::new(&$cred) {
@@ -3122,7 +3136,7 @@ impl IdProvider for OidcProvider {
                             let mut state = self.state.lock().await;
                             *state =
                                 CacheState::OfflineNextCheck(SystemTime::now() + OFFLINE_NEXT_CHECK);
-                            if check_hello_totp_enabled!(self) {
+                            if $require_hello_totp {
                                 if !check_hello_totp_setup!(self, account_id, keystore) {
                                     return impl_setup_hello_totp!(
                                         self,
@@ -3247,7 +3261,7 @@ impl IdProvider for OidcProvider {
 
                 match self.token_validate(account_id, &token).await {
                     Ok(AuthResult::Success { token }) => {
-                        if check_hello_totp_enabled!(self) {
+                        if $require_hello_totp {
                             if !check_hello_totp_setup!(self, account_id, keystore) {
                                 return impl_setup_hello_totp!(
                                     self,
@@ -3316,7 +3330,7 @@ impl IdProvider for OidcProvider {
                         IdpError::Tpm
                     })?;
 
-                auth_and_validate_hello_key!(hello_key, keytype, cred)
+                auth_and_validate_hello_key!(hello_key, keytype, cred, require_hello_totp)
             }
             (AuthCredHandler::PasswordFirst { .. }, PamAuthRequest::Password { cred }) => {
                 // Wrap the wire-delivered credential so this copy (and the clone
@@ -3371,7 +3385,7 @@ impl IdProvider for OidcProvider {
                             error!("Online authentication failed. Hello key missing.");
                         })?;
 
-                auth_and_validate_hello_key!(hello_key, keytype, cred)
+                auth_and_validate_hello_key!(hello_key, keytype, cred, require_hello_totp)
             }
             (
                 AuthCredHandler::MFA {
