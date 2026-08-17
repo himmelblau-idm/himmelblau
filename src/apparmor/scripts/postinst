@@ -20,6 +20,7 @@ reload_apparmor_profile() {
 
 reload_apparmor_profile /etc/apparmor.d/himmelblau-orchestrator-container himmelblau-orchestrator-container
 reload_apparmor_profile /etc/apparmor.d/crun crun
+reload_apparmor_profile /etc/apparmor.d/runc runc
 reload_apparmor_profile /etc/apparmor.d/usr.sbin.cupsd cupsd
 reload_apparmor_profile /etc/apparmor.d/unix-chkpwd unix-chkpwd
 reload_apparmor_profile /etc/apparmor.d/fusermount3 fusermount3
