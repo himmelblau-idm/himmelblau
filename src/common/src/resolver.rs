@@ -1508,7 +1508,9 @@ where
             }
             Err(IdpError::NotFound { what, where_ }) => Ok((
                 AuthSession::Denied,
-                PamAuthResponse::Denied(format!("NotFound: {} in {}", what, where_)),
+                PamAuthResponse::InitDenied {
+                    msg: format!("NotFound: {} in {}", what, where_),
+                },
             )),
             Err(e) => {
                 error!("{:?}", e);
@@ -1770,10 +1772,9 @@ where
                 Ok(PamAuthResponse::Denied(msg))
             }
             Ok(AuthResult::Next(req)) => Ok(req.into()),
-            Err(IdpError::NotFound { what, where_ }) => Ok(PamAuthResponse::Denied(format!(
-                "NotFound: {} in {}",
-                what, where_
-            ))),
+            Err(IdpError::NotFound { what, where_ }) => Ok(PamAuthResponse::InitDenied {
+                msg: format!("NotFound: {} in {}", what, where_),
+            }),
             Err(e) => {
                 error!("{:?}", e);
                 Err(())

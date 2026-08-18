@@ -53,6 +53,7 @@ use idmap::{DEFAULT_IDMAP_RANGE, DEFAULT_SUBID_RANGE};
 use reqwest::Url;
 use serde::Deserialize;
 use std::env;
+use std::time::Duration;
 
 #[derive(Debug, Copy, Clone, PartialEq)]
 pub enum IdAttr {
@@ -153,8 +154,13 @@ struct FederationProvider {
 async fn request_federation_provider(
     odc_provider: &str,
     domain: &str,
+    request_timeout_secs: u64,
 ) -> Result<(String, String, String), MsalError> {
+    let request_timeout = Duration::from_secs(request_timeout_secs);
+    let connect_timeout = std::cmp::min(request_timeout / 2, Duration::from_secs(3));
     let client = reqwest::Client::builder()
+        .connect_timeout(connect_timeout)
+        .timeout(request_timeout)
         .build()
         .map_err(|e| MsalError::RequestFailed(format!("{:?}", e)))?;
 
@@ -788,31 +794,39 @@ impl HimmelblauConfig {
 
         // We don't recognize this alias, so now we need to search for it the
         // hard way by checking for matching tenant id's.
-        let (_, alias_tenant_id, _) =
-            match request_federation_provider(DEFAULT_ODC_PROVIDER, alias).await {
-                Ok(resp) => resp,
-                Err(e) => {
-                    error!(
-                        "Failed matching alias '{}' to a configured tenant: {:?}",
-                        alias, e
-                    );
-                    return None;
-                }
-            };
+        let (_, alias_tenant_id, _) = match request_federation_provider(
+            DEFAULT_ODC_PROVIDER,
+            alias,
+            self.get_request_timeout(),
+        )
+        .await
+        {
+            Ok(resp) => resp,
+            Err(e) => {
+                error!(
+                    "Failed matching alias '{}' to a configured tenant: {:?}",
+                    alias, e
+                );
+                return None;
+            }
+        };
         for domain in domains {
             let tenant_id = match self.get_tenant_id(&domain) {
                 Some(tenant_id) => tenant_id,
                 None => {
-                    let (authority_host, tenant_id, graph_url) =
-                        match request_federation_provider(&self.get_odc_provider(&domain), &domain)
-                            .await
-                        {
-                            Ok(resp) => resp,
-                            Err(e) => {
-                                error!("Failed sending federation provider request: {:?}", e);
-                                continue;
-                            }
-                        };
+                    let (authority_host, tenant_id, graph_url) = match request_federation_provider(
+                        &self.get_odc_provider(&domain),
+                        &domain,
+                        self.get_request_timeout(),
+                    )
+                    .await
+                    {
+                        Ok(resp) => resp,
+                        Err(e) => {
+                            error!("Failed sending federation provider request: {:?}", e);
+                            continue;
+                        }
+                    };
                     self.set(&domain, "authority_host", &authority_host);
                     self.set(&domain, "tenant_id", &tenant_id);
                     self.set(&domain, "graph_url", &graph_url);
