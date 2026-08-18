@@ -7793,6 +7793,10 @@ rec {
             packageId = "sketching";
           }
           {
+            name = "tempfile";
+            packageId = "tempfile";
+          }
+          {
             name = "tokio";
             packageId = "tokio";
             features = [ "rt" "macros" "sync" "time" "net" "io-util" "signal" "rt-multi-thread" "tracing" ];
@@ -7823,11 +7827,9 @@ rec {
             name = "walkdir";
             packageId = "walkdir";
           }
-        ];
-        devDependencies = [
           {
-            name = "tempfile";
-            packageId = "tempfile";
+            name = "zbus";
+            packageId = "zbus";
           }
         ];
         features = {

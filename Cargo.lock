@@ -2358,6 +2358,7 @@ dependencies = [
  "uuid",
  "uzers",
  "walkdir",
+ "zbus",
 ]
 
 [[package]]
