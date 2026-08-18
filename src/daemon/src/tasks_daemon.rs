@@ -22,7 +22,7 @@
 
 use std::ffi::CString;
 use std::os::unix::ffi::OsStrExt;
-use std::os::unix::fs::{symlink, OpenOptionsExt};
+use std::os::unix::fs::{symlink, OpenOptionsExt, PermissionsExt};
 use std::path::Path;
 use std::process::ExitCode;
 use std::str;
@@ -47,17 +47,38 @@ use sketching::tracing_forest::{self};
 use std::fs::OpenOptions;
 use std::io::Write;
 use std::process::Command;
+use tempfile::NamedTempFile;
 use tokio::net::UnixStream;
 use tokio::sync::broadcast;
 use tokio::time;
 use tokio_util::codec::{Decoder, Encoder, Framed};
 use tracing::span;
 use walkdir::WalkDir;
+use zbus::zvariant::OwnedObjectPath;
+use zbus::{proxy, Connection};
 
 #[cfg(all(target_family = "unix", feature = "selinux"))]
 use himmelblau_unix_common::selinux_util;
 
 struct TaskCodec;
+
+#[proxy(
+    interface = "org.freedesktop.Accounts",
+    default_service = "org.freedesktop.Accounts",
+    default_path = "/org/freedesktop/Accounts"
+)]
+trait AccountsService {
+    fn find_user_by_name(&self, name: &str) -> zbus::Result<OwnedObjectPath>;
+    fn cache_user(&self, name: &str) -> zbus::Result<OwnedObjectPath>;
+}
+
+#[proxy(
+    interface = "org.freedesktop.Accounts.User",
+    default_service = "org.freedesktop.Accounts"
+)]
+trait AccountsServiceUser {
+    fn set_icon_file(&self, filename: &str) -> zbus::Result<()>;
+}
 
 impl Decoder for TaskCodec {
     type Error = io::Error;
@@ -436,6 +457,35 @@ fn setup_subordinate_ids(username: &str, start: u32, count: u32) -> Result<(), S
     Ok(())
 }
 
+async fn set_accountsservice_icon(account_id: &str, icon_path: &Path) -> zbus::Result<()> {
+    let connection = Connection::system().await?;
+    let accounts = AccountsServiceProxy::new(&connection).await?;
+    let user_path = match accounts.find_user_by_name(account_id).await {
+        Ok(path) => path,
+        Err(err) => {
+            debug!(
+                ?err,
+                account_id, "AccountsService FindUserByName failed; falling back to CacheUser"
+            );
+            accounts.cache_user(account_id).await?
+        }
+    };
+    let user = AccountsServiceUserProxy::builder(&connection)
+        .path(user_path)?
+        .build()
+        .await?;
+
+    user.set_icon_file(icon_path.to_string_lossy().as_ref())
+        .await
+}
+
+fn create_profile_photo_temp_file(icons_dir: &Path) -> io::Result<NamedTempFile> {
+    let file = NamedTempFile::new_in(icons_dir)?;
+    file.as_file()
+        .set_permissions(fs::Permissions::from_mode(0o600))?;
+    Ok(file)
+}
+
 fn store_tgt(tgt: &KerberosCredentials, uid: uid_t, gid: uid_t) -> Result<(), String> {
     // Usually default_ccache_name in /etc/krb5.conf contains a %{uid} substitution,
     // which will be '0' (root) for the tasks daemon because it runs as root. Force
@@ -662,18 +712,19 @@ async fn handle_tasks(stream: UnixStream, cfg: &HimmelblauConfig) {
             }
             Some(Ok(TaskRequest::LoadProfilePhoto(mut account_id, access_token))) => {
                 debug!("Received task -> LoadProfilePhoto(...)");
-                let icons_dir = "/var/lib/AccountsService/icons/";
-                let users_dir = "/var/lib/AccountsService/users/";
-                if !Path::new(icons_dir).exists() {
-                    info!("Profile photo directory '{}' doesn't exist.", icons_dir);
+                let icons_dir = Path::new("/var/lib/AccountsService/icons/");
+                if !icons_dir.exists() {
+                    info!(
+                        "Profile photo directory '{}' doesn't exist.",
+                        icons_dir.display()
+                    );
                 } else {
                     let upn = account_id.clone();
                     let domain = split_username(&upn).map(|(_, domain)| domain);
                     account_id = cfg.map_upn_to_name(&account_id);
 
-                    // Validate account_id to prevent path traversal and
-                    // cross-user aliasing. Reject rather than strip to avoid
-                    // collisions (e.g. "a/lice" and "alice" mapping to the same file).
+                    // Reject invalid account identifiers before resolving them through
+                    // AccountsService. Stripping characters could select a different user.
                     if account_id.is_empty()
                         || !account_id.chars().all(|c| {
                             c.is_ascii_alphanumeric() || matches!(c, '@' | '.' | '_' | '-')
@@ -684,61 +735,45 @@ async fn handle_tasks(stream: UnixStream, cfg: &HimmelblauConfig) {
                         );
                     // Set the profile picture
                     } else if let Some(domain) = domain {
-                        let filename = format!("{}{}", icons_dir, account_id);
-                        match OpenOptions::new()
-                            .write(true)
-                            .create(true)
-                            .truncate(true)
-                            .custom_flags(libc::O_NOFOLLOW)
-                            .open(&filename)
-                        {
-                            Ok(file) => {
-                                let authority_host = cfg.get_authority_host(domain);
-                                let tenant_id = cfg.get_tenant_id(domain);
-                                let graph_url = cfg.get_graph_url(domain);
-                                let ip_versions = cfg.get_ip_versions();
-                                let request_timeout = cfg.get_request_timeout();
-                                if let Ok(graph) = Graph::new(
-                                    &cfg.get_odc_provider(domain),
-                                    domain,
-                                    Some(&authority_host),
-                                    tenant_id.as_deref(),
-                                    graph_url.as_deref(),
-                                    Duration::from_secs(request_timeout),
-                                    &ip_versions,
-                                )
+                        let result = async {
+                            let profile_photo = create_profile_photo_temp_file(icons_dir)
+                                .map_err(|e| format!("Failed creating profile photo: {:?}", e))?;
+                            let file = profile_photo
+                                .reopen()
+                                .map_err(|e| format!("Failed opening profile photo: {:?}", e))?;
+                            let authority_host = cfg.get_authority_host(domain);
+                            let tenant_id = cfg.get_tenant_id(domain);
+                            let graph_url = cfg.get_graph_url(domain);
+                            let ip_versions = cfg.get_ip_versions();
+                            let request_timeout = cfg.get_request_timeout();
+                            let graph = Graph::new(
+                                &cfg.get_odc_provider(domain),
+                                domain,
+                                Some(&authority_host),
+                                tenant_id.as_deref(),
+                                graph_url.as_deref(),
+                                Duration::from_secs(request_timeout),
+                                &ip_versions,
+                            )
+                            .await
+                            .map_err(|e| format!("Failed creating Graph client: {:?}", e))?;
+                            graph
+                                .fetch_user_profile_photo(&access_token, file)
                                 .await
-                                {
-                                    if let Err(e) =
-                                        graph.fetch_user_profile_photo(&access_token, file).await
-                                    {
-                                        error!("Failed fetching user profile photo: {:?}", e);
-                                    }
-                                }
-                            }
-                            Err(e) => {
-                                error!("Failed creating file for user profile photo: {:?}", e)
-                            }
+                                .map_err(|e| format!("Failed fetching profile photo: {:?}", e))?;
+                            set_accountsservice_icon(&account_id, profile_photo.path())
+                                .await
+                                .map_err(|e| {
+                                    format!(
+                                        "Failed updating AccountsService profile photo: {:?}",
+                                        e
+                                    )
+                                })?;
+                            Ok::<(), String>(())
                         }
-                        let user_file = format!("{}{}", users_dir, account_id);
-                        match OpenOptions::new()
-                            .write(true)
-                            .create(true)
-                            .truncate(true)
-                            .custom_flags(libc::O_NOFOLLOW)
-                            .open(&user_file)
-                        {
-                            Ok(mut file) => {
-                                let contents =
-                                    format!("[User]\nIcon={}\nSystemAccount=false\n", filename);
-
-                                if let Err(e) = file.write_all(contents.as_bytes()) {
-                                    error!("Failed writing to user profile settings: {:?}", e);
-                                }
-                            }
-                            Err(e) => {
-                                error!("Failed creating file for user profile settings: {:?}", e)
-                            }
+                        .await;
+                        if let Err(e) = result {
+                            error!("{}", e);
                         }
                     } else {
                         error!("Couldn't parse domain from name");
@@ -1102,6 +1137,22 @@ mod tests {
 
         let contents = fs::read_to_string(path).unwrap_or_default();
         assert_eq!(contents, "user@example.com:2100000000:65536\n");
+    }
+
+    #[test]
+    fn profile_photo_temp_file_is_private() {
+        let icons_dir = tempfile::tempdir().expect("failed to create temp icon directory");
+        let profile_photo = create_profile_photo_temp_file(icons_dir.path())
+            .expect("failed to create profile photo");
+
+        let mode = profile_photo
+            .as_file()
+            .metadata()
+            .expect("failed to read profile photo metadata")
+            .permissions()
+            .mode()
+            & 0o777;
+        assert_eq!(mode, 0o600);
     }
 
     #[test]

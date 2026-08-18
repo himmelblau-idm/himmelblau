@@ -746,6 +746,7 @@ ifdef(`files_read_usr_files',`
 	files_read_usr_files(himmelblaud_t)
 	files_read_usr_files(himmelblaud_tasks_t)
 ')
+ifdef(`dbus_system_bus_client',`dbus_system_bus_client(himmelblaud_tasks_t)')
 
 # himmelblaud_tasks needs to manage user home content
 ifdef(`userdom_manage_user_home_content',`userdom_manage_user_home_content(himmelblaud_tasks_t)')
@@ -1020,7 +1021,10 @@ optional {
 optional {
 	require {
 		type accountsd_t;
+		class dbus send_msg;
 	}
+	allow himmelblaud_tasks_t accountsd_t:dbus send_msg;
+	allow accountsd_t himmelblaud_tasks_t:dbus send_msg;
 	allow accountsd_t himmelblau_etc_t:dir { getattr open read search };
 	allow accountsd_t himmelblau_etc_t:file { getattr open read };
 	allow accountsd_t himmelblau_etc_t:lnk_file { getattr read };
