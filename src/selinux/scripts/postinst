@@ -15,8 +15,20 @@ is_live_system() {
 
 SELINUX_SRC_DIR="/usr/share/selinux/packages/himmelblaud"
 SELINUX_MAKEFILE="/usr/share/selinux/devel/Makefile"
+SELINUX_POLICYTYPE="targeted"
 
-if command -v selinuxenabled >/dev/null 2>&1 && selinuxenabled; then
+if [ -e /etc/selinux/config ]; then
+  . /etc/selinux/config
+fi
+
+selinux_configured() {
+  [ "${SELINUX:-}" = "disabled" ] && return 1
+  [ -n "${SELINUXTYPE:-}" ] && [ "$SELINUXTYPE" != "$SELINUX_POLICYTYPE" ] && return 1
+  command -v selinuxenabled >/dev/null 2>&1 && selinuxenabled && return 0
+  [ -e /etc/selinux/config ] && [ "${SELINUXTYPE:-}" = "$SELINUX_POLICYTYPE" ]
+}
+
+if selinux_configured; then
   # Check if SELinux development tools are available
   if [ ! -f "$SELINUX_MAKEFILE" ]; then
     echo "Warning: SELinux development Makefile not found at $SELINUX_MAKEFILE"
@@ -30,7 +42,7 @@ if command -v selinuxenabled >/dev/null 2>&1 && selinuxenabled; then
     cd "$SELINUX_SRC_DIR"
     if make -f "$SELINUX_MAKEFILE" himmelblaud.pp; then
       echo "Installing SELinux policy module..."
-      if semodule -i himmelblaud.pp; then
+      if semodule -s "$SELINUX_POLICYTYPE" -i himmelblaud.pp; then
         # Clean up compiled files (keep source for potential recompilation)
         rm -f himmelblaud.pp tmp/*.* 2>/dev/null || :
         rmdir tmp 2>/dev/null || :
