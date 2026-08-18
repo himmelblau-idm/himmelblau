@@ -23,7 +23,7 @@
 use std::ffi::CString;
 use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::{symlink, OpenOptionsExt};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::ExitCode;
 use std::str;
 use std::time::Duration;
@@ -484,6 +484,18 @@ fn write_kerberos_config_snippet(
     top_level_names: Option<String>,
     tenant_id: &str,
 ) -> Result<(), String> {
+    write_kerberos_config_snippet_to(
+        top_level_names,
+        tenant_id,
+        Path::new(DEFAULT_KERBEROS_CONF_DIR),
+    )
+}
+
+fn write_kerberos_config_snippet_to(
+    top_level_names: Option<String>,
+    tenant_id: &str,
+    krb_conf_dir: &Path,
+) -> Result<(), String> {
     if tenant_id.is_empty() {
         return Err("Failed to write Kerberos config snippet, empty tenant_id".to_string());
     }
@@ -491,13 +503,12 @@ fn write_kerberos_config_snippet(
     // The tenant_id will be used in a file path. Validate it is really an UUID.
     uuid::Uuid::try_parse(tenant_id).map_err(|x| format!("Failed to validate tenant ID: {x}"))?;
 
-    let krb_conf_dir = PathBuf::from(DEFAULT_KERBEROS_CONF_DIR);
-
     trace!(?krb_conf_dir, "Check kerberos config dir exists");
     match krb_conf_dir.try_exists() {
         Ok(true) if krb_conf_dir.is_dir() => Ok(()),
         Ok(true) => Err(format!("Path {krb_conf_dir:?} is not a directory")),
-        Ok(false) => Err(format!("Path {krb_conf_dir:?} does not exist")),
+        Ok(false) => fs::create_dir_all(krb_conf_dir)
+            .map_err(|e| format!("Failed to create {krb_conf_dir:?}: {e}")),
         Err(e) => Err(format!("Failed to check if {krb_conf_dir:?} exists: {e}")),
     }?;
 
@@ -1026,6 +1037,7 @@ mod tests {
 
     /// The exact payload from GHSA-x259-23ph-65m5.
     const ADVISORY_PAYLOAD: &str = "padding:100000:65536\nattacker:0:65536\npadding";
+    const TENANT_ID: &str = "11111111-2222-3333-4444-555555555555";
 
     #[test]
     fn validate_subid_username_accepts_legitimate_names() {
@@ -1090,5 +1102,53 @@ mod tests {
 
         let contents = fs::read_to_string(path).unwrap_or_default();
         assert_eq!(contents, "user@example.com:2100000000:65536\n");
+    }
+
+    #[test]
+    fn write_kerberos_config_snippet_creates_missing_config_dir() {
+        let tmpdir = tempfile::tempdir().expect("failed to create temp dir");
+        let krb_conf_dir = tmpdir.path().join("krb5.conf.d");
+
+        write_kerberos_config_snippet_to(
+            Some(".example.com, example.com, invalid:realm".to_string()),
+            TENANT_ID,
+            &krb_conf_dir,
+        )
+        .expect("expected kerberos config snippet to be written");
+
+        assert!(krb_conf_dir.is_dir());
+        let snippet_path = krb_conf_dir.join(format!("himmelblau_{TENANT_ID}.conf"));
+        let contents =
+            fs::read_to_string(snippet_path).expect("expected kerberos config snippet to exist");
+        assert!(contents.contains("[libdefaults]\n\tdns_canonicalize_hostname = false\n"));
+        assert!(contents.contains(&format!(
+            "\t\tkdc = https://login.microsoftonline.com/{TENANT_ID}/kerberos"
+        )));
+        assert!(contents.contains("\t.example.com = KERBEROS.MICROSOFTONLINE.COM"));
+        assert!(contents.contains("\texample.com = KERBEROS.MICROSOFTONLINE.COM"));
+        assert!(!contents.contains("invalid:realm = KERBEROS.MICROSOFTONLINE.COM"));
+    }
+
+    #[test]
+    fn write_kerberos_config_snippet_rejects_non_directory_path() {
+        let krb_conf_dir =
+            tempfile::NamedTempFile::new().expect("failed to create temp config path");
+
+        let err = write_kerberos_config_snippet_to(None, TENANT_ID, krb_conf_dir.path())
+            .expect_err("expected non-directory config path to be rejected");
+
+        assert!(err.contains("is not a directory"));
+    }
+
+    #[test]
+    fn write_kerberos_config_snippet_rejects_invalid_tenant_without_creating_dir() {
+        let tmpdir = tempfile::tempdir().expect("failed to create temp dir");
+        let krb_conf_dir = tmpdir.path().join("krb5.conf.d");
+
+        let err = write_kerberos_config_snippet_to(None, "not-a-tenant-id", &krb_conf_dir)
+            .expect_err("expected invalid tenant ID to be rejected");
+
+        assert!(err.contains("Failed to validate tenant ID"));
+        assert!(!krb_conf_dir.exists());
     }
 }
