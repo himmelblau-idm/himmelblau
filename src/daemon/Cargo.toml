@@ -106,6 +106,7 @@ assets = [
   { source = "src/himmelblaud.tmpfiles.conf", dest = "/usr/lib/tmpfiles.d/himmelblaud.conf", mode = "644" },
 ]
 post_install_script = "scripts/postinst"
+post_trans_script = "scripts/posttrans"
 pre_uninstall_script = "scripts/prerm"
 post_uninstall_script = "scripts/postrm"
 
