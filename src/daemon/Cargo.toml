@@ -200,6 +200,7 @@ assets = [
   { source = "target/release/locale/vi/LC_MESSAGES/himmelblau.mo", dest = "/usr/share/locale/vi/LC_MESSAGES/", mode = "644" },
 ]
 post_install_script = "scripts/postinst"
+post_trans_script = "scripts/posttrans"
 pre_uninstall_script = "scripts/prerm"
 post_uninstall_script = "scripts/postrm"
 

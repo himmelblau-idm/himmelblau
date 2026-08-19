@@ -612,7 +612,7 @@ macro_rules! check_hello_totp_enabled {
 
 #[macro_export]
 macro_rules! impl_himmelblau_offline_auth_step {
-    ($cred_handler:expr, $pam_next_req:expr, $self:ident, $account_id:expr, $keystore:expr, $tpm:expr, $machine_key:expr, $token:expr, $load_cached_prt:ident) => {{
+    ($cred_handler:ident, $pam_next_req:expr, $self:ident, $account_id:ident, $keystore:ident, $tpm:ident, $machine_key:ident, $token:ident, $load_cached_prt:ident) => {{
         match (&$cred_handler, $pam_next_req) {
             (_, PamAuthRequest::Pin { cred }) => {
                 let (hello_key, _keytype) =
@@ -667,21 +667,30 @@ macro_rules! impl_himmelblau_offline_auth_step {
                                 .add($account_id, &RefreshCacheEntry::RefreshToken(refresh_token))
                                 .await;
                         }
-                        if check_hello_totp_setup!($self, $account_id, $keystore)
-                            && check_hello_totp_enabled!($self)
-                        {
-                            // Store the PIN credential in the handler so the
-                            // subsequent HelloTOTP step can use it to unseal
-                            // the TOTP secret from the TPM.
-                            *$cred_handler = AuthCredHandler::HelloTOTP {
-                                cred,
-                                pending_sealed_totp: None,
-                            };
-                            Ok(AuthResult::Next(AuthRequest::HelloTOTP {
-                                msg: tr(
-                                    "Please enter your Hello TOTP code from your Authenticator:",
-                                ) + " ",
-                            }))
+                        if check_hello_totp_enabled!($self) {
+                            if !check_hello_totp_setup!($self, $account_id, $keystore) {
+                                let (auth_result, _auth_cache_action) = impl_setup_hello_totp!(
+                                    $self,
+                                    $account_id,
+                                    $keystore,
+                                    $token,
+                                    cred,
+                                    $tpm,
+                                    $machine_key,
+                                    $cred_handler
+                                )?;
+                                Ok(auth_result)
+                            } else {
+                                *$cred_handler = AuthCredHandler::HelloTOTP {
+                                    cred,
+                                    pending_sealed_totp: None,
+                                };
+                                Ok(AuthResult::Next(AuthRequest::HelloTOTP {
+                                    msg: tr(
+                                        "Please enter your Hello TOTP code from your Authenticator:",
+                                    ) + " ",
+                                }))
+                            }
                         } else {
                             $self.bad_pin_counter.reset_bad_pin_count($account_id).await;
                             Ok(AuthResult::Success {
