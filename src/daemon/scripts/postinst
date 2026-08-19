@@ -36,6 +36,10 @@ selinux_policy_loaded() {
     semodule -l 2>/dev/null | awk '{print $1}' | grep -qx himmelblaud
 }
 
+if getent group tss >/dev/null 2>&1 && id himmelblaud >/dev/null 2>&1; then
+    usermod -a -G tss himmelblaud 2>/dev/null || true
+fi
+
 skip_start=0
 if ! selinux_policy_loaded; then
     skip_start=1
