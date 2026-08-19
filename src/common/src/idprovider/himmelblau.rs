@@ -5090,6 +5090,14 @@ impl HimmelblauProvider {
                                 );
                                 return Err(IdpError::BadRequest);
                             }
+                            if !groups.iter().any(|group| group.gidnumber == gid_number) {
+                                groups.push(GroupToken {
+                                    name: spn.clone(),
+                                    spn: spn.clone(),
+                                    uuid,
+                                    gidnumber: gid_number,
+                                });
+                            }
                             gid_number
                         } else {
                             // Otherwise add a fake primary group
