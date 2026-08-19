@@ -37,6 +37,7 @@ core-foundation-sys-0-8-7 = { package = "core-foundation-sys", path = "src/overr
 cpufeatures-0-2-17 = { package = "cpufeatures", path = "src/overrides/cpufeatures/0.2.17" }
 crunchy-0-2-4 = { package = "crunchy", path = "src/overrides/crunchy/0.2.4" }
 dashmap-6-1-0 = { package = "dashmap", path = "src/overrides/dashmap/6.1.0" }
+defmt-parser-1-0-0 = { package = "defmt-parser", path = "src/overrides/defmt-parser/1.0.0" }
 devd-rs-0-3-6 = { package = "devd-rs", path = "src/overrides/devd-rs/0.3.6" }
 fiat-crypto-0-2-9 = { package = "fiat-crypto", path = "src/overrides/fiat-crypto/0.2.9" }
 foldhash-0-1-5 = { package = "foldhash", path = "src/overrides/foldhash/0.1.5" }
