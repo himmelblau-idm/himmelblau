@@ -1,0 +1,17 @@
+#!/bin/sh
+
+set -eu
+
+DROPIN=/etc/ssh/sshd_config.d/30-himmelblau.conf
+
+if command -v systemctl >/dev/null 2>&1; then
+    systemctl disable --now himmelblau-ssh-ca-refresh.timer >/dev/null 2>&1 || true
+fi
+
+rm -f "$DROPIN"
+if command -v sshd >/dev/null 2>&1; then
+    sshd -t
+fi
+if command -v systemctl >/dev/null 2>&1; then
+    systemctl reload ssh 2>/dev/null || systemctl reload sshd 2>/dev/null || true
+fi

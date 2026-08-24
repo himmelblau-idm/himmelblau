@@ -1,0 +1,20 @@
+#!/bin/sh
+set -eu
+
+if ! /usr/libexec/himmelblau-ssh-ca-refresh; then
+    # Retain a still-fresh last-known-good set. Once Microsoft's advertised
+    # freshness window expires, replace it with no trust anchors and reload so
+    # new Entra-certificate logins fail closed.
+    if /usr/libexec/himmelblau-ssh-ca-refresh --disable-if-stale; then
+        sshd -t
+        if command -v systemctl >/dev/null 2>&1; then
+            systemctl reload ssh 2>/dev/null || systemctl reload sshd 2>/dev/null || true
+        fi
+    fi
+    exit 1
+fi
+
+sshd -t
+if command -v systemctl >/dev/null 2>&1; then
+    systemctl reload ssh 2>/dev/null || systemctl reload sshd 2>/dev/null || true
+fi

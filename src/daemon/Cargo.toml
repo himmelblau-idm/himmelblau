@@ -18,6 +18,10 @@ path = "src/daemon.rs"
 name = "himmelblaud_tasks"
 path = "src/tasks_daemon.rs"
 
+[[bin]]
+name = "himmelblau-ssh-prepare"
+path = "src/ssh_prepare.rs"
+
 [features]
 console = ["dep:console-subscriber"]
 
@@ -72,6 +76,8 @@ assets = [
   ["scripts/himmelblau-init-hsm-pin", "usr/libexec/", "755"],
   ["target/release/himmelblaud", "usr/sbin/", "755"],
   ["target/release/himmelblaud_tasks", "usr/sbin/", "755"],
+  ["target/release/himmelblau-ssh-prepare", "usr/libexec/", "755"],
+  ["../../platform/debian/ssh_config", "etc/ssh/ssh_config.d/30-himmelblau.conf", "644"],
   ["../../README.md", "usr/share/doc/himmelblau/README", "644"],
   ["../../target/config/himmelblau.conf.example", "usr/share/doc/himmelblau/", "644"],
   ["../../man/man1/aad-tool.1", "usr/share/man/man1/", "644"],
@@ -144,6 +150,8 @@ assets = [
   { source = "scripts/himmelblau-init-hsm-pin", dest = "/usr/libexec/", mode = "755" },
   { source = "target/release/himmelblaud", dest = "/usr/sbin/", mode = "755" },
   { source = "target/release/himmelblaud_tasks", dest = "/usr/sbin/", mode = "755" },
+  { source = "target/release/himmelblau-ssh-prepare", dest = "/usr/libexec/", mode = "755" },
+  { source = "../../platform/el/ssh_config", dest = "/etc/ssh/ssh_config.d/30-himmelblau.conf", mode = "644" },
   { source = "../../README.md", dest = "/usr/share/doc/himmelblau/README", mode = "644" },
   { source = "../../target/config/himmelblau.conf.example", dest = "/usr/share/doc/himmelblau/", mode = "644" },
   { source = "../../man/man1/aad-tool.1", dest = "/usr/share/man/man1/", mode = "644" },

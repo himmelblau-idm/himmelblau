@@ -12,20 +12,53 @@ repository.workspace = true
 [lib]
 path = "src/lib.rs"
 
+[[bin]]
+name = "himmelblau-ssh-authorize"
+path = "src/authorize.rs"
+
+[[bin]]
+name = "himmelblau-ssh-ca-refresh"
+path = "src/ca_refresh.rs"
+
+[dependencies]
+himmelblau_unix_common = { workspace = true }
+base64 = { workspace = true }
+httpdate = "1.0.3"
+libc = { workspace = true }
+openssl = { workspace = true }
+reqwest = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+sha2 = { workspace = true }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+
 [package.metadata.deb]
 name = "himmelblau-sshd-config"
 depends = ["openssh-server"]
 assets = [
-  ["../../platform/debian/sshd_config", "etc/ssh/sshd_config.d/30-himmelblau.conf", "644"],
+  ["../../platform/debian/sshd_config", "usr/lib/himmelblau/ssh/30-himmelblau.conf", "644"],
+  ["target/release/himmelblau-ssh-authorize", "usr/libexec/", "755"],
+  ["target/release/himmelblau-ssh-ca-refresh", "usr/libexec/", "755"],
+  ["../../platform/common/himmelblau-ssh-authorizer.sysusers", "usr/lib/sysusers.d/himmelblau-ssh-authorizer.conf", "644"],
+  ["scripts/himmelblau-ssh-ca-update", "usr/libexec/", "755"],
+  ["../../platform/common/himmelblau-ssh-ca-refresh.service", "usr/lib/systemd/system/", "644"],
+  ["../../platform/common/himmelblau-ssh-ca-refresh.timer", "usr/lib/systemd/system/", "644"],
 ]
 maintainer-scripts = "scripts"
 
 [package.metadata.generate-rpm]
 name = "himmelblau-sshd-config"
 assets = [
-  { source = "../../platform/el/sshd_config", dest = "/etc/ssh/sshd_config.d/30-himmelblau.conf", mode = "644" },
+  { source = "../../platform/el/sshd_config", dest = "/usr/lib/himmelblau/ssh/30-himmelblau.conf", mode = "644" },
+  { source = "target/release/himmelblau-ssh-authorize", dest = "/usr/libexec/", mode = "755" },
+  { source = "target/release/himmelblau-ssh-ca-refresh", dest = "/usr/libexec/", mode = "755" },
+  { source = "../../platform/common/himmelblau-ssh-authorizer.sysusers", dest = "/usr/lib/sysusers.d/himmelblau-ssh-authorizer.conf", mode = "644" },
+  { source = "scripts/himmelblau-ssh-ca-update", dest = "/usr/libexec/", mode = "755" },
+  { source = "../../platform/common/himmelblau-ssh-ca-refresh.service", dest = "/usr/lib/systemd/system/", mode = "644" },
+  { source = "../../platform/common/himmelblau-ssh-ca-refresh.timer", dest = "/usr/lib/systemd/system/", mode = "644" },
 ]
 post_install_script = "scripts/postinst"
+pre_uninstall_script = "scripts/prerm"
 
 [package.metadata.generate-rpm.requires]
 openssh-server = "*"
