@@ -101,8 +101,12 @@ in
         default = false;
         description = ''
           Whether to add a try_unseal auth module to automatically unseal
-          Entra ID secrets (TOTP, refresh tokens) using the login password as PIN,
-          similar to how pam_gnome_keyring unlocks the keyring at login.
+          cached Entra ID SSO material using the login password as PIN, similar
+          to how pam_gnome_keyring unlocks the keyring at login.
+
+          This cannot be used with enable_hello_totp. When Hello TOTP is enabled,
+          the daemon refuses the non-interactive unseal before loading cached SSO
+          material because the hook cannot collect the required second factor.
         '';
       };
 

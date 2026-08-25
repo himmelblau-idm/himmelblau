@@ -264,6 +264,30 @@ pub(crate) fn should_block_hello_pin_attempts(bad_pin_count: u32, retry_count: u
     bad_pin_count >= retry_count
 }
 
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum TryUnsealPolicyDenial {
+    HelloDisabled,
+    HelloTotpEnabled,
+    RetryLimitReached,
+}
+
+pub(crate) fn try_unseal_policy_denial(
+    hello_enabled: bool,
+    hello_totp_enabled: bool,
+    bad_pin_count: u32,
+    hello_pin_retry_count: u32,
+) -> Option<TryUnsealPolicyDenial> {
+    if !hello_enabled {
+        Some(TryUnsealPolicyDenial::HelloDisabled)
+    } else if hello_totp_enabled {
+        Some(TryUnsealPolicyDenial::HelloTotpEnabled)
+    } else if should_block_hello_pin_attempts(bad_pin_count, hello_pin_retry_count) {
+        Some(TryUnsealPolicyDenial::RetryLimitReached)
+    } else {
+        None
+    }
+}
+
 #[macro_export]
 macro_rules! handle_hello_bad_pin_count {
     ($self:expr, $account_id:expr, $keystore:expr, $ret_fn:expr) => {{
@@ -327,6 +351,10 @@ macro_rules! handle_hello_bad_pin_count {
 pub(crate) enum KeyType {
     Hello,
     Decoupled,
+}
+
+pub(crate) fn should_renew_expired_try_unseal_prt(keytype: &KeyType, online: bool) -> bool {
+    online && matches!(keytype, KeyType::Hello)
 }
 
 #[macro_export]
@@ -440,6 +468,110 @@ macro_rules! load_cached_prt {
 macro_rules! load_cached_prt_no_op {
     ($hello_key:ident, $cred:ident, $self:ident, $account_id:expr, $keystore:expr, $tpm:expr, $machine_key:expr) => {
         // No-op, since openidconnect does not have PRTs
+    };
+}
+
+#[macro_export]
+macro_rules! load_cached_prt_for_try_unseal {
+    ($hello_key:ident, $keytype:ident, $online:ident, $cred:ident, $self:ident, $account_id:expr, $keystore:expr, $tpm:expr, $machine_key:expr) => {
+        let hello_prt_tag = $self.fetch_hello_prt_key_tag($account_id);
+        if let Ok(Some(hello_prt)) = $keystore.get_tagged_hsm_key(&hello_prt_tag) {
+            let mut prt = $self
+                .client
+                .lock()
+                .await
+                .unseal_user_prt_with_hello_key(&hello_prt, &$hello_key, &$cred, $tpm, $machine_key)
+                .map_err(|e| {
+                    error!("Failed to load hello prt: {:?}", e);
+                    IdpError::Tpm
+                })?;
+            let prt_expired = $self
+                .client
+                .lock()
+                .await
+                .is_prt_expired(&prt, $tpm, $machine_key)
+                .map_err(|e| {
+                    error!("Failed to check prt expiration: {:?}", e);
+                    IdpError::Tpm
+                })?;
+            if prt_expired {
+                if !$crate::idprovider::common::should_renew_expired_try_unseal_prt(
+                    &$keytype, $online,
+                ) {
+                    error!("Offline auth has expired. Please connect to the network to continue.");
+                    return Ok(false);
+                }
+
+                let renewed_token = match $self
+                    .client
+                    .lock()
+                    .await
+                    .acquire_token_by_hello_for_business_key(
+                        $account_id,
+                        &$hello_key,
+                        vec![],
+                        None,
+                        None,
+                        $tpm,
+                        $machine_key,
+                        &$cred,
+                    )
+                    .await
+                {
+                    Ok(token) => token,
+                    Err(himmelblau::error::MsalError::RequestFailed(msg)) => {
+                        error!(?msg, "Network down while renewing expired Hello PRT");
+                        let mut state = $self.state.lock().await;
+                        *state = $crate::idprovider::interface::CacheState::OfflineNextCheck(
+                            std::time::SystemTime::now() + OFFLINE_NEXT_CHECK,
+                        );
+                        return Ok(false);
+                    }
+                    Err(e) => {
+                        error!(?e, "Failed to renew expired Hello PRT");
+                        return Ok(false);
+                    }
+                };
+                let Some(renewed_prt) = renewed_token.prt.as_ref().cloned() else {
+                    error!("Online Hello authentication did not return a replacement PRT");
+                    return Ok(false);
+                };
+                let renewed_hello_prt = $self
+                    .client
+                    .lock()
+                    .await
+                    .seal_user_prt_with_hello_key(
+                        &renewed_prt,
+                        &$hello_key,
+                        &$cred,
+                        $tpm,
+                        $machine_key,
+                    )
+                    .map_err(|e| {
+                        error!(?e, "Failed to seal renewed Hello PRT");
+                        IdpError::Tpm
+                    })?;
+                $keystore
+                    .insert_tagged_hsm_key(&hello_prt_tag, &renewed_hello_prt)
+                    .map_err(|e| {
+                        error!(?e, "Failed to cache renewed Hello PRT");
+                        IdpError::Tpm
+                    })?;
+                prt = renewed_prt;
+            }
+            $self
+                .refresh_cache
+                .add($account_id, &RefreshCacheEntry::Prt(prt))
+                .await;
+        }
+    };
+}
+
+#[macro_export]
+macro_rules! load_cached_prt_for_try_unseal_no_op {
+    ($hello_key:ident, $keytype:ident, $online:ident, $cred:ident, $self:ident, $account_id:expr, $keystore:expr, $tpm:expr, $machine_key:expr) => {
+        // No-op, since openidconnect does not have PRTs
+        let _ = (&$keytype, $online);
     };
 }
 
@@ -730,6 +862,113 @@ macro_rules! impl_himmelblau_offline_auth_step {
                 )
             }
             _ => Err(IdpError::BadRequest),
+        }
+    }};
+}
+
+#[macro_export]
+macro_rules! impl_himmelblau_try_unseal {
+    ($self:ident, $account_id:ident, $cred:ident, $keystore:ident, $tpm:ident, $machine_key:ident, $online:ident, $load_cached_prt:ident) => {{
+        let (hello_enabled, hello_totp_enabled, hello_pin_retry_count) = {
+            let cfg = $self.config.lock().await;
+            (
+                cfg.get_enable_hello(),
+                cfg.get_enable_hello_totp(),
+                cfg.get_hello_pin_retry_count(),
+            )
+        };
+        let policy_denial = $crate::idprovider::common::try_unseal_policy_denial(
+            hello_enabled,
+            hello_totp_enabled,
+            $self.bad_pin_counter.bad_pin_count($account_id).await,
+            hello_pin_retry_count,
+        );
+        if let Some(denial) = policy_denial {
+            match denial {
+                $crate::idprovider::common::TryUnsealPolicyDenial::HelloDisabled => {
+                    error!(
+                        "Refusing try_unseal because Hello authentication is disabled; cached SSO material was not unsealed"
+                    );
+                }
+                $crate::idprovider::common::TryUnsealPolicyDenial::HelloTotpEnabled => {
+                    error!(
+                        "Refusing try_unseal because enable_hello_totp requires an interactive second factor; cached SSO material was not unsealed"
+                    );
+                }
+                $crate::idprovider::common::TryUnsealPolicyDenial::RetryLimitReached => {
+                    error!(
+                        "Refusing try_unseal because the Hello PIN retry limit has been reached; cached SSO material was not unsealed"
+                    );
+                }
+            }
+            return Ok(false);
+        }
+
+        let (hello_key, keytype) =
+            $self.fetch_hello_key($account_id, $keystore).map_err(|e| {
+                error!("try_unseal failed. Hello key missing.");
+                e
+            })?;
+        let pin = match PinValue::new($cred) {
+            Ok(pin) => pin,
+            Err(e) => {
+                error!("Failed setting pin value: {:?}", e);
+                handle_hello_bad_pin_count!($self, $account_id, $keystore, |_msg: &str| {
+                    Ok(false)
+                });
+                return Ok(false);
+            }
+        };
+
+        match $tpm.ms_hello_key_load($machine_key, &hello_key, &pin) {
+            Ok((_, win_hello_storage_key)) => {
+                // The PIN has been validated. Clear stale failures before any
+                // fallible PRT renewal or refresh-token restoration can return.
+                $self.bad_pin_counter.reset_bad_pin_count($account_id).await;
+
+                $load_cached_prt!(
+                    hello_key,
+                    keytype,
+                    $online,
+                    $cred,
+                    $self,
+                    $account_id,
+                    $keystore,
+                    $tpm,
+                    $machine_key
+                );
+
+                let hello_refresh_token_tag =
+                    $self.fetch_hello_refresh_token_key_tag($account_id);
+                if let Ok(Some(sealed_refresh_token)) =
+                    $keystore.get_tagged_hsm_key(&hello_refresh_token_tag)
+                {
+                    let refresh_token = String::from_utf8(
+                        $tpm.unseal_data(&win_hello_storage_key, &sealed_refresh_token)
+                            .map_err(|e| {
+                                error!("Failed to unseal refresh token: {:?}", e);
+                                IdpError::Tpm
+                            })?
+                            .to_vec(),
+                    )
+                    .map_err(|e| {
+                        error!("Failed to decode refresh token: {:?}", e);
+                        IdpError::Tpm
+                    })?;
+                    $self
+                        .refresh_cache
+                        .add($account_id, &RefreshCacheEntry::RefreshToken(refresh_token))
+                        .await;
+                }
+                Ok(true)
+            }
+            Err(e) => {
+                error!("{:?}", e);
+                handle_hello_bad_pin_count!($self, $account_id, $keystore, |_msg: &str| {
+                    Ok(false)
+                });
+                Ok(false)
+            }
         }
     }};
 }
@@ -1170,7 +1409,11 @@ macro_rules! impl_setup_hello_totp {
 
 #[cfg(test)]
 mod tests {
-    use super::{should_block_hello_pin_attempts, should_warn_last_hello_pin_attempt};
+    use super::{
+        should_block_hello_pin_attempts, should_renew_expired_try_unseal_prt,
+        should_warn_last_hello_pin_attempt, try_unseal_policy_denial, KeyType,
+        TryUnsealPolicyDenial,
+    };
 
     #[test]
     fn hello_pin_retry_count_allows_exactly_configured_failures() {
@@ -1191,5 +1434,36 @@ mod tests {
         assert!(!should_warn_last_hello_pin_attempt(0, 0));
         assert!(should_block_hello_pin_attempts(0, 0));
         assert!(should_block_hello_pin_attempts(1, 0));
+    }
+
+    #[test]
+    fn expired_prt_is_renewed_only_for_online_try_unseal_with_hello_key() {
+        assert!(should_renew_expired_try_unseal_prt(&KeyType::Hello, true));
+        assert!(!should_renew_expired_try_unseal_prt(&KeyType::Hello, false));
+        assert!(!should_renew_expired_try_unseal_prt(
+            &KeyType::Decoupled,
+            true
+        ));
+    }
+
+    #[test]
+    fn try_unseal_policy_enforces_all_hello_gates() {
+        assert_eq!(
+            try_unseal_policy_denial(false, false, 0, 3),
+            Some(TryUnsealPolicyDenial::HelloDisabled)
+        );
+        assert_eq!(
+            try_unseal_policy_denial(true, true, 0, 3),
+            Some(TryUnsealPolicyDenial::HelloTotpEnabled)
+        );
+        assert_eq!(
+            try_unseal_policy_denial(true, false, 2, 2),
+            Some(TryUnsealPolicyDenial::RetryLimitReached)
+        );
+        assert_eq!(
+            try_unseal_policy_denial(true, false, 0, 0),
+            Some(TryUnsealPolicyDenial::RetryLimitReached)
+        );
+        assert_eq!(try_unseal_policy_denial(true, false, 1, 2), None);
     }
 }

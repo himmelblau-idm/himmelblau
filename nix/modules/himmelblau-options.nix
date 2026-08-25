@@ -217,7 +217,7 @@ in
         
         The TOTP secret is enrolled and enforced locally on the host and is independent of any cloud-based MFA or identity provider. Users who have not yet enrolled a TOTP secret will be prompted to complete TOTP enrollment.
         
-        Hello PIN alone is not permitted for remote authentication unless allow_remote_hello is enabled. When Hello TOTP is enabled, Hello + TOTP is accepted for remote services; otherwise remote logins skip Hello and require MFA.
+        Hello PIN alone is not permitted for remote authentication unless allow_remote_hello is enabled. When Hello TOTP is enabled, Hello + TOTP is accepted for remote services; otherwise remote logins skip Hello and require MFA. The non-interactive PAM try_unseal option is incompatible with Hello TOTP. When this setting is enabled, try_unseal is refused before cached SSO material is loaded because the hook cannot collect a TOTP. Use the normal interactive Himmelblau authentication flow instead.
       '';
       example = true;
     };
