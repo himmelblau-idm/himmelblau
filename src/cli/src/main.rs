@@ -108,6 +108,36 @@ struct Token {
     response: BrokerTokenResponse,
 }
 
+fn preserve_numeric_account_success(existing_line: &str) -> Option<String> {
+    let control_start = existing_line.find('[')?;
+    let control_end = existing_line[control_start..].find(']')? + control_start;
+    let control = &existing_line[control_start + 1..control_end];
+    let actions: Vec<&str> = control.split_whitespace().collect();
+    let has_numeric_success = actions.iter().any(|action| {
+        action.strip_prefix("success=").is_some_and(|value| {
+            !value.is_empty() && value.bytes().all(|byte| byte.is_ascii_digit())
+        })
+    });
+    if !has_numeric_success || !actions.contains(&"default=ignore") {
+        return None;
+    }
+
+    if actions.contains(&"auth_err=die") {
+        return Some(existing_line.to_string());
+    }
+    if actions.iter().any(|action| action.starts_with("auth_err=")) {
+        return None;
+    }
+
+    let default_offset = control.find("default=ignore")?;
+    let insert_at = control_start + 1 + default_offset;
+    Some(format!(
+        "{}auth_err=die {}",
+        &existing_line[..insert_at],
+        &existing_line[insert_at..]
+    ))
+}
+
 #[instrument(skip(after_pred, before_pred))]
 fn insert_module_line(
     pam_file: &str,
@@ -153,7 +183,13 @@ fn insert_module_line(
             return Ok(());
         }
 
-        lines[existing_index] = module_line.to_string();
+        let updated_line = preserve_numeric_account_success(&lines[existing_index])
+            .unwrap_or_else(|| module_line.to_string());
+        if updated_line == lines[existing_index] {
+            debug!("{} already contains pam_himmelblau; skipping", pam_file);
+            return Ok(());
+        }
+        lines[existing_index] = updated_line;
 
         if dry_run {
             println!("[{}] (dry run):", pam_file);
@@ -2432,12 +2468,12 @@ async fn main() -> ExitCode {
 
 #[cfg(test)]
 mod tests {
-    use super::insert_module_line;
     use super::HimmelblauUnixParser;
+    use super::{insert_module_line, preserve_numeric_account_success};
     use clap::CommandFactory;
     use std::fs;
     use std::path::PathBuf;
-    use std::time::{SystemTime, UNIX_EPOCH};
+    use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
     const ACCOUNT_LINE: &str =
         "account\t[success=ok auth_err=die default=ignore]\tpam_himmelblau.so ignore_unknown_user";
@@ -2534,6 +2570,87 @@ mod tests {
 
         let content = read_to_string(&path)?;
         assert_eq!(content, existing);
+        remove_temp_file(&path)
+    }
+
+    #[test]
+    fn preserves_secure_pam_auth_update_jump() {
+        let line = "account [success=2 auth_err=die default=ignore] pam_himmelblau.so";
+        assert_eq!(
+            preserve_numeric_account_success(line).as_deref(),
+            Some(line)
+        );
+    }
+
+    #[test]
+    fn skips_secure_numeric_account_jump_without_rewriting() -> anyhow::Result<()> {
+        let existing = concat!(
+            "account [success=2 auth_err=die default=ignore] ",
+            "pam_himmelblau.so ignore_unknown_user\n",
+            "account required pam_unix.so\n"
+        );
+        let path = temp_pam_file("secure-numeric-account-jump", existing)?;
+        let sentinel_mtime = UNIX_EPOCH + Duration::from_secs(1_700_000_000);
+        fs::File::options()
+            .write(true)
+            .open(&path)?
+            .set_times(fs::FileTimes::new().set_modified(sentinel_mtime))?;
+        let original_mtime = fs::metadata(&path)?.modified()?;
+
+        insert_module_line(
+            path.to_str().unwrap_or_default(),
+            ACCOUNT_LINE,
+            None,
+            None,
+            true,
+            false,
+        )?;
+
+        assert_eq!(read_to_string(&path)?, existing);
+        assert_eq!(fs::metadata(&path)?.modified()?, original_mtime);
+        remove_temp_file(&path)
+    }
+
+    #[test]
+    fn adds_terminal_denial_to_legacy_pam_auth_update_jump() {
+        assert_eq!(
+            preserve_numeric_account_success(
+                "account [success=2 default=ignore] pam_himmelblau.so"
+            )
+            .as_deref(),
+            Some("account [success=2 auth_err=die default=ignore] pam_himmelblau.so")
+        );
+    }
+
+    #[test]
+    fn preserves_numeric_account_jump_during_update() -> anyhow::Result<()> {
+        let path = temp_pam_file(
+            "numeric-account-jump",
+            concat!(
+                "account [success=2 default=ignore] ",
+                "pam_himmelblau.so ignore_unknown_user\n",
+                "account required pam_unix.so\n"
+            ),
+        )?;
+
+        insert_module_line(
+            path.to_str().unwrap_or_default(),
+            ACCOUNT_LINE,
+            None,
+            None,
+            true,
+            false,
+        )?;
+
+        let content = read_to_string(&path)?;
+        assert_eq!(
+            content,
+            concat!(
+                "account [success=2 auth_err=die default=ignore] ",
+                "pam_himmelblau.so ignore_unknown_user\n",
+                "account required pam_unix.so\n"
+            )
+        );
         remove_temp_file(&path)
     }
 
