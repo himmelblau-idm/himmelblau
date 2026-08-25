@@ -385,6 +385,18 @@ pub trait IdProvider {
         _online_at_init: bool,
     ) -> Result<AuthResult, IdpError>;
 
+    /// Validate a Hello PIN and restore its cached PRT/refresh token without
+    /// entering the interactive online or offline authentication state machine.
+    async fn unix_user_try_unseal<D: KeyStoreTxn + Send>(
+        &self,
+        _account_id: &str,
+        _cred: &str,
+        _keystore: &mut D,
+        _tpm: &mut tpm::provider::BoxedDynTpm,
+        _machine_key: &tpm::structures::StorageKey,
+        _online: bool,
+    ) -> Result<bool, IdpError>;
+
     async fn unix_group_get(
         &self,
         id: &Id,

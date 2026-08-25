@@ -120,19 +120,36 @@ mod tests {
     use himmelblau::UserToken as UnixUserToken;
     use kanidm_hsm_crypto::{provider::BoxedDynTpm, provider::SoftTpm, provider::Tpm, AuthValue};
     use libkrimes::proto::KerberosCredentials;
-    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+    use std::sync::RwLock;
     use std::time::{Duration, SystemTime};
     use tokio::sync::broadcast;
 
     struct OfflineFallbackProvider {
-        offline: AtomicBool,
+        cache_state: RwLock<CacheState>,
+        check_online_result: AtomicBool,
+        cache_state_calls: AtomicUsize,
+        check_online_calls: AtomicUsize,
+        try_unseal_online: AtomicBool,
+        user_get_calls: AtomicUsize,
+        try_unseal_calls: AtomicUsize,
     }
 
     impl OfflineFallbackProvider {
         fn new() -> Self {
             Self {
-                offline: AtomicBool::new(false),
+                cache_state: RwLock::new(CacheState::Online),
+                check_online_result: AtomicBool::new(true),
+                cache_state_calls: AtomicUsize::new(0),
+                check_online_calls: AtomicUsize::new(0),
+                try_unseal_online: AtomicBool::new(false),
+                user_get_calls: AtomicUsize::new(0),
+                try_unseal_calls: AtomicUsize::new(0),
             }
+        }
+
+        fn set_cache_state(&self, state: CacheState) {
+            *self.cache_state.write().expect("cache state lock poisoned") = state;
         }
     }
 
@@ -143,7 +160,8 @@ mod tests {
             _tpm: &mut tpm::provider::BoxedDynTpm,
             _now: SystemTime,
         ) -> bool {
-            true
+            self.check_online_calls.fetch_add(1, Ordering::AcqRel);
+            self.check_online_result.load(Ordering::Acquire)
         }
 
         async fn unix_user_get<D: KeyStoreTxn + Send>(
@@ -154,6 +172,7 @@ mod tests {
             _tpm: &mut tpm::provider::BoxedDynTpm,
             _machine_key: &tpm::structures::StorageKey,
         ) -> Result<UserTokenState, IdpError> {
+            self.user_get_calls.fetch_add(1, Ordering::AcqRel);
             Ok(UserTokenState::UseCached)
         }
 
@@ -224,7 +243,9 @@ mod tests {
             _machine_key: &tpm::structures::StorageKey,
             _shutdown_rx: &broadcast::Receiver<()>,
         ) -> Result<(AuthRequest, AuthCredHandler), IdpError> {
-            self.offline.store(true, Ordering::Release);
+            self.set_cache_state(CacheState::OfflineNextCheck(
+                SystemTime::now() + Duration::from_secs(60),
+            ));
             Err(IdpError::BadRequest)
         }
 
@@ -268,6 +289,20 @@ mod tests {
             Err(IdpError::BadRequest)
         }
 
+        async fn unix_user_try_unseal<D: KeyStoreTxn + Send>(
+            &self,
+            _account_id: &str,
+            _cred: &str,
+            _keystore: &mut D,
+            _tpm: &mut tpm::provider::BoxedDynTpm,
+            _machine_key: &tpm::structures::StorageKey,
+            online: bool,
+        ) -> Result<bool, IdpError> {
+            self.try_unseal_calls.fetch_add(1, Ordering::AcqRel);
+            self.try_unseal_online.store(online, Ordering::Release);
+            Ok(true)
+        }
+
         async fn unix_group_get(
             &self,
             _id: &Id,
@@ -284,11 +319,11 @@ mod tests {
             _account_id: Option<&str>,
             _keystore: &mut D,
         ) -> CacheState {
-            if self.offline.load(Ordering::Acquire) {
-                CacheState::OfflineNextCheck(SystemTime::now() + Duration::from_secs(60))
-            } else {
-                CacheState::Online
-            }
+            self.cache_state_calls.fetch_add(1, Ordering::AcqRel);
+            self.cache_state
+                .read()
+                .expect("cache state lock poisoned")
+                .clone()
         }
 
         async fn offline_break_glass(&self, _ttl: Option<u64>) -> Result<(), IdpError> {
@@ -297,6 +332,12 @@ mod tests {
     }
 
     fn test_token() -> UserToken {
+        let group = GroupToken {
+            name: "linux-users".to_string(),
+            spn: "linux-users".to_string(),
+            uuid: uuid::uuid!("9f8a7a5a-a8e8-5c57-9f4f-7dfe21126c23"),
+            gidnumber: 2100,
+        };
         UserToken {
             name: "testuser".to_string(),
             spn: "testuser@example.com".to_string(),
@@ -305,18 +346,22 @@ mod tests {
             gidnumber: 2000,
             displayname: "Test User".to_string(),
             shell: None,
-            groups: Vec::new(),
+            groups: vec![group],
             tenant_id: Some(uuid::uuid!("58e8a301-2502-4814-81c5-a4d17c399a45")),
             valid: true,
         }
     }
 
-    async fn setup_resolver() -> Resolver<OfflineFallbackProvider> {
+    async fn setup_resolver_with_expiry(expiry: u64) -> Resolver<OfflineFallbackProvider> {
         let db = Db::new("").expect("failed to create test db");
         let mut dbtxn = db.write().await;
         dbtxn.migrate().expect("failed to migrate test db");
+        let token = test_token();
         dbtxn
-            .update_account(&test_token(), 0)
+            .update_group(&token.groups[0], expiry)
+            .expect("failed to seed test group");
+        dbtxn
+            .update_account(&token, expiry)
             .expect("failed to seed test token");
         dbtxn.commit().expect("failed to commit test db");
 
@@ -335,7 +380,7 @@ mod tests {
             hsm,
             machine_key,
             3600,
-            Vec::new(),
+            vec!["9f8a7a5a-a8e8-5c57-9f4f-7dfe21126c23".to_string()],
             "/bin/sh".to_string(),
             "/home/".to_string(),
             HomeAttr::Name,
@@ -346,6 +391,10 @@ mod tests {
         )
         .await
         .expect("failed to create resolver")
+    }
+
+    async fn setup_resolver() -> Resolver<OfflineFallbackProvider> {
+        setup_resolver_with_expiry(0).await
     }
 
     #[tokio::test]
@@ -369,6 +418,149 @@ mod tests {
 
         assert!(matches!(result.0, AuthSession::InProgress { .. }));
         assert!(matches!(result.1, PamAuthResponse::Pin));
+    }
+
+    #[tokio::test]
+    async fn try_unseal_refreshes_only_an_expired_user_token() {
+        let resolver = setup_resolver().await;
+
+        assert!(resolver
+            .pam_try_unseal("testuser@example.com", "123456")
+            .await
+            .expect("try_unseal failed"));
+        assert_eq!(resolver.client.try_unseal_calls.load(Ordering::Acquire), 1);
+        assert!(resolver.client.try_unseal_online.load(Ordering::Acquire));
+        assert_eq!(resolver.client.cache_state_calls.load(Ordering::Acquire), 1);
+        assert_eq!(
+            resolver.client.check_online_calls.load(Ordering::Acquire),
+            0
+        );
+        assert_eq!(resolver.client.user_get_calls.load(Ordering::Acquire), 1);
+        let (_expired, cached) = resolver
+            .get_cached_usertoken(&Id::Name("testuser@example.com".to_string()))
+            .await
+            .expect("failed to reload cached user");
+        let cached = cached.expect("cached user was removed");
+        assert_eq!(cached.groups.len(), 1);
+        assert_eq!(cached.groups[0].spn, "linux-users");
+        assert_eq!(
+            resolver
+                .pam_account_allowed("testuser@example.com")
+                .await
+                .expect("allow-group check failed"),
+            Some(true)
+        );
+    }
+
+    #[tokio::test]
+    async fn try_unseal_skips_refresh_for_a_valid_user_token() {
+        let expiry = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .expect("system clock predates UNIX epoch")
+            .as_secs()
+            + 3600;
+        let resolver = setup_resolver_with_expiry(expiry).await;
+
+        assert!(resolver
+            .pam_try_unseal("testuser@example.com", "123456")
+            .await
+            .expect("try_unseal failed"));
+        assert_eq!(resolver.client.try_unseal_calls.load(Ordering::Acquire), 1);
+        assert!(resolver.client.try_unseal_online.load(Ordering::Acquire));
+        assert_eq!(resolver.client.cache_state_calls.load(Ordering::Acquire), 1);
+        assert_eq!(
+            resolver.client.check_online_calls.load(Ordering::Acquire),
+            0
+        );
+        assert_eq!(resolver.client.user_get_calls.load(Ordering::Acquire), 0);
+    }
+
+    #[tokio::test]
+    async fn try_unseal_passes_offline_state_to_provider() {
+        let resolver = setup_resolver().await;
+        resolver
+            .client
+            .set_cache_state(CacheState::OfflineNextCheck(
+                SystemTime::now() + Duration::from_secs(60),
+            ));
+
+        assert!(resolver
+            .pam_try_unseal("testuser@example.com", "123456")
+            .await
+            .expect("try_unseal failed"));
+        assert_eq!(resolver.client.try_unseal_calls.load(Ordering::Acquire), 1);
+        assert!(!resolver.client.try_unseal_online.load(Ordering::Acquire));
+        assert_eq!(resolver.client.cache_state_calls.load(Ordering::Acquire), 1);
+        assert_eq!(
+            resolver.client.check_online_calls.load(Ordering::Acquire),
+            0
+        );
+        assert_eq!(resolver.client.user_get_calls.load(Ordering::Acquire), 0);
+    }
+
+    #[tokio::test]
+    async fn try_unseal_does_not_probe_or_refresh_when_offline() {
+        let resolver = setup_resolver().await;
+        resolver.client.set_cache_state(CacheState::Offline);
+
+        assert!(resolver
+            .pam_try_unseal("testuser@example.com", "123456")
+            .await
+            .expect("try_unseal failed"));
+        assert_eq!(resolver.client.try_unseal_calls.load(Ordering::Acquire), 1);
+        assert!(!resolver.client.try_unseal_online.load(Ordering::Acquire));
+        assert_eq!(resolver.client.cache_state_calls.load(Ordering::Acquire), 1);
+        assert_eq!(
+            resolver.client.check_online_calls.load(Ordering::Acquire),
+            0
+        );
+        assert_eq!(resolver.client.user_get_calls.load(Ordering::Acquire), 0);
+    }
+
+    #[tokio::test]
+    async fn try_unseal_probes_and_refreshes_when_retry_is_due() {
+        let resolver = setup_resolver().await;
+        resolver
+            .client
+            .set_cache_state(CacheState::OfflineNextCheck(SystemTime::UNIX_EPOCH));
+
+        assert!(resolver
+            .pam_try_unseal("testuser@example.com", "123456")
+            .await
+            .expect("try_unseal failed"));
+        assert_eq!(resolver.client.try_unseal_calls.load(Ordering::Acquire), 1);
+        assert!(resolver.client.try_unseal_online.load(Ordering::Acquire));
+        assert_eq!(resolver.client.cache_state_calls.load(Ordering::Acquire), 1);
+        assert_eq!(
+            resolver.client.check_online_calls.load(Ordering::Acquire),
+            1
+        );
+        assert_eq!(resolver.client.user_get_calls.load(Ordering::Acquire), 1);
+    }
+
+    #[tokio::test]
+    async fn try_unseal_does_not_refresh_when_due_probe_fails() {
+        let resolver = setup_resolver().await;
+        resolver
+            .client
+            .set_cache_state(CacheState::OfflineNextCheck(SystemTime::UNIX_EPOCH));
+        resolver
+            .client
+            .check_online_result
+            .store(false, Ordering::Release);
+
+        assert!(resolver
+            .pam_try_unseal("testuser@example.com", "123456")
+            .await
+            .expect("try_unseal failed"));
+        assert_eq!(resolver.client.try_unseal_calls.load(Ordering::Acquire), 1);
+        assert!(!resolver.client.try_unseal_online.load(Ordering::Acquire));
+        assert_eq!(resolver.client.cache_state_calls.load(Ordering::Acquire), 1);
+        assert_eq!(
+            resolver.client.check_online_calls.load(Ordering::Acquire),
+            1
+        );
+        assert_eq!(resolver.client.user_get_calls.load(Ordering::Acquire), 0);
     }
 }
 
@@ -1782,51 +1974,57 @@ where
         }
     }
 
-    /// One-shot PIN-based unseal: runs auth init and, if the daemon
-    /// requests a PIN, immediately submits it. Returns Ok(true) on
-    /// success, Ok(false) on auth failure, Err(()) on internal error.
+    /// One-shot PIN-based unseal. Every invocation validates the PIN and
+    /// restores valid cached SSO material through a dedicated provider path.
+    /// An expired Entra PRT is renewed with the Hello key when the provider is
+    /// online. A cached user record is refreshed online only when cache_timeout
+    /// has elapsed.
     pub async fn pam_try_unseal(&self, account_id: &str, cred: &str) -> Result<bool, ()> {
-        let (shutdown_tx, _) = broadcast::channel(1);
+        let id = Id::Name(account_id.to_string());
+        let (expired, token) = self.get_cached_usertoken(&id).await?;
+        let Some(token) = token else {
+            debug!("pam_try_unseal: no cached user token");
+            return Ok(false);
+        };
 
-        let (mut auth_session, init_resp) = self
-            .pam_account_authenticate_init(
+        let state = self.get_cachestate(Some(account_id)).await;
+        let online_at_init = self.test_connection_for_state(state).await;
+
+        let mut hsm_lock = self.hsm.lock().await;
+        let mut dbtxn = self.db.write().await;
+        let unseal_result = self
+            .client
+            .unix_user_try_unseal(
                 account_id,
-                "try_unseal",
-                false,
-                false,
-                shutdown_tx.subscribe(),
+                cred,
+                &mut dbtxn,
+                hsm_lock.deref_mut(),
+                &self.machine_key,
+                online_at_init,
             )
-            .await?;
+            .await;
 
-        // Only proceed if the daemon is asking for a PIN.
-        match init_resp {
-            PamAuthResponse::Pin => {}
-            PamAuthResponse::Success => {
-                debug!("pam_try_unseal: already unsealed");
-                return Ok(true);
+        drop(hsm_lock);
+        dbtxn.commit().map_err(|_| ())?;
+
+        match unseal_result {
+            Ok(true) => {
+                if expired && online_at_init {
+                    // This consumes the PRT restored above. Provider failures
+                    // fall back to the cached user without extending its
+                    // cache_timeout, so a later invocation can retry.
+                    if self.refresh_usertoken(&id, Some(token)).await.is_err() {
+                        debug!("pam_try_unseal: timed online refresh failed");
+                    }
+                }
+                Ok(true)
             }
-            _ => {
-                debug!(
-                    "pam_try_unseal: daemon did not request PIN (got {:?})",
-                    init_resp
-                );
-                return Ok(false);
+            Ok(false) => {
+                debug!("pam_try_unseal: PIN auth denied");
+                Ok(false)
             }
-        }
-
-        let step_resp = self
-            .pam_account_authenticate_step(
-                &mut auth_session,
-                PamAuthRequest::Pin {
-                    cred: cred.to_string(),
-                },
-            )
-            .await?;
-
-        match step_resp {
-            PamAuthResponse::Success => Ok(true),
-            _ => {
-                debug!("pam_try_unseal: PIN auth failed (got {:?})", step_resp);
+            Err(e) => {
+                debug!("pam_try_unseal: local unseal failed: {:?}", e);
                 Ok(false)
             }
         }
@@ -1850,18 +2048,25 @@ where
 
     pub async fn test_connection(&self) -> bool {
         let state = self.get_cachestate(None).await;
+        self.test_connection_for_state(state).await
+    }
+
+    async fn test_connection_for_state(&self, state: CacheState) -> bool {
         match state {
             CacheState::Offline => {
                 trace!("Offline -> no change");
                 false
             }
-            CacheState::OfflineNextCheck(_time) => {
+            CacheState::OfflineNextCheck(time) => {
+                let now = SystemTime::now();
+                if now < time {
+                    trace!(?time, "Offline -> next check not due");
+                    return false;
+                }
+
                 let mut hsm_lock = self.hsm.lock().await;
 
-                let res = self
-                    .client
-                    .check_online(hsm_lock.deref_mut(), SystemTime::now())
-                    .await;
+                let res = self.client.check_online(hsm_lock.deref_mut(), now).await;
 
                 drop(hsm_lock);
 

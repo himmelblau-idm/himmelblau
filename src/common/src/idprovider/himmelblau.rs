@@ -48,9 +48,10 @@ use crate::{
     entra_id_refresh_token_token_fetch, extract_base_url, handle_hello_bad_pin_count,
     impl_change_auth_token, impl_check_online, impl_create_decoupled_hello_key,
     impl_handle_hello_pin_totp_auth, impl_himmelblau_hello_key_helpers,
-    impl_himmelblau_offline_auth_init, impl_himmelblau_offline_auth_step, impl_offline_break_glass,
-    impl_provision_hello_key, impl_provision_or_create_hello_key, impl_setup_hello_totp,
-    impl_unix_user_access, load_cached_prt, seal_prt_with_existing_hello_key,
+    impl_himmelblau_offline_auth_init, impl_himmelblau_offline_auth_step,
+    impl_himmelblau_try_unseal, impl_offline_break_glass, impl_provision_hello_key,
+    impl_provision_or_create_hello_key, impl_setup_hello_totp, impl_unix_user_access,
+    load_cached_prt, load_cached_prt_for_try_unseal, seal_prt_with_existing_hello_key,
 };
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
@@ -785,6 +786,32 @@ impl IdProvider for HimmelblauMultiProvider {
         }
     }
 
+    async fn unix_user_try_unseal<D: KeyStoreTxn + Send>(
+        &self,
+        account_id: &str,
+        cred: &str,
+        keystore: &mut D,
+        tpm: &mut tpm::provider::BoxedDynTpm,
+        machine_key: &tpm::structures::StorageKey,
+        online: bool,
+    ) -> Result<bool, IdpError> {
+        let domain = idp_get_domain_for_account!(self, account_id)?;
+        let provider = self.find_provider(domain).await?;
+
+        match provider.as_ref() {
+            Providers::Oidc(provider) => {
+                provider
+                    .unix_user_try_unseal(account_id, cred, keystore, tpm, machine_key, online)
+                    .await
+            }
+            Providers::Himmelblau(provider) => {
+                provider
+                    .unix_user_try_unseal(account_id, cred, keystore, tpm, machine_key, online)
+                    .await
+            }
+        }
+    }
+
     async fn unix_group_get(
         &self,
         _id: &Id,
@@ -1440,8 +1467,9 @@ impl IdProvider for HimmelblauProvider {
         macro_rules! fake_user {
             () => {
                 match old_token {
-                    // If we have an existing token, just keep it
-                    Some(token) => return Ok(UserTokenState::Update(token.clone())),
+                    // If we have an existing token, keep it without extending
+                    // cache_timeout: no online validation succeeded.
+                    Some(_) => return Ok(UserTokenState::UseCached),
                     // Otherwise, see if we should fake it
                     None => {
                         // Check if the user exists
@@ -4418,6 +4446,28 @@ impl IdProvider for HimmelblauProvider {
             machine_key,
             token,
             load_cached_prt
+        )
+    }
+
+    #[instrument(skip_all)]
+    async fn unix_user_try_unseal<D: KeyStoreTxn + Send>(
+        &self,
+        account_id: &str,
+        cred: &str,
+        keystore: &mut D,
+        tpm: &mut tpm::provider::BoxedDynTpm,
+        machine_key: &tpm::structures::StorageKey,
+        online: bool,
+    ) -> Result<bool, IdpError> {
+        impl_himmelblau_try_unseal!(
+            self,
+            account_id,
+            cred,
+            keystore,
+            tpm,
+            machine_key,
+            online,
+            load_cached_prt_for_try_unseal
         )
     }
 

@@ -36,16 +36,20 @@ use crate::{
     check_hello_totp_enabled, check_hello_totp_setup, extract_base_url, handle_hello_bad_pin_count,
     impl_change_auth_token, impl_check_online, impl_create_decoupled_hello_key,
     impl_handle_hello_pin_totp_auth, impl_himmelblau_hello_key_helpers,
-    impl_himmelblau_offline_auth_init, impl_himmelblau_offline_auth_step, impl_offline_break_glass,
-    impl_setup_hello_totp, impl_unix_user_access, load_cached_prt_no_op, no_op_prt_token_fetch,
-    oidc_refresh_token_token_fetch,
+    impl_himmelblau_offline_auth_init, impl_himmelblau_offline_auth_step,
+    impl_himmelblau_try_unseal, impl_offline_break_glass, impl_setup_hello_totp,
+    impl_unix_user_access, load_cached_prt_for_try_unseal_no_op, load_cached_prt_no_op,
+    no_op_prt_token_fetch, oidc_refresh_token_token_fetch,
 };
 use async_trait::async_trait;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine;
 use bytes::{BufMut, BytesMut};
 use futures::{SinkExt, StreamExt};
-use himmelblau::{error::MsalError, MFAAuthContinue, UserToken as UnixUserToken};
+use himmelblau::{
+    error::{ErrorResponse, MsalError},
+    MFAAuthContinue, UserToken as UnixUserToken,
+};
 use himmelblau::{ClientInfo, IdToken};
 use idmap::Idmap;
 use kanidm_hsm_crypto::structures::LoadableMsHelloKey;
@@ -873,13 +877,15 @@ fn orchestrator_inputs_from_pam_request(
 mod tests {
     use super::{
         auth_request_from_orchestrator_inputs, mfa_from_oidc_device, oidc_account_id_from_userinfo,
-        oidc_should_prompt_hello_setup, orchestrator_inputs_from_pam_request,
-        parse_oidc_mfa_extra_data, ropc_is_invalid_credentials, serialize_oidc_mfa_extra_data,
+        oidc_refresh_failure_state, oidc_should_prompt_hello_setup,
+        orchestrator_inputs_from_pam_request, parse_oidc_mfa_extra_data,
+        ropc_is_invalid_credentials, serialize_oidc_mfa_extra_data,
         validated_password_cache_action, OidcMfaExtraData, OidcUserInfoClaims,
         OrchestratorFlowState, OrchestratorInputType, OrchestratorRequiredInput,
     };
-    use crate::idprovider::interface::{AuthCacheAction, AuthRequest, AuthResult};
+    use crate::idprovider::interface::{AuthCacheAction, AuthRequest, AuthResult, UserTokenState};
     use crate::unix_proto::PamAuthRequest;
+    use himmelblau::error::{ErrorResponse, MsalError};
     use oauth2::DeviceAuthorizationResponse;
     use serde_json::json;
 
@@ -937,6 +943,48 @@ mod tests {
         });
 
         assert_eq!(super::oidc_group_claims_from_value(&claims), vec!["valid"]);
+    }
+
+    #[test]
+    fn oidc_refresh_invalidates_only_for_invalid_grant() {
+        assert!(matches!(
+            oidc_refresh_failure_state(&MsalError::RequestFailed("offline".to_string())),
+            UserTokenState::UseCached
+        ));
+        assert!(matches!(
+            oidc_refresh_failure_state(&MsalError::AcquireTokenFailed(ErrorResponse {
+                error: "invalid_grant".to_string(),
+                error_description: "refresh token expired".to_string(),
+                suberror: None,
+                error_codes: vec![],
+            })),
+            UserTokenState::NotFound
+        ));
+        for error in [
+            "invalid_client",
+            "invalid_scope",
+            "temporarily_unavailable",
+            "server_error",
+        ] {
+            assert!(matches!(
+                oidc_refresh_failure_state(&MsalError::AcquireTokenFailed(ErrorResponse {
+                    error: error.to_string(),
+                    error_description: "provider rejected the request".to_string(),
+                    suberror: None,
+                    error_codes: vec![],
+                })),
+                UserTokenState::UseCached
+            ));
+        }
+        for error in [
+            "Failed to read refresh token response body",
+            "Failed to parse refresh token error response",
+        ] {
+            assert!(matches!(
+                oidc_refresh_failure_state(&MsalError::GeneralFailure(error.to_string())),
+                UserTokenState::UseCached
+            ));
+        }
     }
 
     #[test]
@@ -1854,6 +1902,15 @@ fn oidc_group_tokens_from_claims(
         .collect()
 }
 
+fn oidc_refresh_failure_state(error: &MsalError) -> UserTokenState {
+    match error {
+        MsalError::AcquireTokenFailed(response) if response.error == "invalid_grant" => {
+            UserTokenState::NotFound
+        }
+        _ => UserTokenState::UseCached,
+    }
+}
+
 pub struct OidcApplication {
     client: Mutex<Option<OidcDelayedInit>>,
 }
@@ -2231,9 +2288,7 @@ impl OidcApplication {
                 .form(&body)
                 .send()
                 .await
-                .map_err(|e| {
-                    MsalError::GeneralFailure(format!("Failed to send refresh token request: {e}"))
-                })?;
+                .map_err(|e| MsalError::RequestFailed(e.to_string()))?;
 
             let status = resp.status();
             let bytes = resp.bytes().await.map_err(|e| {
@@ -2249,68 +2304,25 @@ impl OidcApplication {
                     ))
                 })
             } else {
-                #[derive(Deserialize, Debug)]
-                struct RefreshTokenErrorResponse {
-                    error: String,
-                    #[allow(dead_code)]
-                    error_description: Option<String>,
-                }
+                let err: ErrorResponse = serde_json::from_slice(&bytes).map_err(|e| {
+                    error!(
+                        ?e,
+                        status = ?status,
+                        body = %String::from_utf8_lossy(&bytes),
+                        "Unexpected refresh token response"
+                    );
+                    MsalError::GeneralFailure(format!(
+                        "Failed to parse refresh token error response: {e}"
+                    ))
+                })?;
 
-                let err: RefreshTokenErrorResponse =
-                    serde_json::from_slice(&bytes).map_err(|e| {
-                        error!(
-                            ?e,
-                            status = ?status,
-                            body = %String::from_utf8_lossy(&bytes),
-                            "Unexpected refresh token response"
-                        );
-                        MsalError::GeneralFailure(format!(
-                            "Failed to parse refresh token error response: {e}"
-                        ))
-                    })?;
-
-                match err.error.as_str() {
-                    // Most common refresh failures
-                    "invalid_grant" => {
-                        error!(
-                            desc = ?err.error_description,
-                            "Refresh token rejected (invalid_grant)"
-                        );
-                        Err(MsalError::GeneralFailure(
-                            "Refresh token rejected (invalid_grant)".to_string(),
-                        ))
-                    }
-                    "invalid_client" => {
-                        error!(
-                            desc = ?err.error_description,
-                            "Client authentication failed (invalid_client)"
-                        );
-                        Err(MsalError::GeneralFailure(
-                            "Client authentication failed (invalid_client)".to_string(),
-                        ))
-                    }
-                    "invalid_scope" => {
-                        error!(
-                            desc = ?err.error_description,
-                            "Requested scope is invalid for refresh (invalid_scope)"
-                        );
-                        Err(MsalError::GeneralFailure(
-                            "Requested scope is invalid for refresh (invalid_scope)".to_string(),
-                        ))
-                    }
-                    other => {
-                        error!(
-                            error = %other,
-                            desc = ?err.error_description,
-                            status = ?status,
-                            "Refresh token grant failed with unexpected error"
-                        );
-                        Err(MsalError::GeneralFailure(format!(
-                            "Refresh token grant failed with error: {}",
-                            other
-                        )))
-                    }
-                }
+                error!(
+                    error = %err.error,
+                    desc = %err.error_description,
+                    status = ?status,
+                    "Refresh token grant failed"
+                );
+                Err(MsalError::AcquireTokenFailed(err))
             }
         } else {
             Err(MsalError::RequestFailed(
@@ -2841,6 +2853,99 @@ impl IdProvider for OidcProvider {
                 }
             },
         };
+
+        // Existing OIDC users must only be refreshed from authenticated
+        // provider data. The synthetic token below is suitable for resolving a
+        // user before their first authentication, but replacing a cached token
+        // with it would discard the group claims used by pam_allow_groups.
+        if token.is_some() {
+            let refresh_token = match self.refresh_cache.refresh_token(account_id).await {
+                Ok(RefreshCacheEntry::RefreshToken(refresh_token)) => refresh_token,
+                Ok(RefreshCacheEntry::Prt(_)) => {
+                    error!(
+                        "Unexpected PRT cache entry while refreshing generic OIDC user '{}'",
+                        account_id
+                    );
+                    return Ok(UserTokenState::UseCached);
+                }
+                Err(e) => {
+                    debug!(
+                        ?e,
+                        "No authenticated refresh token available for cached OIDC user '{}'",
+                        account_id
+                    );
+                    return Ok(UserTokenState::UseCached);
+                }
+            };
+
+            let refreshed = match self
+                .client
+                .acquire_token_by_refresh_token(&refresh_token, vec![])
+                .await
+            {
+                Ok(refreshed) => refreshed,
+                Err(e) => {
+                    let state = oidc_refresh_failure_state(&e);
+                    if matches!(&state, UserTokenState::UseCached) {
+                        match &e {
+                            MsalError::RequestFailed(msg) => {
+                                let url = extract_base_url!(msg);
+                                info!(
+                                    ?url,
+                                    "Network down while refreshing authenticated OIDC user '{}'; retaining cached claims",
+                                    account_id
+                                );
+                            }
+                            _ => {
+                                error!(
+                                    ?e,
+                                    "OIDC refresh failed for authenticated user '{}'; retaining cached claims",
+                                    account_id
+                                );
+                            }
+                        }
+                        let mut cache_state = self.state.lock().await;
+                        *cache_state =
+                            CacheState::OfflineNextCheck(SystemTime::now() + OFFLINE_NEXT_CHECK);
+                    } else {
+                        error!(
+                            ?e,
+                            "OIDC refresh token was rejected for '{}'; invalidating cached user",
+                            account_id
+                        );
+                    }
+                    return Ok(state);
+                }
+            };
+
+            return match self.token_validate(account_id, &refreshed).await {
+                Ok(AuthResult::Success { token }) => Ok(UserTokenState::Update(token)),
+                Ok(AuthResult::Denied(msg)) => {
+                    error!(
+                        %msg,
+                        "Refreshed OIDC identity did not match cached user '{}'; invalidating cached user",
+                        account_id
+                    );
+                    Ok(UserTokenState::NotFound)
+                }
+                Ok(AuthResult::Next(_)) => {
+                    error!(
+                        "Unexpected continuation while refreshing cached OIDC user '{}'; retaining cached claims",
+                        account_id
+                    );
+                    Ok(UserTokenState::UseCached)
+                }
+                Err(e) => {
+                    error!(
+                        ?e,
+                        "Failed to rebuild cached OIDC user '{}' from authenticated claims",
+                        account_id
+                    );
+                    Ok(UserTokenState::UseCached)
+                }
+            };
+        }
+
         let displayname = match token {
             Some(tok) => tok.displayname.clone(),
             None => "".to_string(),
@@ -4023,6 +4128,28 @@ impl IdProvider for OidcProvider {
             machine_key,
             token,
             load_cached_prt_no_op
+        )
+    }
+
+    #[instrument(level = "debug", skip_all)]
+    async fn unix_user_try_unseal<D: KeyStoreTxn + Send>(
+        &self,
+        account_id: &str,
+        cred: &str,
+        keystore: &mut D,
+        tpm: &mut tpm::provider::BoxedDynTpm,
+        machine_key: &tpm::structures::StorageKey,
+        online: bool,
+    ) -> Result<bool, IdpError> {
+        impl_himmelblau_try_unseal!(
+            self,
+            account_id,
+            cred,
+            keystore,
+            tpm,
+            machine_key,
+            online,
+            load_cached_prt_for_try_unseal_no_op
         )
     }
 
