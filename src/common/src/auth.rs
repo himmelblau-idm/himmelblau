@@ -677,7 +677,7 @@ fn hello_totp_enroll_fallback_msg(url: &str) -> Result<String, String> {
     }
 }
 
-fn hello_totp_enroll_qr_msg(url: &str, qr: String) -> Result<String, String> {
+fn hello_totp_enroll_qr_msg(url: &str, qr: &str) -> Result<String, String> {
     let fallback_msg = hello_totp_enroll_fallback_msg(url)?;
     Ok(tr_fmt(
         "Open your authenticator app and scan this QR code to enroll. Then enter the generated code.\n{qr}",
@@ -958,7 +958,7 @@ fn handle_pam_auth_response_hellototp(state: &AuthenticateState, msg: &str) -> P
         && state.service != "broker-interactive"
     {
         match generate_unicode_qr(msg) {
-            Ok(qr) => match hello_totp_enroll_qr_msg(msg, qr) {
+            Ok(qr) => match hello_totp_enroll_qr_msg(msg, &qr) {
                 Ok(msg) => state.msg_printer.print_text(&msg),
                 Err(msg) => {
                     pam_fail!(state.msg_printer, msg, PamResultCode::PAM_SYSTEM_ERR);
@@ -1939,7 +1939,7 @@ mod tests {
         let uri = "otpauth://totp/Himmelblau%20testhost:user%40example.com?secret=JBSWY3DPEHPK3PXP&issuer=Himmelblau%20testhost&algorithm=SHA1&digits=6&period=30";
         let qr = generate_unicode_qr(uri).expect("QR generation should succeed");
 
-        let msg = hello_totp_enroll_qr_msg(uri, qr).expect("QR enrollment message should format");
+        let msg = hello_totp_enroll_qr_msg(uri, &qr).expect("QR enrollment message should format");
 
         assert!(msg.contains(
             "Open your authenticator app and scan this QR code to enroll. Then enter the generated code."
