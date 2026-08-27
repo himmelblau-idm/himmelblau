@@ -3435,13 +3435,6 @@ impl IdProvider for HimmelblauProvider {
                                 ));
                             }
                         };
-                        let action = match (
-                            self.config.lock().await.get_offline_breakglass_enabled(),
-                            password.as_ref(),
-                        ) {
-                            (true, Some(cred)) => AuthCacheAction::PasswordHashUpdate { cred: cred.clone() },
-                            _ => AuthCacheAction::None,
-                        };
                         *cred_handler = AuthCredHandler::MFA {
                             flow: Box::new($resp),
                             password,
@@ -3455,21 +3448,13 @@ impl IdProvider for HimmelblauProvider {
                                 has_physical_security_key: false,
                                 has_cross_device: false,
                             }),
-                            /* Cache the offline password hash for breakglass
-                             * conditions, if enabled. */
-                            action,
+                            // Do not cache the password until MFA succeeds.
+                            AuthCacheAction::None,
                         ));
                     },
                     // PROMPT
                     {
                         let msg = $resp.msg.clone();
-                        let action = match (
-                            self.config.lock().await.get_offline_breakglass_enabled(),
-                            password.as_ref(),
-                        ) {
-                            (true, Some(cred)) => AuthCacheAction::PasswordHashUpdate { cred: cred.clone() },
-                            _ => AuthCacheAction::None,
-                        };
                         *cred_handler = AuthCredHandler::MFA {
                             flow: Box::new($resp),
                             password,
@@ -3481,9 +3466,8 @@ impl IdProvider for HimmelblauProvider {
                                 msg,
                                 echo_on: false,
                             }),
-                            /* Cache the offline password hash for breakglass
-                             * conditions, if enabled. */
-                            action,
+                            // Do not cache the password until MFA succeeds.
+                            AuthCacheAction::None,
                         ));
                     },
                     // POLL
@@ -3491,13 +3475,6 @@ impl IdProvider for HimmelblauProvider {
                         let msg = $resp.msg.clone();
                         let polling_interval = $resp.polling_interval.unwrap_or(5000);
                         let show_push_hint = mfa_flow_uses_push_hint(&$resp);
-                        let action = match (
-                            self.config.lock().await.get_offline_breakglass_enabled(),
-                            password.as_ref(),
-                        ) {
-                            (true, Some(cred)) => AuthCacheAction::PasswordHashUpdate { cred: cred.clone() },
-                            _ => AuthCacheAction::None,
-                        };
                         *cred_handler = AuthCredHandler::MFA {
                             flow: Box::new($resp),
                             password,
@@ -3512,9 +3489,8 @@ impl IdProvider for HimmelblauProvider {
                                 polling_interval: polling_interval / 1000,
                                 show_push_hint,
                             }),
-                            /* Cache the offline password hash for breakglass
-                             * conditions, if enabled. */
-                            action,
+                            // Do not cache the password until MFA succeeds.
+                            AuthCacheAction::None,
                         ));
                     }
                 )
@@ -3596,7 +3572,7 @@ impl IdProvider for HimmelblauProvider {
             };
         }
         macro_rules! reseal_prt_with_existing_hello_key_on_success {
-            ($token:expr, $reauth_hello_pin:expr, $success_token:expr) => {{
+            ($token:expr, $reauth_hello_pin:expr, $success_token:expr, $action:expr) => {{
                 // Issue #1051: If this MFA flow was triggered by an expired
                 // PRT/refresh token, re-seal the new PRT with the existing
                 // Hello key instead of forcing PIN re-enrollment.
@@ -3618,7 +3594,7 @@ impl IdProvider for HimmelblauProvider {
                             AuthResult::Success {
                                 token: $success_token,
                             },
-                            AuthCacheAction::None,
+                            $action,
                         ));
                     }
                     warn!(
@@ -4130,28 +4106,32 @@ impl IdProvider for HimmelblauProvider {
                 let token2 = enroll_and_obtain_enrolled_token!(token, password.clone());
                 match self.token_validate(account_id, &token2, None).await {
                     Ok(AuthResult::Success { token: token3 }) => {
+                        let cache_action = match (
+                            self.config.lock().await.get_offline_breakglass_enabled(),
+                            password.as_ref(),
+                        ) {
+                            (true, Some(cred)) => {
+                                AuthCacheAction::PasswordHashUpdate { cred: cred.clone() }
+                            }
+                            _ => AuthCacheAction::None,
+                        };
                         reseal_prt_with_existing_hello_key_on_success!(
                             &token2,
                             reauth_hello_pin,
-                            token3
+                            token3,
+                            cache_action
                         );
 
                         // Skip Hello enrollment if it is disabled by config
                         let hello_enabled = self.config.lock().await.get_enable_hello();
                         if !hello_enabled || no_hello_pin {
                             info!("Skipping Hello enrollment because it is disabled");
-                            return Ok((
-                                AuthResult::Success { token: token3 },
-                                AuthCacheAction::None,
-                            ));
+                            return Ok((AuthResult::Success { token: token3 }, cache_action));
                         }
                         let hello_key_missing = self.fetch_hello_key(account_id, keystore).is_err();
                         if !hello_key_missing {
                             debug!("Skipping Hello enrollment because Hello is already configured");
-                            return Ok((
-                                AuthResult::Success { token: token3 },
-                                AuthCacheAction::None,
-                            ));
+                            return Ok((AuthResult::Success { token: token3 }, cache_action));
                         }
 
                         // Setup Windows Hello
@@ -4162,7 +4142,7 @@ impl IdProvider for HimmelblauProvider {
                             AuthResult::Next(AuthRequest::SetupPin {
                                 msg: tr("Set up a PIN\nA Hello PIN is a fast, secure way to sign in to your device, apps, and services."),
                             }),
-                            AuthCacheAction::None,
+                            cache_action,
                         ));
                     }
                     Ok(auth_result) => Ok((auth_result, AuthCacheAction::None)),
@@ -4251,28 +4231,32 @@ impl IdProvider for HimmelblauProvider {
                 };
                 match self.token_validate(account_id, &token2, None).await {
                     Ok(AuthResult::Success { token: token3 }) => {
+                        let cache_action = match (
+                            self.config.lock().await.get_offline_breakglass_enabled(),
+                            password.as_ref(),
+                        ) {
+                            (true, Some(cred)) => {
+                                AuthCacheAction::PasswordHashUpdate { cred: cred.clone() }
+                            }
+                            _ => AuthCacheAction::None,
+                        };
                         reseal_prt_with_existing_hello_key_on_success!(
                             &token2,
                             reauth_hello_pin,
-                            token3
+                            token3,
+                            cache_action
                         );
 
                         // Skip Hello enrollment if it is disabled by config
                         let hello_enabled = self.config.lock().await.get_enable_hello();
                         if !hello_enabled || no_hello_pin {
                             info!("Skipping Hello enrollment because it is disabled");
-                            return Ok((
-                                AuthResult::Success { token: token3 },
-                                AuthCacheAction::None,
-                            ));
+                            return Ok((AuthResult::Success { token: token3 }, cache_action));
                         }
                         let hello_key_missing = self.fetch_hello_key(account_id, keystore).is_err();
                         if !hello_key_missing {
                             debug!("Skipping Hello enrollment because Hello is already configured");
-                            return Ok((
-                                AuthResult::Success { token: token3 },
-                                AuthCacheAction::None,
-                            ));
+                            return Ok((AuthResult::Success { token: token3 }, cache_action));
                         }
 
                         // Setup Windows Hello
@@ -4283,7 +4267,7 @@ impl IdProvider for HimmelblauProvider {
                             AuthResult::Next(AuthRequest::SetupPin {
                                 msg: tr("Set up a PIN\nA Hello PIN is a fast, secure way to sign in to your device, apps, and services."),
                             }),
-                            AuthCacheAction::None,
+                            cache_action,
                         ));
                     }
                     Ok(auth_result) => Ok((auth_result, AuthCacheAction::None)),
@@ -4344,28 +4328,32 @@ impl IdProvider for HimmelblauProvider {
                 let token2 = enroll_and_obtain_enrolled_token!(token, password.clone());
                 match self.token_validate(account_id, &token2, None).await {
                     Ok(AuthResult::Success { token: token3 }) => {
+                        let cache_action = match (
+                            self.config.lock().await.get_offline_breakglass_enabled(),
+                            password.as_ref(),
+                        ) {
+                            (true, Some(cred)) => {
+                                AuthCacheAction::PasswordHashUpdate { cred: cred.clone() }
+                            }
+                            _ => AuthCacheAction::None,
+                        };
                         reseal_prt_with_existing_hello_key_on_success!(
                             &token2,
                             reauth_hello_pin,
-                            token3
+                            token3,
+                            cache_action
                         );
 
                         // Skip Hello enrollment if it is disabled by config
                         let hello_enabled = self.config.lock().await.get_enable_hello();
                         if !hello_enabled || no_hello_pin {
                             info!("Skipping Hello enrollment because it is disabled");
-                            return Ok((
-                                AuthResult::Success { token: token3 },
-                                AuthCacheAction::None,
-                            ));
+                            return Ok((AuthResult::Success { token: token3 }, cache_action));
                         }
                         let hello_key_missing = self.fetch_hello_key(account_id, keystore).is_err();
                         if !hello_key_missing {
                             debug!("Skipping Hello enrollment because Hello is already configured");
-                            return Ok((
-                                AuthResult::Success { token: token3 },
-                                AuthCacheAction::None,
-                            ));
+                            return Ok((AuthResult::Success { token: token3 }, cache_action));
                         }
 
                         // Setup Windows Hello
@@ -4376,7 +4364,7 @@ impl IdProvider for HimmelblauProvider {
                             AuthResult::Next(AuthRequest::SetupPin {
                                 msg: tr("Set up a PIN\nA Hello PIN is a fast, secure way to sign in to your device, apps, and services."),
                             }),
-                            AuthCacheAction::None,
+                            cache_action,
                         ));
                     }
                     Ok(auth_result) => Ok((auth_result, AuthCacheAction::None)),
