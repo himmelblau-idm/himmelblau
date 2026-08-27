@@ -564,6 +564,41 @@ mod tests {
         );
         assert_eq!(resolver.client.user_get_calls.load(Ordering::Acquire), 0);
     }
+
+    #[tokio::test]
+    async fn hello_password_reauth_cannot_fall_back_to_offline_auth() {
+        let resolver = setup_resolver().await;
+        resolver
+            .set_cache_userpassword(test_token().uuid, "cached-password")
+            .await
+            .expect("failed to seed cached password");
+        resolver.client.set_cache_state(CacheState::Offline);
+        let (_shutdown_tx, shutdown_rx) = broadcast::channel(1);
+        let mut auth_session = AuthSession::InProgress {
+            account_id: "testuser@example.com".to_string(),
+            service: "gdm-password".to_string(),
+            id: Id::Name("testuser@example.com".to_string()),
+            token: Some(Box::new(test_token())),
+            online_at_init: true,
+            cred_handler: AuthCredHandler::ReauthPassword {
+                reauth_hello_pin: "123456".to_string().into(),
+            },
+            shutdown_rx,
+            no_hello_pin: false,
+            force_reauth: false,
+        };
+
+        let result = resolver
+            .pam_account_authenticate_step(
+                &mut auth_session,
+                PamAuthRequest::Password {
+                    cred: "cached-password".to_string(),
+                },
+            )
+            .await;
+
+        assert!(result.is_err());
+    }
 }
 
 impl<I> Resolver<I>
@@ -1852,6 +1887,11 @@ where
                 // contained to the resolver so that it has generic offline-paths
                 // that are possible?
                 match (&cred_handler, &pam_next_req) {
+                    (AuthCredHandler::ReauthPassword { .. }, _) => {
+                        // Password-based Hello reauthentication must complete online so
+                        // that the provider can enforce the remaining MFA requirements.
+                        return Err(());
+                    }
                     (_, PamAuthRequest::Password { cred }) => {
                         match self.check_cache_userpassword(token.uuid, cred).await {
                             Ok(true) => Ok(AuthResult::Success {
@@ -1927,10 +1967,6 @@ where
                     (AuthCredHandler::PasswordFirst { .. }, _) => {
                         // AuthCredHandler::PasswordFirst with anything other than
                         // PamAuthRequest::Password is invalid.
-                        return Err(());
-                    }
-                    (AuthCredHandler::ReauthPassword { .. }, _) => {
-                        // AuthCredHandler::ReauthPassword is invalid for offline auth.
                         return Err(());
                     }
                 }
