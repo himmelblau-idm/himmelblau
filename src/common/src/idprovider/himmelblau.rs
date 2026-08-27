@@ -63,7 +63,7 @@ use himmelblau::error::{MsalError, DEVICE_AUTH_FAIL};
 use himmelblau::graph::UserObject;
 use himmelblau::graph::{DirectoryObject, Graph};
 use himmelblau::intune::{fetch_intune_portal_versions, IntuneForLinux};
-use himmelblau::{AuthOption, MFAAuthContinue};
+use himmelblau::{AuthOption, EntraSshCertificate, MFAAuthContinue};
 use himmelblau::{ClientToken, ConfidentialClientApplication};
 use idmap::{AadSid, Idmap};
 use kanidm_hsm_crypto::{
@@ -400,6 +400,35 @@ macro_rules! idp_get_domain_for_account {
 
 #[async_trait]
 impl IdProvider for HimmelblauMultiProvider {
+    async fn unix_user_ssh_certificate<D: KeyStoreTxn + Send>(
+        &self,
+        account_id: &str,
+        openssh_public_key: &str,
+        keystore: &mut D,
+        tpm: &mut tpm::provider::BoxedDynTpm,
+        machine_key: &tpm::structures::StorageKey,
+    ) -> Result<EntraSshCertificate, IdpError> {
+        let domain = idp_get_domain_for_account!(self, account_id)?;
+        let provider = self.find_provider(domain).await?;
+        match provider.as_ref() {
+            Providers::Himmelblau(provider) => {
+                provider
+                    .unix_user_ssh_certificate(
+                        account_id,
+                        openssh_public_key,
+                        keystore,
+                        tpm,
+                        machine_key,
+                    )
+                    .await
+            }
+            Providers::Oidc(_) => Err(IdpError::NotFound {
+                what: "Microsoft SSH certificate support".to_string(),
+                where_: "OIDC provider".to_string(),
+            }),
+        }
+    }
+
     async fn offline_break_glass(&self, ttl: Option<u64>) -> Result<(), IdpError> {
         let providers: Vec<_> = self.providers.lock().await.values().cloned().collect();
         for provider in providers {
@@ -1085,6 +1114,37 @@ fn throttle_backoff_delay(attempt: usize) -> Duration {
 
 #[async_trait]
 impl IdProvider for HimmelblauProvider {
+    async fn unix_user_ssh_certificate<D: KeyStoreTxn + Send>(
+        &self,
+        account_id: &str,
+        openssh_public_key: &str,
+        _keystore: &mut D,
+        tpm: &mut tpm::provider::BoxedDynTpm,
+        machine_key: &tpm::structures::StorageKey,
+    ) -> Result<EntraSshCertificate, IdpError> {
+        let sealed_prt = match self.refresh_cache.refresh_token(account_id).await? {
+            RefreshCacheEntry::Prt(prt) => prt,
+            RefreshCacheEntry::RefreshToken(_) => {
+                // SSH issuance is intentionally stricter than other token
+                // acquisition: never use a plain refresh token as a fallback.
+                return Err(IdpError::ProviderUnauthorised);
+            }
+        };
+
+        self.client
+            .lock()
+            .await
+            .exchange_prt_for_ssh_certificate(&sealed_prt, openssh_public_key, tpm, machine_key)
+            .await
+            .map_err(|err| {
+                error!(?err, "Microsoft SSH certificate acquisition failed");
+                match err {
+                    MsalError::RequestFailed(_) => IdpError::Transport,
+                    _ => IdpError::ProviderUnauthorised,
+                }
+            })
+    }
+
     async fn offline_break_glass(&self, ttl: Option<u64>) -> Result<(), IdpError> {
         impl_offline_break_glass!(self, ttl)
     }

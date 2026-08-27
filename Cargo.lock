@@ -3017,9 +3017,8 @@ dependencies = [
 
 [[package]]
 name = "libhimmelblau"
-version = "0.8.30"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b190520a12cef337e297bd029d059bcd30660d2fe1987b47d2fc5d7aa3e693ec"
+version = "0.8.35"
+source = "git+https://gitlab.com/samba-team/libhimmelblau.git?branch=dmulder%2Fssh_certificates#02ff40dd24d11a78925dcd5d1e1982ba2763e6d8"
 dependencies = [
  "base64 0.23.1",
  "cbindgen",
@@ -5276,6 +5275,18 @@ dependencies = [
 [[package]]
 name = "sshd-config"
 version = "4.0.0"
+dependencies = [
+ "base64 0.23.1",
+ "himmelblau_unix_common",
+ "httpdate",
+ "libc",
+ "openssl",
+ "reqwest 0.13.4",
+ "serde",
+ "serde_json",
+ "sha2 0.11.0",
+ "tokio",
+]
 
 [[package]]
 name = "sso"

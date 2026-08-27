@@ -1,2 +1,6 @@
 KbdInteractiveAuthentication yes
 ChallengeResponseAuthentication yes
+PubkeyAuthentication yes
+TrustedUserCAKeys /var/lib/himmelblau/ssh-ca/trusted_user_ca_keys
+AuthorizedPrincipalsCommand /usr/libexec/himmelblau-ssh-authorize "%u" "%U" "%i" "%F" "%t" "%k"
+AuthorizedPrincipalsCommandUser himmelblau-ssh-authorizer

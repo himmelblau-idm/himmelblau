@@ -2,14 +2,53 @@
 
 set -eu
 
-# Comment out the `KbdInteractiveAuthentication no` line if present
-CONF="/etc/ssh/sshd_config"
-if [ -f "$CONF" ]; then
-    sed -i 's/^KbdInteractiveAuthentication[[:space:]]\+no/#KbdInteractiveAuthentication no/' "$CONF"
+DROPIN=/etc/ssh/sshd_config.d/30-himmelblau.conf
+TEMPLATE=/usr/lib/himmelblau/ssh/30-himmelblau.conf
+TRUST=/var/lib/himmelblau/ssh-ca/trusted_user_ca_keys
+BACKUP_DIR=$(mktemp -d /var/lib/himmelblau/ssh-ca-install.XXXXXX)
+trap 'rm -rf "$BACKUP_DIR"' EXIT HUP INT TERM
+
+if command -v systemd-sysusers >/dev/null 2>&1; then
+    systemd-sysusers /usr/lib/sysusers.d/himmelblau-ssh-authorizer.conf
+elif ! getent passwd himmelblau-ssh-authorizer >/dev/null 2>&1; then
+    useradd --system --no-create-home --home-dir /nonexistent \
+        --shell /usr/sbin/nologin himmelblau-ssh-authorizer
 fi
 
-# Restart sshd if systemd is available, to make the config change take effect
+mkdir -p /etc/ssh/sshd_config.d /var/lib/himmelblau/ssh-ca
+if [ -f "$TRUST" ]; then
+    cp -p "$TRUST" "$BACKUP_DIR/trusted_user_ca_keys"
+fi
+if [ -f "$DROPIN" ]; then
+    cp -p "$DROPIN" "$BACKUP_DIR/30-himmelblau.conf"
+fi
+
+# This command authenticates Microsoft through HTTPS using the OS trust store,
+# validates the complete publication, and only then atomically replaces TRUST.
+/usr/libexec/himmelblau-ssh-ca-refresh
+
+cp "$TEMPLATE" "$BACKUP_DIR/30-himmelblau.conf.new"
+chmod 0644 "$BACKUP_DIR/30-himmelblau.conf.new"
+mv "$BACKUP_DIR/30-himmelblau.conf.new" "$DROPIN"
+
+if ! sshd -t; then
+    if [ -f "$BACKUP_DIR/trusted_user_ca_keys" ]; then
+        cp -p "$BACKUP_DIR/trusted_user_ca_keys" "$TRUST"
+    else
+        rm -f "$TRUST"
+    fi
+    if [ -f "$BACKUP_DIR/30-himmelblau.conf" ]; then
+        cp -p "$BACKUP_DIR/30-himmelblau.conf" "$DROPIN"
+    else
+        rm -f "$DROPIN"
+    fi
+    sshd -t || true
+    echo "Himmelblau SSH integration was not activated: sshd validation failed" >&2
+    exit 1
+fi
+
 if command -v systemctl >/dev/null 2>&1; then
-    echo "Restarting sshd service..."
-    systemctl restart ssh 2>/dev/null || systemctl restart sshd 2>/dev/null || true
+    systemctl daemon-reload || true
+    systemctl enable --now himmelblau-ssh-ca-refresh.timer >/dev/null 2>&1 || true
+    systemctl reload ssh 2>/dev/null || systemctl reload sshd 2>/dev/null || true
 fi

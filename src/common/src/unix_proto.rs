@@ -13,6 +13,7 @@ use himmelblau::intune::NoncompliantRule;
 use libc::uid_t;
 use libkrimes::proto::KerberosCredentials;
 use serde::{Deserialize, Serialize};
+use uuid::Uuid;
 
 fn default_true() -> bool {
     true
@@ -189,6 +190,23 @@ pub enum ClientRequest {
     OfflineBreakGlass(Option<u64>),
     Status,
     ComplianceCheck,
+    /// Acquire a short-lived Entra OpenSSH certificate. The daemon ignores
+    /// all caller identity data because none is present: peer credentials are
+    /// the sole identity selector.
+    AcquireSshCertificate {
+        openssh_public_key: String,
+    },
+    /// Validate the certificate offered to sshd against a target Himmelblau
+    /// identity. This request is accepted only from the packaged restricted
+    /// AuthorizedPrincipalsCommand account.
+    ValidateSshCertificateForAccount {
+        target_account: String,
+        target_uid: u32,
+        certificate_type: String,
+        certificate_body_base64: String,
+        openssh_key_id: String,
+        openssh_ca_fingerprint: String,
+    },
 }
 
 impl ClientRequest {
@@ -224,6 +242,17 @@ impl ClientRequest {
             ClientRequest::OfflineBreakGlass(ttl) => format!("OfflineBreakGlass({:?})", ttl),
             ClientRequest::Status => "Status".to_string(),
             ClientRequest::ComplianceCheck => "ComplianceCheck".to_string(),
+            ClientRequest::AcquireSshCertificate { .. } => {
+                "AcquireSshCertificate(<public-key-redacted>)".to_string()
+            }
+            ClientRequest::ValidateSshCertificateForAccount {
+                target_account,
+                target_uid,
+                ..
+            } => format!(
+                "ValidateSshCertificateForAccount({}, {}, <certificate-redacted>)",
+                target_account, target_uid
+            ),
         }
     }
 }
@@ -244,6 +273,56 @@ pub enum ClientResponse {
     NotAuthenticated,
     /// Non-compliant verdict with rule details passed through from Intune.
     NonCompliant(Vec<NoncompliantRule>),
+    SshCertificate(SshCertificate),
+    SshValidatedIdentity(SshValidatedIdentity),
+}
+
+#[derive(Serialize, Deserialize, Clone, PartialEq, Eq)]
+pub struct SshCertificate {
+    /// Complete OpenSSH certificate line. This is deliberately never included
+    /// in Debug output emitted by the daemon request logger.
+    pub openssh_certificate: String,
+    pub valid_after: u64,
+    pub valid_before: u64,
+    pub principals: Vec<String>,
+    pub object_id: Uuid,
+    pub tenant_id: Uuid,
+    pub signing_ca_fingerprint_sha256: String,
+}
+
+impl std::fmt::Debug for SshCertificate {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("SshCertificate")
+            .field("openssh_certificate", &"<redacted>")
+            .field("valid_after", &self.valid_after)
+            .field("valid_before", &self.valid_before)
+            .field("principals", &"<redacted>")
+            .field("object_id", &"<redacted>")
+            .field("tenant_id", &"<redacted>")
+            .field(
+                "signing_ca_fingerprint_sha256",
+                &self.signing_ca_fingerprint_sha256,
+            )
+            .finish()
+    }
+}
+
+#[derive(Serialize, Deserialize, Clone, PartialEq, Eq)]
+pub struct SshValidatedIdentity {
+    pub canonical_upn: String,
+    pub authorized_principal: String,
+    pub object_id: Uuid,
+    pub tenant_id: Uuid,
+}
+
+impl std::fmt::Debug for SshValidatedIdentity {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("SshValidatedIdentity")
+            .field("identity", &"<redacted>")
+            .finish()
+    }
 }
 
 impl From<PamAuthResponse> for ClientResponse {
