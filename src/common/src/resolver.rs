@@ -1592,6 +1592,11 @@ where
                 // contained to the resolver so that it has generic offline-paths
                 // that are possible?
                 match (&cred_handler, &pam_next_req) {
+                    (AuthCredHandler::ReauthPassword { .. }, _) => {
+                        // Password-based Hello reauthentication must complete online so
+                        // that the provider can enforce the remaining MFA requirements.
+                        return Err(());
+                    }
                     (_, PamAuthRequest::Password { cred }) => {
                         match self.check_cache_userpassword(token.uuid, cred).await {
                             Ok(true) => Ok(AuthResult::Success {
@@ -1664,10 +1669,6 @@ where
                     (AuthCredHandler::PasswordFirst { .. }, _) => {
                         // AuthCredHandler::PasswordFirst with anything other than
                         // PamAuthRequest::Password is invalid.
-                        return Err(());
-                    }
-                    (AuthCredHandler::ReauthPassword { .. }, _) => {
-                        // AuthCredHandler::ReauthPassword is invalid for offline auth.
                         return Err(());
                     }
                 }
