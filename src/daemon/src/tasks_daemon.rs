@@ -285,6 +285,10 @@ fn add_user_to_group(account_id: &str, local_group: &str) {
     }
 }
 
+fn group_members_include(users: &str, account_id: &str) -> bool {
+    users.split(',').any(|user| user.trim() == account_id)
+}
+
 fn user_in_group(account_id: &str, local_group: &str) -> bool {
     let output = Command::new("getent")
         .arg("group")
@@ -295,7 +299,7 @@ fn user_in_group(account_id: &str, local_group: &str) -> bool {
         if out.status.success() {
             let stdout = String::from_utf8_lossy(&out.stdout);
             if let Some(users) = stdout.split(':').nth(3) {
-                return users.split(',').any(|u| u == account_id);
+                return group_members_include(users, account_id);
             }
         }
     }
@@ -1089,6 +1093,13 @@ mod tests {
                 username
             );
         }
+    }
+
+    #[test]
+    fn group_membership_matches_newline_terminated_last_member() {
+        let users = "alice,bob\n";
+
+        assert!(group_members_include(users, "bob"));
     }
 
     #[test]
