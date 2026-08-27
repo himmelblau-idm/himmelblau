@@ -720,6 +720,7 @@ impl IdProvider for HimmelblauMultiProvider {
         &self,
         account_id: &str,
         token: Option<&UserToken>,
+        service: &str,
         no_hello_pin: bool,
         keystore: &mut D,
     ) -> Result<(AuthRequest, AuthCredHandler), IdpError> {
@@ -729,12 +730,12 @@ impl IdProvider for HimmelblauMultiProvider {
         match provider.as_ref() {
             Providers::Oidc(provider) => {
                 provider
-                    .unix_user_offline_auth_init(account_id, token, no_hello_pin, keystore)
+                    .unix_user_offline_auth_init(account_id, token, service, no_hello_pin, keystore)
                     .await
             }
             Providers::Himmelblau(provider) => {
                 provider
-                    .unix_user_offline_auth_init(account_id, token, no_hello_pin, keystore)
+                    .unix_user_offline_auth_init(account_id, token, service, no_hello_pin, keystore)
                     .await
             }
         }
@@ -4406,10 +4407,11 @@ impl IdProvider for HimmelblauProvider {
         &self,
         account_id: &str,
         _token: Option<&UserToken>,
+        service: &str,
         no_hello_pin: bool,
         keystore: &mut D,
     ) -> Result<(AuthRequest, AuthCredHandler), IdpError> {
-        impl_himmelblau_offline_auth_init!(self, account_id, no_hello_pin, keystore, true)
+        impl_himmelblau_offline_auth_init!(self, account_id, service, no_hello_pin, keystore, true)
     }
 
     #[instrument(skip_all)]
