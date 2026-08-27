@@ -38,36 +38,6 @@ jobs:
         with:
           ref: ${{ github.event_name == 'workflow_dispatch' && env.OBS_STABLE_BRANCH || github.sha }}
 
-      - name: Configure osc credentials
-        env:
-          OBS_USER: ${{ secrets.OBS_USER }}
-          OBS_PASSWORD: ${{ secrets.OBS_PASSWORD }}
-        run: |
-          set -euo pipefail
-
-          if [ -z "${OBS_USER:-}" ]; then
-            echo "::error::OBS_USER secret is not configured"
-            exit 1
-          fi
-
-          if [ -z "${OBS_PASSWORD:-}" ]; then
-            echo "::error::OBS_PASSWORD secret is not configured"
-            exit 1
-          fi
-
-          umask 077
-          mkdir -p "$HOME/.config/osc"
-          cat > "$HOME/.config/osc/oscrc" << EOF
-          [general]
-          apiurl = ${OBS_API_URL}
-
-          [${OBS_API_URL}]
-          user=${OBS_USER}
-          pass=${OBS_PASSWORD}
-          credentials_mgr_class=osc.credentials.PlaintextConfigFileCredentialsManager
-          trusted_prj=${OBS_TARGET_PROJECT}
-          EOF
-
       - name: Install osc and OBS services
         run: |
           set -euo pipefail
@@ -113,7 +83,7 @@ jobs:
           CARGO_SERVICE_RPM_DIR=$(mktemp -d "${RUNNER_TEMP}/obs-service-cargo-rpm.XXXXXX")
           CARGO_SERVICE_EXTRACT_DIR=$(mktemp -d "${RUNNER_TEMP}/obs-service-cargo-extract.XXXXXX")
 
-          osc getbinaries \
+          osc -A "$OBS_API_URL" getbinaries \
             -d "$CARGO_SERVICE_RPM_DIR" \
             devel:languages:rust \
             obs-service-cargo \
@@ -170,7 +140,37 @@ jobs:
             rpm2cpio \
             zlib1g \
             zstd
-          osc api "/source/${OBS_TARGET_PROJECT}/${OBS_PACKAGE}" >/dev/null
+          osc -A "$OBS_API_URL" api "/source/${OBS_TARGET_PROJECT}/${OBS_PACKAGE}" >/dev/null
+
+      - name: Configure osc credentials
+        env:
+          OBS_USER: ${{ secrets.OBS_USER }}
+          OBS_PASSWORD: ${{ secrets.OBS_PASSWORD }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${OBS_USER:-}" ]; then
+            echo "::error::OBS_USER secret is not configured"
+            exit 1
+          fi
+
+          if [ -z "${OBS_PASSWORD:-}" ]; then
+            echo "::error::OBS_PASSWORD secret is not configured"
+            exit 1
+          fi
+
+          umask 077
+          mkdir -p "$HOME/.config/osc"
+          cat > "$HOME/.config/osc/oscrc" << EOF
+          [general]
+          apiurl = ${OBS_API_URL}
+
+          [${OBS_API_URL}]
+          user=${OBS_USER}
+          pass=${OBS_PASSWORD}
+          credentials_mgr_class=osc.credentials.PlaintextConfigFileCredentialsManager
+          trusted_prj=${OBS_TARGET_PROJECT}
+          EOF
 
       - name: Detect source version
         id: version
@@ -217,6 +217,9 @@ jobs:
           cd "$WORKDIR"
 
           osc co "${{ steps.branch.outputs.branch_project }}/${OBS_PACKAGE}"
+
+      - name: Remove osc credentials before generating sources
+        run: rm -f "$HOME/.config/osc/oscrc"
 
       - name: Update OBS package sources
         id: update
@@ -274,6 +277,32 @@ jobs:
           echo "$STATUS"
           osc diff || true
           echo "has_changes=true" >> "$GITHUB_OUTPUT"
+
+      - name: Restore osc credentials for submission and cleanup
+        if: always()
+        env:
+          OBS_USER: ${{ secrets.OBS_USER }}
+          OBS_PASSWORD: ${{ secrets.OBS_PASSWORD }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${OBS_USER:-}" ] || [ -z "${OBS_PASSWORD:-}" ]; then
+            echo "::error::OBS credentials are not configured"
+            exit 1
+          fi
+
+          umask 077
+          mkdir -p "$HOME/.config/osc"
+          cat > "$HOME/.config/osc/oscrc" << EOF
+          [general]
+          apiurl = ${OBS_API_URL}
+
+          [${OBS_API_URL}]
+          user=${OBS_USER}
+          pass=${OBS_PASSWORD}
+          credentials_mgr_class=osc.credentials.PlaintextConfigFileCredentialsManager
+          trusted_prj=${OBS_TARGET_PROJECT}
+          EOF
 
       - name: Commit and submit OBS changes
         if: steps.update.outputs.has_changes == 'true'
