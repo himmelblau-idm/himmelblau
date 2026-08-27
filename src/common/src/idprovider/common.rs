@@ -183,6 +183,17 @@ impl RefreshCache {
         }
     }
 
+    /// Cache a PRT that was reused for an access-token exchange without
+    /// treating that exchange as a PRT renewal. If a PRT is already cached,
+    /// keep both its value and original insertion time; it may be newer than a
+    /// Hello-sealed copy loaded from disk.
+    pub(crate) async fn add_reused_prt(&self, account_id: &str, prt: &SealedData) {
+        let mut refresh_cache = self.refresh_cache.write().await;
+        refresh_cache
+            .entry(account_id.to_lowercase())
+            .or_insert_with(|| (prt.clone(), SystemTime::now()));
+    }
+
     /// Export all PRT entries from the in-memory cache as a JSON blob.
     /// This is used to persist them to a sealed memfd for systemd's
     /// FileDescriptorStore so they survive daemon restarts.
@@ -1439,8 +1450,88 @@ mod tests {
     use super::{
         should_block_hello_pin_attempts, should_offer_offline_hello_pin,
         should_renew_expired_try_unseal_prt, should_warn_last_hello_pin_attempt,
-        try_unseal_policy_denial, KeyType, TryUnsealPolicyDenial,
+        try_unseal_policy_denial, KeyType, RefreshCache, RefreshCacheEntry, TryUnsealPolicyDenial,
     };
+    use kanidm_hsm_crypto::structures::SealedData;
+    use std::time::{Duration, SystemTime};
+    use zeroize::Zeroizing;
+
+    fn test_prt(byte: u8) -> SealedData {
+        SealedData::SoftV1 {
+            data: Zeroizing::new(vec![byte]),
+            tag: [byte; 16],
+            iv: [byte; 16],
+        }
+    }
+
+    fn serialized_prt(prt: &SealedData) -> Vec<u8> {
+        serde_json::to_vec(prt).expect("test PRT should serialize")
+    }
+
+    #[tokio::test]
+    async fn reused_prt_preserves_existing_value_and_timestamp() {
+        let cache = RefreshCache::new();
+        let account_id = "User@Example.com";
+        let original_prt = test_prt(1);
+        let original_timestamp = SystemTime::now() - Duration::from_secs(60);
+        cache.refresh_cache.write().await.insert(
+            account_id.to_lowercase(),
+            (original_prt.clone(), original_timestamp),
+        );
+
+        cache.add_reused_prt(account_id, &test_prt(2)).await;
+
+        let entries = cache.refresh_cache.read().await;
+        let (cached_prt, cached_timestamp) = entries
+            .get(&account_id.to_lowercase())
+            .expect("existing PRT should remain cached");
+        assert_eq!(serialized_prt(cached_prt), serialized_prt(&original_prt));
+        assert_eq!(*cached_timestamp, original_timestamp);
+    }
+
+    #[tokio::test]
+    async fn reused_prt_is_inserted_when_cache_is_empty() {
+        let cache = RefreshCache::new();
+        let account_id = "User@Example.com";
+        let prt = test_prt(3);
+
+        cache.add_reused_prt(account_id, &prt).await;
+
+        let cached = cache
+            .refresh_token(account_id)
+            .await
+            .expect("reused PRT should be cached when no entry exists");
+        match cached {
+            RefreshCacheEntry::Prt(cached_prt) => {
+                assert_eq!(serialized_prt(&cached_prt), serialized_prt(&prt));
+            }
+            RefreshCacheEntry::RefreshToken(_) => panic!("expected a cached PRT"),
+        }
+    }
+
+    #[tokio::test]
+    async fn fresh_prt_replaces_existing_value_and_timestamp() {
+        let cache = RefreshCache::new();
+        let account_id = "User@Example.com";
+        let original_timestamp = SystemTime::now() - Duration::from_secs(60);
+        cache
+            .refresh_cache
+            .write()
+            .await
+            .insert(account_id.to_lowercase(), (test_prt(4), original_timestamp));
+        let fresh_prt = test_prt(5);
+
+        cache
+            .add(account_id, &RefreshCacheEntry::Prt(fresh_prt.clone()))
+            .await;
+
+        let entries = cache.refresh_cache.read().await;
+        let (cached_prt, cached_timestamp) = entries
+            .get(&account_id.to_lowercase())
+            .expect("fresh PRT should be cached");
+        assert_eq!(serialized_prt(cached_prt), serialized_prt(&fresh_prt));
+        assert!(*cached_timestamp > original_timestamp);
+    }
 
     #[test]
     fn hello_pin_retry_count_allows_exactly_configured_failures() {
