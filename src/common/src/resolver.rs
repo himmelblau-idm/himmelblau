@@ -269,6 +269,7 @@ mod tests {
             &self,
             _account_id: &str,
             _token: Option<&UserToken>,
+            _service: &str,
             _no_hello_pin: bool,
             _keystore: &mut D,
         ) -> Result<(AuthRequest, AuthCredHandler), IdpError> {
@@ -1651,6 +1652,7 @@ where
                                     .unix_user_offline_auth_init(
                                         account_id,
                                         token.as_ref(),
+                                        service,
                                         no_hello_pin,
                                         &mut dbtxn,
                                     )
@@ -1675,7 +1677,13 @@ where
 
             // Can the auth proceed offline?
             self.client
-                .unix_user_offline_auth_init(account_id, token.as_ref(), no_hello_pin, &mut dbtxn)
+                .unix_user_offline_auth_init(
+                    account_id,
+                    token.as_ref(),
+                    service,
+                    no_hello_pin,
+                    &mut dbtxn,
+                )
                 .await
         };
 

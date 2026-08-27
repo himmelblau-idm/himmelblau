@@ -264,6 +264,14 @@ pub(crate) fn should_block_hello_pin_attempts(bad_pin_count: u32, retry_count: u
     bad_pin_count >= retry_count
 }
 
+pub(crate) fn should_offer_offline_hello_pin(
+    is_remote_service: bool,
+    hello_totp_enabled: bool,
+    allow_remote_hello: bool,
+) -> bool {
+    !is_remote_service || hello_totp_enabled || allow_remote_hello
+}
+
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum TryUnsealPolicyDenial {
     HelloDisabled,
@@ -577,25 +585,44 @@ macro_rules! load_cached_prt_for_try_unseal_no_op {
 
 #[macro_export]
 macro_rules! impl_himmelblau_offline_auth_init {
-    ($self:ident, $account_id:expr, $no_hello_pin:ident, $keystore:expr, $password_auth:expr) => {{
+    ($self:ident, $account_id:expr, $service:expr, $no_hello_pin:ident, $keystore:expr, $password_auth:expr) => {{
         let hello_key = $self.fetch_hello_key($account_id, $keystore).ok();
-        let (sfa_enabled, hello_pin_retry_count, breakglass_enabled) = {
+        let (
+            sfa_enabled,
+            hello_pin_retry_count,
+            breakglass_enabled,
+            remote_services,
+            hello_totp_enabled,
+            allow_remote_hello,
+        ) = {
             let cfg = $self.config.lock().await;
             (
                 cfg.get_enable_sfa_fallback(),
                 cfg.get_hello_pin_retry_count(),
                 cfg.get_offline_breakglass_enabled(),
+                cfg.get_password_only_remote_services_deny_list(),
+                cfg.get_enable_hello_totp(),
+                cfg.get_allow_remote_hello(),
             )
         };
+        let is_remote_service = $service.starts_with("remote:")
+            || remote_services
+                .iter()
+                .any(|s| !s.is_empty() && $service.contains(s));
         // We only have 2 options when performing an offline auth; Hello PIN,
         // or cached password for SFA users. If neither option is available,
-        // we should respond with a resonable error indicating how to proceed.
+        // we should respond with a reasonable error indicating how to proceed.
         if hello_key.is_some()
             && !$crate::idprovider::common::should_block_hello_pin_attempts(
                 $self.bad_pin_counter.bad_pin_count($account_id).await,
                 hello_pin_retry_count,
             )
             && !$no_hello_pin
+            && $crate::idprovider::common::should_offer_offline_hello_pin(
+                is_remote_service,
+                hello_totp_enabled,
+                allow_remote_hello,
+            )
         {
             Ok((AuthRequest::Pin, AuthCredHandler::None))
         } else if $password_auth && (sfa_enabled || breakglass_enabled) {
@@ -1410,9 +1437,9 @@ macro_rules! impl_setup_hello_totp {
 #[cfg(test)]
 mod tests {
     use super::{
-        should_block_hello_pin_attempts, should_renew_expired_try_unseal_prt,
-        should_warn_last_hello_pin_attempt, try_unseal_policy_denial, KeyType,
-        TryUnsealPolicyDenial,
+        should_block_hello_pin_attempts, should_offer_offline_hello_pin,
+        should_renew_expired_try_unseal_prt, should_warn_last_hello_pin_attempt,
+        try_unseal_policy_denial, KeyType, TryUnsealPolicyDenial,
     };
 
     #[test]
@@ -1434,6 +1461,14 @@ mod tests {
         assert!(!should_warn_last_hello_pin_attempt(0, 0));
         assert!(should_block_hello_pin_attempts(0, 0));
         assert!(should_block_hello_pin_attempts(1, 0));
+    }
+
+    #[test]
+    fn offline_hello_pin_policy_blocks_unprotected_remote_auth() {
+        assert!(!should_offer_offline_hello_pin(true, false, false));
+        assert!(should_offer_offline_hello_pin(false, false, false));
+        assert!(should_offer_offline_hello_pin(true, false, true));
+        assert!(should_offer_offline_hello_pin(true, true, false));
     }
 
     #[test]
