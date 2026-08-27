@@ -2011,6 +2011,7 @@ async fn main() -> ExitCode {
                 machine_key,
                 cfg.get_cache_timeout(),
                 cfg.get_pam_allow_groups(),
+                cfg.get_oidc_issuer_url().is_some(),
                 cfg.get_shell(None),
                 cfg.get_home_prefix(None),
                 cfg.get_home_attr(None),
