@@ -30,6 +30,7 @@ use crate::db::{Cache, CacheTxn, Db};
 use crate::idprovider::interface::{
     AuthCacheAction,
     AuthCredHandler,
+    AuthRequest,
     AuthResult,
     CacheState,
     GroupToken,
@@ -1526,13 +1527,20 @@ where
                         self.set_cache_userpassword(token.uuid, &cred).await?;
                         Ok(AuthResult::Success { token })
                     }
-                    Ok((AuthResult::Next(next), AuthCacheAction::PasswordHashUpdate { cred })) => {
+                    Ok((
+                        next @ AuthResult::Next(AuthRequest::SetupPin { .. }),
+                        AuthCacheAction::PasswordHashUpdate { cred },
+                    )) => {
+                        // SetupPin is offered only after the remote authentication
+                        // flow has succeeded, so this is a post-authentication cache
+                        // update rather than an in-progress MFA update.
                         self.set_cache_userpassword(token.uuid, &cred).await?;
-                        Ok(AuthResult::Next(next))
+                        Ok(next)
                     }
-                    // I think this state is actually invalid?
+                    // Password verifiers may only be persisted after the complete
+                    // remote authentication flow succeeds. Other `Next` variants
+                    // still represent an authentication step such as MFA.
                     Ok((_, AuthCacheAction::PasswordHashUpdate { .. })) => {
-                        // Ok(res)
                         error!("provider gave back illogical password hash update with a nonsuccess condition");
                         Err(IdpError::BadRequest)
                     }
