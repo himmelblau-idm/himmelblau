@@ -2849,8 +2849,16 @@ impl IdProvider for HimmelblauProvider {
                                 ));
                             }
                         }
-                        Err(ref e) if is_sspr_required(e) => {
+                        // The SSPR cached-token fallback exists only to let a user reach a
+                        // browser on the local machine and complete SSPR enrollment.
+                        Err(ref e) if is_sspr_required(e) && !is_remote_service => {
                             sspr_demand_hello_fallback!($cred, $require_hello_totp)
+                        }
+                        Err(ref e) if is_sspr_required(e) && is_remote_service => {
+                            return Ok((
+                                AuthResult::Denied(msal_error_to_user_message(e)),
+                                AuthCacheAction::None,
+                            ));
                         }
                         Err(MsalError::AcquireTokenFailed(e)) => {
                             if e.error_codes.contains(&CONSENT_REQUIRED) {
@@ -3135,8 +3143,14 @@ impl IdProvider for HimmelblauProvider {
                                         ));
                                     }
                                 }
-                                Err(ref e) if is_sspr_required(e) => {
+                                Err(ref e) if is_sspr_required(e) && !is_remote_service => {
                                     sspr_demand_hello_fallback!($cred, $require_hello_totp)
+                                }
+                                Err(ref e) if is_sspr_required(e) && is_remote_service => {
+                                    return Ok((
+                                        AuthResult::Denied(msal_error_to_user_message(e)),
+                                        AuthCacheAction::None,
+                                    ));
                                 }
                                 Err(MsalError::AcquireTokenFailed(e)) => {
                                     if e.error_codes.contains(&CONSENT_REQUIRED) {
@@ -3271,8 +3285,14 @@ impl IdProvider for HimmelblauProvider {
                                     ));
                                 }
                             }
-                            Err(ref e) if is_sspr_required(e) => {
+                            Err(ref e) if is_sspr_required(e) && !is_remote_service => {
                                 sspr_demand_hello_fallback!($cred, $require_hello_totp)
+                            }
+                            Err(ref e) if is_sspr_required(e) && is_remote_service => {
+                                return Ok((
+                                    AuthResult::Denied(msal_error_to_user_message(e)),
+                                    AuthCacheAction::None,
+                                ));
                             }
                             Err(e) => {
                                 error!("Failed to exchange refresh token for access token: {:?}", e);
@@ -5626,12 +5646,34 @@ impl HimmelblauProvider {
 #[cfg(test)]
 mod tests {
     use super::{
-        is_mfa_required_for_enrollment, is_unavailable_mfa_method_error, mfa_flow_uses_push_hint,
-        password_change_required, CONSENT_REQUIRED,
+        is_mfa_required_for_enrollment, is_sspr_required, is_unavailable_mfa_method_error,
+        mfa_flow_uses_push_hint, password_change_required, CONSENT_REQUIRED,
+        PASSWORD_RESET_REGISTRATION_REQUIRED,
     };
     use crate::idprovider::interface::{AuthCacheAction, AuthCredHandler, AuthRequest, AuthResult};
     use himmelblau::error::{AADSTSError, ErrorResponse, MsalError, DEVICE_AUTH_FAIL};
     use himmelblau::{MFAAuthContinue, MfaMethodInfo};
+
+    fn should_use_sspr_hello_fallback(e: &MsalError, is_remote_service: bool) -> bool {
+        is_sspr_required(e) && !is_remote_service
+    }
+
+    #[test]
+    fn sspr_hello_fallback_is_local_only() {
+        let error = MsalError::AcquireTokenFailed(ErrorResponse {
+            error: "invalid_grant".to_string(),
+            error_description: "SSPR registration required".to_string(),
+            suberror: None,
+            error_codes: vec![PASSWORD_RESET_REGISTRATION_REQUIRED],
+        });
+
+        assert!(should_use_sspr_hello_fallback(&error, false));
+        assert!(!should_use_sspr_hello_fallback(&error, true));
+        assert!(!should_use_sspr_hello_fallback(
+            &MsalError::RequestFailed("network down".to_string()),
+            false
+        ));
+    }
 
     #[test]
     fn unavailable_mfa_method_error_requires_exact_requested_method() {
