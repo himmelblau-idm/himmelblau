@@ -1706,10 +1706,11 @@ impl IdProvider for OidcProvider {
         &self,
         account_id: &str,
         _token: Option<&UserToken>,
+        service: &str,
         no_hello_pin: bool,
         keystore: &mut D,
     ) -> Result<(AuthRequest, AuthCredHandler), IdpError> {
-        impl_himmelblau_offline_auth_init!(self, account_id, no_hello_pin, keystore, false)
+        impl_himmelblau_offline_auth_init!(self, account_id, service, no_hello_pin, keystore, false)
     }
 
     #[instrument(level = "debug", skip_all)]
