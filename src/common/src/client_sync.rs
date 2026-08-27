@@ -30,10 +30,20 @@ pub fn should_skip_daemon_call() -> bool {
 
     static SKIP: OnceLock<bool> = OnceLock::new();
     *SKIP.get_or_init(|| {
-        matches!(
+        // SYSTEMD_ACTIVATION_UNIT may be inherited from an untrusted caller.
+        // Only sd-executor, running directly under the system manager, may use
+        // it to suppress daemon calls during service credential resolution.
+        let is_root_system_child = unsafe { libc::geteuid() == 0 && libc::getppid() == 1 };
+        let is_systemd_executor = std::fs::read_link("/proc/self/exe")
+            .ok()
+            .and_then(|path| path.file_name().map(|name| name == "systemd-executor"))
+            .unwrap_or(false);
+        let is_himmelblau_unit = matches!(
             std::env::var_os("SYSTEMD_ACTIVATION_UNIT").as_deref(),
             Some(v) if v == "himmelblaud.service" || v == "himmelblaud-tasks.service"
-        )
+        );
+
+        is_root_system_child && is_systemd_executor && is_himmelblau_unit
     })
 }
 
