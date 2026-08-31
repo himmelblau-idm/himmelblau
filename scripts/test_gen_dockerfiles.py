@@ -20,8 +20,32 @@ class Arm64RpmDockerfileTests(unittest.TestCase):
 
         self.assertNotIn("FROM --platform=linux/amd64 rust:latest AS tooling", dockerfile)
         self.assertNotIn("COPY --from=tooling", dockerfile)
-        self.assertIn("FROM fedora:44", dockerfile)
+        self.assertIn("FROM --platform=linux/arm64 fedora:44", dockerfile)
         self.assertIn("cargo install cargo-deb cargo-generate-rpm", dockerfile)
+
+    def test_amd64_rpm_pins_amd64_base(self):
+        dockerfile = gen_dockerfiles.render(
+            "rawhide",
+            gen_dockerfiles.DISTS["rawhide"],
+            patch_libhimmelblau=False,
+            arch="amd64",
+        )
+
+        self.assertIn(
+            "FROM --platform=linux/amd64 fedora:rawhide", dockerfile
+        )
+
+    def test_arm64_deb_cross_compile_uses_amd64_base(self):
+        dockerfile = gen_dockerfiles.render(
+            "ubuntu24.04",
+            gen_dockerfiles.DISTS["ubuntu24.04"],
+            patch_libhimmelblau=False,
+            arch="arm64",
+        )
+
+        self.assertIn(
+            "FROM --platform=linux/amd64 ubuntu:24.04", dockerfile
+        )
 
 
 if __name__ == "__main__":
