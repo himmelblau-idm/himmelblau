@@ -325,8 +325,8 @@ user-login = "ebfull"
 user-name = "Sean Bowe"
 
 [[publisher.h2]]
-version = "0.4.10"
-when = "2025-05-05"
+version = "0.4.19"
+when = "2026-08-24"
 user-id = 359
 user-login = "seanmonstar"
 user-name = "Sean McArthur"
@@ -496,8 +496,8 @@ user-login = "fitzgen"
 user-name = "Nick Fitzgerald"
 
 [[publisher.libhimmelblau]]
-version = "0.8.33"
-when = "2026-08-19"
+version = "0.8.37"
+when = "2026-08-27"
 user-id = 247655
 user-login = "dmulder"
 user-name = "David Mulder"
