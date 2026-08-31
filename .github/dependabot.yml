@@ -23,6 +23,30 @@ updates:
         patterns:
           - "*"
 
+
+  # Updates for stable-4.x
+  - package-ecosystem: "cargo"
+    directory: "/"
+    target-branch: main
+    schedule:
+      interval: "monthly"
+    commit-message:
+      prefix: "deps(rust)"
+    ignore:
+      - dependency-name: "der"
+        versions:
+          - "0.8.1"
+      - dependency-name: "kanidm_lib_file_permissions"
+        versions:
+          - ">=1.11.0"
+      - dependency-name: "sketching"
+        versions:
+          - ">=1.11.0"
+    groups:
+      all-cargo-updates:
+        patterns:
+          - "*"
+
   # Updates for stable-3.x
   - package-ecosystem: "cargo"
     directory: "/"
