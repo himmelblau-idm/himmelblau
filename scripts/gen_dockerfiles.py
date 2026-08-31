@@ -294,7 +294,7 @@ DISTS = {
         "family": "rpm",
         "image": "fedora:rawhide",
         "extra_prep": [
-            "RUN dnf -y --refresh update glibc glibc-common glibc-minimal-langpack systemd-libs systemd-standalone-sysusers rpm-libs rpm && dnf -y --refresh update"
+            "RUN dnf -y --refresh --disablerepo=fedora-cisco-openh264 update glibc glibc-common glibc-minimal-langpack systemd-libs systemd-standalone-sysusers rpm-libs rpm && dnf -y --refresh --disablerepo=fedora-cisco-openh264 update"
         ],
         "tpm": True,
         "selinux": True,
