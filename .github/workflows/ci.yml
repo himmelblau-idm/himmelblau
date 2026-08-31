@@ -20,6 +20,7 @@ on:
       - stable-1.x
       - stable-2.x
       - stable-3.x
+      - stable-4.x
 
 env:
   SCCACHE_GHA_ENABLED: "true"
