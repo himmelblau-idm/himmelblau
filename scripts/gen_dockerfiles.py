@@ -166,21 +166,12 @@ CMD_SEP = f" && \\ \n{CMD_TAB}"
 GEN_MANPAGE = "python3 src/common/scripts/gen_param_code.py --gen-man --man-output man/man5/himmelblau.conf.5"
 
 
-def build_deb_final_cmd(
-    features: list,
-    distro_slug: str,
-    cross_target: str = "",
-) -> str:
+def build_deb_final_cmd(features: list, distro_slug: str, cross_target: str = "") -> str:
     target_arg = f" --target={cross_target}" if cross_target else ""
     parts = []
     for pkg, _, needs_tpm in PACKAGES:
-        if pkg == "selinux":  # Debian doesn't use selinux
+        if pkg == "selinux":
             continue
-        # Copy the feature list per-package so that stripping "tpm" for a
-        # package that doesn't need it (e.g. sshd-config) does not mutate the
-        # shared list and accidentally drop the feature for subsequent packages
-        # that DO need it (e.g. sso). Previously this was features.remove()
-        # which permanently modified the caller's list mid-loop.
         pkg_features = list(features)
         if not needs_tpm:
             pkg_features = [f for f in pkg_features if f != "tpm"]
@@ -199,9 +190,7 @@ def build_deb_final_cmd(
 def build_rpm_final_cmd(features: list, selinux: bool, apparmor: bool) -> str:
     feat_str = f" --features {','.join(features)}" if features else ""
     build = f"cargo build ${{CARGO_PATCH_ARG}} --release{feat_str} && \\ \n{CMD_TAB}"
-    strip = CMD_SEP.join(
-        ["strip -s target/release/%s" % s for s in ["*.so", "aad-tool", "himmelblaud", "himmelblaud_tasks", "broker", "himmelblaud-orchestrator"]]
-    )
+    strip = CMD_SEP.join(["strip -s target/release/%s" % s for s in ["*.so", "aad-tool", "himmelblaud", "himmelblaud_tasks", "broker", "himmelblaud-orchestrator"]])
     pkgs = []
     for pkg in PACKAGES:
         if pkg[0] == "selinux" and not selinux:
@@ -213,324 +202,88 @@ def build_rpm_final_cmd(features: list, selinux: bool, apparmor: bool) -> str:
     for _, s, _ in pkgs:
         rpm_cmds.append(f"cargo generate-rpm -p {s}")
     rpms = CMD_SEP.join(rpm_cmds)
-    if apparmor:
-        gen_servicefiles = "make rpm-servicefiles ORCHESTRATOR_APPARMOR_PROFILE=himmelblau-orchestrator-container"
-    else:
-        gen_servicefiles = "make rpm-servicefiles"
+    gen_servicefiles = "make rpm-servicefiles ORCHESTRATOR_APPARMOR_PROFILE=himmelblau-orchestrator-container" if apparmor else "make rpm-servicefiles"
     gen_authselect = "(authselect select minimal --force || authselect select local --force) && make authselect"
     return f'CMD ["/bin/sh", "-c", \\\n{CMD_TAB}"{GEN_MANPAGE} && {gen_servicefiles} && {build}{strip} && {gen_authselect} && \\\n{CMD_TAB}{rpms}"]'
 
 
 def build_gentoo_final_cmd(features: list, repo_root: Path) -> str:
-    """Build command for Gentoo - generates an ebuild file."""
     return f'CMD ["/bin/sh", "-c", "{GEN_MANPAGE} && python3 scripts/gen_ebuild.py --out ./packaging/"]'
 
 
 def build_arch_final_cmd() -> str:
-    """Build command for Arch - runs makepkg on platform/arch/PKGBUILD."""
     return 'CMD ["/bin/sh", "-c", "python3 scripts/package_arch.py --out ./packaging/"]'
 
 
 # ---- Distro targets ----------------------------------------------------------
 
 DISTS = {
-    # ---- Debian family ----
-    "debian12": {
-        "family": "deb",
-        "image": "debian:12",
-        "replace": {
-            "@development-tools": "",
-        },
-        "tpm": True,
-    },
-    "debian13": {
-        "family": "deb",
-        "image": "debian:13",
-        "replace": {
-            "@development-tools": "",
-        },
-        "tpm": True,
-    },
-    "ubuntu22.04": {
-        "family": "deb",
-        "image": "ubuntu:22.04",
-        "tpm": True,
-    },
-    "ubuntu24.04": {
-        "family": "deb",
-        "image": "ubuntu:24.04",
-        "tpm": True,
-    },
-    "ubuntu25.10": {
-        "family": "deb",
-        "image": "ubuntu:25.10",
-        "tpm": True,
-    },
-    "ubuntu26.04": {
-        "family": "deb",
-        "image": "ubuntu:26.04",
-        "tpm": True,
-    },
-    "test": {
-        "family": "deb",
-        "image": "ubuntu:24.04",
-        "tpm": False,
-        "extra_pkgs": ["nodejs"],
-    },
-    # ---- Fedora family ----
-    "fedora43": {
-        "family": "rpm",
-        "image": "fedora:43",
-        "tpm": True,
-        "selinux": True,
-    },
-    "fedora44": {
-        "family": "rpm",
-        "image": "fedora:44",
-        "tpm": True,
-        "selinux": True,
-    },
-    "rawhide": {
-        "family": "rpm",
-        "image": "fedora:rawhide",
-        "extra_prep": [
-            "RUN dnf -y --refresh update glibc glibc-common glibc-minimal-langpack systemd-libs systemd-standalone-sysusers rpm-libs rpm && dnf -y --refresh update"
-        ],
-        "tpm": True,
-        "selinux": True,
-    },
-    # ---- Rocky family ----
-    "rocky8": {
-        "family": "rpm",
-        "image": "rockylinux/rockylinux:8",
-        "extra_prep": [
-            "RUN dnf -y install 'dnf-command(config-manager)' && dnf config-manager --set-enabled powertools",
-            # Python 3.6 doesn't have dataclasses; install python39 and use it
-            "RUN dnf -y install python39 && alternatives --set python3 /usr/bin/python3.9",
-        ],
-        "replace": {
-            "build-essential": '"@Development Tools"',
-            "@development-tools": "",
-        },
-        "tpm": False,
-        "selinux": True,
-        "arm64": False,  # Rocky 8 is EOL, no aarch64 builds
-    },
-    "rocky9": {
-        "family": "rpm",
-        "image": "rockylinux/rockylinux:9",
-        "extra_prep": [
-            "RUN dnf -y install 'dnf-command(config-manager)' && dnf config-manager --set-enabled crb",
-            "RUN sed -i -e 's|$rltype||g' /etc/yum.repos.d/rocky*.repo",
-        ],
-        "replace": {
-            "build-essential": '"@Development Tools"',
-            "@development-tools": "",
-            "curl": "",  # avoid the curl/curl-minimal install conflict
-        },
-        "tpm": True,
-        "selinux": True,
-    },
-    "rocky10": {
-        "family": "rpm",
-        "image": "rockylinux/rockylinux:10",
-        "extra_prep": [
-            "RUN dnf install -y 'dnf-command(config-manager)' && dnf config-manager --set-enabled crb",
-            "RUN sed -i -e 's|$rltype||g' /etc/yum.repos.d/rocky*.repo",
-        ],
-        "replace": {
-            "build-essential": '"@Development Tools"',
-            "@development-tools": "",
-        },
-        "tpm": True,
-        "selinux": True,
-    },
-    # ---- SUSE family ----
-    "sle15sp6": {
-        "family": "zypper",
-        "image": "registry.suse.com/suse/sle15:15.6",
-        "scc": True,
-        "scc_vers": "15.6",
-        "post_bootstrap": [
-            # Python 3.6 doesn't have dataclasses; install python311 and symlink as python3
-            "RUN zypper --non-interactive install python311 && ln -sf /usr/bin/python3.11 /usr/bin/python3",
-        ],
-        "replace": {
-            "build-essential": "",
-            "@development-tools": "",
-            "dbus-devel": "dbus-1-devel",
-            "tpm2-tss-devel": "tpm2-0-tss-devel",
-            "sqlite-devel": "sqlite3-devel",
-            "policycoreutils-devel": "",
-            "selinux-policy-targeted": "",
-        },
-        "tpm": True,
-        "apparmor": True,
-    },
-    "sle15sp7": {
-        "family": "zypper",
-        "image": "registry.suse.com/suse/sle15:15.7",
-        "scc": True,
-        "scc_vers": "15.7",
-        "post_bootstrap": [
-            # Python 3.6 doesn't have dataclasses; install python311 and symlink as python3
-            "RUN zypper --non-interactive install python311 && ln -sf /usr/bin/python3.11 /usr/bin/python3",
-        ],
-        "replace": {
-            "build-essential": "",
-            "@development-tools": "",
-            "dbus-devel": "dbus-1-devel",
-            "tpm2-tss-devel": "tpm2-0-tss-devel",
-            "sqlite-devel": "sqlite3-devel",
-            "clang": "clang7",
-            "policycoreutils-devel": "",
-            "selinux-policy-targeted": "",
-        },
-        "tpm": True,
-        "apparmor": True,
-    },
-    "sle16": {
-        "family": "zypper",
-        "image": "registry.suse.com/bci/bci-sle16-kernel-module-devel:16.0",
-        "scc": True,
-        "scc_vers": "16.0",
-        "extra_prep": [
-            # Temporary patch for broken SLE libudev1 version in the base image
-            "RUN zypper in -y --oldpackage libudev1-257.7-160000.2.2.$(uname -m)",
-            # Temporary authselect build, since it hasn't landed in PackageHub yet
-            "RUN zypper ar -e https://download.opensuse.org/repositories/home:/dmulder:/branches:/authselect/16.0/home:dmulder:branches:authselect.repo",
-            "RUN zypper --non-interactive --gpg-auto-import-keys refresh home_dmulder_branches_authselect"
-        ],
-        "replace": {
-            "build-essential": "",
-            "@development-tools": "",
-            "dbus-devel": "dbus-1-devel",
-            "tpm2-tss-devel": "tpm2-0-tss-devel",
-            "sqlite-devel": "sqlite3-devel",
-            "selinux-policy-targeted": "selinux-tools selinux-policy-devel",
-        },
-        "tpm": True,
-        "selinux": True,
-    },
-    "tumbleweed": {
-        "family": "zypper",
-        "image": "opensuse/tumbleweed:latest",
-        "extra_prep": [
-            "RUN zypper ar -e https://download.opensuse.org/repositories/security:/idm/openSUSE_Tumbleweed/security:idm.repo",
-            "RUN zypper --non-interactive --gpg-auto-import-keys refresh security_idm"
-        ],
-        "replace": {
-            "build-effective": "",
-            "@development-tools": "",
-            "dbus-devel": "dbus-1-devel",
-            "tpm2-tss-devel": "tpm2-0-tss-devel",
-            "sqlite-devel": "sqlite3-devel",
-            "selinux-policy-targeted": "selinux-tools selinux-policy-devel",
-        },
-        "tpm": True,
-        "selinux": True,
-    },
-    # ---- Gentoo family ----
-    # Gentoo generates an ebuild file instead of building binaries
-    # Uses a lightweight Python image since no Gentoo-specific tools are needed
-    "gentoo": {
-        "family": "ebuild",
-        "image": "python:3.11-slim",
-        "extra_prep": [],
-        "tpm": True,
-        "selinux": False,
-    },
-    # ---- Arch Linux family ----
-    # Containerized makepkg; produces himmelblau-*.pkg.tar.zst in ./packaging/
-    "arch": {
-        "family": "arch",
-        "image": "archlinux:base-devel",
-        "extra_prep": [],
-        "tpm": True,
-        "selinux": False,
-    },
-    # ---- Amazon Linux family ----
-    "amzn2023": {
-        "family": "rpm",
-        "image": "amazonlinux:2023",
-        "extra_prep": [],
-        "replace": {
-            "build-essential": '"@Development Tools"',
-            "@development-tools": "",
-            "curl": "",  # avoid the curl/curl-minimal install conflict
-        },
-        "tpm": True,
-        "selinux": True,
-    },
+    "debian12": {"family": "deb", "image": "debian:12", "replace": {"@development-tools": ""}, "tpm": True},
+    "debian13": {"family": "deb", "image": "debian:13", "replace": {"@development-tools": ""}, "tpm": True},
+    "ubuntu22.04": {"family": "deb", "image": "ubuntu:22.04", "tpm": True},
+    "ubuntu24.04": {"family": "deb", "image": "ubuntu:24.04", "tpm": True},
+    "ubuntu25.10": {"family": "deb", "image": "ubuntu:25.10", "tpm": True},
+    "ubuntu26.04": {"family": "deb", "image": "ubuntu:26.04", "tpm": True},
+    "test": {"family": "deb", "image": "ubuntu:24.04", "tpm": False, "extra_pkgs": ["nodejs"]},
+    "fedora43": {"family": "rpm", "image": "fedora:43", "tpm": True, "selinux": True},
+    "fedora44": {"family": "rpm", "image": "fedora:44", "tpm": True, "selinux": True},
+    "rawhide": {"family": "rpm", "image": "fedora:rawhide", "extra_prep": ["RUN dnf -y --refresh update glibc glibc-common glibc-minimal-langpack systemd-libs systemd-standalone-sysusers rpm-libs rpm && dnf -y --refresh update"], "tpm": True, "selinux": True},
+    "rocky8": {"family": "rpm", "image": "rockylinux/rockylinux:8", "extra_prep": ["RUN dnf -y install 'dnf-command(config-manager)' && dnf config-manager --set-enabled powertools", "RUN dnf -y install python39 && alternatives --set python3 /usr/bin/python3.9"], "replace": {"build-essential": '"@Development Tools"', "@development-tools": ""}, "tpm": False, "selinux": True, "arm64": False},
+    "rocky9": {"family": "rpm", "image": "rockylinux/rockylinux:9", "extra_prep": ["RUN dnf -y install 'dnf-command(config-manager)' && dnf config-manager --set-enabled crb", "RUN sed -i -e 's|$rltype||g' /etc/yum.repos.d/rocky*.repo"], "replace": {"build-essential": '"@Development Tools"', "@development-tools": "", "curl": ""}, "tpm": True, "selinux": True},
+    "rocky10": {"family": "rpm", "image": "rockylinux/rockylinux:10", "extra_prep": ["RUN dnf install -y 'dnf-command(config-manager)' && dnf config-manager --set-enabled crb", "RUN sed -i -e 's|$rltype||g' /etc/yum.repos.d/rocky*.repo"], "replace": {"build-essential": '"@Development Tools"', "@development-tools": ""}, "tpm": True, "selinux": True},
+    "sle15sp6": {"family": "zypper", "image": "registry.suse.com/suse/sle15:15.6", "scc": True, "scc_vers": "15.6", "post_bootstrap": ["RUN zypper --non-interactive install python311 && ln -sf /usr/bin/python3.11 /usr/bin/python3"], "replace": {"build-essential": "", "@development-tools": "", "dbus-devel": "dbus-1-devel", "tpm2-tss-devel": "tpm2-0-tss-devel", "sqlite-devel": "sqlite3-devel", "policycoreutils-devel": "", "selinux-policy-targeted": ""}, "tpm": True, "apparmor": True},
+    "sle15sp7": {"family": "zypper", "image": "registry.suse.com/suse/sle15:15.7", "scc": True, "scc_vers": "15.7", "post_bootstrap": ["RUN zypper --non-interactive install python311 && ln -sf /usr/bin/python3.11 /usr/bin/python3"], "replace": {"build-essential": "", "@development-tools": "", "dbus-devel": "dbus-1-devel", "tpm2-tss-devel": "tpm2-0-tss-devel", "sqlite-devel": "sqlite3-devel", "clang": "clang7", "policycoreutils-devel": "", "selinux-policy-targeted": ""}, "tpm": True, "apparmor": True},
+    "sle16": {"family": "zypper", "image": "registry.suse.com/bci/bci-sle16-kernel-module-devel:16.0", "scc": True, "scc_vers": "16.0", "extra_prep": ["RUN zypper in -y --oldpackage libudev1-257.7-160000.2.2.$(uname -m)", "RUN zypper ar -e https://download.opensuse.org/repositories/home:/dmulder:/branches:/authselect/16.0/home:dmulder:branches:authselect.repo", "RUN zypper --non-interactive --gpg-auto-import-keys refresh home_dmulder_branches_authselect"], "replace": {"build-essential": "", "@development-tools": "", "dbus-devel": "dbus-1-devel", "tpm2-tss-devel": "tpm2-0-tss-devel", "sqlite-devel": "sqlite3-devel", "selinux-policy-targeted": "selinux-tools selinux-policy-devel"}, "tpm": True, "selinux": True},
+    "tumbleweed": {"family": "zypper", "image": "opensuse/tumbleweed:latest", "extra_prep": ["RUN zypper ar -e https://download.opensuse.org/repositories/security:/idm/openSUSE_Tumbleweed/security:idm.repo", "RUN zypper --non-interactive --gpg-auto-import-keys refresh security_idm"], "replace": {"build-effective": "", "@development-tools": "", "dbus-devel": "dbus-1-devel", "tpm2-tss-devel": "tpm2-0-tss-devel", "sqlite-devel": "sqlite3-devel", "selinux-policy-targeted": "selinux-tools selinux-policy-devel"}, "tpm": True, "selinux": True},
+    "gentoo": {"family": "ebuild", "image": "python:3.11-slim", "extra_prep": [], "tpm": True, "selinux": False},
+    "arch": {"family": "arch", "image": "archlinux:base-devel", "extra_prep": [], "tpm": True, "selinux": False},
+    "amzn2023": {"family": "rpm", "image": "amazonlinux:2023", "extra_prep": [], "replace": {"build-essential": '"@Development Tools"', "@development-tools": "", "curl": ""}, "tpm": True, "selinux": True},
 }
 
 DOCKERFILE_TPL = """\
-{GENERATED_MARKER}{tooling_stage}FROM {base_image}
+{GENERATED_MARKER}{tooling_stage}FROM --platform={docker_platform} {base_image}
 
 {env}
 {sle_connect}
 
-# Build argument for optional Cargo patch configuration
 ARG CARGO_PATCH_ARG=""
 
-# Install essential build dependencies
 {bootstrap}
 {post_bootstrap}
-# Set environment for Rust
 ENV PATH="/root/.cargo/bin:${{PATH}}"
 
-# Project layout
 VOLUME /himmelblau
-
-# Change directory to the repository
 WORKDIR /himmelblau
 
-
-# Install Rust (latest stable) and packaging tools
 {rust_install}
 
 {patch_libhimmelblau}
 
 {selinux_enabled}
-# Build the project and create the packages
 {final_cmd}
 """
 
-# Minimal Dockerfile template for ebuild generation (no Rust needed)
 DOCKERFILE_EBUILD_TPL = """\
-{GENERATED_MARKER}FROM {base_image}
+{GENERATED_MARKER}FROM --platform={docker_platform} {base_image}
 
-# Project layout
 VOLUME /himmelblau
-
-# Change directory to the repository
 WORKDIR /himmelblau
 
-# Generate the ebuild file
 {final_cmd}
 """
 
-# DEB cross-compilation Dockerfile template (amd64 host → aarch64 target)
-# Uses Debian multiarch to install arm64 dev libraries alongside amd64 toolchain
 DOCKERFILE_CROSS_DEB_TPL = """\
-{GENERATED_MARKER}FROM {base_image}
+{GENERATED_MARKER}FROM --platform=linux/amd64 {base_image}
 
 {env}
 
-# Build argument for optional Cargo patch configuration
 ARG CARGO_PATCH_ARG=""
 
-# Add arm64 architecture for multiarch cross-compilation
 RUN dpkg --add-architecture arm64
 
 {multiarch_sources}
-# Install essential build dependencies (amd64 toolchain + arm64 libraries)
 {bootstrap}
 {post_bootstrap}
-# Install aarch64 cross-compiler and arm64 dev libraries
-# --force-overwrite: transitive deps (e.g. libcurl4-openssl-dev) may ship
-# arch-independent files like /usr/bin/curl-config that conflict with the
-# amd64 version already installed in the bootstrap step.
 RUN apt-get update && apt-get install -y -o Dpkg::Options::="--force-overwrite" \\
     gcc-aarch64-linux-gnu g++-aarch64-linux-gnu \\
     libssl-dev:arm64 \\
@@ -545,21 +298,15 @@ RUN apt-get update && apt-get install -y -o Dpkg::Options::="--force-overwrite" 
     libunistring-dev:arm64 \\
     && rm -rf /var/lib/apt/lists/*
 
-# Set environment for Rust
 ENV PATH="/root/.cargo/bin:${{PATH}}"
 
-# Project layout
 VOLUME /himmelblau
-
-# Change directory to the repository
 WORKDIR /himmelblau
 
-# Install Rust + aarch64 target + packaging tools (native amd64)
 RUN --mount=type=cache,target=/root/.cargo/registry curl https://sh.rustup.rs -sSf | sh -s -- -y && echo 1.93.1 && \\
     rustup target add aarch64-unknown-linux-gnu && \\
     cargo install cargo-deb cargo-generate-rpm
 
-# Configure cross-compilation
 ENV CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc \\
     CC_aarch64_unknown_linux_gnu=aarch64-linux-gnu-gcc \\
     CXX_aarch64_unknown_linux_gnu=aarch64-linux-gnu-g++ \\
@@ -571,62 +318,32 @@ ENV CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc \\
 {patch_libhimmelblau}
 
 {selinux_enabled}
-# Build the project and create the packages
 {final_cmd}
 """
 
-# Rust install: native (amd64) — compile cargo-deb/cargo-generate-rpm from source
 RUST_INSTALL_NATIVE = """\
 RUN --mount=type=cache,target=/root/.cargo/registry curl https://sh.rustup.rs -sSf | sh -s -- -y && echo 1.93.1 && \\
     cargo install cargo-deb cargo-generate-rpm"""
 
-# Rust install: emulated (arm64) — install Rust and packaging tools natively.
-# This is slower than cross-compiling the packaging tools, but avoids copying
-# dynamically linked Debian tooling into Fedora/Rocky/SUSE/Amazon containers.
-# CFLAGS=-O2: prevent gcc segfaults under QEMU emulation (gcc -O3 triggers QEMU bugs)
 RUST_INSTALL_EMULATED = """\
 ENV CFLAGS="-O2" CXXFLAGS="-O2"
 RUN --mount=type=cache,target=/root/.cargo/registry curl https://sh.rustup.rs -sSf | sh -s -- -y && echo 1.93.1 && \\
     cargo install cargo-deb cargo-generate-rpm"""
 
-# Ubuntu codename mapping (used for multiarch apt sources)
-UBUNTU_CODENAMES = {
-    "ubuntu:22.04": "jammy",
-    "ubuntu:24.04": "noble",
-    "ubuntu:25.10": "plucky",
-    "ubuntu:26.04": "resolute",
-}
-
-# Ubuntu 24.04+ uses DEB822 format (.sources files)
+UBUNTU_CODENAMES = {"ubuntu:22.04": "jammy", "ubuntu:24.04": "noble", "ubuntu:25.10": "plucky", "ubuntu:26.04": "resolute"}
 UBUNTU_DEB822_VERSIONS = {"ubuntu:24.04", "ubuntu:25.10", "ubuntu:26.04"}
 
 
 def build_multiarch_sources(dist_cfg):
-    """Generate apt source reconfiguration for Ubuntu arm64 cross-compilation.
-
-    Ubuntu serves arm64 packages from ports.ubuntu.com, not archive.ubuntu.com.
-    Debian serves all architectures from the same mirrors, so no reconfiguration needed.
-    """
     image = dist_cfg["image"]
-
-    # Debian: no reconfiguration needed — deb.debian.org serves arm64 natively
     if not image.startswith("ubuntu:"):
         return ""
-
     codename = UBUNTU_CODENAMES.get(image)
     if not codename:
-        # If a new Ubuntu version is added to DISTS but not to UBUNTU_CODENAMES,
-        # warn loudly so the build fails visibly rather than silently skipping
-        # multiarch configuration (which would cause cryptic apt 404 errors).
         print(f"[WARNING] No codename in UBUNTU_CODENAMES for {image} — arm64 apt sources not configured!")
         return ""
-
     if image in UBUNTU_DEB822_VERSIONS:
-        # DEB822 format (Ubuntu 24.04+):
-        # Pin existing sources to amd64, create separate arm64 sources file
         return f"""\
-# Configure apt sources for arm64 cross-compilation
-# Ubuntu serves arm64 packages from ports.ubuntu.com, not archive.ubuntu.com
 RUN sed -i '/^Types: deb$/a Architectures: amd64' /etc/apt/sources.list.d/ubuntu.sources
 RUN cat <<'EOF' > /etc/apt/sources.list.d/ubuntu-arm64.sources
 Types: deb
@@ -644,12 +361,7 @@ Architectures: arm64
 Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
 EOF
 """
-    else:
-        # Traditional sources.list format (Ubuntu 22.04):
-        # Pin existing entries to [arch=amd64], append arm64 entries for ports.ubuntu.com
-        return f"""\
-# Configure apt sources for arm64 cross-compilation
-# Ubuntu serves arm64 packages from ports.ubuntu.com, not archive.ubuntu.com
+    return f"""\
 RUN sed -i 's/^deb http/deb [arch=amd64] http/' /etc/apt/sources.list && \\
     echo "deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports/ {codename} main restricted universe multiverse" >> /etc/apt/sources.list && \\
     echo "deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports/ {codename}-updates main restricted universe multiverse" >> /etc/apt/sources.list && \\
@@ -659,7 +371,6 @@ RUN sed -i 's/^deb http/deb [arch=amd64] http/' /etc/apt/sources.list && \\
 
 
 SLE_CONNECT_TPL = """\
-# Install SUSEConnect and dependencies for registration
 RUN zypper --non-interactive refresh && \\
     zypper --non-interactive install --no-recommends \\
         SUSEConnect \\
@@ -686,159 +397,98 @@ def build_pkg_list(dist_cfg, selinux):
         q = rep.get(p, p)
         if q:
             out.append(q)
-    # Add any distro-specific extra packages
-    extra = dist_cfg.get("extra_pkgs", [])
-    out.extend(extra)
+    out.extend(dist_cfg.get("extra_pkgs", []))
     out = sorted(set(out))
-    sep = " \\\n        "
-    return sep.join(out)
+    return " \\\n        ".join(out)
 
 
-def render(
-    dist_name,
-    dist_cfg,
-    patch_libhimmelblau,
-    arch="amd64",
-):
+def render(dist_name, dist_cfg, patch_libhimmelblau, arch="amd64"):
     fam = FAMILIES[dist_cfg["family"]]
     selinux = bool(dist_cfg.get("selinux", False))
     pkgs = build_pkg_list(dist_cfg, selinux)
-    # Handle bootstrap - some families (like ebuild) don't need package formatting
-    if "{pkgs}" in fam["bootstrap"]:
-        bootstrap = fam["bootstrap"].format(pkgs=pkgs).rstrip()
-    else:
-        bootstrap = fam["bootstrap"].rstrip()
+    bootstrap = fam["bootstrap"].format(pkgs=pkgs).rstrip() if "{pkgs}" in fam["bootstrap"] else fam["bootstrap"].rstrip()
     env = fam["env"] or ""
     sle_connect = SLE_CONNECT_TPL.format(scc_vers=dist_cfg.get("scc_vers")) if dist_cfg.get("scc") else ""
 
-    # Features
-    tpm = bool(dist_cfg.get("tpm", False))
-    features = []
-    if tpm:
-        features.append("tpm")
-
-    # Determine cross-compilation target for arm64 DEB builds
+    features = ["tpm"] if dist_cfg.get("tpm", False) else []
     arch_info = ARCH_MAP.get(arch, ARCH_MAP["amd64"])
     cross_target = arch_info["rust_target"] if arch != "amd64" else ""
 
-    final_cmd = ""
     if dist_cfg["family"] == "deb" and dist_name != "test":
-        final_cmd = build_deb_final_cmd(
-            features,
-            dist_name,
-            cross_target=cross_target,
-        )
+        final_cmd = build_deb_final_cmd(features, dist_name, cross_target=cross_target)
     elif dist_name == "test":
         final_cmd = "CMD cargo test"
     elif dist_cfg["family"] == "ebuild":
-        # Ebuild generation - lightweight, just runs gen_ebuild.py
-        repo_root = Path(__file__).parent.parent.resolve()
-        final_cmd = build_gentoo_final_cmd(features, repo_root)
+        final_cmd = build_gentoo_final_cmd(features, Path(__file__).parent.parent.resolve())
     elif dist_cfg["family"] == "arch":
         final_cmd = build_arch_final_cmd()
     else:
         final_cmd = build_rpm_final_cmd(features, selinux, bool(dist_cfg.get("apparmor", False)))
 
-    blocks = []
-    if dist_cfg.get("extra_prep"):
-        blocks.extend(dist_cfg["extra_prep"])
-    extra = "\n".join(blocks) + ("\n" if blocks else "")
+    extra = "\n".join(dist_cfg.get("extra_prep", []))
+    extra = extra + ("\n" if extra else "")
+    post_bootstrap = "\n".join(dist_cfg.get("post_bootstrap", []))
+    post_bootstrap = post_bootstrap + ("\n" if post_bootstrap else "")
 
-    # Post-bootstrap commands (run after main package install)
-    post_blocks = []
-    if dist_cfg.get("post_bootstrap"):
-        post_blocks.extend(dist_cfg["post_bootstrap"])
-    post_bootstrap = "\n".join(post_blocks) + ("\n" if post_blocks else "")
-
-    # DEB arm64: use cross-compilation template (no QEMU emulation)
     if arch != "amd64" and dist_cfg["family"] == "deb":
-        multiarch_sources = build_multiarch_sources(dist_cfg)
-        df = DOCKERFILE_CROSS_DEB_TPL.format(
+        return DOCKERFILE_CROSS_DEB_TPL.format(
             GENERATED_MARKER=GENERATED_MARKER,
             base_image=dist_cfg["image"],
             env=env,
-            multiarch_sources=multiarch_sources,
+            multiarch_sources=build_multiarch_sources(dist_cfg),
             bootstrap=(extra + bootstrap),
             post_bootstrap=post_bootstrap,
             selinux_enabled=("ENV HIMMELBLAU_ALLOW_MISSING_SELINUX=1" if not selinux else ""),
             patch_libhimmelblau="COPY ./scripts/cargo-patch-config.toml /root/.cargo/config.toml" if patch_libhimmelblau else "",
             final_cmd=final_cmd,
         )
-        return df
 
-    # Select Rust install method and tooling stage based on architecture
     if dist_cfg["family"] == "arch":
-        # Arch installs rust with pacman and packages with makepkg, so it needs
-        # neither a rustup toolchain nor cargo-deb/cargo-generate-rpm.
         rust_install = ""
         tooling_stage = ""
     elif arch != "amd64":
-        # arm64 RPM/zypper: run under QEMU and compile packaging tools natively
-        # inside the target distro image. Cross-built tools from a Debian
-        # tooling stage can fail to execute on RPM-family images.
         rust_install = RUST_INSTALL_EMULATED
         tooling_stage = ""
     else:
-        # amd64: compile packaging tools natively
         rust_install = RUST_INSTALL_NATIVE
         tooling_stage = ""
 
-    # Use minimal template for ebuild generation
     if dist_cfg["family"] == "ebuild":
-        df = DOCKERFILE_EBUILD_TPL.format(
+        return DOCKERFILE_EBUILD_TPL.format(
             GENERATED_MARKER=GENERATED_MARKER,
+            docker_platform=arch_info["docker_platform"],
             base_image=dist_cfg["image"],
             final_cmd=final_cmd,
         )
-    else:
-        df = DOCKERFILE_TPL.format(
-            GENERATED_MARKER=GENERATED_MARKER,
-            tooling_stage=tooling_stage,
-            base_image=dist_cfg["image"],
-            env=env,
-            bootstrap=(extra + bootstrap),
-            post_bootstrap=post_bootstrap,
-            sle_connect=("\n" + sle_connect + "\n" if sle_connect else ""),
-            rust_install=rust_install,
-            selinux_enabled=("ENV HIMMELBLAU_ALLOW_MISSING_SELINUX=1" if not selinux else ""),
-            patch_libhimmelblau="COPY ./scripts/cargo-patch-config.toml /root/.cargo/config.toml" if patch_libhimmelblau else "",
-            final_cmd=final_cmd,
-        )
-    return df
+
+    return DOCKERFILE_TPL.format(
+        GENERATED_MARKER=GENERATED_MARKER,
+        tooling_stage=tooling_stage,
+        docker_platform=arch_info["docker_platform"],
+        base_image=dist_cfg["image"],
+        env=env,
+        bootstrap=(extra + bootstrap),
+        post_bootstrap=post_bootstrap,
+        sle_connect=("\n" + sle_connect + "\n" if sle_connect else ""),
+        rust_install=rust_install,
+        selinux_enabled=("ENV HIMMELBLAU_ALLOW_MISSING_SELINUX=1" if not selinux else ""),
+        patch_libhimmelblau="COPY ./scripts/cargo-patch-config.toml /root/.cargo/config.toml" if patch_libhimmelblau else "",
+        final_cmd=final_cmd,
+    )
 
 
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", default="./dockerfiles", help="Output directory")
     ap.add_argument("--only", default="", help="Comma-separated list of dists to render")
-    ap.add_argument(
-        "--arch", default="amd64",
-        choices=sorted(ARCH_MAP.keys()),
-        help="Target architecture (default: amd64)",
-    )
-    ap.add_argument(
-        "--patch-libhimmelblau",
-        dest="patch_libhimmelblau",
-        action="store_true",
-        help="Patch libhimmelblau with a local copy mounted at /libhimmelblau",
-    )
-    ap.add_argument(
-        "--no-patch-libhimmelblau",
-        dest="patch_libhimmelblau",
-        action="store_false",
-        help=argparse.SUPPRESS
-    )
+    ap.add_argument("--arch", default="amd64", choices=sorted(ARCH_MAP.keys()), help="Target architecture (default: amd64)")
+    ap.add_argument("--patch-libhimmelblau", dest="patch_libhimmelblau", action="store_true", help="Patch libhimmelblau with a local copy mounted at /libhimmelblau")
+    ap.add_argument("--no-patch-libhimmelblau", dest="patch_libhimmelblau", action="store_false", help=argparse.SUPPRESS)
     ap.set_defaults(patch_libhimmelblau=False)
     args = ap.parse_args()
 
-    if args.only:
-        want = {x.strip() for x in args.only.split(",") if x.strip()}
-    else:
-        want = set(DISTS.keys())
-
+    want = {x.strip() for x in args.only.split(",") if x.strip()} if args.only else set(DISTS.keys())
     os.makedirs(args.out, exist_ok=True)
-
-    # For non-default arch, use arch-suffixed Dockerfile names
     arch_suffix = f".{args.arch}" if args.arch != "amd64" else ""
 
     written = []
@@ -847,16 +497,10 @@ def main():
         if name not in DISTS:
             print(f"[skip] unknown dist: {name}")
             continue
-        # Check if this distro supports the requested architecture
         if args.arch != "amd64" and not DISTS[name].get(args.arch, True):
             skipped.append(name)
             continue
-        df = render(
-            name,
-            DISTS[name],
-            args.patch_libhimmelblau,
-            arch=args.arch,
-        )
+        df = render(name, DISTS[name], args.patch_libhimmelblau, arch=args.arch)
         path = os.path.join(args.out, f"Dockerfile.{name}{arch_suffix}")
         with open(path, "w", encoding="utf-8") as f:
             f.write(df)
