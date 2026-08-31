@@ -70,5 +70,10 @@ EOF
 # Merge Firefox and Thunderbird policies
 merge_mozilla_policy "/etc/firefox/policies/policies.json" "$FIREFOX_EXTENSION_URL" "Firefox" "linux_entra_sso-[0-9][0-9.]*\\.xpi$"
 merge_mozilla_policy "/etc/thunderbird/policies/policies.json" "$THUNDERBIRD_EXTENSION_URL" "Thunderbird" "linux_entra_sso-[0-9][0-9.]*\\.thunderbird\\.xpi$"
+# Betterbird is a Thunderbird fork; it does not read /etc/thunderbird/policies.
+merge_mozilla_policy "/etc/betterbird/policies/policies.json" "$THUNDERBIRD_EXTENSION_URL" "Betterbird" "linux_entra_sso-[0-9][0-9.]*\\.thunderbird\\.xpi$"
+if [ -d /opt/betterbird ]; then
+    merge_mozilla_policy "/opt/betterbird/distribution/policies.json" "$THUNDERBIRD_EXTENSION_URL" "Betterbird" "linux_entra_sso-[0-9][0-9.]*\\.thunderbird\\.xpi$"
+fi
 
 echo "Himmelblau SSO Mozilla policy configuration complete"
