@@ -8,7 +8,7 @@ attempts to build, and provides AI-assisted debugging if the build fails.
 
 Usage:
   python scripts/obs_update.py [--ai-provider gemini|claude] [--dry-run]
-  python scripts/obs_update.py --target tumbleweed --branch stable-2.x
+  python scripts/obs_update.py --target tumbleweed --branch stable-4.x
 """
 
 import argparse
@@ -23,7 +23,7 @@ from typing import Optional
 # Configuration
 DEFAULT_OBS_PROJECT = "network:idm"
 DEFAULT_OBS_PACKAGE = "himmelblau"
-DEFAULT_STABLE_BRANCH = "stable-3.x"
+DEFAULT_STABLE_BRANCH = "stable-4.x"
 DEFAULT_TARGET = "tumbleweed"
 
 TIMEOUT_OSC_SECONDS = 300  # 5 minutes for osc operations
@@ -908,8 +908,8 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  %(prog)s                              # Update from stable-2.x to network:idm
-  %(prog)s --branch stable-2.x          # Specify branch explicitly
+  %(prog)s                              # Update from stable-4.x to network:idm
+  %(prog)s --branch stable-4.x          # Specify branch explicitly
   %(prog)s --arch aarch64               # Test build for ARM64
   %(prog)s --dry-run                    # Show what would be done
   %(prog)s --ai-provider gemini         # Use Gemini for build fixes

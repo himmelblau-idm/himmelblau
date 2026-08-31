@@ -9,6 +9,7 @@ on:
     branches:
       - stable-2.x
       - stable-3.x
+      - stable-4.x
 
 jobs:
   nixos:
