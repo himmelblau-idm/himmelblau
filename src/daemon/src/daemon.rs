@@ -755,55 +755,11 @@ async fn handle_client(
                                                     if cfg.get_fetch_profile_picture()
                                                         && !is_oidc_auth
                                                     {
-                                                        if let Some(token) = cachelayer
-                                                            .get_user_accesstoken(
-                                                                Id::Name(account_id.to_string()),
-                                                                vec![],
-                                                                None,
-                                                                None,
-                                                                None,
-                                                            )
-                                                            .await
-                                                        {
-                                                            if let Some(access_token) = &token.access_token {
-                                                                let (tx, rx) = oneshot::channel();
-
-                                                                match task_channel_tx
-                                                                    .send_timeout(
-                                                                        (
-                                                                            TaskRequest::LoadProfilePhoto(
-                                                                                account_id.to_string(),
-                                                                                access_token.to_string(),
-                                                                            ),
-                                                                            tx,
-                                                                        ),
-                                                                        Duration::from_millis(100),
-                                                                    )
-                                                                    .await
-                                                                {
-                                                                    Ok(()) => {
-                                                                        // Now wait for the other end OR timeout.
-                                                                        match time::timeout_at(
-                                                                            time::Instant::now()
-                                                                                + Duration::from_secs(60),
-                                                                            rx,
-                                                                        )
-                                                                        .await
-                                                                        {
-                                                                            Ok(_) => {
-                                                                                info!("Fetching user profile picture succeeded");
-                                                                            }
-                                                                            _ => {
-                                                                                error!("Fetching user profile picture failed");
-                                                                            }
-                                                                        }
-                                                                    }
-                                                                    Err(_) => {
-                                                                        error!("Fetching user profile picture failed");
-                                                                    }
-                                                                }
-                                                            }
-                                                        }
+                                                        spawn_profile_photo_fetch(
+                                                            cachelayer.clone(),
+                                                            task_channel_tx.clone(),
+                                                            account_id.clone(),
+                                                        );
                                                     }
 
                                                     // Apply Intune policies
@@ -1297,6 +1253,43 @@ async fn spawn_intune_policy_application_if_due(
         intune_policy_throttle,
         account_id,
     );
+}
+
+fn spawn_profile_photo_fetch(
+    cachelayer: Arc<Resolver<HimmelblauMultiProvider>>,
+    task_channel_tx: Sender<AsyncTaskRequest>,
+    account_id: String,
+) {
+    tokio::spawn(async move {
+        let Some(token) = cachelayer
+            .get_user_accesstoken(Id::Name(account_id.clone()), vec![], None, None, None)
+            .await
+        else {
+            return;
+        };
+        let Some(access_token) = token.access_token.as_ref() else {
+            return;
+        };
+        let (tx, rx) = oneshot::channel();
+        if task_channel_tx
+            .send_timeout(
+                (
+                    TaskRequest::LoadProfilePhoto(account_id, access_token.to_string()),
+                    tx,
+                ),
+                Duration::from_millis(100),
+            )
+            .await
+            .is_err()
+        {
+            error!("Fetching user profile picture failed");
+            return;
+        }
+        match time::timeout_at(time::Instant::now() + Duration::from_secs(60), rx).await {
+            Ok(_) => info!("Fetching user profile picture succeeded"),
+            _ => error!("Fetching user profile picture failed"),
+        }
+    });
 }
 
 fn spawn_intune_policy_application(
