@@ -27,7 +27,7 @@ updates:
   # Updates for stable-4.x
   - package-ecosystem: "cargo"
     directory: "/"
-    target-branch: main
+    target-branch: stable-4.x
     schedule:
       interval: "monthly"
     commit-message:
