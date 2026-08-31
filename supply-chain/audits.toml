@@ -6,7 +6,7 @@ who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
 user-id = 31100 # Firstyear (Firstyear)
 start = "2021-10-23"
-end = "2026-09-11"
+end = "2027-08-31"
 
 [[wildcard-audits.crypto-glue]]
 who = "David Mulder <dmulder@samba.org>"
@@ -263,6 +263,11 @@ version = "0.9.1"
 who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
 delta = "0.10.0 -> 0.10.1"
+
+[[audits.chacha20]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+delta = "0.10.1 -> 0.10.2"
 
 [[audits.chacha20poly1305]]
 who = "David Mulder <dmulder@samba.org>"
