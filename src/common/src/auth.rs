@@ -449,6 +449,7 @@ async fn qr_bluetooth_fido_auth(
         origin: "https://login.microsoft.com".to_string(),
         top_origin: None,
         allow: vec![],
+        hints: vec![],
         extensions: None,
         user_verification: CableUvReq::Preferred,
         timeout: Duration::from_secs(120),
