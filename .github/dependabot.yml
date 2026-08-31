@@ -31,6 +31,18 @@ updates:
       - dependency-name: "identity_dbus_broker"
         versions:
           - ">=0.2.0"
+      - dependency-name: "kanidm_lib_file_permissions"
+        versions:
+          - ">=1.11.0"
+      - dependency-name: "kanidm_lib_crypto"
+        versions:
+          - ">=1.11.0"
+      - dependency-name: "sketching"
+        versions:
+          - ">=1.11.0"
+      - dependency-name: "x509-cert"
+        versions:
+          - ">=0.3.0"
     groups:
       all-cargo-updates:
         patterns:
