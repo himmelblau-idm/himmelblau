@@ -9,6 +9,7 @@
  */
 
 use std::error::Error;
+use std::ffi::OsStr;
 use std::io::{Error as IoError, ErrorKind, Read, Write};
 use std::os::unix::net::UnixStream;
 use std::time::{Duration, SystemTime};
@@ -31,20 +32,59 @@ pub fn should_skip_daemon_call() -> bool {
     static SKIP: OnceLock<bool> = OnceLock::new();
     *SKIP.get_or_init(|| {
         // SYSTEMD_ACTIVATION_UNIT may be inherited from an untrusted caller.
-        // Only sd-executor, running directly under the system manager, may use
-        // it to suppress daemon calls during service credential resolution.
-        let is_root_system_child = unsafe { libc::geteuid() == 0 && libc::getppid() == 1 };
-        let is_systemd_executor = std::fs::read_link("/proc/self/exe")
-            .ok()
-            .and_then(|path| path.file_name().map(|name| name == "systemd-executor"))
-            .unwrap_or(false);
-        let is_himmelblau_unit = matches!(
-            std::env::var_os("SYSTEMD_ACTIVATION_UNIT").as_deref(),
-            Some(v) if v == "himmelblaud.service" || v == "himmelblaud-tasks.service"
-        );
-
-        is_root_system_child && is_systemd_executor && is_himmelblau_unit
+        // Only a root process running directly under the system manager may
+        // use it to suppress daemon calls during credential resolution.
+        let activation_unit = std::env::var_os("SYSTEMD_ACTIVATION_UNIT");
+        should_skip_daemon_call_for(
+            unsafe { libc::geteuid() },
+            unsafe { libc::getppid() },
+            activation_unit.as_deref(),
+        )
     })
+}
+
+fn should_skip_daemon_call_for(
+    effective_uid: libc::uid_t,
+    parent_pid: libc::pid_t,
+    activation_unit: Option<&OsStr>,
+) -> bool {
+    effective_uid == 0
+        && parent_pid == 1
+        && matches!(
+            activation_unit,
+            Some(v) if v == "himmelblaud.service" || v == "himmelblaud-tasks.service"
+        )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::should_skip_daemon_call_for;
+    use std::ffi::OsStr;
+
+    #[test]
+    fn daemon_call_is_skipped_for_himmelblau_units_started_by_system_manager() {
+        for unit in ["himmelblaud.service", "himmelblaud-tasks.service"] {
+            assert!(should_skip_daemon_call_for(0, 1, Some(OsStr::new(unit))));
+        }
+    }
+
+    #[test]
+    fn daemon_call_is_not_skipped_for_untrusted_process_contexts() {
+        let unit = Some(OsStr::new("himmelblaud.service"));
+
+        assert!(!should_skip_daemon_call_for(1000, 1, unit));
+        assert!(!should_skip_daemon_call_for(0, 2, unit));
+    }
+
+    #[test]
+    fn daemon_call_is_not_skipped_for_missing_or_unknown_units() {
+        assert!(!should_skip_daemon_call_for(0, 1, None));
+        assert!(!should_skip_daemon_call_for(
+            0,
+            1,
+            Some(OsStr::new("unrelated.service")),
+        ));
+    }
 }
 
 pub struct DaemonClientBlocking {
