@@ -6,63 +6,63 @@ who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
 user-id = 31100 # Firstyear (Firstyear)
 start = "2021-10-23"
-end = "2026-09-11"
+end = "2027-09-02"
 
 [[wildcard-audits.crypto-glue]]
 who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
 user-id = 31100 # Firstyear (Firstyear)
 start = "2024-09-09"
-end = "2026-09-11"
+end = "2027-09-02"
 
 [[wildcard-audits.kanidm-hsm-crypto]]
 who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
 user-id = 31100 # Firstyear (Firstyear)
 start = "2023-11-01"
-end = "2026-09-11"
+end = "2027-09-02"
 
 [[wildcard-audits.kanidm_lib_crypto]]
 who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
 user-id = 31100 # Firstyear (Firstyear)
 start = "2024-02-07"
-end = "2026-09-11"
+end = "2027-09-02"
 
 [[wildcard-audits.kanidm_lib_file_permissions]]
 who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
 user-id = 31100 # Firstyear (Firstyear)
 start = "2024-02-07"
-end = "2026-09-11"
+end = "2027-09-02"
 
 [[wildcard-audits.kanidm_proto]]
 who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
 user-id = 31100 # Firstyear (Firstyear)
 start = "2019-12-17"
-end = "2026-09-11"
+end = "2027-09-02"
 
 [[wildcard-audits.kanidm_utils_users]]
 who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
 user-id = 31100 # Firstyear (Firstyear)
 start = "2024-02-07"
-end = "2026-09-11"
+end = "2027-09-02"
 
 [[wildcard-audits.libhimmelblau]]
 who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
 user-id = 247655 # David Mulder (dmulder)
 start = "2024-06-03"
-end = "2026-09-11"
+end = "2027-09-02"
 
 [[wildcard-audits.sketching]]
 who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
 user-id = 31100 # Firstyear (Firstyear)
 start = "2024-02-07"
-end = "2026-09-11"
+end = "2027-09-02"
 
 [[audits.authenticator]]
 who = "David Mulder <dmulder@samba.org>"
@@ -164,6 +164,11 @@ who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
 delta = "1.4.1 -> 1.4.2"
 
+[[audits.cc]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+delta = "1.4.2 -> 1.4.4"
+
 [[audits.cesu8]]
 who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
@@ -258,6 +263,11 @@ delta = "0.1.5 -> 0.1.6"
 who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
 delta = "0.1.6 -> 0.1.9"
+
+[[audits.find-msvc-tools]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+delta = "0.1.10 -> 0.1.11"
 
 [[audits.futures]]
 who = "David Mulder <dmulder@samba.org>"
@@ -413,6 +423,11 @@ version = "0.16.2"
 who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
 delta = "0.16.2 -> 0.16.3"
+
+[[audits.lru]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+delta = "0.18.2 -> 0.18.3"
 
 [[audits.markup5ever]]
 who = "David Mulder <dmulder@samba.org>"
@@ -848,6 +863,11 @@ delta = "1.20.0 -> 1.21.0"
 who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
 delta = "1.23.1 -> 1.23.2"
+
+[[audits.uuid]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+delta = "1.24.1 -> 1.26.0"
 
 [[audits.uzers]]
 who = "David Mulder <dmulder@samba.org>"
