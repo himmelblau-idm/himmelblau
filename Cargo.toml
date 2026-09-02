@@ -29,7 +29,7 @@ serde_cbor-0-11-2 = { package = "serde_cbor", path = "src/serde_cbor" }
 defmt-parser-1-0-0 = { package = "defmt-parser", path = "src/overrides/defmt-parser/1.0.0" }
 
 [workspace.package]
-version = "3.1.12"
+version = "3.1.13"
 authors = [
     "David Mulder <dmulder@suse.com>"
 ]
