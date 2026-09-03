@@ -10080,9 +10080,9 @@ rec {
       };
       "libhimmelblau" = rec {
         crateName = "libhimmelblau";
-        version = "0.8.37";
+        version = "0.8.38";
         edition = "2021";
-        sha256 = "0n0g4x2z014kha91r3pavl3852k3rh3cv5fs70cb2dwhicc6rwi9";
+        sha256 = "1bmrvniic19jm16cn7q8y8xhab5d0g8fbyirilfvkn3rkl8mswmn";
         libName = "himmelblau";type = [ "rlib" "cdylib" ];
         authors = [
           "David Mulder <dmulder@suse.com>"
@@ -10528,9 +10528,9 @@ rec {
       };
       "libwebauthn" = rec {
         crateName = "libwebauthn";
-        version = "0.9.0";
+        version = "0.10.0";
         edition = "2021";
-        sha256 = "011jnannrgmkxrfrzh1lwysgdgaywmdkqs75cr473afq9h4ml44y";
+        sha256 = "0xy5z2lsj4qlx9ljdki8cw47vav02y74sjkph84z9z58mppr5gxp";
         authors = [
           "Alfie Fresta <afresta@noentropy.org>"
           "Martin Sirringhaus <martin.sirringhaus@suse.com>"
@@ -10968,9 +10968,9 @@ rec {
       };
       "lru" = rec {
         crateName = "lru";
-        version = "0.18.2";
+        version = "0.18.3";
         edition = "2015";
-        sha256 = "02nrs4r8jdnmrm08ab6pvsy87gimklr9ks77jm6v5rm79fdjybsx";
+        sha256 = "0k7zn18j9nlbkcdgnim1ww2malr5c7n5hmr7rsnfd65kkr5pnc8d";
         authors = [
           "Jerome Froelich <jeromefroelic@hotmail.com>"
         ];
@@ -20318,9 +20318,9 @@ rec {
       };
       "uuid" = rec {
         crateName = "uuid";
-        version = "1.24.1";
+        version = "1.26.0";
         edition = "2021";
-        sha256 = "1n8b7fg7dbx6ws64387l2i0qq900rw9b7qax63acdh37sczw1vrc";
+        sha256 = "04kqmzwdqbh1lgci3dhv4ir1nk12bff98z8iq9m8m2myr5qjsxxm";
         authors = [
           "Ashley Mannix<ashleymannix@live.com.au>"
           "Dylan DPC<dylan.dpc@gmail.com>"
