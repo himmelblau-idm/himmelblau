@@ -4,7 +4,7 @@ version = 4
 
 [[package]]
 name = "aad-tool"
-version = "4.0.0"
+version = "4.0.1"
 dependencies = [
  "anyhow",
  "broker-client",
@@ -141,7 +141,7 @@ checksum = "330a5ed07fa54e4702c9d6c4174f74427fc0ef6e214bbd677ae50a5099946470"
 
 [[package]]
 name = "apparmor"
-version = "4.0.0"
+version = "4.0.1"
 
 [[package]]
 name = "arbitrary"
@@ -693,7 +693,7 @@ dependencies = [
 
 [[package]]
 name = "broker"
-version = "4.0.0"
+version = "4.0.1"
 dependencies = [
  "dbus",
  "himmelblau_unix_common",
@@ -709,7 +709,7 @@ dependencies = [
 
 [[package]]
 name = "broker-client"
-version = "4.0.0"
+version = "4.0.1"
 dependencies = [
  "serde_json",
  "zbus",
@@ -2254,7 +2254,7 @@ dependencies = [
 
 [[package]]
 name = "himmelblau-fuzz"
-version = "4.0.0"
+version = "4.0.1"
 dependencies = [
  "arbitrary",
  "himmelblau_unix_common",
@@ -2266,7 +2266,7 @@ dependencies = [
 
 [[package]]
 name = "himmelblau-orchestrator"
-version = "4.0.0"
+version = "4.0.1"
 dependencies = [
  "anyhow",
  "clap",
@@ -2285,7 +2285,7 @@ dependencies = [
 
 [[package]]
 name = "himmelblau_policies"
-version = "4.0.0"
+version = "4.0.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2305,7 +2305,7 @@ dependencies = [
 
 [[package]]
 name = "himmelblau_unix_common"
-version = "4.0.0"
+version = "4.0.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2352,7 +2352,7 @@ dependencies = [
 
 [[package]]
 name = "himmelblaud"
-version = "4.0.0"
+version = "4.0.1"
 dependencies = [
  "async-trait",
  "base64 0.23.1",
@@ -2713,7 +2713,7 @@ dependencies = [
 
 [[package]]
 name = "idmap"
-version = "4.0.0"
+version = "4.0.1"
 dependencies = [
  "murmur3",
  "unicode-normalization",
@@ -3562,7 +3562,7 @@ checksum = "5e0826a989adedc2a244799e823aece04662b66609d96af8dff7ac6df9a8925d"
 
 [[package]]
 name = "nss_himmelblau"
-version = "4.0.0"
+version = "4.0.1"
 dependencies = [
  "himmelblau_unix_common",
  "libc",
@@ -3648,7 +3648,7 @@ dependencies = [
 
 [[package]]
 name = "o365"
-version = "4.0.0"
+version = "4.0.1"
 
 [[package]]
 name = "oauth2"
@@ -3964,7 +3964,7 @@ dependencies = [
 
 [[package]]
 name = "pam_himmelblau"
-version = "4.0.0"
+version = "4.0.1"
 dependencies = [
  "himmelblau_unix_common",
  "libc",
@@ -4401,7 +4401,7 @@ dependencies = [
 
 [[package]]
 name = "qr-greeter"
-version = "4.0.0"
+version = "4.0.1"
 
 [[package]]
 name = "qrcodegen"
@@ -4933,7 +4933,7 @@ dependencies = [
 
 [[package]]
 name = "selinux"
-version = "4.0.0"
+version = "4.0.1"
 
 [[package]]
 name = "semver"
@@ -5364,11 +5364,11 @@ dependencies = [
 
 [[package]]
 name = "sshd-config"
-version = "4.0.0"
+version = "4.0.1"
 
 [[package]]
 name = "sso"
-version = "4.0.0"
+version = "4.0.1"
 dependencies = [
  "broker-client",
  "clap",
@@ -5380,7 +5380,7 @@ dependencies = [
 
 [[package]]
 name = "sso-policies"
-version = "4.0.0"
+version = "4.0.1"
 
 [[package]]
 name = "stable_deref_trait"
