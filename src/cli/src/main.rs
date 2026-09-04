@@ -390,7 +390,21 @@ fn configure_pam(
 
 #[instrument(skip(app, account_id))]
 async fn auth(app: &BrokerClientApplication, account_id: &str) -> Option<UserToken> {
-    let auth_options = vec![AuthOption::Passwordless];
+    let config = match HimmelblauConfig::new(Some(DEFAULT_CONFIG_PATH)) {
+        Ok(cfg) => Some(cfg),
+        Err(e) => {
+            warn!(?e, "Failed to read config, using defaults");
+            None
+        }
+    };
+    let apply_policy = config
+        .as_ref()
+        .map(|c| c.get_apply_policy())
+        .unwrap_or(false);
+    let mut auth_options = vec![AuthOption::Passwordless];
+    if apply_policy {
+        auth_options.push(AuthOption::IntuneEnable);
+    }
     let auth_init = match app.check_user_exists(account_id, &auth_options).await {
         Ok(auth_init) => auth_init,
         Err(e) => {
