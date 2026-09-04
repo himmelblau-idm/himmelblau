@@ -737,7 +737,8 @@ async fn handle_tasks(stream: UnixStream, cfg: &HimmelblauConfig) {
                         error!(
                             "Invalid account_id for profile photo - disallowed characters, rejecting"
                         );
-                    // Set the profile picture
+                    } else if icons_dir.join(&account_id).is_file() {
+                        debug!("Profile photo already present, skipping fetch");
                     } else if let Some(domain) = domain {
                         let result = async {
                             let profile_photo = create_profile_photo_temp_file(icons_dir)
