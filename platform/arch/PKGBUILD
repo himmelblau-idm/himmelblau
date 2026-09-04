@@ -126,6 +126,12 @@ package() {
 
   install -Dm644 platform/opensuse/himmelblaud.service \
     "$pkgdir/usr/lib/systemd/system/himmelblaud.service"
+  install -Dm644 platform/opensuse/himmelblaud.socket \
+    "$pkgdir/usr/lib/systemd/system/himmelblaud.socket"
+  install -Dm644 platform/opensuse/himmelblaud-tasks.socket \
+    "$pkgdir/usr/lib/systemd/system/himmelblaud-tasks.socket"
+  install -Dm644 platform/opensuse/himmelblaud-broker.socket \
+    "$pkgdir/usr/lib/systemd/system/himmelblaud-broker.socket"
   install -Dm644 platform/opensuse/himmelblaud-tasks.service \
     "$pkgdir/usr/lib/systemd/system/himmelblaud-tasks.service"
   install -Dm644 platform/opensuse/himmelblau-hsm-pin-init.service \
