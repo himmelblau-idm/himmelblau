@@ -68,9 +68,6 @@ objc-foundation-0-1-1 = { package = "objc-foundation", path = "src/overrides/obj
 objc2-0-5-2 = { package = "objc2", path = "src/overrides/objc2/0.5.2" }
 objc2-core-bluetooth-0-2-2 = { package = "objc2-core-bluetooth", path = "src/overrides/objc2-core-bluetooth/0.2.2" }
 objc2-foundation-0-2-2 = { package = "objc2-foundation", path = "src/overrides/objc2-foundation/0.2.2" }
-opentelemetry-0-31-0 = { package = "opentelemetry", path = "src/overrides/opentelemetry/0.31.0" }
-opentelemetry-otlp-0-31-1 = { package = "opentelemetry-otlp", path = "src/overrides/opentelemetry-otlp/0.31.1" }
-opentelemetry_sdk-0-31-0 = { package = "opentelemetry_sdk", path = "src/overrides/opentelemetry_sdk/0.31.0" }
 paste-1-0-15 = { package = "paste", path = "src/overrides/paste" }
 pastey-0-1-1 = { package = "pastey", path = "src/overrides/pastey/0.1.1" }
 portable-atomic-1-13-1 = { package = "portable-atomic", path = "src/overrides/portable-atomic/1.13.1" }
@@ -117,7 +114,7 @@ winnow-0-7-10 = { package = "winnow", path = "src/overrides/winnow/0.7.10" }
 zerocopy-derive-0-8-25 = { package = "zerocopy-derive", path = "src/overrides/zerocopy-derive/0.8.25" }
 
 [workspace.package]
-version = "4.0.0"
+version = "5.0.0"
 authors = [
     "David Mulder <dmulder@suse.com>"
 ]
@@ -131,15 +128,13 @@ repository = "https://github.com/himmelblau-idm/himmelblau"
 libc = "^0.2.186"
 pkg-config = "^0.3.33"
 lazy_static = "^1.4.0"
-paste = "^1.0.12"
 serde = { version = "^1.0.228", features = ["derive"] }
 serde_json = "^1.0.149"
 tracing-subscriber = "^0.3.23"
 tracing = "^0.1.37"
 himmelblau_unix_common = { path = "src/common" }
-libhimmelblau = { version = "0.8.37", features = ["broker", "changepassword", "on_behalf_of", "mfa_method_selection", "optional_mfa", "intune_portal_vers_selection", "redirect_uri", "pop_support", "ipvers", "set_timeout"] }
+libhimmelblau = { version = "0.8.40", features = ["broker", "changepassword", "on_behalf_of", "mfa_method_selection", "optional_mfa", "intune_portal_vers_selection", "redirect_uri", "pop_support", "ipvers", "set_timeout"] }
 clap = { version = "^4.6", features = ["derive", "env"] }
-clap_complete = "^4.6.2"
 reqwest = { version = "^0.13.1", features = ["json"] }
 anyhow = "^1.0.102"
 tokio = { version = "^1.52.2", features = ["rt", "macros", "sync", "time", "net", "io-util", "signal", "rt-multi-thread"] }
@@ -147,39 +142,21 @@ tokio-util = { version = "^0.7.18", features = ["codec"] }
 zbus = "5.14"
 async-trait = "^0.1.89"
 himmelblau_policies = { path = "src/policies" }
-pem = "^3.0.6"
-chrono = "^0.4.44"
 os-release = "^0.1.0"
-jsonwebtoken = "^9.2.0"
 zeroize = "^1.8.2"
 idmap = { path = "src/idmap" }
 identity_dbus_broker = "0.2.1"
-rustls = ">=0.23.19" # CVE-2024-11738
 console-subscriber = "0.5.0"
 broker-client = { path = "src/broker-client" }
 libkrimes = { version = "0.1.0", features = ["keyring"] }
 
 # Kanidm deps
-argon2 = { version = "0.5.2", features = ["alloc"] }
-base32 = "^0.5.0"
 base64 = "^0.23.0"
-base64urlsafedata = "0.5.5"
-hex = "^0.4.3"
-num_enum = "^0.7.6"
-scim_proto = "^1.6.4"
-serde_with = "3.19.0"
-time = { version = "^0.3.44", features = ["formatting", "local-offset"] }
 url = "^2.4.0"
 urlencoding = "2.1.3"
 uuid = { version = "^1.23.1", features = ["v4", "v5"] }
-webauthn-rs-proto = "0.5.0"
-kanidm_proto = "1.8.1"
-openssl-sys = "^0.9"
-openssl = "^0.10.80"
 rand = "^0.10.2"
-tss-esapi = "^7.2.0"
 sketching = "1.10.0"
-tracing-forest = "^0.1.6"
 rusqlite = "^0.37.0"
 hashbrown = { version = "0.17.0", features = ["serde", "inline-more"] }
 lru = "^0.18.0"
@@ -189,28 +166,6 @@ walkdir = "2"
 csv = "1.4.0"
 notify-debouncer-full = { version = "0.5" }
 gettextrs = { package = "gettext-rs", version = "0.8", features = ["gettext-system"] }
-utoipa = "4.2.0"
-utoipa-swagger-ui = "4.0.0"
-opentelemetry = { version = "0.27.0" }
-opentelemetry_api = { version = "0.27.0", features = ["logs", "metrics"] }
-opentelemetry-otlp = { version = "0.27.0", default-features = false, features = [
-    "serde",
-    "logs",
-    "metrics",
-    "http-proto",
-    "grpc-tonic",
-] }
-opentelemetry_sdk = { version = "0.27.0", features = ["rt-tokio"] }
-opentelemetry-semantic-conventions = "0.27.0"
-tracing-opentelemetry = "0.28.0"
-tracing-core = "0.1.34"
-tonic = "0.14.5"
-compact_jwt = { version = "0.5.3-dev", features = ["msextensions"] }
 kanidm-hsm-crypto = { version = "^0.3.6" }
-whoami = "1.6.1"
 kanidm_lib_file_permissions = "1.10.0"
-md4 = "0.10.2"
-md-5 = "0.10.6"
-sha-crypt = "0.5.0"
 sha2 = "0.11.0"
-x509-cert = "0.2.5"

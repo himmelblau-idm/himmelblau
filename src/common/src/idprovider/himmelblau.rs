@@ -1473,12 +1473,17 @@ impl IdProvider for HimmelblauProvider {
                     Some(_) => return Ok(UserTokenState::UseCached),
                     // Otherwise, see if we should fake it
                     None => {
+                        let apply_policy = self.config.lock().await.get_apply_policy();
+                        let mut auth_options = vec![];
+                        if apply_policy {
+                            auth_options.push(AuthOption::IntuneEnable);
+                        }
                         // Check if the user exists
                         let auth_init = net_down_check!(
                             self.client
                                 .lock()
                                 .await
-                                .check_user_exists(&account_id, &[])
+                                .check_user_exists(&account_id, &auth_options)
                                 .await,
                             Err(e) => {
                                 error!("Failed checking if the user exists: {:?}", e);
@@ -1917,6 +1922,10 @@ impl IdProvider for HimmelblauProvider {
                 if is_remote_service {
                     auth_options.push(AuthOption::RemoteSession);
                 }
+                let apply_policy = self.config.lock().await.get_apply_policy();
+                if apply_policy {
+                    auth_options.push(AuthOption::IntuneEnable);
+                }
 
                 let mut attempts = 0;
                 let auth_init = loop {
@@ -2252,6 +2261,7 @@ impl IdProvider for HimmelblauProvider {
                                 enable_passwordless_qr_bluetooth,
                                 enable_passwordless,
                                 mfa_method,
+                                apply_policy,
                             ) = {
                                 let cfg = self.config.lock().await;
                                 (
@@ -2262,6 +2272,7 @@ impl IdProvider for HimmelblauProvider {
                                     cfg.get_enable_passwordless_qr_bluetooth(),
                                     cfg.get_enable_passwordless(),
                                     cfg.get_mfa_method(),
+                                    cfg.get_apply_policy(),
                                 )
                             };
                             let is_remote_service = service.starts_with("remote:")
@@ -2290,6 +2301,9 @@ impl IdProvider for HimmelblauProvider {
                                 debug!(
                                     "Forcing MFA for device enrollment despite console password-only mode."
                                 );
+                            }
+                            if apply_policy {
+                                auth_options.push(AuthOption::IntuneEnable);
                             }
 
                             let enrollment_cred: Option<String> = $cred;
@@ -2502,6 +2516,7 @@ impl IdProvider for HimmelblauProvider {
                     enable_passwordless_qr_bluetooth,
                     enable_passwordless,
                     mfa_method,
+                    apply_policy,
                 ) = {
                     let cfg = self.config.lock().await;
                     (
@@ -2513,6 +2528,7 @@ impl IdProvider for HimmelblauProvider {
                         cfg.get_enable_passwordless_qr_bluetooth(),
                         cfg.get_enable_passwordless(),
                         cfg.get_mfa_method(),
+                        cfg.get_apply_policy(),
                     )
                 };
                 let is_remote_service = service.starts_with("remote:")
@@ -2544,6 +2560,9 @@ impl IdProvider for HimmelblauProvider {
                     }
                     if is_remote_service {
                         auth_options.push(AuthOption::RemoteSession);
+                    }
+                    if apply_policy {
+                        auth_options.push(AuthOption::IntuneEnable);
                     }
 
                     let flow = match self
@@ -3969,6 +3988,10 @@ impl IdProvider for HimmelblauProvider {
                 };
                 if sfa_enabled {
                     opts.push(AuthOption::NoDAGFallback);
+                }
+                let apply_policy = self.config.lock().await.get_apply_policy();
+                if apply_policy {
+                    opts.push(AuthOption::IntuneEnable);
                 }
 
                 // Call the appropriate method based on whether mfa_method is configured
@@ -5597,10 +5620,7 @@ impl HimmelblauProvider {
             Ok(cert_key) => cert_key,
             Err(_) => return false,
         };
-        if cert_key.is_none() {
-            return false;
-        }
-        true
+        cert_key.is_some()
     }
 
     #[instrument(level = "debug", skip_all)]
@@ -5636,10 +5656,7 @@ impl HimmelblauProvider {
                 Ok(intune_key) => intune_key,
                 Err(_) => return false,
             };
-        if intune_key.is_none() {
-            return false;
-        }
-        true
+        intune_key.is_some()
     }
 }
 

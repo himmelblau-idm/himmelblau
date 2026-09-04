@@ -124,6 +124,16 @@ who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
 version = "3.0.2"
 
+[[audits.binrw]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+delta = "0.15.0 -> 0.15.2"
+
+[[audits.binrw_derive]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+delta = "0.15.0 -> 0.15.2"
+
 [[audits.bitfield]]
 who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
@@ -754,6 +764,11 @@ who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
 delta = "0.18.1 -> 0.18.2"
 
+[[audits.lru]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+delta = "0.18.2 -> 0.18.3"
+
 [[audits.macaddr]]
 who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
@@ -928,6 +943,11 @@ delta = "0.31.1 -> 0.32.0"
 who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
 delta = "0.31.0 -> 0.32.0"
+
+[[audits.opentelemetry-semantic-conventions]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+delta = "0.31.0 -> 0.32.1"
 
 [[audits.opentelemetry_sdk]]
 who = "David Mulder <dmulder@samba.org>"
@@ -1509,6 +1529,11 @@ who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
 delta = "0.32.0 -> 0.32.1"
 
+[[audits.tracing-opentelemetry]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+delta = "0.32.1 -> 0.33.0"
+
 [[audits.tracing-subscriber]]
 who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
@@ -1578,6 +1603,11 @@ delta = "1.23.4 -> 1.24.0"
 who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
 delta = "1.24.0 -> 1.24.1"
+
+[[audits.uuid]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+delta = "1.24.1 -> 1.26.0"
 
 [[audits.uzers]]
 who = "David Mulder <dmulder@samba.org>"

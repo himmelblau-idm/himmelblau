@@ -419,11 +419,17 @@ async fn auth(app: &BrokerClientApplication, account_id: &str) -> Option<UserTok
         .as_ref()
         .map(|c| c.get_enable_passwordless())
         .unwrap_or(true);
-    let auth_options = if enable_passwordless {
-        vec![AuthOption::Passwordless]
-    } else {
-        vec![]
-    };
+    let apply_policy = config
+        .as_ref()
+        .map(|c| c.get_apply_policy())
+        .unwrap_or(false);
+    let mut auth_options = vec![];
+    if enable_passwordless {
+        auth_options.push(AuthOption::Passwordless);
+    }
+    if apply_policy {
+        auth_options.push(AuthOption::IntuneEnable);
+    }
     let auth_init = match app.check_user_exists(account_id, &auth_options).await {
         Ok(auth_init) => auth_init,
         Err(e) => {
@@ -442,7 +448,7 @@ async fn auth(app: &BrokerClientApplication, account_id: &str) -> Option<UserTok
     debug!("User {} exists? {}", &account_id, exists);
 
     let password = if !auth_init.passwordless() {
-        print!("{} password: ", &account_id);
+        print!("{} password: ", account_id);
         if io::stdout().flush().is_err() {
             error!("Failed flushing stdout");
             return None;
@@ -473,7 +479,7 @@ async fn auth(app: &BrokerClientApplication, account_id: &str) -> Option<UserTok
         Ok(mfa) => mfa,
         Err(e) => match e {
             MsalError::PasswordRequired => {
-                print!("{} password: ", &account_id);
+                print!("{} password: ", account_id);
                 if io::stdout().flush().is_err() {
                     error!("Failed flushing stdout");
                     return None;
