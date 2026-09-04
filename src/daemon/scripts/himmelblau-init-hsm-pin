@@ -11,11 +11,18 @@ CRED=/var/lib/private/himmelblaud/hsm-pin-nopcr.enc
 SRK_HANDLE=0x81000001
 
 gen_pin_hex() {
+    local _pin
     if command -v openssl >/dev/null 2>&1; then
-        openssl rand -hex 24 | tr -d '\n'
+        _pin=$(openssl rand -hex 24) || return 1
     else
-        head -c 24 /dev/urandom | od -An -t x1 | tr -d ' \n'
+        _pin=$(head -c 24 /dev/urandom | od -An -t x1 | tr -d ' \n') || return 1
     fi
+    _pin=$(printf '%s' "$_pin" | tr -d '\n ')
+    if [ "${#_pin}" -ne 48 ]; then
+        echo "ERROR: gen_pin_hex produced ${#_pin} characters (expected 48)" >&2
+        return 1
+    fi
+    printf '%s' "$_pin"
 }
 
 # Returns 0 if the TPM2 SRK is provisioned at the standard persistent handle
@@ -125,9 +132,9 @@ if [ -e /dev/tpmrm0 ] || [ -e /dev/tpm0 ]; then
     fi
 fi
 
-# If the encrypted credential already exists, check if it needs upgrading to
-# TPM-bound encryption. This handles the case where the credential was created
-# during cloud-init or before the SRK was provisioned.
+# If the encrypted credential already exists, validate it and optionally upgrade
+# it to TPM-bound encryption. This handles the case where the credential was
+# created during cloud-init or before the SRK was provisioned.
 if [ -f "$CRED" ]; then
     # Clean up any stale legacy plaintext file
     if [ -f "$LEGACY" ]; then
@@ -135,6 +142,30 @@ if [ -f "$CRED" ]; then
         rm -f "$LEGACY"
     fi
 
+    # Decrypt the existing credential to validate it.
+    # - Decrypt fails: likely a transient/environmental issue (TPM state, machine
+    #   key rotation).  Preserve the credential and abort — do NOT auto-delete,
+    #   because replacing the HSM PIN can make existing cached keys unusable.
+    # - Decrypt succeeds but plaintext < 24 bytes: credential is demonstrably
+    #   invalid (AuthValue::try_from requires ≥ 24 raw bytes); safe to replace.
+    # - Decrypt succeeds and plaintext ≥ 24 bytes: credential is valid; keep it.
+    if HSM_PIN_CHECK=$(systemd-creds decrypt --name=hsm-pin "$CRED" - 2>/dev/null); then
+        if [ "${#HSM_PIN_CHECK}" -lt 24 ]; then
+            echo "WARNING: Existing HSM PIN is too short (${#HSM_PIN_CHECK} bytes, need >=24). Recreating..."
+            unset HSM_PIN_CHECK
+            rm -f "$CRED"
+        else
+            unset HSM_PIN_CHECK
+        fi
+    else
+        echo "ERROR: Could not decrypt existing HSM PIN credential. Leaving it intact and aborting."
+        exit 1
+    fi
+fi
+
+# If the credential is still present after validation it is good — optionally
+# upgrade it to TPM-bound encryption then exit.
+if [ -f "$CRED" ]; then
     # If a TPM is present and the SRK is now provisioned (including via
     # self-provisioning above), try to upgrade the credential to TPM-bound.
     if [ -e /dev/tpmrm0 ] || [ -e /dev/tpm0 ]; then
@@ -156,7 +187,7 @@ if [ -f "$CRED" ]; then
         fi
     fi
 
-    echo "HSM PIN credential already exists, skipping initialization"
+    echo "HSM PIN credential already exists and is valid, skipping initialization"
     exit 0
 fi
 
@@ -169,7 +200,10 @@ elif [ -f "$LEGACY1" ]; then
     HSM_PIN=$(systemd-creds decrypt --name=hsm-pin "$LEGACY1")
 else
     echo "Generating new HSM-PIN"
-    HSM_PIN=$(gen_pin_hex)
+    if ! HSM_PIN=$(gen_pin_hex); then
+        echo "ERROR: Failed to generate a valid HSM PIN. Aborting."
+        exit 1
+    fi
 fi
 
 # Choose the strongest key binding available:
