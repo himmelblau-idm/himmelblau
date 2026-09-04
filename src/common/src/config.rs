@@ -166,7 +166,7 @@ async fn request_federation_provider(
 
     let url = Url::parse_with_params(
         &format!("https://{}/odc/v2.1/federationProvider", odc_provider),
-        &[("domain", domain)],
+        [("domain", domain)],
     )
     .map_err(|e| MsalError::RequestFailed(format!("{:?}", e)))?;
 

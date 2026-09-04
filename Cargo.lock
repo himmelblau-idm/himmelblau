@@ -542,9 +542,9 @@ dependencies = [
 
 [[package]]
 name = "binrw"
-version = "0.15.0"
+version = "0.15.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "81419ff39e6ed10a92a7f125290859776ced35d9a08a665ae40b23e7ca702f30"
+checksum = "6ad120d555272286c1017d25165ab8bd74806f13fc85b258484ec7e4ce75458f"
 dependencies = [
  "array-init",
  "binrw_derive",
@@ -553,9 +553,9 @@ dependencies = [
 
 [[package]]
 name = "binrw_derive"
-version = "0.15.0"
+version = "0.15.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "376404e55ec40d0d6f8b4b7df3f87b87954bd987f0cf9a7207ea3b6ea5c9add4"
+checksum = "6df92e0e9baae4dc82c7bad7715ca40c0a5c71539057bf2ea04a5c29c980410b"
 dependencies = [
  "either",
  "owo-colors",
@@ -835,9 +835,9 @@ checksum = "baf1de4339761588bc0619e3cbc0120ee582ebb74b53b4efbf79117bd2da40fd"
 
 [[package]]
 name = "cfg_aliases"
-version = "0.2.1"
+version = "0.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "613afe47fcd5fac7ccf1db93babcb082c5994d996f20b8b159f2ad1658eb5724"
+checksum = "f079e83a288787bcd14a6aea84cee5c87a67c5a3e660c30f557a3d24761b3527"
 
 [[package]]
 name = "chacha20"
@@ -2339,7 +2339,6 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.11.0",
- "sketching",
  "tokio",
  "tokio-util",
  "totp-rs",
@@ -6528,15 +6527,3 @@ dependencies = [
  "syn 3.0.3",
  "winnow 1.0.2",
 ]
-
-[[patch.unused]]
-name = "opentelemetry"
-version = "0.31.0"
-
-[[patch.unused]]
-name = "opentelemetry-otlp"
-version = "0.31.1"
-
-[[patch.unused]]
-name = "opentelemetry_sdk"
-version = "0.31.0"

@@ -5597,10 +5597,7 @@ impl HimmelblauProvider {
             Ok(cert_key) => cert_key,
             Err(_) => return false,
         };
-        if cert_key.is_none() {
-            return false;
-        }
-        true
+        cert_key.is_some()
     }
 
     #[instrument(level = "debug", skip_all)]
@@ -5636,10 +5633,7 @@ impl HimmelblauProvider {
                 Ok(intune_key) => intune_key,
                 Err(_) => return false,
             };
-        if intune_key.is_none() {
-            return false;
-        }
-        true
+        intune_key.is_some()
     }
 }
 
