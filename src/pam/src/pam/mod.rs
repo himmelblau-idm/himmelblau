@@ -211,6 +211,10 @@ fn should_capture_keyring_secret(prompt: &str) -> bool {
     prompt.contains("pin") || prompt.contains("password")
 }
 
+fn should_learn_short_name_after_auth(result: &PamResultCode, supplied_name: &str) -> bool {
+    *result == PamResultCode::PAM_SUCCESS && split_username(supplied_name).is_some()
+}
+
 pub struct KeyringCaptureMessagePrinter {
     inner: Arc<dyn MessagePrinter>,
     captured: Arc<Mutex<Option<String>>>,
@@ -382,7 +386,7 @@ impl PamHooks for PamKanidm {
             service
         };
 
-        let account_id = match pamh.get_user(None) {
+        let supplied_account_id = match pamh.get_user(None) {
             Ok(aid) => aid,
             Err(e) => {
                 error!(err = ?e, "get_user");
@@ -395,9 +399,9 @@ impl PamHooks for PamKanidm {
             Err(e) => return e,
         };
         let user_map = UserMap::new(&cfg.get_user_map_file());
-        let account_id = match user_map.get_upn_from_local(&account_id) {
+        let account_id = match user_map.get_upn_from_local(&supplied_account_id) {
             Some(account_id) => account_id,
-            None => match cfg.map_name_to_upn(&account_id) {
+            None => match cfg.map_name_to_upn(&supplied_account_id) {
                 Some(upn) => upn,
                 None => return PamResultCode::PAM_IGNORE,
             },
@@ -475,12 +479,18 @@ impl PamHooks for PamKanidm {
         let result = authenticate_with_client(
             daemon_client,
             authtok,
-            cfg,
+            cfg.clone(),
             &account_id,
             &service,
             opts,
             msg_printer,
         );
+
+        // Preserve the original PAM username and only learn after a successful
+        // authentication of an explicitly supplied full UPN.
+        if should_learn_short_name_after_auth(&result, &supplied_account_id) {
+            cfg.learn_authenticated_short_name(&supplied_account_id, &account_id);
+        }
 
         if set_authtok && result == PamResultCode::PAM_SUCCESS {
             if let Ok(Some(secret)) = keyring_secret.lock().map(|s| s.clone()) {
@@ -1103,6 +1113,22 @@ impl PamHooks for PamKanidm {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn failed_authentication_never_triggers_short_name_learning() {
+        assert!(!should_learn_short_name_after_auth(
+            &PamResultCode::PAM_AUTH_ERR,
+            "alice@company.com"
+        ));
+        assert!(!should_learn_short_name_after_auth(
+            &PamResultCode::PAM_SUCCESS,
+            "alice"
+        ));
+        assert!(should_learn_short_name_after_auth(
+            &PamResultCode::PAM_SUCCESS,
+            "alice@company.com"
+        ));
+    }
 
     #[test]
     fn test_should_capture_keyring_secret_pin_prompts() {

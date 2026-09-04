@@ -385,6 +385,15 @@ in
       example = false;
     };
 
+    learned_name_mapping = mkOption {
+      type = types.nullOr (types.bool);
+      default = false;
+      description = ''
+        Enables short Unix names that Himmelblau learns only after a successful login with the exact full UPN. When enabled, a short name is unavailable until that first full-UPN login succeeds. It replaces the implicit primary-domain fallback from cn_name_mapping, preventing an unobserved primary-domain user from colliding with a learned alias. The first UPN learned for a local part keeps its short name; later UPNs with the same local part continue to use their full UPN. This option is ignored when name_mapping_script is configured.
+      '';
+      example = true;
+    };
+
     local_groups = mkOption {
       type = types.nullOr (types.listOf types.str);
       default = null;
