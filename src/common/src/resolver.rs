@@ -99,6 +99,25 @@ where
     nxcache: Mutex<LruCache<Id, SystemTime>>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ResolverError;
+
+pub type ResolverResult<T> = Result<T, ResolverError>;
+
+impl Display for ResolverError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("resolver error")
+    }
+}
+
+impl std::error::Error for ResolverError {}
+
+impl From<()> for ResolverError {
+    fn from(_: ()) -> Self {
+        Self
+    }
+}
+
 impl Display for Id {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(&match self {
@@ -624,7 +643,7 @@ where
         uid_attr_map: UidAttr,
         gid_attr_map: UidAttr,
         allow_id_overrides: Vec<String>,
-    ) -> Result<Self, ()> {
+    ) -> ResolverResult<Self> {
         let hsm = Mutex::new(hsm);
         let mut hsm_lock = hsm.lock().await;
 
@@ -649,7 +668,7 @@ where
             }
             Err(err) => {
                 error!(?err, "Unable to retrieve loadable hmac key from db");
-                return Err(());
+                return Err(ResolverError);
             }
         };
 
@@ -726,7 +745,7 @@ where
         res
     }
 
-    pub async fn clear_cache(&self) -> Result<(), ()> {
+    pub async fn clear_cache(&self) -> ResolverResult<()> {
         let mut nxcache_txn = self.nxcache.lock().await;
         nxcache_txn.clear();
         let mut dbtxn = self.db.write().await;
@@ -744,33 +763,33 @@ where
         Ok(())
     }
 
-    pub async fn invalidate(&self) -> Result<(), ()> {
+    pub async fn invalidate(&self) -> ResolverResult<()> {
         let mut nxcache_txn = self.nxcache.lock().await;
         nxcache_txn.clear();
         let mut dbtxn = self.db.write().await;
         dbtxn
             .invalidate()
             .and_then(|_| dbtxn.commit())
-            .map_err(|_| ())
+            .map_err(|_| ResolverError)
     }
 
-    async fn get_cached_usertokens(&self) -> Result<Vec<UserToken>, ()> {
+    async fn get_cached_usertokens(&self) -> ResolverResult<Vec<UserToken>> {
         let mut dbtxn = self.db.write().await;
-        dbtxn.get_accounts().map_err(|_| ())
+        dbtxn.get_accounts().map_err(|_| ResolverError)
     }
 
     pub async fn refresh_cached_usertoken(
         &self,
         account_id: &str,
-    ) -> Result<Option<UserToken>, ()> {
+    ) -> ResolverResult<Option<UserToken>> {
         let id = Id::Name(account_id.to_string());
         let (_expired, token) = self.get_cached_usertoken(&id).await?;
         self.refresh_usertoken(&id, token).await
     }
 
-    async fn get_cached_grouptokens(&self) -> Result<Vec<GroupToken>, ()> {
+    async fn get_cached_grouptokens(&self) -> ResolverResult<Vec<GroupToken>> {
         let mut dbtxn = self.db.write().await;
-        dbtxn.get_groups().map_err(|_| ())
+        dbtxn.get_groups().map_err(|_| ResolverError)
     }
 
     async fn set_nxcache(&self, id: &Id) {
@@ -816,7 +835,10 @@ where
         false
     }
 
-    async fn get_cached_usertoken(&self, account_id: &Id) -> Result<(bool, Option<UserToken>), ()> {
+    async fn get_cached_usertoken(
+        &self,
+        account_id: &Id,
+    ) -> ResolverResult<(bool, Option<UserToken>)> {
         // Account_id could be:
         //  * gidnumber
         //  * name
@@ -866,7 +888,10 @@ where
         } // end match r
     }
 
-    async fn get_cached_grouptoken(&self, grp_id: &Id) -> Result<(bool, Option<GroupToken>), ()> {
+    async fn get_cached_grouptoken(
+        &self,
+        grp_id: &Id,
+    ) -> ResolverResult<(bool, Option<GroupToken>)> {
         // grp_id could be:
         //  * gidnumber
         //  * name
@@ -914,7 +939,7 @@ where
         }
     }
 
-    async fn set_cache_usertoken(&self, token: &mut UserToken) -> Result<(), ()> {
+    async fn set_cache_usertoken(&self, token: &mut UserToken) -> ResolverResult<()> {
         // Set an expiry
         let ex_time = SystemTime::now() + Duration::from_secs(self.timeout_seconds);
         let offset = ex_time
@@ -966,10 +991,10 @@ where
                 dbtxn
                     .update_account(token, offset.as_secs()))
             .and_then(|_| dbtxn.commit())
-            .map_err(|_| ())
+            .map_err(|_| ResolverError)
     }
 
-    async fn set_cache_grouptoken(&self, token: &GroupToken) -> Result<(), ()> {
+    async fn set_cache_grouptoken(&self, token: &GroupToken) -> ResolverResult<()> {
         // Set an expiry
         let ex_time = SystemTime::now() + Duration::from_secs(self.timeout_seconds);
         let offset = ex_time
@@ -982,48 +1007,48 @@ where
         dbtxn
             .update_group(token, offset.as_secs())
             .and_then(|_| dbtxn.commit())
-            .map_err(|_| ())
+            .map_err(|_| ResolverError)
     }
 
-    async fn delete_cache_usertoken(&self, a_uuid: Uuid) -> Result<(), ()> {
+    async fn delete_cache_usertoken(&self, a_uuid: Uuid) -> ResolverResult<()> {
         let mut dbtxn = self.db.write().await;
         dbtxn
             .delete_account(a_uuid)
             .and_then(|_| dbtxn.commit())
-            .map_err(|_| ())
+            .map_err(|_| ResolverError)
     }
 
-    async fn delete_cache_grouptoken(&self, g_uuid: Uuid) -> Result<(), ()> {
+    async fn delete_cache_grouptoken(&self, g_uuid: Uuid) -> ResolverResult<()> {
         let mut dbtxn = self.db.write().await;
         dbtxn
             .delete_group(g_uuid)
             .and_then(|_| dbtxn.commit())
-            .map_err(|_| ())
+            .map_err(|_| ResolverError)
     }
 
-    async fn set_cache_userpassword(&self, a_uuid: Uuid, cred: &str) -> Result<(), ()> {
+    async fn set_cache_userpassword(&self, a_uuid: Uuid, cred: &str) -> ResolverResult<()> {
         let mut dbtxn = self.db.write().await;
         let mut hsm_txn = self.hsm.lock().await;
         dbtxn
             .update_account_password(a_uuid, cred, hsm_txn.deref_mut(), &self.hmac_key)
             .and_then(|x| dbtxn.commit().map(|_| x))
-            .map_err(|_| ())
+            .map_err(|_| ResolverError)
     }
 
-    async fn check_cache_userpassword(&self, a_uuid: Uuid, cred: &str) -> Result<bool, ()> {
+    async fn check_cache_userpassword(&self, a_uuid: Uuid, cred: &str) -> ResolverResult<bool> {
         let mut dbtxn = self.db.write().await;
         let mut hsm_txn = self.hsm.lock().await;
         dbtxn
             .check_account_password(a_uuid, cred, hsm_txn.deref_mut(), &self.hmac_key)
             .and_then(|x| dbtxn.commit().map(|_| x))
-            .map_err(|_| ())
+            .map_err(|_| ResolverError)
     }
 
     async fn refresh_usertoken(
         &self,
         account_id: &Id,
         token: Option<UserToken>,
-    ) -> Result<Option<UserToken>, ()> {
+    ) -> ResolverResult<Option<UserToken>> {
         let mut hsm_lock = self.hsm.lock().await;
         let mut dbtxn = self.db.write().await;
 
@@ -1070,7 +1095,7 @@ where
         &self,
         grp_id: &Id,
         token: Option<GroupToken>,
-    ) -> Result<Option<GroupToken>, ()> {
+    ) -> ResolverResult<Option<GroupToken>> {
         let mut hsm_lock = self.hsm.lock().await;
 
         let group_get_result = self
@@ -1276,7 +1301,7 @@ where
         account_id: &str,
         token: &UnixUserToken,
         new_tok: &str,
-    ) -> Result<bool, ()> {
+    ) -> ResolverResult<bool> {
         // Validate the user isn't in the nxset (aka, it's a local user or group).
         if self.check_nxset(Some(account_id), None).await {
             return Ok(false);
@@ -1306,20 +1331,21 @@ where
             }
             Err(e) => {
                 trace!("change_auth_token error -> {:?}", e);
-                Err(())
+                Err(ResolverError)
             }
         }
     }
 
-    pub async fn offline_break_glass(&self, ttl: Option<u64>) -> Result<(), ()> {
+    pub async fn offline_break_glass(&self, ttl: Option<u64>) -> ResolverResult<()> {
         let res = self.client.offline_break_glass(ttl).await;
 
         res.map_err(|e| {
             trace!("offline_break_glass error -> {:?}", e);
+            ResolverError
         })
     }
 
-    pub async fn get_usertoken(&self, account_id: Id) -> Result<Option<UserToken>, ()> {
+    pub async fn get_usertoken(&self, account_id: Id) -> ResolverResult<Option<UserToken>> {
         // Validate the user isn't in the nxset (aka, it's a local user or group).
         let (name, idnumber) = match account_id.clone() {
             Id::Name(name) => (Some(name), None),
@@ -1386,7 +1412,7 @@ where
         })
     }
 
-    async fn get_grouptoken(&self, grp_id: Id) -> Result<Option<GroupToken>, ()> {
+    async fn get_grouptoken(&self, grp_id: Id) -> ResolverResult<Option<GroupToken>> {
         trace!("get_grouptoken");
         let (expired, item) = self.get_cached_grouptoken(&grp_id).await.map_err(|e| {
             trace!("get_grouptoken error -> {:?}", e);
@@ -1486,7 +1512,7 @@ where
         .to_string()
     }
 
-    pub async fn get_nssaccounts(&self) -> Result<Vec<NssUser>, ()> {
+    pub async fn get_nssaccounts(&self) -> ResolverResult<Vec<NssUser>> {
         self.get_cached_usertokens().await.map(|l| {
             l.into_iter()
                 .map(|tok| NssUser {
@@ -1501,7 +1527,7 @@ where
         })
     }
 
-    async fn get_nssaccount(&self, account_id: Id) -> Result<Option<NssUser>, ()> {
+    async fn get_nssaccount(&self, account_id: Id) -> ResolverResult<Option<NssUser>> {
         let token = self.get_usertoken(account_id).await?;
         Ok(token.map(|tok| NssUser {
             homedir: self.token_abs_homedirectory(&tok),
@@ -1513,11 +1539,11 @@ where
         }))
     }
 
-    pub async fn get_nssaccount_name(&self, account_id: &str) -> Result<Option<NssUser>, ()> {
+    pub async fn get_nssaccount_name(&self, account_id: &str) -> ResolverResult<Option<NssUser>> {
         self.get_nssaccount(Id::Name(account_id.to_string())).await
     }
 
-    pub async fn get_nssaccount_gid(&self, gid: u32) -> Result<Option<NssUser>, ()> {
+    pub async fn get_nssaccount_gid(&self, gid: u32) -> ResolverResult<Option<NssUser>> {
         self.get_nssaccount(Id::Gid(gid)).await
     }
 
@@ -1530,7 +1556,7 @@ where
         .to_string()
     }
 
-    pub async fn get_nssgroups(&self) -> Result<Vec<NssGroup>, ()> {
+    pub async fn get_nssgroups(&self) -> ResolverResult<Vec<NssGroup>> {
         let l = self.get_cached_grouptokens().await?;
         let mut r: Vec<_> = Vec::with_capacity(l.len());
         for tok in l.into_iter() {
@@ -1544,7 +1570,7 @@ where
         Ok(r)
     }
 
-    async fn get_nssgroup(&self, grp_id: Id) -> Result<Option<NssGroup>, ()> {
+    async fn get_nssgroup(&self, grp_id: Id) -> ResolverResult<Option<NssGroup>> {
         let token = self.get_grouptoken(grp_id).await?;
         // Get members set.
         match token {
@@ -1560,20 +1586,20 @@ where
         }
     }
 
-    pub async fn get_nssgroup_name(&self, grp_id: &str) -> Result<Option<NssGroup>, ()> {
+    pub async fn get_nssgroup_name(&self, grp_id: &str) -> ResolverResult<Option<NssGroup>> {
         self.get_nssgroup(Id::Name(grp_id.to_string())).await
     }
 
-    pub async fn get_nssgroup_gid(&self, gid: u32) -> Result<Option<NssGroup>, ()> {
+    pub async fn get_nssgroup_gid(&self, gid: u32) -> ResolverResult<Option<NssGroup>> {
         self.get_nssgroup(Id::Gid(gid)).await
     }
 
-    pub async fn get_initgroups(&self, account_id: &str) -> Result<Option<Vec<u32>>, ()> {
+    pub async fn get_initgroups(&self, account_id: &str) -> ResolverResult<Option<Vec<u32>>> {
         let token = self.get_usertoken(Id::Name(account_id.to_string())).await?;
         Ok(token.map(|tok| tok.groups.iter().map(|g| g.gidnumber).collect()))
     }
 
-    pub async fn pam_account_allowed(&self, account_id: &str) -> Result<Option<bool>, ()> {
+    pub async fn pam_account_allowed(&self, account_id: &str) -> ResolverResult<Option<bool>> {
         let token = self.get_usertoken(Id::Name(account_id.to_string())).await?;
 
         if self.pam_allow_groups.is_empty() {
@@ -1624,7 +1650,7 @@ where
         no_hello_pin: bool,
         force_reauth: bool,
         shutdown_rx: broadcast::Receiver<()>,
-    ) -> Result<(AuthSession, PamAuthResponse), ()> {
+    ) -> ResolverResult<(AuthSession, PamAuthResponse)> {
         // Setup an auth session. If possible bring the resolver online.
         // Further steps won't attempt to bring the cache online to prevent
         // weird interactions - they should assume online/offline only for
@@ -1754,7 +1780,7 @@ where
             )),
             Err(e) => {
                 error!("{:?}", e);
-                Err(())
+                Err(ResolverError)
             }
         }
     }
@@ -1763,7 +1789,7 @@ where
         &self,
         auth_session: &mut AuthSession,
         pam_next_req: PamAuthRequest,
-    ) -> Result<PamAuthResponse, ()> {
+    ) -> ResolverResult<PamAuthResponse> {
         let state = match auth_session {
             AuthSession::InProgress {
                 account_id,
@@ -1894,7 +1920,7 @@ where
                     (AuthCredHandler::ReauthPassword { .. }, _) => {
                         // Password-based Hello reauthentication must complete online so
                         // that the provider can enforce the remaining MFA requirements.
-                        return Err(());
+                        return Err(ResolverError);
                     }
                     (_, PamAuthRequest::Password { cred }) => {
                         match self.check_cache_userpassword(token.uuid, cred).await {
@@ -1902,23 +1928,23 @@ where
                                 token: *token.clone(),
                             }),
                             Ok(false) => Ok(AuthResult::Denied("Offline auth failed".to_string())),
-                            Err(()) => {
+                            Err(_) => {
                                 // We had a genuine backend error of some description.
-                                return Err(());
+                                return Err(ResolverError);
                             }
                         }
                     }
                     (AuthCredHandler::MFA { .. }, _) => {
                         // AuthCredHandler::MFA is invalid for offline auth
-                        return Err(());
+                        return Err(ResolverError);
                     }
                     (AuthCredHandler::SetupPin { .. }, _) => {
                         // AuthCredHandler::SetupPin is invalid for offline auth
-                        return Err(());
+                        return Err(ResolverError);
                     }
                     (AuthCredHandler::ChangePassword { .. }, _) => {
                         // AuthCredHandler::ChangePassword is invalid for offline auth
-                        return Err(());
+                        return Err(ResolverError);
                     }
                     (_, PamAuthRequest::Pin { .. }) | (_, PamAuthRequest::HelloTOTP { .. }) => {
                         // The Pin acts as a single device password, and can be
@@ -1947,31 +1973,31 @@ where
                     }
                     (AuthCredHandler::HelloTOTP { .. }, _) => {
                         // AuthCredHandler::HelloTOTP with anything other than HelloTOTP is invalid
-                        return Err(());
+                        return Err(ResolverError);
                     }
                     (AuthCredHandler::None, PamAuthRequest::Input { .. }) => {
                         // AuthCredHandler::None is invalid with Input
-                        return Err(());
+                        return Err(ResolverError);
                     }
                     (AuthCredHandler::None, PamAuthRequest::MFAPoll { .. }) => {
                         // AuthCredHandler::None is invalid with MFAPoll
-                        return Err(());
+                        return Err(ResolverError);
                     }
                     (AuthCredHandler::None, PamAuthRequest::SetupPin { .. }) => {
                         // AuthCredHandler::None is invalid with SetupPin
-                        return Err(());
+                        return Err(ResolverError);
                     }
                     (AuthCredHandler::None, PamAuthRequest::Fido { .. }) => {
                         // AuthCredHandler::None is invalid with Fido
-                        return Err(());
+                        return Err(ResolverError);
                     }
                     (AuthCredHandler::None, PamAuthRequest::FidoUnavailable) => {
-                        return Err(());
+                        return Err(ResolverError);
                     }
                     (AuthCredHandler::PasswordFirst { .. }, _) => {
                         // AuthCredHandler::PasswordFirst with anything other than
                         // PamAuthRequest::Password is invalid.
-                        return Err(());
+                        return Err(ResolverError);
                     }
                 }
             }
@@ -2025,7 +2051,7 @@ where
             }),
             Err(e) => {
                 error!("{:?}", e);
-                Err(())
+                Err(ResolverError)
             }
         }
     }
@@ -2035,7 +2061,7 @@ where
     /// An expired Entra PRT is renewed with the Hello key when the provider is
     /// online. A cached user record is refreshed online only when cache_timeout
     /// has elapsed.
-    pub async fn pam_try_unseal(&self, account_id: &str, cred: &str) -> Result<bool, ()> {
+    pub async fn pam_try_unseal(&self, account_id: &str, cred: &str) -> ResolverResult<bool> {
         let id = Id::Name(account_id.to_string());
         let (expired, token) = self.get_cached_usertoken(&id).await?;
         let Some(token) = token else {
@@ -2089,7 +2115,7 @@ where
     pub async fn pam_account_beginsession(
         &self,
         account_id: &str,
-    ) -> Result<Option<HomeDirectoryInfo>, ()> {
+    ) -> ResolverResult<Option<HomeDirectoryInfo>> {
         let token = self.get_usertoken(Id::Name(account_id.to_string())).await?;
         Ok(token.as_ref().map(|tok| HomeDirectoryInfo {
             uid: tok.gidnumber,

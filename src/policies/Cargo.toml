@@ -6,7 +6,6 @@ authors.workspace = true
 rust-version.workspace = true
 edition.workspace = true
 license.workspace = true
-homepage.workspace = true
 repository.workspace = true
 
 [lib]
@@ -23,7 +22,7 @@ regex = "^1.12.3"
 base64.workspace = true
 tokio.workspace = true
 himmelblau_unix_common = { workspace = true }
-os-release = "0.1.0"
+os-release.workspace = true
 semver = "1.0.28"
 libhimmelblau.workspace = true
 tempfile = "3.27.0"

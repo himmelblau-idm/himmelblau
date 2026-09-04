@@ -1950,9 +1950,9 @@ rec {
       };
       "binrw" = rec {
         crateName = "binrw";
-        version = "0.15.0";
+        version = "0.15.2";
         edition = "2021";
-        sha256 = "0c1gf35ff8qbwid6d2m0v4sysv3pb442j9gily90mlbfkvrryhc1";
+        sha256 = "13s5fp7f9isf91cb51gw2dpq0x5xp1d1c9bx070qc8i7apaj1lba";
         authors = [
           "jam1garner <jam@jam1.re>"
           "Colin Snover <github.com@zetafleet.com>"
@@ -1981,9 +1981,9 @@ rec {
       };
       "binrw_derive" = rec {
         crateName = "binrw_derive";
-        version = "0.15.0";
+        version = "0.15.2";
         edition = "2021";
-        sha256 = "1m5dr6jnwfza0xr9mkzhhzclp5c7ggwg6zabidphs3f4bvjh8r1p";
+        sha256 = "02s1h34jjp2al0pbymwhadqmq2hclif73mxsqy1drr5akc72xybd";
         procMacro = true;
         authors = [
           "jam1garner <jam@jam1.re>"
@@ -2859,9 +2859,9 @@ rec {
       };
       "cfg_aliases" = rec {
         crateName = "cfg_aliases";
-        version = "0.2.1";
+        version = "0.2.2";
         edition = "2018";
-        sha256 = "092pxdc1dbgjb6qvh83gk56rkic2n2ybm4yvy76cgynmzi3zwfk1";
+        sha256 = "09rm3dv28gbsal7w6q76lg2nfyn8wp789ska9b8vr1w750xfhygh";
         authors = [
           "Zicklag <zicklag@katharostech.com>"
         ];
@@ -7698,10 +7698,6 @@ rec {
           {
             name = "sha2";
             packageId = "sha2 0.11.0";
-          }
-          {
-            name = "sketching";
-            packageId = "sketching";
           }
           {
             name = "tokio";

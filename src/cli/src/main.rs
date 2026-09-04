@@ -442,7 +442,7 @@ async fn auth(app: &BrokerClientApplication, account_id: &str) -> Option<UserTok
     debug!("User {} exists? {}", &account_id, exists);
 
     let password = if !auth_init.passwordless() {
-        print!("{} password: ", &account_id);
+        print!("{} password: ", account_id);
         if io::stdout().flush().is_err() {
             error!("Failed flushing stdout");
             return None;
@@ -473,7 +473,7 @@ async fn auth(app: &BrokerClientApplication, account_id: &str) -> Option<UserTok
         Ok(mfa) => mfa,
         Err(e) => match e {
             MsalError::PasswordRequired => {
-                print!("{} password: ", &account_id);
+                print!("{} password: ", account_id);
                 if io::stdout().flush().is_err() {
                     error!("Failed flushing stdout");
                     return None;
