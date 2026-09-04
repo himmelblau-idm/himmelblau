@@ -10076,9 +10076,9 @@ rec {
       };
       "libhimmelblau" = rec {
         crateName = "libhimmelblau";
-        version = "0.8.38";
+        version = "0.8.40";
         edition = "2021";
-        sha256 = "1bmrvniic19jm16cn7q8y8xhab5d0g8fbyirilfvkn3rkl8mswmn";
+        sha256 = "14br87qvafa650263s96lyqlms9gcqrsxnn5gg8xgpzl4798jzxh";
         libName = "himmelblau";type = [ "rlib" "cdylib" ];
         authors = [
           "David Mulder <dmulder@suse.com>"
