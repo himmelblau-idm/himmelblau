@@ -1111,7 +1111,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_clear_hello_keys() {
-        sketching::test_init();
         let db = Db::new("").expect("failed to create.");
         let mut dbtxn = db.write().await;
         assert!(dbtxn.migrate().is_ok());
@@ -1146,7 +1145,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_cache_db_account_basic() {
-        sketching::test_init();
         let db = Db::new("").expect("failed to create.");
         let mut dbtxn = db.write().await;
         assert!(dbtxn.migrate().is_ok());
@@ -1231,7 +1229,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_cache_db_group_basic() {
-        sketching::test_init();
         let db = Db::new("").expect("failed to create.");
         let mut dbtxn = db.write().await;
         assert!(dbtxn.migrate().is_ok());
@@ -1306,7 +1303,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_cache_db_account_group_update() {
-        sketching::test_init();
         let db = Db::new("").expect("failed to create.");
         let mut dbtxn = db.write().await;
         assert!(dbtxn.migrate().is_ok());
@@ -1375,8 +1371,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_cache_db_account_password() {
-        sketching::test_init();
-
         let db = Db::new("").expect("failed to create.");
 
         let mut dbtxn = db.write().await;
@@ -1462,7 +1456,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_cache_db_group_rename_duplicate() {
-        sketching::test_init();
         let db = Db::new("").expect("failed to create.");
         let mut dbtxn = db.write().await;
         assert!(dbtxn.migrate().is_ok());
@@ -1517,7 +1510,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_cache_db_account_rename_duplicate() {
-        sketching::test_init();
         let db = Db::new("").expect("failed to create.");
         let mut dbtxn = db.write().await;
         assert!(dbtxn.migrate().is_ok());

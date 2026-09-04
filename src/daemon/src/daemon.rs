@@ -332,7 +332,7 @@ async fn reconcile_local_groups_once(
 
     let accounts = match cachelayer.get_nssaccounts().await {
         Ok(accounts) => accounts,
-        Err(()) => {
+        Err(_) => {
             warn!("Unable to fetch cached users for local group reconciliation");
             return;
         }
@@ -351,7 +351,7 @@ async fn reconcile_local_groups_once(
                     );
                     continue;
                 }
-                Err(()) => {
+                Err(_) => {
                     warn!(
                         account_id = account.name.as_str(),
                         "Failed to refresh cached user before local group reconciliation"
@@ -1171,7 +1171,7 @@ async fn handle_client(
                         Ok(false) => {
                             debug!("pam_try_unseal: failed for {}", account_id);
                         }
-                        Err(()) => {
+                        Err(_) => {
                             error!("pam_try_unseal: error for {}", account_id);
                         }
                     }
