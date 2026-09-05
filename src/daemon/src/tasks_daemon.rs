@@ -36,6 +36,7 @@ use himmelblau_policies::policies::apply_intune_policy;
 use himmelblau_unix_common::config::{split_username, HimmelblauConfig};
 use himmelblau_unix_common::constants::{DEFAULT_CONFIG_PATH, DEFAULT_KERBEROS_CONF_DIR};
 use himmelblau_unix_common::unix_proto::{HomeDirectoryInfo, TaskRequest, TaskResponse};
+use himmelblau_unix_common::user_map::UserMap;
 use kanidm_utils_users::{get_effective_gid, get_effective_uid};
 use libc::uid_t;
 use libc::{lchown, umask};
@@ -490,6 +491,20 @@ fn create_profile_photo_temp_file(icons_dir: &Path) -> io::Result<NamedTempFile>
     Ok(file)
 }
 
+fn resolve_profile_photo_account_id(cfg: &HimmelblauConfig, upn: &str) -> String {
+    let user_map = UserMap::new(&cfg.get_user_map_file());
+    user_map
+        .get_local_from_upn(&upn.to_lowercase())
+        .unwrap_or_else(|| cfg.map_upn_to_name(upn))
+}
+
+fn profile_photo_task_response(outcome: Result<(), String>) -> TaskResponse {
+    match outcome {
+        Ok(()) => TaskResponse::Success(0),
+        Err(e) => TaskResponse::Error(e),
+    }
+}
+
 fn store_tgt(tgt: &KerberosCredentials, uid: uid_t, gid: uid_t) -> Result<(), String> {
     // Usually default_ccache_name in /etc/krb5.conf contains a %{uid} substitution,
     // which will be '0' (root) for the tasks daemon because it runs as root. Force
@@ -714,18 +729,25 @@ async fn handle_tasks(stream: UnixStream, cfg: &HimmelblauConfig) {
                     return;
                 }
             }
-            Some(Ok(TaskRequest::LoadProfilePhoto(mut account_id, access_token))) => {
+            Some(Ok(TaskRequest::LoadProfilePhoto(account_id, access_token))) => {
                 debug!("Received task -> LoadProfilePhoto(...)");
                 let icons_dir = Path::new("/var/lib/AccountsService/icons/");
-                if !icons_dir.exists() {
-                    info!(
-                        "Profile photo directory '{}' doesn't exist.",
-                        icons_dir.display()
-                    );
-                } else {
+
+                let outcome: Result<(), String> = async {
+                    if !icons_dir.exists() {
+                        return Err(format!(
+                            "Profile photo directory '{}' doesn't exist",
+                            icons_dir.display()
+                        ));
+                    }
+
                     let upn = account_id.clone();
-                    let domain = split_username(&upn).map(|(_, domain)| domain);
-                    account_id = cfg.map_upn_to_name(&account_id);
+                    let domain = split_username(&upn)
+                        .map(|(_, domain)| domain)
+                        .ok_or_else(|| format!("Couldn't parse domain from UPN '{upn}'"))?;
+
+                    // Resolve mapped UPNs back to the local account that owns the avatar.
+                    let account_id = resolve_profile_photo_account_id(cfg, &upn);
 
                     // Reject invalid account identifiers before resolving them through
                     // AccountsService. Stripping characters could select a different user.
@@ -734,58 +756,48 @@ async fn handle_tasks(stream: UnixStream, cfg: &HimmelblauConfig) {
                             c.is_ascii_alphanumeric() || matches!(c, '@' | '.' | '_' | '-')
                         })
                     {
-                        error!(
-                            "Invalid account_id for profile photo - disallowed characters, rejecting"
-                        );
-                    // Set the profile picture
-                    } else if let Some(domain) = domain {
-                        let result = async {
-                            let profile_photo = create_profile_photo_temp_file(icons_dir)
-                                .map_err(|e| format!("Failed creating profile photo: {:?}", e))?;
-                            let file = profile_photo
-                                .reopen()
-                                .map_err(|e| format!("Failed opening profile photo: {:?}", e))?;
-                            let authority_host = cfg.get_authority_host(domain);
-                            let tenant_id = cfg.get_tenant_id(domain);
-                            let graph_url = cfg.get_graph_url(domain);
-                            let ip_versions = cfg.get_ip_versions();
-                            let request_timeout = cfg.get_request_timeout();
-                            let graph = Graph::new(
-                                &cfg.get_odc_provider(domain),
-                                domain,
-                                Some(&authority_host),
-                                tenant_id.as_deref(),
-                                graph_url.as_deref(),
-                                Duration::from_secs(request_timeout),
-                                &ip_versions,
-                            )
-                            .await
-                            .map_err(|e| format!("Failed creating Graph client: {:?}", e))?;
-                            graph
-                                .fetch_user_profile_photo(&access_token, file)
-                                .await
-                                .map_err(|e| format!("Failed fetching profile photo: {:?}", e))?;
-                            set_accountsservice_icon(&account_id, profile_photo.path())
-                                .await
-                                .map_err(|e| {
-                                    format!(
-                                        "Failed updating AccountsService profile photo: {:?}",
-                                        e
-                                    )
-                                })?;
-                            Ok::<(), String>(())
-                        }
-                        .await;
-                        if let Err(e) = result {
-                            error!("{}", e);
-                        }
-                    } else {
-                        error!("Couldn't parse domain from name");
+                        return Err(format!(
+                            "Invalid account_id '{account_id}' for profile photo - disallowed characters"
+                        ));
                     }
-                }
 
-                // Always indicate success here
-                if let Err(e) = reqs.send(TaskResponse::Success(0)).await {
+                    let profile_photo = create_profile_photo_temp_file(icons_dir)
+                        .map_err(|e| format!("Failed creating profile photo: {e:?}"))?;
+                    let file = profile_photo
+                        .reopen()
+                        .map_err(|e| format!("Failed opening profile photo: {e:?}"))?;
+                    let authority_host = cfg.get_authority_host(domain);
+                    let tenant_id = cfg.get_tenant_id(domain);
+                    let graph_url = cfg.get_graph_url(domain);
+                    let ip_versions = cfg.get_ip_versions();
+                    let request_timeout = cfg.get_request_timeout();
+                    let graph = Graph::new(
+                        &cfg.get_odc_provider(domain),
+                        domain,
+                        Some(&authority_host),
+                        tenant_id.as_deref(),
+                        graph_url.as_deref(),
+                        Duration::from_secs(request_timeout),
+                        &ip_versions,
+                    )
+                    .await
+                    .map_err(|e| format!("Failed creating Graph client: {e:?}"))?;
+                    graph
+                        .fetch_user_profile_photo(&access_token, file)
+                        .await
+                        .map_err(|e| format!("Failed fetching profile photo: {e:?}"))?;
+                    set_accountsservice_icon(&account_id, profile_photo.path())
+                        .await
+                        .map_err(|e| format!("Failed updating AccountsService profile photo: {e:?}"))?;
+                    Ok(())
+                }
+                .await;
+
+                if let Err(e) = &outcome {
+                    error!("{}", e);
+                }
+                let response = profile_photo_task_response(outcome);
+                if let Err(e) = reqs.send(response).await {
                     error!("Error -> {:?}", e);
                     return;
                 }
@@ -1164,6 +1176,42 @@ mod tests {
             .mode()
             & 0o777;
         assert_eq!(mode, 0o600);
+    }
+
+    #[test]
+    fn profile_photo_account_resolution_reloads_user_map() {
+        let tempdir = tempfile::tempdir().expect("failed to create temp directory");
+        let user_map_path = tempdir.path().join("user-map");
+        let config_path = tempdir.path().join("himmelblau.conf");
+        fs::write(&user_map_path, "alice:user@example.com\n").expect("failed to write user map");
+        fs::write(
+            &config_path,
+            format!("[global]\nuser_map_file = {}\n", user_map_path.display()),
+        )
+        .expect("failed to write config");
+        let cfg = HimmelblauConfig::new(Some(
+            config_path.to_str().expect("config path is not UTF-8"),
+        ))
+        .expect("failed to parse config");
+
+        assert_eq!(
+            resolve_profile_photo_account_id(&cfg, "User@Example.com"),
+            "alice"
+        );
+
+        fs::write(&user_map_path, "bob:user@example.com\n").expect("failed to update user map");
+        assert_eq!(
+            resolve_profile_photo_account_id(&cfg, "user@example.com"),
+            "bob"
+        );
+    }
+
+    #[test]
+    fn profile_photo_failure_returns_task_error() {
+        match profile_photo_task_response(Err("profile photo failed".to_string())) {
+            TaskResponse::Error(message) => assert_eq!(message, "profile photo failed"),
+            response => panic!("expected task error, got {response:?}"),
+        }
     }
 
     #[test]

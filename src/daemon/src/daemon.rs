@@ -89,6 +89,10 @@ enum TaskOutcome {
     NonCompliant(Vec<NoncompliantRule>),
 }
 
+fn profile_photo_task_succeeded(outcome: &TaskOutcome) -> bool {
+    matches!(outcome, TaskOutcome::Status(0))
+}
+
 type AsyncTaskRequest = (TaskRequest, oneshot::Sender<TaskOutcome>);
 type IntunePolicyThrottle = Arc<Mutex<HashMap<String, IntunePolicyThrottleState>>>;
 
@@ -790,11 +794,20 @@ async fn handle_client(
                                                                         )
                                                                         .await
                                                                         {
-                                                                            Ok(_) => {
+                                                                            Ok(Ok(outcome)) if profile_photo_task_succeeded(&outcome) => {
                                                                                 info!("Fetching user profile picture succeeded");
                                                                             }
-                                                                            _ => {
-                                                                                error!("Fetching user profile picture failed");
+                                                                            Ok(Ok(TaskOutcome::Status(status))) => {
+                                                                                error!("Fetching user profile picture failed: status code {}", status);
+                                                                            }
+                                                                            Ok(Ok(TaskOutcome::NonCompliant(_))) => {
+                                                                                error!("Fetching user profile picture: unexpected NonCompliant task outcome");
+                                                                            }
+                                                                            Ok(Err(e)) => {
+                                                                                error!("Fetching user profile picture failed: {:?}", e);
+                                                                            }
+                                                                            Err(e) => {
+                                                                                error!("Fetching user profile picture failed: {:?}", e);
                                                                             }
                                                                         }
                                                                     }
@@ -1444,6 +1457,15 @@ mod tests {
     use super::*;
 
     const ACCOUNT_ID: &str = "user@example.com";
+
+    #[test]
+    fn profile_photo_success_requires_zero_status() {
+        assert!(profile_photo_task_succeeded(&TaskOutcome::Status(0)));
+        assert!(!profile_photo_task_succeeded(&TaskOutcome::Status(1)));
+        assert!(!profile_photo_task_succeeded(&TaskOutcome::NonCompliant(
+            Vec::new()
+        )));
+    }
 
     #[test]
     fn intune_policy_throttle_allows_first_run_and_marks_in_flight() {
