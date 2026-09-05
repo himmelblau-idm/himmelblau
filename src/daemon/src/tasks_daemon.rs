@@ -491,6 +491,20 @@ fn create_profile_photo_temp_file(icons_dir: &Path) -> io::Result<NamedTempFile>
     Ok(file)
 }
 
+fn resolve_profile_photo_account_id(cfg: &HimmelblauConfig, upn: &str) -> String {
+    let user_map = UserMap::new(&cfg.get_user_map_file());
+    user_map
+        .get_local_from_upn(&upn.to_lowercase())
+        .unwrap_or_else(|| cfg.map_upn_to_name(upn))
+}
+
+fn profile_photo_task_response(outcome: Result<(), String>) -> TaskResponse {
+    match outcome {
+        Ok(()) => TaskResponse::Success(0),
+        Err(e) => TaskResponse::Error(e),
+    }
+}
+
 fn store_tgt(tgt: &KerberosCredentials, uid: uid_t, gid: uid_t) -> Result<(), String> {
     // Usually default_ccache_name in /etc/krb5.conf contains a %{uid} substitution,
     // which will be '0' (root) for the tasks daemon because it runs as root. Force
@@ -732,13 +746,8 @@ async fn handle_tasks(stream: UnixStream, cfg: &HimmelblauConfig) {
                         .map(|(_, domain)| domain)
                         .ok_or_else(|| format!("Couldn't parse domain from UPN '{upn}'"))?;
 
-                    // A user_map maps a local login to this UPN; resolve back to the local
-                    // name so AccountsService keys the avatar to the account the user logs in as.
-                    let user_map = UserMap::new(&cfg.get_user_map_file());
-                    let account_id = match user_map.get_local_from_upn(&upn.to_lowercase()) {
-                        Some(local) => local,
-                        None => cfg.map_upn_to_name(&account_id),
-                    };
+                    // Resolve mapped UPNs back to the local account that owns the avatar.
+                    let account_id = resolve_profile_photo_account_id(cfg, &upn);
 
                     // Reject invalid account identifiers before resolving them through
                     // AccountsService. Stripping characters could select a different user.
@@ -784,13 +793,10 @@ async fn handle_tasks(stream: UnixStream, cfg: &HimmelblauConfig) {
                 }
                 .await;
 
-                let response = match outcome {
-                    Ok(()) => TaskResponse::Success(0),
-                    Err(e) => {
-                        error!("{}", e);
-                        TaskResponse::Error(e)
-                    }
-                };
+                if let Err(e) = &outcome {
+                    error!("{}", e);
+                }
+                let response = profile_photo_task_response(outcome);
                 if let Err(e) = reqs.send(response).await {
                     error!("Error -> {:?}", e);
                     return;
@@ -1170,6 +1176,42 @@ mod tests {
             .mode()
             & 0o777;
         assert_eq!(mode, 0o600);
+    }
+
+    #[test]
+    fn profile_photo_account_resolution_reloads_user_map() {
+        let tempdir = tempfile::tempdir().expect("failed to create temp directory");
+        let user_map_path = tempdir.path().join("user-map");
+        let config_path = tempdir.path().join("himmelblau.conf");
+        fs::write(&user_map_path, "alice:user@example.com\n").expect("failed to write user map");
+        fs::write(
+            &config_path,
+            format!("[global]\nuser_map_file = {}\n", user_map_path.display()),
+        )
+        .expect("failed to write config");
+        let cfg = HimmelblauConfig::new(Some(
+            config_path.to_str().expect("config path is not UTF-8"),
+        ))
+        .expect("failed to parse config");
+
+        assert_eq!(
+            resolve_profile_photo_account_id(&cfg, "User@Example.com"),
+            "alice"
+        );
+
+        fs::write(&user_map_path, "bob:user@example.com\n").expect("failed to update user map");
+        assert_eq!(
+            resolve_profile_photo_account_id(&cfg, "user@example.com"),
+            "bob"
+        );
+    }
+
+    #[test]
+    fn profile_photo_failure_returns_task_error() {
+        match profile_photo_task_response(Err("profile photo failed".to_string())) {
+            TaskResponse::Error(message) => assert_eq!(message, "profile photo failed"),
+            response => panic!("expected task error, got {response:?}"),
+        }
     }
 
     #[test]

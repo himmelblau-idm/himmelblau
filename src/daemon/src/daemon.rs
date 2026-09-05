@@ -89,6 +89,10 @@ enum TaskOutcome {
     NonCompliant(Vec<NoncompliantRule>),
 }
 
+fn profile_photo_task_succeeded(outcome: &TaskOutcome) -> bool {
+    matches!(outcome, TaskOutcome::Status(0))
+}
+
 type AsyncTaskRequest = (TaskRequest, oneshot::Sender<TaskOutcome>);
 type IntunePolicyThrottle = Arc<Mutex<HashMap<String, IntunePolicyThrottleState>>>;
 
@@ -790,7 +794,7 @@ async fn handle_client(
                                                                         )
                                                                         .await
                                                                         {
-                                                                            Ok(Ok(TaskOutcome::Status(0))) => {
+                                                                            Ok(Ok(outcome)) if profile_photo_task_succeeded(&outcome) => {
                                                                                 info!("Fetching user profile picture succeeded");
                                                                             }
                                                                             Ok(Ok(TaskOutcome::Status(status))) => {
@@ -1453,6 +1457,15 @@ mod tests {
     use super::*;
 
     const ACCOUNT_ID: &str = "user@example.com";
+
+    #[test]
+    fn profile_photo_success_requires_zero_status() {
+        assert!(profile_photo_task_succeeded(&TaskOutcome::Status(0)));
+        assert!(!profile_photo_task_succeeded(&TaskOutcome::Status(1)));
+        assert!(!profile_photo_task_succeeded(&TaskOutcome::NonCompliant(
+            Vec::new()
+        )));
+    }
 
     #[test]
     fn intune_policy_throttle_allows_first_run_and_marks_in_flight() {
