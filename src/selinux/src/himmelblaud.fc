@@ -20,6 +20,9 @@
 # compatibility symlink target (if present)
 /var/cache/himmelblaud(/.*)?            gen_context(system_u:object_r:himmelblau_var_cache_t,s0)
 
+# Intune policy cache (policies_db_path, written by himmelblaud_tasks).
+/var/cache/himmelblau-policies(/.*)?    gen_context(system_u:object_r:himmelblau_var_cache_t,s0)
+
 # NSS side cache (separate type so we can grant `init_t` narrowly)
 /var/cache/nss-himmelblau(/.*)?         gen_context(system_u:object_r:himmelblau_nss_cache_t,s0)
 
