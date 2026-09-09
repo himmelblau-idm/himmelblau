@@ -8,7 +8,9 @@
                       order="1600"
                      >
 <description>
-Specifies a preferred MFA (Multi-Factor Authentication) method to use during authentication. When set, Himmelblau will attempt to use this specific MFA method instead of the default method configured in the user's Entra ID profile. If not set or if the specified method is not available for the user, the default MFA method will be used.
+Specifies a preferred MFA (Multi-Factor Authentication) method to use during authentication. For Microsoft Entra ID, Himmelblau requests the named Entra method. For native Okta authentication, this option also accepts Okta remediation or method identifiers, such as challenge-authenticator, push, or otp. An exact Okta identifier takes precedence over the compatibility mappings below.
+
+When an Entra method has an Okta equivalent, Himmelblau maps it automatically: PhoneAppNotification and CompanionAppsNotification select Okta Verify push, while PhoneAppOTP selects an Okta verification code. If the configured value is unavailable or cannot be mapped, Himmelblau logs an error and continues with the identity provider's first policy-compliant method.
 
 Valid values include:
 .RS
@@ -28,6 +30,12 @@ TwoWayVoiceAlternateMobile - Phone call to alternate mobile number
 TwoWayVoiceOffice - Phone call to office
 .IP \(bu 2
 ConsolidatedTelephony - Call or text message
+.IP \(bu 2
+challenge-authenticator - Okta IDX authenticator challenge remediation
+.IP \(bu 2
+push - Okta Verify push notification
+.IP \(bu 2
+otp - Okta Verify verification code
 .RE
 </description>
 <conf_description>Preferred MFA method to request during sign-in.</conf_description>

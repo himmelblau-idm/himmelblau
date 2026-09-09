@@ -96,6 +96,14 @@ pub struct UserToken {
 }
 
 pub enum AuthCredHandler {
+    /// Native IDX state is owned by this PAM session, never an Entra MFA flow.
+    InteractionCode(Box<super::okta::NativeAuthSession>),
+    /// Preserve the freshly authenticated OIDC identity through the local TOTP.
+    OidcPinTotp {
+        pin: Zeroizing<String>,
+        pending: Option<SealedData>,
+        token: Box<UserToken>,
+    },
     MFA {
         flow: Box<MFAAuthContinue>,
         password: Option<String>,
@@ -141,6 +149,8 @@ pub enum AuthCredHandler {
 impl fmt::Debug for AuthCredHandler {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            AuthCredHandler::InteractionCode(..) => f.write_str("InteractionCode { .. }"),
+            AuthCredHandler::OidcPinTotp { .. } => f.write_str("OidcPinTotp { .. }"),
             AuthCredHandler::MFA { .. } => f.write_str("MFA { .. }"),
             AuthCredHandler::ReauthPassword { .. } => f.write_str("ReauthPassword { .. }"),
             AuthCredHandler::SetupPin { .. } => f.write_str("SetupPin { .. }"),
@@ -153,11 +163,18 @@ impl fmt::Debug for AuthCredHandler {
 }
 
 pub enum AuthRequest {
+    WebAuthn {
+        enrollment: Option<crate::unix_proto::EnrollmentPresentation>,
+        operation: crate::unix_proto::WebAuthnOperation,
+        origin: String,
+        options: serde_json::Value,
+    },
     Password {
         prompt: Option<String>,
         long_prompt: Option<String>,
     },
     Input {
+        enrollment: Option<crate::unix_proto::EnrollmentPresentation>,
         msg: String,
         echo_on: bool,
     },
@@ -165,6 +182,7 @@ pub enum AuthRequest {
         msg: String,
     },
     MFAPoll {
+        enrollment: Option<crate::unix_proto::EnrollmentPresentation>,
         /// Message to display to the user.
         msg: String,
         /// Interval in seconds between poll attempts.
@@ -198,6 +216,17 @@ pub enum AuthRequest {
 impl Into<PamAuthResponse> for AuthRequest {
     fn into(self) -> PamAuthResponse {
         match self {
+            AuthRequest::WebAuthn {
+                enrollment,
+                operation,
+                origin,
+                options,
+            } => PamAuthResponse::WebAuthn {
+                enrollment,
+                operation,
+                origin,
+                options,
+            },
             AuthRequest::Password {
                 prompt,
                 long_prompt,
@@ -205,13 +234,23 @@ impl Into<PamAuthResponse> for AuthRequest {
                 prompt,
                 long_prompt,
             },
-            AuthRequest::Input { msg, echo_on } => PamAuthResponse::Input { msg, echo_on },
+            AuthRequest::Input {
+                enrollment,
+                msg,
+                echo_on,
+            } => PamAuthResponse::Input {
+                enrollment,
+                msg,
+                echo_on,
+            },
             AuthRequest::HelloTOTP { msg } => PamAuthResponse::HelloTOTP { msg },
             AuthRequest::MFAPoll {
+                enrollment,
                 msg,
                 polling_interval,
                 show_push_hint,
             } => PamAuthResponse::MFAPoll {
+                enrollment,
                 msg,
                 polling_interval,
                 show_push_hint,

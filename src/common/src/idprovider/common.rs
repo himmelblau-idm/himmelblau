@@ -15,21 +15,33 @@
    You should have received a copy of the GNU General Public License
    along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
-use crate::idprovider::interface::IdpError;
+use crate::constants::ID_MAP_CACHE;
+use crate::idmap_cache::StaticIdCache;
+use crate::idprovider::interface::{GroupToken, IdpError, UserToken};
+use idmap::Idmap;
 use kanidm_hsm_crypto::structures::SealedData;
 use lazy_static::lazy_static;
+use openidconnect::core::CoreGenderClaim;
+use openidconnect::{AdditionalClaims, UserInfoClaims};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use std::thread::sleep;
 use std::{
     collections::HashMap,
     time::{Duration, SystemTime},
 };
 use tokio::sync::RwLock;
+use uuid::Uuid;
 
 /// When a cached PRT is older than 4h, opportunistically issue an
 /// `exchange_prt_for_prt` before using it for access-token acquisition.
 pub const PRT_REFRESH_AGE: Duration = Duration::from_secs(4 * 3600);
+
+/// Tolerate trailing slashes without normalizing other issuer differences.
+pub(crate) fn oidc_issuer_matches(configured: &str, reported: Option<&str>) -> bool {
+    reported.is_some_and(|issuer| issuer.trim_end_matches('/') == configured.trim_end_matches('/'))
+}
 
 /// Build a `reqwest::Client` for `attempt_online()` probes.
 ///
@@ -186,6 +198,23 @@ impl RefreshCache {
     pub(crate) async fn remove_prt(&self, account_id: &str) {
         let mut refresh_cache = self.refresh_cache.write().await;
         refresh_cache.remove(account_id.to_lowercase().as_str());
+    }
+
+    pub(crate) async fn remove_refresh_token(&self, account_id: &str) {
+        self.refresh_token_cache
+            .write()
+            .await
+            .remove(&account_id.to_lowercase());
+    }
+
+    /// Restoring a PIN-sealed credential must not overwrite a rotated token
+    /// already held in memory. Preserve its insertion time as well.
+    pub(crate) async fn add_reused_refresh_token(&self, account_id: &str, token: String) {
+        self.refresh_token_cache
+            .write()
+            .await
+            .entry(account_id.to_lowercase())
+            .or_insert_with(|| (token, SystemTime::now()));
     }
 
     /// Cache a PRT that was reused for an access-token exchange without
@@ -839,7 +868,7 @@ macro_rules! impl_himmelblau_offline_auth_step {
                             })?;
                             $self
                                 .refresh_cache
-                                .add($account_id, &RefreshCacheEntry::RefreshToken(refresh_token))
+                                .add_reused_refresh_token($account_id, refresh_token)
                                 .await;
                         }
                         if check_hello_totp_enabled!($self) {
@@ -1000,7 +1029,7 @@ macro_rules! impl_himmelblau_try_unseal {
                     })?;
                     $self
                         .refresh_cache
-                        .add($account_id, &RefreshCacheEntry::RefreshToken(refresh_token))
+                        .add_reused_refresh_token($account_id, refresh_token)
                         .await;
                 }
                 Ok(true)
@@ -1453,13 +1482,49 @@ macro_rules! impl_setup_hello_totp {
 #[cfg(test)]
 mod tests {
     use super::{
-        should_block_hello_pin_attempts, should_offer_offline_hello_pin,
+        oidc_issuer_matches, should_block_hello_pin_attempts, should_offer_offline_hello_pin,
         should_renew_expired_try_unseal_prt, should_warn_last_hello_pin_attempt,
         try_unseal_policy_denial, KeyType, RefreshCache, RefreshCacheEntry, TryUnsealPolicyDenial,
     };
     use kanidm_hsm_crypto::structures::SealedData;
     use std::time::{Duration, SystemTime};
     use zeroize::Zeroizing;
+
+    #[test]
+    fn oidc_issuers_tolerate_only_trailing_slash_differences() {
+        for base in [
+            "https://login.example.com",
+            "https://login.example.com/oauth2/default",
+        ] {
+            for configured_suffix in ["", "/", "///"] {
+                for reported_suffix in ["", "/", "///"] {
+                    assert!(oidc_issuer_matches(
+                        &format!("{base}{configured_suffix}"),
+                        Some(&format!("{base}{reported_suffix}")),
+                    ));
+                }
+            }
+        }
+        let configured = "https://login.example.com/oauth2/default/";
+        for reported in [
+            None,
+            Some(""),
+            Some("https://other.example.com/oauth2/default"),
+            Some("http://login.example.com/oauth2/default"),
+            Some("https://login.example.com:8443/oauth2/default"),
+            Some("https://login.example.com/oauth2/other"),
+            Some("https://login.example.com/oauth2//default"),
+            Some("https://login.example.com/oauth2/default?query=value"),
+        ] {
+            assert!(!oidc_issuer_matches(configured, reported));
+        }
+        for malformed in [serde_json::json!({}), serde_json::json!({"issuer": 42})] {
+            assert!(!oidc_issuer_matches(
+                configured,
+                malformed["issuer"].as_str()
+            ));
+        }
+    }
 
     fn test_prt(byte: u8) -> SealedData {
         SealedData::SoftV1 {
@@ -1471,6 +1536,33 @@ mod tests {
 
     fn serialized_prt(prt: &SealedData) -> Vec<u8> {
         serde_json::to_vec(prt).expect("test PRT should serialize")
+    }
+
+    #[tokio::test]
+    async fn sealed_refresh_restoration_preserves_rotated_memory_token() {
+        let cache = RefreshCache::new();
+        let when = SystemTime::now() - Duration::from_secs(60);
+        cache
+            .refresh_token_cache
+            .write()
+            .await
+            .insert("user@example.com".into(), ("rotated".into(), when));
+        cache
+            .add_reused_refresh_token("User@Example.com", "spent-disk-copy".into())
+            .await;
+        let entries = cache.refresh_token_cache.read().await;
+        assert_eq!(
+            entries.get("user@example.com"),
+            Some(&("rotated".into(), when))
+        );
+        drop(entries);
+        cache.remove_refresh_token("USER@example.com").await;
+        assert!(cache.refresh_token("user@example.com").await.is_err());
+        cache
+            .add_reused_refresh_token("User@Example.com", "restored".into())
+            .await;
+        assert!(matches!(cache.refresh_token("user@example.com").await,
+            Ok(RefreshCacheEntry::RefreshToken(value)) if value == "restored"));
     }
 
     #[tokio::test]
@@ -1638,4 +1730,250 @@ mod tests {
         );
         assert_eq!(try_unseal_policy_denial(true, false, 1, 2), None);
     }
+}
+
+// Shared identity mapping for standard OIDC and Interaction Code providers.
+#[derive(Debug, Deserialize, Serialize)]
+pub(crate) struct OidcAdditionalUserInfoClaims(HashMap<String, Value>);
+impl AdditionalClaims for OidcAdditionalUserInfoClaims {}
+
+pub(crate) type OidcUserInfoClaims = UserInfoClaims<OidcAdditionalUserInfoClaims, CoreGenderClaim>;
+
+fn value_type_name(value: &Value) -> &'static str {
+    match value {
+        Value::Null => "null",
+        Value::Bool(_) => "boolean",
+        Value::Number(_) => "number",
+        Value::String(_) => "string",
+        Value::Array(_) => "array",
+        Value::Object(_) => "object",
+    }
+}
+
+fn oidc_claim_string(userinfo_json: &Value, claim: &str) -> Option<String> {
+    match userinfo_json.get(claim) {
+        Some(Value::String(value)) if !value.is_empty() => Some(value.to_string()),
+        Some(value) => {
+            if matches!(value, Value::String(_)) {
+                warn!(
+                    claim,
+                    "OIDC account ID claim is present but is an empty string"
+                );
+            } else {
+                warn!(
+                    claim,
+                    value_type = value_type_name(value),
+                    "OIDC account ID claim is present but is not a string"
+                );
+            }
+            None
+        }
+        None => None,
+    }
+}
+
+fn oidc_fallback_account_id(userinfo: &OidcUserInfoClaims) -> Option<String> {
+    userinfo
+        .preferred_username()
+        .map(|username| username.to_string())
+        .filter(|username| !username.is_empty())
+        .or_else(|| {
+            userinfo
+                .email()
+                .map(|email| email.to_string())
+                .filter(|email| !email.is_empty())
+        })
+}
+
+pub(crate) fn oidc_account_id_from_userinfo(
+    userinfo: &OidcUserInfoClaims,
+    configured_claims: &[String],
+    strip_at_suffix: bool,
+) -> Result<String, IdpError> {
+    let account_id = if configured_claims.is_empty() {
+        oidc_fallback_account_id(userinfo).ok_or_else(|| {
+            error!("Missing non-empty preferred_username and email claims in userinfo");
+            IdpError::BadRequest
+        })?
+    } else {
+        let userinfo_json = serde_json::to_value(userinfo).map_err(|e| {
+            error!(?e, "Failed to serialize OIDC userinfo claims");
+            IdpError::BadRequest
+        })?;
+
+        let mut configured_account_id = None;
+        for claim in configured_claims {
+            if let Some(account_id) = oidc_claim_string(&userinfo_json, claim) {
+                configured_account_id = Some(account_id);
+                break;
+            }
+        }
+
+        if let Some(account_id) = configured_account_id {
+            account_id
+        } else {
+            warn!(
+                claims = ?configured_claims,
+                "Configured OIDC account ID claims did not match any non-empty string userinfo claim; falling back to preferred_username, then email"
+            );
+
+            oidc_fallback_account_id(userinfo).ok_or_else(|| {
+                error!(
+                    claims = ?configured_claims,
+                    "Configured OIDC account ID claims did not match and fallback preferred_username/email claims are missing or empty"
+                );
+                IdpError::BadRequest
+            })?
+        }
+    };
+
+    if strip_at_suffix {
+        let account_id = account_id
+            .split_once('@')
+            .map(|(local, _)| local.to_string())
+            .unwrap_or(account_id);
+        if account_id.is_empty() {
+            error!("OIDC account ID is empty after stripping @suffix");
+            Err(IdpError::BadRequest)
+        } else {
+            Ok(account_id)
+        }
+    } else {
+        Ok(account_id)
+    }
+}
+
+fn oidc_extract_claim_string(value: &str) -> Option<String> {
+    let value = value.trim();
+    if value.is_empty() || value.contains(':') || value.chars().any(char::is_control) {
+        None
+    } else {
+        Some(value.to_string())
+    }
+}
+
+fn oidc_claim_strings(value: Option<&Value>) -> Vec<String> {
+    match value {
+        Some(Value::String(group)) => oidc_extract_claim_string(group).into_iter().collect(),
+        Some(Value::Array(groups)) => groups
+            .iter()
+            .filter_map(|group| group.as_str().and_then(oidc_extract_claim_string))
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+
+pub(crate) fn oidc_group_claims_from_value(claims: &Value) -> Vec<String> {
+    let mut groups = oidc_claim_strings(claims.get("groups"));
+
+    if let Some(Value::Object(realm_access)) = claims.get("realm_access") {
+        groups.extend(oidc_claim_strings(realm_access.get("roles")));
+    }
+
+    if let Some(Value::Object(resource_access)) = claims.get("resource_access") {
+        for resource in resource_access.values() {
+            if let Value::Object(resource_claims) = resource {
+                groups.extend(oidc_claim_strings(resource_claims.get("roles")));
+            }
+        }
+    }
+
+    groups.sort();
+    groups.dedup();
+    groups
+}
+
+pub(crate) fn oidc_group_tokens_from_claims(
+    group_claims: Vec<String>,
+    idmap: &Idmap,
+    tenant_id: &Uuid,
+) -> Vec<GroupToken> {
+    group_claims
+        .into_iter()
+        .filter_map(|group| {
+            let uuid = Uuid::new_v5(tenant_id, group.as_bytes());
+            let gidnumber = match idmap.gen_to_unix(&tenant_id.to_string(), &group) {
+                Ok(gidnumber) => gidnumber,
+                Err(e) => {
+                    error!(?e, group = %group, "Failed mapping OIDC group claim");
+                    return None;
+                }
+            };
+
+            Some(GroupToken {
+                name: group.clone(),
+                spn: group,
+                uuid,
+                gidnumber,
+            })
+        })
+        .collect()
+}
+
+pub(crate) async fn oidc_user_token_from_claims(
+    claims: &serde_json::Value,
+    shell: String,
+    idmap: &tokio::sync::Mutex<Idmap>,
+    tenant_id: &uuid::Uuid,
+    account_id_claims: &[String],
+    strip_at_suffix: bool,
+) -> Result<UserToken, IdpError> {
+    let bytes = serde_json::to_vec(claims).map_err(|_| IdpError::BadRequest)?;
+    let userinfo = OidcUserInfoClaims::from_json::<reqwest::Error>(&bytes, None)
+        .map_err(|_| IdpError::BadRequest)?;
+    let group_claims = oidc_group_claims_from_value(claims);
+    let account_id = oidc_account_id_from_userinfo(&userinfo, account_id_claims, strip_at_suffix)?;
+
+    let subject = userinfo.subject().to_string();
+    let object_id = uuid::Uuid::new_v5(tenant_id, subject.as_bytes());
+
+    let idmap_cache = StaticIdCache::new(ID_MAP_CACHE, false).map_err(|e| {
+        error!("Failed reading from the idmap cache: {:?}", e);
+        IdpError::BadRequest
+    })?;
+
+    let idmap = idmap.lock().await;
+    let oidc_groups = oidc_group_tokens_from_claims(group_claims, &idmap, tenant_id);
+
+    let (uid, gid) = match idmap_cache.get_user_by_name(&account_id) {
+        Some(user) => (user.uid, user.gid),
+        None => {
+            let gid = idmap
+                .gen_to_unix(&tenant_id.to_string(), &account_id)
+                .map_err(|e| {
+                    error!("{:?}", e);
+                    IdpError::BadRequest
+                })?;
+            (gid, gid)
+        }
+    };
+
+    let displayname = userinfo
+        .name()
+        .and_then(|n| n.get(None))
+        .map(|n| n.to_string())
+        .unwrap_or_default();
+
+    let displayname = flip_displayname_comma(&displayname);
+
+    let mut groups = vec![GroupToken {
+        name: account_id.to_string(),
+        spn: account_id.to_string(),
+        uuid: object_id,
+        gidnumber: gid,
+    }];
+    groups.extend(oidc_groups);
+
+    Ok(UserToken {
+        name: account_id.to_string(),
+        spn: account_id.to_string(),
+        uuid: object_id,
+        real_gidnumber: Some(uid),
+        gidnumber: gid,
+        displayname,
+        shell: Some(shell),
+        groups,
+        tenant_id: Some(*tenant_id),
+        valid: true,
+    })
 }
