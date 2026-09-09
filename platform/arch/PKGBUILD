@@ -203,7 +203,7 @@ package() {
   # GNOME QR greeter extension
   local greeter='qr-greeter@himmelblau-idm.org'
   local asset
-  for asset in extension.js qrcodegen.js qrselection.js metadata.json \
+  for asset in extension.js qrcodegen.js qrselection.js enrollmentqr.js metadata.json \
                stylesheet.css security-key.svg security-key-touch.svg; do
     install -Dm644 "target/release/qr-greeter-build/$greeter/$asset" \
       "$pkgdir/usr/share/gnome-shell/extensions/$greeter/$asset"

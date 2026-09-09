@@ -38,7 +38,7 @@ use crate::idprovider::common::TotpEnrollmentRecord;
 use crate::idprovider::common::PRT_REFRESH_AGE;
 use crate::idprovider::common::{BadPinCounter, RefreshCache};
 use crate::idprovider::interface::{tpm, UserTokenState};
-use crate::idprovider::openidconnect::OidcProvider;
+use crate::idprovider::oidc_router::OidcRouter;
 use crate::reserved_ids::{is_systemd_dynamic_id, SYSTEMD_DYNAMIC_ID_MAX, SYSTEMD_DYNAMIC_ID_MIN};
 use crate::tpm::confidential_client_creds;
 use crate::unix_proto::PamAuthRequest;
@@ -225,7 +225,7 @@ fn msal_error_to_user_message(e: &MsalError) -> String {
 
 #[allow(clippy::large_enum_variant)]
 enum Providers {
-    Oidc(OidcProvider),
+    Oidc(OidcRouter),
     Himmelblau(HimmelblauProvider),
 }
 
@@ -328,10 +328,12 @@ impl HimmelblauMultiProvider {
             }
         } else {
             // Add the oidc provider, if present
-            let provider = OidcProvider::new(&config, "oidc", &idmap).map_err(|e| {
-                error!("Failed initializing OIDC provider: {:?}", e);
-                anyhow!("{:?}", e)
-            })?;
+            let provider = OidcRouter::new(&config, "oidc", &idmap)
+                .await
+                .map_err(|e| {
+                    error!("Failed initializing OIDC provider: {:?}", e);
+                    anyhow!("{:?}", e)
+                })?;
 
             providers
                 .providers
@@ -2087,6 +2089,7 @@ impl IdProvider for HimmelblauProvider {
                     let polling_interval = flow.polling_interval.unwrap_or(5000);
                     Ok((
                         AuthRequest::MFAPoll {
+                            enrollment: None,
                             msg,
                             // Kanidm pam expects a polling_interval in
                             // seconds, not milliseconds.
@@ -2125,6 +2128,7 @@ impl IdProvider for HimmelblauProvider {
                 let polling_interval = flow.polling_interval.unwrap_or(5000);
                 Ok((
                     AuthRequest::MFAPoll {
+                        enrollment: None,
                         msg,
                         // Kanidm pam expects a polling_interval in
                         // seconds, not milliseconds.
@@ -2661,7 +2665,7 @@ impl IdProvider for HimmelblauProvider {
                     };
                     debug!("Session expired, initiating MFA re-authentication with existing Hello key.");
                     return Ok((
-                        AuthResult::Next(AuthRequest::MFAPoll {
+                        AuthResult::Next(AuthRequest::MFAPoll {enrollment: None,
                             msg,
                             // Kanidm pam expects a polling_interval in
                             // seconds, not milliseconds.
@@ -2721,7 +2725,7 @@ impl IdProvider for HimmelblauProvider {
                     };
                     debug!("Session expired, initiating DAG re-authentication with existing Hello key.");
                     return Ok((
-                        AuthResult::Next(AuthRequest::MFAPoll {
+                        AuthResult::Next(AuthRequest::MFAPoll {enrollment: None,
                             msg,
                             // Kanidm pam expects a polling_interval in
                             // seconds, not milliseconds.
@@ -3682,7 +3686,7 @@ impl IdProvider for HimmelblauProvider {
                             reauth_hello_pin: reauth_hello_pin.clone(),
                         };
                         return Ok((
-                            AuthResult::Next(AuthRequest::Input {
+                            AuthResult::Next(AuthRequest::Input {enrollment: None,
                                 msg,
                                 echo_on: false,
                             }),
@@ -3702,7 +3706,7 @@ impl IdProvider for HimmelblauProvider {
                             reauth_hello_pin: reauth_hello_pin.clone(),
                         };
                         return Ok((
-                            AuthResult::Next(AuthRequest::MFAPoll {
+                            AuthResult::Next(AuthRequest::MFAPoll {enrollment: None,
                                 msg,
                                 // Kanidm pam expects a polling_interval in
                                 // seconds, not milliseconds.

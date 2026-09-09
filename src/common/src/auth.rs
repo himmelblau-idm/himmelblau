@@ -70,6 +70,10 @@ macro_rules! auth_handle_mfa_resp {
 
 pub trait MessagePrinter: Send + Sync {
     fn print_text(&self, msg: &str);
+    /// Show authentication secrets without recording their contents in logs.
+    fn print_sensitive(&self, msg: &str) {
+        self.print_text(msg);
+    }
     fn print_error(&self, msg: &str);
     fn prompt_echo_on(&self, prompt: &str) -> Option<String>;
     fn prompt_echo_off(&self, prompt: &str) -> Option<String>;
@@ -106,7 +110,7 @@ impl MessagePrinter for SimpleMessagePrinter {
 }
 
 #[allow(clippy::expect_used)]
-async fn fido_status_check(
+pub(crate) fn fido_status_check(
     msg_printer: Arc<dyn MessagePrinter>,
     presence_prompt: String,
 ) -> Sender<StatusUpdate> {
@@ -258,12 +262,7 @@ fn fido_auth_inner(
     })?;
 
     // Create a channel for status updates
-    let rt = Runtime::new().map_err(|e| {
-        error!("{:?}", e);
-        PamResultCode::PAM_AUTH_ERR
-    })?;
-    let status_tx =
-        rt.block_on(async { fido_status_check(msg_printer, presence_prompt.to_string()).await });
+    let status_tx = fido_status_check(msg_printer, presence_prompt.to_string());
 
     let allow_list: Vec<PublicKeyCredentialDescriptor> = fido_allow_list
         .into_iter()
@@ -919,7 +918,7 @@ fn handle_pam_auth_response_input(
     PamWhatNext::Next(req)
 }
 
-fn generate_unicode_qr(content: &str) -> Result<String, String> {
+pub(crate) fn generate_unicode_qr(content: &str) -> Result<String, String> {
     match qrcodegen::QrCode::encode_text(content, qrcodegen::QrCodeEcc::Low) {
         Ok(qr) => {
             let mut buf = String::new();
@@ -1348,6 +1347,37 @@ fn authenticate_request_response(
         }
     };
 
+    let enrollment = match &response {
+        PamAuthResponse::Input { enrollment, .. }
+        | PamAuthResponse::MFAPoll { enrollment, .. }
+        | PamAuthResponse::WebAuthn { enrollment, .. } => enrollment.as_ref(),
+        _ => None,
+    };
+    if !matches!(response, PamAuthResponse::MFAPollWait) {
+        let qr_emitted = if let Some(enrollment) = enrollment {
+            match crate::enrollment::present(state.msg_printer.as_ref(), &state.service, enrollment)
+            {
+                Ok(active) => active,
+                Err(message) => {
+                    state.clear_enrollment_qr();
+                    pam_fail!(state.msg_printer, message, PamResultCode::PAM_AUTH_ERR);
+                }
+            }
+        } else {
+            false
+        };
+        if qr_emitted {
+            state.enrollment_qr_active = true;
+        } else {
+            state.clear_enrollment_qr();
+        }
+    }
+    if !matches!(
+        response,
+        PamAuthResponse::MFAPoll { .. } | PamAuthResponse::MFAPollWait
+    ) {
+        state.poll_attempt = -1;
+    }
     match response {
         PamAuthResponse::Unknown => handle_pam_auth_response_unknown(state),
         PamAuthResponse::Success => handle_pam_auth_response_success(),
@@ -1357,11 +1387,14 @@ fn authenticate_request_response(
             prompt,
             long_prompt,
         } => handle_pam_auth_response_password(state, prompt.as_deref(), long_prompt.as_deref()),
-        PamAuthResponse::Input { msg, echo_on } => {
-            handle_pam_auth_response_input(state, &msg, echo_on)
-        }
+        PamAuthResponse::Input {
+            enrollment: _,
+            msg,
+            echo_on,
+        } => handle_pam_auth_response_input(state, &msg, echo_on),
         PamAuthResponse::HelloTOTP { msg } => handle_pam_auth_response_hellototp(state, &msg),
         PamAuthResponse::MFAPoll {
+            enrollment: _,
             msg,
             polling_interval,
             show_push_hint,
@@ -1369,6 +1402,30 @@ fn authenticate_request_response(
         PamAuthResponse::MFAPollWait => handle_pam_auth_response_mfapollwait(state),
         PamAuthResponse::SetupPin { msg } => handle_pam_auth_response_setup_pin(state, &msg),
         PamAuthResponse::Pin => handle_pam_auth_response_pin(state),
+        PamAuthResponse::WebAuthn {
+            enrollment: _,
+            operation,
+            origin,
+            options,
+        } => {
+            let result = crate::webauthn::perform(
+                state.msg_printer.clone(),
+                operation,
+                &origin,
+                &options,
+                state.cfg.get_fido_timeout().saturating_mul(1000),
+            );
+            let request = match result {
+                Ok(response) => PamAuthRequest::WebAuthn { response },
+                Err(()) => {
+                    state.msg_printer.print_error(&tr(
+                        "Security key operation unavailable. Choose another method or try again.",
+                    ));
+                    PamAuthRequest::WebAuthnUnavailable
+                }
+            };
+            PamWhatNext::Next(ClientRequest::PamAuthenticateStep(request))
+        }
         PamAuthResponse::Fido {
             fido_challenge,
             fido_allow_list,
@@ -1397,6 +1454,18 @@ struct AuthenticateState {
     msg_printer: Arc<dyn MessagePrinter>,
     poll_attempt: i32,
     polling_interval: u32,
+    enrollment_qr_active: bool,
+}
+
+impl AuthenticateState {
+    fn clear_enrollment_qr(&mut self) {
+        // The empty marker is a greeter command, not a user-facing message.
+        // Ordinary logins (including local-user fallthrough) never need it.
+        if self.enrollment_qr_active {
+            self.msg_printer.print_sensitive("[OIDC_ENROLL_QR]");
+            self.enrollment_qr_active = false;
+        }
+    }
 }
 
 fn daemon_connect_error_is_retryable(err: &io::Error) -> bool {
@@ -1499,6 +1568,7 @@ pub fn authenticate_with_client(
         msg_printer,
         poll_attempt: -1,
         polling_interval: 2,
+        enrollment_qr_active: false,
     };
 
     // This is the initial request to the daemon
@@ -1513,7 +1583,10 @@ pub fn authenticate_with_client(
         let res = authenticate_request_response(&mut state, &req);
         match res {
             PamWhatNext::Next(next_request) => req = next_request,
-            PamWhatNext::Finish(pam_result_code) => return pam_result_code,
+            PamWhatNext::Finish(pam_result_code) => {
+                state.clear_enrollment_qr();
+                return pam_result_code;
+            }
         }
     }
 }
@@ -1608,7 +1681,8 @@ mod tests {
             self.error.lock().unwrap().push(msg.to_string());
         }
 
-        fn prompt_echo_on(&self, _prompt: &str) -> Option<String> {
+        fn prompt_echo_on(&self, prompt: &str) -> Option<String> {
+            self.prompts.lock().unwrap().push(prompt.to_string());
             None
         }
 
@@ -1929,9 +2003,183 @@ mod tests {
                 msg_printer: printer,
                 poll_attempt: 0,
                 polling_interval: 0,
+                enrollment_qr_active: false,
             },
             listener,
         )
+    }
+
+    #[test]
+    fn local_user_fallthrough_has_no_conversation() {
+        for (ignore_unknown_user, expected) in [
+            (true, PamResultCode::PAM_IGNORE),
+            (false, PamResultCode::PAM_USER_UNKNOWN),
+        ] {
+            let printer = Arc::new(RecordingPrinter::default());
+            let (state, listener) = test_password_state(printer.clone());
+            let (socket, _) = listener.accept().unwrap();
+            serde_json::to_writer(
+                &socket,
+                &ClientResponse::PamAuthenticateStepResponse(PamAuthResponse::Unknown),
+            )
+            .unwrap();
+
+            let result = authenticate_with_client(
+                state.daemon_client,
+                None,
+                state.cfg,
+                "localuser",
+                "gdm-password",
+                Options {
+                    ignore_unknown_user,
+                    ..Default::default()
+                },
+                printer.clone(),
+            );
+
+            assert_eq!(result, expected);
+            assert!(printer.text.lock().unwrap().is_empty());
+            assert!(printer.error.lock().unwrap().is_empty());
+            assert!(printer.prompts.lock().unwrap().is_empty());
+            fs::remove_file(listener.local_addr().unwrap().as_pathname().unwrap()).unwrap();
+        }
+    }
+
+    #[test]
+    #[allow(clippy::unwrap_used)]
+    fn enrollment_qr_replacement_and_cleanup_messages() {
+        use crate::unix_proto::EnrollmentPresentation;
+        use base64::Engine;
+        let payload = "otpauth://totp/Test?secret=JBSWY3DPEHPK3PXP";
+        let qr = qrcodegen::QrCode::encode_text(payload, qrcodegen::QrCodeEcc::Low).unwrap();
+        let size = (qr.size() + 8) as u32 * 4;
+        let image = image::GrayImage::from_fn(size, size, |x, y| {
+            image::Luma([if qr.get_module(x as i32 / 4 - 4, y as i32 / 4 - 4) {
+                0
+            } else {
+                255
+            }])
+        });
+        let mut png = io::Cursor::new(Vec::new());
+        image.write_to(&mut png, image::ImageFormat::Png).unwrap();
+        let source = format!(
+            "data:image/png;base64,{}",
+            base64::engine::general_purpose::STANDARD.encode(png.into_inner())
+        );
+        let input = |qr, setup_key| PamAuthResponse::Input {
+            msg: "Enter code".into(),
+            echo_on: false,
+            enrollment: Some(EnrollmentPresentation { qr, setup_key }),
+        };
+        for (response, active_after, clear_count, payload_count, fails) in [
+            (input(Some(source), None), true, 0, 1, false),
+            (input(None, Some("FIXTUREKEY".into())), false, 1, 0, false),
+            (
+                input(Some("invalid".into()), Some("FIXTUREKEY".into())),
+                false,
+                1,
+                0,
+                false,
+            ),
+            (input(Some("invalid".into()), None), false, 1, 0, true),
+            (PamAuthResponse::MFAPollWait, true, 0, 0, false),
+            (PamAuthResponse::Success, false, 1, 0, false),
+        ] {
+            let printer = Arc::new(RecordingPrinter::default());
+            let (mut state, listener) = test_password_state(printer.clone());
+            state.service = "gdm-password".into();
+            state.enrollment_qr_active = true;
+            let (socket, _) = listener.accept().unwrap();
+            serde_json::to_writer(
+                &socket,
+                &ClientResponse::PamAuthenticateStepResponse(response),
+            )
+            .unwrap();
+            let result = authenticate_request_response(
+                &mut state,
+                &ClientRequest::PamAuthenticateStep(PamAuthRequest::MFAPoll { poll_attempt: 0 }),
+            );
+            assert_eq!(
+                matches!(result, PamWhatNext::Finish(PamResultCode::PAM_ABORT)),
+                fails
+            );
+            assert_eq!(state.enrollment_qr_active, active_after);
+            let messages = printer.text.lock().unwrap();
+            assert_eq!(
+                messages
+                    .iter()
+                    .filter(|m| m.as_str() == "[OIDC_ENROLL_QR]")
+                    .count(),
+                clear_count
+            );
+            assert_eq!(
+                messages
+                    .iter()
+                    .filter(|m| m.starts_with("[OIDC_ENROLL_QR] "))
+                    .count(),
+                payload_count
+            );
+            fs::remove_file(listener.local_addr().unwrap().as_pathname().unwrap()).unwrap();
+        }
+    }
+
+    #[test]
+    fn completed_poll_can_be_followed_by_another_poll_after_input() {
+        use std::io::{Read, Write};
+
+        let printer = Arc::new(RecordingPrinter::default());
+        let (mut state, listener) = test_password_state(printer.clone());
+        state.poll_attempt = 3;
+        let socket_path = listener
+            .local_addr()
+            .unwrap()
+            .as_pathname()
+            .unwrap()
+            .to_owned();
+        let server = thread::spawn(move || {
+            let (mut socket, _) = listener.accept().unwrap();
+            socket
+                .set_read_timeout(Some(Duration::from_secs(5)))
+                .unwrap();
+            let mut data = Vec::new();
+            let mut buffer = [0; 1024];
+            loop {
+                let count = socket.read(&mut buffer).unwrap();
+                assert_ne!(count, 0);
+                data.extend_from_slice(&buffer[..count]);
+                if serde_json::from_slice::<ClientRequest>(&data).is_ok() {
+                    break;
+                }
+            }
+            let response = ClientResponse::PamAuthenticateStepResponse(PamAuthResponse::Input {
+                msg: "Enter verification code".into(),
+                echo_on: false,
+                enrollment: None,
+            });
+            socket
+                .write_all(&serde_json::to_vec(&response).unwrap())
+                .unwrap();
+        });
+        let next = authenticate_request_response(
+            &mut state,
+            &ClientRequest::PamAuthenticateStep(PamAuthRequest::MFAPoll { poll_attempt: 3 }),
+        );
+        assert!(matches!(
+            next,
+            PamWhatNext::Next(ClientRequest::PamAuthenticateStep(
+                PamAuthRequest::Input { .. }
+            ))
+        ));
+        let next = handle_pam_auth_response_mfapoll(&mut state, "Approve enrollment", 0, false);
+        assert!(matches!(
+            next,
+            PamWhatNext::Next(ClientRequest::PamAuthenticateStep(
+                PamAuthRequest::MFAPoll { poll_attempt: 0 }
+            ))
+        ));
+        assert!(printer.error.lock().unwrap().is_empty());
+        server.join().unwrap();
+        fs::remove_file(socket_path).unwrap();
     }
 
     #[test]
@@ -2000,5 +2248,105 @@ mod tests {
             !prompts[0].contains("MFA required"),
             "info must not be folded into the prompt by default"
         );
+    }
+}
+
+#[cfg(test)]
+mod fido_status_tests {
+    use super::*;
+    use std::error::Error;
+    use std::sync::mpsc::Receiver;
+
+    type TestResult = Result<(), Box<dyn Error>>;
+    const WAIT: Duration = Duration::from_secs(5);
+
+    #[derive(Debug, PartialEq)]
+    enum Event {
+        Text(String),
+        Prompt(String),
+        Error(String),
+        Dropped,
+    }
+
+    struct StatusPrinter(Sender<Event>);
+
+    impl MessagePrinter for StatusPrinter {
+        fn print_text(&self, msg: &str) {
+            let _ = self.0.send(Event::Text(msg.into()));
+        }
+
+        fn print_error(&self, msg: &str) {
+            let _ = self.0.send(Event::Error(msg.into()));
+        }
+
+        fn prompt_echo_on(&self, _prompt: &str) -> Option<String> {
+            None
+        }
+
+        fn prompt_echo_off(&self, prompt: &str) -> Option<String> {
+            let _ = self.0.send(Event::Prompt(prompt.into()));
+            Some("123456".into())
+        }
+    }
+
+    impl Drop for StatusPrinter {
+        fn drop(&mut self) {
+            let _ = self.0.send(Event::Dropped);
+        }
+    }
+
+    fn start_status_worker() -> (Sender<StatusUpdate>, Receiver<Event>) {
+        let (events, receiver) = channel();
+        let status =
+            fido_status_check(Arc::new(StatusPrinter(events)), "Touch the test key".into());
+        (status, receiver)
+    }
+
+    fn check_presence_delivery() -> TestResult {
+        let (status, events) = start_status_worker();
+        status.send(StatusUpdate::PresenceRequired)?;
+        assert_eq!(
+            events.recv_timeout(WAIT)?,
+            Event::Text("[FIDO_TOUCH] Touch the test key".into())
+        );
+        drop(status);
+        assert_eq!(events.recv_timeout(WAIT)?, Event::Dropped);
+        Ok(())
+    }
+
+    #[test]
+    fn presence_updates_work_without_a_tokio_runtime() -> TestResult {
+        check_presence_delivery()
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn presence_updates_work_inside_an_existing_runtime() -> TestResult {
+        // Call directly on the runtime thread to catch a nested block_on bridge.
+        check_presence_delivery()
+    }
+
+    #[test]
+    fn pin_requests_deliver_the_prompted_pin() -> TestResult {
+        let (status, events) = start_status_worker();
+        let (pin_sender, pin_receiver) = channel();
+        status.send(StatusUpdate::PinUvError(StatusPinUv::PinRequired(
+            pin_sender,
+        )))?;
+        assert_eq!(
+            events.recv_timeout(WAIT)?,
+            Event::Prompt(tr("Fido PIN:") + " ")
+        );
+        assert_eq!(pin_receiver.recv_timeout(WAIT)?.as_bytes(), b"123456");
+        drop(status);
+        assert_eq!(events.recv_timeout(WAIT)?, Event::Dropped);
+        Ok(())
+    }
+
+    #[test]
+    fn dropping_status_senders_releases_the_worker_printer() -> TestResult {
+        let (status, events) = start_status_worker();
+        drop(status);
+        assert_eq!(events.recv_timeout(WAIT)?, Event::Dropped);
+        Ok(())
     }
 }

@@ -21,11 +21,14 @@ use crate::constants::ID_MAP_CACHE;
 use crate::db::KeyStoreTxn;
 use crate::i18n::{tr, tr_fmt};
 use crate::idmap_cache::StaticIdCache;
-use crate::idprovider::common::build_online_probe_client;
 use crate::idprovider::common::flip_displayname_comma;
 use crate::idprovider::common::should_block_hello_pin_attempts;
 use crate::idprovider::common::KeyType;
 use crate::idprovider::common::TotpEnrollmentRecord;
+use crate::idprovider::common::{
+    build_online_probe_client, oidc_group_claims_from_value, oidc_user_token_from_claims,
+    OidcUserInfoClaims,
+};
 use crate::idprovider::common::{BadPinCounter, RefreshCache, RefreshCacheEntry};
 use crate::idprovider::interface::{
     tpm, AuthCacheAction, AuthCredHandler, AuthRequest, AuthResult, CacheState, GroupToken, Id,
@@ -67,15 +70,14 @@ use openidconnect::core::{
     CoreSubjectIdentifierType,
 };
 use openidconnect::{
-    AdditionalClaims, AdditionalProviderMetadata, AuthType, ClientId, DeviceAuthorizationResponse,
+    AdditionalProviderMetadata, AuthType, ClientId, DeviceAuthorizationResponse,
     DeviceAuthorizationUrl, EmptyAdditionalClaims, EmptyExtraDeviceAuthorizationFields,
     EndpointMaybeSet, EndpointNotSet, EndpointSet, IdTokenFields, IssuerUrl, OAuth2TokenResponse,
-    ProviderMetadata, Scope, UserInfoClaims,
+    ProviderMetadata, Scope,
 };
 use reqwest::Url;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 use tokio::net::UnixStream;
@@ -328,6 +330,8 @@ fn pam_auth_request_kind(pam_next_req: &PamAuthRequest) -> &'static str {
         PamAuthRequest::HelloTOTP { .. } => "hello_totp",
         PamAuthRequest::Fido { .. } => "fido",
         PamAuthRequest::FidoUnavailable => "fido_unavailable",
+        PamAuthRequest::WebAuthn { .. } => "webauthn",
+        PamAuthRequest::WebAuthnUnavailable => "webauthn_unavailable",
     }
 }
 
@@ -341,6 +345,7 @@ fn auth_request_kind(auth_req: &AuthRequest) -> &'static str {
         AuthRequest::SetupPin { .. } => "setup_pin",
         AuthRequest::Pin => "pin",
         AuthRequest::Fido { .. } => "fido",
+        AuthRequest::WebAuthn { .. } => "webauthn",
         AuthRequest::ChangePassword { .. } => "change_password",
         AuthRequest::InitDenied { .. } => "init_denied",
     }
@@ -740,6 +745,7 @@ fn auth_request_from_orchestrator_inputs(
             "Selected input prompt from orchestrator inputs"
         );
         return AuthRequest::Input {
+            enrollment: None,
             msg,
             echo_on: matches!(input.input_type, OrchestratorInputType::Text),
         };
@@ -754,6 +760,7 @@ fn auth_request_from_orchestrator_inputs(
             "Selected MFAPoll prompt from orchestrator confirmation input"
         );
         return AuthRequest::MFAPoll {
+            enrollment: None,
             msg: input
                 .prompt
                 .clone()
@@ -765,6 +772,7 @@ fn auth_request_from_orchestrator_inputs(
 
     debug!("No explicit orchestrator input matched; defaulting to MFAPoll waiting prompt");
     AuthRequest::MFAPoll {
+        enrollment: None,
         msg: tr("Waiting for browser authentication to complete..."),
         polling_interval: poll_interval_secs,
         show_push_hint: false,
@@ -876,13 +884,13 @@ fn orchestrator_inputs_from_pam_request(
 #[cfg(test)]
 mod tests {
     use super::{
-        auth_request_from_orchestrator_inputs, mfa_from_oidc_device, oidc_account_id_from_userinfo,
-        oidc_refresh_failure_state, oidc_should_prompt_hello_setup,
-        orchestrator_inputs_from_pam_request, parse_oidc_mfa_extra_data,
-        ropc_is_invalid_credentials, serialize_oidc_mfa_extra_data,
+        auth_request_from_orchestrator_inputs, mfa_from_oidc_device, oidc_refresh_failure_state,
+        oidc_should_prompt_hello_setup, orchestrator_inputs_from_pam_request,
+        parse_oidc_mfa_extra_data, ropc_is_invalid_credentials, serialize_oidc_mfa_extra_data,
         validated_password_cache_action, OidcMfaExtraData, OidcUserInfoClaims,
         OrchestratorFlowState, OrchestratorInputType, OrchestratorRequiredInput,
     };
+    use crate::idprovider::common::oidc_account_id_from_userinfo;
     use crate::idprovider::interface::{AuthCacheAction, AuthRequest, AuthResult, UserTokenState};
     use crate::unix_proto::PamAuthRequest;
     use himmelblau::error::{ErrorResponse, MsalError};
@@ -1297,7 +1305,11 @@ mod tests {
 
         let request = auth_request_from_orchestrator_inputs(&required_inputs, 2);
         match request {
-            AuthRequest::Input { msg, echo_on } => {
+            AuthRequest::Input {
+                enrollment: _,
+                msg,
+                echo_on,
+            } => {
                 assert_eq!(msg, "Email");
                 assert!(echo_on);
             }
@@ -1317,7 +1329,11 @@ mod tests {
 
         let request = auth_request_from_orchestrator_inputs(&required_inputs, 2);
         match request {
-            AuthRequest::Input { msg, echo_on } => {
+            AuthRequest::Input {
+                enrollment: _,
+                msg,
+                echo_on,
+            } => {
                 assert_eq!(msg, "OTP");
                 assert!(!echo_on);
             }
@@ -1338,6 +1354,7 @@ mod tests {
         let request = auth_request_from_orchestrator_inputs(&required_inputs, 5);
         match request {
             AuthRequest::MFAPoll {
+                enrollment: _,
                 msg,
                 polling_interval,
                 show_push_hint,
@@ -1462,7 +1479,8 @@ const OFFLINE_NEXT_CHECK: Duration = Duration::from_secs(15);
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 struct DeviceEndpointProviderMetadata {
-    device_authorization_endpoint: DeviceAuthorizationUrl,
+    #[serde(default)]
+    device_authorization_endpoint: Option<DeviceAuthorizationUrl>,
 }
 
 impl AdditionalProviderMetadata for DeviceEndpointProviderMetadata {}
@@ -1501,12 +1519,6 @@ type OidcTokenResponse = StandardTokenResponse<
     >,
     BasicTokenType,
 >;
-
-#[derive(Debug, Deserialize, Serialize)]
-struct OidcAdditionalUserInfoClaims(HashMap<String, Value>);
-impl AdditionalClaims for OidcAdditionalUserInfoClaims {}
-
-type OidcUserInfoClaims = UserInfoClaims<OidcAdditionalUserInfoClaims, CoreGenderClaim>;
 
 pub trait OidcTokenResponseExt {
     fn into_unix_user_token(self) -> Result<UnixUserToken, MsalError>;
@@ -1661,110 +1673,6 @@ fn oidc_should_prompt_hello_setup(
     hello_enabled && !no_hello_pin && hello_key_missing && has_refresh_token
 }
 
-fn value_type_name(value: &Value) -> &'static str {
-    match value {
-        Value::Null => "null",
-        Value::Bool(_) => "boolean",
-        Value::Number(_) => "number",
-        Value::String(_) => "string",
-        Value::Array(_) => "array",
-        Value::Object(_) => "object",
-    }
-}
-
-fn oidc_claim_string(userinfo_json: &Value, claim: &str) -> Option<String> {
-    match userinfo_json.get(claim) {
-        Some(Value::String(value)) if !value.is_empty() => Some(value.to_string()),
-        Some(value) => {
-            if matches!(value, Value::String(_)) {
-                warn!(
-                    claim,
-                    "OIDC account ID claim is present but is an empty string"
-                );
-            } else {
-                warn!(
-                    claim,
-                    value_type = value_type_name(value),
-                    "OIDC account ID claim is present but is not a string"
-                );
-            }
-            None
-        }
-        None => None,
-    }
-}
-
-fn oidc_fallback_account_id(userinfo: &OidcUserInfoClaims) -> Option<String> {
-    userinfo
-        .preferred_username()
-        .map(|username| username.to_string())
-        .filter(|username| !username.is_empty())
-        .or_else(|| {
-            userinfo
-                .email()
-                .map(|email| email.to_string())
-                .filter(|email| !email.is_empty())
-        })
-}
-
-fn oidc_account_id_from_userinfo(
-    userinfo: &OidcUserInfoClaims,
-    configured_claims: &[String],
-    strip_at_suffix: bool,
-) -> Result<String, IdpError> {
-    let account_id = if configured_claims.is_empty() {
-        oidc_fallback_account_id(userinfo).ok_or_else(|| {
-            error!("Missing non-empty preferred_username and email claims in userinfo");
-            IdpError::BadRequest
-        })?
-    } else {
-        let userinfo_json = serde_json::to_value(userinfo).map_err(|e| {
-            error!(?e, "Failed to serialize OIDC userinfo claims");
-            IdpError::BadRequest
-        })?;
-
-        let mut configured_account_id = None;
-        for claim in configured_claims {
-            if let Some(account_id) = oidc_claim_string(&userinfo_json, claim) {
-                configured_account_id = Some(account_id);
-                break;
-            }
-        }
-
-        if let Some(account_id) = configured_account_id {
-            account_id
-        } else {
-            warn!(
-                claims = ?configured_claims,
-                "Configured OIDC account ID claims did not match any non-empty string userinfo claim; falling back to preferred_username, then email"
-            );
-
-            oidc_fallback_account_id(userinfo).ok_or_else(|| {
-                error!(
-                    claims = ?configured_claims,
-                    "Configured OIDC account ID claims did not match and fallback preferred_username/email claims are missing or empty"
-                );
-                IdpError::BadRequest
-            })?
-        }
-    };
-
-    if strip_at_suffix {
-        let account_id = account_id
-            .split_once('@')
-            .map(|(local, _)| local.to_string())
-            .unwrap_or(account_id);
-        if account_id.is_empty() {
-            error!("OIDC account ID is empty after stripping @suffix");
-            Err(IdpError::BadRequest)
-        } else {
-            Ok(account_id)
-        }
-    } else {
-        Ok(account_id)
-    }
-}
-
 fn validated_password_cache_action(
     auth_result: &AuthResult,
     breakglass_enabled: bool,
@@ -1787,46 +1695,6 @@ fn validated_password_cache_action(
         },
         None => AuthCacheAction::None,
     }
-}
-
-fn oidc_extract_claim_string(value: &str) -> Option<String> {
-    let value = value.trim();
-    if value.is_empty() || value.contains(':') || value.chars().any(char::is_control) {
-        None
-    } else {
-        Some(value.to_string())
-    }
-}
-
-fn oidc_claim_strings(value: Option<&Value>) -> Vec<String> {
-    match value {
-        Some(Value::String(group)) => oidc_extract_claim_string(group).into_iter().collect(),
-        Some(Value::Array(groups)) => groups
-            .iter()
-            .filter_map(|group| group.as_str().and_then(oidc_extract_claim_string))
-            .collect(),
-        _ => Vec::new(),
-    }
-}
-
-fn oidc_group_claims_from_value(claims: &Value) -> Vec<String> {
-    let mut groups = oidc_claim_strings(claims.get("groups"));
-
-    if let Some(Value::Object(realm_access)) = claims.get("realm_access") {
-        groups.extend(oidc_claim_strings(realm_access.get("roles")));
-    }
-
-    if let Some(Value::Object(resource_access)) = claims.get("resource_access") {
-        for resource in resource_access.values() {
-            if let Value::Object(resource_claims) = resource {
-                groups.extend(oidc_claim_strings(resource_claims.get("roles")));
-            }
-        }
-    }
-
-    groups.sort();
-    groups.dedup();
-    groups
 }
 
 async fn oidc_userinfo_from_claims(
@@ -1873,33 +1741,6 @@ async fn oidc_userinfo_from_claims(
         })?;
 
     Ok((userinfo, group_claims))
-}
-
-fn oidc_group_tokens_from_claims(
-    group_claims: Vec<String>,
-    idmap: &Idmap,
-    tenant_id: &Uuid,
-) -> Vec<GroupToken> {
-    group_claims
-        .into_iter()
-        .filter_map(|group| {
-            let uuid = Uuid::new_v5(tenant_id, group.as_bytes());
-            let gidnumber = match idmap.gen_to_unix(&tenant_id.to_string(), &group) {
-                Ok(gidnumber) => gidnumber,
-                Err(e) => {
-                    error!(?e, group = %group, "Failed mapping OIDC group claim");
-                    return None;
-                }
-            };
-
-            Some(GroupToken {
-                name: group.clone(),
-                spn: group,
-                uuid,
-                gidnumber,
-            })
-        })
-        .collect()
 }
 
 fn oidc_refresh_failure_state(error: &MsalError) -> UserTokenState {
@@ -2004,6 +1845,10 @@ impl OidcApplication {
 
             // Create a public client: pass None for the client secret.
             // Whether this works depends on provider configuration. Many support it.
+            let device_endpoint = device_endpoint.ok_or_else(|| {
+                debug!("OIDC provider does not advertise device authorization");
+                IdpError::BadRequest
+            })?;
             let client = CoreClient::from_provider_metadata(provider_metadata, client_id, None)
                 .set_device_authorization_url(device_endpoint)
                 .set_auth_type(AuthType::RequestBody);
@@ -2352,61 +2197,17 @@ impl OidcApplication {
         group_claims.sort();
         group_claims.dedup();
 
-        let account_id =
-            oidc_account_id_from_userinfo(&userinfo, account_id_claims, strip_at_suffix)?;
-
-        let subject = userinfo.subject().to_string();
-        let object_id = uuid::Uuid::new_v5(tenant_id, subject.as_bytes());
-
-        let idmap_cache = StaticIdCache::new(ID_MAP_CACHE, false).map_err(|e| {
-            error!("Failed reading from the idmap cache: {:?}", e);
-            IdpError::BadRequest
-        })?;
-
-        let idmap = idmap.lock().await;
-        let oidc_groups = oidc_group_tokens_from_claims(group_claims, &idmap, tenant_id);
-
-        let (uid, gid) = match idmap_cache.get_user_by_name(&account_id) {
-            Some(user) => (user.uid, user.gid),
-            None => {
-                let gid = idmap
-                    .gen_to_unix(&tenant_id.to_string(), &account_id)
-                    .map_err(|e| {
-                        error!("{:?}", e);
-                        IdpError::BadRequest
-                    })?;
-                (gid, gid)
-            }
-        };
-
-        let displayname = userinfo
-            .name()
-            .and_then(|n| n.get(None))
-            .map(|n| n.to_string())
-            .unwrap_or_default();
-
-        let displayname = flip_displayname_comma(&displayname);
-
-        let mut groups = vec![GroupToken {
-            name: account_id.to_string(),
-            spn: account_id.to_string(),
-            uuid: object_id,
-            gidnumber: gid,
-        }];
-        groups.extend(oidc_groups);
-
-        Ok(UserToken {
-            name: account_id.to_string(),
-            spn: account_id.to_string(),
-            uuid: object_id,
-            real_gidnumber: Some(uid),
-            gidnumber: gid,
-            displayname,
-            shell: Some(shell),
-            groups,
-            tenant_id: Some(*tenant_id),
-            valid: true,
-        })
+        let mut claims = serde_json::to_value(&userinfo).map_err(|_| IdpError::BadRequest)?;
+        claims["groups"] = serde_json::json!(group_claims);
+        oidc_user_token_from_claims(
+            &claims,
+            shell,
+            idmap,
+            tenant_id,
+            account_id_claims,
+            strip_at_suffix,
+        )
+        .await
     }
 }
 
@@ -2419,10 +2220,10 @@ impl Default for OidcApplication {
 pub struct OidcProvider {
     config: Arc<Mutex<HimmelblauConfig>>,
     idmap: Arc<Mutex<Idmap>>,
-    state: Mutex<CacheState>,
+    pub(crate) state: Arc<Mutex<CacheState>>,
     client: OidcApplication,
-    refresh_cache: RefreshCache,
-    bad_pin_counter: BadPinCounter,
+    pub(crate) refresh_cache: Arc<RefreshCache>,
+    pub(crate) bad_pin_counter: Arc<BadPinCounter>,
     domain: String,
 }
 
@@ -2436,10 +2237,10 @@ impl OidcProvider {
         Ok(Self {
             config: cfg.clone(),
             idmap: idmap.clone(),
-            state: Mutex::new(CacheState::OfflineNextCheck(SystemTime::now())),
+            state: Arc::new(Mutex::new(CacheState::OfflineNextCheck(SystemTime::now()))),
             client: OidcApplication::new(),
-            refresh_cache: RefreshCache::new(),
-            bad_pin_counter: BadPinCounter::new(),
+            refresh_cache: Arc::new(RefreshCache::new()),
+            bad_pin_counter: Arc::new(BadPinCounter::new()),
             domain: domain.to_string(),
         })
     }
@@ -2704,6 +2505,7 @@ impl OidcProvider {
         let polling_interval = flow.polling_interval.unwrap_or(5000);
         Ok((
             AuthRequest::MFAPoll {
+                enrollment: None,
                 msg: flow.msg.clone(),
                 polling_interval: polling_interval / 1000,
                 show_push_hint: false,

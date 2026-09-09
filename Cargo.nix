@@ -299,7 +299,7 @@ rec {
           }
           {
             name = "reqwest";
-            packageId = "reqwest 0.13.4";
+            packageId = "reqwest 0.13.5";
             features = [ "json" ];
           }
           {
@@ -6565,6 +6565,67 @@ rec {
         };
         resolvedDefaultFeatures = [ "alloc" "async-await" "async-await-macro" "channel" "default" "futures-channel" "futures-io" "futures-macro" "futures-sink" "io" "memchr" "sink" "slab" "std" ];
       };
+      "g2gen" = rec {
+        crateName = "g2gen";
+        version = "1.2.2";
+        edition = "2018";
+        sha256 = "1z0xdfddyy2whs88v41sbpl78rin0k91f0c51ck20fpq8vmy19y5";
+        procMacro = true;
+        authors = [
+          "WanzenBug <moritz@wanzenbug.xyz>"
+        ];
+        dependencies = [
+          {
+            name = "g2poly";
+            packageId = "g2poly";
+          }
+          {
+            name = "proc-macro2";
+            packageId = "proc-macro2";
+          }
+          {
+            name = "quote";
+            packageId = "quote";
+          }
+          {
+            name = "syn";
+            packageId = "syn 2.0.117";
+            usesDefaultFeatures = false;
+            features = [ "parsing" "proc-macro" ];
+          }
+        ];
+
+      };
+      "g2p" = rec {
+        crateName = "g2p";
+        version = "1.2.2";
+        edition = "2018";
+        sha256 = "1bc01nxcx0zgpj826iz8ws10xy725hnq9jq8s96bzlrhq122d7jk";
+        authors = [
+          "WanzenBug <moritz@wanzenbug.xyz>"
+        ];
+        dependencies = [
+          {
+            name = "g2gen";
+            packageId = "g2gen";
+          }
+          {
+            name = "g2poly";
+            packageId = "g2poly";
+          }
+        ];
+
+      };
+      "g2poly" = rec {
+        crateName = "g2poly";
+        version = "1.2.2";
+        edition = "2018";
+        sha256 = "06z1pf6z78y7m6xjj13hppma50has2n0vffgjp1ij81hqyaj4b9i";
+        authors = [
+          "WanzenBug <moritz@wanzenbug.xyz>"
+        ];
+
+      };
       "generic-array" = rec {
         crateName = "generic-array";
         version = "0.14.7";
@@ -7620,6 +7681,12 @@ rec {
             packageId = "idmap";
           }
           {
+            name = "image";
+            packageId = "image";
+            usesDefaultFeatures = false;
+            features = [ "png" ];
+          }
+          {
             name = "kanidm-hsm-crypto";
             packageId = "kanidm-hsm-crypto";
           }
@@ -7658,6 +7725,11 @@ rec {
             packageId = "oauth2";
           }
           {
+            name = "okta-auth-rs";
+            packageId = "okta-auth-rs";
+            rename = "okta";
+          }
+          {
             name = "openidconnect";
             packageId = "openidconnect";
           }
@@ -7675,7 +7747,7 @@ rec {
           }
           {
             name = "reqwest";
-            packageId = "reqwest 0.13.4";
+            packageId = "reqwest 0.13.5";
             features = [ "json" ];
           }
           {
@@ -7683,13 +7755,28 @@ rec {
             packageId = "rpassword";
           }
           {
+            name = "rqrr";
+            packageId = "rqrr";
+            usesDefaultFeatures = false;
+          }
+          {
             name = "rusqlite";
             packageId = "rusqlite";
+          }
+          {
+            name = "rustls";
+            packageId = "rustls";
+            usesDefaultFeatures = false;
+            features = [ "std" ];
           }
           {
             name = "serde";
             packageId = "serde";
             features = [ "derive" ];
+          }
+          {
+            name = "serde_cbor";
+            packageId = "serde_cbor";
           }
           {
             name = "serde_json";
@@ -7734,6 +7821,12 @@ rec {
           {
             name = "zeroize";
             packageId = "zeroize";
+          }
+        ];
+        devDependencies = [
+          {
+            name = "tracing-subscriber";
+            packageId = "tracing-subscriber";
           }
         ];
         features = {
@@ -10151,7 +10244,7 @@ rec {
           }
           {
             name = "reqwest";
-            packageId = "reqwest 0.13.4";
+            packageId = "reqwest 0.13.5";
             features = [ "json" "cookies" "form" ];
           }
           {
@@ -11903,7 +11996,7 @@ rec {
           }
           {
             name = "reqwest";
-            packageId = "reqwest 0.12.24";
+            packageId = "reqwest 0.12.28";
             optional = true;
             usesDefaultFeatures = false;
           }
@@ -12025,6 +12118,91 @@ rec {
           "default" = [ "registry" ];
         };
         resolvedDefaultFeatures = [ "crypto" "default" "kdf" "nist_algs" "pkcs1" "pkcs12" "pkcs7" "pkcs9" "registry" "x509" "x962" ];
+      };
+      "okta-auth-rs" = rec {
+        crateName = "okta-auth-rs";
+        version = "8.0.1003";
+        edition = "2021";
+        sha256 = "0rf902jp1lnrhxrcb2y0bmiql0byvba9cwxy8n41j5a719m01yxd";
+        libName = "okta";
+        dependencies = [
+          {
+            name = "base64";
+            packageId = "base64 0.22.1";
+          }
+          {
+            name = "cookie_store";
+            packageId = "cookie_store";
+          }
+          {
+            name = "futures-util";
+            packageId = "futures-util";
+            usesDefaultFeatures = false;
+            features = [ "std" "async-await" ];
+          }
+          {
+            name = "httpdate";
+            packageId = "httpdate";
+          }
+          {
+            name = "indexmap";
+            packageId = "indexmap 2.9.0";
+          }
+          {
+            name = "regex";
+            packageId = "regex";
+          }
+          {
+            name = "reqwest";
+            packageId = "reqwest 0.12.28";
+            usesDefaultFeatures = false;
+            features = [ "rustls-tls" "json" "cookies" ];
+          }
+          {
+            name = "ring";
+            packageId = "ring";
+          }
+          {
+            name = "rustls";
+            packageId = "rustls";
+            usesDefaultFeatures = false;
+            features = [ "ring" "std" "tls12" ];
+          }
+          {
+            name = "serde";
+            packageId = "serde";
+            features = [ "derive" ];
+          }
+          {
+            name = "serde_json";
+            packageId = "serde_json";
+            features = [ "preserve_order" ];
+          }
+          {
+            name = "thiserror";
+            packageId = "thiserror 2.0.16";
+          }
+          {
+            name = "tokio";
+            packageId = "tokio";
+            features = [ "rt-multi-thread" "macros" "time" "sync" "net" ];
+          }
+          {
+            name = "url";
+            packageId = "url";
+          }
+          {
+            name = "zeroize";
+            packageId = "zeroize";
+            features = [ "derive" ];
+          }
+        ];
+        features = {
+          "hsm" = [ "dep:kanidm-hsm-crypto" "dep:crypto-glue" ];
+          "tpm" = [ "hsm" "kanidm-hsm-crypto/tpm" ];
+          "webauthn-usb" = [ "dep:authenticator" "dep:serde_cbor" ];
+        };
+        resolvedDefaultFeatures = [ "default" ];
       };
       "once_cell" = rec {
         crateName = "once_cell";
@@ -14685,9 +14863,9 @@ rec {
         };
         resolvedDefaultFeatures = [ "default" "std" "unicode" "unicode-age" "unicode-bool" "unicode-case" "unicode-gencat" "unicode-perl" "unicode-script" "unicode-segment" ];
       };
-      "reqwest 0.12.24" = rec {
+      "reqwest 0.12.28" = rec {
         crateName = "reqwest";
-        version = "0.12.24";
+        version = "0.12.28";
         edition = "2021";
         src = lib.cleanSourceWith { filter = sourceFilter;  src = ./src/overrides/reqwest/0.12.24; };
         authors = [
@@ -14696,7 +14874,7 @@ rec {
         dependencies = [
           {
             name = "reqwest";
-            packageId = "reqwest 0.13.4";
+            packageId = "reqwest 0.13.5";
           }
         ];
         features = {
@@ -14714,20 +14892,20 @@ rec {
           "stream" = [ "reqwest/stream" ];
           "system-proxy" = [ "reqwest/system-proxy" ];
         };
-        resolvedDefaultFeatures = [ "__rustls" "rustls-tls" ];
+        resolvedDefaultFeatures = [ "__rustls" "cookies" "json" "rustls-tls" ];
       };
-      "reqwest 0.13.4" = rec {
+      "reqwest 0.13.5" = rec {
         crateName = "reqwest";
-        version = "0.13.4";
+        version = "0.13.5";
         edition = "2021";
-        sha256 = "1hy1plns9krbh3h1dy2sdjygsfkdcnxm6pbxdi0ya9b5vq8mi711";
+        sha256 = "0ac0n0g7xaffc6q3dhn9rixr4h1f0h7533l1smrxv1n1bjkwz88n";
         authors = [
           "Sean McArthur <sean@seanmonstar.com>"
         ];
         dependencies = [
           {
             name = "base64";
-            packageId = "base64 0.22.1";
+            packageId = "base64 0.23.1";
           }
           {
             name = "bytes";
@@ -14924,7 +15102,7 @@ rec {
             name = "web-sys";
             packageId = "web-sys";
             target = { target, features }: (("wasm32" == target."arch" or null) && (("unknown" == target."os" or null) || ("none" == target."os" or null)));
-            features = [ "AbortController" "AbortSignal" "Headers" "Request" "RequestInit" "RequestMode" "Response" "Window" "FormData" "Blob" "BlobPropertyBag" "ServiceWorkerGlobalScope" "RequestCredentials" "File" "ReadableStream" "RequestCache" ];
+            features = [ "AbortController" "AbortSignal" "Headers" "Request" "RequestInit" "RequestMode" "Response" "Window" "FormData" "Blob" "BlobPropertyBag" "ServiceWorkerGlobalScope" "RequestCredentials" "File" "ReadableStream" "ReferrerPolicy" "RequestCache" ];
           }
         ];
         devDependencies = [
@@ -15019,7 +15197,7 @@ rec {
           }
           {
             name = "reqwest";
-            packageId = "reqwest 0.13.4";
+            packageId = "reqwest 0.13.5";
             usesDefaultFeatures = false;
             features = [ "cookies" ];
           }
@@ -15031,7 +15209,7 @@ rec {
         devDependencies = [
           {
             name = "reqwest";
-            packageId = "reqwest 0.13.4";
+            packageId = "reqwest 0.13.5";
             usesDefaultFeatures = false;
             features = [ "cookies" "default-tls" ];
           }
@@ -15150,6 +15328,30 @@ rec {
           }
         ];
 
+      };
+      "rqrr" = rec {
+        crateName = "rqrr";
+        version = "0.11.0";
+        edition = "2021";
+        sha256 = "0fz9gprgxwdzdahivs64nsq6g1kcaqls63c5h6h9g8ygqm84q24d";
+        authors = [
+          "WanzenBug <moritz@wanzenbug.xyz>"
+        ];
+        dependencies = [
+          {
+            name = "g2p";
+            packageId = "g2p";
+          }
+          {
+            name = "lru";
+            packageId = "lru";
+          }
+        ];
+        features = {
+          "default" = [ "img" ];
+          "image" = [ "dep:image" ];
+          "img" = [ "image" ];
+        };
       };
       "rsa" = rec {
         crateName = "rsa";
@@ -16577,6 +16779,11 @@ rec {
         ];
         dependencies = [
           {
+            name = "indexmap";
+            packageId = "indexmap 2.9.0";
+            optional = true;
+          }
+          {
             name = "itoa";
             packageId = "itoa";
           }
@@ -16615,7 +16822,7 @@ rec {
           "preserve_order" = [ "indexmap" "std" ];
           "std" = [ "memchr/std" "serde_core/std" ];
         };
-        resolvedDefaultFeatures = [ "alloc" "default" "std" ];
+        resolvedDefaultFeatures = [ "alloc" "default" "indexmap" "preserve_order" "std" ];
       };
       "serde_path_to_error" = rec {
         crateName = "serde_path_to_error";
@@ -20424,7 +20631,7 @@ rec {
         ];
         features = {
         };
-        resolvedDefaultFeatures = [ "AbortController" "AbortSignal" "Blob" "BlobPropertyBag" "File" "FormData" "Headers" "ReadableStream" "Request" "RequestCache" "RequestCredentials" "RequestInit" "RequestMode" "Response" "ServiceWorkerGlobalScope" "Window" "default" ];
+        resolvedDefaultFeatures = [ "AbortController" "AbortSignal" "Blob" "BlobPropertyBag" "File" "FormData" "Headers" "ReadableStream" "ReferrerPolicy" "Request" "RequestCache" "RequestCredentials" "RequestInit" "RequestMode" "Response" "ServiceWorkerGlobalScope" "Window" "default" ];
       };
       "web-time" = rec {
         crateName = "web-time";
