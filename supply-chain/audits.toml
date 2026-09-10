@@ -219,6 +219,21 @@ who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
 version = "0.4.0"
 
+[[audits.darling]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+delta = "0.23.0 -> 0.24.1"
+
+[[audits.darling_core]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+delta = "0.23.0 -> 0.24.1"
+
+[[audits.darling_macro]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+delta = "0.23.0 -> 0.24.1"
+
 [[audits.dbus]]
 who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
@@ -669,6 +684,11 @@ who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
 delta = "3.19.0 -> 3.20.0"
 
+[[audits.serde_with]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+delta = "3.22.0 -> 3.23.0"
+
 [[audits.serde_with_macros]]
 who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
@@ -703,6 +723,11 @@ delta = "3.16.1 -> 3.17.0"
 who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
 delta = "3.19.0 -> 3.20.0"
+
+[[audits.serde_with_macros]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+delta = "3.22.0 -> 3.23.0"
 
 [[audits.servo_arc]]
 who = "David Mulder <dmulder@samba.org>"
