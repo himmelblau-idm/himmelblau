@@ -1332,9 +1332,9 @@ dependencies = [
 
 [[package]]
 name = "der"
-version = "0.8.2"
+version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a878c850e9e421b20262e9b41f9c860e4785fa07541c266b62ff9d1ef998a80a"
+checksum = "71fd89660b2dc699704064e59e9dba0147b903e85319429e131620d022be411b"
 dependencies = [
  "der_derive 0.8.0",
  "flagset",
@@ -2116,7 +2116,7 @@ dependencies = [
  "compact_jwt",
  "configparser",
  "csv",
- "der 0.8.2",
+ "der 0.7.10",
  "futures",
  "hashbrown 0.17.1",
  "hostname",
@@ -3005,7 +3005,7 @@ dependencies = [
  "bytes",
  "c-types",
  "cbc",
- "der 0.8.2",
+ "der 0.8.0",
  "errno",
  "futures-util",
  "hex",
