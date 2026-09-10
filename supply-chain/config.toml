@@ -151,7 +151,7 @@ audit-as-crates-io = true
 [policy."redox_syscall:0.5.12"]
 audit-as-crates-io = true
 
-[policy."reqwest:0.12.24"]
+[policy."reqwest:0.12.28"]
 audit-as-crates-io = true
 
 [policy."rsa:0.9.999"]
