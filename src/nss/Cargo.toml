@@ -28,6 +28,7 @@ depends = ["$auto", "libnss-systemd"]
 assets = [
   ["target/release/libnss_himmelblau.so", "usr/lib/libnss_himmelblau.so.2", "755"],
   ["src/nss-himmelblau.tmpfiles.conf", "usr/lib/tmpfiles.d/nss-himmelblau.conf", "644"],
+  ["src/update-nss", "usr/share/nss-himmelblau/update-nss", "755"],
 ]
 maintainer-scripts = "scripts"
 
@@ -37,8 +38,10 @@ maintainer = "David Mulder <dmulder@suse.com>"
 assets = [
   { source = "target/release/libnss_himmelblau.so", dest = "/usr/lib64/libnss_himmelblau.so.2", mode = "755" },
   { source = "src/nss-himmelblau.tmpfiles.conf", dest = "/usr/lib/tmpfiles.d/nss-himmelblau.conf", mode = "644" },
+  { source = "src/update-nss", dest = "/usr/share/nss-himmelblau/update-nss", mode = "755" },
 ]
 post_install_script = "scripts/postinst"
+pre_uninstall_script = "scripts/prerm"
 
 [package.metadata.generate-rpm.provides]
 libnss-aad = ""

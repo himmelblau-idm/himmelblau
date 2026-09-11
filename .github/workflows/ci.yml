@@ -212,6 +212,9 @@ jobs:
       - name: "Check translations"
         run: scripts/i18n-check
         continue-on-error: false
+      - name: "Test nss-himmelblau nsswitch helper"
+        run: sh src/nss/tests/test-update-nss.sh
+        continue-on-error: false
 
   license:
     name: License
