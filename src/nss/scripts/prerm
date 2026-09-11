@@ -1,0 +1,13 @@
+#!/bin/sh
+
+set -eu
+
+# Only remove the NSS entry on a real removal, not an upgrade. On Debian the
+# first argument is "remove"; on RPM it is the number of remaining instances,
+# which is 0 on the final removal.
+case "${1:-}" in
+  remove | 0) ;;
+  *) exit 0 ;;
+esac
+
+/usr/share/nss-himmelblau/update-nss remove

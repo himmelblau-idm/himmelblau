@@ -1,0 +1,49 @@
+#!/bin/sh
+# Add or remove the himmelblau NSS service in the passwd, group, shadow, and
+# initgroups databases of nsswitch.conf, idempotently.
+set -eu
+
+action="${1:-}"
+case "$action" in
+  add | remove) ;;
+  *)
+    echo "usage: ${0##*/} <add|remove>" >&2
+    exit 2
+    ;;
+esac
+
+conf="${DPKG_ROOT:-}/etc/nsswitch.conf"
+usr_conf="${DPKG_ROOT:-}/usr/etc/nsswitch.conf"
+
+if [ "$action" = add ] && [ ! -f "$conf" ] && [ -f "$usr_conf" ]; then
+  cp "$usr_conf" "$conf"
+fi
+[ -f "$conf" ] || exit 0
+
+tmp="$(mktemp "${conf}.himmelblau.XXXXXX")"
+trap 'rm -f "$tmp"' EXIT HUP INT TERM
+
+awk -v action="$action" '
+  function target(f) {
+    return f == "passwd:" || f == "group:" || f == "shadow:" || f == "initgroups:"
+  }
+  target($1) {
+    if (action == "add") {
+      for (i = 2; i <= NF; i++) if ($i == "himmelblau") { print; next }
+      print $0 " himmelblau"
+      next
+    }
+
+    line = $0
+    sub(/[[:blank:]]+himmelblau[[:blank:]]*$/, "", line)
+    gsub(/[[:blank:]]+himmelblau[[:blank:]]+/, " ", line)
+    print line
+    next
+  }
+  { print }
+' "$conf" > "$tmp"
+
+chmod --reference="$conf" "$tmp" 2>/dev/null || chmod 0644 "$tmp"
+chown --reference="$conf" "$tmp" 2>/dev/null || true
+mv "$tmp" "$conf"
+trap - EXIT HUP INT TERM
