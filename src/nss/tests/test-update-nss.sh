@@ -56,6 +56,18 @@ check "remove takes only the exact service" "passwd:         files systemd himme
 run add
 check "add ignores a lookalike token" "passwd:         files systemd himmelblau_extra himmelblau" "$(dbline passwd)"
 
+fixture "passwd:         files systemd # local note"
+run add
+check "add inserts before an inline comment" "passwd:         files systemd himmelblau # local note" "$(dbline passwd)"
+run remove
+check "remove restores a commented line" "passwd:         files systemd # local note" "$(dbline passwd)"
+
+fixture "passwd:         files systemd # himmelblau"
+run add
+check "add ignores the service inside a comment" "passwd:         files systemd himmelblau # himmelblau" "$(dbline passwd)"
+run remove
+check "remove keeps the service inside a comment" "passwd:         files systemd # himmelblau" "$(dbline passwd)"
+
 rm -f "$conf"
 mkdir -p "$work/usr/etc"
 printf 'passwd: files\n' >"$work/usr/etc/nsswitch.conf"
