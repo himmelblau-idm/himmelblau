@@ -10,4 +10,4 @@ case "${1:-}" in
   *) exit 0 ;;
 esac
 
-/usr/share/nss-himmelblau/update-nss remove
+"${DPKG_ROOT:-}/usr/share/nss-himmelblau/update-nss" remove
