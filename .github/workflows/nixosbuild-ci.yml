@@ -24,6 +24,6 @@ jobs:
         with:
           extra_nix_config: experimental-features = nix-command flakes
 
-      - uses: DeterminateSystems/magic-nix-cache-action@908b263ff629f4cc17666315b7fd3ec127c6244d
+      - uses: DeterminateSystems/magic-nix-cache-action@84c0677f58dcedf3b91f8223ce36a9ea5b3c84b7
       - run: nix flake check
       - run: nix build .#daemon .#sso .#broker .#pam .#nss .#aad-tool .#o365 2>&1
