@@ -28,16 +28,28 @@ awk -v action="$action" '
     return f == "passwd:" || f == "group:" || f == "shadow:" || f == "initgroups:"
   }
   target($1) {
+    h = index($0, "#")
+    if (h > 0) { code = substr($0, 1, h - 1); comment = substr($0, h) }
+    else       { code = $0;                   comment = "" }
+
+    present = 0
+    n = split(code, f, /[[:blank:]]+/)
+    for (i = 1; i <= n; i++) if (f[i] == "himmelblau") present = 1
+
     if (action == "add") {
-      for (i = 2; i <= NF; i++) if ($i == "himmelblau") { print; next }
-      print $0 " himmelblau"
+      if (present) { print; next }
+      sub(/[[:blank:]]+$/, "", code)
+      if (comment == "") print code " himmelblau"
+      else               print code " himmelblau " comment
       next
     }
 
-    line = $0
-    sub(/[[:blank:]]+himmelblau[[:blank:]]*$/, "", line)
-    gsub(/[[:blank:]]+himmelblau[[:blank:]]+/, " ", line)
-    print line
+    if (!present) { print; next }
+    sub(/[[:blank:]]+himmelblau[[:blank:]]*$/, "", code)
+    gsub(/[[:blank:]]+himmelblau[[:blank:]]+/, " ", code)
+    if (comment == "") { print code; next }
+    sub(/[[:blank:]]+$/, "", code)
+    print code " " comment
     next
   }
   { print }
