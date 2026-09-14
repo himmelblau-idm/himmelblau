@@ -56,6 +56,14 @@ check "remove takes only the exact service" "passwd:         files systemd himme
 run add
 check "add ignores a lookalike token" "passwd:         files systemd himmelblau_extra himmelblau" "$(dbline passwd)"
 
+fixture "passwd: files himmelblau himmelblau"
+run remove
+check "remove takes trailing duplicates" "passwd: files" "$(dbline passwd)"
+
+fixture "passwd:         files himmelblau systemd himmelblau"
+run remove
+check "remove takes every occurrence" "passwd:         files systemd" "$(dbline passwd)"
+
 fixture "passwd:         files systemd # local note"
 run add
 check "add inserts before an inline comment" "passwd:         files systemd himmelblau # local note" "$(dbline passwd)"
