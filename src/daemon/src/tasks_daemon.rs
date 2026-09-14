@@ -761,6 +761,11 @@ async fn handle_tasks(stream: UnixStream, cfg: &HimmelblauConfig) {
                         ));
                     }
 
+                    if icons_dir.join(&account_id).is_file() {
+                        debug!("Profile photo already present, skipping fetch");
+                        return Ok(());
+                    }
+
                     let profile_photo = create_profile_photo_temp_file(icons_dir)
                         .map_err(|e| format!("Failed creating profile photo: {e:?}"))?;
                     let file = profile_photo
