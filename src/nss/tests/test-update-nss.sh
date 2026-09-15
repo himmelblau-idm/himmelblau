@@ -72,6 +72,10 @@ fixture "  passwd:${tab}files systemd"
 run add
 check "add preserves leading indentation" "  passwd:${tab}files systemd himmelblau" "$(dbline passwd)"
 
+fixture "passwd:${tab}files  himmelblau${tab}systemd"
+run remove
+check "remove keeps separators between remaining services" "passwd:${tab}files${tab}systemd" "$(dbline passwd)"
+
 fixture "passwd:         files systemd # local note"
 run add
 check "add inserts before an inline comment" "passwd:         files systemd himmelblau # local note" "$(dbline passwd)"
