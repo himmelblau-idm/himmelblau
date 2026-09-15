@@ -64,6 +64,14 @@ fixture "passwd:         files himmelblau systemd himmelblau"
 run remove
 check "remove takes every occurrence" "passwd:         files systemd" "$(dbline passwd)"
 
+tab="$(printf '\t')"
+fixture "  passwd:${tab}files systemd himmelblau"
+run remove
+check "remove preserves leading indentation" "  passwd:${tab}files systemd" "$(dbline passwd)"
+fixture "  passwd:${tab}files systemd"
+run add
+check "add preserves leading indentation" "  passwd:${tab}files systemd himmelblau" "$(dbline passwd)"
+
 fixture "passwd:         files systemd # local note"
 run add
 check "add inserts before an inline comment" "passwd:         files systemd himmelblau # local note" "$(dbline passwd)"
