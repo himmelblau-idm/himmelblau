@@ -167,6 +167,8 @@ package() {
     "$pkgdir/usr/lib/libnss_himmelblau.so.2"
   install -Dm644 src/nss/src/nss-himmelblau.tmpfiles.conf \
     "$pkgdir/usr/lib/tmpfiles.d/nss-himmelblau.conf"
+  install -Dm755 src/nss/src/update-nss \
+    "$pkgdir/usr/share/nss-himmelblau/update-nss"
   install -Dm755 target/release/libpam_himmelblau.so \
     "$pkgdir/usr/lib/security/pam_himmelblau.so"
 
