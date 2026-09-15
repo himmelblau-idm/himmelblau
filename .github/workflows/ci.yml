@@ -231,8 +231,10 @@ jobs:
         with:
           egress-policy: audit
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - name: "Test update-nss on ${{ matrix.image }}"
-        run: docker run --rm -v "${{ github.workspace }}:/work" -w /work "${{ matrix.image }}" sh src/nss/tests/test-update-nss.sh
+        run: docker run --rm -v "${{ github.workspace }}:/work:ro" -e TMPDIR=/tmp -w /work "${{ matrix.image }}" sh src/nss/tests/test-update-nss.sh
 
   license:
     name: License
