@@ -45,15 +45,10 @@ awk -v action="$action" '
     }
 
     if (!present) { print; next }
-    match(code, /^[[:blank:]]*[^[:blank:]]+[[:blank:]]+/)
-    rest = substr(code, RLENGTH + 1)
-    code = substr(code, 1, RLENGTH)
-    m = split(rest, s, /[[:blank:]]+/)
-    started = 0
-    for (i = 1; i <= m; i++) {
-      if (s[i] == "himmelblau" || s[i] == "") continue
-      code = started ? code " " s[i] : code s[i]
-      started = 1
+    while (match(code, /[[:blank:]]+himmelblau([[:blank:]]|$)/)) {
+      cut = RLENGTH
+      if (substr(code, RSTART + RLENGTH - 1, 1) ~ /[[:blank:]]/) cut = RLENGTH - 1
+      code = substr(code, 1, RSTART - 1) substr(code, RSTART + cut)
     }
     if (comment == "") { print code; next }
     sub(/[[:blank:]]+$/, "", code)
