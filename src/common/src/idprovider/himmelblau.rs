@@ -230,8 +230,7 @@ enum Providers {
 }
 
 pub struct HimmelblauMultiProvider {
-    config: Arc<Mutex<HimmelblauConfig>>,
-    providers: Arc<Mutex<HashMap<String, Arc<Providers>>>>,
+    provider: Arc<Providers>,
 }
 
 impl HimmelblauMultiProvider {
@@ -248,21 +247,26 @@ impl HimmelblauMultiProvider {
             Err(e) => return Err(anyhow!("{:?}", e)),
         };
 
-        let providers = HashMap::new();
-        let domains = config.lock().await.get_configured_domains();
-        if domains.is_empty() {
-            warn!("No domains configured in himmelblau.conf.");
-        }
-
-        let providers = HimmelblauMultiProvider {
-            config: config.clone(),
-            providers: Arc::new(Mutex::new(providers)),
-        };
-
+        let domain = config.lock().await.get_configured_entra_domain();
         let oidc_issuer_url = config.lock().await.get_oidc_issuer_url();
-        if oidc_issuer_url.is_none() {
-            for domain in domains {
-                debug!("Adding provider for domain {}", domain);
+        let provider = match (oidc_issuer_url, domain) {
+            (None, None) => {
+                return Err(anyhow!("No provider was configured!"));
+            }
+            (Some(_), Some(_)) => {
+                return Err(anyhow!("Both OIDC and EntraID configured!"));
+            }
+            (Some(_), _) => {
+                let provider = OidcRouter::new(&config, "oidc", &idmap)
+                    .await
+                    .map_err(|e| {
+                        error!("Failed initializing OIDC provider: {:?}", e);
+                        anyhow!("{:?}", e)
+                    })?;
+                Providers::Oidc(provider)
+            }
+            (_, Some(domain)) => {
+                info!("Adding provider for domain {}", domain);
                 let (authority_host, tenant_id, graph_url, odc_provider, app_id, ip_versions) = {
                     let cfg = config.lock().await;
                     (
@@ -275,7 +279,7 @@ impl HimmelblauMultiProvider {
                     )
                 };
                 let request_timeout = config.lock().await.get_request_timeout();
-                let graph = match Graph::new(
+                let graph = Graph::new(
                     &odc_provider,
                     &domain,
                     Some(&authority_host),
@@ -285,13 +289,10 @@ impl HimmelblauMultiProvider {
                     &ip_versions,
                 )
                 .await
-                {
-                    Ok(graph) => graph,
-                    Err(e) => {
-                        error!("Failed initializing provider: {:?}", e);
-                        continue;
-                    }
-                };
+                .map_err(|e| {
+                    error!("Failed initializing provider: {:?}", e);
+                    anyhow!("Failed to initialize the provider")
+                })?;
                 let app = BrokerClientApplication::new(
                     None,
                     app_id.as_deref(),
@@ -321,105 +322,41 @@ impl HimmelblauMultiProvider {
                         client.set_cert_key(cert_key);
                     }
                 }
-                providers.providers.lock().await.insert(
-                    domain.to_string(),
-                    Arc::new(Providers::Himmelblau(provider)),
-                );
+                Providers::Himmelblau(provider)
             }
-        } else {
-            // Add the oidc provider, if present
-            let provider = OidcRouter::new(&config, "oidc", &idmap)
-                .await
-                .map_err(|e| {
-                    error!("Failed initializing OIDC provider: {:?}", e);
-                    anyhow!("{:?}", e)
-                })?;
+        };
 
-            providers
-                .providers
-                .lock()
-                .await
-                .insert("oidc".to_string(), Arc::new(Providers::Oidc(provider)));
-        }
-        if providers.providers.lock().await.is_empty() {
-            return Err(anyhow!("No provider was configured!"));
-        }
+        let proxy = HimmelblauMultiProvider {
+            provider: Arc::new(provider),
+        };
 
         // Spawn periodic cookie clearing loop (Fixes bugs #591 and #491)
-        let providers_ref = providers.providers.clone();
+        // FIXME: The client should spawn its own cookie clearing task
+        let providers_ref = proxy.provider.clone();
         tokio::spawn(async move {
             loop {
                 tokio::time::sleep(std::time::Duration::from_secs(12 * 60 * 60)).await;
-                let providers: Vec<_> = providers_ref.lock().await.values().cloned().collect();
-                for provider in providers {
-                    match provider.as_ref() {
-                        Providers::Oidc(_) => {}
-                        Providers::Himmelblau(provider) => {
-                            let app = provider.client.lock().await;
-                            app.clear_cookies();
-                        }
+                match providers_ref.as_ref() {
+                    Providers::Oidc(_) => {}
+                    Providers::Himmelblau(provider) => {
+                        let app = provider.client.lock().await;
+                        app.clear_cookies();
                     }
                 }
             }
         });
 
-        Ok(providers)
+        Ok(proxy)
     }
-
-    async fn find_provider(&self, domain: &str) -> Result<Arc<Providers>, IdpError> {
-        if let Some(provider) = self.providers.lock().await.get(domain).cloned() {
-            return Ok(provider);
-        }
-
-        let primary_domain = {
-            let mut cfg = self.config.lock().await;
-            cfg.get_primary_domain_from_alias(domain).await
-        };
-
-        if let Some(domain) = primary_domain {
-            /* NEVER introduce a new tenant here: Advisory GHSA-q746-m2wv-qh4v */
-            if let Some(provider) = self.providers.lock().await.get(&domain).cloned() {
-                return Ok(provider);
-            }
-        }
-
-        Err(IdpError::NotFound {
-            what: format!("domain: {}", domain),
-            where_: "providers".to_string(),
-        })
-    }
-}
-
-macro_rules! idp_get_domain_for_account {
-    ($hmp:ident, $account_id:expr) => {{
-        let oidc_issuer_url = $hmp.config.lock().await.get_oidc_issuer_url();
-        if oidc_issuer_url.is_some() {
-            Ok("oidc")
-        } else {
-            match split_username($account_id) {
-                Some((_sam, domain)) => Ok(domain),
-                None => {
-                    debug!("Authentication ignored for local user");
-                    Err(IdpError::NotFound {
-                        what: "domain".to_string(),
-                        where_: format!("account_id: {}", $account_id),
-                    })
-                }
-            }
-        }
-    }};
 }
 
 #[async_trait]
 impl IdProvider for HimmelblauMultiProvider {
     async fn offline_break_glass(&self, ttl: Option<u64>) -> Result<(), IdpError> {
-        let providers: Vec<_> = self.providers.lock().await.values().cloned().collect();
-        for provider in providers {
-            match provider.as_ref() {
-                Providers::Oidc(provider) => provider.offline_break_glass(ttl).await?,
-                Providers::Himmelblau(provider) => {
-                    provider.offline_break_glass(ttl).await?;
-                }
+        match self.provider.as_ref() {
+            Providers::Oidc(provider) => provider.offline_break_glass(ttl).await?,
+            Providers::Himmelblau(provider) => {
+                provider.offline_break_glass(ttl).await?;
             }
         }
         Ok(())
@@ -430,18 +367,15 @@ impl IdProvider for HimmelblauMultiProvider {
      * Currently we go offline if ANY provider is down, which could be
      * incorrect. */
     async fn check_online(&self, tpm: &mut tpm::provider::BoxedDynTpm, now: SystemTime) -> bool {
-        let providers: Vec<_> = self.providers.lock().await.values().cloned().collect();
-        for provider in providers {
-            match provider.as_ref() {
-                Providers::Oidc(provider) => {
-                    if !provider.check_online(tpm, now).await {
-                        return false;
-                    }
+        match self.provider.as_ref() {
+            Providers::Oidc(provider) => {
+                if !provider.check_online(tpm, now).await {
+                    return false;
                 }
-                Providers::Himmelblau(provider) => {
-                    if !provider.check_online(tpm, now).await {
-                        return false;
-                    }
+            }
+            Providers::Himmelblau(provider) => {
+                if !provider.check_online(tpm, now).await {
+                    return false;
                 }
             }
         }
@@ -460,14 +394,7 @@ impl IdProvider for HimmelblauMultiProvider {
         tpm: &mut tpm::provider::BoxedDynTpm,
         machine_key: &tpm::structures::StorageKey,
     ) -> Result<UnixUserToken, IdpError> {
-        let account_id = match old_token {
-            Some(token) => token.spn.clone(),
-            None => id.to_string().clone(),
-        };
-        let domain = idp_get_domain_for_account!(self, &account_id)?;
-        let provider = self.find_provider(domain).await?;
-
-        match provider.as_ref() {
+        match self.provider.as_ref() {
             Providers::Oidc(provider) => {
                 provider
                     .unix_user_access(
@@ -514,20 +441,7 @@ impl IdProvider for HimmelblauMultiProvider {
         Option<String>,
         Option<String>,
     ) {
-        let account_id = match old_token {
-            Some(token) => token.spn.clone(),
-            None => id.to_string().clone(),
-        };
-        let empty = (None, None, None, None);
-        let Ok(domain) = idp_get_domain_for_account!(self, &account_id) else {
-            return empty;
-        };
-
-        let Ok(provider) = self.find_provider(domain).await else {
-            return empty;
-        };
-
-        match provider.as_ref() {
+        match self.provider.as_ref() {
             Providers::Oidc(provider) => {
                 provider
                     .unix_user_tgts(id, old_token, keystore, tpm, machine_key)
@@ -550,14 +464,7 @@ impl IdProvider for HimmelblauMultiProvider {
         tpm: &mut tpm::provider::BoxedDynTpm,
         machine_key: &tpm::structures::StorageKey,
     ) -> Result<String, IdpError> {
-        let account_id = match old_token {
-            Some(token) => token.spn.clone(),
-            None => id.to_string().clone(),
-        };
-        let domain = idp_get_domain_for_account!(self, &account_id)?;
-        let provider = self.find_provider(domain).await?;
-
-        match provider.as_ref() {
+        match self.provider.as_ref() {
             Providers::Oidc(provider) => {
                 provider
                     .unix_user_prt_cookie(id, old_token, sso_nonce, keystore, tpm, machine_key)
@@ -580,10 +487,7 @@ impl IdProvider for HimmelblauMultiProvider {
         tpm: &mut tpm::provider::BoxedDynTpm,
         machine_key: &tpm::structures::StorageKey,
     ) -> Result<bool, IdpError> {
-        let domain = idp_get_domain_for_account!(self, account_id)?;
-        let provider = self.find_provider(domain).await?;
-
-        match provider.as_ref() {
+        match self.provider.as_ref() {
             Providers::Oidc(provider) => {
                 provider
                     .change_auth_token(account_id, token, new_tok, keystore, tpm, machine_key)
@@ -606,14 +510,7 @@ impl IdProvider for HimmelblauMultiProvider {
         machine_key: &tpm::structures::StorageKey,
     ) -> Result<UserTokenState, IdpError> {
         /* AAD doesn't permit user listing (must use cache entries from auth) */
-        let account_id = match old_token {
-            Some(token) => token.spn.clone(),
-            None => id.to_string().clone(),
-        };
-        let domain = idp_get_domain_for_account!(self, &account_id)?;
-        let provider = self.find_provider(domain).await?;
-
-        match provider.as_ref() {
+        match self.provider.as_ref() {
             Providers::Oidc(provider) => {
                 provider
                     .unix_user_get(id, old_token, keystore, tpm, machine_key)
@@ -639,10 +536,7 @@ impl IdProvider for HimmelblauMultiProvider {
         machine_key: &tpm::structures::StorageKey,
         shutdown_rx: &broadcast::Receiver<()>,
     ) -> Result<(AuthRequest, AuthCredHandler), IdpError> {
-        let domain = idp_get_domain_for_account!(self, account_id)?;
-        let provider = self.find_provider(domain).await?;
-
-        match provider.as_ref() {
+        match self.provider.as_ref() {
             Providers::Oidc(provider) => {
                 provider
                     .unix_user_online_auth_init(
@@ -689,10 +583,7 @@ impl IdProvider for HimmelblauMultiProvider {
         machine_key: &tpm::structures::StorageKey,
         shutdown_rx: &broadcast::Receiver<()>,
     ) -> Result<(AuthResult, AuthCacheAction), IdpError> {
-        let domain = idp_get_domain_for_account!(self, account_id)?;
-        let provider = self.find_provider(domain).await?;
-
-        match provider.as_ref() {
+        match self.provider.as_ref() {
             Providers::Oidc(provider) => {
                 provider
                     .unix_user_online_auth_step(
@@ -736,10 +627,7 @@ impl IdProvider for HimmelblauMultiProvider {
         no_hello_pin: bool,
         keystore: &mut D,
     ) -> Result<(AuthRequest, AuthCredHandler), IdpError> {
-        let domain = idp_get_domain_for_account!(self, account_id)?;
-        let provider = self.find_provider(domain).await?;
-
-        match provider.as_ref() {
+        match self.provider.as_ref() {
             Providers::Oidc(provider) => {
                 provider
                     .unix_user_offline_auth_init(account_id, token, service, no_hello_pin, keystore)
@@ -764,10 +652,7 @@ impl IdProvider for HimmelblauMultiProvider {
         machine_key: &tpm::structures::StorageKey,
         online_at_init: bool,
     ) -> Result<AuthResult, IdpError> {
-        let domain = idp_get_domain_for_account!(self, account_id)?;
-        let provider = self.find_provider(domain).await?;
-
-        match provider.as_ref() {
+        match self.provider.as_ref() {
             Providers::Oidc(provider) => {
                 provider
                     .unix_user_offline_auth_step(
@@ -808,10 +693,7 @@ impl IdProvider for HimmelblauMultiProvider {
         machine_key: &tpm::structures::StorageKey,
         online: bool,
     ) -> Result<bool, IdpError> {
-        let domain = idp_get_domain_for_account!(self, account_id)?;
-        let provider = self.find_provider(domain).await?;
-
-        match provider.as_ref() {
+        match self.provider.as_ref() {
             Providers::Oidc(provider) => {
                 provider
                     .unix_user_try_unseal(account_id, cred, keystore, tpm, machine_key, online)
@@ -840,78 +722,33 @@ impl IdProvider for HimmelblauMultiProvider {
         account_id: Option<&str>,
         keystore: &mut D,
     ) -> CacheState {
-        match account_id {
-            Some(account_id) => match idp_get_domain_for_account!(self, account_id) {
-                Ok(domain) => match self.find_provider(domain).await {
-                    Ok(provider) => match provider.as_ref() {
-                        Providers::Oidc(provider) => {
-                            return provider.get_cachestate(Some(account_id), keystore).await
-                        }
-                        Providers::Himmelblau(provider) => {
-                            return provider.get_cachestate(Some(account_id), keystore).await
-                        }
-                    },
-                    Err(..) => return CacheState::Offline,
-                },
-                Err(..) => return CacheState::Offline,
-            },
-            None => {
-                let providers: Vec<_> = self.providers.lock().await.values().cloned().collect();
-                for provider in providers {
-                    match provider.as_ref() {
-                        Providers::Oidc(provider) => {
-                            match provider.get_cachestate(None, keystore).await {
-                                CacheState::Offline => return CacheState::Offline,
-                                CacheState::OfflineNextCheck(time) => {
-                                    return CacheState::OfflineNextCheck(time)
-                                }
-                                _ => continue,
-                            }
-                        }
-                        Providers::Himmelblau(provider) => {
-                            match provider.get_cachestate(None, keystore).await {
-                                CacheState::Offline => return CacheState::Offline,
-                                CacheState::OfflineNextCheck(time) => {
-                                    return CacheState::OfflineNextCheck(time)
-                                }
-                                _ => continue,
-                            }
-                        }
-                    }
-                }
+        match self.provider.as_ref() {
+            Providers::Oidc(provider) => {
+                return provider.get_cachestate(account_id, keystore).await
+            }
+            Providers::Himmelblau(provider) => {
+                return provider.get_cachestate(account_id, keystore).await
             }
         }
-        CacheState::Online
     }
 
     async fn export_broker_prts(&self) -> Result<Vec<u8>, serde_json::Error> {
-        let providers: Vec<_> = self
-            .providers
-            .lock()
-            .await
-            .iter()
-            .map(|(domain, provider)| (domain.clone(), provider.clone()))
-            .collect();
         let mut all: HashMap<String, Vec<u8>> = HashMap::new();
-        for (domain, provider) in providers {
-            if let Providers::Himmelblau(p) = provider.as_ref() {
-                let data = p.export_broker_prts().await?;
-                all.insert(domain, data);
-            }
+        if let Providers::Himmelblau(p) = self.provider.as_ref() {
+            let data = p.export_broker_prts().await?;
+            all.insert(p.domain.clone(), data);
         }
         serde_json::to_vec(&all)
     }
 
     async fn import_broker_prts(&self, data: &[u8]) -> Result<(), serde_json::Error> {
         let all: HashMap<String, Vec<u8>> = serde_json::from_slice(data)?;
-        let providers = self.providers.lock().await.clone();
-        for (domain, blob) in &all {
-            if let Some(provider) = providers.get(domain) {
-                let Providers::Himmelblau(p) = provider.as_ref() else {
-                    continue;
-                };
-                if let Err(e) = p.import_broker_prts(blob).await {
-                    tracing::warn!("Failed to import PRTs for domain {}: {:?}", domain, e);
+        if let Providers::Himmelblau(provider) = self.provider.as_ref() {
+            for (domain, blob) in &all {
+                if domain == provider.domain.as_str() {
+                    if let Err(e) = provider.import_broker_prts(blob).await {
+                        tracing::warn!("Failed to import PRTs for domain {}: {:?}", domain, e);
+                    }
                 }
             }
         }

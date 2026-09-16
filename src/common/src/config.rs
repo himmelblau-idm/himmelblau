@@ -680,7 +680,28 @@ impl HimmelblauConfig {
                 domains.push(section);
             }
         }
+        if domains.is_empty() {
+            warn!("No domains configured in himmelblau.conf.");
+        } else if domains.len() > 1 {
+            warn!(
+                "Multiple domains is no longer supported. Only first domain '{}' will be used.",
+                domains
+                    .first()
+                    .map(|domain| domain.as_str())
+                    .unwrap_or_default()
+            );
+        }
         domains
+    }
+
+    pub fn get_configured_entra_domain(&self) -> Option<String> {
+        // The array returned by get_configured_domains() might include "oidc" section
+        self.get_configured_domains()
+            .into_iter()
+            .filter(|x| x != "oidc")
+            .collect::<Vec<String>>()
+            .first()
+            .cloned()
     }
 
     pub fn get_config_file(&self) -> String {
