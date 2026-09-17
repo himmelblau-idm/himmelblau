@@ -1917,6 +1917,16 @@ where
                 // contained to the resolver so that it has generic offline-paths
                 // that are possible?
                 match (&cred_handler, &pam_next_req) {
+                    (AuthCredHandler::InteractionCode(..), _) => {
+                        // A partially completed native flow must finish online.
+                        // This guard must precede the cached Password arm.
+                        return Err(ResolverError);
+                    }
+                    (AuthCredHandler::OidcPinTotp { .. }, PamAuthRequest::Password { .. }) => {
+                        // A pending native PIN second factor cannot be replaced
+                        // by a cached password when connectivity changes.
+                        return Err(ResolverError);
+                    }
                     (AuthCredHandler::ReauthPassword { .. }, _) => {
                         // Password-based Hello reauthentication must complete online so
                         // that the provider can enforce the remaining MFA requirements.
@@ -1975,6 +1985,9 @@ where
                         // AuthCredHandler::HelloTOTP with anything other than HelloTOTP is invalid
                         return Err(ResolverError);
                     }
+                    (AuthCredHandler::OidcPinTotp { .. }, _) => {
+                        return Err(ResolverError);
+                    }
                     (AuthCredHandler::None, PamAuthRequest::Input { .. }) => {
                         // AuthCredHandler::None is invalid with Input
                         return Err(ResolverError);
@@ -1992,6 +2005,9 @@ where
                         return Err(ResolverError);
                     }
                     (AuthCredHandler::None, PamAuthRequest::FidoUnavailable) => {
+                        return Err(ResolverError);
+                    }
+                    (_, PamAuthRequest::WebAuthn { .. } | PamAuthRequest::WebAuthnUnavailable) => {
                         return Err(ResolverError);
                     }
                     (AuthCredHandler::PasswordFirst { .. }, _) => {

@@ -76,6 +76,7 @@ use kanidm_hsm_crypto::{provider::BoxedDynTpm, provider::SoftTpm, provider::Tpm}
 use notify_debouncer_full::{new_debouncer, notify::RecursiveMode};
 
 mod broker;
+mod logging;
 use broker::Broker;
 use identity_dbus_broker::himmelblau_broker_serve_with_listener;
 
@@ -1558,6 +1559,7 @@ async fn main() -> ExitCode {
                .with(console_layer);
 
             subscriber
+            .with(sketching::tracing_subscriber::filter::filter_fn(logging::auth_log_enabled))
             .with(EnvFilter::try_from_default_env()
                 .or_else(|_| EnvFilter::try_new("info"))
                 .expect("Failed to init envfilter")

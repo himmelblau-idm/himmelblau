@@ -18,9 +18,12 @@ path = "src/lib.rs"
 [dependencies]
 serde = { workspace = true }
 serde_json = { workspace = true }
+serde_cbor = "0.11.2"
+rustls = { version = "0.23", default-features = false, features = ["std"] }
 tracing = { workspace = true }
 configparser = "^3.0.2"
 libhimmelblau = { workspace = true }
+okta = { workspace = true }
 reqwest = { workspace = true }
 kanidm-hsm-crypto = { workspace = true }
 zeroize = { workspace = true }
@@ -54,6 +57,8 @@ oauth2 = "5.0.0"
 totp-rs = { version = "5.7.1", features = ["gen_secret", "otpauth", "qr", "serde_support", "zeroize"] }
 hostname = "0.4.2"
 qrcodegen = "1.8.0"
+image = { version = "=0.25.6", default-features = false, features = ["png"] }
+rqrr = { version = "0.11.0", default-features = false }
 urlencoding = { workspace = true }
 zbus = "5.14"
 rand.workspace = true
@@ -61,3 +66,6 @@ gettextrs.workspace = true
 
 [package.metadata.cargo-machete]
 ignored = ["libhimmelblau"]
+
+[dev-dependencies]
+tracing-subscriber = { workspace = true }
