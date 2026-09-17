@@ -19,6 +19,9 @@ url = "https://raw.githubusercontent.com/fermyon/spin/main/supply-chain/audits.t
 [imports.google]
 url = "https://raw.githubusercontent.com/google/supply-chain/main/audits.toml"
 
+[imports.himmelblau]
+url = "https://raw.githubusercontent.com/himmelblau-idm/himmelblau/refs/heads/main/supply-chain/audits.toml"
+
 [imports.isrg]
 url = "https://raw.githubusercontent.com/divviup/libprio-rs/main/supply-chain/audits.toml"
 
@@ -323,6 +326,10 @@ criteria = "safe-to-deploy"
 version = "0.38.0"
 criteria = "safe-to-deploy"
 
+[[exemptions.aws-lc-sys]]
+version = "0.45.0"
+criteria = "safe-to-deploy"
+
 [[exemptions.axum]]
 version = "0.7.9"
 criteria = "safe-to-deploy"
@@ -481,6 +488,10 @@ criteria = "safe-to-deploy"
 
 [[exemptions.dbus-tokio]]
 version = "0.7.6"
+criteria = "safe-to-deploy"
+
+[[exemptions.der]]
+version = "0.8.2"
 criteria = "safe-to-deploy"
 
 [[exemptions.der_derive]]
