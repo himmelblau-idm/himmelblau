@@ -733,6 +733,7 @@ where
         self.client.import_broker_prts(data).await
     }
 
+    #[instrument(level = "debug", skip(self), ret)]
     async fn get_cachestate(&self, account_id: Option<&str>) -> CacheState {
         let mut dbtxn = self.db.write().await;
         let res = self.client.get_cachestate(account_id, &mut dbtxn).await;
@@ -792,6 +793,7 @@ where
         dbtxn.get_groups().map_err(|_| ResolverError)
     }
 
+    #[instrument(level = "debug", skip(self))]
     async fn set_nxcache(&self, id: &Id) {
         let mut nxcache_txn = self.nxcache.lock().await;
         let ex_time = SystemTime::now() + Duration::from_secs(self.timeout_seconds);
@@ -820,6 +822,7 @@ where
         }
     }
 
+    #[instrument(level = "debug", skip(self), ret)]
     pub async fn check_nxset(&self, name: Option<&str>, idnumber: Option<u32>) -> bool {
         let nxset_txn = self.nxset.lock().await;
         if let Some(name) = name {
@@ -835,6 +838,7 @@ where
         false
     }
 
+    #[instrument(level = "debug", skip(self), ret)]
     async fn get_cached_usertoken(
         &self,
         account_id: &Id,
@@ -939,6 +943,7 @@ where
         }
     }
 
+    #[instrument(level = "info", skip(self), ret)]
     async fn set_cache_usertoken(&self, token: &mut UserToken) -> ResolverResult<()> {
         // Set an expiry
         let ex_time = SystemTime::now() + Duration::from_secs(self.timeout_seconds);
@@ -1010,6 +1015,7 @@ where
             .map_err(|_| ResolverError)
     }
 
+    #[instrument(level = "info", skip(self))]
     async fn delete_cache_usertoken(&self, a_uuid: Uuid) -> ResolverResult<()> {
         let mut dbtxn = self.db.write().await;
         dbtxn
@@ -1044,6 +1050,7 @@ where
             .map_err(|_| ResolverError)
     }
 
+    #[instrument(level = "info", skip(self), ret)]
     async fn refresh_usertoken(
         &self,
         account_id: &Id,
@@ -1345,6 +1352,7 @@ where
         })
     }
 
+    #[instrument(level = "info", skip(self), ret)]
     pub async fn get_usertoken(&self, account_id: Id) -> ResolverResult<Option<UserToken>> {
         // Validate the user isn't in the nxset (aka, it's a local user or group).
         let (name, idnumber) = match account_id.clone() {
@@ -1355,7 +1363,6 @@ where
             return Ok(None);
         }
 
-        trace!("get_usertoken");
         // get the item from the cache
         let (expired, item) = self.get_cached_usertoken(&account_id).await.map_err(|e| {
             trace!("get_usertoken error -> {:?}", e);
@@ -1406,10 +1413,6 @@ where
                 self.refresh_usertoken(&account_id, item).await
             }
         }
-        .map(|t| {
-            trace!("token -> {:?}", t);
-            t
-        })
     }
 
     async fn get_grouptoken(&self, grp_id: Id) -> ResolverResult<Option<GroupToken>> {
@@ -1527,6 +1530,7 @@ where
         })
     }
 
+    #[instrument(level = "debug", skip(self), ret)]
     async fn get_nssaccount(&self, account_id: Id) -> ResolverResult<Option<NssUser>> {
         let token = self.get_usertoken(account_id).await?;
         Ok(token.map(|tok| NssUser {
@@ -1539,6 +1543,7 @@ where
         }))
     }
 
+    #[instrument(level = "debug", skip(self), ret)]
     pub async fn get_nssaccount_name(&self, account_id: &str) -> ResolverResult<Option<NssUser>> {
         self.get_nssaccount(Id::Name(account_id.to_string())).await
     }

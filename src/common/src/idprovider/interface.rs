@@ -54,6 +54,7 @@ pub enum CacheState {
     OfflineNextCheck(SystemTime),
 }
 
+#[derive(Debug)]
 pub enum UserTokenState {
     /// Indicate to the resolver that the cached UserToken should be used, if present.
     UseCached,

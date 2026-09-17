@@ -322,6 +322,7 @@ impl IdProvider for IdProviderProxy {
         }
     }
 
+    #[instrument(level = "debug", skip(self, keystore, tpm, machine_key), ret)]
     async fn unix_user_get<D: KeyStoreTxn + Send>(
         &self,
         id: &Id,

@@ -75,6 +75,7 @@ use rand::RngExt;
 use reqwest::Url;
 use std::collections::HashMap;
 use std::ffi::CString;
+use std::fmt::{Debug, Formatter};
 use std::sync::Arc;
 use std::thread::sleep;
 use std::time::Duration;
@@ -335,6 +336,15 @@ impl HimmelblauProvider {
 enum TokenOrObj {
     UserToken(Box<UnixUserToken>),
     UserObj((ClientToken, UserObject)),
+}
+
+impl Debug for TokenOrObj {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            TokenOrObj::UserToken(_) => write!(f, "TokenOrObj::UserToken(...)"),
+            TokenOrObj::UserObj((_, o)) => write!(f, "(..., {:?})", o),
+        }
+    }
 }
 
 macro_rules! check_new_device_enrollment_required {
@@ -646,7 +656,7 @@ impl IdProvider for HimmelblauProvider {
         )
     }
 
-    #[instrument(skip_all)]
+    #[instrument(level = "debug", skip(self, keystore, tpm, machine_key), ret)]
     async fn unix_user_get<D: KeyStoreTxn + Send>(
         &self,
         id: &Id,
@@ -4384,7 +4394,7 @@ impl HimmelblauProvider {
         }
     }
 
-    #[instrument(level = "debug", skip_all)]
+    #[instrument(level = "debug", skip(self, token, old_token, prt_cache_update))]
     async fn token_validate(
         &self,
         account_id: &str,
@@ -4478,7 +4488,7 @@ impl HimmelblauProvider {
         }
     }
 
-    #[instrument(level = "debug", skip_all)]
+    #[instrument(level = "debug", skip(self), ret)]
     async fn user_token_from_unix_user_token(
         &self,
         spn: &str,
