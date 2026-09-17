@@ -1482,10 +1482,10 @@ rec {
       };
       "aws-lc-rs" = rec {
         crateName = "aws-lc-rs";
-        version = "1.16.2";
+        version = "1.18.1";
         edition = "2021";
-        links = "aws_lc_rs_1_16_2_sys";
-        sha256 = "1z6i8qs0xjnzvslxnkhvywzzwfkafb1s4nrpg3f2k1nii4i92m50";
+        links = "aws_lc_rs_1_18_1_sys";
+        sha256 = "07k2hf51mp5sh47f3dbj5xkygqjr4rrr0j4743llsqwdb03x70dj";
         libName = "aws_lc_rs";
         authors = [
           "AWS-LibCrypto"
@@ -1508,6 +1508,7 @@ rec {
           "bindgen" = [ "aws-lc-sys?/bindgen" "aws-lc-fips-sys?/bindgen" ];
           "default" = [ "aws-lc-sys" "alloc" "ring-io" "ring-sig-verify" ];
           "fips" = [ "dep:aws-lc-fips-sys" ];
+          "legacy-des" = [ "aws-lc-sys?/all-bindings" ];
           "non-fips" = [ "aws-lc-sys" ];
           "prebuilt-nasm" = [ "aws-lc-sys?/prebuilt-nasm" ];
           "ring-io" = [ "dep:untrusted" ];
@@ -1517,10 +1518,10 @@ rec {
       };
       "aws-lc-sys" = rec {
         crateName = "aws-lc-sys";
-        version = "0.39.1";
+        version = "0.45.0";
         edition = "2021";
-        links = "aws_lc_0_39_1";
-        sha256 = "16b32brldbf97s05kzfvz263mkk54padn5kl95kakfh5h7wmr8l3";
+        links = "aws_lc_0_45_0";
+        sha256 = "09qvqgsy424myj9g1xf1jwa726aqaspjq45qc0p9mmzsahxnrzwv";
         build = "builder/main.rs";
         libName = "aws_lc_sys";
         authors = [
@@ -1543,6 +1544,11 @@ rec {
           {
             name = "fs_extra";
             packageId = "fs_extra";
+          }
+          {
+            name = "pkg-config";
+            packageId = "pkg-config";
+            target = { target, features }: (target."unix" or false);
           }
         ];
         features = {
@@ -4876,11 +4882,11 @@ rec {
         };
         resolvedDefaultFeatures = [ "alloc" "derive" "flagset" "oid" "pem" "std" "zeroize" ];
       };
-      "der 0.8.0" = rec {
+      "der 0.8.2" = rec {
         crateName = "der";
-        version = "0.8.0";
+        version = "0.8.2";
         edition = "2024";
-        sha256 = "06s1pqid080n2fg446akx01vjiq1pafrxrb481q9kiid1dk8kzbi";
+        sha256 = "02m8k3wix7gzc9mjc72l0zx8aiqfhsf1zd79c81b48g4x58chy58";
         authors = [
           "RustCrypto Developers"
         ];
@@ -4904,7 +4910,7 @@ rec {
         ];
         features = {
           "alloc" = [ "zeroize?/alloc" ];
-          "arbitrary" = [ "dep:arbitrary" "const-oid?/arbitrary" "std" ];
+          "arbitrary" = [ "dep:arbitrary" "dep:derive_arbitrary" "const-oid?/arbitrary" "std" ];
           "bytes" = [ "dep:bytes" "alloc" ];
           "derive" = [ "dep:der_derive" ];
           "flagset" = [ "dep:flagset" ];
@@ -7655,7 +7661,7 @@ rec {
           }
           {
             name = "der";
-            packageId = "der 0.8.0";
+            packageId = "der 0.8.2";
           }
           {
             name = "futures";
@@ -10372,7 +10378,7 @@ rec {
           }
           {
             name = "der";
-            packageId = "der 0.8.0";
+            packageId = "der 0.8.2";
             features = [ "alloc" "derive" "flagset" "std" ];
           }
           {
@@ -15780,9 +15786,9 @@ rec {
       };
       "rustls" = rec {
         crateName = "rustls";
-        version = "0.23.43";
+        version = "0.23.45";
         edition = "2021";
-        sha256 = "01nsagj78r88pifaz55ln1rw31py5n00h7bnw58h3g1aw1n3i0q2";
+        sha256 = "0d6n90q52x5cjyxb6bwcnf9hwg6yb31cwr63rk8n5yfjqwqxfh8d";
         dependencies = [
           {
             name = "aws-lc-rs";
@@ -16033,9 +16039,9 @@ rec {
       };
       "rustls-webpki" = rec {
         crateName = "rustls-webpki";
-        version = "0.103.13";
+        version = "0.103.15";
         edition = "2021";
-        sha256 = "0vkm7z9pnxz5qz66p2kmyy2pwx0g4jnsbqk5xzfhs4czcjl2ki31";
+        sha256 = "1hhanq3lz384v4nccacnjfwsyy99n3yc6m6iw8kljz8yicfwzhzk";
         libName = "webpki";
         dependencies = [
           {
@@ -16065,7 +16071,7 @@ rec {
           "alloc" = [ "ring?/alloc" "pki-types/alloc" ];
           "aws-lc-rs" = [ "dep:aws-lc-rs" "aws-lc-rs/aws-lc-sys" "aws-lc-rs/prebuilt-nasm" ];
           "aws-lc-rs-fips" = [ "dep:aws-lc-rs" "aws-lc-rs/fips" ];
-          "aws-lc-rs-unstable" = [ "aws-lc-rs" "aws-lc-rs/unstable" ];
+          "aws-lc-rs-unstable" = [ "aws-lc-rs" ];
           "default" = [ "std" ];
           "ring" = [ "dep:ring" ];
           "std" = [ "alloc" "pki-types/std" ];

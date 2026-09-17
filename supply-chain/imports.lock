@@ -199,13 +199,6 @@ user-id = 189
 user-login = "BurntSushi"
 user-name = "Andrew Gallant"
 
-[[publisher.der]]
-version = "0.8.0-rc.10"
-when = "2025-11-08"
-user-id = 267
-user-login = "tarcieri"
-user-name = "Tony Arcieri"
-
 [[publisher.der_derive]]
 version = "0.8.0"
 when = "2026-02-11"
@@ -699,8 +692,8 @@ user-login = "sunfishcode"
 user-name = "Dan Gohman"
 
 [[publisher.rustls]]
-version = "0.23.42"
-when = "2026-07-13"
+version = "0.23.34"
+when = "2025-10-22"
 user-id = 4556
 user-login = "djc"
 user-name = "Dirkjan Ochtman"
@@ -1512,6 +1505,16 @@ criteria = "safe-to-deploy"
 delta = "0.10.0 -> 0.10.1"
 notes = "Minor logging-based updated fixing a recent advisory for the crate."
 
+[[audits.bytecode-alliance.audits.rustls]]
+who = "Alex Crichton <alex@alexcrichton.com>"
+criteria = "safe-to-deploy"
+delta = "0.23.37 -> 0.23.45"
+notes = """
+A relatively large update, but no new `unsafe` and nothing awry here. Lots of
+protocol/etc updates which I'm not personally an expert within but the rustls
+maintainers are relatively well trusted as well.
+"""
+
 [[audits.bytecode-alliance.audits.rustls-webpki]]
 who = "Alex Crichton <alex@alexcrichton.com>"
 criteria = "safe-to-deploy"
@@ -1523,6 +1526,12 @@ who = "Alex Crichton <alex@alexcrichton.com>"
 criteria = "safe-to-deploy"
 delta = "0.103.12 -> 0.103.13"
 notes = "Minor fixes for the bug being fixed in this release, nothing awry."
+
+[[audits.bytecode-alliance.audits.rustls-webpki]]
+who = "Alex Crichton <alex@alexcrichton.com>"
+criteria = "safe-to-deploy"
+delta = "0.103.13 -> 0.103.15"
+notes = "Minor updates and feature shufflings."
 
 [[audits.bytecode-alliance.audits.semver]]
 who = "Pat Hickey <phickey@fastly.com>"
