@@ -74,7 +74,7 @@ portable-atomic-1-13-1 = { package = "portable-atomic", path = "src/overrides/po
 quinn-0-11-8 = { package = "quinn", path = "src/overrides/quinn/0.11.8" }
 r-efi-6-0-0 = { package = "r-efi", path = "src/overrides/r-efi/6.0.0" }
 redox_syscall-0-5-12 = { package = "redox_syscall", path = "src/overrides/redox_syscall/0.5.12" }
-reqwest-0-12-24 = { package = "reqwest", path = "src/overrides/reqwest/0.12.24" }
+reqwest-0-12-28 = { package = "reqwest", path = "src/overrides/reqwest/0.12.24" }
 rsa-0-9-999 = { package = "rsa", path = "src/overrides/rsa/0.9.999" }
 rustls-platform-verifier-android-0-1-1 = { package = "rustls-platform-verifier-android", path = "src/overrides/rustls-platform-verifier-android/0.1.1" }
 schannel-0-1-27 = { package = "schannel", path = "src/overrides/schannel/0.1.27" }
@@ -118,7 +118,7 @@ version = "5.0.0"
 authors = [
     "David Mulder <dmulder@suse.com>"
 ]
-rust-version = "1.85"
+rust-version = "1.88"
 edition = "2021"
 license = "GPL-3.0-or-later"
 homepage = "https://github.com/himmelblau-idm/himmelblau"
@@ -136,6 +136,7 @@ himmelblau_unix_common = { path = "src/common" }
 libhimmelblau = { version = "0.8.40", features = ["broker", "changepassword", "on_behalf_of", "mfa_method_selection", "optional_mfa", "intune_portal_vers_selection", "redirect_uri", "pop_support", "ipvers", "set_timeout"] }
 clap = { version = "^4.6", features = ["derive", "env"] }
 reqwest = { version = "^0.13.1", features = ["json"] }
+okta = { package = "okta-auth-rs", version = "8.0.1003" }
 anyhow = "^1.0.102"
 tokio = { version = "^1.52.2", features = ["rt", "macros", "sync", "time", "net", "io-util", "signal", "rt-multi-thread"] }
 tokio-util = { version = "^0.7.18", features = ["codec"] }
