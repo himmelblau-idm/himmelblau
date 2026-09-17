@@ -448,15 +448,15 @@ user-login = "Firstyear"
 user-name = "Firstyear"
 
 [[publisher.kanidm_lib_file_permissions]]
-version = "1.11.1"
-when = "2026-08-14"
+version = "1.11.2"
+when = "2026-09-11"
 user-id = 31100
 user-login = "Firstyear"
 user-name = "Firstyear"
 
 [[publisher.kanidm_utils_users]]
-version = "1.11.1"
-when = "2026-08-14"
+version = "1.11.2"
+when = "2026-09-11"
 user-id = 31100
 user-login = "Firstyear"
 user-name = "Firstyear"
@@ -783,8 +783,8 @@ user-login = "tarcieri"
 user-name = "Tony Arcieri"
 
 [[publisher.sketching]]
-version = "1.11.1"
-when = "2026-08-14"
+version = "1.11.2"
+when = "2026-09-11"
 user-id = 31100
 user-login = "Firstyear"
 user-name = "Firstyear"
