@@ -3161,10 +3161,10 @@ rec {
       };
       "clap" = rec {
         crateName = "clap";
-        version = "4.6.6";
+        version = "4.6.7";
         edition = "2024";
         crateBin = [];
-        sha256 = "1jmx5z8d6jbvxdz6dybh599s4rd7ns6sl90p2rrdga09yh3pwg27";
+        sha256 = "0il98y2rfw75984ck59znd4n592p07bxz8yy3a9blddb02rpd25a";
         dependencies = [
           {
             name = "clap_builder";
@@ -3203,9 +3203,9 @@ rec {
       };
       "clap_builder" = rec {
         crateName = "clap_builder";
-        version = "4.6.6";
+        version = "4.6.7";
         edition = "2024";
-        sha256 = "12cqg25zpjc3k82cpqa2v9h7s3vk1vydpgnwl8lfg6lfm2jzwj3v";
+        sha256 = "0kbhai5rv1vj9r4np52g2b9fmhvy3y82digs9v40c57bgbxrf1zc";
         dependencies = [
           {
             name = "anstream";
@@ -3242,9 +3242,9 @@ rec {
       };
       "clap_derive" = rec {
         crateName = "clap_derive";
-        version = "4.6.4";
+        version = "4.6.7";
         edition = "2024";
-        sha256 = "0qd0v7pa2arwxjjinmjim6xrjy61bc28m1yryhc7zjjssswx44nh";
+        sha256 = "1q36bgbkfb9rdz7jcvd0ffv0wwlyw0lg3z6iwdcybm0mjjvm3izr";
         procMacro = true;
         dependencies = [
           {
@@ -3396,9 +3396,9 @@ rec {
       };
       "configparser" = rec {
         crateName = "configparser";
-        version = "3.2.0";
+        version = "3.3.0";
         edition = "2024";
-        sha256 = "1966j15yqgmvlsv1xwfg3qxvqlz4p863l0q5vvmrj8fj9xrfqvdl";
+        sha256 = "0998lfc9dg565w96817a5amd8zi6ar2sw1b5cgnp8ab2cz8x66h3";
         authors = [
           "QEDK <hi@qedk.xyz>"
         ];
@@ -3986,11 +3986,11 @@ rec {
         };
         resolvedDefaultFeatures = [ "getrandom" "rand_core" "std" ];
       };
-      "crypto-common 0.2.1" = rec {
+      "crypto-common 0.2.2" = rec {
         crateName = "crypto-common";
-        version = "0.2.1";
+        version = "0.2.2";
         edition = "2024";
-        sha256 = "041p8bs680hrg6rhicfifn19cfvybq9aya5i4i0k08d9byqpnwkp";
+        sha256 = "0lql5wjlrjkd3r0w32rwbgqfmgg84ms3h65ldnlckmkc3nb4qvnf";
         libName = "crypto_common";
         authors = [
           "RustCrypto Developers"
@@ -4059,7 +4059,7 @@ rec {
           }
           {
             name = "crypto-common";
-            packageId = "crypto-common 0.2.1";
+            packageId = "crypto-common 0.2.2";
             rename = "crypto-common-pre";
             features = [ "rand_core" ];
           }
@@ -4102,7 +4102,7 @@ rec {
           }
           {
             name = "hmac";
-            packageId = "hmac 0.13.0-rc.5";
+            packageId = "hmac 0.13.0";
             rename = "hmac-pre";
             usesDefaultFeatures = false;
           }
@@ -5247,7 +5247,7 @@ rec {
           }
           {
             name = "crypto-common";
-            packageId = "crypto-common 0.2.1";
+            packageId = "crypto-common 0.2.2";
             rename = "common";
           }
           {
@@ -8045,11 +8045,11 @@ rec {
         };
         resolvedDefaultFeatures = [ "reset" ];
       };
-      "hmac 0.13.0-rc.5" = rec {
+      "hmac 0.13.0" = rec {
         crateName = "hmac";
-        version = "0.13.0-rc.5";
+        version = "0.13.0";
         edition = "2024";
-        sha256 = "1y24smvi5h261sdim0pcw589cv0l07m35hrjmn9kz2kdydrisigg";
+        sha256 = "0gw6avmix6ah63lf70dapxhml4dlcakl9f2lnm6b0hdf6abvq0v3";
         authors = [
           "RustCrypto Developers"
         ];
@@ -8250,9 +8250,9 @@ rec {
       };
       "hybrid-array" = rec {
         crateName = "hybrid-array";
-        version = "0.4.7";
+        version = "0.4.15";
         edition = "2024";
-        sha256 = "0ifwcs8p13agzb4gmx09w970lqf8jq1xmr16riiba0sq7zbjkcp1";
+        sha256 = "05wsyp2n5gyf49qk51mblj9qyb15aay74m6fwmf74mpv1pqn9y17";
         libName = "hybrid_array";
         authors = [
           "RustCrypto Developers"
@@ -8279,6 +8279,7 @@ rec {
         features = {
           "arbitrary" = [ "dep:arbitrary" ];
           "bytemuck" = [ "dep:bytemuck" ];
+          "ctutils" = [ "dep:ctutils" ];
           "serde" = [ "dep:serde" ];
           "subtle" = [ "dep:subtle" ];
           "zerocopy" = [ "dep:zerocopy" ];
@@ -9877,9 +9878,9 @@ rec {
       };
       "kanidm_lib_file_permissions" = rec {
         crateName = "kanidm_lib_file_permissions";
-        version = "1.11.1";
+        version = "1.11.2";
         edition = "2021";
-        sha256 = "1xql7zn6p0zxi9l7y03q2dh66qdb108zfwg9ag7bnpr94j3bx6cy";
+        sha256 = "1s52d4nv6hzk4bccnikxxwk6832wdrz7mdply7jk4b4lyhk8yizh";
         authors = [
           "William Brown <william@blackhats.net.au>"
           "James Hodgkinson <james@terminaloutcomes.com>"
@@ -9895,9 +9896,9 @@ rec {
       };
       "kanidm_utils_users" = rec {
         crateName = "kanidm_utils_users";
-        version = "1.11.1";
+        version = "1.11.2";
         edition = "2021";
-        sha256 = "17n5sj31lbmndjjmnh3yr1yd5a4jz5hn3ksjpdrbvjhiff6jq84q";
+        sha256 = "17m9anqzhjigy56yarbzvk9p8c8fah08fmjp52s7wy5vnaay0ryb";
         authors = [
           "William Brown <william@blackhats.net.au>"
           "James Hodgkinson <james@terminaloutcomes.com>"
@@ -11245,10 +11246,11 @@ rec {
       };
       "md5" = rec {
         crateName = "md5";
-        version = "0.8.0";
+        version = "0.8.1";
         edition = "2021";
-        sha256 = "1q6jfsa5w3993dzymxkv9jxpp7vyhgga6z35g6c0c8rk50w0i5mf";
+        sha256 = "032pi1dmpk8aimpc8p5rxw07wx7w3j8q4ah3iwyxz9n66a3qvfvy";
         authors = [
+          "Daniel McKenna <danielmckenna93@gmail.com>"
           "Ivan Ukhov <ivan.ukhov@gmail.com>"
           "Kamal Ahmad <shibe@openmailbox.org>"
           "Konstantin Stepanov <milezv@gmail.com>"
@@ -11286,9 +11288,9 @@ rec {
       };
       "memfd" = rec {
         crateName = "memfd";
-        version = "0.6.5";
+        version = "0.6.6";
         edition = "2018";
-        sha256 = "09sj2xhn592adr14mss8b433fdn8ikyq02m4dr3a0555mq9fnf5d";
+        sha256 = "140dpk6m2idq4kb2x1cqksqk6yingqlqcvx56qapz5k9kcn4p02p";
         authors = [
           "Luca Bruno <lucab@lucabruno.net>"
           "Simonas Kazlauskas <memfd@kazlauskas.me>"
@@ -17469,9 +17471,9 @@ rec {
       };
       "sketching" = rec {
         crateName = "sketching";
-        version = "1.11.1";
+        version = "1.11.2";
         edition = "2021";
-        sha256 = "1qckn4ijk2alyq71ya5k3xzqqr2fvbisbpkrbw9rnhfnj6sy9n0q";
+        sha256 = "1pd51l7vj02nzh2hhf3k0i19jlxz91krjvym0y38rh3l04gmnjhl";
         authors = [
           "William Brown <william@blackhats.net.au>"
           "James Hodgkinson <james@terminaloutcomes.com>"
@@ -20196,13 +20198,9 @@ rec {
       };
       "typenum" = rec {
         crateName = "typenum";
-        version = "1.18.0";
+        version = "1.20.1";
         edition = "2018";
-        sha256 = "0gwgz8n91pv40gabrr1lzji0b0hsmg0817njpy397bq7rvizzk0x";
-        authors = [
-          "Paho Lurie-Gregg <paho@paholg.com>"
-          "Andre Bogus <bogusandre@gmail.com>"
-        ];
+        sha256 = "086s9ly0906kw5yw41249fba97w5zfxf03pyfwdkffvcprqfixdn";
         features = {
           "scale-info" = [ "dep:scale-info" ];
           "scale_info" = [ "scale-info/derive" ];
@@ -20396,9 +20394,9 @@ rec {
       };
       "uuid" = rec {
         crateName = "uuid";
-        version = "1.26.0";
+        version = "1.26.1";
         edition = "2021";
-        sha256 = "04kqmzwdqbh1lgci3dhv4ir1nk12bff98z8iq9m8m2myr5qjsxxm";
+        sha256 = "1kl5nb7r3gpmkc43d6nbayvzqhcp2grczk6c7bxv80b6x70xmxif";
         authors = [
           "Ashley Mannix<ashleymannix@live.com.au>"
           "Dylan DPC<dylan.dpc@gmail.com>"
