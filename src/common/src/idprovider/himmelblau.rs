@@ -825,6 +825,22 @@ impl IdProvider for HimmelblauProvider {
                             error!(?e, "Failed checking user existence");
                             IdpError::BadRequest
                         })? {
+                            // FIXME: This code branch is an asking for problems:
+                            //        1. account_id when it comes from NSS is a UPN because
+                            //           the NSS module calls config.map_name_to_upn(). But
+                            //           the daemon does not validate it so to this function
+                            //           can arrive a upn, a plain name, a upn, a uuid or a sid.
+                            //        2. If IdAttr::Uuid, resolve_nametosid() does not work,
+                            //           always return 400.
+                            //        3. If IdAttr::Name, even worst. For the same entity it can
+                            //           return different results depending on how the user is
+                            //           searched (by uuid, by upn, by sid, ...). The only
+                            //           authoritative name to be mapped to an unix id should come
+                            //           from a token or from a graph object, not from a user input.
+                            //        Finally, it inserts in the cache an identity with a wrong
+                            //        objectID. Searches for the correct object ID will fail.
+                            //        --- This branch should go. No cached token, no user. ---
+
                             // Never syntetize a user from a numeric identifier
                             if let Id::Gid(_) = id {
                                 debug!(?id, "Rejecting to synthesize user from numeric ID");
@@ -833,6 +849,7 @@ impl IdProvider for HimmelblauProvider {
                                     where_: format!("account_id: {}", account_id)
                                 });
                             }
+
                             // Generate a UserToken, with invalid uuid. We can
                             // only fetch this from an authenticated token.
                             let id_attr_map = self.config.lock().await.get_id_attr_map();
@@ -4497,6 +4514,21 @@ impl HimmelblauProvider {
     ) -> Result<UserToken, IdpError> {
         let mut groups: Vec<GroupToken>;
         let posix_attrs: HashMap<String, String>;
+        // FIXME: The spn is coming from the daemon request and is used for the Unix id mapping.
+        //        The SPN *always* must be the same for the same entity, regardless if the entity
+        //        is searched by uuid, spn or sid, something like:
+        //        let spn = match &value {
+        //            TokenOrObj::UserObj((_, obj)) => &obj.upn,
+        //            TokenOrObj::UserToken(value) => &value.id_token.name,
+        //        };
+        //        if let Some(old) = old_token {
+        //            if spn != &old.spn {
+        //                error!("Current SPN '{}' does not match cached one '{}'.", spn, old.spn);
+        //                return Err(IdpError::NotFound { what: "user".to_string(), where_: "here".to_string()});
+        //            }
+        //        }
+        //        info!(?spn, "Resolved SPN from either user object or id_token");
+        // FIXME: Make sure the spn from value matches spn from old token, if given.
         let spn = spn.to_lowercase();
         let uuid = match &value {
             TokenOrObj::UserObj((_, value)) => Uuid::parse_str(&value.id).map_err(|e| {
