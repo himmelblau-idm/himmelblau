@@ -1341,6 +1341,14 @@ impl IdProvider for HimmelblauProvider {
                             error!(?e, "Failed checking user existence");
                             IdpError::BadRequest
                         })? {
+                            // Never syntetize a user from a numeric identifier
+                            if let Id::Gid(_) = id {
+                                debug!(?id, "Rejecting to synthesize user from numeric ID");
+                                return Err(IdpError::NotFound {
+                                    what: "account_id".to_string(),
+                                    where_: format!("account_id: {}", account_id)
+                                });
+                            }
                             // Generate a UserToken, with invalid uuid. We can
                             // only fetch this from an authenticated token.
                             let id_attr_map = self.config.lock().await.get_id_attr_map();
