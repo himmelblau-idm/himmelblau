@@ -50,11 +50,11 @@ enum Providers {
     Himmelblau(HimmelblauProvider),
 }
 
-pub struct HimmelblauMultiProvider {
+pub struct IdProviderProxy {
     provider: Arc<Providers>,
 }
 
-impl HimmelblauMultiProvider {
+impl IdProviderProxy {
     pub async fn new<D: KeyStoreTxn + Send>(
         config_filename: &str,
         keystore: &mut D,
@@ -161,7 +161,7 @@ impl HimmelblauMultiProvider {
             }
         };
 
-        let proxy = HimmelblauMultiProvider {
+        let proxy = IdProviderProxy {
             provider: Arc::new(provider),
         };
 
@@ -186,7 +186,7 @@ impl HimmelblauMultiProvider {
 }
 
 #[async_trait]
-impl IdProvider for HimmelblauMultiProvider {
+impl IdProvider for IdProviderProxy {
     async fn offline_break_glass(&self, ttl: Option<u64>) -> anyhow::Result<(), IdpError> {
         match self.provider.as_ref() {
             Providers::Oidc(provider) => provider.offline_break_glass(ttl).await?,
@@ -548,7 +548,7 @@ impl IdProvider for HimmelblauMultiProvider {
         _tpm: &mut tpm::provider::BoxedDynTpm,
     ) -> anyhow::Result<GroupToken, IdpError> {
         /* AAD doesn't permit group listing (must use cache entries from auth) */
-        debug!("Group fetching not supported for HimmelblauMultiProvider");
+        debug!("Group fetching not supported");
         Err(IdpError::BadRequest)
     }
 
