@@ -22,7 +22,7 @@ permissions:
 
 jobs:
   build:
-    name: Build ${{ fromJSON(inputs.spec).distro }} / ${{ fromJSON(inputs.spec).architecture }}
+    name: Building ${{ fromJSON(inputs.spec).distro }} ${{ fromJSON(inputs.spec).architecture }}
     runs-on: ${{ fromJSON(inputs.spec).runner }}
     timeout-minutes: 330
     steps:
@@ -53,7 +53,7 @@ jobs:
           retention-days: 14
 
   publish:
-    name: Publish ${{ fromJSON(inputs.spec).distro }} / ${{ fromJSON(inputs.spec).architecture }}
+    name: Publishing ${{ fromJSON(inputs.spec).distro }} ${{ fromJSON(inputs.spec).architecture }}
     needs: build
     runs-on: ubuntu-24.04
     timeout-minutes: 45
