@@ -680,7 +680,7 @@ impl HimmelblauConfig {
                 domains.push(section);
             }
         }
-        if domains.is_empty() {
+        if domains.is_empty() && self.get_oidc_issuer_url().is_none() {
             warn!("No domains configured in himmelblau.conf.");
         } else if domains.len() > 1 {
             warn!(
