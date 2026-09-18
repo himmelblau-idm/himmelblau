@@ -225,7 +225,7 @@ def digest(path):
         return hashlib.file_digest(stream, "sha256").hexdigest()
 
 
-def build(source, artifacts, spec):
+def build(source, artifacts, spec, *, container_cache_ref="", refresh_build_container=False):
     source, artifacts = source.resolve(), artifacts.resolve()
     if run("git", "rev-parse", "HEAD", cwd=source) != spec["source_sha"]:
         raise ValueError("Build checkout does not match resolved source")
@@ -238,8 +238,17 @@ def build(source, artifacts, spec):
         subprocess.run(["python3", "scripts/gen_dockerfiles.py", "--only", spec["distro"],
                         "--out", str(temporary / "images")], cwd=source, check=True)
         # Default Dockerfiles are architecture-neutral; compile on the native runner.
-        command = ["docker", "build", "--platform", spec["platform"], "--progress", "plain",
-                   "-t", image, "-f", str(temporary / "images" / f"Dockerfile.{spec['distro']}")]
+        # Registration state can persist in SUSE layers even with secret mounts.
+        if container_cache_ref and not spec["scc"]:
+            command = ["docker", "buildx", "build", "--load", "--pull",
+                       "--cache-from", f"type=registry,ref={container_cache_ref}",
+                       "--cache-to", f"type=registry,ref={container_cache_ref},mode=max,ignore-error=true"]
+        else:
+            command = ["docker", "build"]
+        command += ["--platform", spec["platform"], "--progress", "plain",
+                    "-t", image, "-f", str(temporary / "images" / f"Dockerfile.{spec['distro']}")]
+        if refresh_build_container:
+            command += ["--no-cache"]
         if spec["scc"]:
             email, regcode = os.environ.get("SCC_EMAIL", ""), os.environ.get("SCC_REGCODE", "")
             if not email or not regcode:
@@ -374,6 +383,10 @@ def main():
     parser.add_argument("command", choices=["prepare", "tag", "build", "publish"])
     parser.add_argument("--source", type=Path, default=Path("source"))
     parser.add_argument("--artifacts", type=Path, default=Path("artifacts"))
+    parser.add_argument("--container-cache-ref", default="",
+                        help="Optional BuildKit registry cache reference; ignored for SUSE registration builds")
+    parser.add_argument("--refresh-build-container", action="store_true",
+                        help="Rebuild installation layers instead of reusing the build-container cache")
     args = parser.parse_args()
     try:
         if args.command == "prepare":
@@ -383,7 +396,9 @@ def main():
         else:
             spec = json.loads(os.environ["TARGET_SPEC"])
             if args.command == "build":
-                build(args.source, args.artifacts, spec)
+                build(args.source, args.artifacts, spec,
+                      container_cache_ref=args.container_cache_ref,
+                      refresh_build_container=args.refresh_build_container)
             else:
                 publish(args.artifacts, spec)
     except (ValueError, KeyError, RuntimeError, subprocess.CalledProcessError) as exc:

@@ -23,6 +23,10 @@ on:
         default: all
         type: choice
         options: [all, amd64, arm64]
+      refresh_build_container:
+        description: Reinstall build-container tools and dependencies instead of reusing cached layers
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -64,6 +68,9 @@ jobs:
 
   packages:
     name: ${{ fromJSON(matrix.spec).distro }} ${{ fromJSON(matrix.spec).architecture }}
+    permissions:
+      contents: read
+      packages: write
     needs: prepare
     if: needs.prepare.outputs.enabled == 'true'
     strategy:
@@ -73,6 +80,7 @@ jobs:
     with:
       spec: ${{ matrix.spec }}
       tooling_sha: ${{ needs.prepare.outputs.tooling_sha }}
+      refresh_build_container: ${{ inputs.refresh_build_container || false }}
     secrets:
       CLOUDSMITH_PACKAGE_PUBLISHER: ${{ secrets.CLOUDSMITH_PACKAGE_PUBLISHER }}
       SCC_EMAIL: ${{ secrets.SCC_EMAIL }}
