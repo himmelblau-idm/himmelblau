@@ -760,64 +760,11 @@ async fn handle_client(
                                                     if cfg.get_fetch_profile_picture()
                                                         && !is_oidc_auth
                                                     {
-                                                        if let Some(token) = cachelayer
-                                                            .get_user_accesstoken(
-                                                                Id::Name(account_id.to_string()),
-                                                                vec![],
-                                                                None,
-                                                                None,
-                                                                None,
-                                                            )
-                                                            .await
-                                                        {
-                                                            if let Some(access_token) = &token.access_token {
-                                                                let (tx, rx) = oneshot::channel();
-
-                                                                match task_channel_tx
-                                                                    .send_timeout(
-                                                                        (
-                                                                            TaskRequest::LoadProfilePhoto(
-                                                                                account_id.to_string(),
-                                                                                access_token.to_string(),
-                                                                            ),
-                                                                            tx,
-                                                                        ),
-                                                                        Duration::from_millis(100),
-                                                                    )
-                                                                    .await
-                                                                {
-                                                                    Ok(()) => {
-                                                                        // Now wait for the other end OR timeout.
-                                                                        match time::timeout_at(
-                                                                            time::Instant::now()
-                                                                                + Duration::from_secs(60),
-                                                                            rx,
-                                                                        )
-                                                                        .await
-                                                                        {
-                                                                            Ok(Ok(outcome)) if profile_photo_task_succeeded(&outcome) => {
-                                                                                info!("Fetching user profile picture succeeded");
-                                                                            }
-                                                                            Ok(Ok(TaskOutcome::Status(status))) => {
-                                                                                error!("Fetching user profile picture failed: status code {}", status);
-                                                                            }
-                                                                            Ok(Ok(TaskOutcome::NonCompliant(_))) => {
-                                                                                error!("Fetching user profile picture: unexpected NonCompliant task outcome");
-                                                                            }
-                                                                            Ok(Err(e)) => {
-                                                                                error!("Fetching user profile picture failed: {:?}", e);
-                                                                            }
-                                                                            Err(e) => {
-                                                                                error!("Fetching user profile picture failed: {:?}", e);
-                                                                            }
-                                                                        }
-                                                                    }
-                                                                    Err(_) => {
-                                                                        error!("Fetching user profile picture failed");
-                                                                    }
-                                                                }
-                                                            }
-                                                        }
+                                                        spawn_profile_photo_fetch(
+                                                            cachelayer.clone(),
+                                                            task_channel_tx.clone(),
+                                                            account_id.clone(),
+                                                        );
                                                     }
 
                                                     // Apply Intune policies
@@ -1313,6 +1260,59 @@ async fn spawn_intune_policy_application_if_due(
     );
 }
 
+fn spawn_profile_photo_fetch(
+    cachelayer: Arc<Resolver<HimmelblauMultiProvider>>,
+    task_channel_tx: Sender<AsyncTaskRequest>,
+    account_id: String,
+) {
+    tokio::spawn(async move {
+        let Some(token) = cachelayer
+            .get_user_accesstoken(Id::Name(account_id.clone()), vec![], None, None, None)
+            .await
+        else {
+            return;
+        };
+        let Some(access_token) = token.access_token.as_ref() else {
+            return;
+        };
+        let (tx, rx) = oneshot::channel();
+        if task_channel_tx
+            .send_timeout(
+                (
+                    TaskRequest::LoadProfilePhoto(account_id, access_token.to_string()),
+                    tx,
+                ),
+                Duration::from_millis(100),
+            )
+            .await
+            .is_err()
+        {
+            error!("Fetching user profile picture failed");
+            return;
+        }
+        match time::timeout_at(time::Instant::now() + Duration::from_secs(60), rx).await {
+            Ok(Ok(outcome)) if profile_photo_task_succeeded(&outcome) => {
+                info!("Fetching user profile picture succeeded");
+            }
+            Ok(Ok(TaskOutcome::Status(status))) => {
+                error!(
+                    "Fetching user profile picture failed: status code {}",
+                    status
+                );
+            }
+            Ok(Ok(TaskOutcome::NonCompliant(_))) => {
+                error!("Fetching user profile picture: unexpected NonCompliant task outcome");
+            }
+            Ok(Err(e)) => {
+                error!("Fetching user profile picture failed: {:?}", e);
+            }
+            Err(e) => {
+                error!("Fetching user profile picture failed: {:?}", e);
+            }
+        }
+    });
+}
+
 fn spawn_intune_policy_application(
     cachelayer: Arc<Resolver<HimmelblauMultiProvider>>,
     cfg: HimmelblauConfig,
@@ -1450,215 +1450,6 @@ async fn apply_intune_policy_for_account(
         Ok(Ok(TaskOutcome::NonCompliant(rules))) => Err(ApplyPolicyError::NonCompliant(rules)),
         Ok(Err(e)) => Err(ApplyPolicyError::TaskError(e.to_string())),
         Err(e) => Err(ApplyPolicyError::TaskTimeout(e.to_string())),
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    const ACCOUNT_ID: &str = "user@example.com";
-
-    #[test]
-    fn profile_photo_success_requires_zero_status() {
-        assert!(profile_photo_task_succeeded(&TaskOutcome::Status(0)));
-        assert!(!profile_photo_task_succeeded(&TaskOutcome::Status(1)));
-        assert!(!profile_photo_task_succeeded(&TaskOutcome::NonCompliant(
-            Vec::new()
-        )));
-    }
-
-    #[test]
-    fn intune_policy_throttle_allows_first_run_and_marks_in_flight() {
-        let mut throttle_state = HashMap::new();
-        let now = time::Instant::now();
-
-        assert!(should_start_intune_policy_application(
-            &mut throttle_state,
-            ACCOUNT_ID,
-            now,
-            true,
-        ));
-        assert_eq!(
-            throttle_state.get(ACCOUNT_ID),
-            Some(&IntunePolicyThrottleState::InFlight)
-        );
-    }
-
-    #[test]
-    fn intune_policy_throttle_skips_in_flight_run() {
-        let mut throttle_state =
-            HashMap::from([(ACCOUNT_ID.to_string(), IntunePolicyThrottleState::InFlight)]);
-        let now = time::Instant::now();
-
-        assert!(!should_start_intune_policy_application(
-            &mut throttle_state,
-            ACCOUNT_ID,
-            now,
-            true,
-        ));
-        assert_eq!(
-            throttle_state.get(ACCOUNT_ID),
-            Some(&IntunePolicyThrottleState::InFlight)
-        );
-    }
-
-    #[test]
-    fn intune_policy_throttle_normalizes_account_id_for_in_flight_run() {
-        let mut throttle_state =
-            HashMap::from([(ACCOUNT_ID.to_string(), IntunePolicyThrottleState::InFlight)]);
-        let now = time::Instant::now();
-
-        assert!(!should_start_intune_policy_application(
-            &mut throttle_state,
-            "User@Example.com",
-            now,
-            true,
-        ));
-        assert_eq!(
-            throttle_state.get(ACCOUNT_ID),
-            Some(&IntunePolicyThrottleState::InFlight)
-        );
-        assert!(!throttle_state.contains_key("User@Example.com"));
-    }
-
-    #[test]
-    fn intune_policy_throttle_skips_recent_run() {
-        let mut throttle_state = HashMap::new();
-        let now = time::Instant::now();
-        throttle_state.insert(
-            ACCOUNT_ID.to_string(),
-            IntunePolicyThrottleState::LastRun(
-                now - INTUNE_POLICY_THROTTLE_INTERVAL + Duration::from_secs(1),
-            ),
-        );
-
-        assert!(!should_start_intune_policy_application(
-            &mut throttle_state,
-            ACCOUNT_ID,
-            now,
-            true,
-        ));
-    }
-
-    #[test]
-    fn intune_policy_throttle_allows_run_after_interval() {
-        let mut throttle_state = HashMap::new();
-        let now = time::Instant::now();
-        throttle_state.insert(
-            ACCOUNT_ID.to_string(),
-            IntunePolicyThrottleState::LastRun(now - INTUNE_POLICY_THROTTLE_INTERVAL),
-        );
-
-        assert!(should_start_intune_policy_application(
-            &mut throttle_state,
-            ACCOUNT_ID,
-            now,
-            true,
-        ));
-        assert_eq!(
-            throttle_state.get(ACCOUNT_ID),
-            Some(&IntunePolicyThrottleState::InFlight)
-        );
-    }
-
-    #[test]
-    fn intune_policy_throttle_tracks_users_independently() {
-        let mut throttle_state = HashMap::new();
-        let now = time::Instant::now();
-        throttle_state.insert(
-            ACCOUNT_ID.to_string(),
-            IntunePolicyThrottleState::LastRun(now),
-        );
-
-        assert!(should_start_intune_policy_application(
-            &mut throttle_state,
-            "other@example.com",
-            now,
-            true,
-        ));
-        assert_eq!(
-            throttle_state.get(ACCOUNT_ID),
-            Some(&IntunePolicyThrottleState::LastRun(now))
-        );
-        assert_eq!(
-            throttle_state.get("other@example.com"),
-            Some(&IntunePolicyThrottleState::InFlight)
-        );
-    }
-
-    #[test]
-    fn intune_policy_compliance_check_ignores_recent_run_throttle() {
-        let mut throttle_state = HashMap::new();
-        let now = time::Instant::now();
-        throttle_state.insert(
-            ACCOUNT_ID.to_string(),
-            IntunePolicyThrottleState::LastRun(now),
-        );
-
-        assert!(should_start_intune_policy_application(
-            &mut throttle_state,
-            ACCOUNT_ID,
-            now,
-            false,
-        ));
-        assert_eq!(
-            throttle_state.get(ACCOUNT_ID),
-            Some(&IntunePolicyThrottleState::InFlight)
-        );
-    }
-
-    #[test]
-    fn intune_policy_compliance_check_skips_in_flight_run() {
-        let mut throttle_state =
-            HashMap::from([(ACCOUNT_ID.to_string(), IntunePolicyThrottleState::InFlight)]);
-        let now = time::Instant::now();
-
-        assert!(!should_start_intune_policy_application(
-            &mut throttle_state,
-            ACCOUNT_ID,
-            now,
-            false,
-        ));
-        assert_eq!(
-            throttle_state.get(ACCOUNT_ID),
-            Some(&IntunePolicyThrottleState::InFlight)
-        );
-    }
-
-    #[tokio::test]
-    async fn intune_policy_throttle_normalizes_account_id_on_completion() {
-        let throttle_state: IntunePolicyThrottle = Arc::new(Mutex::new(HashMap::new()));
-
-        complete_intune_policy_application(&throttle_state, "User@Example.com".to_string()).await;
-
-        let throttle_state = throttle_state.lock().await;
-        assert!(matches!(
-            throttle_state.get(ACCOUNT_ID),
-            Some(IntunePolicyThrottleState::LastRun(_))
-        ));
-        assert!(!throttle_state.contains_key("User@Example.com"));
-    }
-
-    #[test]
-    fn hello_pin_change_allows_root() {
-        assert!(peer_may_change_hello_pin(0, None));
-        assert!(peer_may_change_hello_pin(0, Some(1000)));
-    }
-
-    #[test]
-    fn hello_pin_change_allows_account_owner() {
-        assert!(peer_may_change_hello_pin(1000, Some(1000)));
-    }
-
-    #[test]
-    fn hello_pin_change_denies_other_users() {
-        assert!(!peer_may_change_hello_pin(1000, Some(1001)));
-    }
-
-    #[test]
-    fn hello_pin_change_denies_unresolvable_account() {
-        assert!(!peer_may_change_hello_pin(1000, None));
     }
 }
 
@@ -2428,4 +2219,213 @@ async fn main() -> ExitCode {
     })
     .await
     // TODO: can we catch signals to clean up sockets etc, especially handy when running as root
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const ACCOUNT_ID: &str = "user@example.com";
+
+    #[test]
+    fn profile_photo_success_requires_zero_status() {
+        assert!(profile_photo_task_succeeded(&TaskOutcome::Status(0)));
+        assert!(!profile_photo_task_succeeded(&TaskOutcome::Status(1)));
+        assert!(!profile_photo_task_succeeded(&TaskOutcome::NonCompliant(
+            Vec::new()
+        )));
+    }
+
+    #[test]
+    fn intune_policy_throttle_allows_first_run_and_marks_in_flight() {
+        let mut throttle_state = HashMap::new();
+        let now = time::Instant::now();
+
+        assert!(should_start_intune_policy_application(
+            &mut throttle_state,
+            ACCOUNT_ID,
+            now,
+            true,
+        ));
+        assert_eq!(
+            throttle_state.get(ACCOUNT_ID),
+            Some(&IntunePolicyThrottleState::InFlight)
+        );
+    }
+
+    #[test]
+    fn intune_policy_throttle_skips_in_flight_run() {
+        let mut throttle_state =
+            HashMap::from([(ACCOUNT_ID.to_string(), IntunePolicyThrottleState::InFlight)]);
+        let now = time::Instant::now();
+
+        assert!(!should_start_intune_policy_application(
+            &mut throttle_state,
+            ACCOUNT_ID,
+            now,
+            true,
+        ));
+        assert_eq!(
+            throttle_state.get(ACCOUNT_ID),
+            Some(&IntunePolicyThrottleState::InFlight)
+        );
+    }
+
+    #[test]
+    fn intune_policy_throttle_normalizes_account_id_for_in_flight_run() {
+        let mut throttle_state =
+            HashMap::from([(ACCOUNT_ID.to_string(), IntunePolicyThrottleState::InFlight)]);
+        let now = time::Instant::now();
+
+        assert!(!should_start_intune_policy_application(
+            &mut throttle_state,
+            "User@Example.com",
+            now,
+            true,
+        ));
+        assert_eq!(
+            throttle_state.get(ACCOUNT_ID),
+            Some(&IntunePolicyThrottleState::InFlight)
+        );
+        assert!(!throttle_state.contains_key("User@Example.com"));
+    }
+
+    #[test]
+    fn intune_policy_throttle_skips_recent_run() {
+        let mut throttle_state = HashMap::new();
+        let now = time::Instant::now();
+        throttle_state.insert(
+            ACCOUNT_ID.to_string(),
+            IntunePolicyThrottleState::LastRun(
+                now - INTUNE_POLICY_THROTTLE_INTERVAL + Duration::from_secs(1),
+            ),
+        );
+
+        assert!(!should_start_intune_policy_application(
+            &mut throttle_state,
+            ACCOUNT_ID,
+            now,
+            true,
+        ));
+    }
+
+    #[test]
+    fn intune_policy_throttle_allows_run_after_interval() {
+        let mut throttle_state = HashMap::new();
+        let now = time::Instant::now();
+        throttle_state.insert(
+            ACCOUNT_ID.to_string(),
+            IntunePolicyThrottleState::LastRun(now - INTUNE_POLICY_THROTTLE_INTERVAL),
+        );
+
+        assert!(should_start_intune_policy_application(
+            &mut throttle_state,
+            ACCOUNT_ID,
+            now,
+            true,
+        ));
+        assert_eq!(
+            throttle_state.get(ACCOUNT_ID),
+            Some(&IntunePolicyThrottleState::InFlight)
+        );
+    }
+
+    #[test]
+    fn intune_policy_throttle_tracks_users_independently() {
+        let mut throttle_state = HashMap::new();
+        let now = time::Instant::now();
+        throttle_state.insert(
+            ACCOUNT_ID.to_string(),
+            IntunePolicyThrottleState::LastRun(now),
+        );
+
+        assert!(should_start_intune_policy_application(
+            &mut throttle_state,
+            "other@example.com",
+            now,
+            true,
+        ));
+        assert_eq!(
+            throttle_state.get(ACCOUNT_ID),
+            Some(&IntunePolicyThrottleState::LastRun(now))
+        );
+        assert_eq!(
+            throttle_state.get("other@example.com"),
+            Some(&IntunePolicyThrottleState::InFlight)
+        );
+    }
+
+    #[test]
+    fn intune_policy_compliance_check_ignores_recent_run_throttle() {
+        let mut throttle_state = HashMap::new();
+        let now = time::Instant::now();
+        throttle_state.insert(
+            ACCOUNT_ID.to_string(),
+            IntunePolicyThrottleState::LastRun(now),
+        );
+
+        assert!(should_start_intune_policy_application(
+            &mut throttle_state,
+            ACCOUNT_ID,
+            now,
+            false,
+        ));
+        assert_eq!(
+            throttle_state.get(ACCOUNT_ID),
+            Some(&IntunePolicyThrottleState::InFlight)
+        );
+    }
+
+    #[test]
+    fn intune_policy_compliance_check_skips_in_flight_run() {
+        let mut throttle_state =
+            HashMap::from([(ACCOUNT_ID.to_string(), IntunePolicyThrottleState::InFlight)]);
+        let now = time::Instant::now();
+
+        assert!(!should_start_intune_policy_application(
+            &mut throttle_state,
+            ACCOUNT_ID,
+            now,
+            false,
+        ));
+        assert_eq!(
+            throttle_state.get(ACCOUNT_ID),
+            Some(&IntunePolicyThrottleState::InFlight)
+        );
+    }
+
+    #[tokio::test]
+    async fn intune_policy_throttle_normalizes_account_id_on_completion() {
+        let throttle_state: IntunePolicyThrottle = Arc::new(Mutex::new(HashMap::new()));
+
+        complete_intune_policy_application(&throttle_state, "User@Example.com".to_string()).await;
+
+        let throttle_state = throttle_state.lock().await;
+        assert!(matches!(
+            throttle_state.get(ACCOUNT_ID),
+            Some(IntunePolicyThrottleState::LastRun(_))
+        ));
+        assert!(!throttle_state.contains_key("User@Example.com"));
+    }
+
+    #[test]
+    fn hello_pin_change_allows_root() {
+        assert!(peer_may_change_hello_pin(0, None));
+        assert!(peer_may_change_hello_pin(0, Some(1000)));
+    }
+
+    #[test]
+    fn hello_pin_change_allows_account_owner() {
+        assert!(peer_may_change_hello_pin(1000, Some(1000)));
+    }
+
+    #[test]
+    fn hello_pin_change_denies_other_users() {
+        assert!(!peer_may_change_hello_pin(1000, Some(1001)));
+    }
+
+    #[test]
+    fn hello_pin_change_denies_unresolvable_account() {
+        assert!(!peer_may_change_hello_pin(1000, None));
+    }
 }
