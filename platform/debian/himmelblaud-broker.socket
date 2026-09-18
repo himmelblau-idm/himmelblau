@@ -1,0 +1,19 @@
+# You should not need to edit this file. Instead, use a drop-in file:
+#   systemctl edit himmelblaud-broker.socket
+
+[Unit]
+Description=Himmelblau Daemon Broker Socket
+DefaultDependencies=no
+# Started by himmelblaud.service, not sockets.target. Early listening left
+# NSS clients connected to a socket nobody accepted and hung boot (#1345).
+After=chronyd.service nscd.service ntpd.service network-online.target suspend.target himmelblau-hsm-pin-init.service sockets.target
+Before=himmelblaud.service
+PartOf=himmelblaud.service
+
+[Socket]
+ListenStream=/run/himmelblaud/broker_sock
+FileDescriptorName=himmelblaud-broker
+SocketMode=0666
+DirectoryMode=0755
+Accept=false
+Service=himmelblaud.service

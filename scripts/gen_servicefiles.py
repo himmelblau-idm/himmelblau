@@ -142,7 +142,6 @@ def main():
         dirs_block.extend([
             "UMask=0027",
             "CacheDirectory=himmelblaud",
-            "RuntimeDirectory=himmelblaud",
             "StateDirectory=himmelblaud",
         ])
 
@@ -219,7 +218,8 @@ def main():
 
 [Unit]
 Description=Himmelblau Authentication Daemon
-After={' '.join(base_after)}{' ' + hsm_pin_init_after if hsm_pin_init_after else ''}
+After={' '.join(base_after)}{' ' + hsm_pin_init_after if hsm_pin_init_after else ''} himmelblaud.socket himmelblaud-tasks.socket himmelblaud-broker.socket
+Requires=himmelblaud.socket himmelblaud-tasks.socket himmelblaud-broker.socket
 Before={' '.join(base_before)}
 Wants={' '.join(base_wants)}
 {hsm_pin_init_wants}
@@ -241,6 +241,7 @@ Conflicts=nscd.service
 {'LoadCredentialEncrypted=hsm-pin:/var/lib/himmelblaud/hsm-pin-nopcr.enc' if supported('LoadCredentialEncrypted') else ''}
 {'Environment=HIMMELBLAU_HSM_PIN_PATH=%d/hsm-pin' if supported('LoadCredentialEncrypted') else ''}
 ExecStart=/usr/sbin/himmelblaud
+Sockets=himmelblaud.socket himmelblaud-tasks.socket himmelblaud-broker.socket
 Restart=on-failure
 RestartSec=500ms
 WatchdogSec=120s
@@ -456,6 +457,50 @@ Persistent=true
 [Install]
 WantedBy=timers.target
 """
+
+    socket_after = " ".join(
+        s for s in base_after + ([hsm_pin_init_after] if hsm_pin_init_after else []) + ["sockets.target"] if s
+    )
+    socket_header = (
+        "DefaultDependencies=no\n"
+        "# Started by himmelblaud.service, not sockets.target. Early listening left\n"
+        "# NSS clients connected to a socket nobody accepted and hung boot (#1345).\n"
+        f"After={socket_after}\n"
+        "Before=himmelblaud.service\n"
+        "PartOf=himmelblaud.service\n"
+    )
+
+    def write_socket(name: str, desc: str, listen: str, fdname: str, extra: str = "") -> None:
+        (out_dir / name).write_text(
+            f"# You should not need to edit this file. Instead, use a drop-in file:\n"
+            f"#   systemctl edit {name}\n\n"
+            f"[Unit]\nDescription={desc}\n{socket_header}\n"
+            f"[Socket]\nListenStream={listen}\nFileDescriptorName={fdname}\n"
+            f"{extra}DirectoryMode=0755\nAccept=false\nService=himmelblaud.service\n"
+        )
+        print(f"[gen-systemd] Wrote: {out_dir / name}")
+
+    write_socket(
+        "himmelblaud.socket",
+        "Himmelblau Authentication Daemon Socket",
+        "/run/himmelblaud/socket",
+        "himmelblaud",
+        extra="SocketMode=0666\n",
+    )
+    write_socket(
+        "himmelblaud-tasks.socket",
+        "Himmelblau Daemon Task Socket",
+        "/run/himmelblaud/task_sock",
+        "himmelblaud-task",
+        extra="SocketMode=0600\nSocketUser=root\nSocketGroup=root\n",
+    )
+    write_socket(
+        "himmelblaud-broker.socket",
+        "Himmelblau Daemon Broker Socket",
+        "/run/himmelblaud/broker_sock",
+        "himmelblaud-broker",
+        extra="SocketMode=0666\n",
+    )
 
     (out_dir / "himmelblaud.service").write_text(daemon_unit)
     (out_dir / "himmelblaud-tasks.service").write_text(tasks_unit)

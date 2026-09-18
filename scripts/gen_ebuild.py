@@ -308,6 +308,9 @@ def _fallback_install() -> str:
 
 \t# Install systemd units
 \tsystemd_dounit platform/opensuse/himmelblaud.service
+\tsystemd_dounit platform/opensuse/himmelblaud.socket
+\tsystemd_dounit platform/opensuse/himmelblaud-tasks.socket
+\tsystemd_dounit platform/opensuse/himmelblaud-broker.socket
 \tsystemd_dounit platform/opensuse/himmelblaud-tasks.service
 
 \t# Install configuration
