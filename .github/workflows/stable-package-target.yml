@@ -1,0 +1,90 @@
+name: Build and publish one stable package target
+
+on:
+  workflow_call:
+    inputs:
+      spec:
+        required: true
+        type: string
+      tooling_sha:
+        required: true
+        type: string
+    secrets:
+      CLOUDSMITH_PACKAGE_PUBLISHER:
+        required: true
+      SCC_EMAIL:
+        required: false
+      SCC_REGCODE:
+        required: false
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build ${{ fromJSON(inputs.spec).distro }} / ${{ fromJSON(inputs.spec).architecture }}
+    runs-on: ${{ fromJSON(inputs.spec).runner }}
+    timeout-minutes: 330
+    steps:
+      - name: Checkout release tooling
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.tooling_sha }}
+          path: tooling
+          persist-credentials: false
+      - name: Checkout exact build source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ fromJSON(inputs.spec).source_sha }}
+          path: source
+          persist-credentials: false
+      - name: Build and validate packages using the generated container
+        env:
+          TARGET_SPEC: ${{ inputs.spec }}
+          SCC_EMAIL: ${{ fromJSON(inputs.spec).scc && secrets.SCC_EMAIL || '' }}
+          SCC_REGCODE: ${{ fromJSON(inputs.spec).scc && secrets.SCC_REGCODE || '' }}
+        run: python3 tooling/.github/scripts/stable_packages.py build --source source --artifacts artifacts
+      - name: Retain complete validated package set
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: stable-${{ fromJSON(inputs.spec).distro }}-${{ fromJSON(inputs.spec).architecture }}
+          path: artifacts/
+          if-no-files-found: error
+          retention-days: 14
+
+  publish:
+    name: Publish ${{ fromJSON(inputs.spec).distro }} / ${{ fromJSON(inputs.spec).architecture }}
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    # Serialize uploads sharing an index, including architecture-independent packages.
+    concurrency:
+      group: cloudsmith-${{ fromJSON(inputs.spec).repository }}-${{ fromJSON(inputs.spec).distro }}-${{ fromJSON(inputs.spec).tag }}
+      cancel-in-progress: false
+    steps:
+      - name: Checkout release tooling
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.tooling_sha }}
+          path: tooling
+          persist-credentials: false
+      - name: Download this target's validated packages
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: stable-${{ fromJSON(inputs.spec).distro }}-${{ fromJSON(inputs.spec).architecture }}
+          path: artifacts
+      - name: Install verified Cloudsmith CLI before exposing credentials
+        run: |
+          CLI_DIRECTORY="$RUNNER_TEMP/cloudsmith-cli"
+          mkdir -p "$CLI_DIRECTORY"
+          curl --fail --silent --show-error --location --retry 3 \
+            https://github.com/cloudsmith-io/cloudsmith-cli/releases/download/v1.27.0/cloudsmith-1.27.0-linux-x86_64-gnu.tar.gz \
+            --output "$CLI_DIRECTORY/cloudsmith.tar.gz"
+          echo "cf714418c992d2e9a6a5d81c1523f4e0ac2e2cea0898e91f9df35a399254d014  $CLI_DIRECTORY/cloudsmith.tar.gz" | sha256sum --check
+          tar -xzf "$CLI_DIRECTORY/cloudsmith.tar.gz" -C "$CLI_DIRECTORY"
+          echo "$CLI_DIRECTORY/cloudsmith" >> "$GITHUB_PATH"
+      - name: Publish missing packages and verify synchronization
+        env:
+          TARGET_SPEC: ${{ inputs.spec }}
+          CLOUDSMITH_API_KEY: ${{ secrets.CLOUDSMITH_PACKAGE_PUBLISHER }}
+        run: python3 tooling/.github/scripts/stable_packages.py publish --artifacts artifacts
