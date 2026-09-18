@@ -1,0 +1,78 @@
+name: Build and publish stable packages
+
+on:
+  release:
+    types: [published]
+  repository_dispatch:
+    types: [stable-packages]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing stable release tag (for example 4.0.2)
+        required: true
+        type: string
+      distro:
+        description: Makefile distro target (for example ubuntu24.04), or all
+        default: all
+        type: string
+      revision:
+        description: Optional source commit, branch or tag; defaults to the release tag
+        type: string
+      architecture:
+        description: Architecture to build
+        default: all
+        type: choice
+        options: [all, amd64, arm64]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: stable-packages-${{ inputs.tag || github.event.release.tag_name || github.event.client_payload.tag }}
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    if: >-
+      github.repository == 'himmelblau-idm/himmelblau' &&
+      (github.event_name != 'workflow_dispatch' ||
+       github.ref == format('refs/heads/{0}', github.event.repository.default_branch)) &&
+      (github.event_name != 'release' || !github.event.release.prerelease)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      enabled: ${{ steps.prepare.outputs.enabled }}
+      matrix: ${{ steps.prepare.outputs.matrix }}
+      tooling_sha: ${{ steps.prepare.outputs.tooling_sha }}
+    steps:
+      - name: Checkout trusted release tooling and repository history
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Run stable publishing unit tests
+        run: python3 .github/scripts/test_stable_packages.py
+      - name: Validate release and select build targets
+        id: prepare
+        env:
+          RELEASE_TAG: ${{ inputs.tag || github.event.release.tag_name || github.event.client_payload.tag }}
+          REQUESTED_REVISION: ${{ inputs.revision }}
+          REQUESTED_DISTRO: ${{ inputs.distro }}
+          REQUESTED_ARCHITECTURE: ${{ inputs.architecture }}
+        run: python3 .github/scripts/stable_packages.py prepare
+
+  packages:
+    needs: prepare
+    if: needs.prepare.outputs.enabled == 'true'
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.prepare.outputs.matrix) }}
+    uses: ./.github/workflows/stable-package-target.yml
+    with:
+      spec: ${{ matrix.spec }}
+      tooling_sha: ${{ needs.prepare.outputs.tooling_sha }}
+    secrets:
+      CLOUDSMITH_PACKAGE_PUBLISHER: ${{ secrets.CLOUDSMITH_PACKAGE_PUBLISHER }}
+      SCC_EMAIL: ${{ secrets.SCC_EMAIL }}
+      SCC_REGCODE: ${{ secrets.SCC_REGCODE }}
