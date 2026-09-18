@@ -21,7 +21,27 @@ class Arm64RpmDockerfileTests(unittest.TestCase):
         self.assertNotIn("FROM --platform=linux/amd64 rust:latest AS tooling", dockerfile)
         self.assertNotIn("COPY --from=tooling", dockerfile)
         self.assertIn("FROM fedora:44", dockerfile)
-        self.assertIn("cargo install cargo-deb cargo-generate-rpm", dockerfile)
+        self.assertIn("cargo install cargo-generate-rpm", dockerfile)
+        self.assertNotIn("cargo-deb", dockerfile)
+
+
+class PackagingToolTests(unittest.TestCase):
+    def test_packaging_tools_match_distro_family_on_each_architecture(self):
+        for name, config in gen_dockerfiles.DISTS.items():
+            for arch in gen_dockerfiles.ARCH_MAP:
+                with self.subTest(distro=name, arch=arch):
+                    dockerfile = gen_dockerfiles.render(
+                        name, config, patch_libhimmelblau=False, arch=arch
+                    )
+                    family = config["family"]
+                    if family == "deb":
+                        self.assertIn("cargo install cargo-deb", dockerfile)
+                        self.assertNotIn("cargo-generate-rpm", dockerfile)
+                    elif family in ("rpm", "zypper"):
+                        self.assertIn("cargo install cargo-generate-rpm", dockerfile)
+                        self.assertNotIn("cargo-deb", dockerfile)
+                    else:
+                        self.assertNotIn("cargo install", dockerfile)
 
 
 if __name__ == "__main__":
