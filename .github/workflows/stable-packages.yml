@@ -63,6 +63,7 @@ jobs:
         run: python3 .github/scripts/stable_packages.py prepare
 
   packages:
+    name: ${{ fromJSON(matrix.spec).distro }} ${{ fromJSON(matrix.spec).architecture }}
     needs: prepare
     if: needs.prepare.outputs.enabled == 'true'
     strategy:
