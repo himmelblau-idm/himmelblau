@@ -275,7 +275,9 @@ class ContainerBuildTests(unittest.TestCase):
                      "destination": "ubuntu/noble", "format": "deb", "architecture": "arm64",
                      "platform": "linux/arm64", "scc": False, "expected": ["himmelblau"]}
 
-    def test_native_container_commands_and_validated_artifact(self):
+    def build_packages(self, spec=None, **options):
+        """Exercise package validation with Docker replaced at the process boundary."""
+        spec = spec or self.spec
         with tempfile.TemporaryDirectory() as temporary:
             source = Path(temporary) / "source"
             source.mkdir()
@@ -292,17 +294,94 @@ class ContainerBuildTests(unittest.TestCase):
                     (directory / "himmelblau.deb").write_bytes(b"built package")
                 return subprocess.CompletedProcess(command, 0)
 
-            with patch.object(sp, "run", return_value=self.spec["source_sha"]), \
+            with patch.object(sp, "run", return_value=spec["source_sha"]), \
                  patch.object(sp.subprocess, "run", side_effect=fake_container), \
-                 patch.object(sp, "package_metadata", return_value={"name": "himmelblau", "version": "4.0.2-ubuntu24.04", "architecture": "arm64"}):
-                sp.build(source, artifacts, self.spec)
-            docker = [c for c in commands if c[0] == "docker" and c[1] in {"build", "run"}]
-            self.assertEqual(len(docker), 2)
-            for command in docker:
-                self.assertIn("linux/arm64", command)
-                self.assertNotIn("-it", command)
-                self.assertNotIn("CLOUDSMITH_API_KEY", " ".join(command))
-            self.assertEqual(len(sp.validate_artifacts(artifacts, self.spec)), 1)
+                 patch.object(sp, "package_metadata", return_value={"name": "himmelblau", "version": "4.0.2-ubuntu24.04", "architecture": spec["architecture"]}):
+                sp.build(source, artifacts, spec, **options)
+            return commands, sp.validate_artifacts(artifacts, spec)
+
+    def test_native_container_commands_and_validated_artifact(self):
+        commands, records = self.build_packages()
+        docker = [c for c in commands if c[0] == "docker" and c[1] in {"build", "run"}]
+        self.assertEqual(len(docker), 2)
+        for command in docker:
+            self.assertIn("linux/arm64", command)
+            self.assertNotIn("-it", command)
+            self.assertNotIn("CLOUDSMITH_API_KEY", " ".join(command))
+        self.assertNotIn("--cache-from", docker[0])
+        self.assertNotIn("--no-cache", docker[0])
+        self.assertEqual(len(records), 1)
+
+    def test_cached_image_is_loaded_for_native_package_build_and_validation(self):
+        cache_ref = "ghcr.io/himmelblau-idm/himmelblau-build-cache:v1-ubuntu24.04-arm64"
+        commands, records = self.build_packages(container_cache_ref=cache_ref)
+        image_build = next(c for c in commands if c[:3] == ["docker", "buildx", "build"])
+        package_build = next(c for c in commands if c[:3] == ["docker", "run", "--rm"])
+        self.assertIn("--load", image_build)
+        self.assertIn("--pull", image_build)
+        self.assertEqual(image_build[image_build.index("--platform") + 1], "linux/arm64")
+        self.assertEqual(image_build[image_build.index("--cache-from") + 1], f"type=registry,ref={cache_ref}")
+        self.assertEqual(image_build[image_build.index("--cache-to") + 1],
+                         f"type=registry,ref={cache_ref},mode=max,ignore-error=true")
+        self.assertNotIn("--no-cache", image_build)
+        self.assertEqual(package_build[-1], image_build[image_build.index("-t") + 1])
+        self.assertEqual(len(records), 1)
+
+    def test_cached_amd64_image_uses_native_platform(self):
+        spec = {**self.spec, "architecture": "amd64", "platform": "linux/amd64"}
+        commands, records = self.build_packages(
+            spec=spec, container_cache_ref="ghcr.io/himmelblau-idm/himmelblau-build-cache:v1-ubuntu24.04-amd64")
+        image_build = next(c for c in commands if c[:3] == ["docker", "buildx", "build"])
+        package_build = next(c for c in commands if c[:3] == ["docker", "run", "--rm"])
+        self.assertEqual(image_build[image_build.index("--platform") + 1], "linux/amd64")
+        self.assertEqual(package_build[package_build.index("--platform") + 1], "linux/amd64")
+        self.assertEqual(records[0]["architecture"], "amd64")
+
+    def test_failed_cached_image_build_stops_packaging_and_cleans_up(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            source = Path(temporary) / "source"
+            source.mkdir()
+            artifacts = Path(temporary) / "artifacts"
+            commands = []
+
+            def fail_image_build(command, **kwargs):
+                commands.append(command)
+                if command[:3] == ["docker", "buildx", "build"]:
+                    raise subprocess.CalledProcessError(1, command)
+                return subprocess.CompletedProcess(command, 0)
+
+            with patch.object(sp, "run", return_value=self.spec["source_sha"]), \
+                 patch.object(sp.subprocess, "run", side_effect=fail_image_build):
+                with self.assertRaises(subprocess.CalledProcessError):
+                    sp.build(source, artifacts, self.spec, container_cache_ref="ghcr.io/test/cache:arm64")
+            self.assertFalse(any(c[:2] == ["docker", "run"] for c in commands))
+            self.assertEqual(commands[-1], ["docker", "image", "rm", "-f", "himmelblau-stable-ubuntu24.04-arm64"])
+            self.assertFalse((artifacts / "manifest.json").exists())
+
+    def test_refresh_rebuilds_cached_installation_layers(self):
+        commands, records = self.build_packages(
+            container_cache_ref="ghcr.io/himmelblau-idm/himmelblau-build-cache:v1-ubuntu24.04-arm64",
+            refresh_build_container=True)
+        image_build = next(c for c in commands if c[:3] == ["docker", "buildx", "build"])
+        self.assertIn("--no-cache", image_build)
+        self.assertIn("--cache-to", image_build)
+        self.assertEqual(len(records), 1)
+
+    def test_refresh_also_works_without_registry_cache_setup(self):
+        commands, records = self.build_packages(refresh_build_container=True)
+        image_build = next(c for c in commands if c[:2] == ["docker", "build"])
+        self.assertIn("--no-cache", image_build)
+        self.assertNotIn("--cache-to", image_build)
+        self.assertEqual(len(records), 1)
+
+    def test_build_cli_passes_cache_and_refresh_options(self):
+        with patch("sys.argv", ["stable_packages.py", "build", "--container-cache-ref", "ghcr.io/test/cache:arm64",
+                                "--refresh-build-container"]), \
+             patch.dict(os.environ, {"TARGET_SPEC": json.dumps(self.spec)}), \
+             patch.object(sp, "build") as build:
+            sp.main()
+        build.assert_called_once_with(Path("source"), Path("artifacts"), self.spec,
+                                      container_cache_ref="ghcr.io/test/cache:arm64", refresh_build_container=True)
 
     def test_suse_secret_is_private_quoted_and_removed_after_failure(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -314,6 +393,8 @@ class ContainerBuildTests(unittest.TestCase):
 
             def fail_container(command, **kwargs):
                 if command[:2] == ["docker", "build"]:
+                    self.assertNotIn("--cache-from", command)
+                    self.assertNotIn("--cache-to", command)
                     secret = Path(command[command.index("--secret") + 1].split("src=", 1)[1])
                     secrets.append(secret)
                     self.assertEqual(secret.stat().st_mode & 0o777, 0o600)
@@ -327,7 +408,8 @@ class ContainerBuildTests(unittest.TestCase):
                  patch.object(sp, "run", return_value=spec["source_sha"]), \
                  patch.object(sp.subprocess, "run", side_effect=fail_container):
                 with self.assertRaises(subprocess.CalledProcessError):
-                    sp.build(source, Path(temporary) / "artifacts", spec)
+                    sp.build(source, Path(temporary) / "artifacts", spec,
+                             container_cache_ref="ghcr.io/test/cache:sle16")
             self.assertEqual(len(secrets), 1)
             self.assertFalse(secrets[0].exists())
 
