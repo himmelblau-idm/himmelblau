@@ -113,16 +113,19 @@ FAMILIES = {
     "deb": {
         "bootstrap": APT_BOOTSTRAP,
         "pkgs": DEB_PKGS,
+        "packaging_tool": "cargo-deb",
         "env": "ENV DEBIAN_FRONTEND=noninteractive HIMMELBLAU_ALLOW_MISSING_SELINUX=1",
     },
     "rpm": {
         "bootstrap": DNF_BOOTSTRAP,
         "pkgs": RPM_PKGS,
+        "packaging_tool": "cargo-generate-rpm",
         "env": None,
     },
     "zypper": {
         "bootstrap": ZYPPER_BOOTSTRAP,
         "pkgs": RPM_PKGS,
+        "packaging_tool": "cargo-generate-rpm",
         "env": None,
     },
     "ebuild": {
@@ -557,7 +560,7 @@ WORKDIR /himmelblau
 # Install Rust + aarch64 target + packaging tools (native amd64)
 RUN --mount=type=cache,target=/root/.cargo/registry curl https://sh.rustup.rs -sSf | sh -s -- -y && echo 1.93.1 && \\
     rustup target add aarch64-unknown-linux-gnu && \\
-    cargo install cargo-deb cargo-generate-rpm
+    cargo install cargo-deb
 
 # Configure cross-compilation
 ENV CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc \\
@@ -578,7 +581,7 @@ ENV CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc \\
 # Rust install: native (amd64) — compile cargo-deb/cargo-generate-rpm from source
 RUST_INSTALL_NATIVE = """\
 RUN --mount=type=cache,target=/root/.cargo/registry curl https://sh.rustup.rs -sSf | sh -s -- -y && echo 1.93.1 && \\
-    cargo install cargo-deb cargo-generate-rpm"""
+    cargo install {packaging_tool}"""
 
 # Rust install: emulated (arm64) — install Rust and packaging tools natively.
 # This is slower than cross-compiling the packaging tools, but avoids copying
@@ -587,7 +590,7 @@ RUN --mount=type=cache,target=/root/.cargo/registry curl https://sh.rustup.rs -s
 RUST_INSTALL_EMULATED = """\
 ENV CFLAGS="-O2" CXXFLAGS="-O2"
 RUN --mount=type=cache,target=/root/.cargo/registry curl https://sh.rustup.rs -sSf | sh -s -- -y && echo 1.93.1 && \\
-    cargo install cargo-deb cargo-generate-rpm"""
+    cargo install {packaging_tool}"""
 
 # Ubuntu codename mapping (used for multiarch apt sources)
 UBUNTU_CODENAMES = {
@@ -767,20 +770,21 @@ def render(
         return df
 
     # Select Rust install method and tooling stage based on architecture
-    if dist_cfg["family"] == "arch":
+    if dist_cfg["family"] in ("arch", "ebuild"):
         # Arch installs rust with pacman and packages with makepkg, so it needs
         # neither a rustup toolchain nor cargo-deb/cargo-generate-rpm.
+        # Ebuild generation also needs no Rust toolchain or packaging tools.
         rust_install = ""
         tooling_stage = ""
     elif arch != "amd64":
         # arm64 RPM/zypper: run under QEMU and compile packaging tools natively
         # inside the target distro image. Cross-built tools from a Debian
         # tooling stage can fail to execute on RPM-family images.
-        rust_install = RUST_INSTALL_EMULATED
+        rust_install = RUST_INSTALL_EMULATED.format(packaging_tool=fam["packaging_tool"])
         tooling_stage = ""
     else:
         # amd64: compile packaging tools natively
-        rust_install = RUST_INSTALL_NATIVE
+        rust_install = RUST_INSTALL_NATIVE.format(packaging_tool=fam["packaging_tool"])
         tooling_stage = ""
 
     # Use minimal template for ebuild generation
