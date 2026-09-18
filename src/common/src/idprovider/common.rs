@@ -26,6 +26,7 @@ use openidconnect::{AdditionalClaims, UserInfoClaims};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::fmt::{Debug, Display, Formatter};
 use std::thread::sleep;
 use std::{
     collections::HashMap,
@@ -113,6 +114,23 @@ pub(crate) enum RefreshCacheEntry {
     RefreshToken(String),
 }
 
+impl Debug for RefreshCacheEntry {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            RefreshCacheEntry::Prt(_) => f.write_str("Prt(...)"),
+            RefreshCacheEntry::RefreshToken(_) => f.write_str("RefreshToken(...)"),
+        }
+    }
+}
+impl Display for RefreshCacheEntry {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            RefreshCacheEntry::Prt(_) => f.write_str("Prt(...)"),
+            RefreshCacheEntry::RefreshToken(_) => f.write_str("RefreshToken(...)"),
+        }
+    }
+}
+
 impl RefreshCache {
     pub(crate) fn new() -> Self {
         RefreshCache {
@@ -121,6 +139,7 @@ impl RefreshCache {
         }
     }
 
+    #[instrument(level = "debug", skip(self), ret)]
     pub(crate) async fn refresh_token(
         &self,
         account_id: &str,
