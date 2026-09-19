@@ -853,35 +853,54 @@ impl HimmelblauConfig {
         None
     }
 
+    fn is_local_unix_name(account_id: &str, passwd_path: &str) -> bool {
+        let mut contents = vec![];
+        if let Ok(mut file) = File::open(passwd_path) {
+            let _ = file.read_to_end(&mut contents);
+        }
+        parse_etc_passwd(contents.as_slice())
+            .unwrap_or_default()
+            .into_iter()
+            .any(|u| u.name.to_string() == account_id)
+    }
+
     /// Convert a login name to a UPN, or `None` if it cannot be a directory user
-    /// (empty, or a known local-only name). Callers treat `None` as user-unknown
-    /// and must not look it up against Entra. See himmelblau-idm/himmelblau#1392.
+    /// (empty, a known local-only name, or an ambiguous learned mapped name).
+    /// Callers treat `None` as user-unknown and must not look it up against Entra.
+    /// See himmelblau-idm/himmelblau#1392.
     pub fn map_name_to_upn(&self, account_id: &str) -> Option<String> {
         self.map_name_to_upn_impl(account_id, "/etc/passwd")
     }
 
-    /// Inner impl with an injectable passwd path for hermetic unit tests.
+    /// Inner impl with an injectable passwd path for existing hermetic unit tests.
     fn map_name_to_upn_impl(&self, account_id: &str, passwd_path: &str) -> Option<String> {
+        let name_cache = if passwd_path == "/etc/passwd"
+            && (self.get_name_mapping_script().is_some() || self.get_learned_name_mapping())
+        {
+            MappedNameCache::new(MAPPED_NAME_CACHE, &Mode::ReadWrite).ok()
+        } else {
+            None
+        };
+        self.map_name_to_upn_with_cache_impl(account_id, passwd_path, name_cache.as_ref())
+    }
+
+    fn map_name_to_upn_with_cache_impl(
+        &self,
+        account_id: &str,
+        passwd_path: &str,
+        name_cache: Option<&MappedNameCache>,
+    ) -> Option<String> {
         let name_mapping_script = self.get_name_mapping_script();
         let cn_name_mapping = self.get_cn_name_mapping();
+        let learned_name_mapping = self.get_learned_name_mapping();
         let domains = self.get_configured_domains();
 
         if account_id.trim().is_empty() {
             return None;
         }
 
-        // Make sure this account_id isn't a local user
-        let mut contents = vec![];
-        if let Ok(mut file) = File::open(passwd_path) {
-            let _ = file.read_to_end(&mut contents);
-        }
-        let local_users = parse_etc_passwd(contents.as_slice()).unwrap_or_default();
-        if local_users
-            .into_iter()
-            .map(|u| u.name.to_string())
-            .collect::<Vec<String>>()
-            .contains(&account_id.to_string())
-        {
+        // Local Unix users always win. Never shadow or remap them.
+        if Self::is_local_unix_name(account_id, passwd_path) {
             return Some(account_id.to_string());
         }
 
@@ -894,11 +913,9 @@ impl HimmelblauConfig {
             return None;
         }
 
-        // Empty script output signals "not a directory user" -> None.
         if !account_id.contains('@') {
+            // Keep name_mapping_script authoritative whenever configured.
             if let Some(name_mapping_script) = &name_mapping_script {
-                let name_cache = MappedNameCache::new(MAPPED_NAME_CACHE, &Mode::ReadWrite).ok();
-
                 let output = Command::new(name_mapping_script).arg(account_id).output();
 
                 match output {
@@ -908,8 +925,7 @@ impl HimmelblauConfig {
                             if upn.is_empty() {
                                 return None;
                             }
-                            if let Some(name_cache) = &name_cache {
-                                // Failing to insert a name map is not a critical failure.
+                            if let Some(name_cache) = name_cache {
                                 if let Err(e) = name_cache.insert_mapping(&upn, account_id) {
                                     error!(
                                         "Failed to cache name mapping for {} as {}: {}",
@@ -936,43 +952,133 @@ impl HimmelblauConfig {
                         );
                     }
                 }
+            } else if learned_name_mapping {
+                if let Some(name_cache) = name_cache {
+                    return name_cache.get_upn_from_learned_name(account_id);
+                } else {
+                    return None;
+                }
             }
         }
-        if cn_name_mapping && !account_id.contains('@') && !domains.is_empty() {
+        if cn_name_mapping
+            && !learned_name_mapping
+            && !account_id.contains('@')
+            && !domains.is_empty()
+        {
             return Some(format!("{}@{}", account_id, domains[0]));
         }
         Some(account_id.to_string())
     }
 
-    /// This function maps a UPN to a mapped name. If a mapping script is
-    /// configured, it will use the mapping cache to obtain the mapped name.
-    /// If a mapping script is not configured, but upn to cn mapping is
-    /// enabled, it will map the upn to the cn. Otherwise it will return the
-    /// name unchanged.
+    /// Learn the local part of an explicitly supplied UPN after authentication
+    /// succeeds in the Entra provider.
+    pub fn learn_authenticated_short_name(&self, supplied_name: &str, authenticated_upn: &str) {
+        if !self.get_cn_name_mapping()
+            || !self.get_learned_name_mapping()
+            || self.get_name_mapping_script().is_some()
+            || self.get_oidc_issuer_url().is_some()
+        {
+            return;
+        }
+
+        let name_cache = match MappedNameCache::new(MAPPED_NAME_CACHE, &Mode::ReadWrite) {
+            Ok(cache) => cache,
+            Err(e) => {
+                error!("Failed to open mapped-name cache: {}", e);
+                return;
+            }
+        };
+
+        if let Err(e) = self.learn_authenticated_short_name_with_cache_impl(
+            supplied_name,
+            authenticated_upn,
+            "/etc/passwd",
+            &name_cache,
+        ) {
+            error!(
+                "Failed to learn mapped Unix name for '{}': {}",
+                authenticated_upn, e
+            );
+        }
+    }
+
+    fn learn_authenticated_short_name_with_cache_impl(
+        &self,
+        supplied_name: &str,
+        authenticated_upn: &str,
+        passwd_path: &str,
+        name_cache: &MappedNameCache,
+    ) -> rusqlite::Result<()> {
+        if !self.get_cn_name_mapping()
+            || !self.get_learned_name_mapping()
+            || self.get_name_mapping_script().is_some()
+            || self.get_oidc_issuer_url().is_some()
+            || split_username(supplied_name).is_none()
+            || !supplied_name.eq_ignore_ascii_case(authenticated_upn)
+        {
+            return Ok(());
+        }
+
+        let authenticated_upn = authenticated_upn.to_lowercase();
+        let Some((short_name, _)) = split_username(&authenticated_upn) else {
+            return Ok(());
+        };
+        if short_name.is_empty() || Self::is_local_unix_name(short_name, passwd_path) {
+            return Ok(());
+        }
+
+        name_cache.insert_learned_mapping(&authenticated_upn, short_name)
+    }
+
+    /// Map a UPN to its Unix-facing name. Script mappings retain their existing
+    /// behavior; learned mappings require an explicit opt-in.
     pub fn map_upn_to_name(&self, upn: &str) -> String {
+        let name_cache =
+            if self.get_name_mapping_script().is_some() || self.get_learned_name_mapping() {
+                MappedNameCache::new(MAPPED_NAME_CACHE, &Mode::ReadOnly).ok()
+            } else {
+                None
+            };
+        self.map_upn_to_name_with_cache_impl(upn, name_cache.as_ref())
+    }
+
+    fn map_upn_to_name_with_cache_impl(
+        &self,
+        upn: &str,
+        name_cache: Option<&MappedNameCache>,
+    ) -> String {
         if let Some((name, domain)) = split_username(upn) {
+            let name_mapping_script = self.get_name_mapping_script();
+            let cn_name_mapping = self.get_cn_name_mapping();
+            let learned_name_mapping = self.get_learned_name_mapping();
+
+            if name_mapping_script.is_some() {
+                return name_cache
+                    .map(|cache| cache.get_mapped_name(upn))
+                    .unwrap_or_else(|| upn.to_string());
+            }
+
+            if learned_name_mapping {
+                let normalized_upn = upn.to_lowercase();
+                if let Some(name_cache) = name_cache {
+                    if let Some(mapped_name) = name_cache.get_learned_mapped_name(&normalized_upn) {
+                        return mapped_name;
+                    }
+                }
+            }
+
             let primary = self
                 .get_configured_domains()
                 .first()
                 .map(|e| e.as_str())
                 .unwrap_or("")
                 .to_lowercase();
-            let res;
-            if self.get_name_mapping_script().is_some() {
-                if let Ok(name_mapping_cache) =
-                    MappedNameCache::new(MAPPED_NAME_CACHE, &Mode::ReadOnly)
-                {
-                    res = name_mapping_cache.get_mapped_name(upn);
-                } else {
-                    res = upn.to_string();
-                }
-            // Only perform cn name mapping for the primary domain
-            } else if self.get_cn_name_mapping() && primary == domain.to_lowercase() {
-                res = name.to_string();
+
+            if cn_name_mapping && !learned_name_mapping && primary == domain.to_lowercase() {
+                name.to_string()
             } else {
-                res = upn.to_string();
+                upn.to_string()
             }
-            res
         } else {
             // This isn't a upn, just return the input unchanged
             upn.to_string()
@@ -1054,6 +1160,12 @@ mod tests {
         let file_path = format!("/tmp/himmelblau_test_passwd_{}", uuid::Uuid::new_v4());
         fs::write(&file_path, contents).expect("Failed to write temporary passwd file");
         file_path
+    }
+
+    fn create_temp_name_cache() -> (String, MappedNameCache) {
+        let path = format!("/tmp/himmelblau_test_mapping_{}.db", uuid::Uuid::new_v4());
+        let cache = MappedNameCache::new_for_test(&path).expect("Failed to create mapping cache");
+        (path, cache)
     }
 
     // Helper function to create an empty config (to test defaults without system config interference)
@@ -1744,6 +1856,20 @@ mod tests {
     }
 
     #[test]
+    fn test_get_learned_name_mapping() {
+        let config_data = r#"
+        [global]
+        learned_name_mapping = true
+        "#;
+
+        let temp_file = create_temp_config(config_data);
+        let config = HimmelblauConfig::new(Some(&temp_file)).unwrap();
+
+        assert!(config.get_learned_name_mapping());
+        assert!(!create_empty_config().get_learned_name_mapping());
+    }
+
+    #[test]
     fn test_get_authority_host() {
         let config_data = r#"
         [example.com]
@@ -2090,6 +2216,303 @@ mod tests {
             config.map_name_to_upn_impl("user", &passwd),
             Some("user".to_string())
         );
+    }
+
+    #[test]
+    fn test_learned_short_name_round_trip_after_successful_upn_auth() {
+        let config = HimmelblauConfig::new(Some(&create_temp_config(
+            r#"
+        [global]
+        cn_name_mapping = true
+        learned_name_mapping = true
+        domains = primary.example
+        "#,
+        )))
+        .unwrap();
+        let passwd = create_temp_passwd(PASSWD_MINIMAL);
+        let (cache_path, cache) = create_temp_name_cache();
+
+        config
+            .learn_authenticated_short_name_with_cache_impl(
+                "alice@company.com",
+                "alice@company.com",
+                &passwd,
+                &cache,
+            )
+            .unwrap();
+
+        assert_eq!(
+            config.map_name_to_upn_with_cache_impl("alice", &passwd, Some(&cache)),
+            Some("alice@company.com".to_string())
+        );
+        assert_eq!(
+            config.map_name_to_upn_with_cache_impl("alice@company.com", &passwd, Some(&cache)),
+            Some("alice@company.com".to_string())
+        );
+        assert_eq!(
+            config.map_upn_to_name_with_cache_impl("alice@company.com", Some(&cache)),
+            "alice"
+        );
+
+        drop(cache);
+        let _ = fs::remove_file(cache_path);
+    }
+
+    #[test]
+    fn test_mixed_case_full_upn_learns_canonical_alias() {
+        let config = HimmelblauConfig::new(Some(&create_temp_config(
+            r#"
+        [global]
+        cn_name_mapping = true
+        learned_name_mapping = true
+        domains = primary.example
+        "#,
+        )))
+        .unwrap();
+        let passwd = create_temp_passwd(PASSWD_MINIMAL);
+        let (cache_path, cache) = create_temp_name_cache();
+
+        config
+            .learn_authenticated_short_name_with_cache_impl(
+                "Alice@Company.COM",
+                "Alice@Company.COM",
+                &passwd,
+                &cache,
+            )
+            .unwrap();
+
+        assert_eq!(
+            cache.get_upn_from_learned_name("alice"),
+            Some("alice@company.com".to_string())
+        );
+        assert_eq!(
+            config.map_name_to_upn_with_cache_impl("alice", &passwd, Some(&cache)),
+            Some("alice@company.com".to_string())
+        );
+        assert_eq!(
+            config.map_upn_to_name_with_cache_impl("ALICE@COMPANY.COM", Some(&cache)),
+            "alice"
+        );
+
+        drop(cache);
+        let _ = fs::remove_file(cache_path);
+    }
+
+    #[test]
+    fn test_name_mapping_script_is_not_bypassed_by_learned_mapping() {
+        let config = HimmelblauConfig::new(Some(&create_temp_config(
+            r#"
+        [global]
+        cn_name_mapping = true
+        learned_name_mapping = true
+        name_mapping_script = ../../scripts/test_script_echo.sh
+        domains = primary.example
+        "#,
+        )))
+        .unwrap();
+        let passwd = create_temp_passwd(PASSWD_MINIMAL);
+        let (cache_path, cache) = create_temp_name_cache();
+        config
+            .learn_authenticated_short_name_with_cache_impl(
+                "alice@company.com",
+                "alice@company.com",
+                &passwd,
+                &cache,
+            )
+            .unwrap();
+        assert_eq!(cache.get_upn_from_learned_name("alice"), None);
+        cache.insert_mapping("alice@company.com", "alice").unwrap();
+        assert_eq!(cache.get_learned_mapped_name("alice@company.com"), None);
+
+        assert_eq!(
+            config.map_name_to_upn_with_cache_impl("alice", &passwd, Some(&cache)),
+            Some("alice".to_string())
+        );
+        assert_eq!(
+            config.map_upn_to_name_with_cache_impl("alice@company.com", Some(&cache)),
+            "alice"
+        );
+
+        drop(cache);
+        let _ = fs::remove_file(cache_path);
+    }
+
+    #[test]
+    fn test_colliding_learned_names_preserve_first_mapping() {
+        let config = HimmelblauConfig::new(Some(&create_temp_config(
+            r#"
+        [global]
+        cn_name_mapping = true
+        learned_name_mapping = true
+        domains = primary.example
+        "#,
+        )))
+        .unwrap();
+        let passwd = create_temp_passwd(PASSWD_MINIMAL);
+        let (cache_path, cache) = create_temp_name_cache();
+
+        for upn in ["alice@company.com", "alice@other.example"] {
+            config
+                .learn_authenticated_short_name_with_cache_impl(upn, upn, &passwd, &cache)
+                .unwrap();
+        }
+
+        assert_eq!(
+            cache.get_upn_from_learned_name("alice"),
+            Some("alice@company.com".to_string())
+        );
+        assert_eq!(cache.get_learned_mapped_name("alice@other.example"), None);
+        assert_eq!(
+            config.map_name_to_upn_with_cache_impl("alice", &passwd, Some(&cache)),
+            Some("alice@company.com".to_string())
+        );
+        assert_eq!(
+            config.map_upn_to_name_with_cache_impl("alice@company.com", Some(&cache)),
+            "alice"
+        );
+        assert_eq!(
+            config.map_upn_to_name_with_cache_impl("alice@other.example", Some(&cache)),
+            "alice@other.example"
+        );
+
+        drop(cache);
+        let _ = fs::remove_file(cache_path);
+    }
+
+    #[test]
+    fn test_learned_names_do_not_use_primary_domain_fallback() {
+        let config = HimmelblauConfig::new(Some(&create_temp_config(
+            r#"
+        [global]
+        cn_name_mapping = true
+        learned_name_mapping = true
+        domains = primary.example,secondary.example
+        "#,
+        )))
+        .unwrap();
+        let passwd = create_temp_passwd(PASSWD_MINIMAL);
+        let (cache_path, cache) = create_temp_name_cache();
+
+        assert_eq!(
+            config.map_name_to_upn_with_cache_impl("alice", &passwd, Some(&cache)),
+            None
+        );
+        assert_eq!(
+            config.map_upn_to_name_with_cache_impl("alice@primary.example", Some(&cache)),
+            "alice@primary.example"
+        );
+
+        config
+            .learn_authenticated_short_name_with_cache_impl(
+                "alice@secondary.example",
+                "alice@secondary.example",
+                &passwd,
+                &cache,
+            )
+            .unwrap();
+
+        assert_eq!(
+            config.map_name_to_upn_with_cache_impl("alice", &passwd, Some(&cache)),
+            Some("alice@secondary.example".to_string())
+        );
+        assert_eq!(
+            config.map_upn_to_name_with_cache_impl("alice@primary.example", Some(&cache)),
+            "alice@primary.example"
+        );
+        assert_eq!(
+            config.map_upn_to_name_with_cache_impl("alice@secondary.example", Some(&cache)),
+            "alice"
+        );
+
+        drop(cache);
+        let _ = fs::remove_file(cache_path);
+    }
+
+    #[test]
+    fn test_local_unix_user_prevents_learning_short_alias() {
+        let config = HimmelblauConfig::new(Some(&create_temp_config(
+            r#"
+        [global]
+        cn_name_mapping = true
+        learned_name_mapping = true
+        domains = company.com
+        "#,
+        )))
+        .unwrap();
+        let passwd = create_temp_passwd(&format!(
+            "{}alice:x:1000:1000::/home/alice:/bin/bash\n",
+            PASSWD_MINIMAL
+        ));
+        let (cache_path, cache) = create_temp_name_cache();
+
+        config
+            .learn_authenticated_short_name_with_cache_impl(
+                "alice@company.com",
+                "alice@company.com",
+                &passwd,
+                &cache,
+            )
+            .unwrap();
+
+        assert_eq!(cache.get_upn_from_learned_name("alice"), None);
+
+        drop(cache);
+        let _ = fs::remove_file(cache_path);
+    }
+
+    #[test]
+    fn test_learning_requires_cn_name_mapping_and_is_disabled_for_oidc() {
+        let config = HimmelblauConfig::new(Some(&create_temp_config(
+            r#"
+        [global]
+        cn_name_mapping = true
+        learned_name_mapping = true
+        domains = company.com
+        oidc_issuer_url = https://issuer.example
+        "#,
+        )))
+        .unwrap();
+        let passwd = create_temp_passwd(PASSWD_MINIMAL);
+        let (cache_path, cache) = create_temp_name_cache();
+
+        config
+            .learn_authenticated_short_name_with_cache_impl(
+                "alice@company.com",
+                "alice@company.com",
+                &passwd,
+                &cache,
+            )
+            .unwrap();
+
+        assert_eq!(cache.get_upn_from_learned_name("alice"), None);
+
+        drop(cache);
+        let _ = fs::remove_file(cache_path);
+
+        let config = HimmelblauConfig::new(Some(&create_temp_config(
+            r#"
+        [global]
+        cn_name_mapping = false
+        learned_name_mapping = true
+        domains = company.com
+        "#,
+        )))
+        .unwrap();
+        let (cache_path, cache) = create_temp_name_cache();
+
+        config
+            .learn_authenticated_short_name_with_cache_impl(
+                "alice@company.com",
+                "alice@company.com",
+                &passwd,
+                &cache,
+            )
+            .unwrap();
+
+        assert_eq!(cache.get_upn_from_learned_name("alice"), None);
+
+        drop(cache);
+        let _ = fs::remove_file(cache_path);
     }
 
     #[test]
