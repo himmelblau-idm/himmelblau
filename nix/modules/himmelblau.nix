@@ -115,6 +115,7 @@ in
         default = [
           "passwd"
           "login"
+          "su"
           "systemd-user"
         ];
         description = "Which PAM services to add the himmelblau module to.";
@@ -211,6 +212,7 @@ in
           cfg.pamServices
           ++ lib.optional config.security.sudo.enable "sudo"
           ++ lib.optional config.security.doas.enable "doas"
+          ++ lib.optional config.security.polkit.enable "polkit-1"
           ++ lib.optional config.services.sshd.enable "sshd";
       in
       lib.genAttrs services genServiceCfg;
