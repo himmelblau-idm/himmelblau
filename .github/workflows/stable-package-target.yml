@@ -24,7 +24,29 @@ permissions:
   contents: read
 
 jobs:
+  preflight:
+    name: Checking Cloudsmith ${{ fromJSON(inputs.spec).distro }} ${{ fromJSON(inputs.spec).architecture }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      build_required: ${{ steps.check.outputs.build_required }}
+    steps:
+      - name: Checkout release tooling
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.tooling_sha }}
+          path: tooling
+          persist-credentials: false
+      - name: Check complete package set in Cloudsmith
+        id: check
+        env:
+          TARGET_SPEC: ${{ inputs.spec }}
+          CLOUDSMITH_API_KEY: ${{ secrets.CLOUDSMITH_PACKAGE_PUBLISHER }}
+        run: python3 tooling/.github/scripts/stable_packages.py preflight
+
   build:
+    needs: preflight
+    if: needs.preflight.outputs.build_required == 'true'
     name: Building ${{ fromJSON(inputs.spec).distro }} ${{ fromJSON(inputs.spec).architecture }}
     runs-on: ${{ fromJSON(inputs.spec).runner }}
     timeout-minutes: 330
