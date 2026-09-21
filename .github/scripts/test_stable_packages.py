@@ -60,11 +60,17 @@ class SourceSelectionTests(unittest.TestCase):
 
     def test_defaults_use_tag_and_branch_supported_architectures(self):
         specs = self.specs("3.1.14")
-        self.assertEqual(len(specs), 5)
+        self.assertEqual(len(specs), 7)
         self.assertEqual({s["source_sha"] for s in specs}, {self.tag_sha})
-        self.assertNotIn("rawhide", {s["distro"] for s in specs})
         self.assertFalse(any(s["distro"] == "rocky8" and s["architecture"] == "arm64" for s in specs))
+        rawhide = [s for s in specs if s["distro"] == "rawhide"]
+        self.assertEqual({s["architecture"] for s in rawhide}, {"amd64", "arm64"})
+        self.assertEqual({s["destination"] for s in rawhide}, {"fedora/46"})
         self.assertEqual(next(s for s in specs if s["distro"] == "sle15sp6")["destination"], "opensuse/15.6")
+
+    def test_new_native_cloudsmith_destinations(self):
+        self.assertEqual(sp.DESTINATIONS["rawhide"], "fedora/46")
+        self.assertEqual(sp.DESTINATIONS["sle16"], "sles/16")
 
     def test_expected_identities_include_native_and_independent_architectures(self):
         deb = self.specs("3.1.14", "", "ubuntu24.04", "arm64")[0]
@@ -82,13 +88,18 @@ class SourceSelectionTests(unittest.TestCase):
         self.assertEqual(specs[0]["runner"], "ubuntu-24.04-arm")
         self.assertEqual(specs[0]["expected"], ["himmelblau"])
 
+    def test_rawhide_selection_uses_fedora_46(self):
+        specs = self.specs("3.1.14", "", "rawhide")
+        self.assertEqual({s["architecture"] for s in specs}, {"amd64", "arm64"})
+        self.assertEqual({s["destination"] for s in specs}, {"fedora/46"})
+
     def test_source_branch_name_resolves_remote_tracking_branch(self):
         specs = self.specs("3.1.14", "stable-3.x", "ubuntu24.04")
         self.assertEqual({s["source_sha"] for s in specs}, {self.fix_sha})
 
     def test_invalid_inputs_and_empty_selection(self):
         for args in [("3.1.14;echo bad",), ("3.1.14-alpha",), ("5.0.0",),
-                     ("3.1.14", "", "rawhide"), ("3.1.14", "", "unknown"),
+                     ("3.1.14", "", "unknown"),
                      ("3.1.14", "", "rocky8", "arm64"),
                      ("3.1.14", "", "all", "x86")]:
             with self.subTest(args=args), self.assertRaises(ValueError):
@@ -150,7 +161,7 @@ class SourceSelectionTests(unittest.TestCase):
                                     "REQUESTED_ARCHITECTURE": "unknown"}), patch.object(sp, "output") as out:
             sp.prepare()
         result = json.loads(next(call.args[1] for call in out.call_args_list if call.args[0] == "matrix"))
-        self.assertEqual(len(result["include"]), 5)
+        self.assertEqual(len(result["include"]), 7)
         self.assertEqual(json.loads(result["include"][0]["spec"])["source_sha"], self.tag_sha)
 
 

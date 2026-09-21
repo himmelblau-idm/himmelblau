@@ -26,11 +26,10 @@ DESTINATIONS = {
     "debian12": "debian/bookworm", "debian13": "debian/trixie",
     "rocky8": "el/8", "rocky9": "el/9", "rocky10": "el/10",
     "fedora42": "fedora/42", "fedora43": "fedora/43", "fedora44": "fedora/44",
+    "rawhide": "fedora/46",
     "amzn2023": "amzn/2023", "tumbleweed": "opensuse/tumbleweed",
-    "sle15sp6": "opensuse/15.6", "sle15sp7": "sles/15", "sle16": "opensuse/16.0",
+    "sle15sp6": "opensuse/15.6", "sle15sp7": "sles/15", "sle16": "sles/16",
 }
-# TODO: Enable Rawhide once Cloudsmith supports a distinct Fedora Rawhide index.
-EXCLUDED = {"rawhide"}
 ARCHITECTURES = {
     "amd64": {"runner": "ubuntu-24.04", "platform": "linux/amd64", "rpm": "x86_64"},
     "arm64": {"runner": "ubuntu-24.04-arm", "platform": "linux/arm64", "rpm": "aarch64"},
@@ -117,11 +116,9 @@ def matrix(tag, revision="", distro="all", architecture="all"):
         if not match:
             raise ValueError(f"Cannot find {group}_TARGETS in source Makefile")
         targets.extend(match[1].split())
-    if distro != "all" and (distro not in targets or distro in EXCLUDED):
-        raise ValueError(f"Unsupported or excluded distro: {distro}")
-    if EXCLUDED.intersection(targets):
-        print("::warning::Rawhide is excluded: Cloudsmith has no Fedora Rawhide destination (TODO)")
-    selected = [t for t in targets if t not in EXCLUDED and distro in {"all", t}]
+    if distro != "all" and distro not in targets:
+        raise ValueError(f"Unsupported distro: {distro}")
+    selected = [t for t in targets if distro in {"all", t}]
     entries = []
     for target in selected:
         cfg = dists[target]
