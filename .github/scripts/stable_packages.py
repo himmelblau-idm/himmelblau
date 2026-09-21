@@ -129,6 +129,7 @@ def matrix(tag, revision="", distro="all", architecture="all"):
         if cfg["family"] not in {"deb", "rpm", "zypper"} or target not in DESTINATIONS:
             raise ValueError(f"No approved native Cloudsmith destination for {target}")
         expected = []
+        definitions = []
         for crate, path, _ in packages:
             if crate == "selinux" and (fmt == "deb" or not cfg.get("selinux")):
                 continue
@@ -136,7 +137,16 @@ def matrix(tag, revision="", distro="all", architecture="all"):
                 continue
             metadata = tomllib.loads(source_text(source_sha, f"{path}/Cargo.toml"))["package"]
             section = "deb" if fmt == "deb" else "generate-rpm"
-            expected.append(metadata.get("metadata", {}).get(section, {}).get("name", metadata["name"].replace("_", "-")))
+            package = metadata.get("metadata", {}).get(section, {})
+            name = package.get("name", metadata["name"].replace("_", "-"))
+            expected.append(name)
+            if package.get("epoch", 0) != 0:
+                raise ValueError("Unexpected package epoch")
+            package_version = package.get("version", tag)
+            if package_version != tag:
+                raise ValueError("Package version must match the release tag")
+            full_version = f"{tag}-{target}" if fmt == "deb" else f"{tag}-{package.get('release', '1')}"
+            definitions.append({"name": name, "version": full_version})
         for arch, info in ARCHITECTURES.items():
             if architecture not in {"all", arch} or (arch == "arm64" and not cfg.get("arm64", True)):
                 continue
@@ -144,7 +154,9 @@ def matrix(tag, revision="", distro="all", architecture="all"):
                     "repository": REPOSITORIES[major], "distro": target,
                     "destination": DESTINATIONS[target], "format": fmt,
                     "architecture": arch, "scc": bool(cfg.get("scc")),
-                    "expected": expected, **info}
+                    "expected": expected,
+                    "expected_packages": [dict(package, architectures=[arch, "all"] if fmt == "deb"
+                                               else [info["rpm"], "noarch"]) for package in definitions], **info}
             entries.append({"spec": json.dumps(spec, separators=(",", ":"))})
     if not entries:
         raise ValueError("No supported targets remain after applying the filters")
@@ -272,6 +284,7 @@ def build(source, artifacts, spec, *, container_cache_ref="", refresh_build_cont
             names = [p["name"] for p in records]
             if sorted(names) != sorted(spec["expected"]):
                 raise ValueError(f"Incomplete or unexpected package set: expected {spec['expected']}, got {names}")
+            validate_package_identities(records, spec)
             (artifacts / "manifest.json").write_text(json.dumps({"spec": spec, "packages": records}, indent=2) + "\n")
             summary(f"Built `{spec['distro']}` / `{spec['architecture']}` for `{spec['tag']}` from `{spec['source_sha']}`: {len(records)} packages.")
         finally:
@@ -307,31 +320,65 @@ def api_packages(repository, fmt, tag):
 def existing_identity(remote, local, spec):
     distro, release = spec["destination"].split("/")
     architectures = {a["name"] for a in remote.get("architectures", [])}
+    allowed = local.get("architectures", [local.get("architecture")])
     return (remote.get("format") == spec["format"] and remote.get("name") == local["name"] and
             remote.get("version") == local["version"] and remote.get("epoch") in (None, 0, "0") and
             (remote.get("distro") or {}).get("slug") == distro and
             (remote.get("distro_version") or {}).get("slug") == release and
-            local["architecture"] in architectures)
+            bool(set(allowed).intersection(architectures)))
 
 
 def upload_plan(records, remote_packages, spec):
     missing, pending = [], False
-    markers = {f"release-{spec['tag']}", f"source-{spec['source_sha']}"}
     for local in records:
-        matches = [remote for remote in remote_packages if existing_identity(remote, local, spec)]
+        # Use the same architecture-independent alternatives before and after building.
+        definition = next((p for p in spec.get("expected_packages", []) if p["name"] == local["name"]), local)
+        matches = [remote for remote in remote_packages if existing_identity(remote, definition, spec)]
         if len(matches) > 1:
             raise ValueError(f"Multiple existing packages match {local['name']}; refusing publication")
         if not matches:
             missing.append(local)
             continue
         remote = matches[0]
-        tags = {tag for values in remote.get("tags", {}).values() for tag in values}
-        if not markers.issubset(tags):
-            raise ValueError(f"Existing {local['name']} {local['version']} comes from another or unknown source; no packages replaced")
         if remote.get("is_sync_failed"):
             raise ValueError(f"Existing {local['name']} failed Cloudsmith synchronization; DevOps must resolve it")
         pending |= not remote.get("is_sync_completed", False)
     return missing, pending
+
+
+def require_api_key():
+    if not os.environ.get("CLOUDSMITH_API_KEY"):
+        raise ValueError("CLOUDSMITH_API_KEY is missing; the workflow supplies it from CLOUDSMITH_PACKAGE_PUBLISHER")
+
+
+def synchronized_missing(records, spec):
+    for attempt in range(30):
+        missing, pending = upload_plan(records, api_packages(spec["repository"], spec["format"], spec["tag"]), spec)
+        if not pending:
+            break
+        if attempt == 29:
+            raise RuntimeError("Existing Cloudsmith packages did not synchronize within five minutes")
+        time.sleep(10)
+    return missing
+
+
+def preflight(spec):
+    require_api_key()
+    missing = synchronized_missing(spec["expected_packages"], spec)
+    output("build_required", str(bool(missing)).lower())
+    names = ", ".join(package["name"] for package in missing)
+    summary(f"Cloudsmith preflight `{spec['distro']}` / `{spec['architecture']}` for `{spec['tag']}`: "
+            + (f"building target; missing packages: {names}." if missing else "complete package set already present; skipping build and publication."))
+
+
+def validate_package_identities(records, spec):
+    expected = spec["expected_packages"]
+    if sorted(p["name"] for p in records) != sorted(p["name"] for p in expected):
+        raise ValueError("Package identities do not match the expected target")
+    for record in records:
+        definition = next(p for p in expected if p["name"] == record["name"])
+        if record["version"] != definition["version"] or record["architecture"] not in definition["architectures"]:
+            raise ValueError(f"Unexpected package identity: {record['name']}")
 
 
 def validate_artifacts(artifacts, spec):
@@ -341,6 +388,7 @@ def validate_artifacts(artifacts, spec):
     records = manifest["packages"]
     if sorted(p["name"] for p in records) != sorted(spec["expected"]):
         raise ValueError("Artifact package set is incomplete or unexpected")
+    validate_package_identities(records, spec)
     filenames = {"manifest.json"}
     for record in records:
         name = record["filename"]
@@ -356,16 +404,9 @@ def validate_artifacts(artifacts, spec):
 
 
 def publish(artifacts, spec):
-    if not os.environ.get("CLOUDSMITH_API_KEY"):
-        raise ValueError("CLOUDSMITH_API_KEY is missing; the workflow supplies it from CLOUDSMITH_PACKAGE_PUBLISHER")
+    require_api_key()
     records = validate_artifacts(artifacts, spec)
-    for attempt in range(30):
-        missing, pending = upload_plan(records, api_packages(spec["repository"], spec["format"], spec["tag"]), spec)
-        if not pending:
-            break
-        if attempt == 29:
-            raise RuntimeError("Existing Cloudsmith packages did not synchronize within five minutes")
-        time.sleep(10)
+    missing = synchronized_missing(records, spec)
     tags = f"release-{spec['tag']},source-{spec['source_sha']},distro-{spec['distro']}"
     for record in missing:
         subprocess.run(["cloudsmith", "push", spec["format"],
@@ -380,7 +421,7 @@ def publish(artifacts, spec):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=["prepare", "tag", "build", "publish"])
+    parser.add_argument("command", choices=["prepare", "tag", "preflight", "build", "publish"])
     parser.add_argument("--source", type=Path, default=Path("source"))
     parser.add_argument("--artifacts", type=Path, default=Path("artifacts"))
     parser.add_argument("--container-cache-ref", default="",
@@ -395,7 +436,9 @@ def main():
             tag_version()
         else:
             spec = json.loads(os.environ["TARGET_SPEC"])
-            if args.command == "build":
+            if args.command == "preflight":
+                preflight(spec)
+            elif args.command == "build":
                 build(args.source, args.artifacts, spec,
                       container_cache_ref=args.container_cache_ref,
                       refresh_build_container=args.refresh_build_container)

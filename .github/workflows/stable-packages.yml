@@ -1,4 +1,4 @@
-name: Build and publish stable packages
+name: Check cache, build and publish missing stable packages
 
 on:
   release:
@@ -24,7 +24,7 @@ on:
         type: choice
         options: [all, amd64, arm64]
       refresh_build_container:
-        description: Reinstall build-container tools and dependencies instead of reusing cached layers
+        description: Refresh build-container dependencies for missing targets; existing Cloudsmith packages are preserved
         default: false
         type: boolean
 

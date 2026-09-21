@@ -66,6 +66,14 @@ class SourceSelectionTests(unittest.TestCase):
         self.assertFalse(any(s["distro"] == "rocky8" and s["architecture"] == "arm64" for s in specs))
         self.assertEqual(next(s for s in specs if s["distro"] == "sle15sp6")["destination"], "opensuse/15.6")
 
+    def test_expected_identities_include_native_and_independent_architectures(self):
+        deb = self.specs("3.1.14", "", "ubuntu24.04", "arm64")[0]
+        rpm = self.specs("3.1.14", "", "rocky8", "amd64")[0]
+        self.assertEqual(deb["expected_packages"], [{"name": "himmelblau", "version": "3.1.14-ubuntu24.04",
+                                                    "architectures": ["arm64", "all"]}])
+        self.assertEqual(rpm["expected_packages"], [{"name": "himmelblau", "version": "3.1.14-1",
+                                                    "architectures": ["x86_64", "noarch"]}])
+
     def test_single_distro_fix_and_architecture_filter(self):
         specs = self.specs("3.1.14", self.fix_sha, "ubuntu24.04", "arm64")
         self.assertEqual(len(specs), 1)
@@ -152,6 +160,9 @@ class PublicationTests(unittest.TestCase):
                      "repository": "himmelblau/himmelblau-4", "distro": "ubuntu24.04",
                      "destination": "ubuntu/noble", "format": "deb", "architecture": "amd64",
                      "expected": ["himmelblau", "pam-himmelblau"]}
+        self.spec["expected_packages"] = [
+            {"name": name, "version": "4.0.2-ubuntu24.04", "architectures": ["amd64", "all"]}
+            for name in self.spec["expected"]]
         self.records = [{"name": name, "version": "4.0.2-ubuntu24.04", "architecture": "amd64", "filename": name + ".deb"}
                         for name in self.spec["expected"]]
 
@@ -166,11 +177,10 @@ class PublicationTests(unittest.TestCase):
         self.assertEqual(missing, [self.records[1]])
         self.assertFalse(pending)
 
-    def test_post_tag_fix_fills_empty_target_but_cannot_replace_original(self):
+    def test_post_tag_fix_preserves_original_and_fills_missing_packages(self):
         self.assertEqual(sp.upload_plan(self.records, [], self.spec), (self.records, False))
         original = self.remote(self.records[1], tags={"user": ["release-4.0.2", "source-" + "a" * 40]})
-        with self.assertRaisesRegex(ValueError, "another or unknown source"):
-            sp.upload_plan(self.records, [original], self.spec)
+        self.assertEqual(sp.upload_plan(self.records, [original], self.spec), ([self.records[0]], False))
 
     def test_pending_failed_and_duplicate_packages(self):
         pending = self.remote(self.records[0], is_sync_completed=False)
@@ -201,14 +211,124 @@ class PublicationTests(unittest.TestCase):
             lookup.assert_not_called()
             upload.assert_not_called()
 
-    def test_preflight_conflict_prevents_every_upload(self):
-        remote = self.remote(self.records[1], tags={})
+    def test_failed_synchronization_prevents_every_upload(self):
+        remote = self.remote(self.records[1], is_sync_failed=True)
         with patch.dict(os.environ, {"CLOUDSMITH_API_KEY": "test-not-a-secret"}), \
              patch.object(sp, "validate_artifacts", return_value=self.records), \
              patch.object(sp, "api_packages", return_value=[remote]), patch.object(sp.subprocess, "run") as upload:
             with self.assertRaises(ValueError):
                 sp.publish(Path("artifacts"), self.spec)
             upload.assert_not_called()
+
+    def check_preflight(self, remotes):
+        with patch.dict(os.environ, {"CLOUDSMITH_API_KEY": "test-not-a-secret"}), \
+             patch.object(sp, "api_packages", side_effect=remotes), \
+             patch.object(sp, "output") as outputs, patch.object(sp.time, "sleep"), \
+             patch.object(sp.subprocess, "run") as execute:
+            sp.preflight(self.spec)
+        execute.assert_not_called()
+        return outputs.call_args_list
+
+    def test_complete_target_skips_without_source_markers(self):
+        remotes = [self.remote(record, tags={}) for record in self.records]
+        self.assertEqual(self.check_preflight([remotes]), [unittest.mock.call("build_required", "false")])
+
+    def test_complete_target_from_original_commit_skips_fix_build(self):
+        remotes = [self.remote(record, tags={"user": ["release-4.0.2", "source-" + "a" * 40]})
+                   for record in self.records]
+        self.assertEqual(self.check_preflight([remotes]), [unittest.mock.call("build_required", "false")])
+
+    def test_partial_target_preserves_independent_identity_when_build_is_native(self):
+        remote = self.remote(self.records[0], architectures=[{"name": "all"}])
+        self.assertEqual(sp.upload_plan(self.records, [remote], self.spec), ([self.records[1]], False))
+
+    def test_preflight_cli_emits_skip_output(self):
+        remotes = [self.remote(record) for record in self.records]
+        with tempfile.TemporaryDirectory() as temporary:
+            output_path = Path(temporary) / "outputs"
+            with patch("sys.argv", ["stable_packages.py", "preflight"]), \
+                 patch.dict(os.environ, {"TARGET_SPEC": json.dumps(self.spec), "GITHUB_OUTPUT": str(output_path),
+                                         "CLOUDSMITH_API_KEY": "test-not-a-secret"}), \
+                 patch.object(sp, "api_packages", return_value=remotes):
+                sp.main()
+            self.assertEqual(output_path.read_text(), "build_required=false\n")
+
+    def test_artifact_identity_validation_rejects_wrong_version_or_architecture(self):
+        for overrides in [{"version": "4.0.2-other"}, {"architecture": "arm64"}]:
+            with self.subTest(overrides=overrides), self.assertRaisesRegex(ValueError, "Unexpected package identity"):
+                sp.validate_package_identities([dict(self.records[0], **overrides), self.records[1]], self.spec)
+
+    def test_empty_target_requires_build(self):
+        self.assertEqual(self.check_preflight([[]]), [unittest.mock.call("build_required", "true")])
+
+    def test_partial_target_requires_build(self):
+        self.assertEqual(self.check_preflight([[self.remote(self.records[0])]]),
+                         [unittest.mock.call("build_required", "true")])
+
+    def test_other_version_destination_and_architecture_require_build(self):
+        for overrides in [{"version": "4.0.3-ubuntu24.04"}, {"distro_version": {"slug": "jammy"}},
+                          {"architectures": [{"name": "arm64"}]}, {"epoch": 1}]:
+            with self.subTest(overrides=overrides):
+                remotes = [self.remote(record, **overrides) for record in self.records]
+                self.assertEqual(self.check_preflight([remotes]), [unittest.mock.call("build_required", "true")])
+
+    def test_preflight_accepts_architecture_independent_packages(self):
+        remotes = [self.remote(record, architectures=[{"name": "all"}]) for record in self.records]
+        self.assertEqual(self.check_preflight([remotes]), [unittest.mock.call("build_required", "false")])
+
+    def test_rpm_preflight_native_architectures_and_noarch(self):
+        for architecture, rpm in [("amd64", "x86_64"), ("arm64", "aarch64")]:
+            for remote_arch in [rpm, "noarch"]:
+                with self.subTest(architecture=architecture, remote_arch=remote_arch):
+                    self.spec.update(format="rpm", architecture=architecture, destination="el/9")
+                    self.spec["expected_packages"] = [
+                        {"name": name, "version": "4.0.2-1", "architectures": [rpm, "noarch"]}
+                        for name in self.spec["expected"]]
+                    remotes = [self.remote(record, format="rpm", version="4.0.2-1",
+                                           distro={"slug": "el"}, distro_version={"slug": "9"},
+                                           architectures=[{"name": remote_arch}]) for record in self.records]
+                    self.assertEqual(self.check_preflight([remotes]), [unittest.mock.call("build_required", "false")])
+
+    def test_pending_target_skips_only_after_synchronization(self):
+        complete = [self.remote(record) for record in self.records]
+        pending = [dict(remote, is_sync_completed=False) for remote in complete]
+        self.assertEqual(self.check_preflight([pending, complete]), [unittest.mock.call("build_required", "false")])
+
+    def test_preflight_errors_never_authorize_build(self):
+        remote = self.remote(self.records[0])
+        for response, error in [([dict(remote, is_sync_failed=True)], ValueError),
+                                ([remote, remote], ValueError),
+                                ([dict(remote, is_sync_completed=False)], RuntimeError),
+                                (RuntimeError("lookup failed"), RuntimeError)]:
+            with self.subTest(response=response), \
+                 patch.dict(os.environ, {"CLOUDSMITH_API_KEY": "test-not-a-secret"}), \
+                 patch.object(sp, "api_packages", side_effect=response if isinstance(response, Exception) else None,
+                              return_value=response), patch.object(sp.time, "sleep"), \
+                 patch.object(sp, "output") as outputs:
+                with self.assertRaises(error):
+                    sp.preflight(self.spec)
+                outputs.assert_not_called()
+
+    def test_preflight_missing_key_never_queries_or_authorizes_build(self):
+        with patch.dict(os.environ, {"CLOUDSMITH_API_KEY": ""}), \
+             patch.object(sp, "api_packages") as lookup, patch.object(sp, "output") as outputs:
+            with self.assertRaisesRegex(ValueError, "CLOUDSMITH_API_KEY is missing"):
+                sp.preflight(self.spec)
+            lookup.assert_not_called()
+            outputs.assert_not_called()
+
+    def test_package_appearing_after_preflight_is_preserved(self):
+        original = self.remote(self.records[0], tags={})
+        complete = [original, self.remote(self.records[1])]
+        with patch.dict(os.environ, {"CLOUDSMITH_API_KEY": "test-not-a-secret"}), \
+             patch.object(sp, "api_packages", side_effect=[[], [original], complete]), \
+             patch.object(sp, "output"), patch.object(sp, "validate_artifacts", return_value=self.records), \
+             patch.object(sp.subprocess, "run") as upload:
+            sp.preflight(self.spec)
+            sp.publish(Path("artifacts"), self.spec)
+        upload.assert_called_once()
+        self.assertIn("artifacts/pam-himmelblau.deb", upload.call_args.args[0])
+        self.assertIn("--no-republish", upload.call_args.args[0])
 
     def test_package_lookup_reads_every_page_without_exposing_api_key(self):
         first = [self.remote(self.records[0])] * 100
@@ -273,7 +393,9 @@ class ContainerBuildTests(unittest.TestCase):
         self.spec = {"tag": "4.0.2", "tag_sha": "a" * 40, "source_sha": "b" * 40,
                      "repository": "himmelblau/himmelblau-4", "distro": "ubuntu24.04",
                      "destination": "ubuntu/noble", "format": "deb", "architecture": "arm64",
-                     "platform": "linux/arm64", "scc": False, "expected": ["himmelblau"]}
+                     "platform": "linux/arm64", "scc": False, "expected": ["himmelblau"],
+                     "expected_packages": [{"name": "himmelblau", "version": "4.0.2-ubuntu24.04",
+                                            "architectures": ["arm64", "all"]}]}
 
     def build_packages(self, spec=None, **options):
         """Exercise package validation with Docker replaced at the process boundary."""
@@ -328,7 +450,9 @@ class ContainerBuildTests(unittest.TestCase):
         self.assertEqual(len(records), 1)
 
     def test_cached_amd64_image_uses_native_platform(self):
-        spec = {**self.spec, "architecture": "amd64", "platform": "linux/amd64"}
+        spec = {**self.spec, "architecture": "amd64", "platform": "linux/amd64",
+                "expected_packages": [{"name": "himmelblau", "version": "4.0.2-ubuntu24.04",
+                                       "architectures": ["amd64", "all"]}]}
         commands, records = self.build_packages(
             spec=spec, container_cache_ref="ghcr.io/himmelblau-idm/himmelblau-build-cache:v1-ubuntu24.04-amd64")
         image_build = next(c for c in commands if c[:3] == ["docker", "buildx", "build"])
