@@ -41,8 +41,8 @@ use himmelblau_unix_common::constants::{
     DEFAULT_APP_ID, DEFAULT_CONFIG_PATH, INTUNE_POLICY_TASK_TIMEOUT_SECS,
 };
 use himmelblau_unix_common::db::{Cache, CacheTxn, Db};
-use himmelblau_unix_common::idprovider::himmelblau::HimmelblauMultiProvider;
 use himmelblau_unix_common::idprovider::interface::{Id, IdProvider};
+use himmelblau_unix_common::idprovider::HimmelblauMultiProvider;
 use himmelblau_unix_common::resolver::{AuthSession, Resolver};
 use himmelblau_unix_common::unix_config::UidAttr;
 use himmelblau_unix_common::unix_passwd::{parse_etc_group, parse_etc_passwd};
