@@ -2803,16 +2803,20 @@ impl IdProvider for HimmelblauProvider {
                         ));
                     }
                 };
-                if let Err(e) = tpm.ms_hello_key_load(machine_key, &$hello_key, &pin) {
-                    error!("{:?}", e);
-                    handle_hello_bad_pin_count!(self, account_id, keystore, |msg: &str| {
-                        Ok((AuthResult::Denied(msg.to_string()), AuthCacheAction::None))
-                    });
-                    return Ok((
-                        AuthResult::Denied(tr("Failed to authenticate with Hello PIN.")),
-                        AuthCacheAction::None,
-                    ));
-                }
+                let (_, win_hello_storage_key) =
+                    match tpm.ms_hello_key_load(machine_key, &$hello_key, &pin) {
+                        Ok(keys) => keys,
+                        Err(e) => {
+                            error!("{:?}", e);
+                            handle_hello_bad_pin_count!(self, account_id, keystore, |msg: &str| {
+                                Ok((AuthResult::Denied(msg.to_string()), AuthCacheAction::None))
+                            });
+                            return Ok((
+                                AuthResult::Denied(tr("Failed to authenticate with Hello PIN.")),
+                                AuthCacheAction::None,
+                            ));
+                        }
+                    };
 
                 // If an app_id is defined in the config, the app should have the
                 // GroupMember.Read.All API permission.
@@ -2840,27 +2844,15 @@ impl IdProvider for HimmelblauProvider {
                                         .client
                                         .lock()
                                         .await
-                                        .unseal_user_prt_with_hello_key(
+                                        .unseal_user_prt_with_loaded_hello_key(
                                             &hello_prt,
-                                            &$hello_key,
-                                            &$cred,
+                                            &win_hello_storage_key,
                                             tpm,
                                             machine_key,
                                         );
                                     match unsealed_prt {
-                                        Ok(prt) => match self
-                                            .client
-                                            .lock()
-                                            .await
-                                            .is_prt_expired(&prt, tpm, machine_key)
-                                        {
-                                            Ok(false) => Some(prt),
-                                            Ok(true) => None,
-                                            Err(e) => {
-                                                warn!(?e, "Failed to check cached PRT expiration");
-                                                None
-                                            }
-                                        },
+                                        Ok((prt, false)) => Some(prt),
+                                        Ok((_, true)) => None,
                                         Err(e) => {
                                             warn!(?e, "Failed to unseal cached PRT");
                                             None
@@ -3252,13 +3244,14 @@ impl IdProvider for HimmelblauProvider {
                                 .client
                                 .lock()
                                 .await
-                                .unseal_user_prt_with_hello_key(
+                                .unseal_user_prt_with_loaded_hello_key(
                                     &hello_prt,
-                                    &$hello_key,
-                                    &$cred,
+                                    &win_hello_storage_key,
                                     tpm,
                                     machine_key,
-                                ).ok().map(RefreshCacheEntry::Prt),
+                                )
+                                .ok()
+                                .map(|(prt, _)| RefreshCacheEntry::Prt(prt)),
                             // If we don't have a cached PRT, check for a cached refresh token.
                             Err(_) | Ok(None) => {
                                 match keystore.get_tagged_hsm_key(&hello_refresh_token_tag) {
