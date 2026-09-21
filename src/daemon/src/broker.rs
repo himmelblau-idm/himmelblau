@@ -18,8 +18,8 @@
 use async_trait::async_trait;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine;
-use himmelblau_unix_common::idprovider::himmelblau::HimmelblauMultiProvider;
 use himmelblau_unix_common::idprovider::interface::Id;
+use himmelblau_unix_common::idprovider::HimmelblauMultiProvider;
 use himmelblau_unix_common::resolver::Resolver;
 use identity_dbus_broker::HimmelblauBroker;
 use libc::uid_t;
