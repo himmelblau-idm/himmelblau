@@ -116,6 +116,22 @@ where
     }
 }
 
+fn seal_refresh_token_with_loaded_hello_key(
+    tpm: &mut tpm::provider::BoxedDynTpm,
+    hello_storage_key: &tpm::structures::StorageKey,
+    refresh_token: &str,
+    account_id: &str,
+) -> Result<SealedData, IdpError> {
+    tpm.seal_data(
+        hello_storage_key,
+        Zeroizing::new(refresh_token.as_bytes().to_vec()),
+    )
+    .map_err(|e| {
+        error!(?e, account_id, "Failed to seal refresh token");
+        IdpError::Tpm
+    })
+}
+
 fn unseal_refresh_token_with_loaded_hello_key(
     tpm: &mut tpm::provider::BoxedDynTpm,
     hello_storage_key: &tpm::structures::StorageKey,
@@ -3560,31 +3576,23 @@ impl IdProvider for HimmelblauProvider {
                     }
                 } else {
                     // If there is no PRT, cache the refresh token instead
-                    let pin = PinValue::new(&$cred).map_err(|e| {
-                        error!("Failed initializing pin value: {:?}", e);
-                        IdpError::Tpm
-                    })?;
-                    let (_key, win_hello_storage_key) = tpm
-                        .ms_hello_key_load(machine_key, &$hello_key, &pin)
-                        .map_err(|e| {
-                            error!("Failed loading hello key for prt cache: {:?}", e);
-                            IdpError::Tpm
-                        })?;
-                    let refresh_token_zeroizing =
-                        zeroize::Zeroizing::new(token.refresh_token.as_bytes().to_vec());
-                    tpm.seal_data(&win_hello_storage_key, refresh_token_zeroizing)
+                    let sealed_refresh_token = seal_refresh_token_with_loaded_hello_key(
+                        tpm,
+                        &win_hello_storage_key,
+                        &token.refresh_token,
+                        account_id,
+                    )?;
+                    let hello_refresh_token_tag =
+                        self.fetch_hello_refresh_token_key_tag(account_id);
+                    keystore
+                        .insert_tagged_hsm_key(
+                            &hello_refresh_token_tag,
+                            &sealed_refresh_token,
+                        )
                         .map_err(|e| {
                             let uuid = token.uuid().map(|v| v.to_string()).unwrap_or("".to_string());
-                            error!("Failed to seal refresh token for {}: {:?}", uuid, e);
+                            error!("Failed to cache hello refresh token for {}: {:?}", uuid, e);
                             IdpError::Tpm
-                        })
-                        .and_then(|sealed_prt| {
-                            let hello_prt_tag = self.fetch_hello_refresh_token_key_tag(account_id);
-                            keystore.insert_tagged_hsm_key(&hello_prt_tag, &sealed_prt).map_err(|e| {
-                                let uuid = token.uuid().map(|v| v.to_string()).unwrap_or("".to_string());
-                                error!("Failed to cache hello refresh token for {}: {:?}", uuid, e);
-                                IdpError::Tpm
-                            })
                         })?;
                 }
 
@@ -5953,8 +5961,9 @@ mod tests {
     use super::{
         cached_prt_or_refresh_token, is_device_removed_error, is_mfa_required_for_enrollment,
         is_sspr_required, is_unavailable_mfa_method_error, mfa_flow_uses_push_hint,
-        password_change_required, unexpired_prt_entry, unseal_refresh_token_with_loaded_hello_key,
-        CONSENT_REQUIRED, PASSWORD_RESET_REGISTRATION_REQUIRED,
+        password_change_required, seal_refresh_token_with_loaded_hello_key, unexpired_prt_entry,
+        unseal_refresh_token_with_loaded_hello_key, CONSENT_REQUIRED,
+        PASSWORD_RESET_REGISTRATION_REQUIRED,
     };
     use crate::idprovider::common::RefreshCacheEntry;
     use crate::idprovider::interface::{AuthCacheAction, AuthCredHandler, AuthRequest, AuthResult};
@@ -6091,7 +6100,7 @@ mod tests {
     }
 
     #[test]
-    fn refresh_token_unseal_reuses_loaded_hello_key() -> anyhow::Result<()> {
+    fn refresh_token_storage_reuses_loaded_hello_key() -> anyhow::Result<()> {
         let mut tpm = BoxedDynTpm::new(SoftTpm::new());
         let auth = AuthValue::ephemeral().map_err(|e| anyhow::anyhow!("{e:?}"))?;
         let loadable_machine_key = tpm
@@ -6108,12 +6117,13 @@ mod tests {
             .ms_hello_key_load(&machine_key, &hello_key, &pin)
             .map_err(|e| anyhow::anyhow!("{e:?}"))?;
 
-        let sealed_refresh_token = tpm
-            .seal_data(
-                &hello_storage_key,
-                Zeroizing::new(b"refresh-token".to_vec()),
-            )
-            .map_err(|e| anyhow::anyhow!("{e:?}"))?;
+        let sealed_refresh_token = seal_refresh_token_with_loaded_hello_key(
+            &mut tpm,
+            &hello_storage_key,
+            "refresh-token",
+            "testuser@example.com",
+        )
+        .map_err(|e| anyhow::anyhow!("{e:?}"))?;
         assert_eq!(
             unseal_refresh_token_with_loaded_hello_key(
                 &mut tpm,
