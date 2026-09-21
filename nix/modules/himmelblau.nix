@@ -163,6 +163,19 @@ in
           rules =
             let
               super = config.security.pam.services.${service}.rules;
+              # nixpkgs adds a second, earlier pam_unix rule named
+              # "unix-early" whenever something downstream needs the
+              # password already cached (GNOME keyring, fscrypt,
+              # kwallet, ...). It prompts, and it displaces the main
+              # unix rule to a much later order, so anchoring only to
+              # the main rule puts himmelblau behind a password prompt
+              # and defeats the device code flow. Anchor to whichever
+              # pam_unix rule comes first.
+              authUnixOrder =
+                if super.auth ? unix-early then
+                  lib.min super.auth.unix-early.order super.auth.unix.order
+                else
+                  super.auth.unix.order;
             in
             {
               account.himmelblau = {
@@ -173,7 +186,7 @@ in
                 settings.debug = cfg.debugFlag;
               };
               auth.himmelblau = {
-                order = super.auth.unix.order - 10;
+                order = authUnixOrder - 10;
                 control = "sufficient";
                 modulePath = "${cfg.pamPackage.lib}/lib/libpam_himmelblau.so";
                 settings.mfa_poll_prompt = cfg.mfaSshWorkaroundFlag && service == "sshd";
