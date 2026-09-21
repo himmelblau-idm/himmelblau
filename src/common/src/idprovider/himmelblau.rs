@@ -99,6 +99,22 @@ const THROTTLING_ERROR: u32 = 90055;
 // AADSTS90006: ExternalServerRetryableError - The service is temporarily unavailable.
 const RETRYABLE_ERROR: u32 = 90006;
 
+fn unseal_refresh_token_with_loaded_hello_key(
+    tpm: &mut tpm::provider::BoxedDynTpm,
+    hello_storage_key: &tpm::structures::StorageKey,
+    sealed_refresh_token: &SealedData,
+) -> Result<Option<String>, IdpError> {
+    match tpm.unseal_data(hello_storage_key, sealed_refresh_token) {
+        Ok(refresh_token_bytes) => String::from_utf8(refresh_token_bytes.to_vec())
+            .map(Some)
+            .map_err(|e| {
+                error!(?e, "Failed converting refresh token to string");
+                IdpError::Tpm
+            }),
+        Err(_) => Ok(None),
+    }
+}
+
 fn is_unavailable_mfa_method_error(msg: &str, requested_method: &str) -> bool {
     let expected_prefix =
         format!("Requested MFA method '{requested_method}' not available. Available methods: ");
@@ -3256,27 +3272,15 @@ impl IdProvider for HimmelblauProvider {
                             Err(_) | Ok(None) => {
                                 match keystore.get_tagged_hsm_key(&hello_refresh_token_tag) {
                                     Ok(Some(sealed_refresh_token)) => {
-                                        let pin = PinValue::new(&$cred).map_err(|e| {
-                                            error!("Failed initializing pin value: {:?}", e);
-                                            IdpError::Tpm
-                                        })?;
-                                        let (_key, win_hello_storage_key) = tpm
-                                            .ms_hello_key_load(machine_key, &$hello_key, &pin)
-                                            .map_err(|e| {
-                                                error!("Failed loading hello key for prt cache: {:?}", e);
-                                                IdpError::Tpm
-                                            })?;
-                                        match tpm.unseal_data(&win_hello_storage_key, &sealed_refresh_token) {
-                                            Ok(refresh_token_bytes) => {
-                                                let refresh_token = String::from_utf8(
-                                                    refresh_token_bytes.to_vec(),
-                                                ).map_err(|e| {
-                                                    error!("Failed converting refresh token to string: {:?}", e);
-                                                    IdpError::Tpm
-                                                })?;
-                                                Some(RefreshCacheEntry::RefreshToken(refresh_token))
-                                            }
-                                            Err(_) => in_memory_entry,
+                                        match unseal_refresh_token_with_loaded_hello_key(
+                                            tpm,
+                                            &win_hello_storage_key,
+                                            &sealed_refresh_token,
+                                        )? {
+                                            Some(refresh_token) => Some(
+                                                RefreshCacheEntry::RefreshToken(refresh_token),
+                                            ),
+                                            None => in_memory_entry,
                                         }
                                     }
                                     Err(_) | Ok(None) => in_memory_entry,
@@ -5930,11 +5934,17 @@ mod tests {
     use super::{
         is_device_removed_error, is_mfa_required_for_enrollment, is_sspr_required,
         is_unavailable_mfa_method_error, mfa_flow_uses_push_hint, password_change_required,
-        CONSENT_REQUIRED, PASSWORD_RESET_REGISTRATION_REQUIRED,
+        unseal_refresh_token_with_loaded_hello_key, CONSENT_REQUIRED,
+        PASSWORD_RESET_REGISTRATION_REQUIRED,
     };
     use crate::idprovider::interface::{AuthCacheAction, AuthCredHandler, AuthRequest, AuthResult};
     use himmelblau::error::{AADSTSError, ErrorResponse, MsalError, DEVICE_AUTH_FAIL};
     use himmelblau::{MFAAuthContinue, MfaMethodInfo};
+    use kanidm_hsm_crypto::{
+        provider::{BoxedDynTpm, SoftTpm, Tpm},
+        AuthValue, PinValue,
+    };
+    use zeroize::Zeroizing;
 
     fn should_use_sspr_hello_fallback(e: &MsalError, is_remote_service: bool) -> bool {
         is_sspr_required(e) && !is_remote_service
@@ -6057,6 +6067,68 @@ mod tests {
         assert!(!is_device_removed_error(&[
             PASSWORD_RESET_REGISTRATION_REQUIRED
         ]));
+    }
+
+    #[test]
+    fn refresh_token_unseal_reuses_loaded_hello_key() -> anyhow::Result<()> {
+        let mut tpm = BoxedDynTpm::new(SoftTpm::new());
+        let auth = AuthValue::ephemeral().map_err(|e| anyhow::anyhow!("{e:?}"))?;
+        let loadable_machine_key = tpm
+            .root_storage_key_create(&auth)
+            .map_err(|e| anyhow::anyhow!("{e:?}"))?;
+        let machine_key = tpm
+            .root_storage_key_load(&auth, &loadable_machine_key)
+            .map_err(|e| anyhow::anyhow!("{e:?}"))?;
+        let pin = PinValue::new("123456").map_err(|e| anyhow::anyhow!("{e:?}"))?;
+        let hello_key = tpm
+            .ms_hello_key_create(&machine_key, &pin)
+            .map_err(|e| anyhow::anyhow!("{e:?}"))?;
+        let (_, hello_storage_key) = tpm
+            .ms_hello_key_load(&machine_key, &hello_key, &pin)
+            .map_err(|e| anyhow::anyhow!("{e:?}"))?;
+
+        let sealed_refresh_token = tpm
+            .seal_data(
+                &hello_storage_key,
+                Zeroizing::new(b"refresh-token".to_vec()),
+            )
+            .map_err(|e| anyhow::anyhow!("{e:?}"))?;
+        assert_eq!(
+            unseal_refresh_token_with_loaded_hello_key(
+                &mut tpm,
+                &hello_storage_key,
+                &sealed_refresh_token,
+            )
+            .map_err(|e| anyhow::anyhow!("{e:?}"))?,
+            Some("refresh-token".to_string())
+        );
+
+        let invalid_utf8 = tpm
+            .seal_data(&hello_storage_key, Zeroizing::new(vec![0xff]))
+            .map_err(|e| anyhow::anyhow!("{e:?}"))?;
+        assert!(unseal_refresh_token_with_loaded_hello_key(
+            &mut tpm,
+            &hello_storage_key,
+            &invalid_utf8,
+        )
+        .is_err());
+
+        let other_hello_key = tpm
+            .ms_hello_key_create(&machine_key, &pin)
+            .map_err(|e| anyhow::anyhow!("{e:?}"))?;
+        let (_, other_storage_key) = tpm
+            .ms_hello_key_load(&machine_key, &other_hello_key, &pin)
+            .map_err(|e| anyhow::anyhow!("{e:?}"))?;
+        assert_eq!(
+            unseal_refresh_token_with_loaded_hello_key(
+                &mut tpm,
+                &other_storage_key,
+                &sealed_refresh_token,
+            )
+            .map_err(|e| anyhow::anyhow!("{e:?}"))?,
+            None
+        );
+        Ok(())
     }
 
     #[test]
