@@ -75,6 +75,15 @@ pub enum IpVersionSelection {
     Ipv6Only,
 }
 
+/// Which supplementary groups NSS initgroups publishes.
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub enum InitgroupsMode {
+    /// Only groups that resolve to an NSS name.
+    Named,
+    /// Every cached group GID, including ones getgrgid cannot name.
+    Full,
+}
+
 impl From<JoinType> for u32 {
     fn from(val: JoinType) -> Self {
         // Microsoft Entra ID enrollment join types:
@@ -1363,10 +1372,38 @@ mod tests {
 
         let config_empty = create_empty_config();
         assert_eq!(config_empty.get_ip_version(), IpVersionSelection::Both);
+        assert_eq!(config_empty.get_initgroups_mode(), InitgroupsMode::Named);
         assert_eq!(
             config_empty.get_ip_versions(),
             vec![IpVersion::V4, IpVersion::V6]
         );
+    }
+
+    #[test]
+    fn test_get_initgroups_mode() {
+        let named = r#"
+        [global]
+        initgroups_mode = named
+        "#;
+        let temp_file = create_temp_config(named);
+        let config = HimmelblauConfig::new(Some(&temp_file)).unwrap();
+        assert_eq!(config.get_initgroups_mode(), InitgroupsMode::Named);
+
+        let full = r#"
+        [global]
+        initgroups_mode = full
+        "#;
+        let temp_file = create_temp_config(full);
+        let config = HimmelblauConfig::new(Some(&temp_file)).unwrap();
+        assert_eq!(config.get_initgroups_mode(), InitgroupsMode::Full);
+
+        let invalid = r#"
+        [global]
+        initgroups_mode = debug
+        "#;
+        let temp_file = create_temp_config(invalid);
+        let config = HimmelblauConfig::new(Some(&temp_file)).unwrap();
+        assert_eq!(config.get_initgroups_mode(), InitgroupsMode::Named);
     }
 
     #[test]
