@@ -547,6 +547,28 @@ A comma-separated list of local groups that every Entra ID user should be a memb
 Example: local_groups = sudo,admin
 
 .TP
+.B initgroups_mode
+.RE
+Controls which supplementary groups Himmelblau returns from NSS initgroups.
+
+.RS
+.IP \(bu 2
+named \(em return only groups that resolve to an NSS name (default). A GID that
+.B getgrgid
+cannot name is omitted, so tools such as
+.B groups
+do not fail on an unnamed group id.
+.IP \(bu 2
+full \(em return every cached group GID, including ones with no NSS name. Use this when debugging a missing membership.
+.RE
+
+.P
+Default: named
+
+.P
+Example: initgroups_mode = <named|full>
+
+.TP
 .B local_groups_reconcile_interval
 .RE
 The interval in seconds for periodically reconciling configured local group membership for cached Entra ID users. This keeps the configured local sudo group in sync with sudo_groups between login attempts. Set to 0 to disable periodic reconciliation.

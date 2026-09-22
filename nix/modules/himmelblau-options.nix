@@ -394,6 +394,23 @@ in
       example = [ "sudo" "admin" ];
     };
 
+    initgroups_mode = mkOption {
+      type = types.nullOr (types.enum [ "named" "full" ]);
+      default = "named";
+      description = ''
+        Controls which supplementary groups Himmelblau returns from NSS initgroups.
+        
+        - named -- return only groups that resolve to an NSS name (default). A GID that
+        **getgrgid**
+        cannot name is omitted, so tools such as
+        **groups**
+        do not fail on an unnamed group id.
+        
+        - full -- return every cached group GID, including ones with no NSS name. Use this when debugging a missing membership.
+      '';
+      example = "named";
+    };
+
     local_groups_reconcile_interval = mkOption {
       type = types.nullOr (types.ints.unsigned);
       default = 300;
