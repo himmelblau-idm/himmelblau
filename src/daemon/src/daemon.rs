@@ -1332,8 +1332,24 @@ fn spawn_profile_photo_fetch(
             return;
         }
         match time::timeout_at(time::Instant::now() + Duration::from_secs(60), rx).await {
-            Ok(_) => info!("Fetching user profile picture succeeded"),
-            _ => error!("Fetching user profile picture failed"),
+            Ok(Ok(outcome)) if profile_photo_task_succeeded(&outcome) => {
+                debug!("Profile photo fetch accepted by the tasks daemon");
+            }
+            Ok(Ok(TaskOutcome::Status(status))) => {
+                error!(
+                    "Fetching user profile picture failed: status code {}",
+                    status
+                );
+            }
+            Ok(Ok(TaskOutcome::NonCompliant(_))) => {
+                error!("Fetching user profile picture: unexpected NonCompliant task outcome");
+            }
+            Ok(Err(e)) => {
+                error!("Fetching user profile picture failed: {:?}", e);
+            }
+            Err(e) => {
+                error!("Fetching user profile picture failed: {:?}", e);
+            }
         }
     });
 }
