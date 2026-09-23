@@ -19,7 +19,7 @@ import urllib.parse
 import urllib.request
 
 
-REPOSITORIES = {3: "himmelblau/himmelblau-3", 4: "himmelblau/himmelblau-4"}
+REPOSITORIES = {3: "himmelblau/v_3", 4: "himmelblau/v_4"}
 DESTINATIONS = {
     "ubuntu22.04": "ubuntu/jammy", "ubuntu24.04": "ubuntu/noble",
     "ubuntu25.10": "ubuntu/questing", "ubuntu26.04": "ubuntu/resolute",

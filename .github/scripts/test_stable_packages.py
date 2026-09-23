@@ -72,6 +72,9 @@ class SourceSelectionTests(unittest.TestCase):
         self.assertEqual(sp.DESTINATIONS["rawhide"], "fedora/46")
         self.assertEqual(sp.DESTINATIONS["sle16"], "sles/16")
 
+    def test_cloudsmith_repositories(self):
+        self.assertEqual(sp.REPOSITORIES, {3: "himmelblau/v_3", 4: "himmelblau/v_4"})
+
     def test_expected_identities_include_native_and_independent_architectures(self):
         deb = self.specs("3.1.14", "", "ubuntu24.04", "arm64")[0]
         rpm = self.specs("3.1.14", "", "rocky8", "amd64")[0]
@@ -168,7 +171,7 @@ class SourceSelectionTests(unittest.TestCase):
 class PublicationTests(unittest.TestCase):
     def setUp(self):
         self.spec = {"tag": "4.0.2", "tag_sha": "a" * 40, "source_sha": "b" * 40,
-                     "repository": "himmelblau/himmelblau-4", "distro": "ubuntu24.04",
+                     "repository": "himmelblau/v_4", "distro": "ubuntu24.04",
                      "destination": "ubuntu/noble", "format": "deb", "architecture": "amd64",
                      "expected": ["himmelblau", "pam-himmelblau"]}
         self.spec["expected_packages"] = [
@@ -402,7 +405,7 @@ class PublicationTests(unittest.TestCase):
 class ContainerBuildTests(unittest.TestCase):
     def setUp(self):
         self.spec = {"tag": "4.0.2", "tag_sha": "a" * 40, "source_sha": "b" * 40,
-                     "repository": "himmelblau/himmelblau-4", "distro": "ubuntu24.04",
+                     "repository": "himmelblau/v_4", "distro": "ubuntu24.04",
                      "destination": "ubuntu/noble", "format": "deb", "architecture": "arm64",
                      "platform": "linux/arm64", "scc": False, "expected": ["himmelblau"],
                      "expected_packages": [{"name": "himmelblau", "version": "4.0.2-ubuntu24.04",
