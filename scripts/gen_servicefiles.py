@@ -470,15 +470,19 @@ WantedBy=timers.target
         "PartOf=himmelblaud.service\n"
     )
 
+    # Debian and openSUSE socket units are the same. Write them once.
+    socket_dir = Path(__file__).resolve().parent.parent / "platform" / "systemd"
+    socket_dir.mkdir(parents=True, exist_ok=True)
+
     def write_socket(name: str, desc: str, listen: str, fdname: str, extra: str = "") -> None:
-        (out_dir / name).write_text(
+        (socket_dir / name).write_text(
             f"# You should not need to edit this file. Instead, use a drop-in file:\n"
             f"#   systemctl edit {name}\n\n"
             f"[Unit]\nDescription={desc}\n{socket_header}\n"
             f"[Socket]\nListenStream={listen}\nFileDescriptorName={fdname}\n"
             f"{extra}DirectoryMode=0755\nAccept=false\nService=himmelblaud.service\n"
         )
-        print(f"[gen-systemd] Wrote: {out_dir / name}")
+        print(f"[gen-systemd] Wrote: {socket_dir / name}")
 
     write_socket(
         "himmelblaud.socket",
