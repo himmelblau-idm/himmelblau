@@ -280,12 +280,10 @@ make tumbleweed
 
 Packages will be written to `./packaging/`. You can then copy them to a target machine and install with the native package manager.
 
-> **Note (SLE targets):** For `sle15sp6`, `sle15sp7`, or `sle16` builds, put your SCC email and regcode in `${HOME}/.secrets/scc_regcode`, formatted as follows:
-
-```
-email=SCC_REGISTRATION_EMAIL
-regcode=SCC_REGISTRATION_CODE
-```
+> **Note (SLE targets):** SLE 15 SP6 uses the binary-compatible Leap 15.6 build
+> root. SLE 15 SP7 uses an official SP7 BCI development image with the public
+> SP7 Backports and Backports Update repositories. SLE 16 uses its free BCI base
+> with the Leap 16 OSS repository. No SCC credentials are required.
 
 ### Uninstall
 

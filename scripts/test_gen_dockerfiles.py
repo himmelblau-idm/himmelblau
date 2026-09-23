@@ -44,5 +44,37 @@ class PackagingToolTests(unittest.TestCase):
                         self.assertNotIn("cargo install", dockerfile)
 
 
+class SleRepositoryTests(unittest.TestCase):
+    def test_sle_uses_public_repositories_without_registration(self):
+        expected = {
+            "sle15sp6": ("opensuse/leap:15.6", None),
+            "sle15sp7": (
+                "registry.suse.com/bci/ruby:2.5",
+                "https://download.opensuse.org/repositories/openSUSE:/Backports:/SLE-15-SP7/standard/",
+            ),
+            "sle16": (
+                "registry.suse.com/bci/bci-base:16.0",
+                "https://download.opensuse.org/distribution/leap/16.0/repo/oss",
+            ),
+        }
+
+        for name, (image, repository) in expected.items():
+            with self.subTest(distro=name):
+                config = gen_dockerfiles.DISTS[name]
+                dockerfile = gen_dockerfiles.render(
+                    name, config, patch_libhimmelblau=False, arch="amd64"
+                )
+                self.assertNotIn("scc", config)
+                self.assertIn(f"FROM {image}", dockerfile)
+                if repository:
+                    self.assertIn(repository, dockerfile)
+                if name == "sle15sp7":
+                    self.assertIn("openSUSE:/Backports:/SLE-15-SP7:/Update", dockerfile)
+                    self.assertIn("clang14", dockerfile)
+                    self.assertNotIn("opensuse/leap:15.6", dockerfile)
+                self.assertNotIn("SUSEConnect", dockerfile)
+                self.assertNotIn("scc_regcode", dockerfile)
+
+
 if __name__ == "__main__":
     unittest.main()
