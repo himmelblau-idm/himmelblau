@@ -498,11 +498,75 @@ fn resolve_profile_photo_account_id(cfg: &HimmelblauConfig, upn: &str) -> String
         .unwrap_or_else(|| cfg.map_upn_to_name(upn))
 }
 
+#[cfg(test)]
 fn profile_photo_task_response(outcome: Result<(), String>) -> TaskResponse {
     match outcome {
         Ok(()) => TaskResponse::Success(0),
         Err(e) => TaskResponse::Error(e),
     }
+}
+
+async fn load_profile_photo(
+    cfg: &HimmelblauConfig,
+    upn: &str,
+    access_token: &str,
+) -> Result<(), String> {
+    let icons_dir = Path::new("/var/lib/AccountsService/icons/");
+    if !icons_dir.exists() {
+        return Err(format!(
+            "Profile photo directory '{}' doesn't exist",
+            icons_dir.display()
+        ));
+    }
+
+    let domain = split_username(upn)
+        .map(|(_, domain)| domain)
+        .ok_or_else(|| format!("Couldn't parse domain from UPN '{upn}'"))?;
+
+    // Resolve mapped UPNs back to the local account that owns the avatar.
+    let account_id = resolve_profile_photo_account_id(cfg, upn);
+
+    // Reject invalid account identifiers before resolving them through
+    // AccountsService. Stripping characters could select a different user.
+    if account_id.is_empty()
+        || !account_id
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '@' | '.' | '_' | '-'))
+    {
+        return Err(format!(
+            "Invalid account_id '{account_id}' for profile photo - disallowed characters"
+        ));
+    }
+
+    let profile_photo = create_profile_photo_temp_file(icons_dir)
+        .map_err(|e| format!("Failed creating profile photo: {e:?}"))?;
+    let file = profile_photo
+        .reopen()
+        .map_err(|e| format!("Failed opening profile photo: {e:?}"))?;
+    let authority_host = cfg.get_authority_host(domain);
+    let tenant_id = cfg.get_tenant_id(domain);
+    let graph_url = cfg.get_graph_url(domain);
+    let ip_versions = cfg.get_ip_versions();
+    let request_timeout = cfg.get_request_timeout();
+    let graph = Graph::new(
+        &cfg.get_odc_provider(domain),
+        domain,
+        Some(&authority_host),
+        tenant_id.as_deref(),
+        graph_url.as_deref(),
+        Duration::from_secs(request_timeout),
+        &ip_versions,
+    )
+    .await
+    .map_err(|e| format!("Failed creating Graph client: {e:?}"))?;
+    graph
+        .fetch_user_profile_photo(access_token, file)
+        .await
+        .map_err(|e| format!("Failed fetching profile photo: {e:?}"))?;
+    set_accountsservice_icon(&account_id, profile_photo.path())
+        .await
+        .map_err(|e| format!("Failed updating AccountsService profile photo: {e:?}"))?;
+    Ok(())
 }
 
 fn store_tgt(tgt: &KerberosCredentials, uid: uid_t, gid: uid_t) -> Result<(), String> {
@@ -731,78 +795,16 @@ async fn handle_tasks(stream: UnixStream, cfg: &HimmelblauConfig) {
             }
             Some(Ok(TaskRequest::LoadProfilePhoto(account_id, access_token))) => {
                 debug!("Received task -> LoadProfilePhoto(...)");
-                let icons_dir = Path::new("/var/lib/AccountsService/icons/");
-
-                let outcome: Result<(), String> = async {
-                    if !icons_dir.exists() {
-                        return Err(format!(
-                            "Profile photo directory '{}' doesn't exist",
-                            icons_dir.display()
-                        ));
+                // Reply before Graph runs. This socket also serves HomeDirectory,
+                // and that request gives up after one second.
+                let cfg = cfg.clone();
+                tokio::spawn(async move {
+                    match load_profile_photo(&cfg, &account_id, &access_token).await {
+                        Ok(()) => info!("Fetching user profile picture succeeded"),
+                        Err(e) => error!("{e}"),
                     }
-
-                    let upn = account_id.clone();
-                    let domain = split_username(&upn)
-                        .map(|(_, domain)| domain)
-                        .ok_or_else(|| format!("Couldn't parse domain from UPN '{upn}'"))?;
-
-                    // Resolve mapped UPNs back to the local account that owns the avatar.
-                    let account_id = resolve_profile_photo_account_id(cfg, &upn);
-
-                    // Reject invalid account identifiers before resolving them through
-                    // AccountsService. Stripping characters could select a different user.
-                    if account_id.is_empty()
-                        || !account_id.chars().all(|c| {
-                            c.is_ascii_alphanumeric() || matches!(c, '@' | '.' | '_' | '-')
-                        })
-                    {
-                        return Err(format!(
-                            "Invalid account_id '{account_id}' for profile photo - disallowed characters"
-                        ));
-                    }
-
-                    if icons_dir.join(&account_id).is_file() {
-                        debug!("Profile photo already present, skipping fetch");
-                        return Ok(());
-                    }
-
-                    let profile_photo = create_profile_photo_temp_file(icons_dir)
-                        .map_err(|e| format!("Failed creating profile photo: {e:?}"))?;
-                    let file = profile_photo
-                        .reopen()
-                        .map_err(|e| format!("Failed opening profile photo: {e:?}"))?;
-                    let authority_host = cfg.get_authority_host(domain);
-                    let tenant_id = cfg.get_tenant_id(domain);
-                    let graph_url = cfg.get_graph_url(domain);
-                    let ip_versions = cfg.get_ip_versions();
-                    let request_timeout = cfg.get_request_timeout();
-                    let graph = Graph::new(
-                        &cfg.get_odc_provider(domain),
-                        domain,
-                        Some(&authority_host),
-                        tenant_id.as_deref(),
-                        graph_url.as_deref(),
-                        Duration::from_secs(request_timeout),
-                        &ip_versions,
-                    )
-                    .await
-                    .map_err(|e| format!("Failed creating Graph client: {e:?}"))?;
-                    graph
-                        .fetch_user_profile_photo(&access_token, file)
-                        .await
-                        .map_err(|e| format!("Failed fetching profile photo: {e:?}"))?;
-                    set_accountsservice_icon(&account_id, profile_photo.path())
-                        .await
-                        .map_err(|e| format!("Failed updating AccountsService profile photo: {e:?}"))?;
-                    Ok(())
-                }
-                .await;
-
-                if let Err(e) = &outcome {
-                    error!("{}", e);
-                }
-                let response = profile_photo_task_response(outcome);
-                if let Err(e) = reqs.send(response).await {
+                });
+                if let Err(e) = reqs.send(TaskResponse::Success(0)).await {
                     error!("Error -> {:?}", e);
                     return;
                 }

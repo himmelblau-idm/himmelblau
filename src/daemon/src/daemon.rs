@@ -1292,7 +1292,7 @@ fn spawn_profile_photo_fetch(
         }
         match time::timeout_at(time::Instant::now() + Duration::from_secs(60), rx).await {
             Ok(Ok(outcome)) if profile_photo_task_succeeded(&outcome) => {
-                info!("Fetching user profile picture succeeded");
+                debug!("Profile photo fetch accepted by the tasks daemon");
             }
             Ok(Ok(TaskOutcome::Status(status))) => {
                 error!(
