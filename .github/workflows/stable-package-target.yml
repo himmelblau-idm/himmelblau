@@ -9,6 +9,9 @@ on:
       tooling_sha:
         required: true
         type: string
+      refresh_build_container:
+        default: false
+        type: boolean
     secrets:
       CLOUDSMITH_PACKAGE_PUBLISHER:
         required: true
@@ -21,10 +24,35 @@ permissions:
   contents: read
 
 jobs:
+  preflight:
+    name: Checking Cloudsmith ${{ fromJSON(inputs.spec).distro }} ${{ fromJSON(inputs.spec).architecture }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      build_required: ${{ steps.check.outputs.build_required }}
+    steps:
+      - name: Checkout release tooling
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.tooling_sha }}
+          path: tooling
+          persist-credentials: false
+      - name: Check complete package set in Cloudsmith
+        id: check
+        env:
+          TARGET_SPEC: ${{ inputs.spec }}
+          CLOUDSMITH_API_KEY: ${{ secrets.CLOUDSMITH_PACKAGE_PUBLISHER }}
+        run: python3 tooling/.github/scripts/stable_packages.py preflight
+
   build:
-    name: Build ${{ fromJSON(inputs.spec).distro }} / ${{ fromJSON(inputs.spec).architecture }}
+    needs: preflight
+    if: needs.preflight.outputs.build_required == 'true'
+    name: Building ${{ fromJSON(inputs.spec).distro }} ${{ fromJSON(inputs.spec).architecture }}
     runs-on: ${{ fromJSON(inputs.spec).runner }}
     timeout-minutes: 330
+    permissions:
+      contents: read
+      packages: write
     steps:
       - name: Checkout release tooling
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -38,12 +66,39 @@ jobs:
           ref: ${{ fromJSON(inputs.spec).source_sha }}
           path: source
           persist-credentials: false
+      # SUSE registration persists in image layers; do not export those layers.
+      - name: Log in to the build-container cache registry
+        if: ${{ !fromJSON(inputs.spec).scc }}
+        id: cache-login
+        continue-on-error: true
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+      - name: Set up the build-container cache builder
+        if: ${{ !fromJSON(inputs.spec).scc && steps.cache-login.outcome == 'success' }}
+        id: cache-builder
+        continue-on-error: true
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
+        with:
+          driver: docker-container
+      - name: Report uncached build fallback
+        if: ${{ !fromJSON(inputs.spec).scc && (steps.cache-login.outcome != 'success' || steps.cache-builder.outcome != 'success') }}
+        run: echo "::warning::Build-container cache setup failed; building without the registry cache."
       - name: Build and validate packages using the generated container
         env:
           TARGET_SPEC: ${{ inputs.spec }}
           SCC_EMAIL: ${{ fromJSON(inputs.spec).scc && secrets.SCC_EMAIL || '' }}
           SCC_REGCODE: ${{ fromJSON(inputs.spec).scc && secrets.SCC_REGCODE || '' }}
-        run: python3 tooling/.github/scripts/stable_packages.py build --source source --artifacts artifacts
+          BUILD_CONTAINER_CACHE_REF: ${{ !fromJSON(inputs.spec).scc && steps.cache-login.outcome == 'success' && steps.cache-builder.outcome == 'success' && format('ghcr.io/himmelblau-idm/himmelblau-build-cache:v1-{0}-{1}', fromJSON(inputs.spec).distro, fromJSON(inputs.spec).architecture) || '' }}
+          REFRESH_BUILD_CONTAINER: ${{ inputs.refresh_build_container }}
+        run: |
+          BUILD_ARGS=(--source source --artifacts artifacts --container-cache-ref "$BUILD_CONTAINER_CACHE_REF")
+          if [ "$REFRESH_BUILD_CONTAINER" = true ]; then
+            BUILD_ARGS+=(--refresh-build-container)
+          fi
+          python3 tooling/.github/scripts/stable_packages.py build "${BUILD_ARGS[@]}"
       - name: Retain complete validated package set
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
@@ -53,7 +108,7 @@ jobs:
           retention-days: 14
 
   publish:
-    name: Publish ${{ fromJSON(inputs.spec).distro }} / ${{ fromJSON(inputs.spec).architecture }}
+    name: Publishing ${{ fromJSON(inputs.spec).distro }} ${{ fromJSON(inputs.spec).architecture }}
     needs: build
     runs-on: ubuntu-24.04
     timeout-minutes: 45
