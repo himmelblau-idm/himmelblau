@@ -10176,9 +10176,9 @@ rec {
       };
       "libhimmelblau" = rec {
         crateName = "libhimmelblau";
-        version = "0.8.40";
+        version = "0.8.42";
         edition = "2021";
-        sha256 = "14br87qvafa650263s96lyqlms9gcqrsxnn5gg8xgpzl4798jzxh";
+        sha256 = "05nnrr10x1yqj04wslxr1saqxmwi81sxjnnwyp8kqxq9gsqw1lpr";
         libName = "himmelblau";type = [ "rlib" "cdylib" ];
         authors = [
           "David Mulder <dmulder@suse.com>"
@@ -10296,10 +10296,6 @@ rec {
             name = "tracing-subscriber";
             packageId = "tracing-subscriber";
             features = [ "env-filter" ];
-          }
-          {
-            name = "urlencoding";
-            packageId = "urlencoding";
           }
           {
             name = "uuid";
