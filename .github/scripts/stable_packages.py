@@ -151,6 +151,10 @@ def matrix(tag, revision="", distro="all", architecture="all"):
                     "repository": REPOSITORIES[major], "distro": target,
                     "destination": DESTINATIONS[target], "format": fmt,
                     "architecture": arch, "scc": bool(cfg.get("scc")),
+                    "supported_architectures": [
+                        candidate for candidate in ARCHITECTURES
+                        if candidate != "arm64" or cfg.get("arm64", True)
+                    ],
                     "expected": expected,
                     "expected_packages": [dict(package, architectures=[arch, "all"] if fmt == "deb"
                                                else [info["rpm"], "noarch"]) for package in definitions], **info}
@@ -288,11 +292,13 @@ def build(source, artifacts, spec, *, container_cache_ref="", refresh_build_cont
             subprocess.run(["docker", "image", "rm", "-f", image], check=False, stdout=subprocess.DEVNULL)
 
 
-def api_packages(repository, fmt, tag):
-    # Include untagged packages, but avoid scanning the repository's entire history.
+def api_packages(repository, fmt, tag=None):
+    # Current-version checks stay narrow. Cleanup deliberately inventories the
+    # format's history so it can remove untagged packages from older workflows.
     packages, page = [], 1
     while True:
-        query = urllib.parse.urlencode({"query": f"format:{fmt} version:{tag}-*", "page_size": 100, "page": page})
+        search = f"format:{fmt}" + (f" version:{tag}-*" if tag else "")
+        query = urllib.parse.urlencode({"query": search, "page_size": 100, "page": page})
         request = urllib.request.Request(f"https://api.cloudsmith.io/v1/packages/{repository}/?{query}",
                                          headers={"X-Api-Key": os.environ["CLOUDSMITH_API_KEY"]})
         for attempt in range(3):
@@ -400,6 +406,154 @@ def validate_artifacts(artifacts, spec):
     return records
 
 
+def release_version(package):
+    match = re.match(r"^(\d+)\.(\d+)\.(\d+)(?:-|$)", package.get("version", ""))
+    return tuple(map(int, match.groups())) if match else None
+
+
+def native_architecture(spec, architecture):
+    return architecture if spec["format"] == "deb" else ARCHITECTURES[architecture]["rpm"]
+
+
+def independent_architecture(spec):
+    return "all" if spec["format"] == "deb" else "noarch"
+
+
+def target_package(package, spec):
+    distro, release = spec["destination"].split("/")
+    return (package.get("format") == spec["format"] and
+            package.get("name") in spec["expected"] and
+            package.get("epoch") in (None, 0, "0") and
+            (package.get("distro") or {}).get("slug") == distro and
+            (package.get("distro_version") or {}).get("slug") == release)
+
+
+def package_architectures(package):
+    return {architecture["name"] for architecture in package.get("architectures", [])}
+
+
+def serves_architecture(package, spec, architecture):
+    allowed = {native_architecture(spec, architecture), independent_architecture(spec)}
+    return bool(package_architectures(package).intersection(allowed))
+
+
+def release_packages(packages, spec, release, architecture, name):
+    return [package for package in packages
+            if target_package(package, spec) and package.get("name") == name and
+            release_version(package) == release and serves_architecture(package, spec, architecture)]
+
+
+def complete_release(packages, spec, release, architecture, *, reject_duplicates=False):
+    for name in spec["expected"]:
+        matches = release_packages(packages, spec, release, architecture, name)
+        if len(matches) > 1:
+            if reject_duplicates:
+                raise ValueError(
+                    f"Multiple {release[0]}.{release[1]}.{release[2]} packages match "
+                    f"{name} for {spec['distro']} / {architecture}; refusing cleanup")
+            return False
+        if (not matches or matches[0].get("is_sync_failed") or
+                not matches[0].get("is_sync_completed", False)):
+            return False
+    return True
+
+
+def cleanup_plan(packages, spec):
+    current = tuple(map(int, spec["tag"].split(".")))
+    supported = spec.get("supported_architectures", [spec["architecture"]])
+    releases = {release_version(package) for package in packages if target_package(package, spec)}
+    releases.discard(None)
+    releases = {release for release in releases if release[0] == current[0] and release >= current}
+    complete = [release for release in releases
+                if complete_release(packages, spec, release, spec["architecture"],
+                                    reject_duplicates=True)]
+    if current not in complete:
+        raise RuntimeError("Cloudsmith cleanup did not find the complete synchronized current target")
+    retained = max(complete)
+    coverage = {
+        architecture: complete_release(packages, spec, retained, architecture)
+        for architecture in supported
+    }
+    independent = independent_architecture(spec)
+    deletions = []
+    for package in packages:
+        release = release_version(package)
+        if (not target_package(package, spec) or release is None or
+                release[0] != current[0] or release >= retained or
+                not serves_architecture(package, spec, spec["architecture"])):
+            continue
+        architectures = package_architectures(package)
+        if independent in architectures:
+            replacements = release_packages(
+                packages, spec, retained, spec["architecture"], package["name"])
+            independent_replacement = any(
+                independent in package_architectures(replacement) and
+                replacement.get("is_sync_completed", False) and
+                not replacement.get("is_sync_failed")
+                for replacement in replacements)
+            if not independent_replacement and not all(coverage.values()):
+                continue
+        identifier = package.get("slug_perm")
+        if not isinstance(identifier, str) or not identifier or package.get("is_deleteable") is False:
+            raise ValueError(f"Older {package.get('name', 'package')} cannot be safely deleted")
+        deletions.append(package)
+    identifiers = [package["slug_perm"] for package in deletions]
+    if len(identifiers) != len(set(identifiers)):
+        raise ValueError("Cloudsmith returned duplicate package identifiers; refusing cleanup")
+    return retained, deletions
+
+
+def delete_package(repository, identifier):
+    owner, repo = repository.split("/", 1)
+    parts = [urllib.parse.quote(part, safe="") for part in (owner, repo, identifier)]
+    request = urllib.request.Request(
+        f"https://api.cloudsmith.io/v1/packages/{'/'.join(parts)}/",
+        headers={"X-Api-Key": os.environ["CLOUDSMITH_API_KEY"]}, method="DELETE")
+    for attempt in range(3):
+        try:
+            with urllib.request.urlopen(request, timeout=30):
+                return
+        except urllib.error.HTTPError as exc:
+            if exc.code == 404:
+                return
+            if exc.code not in {429, 500, 502, 503, 504} or attempt == 2:
+                raise RuntimeError(
+                    f"Cloudsmith package deletion failed (HTTP {exc.code}); no credentials logged") from None
+            time.sleep(2 ** attempt)
+        except urllib.error.URLError:
+            if attempt == 2:
+                raise RuntimeError("Cloudsmith package deletion failed; no credentials logged") from None
+            time.sleep(2 ** attempt)
+
+
+def wait_for_deletions(repository, fmt, identifiers):
+    identifiers = set(identifiers)
+    for attempt in range(30):
+        remaining = identifiers.intersection(
+            package.get("slug_perm") for package in api_packages(repository, fmt))
+        if not remaining:
+            return
+        if attempt == 29:
+            raise RuntimeError("Deleted Cloudsmith packages remained visible after five minutes")
+        time.sleep(10)
+
+
+def cleanup(spec):
+    require_api_key()
+    if synchronized_missing(spec["expected_packages"], spec):
+        raise RuntimeError("Cloudsmith cleanup requires the complete synchronized current target")
+    packages = api_packages(spec["repository"], spec["format"])
+    retained, deletions = cleanup_plan(packages, spec)
+    for package in deletions:
+        delete_package(spec["repository"], package["slug_perm"])
+    wait_for_deletions(spec["repository"], spec["format"],
+                       [package["slug_perm"] for package in deletions])
+    retained_tag = ".".join(map(str, retained))
+    summary(f"Reconciled `{spec['distro']}` / `{spec['architecture']}` in "
+            f"`{spec['repository']}/{spec['destination']}`: retained `{retained_tag}`, "
+            f"deleted {len(deletions)} older packages.")
+
+
 def publish(artifacts, spec):
     require_api_key()
     records = validate_artifacts(artifacts, spec)
@@ -418,7 +572,7 @@ def publish(artifacts, spec):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=["prepare", "tag", "preflight", "build", "publish"])
+    parser.add_argument("command", choices=["prepare", "tag", "preflight", "build", "publish", "cleanup"])
     parser.add_argument("--source", type=Path, default=Path("source"))
     parser.add_argument("--artifacts", type=Path, default=Path("artifacts"))
     parser.add_argument("--container-cache-ref", default="",
@@ -439,8 +593,10 @@ def main():
                 build(args.source, args.artifacts, spec,
                       container_cache_ref=args.container_cache_ref,
                       refresh_build_container=args.refresh_build_container)
-            else:
+            elif args.command == "publish":
                 publish(args.artifacts, spec)
+            else:
+                cleanup(spec)
     except (ValueError, KeyError, RuntimeError, subprocess.CalledProcessError) as exc:
         parser.exit(1, f"Stable package operation failed: {exc}\n")
 
