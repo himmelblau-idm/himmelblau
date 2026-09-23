@@ -99,6 +99,10 @@ const THROTTLING_ERROR: u32 = 90055;
 // AADSTS90006: ExternalServerRetryableError - The service is temporarily unavailable.
 const RETRYABLE_ERROR: u32 = 90006;
 
+fn unexpired_prt_entry(prt: SealedData, prt_expired: bool) -> Option<RefreshCacheEntry> {
+    (!prt_expired).then_some(RefreshCacheEntry::Prt(prt))
+}
+
 fn unseal_refresh_token_with_loaded_hello_key(
     tpm: &mut tpm::provider::BoxedDynTpm,
     hello_storage_key: &tpm::structures::StorageKey,
@@ -3267,7 +3271,9 @@ impl IdProvider for HimmelblauProvider {
                                     machine_key,
                                 )
                                 .ok()
-                                .map(|(prt, _)| RefreshCacheEntry::Prt(prt)),
+                                .and_then(|(prt, prt_expired)| {
+                                    unexpired_prt_entry(prt, prt_expired)
+                                }),
                             // If we don't have a cached PRT, check for a cached refresh token.
                             Err(_) | Ok(None) => {
                                 match keystore.get_tagged_hsm_key(&hello_refresh_token_tag) {
@@ -5934,9 +5940,10 @@ mod tests {
     use super::{
         is_device_removed_error, is_mfa_required_for_enrollment, is_sspr_required,
         is_unavailable_mfa_method_error, mfa_flow_uses_push_hint, password_change_required,
-        unseal_refresh_token_with_loaded_hello_key, CONSENT_REQUIRED,
+        unexpired_prt_entry, unseal_refresh_token_with_loaded_hello_key, CONSENT_REQUIRED,
         PASSWORD_RESET_REGISTRATION_REQUIRED,
     };
+    use crate::idprovider::common::RefreshCacheEntry;
     use crate::idprovider::interface::{AuthCacheAction, AuthCredHandler, AuthRequest, AuthResult};
     use himmelblau::error::{AADSTSError, ErrorResponse, MsalError, DEVICE_AUTH_FAIL};
     use himmelblau::{MFAAuthContinue, MfaMethodInfo};
@@ -6128,6 +6135,12 @@ mod tests {
             .map_err(|e| anyhow::anyhow!("{e:?}"))?,
             None
         );
+
+        assert!(matches!(
+            unexpired_prt_entry(sealed_refresh_token.clone(), false),
+            Some(RefreshCacheEntry::Prt(_))
+        ));
+        assert!(unexpired_prt_entry(sealed_refresh_token, true).is_none());
         Ok(())
     }
 
