@@ -103,6 +103,19 @@ fn unexpired_prt_entry(prt: SealedData, prt_expired: bool) -> Option<RefreshCach
     (!prt_expired).then_some(RefreshCacheEntry::Prt(prt))
 }
 
+fn cached_prt_or_refresh_token<F>(
+    cached_prt: Option<RefreshCacheEntry>,
+    load_refresh_token: F,
+) -> Result<Option<RefreshCacheEntry>, IdpError>
+where
+    F: FnOnce() -> Result<Option<RefreshCacheEntry>, IdpError>,
+{
+    match cached_prt {
+        Some(cached_prt) => Ok(Some(cached_prt)),
+        None => load_refresh_token(),
+    }
+}
+
 fn unseal_refresh_token_with_loaded_hello_key(
     tpm: &mut tpm::provider::BoxedDynTpm,
     hello_storage_key: &tpm::structures::StorageKey,
@@ -3259,7 +3272,7 @@ impl IdProvider for HimmelblauProvider {
                     ) {
                         in_memory_entry
                     } else {
-                        match keystore.get_tagged_hsm_key(&hello_prt_tag) {
+                        let cached_prt = match keystore.get_tagged_hsm_key(&hello_prt_tag) {
                             Ok(Some(hello_prt)) => self
                                 .client
                                 .lock()
@@ -3274,25 +3287,25 @@ impl IdProvider for HimmelblauProvider {
                                 .and_then(|(prt, prt_expired)| {
                                     unexpired_prt_entry(prt, prt_expired)
                                 }),
-                            // If we don't have a cached PRT, check for a cached refresh token.
-                            Err(_) | Ok(None) => {
-                                match keystore.get_tagged_hsm_key(&hello_refresh_token_tag) {
-                                    Ok(Some(sealed_refresh_token)) => {
-                                        match unseal_refresh_token_with_loaded_hello_key(
-                                            tpm,
-                                            &win_hello_storage_key,
-                                            &sealed_refresh_token,
-                                        )? {
-                                            Some(refresh_token) => Some(
-                                                RefreshCacheEntry::RefreshToken(refresh_token),
-                                            ),
-                                            None => in_memory_entry,
-                                        }
+                            Err(_) | Ok(None) => None,
+                        };
+                        cached_prt_or_refresh_token(cached_prt, || {
+                            match keystore.get_tagged_hsm_key(&hello_refresh_token_tag) {
+                                Ok(Some(sealed_refresh_token)) => {
+                                    match unseal_refresh_token_with_loaded_hello_key(
+                                        tpm,
+                                        &win_hello_storage_key,
+                                        &sealed_refresh_token,
+                                    )? {
+                                        Some(refresh_token) => Ok(Some(
+                                            RefreshCacheEntry::RefreshToken(refresh_token),
+                                        )),
+                                        None => Ok(in_memory_entry),
                                     }
-                                    Err(_) | Ok(None) => in_memory_entry,
                                 }
-                            },
-                        }
+                                Err(_) | Ok(None) => Ok(in_memory_entry),
+                            }
+                        })?
                     };
                     if let Some(RefreshCacheEntry::Prt(prt)) = refresh_cache_entry {
                         prt_cache_update = PrtCacheUpdate::Reused;
@@ -5938,10 +5951,10 @@ impl HimmelblauProvider {
 #[cfg(test)]
 mod tests {
     use super::{
-        is_device_removed_error, is_mfa_required_for_enrollment, is_sspr_required,
-        is_unavailable_mfa_method_error, mfa_flow_uses_push_hint, password_change_required,
-        unexpired_prt_entry, unseal_refresh_token_with_loaded_hello_key, CONSENT_REQUIRED,
-        PASSWORD_RESET_REGISTRATION_REQUIRED,
+        cached_prt_or_refresh_token, is_device_removed_error, is_mfa_required_for_enrollment,
+        is_sspr_required, is_unavailable_mfa_method_error, mfa_flow_uses_push_hint,
+        password_change_required, unexpired_prt_entry, unseal_refresh_token_with_loaded_hello_key,
+        CONSENT_REQUIRED, PASSWORD_RESET_REGISTRATION_REQUIRED,
     };
     use crate::idprovider::common::RefreshCacheEntry;
     use crate::idprovider::interface::{AuthCacheAction, AuthCredHandler, AuthRequest, AuthResult};
@@ -5951,6 +5964,7 @@ mod tests {
         provider::{BoxedDynTpm, SoftTpm, Tpm},
         AuthValue, PinValue,
     };
+    use std::cell::Cell;
     use zeroize::Zeroizing;
 
     fn should_use_sspr_hello_fallback(e: &MsalError, is_remote_service: bool) -> bool {
@@ -6140,7 +6154,35 @@ mod tests {
             unexpired_prt_entry(sealed_refresh_token.clone(), false),
             Some(RefreshCacheEntry::Prt(_))
         ));
-        assert!(unexpired_prt_entry(sealed_refresh_token, true).is_none());
+
+        let refresh_fallback_used = Cell::new(false);
+        let selected_entry = cached_prt_or_refresh_token(
+            unexpired_prt_entry(sealed_refresh_token.clone(), true),
+            || {
+                refresh_fallback_used.set(true);
+                Ok(Some(RefreshCacheEntry::RefreshToken(
+                    "refresh-token".to_string(),
+                )))
+            },
+        )
+        .map_err(|e| anyhow::anyhow!("{e:?}"))?;
+        assert!(matches!(
+            selected_entry,
+            Some(RefreshCacheEntry::RefreshToken(_))
+        ));
+        assert!(refresh_fallback_used.get());
+
+        refresh_fallback_used.set(false);
+        let selected_entry =
+            cached_prt_or_refresh_token(unexpired_prt_entry(sealed_refresh_token, false), || {
+                refresh_fallback_used.set(true);
+                Ok(Some(RefreshCacheEntry::RefreshToken(
+                    "refresh-token".to_string(),
+                )))
+            })
+            .map_err(|e| anyhow::anyhow!("{e:?}"))?;
+        assert!(matches!(selected_entry, Some(RefreshCacheEntry::Prt(_))));
+        assert!(!refresh_fallback_used.get());
         Ok(())
     }
 
