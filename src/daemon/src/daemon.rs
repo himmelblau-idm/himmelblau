@@ -25,7 +25,7 @@ use std::fs::metadata;
 use std::io;
 use std::io::Error as IoError;
 use std::os::unix::fs::MetadataExt;
-use std::os::unix::io::FromRawFd;
+use std::os::unix::io::{FromRawFd, RawFd};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::sync::Arc;
@@ -55,7 +55,7 @@ use idmap::{gen_subid_start, SUBID_COUNT};
 use uuid::Uuid;
 
 use kanidm_utils_users::{get_current_gid, get_current_uid, get_effective_gid, get_effective_uid};
-use libc::umask;
+use libc::{close, umask};
 use sd_notify::NotifyState;
 use sketching::tracing_forest::traits::*;
 use sketching::tracing_forest::util::*;
@@ -174,6 +174,47 @@ impl Encoder<TaskRequest> for TaskCodec {
         })?;
         dst.put(data.as_slice());
         Ok(())
+    }
+}
+
+/// ListenStream paths in platform/systemd. The config defaults use /var/run,
+/// which is the same directory as /run.
+const ACTIVATED_MAIN_SOCKET: &str = "/run/himmelblaud/socket";
+const ACTIVATED_TASK_SOCKET: &str = "/run/himmelblaud/task_sock";
+const ACTIVATED_BROKER_SOCKET: &str = "/run/himmelblaud/broker_sock";
+
+fn normalize_socket_path(path: &str) -> String {
+    let trimmed = path.trim_end_matches('/');
+    if let Some(rest) = trimmed.strip_prefix("/var/run/") {
+        format!("/run/{rest}")
+    } else if trimmed == "/var/run" {
+        "/run".to_string()
+    } else {
+        trimmed.to_string()
+    }
+}
+
+fn socket_paths_equivalent(configured: &str, activated: &str) -> bool {
+    normalize_socket_path(configured) == normalize_socket_path(activated)
+}
+
+/// Drop a socket-activated fd when himmelblau.conf names a different path.
+/// PAM, NSS, and the CLI connect to the configured path, not the unit path.
+fn release_activated_socket_unless_configured(
+    activated: &mut Option<RawFd>,
+    configured: &str,
+    unit_path: &str,
+) {
+    if socket_paths_equivalent(configured, unit_path) {
+        return;
+    }
+    if let Some(fd) = activated.take() {
+        debug!(
+            configured,
+            unit_path, "socket path is not the systemd unit path; binding the configured path"
+        );
+        // SAFETY: this fd was passed in by systemd and is owned by this process.
+        let _ = unsafe { close(fd) };
     }
 }
 
@@ -1460,6 +1501,26 @@ mod tests {
     const ACCOUNT_ID: &str = "user@example.com";
 
     #[test]
+    fn default_socket_paths_match_the_systemd_units() {
+        assert!(socket_paths_equivalent(
+            "/var/run/himmelblaud/socket",
+            ACTIVATED_MAIN_SOCKET
+        ));
+        assert!(socket_paths_equivalent(
+            "/run/himmelblaud/task_sock/",
+            ACTIVATED_TASK_SOCKET
+        ));
+        assert!(socket_paths_equivalent(
+            "/var/run/himmelblaud/broker_sock",
+            ACTIVATED_BROKER_SOCKET
+        ));
+        assert!(!socket_paths_equivalent(
+            "/tmp/himmelblaud.sock",
+            ACTIVATED_MAIN_SOCKET
+        ));
+    }
+
+    #[test]
     fn profile_photo_success_requires_zero_status() {
         assert!(profile_photo_task_succeeded(&TaskOutcome::Status(0)));
         assert!(!profile_photo_task_succeeded(&TaskOutcome::Status(1)));
@@ -1855,6 +1916,21 @@ async fn main() -> ExitCode {
             // activation + FD store) in one shot, before anything
             // else consumes the LISTEN_* environment variables.
             let mut systemd_fds = prt_memfd::collect_systemd_fds();
+            release_activated_socket_unless_configured(
+                &mut systemd_fds.main_socket,
+                &socket_path,
+                ACTIVATED_MAIN_SOCKET,
+            );
+            release_activated_socket_unless_configured(
+                &mut systemd_fds.task_socket,
+                &task_socket_path,
+                ACTIVATED_TASK_SOCKET,
+            );
+            release_activated_socket_unless_configured(
+                &mut systemd_fds.broker_socket,
+                &broker_socket_path,
+                ACTIVATED_BROKER_SOCKET,
+            );
 
             // Only clean up sockets that were NOT passed via socket
             // activation, as those are owned by systemd.
