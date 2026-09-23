@@ -63,6 +63,10 @@ class SourceSelectionTests(unittest.TestCase):
         self.assertEqual(len(specs), 7)
         self.assertEqual({s["source_sha"] for s in specs}, {self.tag_sha})
         self.assertFalse(any(s["distro"] == "rocky8" and s["architecture"] == "arm64" for s in specs))
+        self.assertEqual(next(s for s in specs if s["distro"] == "rocky8")["supported_architectures"],
+                         ["amd64"])
+        self.assertEqual(next(s for s in specs if s["distro"] == "ubuntu24.04")["supported_architectures"],
+                         ["amd64", "arm64"])
         rawhide = [s for s in specs if s["distro"] == "rawhide"]
         self.assertEqual({s["architecture"] for s in rawhide}, {"amd64", "arm64"})
         self.assertEqual({s["destination"] for s in rawhide}, {"fedora/46"})
@@ -173,6 +177,7 @@ class PublicationTests(unittest.TestCase):
         self.spec = {"tag": "4.0.2", "tag_sha": "a" * 40, "source_sha": "b" * 40,
                      "repository": "himmelblau/v_4", "distro": "ubuntu24.04",
                      "destination": "ubuntu/noble", "format": "deb", "architecture": "amd64",
+                     "supported_architectures": ["amd64", "arm64"],
                      "expected": ["himmelblau", "pam-himmelblau"]}
         self.spec["expected_packages"] = [
             {"name": name, "version": "4.0.2-ubuntu24.04", "architectures": ["amd64", "all"]}
@@ -184,7 +189,14 @@ class PublicationTests(unittest.TestCase):
         return {**record, "format": "deb", "distro": {"slug": "ubuntu"},
                 "distro_version": {"slug": "noble"}, "architectures": [{"name": "amd64"}],
                 "tags": {"user": ["release-4.0.2", "source-" + self.spec["source_sha"]]},
+                "slug_perm": record["name"] + "-" + record["version"], "is_deleteable": True,
                 "is_sync_completed": True, "is_sync_failed": False, **overrides}
+
+    def release(self, tag, architecture="amd64", **overrides):
+        return [self.remote({"name": name, "version": f"{tag}-ubuntu24.04"},
+                            architectures=[{"name": architecture}],
+                            slug_perm=f"{name}-{tag}-{architecture}", **overrides)
+                for name in self.spec["expected"]]
 
     def test_partial_upload_retry_fills_only_missing_identity(self):
         missing, pending = sp.upload_plan(self.records, [self.remote(self.records[0])], self.spec)
@@ -358,6 +370,13 @@ class PublicationTests(unittest.TestCase):
             self.assertEqual(query["query"], ["format:deb version:4.0.2-*"])
         self.assertEqual(query["page"], ["2"])
 
+    def test_cleanup_inventory_lookup_is_not_limited_to_current_version(self):
+        with patch.dict(os.environ, {"CLOUDSMITH_API_KEY": "test-not-a-secret"}), \
+             patch.object(sp.urllib.request, "urlopen", return_value=io.BytesIO(b"[]")) as request:
+            self.assertEqual(sp.api_packages(self.spec["repository"], "deb"), [])
+        query = sp.urllib.parse.parse_qs(sp.urllib.parse.urlsplit(request.call_args.args[0].full_url).query)
+        self.assertEqual(query["query"], ["format:deb"])
+
     def test_authentication_error_does_not_print_response_or_credentials(self):
         error = sp.urllib.error.HTTPError("https://api.cloudsmith.io/", 401, "test-not-a-secret", {}, None)
         with patch.dict(os.environ, {"CLOUDSMITH_API_KEY": "test-not-a-secret"}), \
@@ -377,6 +396,142 @@ class PublicationTests(unittest.TestCase):
         for call in upload.call_args_list:
             self.assertIn("--no-republish", call.args[0])
             self.assertNotIn("test-not-a-secret", " ".join(call.args[0]))
+
+    def test_cleanup_removes_matching_older_target_packages(self):
+        current = self.release("4.0.2")
+        old = self.release("4.0.1")
+        retained, deletions = sp.cleanup_plan(old + current, self.spec)
+        self.assertEqual(retained, (4, 0, 2))
+        self.assertEqual({package["slug_perm"] for package in deletions},
+                         {package["slug_perm"] for package in old})
+
+    def test_cleanup_keeps_newest_complete_release_when_an_older_run_finishes_late(self):
+        old = self.release("4.0.1")
+        current = self.release("4.0.2")
+        newer = self.release("4.0.3")
+        retained, deletions = sp.cleanup_plan(old + current + newer, self.spec)
+        self.assertEqual(retained, (4, 0, 3))
+        self.assertEqual({package["slug_perm"] for package in deletions},
+                         {package["slug_perm"] for package in old + current})
+
+    def test_cleanup_preserves_incomplete_newer_release(self):
+        old = self.release("4.0.1")
+        current = self.release("4.0.2")
+        partial_newer = self.release("4.0.3")[:1]
+        retained, deletions = sp.cleanup_plan(old + current + partial_newer, self.spec)
+        self.assertEqual(retained, (4, 0, 2))
+        self.assertEqual({package["slug_perm"] for package in deletions},
+                         {package["slug_perm"] for package in old})
+        self.assertNotIn(partial_newer[0], deletions)
+
+    def test_cleanup_requires_current_complete_target_and_rejects_newer_duplicates(self):
+        with self.assertRaisesRegex(RuntimeError, "complete synchronized current target"):
+            sp.cleanup_plan(self.release("4.0.2")[:1], self.spec)
+        current = self.release("4.0.2")
+        newer = self.release("4.0.3")
+        with self.assertRaisesRegex(ValueError, "Multiple 4.0.3 packages"):
+            sp.cleanup_plan(current + newer + [dict(newer[0], slug_perm="duplicate")], self.spec)
+
+    def test_cleanup_preserves_other_names_destinations_architectures_and_majors(self):
+        current = self.release("4.0.2")
+        old = self.release("4.0.1")
+        unrelated = [
+            self.remote({"name": "retired-package", "version": "4.0.1-ubuntu24.04"},
+                        slug_perm="retired"),
+            self.remote({"name": "himmelblau", "version": "4.0.1-ubuntu24.04"},
+                        distro_version={"slug": "jammy"}, slug_perm="jammy"),
+            self.remote({"name": "himmelblau", "version": "4.0.1-ubuntu24.04"},
+                        architectures=[{"name": "arm64"}], slug_perm="arm64"),
+            self.remote({"name": "himmelblau", "version": "3.9.9-ubuntu24.04"},
+                        slug_perm="other-major"),
+            self.remote({"name": "himmelblau", "version": "not-a-release"},
+                        slug_perm="unparsed"),
+        ]
+        _, deletions = sp.cleanup_plan(old + current + unrelated, self.spec)
+        self.assertEqual({package["slug_perm"] for package in deletions},
+                         {package["slug_perm"] for package in old})
+
+    def test_independent_package_waits_for_sibling_architecture_coverage(self):
+        current_amd64 = self.release("4.0.2")
+        old = self.release("4.0.1")
+        old[0]["architectures"] = [{"name": "all"}]
+        _, deletions = sp.cleanup_plan(old + current_amd64, self.spec)
+        self.assertNotIn(old[0], deletions)
+        self.assertIn(old[1], deletions)
+
+        current_arm64 = self.release("4.0.2", "arm64")
+        _, deletions = sp.cleanup_plan(old + current_amd64 + current_arm64, self.spec)
+        self.assertIn(old[0], deletions)
+
+    def test_independent_replacement_can_replace_old_independent_package(self):
+        current = self.release("4.0.2")
+        old = self.release("4.0.1")
+        current[0]["architectures"] = [{"name": "all"}]
+        old[0]["architectures"] = [{"name": "all"}]
+        _, deletions = sp.cleanup_plan(old + current, self.spec)
+        self.assertIn(old[0], deletions)
+
+    def test_rpm_cleanup_uses_native_and_noarch_architectures(self):
+        spec = {**self.spec, "format": "rpm", "destination": "el/9", "architecture": "arm64"}
+        spec["expected_packages"] = [
+            {"name": name, "version": "4.0.2-1", "architectures": ["aarch64", "noarch"]}
+            for name in spec["expected"]]
+
+        def rpm_release(tag, architecture):
+            return [{"name": name, "version": f"{tag}-1", "format": "rpm",
+                     "distro": {"slug": "el"}, "distro_version": {"slug": "9"},
+                     "architectures": [{"name": architecture}],
+                     "slug_perm": f"{name}-{tag}-{architecture}", "is_deleteable": True,
+                     "is_sync_completed": True, "is_sync_failed": False}
+                    for name in spec["expected"]]
+
+        current = rpm_release("4.0.2", "aarch64")
+        old = rpm_release("4.0.1", "aarch64")
+        retained, deletions = sp.cleanup_plan(old + current, spec)
+        self.assertEqual(retained, (4, 0, 2))
+        self.assertEqual({package["slug_perm"] for package in deletions},
+                         {package["slug_perm"] for package in old})
+
+    def test_cleanup_deletes_only_after_current_verification_and_checks_removal(self):
+        current = self.release("4.0.2")
+        old = self.release("4.0.1")
+        with patch.dict(os.environ, {"CLOUDSMITH_API_KEY": "test-not-a-secret"}), \
+             patch.object(sp, "api_packages", side_effect=[current, old + current, current]), \
+             patch.object(sp, "delete_package") as delete, patch.object(sp, "summary"):
+            sp.cleanup(self.spec)
+        self.assertEqual({call.args[1] for call in delete.call_args_list},
+                         {package["slug_perm"] for package in old})
+
+    def test_cleanup_missing_current_package_never_deletes(self):
+        with patch.dict(os.environ, {"CLOUDSMITH_API_KEY": "test-not-a-secret"}), \
+             patch.object(sp, "api_packages", return_value=self.release("4.0.2")[:1]), \
+             patch.object(sp, "delete_package") as delete:
+            with self.assertRaisesRegex(RuntimeError, "requires the complete"):
+                sp.cleanup(self.spec)
+        delete.assert_not_called()
+
+    def test_delete_package_uses_identifier_without_exposing_key(self):
+        response = unittest.mock.MagicMock()
+        response.__enter__.return_value = response
+        with patch.dict(os.environ, {"CLOUDSMITH_API_KEY": "test-not-a-secret"}), \
+             patch.object(sp.urllib.request, "urlopen", return_value=response) as request:
+            sp.delete_package("himmelblau/v_4", "package/id")
+        sent = request.call_args.args[0]
+        self.assertEqual(sent.method, "DELETE")
+        self.assertTrue(sent.full_url.endswith("/himmelblau/v_4/package%2Fid/"))
+        self.assertNotIn("test-not-a-secret", sent.full_url)
+
+    def test_delete_package_treats_missing_as_already_deleted_and_redacts_errors(self):
+        missing = sp.urllib.error.HTTPError("https://api.cloudsmith.io/", 404, "missing", {}, None)
+        with patch.dict(os.environ, {"CLOUDSMITH_API_KEY": "test-not-a-secret"}), \
+             patch.object(sp.urllib.request, "urlopen", side_effect=missing):
+            sp.delete_package("himmelblau/v_4", "gone")
+        denied = sp.urllib.error.HTTPError("https://api.cloudsmith.io/", 403, "test-not-a-secret", {}, None)
+        with patch.dict(os.environ, {"CLOUDSMITH_API_KEY": "test-not-a-secret"}), \
+             patch.object(sp.urllib.request, "urlopen", side_effect=denied):
+            with self.assertRaises(RuntimeError) as raised:
+                sp.delete_package("himmelblau/v_4", "denied")
+        self.assertNotIn("test-not-a-secret", str(raised.exception))
 
     def test_artifact_checks_detect_corruption_traversal_and_extra_files(self):
         with tempfile.TemporaryDirectory() as temporary:

@@ -109,12 +109,16 @@ jobs:
 
   publish:
     name: Publishing ${{ fromJSON(inputs.spec).distro }} ${{ fromJSON(inputs.spec).architecture }}
-    needs: build
+    needs: [preflight, build]
+    if: >-
+      always() &&
+      needs.preflight.result == 'success' &&
+      (needs.build.result == 'success' || needs.build.result == 'skipped')
     runs-on: ubuntu-24.04
     timeout-minutes: 45
-    # Serialize uploads sharing an index, including architecture-independent packages.
+    # Serialize every release sharing an index, including architecture-independent packages.
     concurrency:
-      group: cloudsmith-${{ fromJSON(inputs.spec).repository }}-${{ fromJSON(inputs.spec).distro }}-${{ fromJSON(inputs.spec).tag }}
+      group: cloudsmith-${{ fromJSON(inputs.spec).repository }}-${{ fromJSON(inputs.spec).distro }}
       cancel-in-progress: false
     steps:
       - name: Checkout release tooling
@@ -124,11 +128,13 @@ jobs:
           path: tooling
           persist-credentials: false
       - name: Download this target's validated packages
+        if: needs.build.result == 'success'
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: stable-${{ fromJSON(inputs.spec).distro }}-${{ fromJSON(inputs.spec).architecture }}
           path: artifacts
       - name: Install verified Cloudsmith CLI before exposing credentials
+        if: needs.build.result == 'success'
         run: |
           CLI_DIRECTORY="$RUNNER_TEMP/cloudsmith-cli"
           mkdir -p "$CLI_DIRECTORY"
@@ -139,7 +145,13 @@ jobs:
           tar -xzf "$CLI_DIRECTORY/cloudsmith.tar.gz" -C "$CLI_DIRECTORY"
           echo "$CLI_DIRECTORY/cloudsmith" >> "$GITHUB_PATH"
       - name: Publish missing packages and verify synchronization
+        if: needs.build.result == 'success'
         env:
           TARGET_SPEC: ${{ inputs.spec }}
           CLOUDSMITH_API_KEY: ${{ secrets.CLOUDSMITH_PACKAGE_PUBLISHER }}
         run: python3 tooling/.github/scripts/stable_packages.py publish --artifacts artifacts
+      - name: Remove packages replaced by the newest complete target
+        env:
+          TARGET_SPEC: ${{ inputs.spec }}
+          CLOUDSMITH_API_KEY: ${{ secrets.CLOUDSMITH_PACKAGE_PUBLISHER }}
+        run: python3 tooling/.github/scripts/stable_packages.py cleanup
