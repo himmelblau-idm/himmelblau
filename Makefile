@@ -376,7 +376,7 @@ $(RPM_TARGETS): %: .packaging dockerfiles
 $(SLE_TARGETS): %: .packaging dockerfiles
 	@echo "Building $@ SLE RPM packages"
 	mkdir -p target/$@
-	$(DOCKER) build --secret id=scc_regcode,src=${HOME}/.secrets/scc_regcode $(LIBHIMMELBLAU_BUILD_ARG) -t himmelblau-$@-build -f images/Dockerfile.$@ .
+	$(DOCKER) build $(LIBHIMMELBLAU_BUILD_ARG) -t himmelblau-$@-build -f images/Dockerfile.$@ .
 	$(DOCKER) run --rm --security-opt label=disable -it \
 		-v $(CURDIR):/himmelblau \
 		-v $(CURDIR)/target/$@:/himmelblau/target \
@@ -512,7 +512,7 @@ $(SLE_ARM64_TARGETS): arm64-%: .packaging dockerfiles-arm64
 	@distro=$*; \
 	echo "Building ARM64 $$distro SLE RPM packages"; \
 	mkdir -p target/arm64-$$distro
-	$(DOCKER_BUILDX) --secret id=scc_regcode,src=${HOME}/.secrets/scc_regcode \
+	$(DOCKER_BUILDX) \
 		$(LIBHIMMELBLAU_BUILD_ARG) \
 		-t himmelblau-arm64-$*-build \
 		-f images/Dockerfile.$*.arm64 .
