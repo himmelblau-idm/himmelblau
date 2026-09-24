@@ -47,7 +47,6 @@ class PackagingToolTests(unittest.TestCase):
 class SleRepositoryTests(unittest.TestCase):
     def test_sle_uses_public_repositories_without_registration(self):
         expected = {
-            "sle15sp6": ("opensuse/leap:15.6", None),
             "sle15sp7": (
                 "registry.suse.com/bci/ruby:2.5",
                 "https://download.opensuse.org/repositories/openSUSE:/Backports:/SLE-15-SP7/standard/",
@@ -57,6 +56,8 @@ class SleRepositoryTests(unittest.TestCase):
                 "https://download.opensuse.org/distribution/leap/16.0/repo/oss",
             ),
         }
+
+        self.assertNotIn("sle15sp6", gen_dockerfiles.DISTS)
 
         for name, (image, repository) in expected.items():
             with self.subTest(distro=name):

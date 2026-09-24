@@ -40,13 +40,11 @@ all: .packaging dockerfiles ## Auto-detect host distro and build packages just f
 	    esac ;; \
 	  sles|sled|sle_micro|suse|suse-linux-enterprise) \
 	    case "$$VER" in \
-	      15.6*|15-SP6*) TARGET="sle15sp6" ;; \
 	      15.7*|15-SP7*) TARGET="sle15sp7" ;; \
 	      16*|16.*) TARGET="sle16" ;; \
 	    esac ;; \
 	  opensuse-leap) \
 	    case "$$VER" in \
-	      15.6*) TARGET="sle15sp6" ;; \
 	      15.7*) TARGET="sle15sp7" ;; \
 	    esac ;; \
 	  opensuse-tumbleweed) TARGET="tumbleweed" ;; \
@@ -129,7 +127,7 @@ nix: .packaging ## Build Nix packages into ./packaging/
 
 DEB_TARGETS := ubuntu22.04 ubuntu24.04 ubuntu25.10 ubuntu26.04 debian12 debian13
 RPM_TARGETS := rocky8 rocky9 rocky10 tumbleweed rawhide fedora43 fedora44 amzn2023
-SLE_TARGETS := sle15sp6 sle15sp7 sle16
+SLE_TARGETS := sle15sp7 sle16
 GENTOO_TARGETS := gentoo
 ARCH_TARGETS := arch
 ALL_PACKAGE_TARGETS := $(DEB_TARGETS) $(RPM_TARGETS) $(SLE_TARGETS) $(GENTOO_TARGETS) $(ARCH_TARGETS)

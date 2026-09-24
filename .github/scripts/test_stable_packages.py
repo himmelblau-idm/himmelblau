@@ -37,12 +37,12 @@ class SourceSelectionTests(unittest.TestCase):
             '[package]\nname="himmelblaud"\n[package.metadata.deb]\nname="himmelblau"\n'
             '[package.metadata.generate-rpm]\nname="himmelblau"\n')
         (self.repo / "Makefile").write_text(
-            'DEB_TARGETS := ubuntu24.04\nRPM_TARGETS := rocky8 rawhide\nSLE_TARGETS := sle15sp6\n')
+            'DEB_TARGETS := ubuntu24.04\nRPM_TARGETS := rocky8 rawhide\nSLE_TARGETS := sle15sp7\n')
         (self.repo / "scripts/gen_dockerfiles.py").write_text(
             'DISTS = {"ubuntu24.04": {"family": "deb"}, '
             '"rocky8": {"family": "rpm", "arm64": False}, '
             '"rawhide": {"family": "rpm"}, '
-            '"sle15sp6": {"family": "zypper", "scc": True}}\n'
+            '"sle15sp7": {"family": "zypper", "scc": True}}\n'
             'PACKAGES = [("himmelblaud", "src/daemon", True)]\n'
             'raise RuntimeError("configuration inspection must not execute this")\n')
         sp.git("add", ".")
@@ -70,11 +70,12 @@ class SourceSelectionTests(unittest.TestCase):
         rawhide = [s for s in specs if s["distro"] == "rawhide"]
         self.assertEqual({s["architecture"] for s in rawhide}, {"amd64", "arm64"})
         self.assertEqual({s["destination"] for s in rawhide}, {"fedora/46"})
-        self.assertEqual(next(s for s in specs if s["distro"] == "sle15sp6")["destination"], "opensuse/15.6")
+        self.assertEqual(next(s for s in specs if s["distro"] == "sle15sp7")["destination"], "sles/15")
 
     def test_new_native_cloudsmith_destinations(self):
         self.assertEqual(sp.DESTINATIONS["rawhide"], "fedora/46")
         self.assertEqual(sp.DESTINATIONS["sle16"], "sles/16")
+        self.assertNotIn("sle15sp6", sp.DESTINATIONS)
 
     def test_cloudsmith_repositories(self):
         self.assertEqual(sp.REPOSITORIES, {3: "himmelblau/v_3", 4: "himmelblau/v_4"})

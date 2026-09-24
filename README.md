@@ -52,21 +52,9 @@ sudo zypper ref && sudo zypper in himmelblau nss-himmelblau pam-himmelblau himme
 
 ### openSUSE Leap and SUSE Linux Enterprise
 
-Add the appropriate repository for your version:
-
-```shell
-# For Leap 15.6 or SUSE Linux Enterprise 15 SP6:
-sudo zypper ar https://download.opensuse.org/repositories/network:/idm/15.6/network:idm.repo
-
-# For Leap 15.5 or SUSE Linux Enterprise 15 SP5:
-sudo zypper ar https://download.opensuse.org/repositories/network:/idm/15.5/network:idm.repo
-```
-
-Then refresh and install:
-
-```shell
-sudo zypper ref && sudo zypper in himmelblau nss-himmelblau pam-himmelblau himmelblau-sso
-```
+Leap 15.6 and SUSE Linux Enterprise 15 SP6 are no longer supported build
+targets. Visit the [Himmelblau Downloads Page](https://himmelblau-idm.org/downloads.html)
+for current SUSE availability and entitlement-based installation instructions.
 
 ### Fedora and RHEL (including Rocky Linux)
 
@@ -263,7 +251,7 @@ Available targets (as of now):
 
 - **DEB:** `ubuntu22.04` `ubuntu24.04` `ubuntu26.04` `debian12` `debian13`
 - **RHEL family:** `rocky8` `rocky9` `rocky10` `fedora43` `fedora44` `rawhide`
-- **SUSE:** `sle15sp6` `sle15sp7` `sle16` `tumbleweed`
+- **SUSE:** `sle15sp7` `sle16` `tumbleweed`
 
 Examples:
 
@@ -280,10 +268,10 @@ make tumbleweed
 
 Packages will be written to `./packaging/`. You can then copy them to a target machine and install with the native package manager.
 
-> **Note (SLE targets):** SLE 15 SP6 uses the binary-compatible Leap 15.6 build
-> root. SLE 15 SP7 uses an official SP7 BCI development image with the public
-> SP7 Backports and Backports Update repositories. SLE 16 uses its free BCI base
-> with the Leap 16 OSS repository. No SCC credentials are required.
+> **Note (SLE targets):** SLE 15 SP7 uses an official SP7 BCI development image
+> with the public SP7 Backports and Backports Update repositories. SLE 16 uses
+> its free BCI base with the Leap 16 OSS repository. No SCC credentials are
+> required.
 
 ### Uninstall
 
