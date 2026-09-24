@@ -292,12 +292,16 @@ def build(source, artifacts, spec, *, container_cache_ref="", refresh_build_cont
             subprocess.run(["docker", "image", "rm", "-f", image], check=False, stdout=subprocess.DEVNULL)
 
 
-def api_packages(repository, fmt, tag=None):
+def api_packages(repository, fmt, tag=None, distribution=None):
     # Current-version checks stay narrow. Cleanup deliberately inventories the
     # format's history so it can remove untagged packages from older workflows.
     packages, page = [], 1
     while True:
-        search = f"format:{fmt}" + (f" version:{tag}-*" if tag else "")
+        search = f"format:{fmt}"
+        if distribution:
+            search += f" distribution:{distribution}"
+        if tag:
+            search += f" version:{tag}-*"
         query = urllib.parse.urlencode({"query": search, "page_size": 100, "page": page})
         request = urllib.request.Request(f"https://api.cloudsmith.io/v1/packages/{repository}/?{query}",
                                          headers={"X-Api-Key": os.environ["CLOUDSMITH_API_KEY"]})
@@ -527,11 +531,12 @@ def delete_package(repository, identifier):
             time.sleep(2 ** attempt)
 
 
-def wait_for_deletions(repository, fmt, identifiers):
+def wait_for_deletions(repository, fmt, identifiers, distribution=None):
     identifiers = set(identifiers)
     for attempt in range(30):
         remaining = identifiers.intersection(
-            package.get("slug_perm") for package in api_packages(repository, fmt))
+            package.get("slug_perm")
+            for package in api_packages(repository, fmt, distribution=distribution))
         if not remaining:
             return
         if attempt == 29:
@@ -543,12 +548,14 @@ def cleanup(spec):
     require_api_key()
     if synchronized_missing(spec["expected_packages"], spec):
         raise RuntimeError("Cloudsmith cleanup requires the complete synchronized current target")
-    packages = api_packages(spec["repository"], spec["format"])
+    packages = api_packages(
+        spec["repository"], spec["format"], distribution=spec["destination"])
     retained, deletions = cleanup_plan(packages, spec)
     for package in deletions:
         delete_package(spec["repository"], package["slug_perm"])
-    wait_for_deletions(spec["repository"], spec["format"],
-                       [package["slug_perm"] for package in deletions])
+    wait_for_deletions(
+        spec["repository"], spec["format"],
+        [package["slug_perm"] for package in deletions], spec["destination"])
     retained_tag = ".".join(map(str, retained))
     summary(f"Reconciled `{spec['distro']}` / `{spec['architecture']}` in "
             f"`{spec['repository']}/{spec['destination']}`: retained `{retained_tag}`, "
