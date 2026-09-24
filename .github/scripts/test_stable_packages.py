@@ -587,6 +587,19 @@ class PublicationTests(unittest.TestCase):
                 sp.validate_artifacts(directory, self.spec)
 
 
+class WorkflowContractTests(unittest.TestCase):
+    def test_publish_jobs_queue_without_canceling_pending_targets(self):
+        workflow = (MODULE.parents[1] / "workflows/stable-package-target.yml").read_text()
+        self.assertIn(
+            "concurrency:\n"
+            "      group: cloudsmith-${{ fromJSON(inputs.spec).repository }}-"
+            "${{ fromJSON(inputs.spec).distro }}\n"
+            "      cancel-in-progress: false\n"
+            "      queue: max",
+            workflow,
+        )
+
+
 class ContainerBuildTests(unittest.TestCase):
     def setUp(self):
         self.spec = {"tag": "4.0.2", "tag_sha": "a" * 40, "source_sha": "b" * 40,
