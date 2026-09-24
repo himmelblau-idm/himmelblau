@@ -494,7 +494,8 @@ def cleanup_plan(packages, spec):
             if not independent_replacement and not all(coverage.values()):
                 continue
         identifier = package.get("slug_perm")
-        if not isinstance(identifier, str) or not identifier or package.get("is_deleteable") is False:
+        if (not isinstance(identifier, str) or not identifier or
+                package.get("is_deleteable") is not True):
             raise ValueError(f"Older {package.get('name', 'package')} cannot be safely deleted")
         deletions.append(package)
     identifiers = [package["slug_perm"] for package in deletions]
