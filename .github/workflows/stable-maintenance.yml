@@ -1,0 +1,358 @@
+---
+name: Weekly stable-branch maintenance
+
+on:
+  schedule:
+    - cron: "17 3 * * 1"
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: Stable branch to maintain
+        required: true
+        default: all
+        type: choice
+        options:
+          - all
+          - stable-3.x
+          - stable-4.x
+
+permissions:
+  contents: read
+
+jobs:
+  select:
+    name: Select stable maintenance targets
+    if: >-
+      github.repository == 'himmelblau-idm/himmelblau' &&
+      github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      enabled: ${{ steps.select.outputs.enabled }}
+      matrix: ${{ steps.select.outputs.matrix }}
+    steps:
+      - name: Harden the runner (block unapproved outbound calls)
+        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
+        with:
+          egress-policy: block
+          allowed-endpoints: >
+            github.com:443
+
+      - name: Checkout trusted default-branch tooling
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          path: tooling
+          fetch-depth: 0
+          persist-credentials: false
+          set-safe-directory: false
+
+      - name: Snapshot trusted maintenance tooling
+        shell: bash
+        run: |
+          set -euo pipefail
+          tooling_sha="$(sha256sum tooling/.github/scripts/stable_maintenance.py)"
+          tooling_sha="${tooling_sha%% *}"
+          if [[ ! "$tooling_sha" =~ ^[0-9a-f]{64}$ ]]; then
+            echo "::error::Unable to establish trusted tooling digest"
+            exit 2
+          fi
+          printf 'MAINTENANCE_TOOLING_SHA256=%s\n' "$tooling_sha" >> "$GITHUB_ENV"
+
+      - name: Trust only this workspace and disable Git hooks
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config --global --replace-all safe.directory "$GITHUB_WORKSPACE/tooling"
+          mkdir -p "$RUNNER_TEMP/disabled-git-hooks"
+          git -C tooling config --local core.hooksPath "$RUNNER_TEMP/disabled-git-hooks"
+
+      - name: Test the stable maintenance orchestrator
+        run: python3 tooling/.github/scripts/test_stable_maintenance.py
+
+      - name: Select requested stable branches
+        id: select
+        env:
+          REQUESTED_BRANCH: ${{ inputs.branch || 'all' }}
+          STATE_DIR: ${{ runner.temp }}/stable-maintenance-selection
+        run: |
+          mkdir -p "$STATE_DIR"
+          python3 tooling/.github/scripts/stable_maintenance.py \
+            --repo-dir tooling --state-dir "$STATE_DIR" \
+            select --branch "$REQUESTED_BRANCH"
+
+  maintain:
+    name: Maintain ${{ matrix.branch }} — dependencies, vet, backports, release
+    needs: select
+    if: needs.select.outputs.enabled == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+    permissions:
+      contents: read
+      pull-requests: read
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.select.outputs.matrix) }}
+    concurrency:
+      group: stable-maintenance-${{ matrix.branch }}
+      cancel-in-progress: false
+    env:
+      MAINTENANCE_BUILD_IMAGE: himmelblau-stable-maintenance:local
+      TARGET_BRANCH: ${{ matrix.branch }}
+    steps:
+      - name: Harden the runner (block unapproved outbound calls)
+        uses: step-security/harden-runner@e14015d583714f6e62063499dc959a02595150a1 # v2.21.1
+        with:
+          egress-policy: block
+          # Azure resource names are stored as secrets. A provider-scoped
+          # wildcard avoids exposing that secret to this non-AI step.
+          allowed-endpoints: >
+            *.cognitiveservices.azure.com:443
+            api.github.com:443
+            archive.ubuntu.com:80
+            auth.docker.io:443
+            crates.io:443
+            docker-images-prod.6aa30f8b08e16409b46e0173d6de2f56.r2.cloudflarestorage.com:443
+            github.com:443
+            index.crates.io:443
+            production.cloudflare.docker.com:443
+            raw.githubusercontent.com:443
+            registry-1.docker.io:443
+            security.ubuntu.com:80
+            snapshot.ubuntu.com:443
+            static.crates.io:443
+
+      - name: Export runner-local maintenance paths
+        shell: bash
+        run: |
+          set -euo pipefail
+          case "$RUNNER_TEMP" in
+            /*) ;;
+            *) echo "::error::RUNNER_TEMP must be an absolute path"; exit 2 ;;
+          esac
+          {
+            printf 'MAINTENANCE_PROJECT_CARGO_HOME=%s\n' "$RUNNER_TEMP/stable-maintenance-cargo-home"
+            printf 'STATE_DIR=%s\n' "$RUNNER_TEMP/stable-maintenance"
+          } >> "$GITHUB_ENV"
+
+      - name: Checkout trusted default-branch tooling and full history
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          path: tooling
+          fetch-depth: 0
+          persist-credentials: false
+          set-safe-directory: false
+
+      - name: Snapshot trusted maintenance tooling
+        shell: bash
+        run: |
+          set -euo pipefail
+          tooling_sha="$(sha256sum tooling/.github/scripts/stable_maintenance.py)"
+          tooling_sha="${tooling_sha%% *}"
+          if [[ ! "$tooling_sha" =~ ^[0-9a-f]{64}$ ]]; then
+            echo "::error::Unable to establish trusted tooling digest"
+            exit 2
+          fi
+          printf 'MAINTENANCE_TOOLING_SHA256=%s\n' "$tooling_sha" >> "$GITHUB_ENV"
+
+      - name: Checkout mutable maintenance source and full history
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ matrix.branch }}
+          path: source
+          fetch-depth: 0
+          persist-credentials: false
+          set-safe-directory: false
+
+      - name: Test trusted automation before repository mutation
+        run: python3 tooling/.github/scripts/test_stable_maintenance.py
+
+      - name: Initialize hardened Git configuration and exact refs
+        shell: bash
+        run: |
+          set -euo pipefail
+          case "$TARGET_BRANCH" in
+            stable-3.x|stable-4.x) ;;
+            *) echo "::error::Unexpected stable branch"; exit 2 ;;
+          esac
+          git config --global --replace-all safe.directory "$GITHUB_WORKSPACE/tooling"
+          git config --global --add safe.directory "$GITHUB_WORKSPACE/source"
+          case "$MAINTENANCE_PROJECT_CARGO_HOME" in
+            "$RUNNER_TEMP"/*) ;;
+            *) echo "::error::Project Cargo home escaped runner temp"; exit 2 ;;
+          esac
+          for cache_path in \
+            "$MAINTENANCE_PROJECT_CARGO_HOME" \
+            "$MAINTENANCE_PROJECT_CARGO_HOME/registry"; do
+            if [ -L "$cache_path" ]; then
+              echo "::error::Refusing symlinked project Cargo cache: $cache_path"
+              exit 2
+            fi
+          done
+          mkdir -p \
+            "$RUNNER_TEMP/disabled-git-hooks" \
+            "$STATE_DIR"
+          install -d -m 0755 \
+            "$MAINTENANCE_PROJECT_CARGO_HOME" \
+            "$MAINTENANCE_PROJECT_CARGO_HOME/registry"
+          git -C tooling config --local core.hooksPath "$RUNNER_TEMP/disabled-git-hooks"
+          git -C source config --local core.hooksPath "$RUNNER_TEMP/disabled-git-hooks"
+          git -C source config --local user.name "github-actions[bot]"
+          git -C source config --local user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git -C source fetch --force --no-tags origin \
+            "+refs/heads/main:refs/remotes/origin/main" \
+            "+refs/heads/$TARGET_BRANCH:refs/remotes/origin/$TARGET_BRANCH"
+
+      - name: Guard — check for an existing maintenance PR
+        id: guard
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: >-
+          python3 tooling/.github/scripts/stable_maintenance.py
+          --repo-dir source --state-dir "$STATE_DIR"
+          guard --branch "$TARGET_BRANCH"
+
+      - name: Build pinned maintenance image without credentials
+        if: steps.guard.outputs.proceed == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          image_context="$RUNNER_TEMP/stable-maintenance-image-context"
+          mkdir -p "$image_context"
+          docker build \
+            --file tooling/.github/stable-maintenance.Dockerfile \
+            --tag "$MAINTENANCE_BUILD_IMAGE" \
+            "$image_context"
+
+      - name: Smoke-test maintenance image Git tooling
+        if: steps.guard.outputs.proceed == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker run --rm \
+            --network=none \
+            --cap-drop=ALL \
+            --security-opt=no-new-privileges \
+            --user 65532:65532 \
+            --read-only \
+            --tmpfs /tmp:rw,nosuid,nodev,noexec,size=1m \
+            "$MAINTENANCE_BUILD_IMAGE" \
+            sh -euc '
+              export HOME=/tmp
+              git --version
+              printf "%s\n" old > /tmp/old
+              printf "%s\n" new > /tmp/new
+              set +e
+              git diff --no-index --quiet /tmp/old /tmp/new
+              status=$?
+              set -e
+              test "$status" -eq 1
+              rustc --version | grep -E "^rustc 1\.98\.0 "
+              cargo --version | grep -F "cargo 1.98.0"
+              cargo-vet --version | grep -F "0.10.2"
+              cargo-audit --version | grep -F "0.22.2"
+              crate2nix --version | grep -F "0.15.0"
+            '
+
+      - name: Initialize — snapshot trusted refs and backport cutoff
+        if: steps.guard.outputs.proceed == 'true'
+        run: >-
+          python3 tooling/.github/scripts/stable_maintenance.py
+          --repo-dir source --state-dir "$STATE_DIR"
+          initialize --branch "$TARGET_BRANCH"
+
+      - name: Supply chain — refresh cargo-vet imports
+        if: steps.guard.outputs.proceed == 'true'
+        run: >-
+          python3 tooling/.github/scripts/stable_maintenance.py
+          --repo-dir source --state-dir "$STATE_DIR"
+          refresh-vet-imports --branch "$TARGET_BRANCH"
+
+      - name: Dependencies — audit and update crates
+        if: steps.guard.outputs.proceed == 'true'
+        run: >-
+          python3 tooling/.github/scripts/stable_maintenance.py
+          --repo-dir source --state-dir "$STATE_DIR"
+          update-dependencies --branch "$TARGET_BRANCH"
+
+      - name: Supply chain — review unvetted dependency deltas
+        if: steps.guard.outputs.proceed == 'true'
+        env:
+          AZURE_API_KEY: ${{ secrets.AZURE_API_KEY }}
+          AZURE_COGNITIVE_SERVICES_API_KEY: ${{ secrets.AZURE_COGNITIVE_SERVICES_API_KEY }}
+          AZURE_RESOURCE_NAME: ${{ secrets.AZURE_RESOURCE_NAME }}
+          AZURE_OPENAI_DEPLOYMENT: ${{ vars.AZURE_OPENAI_DEPLOYMENT || 'gpt-5.5' }}
+        run: >-
+          python3 tooling/.github/scripts/stable_maintenance.py
+          --repo-dir source --state-dir "$STATE_DIR"
+          vet-dependencies --branch "$TARGET_BRANCH"
+
+      - name: Dependabot — import non-Cargo updates
+        if: steps.guard.outputs.proceed == 'true'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: >-
+          python3 tooling/.github/scripts/stable_maintenance.py
+          --repo-dir source --state-dir "$STATE_DIR"
+          import-dependabot --branch "$TARGET_BRANCH"
+
+      - name: Backports — classify main-branch commits
+        if: steps.guard.outputs.proceed == 'true'
+        env:
+          AZURE_API_KEY: ${{ secrets.AZURE_API_KEY }}
+          AZURE_COGNITIVE_SERVICES_API_KEY: ${{ secrets.AZURE_COGNITIVE_SERVICES_API_KEY }}
+          AZURE_RESOURCE_NAME: ${{ secrets.AZURE_RESOURCE_NAME }}
+          AZURE_OPENAI_DEPLOYMENT: ${{ vars.AZURE_OPENAI_DEPLOYMENT || 'gpt-5.5' }}
+        run: >-
+          python3 tooling/.github/scripts/stable_maintenance.py
+          --repo-dir source --state-dir "$STATE_DIR"
+          classify-backports --branch "$TARGET_BRANCH"
+
+      - name: Backports — apply relevant bug fixes
+        if: steps.guard.outputs.proceed == 'true'
+        run: >-
+          python3 tooling/.github/scripts/stable_maintenance.py
+          --repo-dir source --state-dir "$STATE_DIR"
+          apply-backports --branch "$TARGET_BRANCH"
+
+      - name: Release — increment the patch version
+        if: steps.guard.outputs.proceed == 'true'
+        run: >-
+          python3 tooling/.github/scripts/stable_maintenance.py
+          --repo-dir source --state-dir "$STATE_DIR"
+          release --branch "$TARGET_BRANCH"
+
+      - name: Validate — run clean release gates
+        if: steps.guard.outputs.proceed == 'true'
+        run: >-
+          python3 tooling/.github/scripts/stable_maintenance.py
+          --repo-dir source --state-dir "$STATE_DIR"
+          validate --branch "$TARGET_BRANCH"
+
+      - name: Create scoped publication token
+        id: publish-token
+        if: steps.guard.outputs.proceed == 'true'
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ vars.STABLE_MAINTENANCE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.STABLE_MAINTENANCE_APP_PRIVATE_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
+          permission-workflows: write
+
+      - name: Publish — push branch and open pull request
+        if: steps.guard.outputs.proceed == 'true'
+        env:
+          GITHUB_TOKEN: ${{ steps.publish-token.outputs.token }}
+        run: >-
+          python3 tooling/.github/scripts/stable_maintenance.py
+          --repo-dir source --state-dir "$STATE_DIR"
+          publish --branch "$TARGET_BRANCH"
+
+      - name: Report — summarize results and failures
+        if: always()
+        run: >-
+          python3 tooling/.github/scripts/stable_maintenance.py
+          --repo-dir source --state-dir "$STATE_DIR"
+          report --branch "$TARGET_BRANCH"
