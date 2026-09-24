@@ -432,6 +432,20 @@ class PublicationTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "Multiple 4.0.3 packages"):
             sp.cleanup_plan(current + newer + [dict(newer[0], slug_perm="duplicate")], self.spec)
 
+    def test_cleanup_requires_explicit_delete_permission(self):
+        current = self.release("4.0.2")
+        old = self.release("4.0.1")
+        old[0].pop("is_deleteable")
+        with self.assertRaisesRegex(ValueError, "cannot be safely deleted"):
+            sp.cleanup_plan(old + current, self.spec)
+
+    def test_cleanup_rejects_non_boolean_delete_permission(self):
+        current = self.release("4.0.2")
+        old = self.release("4.0.1")
+        old[0]["is_deleteable"] = 1
+        with self.assertRaisesRegex(ValueError, "cannot be safely deleted"):
+            sp.cleanup_plan(old + current, self.spec)
+
     def test_cleanup_preserves_other_names_destinations_architectures_and_majors(self):
         current = self.release("4.0.2")
         old = self.release("4.0.1")
