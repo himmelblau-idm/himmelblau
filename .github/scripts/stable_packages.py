@@ -28,7 +28,7 @@ DESTINATIONS = {
     "fedora42": "fedora/42", "fedora43": "fedora/43", "fedora44": "fedora/44",
     "rawhide": "fedora/46",
     "amzn2023": "amzn/2023", "tumbleweed": "opensuse/tumbleweed",
-    "sle15sp6": "opensuse/15.6", "sle15sp7": "sles/15", "sle16": "sles/16",
+    "sle15sp7": "sles/15", "sle16": "sles/16",
 }
 ARCHITECTURES = {
     "amd64": {"runner": "ubuntu-24.04", "platform": "linux/amd64", "rpm": "x86_64"},

@@ -349,28 +349,6 @@ DISTS = {
         "selinux": True,
     },
     # ---- SUSE family ----
-    "sle15sp6": {
-        "family": "zypper",
-        # Leap 15.6 and SLE 15 SP6 share the same binary package base.  Using
-        # Leap keeps the build root coherent and supplies the development
-        # packages omitted from the free SLE_BCI repository.
-        "image": "opensuse/leap:15.6",
-        "post_bootstrap": [
-            # Python 3.6 doesn't have dataclasses; install python311 and symlink as python3
-            "RUN zypper --non-interactive install python311 && ln -sf /usr/bin/python3.11 /usr/bin/python3",
-        ],
-        "replace": {
-            "build-essential": "",
-            "@development-tools": "",
-            "dbus-devel": "dbus-1-devel",
-            "tpm2-tss-devel": "tpm2-0-tss-devel",
-            "sqlite-devel": "sqlite3-devel",
-            "policycoreutils-devel": "",
-            "selinux-policy-targeted": "",
-        },
-        "tpm": True,
-        "apparmor": True,
-    },
     "sle15sp7": {
         "family": "zypper",
         # The Ruby development BCI is an SP7 image that already contains the
