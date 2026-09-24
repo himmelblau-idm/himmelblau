@@ -43,6 +43,18 @@ class PackagingToolTests(unittest.TestCase):
                     else:
                         self.assertNotIn("cargo install", dockerfile)
 
+    def test_rpm_release_can_be_overridden_without_changing_the_default(self):
+        dockerfile = gen_dockerfiles.render(
+            "rocky9",
+            gen_dockerfiles.DISTS["rocky9"],
+            patch_libhimmelblau=False,
+            arch="amd64",
+        )
+
+        self.assertIn('if [ -n \\"${RPM_PACKAGE_RELEASE:-}\\" ]', dockerfile)
+        self.assertIn(r'''--set-metadata \"release = '${RPM_PACKAGE_RELEASE}'\"''', dockerfile)
+        self.assertIn("else cargo generate-rpm", dockerfile)
+
 
 class SleRepositoryTests(unittest.TestCase):
     def test_sle_uses_public_repositories_without_registration(self):

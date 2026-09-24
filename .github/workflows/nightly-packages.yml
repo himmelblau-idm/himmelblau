@@ -1,0 +1,80 @@
+name: Check main, build and publish nightly packages
+
+on:
+  schedule:
+    - cron: "0 0 * * *"
+  workflow_dispatch:
+    inputs:
+      distro:
+        description: Makefile distro target (for example ubuntu24.04), or all
+        default: all
+        type: string
+      architecture:
+        description: Architecture to build
+        default: all
+        type: choice
+        options: [all, amd64, arm64]
+      refresh_build_container:
+        description: Refresh build-container dependencies for missing targets; existing Cloudsmith packages are preserved
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nightly-packages
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    if: >-
+      github.repository == 'himmelblau-idm/himmelblau' &&
+      (github.event_name != 'workflow_dispatch' || github.ref == 'refs/heads/main')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    outputs:
+      enabled: ${{ steps.prepare.outputs.enabled }}
+      matrix: ${{ steps.prepare.outputs.matrix }}
+      tooling_sha: ${{ steps.prepare.outputs.tooling_sha }}
+    steps:
+      - name: Checkout main with repository history
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Run package publishing unit tests
+        run: |
+          PYTHONDONTWRITEBYTECODE=1 python3 .github/scripts/test_stable_packages.py
+          PYTHONDONTWRITEBYTECODE=1 python3 .github/scripts/test_nightly_packages.py
+          PYTHONDONTWRITEBYTECODE=1 python3 -m unittest scripts/test_gen_dockerfiles.py
+      - name: Capture the UTC nightly date
+        id: date
+        run: echo "value=$(date --utc +%Y%m%d)" >> "$GITHUB_OUTPUT"
+      - name: Check main and select nightly targets
+        id: prepare
+        env:
+          NIGHTLY_DATE: ${{ steps.date.outputs.value }}
+          REQUESTED_DISTRO: ${{ inputs.distro }}
+          REQUESTED_ARCHITECTURE: ${{ inputs.architecture }}
+          CLOUDSMITH_API_KEY: ${{ secrets.CLOUDSMITH_PACKAGE_PUBLISHER }}
+        run: python3 .github/scripts/nightly_packages.py prepare
+
+  packages:
+    name: ${{ fromJSON(matrix.spec).distro }} ${{ fromJSON(matrix.spec).architecture }}
+    permissions:
+      contents: read
+      packages: write
+    needs: prepare
+    if: needs.prepare.outputs.enabled == 'true'
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.prepare.outputs.matrix) }}
+    uses: ./.github/workflows/nightly-package-target.yml
+    with:
+      spec: ${{ matrix.spec }}
+      tooling_sha: ${{ needs.prepare.outputs.tooling_sha }}
+      refresh_build_container: ${{ inputs.refresh_build_container || false }}
+    secrets:
+      CLOUDSMITH_PACKAGE_PUBLISHER: ${{ secrets.CLOUDSMITH_PACKAGE_PUBLISHER }}
