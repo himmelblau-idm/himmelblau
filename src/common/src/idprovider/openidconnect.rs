@@ -906,7 +906,7 @@ mod tests {
     }
 
     #[test]
-    fn oidc_device_endpoint_prefers_discovery_then_configuration() {
+    fn oidc_device_endpoint_prefers_discovery_then_configuration_and_requires_https() {
         let discovered =
             DeviceAuthorizationUrl::new("https://idp.example/discovered".into()).unwrap();
         let configured = "https://idp.example/configured".to_string();
@@ -920,6 +920,23 @@ mod tests {
 
         let endpoint = resolve_device_authorization_endpoint(None, Some(configured)).unwrap();
         assert_eq!(endpoint.as_str(), "https://idp.example/configured");
+
+        let insecure_discovered =
+            DeviceAuthorizationUrl::new("http://idp.example/discovered".into()).unwrap();
+        assert!(resolve_device_authorization_endpoint(
+            Some(insecure_discovered),
+            Some("https://idp.example/configured".to_string())
+        )
+        .is_none());
+        assert!(resolve_device_authorization_endpoint(
+            None,
+            Some("http://idp.example/configured".to_string())
+        )
+        .is_none());
+        assert!(
+            resolve_device_authorization_endpoint(None, Some("not a valid URL".to_string()))
+                .is_none()
+        );
         assert!(resolve_device_authorization_endpoint(None, None).is_none());
     }
 
@@ -1515,7 +1532,7 @@ fn resolve_device_authorization_endpoint(
     discovered: Option<DeviceAuthorizationUrl>,
     configured: Option<String>,
 ) -> Option<DeviceAuthorizationUrl> {
-    discovered.or_else(|| {
+    let endpoint = discovered.or_else(|| {
         configured.and_then(|endpoint| match DeviceAuthorizationUrl::new(endpoint) {
             Ok(endpoint) => Some(endpoint),
             Err(error) => {
@@ -1526,7 +1543,12 @@ fn resolve_device_authorization_endpoint(
                 None
             }
         })
-    })
+    })?;
+    if endpoint.url().scheme() != "https" {
+        error!("OIDC device authorization endpoint must use HTTPS");
+        return None;
+    }
+    Some(endpoint)
 }
 
 type DeviceProviderMetadata = ProviderMetadata<
