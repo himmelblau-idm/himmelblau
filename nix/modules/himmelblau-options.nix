@@ -76,6 +76,20 @@ in
       example = "https://login.microsoftonline.com/0656e57d-a8fc-4aa4-8366-8045787115ca/v2.0";
     };
 
+    oidc_device_authorization_endpoint = mkOption {
+      type = types.nullOr (types.str);
+      default = null;
+      description = ''
+        Optional device authorization endpoint for generic OIDC providers that omit
+        **device_authorization_endpoint**
+        from their discovery metadata. The discovered endpoint is preferred when it
+        is present. This option is used only when
+        **oidc_issuer_url**
+        is configured.
+      '';
+      example = "https://idp.example.com/device/code";
+    };
+
     oidc_account_id_claims = mkOption {
       type = types.nullOr (types.listOf types.str);
       default = null;

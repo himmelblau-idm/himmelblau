@@ -43,9 +43,10 @@ fn has_grant(metadata: &Value, grant: &str) -> bool {
         .is_some_and(|grants| grants.iter().any(|value| value.as_str() == Some(grant)))
 }
 
-fn has_device_flow(metadata: &Value) -> bool {
+fn has_device_flow(metadata: &Value, configured_endpoint: Option<&str>) -> bool {
     let endpoint = metadata["device_authorization_endpoint"]
         .as_str()
+        .or(configured_endpoint)
         .and_then(|s| reqwest::Url::parse(s).ok());
     endpoint.is_some_and(|url| url.scheme() == "https" && url.host_str().is_some())
         && (metadata.get("grant_types_supported").is_none()
@@ -78,11 +79,16 @@ fn is_okta(issuer: &str, metadata: &Value) -> bool {
     host_hint || grant_hint || mode_hint
 }
 
-fn should_probe(issuer: &str, metadata: &Value, forced: bool) -> bool {
+fn should_probe(
+    issuer: &str,
+    metadata: &Value,
+    configured_endpoint: Option<&str>,
+    forced: bool,
+) -> bool {
     forced
         || has_grant(metadata, "interaction_code")
         || is_okta(issuer, metadata)
-        || !has_device_flow(metadata)
+        || !has_device_flow(metadata, configured_endpoint)
 }
 
 fn discovery_trust_failure(error: &reqwest::Error) -> bool {
@@ -139,6 +145,7 @@ impl OidcRouter {
             return;
         };
         let forced = cfg.get_oidc_force_interaction_code();
+        let configured_device_endpoint = cfg.get_oidc_device_authorization_endpoint();
         let request_timeout = Duration::from_secs(cfg.get_request_timeout());
         drop(cfg);
         let client = match reqwest::Client::builder()
@@ -226,7 +233,12 @@ impl OidcRouter {
             *selection = Selection::Failed;
             return;
         }
-        if !should_probe(&issuer, &metadata, forced) {
+        if !should_probe(
+            &issuer,
+            &metadata,
+            configured_device_endpoint.as_deref(),
+            forced,
+        ) {
             *selection = Selection::StandardOidc;
         } else {
             let result = match &self.native {
@@ -235,7 +247,7 @@ impl OidcRouter {
                     if forced {
                         error!("Invalid native OIDC client configuration; check app_id and oidc_redirect_uri");
                         *selection = Selection::Failed;
-                    } else if has_device_flow(&metadata) {
+                    } else if has_device_flow(&metadata, configured_device_endpoint.as_deref()) {
                         *selection = Selection::StandardOidc;
                     } else {
                         *selection = Selection::Failed;
@@ -252,7 +264,9 @@ impl OidcRouter {
                         self.defer(delay).await;
                         return;
                     }
-                    if !forced && OktaProvider::probe_fallback(&error) && has_device_flow(&metadata)
+                    if !forced
+                        && OktaProvider::probe_fallback(&error)
+                        && has_device_flow(&metadata, configured_device_endpoint.as_deref())
                     {
                         debug!("Interaction Code unavailable; selected standard OIDC");
                         *selection = Selection::StandardOidc;
@@ -779,12 +793,26 @@ mod tests {
 
     #[test]
     fn ordinary_dag_issuers_do_not_get_speculative_probes() {
-        assert!(!should_probe("https://example.com", &dag(), false));
-        assert!(should_probe("https://example.com", &dag(), true));
-        assert!(should_probe("https://example.com", &json!({}), false));
+        assert!(!should_probe("https://example.com", &dag(), None, false));
+        assert!(should_probe("https://example.com", &dag(), None, true));
+        assert!(should_probe("https://example.com", &json!({}), None, false));
         assert!(should_probe(
             "https://example.com",
             &json!({"grant_types_supported":["interaction_code"]}),
+            None,
+            false
+        ));
+    }
+
+    #[test]
+    fn configured_device_endpoint_avoids_speculative_probe() {
+        let metadata = json!({
+            "grant_types_supported":["urn:ietf:params:oauth:grant-type:device_code"]
+        });
+        assert!(!should_probe(
+            "https://example.com",
+            &metadata,
+            Some("https://example.com/device"),
             false
         ));
     }
@@ -794,12 +822,18 @@ mod tests {
         assert!(should_probe(
             "https://example.okta.com/oauth2/default",
             &dag(),
+            None,
             false
         ));
         assert!(!is_okta("https://okta.com.attacker.example", &dag()));
         assert!(!is_okta("https://notokta.com", &dag()));
         let mut metadata = dag();
         metadata["response_modes_supported"] = json!(["okta_post_message"]);
-        assert!(should_probe("https://login.example.com", &metadata, false));
+        assert!(should_probe(
+            "https://login.example.com",
+            &metadata,
+            None,
+            false
+        ));
     }
 }

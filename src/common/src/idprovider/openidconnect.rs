@@ -886,9 +886,11 @@ mod tests {
     use super::{
         auth_request_from_orchestrator_inputs, mfa_from_oidc_device, oidc_refresh_failure_state,
         oidc_should_prompt_hello_setup, orchestrator_inputs_from_pam_request,
-        parse_oidc_mfa_extra_data, ropc_is_invalid_credentials, serialize_oidc_mfa_extra_data,
-        validated_password_cache_action, OidcMfaExtraData, OidcUserInfoClaims,
-        OrchestratorFlowState, OrchestratorInputType, OrchestratorRequiredInput,
+        parse_oidc_mfa_extra_data, resolve_device_authorization_endpoint,
+        ropc_is_invalid_credentials, serialize_oidc_mfa_extra_data,
+        validated_password_cache_action, DeviceAuthorizationUrl, DeviceEndpointProviderMetadata,
+        OidcMfaExtraData, OidcUserInfoClaims, OrchestratorFlowState, OrchestratorInputType,
+        OrchestratorRequiredInput,
     };
     use crate::idprovider::common::oidc_account_id_from_userinfo;
     use crate::idprovider::interface::{AuthCacheAction, AuthRequest, AuthResult, UserTokenState};
@@ -896,6 +898,30 @@ mod tests {
     use himmelblau::error::{ErrorResponse, MsalError};
     use oauth2::DeviceAuthorizationResponse;
     use serde_json::json;
+
+    #[test]
+    fn oidc_device_endpoint_metadata_is_optional() {
+        let metadata: DeviceEndpointProviderMetadata = serde_json::from_value(json!({})).unwrap();
+        assert!(metadata.device_authorization_endpoint.is_none());
+    }
+
+    #[test]
+    fn oidc_device_endpoint_prefers_discovery_then_configuration() {
+        let discovered =
+            DeviceAuthorizationUrl::new("https://idp.example/discovered".into()).unwrap();
+        let configured = "https://idp.example/configured".to_string();
+
+        let endpoint = resolve_device_authorization_endpoint(
+            Some(discovered.clone()),
+            Some(configured.clone()),
+        )
+        .unwrap();
+        assert_eq!(endpoint, discovered);
+
+        let endpoint = resolve_device_authorization_endpoint(None, Some(configured)).unwrap();
+        assert_eq!(endpoint.as_str(), "https://idp.example/configured");
+        assert!(resolve_device_authorization_endpoint(None, None).is_none());
+    }
 
     #[test]
     fn oidc_group_claims_extract_keycloak_groups_and_roles() {
@@ -1485,6 +1511,24 @@ struct DeviceEndpointProviderMetadata {
 
 impl AdditionalProviderMetadata for DeviceEndpointProviderMetadata {}
 
+fn resolve_device_authorization_endpoint(
+    discovered: Option<DeviceAuthorizationUrl>,
+    configured: Option<String>,
+) -> Option<DeviceAuthorizationUrl> {
+    discovered.or_else(|| {
+        configured.and_then(|endpoint| match DeviceAuthorizationUrl::new(endpoint) {
+            Ok(endpoint) => Some(endpoint),
+            Err(error) => {
+                error!(
+                    ?error,
+                    "Invalid configured OIDC device authorization endpoint"
+                );
+                None
+            }
+        })
+    })
+}
+
 type DeviceProviderMetadata = ProviderMetadata<
     DeviceEndpointProviderMetadata,
     CoreAuthDisplay,
@@ -1843,12 +1887,17 @@ impl OidcApplication {
                 .device_authorization_endpoint
                 .clone();
 
+            let configured_device_endpoint =
+                config.lock().await.get_oidc_device_authorization_endpoint();
+
             // Create a public client: pass None for the client secret.
             // Whether this works depends on provider configuration. Many support it.
-            let device_endpoint = device_endpoint.ok_or_else(|| {
-                debug!("OIDC provider does not advertise device authorization");
-                IdpError::BadRequest
-            })?;
+            let device_endpoint =
+                resolve_device_authorization_endpoint(device_endpoint, configured_device_endpoint)
+                    .ok_or_else(|| {
+                        debug!("OIDC device authorization endpoint is not available");
+                        IdpError::BadRequest
+                    })?;
             let client = CoreClient::from_provider_metadata(provider_metadata, client_id, None)
                 .set_device_authorization_url(device_endpoint)
                 .set_auth_type(AuthType::RequestBody);
