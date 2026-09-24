@@ -1783,6 +1783,24 @@ mod tests {
     }
 
     #[test]
+    fn test_get_oidc_device_authorization_endpoint() {
+        let config_data = r#"
+        [global]
+        oidc_device_authorization_endpoint = https://idp.example.com/device/code
+        "#;
+
+        let temp_file = create_temp_config(config_data);
+        let config = HimmelblauConfig::new(Some(&temp_file)).unwrap();
+        assert_eq!(
+            config.get_oidc_device_authorization_endpoint(),
+            Some("https://idp.example.com/device/code".to_string())
+        );
+
+        let config_empty = create_empty_config();
+        assert_eq!(config_empty.get_oidc_device_authorization_endpoint(), None);
+    }
+
+    #[test]
     fn test_get_selinux() {
         let config_data = r#"
         [global]

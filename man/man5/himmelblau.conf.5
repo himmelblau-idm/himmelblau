@@ -187,6 +187,19 @@ otherwise authentication reports that the external step is unsupported.
 Default: http://localhost:8765/callback
 
 .TP
+.B oidc_device_authorization_endpoint
+.RE
+Optional device authorization endpoint for generic OIDC providers that omit
+.B device_authorization_endpoint
+from their discovery metadata. The discovered endpoint is preferred when it
+is present. This option is used only when
+.B oidc_issuer_url
+is configured.
+
+.P
+Example: oidc_device_authorization_endpoint = https://idp.example.com/device/code
+
+.TP
 .B oidc_account_id_claims
 .RE
 A comma-separated, ordered list of OIDC userinfo claim names to use as the
