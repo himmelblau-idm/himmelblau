@@ -552,6 +552,17 @@ Default: true
 Example: cn_name_mapping = false
 
 .TP
+.B learned_name_mapping
+.RE
+Enables short Unix names that Himmelblau learns only after a successful login with the exact full UPN. When enabled, a short name is unavailable until that first full-UPN login succeeds. It replaces the implicit primary-domain fallback from cn_name_mapping, preventing an unobserved primary-domain user from colliding with a learned alias. The first UPN learned for a local part keeps its short name; later UPNs with the same local part continue to use their full UPN. This option is ignored when name_mapping_script is configured.
+
+.P
+Default: false
+
+.P
+Example: learned_name_mapping = true
+
+.TP
 .B local_groups
 .RE
 A comma-separated list of local groups that every Entra ID user should be a member of. For example, you may wish for all Entra ID users to be a member of the sudo group. WARNING: This setting will not REMOVE group member entries when groups are removed from this list. You must remove them manually.
