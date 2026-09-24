@@ -683,6 +683,16 @@ impl HimmelblauConfig {
         domains
     }
 
+    pub fn get_configured_entra_domain(&self) -> Option<String> {
+        // The array returned by get_configured_domains() might include "oidc" section
+        self.get_configured_domains()
+            .into_iter()
+            .filter(|x| x != "oidc")
+            .collect::<Vec<String>>()
+            .first()
+            .cloned()
+    }
+
     pub fn get_config_file(&self) -> String {
         self.filename.clone()
     }
