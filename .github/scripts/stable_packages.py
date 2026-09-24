@@ -242,17 +242,18 @@ def build(source, artifacts, spec, *, container_cache_ref="", refresh_build_cont
     source, artifacts = source.resolve(), artifacts.resolve()
     if run("git", "rev-parse", "HEAD", cwd=source) != spec["source_sha"]:
         raise ValueError("Build checkout does not match resolved source")
-    image = f"himmelblau-stable-{spec['distro']}-{spec['architecture']}"
+    channel = spec.get("channel", "stable")
+    image = f"himmelblau-{channel}-{spec['distro']}-{spec['architecture']}"
     (source / "target").mkdir(exist_ok=True)
     (source / "packaging").mkdir(exist_ok=True)
     artifacts.mkdir(parents=True, exist_ok=False)
-    with tempfile.TemporaryDirectory(prefix="stable-package-", dir=os.environ.get("RUNNER_TEMP")) as temporary:
+    with tempfile.TemporaryDirectory(prefix=f"{channel}-package-", dir=os.environ.get("RUNNER_TEMP")) as temporary:
         temporary = Path(temporary)
         subprocess.run(["python3", "scripts/gen_dockerfiles.py", "--only", spec["distro"],
                         "--out", str(temporary / "images")], cwd=source, check=True)
         # Default Dockerfiles are architecture-neutral; compile on the native runner.
         # Registration state can persist in SUSE layers even with secret mounts.
-        if container_cache_ref and not spec["scc"]:
+        if container_cache_ref and not spec.get("scc", False):
             command = ["docker", "buildx", "build", "--load", "--pull",
                        "--cache-from", f"type=registry,ref={container_cache_ref}",
                        "--cache-to", f"type=registry,ref={container_cache_ref},mode=max,ignore-error=true"]
@@ -262,7 +263,7 @@ def build(source, artifacts, spec, *, container_cache_ref="", refresh_build_cont
                     "-t", image, "-f", str(temporary / "images" / f"Dockerfile.{spec['distro']}")]
         if refresh_build_container:
             command += ["--no-cache"]
-        if spec["scc"]:
+        if spec.get("scc", False):
             email, regcode = os.environ.get("SCC_EMAIL", ""), os.environ.get("SCC_REGCODE", "")
             if not email or not regcode:
                 raise ValueError("SUSE builds require SCC_EMAIL and SCC_REGCODE secrets")
@@ -272,9 +273,15 @@ def build(source, artifacts, spec, *, container_cache_ref="", refresh_build_cont
             command += ["--secret", f"id=scc_regcode,src={secret}"]
         try:
             subprocess.run(command + [str(source)], check=True, env={**os.environ, "DOCKER_BUILDKIT": "1"})
-            subprocess.run(["docker", "run", "--rm", "--platform", spec["platform"],
-                            "--security-opt", "label=disable", "-v", f"{source}:/himmelblau",
-                            "-v", f"{source / 'target'}:/himmelblau/target", image], check=True)
+            run_command = ["docker", "run", "--rm", "--platform", spec["platform"],
+                           "--security-opt", "label=disable"]
+            variables = ("DEB_REVISION_APPEND",) if spec["format"] == "deb" else ("RPM_PACKAGE_RELEASE",)
+            for variable in variables:
+                if value := spec.get(variable.lower()):
+                    run_command += ["-e", f"{variable}={value}"]
+            run_command += ["-v", f"{source}:/himmelblau",
+                            "-v", f"{source / 'target'}:/himmelblau/target", image]
+            subprocess.run(run_command, check=True)
             directory = source / "target" / ("debian" if spec["format"] == "deb" else "generate-rpm")
             records = []
             for path in sorted(directory.glob(f"*.{spec['format']}")):
@@ -566,7 +573,10 @@ def publish(artifacts, spec):
     require_api_key()
     records = validate_artifacts(artifacts, spec)
     missing = synchronized_missing(records, spec)
-    tags = f"release-{spec['tag']},source-{spec['source_sha']},distro-{spec['distro']}"
+    tags = spec.get(
+        "upload_tags",
+        f"release-{spec['tag']},source-{spec['source_sha']},distro-{spec['distro']}",
+    )
     for record in missing:
         subprocess.run(["cloudsmith", "push", spec["format"],
                         f"{spec['repository']}/{spec['destination']}",

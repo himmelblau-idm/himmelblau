@@ -1,4 +1,4 @@
-name: Build and publish one stable package target
+name: Build and publish one nightly package target
 
 on:
   workflow_call:
@@ -15,10 +15,6 @@ on:
     secrets:
       CLOUDSMITH_PACKAGE_PUBLISHER:
         required: true
-      SCC_EMAIL:
-        required: false
-      SCC_REGCODE:
-        required: false
 
 permissions:
   contents: read
@@ -31,18 +27,18 @@ jobs:
     outputs:
       build_required: ${{ steps.check.outputs.build_required }}
     steps:
-      - name: Checkout release tooling
+      - name: Checkout nightly tooling
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.tooling_sha }}
           path: tooling
           persist-credentials: false
-      - name: Check complete package set in Cloudsmith
+      - name: Check complete nightly package set in Cloudsmith
         id: check
         env:
           TARGET_SPEC: ${{ inputs.spec }}
           CLOUDSMITH_API_KEY: ${{ secrets.CLOUDSMITH_PACKAGE_PUBLISHER }}
-        run: python3 tooling/.github/scripts/stable_packages.py preflight
+        run: python3 tooling/.github/scripts/nightly_packages.py preflight
 
   build:
     needs: preflight
@@ -54,21 +50,19 @@ jobs:
       contents: read
       packages: write
     steps:
-      - name: Checkout release tooling
+      - name: Checkout nightly tooling
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.tooling_sha }}
           path: tooling
           persist-credentials: false
-      - name: Checkout exact build source
+      - name: Checkout exact main source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ fromJSON(inputs.spec).source_sha }}
           path: source
           persist-credentials: false
-      # SUSE registration persists in image layers; do not export those layers.
       - name: Log in to the build-container cache registry
-        if: ${{ !fromJSON(inputs.spec).scc }}
         id: cache-login
         continue-on-error: true
         uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
@@ -77,35 +71,33 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ github.token }}
       - name: Set up the build-container cache builder
-        if: ${{ !fromJSON(inputs.spec).scc && steps.cache-login.outcome == 'success' }}
+        if: steps.cache-login.outcome == 'success'
         id: cache-builder
         continue-on-error: true
         uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
         with:
           driver: docker-container
       - name: Report uncached build fallback
-        if: ${{ !fromJSON(inputs.spec).scc && (steps.cache-login.outcome != 'success' || steps.cache-builder.outcome != 'success') }}
+        if: steps.cache-login.outcome != 'success' || steps.cache-builder.outcome != 'success'
         run: echo "::warning::Build-container cache setup failed; building without the registry cache."
-      - name: Build and validate packages using the generated container
+      - name: Build and validate nightly packages using the generated container
         env:
           TARGET_SPEC: ${{ inputs.spec }}
-          SCC_EMAIL: ${{ fromJSON(inputs.spec).scc && secrets.SCC_EMAIL || '' }}
-          SCC_REGCODE: ${{ fromJSON(inputs.spec).scc && secrets.SCC_REGCODE || '' }}
-          BUILD_CONTAINER_CACHE_REF: ${{ !fromJSON(inputs.spec).scc && steps.cache-login.outcome == 'success' && steps.cache-builder.outcome == 'success' && format('ghcr.io/himmelblau-idm/himmelblau-build-cache:v1-{0}-{1}', fromJSON(inputs.spec).distro, fromJSON(inputs.spec).architecture) || '' }}
+          BUILD_CONTAINER_CACHE_REF: ${{ steps.cache-login.outcome == 'success' && steps.cache-builder.outcome == 'success' && format('ghcr.io/himmelblau-idm/himmelblau-build-cache:v1-{0}-{1}', fromJSON(inputs.spec).distro, fromJSON(inputs.spec).architecture) || '' }}
           REFRESH_BUILD_CONTAINER: ${{ inputs.refresh_build_container }}
         run: |
           BUILD_ARGS=(--source source --artifacts artifacts --container-cache-ref "$BUILD_CONTAINER_CACHE_REF")
           if [ "$REFRESH_BUILD_CONTAINER" = true ]; then
             BUILD_ARGS+=(--refresh-build-container)
           fi
-          python3 tooling/.github/scripts/stable_packages.py build "${BUILD_ARGS[@]}"
-      - name: Retain complete validated package set
+          python3 tooling/.github/scripts/nightly_packages.py build "${BUILD_ARGS[@]}"
+      - name: Retain validated nightly package set
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: stable-${{ fromJSON(inputs.spec).distro }}-${{ fromJSON(inputs.spec).architecture }}
+          name: nightly-${{ fromJSON(inputs.spec).nightly_id }}-${{ fromJSON(inputs.spec).distro }}-${{ fromJSON(inputs.spec).architecture }}
           path: artifacts/
           if-no-files-found: error
-          retention-days: 14
+          retention-days: 3
 
   publish:
     name: Publishing ${{ fromJSON(inputs.spec).distro }} ${{ fromJSON(inputs.spec).architecture }}
@@ -116,12 +108,11 @@ jobs:
       (needs.build.result == 'success' || needs.build.result == 'skipped')
     runs-on: ubuntu-24.04
     timeout-minutes: 45
-    # Serialize every release sharing an index, including architecture-independent packages.
     concurrency:
       group: cloudsmith-${{ fromJSON(inputs.spec).repository }}-${{ fromJSON(inputs.spec).distro }}
       cancel-in-progress: false
     steps:
-      - name: Checkout release tooling
+      - name: Checkout nightly tooling
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.tooling_sha }}
@@ -131,7 +122,7 @@ jobs:
         if: needs.build.result == 'success'
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          name: stable-${{ fromJSON(inputs.spec).distro }}-${{ fromJSON(inputs.spec).architecture }}
+          name: nightly-${{ fromJSON(inputs.spec).nightly_id }}-${{ fromJSON(inputs.spec).distro }}-${{ fromJSON(inputs.spec).architecture }}
           path: artifacts
       - name: Install verified Cloudsmith CLI before exposing credentials
         if: needs.build.result == 'success'
@@ -144,14 +135,14 @@ jobs:
           echo "cf714418c992d2e9a6a5d81c1523f4e0ac2e2cea0898e91f9df35a399254d014  $CLI_DIRECTORY/cloudsmith.tar.gz" | sha256sum --check
           tar -xzf "$CLI_DIRECTORY/cloudsmith.tar.gz" -C "$CLI_DIRECTORY"
           echo "$CLI_DIRECTORY/cloudsmith" >> "$GITHUB_PATH"
-      - name: Publish missing packages and verify synchronization
+      - name: Publish and verify nightly packages
         if: needs.build.result == 'success'
         env:
           TARGET_SPEC: ${{ inputs.spec }}
           CLOUDSMITH_API_KEY: ${{ secrets.CLOUDSMITH_PACKAGE_PUBLISHER }}
-        run: python3 tooling/.github/scripts/stable_packages.py publish --artifacts artifacts
-      - name: Remove packages replaced by the newest complete target
+        run: python3 tooling/.github/scripts/nightly_packages.py publish --artifacts artifacts
+      - name: Remove packages replaced by the latest complete nightly target
         env:
           TARGET_SPEC: ${{ inputs.spec }}
           CLOUDSMITH_API_KEY: ${{ secrets.CLOUDSMITH_PACKAGE_PUBLISHER }}
-        run: python3 tooling/.github/scripts/stable_packages.py cleanup
+        run: python3 tooling/.github/scripts/nightly_packages.py cleanup

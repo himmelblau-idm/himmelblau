@@ -595,8 +595,7 @@ class WorkflowContractTests(unittest.TestCase):
             "concurrency:\n"
             "      group: cloudsmith-${{ fromJSON(inputs.spec).repository }}-"
             "${{ fromJSON(inputs.spec).distro }}\n"
-            "      cancel-in-progress: false\n"
-            "      queue: max",
+            "      cancel-in-progress: false",
             workflow,
         )
 
