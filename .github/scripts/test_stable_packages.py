@@ -377,6 +377,15 @@ class PublicationTests(unittest.TestCase):
         query = sp.urllib.parse.parse_qs(sp.urllib.parse.urlsplit(request.call_args.args[0].full_url).query)
         self.assertEqual(query["query"], ["format:deb"])
 
+    def test_cleanup_inventory_lookup_can_filter_distribution(self):
+        with patch.dict(os.environ, {"CLOUDSMITH_API_KEY": "test-not-a-secret"}), \
+             patch.object(sp.urllib.request, "urlopen", return_value=io.BytesIO(b"[]")) as request:
+            self.assertEqual(sp.api_packages(
+                self.spec["repository"], "deb", distribution="ubuntu/noble"), [])
+        query = sp.urllib.parse.parse_qs(
+            sp.urllib.parse.urlsplit(request.call_args.args[0].full_url).query)
+        self.assertEqual(query["query"], ["format:deb distribution:ubuntu/noble"])
+
     def test_authentication_error_does_not_print_response_or_credentials(self):
         error = sp.urllib.error.HTTPError("https://api.cloudsmith.io/", 401, "test-not-a-secret", {}, None)
         with patch.dict(os.environ, {"CLOUDSMITH_API_KEY": "test-not-a-secret"}), \
@@ -510,11 +519,18 @@ class PublicationTests(unittest.TestCase):
         current = self.release("4.0.2")
         old = self.release("4.0.1")
         with patch.dict(os.environ, {"CLOUDSMITH_API_KEY": "test-not-a-secret"}), \
-             patch.object(sp, "api_packages", side_effect=[current, old + current, current]), \
+             patch.object(sp, "api_packages", side_effect=[current, old + current, current]) as lookup, \
              patch.object(sp, "delete_package") as delete, patch.object(sp, "summary"):
             sp.cleanup(self.spec)
         self.assertEqual({call.args[1] for call in delete.call_args_list},
                          {package["slug_perm"] for package in old})
+        self.assertEqual(
+            lookup.call_args_list,
+            [unittest.mock.call(self.spec["repository"], self.spec["format"], self.spec["tag"]),
+             unittest.mock.call(self.spec["repository"], self.spec["format"],
+                                distribution=self.spec["destination"]),
+             unittest.mock.call(self.spec["repository"], self.spec["format"],
+                                distribution=self.spec["destination"])])
 
     def test_cleanup_missing_current_package_never_deletes(self):
         with patch.dict(os.environ, {"CLOUDSMITH_API_KEY": "test-not-a-secret"}), \
