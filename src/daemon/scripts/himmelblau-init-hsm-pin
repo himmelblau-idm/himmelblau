@@ -42,8 +42,8 @@ srk_is_provisioned() {
 #
 # Algorithm preference matches systemd: ECC P-256 first, RSA-2048 fallback.
 # Attributes match the TCG standard:
-#   DECRYPT | FIXEDPARENT | FIXEDTPM | NODA | RESTRICTED |
-#   SENSITIVEDATAORIGIN | USERWITHAUTH
+#   decrypt | fixedparent | fixedtpm | noda | restricted |
+#   sensitivedataorigin | userwithauth
 #
 # Returns 0 on success, 1 on failure (tpm2-tools not installed counts as
 # success — caller already verified srk_is_provisioned returned false via
@@ -67,14 +67,14 @@ provision_srk() {
     if tpm2_createprimary \
             -C o \
             -G ecc256:aes128cfb \
-            -a "DECRYPT|FIXEDPARENT|FIXEDTPM|NODA|RESTRICTED|SENSITIVEDATAORIGIN|USERWITHAUTH" \
+            -a "decrypt|fixedparent|fixedtpm|noda|restricted|sensitivedataorigin|userwithauth" \
             -c "$CTX" >/dev/null 2>&1; then
         echo "SRK: created ECC P-256 primary key"
     # Fall back to RSA-2048 if ECC is not supported by this TPM
     elif tpm2_createprimary \
             -C o \
             -G rsa2048:aes128cfb \
-            -a "DECRYPT|FIXEDPARENT|FIXEDTPM|NODA|RESTRICTED|SENSITIVEDATAORIGIN|USERWITHAUTH" \
+            -a "decrypt|fixedparent|fixedtpm|noda|restricted|sensitivedataorigin|userwithauth" \
             -c "$CTX" >/dev/null 2>&1; then
         echo "SRK: ECC not supported, created RSA-2048 primary key"
     else
