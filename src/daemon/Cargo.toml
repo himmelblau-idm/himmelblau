@@ -217,6 +217,7 @@ nss-himmelblau = "*"
 pam-himmelblau = "*"
 himmelblau-selinux = "*"
 himmelblau-apparmor = "*"
+man = "*"
 krb5 = "*"
 cron = "*" # For Intune policy scripts
 "(system-user-tss or tpm2-tss)" = "*"
@@ -233,9 +234,6 @@ authd-msentraid = ""
 [package.metadata.generate-rpm.suggests]
 himmelblau-sso = ""
 himmelblau-orchestrator = "*"
-
-[package.metadata.generate-rpm.requires]
-man = ""
 
 [package.metadata.cargo-machete]
 ignored = ["libhimmelblau"]
