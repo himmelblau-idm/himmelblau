@@ -150,6 +150,7 @@ package() {
   install -Dm644 man/man5/himmelblau.conf.5 "$pkgdir/usr/share/man/man5/himmelblau.conf.5"
   install -Dm644 man/man8/himmelblaud.8 "$pkgdir/usr/share/man/man8/himmelblaud.8"
   install -Dm644 man/man8/himmelblaud_tasks.8 "$pkgdir/usr/share/man/man8/himmelblaud_tasks.8"
+  install -Dm644 man/man8/pam_himmelblau.8 "$pkgdir/usr/share/man/man8/pam_himmelblau.8"
 
   install -Dm644 README.md "$pkgdir/usr/share/doc/$pkgname/README"
   install -Dm644 target/config/himmelblau.conf.example \

@@ -844,6 +844,7 @@ patchelf --set-soname libnss_himmelblau.so.2 target/release/libnss_himmelblau.so
 # PAM
 install -D -d -m 0755 %{{buildroot}}/%{{_pam_moduledir}}
 install -D -d -m 0755 %{{buildroot}}/usr/lib/pam-config.d
+install -D -d -m 0755 %{{buildroot}}%{{_mandir}}/man8
 strip --strip-unneeded target/release/libpam_himmelblau.so
 {generate_install_section(pam_metadata)}
 
@@ -860,7 +861,6 @@ install -D -d -m 0755 %{{buildroot}}%{{_datadir}}/doc/himmelblau/
 install -D -d -m 0755 %{{buildroot}}/%{{_tmpfilesdir}}/
 install -D -d -m 0755 %{{buildroot}}%{{_mandir}}/man1
 install -D -d -m 0755 %{{buildroot}}%{{_mandir}}/man5
-install -D -d -m 0755 %{{buildroot}}%{{_mandir}}/man8
 install -D -d -m 0755 %{{buildroot}}%{{_libexecdir}}
 strip --strip-unneeded target/release/himmelblaud
 strip --strip-unneeded target/release/himmelblaud_tasks
