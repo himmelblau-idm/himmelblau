@@ -25,6 +25,7 @@ use lru::LruCache;
 use tokio::sync::Mutex;
 use uuid::Uuid;
 
+use crate::config::InitgroupsMode;
 use crate::constants::SERVER_CONFIG_PATH;
 use crate::db::{Cache, CacheTxn, Db};
 use crate::idprovider::interface::{
@@ -94,6 +95,7 @@ where
     home_alias: Option<HomeAttr>,
     uid_attr_map: UidAttr,
     gid_attr_map: UidAttr,
+    initgroups_mode: InitgroupsMode,
     allow_id_overrides: HashSet<Id>,
     nxset: Mutex<HashSet<Id>>,
     nxcache: Mutex<LruCache<Id, SystemTime>>,
@@ -130,6 +132,7 @@ impl Display for Id {
 #[cfg(test)]
 mod tests {
     use super::{AuthSession, Resolver};
+    use crate::config::InitgroupsMode;
     use crate::db::{Cache, CacheTxn, Db, KeyStoreTxn};
     use crate::idprovider::interface::{
         tpm, AuthCacheAction, AuthCredHandler, AuthRequest, AuthResult, CacheState, GroupToken, Id,
@@ -375,12 +378,22 @@ mod tests {
     }
 
     async fn setup_resolver_with_expiry(expiry: u64) -> Resolver<OfflineFallbackProvider> {
+        setup_resolver_with(expiry, InitgroupsMode::Named, Vec::new()).await
+    }
+
+    async fn setup_resolver_with(
+        expiry: u64,
+        initgroups_mode: InitgroupsMode,
+        extra_groups: Vec<GroupToken>,
+    ) -> Resolver<OfflineFallbackProvider> {
         let db = Db::new("").expect("failed to create test db");
         let mut dbtxn = db.write().await;
         dbtxn.migrate().expect("failed to migrate test db");
-        let token = test_token();
+        let mut token = test_token();
+        let named_group = token.groups[0].clone();
+        token.groups.extend(extra_groups);
         dbtxn
-            .update_group(&token.groups[0], expiry)
+            .update_group(&named_group, expiry)
             .expect("failed to seed test group");
         dbtxn
             .update_account(&token, expiry)
@@ -410,6 +423,7 @@ mod tests {
             None,
             UidAttr::Name,
             UidAttr::Name,
+            initgroups_mode,
             Vec::new(),
         )
         .await
@@ -418,6 +432,32 @@ mod tests {
 
     async fn setup_resolver() -> Resolver<OfflineFallbackProvider> {
         setup_resolver_with_expiry(0).await
+    }
+
+    #[tokio::test]
+    async fn initgroups_named_omits_gid_with_no_nss_name() {
+        let unnamed = GroupToken {
+            name: "unnamed".to_string(),
+            spn: "unnamed".to_string(),
+            uuid: uuid::uuid!("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
+            gidnumber: 299568524,
+        };
+        let named_resolver =
+            setup_resolver_with(0, InitgroupsMode::Named, vec![unnamed.clone()]).await;
+        let named = named_resolver
+            .get_initgroups("testuser")
+            .await
+            .expect("named initgroups")
+            .expect("cached user");
+        assert_eq!(named, vec![2100]);
+
+        let full_resolver = setup_resolver_with(0, InitgroupsMode::Full, vec![unnamed]).await;
+        let full = full_resolver
+            .get_initgroups("testuser")
+            .await
+            .expect("full initgroups")
+            .expect("cached user");
+        assert_eq!(full, vec![2100, 299568524]);
     }
 
     #[tokio::test]
@@ -642,6 +682,7 @@ where
         home_alias: Option<HomeAttr>,
         uid_attr_map: UidAttr,
         gid_attr_map: UidAttr,
+        initgroups_mode: InitgroupsMode,
         allow_id_overrides: Vec<String>,
     ) -> ResolverResult<Self> {
         let hsm = Mutex::new(hsm);
@@ -716,6 +757,7 @@ where
             home_alias,
             uid_attr_map,
             gid_attr_map,
+            initgroups_mode,
             allow_id_overrides: allow_id_overrides.into_iter().map(Id::Name).collect(),
             nxset: Mutex::new(HashSet::new()),
             nxcache: Mutex::new(LruCache::new(NXCACHE_SIZE)),
@@ -1596,7 +1638,27 @@ where
 
     pub async fn get_initgroups(&self, account_id: &str) -> ResolverResult<Option<Vec<u32>>> {
         let token = self.get_usertoken(Id::Name(account_id.to_string())).await?;
-        Ok(token.map(|tok| tok.groups.iter().map(|g| g.gidnumber).collect()))
+        let Some(tok) = token else {
+            return Ok(None);
+        };
+        if self.initgroups_mode == InitgroupsMode::Full {
+            return Ok(Some(tok.groups.iter().map(|g| g.gidnumber).collect()));
+        }
+        let mut named = Vec::with_capacity(tok.groups.len());
+        for group in &tok.groups {
+            match self.get_nssgroup_gid(group.gidnumber).await {
+                Ok(Some(nss_group)) if !nss_group.name.is_empty() => {
+                    named.push(group.gidnumber);
+                }
+                Ok(Some(_)) | Ok(None) | Err(_) => {
+                    debug!(
+                        gid = group.gidnumber,
+                        "skipping supplementary group with no NSS name"
+                    );
+                }
+            }
+        }
+        Ok(Some(named))
     }
 
     pub async fn pam_account_allowed(&self, account_id: &str) -> ResolverResult<Option<bool>> {

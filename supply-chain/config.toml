@@ -311,7 +311,7 @@ version = "1.14.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.aws-lc-sys]]
-version = "0.38.0"
+version = "0.45.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.axum]]
@@ -472,6 +472,10 @@ criteria = "safe-to-deploy"
 
 [[exemptions.dbus-tokio]]
 version = "0.7.6"
+criteria = "safe-to-deploy"
+
+[[exemptions.der]]
+version = "0.8.2"
 criteria = "safe-to-deploy"
 
 [[exemptions.der_derive]]

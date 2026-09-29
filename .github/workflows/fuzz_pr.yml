@@ -87,7 +87,9 @@ jobs:
             fuzz-weekly-corpus-${{ runner.os }}-
 
       - name: Install cargo-fuzz
-        run: sfw cargo install cargo-fuzz --version 0.13.1
+        run: |
+          sfw rustup toolchain install stable --profile minimal
+          sfw cargo +stable install cargo-fuzz --version 0.13.1
 
       - name: Run ${{ matrix.target }} (ASan quick)
         run: |

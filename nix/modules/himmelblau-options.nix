@@ -76,6 +76,20 @@ in
       example = "https://login.microsoftonline.com/0656e57d-a8fc-4aa4-8366-8045787115ca/v2.0";
     };
 
+    oidc_device_authorization_endpoint = mkOption {
+      type = types.nullOr (types.str);
+      default = null;
+      description = ''
+        Optional device authorization endpoint for generic OIDC providers that omit
+        **device_authorization_endpoint**
+        from their discovery metadata. The discovered endpoint is preferred when it
+        is present. This option is used only when
+        **oidc_issuer_url**
+        is configured.
+      '';
+      example = "https://idp.example.com/device/code";
+    };
+
     oidc_account_id_claims = mkOption {
       type = types.nullOr (types.listOf types.str);
       default = null;
@@ -392,6 +406,23 @@ in
         A comma-separated list of local groups that every Entra ID user should be a member of. For example, you may wish for all Entra ID users to be a member of the sudo group. WARNING: This setting will not REMOVE group member entries when groups are removed from this list. You must remove them manually.
       '';
       example = [ "sudo" "admin" ];
+    };
+
+    initgroups_mode = mkOption {
+      type = types.nullOr (types.enum [ "named" "full" ]);
+      default = "named";
+      description = ''
+        Controls which supplementary groups Himmelblau returns from NSS initgroups.
+        
+        - named -- return only groups that resolve to an NSS name (default). A GID that
+        **getgrgid**
+        cannot name is omitted, so tools such as
+        **groups**
+        do not fail on an unnamed group id.
+        
+        - full -- return every cached group GID, including ones with no NSS name. Use this when debugging a missing membership.
+      '';
+      example = "named";
     };
 
     local_groups_reconcile_interval = mkOption {

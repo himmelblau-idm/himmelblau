@@ -5,14 +5,11 @@
 # pacman hooks shipped by systemd, so this script does not do any of that.
 
 _configure_nss() {
-    local conf=/etc/nsswitch.conf
+    /usr/share/nss-himmelblau/update-nss add
+}
 
-    [ -f "$conf" ] || return 0
-
-    sed -i '/^passwd:/ {/himmelblau/! s/$/ himmelblau/}' "$conf"
-    sed -i '/^group:/ {/himmelblau/! s/$/ himmelblau/}' "$conf"
-    sed -i '/^shadow:/ {/himmelblau/! s/$/ himmelblau/}' "$conf"
-    sed -i '/^initgroups:/ {/himmelblau/! s/$/ himmelblau/}' "$conf"
+_deconfigure_nss() {
+    /usr/share/nss-himmelblau/update-nss remove
 }
 
 _configure_pam() {
@@ -125,10 +122,13 @@ post_upgrade() {
     echo "    systemctl try-restart himmelblaud himmelblaud-tasks"
 }
 
+pre_remove() {
+    _deconfigure_nss
+}
+
 post_remove() {
     _disable_greeter
 
-    echo "The pam_himmelblau.so lines in /etc/pam.d and the himmelblau entries in"
-    echo "/etc/nsswitch.conf are left in place, remove them by hand if Entra ID"
-    echo "logon is no longer wanted."
+    echo "The pam_himmelblau.so lines in /etc/pam.d are left in place, remove them"
+    echo "by hand if Entra ID logon is no longer wanted."
 }

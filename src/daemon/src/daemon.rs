@@ -2118,6 +2118,7 @@ async fn main() -> ExitCode {
                 cfg.get_home_alias(None),
                 UidAttr::Name,
                 UidAttr::Name,
+                cfg.get_initgroups_mode(),
                 user_map.get_id_overrides(),
             )
             .await

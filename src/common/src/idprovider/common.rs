@@ -480,31 +480,27 @@ macro_rules! impl_himmelblau_hello_key_helpers {
 
 #[macro_export]
 macro_rules! load_cached_prt {
-    ($hello_key:ident, $cred:ident, $self:ident, $account_id:expr, $keystore:expr, $tpm:expr, $machine_key:expr) => {
+    ($hello_key:ident, $hello_storage_key:ident, $cred:ident, $self:ident, $account_id:expr, $keystore:expr, $tpm:expr, $machine_key:expr) => {
         // Check for and decrypt any cached PRT
         let hello_prt_tag = $self.fetch_hello_prt_key_tag($account_id);
         if let Ok(Some(hello_prt)) = $keystore.get_tagged_hsm_key(&hello_prt_tag) {
-            let prt = $self
+            let (prt, prt_expired) = $self
                 .client
                 .lock()
                 .await
-                .unseal_user_prt_with_hello_key(&hello_prt, &$hello_key, &$cred, $tpm, $machine_key)
+                .unseal_user_prt_with_loaded_hello_key(
+                    &hello_prt,
+                    &$hello_storage_key,
+                    $tpm,
+                    $machine_key,
+                )
                 .map_err(|e| {
                     error!("Failed to load hello prt: {:?}", e);
                     IdpError::Tpm
                 })?;
             // Check if the cached PRT has expired.
             // This happens after 14 days of no online contact.
-            if $self
-                .client
-                .lock()
-                .await
-                .is_prt_expired(&prt, $tpm, $machine_key)
-                .map_err(|e| {
-                    error!("Failed to check prt expiration: {:?}", e);
-                    IdpError::Tpm
-                })?
-            {
+            if prt_expired {
                 return Ok(AuthResult::Denied(tr(
                     "Offline auth has expired. Please connect to the network to continue.",
                 )));
@@ -519,32 +515,28 @@ macro_rules! load_cached_prt {
 
 #[macro_export]
 macro_rules! load_cached_prt_no_op {
-    ($hello_key:ident, $cred:ident, $self:ident, $account_id:expr, $keystore:expr, $tpm:expr, $machine_key:expr) => {
+    ($hello_key:ident, $hello_storage_key:ident, $cred:ident, $self:ident, $account_id:expr, $keystore:expr, $tpm:expr, $machine_key:expr) => {
         // No-op, since openidconnect does not have PRTs
     };
 }
 
 #[macro_export]
 macro_rules! load_cached_prt_for_try_unseal {
-    ($hello_key:ident, $keytype:ident, $online:ident, $cred:ident, $self:ident, $account_id:expr, $keystore:expr, $tpm:expr, $machine_key:expr) => {
+    ($hello_key:ident, $hello_storage_key:ident, $keytype:ident, $online:ident, $cred:ident, $self:ident, $account_id:expr, $keystore:expr, $tpm:expr, $machine_key:expr) => {
         let hello_prt_tag = $self.fetch_hello_prt_key_tag($account_id);
         if let Ok(Some(hello_prt)) = $keystore.get_tagged_hsm_key(&hello_prt_tag) {
-            let mut prt = $self
+            let (mut prt, prt_expired) = $self
                 .client
                 .lock()
                 .await
-                .unseal_user_prt_with_hello_key(&hello_prt, &$hello_key, &$cred, $tpm, $machine_key)
+                .unseal_user_prt_with_loaded_hello_key(
+                    &hello_prt,
+                    &$hello_storage_key,
+                    $tpm,
+                    $machine_key,
+                )
                 .map_err(|e| {
                     error!("Failed to load hello prt: {:?}", e);
-                    IdpError::Tpm
-                })?;
-            let prt_expired = $self
-                .client
-                .lock()
-                .await
-                .is_prt_expired(&prt, $tpm, $machine_key)
-                .map_err(|e| {
-                    error!("Failed to check prt expiration: {:?}", e);
                     IdpError::Tpm
                 })?;
             if prt_expired {
@@ -622,7 +614,7 @@ macro_rules! load_cached_prt_for_try_unseal {
 
 #[macro_export]
 macro_rules! load_cached_prt_for_try_unseal_no_op {
-    ($hello_key:ident, $keytype:ident, $online:ident, $cred:ident, $self:ident, $account_id:expr, $keystore:expr, $tpm:expr, $machine_key:expr) => {
+    ($hello_key:ident, $hello_storage_key:ident, $keytype:ident, $online:ident, $cred:ident, $self:ident, $account_id:expr, $keystore:expr, $tpm:expr, $machine_key:expr) => {
         // No-op, since openidconnect does not have PRTs
         let _ = (&$keytype, $online);
     };
@@ -841,6 +833,7 @@ macro_rules! impl_himmelblau_offline_auth_step {
                     Ok((_, win_hello_storage_key)) => {
                         $load_cached_prt!(
                             hello_key,
+                            win_hello_storage_key,
                             cred,
                             $self,
                             $account_id,
@@ -1000,6 +993,7 @@ macro_rules! impl_himmelblau_try_unseal {
 
                 $load_cached_prt!(
                     hello_key,
+                    win_hello_storage_key,
                     keytype,
                     $online,
                     $cred,

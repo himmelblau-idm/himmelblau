@@ -31,19 +31,32 @@ jobs:
 
     - name: Checkout code
       uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      with:
+        fetch-depth: 0
 
     - name: Set up Git for tagging
       run: |
         git config --global user.name "GitHub Action"
         git config --global user.email "action@github.com"
 
-    - name: Extract version from Cargo.toml
-      id: get-version
+    - name: Create release tag or handle unchanged version
+      id: release-tag
+      if: github.ref_name == 'stable-3.x' || github.ref_name == 'stable-4.x'
+      run: python3 .github/scripts/stable_packages.py tag
+
+    - name: Tag legacy stable branches
+      if: github.ref_name != 'stable-3.x' && github.ref_name != 'stable-4.x'
       run: |
         VERSION=$(grep '^version =' Cargo.toml | head -n 1 | sed 's/version = "\(.*\)"/\1/')
-        echo "VERSION=$VERSION" >> $GITHUB_ENV
-
-    - name: Create and push a new tag
-      run: |
         git tag "$VERSION"
         git push origin "$VERSION"
+
+    - name: Dispatch stable package builds independently of release notes
+      if: steps.release-tag.outputs.dispatch == 'true'
+      env:
+        GH_TOKEN: ${{ github.token }}
+        RELEASE_TAG: ${{ steps.release-tag.outputs.tag }}
+      run: |
+        jq -n --arg tag "$RELEASE_TAG" \
+          '{event_type: "stable-packages", client_payload: {tag: $tag}}' |
+          gh api --method POST "repos/$GITHUB_REPOSITORY/dispatches" --input -

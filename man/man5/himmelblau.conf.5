@@ -187,6 +187,19 @@ otherwise authentication reports that the external step is unsupported.
 Default: http://localhost:8765/callback
 
 .TP
+.B oidc_device_authorization_endpoint
+.RE
+Optional device authorization endpoint for generic OIDC providers that omit
+.B device_authorization_endpoint
+from their discovery metadata. The discovered endpoint is preferred when it
+is present. This option is used only when
+.B oidc_issuer_url
+is configured.
+
+.P
+Example: oidc_device_authorization_endpoint = https://idp.example.com/device/code
+
+.TP
 .B oidc_account_id_claims
 .RE
 A comma-separated, ordered list of OIDC userinfo claim names to use as the
@@ -545,6 +558,28 @@ A comma-separated list of local groups that every Entra ID user should be a memb
 
 .P
 Example: local_groups = sudo,admin
+
+.TP
+.B initgroups_mode
+.RE
+Controls which supplementary groups Himmelblau returns from NSS initgroups.
+
+.RS
+.IP \(bu 2
+named \(em return only groups that resolve to an NSS name (default). A GID that
+.B getgrgid
+cannot name is omitted, so tools such as
+.B groups
+do not fail on an unnamed group id.
+.IP \(bu 2
+full \(em return every cached group GID, including ones with no NSS name. Use this when debugging a missing membership.
+.RE
+
+.P
+Default: named
+
+.P
+Example: initgroups_mode = <named|full>
 
 .TP
 .B local_groups_reconcile_interval

@@ -82,18 +82,6 @@ jobs:
         fi
         python3 .github/scripts/release_automation.py "${ARGS[@]}"
 
-    - name: Add package links
-      if: ${{ steps.release-tag.outputs.stable == 'true' && (github.event_name != 'workflow_dispatch' || github.event.inputs.dry_run != 'true') }}
-      shell: bash
-      run: |
-        TAG="${{ steps.release-tag.outputs.tag }}"
-        {
-          printf '\n---\n\n'
-          printf '## Packages\n\n'
-          printf -- '- Stable packages: https://packages.himmelblau-idm.org/stable/%s/\n' "$TAG"
-          printf -- '- SBOM: https://packages.himmelblau-idm.org/stable/%s/sbom/sbom.json\n' "$TAG"
-        } >> release-notes.md
-
     - name: Publish GitHub Release
       if: ${{ steps.release-tag.outputs.stable == 'true' && (github.event_name != 'workflow_dispatch' || github.event.inputs.dry_run != 'true') }}
       env:

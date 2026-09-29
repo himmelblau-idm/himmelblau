@@ -213,6 +213,29 @@ jobs:
         run: scripts/i18n-check
         continue-on-error: false
 
+  nss-helper:
+    name: NSS helper
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        image:
+          - ubuntu:24.04
+          - ubuntu:26.04
+          - debian:13
+          - archlinux:latest
+          - fedora:43
+    steps:
+      - name: Harden the runner (Audit all outbound calls)
+        uses: step-security/harden-runner@05e31511f85b41b11d1cf0ef85d0992719546e2c # v2.21.0
+        with:
+          egress-policy: audit
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: "Test update-nss on ${{ matrix.image }}"
+        run: docker run --rm -v "${{ github.workspace }}:/work:ro" -e TMPDIR=/tmp -w /work "${{ matrix.image }}" sh src/nss/tests/test-update-nss.sh
+
   license:
     name: License
     runs-on: ubuntu-latest

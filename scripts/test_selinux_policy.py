@@ -59,61 +59,57 @@ SELINUX_DISTROS = {
         "pkg_manager": "dnf",
         "selinux_pkgs": ["policycoreutils", "selinux-policy-targeted", "selinux-policy-devel", "policycoreutils-devel"],
         "extra_setup": "dnf install -y 'dnf-command(config-manager)' && dnf config-manager --set-enabled powertools",
-        "requires_scc": False,
     },
     "rocky9": {
         "base_image": "rockylinux/rockylinux:9",
         "pkg_manager": "dnf",
         "selinux_pkgs": ["policycoreutils", "selinux-policy-targeted", "selinux-policy-devel", "policycoreutils-devel"],
         "extra_setup": "dnf install -y 'dnf-command(config-manager)' && dnf config-manager --set-enabled crb",
-        "requires_scc": False,
     },
     "rocky10": {
         "base_image": "rockylinux/rockylinux:10",
         "pkg_manager": "dnf",
         "selinux_pkgs": ["policycoreutils", "selinux-policy-targeted", "selinux-policy-devel", "policycoreutils-devel"],
         "extra_setup": "dnf install -y 'dnf-command(config-manager)' && dnf config-manager --set-enabled crb && sed -i -e 's|$rltype||g' /etc/yum.repos.d/rocky*.repo",
-        "requires_scc": False,
     },
     "fedora43": {
         "base_image": "fedora:43",
         "pkg_manager": "dnf",
         "selinux_pkgs": ["policycoreutils", "selinux-policy-targeted", "selinux-policy-devel", "policycoreutils-devel"],
         "extra_setup": None,
-        "requires_scc": False,
     },
     "fedora44": {
         "base_image": "fedora:44",
         "pkg_manager": "dnf",
         "selinux_pkgs": ["policycoreutils", "selinux-policy-targeted", "selinux-policy-devel", "policycoreutils-devel"],
         "extra_setup": None,
-        "requires_scc": False,
     },
     "rawhide": {
         "base_image": "fedora:rawhide",
         "pkg_manager": "dnf",
         "selinux_pkgs": ["policycoreutils", "selinux-policy-targeted", "selinux-policy-devel", "policycoreutils-devel"],
         "extra_setup": None,
-        "requires_scc": False,
     },
     "tumbleweed": {
         "base_image": "opensuse/tumbleweed",
         "pkg_manager": "zypper",
         "selinux_pkgs": ["policycoreutils", "selinux-policy-targeted", "selinux-policy-devel"],
         "extra_setup": None,
-        "requires_scc": False,
     },
     "sle16": {
         "base_image": "registry.suse.com/bci/bci-base:16.0",
         "pkg_manager": "zypper",
         "selinux_pkgs": ["policycoreutils", "selinux-policy-targeted", "selinux-policy-devel", "selinux-tools"],
-        "extra_setup": None,
-        "requires_scc": True,  # Requires ~/.secrets/scc_regcode
+        "extra_setup": (
+            "zypper ar -e https://download.opensuse.org/distribution/leap/16.0/repo/oss "
+            "openSUSE_Leap_16.0_OSS && zypper --non-interactive "
+            "--gpg-auto-import-keys refresh openSUSE_Leap_16.0_OSS"
+        ),
     },
 }
 
-# Default distros to test (excludes SLE which requires SCC credentials)
-DEFAULT_DISTROS = [d for d, c in SELINUX_DISTROS.items() if not c.get("requires_scc")]
+# Test every supported SELinux distro by default.
+DEFAULT_DISTROS = list(SELINUX_DISTROS)
 
 # Path to the SELinux source directory
 SELINUX_SRC = Path(__file__).parent.parent / "src" / "selinux" / "src"
@@ -159,12 +155,6 @@ def build_test_image(runtime: str, distro: str, config: dict) -> tuple[bool, str
     """Build a minimal test image for the distro."""
     image_name = f"himmelblau-selinux-test-{distro}"
 
-    # Check for SCC credentials if required
-    scc_regcode_path = Path.home() / ".secrets" / "scc_regcode"
-    if config.get("requires_scc"):
-        if not scc_regcode_path.exists():
-            return False, f"SLE requires SCC credentials at {scc_regcode_path}\nCreate file with: email=<email>\\nregcode=<code>"
-
     # Create Dockerfile
     dockerfile_content = f"""FROM {config['base_image']}
 
@@ -172,23 +162,6 @@ def build_test_image(runtime: str, distro: str, config: dict) -> tuple[bool, str
 """
     if config.get('extra_setup'):
         dockerfile_content += f"RUN {config['extra_setup']}\n"
-
-    # SLE16 requires SUSEConnect registration
-    if config.get("requires_scc"):
-        dockerfile_content += """
-# Install SUSEConnect for registration
-RUN zypper --non-interactive refresh && \\
-    zypper --non-interactive install --no-recommends SUSEConnect ca-certificates && \\
-    zypper clean --all
-
-# Register with SCC (requires --secret during build)
-RUN --mount=type=secret,id=scc_regcode,dst=/run/secrets/scc_regcode \\
-    set -e && \\
-    source /run/secrets/scc_regcode && \\
-    SUSEConnect --email "$email" --regcode "$regcode" && \\
-    SUSEConnect -p PackageHub/16.0/x86_64
-
-"""
 
     if config['pkg_manager'] == 'dnf':
         pkgs = " ".join(config['selinux_pkgs'] + ["make", "m4", "checkpolicy"])
@@ -213,12 +186,6 @@ WORKDIR /selinux
     try:
         # Build the image
         cmd = [runtime, "build", "-t", image_name, "-f", dockerfile_path, "."]
-
-        # Add secret mount for SLE
-        if config.get("requires_scc"):
-            cmd = [runtime, "build",
-                   "--secret", f"id=scc_regcode,src={scc_regcode_path}",
-                   "-t", image_name, "-f", dockerfile_path, "."]
 
         rc, stdout, stderr = run_command(cmd, timeout=600)
 
@@ -702,11 +669,9 @@ Examples:
     if args.list:
         print("Available distributions for testing:")
         for distro, config in SELINUX_DISTROS.items():
-            scc_note = " (requires SCC credentials)" if config.get("requires_scc") else ""
             default_note = " [default]" if distro in DEFAULT_DISTROS else ""
-            print(f"  {distro}: {config['base_image']}{scc_note}{default_note}")
-        print(f"\nDefault distros (no SCC required): {', '.join(DEFAULT_DISTROS)}")
-        print(f"To test SLE, ensure ~/.secrets/scc_regcode exists with email= and regcode= lines")
+            print(f"  {distro}: {config['base_image']}{default_note}")
+        print(f"\nDefault distros: {', '.join(DEFAULT_DISTROS)}")
         sys.exit(0)
 
     # Determine distros to test
@@ -719,8 +684,7 @@ Examples:
                 sys.exit(1)
     else:
         distros = DEFAULT_DISTROS.copy()
-        print(f"Note: Using default distros (excludes SLE which requires SCC credentials)")
-        print(f"      To include SLE: --distros {','.join(DEFAULT_DISTROS)},sle16")
+        print("Note: Using all supported distros")
 
     # Find container runtime
     try:
