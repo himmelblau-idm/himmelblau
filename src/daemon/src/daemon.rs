@@ -1494,6 +1494,9 @@ async fn apply_intune_policy_for_account(
     }
 }
 
+// Keep this long-standing test module in place to avoid unrelated churn in
+// stable backports when production helpers are added below it.
+#[allow(clippy::items_after_test_module)]
 #[cfg(test)]
 mod tests {
     use super::*;
