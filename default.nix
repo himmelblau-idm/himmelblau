@@ -17,10 +17,31 @@ let
     ];
   };
   cargo_nix = pkgs.callPackage ./Cargo.nix {
+    # Each workspace member is built separately, so enable the common crate's
+    # TPM feature explicitly rather than relying on Cargo workspace unification.
+    rootFeatures = [
+      "default"
+      "himmelblau_unix_common/tpm"
+    ];
     buildRustCrateForPkgs =
       pkgs:
       pkgs.buildRustCrate.override {
         defaultCrateOverrides = pkgs.defaultCrateOverrides // {
+          tss-esapi-sys = attrs: {
+            nativeBuildInputs = (attrs.nativeBuildInputs or [ ]) ++ [
+              pkgs.pkg-config
+              pkgs.rustPlatform.bindgenHook
+            ];
+            buildInputs = (attrs.buildInputs or [ ]) ++ [ pkgs.tpm2-tss ];
+            # buildRustCrate names dependency metadata after the crate rather
+            # than its Cargo `links = "tss2-esys"` field. Export the name that
+            # tss-esapi's build script expects, using the detected ESYS version.
+            postInstall = (attrs.postInstall or "") + ''
+              source "$lib/env"
+              printf 'export DEP_TSS2_ESYS_VERSION="%s"\n' \
+                "''${DEP_TSS_ESAPI_VERSION:?Missing detected ESYS version}" >> "$lib/env"
+            '';
+          };
           idmap =
             attrs:
             unistring
