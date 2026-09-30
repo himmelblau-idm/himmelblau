@@ -222,6 +222,12 @@ class BranchAndCliTests(unittest.TestCase):
         self.assertEqual(smoke_argv[-2], "-euc")
         for command in ("rustc --version", "cargo --version", "cargo-vet --version", "cargo-audit --version", "crate2nix --version"):
             self.assertIn(command, smoke_argv[-1])
+        maintain_job = workflow.split("\n  maintain:\n", 1)[1]
+        maintain_hardening = maintain_job.split(
+            "      - name: Export runner-local maintenance paths\n", 1
+        )[0]
+        allowed_endpoints = maintain_hardening.split("          allowed-endpoints: >\n", 1)[1]
+        self.assertIn("production.cloudfront.docker.com:443", allowed_endpoints.split())
         self.assertIn("snapshot.ubuntu.com:443", workflow)
         self.assertIn("github.ref == 'refs/heads/main'", workflow)
         self.assertNotIn("github.event.repository", workflow)
