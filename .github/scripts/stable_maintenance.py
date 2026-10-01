@@ -1018,10 +1018,12 @@ def contained_repo_command(
 ) -> CommandResult:
     if not command or command[0] not in {"cargo", "crate2nix"}:
         raise MaintenanceError("contained repository command is not allowlisted")
-    engine = shutil.which("podman") or shutil.which("docker")
+    # The workflow builds and smoke-tests this image with Docker. Podman has a
+    # separate image store, so it cannot run the image built by those steps.
+    engine = shutil.which("docker")
     image = os.environ.get("MAINTENANCE_BUILD_IMAGE")
     if not engine or not image:
-        raise MaintenanceError("podman/docker and MAINTENANCE_BUILD_IMAGE are required")
+        raise MaintenanceError("docker and MAINTENANCE_BUILD_IMAGE are required")
     if not re.fullmatch(r"[A-Za-z0-9_./:@+-]{1,300}", image):
         raise MaintenanceError("invalid maintenance build image")
     container_name = f"himmelblau-maint-{secrets.token_hex(8)}"
@@ -1080,7 +1082,8 @@ def contained_repo_command(
                 raise MaintenanceError("project Cargo git cache is unsafe")
             argv.extend(["-v", f"{git_cache.resolve()}:/opt/project-cargo/git:ro"])
     argv.extend([
-        "-w", "/workspace", "-e", "CARGO_NET_OFFLINE=true", "-e", "CARGO_TARGET_DIR=/target",
+        "-w", "/workspace", "-e", "HOME=/tmp", "-e", "XDG_CACHE_HOME=/tmp",
+        "-e", "CARGO_NET_OFFLINE=true", "-e", "CARGO_TARGET_DIR=/target",
         "-e", "CARGO_HOME=/opt/project-cargo", "-e", "RUSTUP_HOME=/usr/local/rustup",
         "-e", "O365_GEN_DIR=/target/o365-generated",
         "-e", "PATH=/usr/local/cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",

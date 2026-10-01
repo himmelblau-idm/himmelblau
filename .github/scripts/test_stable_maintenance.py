@@ -76,7 +76,10 @@ class BranchAndCliTests(unittest.TestCase):
             self.assertEqual(os.stat(state.path).st_mode & 0o777, 0o600)
 
     def test_locked_build_command_has_security_boundaries(self):
-        with tempfile.TemporaryDirectory() as tmp, mock.patch.object(sm.shutil, "which", side_effect=["/usr/bin/podman"]):
+        engines = {"podman": "/usr/bin/podman", "docker": "/usr/bin/docker"}
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.object(
+            sm.shutil, "which", side_effect=engines.get,
+        ) as which:
             source = Path(tmp) / "source"; source.mkdir()
             cargo_home = Path(tmp) / "project-cargo-home"
             cargo_home.mkdir(parents=True, exist_ok=True)
@@ -91,6 +94,7 @@ class BranchAndCliTests(unittest.TestCase):
             }
             with mock.patch.dict(os.environ, env):
                 sm.locked_build(runner, target_dir=Path(tmp) / "target")
+            which.assert_called_once_with("docker")
             argv = runner.run.call_args_list[0].args[0]
             joined = " ".join(argv)
             self.assertIn("--network=none", argv)
@@ -107,6 +111,8 @@ class BranchAndCliTests(unittest.TestCase):
             self.assertIn(f"{(cargo_home / 'git').resolve()}:/opt/project-cargo/git:ro", joined)
             self.assertNotIn(f"{cargo_home.resolve()}:/opt/project-cargo:ro", joined)
             self.assertIn("CARGO_HOME=/opt/project-cargo", argv)
+            self.assertIn("HOME=/tmp", argv)
+            self.assertIn("XDG_CACHE_HOME=/tmp", argv)
             self.assertIn("RUSTUP_HOME=/usr/local/rustup", argv)
             self.assertIn("PATH=/usr/local/cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin", argv)
             self.assertIn("O365_GEN_DIR=/target/o365-generated", argv)
@@ -115,8 +121,20 @@ class BranchAndCliTests(unittest.TestCase):
             self.assertNotIn("AZURE", joined)
             self.assertNotIn("GITHUB_TOKEN", joined)
             cleanup = runner.run.call_args_list[-1].args[0]
-            self.assertEqual(cleanup[:3], ["/usr/bin/podman", "rm", "-f"])
+            self.assertEqual(cleanup[:3], ["/usr/bin/docker", "rm", "-f"])
             self.assertRegex(cleanup[3], r"^himmelblau-maint-[0-9a-f]{16}$")
+
+    def test_container_requires_docker_even_when_podman_is_installed(self):
+        engines = {"podman": "/usr/bin/podman", "docker": None}
+        runner = mock.Mock()
+        with mock.patch.object(sm.shutil, "which", side_effect=engines.get) as which, \
+             mock.patch.dict(os.environ, {"MAINTENANCE_BUILD_IMAGE": "image@sha256:abc"}), \
+             self.assertRaisesRegex(sm.MaintenanceError, "docker and MAINTENANCE_BUILD_IMAGE"):
+            sm.contained_repo_command(
+                runner, ["cargo", "vet"], network=False, source_rw=False, cache_rw=False,
+            )
+        which.assert_called_once_with("docker")
+        runner.run.assert_not_called()
 
     def test_networked_write_command_uses_only_source_and_project_cache_mounts(self):
         with tempfile.TemporaryDirectory() as tmp, mock.patch.object(sm.shutil, "which", return_value="/usr/bin/docker"):
@@ -220,8 +238,12 @@ class BranchAndCliTests(unittest.TestCase):
         )
         smoke_argv = shlex.split(smoke_command)
         self.assertEqual(smoke_argv[-2], "-euc")
-        for command in ("rustc --version", "cargo --version", "cargo-vet --version", "cargo-audit --version", "crate2nix --version"):
+        for command in (
+            "rustc --version", "cargo --version", "cargo-vet --version",
+            "cargo vet gc", "cargo-audit --version", "crate2nix --version",
+        ):
             self.assertIn(command, smoke_argv[-1])
+        self.assertIn("export XDG_CACHE_HOME=/tmp", smoke_argv[-1])
         maintain_job = workflow.split("\n  maintain:\n", 1)[1]
         maintain_hardening = maintain_job.split(
             "      - name: Export runner-local maintenance paths\n", 1
