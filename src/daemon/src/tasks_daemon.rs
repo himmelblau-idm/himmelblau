@@ -38,9 +38,11 @@ use himmelblau_unix_common::constants::{DEFAULT_CONFIG_PATH, DEFAULT_KERBEROS_CO
 use himmelblau_unix_common::unix_proto::{HomeDirectoryInfo, TaskRequest, TaskResponse};
 use himmelblau_unix_common::user_map::UserMap;
 use kanidm_utils_users::{get_effective_gid, get_effective_uid};
+use keyutils::keytypes::user::User;
+use keyutils::{Keyring, SpecialKeyring};
 use libc::uid_t;
 use libc::{lchown, umask};
-use libkrimes::proto::KerberosCredentials;
+use libkrimes::proto::{KerberosCredentials, Name};
 use sd_notify::NotifyState;
 use sketching::tracing_forest::traits::*;
 use sketching::tracing_forest::util::*;
@@ -505,12 +507,56 @@ fn profile_photo_task_response(outcome: Result<(), String>) -> TaskResponse {
     }
 }
 
+fn kerberos_subsidiary_name(name: &Name) -> Result<String, String> {
+    // Serialize the components separately: display names can be ambiguous when
+    // a principal contains '@' or '/'. Keep the key description short and stable.
+    let principal = serde_json::to_vec(name)
+        .map_err(|e| format!("Failed to serialize Kerberos principal: {}", e))?;
+    Ok(format!(
+        "himmelblau-{}",
+        uuid::Uuid::new_v5(&uuid::Uuid::NAMESPACE_OID, &principal)
+    ))
+}
+
+fn write_primary_kerberos_cache(collection: &mut Keyring, subsidiary: &str) -> Result<(), String> {
+    // MIT's KEYRING primary record is a version and length in network byte order,
+    // followed by the subsidiary name. add_key updates the existing record.
+    let length = u32::try_from(subsidiary.len())
+        .map_err(|e| format!("Kerberos cache name is too long: {}", e))?;
+    let mut payload = Vec::with_capacity(8 + subsidiary.len());
+    payload.extend_from_slice(&1u32.to_be_bytes());
+    payload.extend_from_slice(&length.to_be_bytes());
+    payload.extend_from_slice(subsidiary.as_bytes());
+    collection
+        .add_key::<User, _, _>("krb_ccache:primary", payload.as_slice())
+        .map_err(|e| format!("Failed to select primary Kerberos cache: {}", e))?;
+    Ok(())
+}
+
+fn select_primary_kerberos_cache(uid: uid_t, subsidiary: &str) -> Result<(), String> {
+    let process = keyutils_raw::keyctl_get_keyring_id(SpecialKeyring::Process.serial(), false)
+        .map_err(|e| format!("Failed to access process keyring: {}", e))?;
+    // The tasks daemon changes its effective UID, not its real UID. Select this
+    // user's persistent ring explicitly instead of using attach_persistent().
+    let persistent = keyutils_raw::keyctl_get_persistent(uid, process)
+        .map_err(|e| format!("Failed to access persistent keyring for {}: {}", uid, e))?;
+    // SAFETY: keyctl_get_persistent returned a valid kernel keyring ID.
+    let persistent = unsafe { Keyring::new(persistent) };
+    let mut collection = persistent
+        .search_for_keyring("_krb", None)
+        .map_err(|e| format!("Failed to access Kerberos cache collection: {}", e))?;
+    write_primary_kerberos_cache(&mut collection, subsidiary)
+}
+
 fn store_tgt(tgt: &KerberosCredentials, uid: uid_t, gid: uid_t) -> Result<(), String> {
     // Usually default_ccache_name in /etc/krb5.conf contains a %{uid} substitution,
     // which will be '0' (root) for the tasks daemon because it runs as root. Force
     // the ccache name.
     // TODO: Add a new himmelblau.conf option to define the ccache name
-    let ccname = Some(format!("KEYRING:persistent:{}", uid));
+    // libkrimes otherwise allocates a new random cache whenever the initial
+    // cache's principal differs, so alternating cloud/AD tickets exhaust quota.
+    let subsidiary = kerberos_subsidiary_name(tgt.name())?;
+    let ccname = Some(format!("KEYRING:persistent:{}:{}", uid, subsidiary));
 
     debug!(?ccname, "Storing kerberos ticket in credential cache");
 
@@ -529,6 +575,15 @@ fn store_tgt(tgt: &KerberosCredentials, uid: uid_t, gid: uid_t) -> Result<(), St
     match ccache.init(tgt.name(), None) {
         Ok(_) => (),
         Err(e) => {
+            // A partial init can leave a cache without a principal. Remove only
+            // our named subsidiary so the next attempt can initialize it again.
+            if let Err(cleanup_error) = ccache.destroy() {
+                warn!(
+                    ?cleanup_error,
+                    ?ccname,
+                    "Failed to remove uninitialized Kerberos cache"
+                );
+            }
             drop(guard);
             let msg = format!("Failed to init credential cache {:?}: {:?}", ccname, e);
             return Err(msg);
@@ -544,9 +599,13 @@ fn store_tgt(tgt: &KerberosCredentials, uid: uid_t, gid: uid_t) -> Result<(), St
         }
     }
 
+    // Explicit subsidiaries do not update the primary record in libkrimes.
+    // Switch only after storage succeeds; the last successful (normally AD)
+    // ticket remains the default for applications using the collection name.
+    let result = select_primary_kerberos_cache(uid, &subsidiary);
     drop(guard);
 
-    Ok(())
+    result
 }
 
 fn write_kerberos_config_snippet(
@@ -1089,6 +1148,81 @@ mod tests {
     /// The exact payload from GHSA-x259-23ph-65m5.
     const ADVISORY_PAYLOAD: &str = "padding:100000:65536\nattacker:0:65536\npadding";
     const TENANT_ID: &str = "11111111-2222-3333-4444-555555555555";
+
+    #[test]
+    fn kerberos_cache_names_are_stable_per_principal() {
+        let cloud = Name::principal("alice", "CLOUD.EXAMPLE.COM");
+        let ad = Name::principal("alice", "AD.EXAMPLE.COM");
+        let cloud_cache = kerberos_subsidiary_name(&cloud).unwrap();
+        assert_eq!(cloud_cache, kerberos_subsidiary_name(&cloud).unwrap());
+        assert_ne!(cloud_cache, kerberos_subsidiary_name(&ad).unwrap());
+        assert_ne!(
+            cloud_cache,
+            kerberos_subsidiary_name(&Name::principal("bob", "CLOUD.EXAMPLE.COM")).unwrap()
+        );
+        assert!(cloud_cache.starts_with("himmelblau-"));
+        assert!(!cloud_cache.contains(':'));
+    }
+
+    #[test]
+    fn kerberos_cache_names_distinguish_ambiguous_display_names() {
+        let first = Name::principal("alice@EXAMPLE", "COM");
+        let second = Name::principal("alice", "EXAMPLE@COM");
+        assert_eq!(String::from(&first), String::from(&second));
+        assert_ne!(
+            kerberos_subsidiary_name(&first).unwrap(),
+            kerberos_subsidiary_name(&second).unwrap()
+        );
+    }
+
+    #[test]
+    #[ignore = "requires kernel keyring support"]
+    fn kerberos_keyring_reuses_principal_caches() {
+        // Use a unique thread collection, never the user's persistent auth ring.
+        let collection_name = format!("himmelblau-test-{}", uuid::Uuid::new_v4());
+        let mut thread = Keyring::attach_or_create(SpecialKeyring::Thread).unwrap();
+        let mut collection = thread
+            .add_keyring(format!("_krb_{}", collection_name))
+            .unwrap();
+        let unrelated = collection.add_keyring("unrelated").unwrap();
+        let cloud = Name::principal("alice", "CLOUD.EXAMPLE.COM");
+        let ad = Name::principal("alice", "AD.EXAMPLE.COM");
+
+        // A quota failure during init can leave an empty subsidiary. The same
+        // cleanup used by store_tgt must allow a later attempt to initialize it.
+        let ad_subsidiary = kerberos_subsidiary_name(&ad).unwrap();
+        collection.add_keyring(ad_subsidiary.as_str()).unwrap();
+        let ad_ccname = format!("KEYRING:thread:{}:{}", collection_name, ad_subsidiary);
+        let mut partial_cache = libkrimes::ccache::resolve(Some(&ad_ccname)).unwrap();
+        assert!(partial_cache.init(&ad, None).is_err());
+        partial_cache.destroy().unwrap();
+        partial_cache.init(&ad, None).unwrap();
+
+        for _ in 0..8 {
+            for principal in [&cloud, &ad] {
+                let subsidiary = kerberos_subsidiary_name(principal).unwrap();
+                let ccname = format!("KEYRING:thread:{}:{}", collection_name, subsidiary);
+                let mut cache = libkrimes::ccache::resolve(Some(&ccname)).unwrap();
+                cache.init(principal, None).unwrap();
+                write_primary_kerberos_cache(&mut collection, &subsidiary).unwrap();
+                let primary = collection
+                    .search_for_key::<User, _, Option<&mut Keyring>>("krb_ccache:primary", None)
+                    .unwrap()
+                    .read()
+                    .unwrap();
+                assert_eq!(&primary[..4], &1u32.to_be_bytes());
+                assert_eq!(&primary[4..8], &(subsidiary.len() as u32).to_be_bytes());
+                assert_eq!(&primary[8..], subsidiary.as_bytes());
+            }
+            let (keys, caches) = collection.read().unwrap();
+            assert_eq!(keys.len(), 1, "primary record must be reused");
+            assert_eq!(caches.len(), 3, "only two principal caches plus unrelated");
+            assert!(caches.contains(&unrelated));
+        }
+
+        collection.clear().unwrap();
+        thread.unlink_keyring(&collection).unwrap();
+    }
 
     #[test]
     fn validate_subid_username_accepts_legitimate_names() {

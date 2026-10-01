@@ -55,6 +55,8 @@ libhimmelblau.workspace = true
 url.workspace = true
 console-subscriber = { workspace = true, optional = true }
 libkrimes = { workspace = true }
+keyutils = "0.4.0"
+keyutils-raw = "0.4.0"
 tempfile = "3.27.0"
 zbus = { workspace = true }
 

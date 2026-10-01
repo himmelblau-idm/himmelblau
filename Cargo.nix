@@ -7916,6 +7916,14 @@ rec {
             packageId = "kanidm_utils_users";
           }
           {
+            name = "keyutils";
+            packageId = "keyutils";
+          }
+          {
+            name = "keyutils-raw";
+            packageId = "keyutils-raw";
+          }
+          {
             name = "libc";
             packageId = "libc";
           }

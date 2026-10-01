@@ -2401,6 +2401,8 @@ dependencies = [
  "kanidm-hsm-crypto",
  "kanidm_lib_file_permissions",
  "kanidm_utils_users",
+ "keyutils",
+ "keyutils-raw",
  "libc",
  "libhimmelblau",
  "libkrimes",
