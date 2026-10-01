@@ -241,6 +241,7 @@ jobs:
             "$MAINTENANCE_BUILD_IMAGE" \
             sh -euc '
               export HOME=/tmp
+              export XDG_CACHE_HOME=/tmp
               git --version
               printf "%s\n" old > /tmp/old
               printf "%s\n" new > /tmp/new
@@ -252,6 +253,7 @@ jobs:
               rustc --version | grep -E "^rustc 1\.98\.0 "
               cargo --version | grep -F "cargo 1.98.0"
               cargo-vet --version | grep -F "0.10.2"
+              cargo vet gc
               cargo-audit --version | grep -F "0.22.2"
               crate2nix --version | grep -F "0.15.0"
             '
