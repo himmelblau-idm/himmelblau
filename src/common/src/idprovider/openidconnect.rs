@@ -2483,7 +2483,10 @@ impl OidcProvider {
             };
 
         let request_timeout = self.config.lock().await.get_request_timeout();
-        let client = match build_online_probe_client(request_timeout) {
+        let client = match build_online_probe_client(
+            request_timeout,
+            reqwest::redirect::Policy::default(),
+        ) {
             Ok(c) => c,
             Err(e) => {
                 error!(?e, "Failed to build HTTP client for online check");
