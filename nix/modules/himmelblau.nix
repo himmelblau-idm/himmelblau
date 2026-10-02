@@ -171,6 +171,7 @@ in
 
     systemd.tmpfiles.rules = [
       "d /var/cache/nss-himmelblau 0755 root root -"
+      "d /var/cache/himmelblau-policies 0600 root root -"
     ];
 
     programs.firefox = {
@@ -273,12 +274,27 @@ in
     systemd.services =
       let
         tpmAccessRequired = config.security.tpm2.enable && mayUseLocalTpmDevice;
+        commonAfter = [
+          "chronyd.service"
+          "ntpd.service"
+          "network-online.target"
+          "suspend.target"
+        ];
+        daemonAfter = commonAfter ++ [ "nscd.service" ]
+          ++ lib.optional config.security.tpm2.enable "himmelblau-hsm-pin-init.service"
+          ++ lib.optional tpmAccessRequired "tpm2-udev-trigger.service";
+        daemonSockets = [
+          "himmelblaud.socket"
+          "himmelblaud-tasks.socket"
+          "himmelblaud-broker.socket"
+        ];
         commonServiceConfig = {
           Type = "notify";
-          UMask = "0027";
           # SystemCallFilter = "@aio @basic-io @chown @file-system @io-event @network-io @sync";
           NoNewPrivileges = true;
+          PrivateTmp = true;
           PrivateDevices = true;
+          ProtectSystem = "strict";
           ProtectHostname = true;
           ProtectClock = true;
           ProtectKernelTunables = true;
@@ -296,58 +312,162 @@ in
             "chronyd.service"
             "ntpd.service"
             "network-online.target"
-          ] ++ lib.optional tpmAccessRequired "tpm2-udev-trigger.service";
-          after = lib.optional tpmAccessRequired "tpm2-udev-trigger.service";
-          before = [ "accounts-daemon.service" ];
+            "nss-user-lookup.target"
+          ] ++ lib.optional config.security.tpm2.enable "himmelblau-hsm-pin-init.service"
+            ++ lib.optional tpmAccessRequired "tpm2-udev-trigger.service";
+          after = daemonAfter ++ daemonSockets;
+          requires = daemonSockets;
+          before = [
+            "accounts-daemon.service"
+            "systemd-user-sessions.service"
+            "sshd.service"
+            "nss-user-lookup.target"
+          ];
           wantedBy = [
             "multi-user.target"
             "accounts-daemon.service"
           ];
 
           upholds = [ "himmelblaud-tasks.service" ];
+          startLimitIntervalSec = 30;
+          startLimitBurst = 8;
           serviceConfig = commonServiceConfig // {
+            UMask = "0027";
             ExecStart =
               "${cfg.daemonPackage}/bin/himmelblaud --config ${configFile}"
               + lib.optionalString cfg.debugFlag " -d";
             Restart = "on-failure";
+            RestartSec = "500ms";
             WatchdogSec = "120s";
+            FileDescriptorStoreMax = 1;
+            FileDescriptorStorePreserve = "yes";
+            Sockets = daemonSockets;
             DynamicUser = "yes";
+            User = "himmelblaud";
             CacheDirectory = "himmelblaud"; # /var/cache/himmelblaud
-            CacheDirectoryMode = "0750";
-            RuntimeDirectory = "himmelblaud"; # /var/run/himmelblaud
             StateDirectory = "himmelblaud"; # /var/lib/himmelblaud
-            PrivateTmp = true;
             # Expose host devices only when a TPM-backed HSM mode may need them.
             PrivateDevices = !tpmAccessRequired;
             DeviceAllow = lib.optional tpmAccessRequired "char-tpm rw";
             SupplementaryGroups = lib.optional (
               tpmAccessRequired && config.security.tpm2.tssGroup != null
             ) config.security.tpm2.tssGroup;
+          } // lib.optionalAttrs config.security.tpm2.enable {
+            LoadCredentialEncrypted = "hsm-pin:/var/lib/himmelblaud/hsm-pin-nopcr.enc";
+            Environment = "HIMMELBLAU_HSM_PIN_PATH=%d/hsm-pin";
+          };
+        };
+
+        himmelblau-hsm-pin-init = lib.mkIf config.security.tpm2.enable {
+          description = "Himmelblau HSM PIN Initialization";
+          before = [ "himmelblaud.service" ];
+          after = [
+            "local-fs.target"
+            "systemd-tpm2-setup.service"
+            "tpm2-udev-trigger.service"
+          ];
+          wants = [
+            "systemd-tpm2-setup.service"
+            "tpm2-udev-trigger.service"
+          ];
+          wantedBy = [ "himmelblaud.service" ];
+          path = [
+            pkgs.coreutils
+            pkgs.gnugrep
+            pkgs.openssl
+            pkgs.systemd
+            pkgs.tpm2-tools
+          ];
+          unitConfig = {
+            DefaultDependencies = false;
+            ConditionPathExists = "!/var/lib/private/himmelblaud/hsm-pin-nopcr.enc";
+          };
+          serviceConfig = {
+            Type = "oneshot";
+            ExecStart = "${cfg.daemonPackage}/libexec/himmelblau-init-hsm-pin";
           };
         };
 
         himmelblaud-tasks = {
           description = "Himmelblau Local Tasks";
+          after = commonAfter ++ [ "himmelblaud.service" ];
           bindsTo = [ "himmelblaud.service" ];
           wantedBy = [ "multi-user.target" ];
+          startLimitIntervalSec = 30;
+          startLimitBurst = 8;
           path = [
             pkgs.shadow
             pkgs.bash
             pkgs.util-linux
           ];
           unitConfig = {
-            ConditionPathExists = "/var/run/himmelblaud/task_sock";
+            ConditionPathExists = "/run/himmelblaud/task_sock";
           };
           serviceConfig = commonServiceConfig // {
             ExecStart = "${cfg.daemonPackage}/bin/himmelblaud_tasks";
             Restart = "on-failure";
+            RestartSec = "1s";
             WatchdogSec = "120s";
             User = "root";
-            ProtectSystem = "strict";
-            CacheDirectory = "himmelblau-policies"; # /var/cache/himmelblau-policies
+            CacheDirectory = "nss-himmelblau";
+            CapabilityBoundingSet = [
+              "CAP_CHOWN"
+              "CAP_FOWNER"
+              "CAP_DAC_OVERRIDE"
+              "CAP_DAC_READ_SEARCH"
+              "CAP_SETUID"
+              "CAP_SETGID"
+            ];
+            AmbientCapabilities = [ "CAP_SETUID" "CAP_SETGID" ];
+            InaccessiblePaths = [ "-/sys/firmware/efi/mok-variables" ];
             ReadWritePaths =
-              "/home /var/run/himmelblaud /tmp /etc/krb5.conf.d /etc /var/lib /var/cache/nss-himmelblau /var/cache/himmelblau-policies";
-            RestrictAddressFamilies = ["AF_UNIX" "AF_INET" "AF_INET6"];
+              "/home /run/himmelblaud /tmp /etc/krb5.conf.d /etc /var/lib /var/cache/nss-himmelblau /var/cache/himmelblau-policies";
+          };
+        };
+      };
+
+    systemd.sockets =
+      let
+        daemonAfter = config.systemd.services.himmelblaud.after;
+        commonSocket = {
+          after = lib.filter (unit: !(lib.hasSuffix ".socket" unit)) daemonAfter
+            ++ [ "sockets.target" ];
+          before = [ "himmelblaud.service" ];
+          partOf = [ "himmelblaud.service" ];
+          unitConfig.DefaultDependencies = false;
+        };
+        commonSocketConfig = {
+          DirectoryMode = "0755";
+          Accept = false;
+          Service = "himmelblaud.service";
+        };
+      in
+      {
+        # Pulled in by the daemon, not sockets.target, to avoid early NSS boot hangs.
+        himmelblaud = commonSocket // {
+          description = "Himmelblau Authentication Daemon Socket";
+          socketConfig = commonSocketConfig // {
+            ListenStream = "/run/himmelblaud/socket";
+            FileDescriptorName = "himmelblaud";
+            SocketMode = "0666";
+          };
+        };
+        himmelblaud-tasks = commonSocket // {
+          description = "Himmelblau Daemon Task Socket";
+          socketConfig = commonSocketConfig // {
+            ListenStream = "/run/himmelblaud/task_sock";
+            FileDescriptorName = "himmelblaud-task";
+            SocketMode = "0600";
+            SocketUser = "root";
+            SocketGroup = "root";
+          };
+        };
+        himmelblaud-broker = commonSocket // {
+          description = "Himmelblau Daemon Broker Socket";
+          socketConfig = commonSocketConfig // {
+            ListenStream = "/run/himmelblaud/broker_sock";
+            FileDescriptorName = "himmelblaud-broker";
+            SocketMode = "0666";
           };
         };
       };
