@@ -325,6 +325,10 @@ Wants=systemd-tpm2-setup.service
 [Service]
 Type=oneshot
 ExecStart=/usr/libexec/himmelblau-init-hsm-pin
+RuntimeDirectory=himmelblau-hsm-pin
+RuntimeDirectoryMode=0700
+TemporaryFileSystem=/run/himmelblau-hsm-pin:rw,mode=0700
+UMask=0077
 
 [Install]
 WantedBy=himmelblaud.service
