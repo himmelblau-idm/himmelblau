@@ -214,7 +214,11 @@ def build_rpm_final_cmd(features: list, selinux: bool, apparmor: bool) -> str:
         pkgs.append(pkg)
     rpm_cmds = []
     for _, s, _ in pkgs:
-        rpm_cmds.append(f"cargo generate-rpm -p {s}")
+        rpm_cmds.append(
+            f'if [ -n \\"${{RPM_PACKAGE_RELEASE:-}}\\" ]; then '
+            f'cargo generate-rpm -p {s} --set-metadata \\"release = \'${{RPM_PACKAGE_RELEASE}}\'\\"; '
+            f'else cargo generate-rpm -p {s}; fi'
+        )
     rpms = CMD_SEP.join(rpm_cmds)
     if apparmor:
         gen_servicefiles = "make rpm-servicefiles ORCHESTRATOR_APPARMOR_PROFILE=himmelblau-orchestrator-container"
