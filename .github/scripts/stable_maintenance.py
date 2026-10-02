@@ -414,6 +414,51 @@ def parse_cargo_vet_output(output: str) -> list[VetItem]:
     return list(dict.fromkeys(items))
 
 
+def parse_locked_cargo_vet_report(result: CommandResult) -> list[VetItem]:
+    """Read coverage failures without relying on unlocked vet suggestions."""
+    error = "post-import cargo-vet baseline failed without parseable requirements"
+    try:
+        report = json.loads(result.stdout)
+    except json.JSONDecodeError as exc:
+        raise MaintenanceError(error) from exc
+    if not isinstance(report, dict):
+        raise MaintenanceError(error)
+    conclusion = report.get("conclusion")
+    if conclusion == "success" and result.returncode == 0:
+        if any(not isinstance(report.get(key), list) for key in (
+            "vetted_fully", "vetted_partially", "vetted_with_exemptions",
+        )):
+            raise MaintenanceError(error)
+        return []
+    if conclusion == "fail (violation)":
+        raise MaintenanceError("post-import cargo-vet baseline contains audit violation conflicts")
+    if conclusion != "fail (vetting)" or result.returncode == 0:
+        raise MaintenanceError(error)
+    failures = report.get("failures")
+    if not isinstance(failures, list) or not failures:
+        raise MaintenanceError(error)
+    gaps: list[VetItem] = []
+    for failure in failures:
+        if not isinstance(failure, dict):
+            raise MaintenanceError(error)
+        name, version = failure.get("name"), failure.get("version")
+        criteria = failure.get("missing_criteria")
+        if (not isinstance(name, str) or not PACKAGE_RE.fullmatch(name)
+                or not isinstance(version, str) or not isinstance(criteria, list)
+                or not criteria or any(not isinstance(item, str) or not item for item in criteria)):
+            raise MaintenanceError(error)
+        # cargo-vet versions may identify a Git revision as well as a SemVer.
+        semver, separator, revision = version.partition("@git:")
+        try:
+            SemVer.parse(semver)
+        except ValueError as exc:
+            raise MaintenanceError(error) from exc
+        if separator and not re.fullmatch(r"[0-9a-fA-F]{40}", revision):
+            raise MaintenanceError(error)
+        gaps.append(VetItem(name, None, version))
+    return list(dict.fromkeys(gaps))
+
+
 def serialize_audit(crate: str, old: str | None, new: str) -> str:
     if not PACKAGE_RE.fullmatch(crate):
         raise MaintenanceError("invalid crate name in audit")
@@ -1015,6 +1060,7 @@ def satisfies_all_advisories(version: SemVer, groups: Sequence[set[str]]) -> boo
 def contained_repo_command(
     runner: Runner, command: Sequence[str], *, network: bool, source_rw: bool,
     cache_rw: bool, timeout: int = 1800, check: bool = True,
+    vet_store: Path | None = None,
 ) -> CommandResult:
     if not command or command[0] not in {"cargo", "crate2nix"}:
         raise MaintenanceError("contained repository command is not allowlisted")
@@ -1046,7 +1092,16 @@ def contained_repo_command(
     for forbidden in ("credentials", "credentials.toml", "config", "config.toml"):
         if (project_home / forbidden).exists():
             raise MaintenanceError("project Cargo home must not contain credentials or host configuration")
-    user = f"{os.getuid()}:{os.getgid()}" if source_rw or cache_rw else "65532:65532"
+    if vet_store is not None:
+        if vet_store.is_symlink() or not vet_store.is_dir():
+            raise MaintenanceError("temporary cargo-vet store must be a non-symlink directory")
+        vet_store = vet_store.resolve()
+        if vet_store == runner.root or runner.root in vet_store.parents:
+            raise MaintenanceError("temporary cargo-vet store must be outside the source checkout")
+        if list(command[:2]) != ["cargo", "vet"]:
+            raise MaintenanceError("temporary cargo-vet store requires a cargo vet command")
+        command = [*command, "--store-path", "/vet-store"]
+    user = f"{os.getuid()}:{os.getgid()}" if source_rw or cache_rw or vet_store is not None else "65532:65532"
     argv = [
         engine, "run", "--name", container_name, f"--network={'bridge' if network else 'none'}",
         "--cap-drop=ALL", "--security-opt=no-new-privileges",
@@ -1060,6 +1115,8 @@ def contained_repo_command(
         # hooks, or any other Git administrative state even for source-rw phases.
         "-v", f"{git_admin}:/workspace/.git:ro",
     ]
+    if vet_store is not None:
+        argv.extend(["-v", f"{vet_store}:/vet-store:rw"])
     if cache_rw:
         # Only trusted, networked preparation/update commands may mutate the
         # dedicated project cache.  It is deliberately not the runner's Cargo
@@ -1220,19 +1277,32 @@ def phase_refresh_vet_imports(args: argparse.Namespace, state: State, runner: Ru
     if runner.git(["status", "--porcelain"]).stdout:
         raise MaintenanceError("tracked worktree must be clean before refreshing cargo-vet imports")
     contained_repo_command(runner, ["cargo", "vet", "regenerate", "imports"], network=True, source_rw=True, cache_rw=True, timeout=900)
+    # cargo-vet also prunes exemptions and local audits when regenerating
+    # imports. Keep the committed policy/audits: this phase may only publish
+    # the refreshed import lock, which is validated against that same policy.
+    runner.git(["restore", "--source=HEAD", "--worktree", "--", "supply-chain/config.toml", "supply-chain/audits.toml"])
     changed = runner.git(["diff", "--name-only"]).stdout.splitlines()
     if any(path != "supply-chain/imports.lock" for path in changed):
         raise MaintenanceError("cargo-vet import refresh changed an unexpected path")
-    baseline = contained_repo_command(runner, ["cargo", "vet"], network=False, source_rw=False, cache_rw=False, timeout=900, check=False)
-    gaps = parse_cargo_vet_output(baseline.stdout + "\n" + baseline.stderr)
-    if baseline.returncode and not gaps:
-        raise MaintenanceError("post-import cargo-vet baseline failed without parseable requirements")
+    # --locked prevents fetching imports, not opening/rewriting the store.
+    # Validate the refreshed imports against preserved policy in a disposable
+    # writable store, leaving the checkout and dependency cache read-only.
+    with tempfile.TemporaryDirectory(prefix="vet-baseline-", dir=state.directory) as tmp:
+        vet_store = Path(tmp) / "supply-chain"
+        shutil.copytree(runner.root / "supply-chain", vet_store)
+        baseline = contained_repo_command(
+            runner, ["cargo", "vet", "--locked", "--frozen", "--output-format=json"],
+            network=False, source_rw=False, cache_rw=False, timeout=900,
+            check=False, vet_store=vet_store,
+        )
+    gaps = parse_locked_cargo_vet_report(baseline)
     value = state.load()
     registry = registry_packages(cargo_metadata(runner))
     value["post_import_unvetted"] = [asdict(item) for item in gaps]
-    value["post_import_covered_count"] = len(registry) - len(gaps)
+    covered = set(registry) - {(item.crate, item.new) for item in gaps}
+    value["post_import_covered_count"] = len(covered)
     value["already_covered"] = [
-        {"crate": name, "version": version} for name, version in sorted(registry)
+        {"crate": name, "version": version} for name, version in sorted(covered)
     ][:500]
     state.save(value)
     if gaps:

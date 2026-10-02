@@ -27,6 +27,17 @@ sys.modules[SPEC.name] = sm
 SPEC.loader.exec_module(sm)
 
 
+# cargo-vet 0.10.2 JsonReport with suggestions disabled by --locked.
+VET_SUCCESS = json.dumps({
+    "conclusion": "success", "vetted_fully": [],
+    "vetted_partially": [], "vetted_with_exemptions": [],
+})
+VET_LOCKED_FAILURE = json.dumps({
+    "conclusion": "fail (vetting)",
+    "failures": [{"name": "example", "version": "1.0.0", "missing_criteria": ["safe-to-deploy"]}],
+    "suggest": None,
+})
+
 UTC = dt.timezone.utc
 NOW = dt.datetime(2026, 9, 24, 12, tzinfo=UTC)
 
@@ -135,6 +146,41 @@ class BranchAndCliTests(unittest.TestCase):
             )
         which.assert_called_once_with("docker")
         runner.run.assert_not_called()
+
+    def test_vet_store_is_writable_without_source_or_cache_writes(self):
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.object(sm.shutil, "which", return_value="/usr/bin/docker"):
+            base = Path(tmp); source = base / "source"; cache = base / "cache"; store = base / "store"
+            for path in (source, source / ".git", cache, cache / "registry", store): path.mkdir()
+            runner = mock.Mock(root=source.resolve())
+            runner.run.return_value = sm.CommandResult(0, "", "")
+            env = {"MAINTENANCE_BUILD_IMAGE": "image@sha256:abc", "MAINTENANCE_PROJECT_CARGO_HOME": str(cache)}
+            with mock.patch.dict(os.environ, env):
+                sm.contained_repo_command(
+                    runner, ["cargo", "vet", "--locked", "--frozen"],
+                    network=False, source_rw=False, cache_rw=False, vet_store=store,
+                )
+            argv = runner.run.call_args_list[0].args[0]
+            self.assertIn(f"{source.resolve()}:/workspace:ro", argv)
+            self.assertIn(f"{(source / '.git').resolve()}:/workspace/.git:ro", argv)
+            self.assertIn(f"{(cache / 'registry').resolve()}:/opt/project-cargo/registry:ro", argv)
+            self.assertIn(f"{store.resolve()}:/vet-store:rw", argv)
+            self.assertEqual(argv[argv.index("--user") + 1], f"{os.getuid()}:{os.getgid()}")
+            self.assertIn("--network=none", argv)
+            self.assertEqual(argv[-6:], ["cargo", "vet", "--locked", "--frozen", "--store-path", "/vet-store"])
+            runner.run.reset_mock()
+            for unsafe in (source, source / ".git", base / "missing"):
+                with mock.patch.dict(os.environ, env), self.assertRaises(sm.MaintenanceError):
+                    sm.contained_repo_command(
+                        runner, ["cargo", "vet"], network=False, source_rw=False,
+                        cache_rw=False, vet_store=unsafe,
+                    )
+            link = base / "link"; link.symlink_to(store, target_is_directory=True)
+            with mock.patch.dict(os.environ, env), self.assertRaises(sm.MaintenanceError):
+                sm.contained_repo_command(
+                    runner, ["cargo", "vet"], network=False, source_rw=False,
+                    cache_rw=False, vet_store=link,
+                )
+            runner.run.assert_not_called()
 
     def test_networked_write_command_uses_only_source_and_project_cache_mounts(self):
         with tempfile.TemporaryDirectory() as tmp, mock.patch.object(sm.shutil, "which", return_value="/usr/bin/docker"):
@@ -461,6 +507,37 @@ class VersionPolicyTests(unittest.TestCase):
 
 
 class CargoVetTests(unittest.TestCase):
+    def test_locked_json_report_records_failures_without_suggestions(self):
+        self.assertEqual(sm.parse_locked_cargo_vet_report(sm.CommandResult(1, VET_LOCKED_FAILURE, "")), [
+            sm.VetItem("example", None, "1.0.0"),
+        ])
+        report = json.loads(VET_LOCKED_FAILURE)
+        report["failures"].append({
+            "name": "git-crate", "version": "2.0.0@git:" + "A" * 40,
+            "missing_criteria": ["safe-to-run"],
+        })
+        self.assertEqual(len(sm.parse_locked_cargo_vet_report(sm.CommandResult(1, json.dumps(report), ""))), 2)
+        self.assertEqual(sm.parse_locked_cargo_vet_report(sm.CommandResult(0, VET_SUCCESS, "warning")), [])
+
+    def test_locked_json_report_rejects_errors_and_inconsistent_results(self):
+        invalid = [
+            (1, ""), (1, "store error"), (1, "[]"), (0, "{}"),
+            (1, VET_SUCCESS), (0, VET_LOCKED_FAILURE),
+            (0, '{"conclusion":"success"}'),
+            (1, '{"conclusion":"fail (vetting)","failures":[]}'),
+            (1, '{"conclusion":"fail (vetting)","failures":[null]}'),
+            (1, '{"conclusion":"fail (violation)","violations":{}}'),
+        ]
+        for field, value in (("name", "bad name"), ("version", "bogus"),
+                             ("version", "1.0.0@git:bad"), ("missing_criteria", []),
+                             ("missing_criteria", [None])):
+            report = json.loads(VET_LOCKED_FAILURE)
+            report["failures"][0][field] = value
+            invalid.append((1, json.dumps(report)))
+        for code, output in invalid:
+            with self.subTest(code=code, output=output), self.assertRaises(sm.MaintenanceError):
+                sm.parse_locked_cargo_vet_report(sm.CommandResult(code, output, ""))
+
     def test_parser_returns_only_explicit_unvetted_commands(self):
         output = """
         Vetting Failed!
@@ -729,7 +806,9 @@ class MutationBoundaryTests(unittest.TestCase):
     def test_refresh_commits_only_the_import_lock(self):
         with tempfile.TemporaryDirectory() as tmp:
             state = sm.State(Path(tmp) / "state")
-            runner = mock.Mock()
+            root = Path(tmp) / "source"
+            (root / "supply-chain").mkdir(parents=True)
+            runner = mock.Mock(root=root)
             def git(argv, **kwargs):
                 if argv == ["status", "--porcelain"]:
                     return sm.CommandResult(0, "", "")
@@ -737,9 +816,11 @@ class MutationBoundaryTests(unittest.TestCase):
                     return sm.CommandResult(0, "supply-chain/imports.lock\n", "")
                 if argv in (["add", "--", "supply-chain/imports.lock"], ["commit", "-m", "chore: refresh cargo vet metadata"]):
                     return sm.CommandResult(0, "", "")
+                if argv == ["restore", "--source=HEAD", "--worktree", "--", "supply-chain/config.toml", "supply-chain/audits.toml"]:
+                    return sm.CommandResult(0, "", "")
                 raise AssertionError(argv)
             runner.git.side_effect = git
-            with mock.patch.object(sm, "contained_repo_command", return_value=sm.CommandResult(0, "", "")), \
+            with mock.patch.object(sm, "contained_repo_command", return_value=sm.CommandResult(0, VET_SUCCESS, "")), \
                  mock.patch.object(sm, "cargo_metadata", return_value={"packages": []}):
                 sm.phase_refresh_vet_imports(mock.Mock(), state, runner)
             runner.git.assert_any_call(["add", "--", "supply-chain/imports.lock"])
@@ -749,11 +830,97 @@ class MutationBoundaryTests(unittest.TestCase):
         runner = mock.Mock()
         runner.git.side_effect = [
             sm.CommandResult(0, "", ""),
-            sm.CommandResult(0, "supply-chain/audits.toml\n", ""),
+            sm.CommandResult(0, "", ""),
+            sm.CommandResult(0, "Cargo.toml\n", ""),
         ]
-        with mock.patch.object(sm, "contained_repo_command", return_value=sm.CommandResult(0, "", "")), \
+        with mock.patch.object(sm, "contained_repo_command", return_value=sm.CommandResult(0, VET_SUCCESS, "")), \
              self.assertRaisesRegex(sm.MaintenanceError, "unexpected path"):
             sm.phase_refresh_vet_imports(mock.Mock(), mock.Mock(), runner)
+
+    def test_refresh_preserves_policy_and_audits_with_real_git(self):
+        for outcome in ("success", "unexpected", "gaps", "failure", "exception"):
+            with self.subTest(outcome=outcome), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp) / "source"
+                (root / "supply-chain").mkdir(parents=True)
+                originals = {
+                    "supply-chain/config.toml": "# Keep exemptions and policy\n",
+                    "supply-chain/audits.toml": "# Keep local audit history\n",
+                    "supply-chain/imports.lock": "# Old imported audits\n",
+                    "Cargo.toml": "# Manifest\n",
+                }
+                for path, content in originals.items():
+                    (root / path).write_text(content)
+                runner = sm.Runner(root)
+                runner.git(["init"])
+                runner.git(["config", "user.name", "Maintenance test"])
+                runner.git(["config", "user.email", "maintenance-test@example.invalid"])
+                runner.git(["add", "."])
+                runner.git(["commit", "-m", "Initial metadata"])
+                initial_head = runner.git(["rev-parse", "HEAD"]).stdout
+                state = sm.State(Path(tmp) / "state")
+
+                def contained(_runner, command, **kwargs):
+                    if command == ["cargo", "vet", "regenerate", "imports"]:
+                        for path in originals:
+                            if path != "Cargo.toml" or outcome == "unexpected":
+                                (root / path).write_text("# Regenerated\n")
+                    else:
+                        self.assertEqual(command, ["cargo", "vet", "--locked", "--frozen", "--output-format=json"])
+                        self.assertFalse(kwargs["network"])
+                        self.assertFalse(kwargs["source_rw"])
+                        self.assertFalse(kwargs["cache_rw"])
+                        store = kwargs["vet_store"]
+                        self.assertNotIn(root, store.parents)
+                        for path in ("supply-chain/config.toml", "supply-chain/audits.toml"):
+                            self.assertEqual((root / path).read_text(), originals[path])
+                            self.assertEqual((store / Path(path).name).read_text(), originals[path])
+                        self.assertEqual((store / "imports.lock").read_text(), "# Regenerated\n")
+                        for name in ("config.toml", "audits.toml", "imports.lock"):
+                            (store / name).write_text("# Baseline store rewrite\n")
+                        if outcome == "gaps":
+                            return sm.CommandResult(1, VET_LOCKED_FAILURE, "")
+                        if outcome == "failure":
+                            return sm.CommandResult(1, "", "store error")
+                        if outcome == "exception":
+                            raise sm.MaintenanceError("command timed out")
+                    return sm.CommandResult(0, VET_SUCCESS, "")
+
+                with mock.patch.object(sm, "contained_repo_command", side_effect=contained) as command, \
+                     mock.patch.object(sm, "cargo_metadata", return_value={"packages": [
+                         {"name": name, "version": "1.0.0", "id": name,
+                          "source": "registry+https://github.com/rust-lang/crates.io-index"}
+                         for name in ("example", "covered-crate")
+                     ]}):
+                    if outcome != "success":
+                        errors = {
+                            "unexpected": "unexpected path", "gaps": "pre-existing unvetted",
+                            "failure": "without parseable requirements", "exception": "command timed out",
+                        }
+                        with self.assertRaisesRegex(sm.MaintenanceError, errors[outcome]):
+                            sm.phase_refresh_vet_imports(mock.Mock(), state, runner)
+                        self.assertEqual(command.call_count, 1 if outcome == "unexpected" else 2)
+                        self.assertEqual(runner.git(["rev-parse", "HEAD"]).stdout, initial_head)
+                        if outcome == "gaps":
+                            value = state.load()
+                            self.assertEqual(value["post_import_unvetted"], [
+                                {"crate": "example", "old": None, "new": "1.0.0"},
+                            ])
+                            self.assertEqual(value["post_import_covered_count"], 1)
+                            self.assertEqual(value["already_covered"], [
+                                {"crate": "covered-crate", "version": "1.0.0"},
+                            ])
+                    else:
+                        sm.phase_refresh_vet_imports(mock.Mock(), state, runner)
+                        self.assertEqual(command.call_count, 2)
+                        self.assertEqual(
+                            runner.git(["diff", "--name-only", "HEAD^", "HEAD"]).stdout,
+                            "supply-chain/imports.lock\n",
+                        )
+                        self.assertEqual(runner.git(["status", "--porcelain"]).stdout, "")
+                for path in ("supply-chain/config.toml", "supply-chain/audits.toml"):
+                    self.assertEqual((root / path).read_text(), originals[path])
+                self.assertEqual((root / "supply-chain/imports.lock").read_text(), "# Regenerated\n")
+                self.assertEqual(list(state.directory.glob("vet-baseline-*")), [])
 
     def test_conflicting_backport_is_aborted_without_ai(self):
         with tempfile.TemporaryDirectory() as tmp:
