@@ -581,36 +581,39 @@ fn store_tgt(tgt: &KerberosCredentials, uid: uid_t, gid: uid_t) -> Result<(), St
     let guard = uzers::switch::switch_user_group(uid, gid)
         .map_err(|e| format!("Failed to switch user/group: {}", e))?;
 
-    let mut ccache = match libkrimes::ccache::resolve(ccname.as_deref()) {
-        Ok(ccache) => ccache,
-        Err(e) => {
-            drop(guard);
-            let msg = format!("Failed to resolve credential cache {:?}: {:?}", ccname, e);
-            return Err(msg);
-        }
-    };
-
-    match ccache.init(tgt.name(), None) {
-        Ok(_) => (),
-        Err(e) => {
-            drop(guard);
-            let msg = format!("Failed to init credential cache {:?}: {:?}", ccname, e);
-            return Err(msg);
-        }
-    }
-
-    match ccache.store(tgt) {
-        Ok(_) => (),
-        Err(e) => {
-            drop(guard);
-            let msg = format!("Failed to store TGT in credential cache: {:?}", e);
-            return Err(msg);
-        }
-    }
+    let res = libkrimes::ccache::resolve(ccname.as_deref())
+        .map_err(|e| format!("Failed to resolve credential cache: {:?}", e))
+        .and_then(|ccache| match ccache {
+            libkrimes::ccache::ResolvedCredentialCache::Collection(cccol) => {
+                match cccol.find(tgt.name()) {
+                    Ok(cc) => Ok(cc),
+                    Err(libkrimes::error::KrbError::CredentialCacheNotFound) => cccol.new_unique(),
+                    Err(e) => Err(e),
+                }
+            }
+            .map_err(|e| format!("Failed to get subsidiary credential cache: {:?}", e))
+            .and_then(|mut cc| {
+                cc.init(tgt.name(), None)
+                    .map_err(|e| format!("Failed to init credential cache: {:?}", e))
+                    .and_then(|_| {
+                        cc.store(tgt).map_err(|e| {
+                            format!("Failed to store credentials in credential cache: {:?}", e)
+                        })
+                    })
+            }),
+            libkrimes::ccache::ResolvedCredentialCache::Subsidiary(mut cc) => cc
+                .init(tgt.name(), None)
+                .map_err(|e| format!("Failed to init credential cache: {:?}", e))
+                .and_then(|_| {
+                    cc.store(tgt).map_err(|e| {
+                        format!("Failed to store credentials in credential cache: {:?}", e)
+                    })
+                }),
+        });
 
     drop(guard);
 
-    Ok(())
+    res
 }
 
 fn write_kerberos_config_snippet(

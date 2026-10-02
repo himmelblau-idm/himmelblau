@@ -60,6 +60,7 @@ use himmelblau_unix_common::unix_config::HsmType;
 use himmelblau_unix_common::unix_proto::{ClientRequest, ClientResponse};
 use himmelblau_unix_common::{tpm_loadable_machine_key, tpm_machine_key};
 use kanidm_hsm_crypto::glue::traits::EncodeDer;
+use kanidm_hsm_crypto::glue::x509::profile::cabf::tls::{CertificateType, Subscriber};
 use kanidm_hsm_crypto::glue::{
     spki::der::pem::LineEnding,
     traits::{EncodePem, Keypair},
@@ -1166,24 +1167,22 @@ async fn main() -> ExitCode {
             let serial_number = x509::SerialNumber::from(1u32);
 
             let now = SystemTime::now();
-            let validity = x509::Validity {
-                not_before: match x509::Time::try_from(now) {
-                    Ok(not_before) => not_before,
-                    Err(e) => {
-                        error!(?e, ?now, "Failed parsing timestamp");
-                        return ExitCode::FAILURE;
-                    }
-                },
-                not_after: match x509::Time::try_from(now + Duration::from_secs(valid_days * 86400))
-                {
+            let not_before = match x509::Time::try_from(now) {
+                Ok(not_before) => not_before,
+                Err(e) => {
+                    error!(?e, ?now, "Failed parsing timestamp");
+                    return ExitCode::FAILURE;
+                }
+            };
+            let not_after =
+                match x509::Time::try_from(now + Duration::from_secs(valid_days * 86400)) {
                     Ok(not_after) => not_after,
                     Err(e) => {
                         error!(?e, ?now, "Failed parsing timestamp");
                         return ExitCode::FAILURE;
                     }
-                },
-            };
-
+                };
+            let validity = x509::Validity::new(not_before, not_after);
             let subject = match x509::Name::from_str(&format!("CN={}", client_id)) {
                 Ok(subject) => subject,
                 Err(e) => {
@@ -1194,7 +1193,7 @@ async fn main() -> ExitCode {
 
             // Get the SubjectPublicKeyInfo from the TPM key
             let subject_public_key_info =
-                match x509::SubjectPublicKeyInfoOwned::from_key(signing_key.verifying_key()) {
+                match x509::SubjectPublicKeyInfoOwned::from_key(&signing_key.verifying_key()) {
                     Ok(subject_public_key_info) => subject_public_key_info,
                     Err(e) => {
                         error!(?e, "Failed setting subject key info");
@@ -1202,14 +1201,36 @@ async fn main() -> ExitCode {
                     }
                 };
 
+            let alt_name = match x509::Ia5String::new("localhost") {
+                Ok(n) => n,
+                Err(e) => {
+                    error!(?e, "Failed to build certificate name");
+                    return ExitCode::FAILURE;
+                }
+            };
+            let names = vec![x509::GeneralName::DnsName(alt_name)];
+            let certificate_type =
+                match CertificateType::domain_validated(subject.clone(), names.clone()) {
+                    Ok(t) => t,
+                    Err(e) => {
+                        error!(?e, "Failed to build certificate type");
+                        return ExitCode::FAILURE;
+                    }
+                };
+            let profile = Subscriber {
+                certificate_type,
+                issuer: subject,
+                client_auth: false,
+                tls12_options: Default::default(),
+                enable_data_encipherment: Default::default(),
+            };
+
             // Build the certificate (self-signed, so issuer = None)
             let mut cert_builder = match x509::CertificateBuilder::new(
-                x509::Profile::Manual { issuer: None },
+                profile,
                 serial_number,
                 validity,
-                subject,
                 subject_public_key_info,
-                &signing_key,
             ) {
                 Ok(cert_builder) => cert_builder,
                 Err(e) => {
@@ -1219,7 +1240,7 @@ async fn main() -> ExitCode {
             };
 
             // Encode the TBS certificate
-            let tbs = match cert_builder.finalize() {
+            let tbs = match cert_builder.finalize(&signing_key) {
                 Ok(tbs) => tbs,
                 Err(e) => {
                     error!(?e, "Failed encoding the TBS certificate");
@@ -1237,7 +1258,7 @@ async fn main() -> ExitCode {
             };
 
             // Complete the certificate assembly
-            let cert = match cert_builder.assemble(signature) {
+            let cert = match cert_builder.assemble(signature, &signing_key) {
                 Ok(cert) => cert,
                 Err(e) => {
                     error!(?e, "Failed assembling the certificate");
