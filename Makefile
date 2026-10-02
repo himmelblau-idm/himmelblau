@@ -3,7 +3,7 @@ SHELL := /usr/bin/env bash
 all: .packaging dockerfiles ## Auto-detect host distro and build packages just for this host
 	@set -euo pipefail; \
 	. /etc/os-release; \
-	ID="$$ID"; VER="$$VERSION_ID"; LIKE="$${ID_LIKE:-}"; \
+	ID="$$ID"; VER="$${VERSION_ID:-}"; LIKE="$${ID_LIKE:-}"; \
 	TARGET=""; \
 	echo "Detecting host distro: ID=$$ID VERSION_ID=$$VER ID_LIKE=$$LIKE"; \
 	\
@@ -49,7 +49,7 @@ all: .packaging dockerfiles ## Auto-detect host distro and build packages just f
 	    esac ;; \
 	  opensuse-tumbleweed) TARGET="tumbleweed" ;; \
 	  gentoo)         TARGET="gentoo" ;; \
-	  arch|archlinux|manjaro) TARGET="arch" ;; \
+	  arch|archlinux|manjaro|cachyos) TARGET="arch" ;; \
 	  amzn)          case "$$VER" in 2023) TARGET="amzn2023" ;; esac ;; \
 	esac; \
 	\
@@ -141,7 +141,7 @@ ALL_ARM64_TARGETS := $(DEB_ARM64_TARGETS) $(RPM_ARM64_TARGETS) $(SLE_ARM64_TARGE
 install: ## Install packages from ./packaging onto this host (apt/dnf/yum/zypper/pacman auto-detected)
 	@set -euo pipefail; \
 	. /etc/os-release; \
-	ID="$${ID}"; VER="$${VERSION_ID}"; \
+	ID="$${ID}"; \
 	PKGTYPE=""; RPM_SUFFIX=""; INSTALL_CMD=""; \
 	case "$$ID" in \
 	  ubuntu|linuxmint|debian) \
@@ -152,7 +152,7 @@ install: ## Install packages from ./packaging onto this host (apt/dnf/yum/zypper
 		                            (command -v zypper >/dev/null && zypper --non-interactive --no-gpg-checks in ./packaging/*.rpm)';; \
 	  gentoo) \
 		PKGTYPE="gentoo"; INSTALL_CMD='python3 scripts/install_local.py --no-build --destdir $(DESTDIR)/';; \
-	  arch|archlinux|manjaro) \
+	  arch|archlinux|manjaro|cachyos) \
 		PKGTYPE="arch"; INSTALL_CMD='pacman -U --noconfirm ./packaging/himmelblau-*.pkg.tar.zst';; \
 	esac; \
 	if [ -z "$$PKGTYPE" ] && command -v pacman >/dev/null 2>&1; then \
