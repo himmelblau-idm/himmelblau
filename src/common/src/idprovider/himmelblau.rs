@@ -983,6 +983,33 @@ impl IdProvider for HimmelblauMultiProvider {
 // If the provider is offline, we need to backoff and wait a bit.
 const OFFLINE_NEXT_CHECK: Duration = Duration::from_secs(15);
 
+async fn probe_entra_authority(
+    authority_url: &str,
+    request_timeout: u64,
+    now: SystemTime,
+) -> CacheState {
+    // The authority root may redirect to an unrelated, proxy-blocked host.
+    // A response from the authority itself is sufficient for reachability.
+    let client =
+        match build_online_probe_client(request_timeout, reqwest::redirect::Policy::none()) {
+            Ok(c) => c,
+            Err(e) => {
+                error!(?e, "Failed to build HTTP client for online check");
+                return CacheState::OfflineNextCheck(now + OFFLINE_NEXT_CHECK);
+            }
+        };
+    match client.get(authority_url).send().await {
+        Ok(_) => {
+            debug!("provider is now online");
+            CacheState::Online
+        }
+        Err(err) => {
+            error!(?err, "Provider online failed");
+            CacheState::OfflineNextCheck(now + OFFLINE_NEXT_CHECK)
+        }
+    }
+}
+
 pub struct HimmelblauProvider {
     state: Mutex<CacheState>,
     client: Mutex<BrokerClientApplication>,
@@ -4842,36 +4869,11 @@ impl HimmelblauProvider {
             .await
             .unwrap_or(self.config.lock().await.get_authority_host(&self.domain));
         let request_timeout = self.config.lock().await.get_request_timeout();
-        // The authority root may redirect to an unrelated, proxy-blocked host.
-        // A response from the authority itself is sufficient for reachability.
-        let client =
-            match build_online_probe_client(request_timeout, reqwest::redirect::Policy::none()) {
-                Ok(c) => c,
-                Err(e) => {
-                    error!(?e, "Failed to build HTTP client for online check");
-                    let mut state = self.state.lock().await;
-                    *state = CacheState::OfflineNextCheck(now + OFFLINE_NEXT_CHECK);
-                    return false;
-                }
-            };
-        match client
-            .get(format!("https://{}", authority_host))
-            .send()
-            .await
-        {
-            Ok(_) => {
-                debug!("provider is now online");
-                let mut state = self.state.lock().await;
-                *state = CacheState::Online;
-                return true;
-            }
-            Err(err) => {
-                error!(?err, "Provider online failed");
-                let mut state = self.state.lock().await;
-                *state = CacheState::OfflineNextCheck(now + OFFLINE_NEXT_CHECK);
-                return false;
-            }
-        }
+        let next_state =
+            probe_entra_authority(&format!("https://{}", authority_host), request_timeout, now).await;
+        let online = matches!(next_state, CacheState::Online);
+        *self.state.lock().await = next_state;
+        online
     }
 
     impl_himmelblau_hello_key_helpers!();
@@ -5977,6 +5979,52 @@ mod tests {
     };
     use std::{cell::Cell, collections::HashMap};
     use zeroize::Zeroizing;
+
+    #[tokio::test]
+    async fn entra_authority_response_marks_online_without_following_redirects() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        use tokio::net::TcpListener;
+
+        for status in ["302 Found", "404 Not Found", "503 Service Unavailable"] {
+            let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let address = listener.local_addr().unwrap();
+            let server = tokio::spawn(async move {
+                let (mut socket, _) = listener.accept().await.unwrap();
+                let mut request = [0; 4096];
+                socket.read(&mut request).await.unwrap();
+                // Following the redirect would fail like the blocked host in #1733.
+                let response = format!(
+                    "HTTP/1.1 {status}\r\nLocation: http://127.0.0.1:0/blocked\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+                );
+                socket.write_all(response.as_bytes()).await.unwrap();
+            });
+            let state = super::probe_entra_authority(
+                &format!("http://{address}/"),
+                5,
+                std::time::SystemTime::now(),
+            )
+            .await;
+            assert!(matches!(state, super::CacheState::Online), "{status}");
+            server.await.unwrap();
+        }
+    }
+
+    #[tokio::test]
+    async fn entra_authority_connection_failure_keeps_offline_retry() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .unwrap();
+        let address = listener.local_addr().unwrap();
+        drop(listener);
+        let now = std::time::SystemTime::now();
+        let state = super::probe_entra_authority(&format!("http://{address}/"), 5, now).await;
+        match state {
+            super::CacheState::OfflineNextCheck(deadline) => {
+                assert_eq!(deadline, now + super::OFFLINE_NEXT_CHECK);
+            }
+            _ => panic!("connection failure should schedule an offline retry"),
+        }
+    }
 
     #[derive(Default)]
     struct RecordingKeyStore {
