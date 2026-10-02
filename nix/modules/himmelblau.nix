@@ -127,8 +127,6 @@ in
   };
 
   config = lib.mkIf cfg.enable {
-    # The default HSM mode uses the TPM when available. Configure its udev
-    # permissions as well as compiling support, unless explicitly disabled.
     security.tpm2.enable = lib.mkDefault (cfg.settings.hsm_type != "soft");
 
     environment.etc."himmelblau/himmelblau.conf".source = configFile;
@@ -276,15 +274,11 @@ in
             WatchdogSec = "120s";
             DynamicUser = "yes";
             CacheDirectory = "himmelblaud"; # /var/cache/himmelblaud
-            CacheDirectoryMode = "0750";
             RuntimeDirectory = "himmelblaud"; # /var/run/himmelblaud
             StateDirectory = "himmelblaud"; # /var/lib/himmelblaud
             PrivateTmp = true;
             # We have to disable this to allow tpmrm0 access for tpm binding.
             PrivateDevices = false;
-            # ProtectClock adds a device allowlist. Both tpm and tpmrm devices
-            # use the kernel's "tpm" character-device major.
-            DeviceAllow = [ "char-tpm rw" ];
             SupplementaryGroups = lib.optional (
               config.security.tpm2.enable && config.security.tpm2.tssGroup != null
             ) config.security.tpm2.tssGroup;
