@@ -70,6 +70,10 @@ let
                 pkgs.makeWrapper
               ];
               postInstall = (if attrs ? postInstall then attrs.postInstall else "") + ''
+                install -Dm755 \
+                  ${./src/daemon/scripts/himmelblau-init-hsm-pin} \
+                  $out/libexec/himmelblau-init-hsm-pin
+
                 po_dir=${./po}
                 linguas="$po_dir/LINGUAS"
                 if [ -f "$linguas" ]; then
