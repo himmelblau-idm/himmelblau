@@ -138,6 +138,7 @@ mod tests {
         try_unseal_online: AtomicBool,
         user_get_calls: AtomicUsize,
         try_unseal_calls: AtomicUsize,
+        user_get_error: AtomicUsize,
     }
 
     impl OfflineFallbackProvider {
@@ -150,6 +151,7 @@ mod tests {
                 try_unseal_online: AtomicBool::new(false),
                 user_get_calls: AtomicUsize::new(0),
                 try_unseal_calls: AtomicUsize::new(0),
+                user_get_error: AtomicUsize::new(0),
             }
         }
 
@@ -178,7 +180,14 @@ mod tests {
             _machine_key: &tpm::structures::StorageKey,
         ) -> Result<UserTokenState, IdpError> {
             self.user_get_calls.fetch_add(1, Ordering::AcqRel);
-            Ok(UserTokenState::UseCached)
+            match self.user_get_error.load(Ordering::Acquire) {
+                1 => Err(IdpError::NotFound {
+                    what: "user".to_string(),
+                    where_: "test provider".to_string(),
+                }),
+                2 => Err(IdpError::BadRequest),
+                _ => Ok(UserTokenState::UseCached),
+            }
         }
 
         async fn unix_user_access<D: KeyStoreTxn + Send>(
@@ -413,6 +422,48 @@ mod tests {
 
     async fn setup_resolver() -> Resolver<OfflineFallbackProvider> {
         setup_resolver_with_expiry(0).await
+    }
+
+    #[tokio::test]
+    async fn refresh_usertoken_logs_not_found_at_debug_and_other_errors_at_error() {
+        use std::sync::{Arc, Mutex};
+        use tracing::instrument::WithSubscriber;
+        use tracing::{Event, Level, Subscriber};
+        use tracing_subscriber::layer::{Context, SubscriberExt};
+        use tracing_subscriber::Layer;
+
+        struct Events(Arc<Mutex<Vec<Level>>>);
+        impl<S: Subscriber> Layer<S> for Events {
+            fn on_event(&self, event: &Event<'_>, _ctx: Context<'_, S>) {
+                if event.metadata().target() == "himmelblau_unix_common::resolver" {
+                    self.0
+                        .lock()
+                        .expect("events lock poisoned")
+                        .push(*event.metadata().level());
+                }
+            }
+        }
+
+        let resolver = setup_resolver().await;
+        let id = Id::Name("testuser@example.com".to_string());
+        for (error, level) in [(1, Level::DEBUG), (2, Level::ERROR)] {
+            resolver
+                .client
+                .user_get_error
+                .store(error, Ordering::Release);
+            for token in [None, Some(test_token())] {
+                let expected_spn = token.as_ref().map(|token| token.spn.clone());
+                let events = Arc::new(Mutex::new(Vec::new()));
+                let subscriber = tracing_subscriber::registry().with(Events(events.clone()));
+                let result = resolver
+                    .refresh_usertoken(&id, token)
+                    .with_subscriber(subscriber)
+                    .await
+                    .expect("refresh failed");
+                assert_eq!(result.map(|token| token.spn), expected_spn);
+                assert_eq!(*events.lock().expect("events lock poisoned"), vec![level]);
+            }
+        }
     }
 
     #[tokio::test]
@@ -1099,6 +1150,11 @@ where
                 Ok(None)
             }
             Ok(UserTokenState::UseCached) => Ok(token),
+            Err(err @ IdpError::NotFound { .. }) => {
+                // NSS may ask for local or unknown identities outside the provider.
+                debug!(?err, "User lookup did not match an identity provider");
+                Ok(token)
+            }
             Err(err) => {
                 // Something went wrong, we don't know what, but lets return the token
                 // anyway.
