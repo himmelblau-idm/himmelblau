@@ -51,10 +51,12 @@ pub(crate) fn oidc_issuer_matches(configured: &str, reported: Option<&str>) -> b
 /// `auth.rs`.
 pub(crate) fn build_online_probe_client(
     request_timeout_secs: u64,
+    redirect_policy: reqwest::redirect::Policy,
 ) -> Result<reqwest::Client, reqwest::Error> {
     let request_timeout = Duration::from_secs(request_timeout_secs);
     let connect_timeout = std::cmp::min(request_timeout / 2, Duration::from_secs(3));
     reqwest::Client::builder()
+        .redirect(redirect_policy)
         .connect_timeout(connect_timeout)
         .timeout(request_timeout)
         .build()
@@ -1476,13 +1478,44 @@ macro_rules! impl_setup_hello_totp {
 #[cfg(test)]
 mod tests {
     use super::{
-        oidc_issuer_matches, should_block_hello_pin_attempts, should_offer_offline_hello_pin,
-        should_renew_expired_try_unseal_prt, should_warn_last_hello_pin_attempt,
-        try_unseal_policy_denial, KeyType, RefreshCache, RefreshCacheEntry, TryUnsealPolicyDenial,
+        build_online_probe_client, oidc_issuer_matches, should_block_hello_pin_attempts,
+        should_offer_offline_hello_pin, should_renew_expired_try_unseal_prt,
+        should_warn_last_hello_pin_attempt, try_unseal_policy_denial, KeyType, RefreshCache,
+        RefreshCacheEntry, TryUnsealPolicyDenial,
     };
     use kanidm_hsm_crypto::structures::SealedData;
     use std::time::{Duration, SystemTime};
     use zeroize::Zeroizing;
+
+    #[tokio::test]
+    async fn authority_probe_does_not_follow_redirects() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        use tokio::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut request = [0; 4096];
+            socket.read(&mut request).await.unwrap();
+            // Following this redirect would fail, just like the blocked host
+            // behind the reporter's allowlisting proxy.
+            socket
+                .write_all(
+                    b"HTTP/1.1 302 Found\r\nLocation: http://127.0.0.1:0/blocked\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                )
+                .await
+                .unwrap();
+        });
+        let client = build_online_probe_client(5, reqwest::redirect::Policy::none()).unwrap();
+        let response = client
+            .get(format!("http://{address}/"))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), reqwest::StatusCode::FOUND);
+        server.await.unwrap();
+    }
 
     #[test]
     fn oidc_issuers_tolerate_only_trailing_slash_differences() {
