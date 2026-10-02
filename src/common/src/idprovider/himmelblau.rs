@@ -4842,7 +4842,12 @@ impl HimmelblauProvider {
             .await
             .unwrap_or(self.config.lock().await.get_authority_host(&self.domain));
         let request_timeout = self.config.lock().await.get_request_timeout();
-        let client = match build_online_probe_client(request_timeout) {
+        // The authority root may redirect to an unrelated, proxy-blocked host.
+        // A response from the authority itself is sufficient for reachability.
+        let client = match build_online_probe_client(
+            request_timeout,
+            reqwest::redirect::Policy::none(),
+        ) {
             Ok(c) => c,
             Err(e) => {
                 error!(?e, "Failed to build HTTP client for online check");
@@ -4856,18 +4861,11 @@ impl HimmelblauProvider {
             .send()
             .await
         {
-            Ok(resp) => {
-                if resp.status().is_success() {
-                    debug!("provider is now online");
-                    let mut state = self.state.lock().await;
-                    *state = CacheState::Online;
-                    return true;
-                } else {
-                    error!("Provider online failed: {}", resp.status());
-                    let mut state = self.state.lock().await;
-                    *state = CacheState::OfflineNextCheck(now + OFFLINE_NEXT_CHECK);
-                    return false;
-                }
+            Ok(_) => {
+                debug!("provider is now online");
+                let mut state = self.state.lock().await;
+                *state = CacheState::Online;
+                return true;
             }
             Err(err) => {
                 error!(?err, "Provider online failed");
