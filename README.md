@@ -242,7 +242,8 @@ This installs whatever is already in `./packaging/`.
 sudo make install
 ```
 
-Under the hood, `make install` uses your system package manager (`apt`, `dnf`/`yum`, or `zypper`) to install the locally built packages.
+Under the hood, `make install` uses your system package manager (`apt`, `dnf`/`yum`,
+`zypper`, or `pacman`) to install the locally built packages.
 
 ### Building for Other Distros (Optional)
 
