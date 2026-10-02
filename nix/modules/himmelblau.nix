@@ -280,7 +280,9 @@ in
             # We have to disable this to allow tpmrm0 access for tpm binding.
             PrivateDevices = false;
             SupplementaryGroups = lib.optional (
-              config.security.tpm2.enable && config.security.tpm2.tssGroup != null
+              config.security.tpm2.enable
+              && cfg.settings.hsm_type != "soft"
+              && config.security.tpm2.tssGroup != null
             ) config.security.tpm2.tssGroup;
           };
         };
