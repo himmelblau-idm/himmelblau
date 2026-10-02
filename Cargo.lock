@@ -2345,6 +2345,7 @@ dependencies = [
  "tokio-util",
  "totp-rs",
  "tracing",
+ "tracing-subscriber",
  "urlencoding",
  "uuid",
  "zbus",

@@ -63,3 +63,6 @@ gettextrs.workspace = true
 
 [package.metadata.cargo-machete]
 ignored = ["libhimmelblau"]
+
+[dev-dependencies]
+tracing-subscriber = { workspace = true }
