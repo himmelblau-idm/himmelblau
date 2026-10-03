@@ -51,10 +51,12 @@ pub(crate) fn oidc_issuer_matches(configured: &str, reported: Option<&str>) -> b
 /// `auth.rs`.
 pub(crate) fn build_online_probe_client(
     request_timeout_secs: u64,
+    redirect_policy: reqwest::redirect::Policy,
 ) -> Result<reqwest::Client, reqwest::Error> {
     let request_timeout = Duration::from_secs(request_timeout_secs);
     let connect_timeout = std::cmp::min(request_timeout / 2, Duration::from_secs(3));
     reqwest::Client::builder()
+        .redirect(redirect_policy)
         .connect_timeout(connect_timeout)
         .timeout(request_timeout)
         .build()
