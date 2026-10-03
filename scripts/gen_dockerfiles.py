@@ -701,7 +701,7 @@ def render(
             cross_target=cross_target,
         )
     elif dist_name == "test":
-        final_cmd = "CMD cargo test"
+        final_cmd = "CMD python3 scripts/test_hsm_pin_init.py && cargo test"
     elif dist_cfg["family"] == "ebuild":
         # Ebuild generation - lightweight, just runs gen_ebuild.py
         repo_root = Path(__file__).parent.parent.resolve()
