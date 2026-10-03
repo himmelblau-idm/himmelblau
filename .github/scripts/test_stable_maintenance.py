@@ -37,6 +37,7 @@ VET_LOCKED_FAILURE = json.dumps({
     "failures": [{"name": "example", "version": "1.0.0", "missing_criteria": ["safe-to-deploy"]}],
     "suggest": None,
 })
+VET_DELTA_SUGGESTION = "cargo vet diff example 0.9.0 1.0.0"
 
 UTC = dt.timezone.utc
 NOW = dt.datetime(2026, 9, 24, 12, tzinfo=UTC)
@@ -549,8 +550,23 @@ class CargoVetTests(unittest.TestCase):
             sm.VetItem("serde", "1.0.1", "1.0.2"), sm.VetItem("novel-crate", None, "0.1.0"),
         ])
 
+    def test_parser_accepts_git_target_only_for_delta(self):
+        git_version = "1.0.0@git:" + "a" * 40
+        self.assertEqual(
+            sm.parse_cargo_vet_output(f"cargo vet diff example 0.9.0 {git_version}"),
+            [sm.VetItem("example", "0.9.0", git_version)],
+        )
+        self.assertEqual(sm.parse_cargo_vet_output(f"cargo vet inspect example {git_version}"), [])
+
     def test_covered_dependencies_produce_no_items(self):
         self.assertEqual(sm.parse_cargo_vet_output("Vetting Succeeded!"), [])
+
+    def test_locked_gaps_must_match_review_suggestions(self):
+        locked = sm.CommandResult(1, VET_LOCKED_FAILURE, "")
+        mismatched = sm.CommandResult(1, "cargo vet diff other 0.9.0 1.0.0", "")
+        with mock.patch.object(sm, "isolated_vet_command", side_effect=[locked, mismatched]), \
+             self.assertRaisesRegex(sm.MaintenanceError, "disagree"):
+            sm.reviewable_vet_gaps(mock.Mock(), Path("state"))
 
     def test_audit_serialization_delta_and_full_version(self):
         delta = sm.serialize_audit("serde", "1.0.1", "1.0.2")
@@ -560,6 +576,10 @@ class CargoVetTests(unittest.TestCase):
         full = sm.serialize_audit("fresh", None, "0.1.0")
         self.assertIn('version = "0.1.0"', full)
         self.assertNotIn("delta", full)
+        git_version = "1.0.0@git:" + "a" * 40
+        self.assertIn(f'delta = "0.9.0 -> {git_version}"', sm.serialize_audit("example", "0.9.0", git_version))
+        with self.assertRaises(sm.MaintenanceError):
+            sm.serialize_audit("example", None, git_version)
 
     def test_audit_serialization_rejects_injection(self):
         with self.assertRaises(sm.MaintenanceError):
@@ -571,7 +591,7 @@ class CargoVetTests(unittest.TestCase):
             (root / "supply-chain/audits.toml").write_text("")
             state = sm.State(Path(tmp) / "state")
             runner = mock.Mock(root=root.resolve())
-            rejected = sm.VetItem("transitive", "1.0.0", "1.0.1")
+            rejected = sm.VetItem("example", "0.9.0", "1.0.0")
 
             def git(argv, **kwargs):
                 if argv in (["status", "--porcelain"], ["diff", "--name-only"]):
@@ -579,9 +599,10 @@ class CargoVetTests(unittest.TestCase):
                 raise AssertionError(argv)
 
             runner.git.side_effect = git
-            vet_failed = sm.CommandResult(1, "cargo vet diff transitive 1.0.0 1.0.1\n", "")
-            vet_clean = sm.CommandResult(0, "Vetting Succeeded!\n", "")
-            with mock.patch.object(sm, "contained_repo_command", side_effect=[vet_failed, vet_clean]), \
+            vet_failed = sm.CommandResult(1, VET_LOCKED_FAILURE, "")
+            suggestion = sm.CommandResult(1, VET_DELTA_SUGGESTION, "")
+            vet_clean = sm.CommandResult(0, VET_SUCCESS, "")
+            with mock.patch.object(sm, "contained_repo_command", side_effect=[vet_failed, suggestion, vet_clean]), \
                  mock.patch.object(sm, "AzureAI", return_value=mock.Mock()), \
                  mock.patch.object(sm, "safe_vet_decision", return_value=False), \
                  mock.patch.object(sm, "_fallback_after_vet_rejection", return_value=([], [])):
@@ -606,6 +627,199 @@ class CargoVetTests(unittest.TestCase):
         self.assertEqual(retry_decisions, [(newly_rejected, False)])
         self.assertEqual(retry_added, [])
         decide.assert_called_once()
+
+    def test_dependency_vet_uses_locked_reports_and_disposable_stores(self):
+        for outcome in ("covered", "accepted", "final-gap", "error", "exception"):
+            with self.subTest(outcome=outcome), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp) / "source"
+                (root / "supply-chain").mkdir(parents=True)
+                originals = {name: "# Committed " + name + "\n" for name in (
+                    "config.toml", "audits.toml", "imports.lock",
+                )}
+                for name, content in originals.items():
+                    (root / "supply-chain" / name).write_text(content)
+                runner = sm.Runner(root)
+                runner.git(["init"])
+                runner.git(["config", "user.name", "Maintenance test"])
+                runner.git(["config", "user.email", "maintenance-test@example.invalid"])
+                runner.git(["add", "."])
+                runner.git(["commit", "-m", "Initial metadata"])
+                initial_head = runner.git(["rev-parse", "HEAD"]).stdout
+                state = sm.State(Path(tmp) / "state")
+                calls = []
+                locked_calls = 0
+
+                def contained(_runner, command, **kwargs):
+                    nonlocal locked_calls
+                    self.assertEqual(kwargs["network"], command == ["cargo", "vet"])
+                    self.assertFalse(kwargs["source_rw"])
+                    self.assertFalse(kwargs["cache_rw"])
+                    store = kwargs["vet_store"]
+                    calls.append(store)
+                    audits = (root / "supply-chain/audits.toml").read_text()
+                    self.assertEqual((store / "audits.toml").read_text(), audits)
+                    if command == ["cargo", "vet"]:
+                        return sm.CommandResult(1, VET_DELTA_SUGGESTION, "")
+                    self.assertEqual(command, ["cargo", "vet", "--locked", "--frozen", "--output-format=json"])
+                    locked_calls += 1
+                    if locked_calls == 2 and outcome in ("accepted", "final-gap"):
+                        self.assertIn('[[audits.example]]', audits)
+                        self.assertIn('delta = "0.9.0 -> 1.0.0"', audits)
+                    for name in originals:
+                        (store / name).write_text("# Disposable rewrite\n")
+                    if outcome == "error":
+                        return sm.CommandResult(1, "", "store error")
+                    if outcome == "exception":
+                        raise sm.MaintenanceError("command timed out")
+                    if outcome == "final-gap" or (outcome == "accepted" and locked_calls == 1):
+                        return sm.CommandResult(1, VET_LOCKED_FAILURE, "")
+                    return sm.CommandResult(0, VET_SUCCESS, "")
+
+                with mock.patch.object(sm, "contained_repo_command", side_effect=contained), \
+                     mock.patch.object(sm, "AzureAI") as ai, \
+                     mock.patch.object(sm, "safe_vet_decision", return_value=True) as decide:
+                    if outcome in ("final-gap", "error", "exception"):
+                        message = {"final-gap": "still reports uncovered", "error": "without parseable", "exception": "timed out"}[outcome]
+                        with self.assertRaisesRegex(sm.MaintenanceError, message):
+                            sm.phase_vet_dependencies(mock.Mock(), state, runner)
+                        self.assertEqual(runner.git(["rev-parse", "HEAD"]).stdout, initial_head)
+                    else:
+                        sm.phase_vet_dependencies(mock.Mock(), state, runner)
+                        if outcome == "accepted":
+                            self.assertEqual(runner.git(["diff", "--name-only", "HEAD^", "HEAD"]).stdout,
+                                             "supply-chain/audits.toml\n")
+                            self.assertEqual(state.load()["vet_accepted"], [sm.asdict(sm.VetItem("example", "0.9.0", "1.0.0"))])
+                        else:
+                            self.assertEqual(runner.git(["rev-parse", "HEAD"]).stdout, initial_head)
+                        self.assertEqual(runner.git(["status", "--porcelain"]).stdout, "")
+                    if outcome in ("covered", "error", "exception"):
+                        ai.assert_not_called()
+                        decide.assert_not_called()
+                    else:
+                        self.assertEqual(decide.call_args.args[2], sm.VetItem("example", "0.9.0", "1.0.0"))
+                for name in ("config.toml", "imports.lock"):
+                    self.assertEqual((root / "supply-chain" / name).read_text(), originals[name])
+                self.assertTrue(calls)
+                self.assertTrue(all(not path.exists() for path in calls))
+
+    def test_final_validation_rejects_locked_vet_gaps(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "source"
+            (root / "supply-chain").mkdir(parents=True)
+            (root / "supply-chain/audits.toml").write_text("# Current audits\n")
+            state = sm.State(Path(tmp) / "state")
+            runner = mock.Mock(root=root)
+            stores = []
+            def contained(_runner, command, **kwargs):
+                if command[:2] == ["cargo", "vet"]:
+                    self.assertEqual(command, ["cargo", "vet", "--locked", "--frozen", "--output-format=json"])
+                    self.assertFalse(kwargs["network"])
+                    stores.append(kwargs["vet_store"])
+                    return sm.CommandResult(1, VET_LOCKED_FAILURE, "")
+                return sm.CommandResult(0, "", "")
+            with mock.patch.object(sm, "locked_build", return_value=sm.CommandResult(0, "", "")), \
+                 mock.patch.object(sm, "contained_repo_command", side_effect=contained), \
+                 self.assertRaisesRegex(sm.MaintenanceError, "final gate reports uncovered"):
+                sm.phase_validate(mock.Mock(), state, runner)
+            self.assertNotIn("cargo-vet: passed", state.load()["gate_results"])
+            self.assertEqual(len(stores), 1)
+            self.assertFalse(stores[0].exists())
+
+    def test_vet_review_material_uses_a_disposable_store(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "source"
+            (root / "supply-chain").mkdir(parents=True)
+            audits = root / "supply-chain/audits.toml"
+            audits.write_text("# Original audits\n")
+            runner = mock.Mock(root=root)
+            ai = mock.Mock()
+            ai.call.return_value = {"decision": True}
+            stores = []
+            def contained(_runner, command, **kwargs):
+                self.assertEqual(command, [
+                    "cargo", "vet", "diff", "example", "0.9.0", "1.0.0", "--mode=local",
+                ])
+                self.assertTrue(kwargs["network"])
+                self.assertTrue(kwargs["cache_rw"])
+                self.assertFalse(kwargs["source_rw"])
+                stores.append(kwargs["vet_store"])
+                (stores[-1] / "audits.toml").write_text("# Tool rewrite\n")
+                return sm.CommandResult(0, "Review material", "")
+            with mock.patch.object(sm, "contained_repo_command", side_effect=contained), \
+                 mock.patch.object(sm, "cache_crate_source", return_value=root), \
+                 mock.patch.object(sm, "crate_source_context", return_value=b"verified source"):
+                self.assertTrue(sm._vet_decision(
+                    ai, runner, sm.VetItem("example", "0.9.0", "1.0.0"), Path(tmp) / "vet-sources",
+                ))
+            ai.call.assert_called_once()
+            filename = ai.call.call_args.kwargs["attachment"][0]
+            self.assertRegex(filename, r"^[A-Za-z0-9_.-]{1,100}$")
+            self.assertEqual(audits.read_text(), "# Original audits\n")
+            self.assertFalse(stores[0].exists())
+
+    def test_git_delta_is_rejected_before_review(self):
+        git_version = "1.0.0@git:" + "a" * 40
+        ai = mock.Mock()
+        self.assertFalse(sm._vet_decision(
+            ai, mock.Mock(), sm.VetItem("example", "0.9.0", git_version), Path("state/vet-sources"),
+        ))
+        ai.call.assert_not_called()
+
+    def test_full_audit_is_rejected_before_review(self):
+        ai = mock.Mock()
+        self.assertFalse(sm._vet_decision(
+            ai, mock.Mock(), sm.VetItem("example", None, "1.0.0"), Path("state/vet-sources"),
+        ))
+        ai.call.assert_not_called()
+
+    def test_vet_fallback_uses_locked_json_for_each_candidate(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "source"
+            (root / "supply-chain").mkdir(parents=True)
+            (root / "supply-chain/audits.toml").write_text("# Audits\n")
+            runner = mock.Mock(root=root)
+            parent = "a" * 40
+            def git(argv, **kwargs):
+                if argv == ["show", "-s", "--format=%s", "HEAD"]:
+                    return sm.CommandResult(0, "deps(rust): bump the all-cargo-updates group\n", "")
+                if argv == ["rev-parse", "HEAD^"]:
+                    return sm.CommandResult(0, parent, "")
+                return sm.CommandResult(0, "", "")
+            runner.git.side_effect = git
+            state = sm.State(Path(tmp) / "state")
+            state.save({
+                "started_at": NOW.isoformat(),
+                "dependency_updates": [{"crate": "example", "old": "0.9.0", "new": "1.0.1"}],
+                "dependency_candidates": {"example@0.9.0": ["1.0.1", "1.0.0"]},
+            })
+            stores = []
+            def contained(_runner, command, **kwargs):
+                if command == ["cargo", "vet"]:
+                    self.assertTrue(kwargs["network"])
+                    return sm.CommandResult(1, VET_DELTA_SUGGESTION, "")
+                self.assertEqual(command, ["cargo", "vet", "--locked", "--frozen", "--output-format=json"])
+                self.assertFalse(kwargs["network"])
+                self.assertFalse(kwargs["source_rw"])
+                self.assertFalse(kwargs["cache_rw"])
+                stores.append(kwargs["vet_store"])
+                return sm.CommandResult(1, VET_LOCKED_FAILURE, "")
+            with mock.patch.object(sm, "contained_repo_command", side_effect=contained), \
+                 mock.patch.object(sm, "contained_cargo_update", return_value=sm.CommandResult(0, "", "")), \
+                 mock.patch.object(sm, "locked_build", return_value=sm.CommandResult(0, "", "")), \
+                 mock.patch.object(sm, "cargo_metadata", return_value={"packages": []}), \
+                 mock.patch.object(sm, "direct_registry_packages", return_value=[]), \
+                 mock.patch.object(sm, "snapshot_worktree", return_value="baseline"), \
+                 mock.patch.object(sm, "restore_worktree") as restore, \
+                 mock.patch.object(sm, "safe_vet_decision", return_value=False) as decide:
+                accepted, rejected = sm._fallback_after_vet_rejection(
+                    state, runner, mock.Mock(), {sm.VetItem("example", None, "1.0.1")}, "# Audits\n",
+                )
+            self.assertEqual(accepted, [])
+            self.assertEqual(rejected, [sm.asdict(sm.VetItem("example", "0.9.0", "1.0.0"))])
+            self.assertEqual(decide.call_args.args[2], sm.VetItem("example", "0.9.0", "1.0.0"))
+            restore.assert_called_once_with(runner, "baseline")
+            self.assertEqual(len(stores), 1)
+            self.assertFalse(stores[0].exists())
 
     def test_real_cargo_audit_patched_requirements(self):
         audit = {"vulnerabilities": {"list": [{
@@ -797,7 +1011,7 @@ class MutationBoundaryTests(unittest.TestCase):
                     return sm.CommandResult(0, "supply-chain/config.toml\n", "")
                 raise AssertionError(argv)
             runner.git.side_effect = git
-            clean_vet = sm.CommandResult(0, "", "")
+            clean_vet = sm.CommandResult(0, VET_SUCCESS, "")
             with mock.patch.object(sm, "contained_repo_command", return_value=clean_vet), self.assertRaisesRegex(
                 sm.MaintenanceError, "unexpected files changed",
             ):
