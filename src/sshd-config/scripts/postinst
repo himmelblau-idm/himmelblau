@@ -2,14 +2,86 @@
 
 set -eu
 
-# Comment out the `KbdInteractiveAuthentication no` line if present
-CONF="/etc/ssh/sshd_config"
-if [ -f "$CONF" ]; then
-    sed -i 's/^KbdInteractiveAuthentication[[:space:]]\+no/#KbdInteractiveAuthentication no/' "$CONF"
+DROPIN=/etc/ssh/sshd_config.d/30-himmelblau.conf
+TEMPLATE=/usr/lib/himmelblau/ssh/30-himmelblau.conf
+CONF=/etc/ssh/sshd_config
+TRUST=/var/lib/himmelblau/ssh-ca/trusted_user_ca_keys
+# Keep rollback material outside the state directory: an upgrade may encounter
+# a pre-existing writable or otherwise unsafe /var/lib/himmelblau parent.
+BACKUP_DIR=$(mktemp -d /run/himmelblau-ssh-ca-install.XXXXXX)
+trap 'rm -rf "$BACKUP_DIR"' EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
+if command -v systemd-sysusers >/dev/null 2>&1; then
+    systemd-sysusers /usr/lib/sysusers.d/himmelblau-ssh-authorizer.conf
+elif ! getent passwd himmelblau-ssh-authorizer >/dev/null 2>&1; then
+    useradd --system --no-create-home --home-dir /nonexistent \
+        --shell /usr/sbin/nologin himmelblau-ssh-authorizer
 fi
 
-# Restart sshd if systemd is available, to make the config change take effect
+mkdir -p /etc/ssh/sshd_config.d
+if [ -f "$DROPIN" ] && [ ! -L "$DROPIN" ]; then
+    cp -p "$DROPIN" "$BACKUP_DIR/30-himmelblau.conf"
+fi
+
+if [ -f "$CONF" ] && [ ! -L "$CONF" ]; then
+    cp -p "$CONF" "$BACKUP_DIR/sshd_config"
+fi
+# This command authenticates Microsoft through HTTPS using the OS trust store,
+# validates the complete publication, and only then atomically replaces TRUST.
+# Before domain configuration, install with an empty trust file. The refresh
+# timer activates CA keys after configuration becomes available.
+if ! /usr/libexec/himmelblau-ssh-ca-refresh --allow-unconfigured; then
+    echo "WARNING: Initial CA discovery failed; the timer will retry." >&2
+    # The staleness check disables absent/invalid/expired trust, while its
+    # Exit 2 specifically means fresh trust was retained. Real inspection/write
+    # errors still abort installation rather than keeping unverified trust.
+    if /usr/libexec/himmelblau-ssh-ca-refresh --disable-if-stale; then
+        :
+    else
+        status=$?
+        if [ "$status" -ne 2 ]; then
+            echo "ERROR: Could not safely establish SSH CA trust." >&2
+            exit 1
+        fi
+    fi
+    # Ensure sshd always has a readable trust file on a first offline install.
+    if [ ! -f "$TRUST" ]; then
+        printf '# Entra trust disabled pending successful discovery\n' >"$TRUST"
+        chmod 0644 "$TRUST"
+    fi
+fi
+
+cp "$TEMPLATE" "$BACKUP_DIR/30-himmelblau.conf.new"
+chmod 0644 "$BACKUP_DIR/30-himmelblau.conf.new"
+mv "$BACKUP_DIR/30-himmelblau.conf.new" "$DROPIN"
+
+# Preserve the existing PAM/Hello upgrade migration even when an authoritative
+# global setting appears before Include in the main sshd configuration.
+if [ -f "$CONF" ]; then
+    sed -i -E 's/^KbdInteractiveAuthentication[[:space:]]+no([[:space:]]*(#.*)?)$/KbdInteractiveAuthentication yes\1/' "$CONF"
+fi
+
+if ! sshd -t; then
+    if [ -f "$BACKUP_DIR/sshd_config" ]; then
+        rm -f "$CONF"
+        cp -p "$BACKUP_DIR/sshd_config" "$CONF"
+    fi
+    if [ -f "$BACKUP_DIR/30-himmelblau.conf" ]; then
+        rm -f "$DROPIN"
+        cp -p "$BACKUP_DIR/30-himmelblau.conf" "$DROPIN"
+    else
+        rm -f "$DROPIN"
+    fi
+    sshd -t || true
+    echo "Himmelblau SSH integration was not activated: sshd validation failed" >&2
+    exit 1
+fi
+
 if command -v systemctl >/dev/null 2>&1; then
-    echo "Restarting sshd service..."
-    systemctl restart ssh 2>/dev/null || systemctl restart sshd 2>/dev/null || true
+    systemctl daemon-reload || true
+    systemctl enable --now himmelblau-ssh-ca-refresh.timer >/dev/null 2>&1 || true
+    systemctl reload ssh 2>/dev/null || systemctl reload sshd 2>/dev/null || true
 fi

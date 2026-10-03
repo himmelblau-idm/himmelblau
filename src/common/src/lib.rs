@@ -62,6 +62,7 @@ pub mod policy_cache;
 pub mod reserved_ids;
 #[cfg(target_family = "unix")]
 pub mod resolver;
+pub mod ssh_cert;
 #[cfg(target_family = "unix")]
 pub mod tpm;
 #[cfg(target_family = "unix")]

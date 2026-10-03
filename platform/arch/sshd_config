@@ -1,0 +1,3 @@
+# PAM integration only; Entra certificate helpers are not packaged on Arch.
+KbdInteractiveAuthentication yes
+ChallengeResponseAuthentication yes

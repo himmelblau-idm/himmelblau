@@ -7683,6 +7683,11 @@ rec {
         edition = "2021";
         crateBin = [
           {
+            name = "himmelblau-ssh-prepare";
+            path = "src/ssh_prepare.rs";
+            requiredFeatures = [ ];
+          }
+          {
             name = "himmelblaud";
             path = "src/daemon.rs";
             requiredFeatures = [ ];
@@ -9831,9 +9836,14 @@ rec {
       };
       "libhimmelblau" = rec {
         crateName = "libhimmelblau";
-        version = "0.8.30";
+        version = "0.8.35";
         edition = "2021";
-        sha256 = "1v4kwsiplpgws93pp6715w6ncc6dkc2rs0mxjzi3gwyf2855545i";
+        workspace_member = null;
+        src = pkgs.fetchgit {
+          url = "https://gitlab.com/samba-team/libhimmelblau.git";
+          rev = "02ff40dd24d11a78925dcd5d1e1982ba2763e6d8";
+          sha256 = "0y36lanp7r7q88z2v9yg9y981w7c5ndz40xbp0jc84x07n1kcp5i";
+        };
         libName = "himmelblau";type = [ "rlib" "cdylib" ];
         authors = [
           "David Mulder <dmulder@suse.com>"
@@ -17441,10 +17451,67 @@ rec {
         crateName = "sshd-config";
         version = "4.0.0";
         edition = "2021";
+        crateBin = [
+          {
+            name = "himmelblau-ssh-authorize";
+            path = "src/authorize.rs";
+            requiredFeatures = [ ];
+          }
+          {
+            name = "himmelblau-ssh-ca-refresh";
+            path = "src/ca_refresh.rs";
+            requiredFeatures = [ ];
+          }
+        ];
         src = lib.cleanSourceWith { filter = sourceFilter;  src = ./src/sshd-config; };
         libName = "sshd_config";
         authors = [
           "David Mulder <dmulder@suse.com>"
+        ];
+        dependencies = [
+          {
+            name = "base64";
+            packageId = "base64 0.23.1";
+          }
+          {
+            name = "himmelblau_unix_common";
+            packageId = "himmelblau_unix_common";
+          }
+          {
+            name = "httpdate";
+            packageId = "httpdate";
+          }
+          {
+            name = "libc";
+            packageId = "libc";
+          }
+          {
+            name = "openssl";
+            packageId = "openssl";
+          }
+          {
+            name = "reqwest";
+            packageId = "reqwest 0.13.4";
+            features = [ "json" ];
+          }
+          {
+            name = "serde";
+            packageId = "serde";
+            features = [ "derive" ];
+          }
+          {
+            name = "serde_json";
+            packageId = "serde_json";
+          }
+          {
+            name = "sha2";
+            packageId = "sha2 0.11.0";
+          }
+          {
+            name = "tokio";
+            packageId = "tokio";
+            features = [ "rt" "macros" "sync" "time" "net" "io-util" "signal" "rt-multi-thread" "macros" "rt-multi-thread" ];
+          }
         ];
 
       };

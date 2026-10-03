@@ -354,6 +354,20 @@ fn load_config_hierarchy(
 
 impl HimmelblauConfig {
     pub fn new(config_path: Option<&str>) -> Result<HimmelblauConfig, String> {
+        Self::new_with_server_config(config_path, true)
+    }
+
+    /// Load administrator configuration without the daemon-generated cache.
+    /// This is intended for unprivileged helpers which only need global client
+    /// settings such as the public daemon socket path.
+    pub fn new_unprivileged(config_path: Option<&str>) -> Result<HimmelblauConfig, String> {
+        Self::new_with_server_config(config_path, false)
+    }
+
+    fn new_with_server_config(
+        config_path: Option<&str>,
+        include_server_config: bool,
+    ) -> Result<HimmelblauConfig, String> {
         let mut sconfig = Ini::new();
         let mut filename: String = DEFAULT_CONFIG_PATH.to_string();
         if let Some(config_path) = config_path {
@@ -373,7 +387,7 @@ impl HimmelblauConfig {
 
         // Apply server generated config (generated during domain join)
         let srv_cfg_path: PathBuf = PathBuf::from(SERVER_CONFIG_PATH.to_string());
-        if srv_cfg_path.exists() {
+        if include_server_config && srv_cfg_path.exists() {
             if let Err(e) = sconfig.load_and_append(SERVER_CONFIG_PATH) {
                 return Err(format!(
                     "failed to read config from {} - cannot start up: {} Quitting.",

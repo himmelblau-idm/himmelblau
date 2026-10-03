@@ -1,0 +1,11 @@
+[Unit]
+Description=Periodically refresh Microsoft Entra SSH certificate authority keys
+
+[Timer]
+OnBootSec=15min
+OnUnitActiveSec=12h
+RandomizedDelaySec=30min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

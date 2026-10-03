@@ -196,8 +196,8 @@ package() {
   install -Dm644 src/sso-policies/src/thunderbird/policies.json \
     "$pkgdir/usr/share/doc/$pkgname/thunderbird-policies.json.example"
 
-  # sshd drop-in. The EL variant is used because Arch also ships a recent sshd.
-  install -Dm644 platform/el/sshd_config \
+  # Arch keeps PAM SSH integration until its certificate helpers are packaged.
+  install -Dm644 platform/arch/sshd_config \
     "$pkgdir/etc/ssh/sshd_config.d/30-himmelblau.conf"
 
   # GNOME QR greeter extension

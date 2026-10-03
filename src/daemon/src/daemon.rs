@@ -44,6 +44,7 @@ use himmelblau_unix_common::db::{Cache, CacheTxn, Db};
 use himmelblau_unix_common::idprovider::himmelblau::HimmelblauMultiProvider;
 use himmelblau_unix_common::idprovider::interface::{Id, IdProvider};
 use himmelblau_unix_common::resolver::{AuthSession, Resolver};
+use himmelblau_unix_common::ssh_cert::parse_ssh_certificate;
 use himmelblau_unix_common::unix_config::UidAttr;
 use himmelblau_unix_common::unix_passwd::{parse_etc_group, parse_etc_passwd};
 use himmelblau_unix_common::unix_proto::{
@@ -70,6 +71,7 @@ use tokio::sync::Mutex;
 use tokio::time;
 use tokio_util::codec::{Decoder, Encoder, Framed};
 use tracing::span;
+use uzers::get_user_by_uid;
 
 use kanidm_hsm_crypto::{provider::BoxedDynTpm, provider::SoftTpm, provider::Tpm};
 
@@ -1176,6 +1178,132 @@ async fn handle_client(
                         }
                     }
                     ClientResponse::Ok
+                }
+                .instrument(span)
+                .await
+            }
+            ClientRequest::AcquireSshCertificate { openssh_public_key } => {
+                let span = span!(
+                    Level::INFO,
+                    "acquire ssh certificate",
+                    peer_uid = ucred.uid()
+                );
+                async {
+                    // The request deliberately has no user/account selector.
+                    // Resolve the peer UID through the same NSS mapping used by
+                    // the rest of the daemon and use the resulting canonical
+                    // account for the sealed-PRT lookup.
+                    let account_id = match cachelayer.get_nssaccount_gid(ucred.uid()).await {
+                        Ok(Some(user)) => user.name.to_lowercase(),
+                        _ => {
+                            warn!(
+                                peer_uid = ucred.uid(),
+                                "SSH certificate caller is not a known Himmelblau user"
+                            );
+                            return ClientResponse::NotAuthenticated;
+                        }
+                    };
+
+                    match cachelayer
+                        .acquire_ssh_certificate(&account_id, &openssh_public_key)
+                        .await
+                    {
+                        Ok(certificate) => ClientResponse::SshCertificate(
+                            himmelblau_unix_common::unix_proto::SshCertificate {
+                                openssh_certificate: certificate.openssh_certificate(),
+                                valid_after: certificate.valid_after,
+                                valid_before: certificate.valid_before,
+                                principals: certificate.principals,
+                                object_id: certificate.object_id,
+                                tenant_id: certificate.tenant_id,
+                                signing_ca_fingerprint_sha256: certificate
+                                    .signing_ca_fingerprint_sha256,
+                            },
+                        ),
+                        Err(()) => ClientResponse::NotAuthenticated,
+                    }
+                }
+                .instrument(span)
+                .await
+            }
+            ClientRequest::ValidateSshCertificateForAccount {
+                target_account,
+                target_uid,
+                certificate_type,
+                certificate_body_base64,
+                openssh_key_id,
+                openssh_ca_fingerprint,
+            } => {
+                let span = span!(
+                    Level::INFO,
+                    "validate ssh certificate",
+                    peer_uid = ucred.uid()
+                );
+                async {
+                    let authorized_peer = get_user_by_uid(ucred.uid())
+                        .is_some_and(|user| user.name() == "himmelblau-ssh-authorizer");
+                    if !authorized_peer {
+                        warn!(
+                            peer_uid = ucred.uid(),
+                            "Rejected SSH validation request from unauthorized peer"
+                        );
+                        return ClientResponse::Error;
+                    }
+
+                    let parsed = match parse_ssh_certificate(&certificate_body_base64) {
+                        Ok(parsed) => parsed,
+                        Err(err) => {
+                            warn!(reason = err, "Rejected malformed SSH certificate");
+                            return ClientResponse::NotAuthenticated;
+                        }
+                    };
+                    if parsed.key_type != certificate_type
+                        || parsed.key_id != openssh_key_id
+                        || parsed.signing_ca_fingerprint_sha256 != openssh_ca_fingerprint
+                    {
+                        warn!("OpenSSH certificate metadata did not match the signed certificate");
+                        return ClientResponse::NotAuthenticated;
+                    }
+
+                    let nss_user = match cachelayer.get_nssaccount_gid(target_uid).await {
+                        Ok(Some(user)) if user.name.eq_ignore_ascii_case(&target_account) => user,
+                        _ => {
+                            warn!(target_uid, "SSH target UID/account mapping mismatch");
+                            return ClientResponse::NotAuthenticated;
+                        }
+                    };
+                    let token = match cachelayer
+                        .get_usertoken(Id::Name(nss_user.name.clone()))
+                        .await
+                    {
+                        Ok(Some(token)) if token.valid => token,
+                        _ => return ClientResponse::NotAuthenticated,
+                    };
+                    if token.gidnumber != target_uid
+                        || token.uuid != parsed.object_id
+                        || token.tenant_id != Some(parsed.tenant_id)
+                    {
+                        warn!("SSH certificate OID/TID did not match the target identity");
+                        return ClientResponse::NotAuthenticated;
+                    }
+                    let Some(principal) = parsed
+                        .principals
+                        .iter()
+                        .find(|principal| principal.eq_ignore_ascii_case(&token.spn))
+                        .cloned()
+                    else {
+                        warn!("SSH certificate did not contain the target canonical UPN");
+                        return ClientResponse::NotAuthenticated;
+                    };
+
+                    ClientResponse::SshValidatedIdentity(
+                        himmelblau_unix_common::unix_proto::SshValidatedIdentity {
+                            canonical_upn: token.spn,
+                            authorized_principal: principal,
+                            object_id: parsed.object_id,
+                            tenant_id: parsed.tenant_id,
+                        },
+                    )
                 }
                 .instrument(span)
                 .await

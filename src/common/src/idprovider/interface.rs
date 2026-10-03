@@ -11,7 +11,7 @@
 use crate::db::KeyStoreTxn;
 use crate::unix_proto::{PamAuthRequest, PamAuthResponse};
 use async_trait::async_trait;
-use himmelblau::{AuthOption, MFAAuthContinue, UserToken as UnixUserToken};
+use himmelblau::{AuthOption, EntraSshCertificate, MFAAuthContinue, UserToken as UnixUserToken};
 use kanidm_hsm_crypto::structures::SealedData;
 use libkrimes::proto::KerberosCredentials;
 use serde::{Deserialize, Serialize};
@@ -249,6 +249,23 @@ pub enum AuthCacheAction {
 
 #[async_trait]
 pub trait IdProvider {
+    /// Acquire a Microsoft-issued OpenSSH user certificate. Implementations
+    /// must use a cached sealed PRT and must not fall back to an ordinary
+    /// refresh token or an interactive flow.
+    async fn unix_user_ssh_certificate<D: KeyStoreTxn + Send>(
+        &self,
+        _account_id: &str,
+        _openssh_public_key: &str,
+        _keystore: &mut D,
+        _tpm: &mut tpm::provider::BoxedDynTpm,
+        _machine_key: &tpm::structures::StorageKey,
+    ) -> Result<EntraSshCertificate, IdpError> {
+        Err(IdpError::NotFound {
+            what: "ssh certificate support".to_string(),
+            where_: "identity provider".to_string(),
+        })
+    }
+
     async fn configure_hsm_keys<D: KeyStoreTxn + Send>(
         &self,
         _keystore: &mut D,

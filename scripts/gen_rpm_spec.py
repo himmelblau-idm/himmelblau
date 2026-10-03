@@ -762,7 +762,6 @@ Summary:        Azure Entra Id SSHD Configuration
 Requires:       %{{name}} = %{{version}}
 {dep_gen(sshd_metadata)}
 BuildRequires:  openssh-server
-BuildArch:      noarch
 
 %description -n himmelblau-sshd-config
 {desc}

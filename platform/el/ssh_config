@@ -1,0 +1,6 @@
+# Himmelblau Entra SSH SSO. The helper is fail-closed for this identity only;
+# existing SSH identities and agents remain available.
+Match exec "/usr/libexec/himmelblau-ssh-prepare"
+    IdentityFile /run/user/%i/himmelblau/ssh/id_rsa
+    CertificateFile /run/user/%i/himmelblau/ssh/id_rsa-cert.pub
+Match all

@@ -35,6 +35,7 @@ GENTOO_DEPEND = [
 ]
 
 GENTOO_RDEPEND = [
+    "net-misc/openssh",
     "sys-apps/systemd",
 ]
 
@@ -172,6 +173,7 @@ def generate_install_commands(repo_root: Path) -> str:
     # Group assets by type for cleaner output
     binaries = []
     sbinaries = []
+    libexecs = []
     libraries = []
     pam_modules = []
     configs = []
@@ -182,6 +184,7 @@ def generate_install_commands(repo_root: Path) -> str:
     for asset in assets:
         src = asset["source"]
         dest = asset["dest"]
+        mode = asset["mode"]
 
         # Skip selinux assets
         if "selinux" in src.lower() or "selinux" in dest.lower():
@@ -197,6 +200,8 @@ def generate_install_commands(repo_root: Path) -> str:
             binaries.append((src, dest))
         elif dest.startswith("/usr/sbin/") or dest.endswith("/usr/sbin/"):
             sbinaries.append((src, dest))
+        elif dest.startswith("/usr/libexec/") and int(mode, 8) & 0o111:
+            libexecs.append((src, dest))
         elif "/security/" in dest and (dest.endswith(".so") or src_basename.endswith(".so")):
             pam_modules.append((src, dest))
         elif dest.endswith(".so") or dest.endswith(".so.2"):
@@ -221,6 +226,15 @@ def generate_install_commands(repo_root: Path) -> str:
         lines.append("\n\t# Install system binaries")
         for src, dest in sbinaries:
             lines.append(f'\tdosbin "${{S}}/{src}"')
+
+    if libexecs:
+        lines.append("\n\t# Install executable helpers")
+        lines.append("\texeinto /usr/libexec")
+        for src, dest in libexecs:
+            if dest.endswith("/"):
+                lines.append(f'\tdoexe "${{S}}/{src}"')
+            else:
+                lines.append(f'\tnewexe "${{S}}/{src}" "{os.path.basename(dest)}"')
 
     if libraries:
         lines.append("\n\t# Install NSS library")
@@ -309,6 +323,21 @@ def _fallback_install() -> str:
 \t# Install systemd units
 \tsystemd_dounit platform/opensuse/himmelblaud.service
 \tsystemd_dounit platform/opensuse/himmelblaud-tasks.service
+\tsystemd_dounit platform/common/himmelblau-ssh-ca-refresh.service
+\tsystemd_dounit platform/common/himmelblau-ssh-ca-refresh.timer
+
+\t# Install SSH certificate helpers
+\texeinto /usr/libexec
+\tdoexe target/release/himmelblau-ssh-prepare
+\tdoexe target/release/himmelblau-ssh-authorize
+\tdoexe target/release/himmelblau-ssh-ca-refresh
+\tdoexe src/sshd-config/scripts/himmelblau-ssh-ca-update
+\tinsinto /usr/lib/sysusers.d
+\tnewins platform/common/himmelblau-ssh-authorizer.sysusers himmelblau-ssh-authorizer.conf
+\tinsinto /usr/lib/himmelblau/ssh
+\tnewins platform/el/sshd_config 30-himmelblau.conf
+\tinsinto /etc/ssh/ssh_config.d
+\tnewins platform/el/ssh_config 30-himmelblau.conf
 
 \t# Install configuration
 \tinsinto /usr/lib/himmelblau
@@ -368,17 +397,32 @@ src_compile() {{
 src_install() {{
 {install_commands}
 
+\t# Gentoo does not consume cargo-deb/RPM maintainer scripts. Install explicit
+\t# lifecycle helpers so pkg_postinst/pkg_prerm can activate SSH integration.
+\texeinto /usr/libexec
+\tnewexe "${{S}}/src/sshd-config/scripts/postinst" himmelblau-ssh-configure
+\tnewexe "${{S}}/src/sshd-config/scripts/prerm" himmelblau-ssh-remove
+
 \t# Documentation
 \tdodoc README.md
 }}
 
 pkg_postinst() {{
+\t/usr/libexec/himmelblau-ssh-configure configure || die "failed to activate Himmelblau SSH integration"
 \tewarn "After installation, you need to:"
 \tewarn "  1. Override /usr/lib/himmelblau/himmelblau.conf with your own configuration if needed"
 \tewarn "  2. Enable the himmelblaud service: systemctl enable --now himmelblaud"
 \tewarn "  3. Configure PAM and NSS (see documentation)"
 \teinfo "Support Himmelblau: Financial support helps keep cloud identity for Linux open."
 \teinfo "Learn more: https://himmelblau-idm.org/donations/"
+}}
+
+pkg_prerm() {{
+\t# Keep the live integration during an upgrade; remove it only when the
+\t# package is actually unmerged.
+\tif [[ -z ${{REPLACED_BY_VERSION:-}} ]]; then
+\t\t/usr/libexec/himmelblau-ssh-remove 0 || die "failed to remove Himmelblau SSH integration"
+\tfi
 }}
 """
 
