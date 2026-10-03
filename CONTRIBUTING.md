@@ -136,6 +136,25 @@ Commits should be small and focused. Large changes are easier to merge if split 
 Himmelblau supports multiple distros. Packaging information lives in various Cargo.toml files throughout the project.
 If contributing packaging fixes, test on at least one supported distro and note which in your PR.
 
+For systemd FD-store changes, run the generator checks with:
+
+```bash
+python3 scripts/test_systemd_fdstore.py -v
+```
+
+On a host with systemd 254 or later and a running user manager, also run:
+
+```bash
+HIMMELBLAU_SYSTEMD_TESTS=1 python3 scripts/test_systemd_fdstore.py -v
+```
+
+The integration tests create and remove temporary user units with a dummy daemon
+and synthetic token; they do not require root or change the installed services.
+They cover token preservation across restarts, release on a full stop, introducing
+socket units during an upgrade, and recovery from a pinned FD store. Broker tokens
+are retained across `systemctl restart`, but released by a separate stop/start.
+These checks do not replace package installation and login tests in a VM.
+
 ---
 
 ## Getting Help

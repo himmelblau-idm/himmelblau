@@ -246,7 +246,9 @@ Restart=on-failure
 RestartSec=500ms
 WatchdogSec=120s
 {'FileDescriptorStoreMax=1' if supported('FileDescriptorStoreMax') else ''}
-{'FileDescriptorStorePreserve=yes' if supported('FileDescriptorStorePreserve') else ''}
+# Preserve broker tokens during restart, but release them on a full stop.
+# Preserving them indefinitely pins the dead service and blocks socket startup.
+{'FileDescriptorStorePreserve=restart' if supported('FileDescriptorStorePreserve') else ''}
 
 {daemon_rw_paths_comment}
 
