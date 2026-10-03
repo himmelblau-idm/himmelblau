@@ -10,6 +10,7 @@
 use himmelblau_unix_common::client_sync::{should_skip_daemon_call, DaemonClientBlocking};
 use himmelblau_unix_common::config::HimmelblauConfig;
 use himmelblau_unix_common::constants::{DEFAULT_CONFIG_PATH, NSS_CACHE};
+use himmelblau_unix_common::idprovider::interface::synthetic_primary_group_gid;
 use himmelblau_unix_common::idprovider::interface::Id;
 use himmelblau_unix_common::nss_cache::{Mode, NssCache};
 use himmelblau_unix_common::unix_passwd::parse_etc_group;
@@ -31,6 +32,17 @@ const NSS_STATUS_TRYAGAIN: libc::c_int = -2;
 
 struct HimmelblauPasswd;
 libnss_passwd_hooks!(himmelblau, HimmelblauPasswd);
+
+fn group_lookup_name(
+    name: &str,
+    map_user_name: impl FnOnce(&str) -> Option<String>,
+) -> Option<String> {
+    if synthetic_primary_group_gid(name).is_some() {
+        Some(name.to_string())
+    } else {
+        map_user_name(name)
+    }
+}
 
 fn is_local_group(name: &str) -> bool {
     let contents = read_etc_group();
@@ -385,7 +397,7 @@ impl GroupHooks for HimmelblauGroup {
         if is_local_group(&cfg.map_upn_to_name(&name)) {
             return Response::NotFound;
         }
-        let upn = match cfg.map_name_to_upn(&name) {
+        let upn = match group_lookup_name(&name, |name| cfg.map_name_to_upn(name)) {
             Some(upn) => upn,
             None => return Response::NotFound,
         };
@@ -397,8 +409,13 @@ impl GroupHooks for HimmelblauGroup {
         };
 
         // Attempt to respond to a request for the fake primary group name.
-        match if upn.contains("@") {
-            let req = ClientRequest::NssGroupByName(upn);
+        match if upn.contains("@") || synthetic_primary_group_gid(&name).is_some() {
+            let req =
+                ClientRequest::NssGroupByName(if synthetic_primary_group_gid(&name).is_some() {
+                    name.clone()
+                } else {
+                    upn
+                });
             daemon_client
                 .call_and_wait(&req, cfg.get_unix_sock_timeout())
                 .map(|r| match r {
@@ -976,6 +993,33 @@ mod tests {
             homedir: "/home/test".to_string(),
             shell: "/bin/bash".to_string(),
         }
+    }
+
+    #[test]
+    fn synthetic_group_lookup_bypasses_rejecting_user_name_mapper() {
+        let name = "himmelblau-primary-group-2400";
+        assert_eq!(
+            group_lookup_name(name, |_| panic!("synthetic group reached user mapper")),
+            Some(name.to_string())
+        );
+        for alias in [
+            "himmelblau-primary-group-2400-synthetic",
+            "himmelblau-primary-group-2400-synthetic-1",
+        ] {
+            assert_eq!(
+                group_lookup_name(alias, |_| panic!("synthetic alias reached user mapper")),
+                Some(alias.to_string())
+            );
+        }
+        assert_eq!(group_lookup_name("ordinary-group", |_| None), None);
+        assert_eq!(
+            group_lookup_name("himmelblau-primary-group-02400", |_| None),
+            None
+        );
+        assert_eq!(
+            group_lookup_name("himmelblau-primary-group-2400-synthetic-01", |_| None),
+            None
+        );
     }
 
     #[test]

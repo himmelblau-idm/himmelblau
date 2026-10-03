@@ -16,8 +16,8 @@
    along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
 use super::interface::{
-    AuthCacheAction, AuthCredHandler, AuthRequest, AuthResult, CacheState, GroupToken, Id,
-    IdProvider, IdpError, UserToken,
+    synthetic_primary_group_gid, AuthCacheAction, AuthCredHandler, AuthRequest, AuthResult,
+    CacheState, GroupToken, Id, IdProvider, IdpError, UserToken,
 };
 use crate::auth_handle_mfa_resp;
 use crate::config::split_username;
@@ -98,6 +98,69 @@ const MFA_REQUIRED_FOR_ENROLLMENT: [u32; 3] = [50072, 50074, 50076];
 const THROTTLING_ERROR: u32 = 90055;
 // AADSTS90006: ExternalServerRetryableError - The service is temporarily unavailable.
 const RETRYABLE_ERROR: u32 = 90006;
+
+// Synthetic primary groups must be identical for every user sharing a GID. The
+// group cache has a UNIQUE constraint on gidnumber, so deriving these from the
+// user would cause users with the same primary GID to replace each other.
+const SYNTHETIC_PRIMARY_GROUP_NAMESPACE: Uuid = uuid::uuid!("ba3d9e2e-98d7-4b1d-b9fb-69fc52265c90");
+
+pub(crate) fn synthetic_primary_group(gidnumber: u32) -> GroupToken {
+    let name = format!("himmelblau-primary-group-{gidnumber}");
+    GroupToken {
+        uuid: Uuid::new_v5(&SYNTHETIC_PRIMARY_GROUP_NAMESPACE, &gidnumber.to_be_bytes()),
+        spn: name.clone(),
+        name,
+        gidnumber,
+    }
+}
+
+pub(crate) fn is_synthetic_primary_group(group: &GroupToken) -> bool {
+    let expected = synthetic_primary_group(group.gidnumber);
+    group.uuid == expected.uuid
+        && group.gidnumber == expected.gidnumber
+        && group.name == group.spn
+        && synthetic_primary_group_gid(&group.name) == Some(group.gidnumber)
+}
+
+fn reconcile_primary_group(
+    groups: &mut Vec<GroupToken>,
+    user_uuid: Uuid,
+    _user_spn: &str,
+    gidnumber: u32,
+) {
+    // Remove both deterministic synthetic groups for an obsolete GID and the
+    // legacy per-user synthetic representation used by older cache entries.
+    groups.retain(|group| {
+        !(is_synthetic_primary_group(group) || group.uuid == user_uuid && group.name == group.spn)
+    });
+
+    if !groups.iter().any(|group| group.gidnumber == gidnumber) {
+        groups.push(synthetic_primary_group(gidnumber));
+    }
+}
+
+fn retain_valid_entra_groups(groups: &mut Vec<GroupToken>) {
+    groups.retain(|group| {
+        is_synthetic_primary_group(group)
+            || (synthetic_primary_group_gid(&group.name).is_none()
+                && synthetic_primary_group_gid(&group.spn).is_none())
+    });
+}
+
+fn reconcile_static_primary_group(
+    groups: &mut Vec<GroupToken>,
+    user_uuid: Uuid,
+    user_spn: &str,
+    uidnumber: u32,
+    gidnumber: u32,
+) -> (u32, u32) {
+    // Static mappings only provide the numeric identity. Directory group
+    // membership still needs the same reserved-namespace filtering and
+    // deterministic primary-group reconciliation as dynamically mapped users.
+    retain_valid_entra_groups(groups);
+    reconcile_primary_group(groups, user_uuid, user_spn, gidnumber);
+    (uidnumber, gidnumber)
+}
 
 fn is_unavailable_mfa_method_error(msg: &str, requested_method: &str) -> bool {
     let expected_prefix =
@@ -5038,7 +5101,9 @@ impl HimmelblauProvider {
                     IdpError::BadRequest
                 })?;
                 match idmap_cache.get_user_by_name(&spn) {
-                    Some(user) => (user.uid, user.gid),
+                    Some(user) => {
+                        reconcile_static_primary_group(&mut groups, uuid, &spn, user.uid, user.gid)
+                    }
                     None => {
                         let id_attr_map = self.config.lock().await.get_id_attr_map();
                         let uidnumber = match id_attr_map {
@@ -5109,6 +5174,13 @@ impl HimmelblauProvider {
                             },
                         };
 
+                        // The deterministic fallback namespace is internal to
+                        // the Entra provider. A directory object using it must
+                        // not collide with synthetic primary-group rows. Keep
+                        // this filtering here so generic OIDC claims remain
+                        // unaffected by the Entra-specific namespace.
+                        retain_valid_entra_groups(&mut groups);
+
                         // Utilize the existing primary group if set
                         let gidnumber = if let Some(gid_number) = posix_attrs.get("gidNumber") {
                             let gid_number = gid_number.parse::<u32>().map_err(|e| {
@@ -5130,9 +5202,16 @@ impl HimmelblauProvider {
                                 );
                                 return Err(IdpError::BadRequest);
                             }
+                            reconcile_primary_group(&mut groups, uuid, &spn, gid_number);
                             gid_number
                         } else {
-                            // Otherwise add a fake primary group
+                            // Preserve the legacy UPN-named per-user fallback
+                            // when no RFC2307 primary GID is configured. Remove
+                            // stale cached fallbacks when directory refresh failed.
+                            groups.retain(|group| {
+                                !(is_synthetic_primary_group(group)
+                                    || group.uuid == uuid && group.name == group.spn)
+                            });
                             groups.push(GroupToken {
                                 name: spn.clone(),
                                 spn: spn.clone(),
@@ -5211,6 +5290,14 @@ impl HimmelblauProvider {
             // Group names with an "@" will also resolve via NSS, which we
             // NEVER permit (see CVE-2025-49012).
             return Err(anyhow!("Group names cannot contain the '@' symbol."));
+        }
+        // Reject just this directory group before mapping/caching it. The user
+        // group loop already skips conversion failures and can still supply
+        // the synthetic primary group when this was its only matching GID.
+        if synthetic_primary_group_gid(&name).is_some() {
+            return Err(anyhow!(
+                "Group name uses the synthetic primary-group namespace."
+            ));
         }
         let id =
             Uuid::parse_str(&value.id).map_err(|e| anyhow!("Failed parsing user uuid: {}", e))?;
@@ -5627,11 +5714,133 @@ impl HimmelblauProvider {
 mod tests {
     use super::{
         is_mfa_required_for_enrollment, is_unavailable_mfa_method_error, mfa_flow_uses_push_hint,
-        password_change_required, CONSENT_REQUIRED,
+        password_change_required, reconcile_primary_group, reconcile_static_primary_group,
+        retain_valid_entra_groups, synthetic_primary_group, CONSENT_REQUIRED,
     };
-    use crate::idprovider::interface::{AuthCacheAction, AuthCredHandler, AuthRequest, AuthResult};
+    use crate::idprovider::interface::{
+        AuthCacheAction, AuthCredHandler, AuthRequest, AuthResult, GroupToken,
+    };
     use himmelblau::error::{AADSTSError, ErrorResponse, MsalError, DEVICE_AUTH_FAIL};
     use himmelblau::{MFAAuthContinue, MfaMethodInfo};
+    use uuid::Uuid;
+
+    #[test]
+    fn synthetic_primary_group_is_stable_per_gid() {
+        let first = synthetic_primary_group(1234);
+        let second = synthetic_primary_group(1234);
+
+        assert_eq!(first.uuid, second.uuid);
+        assert_eq!(first.name, second.name);
+        assert_eq!(first.spn, second.spn);
+        assert_eq!(first.gidnumber, 1234);
+        assert_ne!(first.uuid, synthetic_primary_group(1235).uuid);
+    }
+
+    #[test]
+    fn primary_group_reconciliation_drops_stale_synthetic_and_renamed_legacy_groups() {
+        let user_uuid = Uuid::new_v4();
+        let user_spn = "alice@example.com";
+        let real_group = GroupToken {
+            name: "real-group".to_string(),
+            spn: "real-group".to_string(),
+            uuid: Uuid::new_v4(),
+            gidnumber: 2000,
+        };
+        let legacy_group = GroupToken {
+            name: "old-alice@example.com".to_string(),
+            spn: "old-alice@example.com".to_string(),
+            uuid: user_uuid,
+            gidnumber: 1000,
+        };
+        let mut groups = vec![
+            real_group.clone(),
+            legacy_group,
+            synthetic_primary_group(1000),
+        ];
+
+        reconcile_primary_group(&mut groups, user_uuid, user_spn, 3000);
+
+        assert_eq!(groups.len(), 2);
+        assert!(groups.iter().any(|group| group.uuid == real_group.uuid));
+        assert!(groups.iter().any(|group| {
+            group.uuid == synthetic_primary_group(3000).uuid && group.gidnumber == 3000
+        }));
+        assert!(!groups.iter().any(|group| group.gidnumber == 1000));
+    }
+
+    #[test]
+    fn primary_group_reconciliation_prefers_a_real_group() {
+        let real_group = GroupToken {
+            name: "real-group".to_string(),
+            spn: "real-group".to_string(),
+            uuid: Uuid::new_v4(),
+            gidnumber: 2000,
+        };
+        let mut groups = vec![synthetic_primary_group(1000), real_group.clone()];
+
+        reconcile_primary_group(&mut groups, Uuid::new_v4(), "alice@example.com", 2000);
+
+        assert_eq!(groups.len(), 1);
+        assert_eq!(groups[0].uuid, real_group.uuid);
+    }
+
+    #[test]
+    fn entra_group_filter_preserves_only_canonical_reserved_groups() {
+        let synthetic = synthetic_primary_group(2000);
+        let ordinary = GroupToken {
+            name: "ordinary-group".to_string(),
+            spn: "ordinary-group".to_string(),
+            uuid: Uuid::new_v4(),
+            gidnumber: 2100,
+        };
+        let reserved_name = GroupToken {
+            name: synthetic.name.clone(),
+            spn: "directory-group".to_string(),
+            uuid: Uuid::new_v4(),
+            gidnumber: 2200,
+        };
+        let reserved_spn = GroupToken {
+            name: "directory-group".to_string(),
+            spn: synthetic.spn.clone(),
+            uuid: Uuid::new_v4(),
+            gidnumber: 2300,
+        };
+        let mut groups = vec![
+            ordinary.clone(),
+            reserved_name,
+            reserved_spn,
+            synthetic.clone(),
+        ];
+
+        retain_valid_entra_groups(&mut groups);
+
+        assert_eq!(groups.len(), 2);
+        assert!(groups.iter().any(|group| group.uuid == ordinary.uuid));
+        assert!(groups.iter().any(|group| group.uuid == synthetic.uuid));
+    }
+
+    #[test]
+    fn static_user_mapping_still_reconciles_primary_group() {
+        let user_uuid = Uuid::new_v4();
+        let reserved = synthetic_primary_group(3000);
+        let mut groups = vec![GroupToken {
+            name: reserved.name,
+            spn: "directory-group".to_string(),
+            uuid: Uuid::new_v4(),
+            gidnumber: 3000,
+        }];
+
+        let ids =
+            reconcile_static_primary_group(&mut groups, user_uuid, "alice@example.com", 2000, 3000);
+
+        assert_eq!(ids, (2000, 3000));
+        assert_eq!(groups.len(), 1);
+        let expected = synthetic_primary_group(3000);
+        assert_eq!(groups[0].uuid, expected.uuid);
+        assert_eq!(groups[0].name, expected.name);
+        assert_eq!(groups[0].spn, expected.spn);
+        assert_eq!(groups[0].gidnumber, expected.gidnumber);
+    }
 
     #[test]
     fn unavailable_mfa_method_error_requires_exact_requested_method() {
