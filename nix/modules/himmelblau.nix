@@ -127,6 +127,8 @@ in
   };
 
   config = lib.mkIf cfg.enable {
+    security.tpm2.enable = lib.mkDefault (cfg.settings.hsm_type != "soft");
+
     environment.etc."himmelblau/himmelblau.conf".source = configFile;
 
     systemd.tmpfiles.rules = [
@@ -255,6 +257,9 @@ in
             "chronyd.service"
             "ntpd.service"
             "network-online.target"
+          ] ++ lib.optional config.security.tpm2.enable "tpm2-udev-trigger.service";
+          after = lib.optional config.security.tpm2.enable [
+            "himmelblau-hsm-pin-init.service"
           ];
           before = [ "accounts-daemon.service" ];
           wantedBy = [
@@ -276,6 +281,33 @@ in
             PrivateTmp = true;
             # We have to disable this to allow tpmrm0 access for tpm binding.
             PrivateDevices = false;
+          } // lib.optionalAttrs config.security.tpm2.enable {
+            SupplementaryGroups = config.security.tpm2.tssGroup;
+            LoadCredentialEncrypted = "hsm-pin:/var/lib/himmelblaud/hsm-pin-nopcr.enc";
+            Environment = "HIMMELBLAU_HSM_PIN_PATH=%d/hsm-pin";
+          }
+        };
+
+        himmelblau-hsm-pin-init = lib.mkIf config.security.tpm2.enable {
+          description = "Himmelblau HSM PIN Initialization";
+          before = [ "himmelblaud.service" ];
+          after = [ "systemd-tpm2-setup.service" ];
+          wants = [ "systemd-tpm2-setup.service" ];
+          wantedBy = [ "himmelblaud.service" ];
+          path = [
+            pkgs.coreutils
+            pkgs.gnugrep
+            pkgs.openssl
+            pkgs.systemd
+            pkgs.tpm2-tools
+          ];
+          unitConfig = {
+            DefaultDependencies = false;
+            ConditionPathExists = "!/var/lib/private/himmelblaud/hsm-pin-nopcr.enc";
+          };
+          serviceConfig = {
+            Type = "oneshot";
+            ExecStart = "${cfg.daemonPackage}/libexec/himmelblau-init-hsm-pin";
           };
         };
 

@@ -17,10 +17,26 @@ let
     ];
   };
   cargo_nix = pkgs.callPackage ./Cargo.nix {
+    rootFeatures = [
+      "default"
+      "himmelblau_unix_common/tpm"
+    ];
     buildRustCrateForPkgs =
       pkgs:
       pkgs.buildRustCrate.override {
         defaultCrateOverrides = pkgs.defaultCrateOverrides // {
+          tss-esapi = attrs: {
+            DEP_TSS2_ESYS_VERSION = pkgs.tpm2-tss.version;
+          };
+          tss-esapi-sys = attrs: {
+            nativeBuildInputs = (attrs.nativeBuildInputs or [ ]) ++ [
+              pkgs.pkg-config
+              pkgs.rustPlatform.bindgenHook
+            ];
+            buildInputs = (attrs.buildInputs or [ ]) ++ [
+              pkgs.tpm2-tss
+            ];
+          };
           idmap =
             attrs:
             unistring
@@ -54,6 +70,10 @@ let
                 pkgs.makeWrapper
               ];
               postInstall = (if attrs ? postInstall then attrs.postInstall else "") + ''
+                install -Dm755 \
+                  ${./src/daemon/scripts/himmelblau-init-hsm-pin} \
+                  $out/libexec/himmelblau-init-hsm-pin
+
                 po_dir=${./po}
                 linguas="$po_dir/LINGUAS"
                 if [ -f "$linguas" ]; then
