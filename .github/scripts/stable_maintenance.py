@@ -398,7 +398,7 @@ def parse_cargo_vet_output(output: str) -> list[VetItem]:
         if match:
             if PACKAGE_RE.fullmatch(match[1]):
                 try:
-                    SemVer.parse(match[2]); SemVer.parse(match[3])
+                    SemVer.parse(match[2]); validate_vet_version(match[3])
                 except ValueError:
                     continue
                 items.append(VetItem(match[1], match[2], match[3]))
@@ -414,9 +414,17 @@ def parse_cargo_vet_output(output: str) -> list[VetItem]:
     return list(dict.fromkeys(items))
 
 
+def validate_vet_version(version: str) -> None:
+    """Validate cargo-vet's SemVer or SemVer@git:<commit> syntax."""
+    semver, separator, revision = version.partition("@git:")
+    SemVer.parse(semver)
+    if separator and not re.fullmatch(r"[0-9a-fA-F]{40}", revision):
+        raise ValueError(f"not a cargo-vet version: {version!r}")
+
+
 def parse_locked_cargo_vet_report(result: CommandResult) -> list[VetItem]:
     """Read coverage failures without relying on unlocked vet suggestions."""
-    error = "post-import cargo-vet baseline failed without parseable requirements"
+    error = "locked cargo-vet check failed without parseable requirements"
     try:
         report = json.loads(result.stdout)
     except json.JSONDecodeError as exc:
@@ -431,7 +439,7 @@ def parse_locked_cargo_vet_report(result: CommandResult) -> list[VetItem]:
             raise MaintenanceError(error)
         return []
     if conclusion == "fail (violation)":
-        raise MaintenanceError("post-import cargo-vet baseline contains audit violation conflicts")
+        raise MaintenanceError("locked cargo-vet check contains audit violation conflicts")
     if conclusion != "fail (vetting)" or result.returncode == 0:
         raise MaintenanceError(error)
     failures = report.get("failures")
@@ -447,14 +455,10 @@ def parse_locked_cargo_vet_report(result: CommandResult) -> list[VetItem]:
                 or not isinstance(version, str) or not isinstance(criteria, list)
                 or not criteria or any(not isinstance(item, str) or not item for item in criteria)):
             raise MaintenanceError(error)
-        # cargo-vet versions may identify a Git revision as well as a SemVer.
-        semver, separator, revision = version.partition("@git:")
         try:
-            SemVer.parse(semver)
+            validate_vet_version(version)
         except ValueError as exc:
             raise MaintenanceError(error) from exc
-        if separator and not re.fullmatch(r"[0-9a-fA-F]{40}", revision):
-            raise MaintenanceError(error)
         gaps.append(VetItem(name, None, version))
     return list(dict.fromkeys(gaps))
 
@@ -462,9 +466,11 @@ def parse_locked_cargo_vet_report(result: CommandResult) -> list[VetItem]:
 def serialize_audit(crate: str, old: str | None, new: str) -> str:
     if not PACKAGE_RE.fullmatch(crate):
         raise MaintenanceError("invalid crate name in audit")
-    SemVer.parse(new)
+    validate_vet_version(new)
     if old is not None:
         SemVer.parse(old)
+    elif "@git:" in new:
+        raise MaintenanceError("Git revisions require a delta audit")
     lines = [f"[[audits.{crate}]]", f'who = "{AUDIT_WHO}"', 'criteria = "safe-to-deploy"']
     if old is None:
         lines.append(f'version = "{new}"')
@@ -1156,6 +1162,52 @@ def contained_repo_command(
             pass
 
 
+def isolated_vet_command(
+    runner: Runner, command: Sequence[str], state_dir: Path, *, network: bool,
+    cache_rw: bool = False,
+) -> CommandResult:
+    # cargo-vet opens a writable store even with --locked. Let it lock and
+    # serialize a disposable copy without changing checkout policy or audits.
+    with tempfile.TemporaryDirectory(prefix="vet-baseline-", dir=state_dir) as tmp:
+        vet_store = Path(tmp) / "supply-chain"
+        shutil.copytree(runner.root / "supply-chain", vet_store)
+        return contained_repo_command(
+            runner, command, network=network, source_rw=False, cache_rw=cache_rw,
+            timeout=900, check=False, vet_store=vet_store,
+        )
+
+
+def locked_vet_gaps(runner: Runner, state_dir: Path) -> list[VetItem]:
+    result = isolated_vet_command(
+        runner, ["cargo", "vet", "--locked", "--frozen", "--output-format=json"],
+        state_dir, network=False,
+    )
+    return parse_locked_cargo_vet_report(result)
+
+
+def reviewable_vet_gaps(runner: Runner, state_dir: Path) -> list[VetItem]:
+    """Combine authoritative locked gaps with cargo-vet's review suggestions."""
+    locked = locked_vet_gaps(runner, state_dir)
+    if not locked:
+        return []
+    suggested = isolated_vet_command(
+        runner, ["cargo", "vet"], state_dir, network=True,
+    )
+    suggestions = parse_cargo_vet_output(suggested.stdout + "\n" + suggested.stderr)
+    if suggested.returncode == 0 or not suggestions:
+        raise MaintenanceError("cargo-vet failed without parseable audit requirements")
+    locked_keys = {(item.crate, item.new) for item in locked}
+    suggestion_keys = {(item.crate, item.new) for item in suggestions}
+    if suggestion_keys != locked_keys:
+        raise MaintenanceError("cargo-vet locked gaps and review suggestions disagree")
+    by_key: dict[tuple[str, str], list[VetItem]] = {}
+    for item in suggestions:
+        by_key.setdefault((item.crate, item.new), []).append(item)
+    if any(len(matches) != 1 for matches in by_key.values()):
+        raise MaintenanceError("cargo-vet emitted ambiguous review suggestions")
+    return [by_key[(item.crate, item.new)][0] for item in locked]
+
+
 def locked_build(runner: Runner, *, target_dir: Path | None = None) -> CommandResult:
     return contained_repo_command(
         runner, ["cargo", "build", "--workspace", "--locked"],
@@ -1284,18 +1336,7 @@ def phase_refresh_vet_imports(args: argparse.Namespace, state: State, runner: Ru
     changed = runner.git(["diff", "--name-only"]).stdout.splitlines()
     if any(path != "supply-chain/imports.lock" for path in changed):
         raise MaintenanceError("cargo-vet import refresh changed an unexpected path")
-    # --locked prevents fetching imports, not opening/rewriting the store.
-    # Validate the refreshed imports against preserved policy in a disposable
-    # writable store, leaving the checkout and dependency cache read-only.
-    with tempfile.TemporaryDirectory(prefix="vet-baseline-", dir=state.directory) as tmp:
-        vet_store = Path(tmp) / "supply-chain"
-        shutil.copytree(runner.root / "supply-chain", vet_store)
-        baseline = contained_repo_command(
-            runner, ["cargo", "vet", "--locked", "--frozen", "--output-format=json"],
-            network=False, source_rw=False, cache_rw=False, timeout=900,
-            check=False, vet_store=vet_store,
-        )
-    gaps = parse_locked_cargo_vet_report(baseline)
+    gaps = locked_vet_gaps(runner, state.directory)
     value = state.load()
     registry = registry_packages(cargo_metadata(runner))
     value["post_import_unvetted"] = [asdict(item) for item in gaps]
@@ -1481,11 +1522,14 @@ def _append_audit(path: Path, item: VetItem) -> None:
 
 
 def _vet_decision(ai: AzureAI, runner: Runner, item: VetItem, source_cache: Path) -> bool:
-    command = ["cargo", "vet", "diff", item.crate, item.old, item.new] if item.old else [
-        "cargo", "vet", "inspect", item.crate, item.new,
-    ]
-    diff = contained_repo_command(
-        runner, command, network=True, source_rw=False, cache_rw=True, timeout=900, check=False,
+    if item.old is None or "@git:" in item.new:
+        # The bounded source attachment is not guaranteed to contain an entire
+        # crate, and cargo-vet omits Cargo.toml from Git-revision diffs. This
+        # automation therefore cannot safely issue full or Git-target audits.
+        return False
+    command = ["cargo", "vet", "diff", item.crate, item.old, item.new, "--mode=local"]
+    diff = isolated_vet_command(
+        runner, command, source_cache.parent, network=True, cache_rw=True,
     )
     if diff.returncode:
         raise MaintenanceError("cargo-vet could not produce required review material")
@@ -1495,13 +1539,16 @@ def _vet_decision(ai: AzureAI, runner: Runner, item: VetItem, source_cache: Path
         "change is safe-to-deploy: no malicious, obfuscated, unsafe, unexpected network/process/build, credential, "
         "filesystem, or supply-chain behavior and no unresolved concern. Return only the decision."
     )
-    versions = [item.new] if item.old is None else [item.old, item.new]
+    versions = [item.old, item.new]
     sources = {version: cache_crate_source(item.crate, version, source_cache) for version in versions}
     review_data = (
         f"crate={item.crate}\nold={item.old}\nnew={item.new}\ndiff_sha256={digest}\n"
         + "\n".join(f"verified_source_{version}={sources[version]}" for version in versions)
     )
-    filename = f"{item.crate}-{item.old or 'inspect'}-{item.new}.diff".replace("+", "_")
+    # Keep untrusted version text out of the attachment name. The review data
+    # carries the exact versions, while this bounded name is stable and unique
+    # to the material being reviewed.
+    filename = f"{item.crate[:60]}-{digest[:32]}.diff"
     diff_bytes = diff.stdout.encode()
     remaining = MAX_AI_INPUT_BYTES - len(review_data.encode()) - len(diff_bytes) - 4096
     per_source = max(0, remaining // len(versions))
@@ -1603,10 +1650,7 @@ def _fallback_after_vet_rejection(
                 restore_worktree(runner, baseline); continue
             if build.returncode:
                 restore_worktree(runner, baseline); continue
-            vet = contained_repo_command(runner, ["cargo", "vet"], network=False, source_rw=False, cache_rw=False, timeout=900, check=False)
-            gaps = parse_cargo_vet_output(vet.stdout + "\n" + vet.stderr)
-            if vet.returncode and not gaps:
-                raise MaintenanceError("cargo-vet failed during fallback without parseable requirements")
+            gaps = reviewable_vet_gaps(runner, state.directory)
             decisions, newly_rejected = decide_vet_gaps(
                 ai, runner, gaps, state.directory / "vet-sources", rejected_items,
             )
@@ -1638,10 +1682,7 @@ def _fallback_after_vet_rejection(
 def phase_vet_dependencies(args: argparse.Namespace, state: State, runner: Runner) -> None:
     if runner.git(["status", "--porcelain"]).stdout:
         raise MaintenanceError("tracked worktree must be clean before cargo-vet certification")
-    vet = contained_repo_command(runner, ["cargo", "vet"], network=False, source_rw=False, cache_rw=False, timeout=900, check=False)
-    items = parse_cargo_vet_output(vet.stdout + "\n" + vet.stderr)
-    if vet.returncode and not items:
-        raise MaintenanceError("cargo-vet failed without parseable audit requirements")
+    items = reviewable_vet_gaps(runner, state.directory)
     accepted: list[dict[str, str | None]] = []
     rejected: list[dict[str, str | None]] = []
     ai = AzureAI() if items else None
@@ -1665,8 +1706,7 @@ def phase_vet_dependencies(args: argparse.Namespace, state: State, runner: Runne
     else:
         for item, _ in decisions:
             _append_audit(audits_path, item)
-    final = contained_repo_command(runner, ["cargo", "vet"], network=False, source_rw=False, cache_rw=False, timeout=900, check=False)
-    if final.returncode:
+    if locked_vet_gaps(runner, state.directory):
         raise MaintenanceError("cargo-vet still reports uncovered dependencies")
     changed = runner.git(["diff", "--name-only"]).stdout.splitlines()
     if changed:
@@ -1995,7 +2035,8 @@ def phase_validate(args: argparse.Namespace, state: State, runner: Runner) -> No
     if contained_repo_command(runner, ["cargo", "audit", "--json"], network=True, source_rw=False, cache_rw=True, timeout=900, check=False).returncode:
         raise MaintenanceError("cargo-audit final gate failed")
     value = state.load(); value.setdefault("gate_results", []).append("cargo-audit: passed"); state.save(value)
-    contained_repo_command(runner, ["cargo", "vet"], network=False, source_rw=False, cache_rw=False, timeout=900)
+    if locked_vet_gaps(runner, state.directory):
+        raise MaintenanceError("cargo-vet final gate reports uncovered dependencies")
     value = state.load(); value.setdefault("gate_results", []).append("cargo-vet: passed"); state.save(value)
     contained_repo_command(runner, ["cargo", "metadata", "--locked", "--format-version", "1"], network=True, source_rw=False, cache_rw=True, timeout=300)
     if (runner.root / "Cargo.nix").is_file():
