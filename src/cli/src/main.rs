@@ -54,7 +54,7 @@ use himmelblau_unix_common::pam::{Options, PamResultCode};
 use himmelblau_unix_common::reserved_ids::{
     is_systemd_dynamic_id, SYSTEMD_DYNAMIC_ID_MAX, SYSTEMD_DYNAMIC_ID_MIN,
 };
-use himmelblau_unix_common::tpm::{confidential_client_creds, open_tpm};
+use himmelblau_unix_common::tpm::{confidential_client_creds, open_tpm, resolve_hsm_type};
 use himmelblau_unix_common::tpm_init;
 use himmelblau_unix_common::unix_config::HsmType;
 use himmelblau_unix_common::unix_proto::{ClientRequest, ClientResponse};
@@ -2333,6 +2333,25 @@ async fn main() -> ExitCode {
                 }
             };
 
+            let db = match Db::new(&cfg.get_db_path()) {
+                Ok(db) => db,
+                Err(e) => {
+                    error!("Failed loading Himmelblau cache: {:?}", e);
+                    return ExitCode::FAILURE;
+                }
+            };
+            let configured_hsm_type = cfg.get_hsm_type();
+            let existing_machine_key = match db.get_loadable_hsm_key().await {
+                Ok(machine_key) => machine_key,
+                Err(e) => {
+                    error!("Failed loading HSM machine key: {:?}", e);
+                    return ExitCode::FAILURE;
+                }
+            };
+            let effective_hsm_type =
+                resolve_hsm_type(&configured_hsm_type, existing_machine_key.as_ref());
+            let soft_fallback_available = effective_hsm_type == HsmType::TpmIfPossible;
+
             // Check whether the HSM PIN credential is TPM-bound via systemd-creds.
             // This is reliable evidence of TPM involvement regardless of hsm_type.
             let unencrypted_pin_present = match PathBuf::from_str(&cfg.get_hsm_pin_path()) {
@@ -2345,16 +2364,12 @@ async fn main() -> ExitCode {
             };
             let pin_tpm_bound = encrypted_pin_present && !unencrypted_pin_present;
 
-            // Actually attempt to open the hardware TPM to verify it is reachable
-            // and the compiled binary has the tpm feature enabled. Reading the
-            // config string alone is not sufficient — it may say "tpm" while the
-            // daemon silently fell back to SoftTpm (e.g. after a Soft→TPM migration
-            // without clearing HSM key material, or on a system where the SRK has
-            // not been provisioned).
-            let hw_tpm_opened = open_tpm(&cfg.get_tpm_tcti_name()).is_some();
-
-            match cfg.get_hsm_type() {
+            match effective_hsm_type {
                 HsmType::Tpm | HsmType::TpmIfPossible => {
+                    // Actually attempt to open the hardware TPM to verify it is reachable
+                    // and the compiled binary has the tpm feature enabled.
+                    let hw_tpm_opened = open_tpm(&cfg.get_tpm_tcti_name()).is_some();
+
                     if hw_tpm_opened {
                         if pin_tpm_bound {
                             println!(
@@ -2377,16 +2392,36 @@ async fn main() -> ExitCode {
                         );
                         println!(
                             "  hsm_type = {} in config, but opening the TPM device failed.",
-                            cfg.get_hsm_type()
+                            configured_hsm_type
                         );
-                        println!(
-                            "  The daemon may be running in SoftTpm fallback mode. \
-                             Check that the tpm feature was compiled in and /dev/tpmrm0 is accessible."
-                        );
+                        if soft_fallback_available {
+                            println!(
+                                "  The daemon may be running in SoftTpm fallback mode. \
+                                 Check that the tpm feature was compiled in and /dev/tpmrm0 is accessible."
+                            );
+                        } else if configured_hsm_type == HsmType::TpmIfPossible {
+                            println!(
+                                "  The persisted TPM-backed machine key prevents SoftTpm fallback. \
+                                 The daemon cannot start until the TPM is reachable."
+                            );
+                        } else {
+                            println!("  The daemon cannot start until the TPM is reachable.");
+                        }
                     }
                 }
                 HsmType::Soft => {
-                    if pin_tpm_bound {
+                    let tpm_available = configured_hsm_type == HsmType::TpmIfPossible
+                        && open_tpm(&cfg.get_tpm_tcti_name()).is_some();
+
+                    if tpm_available {
+                        println!(
+                            "Himmelblau TPM state: \x1b[33mTPM available but not in use\x1b[0m \
+                             (existing software machine key selects the Soft HSM)"
+                        );
+                        if pin_tpm_bound {
+                            println!("  HSM PIN is TPM-bound via systemd-creds.");
+                        }
+                    } else if pin_tpm_bound {
                         println!(
                             "Himmelblau TPM state: \x1b[33mSoft HSM, but HSM PIN is TPM-bound \
                              via systemd-creds\x1b[0m"
@@ -2479,6 +2514,11 @@ mod tests {
     use super::HimmelblauUnixParser;
     use super::{insert_module_line, preserve_numeric_account_success};
     use clap::CommandFactory;
+    use himmelblau_unix_common::db::{Cache, CacheTxn, Db};
+    use himmelblau_unix_common::tpm::resolve_hsm_type;
+    use himmelblau_unix_common::unix_config::HsmType;
+    use kanidm_hsm_crypto::provider::{BoxedDynTpm, SoftTpm, Tpm};
+    use kanidm_hsm_crypto::AuthValue;
     use std::fs;
     use std::path::PathBuf;
     use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -2508,6 +2548,45 @@ mod tests {
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
             Err(err) => Err(err.into()),
         }
+    }
+
+    #[tokio::test]
+    async fn tpm_status_uses_persisted_soft_machine_key() -> anyhow::Result<()> {
+        let db = Db::new("").map_err(|e| anyhow::anyhow!("{e:?}"))?;
+        assert_eq!(
+            resolve_hsm_type(
+                &HsmType::TpmIfPossible,
+                db.get_loadable_hsm_key()
+                    .await
+                    .map_err(|e| anyhow::anyhow!("{e:?}"))?
+                    .as_ref(),
+            ),
+            HsmType::TpmIfPossible
+        );
+
+        let hsm_pin = AuthValue::generate().map_err(|e| anyhow::anyhow!("{e:?}"))?;
+        let auth_value =
+            AuthValue::try_from(hsm_pin.as_bytes()).map_err(|e| anyhow::anyhow!("{e:?}"))?;
+        let mut hsm = BoxedDynTpm::new(SoftTpm::new());
+        let loadable_machine_key = hsm
+            .root_storage_key_create(&auth_value)
+            .map_err(|e| anyhow::anyhow!("{e:?}"))?;
+        let mut dbtxn = db.write().await;
+        dbtxn.migrate().map_err(|e| anyhow::anyhow!("{e:?}"))?;
+        dbtxn
+            .insert_hsm_machine_key(&loadable_machine_key)
+            .map_err(|e| anyhow::anyhow!("{e:?}"))?;
+        dbtxn.commit().map_err(|e| anyhow::anyhow!("{e:?}"))?;
+
+        let existing_machine_key = db
+            .get_loadable_hsm_key()
+            .await
+            .map_err(|e| anyhow::anyhow!("{e:?}"))?;
+        assert_eq!(
+            resolve_hsm_type(&HsmType::TpmIfPossible, existing_machine_key.as_ref()),
+            HsmType::Soft
+        );
+        Ok(())
     }
 
     #[test]
