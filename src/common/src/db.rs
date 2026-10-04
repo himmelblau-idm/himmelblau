@@ -169,6 +169,13 @@ impl Db {
             crypto_policy,
         })
     }
+
+    pub async fn get_loadable_hsm_key(&self) -> Result<Option<LoadableMachineKey>, CacheError> {
+        let mut dbtxn = self.write().await;
+        let loadable_machine_key = dbtxn.get_hsm_machine_key()?;
+        dbtxn.commit()?;
+        Ok(loadable_machine_key)
+    }
 }
 
 #[async_trait]
@@ -587,14 +594,13 @@ impl<'a> CacheTxn for DbTxn<'a> {
             .optional()
             .map_err(|e| self.sqlite_error("query_row", &e))?;
 
-        match data {
-            Some(d) => Ok(serde_json::from_slice(d.as_slice())
-                .map_err(|e| {
-                    error!("json error -> {:?}", e);
-                })
-                .ok()),
-            None => Ok(None),
-        }
+        data.map(|d| {
+            serde_json::from_slice(d.as_slice()).map_err(|e| {
+                error!("json error -> {:?}", e);
+                CacheError::SerdeJson
+            })
+        })
+        .transpose()
     }
 
     fn insert_hsm_machine_key(
@@ -1090,7 +1096,7 @@ impl<'a> Drop for DbTxn<'a> {
 #[cfg(test)]
 mod tests {
 
-    use super::{Cache, CacheTxn, Db, KeyStoreTxn};
+    use super::{Cache, CacheError, CacheTxn, Db, KeyStoreTxn};
     use crate::idprovider::interface::{GroupToken, Id, UserToken};
     use kanidm_hsm_crypto::{provider::BoxedDynTpm, provider::Tpm, AuthValue};
 
@@ -1107,6 +1113,25 @@ mod tests {
     fn setup_tpm() -> BoxedDynTpm {
         use kanidm_hsm_crypto::provider::SoftTpm;
         BoxedDynTpm::new(SoftTpm::new())
+    }
+
+    #[tokio::test]
+    async fn invalid_hsm_machine_key_is_not_treated_as_missing() {
+        let db = Db::new("").expect("failed to create.");
+        let mut dbtxn = db.write().await;
+        assert!(dbtxn.migrate().is_ok());
+        assert!(dbtxn
+            .conn
+            .execute(
+                "INSERT INTO hsm_int_t (key, value) VALUES ('mk', ?1)",
+                [b"invalid".as_slice()],
+            )
+            .is_ok());
+
+        assert!(matches!(
+            dbtxn.get_hsm_machine_key(),
+            Err(CacheError::SerdeJson)
+        ));
     }
 
     #[tokio::test]
