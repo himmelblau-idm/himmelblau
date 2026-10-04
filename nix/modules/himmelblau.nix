@@ -127,6 +127,8 @@ in
   };
 
   config = lib.mkIf cfg.enable {
+    security.tpm2.enable = lib.mkDefault (cfg.settings.hsm_type != "soft");
+
     environment.etc."himmelblau/himmelblau.conf".source = configFile;
 
     systemd.tmpfiles.rules = [
@@ -255,7 +257,8 @@ in
             "chronyd.service"
             "ntpd.service"
             "network-online.target"
-          ];
+          ] ++ lib.optional config.security.tpm2.enable "tpm2-udev-trigger.service";
+          after = lib.optional config.security.tpm2.enable "tpm2-udev-trigger.service";
           before = [ "accounts-daemon.service" ];
           wantedBy = [
             "multi-user.target"
@@ -276,6 +279,11 @@ in
             PrivateTmp = true;
             # We have to disable this to allow tpmrm0 access for tpm binding.
             PrivateDevices = false;
+            SupplementaryGroups = lib.optional (
+              config.security.tpm2.enable
+              && cfg.settings.hsm_type != "soft"
+              && config.security.tpm2.tssGroup != null
+            ) config.security.tpm2.tssGroup;
           };
         };
 
