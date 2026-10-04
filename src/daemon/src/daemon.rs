@@ -71,7 +71,7 @@ use tokio::time;
 use tokio_util::codec::{Decoder, Encoder, Framed};
 use tracing::span;
 
-use kanidm_hsm_crypto::{provider::BoxedDynTpm, provider::SoftTpm, provider::Tpm};
+use kanidm_hsm_crypto::provider::Tpm;
 
 use notify_debouncer_full::{new_debouncer, notify::RecursiveMode};
 
@@ -2051,9 +2051,16 @@ async fn main() -> ExitCode {
                     return ExitCode::FAILURE
                 }
 
-            let (auth_value, mut hsm) = tpm_init!(cfg, return ExitCode::FAILURE);
 
-            // With the assistance of the DB, setup the HSM and its machine key.
+            // With the assistance of the DB, setup the HSM and its machine key,
+            // first checking for an existing key and then generating a new one
+            // if necessary.
+            
+            let (auth_value, mut hsm) = tpm_init!(
+                cfg,
+                db.get_loadable_hsm_key(),
+                return ExitCode::FAILURE
+            );
 
             let loadable_machine_key = tpm_loadable_machine_key!(
                 db,
