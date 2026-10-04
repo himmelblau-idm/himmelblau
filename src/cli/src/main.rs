@@ -68,8 +68,7 @@ use kanidm_hsm_crypto::glue::{
 };
 use kanidm_hsm_crypto::structures::{LoadableRS256Key, SealedData};
 use kanidm_hsm_crypto::{
-    provider::BoxedDynTpm, provider::SoftTpm, provider::Tpm,
-    structures::LoadableMsDeviceEnrolmentKey, structures::LoadableMsOapxbcRsaKey,
+    provider::Tpm, structures::LoadableMsDeviceEnrolmentKey, structures::LoadableMsOapxbcRsaKey,
 };
 use rpassword::read_password;
 use serde::Deserialize;
@@ -617,8 +616,6 @@ async fn confidential_client_access_token(
         cfg.get_configured_domains()[0].clone()
     };
 
-    let (auth_value, mut tpm) = tpm_init!(cfg, return None);
-
     let db = match Db::new(&cfg.get_db_path()) {
         Ok(db) => db,
         Err(e) => {
@@ -626,6 +623,8 @@ async fn confidential_client_access_token(
             return None;
         }
     };
+
+    let (auth_value, mut tpm) = tpm_init!(cfg, db.get_loadable_hsm_key(), return None);
 
     // Fetch the machine key
     let loadable_machine_key = tpm_loadable_machine_key!(db, tpm, auth_value, false, return None);
@@ -853,8 +852,6 @@ async fn main() -> ExitCode {
 
     macro_rules! obtain_host_data {
         ($domain:expr, $cfg:ident) => {{
-            let (auth_value, mut tpm) = tpm_init!($cfg, return ExitCode::FAILURE);
-
             let db = match Db::new(&$cfg.get_db_path()) {
                 Ok(db) => db,
                 Err(e) => {
@@ -862,6 +859,9 @@ async fn main() -> ExitCode {
                     return ExitCode::FAILURE;
                 }
             };
+
+            let (auth_value, mut tpm) =
+                tpm_init!($cfg, db.get_loadable_hsm_key(), return ExitCode::FAILURE);
 
             // Fetch the machine key
             let loadable_machine_key = tpm_loadable_machine_key!(
@@ -1119,8 +1119,6 @@ async fn main() -> ExitCode {
                 }
             };
 
-            let (auth_value, mut tpm) = tpm_init!(cfg, return ExitCode::FAILURE);
-
             let db = match Db::new(&cfg.get_db_path()) {
                 Ok(db) => db,
                 Err(e) => {
@@ -1128,6 +1126,9 @@ async fn main() -> ExitCode {
                     return ExitCode::FAILURE;
                 }
             };
+
+            let (auth_value, mut tpm) =
+                tpm_init!(cfg, db.get_loadable_hsm_key(), return ExitCode::FAILURE);
 
             // Fetch the machine key
             let loadable_machine_key =
@@ -1321,8 +1322,6 @@ async fn main() -> ExitCode {
                 }
             };
 
-            let (auth_value, mut tpm) = tpm_init!(cfg, return ExitCode::FAILURE);
-
             let db = match Db::new(&cfg.get_db_path()) {
                 Ok(db) => db,
                 Err(e) => {
@@ -1330,6 +1329,9 @@ async fn main() -> ExitCode {
                     return ExitCode::FAILURE;
                 }
             };
+
+            let (auth_value, mut tpm) =
+                tpm_init!(cfg, db.get_loadable_hsm_key(), return ExitCode::FAILURE);
 
             // Fetch the machine key
             let loadable_machine_key =

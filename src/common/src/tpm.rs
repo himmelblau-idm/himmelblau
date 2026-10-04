@@ -8,6 +8,8 @@
  * file, You can obtain one at https://mozilla.org/MPL/2.0/.
  */
 use kanidm_hsm_crypto::provider::BoxedDynTpm;
+#[cfg(not(feature = "tpm"))]
+use kanidm_hsm_crypto::provider::SoftTpm;
 use kanidm_hsm_crypto::AuthValue;
 use std::error::Error;
 use std::io::Read;
@@ -188,20 +190,32 @@ pub fn open_tpm_if_possible(tcti_name: &str) -> BoxedDynTpm {
 
 #[cfg(not(feature = "tpm"))]
 pub fn open_tpm_if_possible(_tcti_name: &str) -> BoxedDynTpm {
-    use kanidm_hsm_crypto::provider::SoftTpm;
     debug!("opened soft tpm");
     BoxedDynTpm::new(SoftTpm::new())
 }
 
 #[macro_export]
 macro_rules! tpm_init {
-    ($cfg:ident, $on_error:expr) => {{
+    ($cfg:ident, $loadable_machine_key_fut:expr, $on_error:expr) => {{
         use himmelblau_unix_common::constants::DEFAULT_HSM_PIN_PATH_ENC;
         use himmelblau_unix_common::tpm::{
             decrypt_hsm_pin, open_tpm, open_tpm_if_possible, read_hsm_pin, write_hsm_pin,
         };
         use himmelblau_unix_common::unix_config::HsmType;
+        use kanidm_hsm_crypto::provider::{BoxedDynTpm, SoftTpm};
+        use kanidm_hsm_crypto::structures::LoadableStorageKey;
         use kanidm_hsm_crypto::AuthValue;
+
+        // Note that we do not conflate a null key with an error retrieving
+        // the key; since that would otherwise result in the key being
+        // discarded, invalidating any existing TPM state.
+        let existing_machine_key = match $loadable_machine_key_fut.await {
+            Ok(loadable_machine_key) => loadable_machine_key,
+            Err(err) => {
+                error!(?err, "Unable to access hsm loadable machine key");
+                $on_error
+            }
+        };
 
         // Check for an existing encrypted hsm pin. If present, we MUST be root
         // to decrypt it (aad-tool will use this, or himmelblaud started with
@@ -245,7 +259,30 @@ macro_rules! tpm_init {
             }
         };
 
-        let mut hsm: BoxedDynTpm = match $cfg.get_hsm_type() {
+        let configured_hsm_type = $cfg.get_hsm_type();
+        let target_hsm_type = match (&configured_hsm_type, existing_machine_key.as_ref()) {
+            (
+                HsmType::TpmIfPossible,
+                Some(
+                    LoadableStorageKey::SoftAes256GcmV1 { .. }
+                    | LoadableStorageKey::SoftAes256GcmV2 { .. },
+                ),
+            ) => HsmType::Soft,
+            (HsmType::TpmIfPossible, Some(LoadableStorageKey::TpmAes128CfbV1 { .. })) => {
+                HsmType::Tpm
+            }
+            (configured_hsm_type, _) => configured_hsm_type.clone(),
+        };
+
+        if configured_hsm_type == HsmType::TpmIfPossible && target_hsm_type != configured_hsm_type
+        {
+            info!(
+                ?target_hsm_type,
+                "TpmIfPossible has resolved to {target_hsm_type:?} to align with the existing machine key."
+            );
+        }
+
+        let mut hsm = match target_hsm_type {
             HsmType::Soft => BoxedDynTpm::new(SoftTpm::new()),
             HsmType::TpmIfPossible => open_tpm_if_possible(&$cfg.get_tpm_tcti_name()),
             HsmType::Tpm => match open_tpm(&$cfg.get_tpm_tcti_name()) {
