@@ -172,7 +172,22 @@ impl Db {
 
     pub async fn get_loadable_hsm_key(&self) -> Result<Option<LoadableMachineKey>, CacheError> {
         let mut dbtxn = self.write().await;
-        let loadable_machine_key = dbtxn.get_hsm_machine_key()?;
+        let initialized = dbtxn
+            .conn
+            .query_row(
+                "SELECT EXISTS(
+                    SELECT 1 FROM sqlite_master
+                    WHERE type = 'table' AND name = 'db_version_t'
+                )",
+                [],
+                |row| row.get::<_, bool>(0),
+            )
+            .map_err(|e| dbtxn.sqlite_error("check database initialization", &e))?;
+        let loadable_machine_key = if initialized {
+            dbtxn.get_hsm_machine_key()?
+        } else {
+            None
+        };
         dbtxn.commit()?;
         Ok(loadable_machine_key)
     }
@@ -1132,6 +1147,12 @@ mod tests {
             dbtxn.get_hsm_machine_key(),
             Err(CacheError::SerdeJson)
         ));
+    }
+
+    #[tokio::test]
+    async fn uninitialized_database_has_no_hsm_machine_key() {
+        let db = Db::new("").expect("failed to create.");
+        assert!(matches!(db.get_loadable_hsm_key().await, Ok(None)));
     }
 
     #[tokio::test]
