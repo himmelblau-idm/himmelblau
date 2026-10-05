@@ -569,6 +569,30 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn auth_init_uses_the_upn_of_a_local_name() {
+        let resolver = setup_resolver().await;
+        seed_aliased_token(&resolver).await;
+        let (_shutdown_tx, shutdown_rx) = broadcast::channel(1);
+
+        let (session, _resp) = resolver
+            .pam_account_authenticate_init(
+                "onprem-user@example.com",
+                "gdm-password",
+                false,
+                false,
+                shutdown_rx,
+            )
+            .await
+            .expect("auth init failed");
+        match session {
+            AuthSession::InProgress { account_id, .. } => {
+                assert_eq!(account_id, "first.last@example.com")
+            }
+            _ => panic!("expected an in progress auth session"),
+        }
+    }
+
+    #[tokio::test]
     async fn initgroups_named_omits_gid_with_no_nss_name() {
         let unnamed = GroupToken {
             name: "unnamed".to_string(),
@@ -1524,6 +1548,12 @@ where
             return Ok(false);
         }
 
+        let (_expired, cached) = self
+            .get_cached_usertoken(&Id::Name(account_id.to_string()))
+            .await?;
+        let account_id = Self::canonical_account_id(account_id, cached.as_ref());
+        let account_id = account_id.as_str();
+
         let mut hsm_lock = self.hsm.lock().await;
         let mut dbtxn = self.db.write().await;
 
@@ -1560,6 +1590,16 @@ where
             trace!("offline_break_glass error -> {:?}", e);
             ResolverError
         })
+    }
+
+    /// The identity provider needs the UPN: the tenant is derived from its domain,
+    /// and it is the name to sign in with and the tag of the Hello key. A login name
+    /// which resolved to a cached user (see `get_cached_usertoken`) is replaced by
+    /// that user's SPN.
+    fn canonical_account_id(account_id: &str, token: Option<&UserToken>) -> String {
+        token
+            .map(|tok| tok.spn.clone())
+            .unwrap_or_else(|| account_id.to_string())
     }
 
     pub async fn get_usertoken(&self, account_id: Id) -> ResolverResult<Option<UserToken>> {
@@ -1908,6 +1948,8 @@ where
             Some(token) => Some(token),
             None => self.refresh_usertoken(&id, None).await?,
         };
+        let account_id = Self::canonical_account_id(account_id, token.as_ref());
+        let account_id = account_id.as_str();
         let state = self.get_cachestate(Some(account_id)).await;
 
         let online_at_init = if !matches!(state, CacheState::Online) {
@@ -2322,6 +2364,8 @@ where
             return Ok(false);
         };
 
+        let account_id = Self::canonical_account_id(account_id, Some(&token));
+        let account_id = account_id.as_str();
         let state = self.get_cachestate(Some(account_id)).await;
         let online_at_init = self.test_connection_for_state(state).await;
 
