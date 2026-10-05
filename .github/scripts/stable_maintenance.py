@@ -1209,10 +1209,39 @@ def reviewable_vet_gaps(runner: Runner, state_dir: Path) -> list[VetItem]:
 
 
 def locked_build(runner: Runner, *, target_dir: Path | None = None) -> CommandResult:
-    return contained_repo_command(
+    result = contained_repo_command(
         runner, ["cargo", "build", "--workspace", "--locked"],
         network=False, source_rw=False, cache_rw=False, check=False,
     )
+    if result.returncode:
+        # Subprocess output is untrusted and may contain source text, secrets,
+        # URLs or Actions commands. Emit only fixed hints and bounded numbers.
+        stderr = result.stderr.lower()
+        patterns = (
+            ("permission-denied", ("permission denied",)),
+            ("read-only-filesystem", ("read-only file system",)),
+            ("offline-cache-miss", ("no matching package named", "attempting to make an http request")),
+            ("lockfile-needs-update", ("needs to be updated but --locked was passed",)),
+            ("no-space", ("no space left on device",)),
+            ("build-script-failed", ("failed to run custom build command",)),
+            ("compiler-error", ("could not compile",)),
+            ("docker-daemon", ("cannot connect to the docker daemon",)),
+            ("container-start", ("oci runtime create failed", "failed to create task for container")),
+        )
+        hints = [name for name, needles in patterns if any(needle in stderr for needle in needles)]
+        paths = [name for name, prefix in (
+            ("project-cache", "/opt/project-cargo/"),
+            ("source", "/workspace/"), ("target", "/target/"),
+        ) if prefix in stderr]
+        codes = sorted(set(re.findall(r"error\[(E[0-9]{4})\]", result.stderr)))[:8]
+        print(
+            f"build-debug: exit={result.returncode} hints={','.join(hints) or 'unclassified'} "
+            f"paths={','.join(paths) or 'unknown'} rust_codes={','.join(codes) or 'none'} "
+            f"stdout_bytes={len(result.stdout.encode('utf-8'))} "
+            f"stderr_bytes={len(result.stderr.encode('utf-8'))}",
+            file=sys.stderr,
+        )
+    return result
 
 
 def phase_select(args: argparse.Namespace, state: State, runner: Runner) -> None:
@@ -2270,3 +2299,4 @@ def main(argv: Sequence[str] | None = None) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
