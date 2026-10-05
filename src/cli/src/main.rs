@@ -2333,21 +2333,21 @@ async fn main() -> ExitCode {
                 }
             };
 
-            let db = match Db::new(&cfg.get_db_path()) {
-                Ok(db) => db,
+            let existing_machine_key = match Db::open_read_only(&cfg.get_db_path()) {
+                Ok(Some(db)) => match db.get_loadable_hsm_key().await {
+                    Ok(machine_key) => machine_key,
+                    Err(e) => {
+                        error!("Failed loading HSM machine key: {:?}", e);
+                        return ExitCode::FAILURE;
+                    }
+                },
+                Ok(None) => None,
                 Err(e) => {
                     error!("Failed loading Himmelblau cache: {:?}", e);
                     return ExitCode::FAILURE;
                 }
             };
             let configured_hsm_type = cfg.get_hsm_type();
-            let existing_machine_key = match db.get_loadable_hsm_key().await {
-                Ok(machine_key) => machine_key,
-                Err(e) => {
-                    error!("Failed loading HSM machine key: {:?}", e);
-                    return ExitCode::FAILURE;
-                }
-            };
             let effective_hsm_type =
                 resolve_hsm_type(&configured_hsm_type, existing_machine_key.as_ref());
             let soft_fallback_available = effective_hsm_type == HsmType::TpmIfPossible;
@@ -2586,6 +2586,23 @@ mod tests {
             resolve_hsm_type(&HsmType::TpmIfPossible, existing_machine_key.as_ref()),
             HsmType::Soft
         );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn tpm_status_does_not_create_missing_cache() -> anyhow::Result<()> {
+        let nanos = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
+        let path = std::env::temp_dir().join(format!(
+            "aad-tool-tpm-status-missing-cache-{}-{}.db",
+            std::process::id(),
+            nanos
+        ));
+        assert!(!path.exists());
+
+        let db = Db::open_read_only(path.to_str().unwrap_or_default())
+            .map_err(|e| anyhow::anyhow!("{e:?}"))?;
+        assert!(db.is_none());
+        assert!(!path.exists());
         Ok(())
     }
 

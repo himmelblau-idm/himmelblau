@@ -10,6 +10,7 @@
 
 use std::convert::TryFrom;
 use std::fmt;
+use std::path::Path;
 use std::time::Duration;
 
 use crate::idprovider::interface::{GroupToken, Id, UserToken};
@@ -18,7 +19,7 @@ use kanidm_lib_crypto::CryptoPolicy;
 use kanidm_lib_crypto::DbPasswordV1;
 use kanidm_lib_crypto::Password;
 use libc::umask;
-use rusqlite::{Connection, OptionalExtension};
+use rusqlite::{Connection, OpenFlags, OptionalExtension};
 use tokio::sync::{Mutex, MutexGuard};
 use uuid::Uuid;
 
@@ -151,6 +152,19 @@ pub enum DbError {
 }
 
 impl Db {
+    fn from_connection(conn: Connection) -> Self {
+        // We only build a single thread. If we need more than one, we'll
+        // need to re-do this to account for path = "" for debug.
+        let crypto_policy = CryptoPolicy::time_target(Duration::from_millis(250));
+
+        trace!("Configured {:?}", crypto_policy);
+
+        Db {
+            conn: Mutex::new(conn),
+            crypto_policy,
+        }
+    }
+
     pub fn new(path: &str) -> Result<Self, DbError> {
         let before = unsafe { umask(0o0077) };
         let conn = Connection::open(path).map_err(|e| {
@@ -158,16 +172,20 @@ impl Db {
             DbError::Sqlite
         })?;
         let _ = unsafe { umask(before) };
-        // We only build a single thread. If we need more than one, we'll
-        // need to re-do this to account for path = "" for debug.
-        let crypto_policy = CryptoPolicy::time_target(Duration::from_millis(250));
+        Ok(Self::from_connection(conn))
+    }
 
-        trace!("Configured {:?}", crypto_policy);
-
-        Ok(Db {
-            conn: Mutex::new(conn),
-            crypto_policy,
-        })
+    pub fn open_read_only(path: &str) -> Result<Option<Self>, DbError> {
+        match Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY) {
+            Ok(conn) => Ok(Some(Self::from_connection(conn))),
+            Err(e) => match Path::new(path).try_exists() {
+                Ok(false) => Ok(None),
+                _ => {
+                    error!(err = ?e, "rusqulite error");
+                    Err(DbError::Sqlite)
+                }
+            },
+        }
     }
 
     pub async fn get_loadable_hsm_key(&self) -> Result<Option<LoadableMachineKey>, CacheError> {
