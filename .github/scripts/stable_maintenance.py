@@ -1982,9 +1982,21 @@ def phase_classify_backports(args: argparse.Namespace, state: State, runner: Run
     value = state.load()
     cutoff, main = require_sha(value["cutoff"]), require_sha(value["main_head"])
     candidates = runner.git(["rev-list", "--reverse", f"{cutoff}..{main}"]).stdout.splitlines()
-    selected, skipped = [], []
-    ai = AzureAI()
+    selected, skipped, review_required = [], [], []
+    ai: AzureAI | None = None
+    initialization_error: MaintenanceError | None = None
+
+    def defer(sha: str, check: str, stage: str, exc: MaintenanceError) -> None:
+        reason = diagnostic_reason(exc)
+        review_required.append({"sha": sha, "check": check, "stage": stage, "reason": reason})
+        print(
+            f"backport-warning: sha={sha} check={check} stage={stage} "
+            f"reason={reason} manual_review_required=true",
+            file=sys.stderr,
+        )
+
     for sha in candidates:
+        require_sha(sha)
         try:
             record = _commit_record(runner, sha)
         except MaintenanceError as exc:
@@ -1992,6 +2004,14 @@ def phase_classify_backports(args: argparse.Namespace, state: State, runner: Run
         reason = prefilter_commit(record["subject"], record["paths"], author=record["author"], parents=record["parents"])
         if reason:
             skipped.append({"sha": sha, "reason": reason}); continue
+        if ai is None and initialization_error is None:
+            try:
+                ai = AzureAI()
+            except MaintenanceError as exc:
+                initialization_error = exc
+        if initialization_error is not None:
+            defer(sha, "bug-fix", "azure-initialization", initialization_error)
+            continue
         classification_stage = "main-patch"
         try:
             patch = runner.git(
@@ -2008,12 +2028,12 @@ def phase_classify_backports(args: argparse.Namespace, state: State, runner: Run
                 "not a feature, refactor, maintenance, dependency, formatting, test-only, docs, or CI-only change.",
                 material, BOOL_SCHEMA, "bug_fix_decision",
             )
+            classification_stage = "schema-validation"
+            validate_schema_result(bug, BOOL_SCHEMA)
         except MaintenanceError as exc:
-            raise MaintenanceError(
-                f"unable to classify main commit {sha} "
-                f"(stage={classification_stage}, reason={diagnostic_reason(exc)})"
-            ) from exc
-        if type(bug.get("decision")) is not bool or not bug["decision"]:
+            defer(sha, "bug-fix", classification_stage, exc)
+            continue
+        if not bug["decision"]:
             skipped.append({"sha": sha, "reason": "not a bug fix"}); continue
         relevance_stage = "stable-context"
         try:
@@ -2028,17 +2048,19 @@ def phase_classify_backports(args: argparse.Namespace, state: State, runner: Run
                 "mechanical conflict resolution is needed. Reject fixes solely for features absent from that branch.",
                 branch_context, BOOL_SCHEMA, "stable_relevance_decision",
             )
+            relevance_stage = "schema-validation"
+            validate_schema_result(relevant, BOOL_SCHEMA)
         except MaintenanceError as exc:
-            raise MaintenanceError(
-                f"unable to classify stable relevance for {sha} "
-                f"(stage={relevance_stage}, reason={diagnostic_reason(exc)})"
-            ) from exc
-        if type(relevant.get("decision")) is not bool:
-            raise MaintenanceError("AI relevance response violated schema")
+            defer(sha, "stable-relevance", relevance_stage, exc)
+            continue
         if relevant["decision"]: selected.append(sha)
         else: skipped.append({"sha": sha, "reason": "not relevant to stable branch"})
-    value["backport_candidates"] = selected; value["backport_skipped"] = skipped; state.save(value)
-    state.event("classify-backports", "main commits classified", selected=len(selected), skipped=len(skipped))
+    value["backport_candidates"] = selected; value["backport_skipped"] = skipped
+    value["backport_review_required"] = review_required; state.save(value)
+    state.event(
+        "classify-backports", "main commits classified", selected=len(selected),
+        skipped=len(skipped), manual_review=len(review_required),
+    )
 
 
 def phase_apply_backports(args: argparse.Namespace, state: State, runner: Runner) -> None:
@@ -2179,6 +2201,7 @@ def secure_github_push(runner: Runner, state_dir: Path, repo: str, branch: str, 
 
 def sanitized_state_details(value: Mapping[str, Any], *, max_items: int = 50) -> list[str]:
     keys = (
+        "backport_review_required",
         "quarantine_exclusions", "dependency_updates", "dependency_rejected", "unresolved_advisories",
         "already_covered", "vet_accepted", "vet_rejected", "dependabot_imported", "dependabot_skipped",
         "backport_candidates", "backport_skipped", "backports_applied", "backports_conflict_skipped", "gate_results",
@@ -2206,7 +2229,8 @@ def build_pr_body(value: Mapping[str, Any], *, max_bytes: int = 60 * 1024) -> st
         f"- Dependency updates: {len(value.get('dependency_updates', []))}",
         f"- Newly AI-vetted deltas: {len(value.get('vet_accepted', []))}",
         f"- Dependabot PRs imported: {len(value.get('dependabot_imported', []))}",
-        f"- Bug fixes backported: {len(value.get('backports_applied', []))}", "",
+        f"- Bug fixes backported: {len(value.get('backports_applied', []))}",
+        f"- Backports requiring manual review: {len(value.get('backport_review_required', []))}", "",
     ]
     ending = ["", marker]
     for detail in sanitized_state_details(value):
@@ -2260,7 +2284,7 @@ def phase_report(args: argparse.Namespace, state: State, runner: Runner) -> None
     if value.get("skip"):
         numbers = ", ".join(f"#{number}" for number in value.get("blocking_pull_requests", []))
         lines.extend([f"Run skipped because an existing maintenance PR is open: {numbers or 'unknown' }.", ""])
-    for key in ("dependency_updates", "vet_accepted", "vet_rejected", "dependabot_imported", "backports_applied", "backports_conflict_skipped"):
+    for key in ("dependency_updates", "vet_accepted", "vet_rejected", "dependabot_imported", "backports_applied", "backports_conflict_skipped", "backport_review_required"):
         lines.append(f"- {key.replace('_', ' ').title()}: {len(value.get(key, []))}")
     lines.extend(["", "## Bounded details", *sanitized_state_details(value)])
     report = "\n".join(lines) + "\n"

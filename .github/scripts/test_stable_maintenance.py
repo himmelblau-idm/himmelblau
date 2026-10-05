@@ -477,10 +477,14 @@ class BranchAndCliTests(unittest.TestCase):
             "main_head": "a" * 40,
             "dependency_updates": [{"crate": "é" * 200, "new": str(i)} for i in range(500)],
             "vet_accepted": [], "dependabot_imported": [], "backports_applied": [],
+            "backport_review_required": [{"sha": "b" * 40, "check": "stable-relevance",
+                                          "stage": "azure-call", "reason": "azure-retries-exhausted"}],
         }
         body = sm.build_pr_body(value, max_bytes=4096)
         self.assertLessEqual(len(body.encode()), 4096)
         self.assertTrue(body.endswith(f"{sm.MARKER} {'a' * 40}"))
+        self.assertIn("Backports requiring manual review: 1", body)
+        self.assertIn("b" * 40, body)
 
     def test_runner_rejects_oversized_streamed_output(self):
         runner = sm.Runner(Path.cwd(), {"PATH": os.environ["PATH"]})
@@ -1345,7 +1349,7 @@ class MarkerConflictAndAITests(unittest.TestCase):
             self.assertIn("stage=structured-output", lines[-1])
             self.assertIn("reason=missing-structured-output", lines[-1])
 
-    def test_relevance_diagnostics_distinguish_context_from_azure_and_fail_closed(self):
+    def test_relevance_failures_defer_one_commit_and_continue_with_diagnostics(self):
         for stage, failure in [
             ("stable-context", sm.MaintenanceError("stable branch context exceeds bounded AI input")),
             ("azure-call", sm.MaintenanceError("Azure failed after bounded retries")),
@@ -1353,19 +1357,28 @@ class MarkerConflictAndAITests(unittest.TestCase):
             with self.subTest(stage=stage), tempfile.TemporaryDirectory() as tmp:
                 state = sm.State(Path(tmp) / "state")
                 state.save({"branch": "stable-4.x", "cutoff": "a" * 40, "main_head": "b" * 40})
+                later = "d" * 40
                 runner = mock.Mock()
-                runner.git.side_effect = [sm.CommandResult(0, self.SHA + "\n", ""), sm.CommandResult(0, "patch", "")]
+                runner.git.side_effect = [sm.CommandResult(0, self.SHA + "\n" + later + "\n", ""),
+                                          sm.CommandResult(0, "patch", ""), sm.CommandResult(0, "patch", "")]
                 record = {"subject": "Fix bug", "paths": ["src/a.rs"], "author": "Maintainer", "parents": 1}
                 ai = mock.Mock()
-                ai.call.side_effect = [{"decision": True}, failure]
-                context_effect = {"side_effect": failure} if stage == "stable-context" else {"return_value": "stable"}
+                ai.call.side_effect = ([{"decision": True}] * 3 if stage == "stable-context" else
+                                       [{"decision": True}, failure, {"decision": True}, {"decision": True}])
+                context_effect = {"side_effect": [failure, "stable"]} if stage == "stable-context" else {"return_value": "stable"}
+                output = io.StringIO()
                 with mock.patch.object(sm, "_commit_record", return_value=record), \
                      mock.patch.object(sm, "AzureAI", return_value=ai), \
-                     mock.patch.object(sm, "stable_path_context", **context_effect):
-                    with self.assertRaisesRegex(sm.MaintenanceError, "stage=" + stage) as caught:
-                        sm.phase_classify_backports(mock.Mock(), state, runner)
-                self.assertIn("reason=" + sm.diagnostic_reason(failure), str(caught.exception))
-                self.assertNotIn("backport_candidates", state.load())
+                     mock.patch.object(sm, "stable_path_context", **context_effect), \
+                     mock.patch.object(sm.sys, "stderr", output):
+                    sm.phase_classify_backports(mock.Mock(), state, runner)
+                self.assertIn("stage=" + stage, output.getvalue())
+                self.assertIn("reason=" + sm.diagnostic_reason(failure), output.getvalue())
+                self.assertEqual(state.load()["backport_candidates"], [later])
+                self.assertEqual(state.load()["backport_review_required"], [{
+                    "sha": self.SHA, "check": "stable-relevance", "stage": stage,
+                    "reason": sm.diagnostic_reason(failure),
+                }])
 
     def test_marker_parsing(self):
         self.assertEqual(sm.marker_sha(f"body\n{sm.MARKER} {self.SHA}\n"), self.SHA)
@@ -1407,32 +1420,102 @@ class MarkerConflictAndAITests(unittest.TestCase):
             self.assertIn("stable", context)
             self.assertIn("MISSING_OR_DELETED_ON_STABLE", context)
 
-    def test_backport_classification_error_aborts_instead_of_advancing_cutoff(self):
+    def test_backport_classification_failure_preserves_earlier_and_later_backports(self):
         with tempfile.TemporaryDirectory() as tmp:
             state = sm.State(Path(tmp) / "state")
-            cutoff, main, commit = "a" * 40, "b" * 40, "c" * 40
+            cutoff, main = "a" * 40, "b" * 40
+            earlier, failed, later = "c" * 40, "d" * 40, "e" * 40
             state.save({"branch": "stable-4.x", "cutoff": cutoff, "main_head": main})
             runner = mock.Mock()
 
             def git(argv, **kwargs):
                 if argv == ["rev-list", "--reverse", f"{cutoff}..{main}"]:
-                    return sm.CommandResult(0, commit + "\n", "")
+                    return sm.CommandResult(0, "\n".join([earlier, failed, later]) + "\n", "")
                 if argv[:2] == ["show", "--format=fuller"]:
                     return sm.CommandResult(0, "patch", "")
+                if argv[:2] == ["log", "-1"]:
+                    return sm.CommandResult(0, "", "")
+                if argv == ["rev-parse", "HEAD"]:
+                    return sm.CommandResult(0, cutoff + "\n", "")
+                if argv[:2] == ["cherry-pick", "-x"]:
+                    self.assertIn(argv[2], [earlier, later])
+                    return sm.CommandResult(0, "", "")
                 raise AssertionError(argv)
 
             runner.git.side_effect = git
             record = {
-                "sha": commit, "subject": "Fix stable bug", "body": "", "author": "Maintainer",
+                "subject": "Fix stable bug", "body": "", "author": "Maintainer",
                 "parents": 1, "paths": ["src/a.rs"],
             }
             ai = mock.Mock()
-            ai.call.side_effect = sm.MaintenanceError("temporary Azure failure")
+            secret = "credential-do-not-log"
+            ai.call.side_effect = [{"decision": True}, {"decision": True},
+                                   sm.MaintenanceError(secret), {"decision": True}, {"decision": True}]
+            output = io.StringIO()
             with mock.patch.object(sm, "_commit_record", return_value=record), \
                  mock.patch.object(sm, "AzureAI", return_value=ai), \
-                 self.assertRaisesRegex(sm.MaintenanceError, "unable to classify main commit"):
+                 mock.patch.object(sm, "stable_path_context", return_value="stable"), \
+                 mock.patch.object(sm.sys, "stderr", output):
                 sm.phase_classify_backports(mock.Mock(), state, runner)
-            self.assertNotIn("backport_candidates", state.load())
+            value = state.load()
+            self.assertEqual(value["cutoff"], cutoff)
+            self.assertEqual(value["backport_candidates"], [earlier, later])
+            self.assertEqual(value["backport_review_required"], [{
+                "sha": failed, "check": "bug-fix", "stage": "azure-call", "reason": "unclassified-error",
+            }])
+            sm.phase_apply_backports(mock.Mock(), state, runner)
+            self.assertEqual(state.load()["backports_applied"], [earlier, later])
+            body = sm.build_pr_body(state.load())
+            self.assertIn("Backports requiring manual review: 1", body)
+            self.assertIn(failed, body)
+            self.assertNotIn(secret, body)
+            self.assertNotIn(secret, output.getvalue())
+            summary = io.StringIO()
+            with mock.patch.dict(os.environ, {"GITHUB_STEP_SUMMARY": ""}), mock.patch.object(sm.sys, "stdout", summary):
+                sm.phase_report(mock.Mock(), state, runner)
+            self.assertIn(failed, summary.getvalue())
+            self.assertIn("Backport Review Required: 1", summary.getvalue())
+            self.assertNotIn(secret, summary.getvalue())
+
+    def test_unavailable_ai_defers_candidates_without_aborting_or_reinitializing(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            state = sm.State(Path(tmp) / "state")
+            cutoff, main = "a" * 40, "b" * 40
+            state.save({"branch": "stable-4.x", "cutoff": cutoff, "main_head": main})
+            commits = ["c" * 40, "d" * 40]
+            runner = mock.Mock()
+            runner.git.return_value = sm.CommandResult(0, "\n".join(commits), "")
+            record = {"subject": "Fix bug", "paths": ["src/a.rs"], "author": "Maintainer", "parents": 1}
+            with mock.patch.object(sm, "_commit_record", return_value=record), \
+                 mock.patch.object(sm, "AzureAI", side_effect=sm.MaintenanceError("secret")) as factory, \
+                 mock.patch.object(sm.sys, "stderr", io.StringIO()):
+                sm.phase_classify_backports(mock.Mock(), state, runner)
+            factory.assert_called_once_with()
+            value = state.load()
+            self.assertEqual(value["backport_candidates"], [])
+            self.assertEqual([row["sha"] for row in value["backport_review_required"]], commits)
+            self.assertTrue(all(row["stage"] == "azure-initialization" for row in value["backport_review_required"]))
+
+    def test_invalid_ai_decisions_are_deferred_in_both_backport_checks(self):
+        for check in ("bug-fix", "stable-relevance"):
+            for invalid in (None, {"decision": "yes"}, {"decision": True, "extra": "secret"}):
+                with self.subTest(check=check, invalid=invalid), tempfile.TemporaryDirectory() as tmp:
+                    state = sm.State(Path(tmp) / "state")
+                    state.save({"branch": "stable-4.x", "cutoff": "a" * 40, "main_head": "b" * 40})
+                    runner = mock.Mock()
+                    runner.git.side_effect = [sm.CommandResult(0, self.SHA + "\n", ""), sm.CommandResult(0, "patch", "")]
+                    record = {"subject": "Fix bug", "paths": ["src/a.rs"], "author": "Maintainer", "parents": 1}
+                    ai = mock.Mock()
+                    ai.call.side_effect = [invalid] if check == "bug-fix" else [{"decision": True}, invalid]
+                    with mock.patch.object(sm, "_commit_record", return_value=record), \
+                         mock.patch.object(sm, "AzureAI", return_value=ai), \
+                         mock.patch.object(sm, "stable_path_context", return_value="stable"), \
+                         mock.patch.object(sm.sys, "stderr", io.StringIO()):
+                        sm.phase_classify_backports(mock.Mock(), state, runner)
+                    value = state.load()
+                    self.assertEqual(value["backport_candidates"], [])
+                    self.assertEqual(value["backport_review_required"][0]["check"], check)
+                    self.assertEqual(value["backport_review_required"][0]["stage"], "schema-validation")
 
     def test_schema_validation_rejects_extra_keys_and_wrong_types(self):
         for value in ({"decision": "true"}, {"decision": True, "reason": "extra"}):
