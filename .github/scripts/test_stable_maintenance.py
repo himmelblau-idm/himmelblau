@@ -186,6 +186,88 @@ class BranchAndCliTests(unittest.TestCase):
         self.assertNotIn("E0008", output.getvalue())
         self.assertNotIn(secret, output.getvalue())
 
+    def test_build_failure_identifies_operations_without_echoing_output(self):
+        secret = "secret-token-do-not-log"
+        cases = (
+            (f"error: couldn't read /opt/project-cargo/registry/src/{secret}: Permission denied (os error 13)",
+             "operations=read-file permission_paths=project-cache os_errors=13"),
+            (f"error: could not execute process `rustc /workspace/{secret} /opt/project-cargo/{secret}` (never executed)\nCaused by:\n  Permission denied (os error 13)",
+             "operations=start-process permission_paths=unknown os_errors=13"),
+            (f"error: linking with `cc` failed: exit status: 1\ncc: /tmp/{secret}: Permission denied",
+             "operations=link permission_paths=temporary os_errors=none"),
+            (f"error: failed to run custom build command for `{secret}`\nfailed to open /workspace/{secret}: Permission denied (os error 13)",
+             "operations=run-build-script,open-file permission_paths=source os_errors=13"),
+            (f"failed to create temporary file /target/{secret}: Permission denied (os error 13)",
+             "operations=create-temporary-file permission_paths=target os_errors=13"),
+            (f"{secret}: failed to map segment from shared object: Operation not permitted (os error 1)",
+             "operations=load-library permission_paths=unknown os_errors=1"),
+            (f"::error::{secret}\x1b[31m", "operations=unknown permission_paths=unknown os_errors=none"),
+        )
+        for stderr, expected in cases:
+            with self.subTest(expected=expected), mock.patch.object(
+                sm, "contained_repo_command", return_value=sm.CommandResult(101, secret, stderr),
+            ), mock.patch.object(sm.sys, "stderr", io.StringIO()) as output:
+                sm.locked_build(mock.Mock())
+                diagnostic = output.getvalue()
+                self.assertIn(expected, diagnostic)
+                self.assertNotIn(secret, diagnostic)
+                self.assertNotIn("::error::", diagnostic)
+                self.assertNotIn("\x1b", diagnostic)
+                self.assertEqual(len(diagnostic.splitlines()), 1)
+                self.assertLess(len(diagnostic), 900)
+        stderr = "\n".join(f"Permission denied (os error {number})" for number in range(20))
+        with mock.patch.object(sm, "contained_repo_command", return_value=sm.CommandResult(101, "", stderr)), \
+             mock.patch.object(sm.sys, "stderr", io.StringIO()) as output:
+            sm.locked_build(mock.Mock())
+        self.assertIn("os_errors=0,1,2,3,4,5,6,7", output.getvalue())
+        self.assertNotIn(",8", output.getvalue())
+
+    def test_operation_not_permitted_is_a_permission_denied_hint(self):
+        """EPERM-only failures use the same primary hint as EACCES."""
+        stderr = "Operation not permitted (os error 1)"
+        with mock.patch.object(sm, "contained_repo_command", return_value=sm.CommandResult(101, "", stderr)), \
+             mock.patch.object(sm.sys, "stderr", io.StringIO()) as output:
+            sm.locked_build(mock.Mock())
+        self.assertIn("hints=permission-denied ", output.getvalue())
+        self.assertIn("permission_paths=unknown os_errors=1", output.getvalue())
+
+    def test_permission_paths_require_an_explicit_denied_operand(self):
+        """Only unambiguous diagnostic operands determine permission buckets."""
+        secret = "secret-token-do-not-log"
+        cases = (
+            (f"could not execute process `rustc /workspace/{secret} /opt/project-cargo/{secret}`: Permission denied", "unknown"),
+            (f"could not execute process `/usr/local/rustup/rustc /target/{secret}`: Operation not permitted", "unknown"),
+            (f"failed to spawn `/tmp/{secret}`: Permission denied", "unknown"),
+            (f'"/usr/local/rustup/rustc /workspace/{secret}": Permission denied', "unknown"),
+            (f"rustc /workspace/{secret} --out-dir /target/{secret}: Permission denied", "unknown"),
+            (f"error: failed to open /workspace/{secret}: Permission denied; command: /opt/project-cargo/{secret}", "unknown"),
+            (f"Permission denied while running /target/{secret}", "unknown"),
+            (f"error: couldn't read /elsewhere/workspace/{secret}: Permission denied", "unknown"),
+            (f"failed to open /target-other/{secret}: Permission denied", "unknown"),
+            (f"error: couldn't read /workspace/{secret}/opt/project-cargo/file: Permission denied", "source"),
+            (f"error: couldn't read '/opt/project-cargo/{secret} with spaces': Permission denied (os error 13)", "project-cache"),
+            (f'failed to open "/workspace/{secret} with spaces": Permission denied', "source"),
+            (f"unable to open `/target/{secret}`: Operation not permitted (os error 1)", "target"),
+            (f"cc: /tmp/{secret}: Permission denied", "temporary"),
+            (f"error: could not read /usr/local/rustup/{secret}: Permission denied", "toolchain"),
+            (f"/opt/project-cargo/{secret}: failed to map segment from shared object: Operation not permitted", "project-cache"),
+            (f"/tmp/{secret}: Permission denied\nfailed to open /workspace/{secret}: Permission denied", "source,temporary"),
+            (f"error: couldn't read /workspace/{secret}: Permission denied\n::error::{secret}\x1b[31m /target/{secret}", "source"),
+        )
+        for stderr, expected in cases:
+            with self.subTest(stderr=stderr), mock.patch.object(
+                sm, "contained_repo_command", return_value=sm.CommandResult(101, secret, stderr),
+            ), mock.patch.object(sm.sys, "stderr", io.StringIO()) as output:
+                sm.locked_build(mock.Mock())
+                diagnostic = output.getvalue()
+                self.assertIn(f"permission_paths={expected} ", diagnostic)
+                self.assertIn("hints=permission-denied ", diagnostic)
+                self.assertNotIn(secret, diagnostic)
+                self.assertNotIn("::error::", diagnostic)
+                self.assertNotIn("\x1b", diagnostic)
+                self.assertEqual(len(diagnostic.splitlines()), 1)
+                self.assertLess(len(diagnostic), 900)
+
     def test_clean_build_failure_keeps_later_release_gates_blocked(self):
         with tempfile.TemporaryDirectory() as tmp:
             state = sm.State(Path(tmp) / "state")
