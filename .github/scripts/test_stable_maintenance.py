@@ -136,6 +136,69 @@ class BranchAndCliTests(unittest.TestCase):
             self.assertEqual(cleanup[:3], ["/usr/bin/docker", "rm", "-f"])
             self.assertRegex(cleanup[3], r"^himmelblau-maint-[0-9a-f]{16}$")
 
+    def test_failed_build_reports_bounded_hints_without_raw_output(self):
+        secret = "secret-token-do-not-log"
+        failures = (
+            (101, f"error: Permission denied: /opt/project-cargo/registry/{secret}",
+             "hints=permission-denied paths=project-cache rust_codes=none"),
+            (101, f"error: Read-only file system: /workspace/{secret}",
+             "hints=read-only-filesystem paths=source rust_codes=none"),
+            (101, f"error: no matching package named `{secret}` found", "hints=offline-cache-miss"),
+            (101, "error: lock file needs to be updated but --locked was passed", "hints=lockfile-needs-update"),
+            (101, f"No space left on device: /target/{secret}", "hints=no-space paths=target"),
+            (101, f"failed to run custom build command for `{secret}`", "hints=build-script-failed"),
+            (101, f"error[E0308]: {secret}\nerror[E0308]: duplicate\ncould not compile", "rust_codes=E0308"),
+            (125, f"Cannot connect to the Docker daemon at https://{secret}", "hints=docker-daemon"),
+            (126, f"OCI runtime create failed: {secret}", "hints=container-start"),
+            (137, f"::error::{secret}\x1b[31m", "hints=unclassified paths=unknown rust_codes=none"),
+        )
+        for exit_code, stderr, expected in failures:
+            with self.subTest(stderr=expected), mock.patch.object(sm, "contained_repo_command") as command:
+                result = sm.CommandResult(exit_code, f"::error::{secret}", stderr)
+                command.return_value = result
+                output = io.StringIO()
+                with mock.patch.object(sm.sys, "stderr", output):
+                    self.assertIs(sm.locked_build(mock.Mock()), result)
+                diagnostic = output.getvalue()
+                self.assertIn(f"build-debug: exit={exit_code}", diagnostic)
+                self.assertIn(expected, diagnostic)
+                self.assertNotIn(secret, diagnostic)
+                self.assertNotIn("::error::", diagnostic)
+                self.assertNotIn("\x1b", diagnostic)
+                self.assertEqual(len(diagnostic.splitlines()), 1)
+                self.assertLess(len(diagnostic), 600)
+                self.assertEqual(command.call_args.args[1], ["cargo", "build", "--workspace", "--locked"])
+                self.assertEqual(command.call_args.kwargs, {
+                    "network": False, "source_rw": False, "cache_rw": False, "check": False,
+                })
+        output = io.StringIO()
+        with mock.patch.object(sm, "contained_repo_command", return_value=sm.CommandResult(0, secret, secret)), \
+             mock.patch.object(sm.sys, "stderr", output):
+            sm.locked_build(mock.Mock())
+        self.assertEqual(output.getvalue(), "")
+        output = io.StringIO()
+        stderr = "\n".join(f"error[E{number:04d}]: {secret}" for number in range(20))
+        with mock.patch.object(sm, "contained_repo_command", return_value=sm.CommandResult(101, "", stderr)), \
+             mock.patch.object(sm.sys, "stderr", output):
+            sm.locked_build(mock.Mock())
+        self.assertIn("rust_codes=" + ",".join(f"E{number:04d}" for number in range(8)), output.getvalue())
+        self.assertNotIn("E0008", output.getvalue())
+        self.assertNotIn(secret, output.getvalue())
+
+    def test_clean_build_failure_keeps_later_release_gates_blocked(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            state = sm.State(Path(tmp) / "state")
+            runner = mock.Mock()
+            failure = sm.CommandResult(101, "", "Permission denied")
+            output = io.StringIO()
+            with mock.patch.object(sm, "contained_repo_command", return_value=failure) as command, \
+                 mock.patch.object(sm.sys, "stderr", output), \
+                 self.assertRaisesRegex(sm.MaintenanceError, "clean locked-down build failed"):
+                sm.phase_validate(mock.Mock(), state, runner)
+            self.assertEqual(command.call_count, 1)
+            self.assertNotIn("gate_results", state.load())
+            self.assertIn("hints=permission-denied", output.getvalue())
+
     def test_container_requires_docker_even_when_podman_is_installed(self):
         engines = {"podman": "/usr/bin/podman", "docker": None}
         runner = mock.Mock()
@@ -1425,3 +1488,4 @@ class InitializePhaseTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
