@@ -25,7 +25,7 @@ use lru::LruCache;
 use tokio::sync::Mutex;
 use uuid::Uuid;
 
-use crate::config::InitgroupsMode;
+use crate::config::{split_username, InitgroupsMode};
 use crate::constants::SERVER_CONFIG_PATH;
 use crate::db::{Cache, CacheTxn, Db};
 use crate::idprovider::interface::{
@@ -131,7 +131,7 @@ impl Display for Id {
 
 #[cfg(test)]
 mod tests {
-    use super::{AuthSession, Resolver};
+    use super::{is_placeholder_token, AuthSession, Resolver};
     use crate::config::InitgroupsMode;
     use crate::db::{Cache, CacheTxn, Db, KeyStoreTxn};
     use crate::idprovider::interface::{
@@ -485,6 +485,89 @@ mod tests {
         }
     }
 
+    fn aliased_token() -> UserToken {
+        let mut token = test_token();
+        token.name = "onprem-user".to_string();
+        token.spn = "first.last@example.com".to_string();
+        token.uuid = uuid::uuid!("7d1a52f3-3f4e-4f7e-8f3e-3c3f0b2f9a10");
+        token.real_gidnumber = Some(2001);
+        token.gidnumber = 2001;
+        token
+    }
+
+    async fn seed_aliased_token(resolver: &Resolver<OfflineFallbackProvider>) {
+        let mut dbtxn = resolver.db.write().await;
+        dbtxn
+            .update_account(&aliased_token(), 0)
+            .expect("failed to seed aliased token");
+        dbtxn.commit().expect("failed to commit aliased token");
+    }
+
+    #[tokio::test]
+    async fn cached_usertoken_is_found_by_expanded_local_name() {
+        let resolver = setup_resolver().await;
+        seed_aliased_token(&resolver).await;
+
+        for (name, found) in [
+            // The local name itself, and the UPN
+            ("onprem-user", true),
+            ("first.last@example.com", true),
+            // The local name expanded into the same domain by cn_name_mapping
+            ("onprem-user@example.com", true),
+            ("ONPREM-USER@Example.com", true),
+            // Never into another domain
+            ("onprem-user@other.com", false),
+            ("unknown@example.com", false),
+        ] {
+            let (_expired, cached) = resolver
+                .get_cached_usertoken(&Id::Name(name.to_string()))
+                .await
+                .expect("failed to read cached user");
+            assert_eq!(
+                cached.map(|t| t.spn),
+                found.then(|| aliased_token().spn),
+                "lookup of {name}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn placeholder_does_not_hide_a_local_name() {
+        let resolver = setup_resolver().await;
+        seed_aliased_token(&resolver).await;
+
+        // What the identity provider cached when the expanded name was tried
+        // as a UPN before the user was known.
+        let uuid = uuid::uuid!("c0ffee00-0000-4000-8000-000000000001");
+        let mut placeholder = test_token();
+        placeholder.name = "onprem-user@example.com".to_string();
+        placeholder.spn = "onprem-user@example.com".to_string();
+        placeholder.uuid = uuid;
+        placeholder.real_gidnumber = Some(2002);
+        placeholder.gidnumber = 2002;
+        placeholder.groups = vec![GroupToken {
+            name: placeholder.spn.clone(),
+            spn: placeholder.spn.clone(),
+            uuid,
+            gidnumber: 2002,
+        }];
+        assert!(is_placeholder_token(&placeholder));
+        assert!(!is_placeholder_token(&aliased_token()));
+        {
+            let mut dbtxn = resolver.db.write().await;
+            dbtxn
+                .update_account(&placeholder, 0)
+                .expect("failed to seed placeholder");
+            dbtxn.commit().expect("failed to commit placeholder");
+        }
+
+        let (_expired, cached) = resolver
+            .get_cached_usertoken(&Id::Name("onprem-user@example.com".to_string()))
+            .await
+            .expect("failed to read cached user");
+        assert_eq!(cached.map(|t| t.spn), Some(aliased_token().spn));
+    }
+
     #[tokio::test]
     async fn initgroups_named_omits_gid_with_no_nss_name() {
         let unnamed = GroupToken {
@@ -713,6 +796,22 @@ mod tests {
     }
 }
 
+/// The identity provider caches a placeholder for a user which exists but could
+/// not be fetched yet. Its single group carries the user's own uuid.
+fn is_placeholder_token(token: &UserToken) -> bool {
+    token.groups.iter().any(|group| group.uuid == token.uuid)
+}
+
+/// Is `token` the user which `local@domain` was expanded from? That is so if
+/// the token's local name is `local` and its UPN is in `domain`. A token whose
+/// local name is its UPN never matches.
+fn is_expanded_local_name(token: &UserToken, local: &str, domain: &str) -> bool {
+    token.name.eq_ignore_ascii_case(local)
+        && split_username(&token.spn)
+            .map(|(_, spn_domain)| spn_domain.eq_ignore_ascii_case(domain))
+            .unwrap_or(false)
+}
+
 impl<I> Resolver<I>
 where
     I: IdProvider + Sync,
@@ -939,9 +1038,29 @@ where
         //  * uuid
         //  Attempt to search these in the db.
         let mut dbtxn = self.db.write().await;
-        let r = dbtxn.get_account(account_id).map_err(|err| {
+        let mut r = dbtxn.get_account(account_id).map_err(|err| {
             trace!("get_cached_usertoken {:?}", err);
         })?;
+
+        // With cn_name_mapping, a local name such as an onPremisesSamAccountName
+        // reaches us expanded to "<name>@<primary domain>", which matches neither
+        // the cached name nor the cached SPN. Look for the user whose local name
+        // it is. A placeholder cached for the expanded name must not hide them.
+        if r.as_ref().map_or(true, |(ut, _)| is_placeholder_token(ut)) {
+            if let Id::Name(name) = account_id {
+                if let Some((local, domain)) = split_username(name) {
+                    let aliased = dbtxn
+                        .get_account(&Id::Name(local.to_string()))
+                        .map_err(|err| {
+                            trace!("get_cached_usertoken {:?}", err);
+                        })?
+                        .filter(|(ut, _)| is_expanded_local_name(ut, local, domain));
+                    if aliased.is_some() {
+                        r = aliased;
+                    }
+                }
+            }
+        }
 
         match r {
             Some((ut, ex)) => {
@@ -1459,12 +1578,12 @@ where
             trace!("get_usertoken error -> {:?}", e);
         })?;
 
-        let state = match account_id {
-            Id::Name(ref name) => self.get_cachestate(Some(name)).await,
-            Id::Gid(_) => match &item {
-                Some(token) => self.get_cachestate(Some(&token.spn)).await,
-                None => self.get_cachestate(None).await,
-            },
+        // Prefer the SPN of the cached user. The requested name may be a local
+        // name, from which no domain, and so no provider, can be derived.
+        let state = match (&account_id, &item) {
+            (_, Some(token)) => self.get_cachestate(Some(&token.spn)).await,
+            (Id::Name(name), None) => self.get_cachestate(Some(name)).await,
+            (Id::Gid(_), None) => self.get_cachestate(None).await,
         };
 
         match (expired, state) {
