@@ -51,6 +51,25 @@ impl Display for UidAttr {
     }
 }
 
+#[derive(Debug, Copy, Clone, PartialEq)]
+pub enum NameAttr {
+    Spn,
+    OnPremisesSamAccountName,
+}
+
+impl Display for NameAttr {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{}",
+            match self {
+                NameAttr::Spn => "SPN",
+                NameAttr::OnPremisesSamAccountName => "onPremisesSamAccountName",
+            }
+        )
+    }
+}
+
 #[derive(Debug, Clone, Default, PartialEq)]
 pub enum HsmType {
     #[default]

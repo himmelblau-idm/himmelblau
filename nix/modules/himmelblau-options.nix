@@ -399,6 +399,20 @@ in
       example = false;
     };
 
+    local_name_attr = mkOption {
+      type = types.nullOr (types.enum [ "spn" "onPremisesSamAccountName" ]);
+      default = "spn";
+      description = ''
+        The Entra ID attribute used for the local NSS login name. Available options include:
+
+        - SPN (the user principal name)
+
+        - onPremisesSamAccountName
+        When onPremisesSamAccountName is configured but unavailable for a user, Himmelblau falls back to SPN.
+      '';
+      example = "onPremisesSamAccountName";
+    };
+
     local_groups = mkOption {
       type = types.nullOr (types.listOf types.str);
       default = null;
