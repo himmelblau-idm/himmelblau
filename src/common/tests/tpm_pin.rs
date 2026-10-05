@@ -1,12 +1,11 @@
 extern crate himmelblau_unix_common as real_common;
 
-use kanidm_hsm_crypto::provider::{BoxedDynTpm, SoftTpm};
 use kanidm_hsm_crypto::AuthValue;
 use real_common::constants::{DEFAULT_HSM_PIN_PATH, DEFAULT_HSM_PIN_PATH_ENC};
 use real_common::unix_config::HsmType;
 use std::process::Command;
 use std::sync::Mutex;
-use tracing::{error, trace};
+use tracing::{error, info, trace};
 
 const CREDENTIALS_DIRECTORY: &str = "/run/credentials/himmelblaud.service";
 const CREDENTIAL_PIN: &str = "/run/credentials/himmelblaud.service/hsm-pin";
@@ -84,7 +83,10 @@ impl TestConfig {
 #[allow(unused_mut)]
 async fn initialize(path: &'static str) -> Option<AuthValue> {
     let cfg = TestConfig { path };
-    let (auth_value, _hsm) = real_common::tpm_init!(cfg, return None);
+    let no_machine_key = async {
+        Ok::<_, std::convert::Infallible>(None::<kanidm_hsm_crypto::structures::LoadableStorageKey>)
+    };
+    let (auth_value, _hsm) = real_common::tpm_init!(cfg, no_machine_key, return None);
     Some(auth_value)
 }
 
