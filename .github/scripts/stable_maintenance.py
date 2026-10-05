@@ -1218,7 +1218,8 @@ def contained_repo_command(
         "--user", user, "--pids-limit=512", "--cpus=4", "--memory=8g", "--memory-swap=8g",
         "--ulimit", "nofile=4096:4096", "--ulimit", "fsize=4294967296:4294967296",
         "--read-only", "--tmpfs", "/tmp:rw,nosuid,nodev,noexec,size=1g",
-        "--tmpfs", "/target:rw,nosuid,nodev,size=6g",
+        # Docker defaults tmpfs to noexec; Cargo runs build scripts and tests here.
+        "--tmpfs", "/target:rw,nosuid,nodev,exec,size=6g",
         "-v", f"{runner.root}:/workspace:{'rw' if source_rw else 'ro'}",
         # This nested bind must follow the source bind.  It prevents Cargo,
         # build scripts, and crate tooling from changing refs, objects, config,
