@@ -1305,6 +1305,103 @@ class MarkerConflictAndAITests(unittest.TestCase):
                 sm.http_json("https://example.invalid")
         self.assertEqual(sm.diagnostic_reason(caught.exception), "invalid-json")
 
+    def test_http_throttling_preserves_only_validated_retry_and_quota_headers(self):
+        headers = sm.email.message.Message()
+        headers["Retry-After-Ms"] = "61000"
+        headers["Retry-After"] = "90"
+        headers["X-Ratelimit-Limit-Tokens"] = "150000"
+        headers["x-ratelimit-remaining-tokens"] = "0"
+        headers["x-ratelimit-limit-requests"] = "60"
+        headers["x-ratelimit-remaining-requests"] = "secret-do-not-log"
+        headers["x-private-header"] = "secret-do-not-log"
+        failure = sm.urllib.error.HTTPError("https://secret-do-not-log", 429, "secret-do-not-log", headers, None)
+        with mock.patch.object(sm.urllib.request, "urlopen", side_effect=failure):
+            with self.assertRaises(sm.HTTPStatusError) as caught:
+                sm.http_json("https://example.invalid")
+        error = caught.exception
+        self.assertEqual(error.status, 429)
+        self.assertEqual(error.retry_after, 61)
+        self.assertEqual(error.rate_limits, {"limit_tokens": 150000, "remaining_tokens": 0, "limit_requests": 60})
+        self.assertNotIn("secret-do-not-log", str(error))
+        for raw in ("-1", "NaN", "inf", "999999999999999", "secret-do-not-log", "1\n::error::secret"):
+            with self.subTest(raw=raw):
+                error = sm.HTTPStatusError(429, {"retry-after-ms": raw, "retry-after": raw,
+                                               "x-ratelimit-limit-tokens": raw})
+                self.assertIsNone(error.retry_after)
+                self.assertEqual(error.rate_limits, {})
+        future = dt.datetime.now(dt.timezone.utc) + dt.timedelta(seconds=60)
+        error = sm.HTTPStatusError(429, {"retry-after": sm.email.utils.format_datetime(future, usegmt=True)})
+        self.assertGreater(error.retry_after, 55)
+        self.assertLessEqual(error.retry_after, 60)
+
+    def test_obsolete_http_retry_dates_are_utc_and_honored(self):
+        now = dt.datetime(2026, 10, 5, 16, 0, tzinfo=dt.timezone.utc)
+
+        class Clock(dt.datetime):
+            @classmethod
+            def now(cls, tz=None):
+                return now.astimezone(tz) if tz else now.replace(tzinfo=None)
+
+        ai = object.__new__(sm.AzureAI)
+        ai.key, ai.model, ai.url = "key", "model", "https://example.invalid"
+        for raw in ("Mon, 05 Oct 2026 16:02:00 GMT", "Monday, 05-Oct-26 16:02:00 GMT",
+                    "Mon Oct  5 16:02:00 2026"):
+            with self.subTest(raw=raw), mock.patch.object(sm.dt, "datetime", Clock):
+                error = sm.HTTPStatusError(429, {"retry-after": raw})
+                self.assertEqual(error.retry_after, 120)
+                with mock.patch.object(sm, "http_json", side_effect=[error, {"output_text": '{"decision":true}'}]), \
+                     mock.patch.object(sm.time, "sleep") as sleep, \
+                     mock.patch.object(sm.sys, "stderr", io.StringIO()):
+                    self.assertEqual(ai.call("instructions", "data", sm.BOOL_SCHEMA, "result"), {"decision": True})
+                sleep.assert_called_once_with(120)
+        with mock.patch.object(sm.dt, "datetime", Clock):
+            self.assertEqual(sm.HTTPStatusError(429, {"retry-after": "Sun Nov  6 08:49:37 1994"}).retry_after, 0)
+
+    def test_azure_throttling_waits_for_headers_or_minute_window_and_keeps_request(self):
+        ai = object.__new__(sm.AzureAI)
+        ai.key, ai.model, ai.url = "secret-do-not-log", "model", "https://example.invalid"
+        data = "x" * 1033558
+        for headers, expected in (({"retry-after-ms": "61000"}, 61), ({"retry-after": "65.5"}, 65.5), ({}, 60)):
+            with self.subTest(headers=headers):
+                failure = sm.HTTPStatusError(429, headers)
+                output = io.StringIO()
+                with mock.patch.object(sm, "http_json", side_effect=[failure, {"output_text": '{"decision":true}'}]) as request, \
+                     mock.patch.object(sm.time, "sleep") as sleep, \
+                     mock.patch.object(sm.secrets, "randbelow", return_value=0), \
+                     mock.patch.object(sm.sys, "stderr", output):
+                    self.assertEqual(ai.call("instructions", data, sm.BOOL_SCHEMA, "result"), {"decision": True})
+                sleep.assert_called_once_with(expected)
+                self.assertEqual(request.call_count, 2)
+                self.assertEqual(request.call_args_list[0].kwargs["body"], request.call_args_list[1].kwargs["body"])
+                self.assertIn("input_bytes=1033558 reason=http-status-429", output.getvalue())
+                self.assertNotIn("secret-do-not-log", output.getvalue())
+        output = io.StringIO()
+        failure = sm.HTTPStatusError(429, {"x-ratelimit-limit-tokens": "150000", "x-ratelimit-remaining-tokens": "0"})
+        with mock.patch.object(sm, "http_json", side_effect=failure) as request, \
+             mock.patch.object(sm.time, "sleep") as sleep, \
+             mock.patch.object(sm.secrets, "randbelow", return_value=10), \
+             mock.patch.object(sm.sys, "stderr", output), \
+             self.assertRaisesRegex(sm.MaintenanceError, "bounded retries"):
+            ai.call("instructions", data, sm.BOOL_SCHEMA, "result")
+        self.assertEqual(request.call_count, sm.MAX_AI_ATTEMPTS)
+        self.assertEqual(sleep.call_args_list, [mock.call(70), mock.call(130)])
+        self.assertEqual(len(output.getvalue().splitlines()), sm.MAX_AI_ATTEMPTS)
+        self.assertIn("limit_tokens=150000 remaining_tokens=0", output.getvalue())
+
+    def test_azure_does_not_retry_before_an_excessive_server_wait(self):
+        ai = object.__new__(sm.AzureAI)
+        ai.key, ai.model, ai.url = "key", "model", "https://example.invalid"
+        output = io.StringIO()
+        with mock.patch.object(sm, "http_json", side_effect=sm.HTTPStatusError(429, {"retry-after": "301"})) as request, \
+             mock.patch.object(sm.time, "sleep") as sleep, \
+             mock.patch.object(sm.sys, "stderr", output):
+            with self.assertRaisesRegex(sm.MaintenanceError, "bounded wait budget") as caught:
+                ai.call("instructions", "data", sm.BOOL_SCHEMA, "result")
+        self.assertEqual(sm.diagnostic_reason(caught.exception), "azure-retry-wait-too-long")
+        self.assertEqual(request.call_count, 1)
+        sleep.assert_not_called()
+        self.assertIn("retry_after_s=301", output.getvalue())
+
     def test_azure_failure_diagnostics_are_bounded_and_sanitized(self):
         ai = object.__new__(sm.AzureAI)
         secret = "credential-model-content"
