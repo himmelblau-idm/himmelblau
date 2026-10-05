@@ -631,6 +631,44 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn nxset_compares_names_case_insensitively() {
+        let resolver = setup_resolver().await;
+        resolver
+            .reload_nxset(vec![("Admin".to_string(), 4242u32)].into_iter())
+            .await;
+
+        for name in ["admin", "ADMIN", "Admin"] {
+            assert!(resolver.check_nxset(Some(name), None).await, "{name}");
+        }
+        assert!(resolver.check_nxset(None, Some(4242)).await);
+        assert!(!resolver.check_nxset(Some("administrator"), None).await);
+        assert!(!resolver.check_nxset(Some("admin@example.com"), None).await);
+    }
+
+    #[tokio::test]
+    async fn user_colliding_with_a_local_account_is_not_returned() {
+        let resolver = setup_resolver().await;
+        seed_aliased_token(&resolver).await;
+        let id = Id::Name("first.last@example.com".to_string());
+
+        let found = resolver
+            .get_usertoken(id.clone())
+            .await
+            .expect("lookup failed");
+        assert_eq!(found.map(|t| t.name), Some("onprem-user".to_string()));
+
+        // A local account appears which has the Entra user's local name.
+        resolver
+            .reload_nxset(vec![("ONPREM-USER".to_string(), 99999u32)].into_iter())
+            .await;
+        assert!(resolver
+            .get_usertoken(id)
+            .await
+            .expect("lookup failed")
+            .is_none());
+    }
+
+    #[tokio::test]
     async fn initgroups_named_omits_gid_with_no_nss_name() {
         let unnamed = GroupToken {
             name: "unnamed".to_string(),
@@ -1061,6 +1099,9 @@ where
         let mut nxset_txn = self.nxset.lock().await;
         nxset_txn.clear();
         for (name, gid) in iter {
+            // The local name of an Entra user (an onPremisesSamAccountName) is
+            // case insensitive: a local "admin" must exclude "ADMIN" as well.
+            let key = Id::Name(name.to_ascii_lowercase());
             let name = Id::Name(name);
             let gid = Id::Gid(gid);
 
@@ -1068,7 +1109,7 @@ where
             if !(self.allow_id_overrides.contains(&gid) || self.allow_id_overrides.contains(&name))
             {
                 trace!("Adding {:?}:{:?} to resolver exclusion set", name, gid);
-                nxset_txn.insert(name);
+                nxset_txn.insert(key);
                 nxset_txn.insert(gid);
             }
         }
@@ -1077,7 +1118,7 @@ where
     pub async fn check_nxset(&self, name: Option<&str>, idnumber: Option<u32>) -> bool {
         let nxset_txn = self.nxset.lock().await;
         if let Some(name) = name {
-            if nxset_txn.contains(&Id::Name(name.to_string())) {
+            if nxset_txn.contains(&Id::Name(name.to_ascii_lowercase())) {
                 return true;
             }
         }
@@ -1664,7 +1705,7 @@ where
             (Id::Gid(_), None) => self.get_cachestate(None).await,
         };
 
-        match (expired, state) {
+        let token = match (expired, state) {
             (_, CacheState::Offline) => {
                 trace!("offline, returning cached item");
                 Ok(item)
@@ -1704,7 +1745,21 @@ where
         .map(|t| {
             trace!("token -> {:?}", t);
             t
-        })
+        })?;
+
+        // Only the requested name was checked above, and a UPN can't collide with
+        // a local account. The name and id of the user we return can, and a local
+        // account may have appeared since the user was cached.
+        match token {
+            Some(tok) if self.check_nxset(Some(&tok.name), Some(tok.gidnumber)).await => {
+                warn!(
+                    "Refusing '{}': its name or id collides with a local account",
+                    tok.spn
+                );
+                Ok(None)
+            }
+            token => Ok(token),
+        }
     }
 
     async fn get_grouptoken(&self, grp_id: Id) -> ResolverResult<Option<GroupToken>> {
