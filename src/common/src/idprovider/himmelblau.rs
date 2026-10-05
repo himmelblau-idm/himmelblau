@@ -41,6 +41,7 @@ use crate::idprovider::interface::{tpm, UserTokenState};
 use crate::idprovider::oidc_router::OidcRouter;
 use crate::reserved_ids::{is_systemd_dynamic_id, SYSTEMD_DYNAMIC_ID_MAX, SYSTEMD_DYNAMIC_ID_MIN};
 use crate::tpm::confidential_client_creds;
+use crate::unix_config::NameAttr;
 use crate::unix_proto::PamAuthRequest;
 use crate::user_map::UserMap;
 use crate::{
@@ -157,6 +158,26 @@ fn unseal_refresh_token_with_loaded_hello_key(
                 IdpError::Tpm
             }),
         Err(_) => Ok(None),
+    }
+}
+
+fn normalize_on_premises_sam_account_name(value: Option<&str>) -> Option<String> {
+    value
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+}
+
+fn select_local_name(
+    spn: &str,
+    local_name_attr: NameAttr,
+    on_premises_sam_account_name: Option<&str>,
+) -> String {
+    match local_name_attr {
+        NameAttr::Spn => spn.to_string(),
+        NameAttr::OnPremisesSamAccountName => {
+            normalize_on_premises_sam_account_name(on_premises_sam_account_name)
+                .unwrap_or_else(|| spn.to_string())
+        }
     }
 }
 
@@ -5279,6 +5300,39 @@ impl HimmelblauProvider {
                 posix_attrs = HashMap::new();
             }
         };
+        let local_name_attr = self
+            .config
+            .lock()
+            .await
+            .get_local_name_attr(Some(&self.domain));
+        let on_premises_sam_account_name = match &value {
+            TokenOrObj::UserObj((_, value)) => normalize_on_premises_sam_account_name(
+                value.on_premises_sam_account_name.as_deref(),
+            ),
+            TokenOrObj::UserToken(_) if local_name_attr == NameAttr::OnPremisesSamAccountName => {
+                match &access_token {
+                    Some(access_token) => match self.graph.request_user(access_token, &spn).await {
+                        Ok(user) => normalize_on_premises_sam_account_name(
+                            user.on_premises_sam_account_name.as_deref(),
+                        ),
+                        Err(e) => {
+                            debug!(
+                                "Failed fetching user object for onPremisesSamAccountName: {:?}",
+                                e
+                            );
+                            None
+                        }
+                    },
+                    None => None,
+                }
+            }
+            TokenOrObj::UserToken(_) => None,
+        };
+        let local_name = select_local_name(
+            &spn,
+            local_name_attr,
+            on_premises_sam_account_name.as_deref(),
+        );
         let valid = true;
         let user_map = UserMap::new(&self.config.lock().await.get_user_map_file());
         let (uidnumber, gidnumber) = match user_map.get_local_from_upn(&spn) {
@@ -5421,7 +5475,6 @@ impl HimmelblauProvider {
                 TokenOrObj::UserObj((_, value)) => value.displayname.clone(),
                 TokenOrObj::UserToken(value) => value.id_token.name.clone(),
             },
-            //value.id_token.name.clone(),
         };
 
         let displayname = flip_displayname_comma(&displayname);
@@ -5440,7 +5493,7 @@ impl HimmelblauProvider {
         }
 
         Ok(UserToken {
-            name: spn.clone(),
+            name: local_name,
             spn: spn.clone(),
             uuid,
             real_gidnumber: Some(gidnumber),
@@ -5966,12 +6019,13 @@ mod tests {
         cache_refresh_token_with_loaded_hello_key, cached_prt_or_refresh_token,
         is_device_removed_error, is_mfa_required_for_enrollment, is_sspr_required,
         is_unavailable_mfa_method_error, mfa_flow_uses_push_hint, password_change_required,
-        unexpired_prt_entry, unseal_refresh_token_with_loaded_hello_key, CONSENT_REQUIRED,
-        PASSWORD_RESET_REGISTRATION_REQUIRED,
+        unexpired_prt_entry, unseal_refresh_token_with_loaded_hello_key, select_local_name,
+        CONSENT_REQUIRED, PASSWORD_RESET_REGISTRATION_REQUIRED,
     };
     use crate::db::{CacheError, KeyStoreTxn};
     use crate::idprovider::common::RefreshCacheEntry;
     use crate::idprovider::interface::{AuthCacheAction, AuthCredHandler, AuthRequest, AuthResult};
+    use crate::unix_config::NameAttr;
     use himmelblau::error::{AADSTSError, ErrorResponse, MsalError, DEVICE_AUTH_FAIL};
     use himmelblau::{MFAAuthContinue, MfaMethodInfo};
     use kanidm_hsm_crypto::{
@@ -6039,6 +6093,40 @@ mod tests {
             &MsalError::RequestFailed("network down".to_string()),
             false
         ));
+    }
+
+    #[test]
+    fn local_name_defaults_to_spn() {
+        assert_eq!(
+            select_local_name("user@example.com", NameAttr::Spn, Some("onprem-user")),
+            "user@example.com"
+        );
+    }
+
+    #[test]
+    fn local_name_uses_on_premises_sam_account_name_when_configured() {
+        assert_eq!(
+            select_local_name(
+                "user@example.com",
+                NameAttr::OnPremisesSamAccountName,
+                Some(" onprem-user ")
+            ),
+            "onprem-user"
+        );
+    }
+
+    #[test]
+    fn local_name_falls_back_to_spn_for_missing_on_premises_sam_account_name() {
+        for value in [None, Some(""), Some("   ")] {
+            assert_eq!(
+                select_local_name(
+                    "user@example.com",
+                    NameAttr::OnPremisesSamAccountName,
+                    value
+                ),
+                "user@example.com"
+            );
+        }
     }
 
     #[test]
