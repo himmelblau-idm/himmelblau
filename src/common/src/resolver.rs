@@ -395,6 +395,16 @@ mod tests {
         initgroups_mode: InitgroupsMode,
         extra_groups: Vec<GroupToken>,
     ) -> Resolver<OfflineFallbackProvider> {
+        let allow_groups = vec!["9f8a7a5a-a8e8-5c57-9f4f-7dfe21126c23".to_string()];
+        setup_resolver_allowing(expiry, initgroups_mode, extra_groups, allow_groups).await
+    }
+
+    async fn setup_resolver_allowing(
+        expiry: u64,
+        initgroups_mode: InitgroupsMode,
+        extra_groups: Vec<GroupToken>,
+        pam_allow_groups: Vec<String>,
+    ) -> Resolver<OfflineFallbackProvider> {
         let db = Db::new("").expect("failed to create test db");
         let mut dbtxn = db.write().await;
         dbtxn.migrate().expect("failed to migrate test db");
@@ -424,7 +434,7 @@ mod tests {
             hsm,
             machine_key,
             3600,
-            vec!["9f8a7a5a-a8e8-5c57-9f4f-7dfe21126c23".to_string()],
+            pam_allow_groups,
             false,
             "/bin/sh".to_string(),
             "/home/".to_string(),
@@ -589,6 +599,34 @@ mod tests {
                 assert_eq!(account_id, "first.last@example.com")
             }
             _ => panic!("expected an in progress auth session"),
+        }
+    }
+
+    #[tokio::test]
+    async fn allow_list_matches_the_resolved_user_only() {
+        // "onprem-user@example.com" is the UPN of some other user. Here it is
+        // merely the expanded local name of the cached "first.last@example.com".
+        for (allowed, admitted) in [
+            ("onprem-user@example.com", false),
+            ("first.last@example.com", true),
+        ] {
+            let resolver = setup_resolver_allowing(
+                0,
+                InitgroupsMode::Named,
+                Vec::new(),
+                vec![allowed.to_string()],
+            )
+            .await;
+            seed_aliased_token(&resolver).await;
+
+            assert_eq!(
+                resolver
+                    .pam_account_allowed("onprem-user@example.com")
+                    .await
+                    .expect("allow-group check failed"),
+                Some(admitted),
+                "allow list {allowed}"
+            );
         }
     }
 
@@ -1900,16 +1938,16 @@ where
                         }
                         ids
                     })
-                    .chain(std::iter::once(account_id.to_string()))
+                    // The name the user typed is only an alias when it is a local
+                    // name, and may spell the UPN of another user. Match on the
+                    // user the cache resolved it to.
+                    .chain(std::iter::once(tok.spn.clone()))
                     .collect();
 
                 debug!(
                     "Checking if user is in allowed groups ({:?}) -> {:?}",
                     self.pam_allow_groups,
-                    user_set
-                        .iter()
-                        .filter(|s| s.as_str() != account_id)
-                        .cloned(),
+                    user_set.iter().filter(|s| s.as_str() != tok.spn).cloned(),
                 );
                 let intersection_count = user_set.intersection(&self.pam_allow_groups).count();
                 debug!("Number of intersecting groups: {}", intersection_count);
