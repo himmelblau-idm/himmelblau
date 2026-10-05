@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 import base64
 import datetime as dt
+import email.utils
 import hashlib
 import io
 import json
@@ -39,6 +40,7 @@ from typing import Any, Iterable, Mapping, Sequence
 STABLE_BRANCHES = ("stable-3.x", "stable-4.x")
 QUARANTINE_HOURS = 252
 MAX_AI_ATTEMPTS = 3
+MAX_AI_RETRY_SECONDS = 300
 MAX_HTTP_BYTES = 8 * 1024 * 1024
 MAX_AI_INPUT_BYTES = 4 * 1024 * 1024
 MAX_AI_OUTPUT_BYTES = 256 * 1024
@@ -81,8 +83,43 @@ class MaintenanceError(RuntimeError):
 class HTTPStatusError(MaintenanceError):
     """Keep only the numeric status; never retain a response body for logging."""
 
-    def __init__(self, status: int):
+    def __init__(self, status: int, headers: Mapping[str, str] | None = None):
         self.status = status if type(status) is int and 100 <= status <= 599 else 0
+        self.retry_after: float | None = None
+        self.rate_limits: dict[str, int] = {}
+        # Preserve only validated numeric metadata, never arbitrary header text.
+        def integer_header(name: str) -> int | None:
+            raw = headers.get(name) if headers is not None else None
+            if isinstance(raw, str) and re.fullmatch(r"[0-9]{1,12}", raw.strip()):
+                return int(raw.strip())
+            return None
+
+        milliseconds = integer_header("retry-after-ms")
+        raw_retry = headers.get("retry-after") if headers is not None else None
+        if milliseconds is not None:
+            self.retry_after = milliseconds / 1000
+        elif isinstance(raw_retry, str) and len(raw_retry) <= 128:
+            if re.fullmatch(r"[0-9]{1,9}(?:\.[0-9]{1,3})?", raw_retry.strip()):
+                self.retry_after = float(raw_retry.strip())
+            else:
+                try:
+                    when = email.utils.parsedate_to_datetime(raw_retry)
+                    # HTTP-date's obsolete asctime form has no explicit zone
+                    # but represents UTC (RFC 9110 section 5.6.7).
+                    if when.tzinfo is None:
+                        when = when.replace(tzinfo=dt.timezone.utc)
+                    self.retry_after = max(0, (when - dt.datetime.now(dt.timezone.utc)).total_seconds())
+                except (ValueError, TypeError, OverflowError):
+                    pass
+        for label, name in (
+            ("limit_tokens", "x-ratelimit-limit-tokens"),
+            ("remaining_tokens", "x-ratelimit-remaining-tokens"),
+            ("limit_requests", "x-ratelimit-limit-requests"),
+            ("remaining_requests", "x-ratelimit-remaining-requests"),
+        ):
+            number = integer_header(name)
+            if number is not None:
+                self.rate_limits[label] = number
         super().__init__("HTTP request failed")
 
 
@@ -103,6 +140,7 @@ def diagnostic_reason(exc: Exception) -> str:
         "AI structured output has an invalid boolean": "schema-boolean",
         "AI structured output has an invalid string": "schema-string",
         "Azure failed after bounded retries": "azure-retries-exhausted",
+        "Azure retry delay exceeds bounded wait budget": "azure-retry-wait-too-long",
         "main commit context exceeds budget": "main-context-too-large",
         "stable branch context exceeds bounded AI input": "stable-context-too-large",
         "combined relevance context exceeds budget": "combined-context-too-large",
@@ -614,10 +652,10 @@ def http_json(
     try:
         with urllib.request.urlopen(request, timeout=timeout) as response:
             if response.status < 200 or response.status >= 300:
-                raise HTTPStatusError(response.status)
+                raise HTTPStatusError(response.status, response.headers)
             raw = response.read(max_bytes + 1)
     except urllib.error.HTTPError as exc:
-        raise HTTPStatusError(exc.code) from exc
+        raise HTTPStatusError(exc.code, exc.headers) from exc
     except TimeoutError as exc:
         raise MaintenanceError("HTTP request timed out") from exc
     except urllib.error.URLError as exc:
@@ -856,14 +894,27 @@ class AzureAI:
                 stage = "schema-validation"
                 return validate_schema_result(decision, schema)
             except (MaintenanceError, json.JSONDecodeError) as exc:
+                rate_details = ""
+                if isinstance(exc, HTTPStatusError) and exc.status == 429:
+                    rate_details = "".join(f" {key}={number}" for key, number in exc.rate_limits.items())
+                    if exc.retry_after is not None:
+                        rate_details += f" retry_after_s={exc.retry_after:g}"
                 print(
                     f"azure-debug: stage={stage} attempt={attempt + 1}/{MAX_AI_ATTEMPTS} "
-                    f"input_bytes={len(content) + attachment_size} reason={diagnostic_reason(exc)}",
+                    f"input_bytes={len(content) + attachment_size} reason={diagnostic_reason(exc)}{rate_details}",
                     file=sys.stderr,
                 )
                 last_error = exc
                 if attempt + 1 < MAX_AI_ATTEMPTS:
-                    time.sleep(min(2 ** attempt, 2))
+                    delay = min(2 ** attempt, 2)
+                    if isinstance(exc, HTTPStatusError) and exc.status == 429:
+                        # Azure's quota window is one minute; rapid retries can
+                        # consume quota themselves. Respect server guidance.
+                        delay = exc.retry_after if exc.retry_after is not None else 60 * 2 ** attempt + secrets.randbelow(11)
+                        if delay > MAX_AI_RETRY_SECONDS:
+                            raise MaintenanceError("Azure retry delay exceeds bounded wait budget") from exc
+                        delay = max(1, delay)
+                    time.sleep(delay)
         raise MaintenanceError("Azure failed after bounded retries") from last_error
 
 
