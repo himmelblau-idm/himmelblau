@@ -1313,7 +1313,35 @@ def reviewable_vet_gaps(runner: Runner, state_dir: Path) -> list[VetItem]:
     return [by_key[(item.crate, item.new)][0] for item in locked]
 
 
+def permission_error_path_hints(stderr: str) -> list[str]:
+    """Bucket explicit denied operands; ambiguous command lines stay unknown."""
+    diagnostic = re.compile(
+        r"\s*(?:[a-z0-9_.+-]+:\s*)?"
+        r"(?P<operation>(?:(?:couldn't|could not|failed to|unable to) (?:read|open)"
+        r"|failed to create temporary file)\s+)?"
+        r"(?P<operand>/[^\s:'\"`]+|`/[^`]+`|'/[^']+'|\"/[^\"]+\")"
+        r":\s*(?:failed to map segment from shared object:\s*)?"
+        r"(?:permission denied|operation not permitted)(?: \(os error [0-9]{1,3}\))?\s*",
+    )
+    denied_paths = set()
+    for line in stderr.splitlines():
+        match = diagnostic.fullmatch(line)
+        if match:
+            operand = match["operand"].strip("'\"`")
+            # Without an explicit file operation, a quoted string containing
+            # spaces could be an entire command rather than a filename.
+            if not match["operation"] and any(char.isspace() for char in operand):
+                continue
+            denied_paths.add(operand)
+    return [name for name, prefix in (
+        ("project-cache", "/opt/project-cargo/"),
+        ("source", "/workspace/"), ("target", "/target/"),
+        ("temporary", "/tmp/"), ("toolchain", "/usr/local/rustup/"),
+    ) if any(path.startswith(prefix) for path in denied_paths)]
+
+
 def locked_build(runner: Runner, *, target_dir: Path | None = None) -> CommandResult:
+    """Run the contained build and report only bounded, sanitized failure hints."""
     result = contained_repo_command(
         runner, ["cargo", "build", "--workspace", "--locked"],
         network=False, source_rw=False, cache_rw=False, check=False,
@@ -1323,7 +1351,7 @@ def locked_build(runner: Runner, *, target_dir: Path | None = None) -> CommandRe
         # URLs or Actions commands. Emit only fixed hints and bounded numbers.
         stderr = result.stderr.lower()
         patterns = (
-            ("permission-denied", ("permission denied",)),
+            ("permission-denied", ("permission denied", "operation not permitted")),
             ("read-only-filesystem", ("read-only file system",)),
             ("offline-cache-miss", ("no matching package named", "attempting to make an http request")),
             ("lockfile-needs-update", ("needs to be updated but --locked was passed",)),
@@ -1339,11 +1367,26 @@ def locked_build(runner: Runner, *, target_dir: Path | None = None) -> CommandRe
             ("source", "/workspace/"), ("target", "/target/"),
         ) if prefix in stderr]
         codes = sorted(set(re.findall(r"error\[(E[0-9]{4})\]", result.stderr)))[:8]
+        operations = [name for name, needles in (
+            ("read-file", ("couldn't read", "could not read", "failed to read", "unable to read")),
+            ("start-process", ("could not execute process", "failed to execute", "failed to spawn")),
+            ("link", ("error: linking with",)),
+            ("run-build-script", ("failed to run custom build command",)),
+            ("open-file", ("failed to open", "could not open", "unable to open")),
+            ("create-temporary-file", ("failed to create temporary file", "couldn't create a temp dir")),
+            ("load-library", ("failed to map segment", "could not load proc macro", "error while loading shared libraries")),
+        ) if any(needle in stderr for needle in needles)]
+        # Even on a permission-error line, command arguments may be incidental.
+        permission_paths = permission_error_path_hints(stderr)
+        os_errors = sorted({int(code) for code in re.findall(r"\(os error ([0-9]{1,3})\)", stderr)})[:8]
         print(
             f"build-debug: exit={result.returncode} hints={','.join(hints) or 'unclassified'} "
             f"paths={','.join(paths) or 'unknown'} rust_codes={','.join(codes) or 'none'} "
             f"stdout_bytes={len(result.stdout.encode('utf-8'))} "
-            f"stderr_bytes={len(result.stderr.encode('utf-8'))}",
+            f"stderr_bytes={len(result.stderr.encode('utf-8'))} "
+            f"operations={','.join(operations) or 'unknown'} "
+            f"permission_paths={','.join(permission_paths) or 'unknown'} "
+            f"os_errors={','.join(map(str, os_errors)) or 'none'}",
             file=sys.stderr,
         )
     return result
