@@ -57,7 +57,8 @@ use crate::{
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use himmelblau::auth::{
-    BrokerClientApplication, PublicClientApplication, UserToken as UnixUserToken, BROKER_APP_ID,
+    BrokerClientApplication, IpVersion, PublicClientApplication, UserToken as UnixUserToken,
+    BROKER_APP_ID,
 };
 use himmelblau::discovery::EnrollAttrs;
 use himmelblau::error::{MsalError, DEVICE_AUTH_FAIL};
@@ -77,6 +78,7 @@ use rand::RngExt;
 use reqwest::Url;
 use std::collections::HashMap;
 use std::ffi::CString;
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::sync::Arc;
 use std::thread::sleep;
 use std::time::Duration;
@@ -4799,16 +4801,17 @@ impl HimmelblauProvider {
         access_token: &str,
         upn: &str,
     ) -> Result<UserObject, MsalError> {
-        let (local_name_attr, timeout) = {
+        let (local_name_attr, timeout, ip_versions) = {
             let cfg = self.config.lock().await;
             (
                 cfg.get_local_name_attr(Some(&self.domain)),
                 cfg.get_request_timeout(),
+                cfg.get_ip_versions(),
             )
         };
         if local_name_attr == NameAttr::OnPremisesSamAccountName {
             match self
-                .graph_request_user_with_sam(access_token, upn, timeout)
+                .graph_request_user_with_sam(access_token, upn, timeout, &ip_versions)
                 .await
             {
                 Ok(user) => return Ok(user),
@@ -4823,12 +4826,23 @@ impl HimmelblauProvider {
         access_token: &str,
         upn: &str,
         timeout: u64,
+        ip_versions: &[IpVersion],
     ) -> Result<UserObject, Box<dyn std::error::Error + Send + Sync>> {
         let graph_url = self.graph.graph_url().await.map_err(|e| format!("{e:?}"))?;
-        Ok(reqwest::Client::builder()
+        let client_builder = reqwest::Client::builder()
             .timeout(Duration::from_secs(timeout))
             // Never forward the access token to another host.
-            .redirect(reqwest::redirect::Policy::none())
+            .redirect(reqwest::redirect::Policy::none());
+        let client_builder = match ip_versions {
+            [IpVersion::V4] => {
+                client_builder.local_address(IpAddr::V4(Ipv4Addr::UNSPECIFIED))
+            }
+            [IpVersion::V6] => {
+                client_builder.local_address(IpAddr::V6(Ipv6Addr::UNSPECIFIED))
+            }
+            _ => client_builder,
+        };
+        Ok(client_builder
             .build()?
             .get(user_with_sam_account_name_url(&graph_url, upn))
             .bearer_auth(access_token)
