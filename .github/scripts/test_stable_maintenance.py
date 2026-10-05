@@ -1214,6 +1214,96 @@ class MutationBoundaryTests(unittest.TestCase):
 class MarkerConflictAndAITests(unittest.TestCase):
     SHA = "a" * 40
 
+    def test_http_status_and_transport_diagnostics_do_not_echo_secrets(self):
+        secret = "credential-model-content"
+        failures = [
+            (sm.urllib.error.HTTPError("https://host/" + secret, 429, secret, {}, None), "http-status-429"),
+            (sm.urllib.error.URLError(secret), "transport-error"),
+            (sm.urllib.error.URLError(TimeoutError(secret)), "transport-timeout"),
+        ]
+        for failure, reason in failures:
+            with self.subTest(reason=reason), mock.patch.object(sm.urllib.request, "urlopen", side_effect=failure):
+                with self.assertRaises(sm.MaintenanceError) as caught:
+                    sm.http_json("https://example.invalid")
+                self.assertEqual(sm.diagnostic_reason(caught.exception), reason)
+                self.assertNotIn(secret, str(caught.exception))
+
+    def test_http_json_normalizes_invalid_utf8(self):
+        response = mock.MagicMock()
+        response.__enter__.return_value = response
+        response.status = 200
+        response.read.return_value = bytes([0xff])
+        with mock.patch.object(sm.urllib.request, "urlopen", return_value=response):
+            with self.assertRaisesRegex(sm.MaintenanceError, "invalid JSON") as caught:
+                sm.http_json("https://example.invalid")
+        self.assertEqual(sm.diagnostic_reason(caught.exception), "invalid-json")
+
+    def test_azure_failure_diagnostics_are_bounded_and_sanitized(self):
+        ai = object.__new__(sm.AzureAI)
+        secret = "credential-model-content"
+        ai.key, ai.model, ai.url = secret, secret, "https://host/" + secret
+        failures = [
+            (sm.HTTPStatusError(400), "http-request", "http-status-400"),
+            (sm.MaintenanceError(secret), "http-request", "unclassified-error"),
+            ({"output_text": secret}, "json-parse", "invalid-json"),
+            ({"output_text": '{"decision":"' + secret + '"}'}, "schema-validation", "schema-boolean"),
+            ({"output": []}, "structured-output", "missing-structured-output"),
+        ]
+        for response, stage, reason in failures:
+            effect = {"side_effect": response} if isinstance(response, Exception) else {"return_value": response}
+            output = io.StringIO()
+            with self.subTest(reason=reason), mock.patch.object(sm, "http_json", **effect), \
+                 mock.patch.object(sm.time, "sleep"), mock.patch.object(sm.sys, "stderr", output):
+                with self.assertRaises(sm.MaintenanceError):
+                    ai.call(secret, secret, sm.BOOL_SCHEMA, secret)
+            lines = output.getvalue().splitlines()
+            self.assertEqual(len(lines), sm.MAX_AI_ATTEMPTS)
+            self.assertIn("stage=" + stage, lines[-1])
+            self.assertIn("reason=" + reason, lines[-1])
+            self.assertNotIn(secret, output.getvalue())
+            self.assertNotIn("https://", output.getvalue())
+
+    def test_azure_malformed_output_arrays_fail_as_missing_structured_output(self):
+        ai = object.__new__(sm.AzureAI)
+        ai.key, ai.model, ai.url = "key", "model", "https://example.invalid"
+        responses = [
+            {"output": None},
+            {"output": [{"content": None}]},
+        ]
+        for response in responses:
+            output = io.StringIO()
+            with self.subTest(response=response), mock.patch.object(
+                sm, "http_json", return_value=response
+            ), mock.patch.object(sm.time, "sleep"), mock.patch.object(sm.sys, "stderr", output):
+                with self.assertRaisesRegex(sm.MaintenanceError, "bounded retries"):
+                    ai.call("instructions", "data", sm.BOOL_SCHEMA, "result")
+            lines = output.getvalue().splitlines()
+            self.assertEqual(len(lines), sm.MAX_AI_ATTEMPTS)
+            self.assertIn("stage=structured-output", lines[-1])
+            self.assertIn("reason=missing-structured-output", lines[-1])
+
+    def test_relevance_diagnostics_distinguish_context_from_azure_and_fail_closed(self):
+        for stage, failure in [
+            ("stable-context", sm.MaintenanceError("stable branch context exceeds bounded AI input")),
+            ("azure-call", sm.MaintenanceError("Azure failed after bounded retries")),
+        ]:
+            with self.subTest(stage=stage), tempfile.TemporaryDirectory() as tmp:
+                state = sm.State(Path(tmp) / "state")
+                state.save({"branch": "stable-4.x", "cutoff": "a" * 40, "main_head": "b" * 40})
+                runner = mock.Mock()
+                runner.git.side_effect = [sm.CommandResult(0, self.SHA + "\n", ""), sm.CommandResult(0, "patch", "")]
+                record = {"subject": "Fix bug", "paths": ["src/a.rs"], "author": "Maintainer", "parents": 1}
+                ai = mock.Mock()
+                ai.call.side_effect = [{"decision": True}, failure]
+                context_effect = {"side_effect": failure} if stage == "stable-context" else {"return_value": "stable"}
+                with mock.patch.object(sm, "_commit_record", return_value=record), \
+                     mock.patch.object(sm, "AzureAI", return_value=ai), \
+                     mock.patch.object(sm, "stable_path_context", **context_effect):
+                    with self.assertRaisesRegex(sm.MaintenanceError, "stage=" + stage) as caught:
+                        sm.phase_classify_backports(mock.Mock(), state, runner)
+                self.assertIn("reason=" + sm.diagnostic_reason(failure), str(caught.exception))
+                self.assertNotIn("backport_candidates", state.load())
+
     def test_marker_parsing(self):
         self.assertEqual(sm.marker_sha(f"body\n{sm.MARKER} {self.SHA}\n"), self.SHA)
         self.assertIsNone(sm.marker_sha("ordinary commit"))
