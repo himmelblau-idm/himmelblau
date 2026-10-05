@@ -181,6 +181,16 @@ fn select_local_name(
     }
 }
 
+/// Graph returns a small default set of properties for a user, which lacks
+/// onPremisesSamAccountName unless it is asked for with `$select`.
+fn user_with_sam_account_name_url(graph_url: &str, upn: &str) -> String {
+    format!(
+        "{}/v1.0/users/{}?$select=id,displayName,userPrincipalName,onPremisesSamAccountName",
+        graph_url.trim_end_matches('/'),
+        urlencoding::encode(upn)
+    )
+}
+
 fn is_unavailable_mfa_method_error(msg: &str, requested_method: &str) -> bool {
     let expected_prefix =
         format!("Requested MFA method '{requested_method}' not available. Available methods: ");
@@ -1509,7 +1519,7 @@ impl IdProvider for HimmelblauProvider {
                 .await
                 {
                     Ok(token) => {
-                        match self.graph.request_user(&token.access_token, &account_id).await {
+                        match self.graph_request_user(&token.access_token, &account_id).await {
                             Ok(userobj) => {
                                 match self
                                     .user_token_from_unix_user_token(
@@ -4780,6 +4790,55 @@ impl IdProvider for HimmelblauProvider {
 }
 
 impl HimmelblauProvider {
+    /// Fetch a user from Graph. `Graph::request_user` selects no properties, so
+    /// onPremisesSamAccountName is missing from its answer. If that is the local
+    /// name attribute, ask for it explicitly, and fall back to `request_user`
+    /// should that fail.
+    async fn graph_request_user(
+        &self,
+        access_token: &str,
+        upn: &str,
+    ) -> Result<UserObject, MsalError> {
+        let (local_name_attr, timeout) = {
+            let cfg = self.config.lock().await;
+            (
+                cfg.get_local_name_attr(Some(&self.domain)),
+                cfg.get_request_timeout(),
+            )
+        };
+        if local_name_attr == NameAttr::OnPremisesSamAccountName {
+            match self
+                .graph_request_user_with_sam(access_token, upn, timeout)
+                .await
+            {
+                Ok(user) => return Ok(user),
+                Err(e) => debug!(?e, "Failed selecting onPremisesSamAccountName"),
+            }
+        }
+        self.graph.request_user(access_token, upn).await
+    }
+
+    async fn graph_request_user_with_sam(
+        &self,
+        access_token: &str,
+        upn: &str,
+        timeout: u64,
+    ) -> Result<UserObject, Box<dyn std::error::Error + Send + Sync>> {
+        let graph_url = self.graph.graph_url().await.map_err(|e| format!("{e:?}"))?;
+        Ok(reqwest::Client::builder()
+            .timeout(Duration::from_secs(timeout))
+            // Never forward the access token to another host.
+            .redirect(reqwest::redirect::Policy::none())
+            .build()?
+            .get(user_with_sam_account_name_url(&graph_url, upn))
+            .bearer_auth(access_token)
+            .send()
+            .await?
+            .error_for_status()?
+            .json()
+            .await?)
+    }
+
     #[instrument(level = "debug", skip_all)]
     async fn delayed_init(&self) -> Result<(), IdpError> {
         // The purpose of this function is to delay initialization as long as
@@ -5311,7 +5370,7 @@ impl HimmelblauProvider {
             ),
             TokenOrObj::UserToken(_) if local_name_attr == NameAttr::OnPremisesSamAccountName => {
                 match &access_token {
-                    Some(access_token) => match self.graph.request_user(access_token, &spn).await {
+                    Some(access_token) => match self.graph_request_user(access_token, &spn).await {
                         Ok(user) => normalize_on_premises_sam_account_name(
                             user.on_premises_sam_account_name.as_deref(),
                         ),
@@ -6020,7 +6079,7 @@ mod tests {
         is_device_removed_error, is_mfa_required_for_enrollment, is_sspr_required,
         is_unavailable_mfa_method_error, mfa_flow_uses_push_hint, password_change_required,
         unexpired_prt_entry, unseal_refresh_token_with_loaded_hello_key, select_local_name,
-        CONSENT_REQUIRED, PASSWORD_RESET_REGISTRATION_REQUIRED,
+        user_with_sam_account_name_url, CONSENT_REQUIRED, PASSWORD_RESET_REGISTRATION_REQUIRED,
     };
     use crate::db::{CacheError, KeyStoreTxn};
     use crate::idprovider::common::RefreshCacheEntry;
@@ -6100,6 +6159,14 @@ mod tests {
         assert_eq!(
             select_local_name("user@example.com", NameAttr::Spn, Some("onprem-user")),
             "user@example.com"
+        );
+    }
+
+    #[test]
+    fn user_url_selects_the_sam_account_name() {
+        assert_eq!(
+            user_with_sam_account_name_url("https://graph.microsoft.com/", "first.last@example.com"),
+            "https://graph.microsoft.com/v1.0/users/first.last%40example.com?$select=id,displayName,userPrincipalName,onPremisesSamAccountName"
         );
     }
 
