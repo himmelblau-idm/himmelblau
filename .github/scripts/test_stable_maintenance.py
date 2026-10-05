@@ -1222,10 +1222,14 @@ class MutationBoundaryTests(unittest.TestCase):
                     return sm.CommandResult(0, "", "")
                 raise AssertionError(argv)
             runner.git.side_effect = git
-            with mock.patch.object(sm, "AzureAI", side_effect=AssertionError("AI must not resolve conflicts")):
+            output = io.StringIO()
+            with mock.patch.object(sm, "AzureAI", side_effect=AssertionError("AI must not resolve conflicts")), \
+                 mock.patch.object(sm.sys, "stderr", output):
                 sm.phase_apply_backports(mock.Mock(), state, runner)
             self.assertEqual(state.load()["backports_applied"], [])
             self.assertEqual(state.load()["backports_conflict_skipped"], [sha])
+            self.assertIn(f"backport-debug: sha={sha} result=conflict-skipped", output.getvalue())
+            self.assertIn("backport-summary: phase=apply applied=0 skipped=1", output.getvalue())
 
     def test_conflicting_dependabot_pr_is_reset_without_ai(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -1560,8 +1564,17 @@ class MarkerConflictAndAITests(unittest.TestCase):
             self.assertEqual(value["backport_review_required"], [{
                 "sha": failed, "check": "bug-fix", "stage": "azure-call", "reason": "unclassified-error",
             }])
-            sm.phase_apply_backports(mock.Mock(), state, runner)
+            for sha in (earlier, later):
+                for check in ("bug-fix", "stable-relevance"):
+                    self.assertIn(f"backport-debug: sha={sha} check={check} decision=true", output.getvalue())
+            self.assertNotIn(f"backport-debug: sha={failed}", output.getvalue())
+            self.assertIn("backport-summary: phase=classify candidates=3 selected=2 skipped=0 manual_review=1", output.getvalue())
+            with mock.patch.object(sm.sys, "stderr", output):
+                sm.phase_apply_backports(mock.Mock(), state, runner)
             self.assertEqual(state.load()["backports_applied"], [earlier, later])
+            for sha in (earlier, later):
+                self.assertIn(f"backport-debug: sha={sha} result=applied", output.getvalue())
+            self.assertIn("backport-summary: phase=apply applied=2 skipped=0", output.getvalue())
             body = sm.build_pr_body(state.load())
             self.assertIn("Backports requiring manual review: 1", body)
             self.assertIn(failed, body)
@@ -1573,6 +1586,36 @@ class MarkerConflictAndAITests(unittest.TestCase):
             self.assertIn(failed, summary.getvalue())
             self.assertIn("Backport Review Required: 1", summary.getvalue())
             self.assertNotIn(secret, summary.getvalue())
+
+    def test_negative_backport_decisions_are_logged_without_untrusted_material(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            state = sm.State(Path(tmp) / "state")
+            state.save({"branch": "stable-4.x", "cutoff": "d" * 40, "main_head": "e" * 40})
+            prefiltered, not_bug, not_relevant = (letter * 40 for letter in "abc")
+            runner = mock.Mock()
+            runner.git.side_effect = [sm.CommandResult(0, "\n".join([prefiltered, not_bug, not_relevant]), ""),
+                                      sm.CommandResult(0, "patch-secret", ""), sm.CommandResult(0, "patch-secret", "")]
+            record = {"subject": "Fix subject-secret", "body": "body-secret", "paths": ["src/path-secret.rs"],
+                      "author": "author-secret", "parents": 1}
+            ai = mock.Mock()
+            ai.call.side_effect = [{"decision": False}, {"decision": True}, {"decision": False}]
+            output = io.StringIO()
+            with mock.patch.object(sm, "_commit_record", return_value=record), \
+                 mock.patch.object(sm, "prefilter_commit", side_effect=["prefilter-secret", None, None]), \
+                 mock.patch.object(sm, "AzureAI", return_value=ai), \
+                 mock.patch.object(sm, "stable_path_context", return_value="stable-secret"), \
+                 mock.patch.object(sm.sys, "stderr", output):
+                sm.phase_classify_backports(mock.Mock(), state, runner)
+            log = output.getvalue()
+            self.assertIn(f"backport-debug: sha={not_bug} check=bug-fix decision=false", log)
+            self.assertNotIn(f"sha={not_bug} check=stable-relevance", log)
+            self.assertIn(f"backport-debug: sha={not_relevant} check=bug-fix decision=true", log)
+            self.assertIn(f"backport-debug: sha={not_relevant} check=stable-relevance decision=false", log)
+            self.assertNotIn(f"sha={prefiltered}", log)
+            self.assertIn("backport-summary: phase=classify candidates=3 selected=0 skipped=3 manual_review=0", log)
+            self.assertNotIn("secret", log)
+            self.assertEqual(state.load()["backport_candidates"], [])
+            self.assertEqual(state.load()["backport_review_required"], [])
 
     def test_unavailable_ai_defers_candidates_without_aborting_or_reinitializing(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -1607,12 +1650,13 @@ class MarkerConflictAndAITests(unittest.TestCase):
                     with mock.patch.object(sm, "_commit_record", return_value=record), \
                          mock.patch.object(sm, "AzureAI", return_value=ai), \
                          mock.patch.object(sm, "stable_path_context", return_value="stable"), \
-                         mock.patch.object(sm.sys, "stderr", io.StringIO()):
+                         mock.patch.object(sm.sys, "stderr", io.StringIO()) as output:
                         sm.phase_classify_backports(mock.Mock(), state, runner)
                     value = state.load()
                     self.assertEqual(value["backport_candidates"], [])
                     self.assertEqual(value["backport_review_required"][0]["check"], check)
                     self.assertEqual(value["backport_review_required"][0]["stage"], "schema-validation")
+                    self.assertNotIn(f"backport-debug: sha={self.SHA} check={check}", output.getvalue())
 
     def test_schema_validation_rejects_extra_keys_and_wrong_types(self):
         for value in ({"decision": "true"}, {"decision": True, "reason": "extra"}):

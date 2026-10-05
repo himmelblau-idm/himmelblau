@@ -2084,6 +2084,7 @@ def phase_classify_backports(args: argparse.Namespace, state: State, runner: Run
         except MaintenanceError as exc:
             defer(sha, "bug-fix", classification_stage, exc)
             continue
+        print(f"backport-debug: sha={sha} check=bug-fix decision={str(bug['decision']).lower()}", file=sys.stderr)
         if not bug["decision"]:
             skipped.append({"sha": sha, "reason": "not a bug fix"}); continue
         relevance_stage = "stable-context"
@@ -2104,6 +2105,7 @@ def phase_classify_backports(args: argparse.Namespace, state: State, runner: Run
         except MaintenanceError as exc:
             defer(sha, "stable-relevance", relevance_stage, exc)
             continue
+        print(f"backport-debug: sha={sha} check=stable-relevance decision={str(relevant['decision']).lower()}", file=sys.stderr)
         if relevant["decision"]: selected.append(sha)
         else: skipped.append({"sha": sha, "reason": "not relevant to stable branch"})
     value["backport_candidates"] = selected; value["backport_skipped"] = skipped
@@ -2111,6 +2113,10 @@ def phase_classify_backports(args: argparse.Namespace, state: State, runner: Run
     state.event(
         "classify-backports", "main commits classified", selected=len(selected),
         skipped=len(skipped), manual_review=len(review_required),
+    )
+    print(
+        f"backport-summary: phase=classify candidates={len(candidates)} selected={len(selected)} "
+        f"skipped={len(skipped)} manual_review={len(review_required)}", file=sys.stderr,
     )
 
 
@@ -2122,6 +2128,7 @@ def phase_apply_backports(args: argparse.Namespace, state: State, runner: Runner
             "log", "-1", "--format=%H", "--fixed-strings", "--grep", f"(cherry picked from commit {sha})",
         ]).stdout.strip()
         if present:
+            print(f"backport-debug: sha={sha} result=already-present", file=sys.stderr)
             skipped.append(sha); continue
         pre_head = require_sha(runner.git(["rev-parse", "HEAD"]).stdout.strip())
         pick = runner.git(["cherry-pick", "-x", sha], check=False)
@@ -2129,13 +2136,17 @@ def phase_apply_backports(args: argparse.Namespace, state: State, runner: Runner
             status = runner.git(["status", "--porcelain=v1"]).stdout
             if not has_unresolved_conflicts(status):
                 runner.git(["cherry-pick", "--skip"], check=False)
+                print(f"backport-debug: sha={sha} result=empty-or-failed-skipped", file=sys.stderr)
                 skipped.append(sha); continue
             runner.git(["cherry-pick", "--abort"], check=False)
             runner.git(["reset", "--hard", pre_head])
+            print(f"backport-debug: sha={sha} result=conflict-skipped", file=sys.stderr)
             skipped.append(sha); continue
         applied.append(sha)
+        print(f"backport-debug: sha={sha} result=applied", file=sys.stderr)
     value["backports_applied"] = applied; value["backports_conflict_skipped"] = skipped; state.save(value)
     state.event("apply-backports", "backports applied", applied=len(applied), skipped=len(skipped))
+    print(f"backport-summary: phase=apply applied={len(applied)} skipped={len(skipped)}", file=sys.stderr)
 
 
 def _replace_workspace_version(path: Path, old: str, new: str) -> None:
