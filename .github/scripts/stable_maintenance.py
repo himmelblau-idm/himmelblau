@@ -42,6 +42,7 @@ QUARANTINE_HOURS = 252
 MAX_AI_ATTEMPTS = 3
 MAX_AI_RETRY_SECONDS = 300
 MAX_HTTP_BYTES = 8 * 1024 * 1024
+MAX_REGISTRY_CACHE_DEPTH = 128
 MAX_AI_INPUT_BYTES = 4 * 1024 * 1024
 MAX_AI_OUTPUT_BYTES = 256 * 1024
 AUTOMATION_PREFIX = "automation/stable-maintenance/"
@@ -1167,6 +1168,78 @@ def satisfies_all_advisories(version: SemVer, groups: Sequence[set[str]]) -> boo
     return bool(groups) and all(group and any(semver_satisfies(version, req) for req in group) for group in groups)
 
 
+def make_registry_cache_readable(registry: Path) -> None:
+    """Share only read/traverse access to public crate payloads with the build UID."""
+    def grant_access(fd: int, metadata: os.stat_result, bits: int) -> int:
+        mode = stat.S_IMODE(metadata.st_mode)
+        if mode | bits == mode:
+            return 0
+        os.chmod(f"/proc/self/fd/{fd}", mode | bits)
+        current = os.fstat(fd)
+        if ((current.st_dev, current.st_ino) != (metadata.st_dev, metadata.st_ino)
+                or stat.S_IFMT(current.st_mode) != stat.S_IFMT(metadata.st_mode)
+                or stat.S_IMODE(current.st_mode) | bits != stat.S_IMODE(current.st_mode)):
+            raise MaintenanceError("unsafe entry in project Cargo registry cache")
+        return 1
+
+    def open_directory(fd: int, metadata: os.stat_result) -> int:
+        child = os.open(f"/proc/self/fd/{fd}", os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            current = os.fstat(child)
+            if ((current.st_dev, current.st_ino) != (metadata.st_dev, metadata.st_ino)
+                    or not stat.S_ISDIR(current.st_mode)):
+                raise MaintenanceError("unsafe directory in project Cargo registry cache")
+        except BaseException:
+            os.close(child)
+            raise
+        return child
+
+    def visit(fd: int, depth: int) -> int:
+        # Bound recursion and simultaneously open descriptors for external input.
+        if depth > MAX_REGISTRY_CACHE_DEPTH:
+            raise MaintenanceError("project Cargo registry cache exceeds safe traversal depth")
+        changed = 0
+        for name in os.listdir(fd):
+            path_fd = os.open(name, os.O_PATH | os.O_NOFOLLOW, dir_fd=fd)
+            try:
+                metadata = os.fstat(path_fd)
+                if stat.S_ISDIR(metadata.st_mode):
+                    if depth >= MAX_REGISTRY_CACHE_DEPTH:
+                        raise MaintenanceError("project Cargo registry cache exceeds safe traversal depth")
+                    changed += grant_access(path_fd, metadata, 0o555)
+                    child = open_directory(path_fd, metadata)
+                    try:
+                        changed += visit(child, depth + 1)
+                    finally:
+                        os.close(child)
+                elif stat.S_ISREG(metadata.st_mode) and metadata.st_nlink == 1:
+                    changed += grant_access(path_fd, metadata, 0o444)
+                else:
+                    raise MaintenanceError("unsafe entry in project Cargo registry cache")
+            finally:
+                os.close(path_fd)
+        return changed
+
+    try:
+        path_fd = os.open(registry, os.O_PATH | os.O_NOFOLLOW)
+        try:
+            metadata = os.fstat(path_fd)
+            if not stat.S_ISDIR(metadata.st_mode):
+                raise MaintenanceError("unsafe directory in project Cargo registry cache")
+            changed = grant_access(path_fd, metadata, 0o555)
+            fd = open_directory(path_fd, metadata)
+            try:
+                changed += visit(fd, 0)
+            finally:
+                os.close(fd)
+        finally:
+            os.close(path_fd)
+    except OSError as exc:
+        raise MaintenanceError("project Cargo registry cache permissions could not be adjusted") from exc
+    if changed:
+        print(f"cache-debug: registry_read_permissions_adjusted={changed}", file=sys.stderr)
+
+
 def contained_repo_command(
     runner: Runner, command: Sequence[str], *, network: bool, source_rw: bool,
     cache_rw: bool, timeout: int = 1800, check: bool = True,
@@ -1240,6 +1313,11 @@ def contained_repo_command(
         registry = project_home / "registry"
         if registry.is_symlink() or not registry.is_dir():
             raise MaintenanceError("read-only project Cargo registry cache is unavailable")
+        if user == "65532:65532":
+            # Networked Cargo preparation uses the runner UID. Archive/umask
+            # permissions can leave its source payload unreadable by this UID.
+            # Adjust only payload read bits; the container mount remains ro.
+            make_registry_cache_readable(registry)
         argv.extend([
             "--tmpfs", "/opt/project-cargo:rw,nosuid,nodev,size=16m",
             "-v", f"{registry.resolve()}:/opt/project-cargo/registry:ro",
