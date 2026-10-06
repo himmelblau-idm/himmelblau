@@ -2367,6 +2367,7 @@ mod regression_tests {
                 groups: vec![],
                 tenant_id: None,
                 valid: true,
+                is_placeholder: false,
             };
             session.pending = Some(identity.clone());
             session.phase = LocalPhase::SetupPin;

@@ -57,6 +57,7 @@ pub enum CacheError {
     Parse,
     Sqlite,
     TooManyResults,
+    IdentityConflict,
     TransactionInvalidState,
     Tpm,
 }
@@ -258,13 +259,22 @@ impl<'a> DbTxn<'a> {
         &mut self,
         account_id: &str,
     ) -> Result<Vec<(Vec<u8>, i64)>, CacheError> {
-        let mut stmt = self.conn
+        // A name is only an alias. It must not hide another account's canonical
+        // SPN or UUID, including in databases populated before conflict checks.
+        // Return all canonical matches so the caller rejects ambiguous ownership.
+        let mut stmt = self
+            .conn
             .prepare(
-        "SELECT token, expiry FROM account_t WHERE uuid = :account_id OR name = :account_id COLLATE NOCASE OR spn = :account_id COLLATE NOCASE"
+                "SELECT token, expiry FROM account_t
+                 WHERE uuid = :account_id COLLATE NOCASE
+                    OR spn = :account_id COLLATE NOCASE
+                    OR (name = :account_id COLLATE NOCASE AND NOT EXISTS (
+                        SELECT 1 FROM account_t
+                        WHERE uuid = :account_id COLLATE NOCASE
+                           OR spn = :account_id COLLATE NOCASE
+                    ))",
             )
-            .map_err(|e| {
-                self.sqlite_error("select prepare", &e)
-            })?;
+            .map_err(|e| self.sqlite_error("select prepare", &e))?;
 
         // Makes tuple (token, expiry)
         let data_iter = stmt
@@ -741,19 +751,58 @@ impl<'a> CacheTxn for DbTxn<'a> {
         // to manually manage the update or insert :( :(
         let account_uuid = account.uuid.as_hyphenated().to_string();
 
-        // Find anything conflicting and purge it.
-        self.conn.execute("DELETE FROM account_t WHERE NOT uuid = :uuid AND (name = :name OR spn = :spn OR gidnumber = :gidnumber)",
-            named_params!{
-                ":uuid": &account_uuid,
-                ":name": &account.name,
-                ":spn": &account.spn,
-                ":gidnumber": &account.gidnumber,
+        // Check ownership before changing anything. SQLite's UNIQUE constraints
+        // are case-sensitive and do not catch aliases overlapping canonical IDs.
+        // Aliases and numeric IDs cannot authorize eviction of a different
+        // canonical identity, including its password and memberships.
+        let replacements = {
+            let mut stmt = self
+                .conn
+                .prepare(
+                    "SELECT uuid, spn FROM account_t
+                     WHERE uuid != :uuid AND (
+                         uuid = :name COLLATE NOCASE OR uuid = :spn COLLATE NOCASE
+                         OR name = :uuid COLLATE NOCASE OR name = :name COLLATE NOCASE
+                         OR name = :spn COLLATE NOCASE OR spn = :uuid COLLATE NOCASE
+                         OR spn = :name COLLATE NOCASE OR spn = :spn COLLATE NOCASE
+                         OR gidnumber = :gidnumber
+                     )",
+                )
+                .map_err(|e| self.sqlite_error("account ownership prepare", &e))?;
+            let rows = stmt
+                .query_map(
+                    named_params! {
+                        ":uuid": &account_uuid,
+                        ":name": &account.name,
+                        ":spn": &account.spn,
+                        ":gidnumber": &account.gidnumber,
+                    },
+                    |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+                )
+                .map_err(|e| self.sqlite_error("account ownership query", &e))?;
+            let mut replacements = Vec::new();
+            for row in rows {
+                let (uuid, spn) =
+                    row.map_err(|e| self.sqlite_error("account ownership row", &e))?;
+                // An authoritative refresh of the same canonical SPN may
+                // replace a provisional UUID (including legacy tokens without
+                // the marker) or a recreated directory account. Its old UUID's
+                // credentials must be discarded, never transferred to the new
+                // identity. A provisional lookup cannot authorize replacement.
+                if account.is_placeholder || !spn.eq_ignore_ascii_case(&account.spn) {
+                    return Err(CacheError::IdentityConflict);
+                }
+                replacements
+                    .push(Uuid::parse_str(&uuid).map_err(|_| CacheError::IdentityConflict)?);
             }
-            )
-            .map_err(|e| {
-                self.sqlite_error("delete account_t duplicate", &e)
-            })
-            .map(|_| ())?;
+            if replacements.len() > 1 {
+                return Err(CacheError::IdentityConflict);
+            }
+            replacements
+        };
+        for uuid in replacements {
+            self.delete_account(uuid)?;
+        }
 
         let updated = self.conn.execute(
                 "UPDATE account_t SET name=:name, spn=:spn, gidnumber=:gidnumber, token=:token, expiry=:expiry WHERE uuid = :uuid",
@@ -767,7 +816,7 @@ impl<'a> CacheTxn for DbTxn<'a> {
             }
             )
             .map_err(|e| {
-                self.sqlite_error("delete account_t duplicate", &e)
+                self.sqlite_error("update account_t", &e)
             })?;
 
         if updated == 0 {
@@ -1090,12 +1139,46 @@ impl<'a> Drop for DbTxn<'a> {
 #[cfg(test)]
 mod tests {
 
-    use super::{Cache, CacheTxn, Db, KeyStoreTxn};
+    use super::{Cache, CacheError, CacheTxn, Db, DbTxn, KeyStoreTxn};
     use crate::idprovider::interface::{GroupToken, Id, UserToken};
     use kanidm_hsm_crypto::{provider::BoxedDynTpm, provider::Tpm, AuthValue};
 
     const TESTACCOUNT1_PASSWORD_A: &str = "password a for account1 test";
     const TESTACCOUNT1_PASSWORD_B: &str = "password b for account1 test";
+
+    fn account(name: &str, spn: &str, uuid: uuid::Uuid, gidnumber: u32) -> UserToken {
+        UserToken {
+            name: name.to_string(),
+            spn: spn.to_string(),
+            displayname: "Test User".to_string(),
+            real_gidnumber: Some(gidnumber),
+            gidnumber,
+            uuid,
+            shell: None,
+            groups: Vec::new(),
+            tenant_id: Some(uuid::uuid!("58e8a301-2502-4814-81c5-a4d17c399a45")),
+            valid: true,
+            is_placeholder: false,
+        }
+    }
+
+    // Reproduce rows written by older versions that permitted conflicting aliases.
+    fn insert_legacy_account(dbtxn: &mut DbTxn<'_>, account: &UserToken) {
+        dbtxn
+            .conn
+            .execute(
+                "INSERT INTO account_t (uuid, name, spn, gidnumber, token, expiry)
+                 VALUES (?1, ?2, ?3, ?4, ?5, 0)",
+                params![
+                    account.uuid.to_string(),
+                    account.name,
+                    account.spn,
+                    account.gidnumber,
+                    serde_json::to_vec(account).unwrap(),
+                ],
+            )
+            .unwrap();
+    }
 
     #[cfg(feature = "tpm")]
     fn setup_tpm() -> BoxedDynTpm {
@@ -1160,6 +1243,7 @@ mod tests {
             groups: Vec::new(),
             tenant_id: Some(uuid::uuid!("58e8a301-2502-4814-81c5-a4d17c399a45")),
             valid: true,
+            is_placeholder: false,
         };
 
         let id_name = Id::Name("testuser".to_string());
@@ -1332,6 +1416,7 @@ mod tests {
             groups: vec![gt1.clone(), gt2],
             tenant_id: Some(uuid::uuid!("58e8a301-2502-4814-81c5-a4d17c399a45")),
             valid: true,
+            is_placeholder: false,
         };
 
         // First, add the groups.
@@ -1402,6 +1487,7 @@ mod tests {
             groups: Vec::new(),
             tenant_id: Some(uuid::uuid!("58e8a301-2502-4814-81c5-a4d17c399a45")),
             valid: true,
+            is_placeholder: false,
         };
 
         // Test that with no account, is false
@@ -1445,6 +1531,8 @@ mod tests {
 
         // Check that updating the account does not break the password.
         ut1.displayname = "Test User Update".to_string();
+        ut1.name = "renamed".to_string();
+        ut1.spn = "renamed@example.com".to_string();
         dbtxn.update_account(&ut1, 0).unwrap();
         assert!(matches!(
             dbtxn.check_account_password(uuid1, TESTACCOUNT1_PASSWORD_B, &mut hsm, &hmac_key),
@@ -1525,11 +1613,12 @@ mod tests {
             groups: Vec::new(),
             tenant_id: Some(uuid::uuid!("58e8a301-2502-4814-81c5-a4d17c399a45")),
             valid: true,
+            is_placeholder: false,
         };
 
         let ut2 = UserToken {
             name: "testuser".to_string(),
-            spn: "testuser@example.com".to_string(),
+            spn: "testuser@other.example.com".to_string(),
             displayname: "Test User".to_string(),
             real_gidnumber: Some(2001),
             gidnumber: 2001,
@@ -1538,6 +1627,7 @@ mod tests {
             groups: Vec::new(),
             tenant_id: Some(uuid::uuid!("58e8a301-2502-4814-81c5-a4d17c399a45")),
             valid: true,
+            is_placeholder: false,
         };
 
         let id_name = Id::Name("testuser".to_string());
@@ -1552,18 +1642,22 @@ mod tests {
         let r0 = dbtxn.get_account(&id_name).unwrap();
         assert!(r0.unwrap().0.uuid == uuid::uuid!("0302b99c-f0f6-41ab-9492-852692b0fd16"));
 
-        // Do the "rename" of gt1 which is what would allow gt2 to be valid.
+        // A different UUID cannot take ownership until the original account's
+        // rename has actually been cached.
         ut1.name = "testuser2".to_string();
         ut1.spn = "testuser2@example.com".to_string();
-        // Now, add gt2 which dups on gt1 name/spn.
-        dbtxn.update_account(&ut2, 0).unwrap();
+        assert!(matches!(
+            dbtxn.update_account(&ut2, 0),
+            Err(CacheError::IdentityConflict)
+        ));
         let r2 = dbtxn.get_account(&id_name).unwrap();
-        assert!(r2.unwrap().0.uuid == uuid::uuid!("799123b2-3802-4b19-b0b8-1ffae2aa9a4b"));
+        assert_eq!(r2.unwrap().0.uuid, ut1.uuid);
         let r3 = dbtxn.get_account(&id_name2).unwrap();
         assert!(r3.is_none());
 
-        // Now finally update gt1
+        // Apply the authoritative rename before caching the new owner.
         dbtxn.update_account(&ut1, 0).unwrap();
+        dbtxn.update_account(&ut2, 0).unwrap();
 
         // Both now coexist
         let r4 = dbtxn.get_account(&id_name).unwrap();
@@ -1572,5 +1666,280 @@ mod tests {
         assert!(r5.unwrap().0.uuid == uuid::uuid!("0302b99c-f0f6-41ab-9492-852692b0fd16"));
 
         assert!(dbtxn.commit().is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_cache_db_conflicts_preserve_account_password_and_memberships() {
+        let db = Db::new("").unwrap();
+        let mut dbtxn = db.write().await;
+        dbtxn.migrate().unwrap();
+
+        let mut owner = account(
+            "shared",
+            "owner@example.com",
+            uuid::uuid!("0302b99c-f0f6-41ab-9492-852692b0fd16"),
+            2000,
+        );
+        let group = GroupToken {
+            name: "testgroup".to_string(),
+            spn: "testgroup@example.com".to_string(),
+            gidnumber: 3000,
+            uuid: uuid::uuid!("b500be97-8552-42a5-aca0-668bc5625705"),
+        };
+        owner.groups.push(group.clone());
+        dbtxn.update_group(&group, 0).unwrap();
+        dbtxn.update_account(&owner, 42).unwrap();
+        let password = b"cached password must survive";
+        dbtxn
+            .conn
+            .execute(
+                "UPDATE account_t SET password = ?1 WHERE uuid = ?2",
+                params![password.as_slice(), owner.uuid.to_string()],
+            )
+            .unwrap();
+
+        let other = account(
+            "other",
+            "other@example.com",
+            uuid::uuid!("799123b2-3802-4b19-b0b8-1ffae2aa9a4b"),
+            2001,
+        );
+        let uuid_alias = owner.uuid.to_string().to_uppercase();
+        for (name, spn, gid) in [
+            ("shared", "other@example.com", 2001),
+            ("SHARED", "other@example.com", 2001),
+            ("other", "other@example.com", 2000),
+            ("OWNER@EXAMPLE.COM", "other@example.com", 2001),
+            ("other", "SHARED", 2001),
+            (uuid_alias.as_str(), "other@example.com", 2001),
+            ("other", uuid_alias.as_str(), 2001),
+        ] {
+            let mut conflicting = other.clone();
+            conflicting.name = name.to_string();
+            conflicting.spn = spn.to_string();
+            conflicting.gidnumber = gid;
+            assert!(matches!(
+                dbtxn.update_account(&conflicting, 99),
+                Err(CacheError::IdentityConflict)
+            ));
+            assert_eq!(dbtxn.get_accounts().unwrap().len(), 1);
+            let (cached, expiry) = dbtxn
+                .get_account(&Id::Name(owner.uuid.to_string()))
+                .unwrap()
+                .unwrap();
+            assert_eq!(cached.name, owner.name);
+            assert_eq!(cached.spn, owner.spn);
+            assert_eq!(expiry, 42);
+            let members = dbtxn.get_group_members(group.uuid).unwrap();
+            assert_eq!(members.len(), 1);
+            assert_eq!(members[0].uuid, owner.uuid);
+            let cached_password: Vec<u8> = dbtxn
+                .conn
+                .query_row(
+                    "SELECT password FROM account_t WHERE uuid = ?1",
+                    params![owner.uuid.to_string()],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert_eq!(cached_password, password);
+        }
+        dbtxn.commit().unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_cache_db_canonical_lookup_precedes_legacy_alias() {
+        let db = Db::new("").unwrap();
+        let mut dbtxn = db.write().await;
+        dbtxn.migrate().unwrap();
+        let owner = account(
+            "shared",
+            "owner@example.com",
+            uuid::uuid!("0302b99c-f0f6-41ab-9492-852692b0fd16"),
+            2000,
+        );
+        dbtxn.update_account(&owner, 0).unwrap();
+        let mut other = account(
+            "OWNER@EXAMPLE.COM",
+            "other@example.com",
+            uuid::uuid!("799123b2-3802-4b19-b0b8-1ffae2aa9a4b"),
+            2001,
+        );
+        insert_legacy_account(&mut dbtxn, &other);
+        let uuid_alias = owner.uuid.to_string().to_uppercase();
+        let uuid_named = account(
+            &uuid_alias,
+            "uuid-named@example.com",
+            uuid::uuid!("b500be97-8552-42a5-aca0-668bc5625705"),
+            2002,
+        );
+        insert_legacy_account(&mut dbtxn, &uuid_named);
+
+        for id in [owner.spn.clone(), owner.spn.to_uppercase(), uuid_alias] {
+            let (cached, _) = dbtxn.get_account(&Id::Name(id)).unwrap().unwrap();
+            assert_eq!(cached.uuid, owner.uuid);
+        }
+        assert_eq!(
+            dbtxn
+                .get_account(&Id::Name(other.spn.clone()))
+                .unwrap()
+                .unwrap()
+                .0
+                .uuid,
+            other.uuid
+        );
+
+        // A canonical match may win over aliases, but never over a second
+        // canonical match left by a legacy case-sensitive cache.
+        dbtxn.delete_account(other.uuid).unwrap();
+        other.name = "other".to_string();
+        other.spn = owner.spn.to_uppercase();
+        insert_legacy_account(&mut dbtxn, &other);
+        assert!(matches!(
+            dbtxn.get_account(&Id::Name(owner.spn.clone())),
+            Err(CacheError::TooManyResults)
+        ));
+
+        dbtxn.delete_account(other.uuid).unwrap();
+        other.spn = owner.uuid.to_string();
+        insert_legacy_account(&mut dbtxn, &other);
+        assert!(matches!(
+            dbtxn.get_account(&Id::Name(owner.uuid.to_string())),
+            Err(CacheError::TooManyResults)
+        ));
+
+        dbtxn.delete_account(other.uuid).unwrap();
+        other.name = owner.name.to_uppercase();
+        other.spn = "other@example.com".to_string();
+        insert_legacy_account(&mut dbtxn, &other);
+        assert!(matches!(
+            dbtxn.get_account(&Id::Name(owner.name.clone())),
+            Err(CacheError::TooManyResults)
+        ));
+        dbtxn.commit().unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_cache_db_explicit_placeholder_promotion() {
+        let db = Db::new("").unwrap();
+        let mut dbtxn = db.write().await;
+        dbtxn.migrate().unwrap();
+        let mut placeholder = account(
+            "owner@example.com",
+            "owner@example.com",
+            uuid::uuid!("0302b99c-f0f6-41ab-9492-852692b0fd16"),
+            2000,
+        );
+        placeholder.is_placeholder = true;
+        let old_group = GroupToken {
+            name: placeholder.name.clone(),
+            spn: placeholder.spn.clone(),
+            uuid: placeholder.uuid,
+            gidnumber: placeholder.gidnumber,
+        };
+        placeholder.groups.push(old_group.clone());
+        dbtxn.update_group(&old_group, 0).unwrap();
+        dbtxn.update_account(&placeholder, 0).unwrap();
+
+        let mut authenticated = account(
+            "owner",
+            "OWNER@EXAMPLE.COM",
+            uuid::uuid!("799123b2-3802-4b19-b0b8-1ffae2aa9a4b"),
+            2001,
+        );
+        // Sharing only an alias or numeric ID is not evidence of promotion.
+        authenticated.spn = "other@example.com".to_string();
+        authenticated.gidnumber = placeholder.gidnumber;
+        assert!(matches!(
+            dbtxn.update_account(&authenticated, 1),
+            Err(CacheError::IdentityConflict)
+        ));
+        authenticated.spn = "OWNER@EXAMPLE.COM".to_string();
+        authenticated.gidnumber = 2001;
+
+        // Validate every owner before deleting even a replaceable placeholder.
+        let conflicting = account(
+            "owner",
+            "different@example.com",
+            uuid::uuid!("b500be97-8552-42a5-aca0-668bc5625705"),
+            2002,
+        );
+        dbtxn.update_account(&conflicting, 0).unwrap();
+        assert!(matches!(
+            dbtxn.update_account(&authenticated, 1),
+            Err(CacheError::IdentityConflict)
+        ));
+        assert_eq!(dbtxn.get_accounts().unwrap().len(), 2);
+        assert_eq!(dbtxn.get_group_members(old_group.uuid).unwrap().len(), 1);
+        dbtxn.delete_account(conflicting.uuid).unwrap();
+
+        dbtxn.update_account(&authenticated, 1).unwrap();
+        assert!(dbtxn
+            .get_account(&Id::Name(placeholder.uuid.to_string()))
+            .unwrap()
+            .is_none());
+        assert!(dbtxn.get_group_members(old_group.uuid).unwrap().is_empty());
+        assert_eq!(dbtxn.get_accounts().unwrap().len(), 1);
+        let (cached, expiry) = dbtxn
+            .get_account(&Id::Name(placeholder.spn.clone()))
+            .unwrap()
+            .unwrap();
+        assert_eq!(cached.uuid, authenticated.uuid);
+        assert!(!cached.is_placeholder);
+        assert_eq!(expiry, 1);
+
+        // A later provisional lookup must never replace an authenticated owner.
+        assert!(matches!(
+            dbtxn.update_account(&placeholder, 2),
+            Err(CacheError::IdentityConflict)
+        ));
+        dbtxn.commit().unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_cache_db_legacy_canonical_promotion_discards_old_credentials() {
+        let db = Db::new("").unwrap();
+        let mut dbtxn = db.write().await;
+        dbtxn.migrate().unwrap();
+        let owner = account(
+            "shared",
+            "owner@example.com",
+            uuid::uuid!("0302b99c-f0f6-41ab-9492-852692b0fd16"),
+            2000,
+        );
+        dbtxn.update_account(&owner, 0).unwrap();
+        let mut old_token = serde_json::to_value(&owner).unwrap();
+        old_token.as_object_mut().unwrap().remove("is_placeholder");
+        dbtxn
+            .conn
+            .execute(
+                "UPDATE account_t SET token = ?1, password = ?2 WHERE uuid = ?3",
+                params![
+                    serde_json::to_vec(&old_token).unwrap(),
+                    b"old UUID credentials".as_slice(),
+                    owner.uuid.to_string(),
+                ],
+            )
+            .unwrap();
+        let mut authenticated = owner.clone();
+        authenticated.uuid = uuid::uuid!("799123b2-3802-4b19-b0b8-1ffae2aa9a4b");
+        authenticated.spn = owner.spn.to_uppercase();
+        dbtxn.update_account(&authenticated, 1).unwrap();
+        assert!(dbtxn
+            .get_account(&Id::Name(owner.uuid.to_string()))
+            .unwrap()
+            .is_none());
+        let accounts = dbtxn.get_accounts().unwrap();
+        assert_eq!(accounts.len(), 1);
+        assert_eq!(accounts[0].uuid, authenticated.uuid);
+        let password: Option<Vec<u8>> = dbtxn
+            .conn
+            .query_row(
+                "SELECT password FROM account_t WHERE uuid = ?1",
+                params![authenticated.uuid.to_string()],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(password.is_none());
+        dbtxn.commit().unwrap();
     }
 }

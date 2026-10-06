@@ -408,7 +408,7 @@ in
         - SPN (the user principal name)
 
         - onPremisesSamAccountName
-        When onPremisesSamAccountName is configured but unavailable for a user, Himmelblau falls back to SPN.
+        When onPremisesSamAccountName is configured but absent or blank for a user, Himmelblau falls back to SPN. A temporary lookup failure preserves an established cached name. Conflicting cached aliases fall back to SPN without removing another account. SAM names outside the primary configured domain remain domain-qualified so they can be used for subsequent logins. The first login still requires the UPN.
       '';
       example = "onPremisesSamAccountName";
     };
