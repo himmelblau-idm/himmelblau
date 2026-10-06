@@ -211,10 +211,6 @@ impl IdProvider for IdProviderProxy {
         Ok(())
     }
 
-    /* TODO: Kanidm should be modified to provide the account_id to
-     * provider_authenticate, so that we can test the correct provider here.
-     * Currently we go offline if ANY provider is down, which could be
-     * incorrect. */
     async fn check_online(&self, tpm: &mut tpm::provider::BoxedDynTpm, now: SystemTime) -> bool {
         match self.provider.as_ref() {
             Providers::Oidc(provider) => {
