@@ -43,7 +43,7 @@ class PackagingToolTests(unittest.TestCase):
                     else:
                         self.assertNotIn("cargo install", dockerfile)
 
-    def test_rpm_release_can_be_overridden_without_changing_the_default(self):
+    def test_rpm_release_defaults_to_one_and_can_be_overridden(self):
         dockerfile = gen_dockerfiles.render(
             "rocky9",
             gen_dockerfiles.DISTS["rocky9"],
@@ -51,9 +51,38 @@ class PackagingToolTests(unittest.TestCase):
             arch="amd64",
         )
 
-        self.assertIn('if [ -n \\"${RPM_PACKAGE_RELEASE:-}\\" ]', dockerfile)
-        self.assertIn(r'''--set-metadata \"release = '${RPM_PACKAGE_RELEASE}'\"''', dockerfile)
-        self.assertIn("else cargo generate-rpm", dockerfile)
+        self.assertIn(r'''RPM_INTERNAL_RELEASE=\"${RPM_PACKAGE_RELEASE:-1}\"''', dockerfile)
+        self.assertIn(
+            r'''--set-metadata \"release = '${RPM_INTERNAL_RELEASE}'\"''',
+            dockerfile,
+        )
+
+    def test_interdependent_rpms_require_matching_versions(self):
+        dockerfile = gen_dockerfiles.render(
+            "rocky9",
+            gen_dockerfiles.DISTS["rocky9"],
+            patch_libhimmelblau=False,
+            arch="amd64",
+        )
+
+        expected = {
+            "src/nss": "himmelblau",
+            "src/pam": "himmelblau",
+            "src/broker": "himmelblau",
+            "src/sso": "himmelblau-broker",
+            "src/o365": "himmelblau",
+        }
+        self.assertIn("RPM_INTERNAL_VERSION=$(cargo metadata --no-deps", dockerfile)
+        for crate, dependency in expected.items():
+            with self.subTest(crate=crate):
+                self.assertIn(
+                    f"cargo generate-rpm -p {crate} "
+                    + r'''--set-metadata \"release = '${RPM_INTERNAL_RELEASE}'\" '''
+                    + r'''--set-metadata \"requires = { '''
+                    + f"{dependency} = '= ${{RPM_INTERNAL_VERSION}}-${{RPM_INTERNAL_RELEASE}}'"
+                    + r''' }\"''',
+                    dockerfile,
+                )
 
 
 class SleRepositoryTests(unittest.TestCase):

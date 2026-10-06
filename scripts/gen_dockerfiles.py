@@ -162,6 +162,14 @@ PACKAGES = [
     ("himmelblau-orchestrator", "src/orchestrator", False),
 ]
 
+RPM_INTERNAL_REQUIRES = {
+    "src/nss": ("himmelblau",),
+    "src/pam": ("himmelblau",),
+    "src/broker": ("himmelblau",),
+    "src/sso": ("himmelblau-broker",),
+    "src/o365": ("himmelblau",),
+}
+
 CMD_TAB = "     "
 CMD_SEP = f" && \\ \n{CMD_TAB}"
 
@@ -214,11 +222,27 @@ def build_rpm_final_cmd(features: list, selinux: bool, apparmor: bool) -> str:
         pkgs.append(pkg)
     rpm_cmds = []
     for _, s, _ in pkgs:
+        requires = RPM_INTERNAL_REQUIRES.get(s, ())
+        requires_arg = ""
+        if requires:
+            requires_toml = ", ".join(
+                f"{package} = '= ${{RPM_INTERNAL_VERSION}}-${{RPM_INTERNAL_RELEASE}}'"
+                for package in requires
+            )
+            requires_arg = (
+                f' --set-metadata \\"requires = {{ {requires_toml} }}\\"'
+            )
         rpm_cmds.append(
-            f'if [ -n \\"${{RPM_PACKAGE_RELEASE:-}}\\" ]; then '
-            f'cargo generate-rpm -p {s} --set-metadata \\"release = \'${{RPM_PACKAGE_RELEASE}}\'\\"; '
-            f'else cargo generate-rpm -p {s}; fi'
+            f'cargo generate-rpm -p {s} '
+            f'--set-metadata \\"release = \'${{RPM_INTERNAL_RELEASE}}\'\\"'
+            f'{requires_arg}'
         )
+    rpm_cmds.insert(
+        0,
+        "RPM_INTERNAL_VERSION=$(cargo metadata --no-deps --format-version 1 "
+        "| jq -r '.packages[] | select(.name == \\\"himmelblaud\\\") | .version')",
+    )
+    rpm_cmds.insert(1, 'RPM_INTERNAL_RELEASE=\\"${RPM_PACKAGE_RELEASE:-1}\\"')
     rpms = CMD_SEP.join(rpm_cmds)
     if apparmor:
         gen_servicefiles = "make rpm-servicefiles ORCHESTRATOR_APPARMOR_PROFILE=himmelblau-orchestrator-container"
