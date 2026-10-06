@@ -69,21 +69,7 @@ impl IdProviderProxy {
             Err(e) => return Err(anyhow!("{:?}", e)),
         };
 
-        // The array returned by get_configured_domains() might include "oidc" section
-        let domain = config
-            .lock()
-            .await
-            .get_configured_domains()
-            .into_iter()
-            .filter(|x| x != "oidc")
-            .collect::<Vec<String>>()
-            .split_first().map(|(first, others)| {
-            if !others.is_empty() {
-                warn!("Multiple domains is no longer supported. Only first domain '{}' will be used.",
-                   first);
-            }
-            first.to_string()
-        });
+        let domain = config.lock().await.get_configured_entra_domain();
         let oidc_issuer_url = config.lock().await.get_oidc_issuer_url();
         let provider = match (oidc_issuer_url, domain) {
             (None, None) => {
