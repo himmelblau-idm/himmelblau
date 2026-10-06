@@ -1272,6 +1272,16 @@ def contained_repo_command(
         raise MaintenanceError("repository .git resolved outside the mutable source checkout")
     if project_home == runner.root or runner.root in project_home.parents:
         raise MaintenanceError("project cache must be outside the mutable source checkout")
+    # QR greeter build scripts on supported branches generate packaging assets
+    # under workspace/target even when CARGO_TARGET_DIR points elsewhere.
+    # Create only the mountpoint on the host; all output stays in a bounded tmpfs.
+    assets_target = runner.root / "target"
+    if assets_target.is_symlink() or (assets_target.exists() and not assets_target.is_dir()):
+        raise MaintenanceError("workspace target mountpoint must be a non-symlink directory")
+    try:
+        assets_target.mkdir(mode=0o755, exist_ok=True)
+    except OSError as exc:
+        raise MaintenanceError("workspace target mountpoint could not be created") from exc
     for forbidden in ("credentials", "credentials.toml", "config", "config.toml"):
         if (project_home / forbidden).exists():
             raise MaintenanceError("project Cargo home must not contain credentials or host configuration")
@@ -1298,6 +1308,8 @@ def contained_repo_command(
         # build scripts, and crate tooling from changing refs, objects, config,
         # hooks, or any other Git administrative state even for source-rw phases.
         "-v", f"{git_admin}:/workspace/.git:ro",
+        # Only generated assets are writable inside the read-only source mount.
+        "--tmpfs", "/workspace/target:rw,nosuid,nodev,noexec,size=64m,mode=1777",
     ]
     if vet_store is not None:
         argv.extend(["-v", f"{vet_store}:/vet-store:rw"])

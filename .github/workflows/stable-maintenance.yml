@@ -257,6 +257,11 @@ jobs:
               cargo-audit --version | grep -F "0.22.2"
               crate2nix --version | grep -F "0.15.0"
             '
+      - name: Smoke-test isolated asset generation
+        if: steps.guard.outputs.proceed == 'true'
+        run: |
+          MAINTENANCE_CONTAINER_TESTS=1 python3 tooling/.github/scripts/test_stable_maintenance.py \
+            BranchAndCliTests.test_generated_assets_build_in_read_only_container
 
       - name: Initialize — snapshot trusted refs and backport cutoff
         if: steps.guard.outputs.proceed == 'true'
