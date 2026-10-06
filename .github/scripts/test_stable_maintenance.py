@@ -247,6 +247,9 @@ class BranchAndCliTests(unittest.TestCase):
             self.assertIn("/workspace:ro", joined)
             self.assertIn(f"{(source / '.git').resolve()}:/workspace/.git:ro", joined)
             self.assertIn("/target:rw,nosuid,nodev,exec,size=6g", argv)
+            self.assertIn("/workspace/target:rw,nosuid,nodev,noexec,size=64m,mode=1777", argv)
+            self.assertTrue((source / "target").is_dir())
+            self.assertEqual(list((source / "target").iterdir()), [])
             self.assertIn("/tmp:rw,nosuid,nodev,noexec,size=1g", argv)
             self.assertNotIn(f"{Path(tmp) / 'target'}:/target", joined)
             self.assertNotIn("/home/runner/.cargo", joined)
@@ -268,6 +271,76 @@ class BranchAndCliTests(unittest.TestCase):
             cleanup = runner.run.call_args_list[-1].args[0]
             self.assertEqual(cleanup[:3], ["/usr/bin/docker", "rm", "-f"])
             self.assertRegex(cleanup[3], r"^himmelblau-maint-[0-9a-f]{16}$")
+
+    @unittest.skipUnless(os.environ.get("MAINTENANCE_CONTAINER_TESTS") == "1",
+                         "requires the built maintenance Docker image")
+    def test_generated_assets_build_in_read_only_container(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp) / "source"; source.mkdir()
+            (source / ".git").mkdir()
+            (source / "src").mkdir()
+            (source / "src/lib.rs").write_text("pub fn fixture() {}\n")
+            (source / "Cargo.toml").write_text(
+                '[package]\nname = "asset-mount-fixture"\nversion = "0.1.0"\nedition = "2021"\n')
+            (source / "Cargo.lock").write_text(
+                'version = 3\n\n[[package]]\nname = "asset-mount-fixture"\nversion = "0.1.0"\n')
+            (source / "build.rs").write_text("""
+fn main() {
+    let output = "target/release/qr-greeter-build";
+    std::fs::create_dir_all(output).unwrap();
+    std::fs::write(format!("{output}/asset"), "generated").unwrap();
+    assert_eq!(std::fs::read_to_string(format!("{output}/asset")).unwrap(), "generated");
+    assert!(std::fs::write("source-sentinel", "changed").is_err());
+    assert!(std::fs::write(".git/sentinel", "changed").is_err());
+}
+""")
+            for path in (source / "source-sentinel", source / ".git/sentinel"):
+                path.write_text("unchanged"); path.chmod(0o666)
+            # Existing host output must also be obscured by disposable storage.
+            (source / "target").mkdir()
+            (source / "target/host-sentinel").write_text("unchanged")
+            cargo_home = Path(tmp) / "cargo-home"; cargo_home.mkdir()
+            (cargo_home / "registry").mkdir()
+            runner = sm.Runner(source.resolve(), os.environ)
+            with mock.patch.dict(os.environ, {"MAINTENANCE_PROJECT_CARGO_HOME": str(cargo_home)}):
+                result = sm.locked_build(runner)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual((source / "source-sentinel").read_text(), "unchanged")
+            self.assertEqual((source / ".git/sentinel").read_text(), "unchanged")
+            self.assertEqual((source / "target/host-sentinel").read_text(), "unchanged")
+            self.assertEqual(list((source / "target").iterdir()), [source / "target/host-sentinel"])
+
+    def test_generated_assets_mount_rejects_unsafe_host_mountpoints(self):
+        for kind in ("file", "symlink", "dangling-symlink"):
+            with self.subTest(kind=kind), tempfile.TemporaryDirectory() as tmp:
+                source = Path(tmp) / "source"; source.mkdir()
+                (source / ".git").mkdir()
+                cargo_home = Path(tmp) / "cargo-home"; cargo_home.mkdir()
+                (cargo_home / "registry").mkdir()
+                outside = Path(tmp) / "outside"; outside.mkdir()
+                marker = outside / "marker"; marker.write_text("unchanged")
+                target = source / "target"
+                if kind == "file":
+                    target.write_text("unchanged")
+                elif kind == "symlink":
+                    target.symlink_to(outside, target_is_directory=True)
+                else:
+                    target.symlink_to(Path(tmp) / "missing", target_is_directory=True)
+                runner = mock.Mock(root=source.resolve())
+                runner.run.return_value = sm.CommandResult(0, "", "")
+                env = {
+                    "MAINTENANCE_BUILD_IMAGE": "build:local",
+                    "MAINTENANCE_PROJECT_CARGO_HOME": str(cargo_home),
+                }
+                with mock.patch.dict(os.environ, env), mock.patch.object(sm.shutil, "which", return_value="/usr/bin/docker"):
+                    with self.assertRaisesRegex(sm.MaintenanceError, "target mountpoint"):
+                        sm.locked_build(runner)
+                runner.run.assert_not_called()
+                self.assertEqual(marker.read_text(), "unchanged")
+                if kind == "file":
+                    self.assertEqual(target.read_text(), "unchanged")
+                else:
+                    self.assertTrue(target.is_symlink())
 
     def test_failed_build_reports_bounded_hints_without_raw_output(self):
         secret = "secret-token-do-not-log"
