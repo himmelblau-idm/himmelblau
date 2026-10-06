@@ -359,6 +359,11 @@ who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
 delta = "0.21.3 -> 0.23.0"
 
+[[audits.darling_macro]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+delta = "0.23.0 -> 0.24.1"
+
 [[audits.data-encoding]]
 who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"

@@ -489,8 +489,8 @@ user-login = "fitzgen"
 user-name = "Nick Fitzgerald"
 
 [[publisher.libhimmelblau]]
-version = "0.8.41"
-when = "2026-09-15"
+version = "0.8.43"
+when = "2026-10-01"
 user-id = 247655
 user-login = "dmulder"
 user-name = "David Mulder"
@@ -671,8 +671,8 @@ user-login = "seanmonstar"
 user-name = "Sean McArthur"
 
 [[publisher.reqwest]]
-version = "0.13.4"
-when = "2026-05-25"
+version = "0.13.5"
+when = "2026-09-08"
 user-id = 359
 user-login = "seanmonstar"
 user-name = "Sean McArthur"
@@ -2599,6 +2599,61 @@ aggregated-from = "https://chromium.googlesource.com/chromium/src/+/main/third_p
 who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
 delta = "1.16.2 -> 1.18.1"
+
+[[audits.himmelblau.audits.clap]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+delta = "4.6.6 -> 4.6.7"
+
+[[audits.himmelblau.audits.clap_builder]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+delta = "4.6.6 -> 4.6.7"
+
+[[audits.himmelblau.audits.clap_derive]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+delta = "4.6.4 -> 4.6.7"
+
+[[audits.himmelblau.audits.configparser]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+delta = "3.2.0 -> 3.3.0"
+
+[[audits.himmelblau.audits.crypto-common]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+delta = "0.2.1 -> 0.2.2"
+
+[[audits.himmelblau.audits.hmac]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+delta = "0.13.0-rc.5 -> 0.13.0"
+
+[[audits.himmelblau.audits.hybrid-array]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+delta = "0.4.7 -> 0.4.15"
+
+[[audits.himmelblau.audits.md5]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+delta = "0.8.0 -> 0.8.1"
+
+[[audits.himmelblau.audits.memfd]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+delta = "0.6.5 -> 0.6.6"
+
+[[audits.himmelblau.audits.typenum]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+delta = "1.18.0 -> 1.20.1"
+
+[[audits.himmelblau.audits.uuid]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+delta = "1.26.0 -> 1.26.1"
 
 [[audits.isrg.audits.base64]]
 who = "Tim Geoghegan <timg@letsencrypt.org>"
