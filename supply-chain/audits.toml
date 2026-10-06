@@ -349,10 +349,20 @@ who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
 delta = "0.21.3 -> 0.23.0"
 
+[[audits.darling]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+delta = "0.23.0 -> 0.24.1"
+
 [[audits.darling_core]]
 who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
 delta = "0.21.3 -> 0.23.0"
+
+[[audits.darling_core]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+delta = "0.23.0 -> 0.24.1"
 
 [[audits.darling_macro]]
 who = "David Mulder <dmulder@samba.org>"
@@ -1049,6 +1059,11 @@ who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
 delta = "0.10.1 -> 0.10.2"
 
+[[audits.rand]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+delta = "0.10.2 -> 0.10.3"
+
 [[audits.rand_core]]
 who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
@@ -1274,6 +1289,11 @@ who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
 delta = "3.21.0 -> 3.22.0"
 
+[[audits.serde_with]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+delta = "3.22.0 -> 3.24.0"
+
 [[audits.serde_with_macros]]
 who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
@@ -1323,6 +1343,11 @@ delta = "3.19.0 -> 3.21.0"
 who = "David Mulder <dmulder@samba.org>"
 criteria = "safe-to-deploy"
 delta = "3.21.0 -> 3.22.0"
+
+[[audits.serde_with_macros]]
+who = "David Mulder <dmulder@samba.org>"
+criteria = "safe-to-deploy"
+delta = "3.22.0 -> 3.24.0"
 
 [[audits.serdect]]
 who = "David Mulder <dmulder@samba.org>"
