@@ -9,6 +9,7 @@ import importlib.util
 import json
 import os
 import shlex
+import stat
 import tempfile
 import tarfile
 import unittest
@@ -87,6 +88,133 @@ class BranchAndCliTests(unittest.TestCase):
             self.assertEqual(state.load(), {"skip": True})
             self.assertEqual(os.stat(state.path).st_mode & 0o777, 0o600)
 
+    def test_registry_cache_grants_read_access_without_write_or_file_execute(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            registry = Path(tmp) / "registry"; registry.mkdir(mode=0o300)
+            source = registry / "src"; source.mkdir(mode=0o300)
+            code = source / "lib.rs"; code.write_text("public crate source")
+            code.chmod(0o200)
+            executable = source / "configure"; executable.write_text("script")
+            executable.chmod(0o300)
+            original_open = sm.os.open
+            def permission_aware_open(path, flags, *args, **kwargs):
+                if (flags & os.O_ACCMODE) == os.O_RDONLY and not flags & os.O_PATH:
+                    if str(path).startswith("/proc/self/fd/"):
+                        metadata = os.stat(path)
+                    else:
+                        metadata = os.stat(path, dir_fd=kwargs.get("dir_fd"), follow_symlinks=False)
+                    if stat.S_IMODE(metadata.st_mode) & 0o444 == 0:
+                        raise PermissionError(13, "simulated runner access denial")
+                return original_open(path, flags, *args, **kwargs)
+            with mock.patch.object(sm.os, "open", side_effect=permission_aware_open):
+                sm.make_registry_cache_readable(registry)
+            self.assertEqual(registry.stat().st_mode & 0o777, 0o755)
+            self.assertEqual(source.stat().st_mode & 0o777, 0o755)
+            self.assertEqual(code.stat().st_mode & 0o777, 0o644)
+            self.assertEqual(executable.stat().st_mode & 0o777, 0o744)
+            self.assertEqual(code.read_text(), "public crate source")
+
+    def test_registry_cache_rejects_links_and_special_files_without_touching_destination(self):
+        for kind in ("symlink", "directory-symlink", "hardlink", "fifo"):
+            with self.subTest(kind=kind), tempfile.TemporaryDirectory() as tmp:
+                registry = Path(tmp) / "registry"; registry.mkdir()
+                outside = Path(tmp) / "outside"; outside.write_text("private")
+                outside.chmod(0o600)
+                entry = registry / "unsafe"
+                if kind == "symlink": entry.symlink_to(outside)
+                elif kind == "directory-symlink": entry.symlink_to(Path(tmp), target_is_directory=True)
+                elif kind == "hardlink": os.link(outside, entry)
+                else: os.mkfifo(entry)
+                with self.assertRaises(sm.MaintenanceError):
+                    sm.make_registry_cache_readable(registry)
+                self.assertEqual(outside.stat().st_mode & 0o777, 0o600)
+
+    @unittest.skipUnless(os.getuid() == 0, "requires root to reproduce a different build UID")
+    def test_registry_source_is_readable_by_actual_build_uid(self):
+        def build_user():
+            os.setgroups([]); os.setgid(65532); os.setuid(65532)
+        with tempfile.TemporaryDirectory() as tmp:
+            Path(tmp).chmod(0o755)
+            registry = Path(tmp) / "registry"; registry.mkdir(mode=0o700)
+            code = registry / "lib.rs"; code.write_text("public crate source")
+            code.chmod(0o600)
+            # The running Python may live under a root-only pyenv directory.
+            # Use system tools the dropped UID can execute to probe file access.
+            command = ["/bin/cat", str(code)]
+            try:
+                denied = sm.subprocess.run(command, preexec_fn=build_user, capture_output=True, text=True, env={"LC_ALL": "C"})
+            except sm.subprocess.SubprocessError:
+                self.skipTest("environment denies changing UID/GID despite UID 0")
+            self.assertNotEqual(denied.returncode, 0)
+            self.assertIn("Permission denied", denied.stderr)
+            sm.make_registry_cache_readable(registry)
+            readable = sm.subprocess.run(command, preexec_fn=build_user, capture_output=True, text=True, env={"LC_ALL": "C"})
+            self.assertEqual(readable.returncode, 0, readable.stderr)
+            self.assertEqual(readable.stdout.strip(), "public crate source")
+            command = ["/bin/sh", "-c", "printf '%s' changed > \"$1\"", "sh", str(code)]
+            denied_write = sm.subprocess.run(command, preexec_fn=build_user, capture_output=True, text=True, env={"LC_ALL": "C"})
+            self.assertNotEqual(denied_write.returncode, 0)
+            self.assertEqual(code.read_text(), "public crate source")
+
+    def test_registry_cache_os_errors_are_safe_and_close_descriptors(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            registry = Path(tmp) / "registry"; registry.mkdir()
+            code = registry / "lib.rs"; code.write_text("source"); code.chmod(0o600)
+            original_open = sm.os.open
+            for error in (OSError(40, "secret-path"), FileNotFoundError(2, "secret-path")):
+                opened = []
+                def replaced_entry(path, *args, **kwargs):
+                    if path == "lib.rs": raise error
+                    fd = original_open(path, *args, **kwargs); opened.append(fd); return fd
+                with self.subTest(error=type(error).__name__), mock.patch.object(sm.os, "open", side_effect=replaced_entry):
+                    with self.assertRaises(sm.MaintenanceError) as raised:
+                        sm.make_registry_cache_readable(registry)
+                self.assertNotIn("secret-path", str(raised.exception))
+                self.assertIs(raised.exception.__cause__, error)
+                self.assertEqual(code.stat().st_mode & 0o777, 0o600)
+                for fd in opened:
+                    with self.assertRaises(OSError): os.fstat(fd)
+            with mock.patch.object(sm.os, "open", side_effect=PermissionError(13, "secret-path")), \
+                 self.assertRaises(sm.MaintenanceError):
+                sm.make_registry_cache_readable(registry)
+
+    def test_registry_cache_depth_limit_is_checked_and_closes_every_descriptor(self):
+        original_open = sm.os.open
+        for depth in (128, 129):
+            with self.subTest(depth=depth), tempfile.TemporaryDirectory() as tmp:
+                registry = Path(tmp) / "registry"; registry.mkdir(mode=0o700)
+                leaf = registry
+                for _ in range(depth):
+                    leaf = leaf / "d"; leaf.mkdir(mode=0o700)
+                code = leaf / "secret-marker.rs"; code.write_text("source"); code.chmod(0o600)
+                opened = []
+                def tracked_open(*args, **kwargs):
+                    fd = original_open(*args, **kwargs); opened.append(fd); return fd
+                with mock.patch.object(sm.os, "open", side_effect=tracked_open):
+                    if depth == 128:
+                        sm.make_registry_cache_readable(registry)
+                        self.assertEqual(code.stat().st_mode & 0o777, 0o644)
+                    else:
+                        with self.assertRaisesRegex(sm.MaintenanceError, "depth") as raised:
+                            sm.make_registry_cache_readable(registry)
+                        self.assertNotIn("secret-marker", str(raised.exception))
+                        self.assertEqual(code.stat().st_mode & 0o777, 0o600)
+                        self.assertEqual(leaf.stat().st_mode & 0o777, 0o700)
+                for fd in opened:
+                    with self.assertRaises(OSError): os.fstat(fd)
+
+    @unittest.skipUnless(os.getuid() == 0, "root-only UID probe")
+    def test_build_uid_probe_does_not_execute_private_python(self):
+        results = [
+            sm.CommandResult(1, "", "Permission denied"),
+            sm.CommandResult(0, "public crate source\n", ""),
+            sm.CommandResult(1, "", "Permission denied"),
+        ]
+        with mock.patch.object(sm.sys, "executable", "/root/private/python"), \
+             mock.patch.object(sm.subprocess, "run", side_effect=results) as run:
+            self.test_registry_source_is_readable_by_actual_build_uid()
+        self.assertEqual([call.args[0][0] for call in run.call_args_list], ["/bin/cat", "/bin/cat", "/bin/sh"])
+
     def test_locked_build_command_has_security_boundaries(self):
         engines = {"podman": "/usr/bin/podman", "docker": "/usr/bin/docker"}
         with tempfile.TemporaryDirectory() as tmp, mock.patch.object(
@@ -97,6 +225,9 @@ class BranchAndCliTests(unittest.TestCase):
             cargo_home.mkdir(parents=True, exist_ok=True)
             (source / ".git").mkdir()
             (cargo_home / "registry").mkdir()
+            private_source = cargo_home / "registry" / "lib.rs"
+            private_source.write_text("public source")
+            private_source.chmod(0o600)
             (cargo_home / "git").mkdir()
             runner = mock.Mock(root=source.resolve())
             runner.run.return_value = sm.CommandResult(0, "", "")
@@ -106,6 +237,7 @@ class BranchAndCliTests(unittest.TestCase):
             }
             with mock.patch.dict(os.environ, env):
                 sm.locked_build(runner, target_dir=Path(tmp) / "target")
+            self.assertEqual(private_source.stat().st_mode & 0o777, 0o644)
             which.assert_called_once_with("docker")
             argv = runner.run.call_args_list[0].args[0]
             joined = " ".join(argv)
