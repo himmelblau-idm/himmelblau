@@ -15,7 +15,7 @@
    You should have received a copy of the GNU General Public License
    along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
-use crate::config::HimmelblauConfig;
+use crate::config::{split_username, HimmelblauConfig};
 use crate::db::KeyStoreTxn;
 use crate::idprovider::himmelblau::HimmelblauProvider;
 use crate::idprovider::interface::{
@@ -51,6 +51,7 @@ enum Providers {
 }
 
 pub struct IdProviderProxy {
+    config: Arc<Mutex<HimmelblauConfig>>,
     provider: Arc<Providers>,
 }
 
@@ -162,6 +163,7 @@ impl IdProviderProxy {
         };
 
         let proxy = IdProviderProxy {
+            config: config.clone(),
             provider: Arc::new(provider),
         };
 
@@ -182,6 +184,32 @@ impl IdProviderProxy {
         });
 
         Ok(proxy)
+    }
+    async fn find_provider(&self, domain: Option<&str>) -> Result<Arc<Providers>, IdpError> {
+        match (domain, self.provider.as_ref()) {
+            (_, Providers::Oidc(_)) => Some(self.provider.clone()),
+            (Some(d), Providers::Himmelblau(h)) => {
+                if d == h.domain() {
+                    Some(self.provider.clone())
+                } else if self
+                    .config
+                    .lock()
+                    .await
+                    .get_primary_domain_from_alias(d)
+                    .await
+                    .is_some_and(|p| p.as_str() == h.domain())
+                {
+                    Some(self.provider.clone())
+                } else {
+                    None
+                }
+            }
+            (None, Providers::Himmelblau(_)) => None,
+        }
+        .ok_or(IdpError::NotFound {
+            what: format!("domain: {}", domain.unwrap_or("<empty>")),
+            where_: "providers".to_string(),
+        })
     }
 }
 
@@ -229,7 +257,12 @@ impl IdProvider for IdProviderProxy {
         tpm: &mut tpm::provider::BoxedDynTpm,
         machine_key: &tpm::structures::StorageKey,
     ) -> anyhow::Result<UnixUserToken, IdpError> {
-        match self.provider.as_ref() {
+        let domain = match old_token {
+            Some(token) => split_username(token.spn.as_str()).map(|parts| parts.1),
+            None => id.split_domain(),
+        };
+        let provider = self.find_provider(domain).await?;
+        match provider.as_ref() {
             Providers::Oidc(provider) => {
                 provider
                     .unix_user_access(
@@ -276,7 +309,14 @@ impl IdProvider for IdProviderProxy {
         Option<String>,
         Option<String>,
     ) {
-        match self.provider.as_ref() {
+        let domain = match old_token {
+            Some(token) => split_username(token.spn.as_str()).map(|parts| parts.1),
+            None => id.split_domain(),
+        };
+        let Ok(provider) = self.find_provider(domain).await else {
+            return (None, None, None, None);
+        };
+        match provider.as_ref() {
             Providers::Oidc(provider) => {
                 provider
                     .unix_user_tgts(id, old_token, keystore, tpm, machine_key)
@@ -299,7 +339,12 @@ impl IdProvider for IdProviderProxy {
         tpm: &mut tpm::provider::BoxedDynTpm,
         machine_key: &tpm::structures::StorageKey,
     ) -> anyhow::Result<String, IdpError> {
-        match self.provider.as_ref() {
+        let domain = match old_token {
+            Some(token) => split_username(token.spn.as_str()).map(|parts| parts.1),
+            None => id.split_domain(),
+        };
+        let provider = self.find_provider(domain).await?;
+        match provider.as_ref() {
             Providers::Oidc(provider) => {
                 provider
                     .unix_user_prt_cookie(id, old_token, sso_nonce, keystore, tpm, machine_key)
@@ -322,7 +367,9 @@ impl IdProvider for IdProviderProxy {
         tpm: &mut tpm::provider::BoxedDynTpm,
         machine_key: &tpm::structures::StorageKey,
     ) -> anyhow::Result<bool, IdpError> {
-        match self.provider.as_ref() {
+        let domain = split_username(account_id).map(|parts| parts.1);
+        let provider = self.find_provider(domain).await?;
+        match provider.as_ref() {
             Providers::Oidc(provider) => {
                 provider
                     .change_auth_token(account_id, token, new_tok, keystore, tpm, machine_key)
@@ -345,7 +392,12 @@ impl IdProvider for IdProviderProxy {
         machine_key: &tpm::structures::StorageKey,
     ) -> anyhow::Result<UserTokenState, IdpError> {
         /* AAD doesn't permit user listing (must use cache entries from auth) */
-        match self.provider.as_ref() {
+        let domain = match old_token {
+            Some(token) => split_username(token.spn.as_str()).map(|parts| parts.1),
+            None => id.split_domain(),
+        };
+        let provider = self.find_provider(domain).await?;
+        match provider.as_ref() {
             Providers::Oidc(provider) => {
                 provider
                     .unix_user_get(id, old_token, keystore, tpm, machine_key)
@@ -371,7 +423,9 @@ impl IdProvider for IdProviderProxy {
         machine_key: &tpm::structures::StorageKey,
         shutdown_rx: &broadcast::Receiver<()>,
     ) -> anyhow::Result<(AuthRequest, AuthCredHandler), IdpError> {
-        match self.provider.as_ref() {
+        let domain = split_username(account_id).map(|parts| parts.1);
+        let provider = self.find_provider(domain).await?;
+        match provider.as_ref() {
             Providers::Oidc(provider) => {
                 provider
                     .unix_user_online_auth_init(
@@ -418,7 +472,9 @@ impl IdProvider for IdProviderProxy {
         machine_key: &tpm::structures::StorageKey,
         shutdown_rx: &broadcast::Receiver<()>,
     ) -> anyhow::Result<(AuthResult, AuthCacheAction), IdpError> {
-        match self.provider.as_ref() {
+        let domain = split_username(account_id).map(|parts| parts.1);
+        let provider = self.find_provider(domain).await?;
+        match provider.as_ref() {
             Providers::Oidc(provider) => {
                 provider
                     .unix_user_online_auth_step(
@@ -462,7 +518,9 @@ impl IdProvider for IdProviderProxy {
         no_hello_pin: bool,
         keystore: &mut D,
     ) -> anyhow::Result<(AuthRequest, AuthCredHandler), IdpError> {
-        match self.provider.as_ref() {
+        let domain = split_username(account_id).map(|parts| parts.1);
+        let provider = self.find_provider(domain).await?;
+        match provider.as_ref() {
             Providers::Oidc(provider) => {
                 provider
                     .unix_user_offline_auth_init(account_id, token, service, no_hello_pin, keystore)
@@ -487,7 +545,9 @@ impl IdProvider for IdProviderProxy {
         machine_key: &tpm::structures::StorageKey,
         online_at_init: bool,
     ) -> anyhow::Result<AuthResult, IdpError> {
-        match self.provider.as_ref() {
+        let domain = split_username(account_id).map(|parts| parts.1);
+        let provider = self.find_provider(domain).await?;
+        match provider.as_ref() {
             Providers::Oidc(provider) => {
                 provider
                     .unix_user_offline_auth_step(
@@ -528,7 +588,9 @@ impl IdProvider for IdProviderProxy {
         machine_key: &tpm::structures::StorageKey,
         online: bool,
     ) -> anyhow::Result<bool, IdpError> {
-        match self.provider.as_ref() {
+        let domain = split_username(account_id).map(|parts| parts.1);
+        let provider = self.find_provider(domain).await?;
+        match provider.as_ref() {
             Providers::Oidc(provider) => {
                 provider
                     .unix_user_try_unseal(account_id, cred, keystore, tpm, machine_key, online)
@@ -557,7 +619,17 @@ impl IdProvider for IdProviderProxy {
         account_id: Option<&str>,
         keystore: &mut D,
     ) -> CacheState {
-        match self.provider.as_ref() {
+        let provider = match account_id {
+            Some(id) => {
+                let domain = split_username(id).map(|parts| parts.1);
+                let Ok(provider) = self.find_provider(domain).await else {
+                    return CacheState::Offline;
+                };
+                provider.clone()
+            }
+            None => self.provider.clone(),
+        };
+        match provider.as_ref() {
             Providers::Oidc(provider) => {
                 return provider.get_cachestate(account_id, keystore).await
             }
