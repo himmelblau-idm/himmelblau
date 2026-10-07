@@ -58,6 +58,8 @@ fn should_skip_daemon_call_for(
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used)]
+
     use super::{should_skip_daemon_call_for, DaemonClientBlocking};
     use crate::unix_proto::{ClientRequest, ClientResponse, PamAuthResponse};
     use std::ffi::OsStr;
