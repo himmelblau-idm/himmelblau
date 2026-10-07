@@ -187,15 +187,15 @@ mod tests {
 
         let server = thread::spawn(move || {
             read_request(&mut server_stream);
-            server_stream.write_all(&response[..response.len() - 1]).unwrap();
+            server_stream
+                .write_all(&response[..response.len() - 1])
+                .unwrap();
         });
 
         let mut client = DaemonClientBlocking {
             stream: client_stream,
         };
-        let error = client
-            .call_and_wait(&ClientRequest::Status, 1)
-            .unwrap_err();
+        let error = client.call_and_wait(&ClientRequest::Status, 1).unwrap_err();
         server.join().unwrap();
 
         assert_eq!(
@@ -217,9 +217,7 @@ mod tests {
         let mut client = DaemonClientBlocking {
             stream: client_stream,
         };
-        let error = client
-            .call_and_wait(&ClientRequest::Status, 1)
-            .unwrap_err();
+        let error = client.call_and_wait(&ClientRequest::Status, 1).unwrap_err();
         release_tx.send(()).unwrap();
         server.join().unwrap();
 
