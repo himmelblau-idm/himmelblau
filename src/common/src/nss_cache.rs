@@ -266,6 +266,23 @@ impl NssCache {
         Some(user)
     }
 
+    /// Fallback cache entries have no evidence that a qualified alias is not
+    /// another user's real UPN. Only the daemon can verify that ambiguity.
+    pub fn get_user_for_fallback(&self, id: &Id) -> Option<NssUser> {
+        let user = self.get_user(id)?;
+        if let Id::Name(name) = id {
+            if name.contains('@')
+                && !user
+                    .canonical_name
+                    .as_deref()
+                    .is_some_and(|canonical| canonical.eq_ignore_ascii_case(name))
+            {
+                return None;
+            }
+        }
+        Some(user)
+    }
+
     pub fn get_users(&self) -> Vec<NssUser> {
         let mut users = Vec::new();
         let max_age_secs: i64 = 48 * 3600; // 48 hours
@@ -340,6 +357,90 @@ mod tests {
              INSERT INTO nss_passwd VALUES
                 ('alice', 1000, 1000, 'Test User', '/home/test', '/bin/bash', strftime('%s', 'now'));",
         ).unwrap();
+    }
+
+    #[test]
+    fn fallback_cannot_substitute_a_qualified_alias_for_an_uncached_upn() {
+        let cache = cache();
+        for (canonical, alias, uid) in [
+            ("alice@example.com", "bob@example.com", 1000),
+            ("alice@secondary.com", "bob@secondary.com", 1001),
+        ] {
+            let mut alice = user(canonical, alias, uid);
+            alice.aliases.push(format!("bare-{uid}"));
+            cache.insert_user(&alice).unwrap();
+            // Cache discovery sees the alias, but fallback cannot establish
+            // whether another directory user owns the requested real UPN.
+            assert_eq!(cache.get_user(&Id::Name(alias.into())).unwrap().uid, uid);
+            assert!(cache
+                .get_user_for_fallback(&Id::Name(alias.into()))
+                .is_none());
+            assert_eq!(
+                cache
+                    .get_user_for_fallback(&Id::Name(canonical.to_uppercase()))
+                    .unwrap()
+                    .uid,
+                uid
+            );
+            assert_eq!(cache.get_user_for_fallback(&Id::Gid(uid)).unwrap().uid, uid);
+            assert_eq!(
+                cache
+                    .get_user_for_fallback(&Id::Name(format!("bare-{uid}")))
+                    .unwrap()
+                    .uid,
+                uid
+            );
+        }
+        // Older NSS libraries stored display names without canonical metadata,
+        // including qualified SAM names. Such rows cannot establish ownership.
+        let mut legacy = user("unused@example.com", "legacy@example.com", 1003);
+        legacy.canonical_name = None;
+        legacy.aliases.clear();
+        cache.insert_user(&legacy).unwrap();
+        assert!(cache.get_user(&Id::Name(legacy.name.clone())).is_some());
+        assert!(cache
+            .get_user_for_fallback(&Id::Name(legacy.name))
+            .is_none());
+        assert_eq!(
+            cache
+                .get_user_for_fallback(&Id::Gid(legacy.uid))
+                .unwrap()
+                .uid,
+            legacy.uid
+        );
+        let bob = user("bob@example.com", "robert", 1002);
+        cache.insert_user(&bob).unwrap();
+        assert_eq!(
+            cache
+                .get_user_for_fallback(&Id::Name("bob@example.com".into()))
+                .unwrap()
+                .uid,
+            bob.uid
+        );
+    }
+
+    #[test]
+    fn old_and_migrated_caches_require_canonical_metadata_for_qualified_fallback() {
+        for migrated in [false, true] {
+            let mut conn = Connection::open_in_memory().unwrap();
+            create_legacy_schema(&conn);
+            conn.execute("UPDATE nss_passwd SET name = 'legacy@example.com'", [])
+                .unwrap();
+            if migrated {
+                NssCache::initialize_schema(&mut conn).unwrap();
+            }
+            let cache = NssCache {
+                conn: Some(conn),
+                writable: false,
+            };
+            let id = Id::Name("legacy@example.com".into());
+            assert!(cache.get_user(&id).is_some());
+            assert!(cache.get_user_for_fallback(&id).is_none());
+            assert_eq!(
+                cache.get_user_for_fallback(&Id::Gid(1000)).unwrap().uid,
+                1000
+            );
+        }
     }
 
     #[test]

@@ -408,7 +408,7 @@ in
         - SPN (the user principal name)
 
         - onPremisesSamAccountName
-        When onPremisesSamAccountName is configured but absent or blank for a user, Himmelblau falls back to SPN. A temporary lookup failure preserves an established cached name. Conflicting cached aliases fall back to SPN without removing another account. SAM names outside the primary configured domain remain domain-qualified so they can be used for subsequent logins. The first login still requires the UPN.
+        When onPremisesSamAccountName is configured but absent or blank for a user, Himmelblau falls back to SPN. A temporary lookup failure preserves an established cached name. Conflicting cached aliases fall back to SPN without removing another account. SAM names outside the primary configured domain remain domain-qualified so they can be used for subsequent logins. The first login still requires the UPN. Domain-qualified aliases are verified against the exact UPN online before use. While offline, use the canonical UPN unless this daemon has recently verified that the alias does not belong to another UPN; this verification expires with cache_timeout and is lost on daemon restart. If the daemon is unavailable, the NSS fallback cache resolves qualified names only by their canonical UPN. Legacy NSS cache entries must be refreshed by the daemon before qualified-name fallback is available.
       '';
       example = "onPremisesSamAccountName";
     };

@@ -67,7 +67,7 @@ macro_rules! fetch_cached_user {
     }};
     ($cache:expr, $cfg:ident, $id:expr, $ret:expr, $local_name:expr) => {{
         match $cache {
-            Some(ref c) => match c.get_user(&$id) {
+            Some(ref c) => match c.get_user_for_fallback(&$id) {
                 Some(nu) => {
                     let mut passwd = passwd_from_nssuser(nu);
                     // Use local_name override if provided, otherwise use cn_name_mapping
@@ -860,7 +860,7 @@ impl ShadowHooks for HimmelblauShadow {
             Err(_) => {
                 // Try cache if daemon unavailable
                 return match nss_cache {
-                    Some(ref c) => match c.get_user(&Id::Name(upn)) {
+                    Some(ref c) => match c.get_user_for_fallback(&Id::Name(upn)) {
                         Some(nu) => {
                             Response::Success(mapped_shadow_from_nssuser(&nu, &cfg, local_name))
                         }
@@ -882,7 +882,7 @@ impl ShadowHooks for HimmelblauShadow {
                     .unwrap_or_else(|| {
                         // Check cache on NotFound
                         match nss_cache {
-                            Some(ref c) => match c.get_user(&Id::Name(upn.clone())) {
+                            Some(ref c) => match c.get_user_for_fallback(&Id::Name(upn.clone())) {
                                 Some(nu) => Response::Success(mapped_shadow_from_nssuser(
                                     &nu,
                                     &cfg,
@@ -896,7 +896,7 @@ impl ShadowHooks for HimmelblauShadow {
                 _ => {
                     // Check cache on unexpected response
                     match nss_cache {
-                        Some(ref c) => match c.get_user(&Id::Name(upn.clone())) {
+                        Some(ref c) => match c.get_user_for_fallback(&Id::Name(upn.clone())) {
                             Some(nu) => Response::Success(mapped_shadow_from_nssuser(
                                 &nu,
                                 &cfg,
@@ -911,7 +911,7 @@ impl ShadowHooks for HimmelblauShadow {
             .unwrap_or_else(|_| {
                 // Check cache on error
                 match nss_cache {
-                    Some(ref c) => match c.get_user(&Id::Name(upn)) {
+                    Some(ref c) => match c.get_user_for_fallback(&Id::Name(upn)) {
                         Some(nu) => {
                             Response::Success(mapped_shadow_from_nssuser(&nu, &cfg, local_name))
                         }
