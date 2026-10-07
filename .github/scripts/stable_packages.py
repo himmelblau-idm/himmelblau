@@ -20,6 +20,8 @@ import urllib.request
 
 
 REPOSITORIES = {3: "himmelblau/v_3", 4: "himmelblau/v_4"}
+# Existing release tags can still list targets retired by the current publisher.
+RETIRED_TARGETS = {"sle15sp6"}
 DESTINATIONS = {
     "ubuntu22.04": "ubuntu/jammy", "ubuntu24.04": "ubuntu/noble",
     "ubuntu25.10": "ubuntu/questing", "ubuntu26.04": "ubuntu/resolute",
@@ -116,7 +118,8 @@ def matrix(tag, revision="", distro="all", architecture="all"):
         if not match:
             raise ValueError(f"Cannot find {group}_TARGETS in source Makefile")
         targets.extend(match[1].split())
-    if distro != "all" and distro not in targets:
+    targets = [target for target in targets if target not in RETIRED_TARGETS]
+    if distro != "all" and distro not in targets and distro not in RETIRED_TARGETS:
         raise ValueError(f"Unsupported distro: {distro}")
     selected = [t for t in targets if distro in {"all", t}]
     entries = []
@@ -159,7 +162,7 @@ def matrix(tag, revision="", distro="all", architecture="all"):
                     "expected_packages": [dict(package, architectures=[arch, "all"] if fmt == "deb"
                                                else [info["rpm"], "noarch"]) for package in definitions], **info}
             entries.append({"spec": json.dumps(spec, separators=(",", ":"))})
-    if not entries:
+    if not entries and selected:
         raise ValueError("No supported targets remain after applying the filters")
     return {"include": entries}
 
@@ -175,6 +178,10 @@ def prepare():
                     os.environ.get("REQUESTED_REVISION", "") if manual else "",
                     (os.environ.get("REQUESTED_DISTRO") or "all") if manual else "all",
                     (os.environ.get("REQUESTED_ARCHITECTURE") or "all") if manual else "all")
+    if not result["include"]:
+        output("enabled", "false")
+        summary("No supported build targets selected; skipping.")
+        return
     output("matrix", json.dumps(result, separators=(",", ":")))
     output("tooling_sha", resolve("HEAD"))
     output("enabled", "true")
