@@ -134,7 +134,8 @@ def matrix(source_sha, nightly_date, run_number, distro="all", architecture="all
 def user_tags(package):
     tags = package.get("tags", {})
     if isinstance(tags, dict):
-        tags = tags.get("user", [])
+        # Cloudsmith groups custom package tags under "info", not "user".
+        tags = tags.get("info", [])
     return set(tags if isinstance(tags, list) else [])
 
 

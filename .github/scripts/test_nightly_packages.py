@@ -1,6 +1,8 @@
 """Nightly publishing contracts tested without Docker or network writes."""
 
+from datetime import date, timedelta
 import importlib.util
+import io
 import json
 import os
 from pathlib import Path
@@ -139,7 +141,7 @@ class PublicationTests(unittest.TestCase):
             "distro": {"slug": "ubuntu"},
             "distro_version": {"slug": "noble"},
             "architectures": [{"name": architecture}],
-            "tags": {"user": ["nightly", f"source-{source_sha}", f"nightly-{nightly_id}"]},
+            "tags": {"info": ["nightly", f"source-{source_sha}", f"nightly-{nightly_id}"]},
             "slug_perm": f"{name}-{nightly_id}-{architecture}",
             "is_deleteable": True,
             "is_sync_completed": True,
@@ -149,6 +151,64 @@ class PublicationTests(unittest.TestCase):
 
     def build(self, nightly_id=None, source_sha=None, architecture="amd64"):
         return [self.remote(name, nightly_id, source_sha, architecture) for name in self.spec["expected"]]
+
+    def test_custom_tags_use_cloudsmith_info_group(self):
+        tags = ["nightly", f"source-{self.sha}", f"nightly-{self.spec['nightly_id']}"]
+        self.assertEqual(np.user_tags({"tags": {"info": tags, "version": ["latest"]}}),
+                         set(tags))
+        self.assertEqual(np.user_tags({"tags": tags}), set(tags))
+        self.assertEqual(np.user_tags({"tags": {"version": tags}}), set())
+
+    def test_cleanup_removes_entire_paginated_backlog_for_deb_and_rpm(self):
+        for fmt in ["deb", "rpm"]:
+            with self.subTest(format=fmt):
+                self.spec["format"] = fmt
+                old = []
+                for index in range(60):
+                    day = date(2026, 7, 1) + timedelta(days=index)
+                    nightly_id = f"{day:%Y%m%d}.{index + 1}.git{self.old_sha[:12]}"
+                    old.extend(self.build(nightly_id, self.old_sha))
+                # Cleanup must include earlier workspace versions too.
+                for package in old[:20]:
+                    package["version"] = package["version"].replace("5.0.0-", "4.9.0-")
+                current = self.build()
+                unrelated = self.build(architecture="arm64")
+                remote = current + unrelated + list(reversed(old))
+                if fmt == "rpm":
+                    for package in remote:
+                        package["format"] = "rpm"
+                        package["distro"] = {"slug": "el"}
+                        package["distro_version"] = {"slug": "9"}
+                        package["version"] = package["version"].replace("-ubuntu24.04~", "-0.")
+                        arch = package["architectures"][0]["name"]
+                        package["architectures"][0]["name"] = {
+                            "amd64": "x86_64", "arm64": "aarch64"
+                        }[arch]
+                self.spec["destination"] = "ubuntu/noble" if fmt == "deb" else "el/9"
+                pages = [io.BytesIO(json.dumps(remote[:100]).encode()),
+                         io.BytesIO(json.dumps(remote[100:]).encode())]
+                with patch.dict(os.environ, {"CLOUDSMITH_API_KEY": "test"}), \
+                     patch.object(np.packages.urllib.request, "urlopen", side_effect=pages) as lookup, \
+                     patch.object(np.packages, "delete_package") as delete, \
+                     patch.object(np.packages, "wait_for_deletions") as wait, \
+                     patch.object(np.packages, "summary"):
+                    np.cleanup(self.spec)
+                self.assertEqual(delete.call_args_list, [
+                    unittest.mock.call(self.spec["repository"], package["slug_perm"])
+                    for package in reversed(old)
+                ])
+                wait.assert_called_once_with(
+                    self.spec["repository"], fmt,
+                    [package["slug_perm"] for package in reversed(old)],
+                    self.spec["destination"],
+                )
+                self.assertEqual(lookup.call_count, 2)
+                for page, call in enumerate(lookup.call_args_list, start=1):
+                    query = np.packages.urllib.parse.parse_qs(
+                        np.packages.urllib.parse.urlsplit(call.args[0].full_url).query)
+                    self.assertEqual(query["query"],
+                                     [f"format:{fmt} distribution:{self.spec['destination']}"])
+                    self.assertEqual(query["page"], [str(page)])
 
     def test_complete_current_source_skips_and_partial_source_rebuilds(self):
         complete = self.build()
@@ -198,7 +258,7 @@ class PublicationTests(unittest.TestCase):
     def test_cleanup_does_not_touch_other_architecture_or_unmanaged_packages(self):
         old_id = "20260923.122.git" + self.old_sha[:12]
         remote = self.build() + self.build(old_id, self.old_sha, "arm64")
-        remote.append(self.remote("foreign", old_id, self.old_sha, tags={"user": []}))
+        remote.append(self.remote("foreign", old_id, self.old_sha, tags={"info": []}))
         _, deletions = np.cleanup_plan(remote, self.spec)
         self.assertEqual(deletions, [])
 
