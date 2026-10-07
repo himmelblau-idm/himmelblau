@@ -10176,9 +10176,14 @@ rec {
       };
       "libhimmelblau" = rec {
         crateName = "libhimmelblau";
-        version = "0.8.42";
+        version = "0.8.43";
         edition = "2021";
-        sha256 = "05nnrr10x1yqj04wslxr1saqxmwi81sxjnnwyp8kqxq9gsqw1lpr";
+        workspace_member = null;
+        src = pkgs.fetchgit {
+          url = "https://github.com/himmelblau-idm/libhimmelblau";
+          rev = "020344d802055e93c2369740ba386fac426e3c7f";
+          sha256 = "1lvx5z0hxc3pb89kqifi28b7zvkr1i014li2nb1mzk4s9in7ch3p";
+        };
         libName = "himmelblau";type = [ "rlib" "cdylib" ];
         authors = [
           "David Mulder <dmulder@suse.com>"

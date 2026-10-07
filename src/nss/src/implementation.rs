@@ -97,10 +97,7 @@ macro_rules! fetch_all_cached_users {
                 .into_iter()
                 .filter_map(|nu| {
                     // Skip users whose UPN is mapped to a local user
-                    if $user_map
-                        .get_local_from_upn(&nu.name.to_lowercase())
-                        .is_some()
-                    {
+                    if is_mapped_nss_user(&nu, &$user_map) {
                         return None;
                     }
                     let mut passwd = passwd_from_nssuser(nu);
@@ -146,10 +143,7 @@ impl PasswdHooks for HimmelblauPasswd {
                     .filter_map(|nu| {
                         // Skip users whose UPN is mapped to a local user
                         // (the local NSS module handles these)
-                        if user_map
-                            .get_local_from_upn(&nu.name.to_lowercase())
-                            .is_some()
-                        {
+                        if is_mapped_nss_user(&nu, &user_map) {
                             return None;
                         }
                         insert_cached_user!(nss_cache, nu);
@@ -463,6 +457,13 @@ impl GroupHooks for HimmelblauGroup {
     }
 }
 
+fn is_mapped_nss_user(nu: &NssUser, user_map: &UserMap) -> bool {
+    let canonical_name = nu.canonical_name.as_deref().unwrap_or(&nu.name);
+    user_map
+        .get_local_from_upn(&canonical_name.to_lowercase())
+        .is_some()
+}
+
 fn passwd_from_nssuser(nu: NssUser) -> Passwd {
     Passwd {
         name: nu.name,
@@ -764,10 +765,7 @@ impl ShadowHooks for HimmelblauShadow {
                             .into_iter()
                             .filter_map(|nu| {
                                 // Skip users whose UPN is mapped to a local user
-                                if user_map
-                                    .get_local_from_upn(&nu.name.to_lowercase())
-                                    .is_some()
-                                {
+                                if is_mapped_nss_user(&nu, &user_map) {
                                     return None;
                                 }
                                 Some(mapped_shadow_from_nssuser(&nu, &cfg, None))
@@ -786,10 +784,7 @@ impl ShadowHooks for HimmelblauShadow {
                     .into_iter()
                     .filter_map(|nu| {
                         // Skip users whose UPN is mapped to a local user
-                        if user_map
-                            .get_local_from_upn(&nu.name.to_lowercase())
-                            .is_some()
-                        {
+                        if is_mapped_nss_user(&nu, &user_map) {
                             return None;
                         }
                         insert_cached_user!(nss_cache, nu);
@@ -802,10 +797,7 @@ impl ShadowHooks for HimmelblauShadow {
                         .into_iter()
                         .filter_map(|nu| {
                             // Skip users whose UPN is mapped to a local user
-                            if user_map
-                                .get_local_from_upn(&nu.name.to_lowercase())
-                                .is_some()
-                            {
+                            if is_mapped_nss_user(&nu, &user_map) {
                                 return None;
                             }
                             Some(mapped_shadow_from_nssuser(&nu, &cfg, None))
@@ -821,10 +813,7 @@ impl ShadowHooks for HimmelblauShadow {
                         .into_iter()
                         .filter_map(|nu| {
                             // Skip users whose UPN is mapped to a local user
-                            if user_map
-                                .get_local_from_upn(&nu.name.to_lowercase())
-                                .is_some()
-                            {
+                            if is_mapped_nss_user(&nu, &user_map) {
                                 return None;
                             }
                             Some(mapped_shadow_from_nssuser(&nu, &cfg, None))
@@ -970,6 +959,8 @@ mod tests {
     fn test_nss_user(name: &str) -> NssUser {
         NssUser {
             name: name.to_string(),
+            canonical_name: None,
+            aliases: Vec::new(),
             uid: 1000,
             gid: 1000,
             gecos: "Test User".to_string(),
@@ -1119,6 +1110,44 @@ mod tests {
         };
 
         assert_eq!(status, NSS_STATUS_UNAVAIL);
+    }
+
+    #[test]
+    fn cached_lookup_metadata_preserves_passwd_and_shadow_display_names() -> Result<(), String> {
+        let cfg = test_config()?;
+        for (domain, expected) in [
+            ("contoso.com", "alice"),
+            ("fabrikam.com", "alice@fabrikam.com"),
+        ] {
+            let mut nu = test_nss_user(&format!("alice@{domain}"));
+            nu.canonical_name = Some(format!("alice.long@{domain}"));
+            nu.aliases = vec![nu.name.clone()];
+            let shadow = mapped_shadow_from_nssuser(&nu, &cfg, None);
+            let mut passwd = passwd_from_nssuser(nu);
+            passwd.name = cfg.map_upn_to_name(&passwd.name);
+            assert_eq!(passwd.name, expected);
+            assert_eq!(shadow.name, expected);
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn mapped_user_filter_uses_canonical_identity_instead_of_display_name() -> Result<(), String> {
+        let path = create_temp_config("alice-local:alice.long@contoso.com")?;
+        let user_map = UserMap::new(&path);
+        fs::remove_file(path).ok();
+        let mut nu = test_nss_user("alice@contoso.com");
+        nu.canonical_name = Some("ALICE.LONG@CONTOSO.COM".to_string());
+        assert!(is_mapped_nss_user(&nu, &user_map));
+        assert!(is_mapped_nss_user(
+            &test_nss_user("alice.long@contoso.com"),
+            &user_map
+        ));
+        assert!(!is_mapped_nss_user(
+            &test_nss_user("alice@contoso.com"),
+            &user_map
+        ));
+        Ok(())
     }
 
     #[test]

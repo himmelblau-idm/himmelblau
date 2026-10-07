@@ -399,6 +399,20 @@ in
       example = false;
     };
 
+    local_name_attr = mkOption {
+      type = types.nullOr (types.enum [ "spn" "onPremisesSamAccountName" ]);
+      default = "spn";
+      description = ''
+        The Entra ID attribute used for the local NSS login name. Available options include:
+
+        - SPN (the user principal name)
+
+        - onPremisesSamAccountName
+        When onPremisesSamAccountName is configured but absent or blank for a user, Himmelblau falls back to SPN. A temporary lookup failure preserves an established cached name. Conflicting cached aliases fall back to SPN without removing another account. SAM names outside the primary configured domain remain domain-qualified so they can be used for subsequent logins. The first login still requires the UPN.
+      '';
+      example = "onPremisesSamAccountName";
+    };
+
     local_groups = mkOption {
       type = types.nullOr (types.listOf types.str);
       default = null;
