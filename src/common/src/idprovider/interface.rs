@@ -80,6 +80,10 @@ pub struct GroupToken {
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct UserToken {
+    /// True only for a provisional account created before authenticated metadata.
+    /// Old cache entries are treated as authoritative, never guessed from groups.
+    #[serde(default)]
+    pub is_placeholder: bool,
     pub name: String,
     pub spn: String,
     pub uuid: Uuid,

@@ -1971,5 +1971,6 @@ pub(crate) async fn oidc_user_token_from_claims(
         groups,
         tenant_id: Some(*tenant_id),
         valid: true,
+        is_placeholder: false,
     })
 }
