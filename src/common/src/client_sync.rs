@@ -58,8 +58,14 @@ fn should_skip_daemon_call_for(
 
 #[cfg(test)]
 mod tests {
-    use super::should_skip_daemon_call_for;
+    use super::{should_skip_daemon_call_for, DaemonClientBlocking};
+    use crate::unix_proto::{ClientRequest, ClientResponse, PamAuthResponse};
     use std::ffi::OsStr;
+    use std::io::{ErrorKind, Read, Write};
+    use std::os::unix::net::UnixStream;
+    use std::sync::mpsc;
+    use std::thread;
+    use std::time::Duration;
 
     #[test]
     fn daemon_call_is_skipped_for_himmelblau_units_started_by_system_manager() {
@@ -84,6 +90,169 @@ mod tests {
             1,
             Some(OsStr::new("unrelated.service")),
         ));
+    }
+
+    fn padded_response(target_len: usize) -> (Vec<u8>, String) {
+        let empty = serde_json::to_vec(&ClientResponse::PamAuthenticateStepResponse(
+            PamAuthResponse::Denied(String::new()),
+        ))
+        .unwrap();
+        let message = "x".repeat(target_len.checked_sub(empty.len()).unwrap());
+        let response = serde_json::to_vec(&ClientResponse::PamAuthenticateStepResponse(
+            PamAuthResponse::Denied(message.clone()),
+        ))
+        .unwrap();
+        assert_eq!(response.len(), target_len);
+        (response, message)
+    }
+
+    fn read_request(stream: &mut UnixStream) {
+        let mut request = [0; 1024];
+        assert!(stream.read(&mut request).unwrap() > 0);
+    }
+
+    fn assert_denied(response: ClientResponse, expected: &str) {
+        match response {
+            ClientResponse::PamAuthenticateStepResponse(PamAuthResponse::Denied(message)) => {
+                assert_eq!(message, expected);
+            }
+            other => panic!("expected denied response, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn response_is_decoded_at_exact_buffer_multiples() {
+        for target_len in [1024, 2048] {
+            let (response, expected) = padded_response(target_len);
+            let (client_stream, mut server_stream) = UnixStream::pair().unwrap();
+            let (release_tx, release_rx) = mpsc::channel();
+
+            let server = thread::spawn(move || {
+                read_request(&mut server_stream);
+                server_stream.write_all(&response).unwrap();
+                server_stream.flush().unwrap();
+                release_rx.recv_timeout(Duration::from_secs(3)).unwrap();
+            });
+
+            let mut client = DaemonClientBlocking {
+                stream: client_stream,
+            };
+            let result = client.call_and_wait(&ClientRequest::Status, 1);
+            release_tx.send(()).unwrap();
+            server.join().unwrap();
+
+            assert_denied(result.unwrap(), &expected);
+        }
+    }
+
+    #[test]
+    fn fragmented_response_is_read_until_json_is_complete() {
+        let response = serde_json::to_vec(&ClientResponse::PamAuthenticateStepResponse(
+            PamAuthResponse::Denied("fragmented".to_string()),
+        ))
+        .unwrap();
+        let split = response.len() / 2;
+        let (client_stream, mut server_stream) = UnixStream::pair().unwrap();
+        let (release_tx, release_rx) = mpsc::channel();
+
+        let server = thread::spawn(move || {
+            read_request(&mut server_stream);
+            server_stream.write_all(&response[..split]).unwrap();
+            server_stream.flush().unwrap();
+            thread::sleep(Duration::from_millis(20));
+            server_stream.write_all(&response[split..]).unwrap();
+            server_stream.flush().unwrap();
+            release_rx.recv_timeout(Duration::from_secs(3)).unwrap();
+        });
+
+        let mut client = DaemonClientBlocking {
+            stream: client_stream,
+        };
+        let result = client.call_and_wait(&ClientRequest::Status, 1);
+        release_tx.send(()).unwrap();
+        server.join().unwrap();
+
+        assert_denied(result.unwrap(), "fragmented");
+    }
+
+    #[test]
+    fn truncated_response_fails_when_peer_closes() {
+        let response = serde_json::to_vec(&ClientResponse::PamAuthenticateStepResponse(
+            PamAuthResponse::Denied("truncated".to_string()),
+        ))
+        .unwrap();
+        let (client_stream, mut server_stream) = UnixStream::pair().unwrap();
+
+        let server = thread::spawn(move || {
+            read_request(&mut server_stream);
+            server_stream.write_all(&response[..response.len() - 1]).unwrap();
+        });
+
+        let mut client = DaemonClientBlocking {
+            stream: client_stream,
+        };
+        let error = client
+            .call_and_wait(&ClientRequest::Status, 1)
+            .unwrap_err();
+        server.join().unwrap();
+
+        assert_eq!(
+            error.downcast_ref::<std::io::Error>().unwrap().kind(),
+            ErrorKind::UnexpectedEof
+        );
+    }
+
+    #[test]
+    fn incomplete_response_honors_wall_clock_timeout() {
+        let (client_stream, mut server_stream) = UnixStream::pair().unwrap();
+        let (release_tx, release_rx) = mpsc::channel();
+
+        let server = thread::spawn(move || {
+            read_request(&mut server_stream);
+            release_rx.recv_timeout(Duration::from_secs(3)).unwrap();
+        });
+
+        let mut client = DaemonClientBlocking {
+            stream: client_stream,
+        };
+        let error = client
+            .call_and_wait(&ClientRequest::Status, 1)
+            .unwrap_err();
+        release_tx.send(()).unwrap();
+        server.join().unwrap();
+
+        assert_eq!(
+            error.downcast_ref::<std::io::Error>().unwrap().kind(),
+            ErrorKind::TimedOut
+        );
+    }
+
+    #[test]
+    fn connection_can_be_reused_for_successive_responses() {
+        let (client_stream, mut server_stream) = UnixStream::pair().unwrap();
+
+        let server = thread::spawn(move || {
+            for response in [ClientResponse::Ok, ClientResponse::Error] {
+                read_request(&mut server_stream);
+                server_stream
+                    .write_all(&serde_json::to_vec(&response).unwrap())
+                    .unwrap();
+                server_stream.flush().unwrap();
+            }
+        });
+
+        let mut client = DaemonClientBlocking {
+            stream: client_stream,
+        };
+        assert!(matches!(
+            client.call_and_wait(&ClientRequest::Status, 1).unwrap(),
+            ClientResponse::Ok
+        ));
+        assert!(matches!(
+            client.call_and_wait(&ClientRequest::Status, 1).unwrap(),
+            ClientResponse::Error
+        ));
+        server.join().unwrap();
     }
 }
 
@@ -165,44 +334,40 @@ impl DaemonClientBlocking {
 
         // Now wait on the response.
         let start = SystemTime::now();
-        let mut read_started = false;
         let mut data = Vec::with_capacity(1024);
-        let mut counter = 0;
 
         loop {
             let mut buffer = [0; 1024];
             let durr = SystemTime::now().duration_since(start).map_err(Box::new)?;
             if durr > timeout {
-                error!("Socket timeout");
-                // timed out, not enough activity.
-                break;
+                error!("Socket timeout waiting for daemon response");
+                return Err(Box::new(IoError::new(
+                    ErrorKind::TimedOut,
+                    "socket timeout",
+                )));
             }
-            // Would be a lot easier if we had peek ...
-            // https://github.com/rust-lang/rust/issues/76923
             match self.stream.read(&mut buffer) {
                 Ok(0) => {
-                    if read_started {
-                        debug!("read_started true, we have completed");
-                        // We're done, no more bytes.
-                        break;
-                    } else {
-                        debug!("Waiting ...");
-                        // Still can wait ...
-                        continue;
-                    }
+                    error!("Socket closed before a complete response was received");
+                    return Err(Box::new(IoError::new(
+                        ErrorKind::UnexpectedEof,
+                        "socket closed before a complete response was received",
+                    )));
                 }
                 Ok(count) => {
-                    data.extend_from_slice(&buffer);
-                    counter += count;
-                    if count == 1024 {
-                        debug!("Filled 1024 bytes, looping ...");
-                        // We have filled the buffer, we need to copy and loop again.
-                        read_started = true;
-                        continue;
-                    } else {
-                        debug!("Filled {} bytes, complete", count);
-                        // We have a partial read, so we are complete.
-                        break;
+                    data.extend_from_slice(&buffer[..count]);
+                    match serde_json::from_slice::<ClientResponse>(&data) {
+                        Ok(response) => return Ok(response),
+                        Err(e) if e.is_eof() => {
+                            debug!(
+                                "Read {} bytes; waiting for the rest of the JSON response",
+                                count
+                            );
+                        }
+                        Err(e) => {
+                            error!("socket encoding error -> {:?}", e);
+                            return Err(Box::new(IoError::other("JSON decode error")));
+                        }
                     }
                 }
                 Err(e) if e.kind() == ErrorKind::WouldBlock || e.kind() == ErrorKind::TimedOut => {
@@ -217,26 +382,13 @@ impl DaemonClientBlocking {
                             "socket timeout",
                         )));
                     }
-                    continue;
                 }
                 Err(e) => {
                     error!("Stream read failure from {:?} -> {:?}", &self.stream, e);
-                    // Failure!
                     return Err(Box::new(e));
                 }
             }
         }
-
-        // Extend from slice fills with 0's, so we need to truncate now.
-        data.truncate(counter);
-
-        // Now attempt to decode.
-        let cr = serde_json::from_slice::<ClientResponse>(data.as_slice()).map_err(|e| {
-            error!("socket encoding error -> {:?}", e);
-            Box::new(IoError::other("JSON decode error"))
-        })?;
-
-        Ok(cr)
     }
 
     /// This writes the request to the existing socket and returns immediately,
