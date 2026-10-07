@@ -1,0 +1,40 @@
+name: Check stable releases and packages
+run-name: Check stable releases and packages
+
+on:
+  schedule:
+    - cron: "17,47 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: write
+
+concurrency:
+  group: stable-release-scan
+  cancel-in-progress: false
+
+jobs:
+  scan:
+    if: github.repository == 'himmelblau-idm/himmelblau' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Checkout trusted tooling and repository history
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Test stable release scanning and package selection
+        env:
+          PYTHONDONTWRITEBYTECODE: "1"
+        run: |
+          python3 .github/scripts/test_stable_release_scan.py
+          python3 .github/scripts/test_stable_packages.py
+      - name: Reconcile the latest stable releases
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          CLOUDSMITH_API_KEY: ${{ secrets.CLOUDSMITH_PACKAGE_PUBLISHER }}
+          PYTHONDONTWRITEBYTECODE: "1"
+        run: python3 .github/scripts/stable_release_scan.py
