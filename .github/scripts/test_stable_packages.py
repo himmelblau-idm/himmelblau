@@ -37,11 +37,13 @@ class SourceSelectionTests(unittest.TestCase):
             '[package]\nname="himmelblaud"\n[package.metadata.deb]\nname="himmelblau"\n'
             '[package.metadata.generate-rpm]\nname="himmelblau"\n')
         (self.repo / "Makefile").write_text(
-            'DEB_TARGETS := ubuntu24.04\nRPM_TARGETS := rocky8 rawhide\nSLE_TARGETS := sle15sp7\n')
+            'DEB_TARGETS := ubuntu24.04\nRPM_TARGETS := rocky8 rawhide\n'
+            'SLE_TARGETS := sle15sp6 sle15sp7\n')
         (self.repo / "scripts/gen_dockerfiles.py").write_text(
             'DISTS = {"ubuntu24.04": {"family": "deb"}, '
             '"rocky8": {"family": "rpm", "arm64": False}, '
             '"rawhide": {"family": "rpm"}, '
+            '"sle15sp6": {"family": "zypper"}, '
             '"sle15sp7": {"family": "zypper", "scc": True}}\n'
             'PACKAGES = [("himmelblaud", "src/daemon", True)]\n'
             'raise RuntimeError("configuration inspection must not execute this")\n')
@@ -71,6 +73,25 @@ class SourceSelectionTests(unittest.TestCase):
         self.assertEqual({s["architecture"] for s in rawhide}, {"amd64", "arm64"})
         self.assertEqual({s["destination"] for s in rawhide}, {"fedora/46"})
         self.assertEqual(next(s for s in specs if s["distro"] == "sle15sp7")["destination"], "sles/15")
+        self.assertNotIn("sle15sp6", {s["distro"] for s in specs})
+
+    def test_retired_distro_request_is_an_empty_matrix(self):
+        self.assertEqual(sp.matrix("3.1.14", distro="sle15sp6"), {"include": []})
+
+    def test_retired_distro_prepare_skips_cleanly(self):
+        with patch.dict(os.environ, {"GITHUB_EVENT_NAME": "workflow_dispatch", "RELEASE_TAG": "3.1.14",
+                                  "REQUESTED_DISTRO": "sle15sp6", "REQUESTED_REVISION": "",
+                                  "REQUESTED_ARCHITECTURE": "all"}), \
+             patch.object(sp, "output") as output, patch.object(sp, "summary") as summary:
+            sp.prepare()
+        output.assert_called_once_with("enabled", "false")
+        summary.assert_called_once_with("No supported build targets selected; skipping.")
+
+    def test_unmapped_active_target_still_fails(self):
+        destinations = {key: value for key, value in sp.DESTINATIONS.items() if key != "sle15sp7"}
+        with patch.object(sp, "DESTINATIONS", destinations), \
+             self.assertRaisesRegex(ValueError, "No approved native Cloudsmith destination for sle15sp7"):
+            sp.matrix("3.1.14")
 
     def test_new_native_cloudsmith_destinations(self):
         self.assertEqual(sp.DESTINATIONS["rawhide"], "fedora/46")
