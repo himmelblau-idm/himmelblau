@@ -4054,13 +4054,17 @@ impl IdProvider for HimmelblauProvider {
                         // ROPC validates the password, but the enrolled-token
                         // request can still require MFA for a different client.
                         debug!("ROPC succeeded - checking enrolled-token requirements");
-                        let token2 = enroll_and_obtain_enrolled_token!(token, Some(cred.clone()), {
-                            info!("Enrolled-token acquisition requires MFA; continuing with ForceMFA.");
-                            // Fall through to the existing fresh MFA flow below.
-                            // Do not validate/cache the ROPC token or try another
-                            // cached token after this downstream MFA demand.
-                            break 'password_only;
-                        });
+                        let token2 = enroll_and_obtain_enrolled_token!(
+                            token,
+                            Some(cred.clone()),
+                            {
+                                info!("Enrolled-token acquisition requires MFA; continuing with ForceMFA.");
+                                // Fall through to the existing fresh MFA flow below.
+                                // Do not validate/cache the ROPC token or try another
+                                // cached token after this downstream MFA demand.
+                                break 'password_only;
+                            }
+                        );
                         return match self
                             .token_validate(account_id, &token2, None, PrtCacheUpdate::Fresh)
                             .await
