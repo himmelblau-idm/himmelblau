@@ -89,10 +89,13 @@ pub trait CacheTxn {
     fn get_account(&mut self, account_id: &Id) -> Result<Option<(UserToken, u64)>, CacheError>;
 
     fn get_accounts(&mut self) -> Result<Vec<UserToken>, CacheError>;
+    fn get_unexpired_accounts(&mut self, now: u64) -> Result<Vec<UserToken>, CacheError>;
 
     fn update_account(&mut self, account: &UserToken, expire: u64) -> Result<(), CacheError>;
 
     fn delete_account(&mut self, a_uuid: Uuid) -> Result<(), CacheError>;
+
+    fn clear_account_password(&mut self, a_uuid: Uuid) -> Result<(), CacheError>;
 
     fn update_account_password(
         &mut self,
@@ -765,6 +768,24 @@ impl<'a> CacheTxn for DbTxn<'a> {
             .collect())
     }
 
+    fn get_unexpired_accounts(&mut self, now: u64) -> Result<Vec<UserToken>, CacheError> {
+        let now = i64::try_from(now).map_err(|_| CacheError::Parse)?;
+        let mut stmt = self
+            .conn
+            .prepare("SELECT token FROM account_t WHERE expiry > ?1")
+            .map_err(|e| self.sqlite_error("select prepare", &e))?;
+        let rows = stmt
+            .query_map([now], |row| row.get::<_, Vec<u8>>(0))
+            .map_err(|e| self.sqlite_error("query_map", &e))?;
+        let data: Result<Vec<_>, _> = rows
+            .map(|row| row.map_err(|e| self.sqlite_error("map", &e)))
+            .collect();
+        Ok(data?
+            .into_iter()
+            .filter_map(|token| serde_json::from_slice(&token).ok())
+            .collect())
+    }
+
     fn update_account(&mut self, account: &UserToken, expire: u64) -> Result<(), CacheError> {
         let data = serde_json::to_vec(account).map_err(|e| {
             error!("update_account json error -> {:?}", e);
@@ -879,6 +900,16 @@ impl<'a> CacheTxn for DbTxn<'a> {
             )
             .map(|_| ())
             .map_err(|e| self.sqlite_error("account_t delete", &e))
+    }
+
+    fn clear_account_password(&mut self, a_uuid: Uuid) -> Result<(), CacheError> {
+        self.conn
+            .execute(
+                "UPDATE account_t SET password = NULL WHERE uuid = ?1",
+                [a_uuid.as_hyphenated().to_string()],
+            )
+            .map_err(|e| self.sqlite_error("clear account_t password", &e))
+            .map(|_| ())
     }
 
     fn update_account_password(

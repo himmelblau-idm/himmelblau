@@ -1532,7 +1532,7 @@ impl IdProvider for HimmelblauProvider {
                                         if let Some(old_token) = old_token {
                                             token.displayname.clone_from(&old_token.displayname)
                                         }
-                                        return Ok(UserTokenState::Update(token));
+                                        return Ok(UserTokenState::LookupOnly(token));
                                     }
                                     Err(e) => {
                                         error!(?e, "Failed to obtain token from user object using confidential client");
@@ -1576,7 +1576,9 @@ impl IdProvider for HimmelblauProvider {
                         if apply_policy {
                             auth_options.push(AuthOption::IntuneEnable);
                         }
-                        // Check if the user exists
+                        // This existence probe can report a false positive.
+                        // Never cache the locally fabricated identity it
+                        // permits us to return.
                         let auth_init = net_down_check!(
                             self.client
                                 .lock()
@@ -1592,8 +1594,8 @@ impl IdProvider for HimmelblauProvider {
                             error!(?e, "Failed checking user existence");
                             IdpError::BadRequest
                         })? {
-                            // Generate a UserToken, with invalid uuid. We can
-                            // only fetch this from an authenticated token.
+                            // Generate a lookup-only UserToken. Its real UUID
+                            // requires a provider-backed token.
                             let id_attr_map = self.config.lock().await.get_id_attr_map();
                             let (uid, gid) = match idmap_cache.get_user_by_name(&account_id) {
                                 Some(user) => {
@@ -1649,7 +1651,7 @@ impl IdProvider for HimmelblauProvider {
                                 uuid: fake_uuid,
                                 gidnumber: uid,
                             }];
-                            return Ok(UserTokenState::Update(UserToken {
+                            return Ok(UserTokenState::LookupOnly(UserToken {
                                 name: account_id.clone(),
                                 spn: account_id.clone(),
                                 uuid: fake_uuid,

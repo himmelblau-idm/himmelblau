@@ -62,6 +62,8 @@ pub enum UserTokenState {
 
     /// Update the cache state with the data found in this UserToken.
     Update(UserToken),
+    /// Return a fabricated identity for lookup without persisting it.
+    LookupOnly(UserToken),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
