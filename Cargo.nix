@@ -9188,9 +9188,9 @@ rec {
       };
       "image" = rec {
         crateName = "image";
-        version = "0.25.10";
+        version = "0.25.6";
         edition = "2021";
-        sha256 = "0131b9fsd5grxf3lchfs2ci0rg8ga2mh1ygai7k2zh1k8cwq1aw5";
+        sha256 = "06i522bq4qlwylwnlmcn0sgqg72swwan544aldbhi0drwr66cdfv";
         authors = [
           "The image-rs Developers"
         ];
@@ -9203,10 +9203,6 @@ rec {
           {
             name = "byteorder-lite";
             packageId = "byteorder-lite";
-          }
-          {
-            name = "moxcms";
-            packageId = "moxcms";
           }
           {
             name = "num-traits";
@@ -9231,7 +9227,7 @@ rec {
           "nasm" = [ "ravif?/asm" ];
           "png" = [ "dep:png" ];
           "qoi" = [ "dep:qoi" ];
-          "rayon" = [ "dep:rayon" "ravif?/threading" "exr?/rayon" ];
+          "rayon" = [ "dep:rayon" "ravif?/threading" ];
           "serde" = [ "dep:serde" ];
           "tiff" = [ "dep:tiff" ];
           "webp" = [ "dep:image-webp" ];
@@ -11444,45 +11440,6 @@ rec {
         ];
         features = {
         };
-      };
-      "moxcms" = rec {
-        crateName = "moxcms";
-        version = "0.8.1";
-        edition = "2024";
-        sha256 = "0jz4fd5f7pdn1rngqc96lxriqjkym1lswdhdbjr037s8p9ac31dv";
-        authors = [
-          "Radzivon Bartoshyk"
-        ];
-        dependencies = [
-          {
-            name = "num-traits";
-            packageId = "num-traits";
-          }
-          {
-            name = "pxfm";
-            packageId = "pxfm";
-          }
-        ];
-        features = {
-          "any_to_any" = [ "lut" ];
-          "avx512_shaper_fixed_point_paths" = [ "avx512" ];
-          "avx512_shaper_optimized_paths" = [ "avx512" ];
-          "avx_luts" = [ "lut" "avx" ];
-          "avx_shaper_fixed_point_paths" = [ "avx" ];
-          "avx_shaper_optimized_paths" = [ "avx" ];
-          "avx_shaper_paths" = [ "avx" ];
-          "default" = [ "avx_shaper_paths" "sse_shaper_paths" "neon_shaper_paths" "avx_shaper_fixed_point_paths" "avx_luts" "sse_shaper_fixed_point_paths" "sse_luts" "neon_shaper_fixed_point_paths" "neon_luts" "lut" ];
-          "neon_luts" = [ "lut" "neon" ];
-          "neon_shaper_fixed_point_paths" = [ "neon" ];
-          "neon_shaper_optimized_paths" = [ "neon" ];
-          "neon_shaper_paths" = [ "neon" ];
-          "options" = [ "lut" ];
-          "sse_luts" = [ "lut" "sse" ];
-          "sse_shaper_fixed_point_paths" = [ "sse" ];
-          "sse_shaper_optimized_paths" = [ "sse" ];
-          "sse_shaper_paths" = [ "sse" ];
-        };
-        resolvedDefaultFeatures = [ "avx" "avx_luts" "avx_shaper_fixed_point_paths" "avx_shaper_paths" "default" "lut" "neon" "neon_luts" "neon_shaper_fixed_point_paths" "neon_shaper_paths" "sse" "sse_luts" "sse_shaper_fixed_point_paths" "sse_shaper_paths" ];
       };
       "murmur3" = rec {
         crateName = "murmur3";
@@ -13935,16 +13892,16 @@ rec {
       };
       "png" = rec {
         crateName = "png";
-        version = "0.18.1";
-        edition = "2021";
-        sha256 = "0qca282xp8a6d7mikxrwji3f52mjn4vnqxz2v9iz5adj665rnxk0";
+        version = "0.17.16";
+        edition = "2018";
+        sha256 = "09kmkms9fmkbkarw0lnf0scqvjwwg3r7riddag0i3q39r0pil5c2";
         authors = [
           "The image-rs Developers"
         ];
         dependencies = [
           {
             name = "bitflags";
-            packageId = "bitflags 2.9.1";
+            packageId = "bitflags 1.3.2";
           }
           {
             name = "crc32fast";
@@ -13966,7 +13923,6 @@ rec {
         ];
         features = {
           "unstable" = [ "crc32fast/nightly" ];
-          "zlib-rs" = [ "flate2/zlib-rs" ];
         };
       };
       "polling" = rec {
@@ -14429,16 +14385,6 @@ rec {
           "unicase" = [ "dep:unicase" ];
         };
         resolvedDefaultFeatures = [ "default" "idna" "punycode" ];
-      };
-      "pxfm" = rec {
-        crateName = "pxfm";
-        version = "0.1.30";
-        edition = "2024";
-        sha256 = "1slrnbxd0nc96sny6x50ss1sm9ci0gig0fp1w8mw0pkgm5prapfm";
-        authors = [
-          "Radzivon Bartoshyk"
-        ];
-
       };
       "qr-greeter" = rec {
         crateName = "qr-greeter";
