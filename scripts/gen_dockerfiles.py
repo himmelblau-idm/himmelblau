@@ -71,7 +71,7 @@ SELINUX_PKGS = ["policycoreutils-devel", "selinux-policy-targeted"]
 AUTHSELECT_PKGS = ["authselect"]
 
 DEB_PKGS = COMMON + [p for p, _ in PKG_PAIRS if p]
-RPM_PKGS = COMMON + AUTHSELECT_PKGS + [q for _, q in PKG_PAIRS if q]
+RPM_PKGS = COMMON + AUTHSELECT_PKGS + ["rpm-build"] + [q for _, q in PKG_PAIRS if q]
 
 # enable caching of apt packages: https://docs.docker.com/build/cache/optimize/#use-cache-mounts
 APT_BOOTSTRAP = """\
