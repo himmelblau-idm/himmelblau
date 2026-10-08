@@ -1,4 +1,4 @@
-.TH HIMMELBLAU.CONF "5" "September 2026" "Himmelblau Configuration" "File Formats"
+.TH HIMMELBLAU.CONF "5" "October 2026" "Himmelblau Configuration" "File Formats"
 .SH NAME
 himmelblau.conf \- Configuration file for Himmelblau, enabling Azure Entra ID authentication on Linux.
 
@@ -580,17 +580,6 @@ Default: named
 
 .P
 Example: initgroups_mode = <named|full>
-
-.TP
-.B local_groups_reconcile_interval
-.RE
-The interval in seconds for periodically reconciling configured local group membership for cached Entra ID users. This keeps the configured local sudo group in sync with sudo_groups between login attempts. Set to 0 to disable periodic reconciliation.
-
-.P
-Default: 300
-
-.P
-Example: local_groups_reconcile_interval = 300
 
 .TP
 .B sudo_groups

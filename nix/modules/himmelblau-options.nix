@@ -39,6 +39,15 @@ in
         to authenticate against any standards-compliant OIDC provider, rather than
         using the built-in Microsoft Entra ID defaults.
         
+        Himmelblau prefers native Interaction Code authentication when supported by the
+        configured client. It probes issuers with Okta metadata or hostname hints,
+        issuers advertising the interaction_code grant, and issuers without a usable
+        device authorization flow. Otherwise it uses the existing OIDC device flow.
+        Selection lasts until daemon restart. Temporary outages defer selection.
+        The absence of interaction_code in discovery does not prove it is disabled.
+        Use oidc_force_interaction_code to require native authentication and
+        oidc_redirect_uri to configure its registered redirect URI.
+        
         If
         **enable_hello**
         is set to true (the default), the client application must allow refresh tokens
@@ -62,7 +71,7 @@ in
         If this option is not set, Himmelblau defaults to its native Microsoft Entra ID
         authentication flow.
         
-        If
+        When the standard OIDC backend is selected, if
         **allow_console_password_only**
         is enabled and the OIDC provider advertises the
         **password**
@@ -74,6 +83,37 @@ in
         grant continue to use the device flow.
       '';
       example = "https://login.microsoftonline.com/0656e57d-a8fc-4aa4-8366-8045787115ca/v2.0";
+    };
+
+    oidc_force_interaction_code = mkOption {
+      type = types.nullOr (types.bool);
+      default = false;
+      description = ''
+        Require native Interaction Code (IDX) authentication for the configured OIDC
+        issuer. When true, Himmelblau never falls back to device authorization or the
+        browser orchestrator. The server must implement the compatible IDX protocol,
+        and the configured public client must permit Interaction Code.
+        
+        When false, Himmelblau probes likely compatible providers (including Okta) and
+        issuers without device authorization, then falls back quietly when native
+        authentication is unavailable. Selection is fixed until daemon restart;
+        selection during a network outage is deferred until connectivity returns.
+      '';
+    };
+
+    oidc_redirect_uri = mkOption {
+      type = types.nullOr (types.str);
+      default = "http://localhost:8765/callback";
+      description = ''
+        Redirect URI supplied to native OIDC Interaction Code requests. Register this
+        exact URI on the public OIDC application identified by app_id, or configure
+        the URI already registered there. A URI without a fragment or embedded
+        credentials is required.
+        
+        Native PAM flows do not open a callback listener. Policies requiring a browser
+        redirect or external callback must offer another supported native method;
+        otherwise authentication reports that the external step is unsupported.
+      '';
     };
 
     oidc_device_authorization_endpoint = mkOption {
@@ -367,7 +407,9 @@ in
       type = types.nullOr (types.str);
       default = null;
       description = ''
-        Specifies a preferred MFA (Multi-Factor Authentication) method to use during authentication. When set, Himmelblau will attempt to use this specific MFA method instead of the default method configured in the user's Entra ID profile. If not set or if the specified method is not available for the user, the default MFA method will be used.
+        Specifies a preferred MFA (Multi-Factor Authentication) method to use during authentication. For Microsoft Entra ID, Himmelblau requests the named Entra method. For native Okta authentication, this option also accepts Okta remediation or method identifiers, such as challenge-authenticator, push, or otp. An exact Okta identifier takes precedence over the compatibility mappings below.
+        
+        When an Entra method has an Okta equivalent, Himmelblau maps it automatically: PhoneAppNotification and CompanionAppsNotification select Okta Verify push, while PhoneAppOTP selects an Okta verification code. If the configured value is unavailable or cannot be mapped, Himmelblau logs an error and continues with the identity provider's first policy-compliant method.
         
         Valid values include:
         
@@ -386,6 +428,12 @@ in
         - TwoWayVoiceOffice - Phone call to office
         
         - ConsolidatedTelephony - Call or text message
+        
+        - challenge-authenticator - Okta IDX authenticator challenge remediation
+        
+        - push - Okta Verify push notification
+        
+        - otp - Okta Verify verification code
       '';
       example = "TwoWayVoiceMobile";
     };
@@ -423,15 +471,6 @@ in
         - full -- return every cached group GID, including ones with no NSS name. Use this when debugging a missing membership.
       '';
       example = "named";
-    };
-
-    local_groups_reconcile_interval = mkOption {
-      type = types.nullOr (types.ints.unsigned);
-      default = 300;
-      description = ''
-        The interval in seconds for periodically reconciling configured local group membership for cached Entra ID users. This keeps the configured local sudo group in sync with sudo_groups between login attempts. Set to 0 to disable periodic reconciliation.
-      '';
-      example = 300;
     };
 
     sudo_groups = mkOption {
@@ -495,6 +534,11 @@ in
       type = types.nullOr (types.str);
       default = null;
       description = ''
+        When oidc_issuer_url is configured, this is the OIDC public client identifier.
+        Native Interaction Code authentication requires that grant to be enabled for
+        the authorization server and application, and oidc_redirect_uri to be registered
+        on the application. No client secret is used.
+        
         Specifies the Azure Entra ID application (client) ID used by Himmelblau for directory operations such as reading extended attributes (for example,
         the
         **gidNumber**
