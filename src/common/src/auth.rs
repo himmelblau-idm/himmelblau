@@ -21,7 +21,9 @@ use crate::hello_pin_complexity::{is_simple_pin, meets_intune_pin_policy};
 use crate::i18n::{self, tr, tr_fmt, trn_fmt};
 use crate::unix_proto::{ClientRequest, ClientResponse, PamAuthRequest, PamAuthResponse};
 use regex::{Match, Regex};
+use std::future::Future;
 use std::io::{self, ErrorKind, Write};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use lazy_static::lazy_static;
@@ -51,8 +53,10 @@ use libwebauthn::webauthn::WebAuthn;
 use rpassword::prompt_password;
 use serde_json::{json, to_string as json_to_string};
 use sha2::{Digest, Sha256};
-use std::sync::mpsc::{channel, RecvError, Sender};
+use std::sync::mpsc::{channel, Receiver, RecvTimeoutError, Sender, TryRecvError};
 use tokio::runtime::Runtime;
+
+const FIDO_INTERRUPT_POLL_INTERVAL: Duration = Duration::from_millis(100);
 
 #[macro_export]
 macro_rules! auth_handle_mfa_resp {
@@ -117,14 +121,29 @@ impl MessagePrinter for SimpleMessagePrinter {
     }
 }
 
-#[allow(clippy::expect_used)]
 pub(crate) fn fido_status_check(
     msg_printer: Arc<dyn MessagePrinter>,
     presence_prompt: String,
 ) -> Sender<StatusUpdate> {
+    spawn_fido_status_check(
+        msg_printer,
+        presence_prompt,
+        Arc::new(AtomicBool::new(false)),
+    )
+    .0
+}
+
+fn spawn_fido_status_check(
+    msg_printer: Arc<dyn MessagePrinter>,
+    presence_prompt: String,
+    cancelled: Arc<AtomicBool>,
+) -> (Sender<StatusUpdate>, thread::JoinHandle<()>) {
     let (status_tx, status_rx) = channel::<StatusUpdate>();
-    thread::spawn(move || loop {
-        match status_rx.recv() {
+    let worker = thread::spawn(move || loop {
+        if cancelled.load(Ordering::Acquire) {
+            return;
+        }
+        match status_rx.recv_timeout(FIDO_INTERRUPT_POLL_INTERVAL) {
             Ok(StatusUpdate::InteractiveManagement(..)) => {
                 error!("Fido STATUS: InteractiveManagement: This can't happen when doing non-interactive usage");
                 break;
@@ -139,7 +158,13 @@ pub(crate) fn fido_status_check(
             Ok(StatusUpdate::PinUvError(StatusPinUv::PinRequired(sender))) => {
                 match msg_printer.prompt_echo_off(&(tr("Fido PIN:") + " ")) {
                     Some(pin) => {
-                        sender.send(Pin::new(&pin)).expect("Failed to send PIN");
+                        if cancelled.load(Ordering::Acquire) {
+                            break;
+                        }
+                        if let Err(e) = sender.send(Pin::new(&pin)) {
+                            error!("Failed to send FIDO PIN: {:?}", e);
+                            break;
+                        }
                         continue;
                     }
                     None => {
@@ -160,7 +185,13 @@ pub(crate) fn fido_status_check(
                 msg_printer.print_text(&msg);
                 match msg_printer.prompt_echo_off(&(tr("Fido PIN:") + " ")) {
                     Some(pin) => {
-                        sender.send(Pin::new(&pin)).expect("Failed to send PIN");
+                        if cancelled.load(Ordering::Acquire) {
+                            break;
+                        }
+                        if let Err(e) = sender.send(Pin::new(&pin)) {
+                            error!("Failed to send FIDO PIN: {:?}", e);
+                            break;
+                        }
                         continue;
                     }
                     None => {
@@ -207,16 +238,104 @@ pub(crate) fn fido_status_check(
                 msg_printer.print_error(&tr("Unexpected select device notice"));
                 break;
             }
-            Err(RecvError) => {
+            Err(RecvTimeoutError::Timeout) => continue,
+            Err(RecvTimeoutError::Disconnected) => {
                 debug!("Fido STATUS: end");
                 return;
             }
         }
     });
-    status_tx
+    (status_tx, worker)
 }
 
-#[allow(clippy::unwrap_used)]
+struct FidoUsbSession {
+    manager: AuthenticatorService,
+    status: Sender<StatusUpdate>,
+    worker: Option<thread::JoinHandle<()>>,
+    cancelled: Arc<AtomicBool>,
+    started: bool,
+}
+
+impl FidoUsbSession {
+    fn new(
+        manager: AuthenticatorService,
+        msg_printer: Arc<dyn MessagePrinter>,
+        presence_prompt: String,
+    ) -> Self {
+        let cancelled = Arc::new(AtomicBool::new(false));
+        let (status, worker) =
+            spawn_fido_status_check(msg_printer, presence_prompt, cancelled.clone());
+        Self {
+            manager,
+            status,
+            worker: Some(worker),
+            cancelled,
+            started: false,
+        }
+    }
+
+    async fn sign(
+        &mut self,
+        timeout_ms: u64,
+        args: SignArgs,
+    ) -> Result<authenticator::SignResult, PamResultCode> {
+        let (sign_tx, sign_rx) = channel();
+        let cancelled = self.cancelled.clone();
+        let callback = StateCallback::new(Box::new(move |rv| {
+            if let Err(e) = sign_tx.send(rv) {
+                if cancelled.load(Ordering::Acquire) {
+                    debug!("Discarding cancelled FIDO assertion result");
+                } else {
+                    error!("Failed sending FIDO assertion result: {:?}", e);
+                }
+            }
+        }));
+        self.manager
+            .sign(timeout_ms, args, self.status.clone(), callback)
+            .map_err(|e| {
+                error!("Failed to start USB FIDO authentication: {:?}", e);
+                PamResultCode::PAM_CRED_INSUFFICIENT
+            })?;
+        self.started = true;
+        receive_fido_result(sign_rx).await?.map_err(|e| {
+            error!("USB FIDO authentication failed: {:?}", e);
+            PamResultCode::PAM_CRED_INSUFFICIENT
+        })
+    }
+}
+
+impl Drop for FidoUsbSession {
+    fn drop(&mut self) {
+        self.cancelled.store(true, Ordering::Release);
+        if self.started {
+            if let Err(e) = self.manager.cancel() {
+                error!("Failed to cancel USB FIDO authentication: {:?}", e);
+            }
+        }
+        // Finish all PAM callbacks before returning control to the PAM caller.
+        if let Some(worker) = self.worker.take() {
+            if let Err(e) = worker.join() {
+                error!("FIDO status worker panicked: {:?}", e);
+            }
+        }
+    }
+}
+
+async fn receive_fido_result<T>(receiver: Receiver<T>) -> Result<T, PamResultCode> {
+    loop {
+        match receiver.try_recv() {
+            Ok(result) => return Ok(result),
+            Err(TryRecvError::Empty) => {
+                tokio::time::sleep(FIDO_INTERRUPT_POLL_INTERVAL).await;
+            }
+            Err(TryRecvError::Disconnected) => {
+                error!("FIDO assertion result channel disconnected");
+                return Err(PamResultCode::PAM_CRED_INSUFFICIENT);
+            }
+        }
+    }
+}
+
 pub fn fido_auth(
     msg_printer: Arc<dyn MessagePrinter>,
     fido_challenge: String,
@@ -225,18 +344,25 @@ pub fn fido_auth(
     prompt: &str,
     presence_prompt: &str,
 ) -> Result<String, PamResultCode> {
-    fido_auth_inner(
-        msg_printer,
-        fido_challenge,
-        fido_allow_list,
+    let rt = Runtime::new().map_err(|e| {
+        error!("Failed to create FIDO runtime: {:?}", e);
+        PamResultCode::PAM_AUTH_ERR
+    })?;
+    rt.block_on(wait_for_fido(
+        fido_auth_inner(
+            msg_printer,
+            fido_challenge,
+            fido_allow_list,
+            timeout_ms,
+            prompt,
+            presence_prompt,
+            None,
+        ),
         timeout_ms,
-        prompt,
-        presence_prompt,
-        None,
-    )
+    ))
 }
 
-fn fido_auth_inner(
+async fn fido_auth_inner(
     msg_printer: Arc<dyn MessagePrinter>,
     fido_challenge: String,
     fido_allow_list: Vec<String>,
@@ -274,7 +400,7 @@ fn fido_auth_inner(
     })?;
 
     // Create a channel for status updates
-    let status_tx = fido_status_check(msg_printer, presence_prompt.to_string());
+    let mut session = FidoUsbSession::new(manager, msg_printer, presence_prompt.to_string());
 
     let allow_list: Vec<PublicKeyCredentialDescriptor> = fido_allow_list
         .into_iter()
@@ -304,31 +430,7 @@ fn fido_auth_inner(
         use_ctap1_fallback: false,
     };
 
-    // Perform authentication
-    let (sign_tx, sign_rx) = channel();
-    let callback = StateCallback::new(Box::new(move |rv| {
-        if let Err(e) = sign_tx.send(rv) {
-            error!("Failed sending FIDO assertion result: {:?}", e);
-        }
-    }));
-
-    manager
-        .sign(timeout_ms, ctap_args, status_tx.clone(), callback)
-        .map_err(|e| {
-            error!("{:?}", e);
-            PamResultCode::PAM_CRED_INSUFFICIENT
-        })?;
-
-    let assertion_result = sign_rx
-        .recv()
-        .map_err(|e| {
-            error!("{:?}", e);
-            PamResultCode::PAM_CRED_INSUFFICIENT
-        })?
-        .map_err(|e| {
-            error!("{:?}", e);
-            PamResultCode::PAM_CRED_INSUFFICIENT
-        })?;
+    let assertion_result = session.sign(timeout_ms, ctap_args).await?;
 
     let credential_id = assertion_result
         .assertion
@@ -364,6 +466,86 @@ enum BluetoothState {
     PoweredOn,
     PoweredOff,
     NoAdapter,
+}
+
+fn check_fido_interrupt() -> Result<(), PamResultCode> {
+    let mut pending = std::mem::MaybeUninit::<libc::sigset_t>::uninit();
+    // Observe, but do not consume, signals blocked by the PAM host (e.g. sudo).
+    if unsafe { libc::sigpending(pending.as_mut_ptr()) } != 0 {
+        error!(
+            "Failed to inspect pending authentication signals: {}",
+            io::Error::last_os_error()
+        );
+        return Err(PamResultCode::PAM_SYSTEM_ERR);
+    }
+    let pending = unsafe { pending.assume_init() };
+    for signal in [libc::SIGINT, libc::SIGQUIT] {
+        match unsafe { libc::sigismember(&pending, signal) } {
+            1 => {
+                debug!(
+                    "FIDO authentication interrupted by pending signal {}",
+                    signal
+                );
+                return Err(PamResultCode::PAM_ABORT);
+            }
+            0 => {}
+            _ => {
+                error!(
+                    "Failed to inspect pending authentication signal: {}",
+                    io::Error::last_os_error()
+                );
+                return Err(PamResultCode::PAM_SYSTEM_ERR);
+            }
+        }
+    }
+    Ok(())
+}
+
+// Poll directly on the PAM caller thread, where thread-directed signals are pending.
+async fn wait_for_fido<T>(
+    operation: impl Future<Output = Result<T, PamResultCode>>,
+    timeout_ms: u64,
+) -> Result<T, PamResultCode> {
+    let mut poll = tokio::time::interval(FIDO_INTERRUPT_POLL_INTERVAL);
+    let deadline = tokio::time::sleep(Duration::from_millis(timeout_ms));
+    tokio::pin!(operation, deadline);
+    loop {
+        tokio::select! {
+            biased;
+            _ = poll.tick() => check_fido_interrupt()?,
+            _ = &mut deadline => {
+                error!("FIDO authentication timed out after {} ms", timeout_ms);
+                return Err(PamResultCode::PAM_CRED_INSUFFICIENT);
+            }
+            result = &mut operation => {
+                check_fido_interrupt()?;
+                return result;
+            }
+        }
+    }
+}
+
+async fn race_fido_transports<T>(
+    usb: impl Future<Output = Result<T, PamResultCode>>,
+    qr: impl Future<Output = Result<T, PamResultCode>>,
+) -> Result<T, PamResultCode> {
+    tokio::pin!(usb, qr);
+    tokio::select! {
+        result = &mut usb => match result {
+            Ok(assertion) => Ok(assertion),
+            Err(e) => {
+                debug!("USB FIDO failed ({:?}), waiting for QR/Bluetooth", e);
+                qr.await
+            }
+        },
+        result = &mut qr => match result {
+            Ok(assertion) => Ok(assertion),
+            Err(e) => {
+                debug!("QR/Bluetooth failed ({:?}), waiting for USB", e);
+                usb.await
+            }
+        },
+    }
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -496,7 +678,8 @@ async fn qr_bluetooth_fido_auth(
         }
     };
 
-    // Wait for the phone to scan the QR and establish a BLE tunnel.
+    // Channel creation starts the connection task; the caller bounds the
+    // scan/handshake and assertion together with wait_for_fido.
     let mut channel = device
         .channel(ChannelSettings::default())
         .await
@@ -569,9 +752,7 @@ async fn qr_bluetooth_fido_auth(
     Ok(result_str)
 }
 
-/// Race USB security key and QR/Bluetooth (caBLE) auth concurrently.
-/// Called from synchronous PAM code — creates a tokio runtime to bridge
-/// into async. First path to succeed wins; the loser is cancelled.
+/// Race USB security key and QR/Bluetooth auth; cancel the losing transport.
 pub fn fido_auth_with_qr_bluetooth(
     msg_printer: &Arc<dyn MessagePrinter>,
     fido_challenge: String,
@@ -601,77 +782,27 @@ pub fn fido_auth_with_qr_bluetooth(
     let qr_url = cable_device.qr_code.to_string();
     let qr_suffix = qr_bluetooth_message(msg_printer.as_ref(), qr_prompt, &qr_url)?;
 
-    rt.block_on(async {
-        // USB FIDO uses synchronous blocking I/O (HID polling), so run it
-        // on the blocking thread pool to keep the async executor free.
-        let usb_challenge = fido_challenge.clone();
-        let usb_allow = fido_allow_list.clone();
-        let usb_printer = msg_printer.clone();
-        let usb_prompt = prompt.to_string();
-        let usb_presence = presence_prompt.to_string();
-
-        let mut usb_handle = tokio::task::spawn_blocking(move || {
+    rt.block_on(wait_for_fido(
+        race_fido_transports(
             fido_auth_inner(
-                usb_printer,
-                usb_challenge,
-                usb_allow,
+                msg_printer.clone(),
+                fido_challenge.clone(),
+                fido_allow_list.clone(),
                 timeout_ms,
-                &usb_prompt,
-                &usb_presence,
+                prompt,
+                presence_prompt,
                 Some(&qr_suffix),
-            )
-        });
-
-        // QR/Bluetooth — device already created, messages sent via fido_auth_inner.
-        let qr_bt_handle = qr_bluetooth_fido_auth(
-            msg_printer.clone(),
-            fido_challenge,
-            fido_allow_list,
-            "",
-            Some(cable_device),
-        );
-
-        tokio::pin!(qr_bt_handle);
-
-        // Race both paths; whichever completes first wins.
-        // If the winner fails, we fall back to the remaining path.
-        tokio::select! {
-            usb_result = &mut usb_handle => {
-                match usb_result {
-                    // USB succeeded — cancel QR/Bluetooth, return assertion.
-                    Ok(Ok(assertion)) => {
-                        Ok(assertion)
-                    },
-                    // USB failed — fall back to QR/Bluetooth.
-                    Ok(Err(e)) => {
-                        debug!("USB FIDO failed ({:?}), waiting for QR/Bluetooth...", e);
-                        qr_bt_handle.await.or(Err(e))
-                    }
-                    Err(_) => {
-                        qr_bt_handle.await.or(Err(PamResultCode::PAM_AUTH_ERR))
-                    }
-                }
-            }
-            qr_bt_result = &mut qr_bt_handle => {
-                match qr_bt_result {
-                    // QR/Bluetooth succeeded — abort USB task, return assertion.
-                    Ok(assertion) => {
-                        usb_handle.abort();
-                        Ok(assertion)
-                    },
-                    // QR/Bluetooth failed — fall back to USB.
-                    Err(ref e) => {
-                        debug!("QR/Bluetooth failed ({:?}), waiting for USB...", e);
-                        match usb_handle.await {
-                            Ok(Ok(assertion)) => Ok(assertion),
-                            Ok(Err(e)) => Err(e),
-                            Err(_) => Err(PamResultCode::PAM_AUTH_ERR),
-                        }
-                    }
-                }
-            }
-        }
-    })
+            ),
+            qr_bluetooth_fido_auth(
+                msg_printer.clone(),
+                fido_challenge,
+                fido_allow_list,
+                "",
+                Some(cable_device),
+            ),
+        ),
+        timeout_ms,
+    ))
 }
 
 #[macro_export]
@@ -1189,17 +1320,21 @@ fn fido_auth_qr_bluetooth_only(
     fido_challenge: String,
     fido_allow_list: Vec<String>,
     qr_prompt: &str,
+    timeout_ms: u64,
 ) -> Result<String, PamResultCode> {
     let rt = Runtime::new().map_err(|e| {
         error!("{:?}", e);
         PamResultCode::PAM_AUTH_ERR
     })?;
-    rt.block_on(qr_bluetooth_fido_auth(
-        msg_printer,
-        fido_challenge,
-        fido_allow_list,
-        qr_prompt,
-        None,
+    rt.block_on(wait_for_fido(
+        qr_bluetooth_fido_auth(
+            msg_printer,
+            fido_challenge,
+            fido_allow_list,
+            qr_prompt,
+            None,
+        ),
+        timeout_ms,
     ))
 }
 
@@ -1265,6 +1400,9 @@ fn handle_pam_auth_response_fido(
                 &qr_prompt,
             ) {
                 Ok(assertion) => assertion,
+                Err(PamResultCode::PAM_ABORT) => {
+                    return PamWhatNext::Finish(PamResultCode::PAM_ABORT);
+                }
                 Err(e) => {
                     pam_fail!(
                         state.msg_printer,
@@ -1281,8 +1419,12 @@ fn handle_pam_auth_response_fido(
                 fido_challenge,
                 fido_allow_list,
                 &qr_prompt,
+                timeout_ms,
             ) {
                 Ok(assertion) => assertion,
+                Err(PamResultCode::PAM_ABORT) => {
+                    return PamWhatNext::Finish(PamResultCode::PAM_ABORT);
+                }
                 Err(e) => {
                     pam_fail!(
                         state.msg_printer,
@@ -1303,6 +1445,9 @@ fn handle_pam_auth_response_fido(
                 &fido_presence_prompt,
             ) {
                 Ok(assertion) => assertion,
+                Err(PamResultCode::PAM_ABORT) => {
+                    return PamWhatNext::Finish(PamResultCode::PAM_ABORT);
+                }
                 Err(e) => {
                     pam_fail!(
                         state.msg_printer,
@@ -2398,6 +2543,390 @@ mod tests {
             !prompts[0].contains("MFA required"),
             "info must not be folded into the prompt by default"
         );
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
+mod fido_cancellation_tests {
+    use super::*;
+    use authenticator::authenticatorservice::{AuthenticatorTransport, RegisterArgs};
+    use authenticator::errors::AuthenticatorError;
+    use std::sync::atomic::AtomicUsize;
+
+    struct WaitingUsbTransport {
+        cancellations: Arc<AtomicUsize>,
+        callback: Option<StateCallback<authenticator::Result<authenticator::SignResult>>>,
+    }
+
+    impl AuthenticatorTransport for WaitingUsbTransport {
+        fn register(
+            &mut self,
+            _timeout: u64,
+            _args: RegisterArgs,
+            _status: Sender<StatusUpdate>,
+            _callback: StateCallback<authenticator::Result<authenticator::RegisterResult>>,
+        ) -> authenticator::Result<()> {
+            Err(AuthenticatorError::NoConfiguredTransports)
+        }
+
+        fn sign(
+            &mut self,
+            _timeout: u64,
+            _args: SignArgs,
+            _status: Sender<StatusUpdate>,
+            callback: StateCallback<authenticator::Result<authenticator::SignResult>>,
+        ) -> authenticator::Result<()> {
+            self.callback = Some(callback);
+            Ok(())
+        }
+
+        fn cancel(&mut self) -> authenticator::Result<()> {
+            self.cancellations.fetch_add(1, Ordering::Relaxed);
+            self.callback.take();
+            Ok(())
+        }
+
+        fn reset(
+            &mut self,
+            _timeout: u64,
+            _status: Sender<StatusUpdate>,
+            _callback: StateCallback<authenticator::Result<authenticator::ResetResult>>,
+        ) -> authenticator::Result<()> {
+            Err(AuthenticatorError::NoConfiguredTransports)
+        }
+
+        fn set_pin(
+            &mut self,
+            _timeout: u64,
+            _pin: Pin,
+            _status: Sender<StatusUpdate>,
+            _callback: StateCallback<authenticator::Result<authenticator::ResetResult>>,
+        ) -> authenticator::Result<()> {
+            Err(AuthenticatorError::NoConfiguredTransports)
+        }
+
+        fn manage(
+            &mut self,
+            _timeout: u64,
+            _status: Sender<StatusUpdate>,
+            _callback: StateCallback<authenticator::Result<authenticator::ManageResult>>,
+        ) -> authenticator::Result<()> {
+            Err(AuthenticatorError::NoConfiguredTransports)
+        }
+    }
+
+    async fn waiting_usb(
+        cancellations: Arc<AtomicUsize>,
+        printer: Arc<dyn MessagePrinter>,
+    ) -> Result<(), PamResultCode> {
+        let mut manager = AuthenticatorService::new().unwrap();
+        manager.add_transport(Box::new(WaitingUsbTransport {
+            cancellations,
+            callback: None,
+        }));
+        let mut session = FidoUsbSession::new(manager, printer, "Touch the test key".into());
+        session
+            .sign(
+                60_000,
+                SignArgs {
+                    client_data_hash: [0; 32],
+                    origin: "https://login.microsoft.com".into(),
+                    relying_party_id: "login.microsoft.com".into(),
+                    allow_list: vec![],
+                    user_verification_req: UserVerificationRequirement::Preferred,
+                    user_presence_req: true,
+                    extensions: AuthenticationExtensionsClientInputs::default(),
+                    pin: None,
+                    use_ctap1_fallback: false,
+                },
+            )
+            .await
+            .map(|_| ())
+    }
+
+    #[tokio::test]
+    async fn fido_qr_success_cancels_usb_and_releases_printer() {
+        let cancellations = Arc::new(AtomicUsize::new(0));
+        let printer = Arc::new(SimpleMessagePrinter::default());
+        let result = tokio::time::timeout(
+            Duration::from_secs(1),
+            wait_for_fido(
+                race_fido_transports(waiting_usb(cancellations.clone(), printer.clone()), async {
+                    tokio::time::sleep(Duration::from_millis(20)).await;
+                    Ok(())
+                }),
+                60_000,
+            ),
+        )
+        .await
+        .unwrap();
+        assert_eq!(result, Ok(()));
+        assert_eq!(cancellations.load(Ordering::Relaxed), 1);
+        assert_eq!(
+            Arc::strong_count(&printer),
+            1,
+            "status worker retained the PAM printer"
+        );
+    }
+
+    #[tokio::test]
+    async fn fido_shared_deadline_cancels_remaining_usb_after_qr_failure() {
+        let cancellations = Arc::new(AtomicUsize::new(0));
+        let result = tokio::time::timeout(
+            Duration::from_secs(1),
+            wait_for_fido(
+                race_fido_transports(
+                    waiting_usb(
+                        cancellations.clone(),
+                        Arc::new(SimpleMessagePrinter::default()),
+                    ),
+                    async { Err(PamResultCode::PAM_AUTH_ERR) },
+                ),
+                20,
+            ),
+        )
+        .await
+        .unwrap();
+        assert_eq!(result, Err(PamResultCode::PAM_CRED_INSUFFICIENT));
+        assert_eq!(cancellations.load(Ordering::Relaxed), 1);
+    }
+
+    #[tokio::test]
+    async fn fido_race_keeps_the_other_transport_after_a_failure() {
+        for usb_fails in [true, false] {
+            let result = wait_for_fido(
+                race_fido_transports(
+                    async {
+                        if usb_fails {
+                            Err(PamResultCode::PAM_AUTH_ERR)
+                        } else {
+                            Ok("usb")
+                        }
+                    },
+                    async {
+                        if usb_fails {
+                            Ok("phone")
+                        } else {
+                            Err(PamResultCode::PAM_AUTH_ERR)
+                        }
+                    },
+                ),
+                1000,
+            )
+            .await;
+            assert_eq!(result, Ok(if usb_fails { "phone" } else { "usb" }));
+        }
+    }
+
+    #[tokio::test]
+    async fn fido_usb_success_drops_qr_wait() {
+        struct Dropped(Arc<AtomicBool>);
+        impl Drop for Dropped {
+            fn drop(&mut self) {
+                self.0.store(true, Ordering::Release);
+            }
+        }
+        let dropped = Arc::new(AtomicBool::new(false));
+        let (started, ready) = tokio::sync::oneshot::channel();
+        let result = wait_for_fido(
+            race_fido_transports(
+                async {
+                    ready.await.unwrap();
+                    Ok::<_, PamResultCode>(())
+                },
+                async {
+                    let _guard = Dropped(dropped.clone());
+                    started.send(()).unwrap();
+                    std::future::pending::<Result<(), PamResultCode>>().await
+                },
+            ),
+            1000,
+        )
+        .await;
+        assert_eq!(result, Ok(()));
+        assert!(dropped.load(Ordering::Acquire));
+    }
+
+    #[tokio::test]
+    async fn fido_wait_includes_connection_in_timeout() {
+        let result = tokio::time::timeout(
+            Duration::from_secs(1),
+            wait_for_fido(std::future::pending::<Result<(), PamResultCode>>(), 20),
+        )
+        .await
+        .expect("FIDO wait did not enforce its deadline");
+        assert_eq!(result, Err(PamResultCode::PAM_CRED_INSUFFICIENT));
+    }
+
+    #[tokio::test]
+    async fn fido_wait_preserves_success_and_failure() {
+        assert_eq!(
+            wait_for_fido(async { Ok("assertion") }, 1000).await,
+            Ok("assertion")
+        );
+        assert_eq!(
+            wait_for_fido(async { Err::<(), _>(PamResultCode::PAM_AUTH_ERR) }, 1000).await,
+            Err(PamResultCode::PAM_AUTH_ERR),
+        );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn fido_wait_does_not_replace_default_sigint_handling() {
+        use std::os::unix::process::ExitStatusExt;
+
+        const CHILD: &str = "HIMMELBLAU_FIDO_DEFAULT_SIGNAL_TEST_CHILD";
+        if std::env::var_os(CHILD).is_none() {
+            let output = std::process::Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "auth::fido_cancellation_tests::fido_wait_does_not_replace_default_sigint_handling",
+                    "--nocapture",
+                ])
+                .env(CHILD, "1")
+                .output()
+                .unwrap();
+            assert_eq!(
+                output.status.signal(),
+                Some(libc::SIGINT),
+                "{}\n{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr),
+            );
+            return;
+        }
+
+        unsafe {
+            assert_ne!(libc::signal(libc::SIGINT, libc::SIG_DFL), libc::SIG_ERR);
+            let caller = libc::pthread_self();
+            thread::spawn(move || {
+                thread::sleep(Duration::from_millis(20));
+                assert_eq!(libc::pthread_kill(caller, libc::SIGINT), 0);
+            });
+        }
+        Runtime::new().unwrap().block_on(async {
+            let result = tokio::time::timeout(
+                Duration::from_secs(1),
+                wait_for_fido(std::future::pending::<Result<(), PamResultCode>>(), 60_000),
+            )
+            .await;
+            assert!(
+                result.is_ok(),
+                "default SIGINT did not terminate the subprocess"
+            );
+        });
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn fido_wait_observes_blocked_interrupt_on_caller_thread() {
+        const CHILD: &str = "HIMMELBLAU_FIDO_SIGNAL_TEST_CHILD";
+        if std::env::var_os(CHILD).is_none() {
+            let output = std::process::Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "auth::fido_cancellation_tests::fido_wait_observes_blocked_interrupt_on_caller_thread",
+                    "--nocapture",
+                ])
+                .env(CHILD, "1")
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "{}\n{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr),
+            );
+            return;
+        }
+
+        // Real signals are confined to this subprocess's test thread.
+        unsafe {
+            let mut blocked = std::mem::zeroed::<libc::sigset_t>();
+            let mut original = std::mem::zeroed::<libc::sigset_t>();
+            assert_eq!(libc::sigemptyset(&mut blocked), 0);
+            assert_eq!(libc::sigaddset(&mut blocked, libc::SIGINT), 0);
+            assert_eq!(libc::sigaddset(&mut blocked, libc::SIGQUIT), 0);
+            assert_eq!(
+                libc::pthread_sigmask(libc::SIG_BLOCK, &blocked, &mut original),
+                0
+            );
+            let caller = libc::pthread_self();
+            let rt = Runtime::new().unwrap();
+
+            for (signal, with_usb) in [
+                (libc::SIGINT, false),
+                (libc::SIGQUIT, false),
+                (libc::SIGINT, true),
+                (libc::SIGQUIT, true),
+            ] {
+                let cancellations = Arc::new(AtomicUsize::new(0));
+                let sender = thread::spawn(move || {
+                    thread::sleep(Duration::from_millis(20));
+                    assert_eq!(libc::pthread_kill(caller, signal), 0);
+                });
+                let started = Instant::now();
+                let result = rt
+                    .block_on(async {
+                        tokio::time::timeout(
+                            Duration::from_secs(1),
+                            wait_for_fido(
+                                async {
+                                    if with_usb {
+                                        race_fido_transports(
+                                            waiting_usb(
+                                                cancellations.clone(),
+                                                Arc::new(SimpleMessagePrinter::default()),
+                                            ),
+                                            std::future::pending::<Result<(), PamResultCode>>(),
+                                        )
+                                        .await
+                                    } else {
+                                        std::future::pending::<Result<(), PamResultCode>>().await
+                                    }
+                                },
+                                60_000,
+                            ),
+                        )
+                        .await
+                    })
+                    .expect("blocked interrupt did not cancel the FIDO wait");
+                sender.join().unwrap();
+                assert_eq!(result, Err(PamResultCode::PAM_ABORT));
+                assert!(started.elapsed() < Duration::from_millis(500));
+                assert_eq!(cancellations.load(Ordering::Relaxed), usize::from(with_usb));
+
+                let mut pending = std::mem::zeroed::<libc::sigset_t>();
+                let mut mask = std::mem::zeroed::<libc::sigset_t>();
+                assert_eq!(libc::sigpending(&mut pending), 0);
+                assert_eq!(
+                    libc::sigismember(&pending, signal),
+                    1,
+                    "host signal was consumed"
+                );
+                assert_eq!(
+                    libc::pthread_sigmask(libc::SIG_BLOCK, std::ptr::null(), &mut mask),
+                    0
+                );
+                assert_eq!(
+                    libc::sigismember(&mask, signal),
+                    1,
+                    "host signal was unblocked"
+                );
+
+                let mut consume = std::mem::zeroed::<libc::sigset_t>();
+                assert_eq!(libc::sigemptyset(&mut consume), 0);
+                assert_eq!(libc::sigaddset(&mut consume, signal), 0);
+                let mut received = 0;
+                assert_eq!(libc::sigwait(&consume, &mut received), 0);
+                assert_eq!(received, signal);
+            }
+            assert_eq!(
+                libc::pthread_sigmask(libc::SIG_SETMASK, &original, std::ptr::null_mut()),
+                0
+            );
+        }
     }
 }
 

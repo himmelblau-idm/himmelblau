@@ -573,8 +573,13 @@ in
       type = types.nullOr (types.ints.unsigned);
       default = 25;
       description = ''
-        The timeout in seconds for FIDO/passkey authentication. This is how long
-        the system waits for the user to insert and activate their security key.
+        The timeout in seconds for FIDO/passkey authentication. This bounds waiting
+        for the user to insert and activate their security key, or to scan the
+        QR/Bluetooth code, connect their phone, and complete passkey authentication.
+        When both transports are offered, they share this deadline rather than
+        receiving separate timeouts.
+        Keyboard interrupts pending during PAM authentication abort the attempt
+        instead of switching to a different authentication method.
       '';
       example = 60;
     };

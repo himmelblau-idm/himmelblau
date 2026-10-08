@@ -853,6 +853,7 @@ impl PamHooks for PamKanidm {
                         &fido_presence_prompt,
                     ) {
                         Ok(assertion) => assertion,
+                        Err(PamResultCode::PAM_ABORT) => return PamResultCode::PAM_ABORT,
                         Err(e) => {
                             msg_printer.print_text(&tr_fmt(
                                 "{code}: {message}\nIf you are now prompted for a password from pam_unix, please disregard the prompt, go back and try again.",

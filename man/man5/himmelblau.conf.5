@@ -1,4 +1,4 @@
-.TH HIMMELBLAU.CONF "5" "September 2026" "Himmelblau Configuration" "File Formats"
+.TH HIMMELBLAU.CONF "5" "October 2026" "Himmelblau Configuration" "File Formats"
 .SH NAME
 himmelblau.conf \- Configuration file for Himmelblau, enabling Azure Entra ID authentication on Linux.
 
@@ -743,8 +743,13 @@ Example: enable_passwordless_qr_bluetooth = true
 .TP
 .B fido_timeout
 .RE
-The timeout in seconds for FIDO/passkey authentication. This is how long
-the system waits for the user to insert and activate their security key.
+The timeout in seconds for FIDO/passkey authentication. This bounds waiting
+for the user to insert and activate their security key, or to scan the
+QR/Bluetooth code, connect their phone, and complete passkey authentication.
+When both transports are offered, they share this deadline rather than
+receiving separate timeouts.
+Keyboard interrupts pending during PAM authentication abort the attempt
+instead of switching to a different authentication method.
 
 .P
 Default: 25

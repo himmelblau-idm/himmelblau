@@ -7,8 +7,13 @@
            domain_specific="false"
            order="2700">
 <description>
-The timeout in seconds for FIDO/passkey authentication. This is how long
-the system waits for the user to insert and activate their security key.
+The timeout in seconds for FIDO/passkey authentication. This bounds waiting
+for the user to insert and activate their security key, or to scan the
+QR/Bluetooth code, connect their phone, and complete passkey authentication.
+When both transports are offered, they share this deadline rather than
+receiving separate timeouts.
+Keyboard interrupts pending during PAM authentication abort the attempt
+instead of switching to a different authentication method.
 </description>
 <default>25</default>
 <default_const>DEFAULT_FIDO_TIMEOUT</default_const>
