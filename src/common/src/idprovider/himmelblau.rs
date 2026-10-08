@@ -201,6 +201,34 @@ fn is_mfa_required_for_enrollment(e: &MsalError) -> bool {
     }
 }
 
+// Do not turn a mixed response containing another policy/device failure into an
+// MFA retry. Enrollment keeps its existing error handling above.
+fn is_mfa_required_for_token(e: &MsalError) -> bool {
+    match e {
+        MsalError::AcquireTokenFailed(resp) => {
+            !resp.error_codes.is_empty()
+                && resp
+                    .error_codes
+                    .iter()
+                    .all(|code| MFA_REQUIRED_FOR_ENROLLMENT.contains(code))
+        }
+        _ => is_mfa_required_for_enrollment(e),
+    }
+}
+
+// The caller may escape the password-only path on an MFA demand. An empty
+// callback preserves the error, which is essential after MFA has already run.
+// Evaluate the request before the callback so no client lock is held by it.
+macro_rules! on_token_mfa_required {
+    ($result:expr, $on_mfa_required:block) => {{
+        let result = $result;
+        if matches!(&result, Err(e) if is_mfa_required_for_token(e)) {
+            $on_mfa_required
+        }
+        result
+    }};
+}
+
 fn password_change_required(
     cred_handler: &mut AuthCredHandler,
     old_cred: String,
@@ -2349,7 +2377,12 @@ impl IdProvider for HimmelblauProvider {
             };
         }
         macro_rules! enroll_and_obtain_enrolled_token {
+            // Only PasswordFirst opts into the downstream MFA transition. In
+            // particular, a repeated demand after MFA completion must deny.
             ($token:ident, $cred:expr) => {{
+                enroll_and_obtain_enrolled_token!($token, $cred, {})
+            }};
+            ($token:ident, $cred:expr, $on_mfa_required:block) => {{
                 if !self.is_domain_joined(keystore).await {
                     debug!("Device is not enrolled. Enrolling now.");
                     if let Err(e) = self.join_domain(tpm, &$token, keystore, machine_key).await {
@@ -2472,10 +2505,20 @@ impl IdProvider for HimmelblauProvider {
                         machine_key,
                     )
                     .await;
+                let mtoken2 = on_token_mfa_required!(mtoken2, $on_mfa_required);
                 net_down_check!(mtoken2,
                     Ok(token) => token,
                     Err(e) => {
                         error!("{:?}", e);
+                        // If the caller did not opt into the password-only
+                        // escape, MFA is still required. Do not try a different
+                        // client to work around that demand after MFA completion.
+                        if is_mfa_required_for_token(&e) {
+                            return Ok((
+                                AuthResult::Denied(msal_error_to_user_message(&e)),
+                                AuthCacheAction::None,
+                            ));
+                        }
                         match e {
                             MsalError::AcquireTokenFailed(err_resp) => {
                                 if err_resp.error_codes.contains(&DEVICE_AUTH_FAIL) {
@@ -2485,19 +2528,20 @@ impl IdProvider for HimmelblauProvider {
                                     info!("Azure hasn't finished replicating the device...");
                                     info!("Retrying in 5 seconds");
                                     sleep(Duration::from_secs(5));
-                                    net_down_check!(
-                                        self.client
-                                            .lock()
-                                            .await
-                                            .acquire_token_by_refresh_token(
-                                                &$token.refresh_token,
-                                                scopes,
-                                                None,
-                                                client_id,
-                                                tpm,
-                                                machine_key,
-                                            )
-                                            .await,
+                                    let retry = self.client
+                                        .lock()
+                                        .await
+                                        .acquire_token_by_refresh_token(
+                                            &$token.refresh_token,
+                                            scopes,
+                                            None,
+                                            client_id,
+                                            tpm,
+                                            machine_key,
+                                        )
+                                        .await;
+                                    let retry = on_token_mfa_required!(retry, $on_mfa_required);
+                                    net_down_check!(retry,
                                         Ok(token) => token,
                                         Err(e) => {
                                             error!("{:?}", e);
@@ -2524,7 +2568,7 @@ impl IdProvider for HimmelblauProvider {
                                          Retrying with default app ID.",
                                         err_resp.error_description
                                     );
-                                    match self.client
+                                    let retry = self.client
                                         .lock()
                                         .await
                                         .acquire_token_by_refresh_token(
@@ -2535,8 +2579,8 @@ impl IdProvider for HimmelblauProvider {
                                             tpm,
                                             machine_key,
                                         )
-                                        .await
-                                    {
+                                        .await;
+                                    match on_token_mfa_required!(retry, $on_mfa_required) {
                                         Ok(token) => token,
                                         Err(e) => {
                                             error!("{:?}", e);
@@ -2563,7 +2607,7 @@ impl IdProvider for HimmelblauProvider {
                                     "AADSTS error with Edge Browser app. \
                                      Retrying with default app ID."
                                 );
-                                match self.client
+                                let retry = self.client
                                     .lock()
                                     .await
                                     .acquire_token_by_refresh_token(
@@ -2574,8 +2618,8 @@ impl IdProvider for HimmelblauProvider {
                                         tpm,
                                         machine_key,
                                     )
-                                    .await
-                                {
+                                    .await;
+                                match on_token_mfa_required!(retry, $on_mfa_required) {
                                     Ok(token) => token,
                                     Err(e) => {
                                         error!("{:?}", e);
@@ -4006,10 +4050,17 @@ impl IdProvider for HimmelblauProvider {
                 let mfa_confirmed_required = ropc_result.is_some();
 
                 match ropc_result {
-                    Some(Ok(token)) => {
-                        // Password validated and no MFA required - return success
-                        debug!("ROPC succeeded - no MFA required");
-                        let token2 = enroll_and_obtain_enrolled_token!(token, Some(cred.clone()));
+                    Some(Ok(token)) => 'password_only: {
+                        // ROPC validates the password, but the enrolled-token
+                        // request can still require MFA for a different client.
+                        debug!("ROPC succeeded - checking enrolled-token requirements");
+                        let token2 = enroll_and_obtain_enrolled_token!(token, Some(cred.clone()), {
+                            info!("Enrolled-token acquisition requires MFA; continuing with ForceMFA.");
+                            // Fall through to the existing fresh MFA flow below.
+                            // Do not validate/cache the ROPC token or try another
+                            // cached token after this downstream MFA demand.
+                            break 'password_only;
+                        });
                         return match self
                             .token_validate(account_id, &token2, None, PrtCacheUpdate::Fresh)
                             .await
@@ -5963,10 +6014,10 @@ impl HimmelblauProvider {
 mod tests {
     use super::{
         cache_refresh_token_with_loaded_hello_key, cached_prt_or_refresh_token,
-        is_device_removed_error, is_mfa_required_for_enrollment, is_sspr_required,
-        is_unavailable_mfa_method_error, mfa_flow_uses_push_hint, password_change_required,
-        unexpired_prt_entry, unseal_refresh_token_with_loaded_hello_key, CONSENT_REQUIRED,
-        PASSWORD_RESET_REGISTRATION_REQUIRED,
+        is_device_removed_error, is_mfa_required_for_enrollment, is_mfa_required_for_token,
+        is_sspr_required, is_unavailable_mfa_method_error, mfa_flow_uses_push_hint,
+        password_change_required, unexpired_prt_entry, unseal_refresh_token_with_loaded_hello_key,
+        CONSENT_REQUIRED, PASSWORD_RESET_REGISTRATION_REQUIRED,
     };
     use crate::db::{CacheError, KeyStoreTxn};
     use crate::idprovider::common::RefreshCacheEntry;
@@ -6168,6 +6219,97 @@ mod tests {
         assert!(!is_mfa_required_for_enrollment(&MsalError::RequestFailed(
             "network down".to_string()
         )));
+    }
+
+    fn token_mfa_demands() -> Vec<MsalError> {
+        let mut demands = vec![MsalError::MFARequired];
+        for code in [50072, 50074, 50076] {
+            demands.push(MsalError::AADSTSError(AADSTSError::new(code, None)));
+            demands.push(MsalError::AcquireTokenFailed(ErrorResponse {
+                error: "invalid_grant".to_string(),
+                error_description: "MFA required".to_string(),
+                suberror: None,
+                error_codes: vec![code],
+            }));
+        }
+        demands
+    }
+
+    #[test]
+    fn token_mfa_demand_escapes_password_only_before_success() {
+        for demand in token_mfa_demands() {
+            let mut reached_success = false;
+            let escaped = 'password_only: {
+                let _: Result<(), MsalError> = on_token_mfa_required!(Err(demand), {
+                    break 'password_only true;
+                });
+                reached_success = true;
+                false
+            };
+            assert!(escaped);
+            assert!(!reached_success);
+        }
+    }
+
+    #[test]
+    fn token_mfa_callback_preserves_success_and_unrelated_errors() {
+        let token = on_token_mfa_required!(Ok::<_, MsalError>("token"), {
+            panic!("Successful token must not trigger MFA");
+        });
+        assert!(matches!(token, Ok("token")));
+
+        let mut errors = vec![
+            MsalError::RequestFailed("network down".to_string()),
+            MsalError::ChangePassword,
+            MsalError::AADSTSError(AADSTSError::new(50126, None)),
+            MsalError::AADSTSError(AADSTSError::new(53003, None)),
+        ];
+        for codes in [
+            vec![],
+            vec![50126],
+            vec![53003],
+            vec![DEVICE_AUTH_FAIL],
+            vec![CONSENT_REQUIRED],
+            vec![50076, DEVICE_AUTH_FAIL],
+            vec![50076, 53003],
+        ] {
+            errors.push(MsalError::AcquireTokenFailed(ErrorResponse {
+                error: "invalid_grant".to_string(),
+                error_description: "authentication failed".to_string(),
+                suberror: None,
+                error_codes: codes,
+            }));
+        }
+        for error in errors {
+            let expected = format!("{error:?}");
+            let result: Result<(), MsalError> = on_token_mfa_required!(Err(error), {
+                panic!("Unrelated failure must not trigger MFA");
+            });
+            assert_eq!(format!("{:?}", result.unwrap_err()), expected);
+        }
+    }
+
+    #[test]
+    fn token_mfa_demand_after_transition_remains_an_error() {
+        let mut transitions = 0;
+        'password_only: {
+            let _: Result<(), MsalError> = on_token_mfa_required!(Err(MsalError::MFARequired), {
+                transitions += 1;
+                break 'password_only;
+            });
+            panic!("Password-only authentication must not complete");
+        }
+
+        // MFA completion uses the default, empty callback. The same demand on
+        // its refresh (or a retry) must reach denial rather than restart MFA.
+        for demand in token_mfa_demands() {
+            let expected = format!("{demand:?}");
+            let result: Result<(), MsalError> = on_token_mfa_required!(Err(demand), {});
+            let error = result.unwrap_err();
+            assert!(is_mfa_required_for_token(&error));
+            assert_eq!(format!("{error:?}"), expected);
+        }
+        assert_eq!(transitions, 1);
     }
 
     #[test]
