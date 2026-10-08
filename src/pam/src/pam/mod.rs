@@ -223,8 +223,16 @@ impl KeyringCaptureMessagePrinter {
 }
 
 impl MessagePrinter for KeyringCaptureMessagePrinter {
+    fn supports_terminal_qr(&self) -> bool {
+        self.inner.supports_terminal_qr()
+    }
+
     fn print_text(&self, msg: &str) {
         self.inner.print_text(msg);
+    }
+
+    fn print_sensitive(&self, msg: &str) {
+        self.inner.print_sensitive(msg);
     }
 
     fn print_error(&self, msg: &str) {

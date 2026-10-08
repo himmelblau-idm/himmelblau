@@ -69,6 +69,10 @@ macro_rules! auth_handle_mfa_resp {
 }
 
 pub trait MessagePrinter: Send + Sync {
+    /// Whether this output can render a Unicode QR code with ANSI colors.
+    fn supports_terminal_qr(&self) -> bool {
+        false
+    }
     fn print_text(&self, msg: &str);
     /// Show authentication secrets without recording their contents in logs.
     fn print_sensitive(&self, msg: &str) {
@@ -87,6 +91,10 @@ pub const DAEMON_START_WAIT_INTERVAL: Duration = Duration::from_millis(250);
 pub struct SimpleMessagePrinter {}
 
 impl MessagePrinter for SimpleMessagePrinter {
+    fn supports_terminal_qr(&self) -> bool {
+        true
+    }
+
     fn print_text(&self, msg: &str) {
         println!("{}", msg);
     }
@@ -243,7 +251,11 @@ fn fido_auth_inner(
         Some(suffix) => format!("[FIDO_INSERT] {}\n{}", prompt, suffix),
         None => format!("[FIDO_INSERT] {}", prompt),
     };
-    msg_printer.print_text(&msg);
+    if qr_suffix.is_some() {
+        msg_printer.print_sensitive(&msg);
+    } else {
+        msg_printer.print_text(&msg);
+    }
 
     let mut manager = AuthenticatorService::new().map_err(|e| {
         error!("{:?}", e);
@@ -354,6 +366,58 @@ enum BluetoothState {
     NoAdapter,
 }
 
+#[derive(Debug, PartialEq, Eq)]
+enum FidoAuthMethod {
+    Unavailable,
+    SecurityKey,
+    QrBluetooth,
+    SecurityKeyAndQrBluetooth,
+}
+
+fn can_display_qr_bluetooth(service: &str, printer: &dyn MessagePrinter) -> bool {
+    service.contains("gdm") || printer.supports_terminal_qr()
+}
+
+fn select_fido_auth_method(
+    has_physical_security_key: bool,
+    has_cross_device: bool,
+    bluetooth: &BluetoothState,
+    can_display_qr: bool,
+) -> FidoAuthMethod {
+    let can_qr =
+        has_cross_device && matches!(bluetooth, BluetoothState::PoweredOn) && can_display_qr;
+    match (has_physical_security_key, can_qr) {
+        (true, true) => FidoAuthMethod::SecurityKeyAndQrBluetooth,
+        (true, false) => FidoAuthMethod::SecurityKey,
+        (false, true) => FidoAuthMethod::QrBluetooth,
+        (false, false) => FidoAuthMethod::Unavailable,
+    }
+}
+
+fn qr_bluetooth_message(
+    printer: &dyn MessagePrinter,
+    prompt: &str,
+    qr_url: &str,
+) -> Result<String, PamResultCode> {
+    if !printer.supports_terminal_qr() {
+        return Ok(format!("[QR_BT_LABEL] {}\n[QR_BT] {}", prompt, qr_url));
+    }
+
+    let qr = generate_unicode_qr(qr_url).map_err(|e| {
+        error!("Failed to render QR/Bluetooth code: {}", e);
+        printer.print_error(&tr("The QR/Bluetooth code could not be displayed."));
+        PamResultCode::PAM_SYSTEM_ERR
+    })?;
+    let mut message = format!("{}\n", prompt);
+    // Set both colors so the quiet zone stays white on dark terminal themes.
+    for line in qr.lines() {
+        message.push_str("\x1b[30;47m");
+        message.push_str(line);
+        message.push_str("\x1b[0m\n");
+    }
+    Ok(message)
+}
+
 fn check_bluetooth() -> BluetoothState {
     let conn = match zbus::blocking::Connection::system() {
         Ok(c) => c,
@@ -425,8 +489,9 @@ async fn qr_bluetooth_fido_auth(
                 PamResultCode::PAM_CRED_INSUFFICIENT
             })?;
             let qr_url = d.qr_code.to_string();
-            // Combine into single print_text to avoid GDM per-message delay.
-            msg_printer.print_text(&format!("[QR_BT_LABEL] {}\n[QR_BT] {}", qr_prompt, qr_url));
+            // Combine into one message to avoid GDM per-message delay.
+            let message = qr_bluetooth_message(msg_printer.as_ref(), qr_prompt, &qr_url)?;
+            msg_printer.print_sensitive(&message);
             d
         }
     };
@@ -534,7 +599,7 @@ pub fn fido_auth_with_qr_bluetooth(
         PamResultCode::PAM_CRED_INSUFFICIENT
     })?;
     let qr_url = cable_device.qr_code.to_string();
-    let qr_suffix = format!("[QR_BT_LABEL] {}\n[QR_BT] {}", qr_prompt, qr_url);
+    let qr_suffix = qr_bluetooth_message(msg_printer.as_ref(), qr_prompt, &qr_url)?;
 
     rt.block_on(async {
         // USB FIDO uses synchronous blocking I/O (HID polling), so run it
@@ -1149,90 +1214,102 @@ fn handle_pam_auth_response_fido(
     let fido_prompt = state.cfg.get_fido_prompt();
     let fido_presence_prompt = state.cfg.get_fido_presence_prompt();
     let qr_prompt = state.cfg.get_qr_bluetooth_prompt();
-    let is_graphical = state.service.contains("gdm");
-    let bt_state = check_bluetooth();
-    let has_bt = matches!(bt_state, BluetoothState::PoweredOn);
-    let bt_off = matches!(bt_state, BluetoothState::PoweredOff);
-    let mut can_qr_bluetooth = has_cross_device && has_bt;
+    let can_display_qr = can_display_qr_bluetooth(&state.service, state.msg_printer.as_ref());
+    let mut bt_state = check_bluetooth();
     debug!(
-        "FIDO auth: has_physical_security_key={}, has_cross_device={}, is_graphical={}, has_bluetooth={}",
-        has_physical_security_key, has_cross_device, is_graphical, has_bt
+        "FIDO auth: has_physical_security_key={}, has_cross_device={}, can_display_qr={}, has_bluetooth={}",
+        has_physical_security_key,
+        has_cross_device,
+        can_display_qr,
+        matches!(bt_state, BluetoothState::PoweredOn)
     );
 
-    if !has_physical_security_key && !can_qr_bluetooth {
-        if has_cross_device && bt_off && is_graphical {
-            state
-                .msg_printer
-                .print_text(&tr("Enable Bluetooth to sign in with your phone."));
-            for _ in 0..30 {
-                std::thread::sleep(std::time::Duration::from_secs(1));
-                if matches!(check_bluetooth(), BluetoothState::PoweredOn) {
-                    can_qr_bluetooth = true;
-                    break;
-                }
+    if !has_physical_security_key
+        && has_cross_device
+        && can_display_qr
+        && matches!(bt_state, BluetoothState::PoweredOff)
+    {
+        state
+            .msg_printer
+            .print_text(&tr("Enable Bluetooth to sign in with your phone."));
+        for _ in 0..30 {
+            std::thread::sleep(std::time::Duration::from_secs(1));
+            bt_state = check_bluetooth();
+            if matches!(bt_state, BluetoothState::PoweredOn) {
+                break;
             }
-        }
-        if !can_qr_bluetooth {
-            debug!("FIDO auth: no usable FIDO hardware, requesting fallback to password");
-            let req = ClientRequest::PamAuthenticateStep(PamAuthRequest::FidoUnavailable);
-            return PamWhatNext::Next(req);
         }
     }
 
-    let result = if has_physical_security_key && can_qr_bluetooth && is_graphical {
-        debug!("FIDO auth: attempting both security key and QR/Bluetooth");
-        match fido_auth_with_qr_bluetooth(
-            &state.msg_printer,
-            fido_challenge,
-            fido_allow_list,
-            timeout_ms,
-            &fido_prompt,
-            &fido_presence_prompt,
-            &qr_prompt,
-        ) {
-            Ok(assertion) => assertion,
-            Err(e) => {
-                pam_fail!(
-                    state.msg_printer,
-                    tr("Security key and QR/Bluetooth authentication failed."),
-                    e
-                );
+    let result = match select_fido_auth_method(
+        has_physical_security_key,
+        has_cross_device,
+        &bt_state,
+        can_display_qr,
+    ) {
+        FidoAuthMethod::Unavailable => {
+            debug!("FIDO auth: no usable FIDO transport, requesting fallback to password");
+            return PamWhatNext::Next(ClientRequest::PamAuthenticateStep(
+                PamAuthRequest::FidoUnavailable,
+            ));
+        }
+        FidoAuthMethod::SecurityKeyAndQrBluetooth => {
+            debug!("FIDO auth: attempting both security key and QR/Bluetooth");
+            match fido_auth_with_qr_bluetooth(
+                &state.msg_printer,
+                fido_challenge,
+                fido_allow_list,
+                timeout_ms,
+                &fido_prompt,
+                &fido_presence_prompt,
+                &qr_prompt,
+            ) {
+                Ok(assertion) => assertion,
+                Err(e) => {
+                    pam_fail!(
+                        state.msg_printer,
+                        tr("Security key and QR/Bluetooth authentication failed."),
+                        e
+                    );
+                }
             }
         }
-    } else if can_qr_bluetooth && is_graphical {
-        debug!("FIDO auth: attempting QR/Bluetooth");
-        match fido_auth_qr_bluetooth_only(
-            state.msg_printer.clone(),
-            fido_challenge,
-            fido_allow_list,
-            &qr_prompt,
-        ) {
-            Ok(assertion) => assertion,
-            Err(e) => {
-                pam_fail!(
-                    state.msg_printer,
-                    tr("QR/Bluetooth authentication failed."),
-                    e
-                );
+        FidoAuthMethod::QrBluetooth => {
+            debug!("FIDO auth: attempting QR/Bluetooth");
+            match fido_auth_qr_bluetooth_only(
+                state.msg_printer.clone(),
+                fido_challenge,
+                fido_allow_list,
+                &qr_prompt,
+            ) {
+                Ok(assertion) => assertion,
+                Err(e) => {
+                    pam_fail!(
+                        state.msg_printer,
+                        tr("QR/Bluetooth authentication failed."),
+                        e
+                    );
+                }
             }
         }
-    } else {
-        debug!("FIDO auth: attempting security key");
-        match fido_auth(
-            state.msg_printer.clone(),
-            fido_challenge,
-            fido_allow_list,
-            timeout_ms,
-            &fido_prompt,
-            &fido_presence_prompt,
-        ) {
-            Ok(assertion) => assertion,
-            Err(e) => {
-                pam_fail!(
-                    state.msg_printer,
-                    tr("Security key authentication failed."),
-                    e
-                );
+        FidoAuthMethod::SecurityKey => {
+            debug!("FIDO auth: attempting security key");
+            match fido_auth(
+                state.msg_printer.clone(),
+                fido_challenge,
+                fido_allow_list,
+                timeout_ms,
+                &fido_prompt,
+                &fido_presence_prompt,
+            ) {
+                Ok(assertion) => assertion,
+                Err(e) => {
+                    pam_fail!(
+                        state.msg_printer,
+                        tr("Security key authentication failed."),
+                        e
+                    );
+                }
             }
         }
     };
@@ -1690,6 +1767,79 @@ mod tests {
             self.prompts.lock().unwrap().push(prompt.to_string());
             Some("hunter2".to_string())
         }
+    }
+
+    #[test]
+    fn qr_bluetooth_gdm_message_is_unchanged() -> Result<(), PamResultCode> {
+        let message = qr_bluetooth_message(
+            &RecordingPrinter::default(),
+            "Scan with your phone",
+            "FIDO:/1234567890",
+        )?;
+        assert_eq!(
+            message,
+            "[QR_BT_LABEL] Scan with your phone\n[QR_BT] FIDO:/1234567890"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn qr_bluetooth_terminal_message_round_trips_real_cable_payload(
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let device = CableQrCodeDevice::new_transient(
+            QrCodeOperationHint::GetAssertionRequest,
+            CableTransports::CloudAssistedOnly,
+        )?;
+        let payload = device.qr_code.to_string();
+        assert!(payload.starts_with("FIDO:/"));
+        let message = qr_bluetooth_message(
+            &SimpleMessagePrinter::default(),
+            "Scan with your phone",
+            &payload,
+        )
+        .map_err(|e| format!("QR presentation failed: {e:?}"))?;
+        assert!(!message.contains("[QR_BT"));
+        assert!(!message.contains(&payload));
+        let qr = message
+            .strip_prefix("Scan with your phone\n")
+            .ok_or("missing QR prompt")?;
+        let lines: Vec<Vec<char>> = qr
+            .lines()
+            .map(|line| {
+                line.strip_prefix("\x1b[30;47m")
+                    .and_then(|line| line.strip_suffix("\x1b[0m"))
+                    .map(|line| line.chars().collect())
+                    .ok_or("missing explicit black-on-white colors")
+            })
+            .collect::<Result<_, _>>()?;
+        let width = lines.first().ok_or("missing QR pixels")?.len();
+        assert!(lines.iter().all(|line| line.len() == width));
+        assert!(lines.iter().all(|line| line
+            .iter()
+            .all(|ch| matches!(ch, ' ' | '\u{2588}' | '\u{2580}' | '\u{2584}'))));
+        assert!(lines[..2].iter().flatten().all(|ch| *ch == ' '));
+        assert!(lines.iter().all(|line| line[..4]
+            .iter()
+            .chain(&line[width - 4..])
+            .all(|ch| *ch == ' ')));
+        let image = image::GrayImage::from_fn(width as u32 * 4, lines.len() as u32 * 8, |x, y| {
+            let dark = match lines[y as usize / 8][x as usize / 4] {
+                '\u{2588}' => true,
+                '\u{2580}' => y % 8 < 4,
+                '\u{2584}' => y % 8 >= 4,
+                _ => false,
+            };
+            image::Luma([if dark { 0 } else { 255 }])
+        });
+        let mut prepared = rqrr::PreparedImage::prepare_from_greyscale(
+            image.width() as usize,
+            image.height() as usize,
+            |x, y| image.get_pixel(x as u32, y as u32).0[0],
+        );
+        let grids = prepared.detect_grids();
+        assert_eq!(grids.len(), 1);
+        assert_eq!(grids[0].decode()?.1, payload);
+        Ok(())
     }
 
     fn retryable_connect_error() -> io::Error {
