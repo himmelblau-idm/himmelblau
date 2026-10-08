@@ -29,7 +29,7 @@ pub(super) enum AuthStep {
 
 struct Script {
     account_id: &'static str,
-    password: &'static str,
+    password: String,
     steps: VecDeque<AuthStep>,
 }
 
@@ -65,12 +65,12 @@ impl TestBrokerClient {
     pub(super) fn set_steps(
         &self,
         account_id: &'static str,
-        password: &'static str,
+        password: &str,
         steps: Vec<AuthStep>,
     ) {
         *self.script.lock().unwrap() = Some(Script {
             account_id,
-            password,
+            password: password.to_string(),
             steps: steps.into(),
         });
     }

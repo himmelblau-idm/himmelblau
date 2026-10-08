@@ -24,7 +24,6 @@ use tokio::sync::{broadcast, Mutex};
 use uuid::Uuid;
 
 const ACCOUNT: &str = "testuser@example.com";
-const PASSWORD: &str = "test-password";
 const DOMAIN: &str = "example.com";
 const TENANT: &str = "58e8a301-2502-4814-81c5-a4d17c399a45";
 const OTP_PROMPT: &str = "Enter the verification code";
@@ -67,6 +66,7 @@ struct Fixture {
     tpm: BoxedDynTpm,
     machine_key: StorageKey,
     old_token: UserToken,
+    password: String,
     config_path: PathBuf,
 }
 
@@ -157,6 +157,8 @@ impl Fixture {
             tpm,
             machine_key,
             old_token,
+            // No reusable credential is embedded in the fixture or repository.
+            password: Uuid::new_v4().to_string(),
             config_path,
         }
     }
@@ -166,7 +168,7 @@ impl Fixture {
             .client
             .lock()
             .await
-            .set_steps(ACCOUNT, PASSWORD, steps);
+            .set_steps(ACCOUNT, &self.password, steps);
     }
 
     async fn step(
@@ -276,7 +278,11 @@ fn mfa_demands() -> Vec<MsalError> {
     demands
 }
 
-fn assert_mfa_challenge(result: (AuthResult, AuthCacheAction), handler: &AuthCredHandler) {
+fn assert_mfa_challenge(
+    result: (AuthResult, AuthCacheAction),
+    handler: &AuthCredHandler,
+    expected_password: &str,
+) {
     assert!(matches!(
         result,
         (
@@ -286,7 +292,7 @@ fn assert_mfa_challenge(result: (AuthResult, AuthCacheAction), handler: &AuthCre
     ));
     assert!(matches!(
         handler,
-        AuthCredHandler::MFA { password: Some(password), .. } if password == PASSWORD
+        AuthCredHandler::MFA { password: Some(password), .. } if password == expected_password
     ));
 }
 
@@ -338,11 +344,11 @@ fn password_first_refresh_mfa_demand_enters_real_interactive_flow() {
                 .step(
                     &mut handler,
                     PamAuthRequest::Password {
-                        cred: PASSWORD.into(),
+                        cred: fixture.password.clone(),
                     },
                 )
                 .await;
-            assert_mfa_challenge(result, &handler);
+            assert_mfa_challenge(result, &handler, &fixture.password);
             fixture.assert_finished().await;
         }
     });
@@ -368,11 +374,11 @@ fn password_first_default_client_refresh_mfa_demand_enters_interactive_flow() {
             .step(
                 &mut handler,
                 PamAuthRequest::Password {
-                    cred: PASSWORD.into(),
+                    cred: fixture.password.clone(),
                 },
             )
             .await;
-        assert_mfa_challenge(result, &handler);
+        assert_mfa_challenge(result, &handler, &fixture.password);
         fixture.assert_finished().await;
     });
 }
@@ -396,11 +402,11 @@ fn password_first_repeated_refresh_mfa_demand_denies_without_restarting() {
                 .step(
                     &mut handler,
                     PamAuthRequest::Password {
-                        cred: PASSWORD.into(),
+                        cred: fixture.password.clone(),
                     },
                 )
                 .await;
-            assert_mfa_challenge(result, &handler);
+            assert_mfa_challenge(result, &handler, &fixture.password);
             assert_denied(
                 fixture
                     .step(
@@ -431,7 +437,7 @@ fn password_first_genuine_denials_do_not_start_mfa() {
                 .step(
                     &mut handler,
                     PamAuthRequest::Password {
-                        cred: PASSWORD.into(),
+                        cred: fixture.password.clone(),
                     },
                 )
                 .await,
@@ -451,7 +457,7 @@ fn password_first_genuine_denials_do_not_start_mfa() {
                     .step(
                         &mut handler,
                         PamAuthRequest::Password {
-                            cred: PASSWORD.into(),
+                            cred: fixture.password.clone(),
                         },
                     )
                     .await,
@@ -478,11 +484,11 @@ fn password_first_denied_mfa_completion_does_not_cache_password() {
             .step(
                 &mut handler,
                 PamAuthRequest::Password {
-                    cred: PASSWORD.into(),
+                    cred: fixture.password.clone(),
                 },
             )
             .await;
-        assert_mfa_challenge(result, &handler);
+        assert_mfa_challenge(result, &handler, &fixture.password);
         assert_denied(
             fixture
                 .step(
@@ -529,7 +535,7 @@ fn password_first_repeated_mfa_initiation_demand_is_bounded() {
                 .step(
                     &mut handler,
                     PamAuthRequest::Password {
-                        cred: PASSWORD.into(),
+                        cred: fixture.password.clone(),
                     },
                 )
                 .await,
