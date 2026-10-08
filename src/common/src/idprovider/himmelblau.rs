@@ -2528,20 +2528,19 @@ impl IdProvider for HimmelblauProvider {
                                     info!("Azure hasn't finished replicating the device...");
                                     info!("Retrying in 5 seconds");
                                     sleep(Duration::from_secs(5));
-                                    let retry = self.client
-                                        .lock()
-                                        .await
-                                        .acquire_token_by_refresh_token(
-                                            &$token.refresh_token,
-                                            scopes,
-                                            None,
-                                            client_id,
-                                            tpm,
-                                            machine_key,
-                                        )
-                                        .await;
-                                    let retry = on_token_mfa_required!(retry, $on_mfa_required);
-                                    net_down_check!(retry,
+                                    net_down_check!(
+                                        self.client
+                                            .lock()
+                                            .await
+                                            .acquire_token_by_refresh_token(
+                                                &$token.refresh_token,
+                                                scopes,
+                                                None,
+                                                client_id,
+                                                tpm,
+                                                machine_key,
+                                            )
+                                            .await,
                                         Ok(token) => token,
                                         Err(e) => {
                                             error!("{:?}", e);
@@ -2568,7 +2567,7 @@ impl IdProvider for HimmelblauProvider {
                                          Retrying with default app ID.",
                                         err_resp.error_description
                                     );
-                                    let retry = self.client
+                                    match self.client
                                         .lock()
                                         .await
                                         .acquire_token_by_refresh_token(
@@ -2579,8 +2578,8 @@ impl IdProvider for HimmelblauProvider {
                                             tpm,
                                             machine_key,
                                         )
-                                        .await;
-                                    match on_token_mfa_required!(retry, $on_mfa_required) {
+                                        .await
+                                    {
                                         Ok(token) => token,
                                         Err(e) => {
                                             error!("{:?}", e);
