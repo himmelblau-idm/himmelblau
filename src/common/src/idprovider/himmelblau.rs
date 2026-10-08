@@ -85,6 +85,16 @@ use totp_rs::{Algorithm, Secret, TOTP};
 use uuid::Uuid;
 use zeroize::Zeroizing;
 
+#[cfg(test)]
+mod password_first_tests;
+#[cfg(test)]
+mod test_client;
+
+#[cfg(not(test))]
+type ProviderClient = BrokerClientApplication;
+#[cfg(test)]
+type ProviderClient = test_client::TestBrokerClient;
+
 // AADSTS65002: Consent between first party application and resource is required.
 // This occurs when a tenant has not granted consent for an application to access
 // the Graph API. When this happens, we should gracefully fallback and continue
@@ -1040,7 +1050,7 @@ async fn probe_entra_authority(
 
 pub struct HimmelblauProvider {
     state: Mutex<CacheState>,
-    client: Mutex<BrokerClientApplication>,
+    client: Mutex<ProviderClient>,
     config: Arc<Mutex<HimmelblauConfig>>,
     domain: String,
     graph: Graph,
@@ -1058,6 +1068,8 @@ impl HimmelblauProvider {
         graph: Graph,
         idmap: &Arc<Mutex<Idmap>>,
     ) -> Result<Self, IdpError> {
+        #[cfg(test)]
+        let client = ProviderClient::from(client);
         Ok(HimmelblauProvider {
             state: Mutex::new(CacheState::OfflineNextCheck(SystemTime::now())),
             client: Mutex::new(client),
