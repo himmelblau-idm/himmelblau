@@ -86,6 +86,9 @@ impl NssCache {
     }
 
     pub fn insert_user(&self, user: &NssUser) -> Result<()> {
+        if !user.cacheable {
+            return Ok(());
+        }
         if let Some(conn) = &self.conn {
             if self.writable {
                 let now = SystemTime::now()
@@ -149,6 +152,7 @@ impl NssCache {
                     gecos: row.get(3).ok()?,
                     homedir: row.get(4).ok()?,
                     shell: row.get(5).ok()?,
+                    cacheable: true,
                 })
             } else {
                 None
@@ -188,6 +192,7 @@ impl NssCache {
                         gecos: row.get(3)?,
                         homedir: row.get(4)?,
                         shell: row.get(5)?,
+                        cacheable: true,
                     }))
                 } else {
                     Ok(None)
@@ -202,5 +207,46 @@ impl NssCache {
         }
 
         users
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used)]
+    use super::NssCache;
+    use crate::idprovider::interface::Id;
+    use crate::unix_proto::NssUser;
+    use rusqlite::Connection;
+
+    #[test]
+    fn lookup_only_user_does_not_enter_fallback_cache() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE nss_passwd (
+                name TEXT PRIMARY KEY, uid INTEGER, gid INTEGER, gecos TEXT,
+                homedir TEXT, shell TEXT, last_updated INTEGER
+            )",
+        )
+        .unwrap();
+        let cache = NssCache {
+            conn: Some(conn),
+            writable: true,
+        };
+        let mut user = NssUser {
+            name: "user@example.com".to_string(),
+            uid: 2000,
+            gid: 2000,
+            gecos: String::new(),
+            homedir: "/home/user".to_string(),
+            shell: "/bin/sh".to_string(),
+            cacheable: false,
+        };
+        let id = Id::Name(user.name.clone());
+
+        cache.insert_user(&user).unwrap();
+        assert!(cache.get_user(&id).is_none());
+        user.cacheable = true;
+        cache.insert_user(&user).unwrap();
+        assert!(cache.get_user(&id).is_some());
     }
 }
