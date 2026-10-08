@@ -376,7 +376,7 @@ async fn reconcile_local_groups_once(
         })
         .collect();
 
-    let accounts = match cachelayer.get_nssaccounts().await {
+    let accounts = match cachelayer.get_unexpired_nssaccounts().await {
         Ok(accounts) => accounts,
         Err(_) => {
             warn!("Unable to fetch cached users for local group reconciliation");
