@@ -167,6 +167,6 @@ walkdir = "2"
 csv = "1.4.0"
 notify-debouncer-full = { version = "0.5" }
 gettextrs = { package = "gettext-rs", version = "0.8", features = ["gettext-system"] }
-kanidm-hsm-crypto = { version = "^0.3.6" }
+kanidm-hsm-crypto = { version = "^0.4.0" }
 kanidm_lib_file_permissions = "1.10.0"
 sha2 = "0.11.0"
