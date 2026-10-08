@@ -1,6 +1,8 @@
 // Script only the external broker calls, keeping the provider's authentication
 // state machine and cache-action selection under test. This module is compiled
 // only for unit tests; unscripted clients delegate to the real broker.
+// Box delegated futures so the test wrapper does not embed the broker's large
+// network state machines in every branch of the provider's debug-build future.
 #![allow(clippy::panic, clippy::too_many_arguments, clippy::unwrap_used)]
 
 use himmelblau::auth::{AuthInit, BrokerClientApplication, UserToken};
@@ -109,17 +111,16 @@ impl TestBrokerClient {
             Some(AuthStep::Password(response)) => response,
             Some(_) => panic!("Expected a different broker call, got password authentication"),
             None => {
-                self.inner
-                    .acquire_token_by_username_password(
-                        username,
-                        password,
-                        scopes,
-                        request_resource,
-                        client_id,
-                        tpm,
-                        storage_key,
-                    )
-                    .await
+                Box::pin(self.inner.acquire_token_by_username_password(
+                    username,
+                    password,
+                    scopes,
+                    request_resource,
+                    client_id,
+                    tpm,
+                    storage_key,
+                ))
+                .await
             }
         }
     }
@@ -143,16 +144,15 @@ impl TestBrokerClient {
             }
             Some(_) => panic!("Expected a different broker call, got token refresh"),
             None => {
-                self.inner
-                    .acquire_token_by_refresh_token(
-                        refresh_token,
-                        scopes,
-                        request_resource,
-                        client_id,
-                        tpm,
-                        storage_key,
-                    )
-                    .await
+                Box::pin(self.inner.acquire_token_by_refresh_token(
+                    refresh_token,
+                    scopes,
+                    request_resource,
+                    client_id,
+                    tpm,
+                    storage_key,
+                ))
+                .await
             }
         }
     }
@@ -172,20 +172,25 @@ impl TestBrokerClient {
             }) => {
                 assert!(password.is_some());
                 assert!(options == expected_options);
-                assert!(auth_init.is_none(), "MFA must use a fresh auth configuration");
+                assert!(
+                    auth_init.is_none(),
+                    "MFA must use a fresh auth configuration"
+                );
                 response
             }
             Some(_) => panic!("Expected a different broker call, got MFA initiation"),
             None => {
-                self.inner
-                    .initiate_acquire_token_by_mfa_flow_for_device_enrollment(
-                        username,
-                        password,
-                        options,
-                        auth_init,
-                        selected_method,
-                    )
-                    .await
+                Box::pin(
+                    self.inner
+                        .initiate_acquire_token_by_mfa_flow_for_device_enrollment(
+                            username,
+                            password,
+                            options,
+                            auth_init,
+                            selected_method,
+                        ),
+                )
+                .await
             }
         }
     }
@@ -201,9 +206,13 @@ impl TestBrokerClient {
             Some(AuthStep::Complete(response)) => response,
             Some(_) => panic!("Expected a different broker call, got MFA completion"),
             None => {
-                self.inner
-                    .acquire_token_by_mfa_flow(username, auth_data, poll_attempt, flow)
-                    .await
+                Box::pin(self.inner.acquire_token_by_mfa_flow(
+                    username,
+                    auth_data,
+                    poll_attempt,
+                    flow,
+                ))
+                .await
             }
         }
     }

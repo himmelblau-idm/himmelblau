@@ -72,8 +72,8 @@ struct Fixture {
 
 impl Fixture {
     async fn new() -> Self {
-        let config_path = std::env::temp_dir()
-            .join(format!("himmelblau-password-first-{}.conf", Uuid::new_v4()));
+        let config_path =
+            std::env::temp_dir().join(format!("himmelblau-password-first-{}.conf", Uuid::new_v4()));
         std::fs::write(&config_path, "[global]\n").unwrap();
         let mut config = HimmelblauConfig::new(config_path.to_str()).unwrap();
         config.set("global", "allow_console_password_only", "true");
@@ -194,7 +194,12 @@ impl Fixture {
 
     async fn assert_finished(&self) {
         self.provider.client.lock().await.assert_finished();
-        assert!(self.provider.refresh_cache.refresh_token(ACCOUNT).await.is_err());
+        assert!(self
+            .provider
+            .refresh_cache
+            .refresh_token(ACCOUNT)
+            .await
+            .is_err());
     }
 }
 
@@ -292,14 +297,69 @@ fn assert_denied(result: (AuthResult, AuthCacheAction)) {
     ));
 }
 
-#[tokio::test]
-async fn password_first_refresh_mfa_demand_enters_real_interactive_flow() {
-    let mut fixture = Fixture::new().await;
-    for demand in mfa_demands() {
+// The macro-expanded provider future has large debug-build construction/move
+// frames. Construct and poll each test future on a dedicated stack rather than
+// changing process-wide stack settings or production authentication code.
+fn run_provider_test<F, Fut>(test: F)
+where
+    F: FnOnce() -> Fut + Send + 'static,
+    Fut: std::future::Future<Output = ()>,
+{
+    let worker = std::thread::Builder::new()
+        .name("password-first-provider-test".into())
+        .stack_size(16 * 1024 * 1024)
+        .spawn(move || {
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap()
+                .block_on(test());
+        })
+        .unwrap();
+    if let Err(panic) = worker.join() {
+        std::panic::resume_unwind(panic);
+    }
+}
+
+#[test]
+fn password_first_refresh_mfa_demand_enters_real_interactive_flow() {
+    run_provider_test(|| async {
+        let mut fixture = Fixture::new().await;
+        for demand in mfa_demands() {
+            fixture
+                .script(vec![
+                    AuthStep::Password(Ok(token())),
+                    refresh(demand),
+                    initiate(),
+                ])
+                .await;
+            let mut handler = password_first_handler();
+            let result = fixture
+                .step(
+                    &mut handler,
+                    PamAuthRequest::Password {
+                        cred: PASSWORD.into(),
+                    },
+                )
+                .await;
+            assert_mfa_challenge(result, &handler);
+            fixture.assert_finished().await;
+        }
+    });
+}
+
+#[test]
+fn password_first_default_client_refresh_mfa_demand_enters_interactive_flow() {
+    run_provider_test(|| async {
+        let mut fixture = Fixture::new().await;
         fixture
             .script(vec![
                 AuthStep::Password(Ok(token())),
-                refresh(demand),
+                refresh(MsalError::AADSTSError(AADSTSError::new(65001, None))),
+                AuthStep::Refresh {
+                    client_id: Some(super::DEFAULT_APP_ID),
+                    response: Err(MsalError::MFARequired),
+                },
                 initiate(),
             ])
             .await;
@@ -314,47 +374,103 @@ async fn password_first_refresh_mfa_demand_enters_real_interactive_flow() {
             .await;
         assert_mfa_challenge(result, &handler);
         fixture.assert_finished().await;
-    }
+    });
 }
 
-#[tokio::test]
-async fn password_first_default_client_refresh_mfa_demand_enters_interactive_flow() {
-    let mut fixture = Fixture::new().await;
-    fixture
-        .script(vec![
-            AuthStep::Password(Ok(token())),
-            refresh(MsalError::AADSTSError(AADSTSError::new(65001, None))),
-            AuthStep::Refresh {
-                client_id: Some(super::DEFAULT_APP_ID),
-                response: Err(MsalError::MFARequired),
-            },
-            initiate(),
-        ])
-        .await;
-    let mut handler = password_first_handler();
-    let result = fixture
-        .step(
-            &mut handler,
-            PamAuthRequest::Password {
-                cred: PASSWORD.into(),
-            },
-        )
-        .await;
-    assert_mfa_challenge(result, &handler);
-    fixture.assert_finished().await;
+#[test]
+fn password_first_repeated_refresh_mfa_demand_denies_without_restarting() {
+    run_provider_test(|| async {
+        let mut fixture = Fixture::new().await;
+        for demand in mfa_demands() {
+            fixture
+                .script(vec![
+                    AuthStep::Password(Ok(token())),
+                    refresh(MsalError::MFARequired),
+                    initiate(),
+                    AuthStep::Complete(Ok(token())),
+                    refresh(demand),
+                ])
+                .await;
+            let mut handler = password_first_handler();
+            let result = fixture
+                .step(
+                    &mut handler,
+                    PamAuthRequest::Password {
+                        cred: PASSWORD.into(),
+                    },
+                )
+                .await;
+            assert_mfa_challenge(result, &handler);
+            assert_denied(
+                fixture
+                    .step(
+                        &mut handler,
+                        PamAuthRequest::Input {
+                            cred: "123456".into(),
+                        },
+                    )
+                    .await,
+            );
+            fixture.assert_finished().await;
+        }
+    });
 }
 
-#[tokio::test]
-async fn password_first_repeated_refresh_mfa_demand_denies_without_restarting() {
-    let mut fixture = Fixture::new().await;
-    for demand in mfa_demands() {
+#[test]
+fn password_first_genuine_denials_do_not_start_mfa() {
+    run_provider_test(|| async {
+        let mut fixture = Fixture::new().await;
+        fixture
+            .script(vec![AuthStep::Password(Err(MsalError::AADSTSError(
+                AADSTSError::new(50126, None),
+            )))])
+            .await;
+        let mut handler = password_first_handler();
+        assert_denied(
+            fixture
+                .step(
+                    &mut handler,
+                    PamAuthRequest::Password {
+                        cred: PASSWORD.into(),
+                    },
+                )
+                .await,
+        );
+        fixture.assert_finished().await;
+
+        for codes in [vec![53003], vec![50076, 53003]] {
+            fixture
+                .script(vec![
+                    AuthStep::Password(Ok(token())),
+                    refresh(token_error(codes)),
+                ])
+                .await;
+            let mut handler = password_first_handler();
+            assert_denied(
+                fixture
+                    .step(
+                        &mut handler,
+                        PamAuthRequest::Password {
+                            cred: PASSWORD.into(),
+                        },
+                    )
+                    .await,
+            );
+            fixture.assert_finished().await;
+        }
+    });
+}
+
+#[test]
+fn password_first_denied_mfa_completion_does_not_cache_password() {
+    run_provider_test(|| async {
+        let mut fixture = Fixture::new().await;
         fixture
             .script(vec![
                 AuthStep::Password(Ok(token())),
                 refresh(MsalError::MFARequired),
                 initiate(),
-                AuthStep::Complete(Ok(token())),
-                refresh(demand),
+                AuthStep::Complete(Err(MsalError::AADSTSError(AADSTSError::new(500121, None)))),
             ])
             .await;
         let mut handler = password_first_handler();
@@ -378,35 +494,33 @@ async fn password_first_repeated_refresh_mfa_demand_denies_without_restarting() 
                 .await,
         );
         fixture.assert_finished().await;
-    }
+    });
 }
 
-#[tokio::test]
-async fn password_first_genuine_denials_do_not_start_mfa() {
-    let mut fixture = Fixture::new().await;
-    fixture
-        .script(vec![AuthStep::Password(Err(MsalError::AADSTSError(
-            AADSTSError::new(50126, None),
-        )))])
-        .await;
-    let mut handler = password_first_handler();
-    assert_denied(
-        fixture
-            .step(
-                &mut handler,
-                PamAuthRequest::Password {
-                    cred: PASSWORD.into(),
-                },
-            )
-            .await,
-    );
-    fixture.assert_finished().await;
-
-    for codes in [vec![53003], vec![50076, 53003]] {
+#[test]
+fn password_first_repeated_mfa_initiation_demand_is_bounded() {
+    run_provider_test(|| async {
+        let mut fixture = Fixture::new().await;
         fixture
             .script(vec![
                 AuthStep::Password(Ok(token())),
-                refresh(token_error(codes)),
+                refresh(MsalError::MFARequired),
+                AuthStep::Initiate {
+                    options: vec![
+                        AuthOption::Fido,
+                        AuthOption::IntuneEnable,
+                        AuthOption::ForceMFA,
+                    ],
+                    response: Err(MsalError::MFARequired),
+                },
+                AuthStep::Initiate {
+                    options: vec![
+                        AuthOption::Fido,
+                        AuthOption::IntuneEnable,
+                        AuthOption::ForceMFA,
+                    ],
+                    response: Err(MsalError::MFARequired),
+                },
             ])
             .await;
         let mut handler = password_first_handler();
@@ -421,80 +535,5 @@ async fn password_first_genuine_denials_do_not_start_mfa() {
                 .await,
         );
         fixture.assert_finished().await;
-    }
-}
-
-#[tokio::test]
-async fn password_first_denied_mfa_completion_does_not_cache_password() {
-    let mut fixture = Fixture::new().await;
-    fixture
-        .script(vec![
-            AuthStep::Password(Ok(token())),
-            refresh(MsalError::MFARequired),
-            initiate(),
-            AuthStep::Complete(Err(MsalError::AADSTSError(AADSTSError::new(
-                500121, None,
-            )))),
-        ])
-        .await;
-    let mut handler = password_first_handler();
-    let result = fixture
-        .step(
-            &mut handler,
-            PamAuthRequest::Password {
-                cred: PASSWORD.into(),
-            },
-        )
-        .await;
-    assert_mfa_challenge(result, &handler);
-    assert_denied(
-        fixture
-            .step(
-                &mut handler,
-                PamAuthRequest::Input {
-                    cred: "123456".into(),
-                },
-            )
-            .await,
-    );
-    fixture.assert_finished().await;
-}
-
-#[tokio::test]
-async fn password_first_repeated_mfa_initiation_demand_is_bounded() {
-    let mut fixture = Fixture::new().await;
-    fixture
-        .script(vec![
-            AuthStep::Password(Ok(token())),
-            refresh(MsalError::MFARequired),
-            AuthStep::Initiate {
-                options: vec![
-                    AuthOption::Fido,
-                    AuthOption::IntuneEnable,
-                    AuthOption::ForceMFA,
-                ],
-                response: Err(MsalError::MFARequired),
-            },
-            AuthStep::Initiate {
-                options: vec![
-                    AuthOption::Fido,
-                    AuthOption::IntuneEnable,
-                    AuthOption::ForceMFA,
-                ],
-                response: Err(MsalError::MFARequired),
-            },
-        ])
-        .await;
-    let mut handler = password_first_handler();
-    assert_denied(
-        fixture
-            .step(
-                &mut handler,
-                PamAuthRequest::Password {
-                    cred: PASSWORD.into(),
-                },
-            )
-            .await,
-    );
-    fixture.assert_finished().await;
+    });
 }
