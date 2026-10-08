@@ -62,12 +62,7 @@ impl DerefMut for TestBrokerClient {
 }
 
 impl TestBrokerClient {
-    pub(super) fn set_steps(
-        &self,
-        account_id: &'static str,
-        password: &str,
-        steps: Vec<AuthStep>,
-    ) {
+    pub(super) fn set_steps(&self, account_id: &'static str, password: &str, steps: Vec<AuthStep>) {
         *self.script.lock().unwrap() = Some(Script {
             account_id,
             password: password.to_string(),
