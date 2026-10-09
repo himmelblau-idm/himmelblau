@@ -26,6 +26,25 @@ class Arm64RpmDockerfileTests(unittest.TestCase):
 
 
 class PackagingToolTests(unittest.TestCase):
+    def test_rustup_installers_pin_the_declared_toolchain(self):
+        cases = [
+            ("fedora44", "amd64"),  # native template
+            ("fedora44", "arm64"),  # emulated template
+            ("ubuntu24.04", "arm64"),  # cross-compilation template
+        ]
+        for distro, arch in cases:
+            with self.subTest(distro=distro, arch=arch):
+                dockerfile = gen_dockerfiles.render(
+                    distro,
+                    gen_dockerfiles.DISTS[distro],
+                    patch_libhimmelblau=False,
+                    arch=arch,
+                )
+                self.assertIn(
+                    "sh -s -- -y --default-toolchain 1.93.1", dockerfile
+                )
+                self.assertNotIn("&& echo 1.93.1", dockerfile)
+
     def test_packaging_tools_match_distro_family_on_each_architecture(self):
         for name, config in gen_dockerfiles.DISTS.items():
             for arch in gen_dockerfiles.ARCH_MAP:
