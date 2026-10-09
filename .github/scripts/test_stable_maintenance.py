@@ -264,6 +264,9 @@ class BranchAndCliTests(unittest.TestCase):
             self.assertIn("RUSTUP_HOME=/usr/local/rustup", argv)
             self.assertIn("PATH=/usr/local/cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin", argv)
             self.assertIn("O365_GEN_DIR=/target/o365-generated", argv)
+            self.assertIn(sm.BUILD_RESOURCE_PROBE, argv)
+            self.assertEqual(argv[-9:], ["python3", "-I", "-c", sm.BUILD_RESOURCE_PROBE,
+                             "cargo", "build", "--workspace", "--locked", "--message-format=json"])
             for limit in ("65532:65532", "--pids-limit=512", "--cpus=4", "--memory=8g", "--memory-swap=8g"):
                 self.assertIn(limit, argv)
             self.assertNotIn("AZURE", joined)
@@ -309,6 +312,23 @@ fn main() {
             self.assertEqual((source / ".git/sentinel").read_text(), "unchanged")
             self.assertEqual((source / "target/host-sentinel").read_text(), "unchanged")
             self.assertEqual(list((source / "target").iterdir()), [source / "target/host-sentinel"])
+            # Exercise the real Cargo/rustc JSON linker error format, too.
+            (source / "src/lib.rs").unlink()
+            (source / "src/main.rs").write_text("fn main() {}\n")
+            (source / "build.rs").write_text(
+                'fn main() { println!("cargo:rustc-link-lib=maintenance_missing_fixture"); }\n')
+            with mock.patch.dict(os.environ, {"MAINTENANCE_PROJECT_CARGO_HOME": str(cargo_home)}), \
+                 mock.patch.object(sm.sys, "stderr", io.StringIO()) as output:
+                failure = sm.locked_build(runner)
+            self.assertNotEqual(failure.returncode, 0)
+            diagnostic = json.loads(output.getvalue().splitlines()[0].removeprefix("build-diagnostics: "))
+            self.assertIn("maintenance_missing_fixture", diagnostic["missing_libraries"])
+            self.assertTrue(any(x["crate"] == "asset-mount-fixture" and "bin" in x["kind"]
+                                for x in diagnostic["compiler_errors"]))
+            self.assertIn("target_free_bytes", diagnostic["resources"])
+            self.assertEqual((source / "source-sentinel").read_text(), "unchanged")
+            self.assertEqual((source / ".git/sentinel").read_text(), "unchanged")
+            self.assertEqual((source / "target/host-sentinel").read_text(), "unchanged")
 
     def test_generated_assets_mount_rejects_unsafe_host_mountpoints(self):
         for kind in ("file", "symlink", "dangling-symlink"):
@@ -371,9 +391,9 @@ fn main() {
                 self.assertNotIn(secret, diagnostic)
                 self.assertNotIn("::error::", diagnostic)
                 self.assertNotIn("\x1b", diagnostic)
-                self.assertEqual(len(diagnostic.splitlines()), 1)
-                self.assertLess(len(diagnostic), 600)
-                self.assertEqual(command.call_args.args[1], ["cargo", "build", "--workspace", "--locked"])
+                self.assertEqual(len(diagnostic.splitlines()), 2)
+                self.assertLess(len(diagnostic), 1200)
+                self.assertEqual(command.call_args.args[1], ["cargo", "build", "--workspace", "--locked", "--message-format=json"])
                 self.assertEqual(command.call_args.kwargs, {
                     "network": False, "source_rw": False, "cache_rw": False, "check": False,
                 })
@@ -418,8 +438,8 @@ fn main() {
                 self.assertNotIn(secret, diagnostic)
                 self.assertNotIn("::error::", diagnostic)
                 self.assertNotIn("\x1b", diagnostic)
-                self.assertEqual(len(diagnostic.splitlines()), 1)
-                self.assertLess(len(diagnostic), 900)
+                self.assertEqual(len(diagnostic.splitlines()), 2)
+                self.assertLess(len(diagnostic), 1200)
         stderr = "\n".join(f"Permission denied (os error {number})" for number in range(20))
         with mock.patch.object(sm, "contained_repo_command", return_value=sm.CommandResult(101, "", stderr)), \
              mock.patch.object(sm.sys, "stderr", io.StringIO()) as output:
@@ -470,8 +490,89 @@ fn main() {
                 self.assertNotIn(secret, diagnostic)
                 self.assertNotIn("::error::", diagnostic)
                 self.assertNotIn("\x1b", diagnostic)
-                self.assertEqual(len(diagnostic.splitlines()), 1)
-                self.assertLess(len(diagnostic), 900)
+                self.assertEqual(len(diagnostic.splitlines()), 2)
+                self.assertLess(len(diagnostic), 1200)
+
+    def test_cargo_json_build_diagnostics_identify_linker_failure_and_progress(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "Cargo.lock").write_text('version = 3\n[[package]]\nname = "example"\nversion = "1.2.3"\n')
+            message = {"reason": "compiler-message", "package_id": "registry+https://registry.invalid/index#example@1.2.3",
+                       "target": {"name": "example", "kind": ["bin"], "src_path": "/workspace/src/main.rs"},
+                       "message": {"level": "error", "message": "linking with `cc` failed: exit status: 1",
+                                   "code": None, "spans": [], "rendered": "::error::SECRET_RENDERED",
+                                   "children": [{"message": "cc SECRET_ARGUMENT /SECRET/PATH"},
+                                                {"message": "rust-lld: error: unable to find library -lkrb5\nrust-lld: error: undefined symbol: krb5_init_context"}]}}
+            stdout = "\n".join(json.dumps(x) for x in (
+                {"reason": "compiler-artifact"}, {"reason": "build-script-executed", "env": [["TOKEN", "SECRET_ENV"]]},
+                message, {"reason": "maintenance-resources", "resources": {"memory_oom_kill": 1, "target_free_bytes": 123, "TOKEN": "SECRET_ENV"}}))
+            result = sm.CommandResult(101, stdout, "could not compile example")
+            with mock.patch.object(sm, "contained_repo_command", return_value=result), \
+                 mock.patch.object(sm.sys, "stderr", io.StringIO()) as output:
+                self.assertIs(sm.locked_build(mock.Mock(root=root)), result)
+            report = json.loads(output.getvalue().splitlines()[0].removeprefix("build-diagnostics: "))
+            self.assertEqual(report["compiler_errors"][0], {"crate": "example", "version": "1.2.3", "target": "example",
+                "kind": ["bin"], "source": "src/main.rs", "code": "none", "locations": []})
+            self.assertEqual(report["missing_libraries"], ["krb5"])
+            self.assertEqual(report["undefined_symbols"], ["krb5_init_context"])
+            self.assertEqual(report["linker_causes"], ["missing-library", "undefined-symbol"])
+            self.assertEqual(report["resources"], {"memory_oom_kill": 1, "target_free_bytes": 123})
+            self.assertEqual((report["completed_artifacts"], report["completed_build_scripts"]), (1, 1))
+            self.assertIn("operations=link", output.getvalue())
+            self.assertNotIn("SECRET", output.getvalue())
+            self.assertNotIn("::error::", output.getvalue())
+
+    def test_cargo_json_diagnostics_are_bounded_and_reject_unsafe_fields(self):
+        item = {"reason": "compiler-message", "package_id": "file:///workspace/example#1.2.3",
+                "target": {"name": "::error::TOKEN\n", "kind": ["bin", "::error::TOKEN"], "src_path": "../../TOKEN"},
+                "message": {"level": "error", "code": {"code": "E0308"}, "message": "TOKEN\x1b[31m",
+                            "spans": [{"file_name": "src/main.rs", "line_start": 12, "column_start": 3, "text": ["TOKEN"]},
+                                      {"file_name": "https://TOKEN", "line_start": 1, "column_start": 1}], "children": None}}
+        malformed = ['not JSON TOKEN', '{broken', '[]', '{"reason":"compiler-message","message":null}',
+                     '{"reason":"compiler-message","message":{"level":"error"},"target":null}']
+        result = sm.CommandResult(101, "\n".join([*malformed, *[json.dumps(item) for _ in range(20)]]),
+                                  "undefined reference to `::error::TOKEN'\nNo space left on device\nBus error")
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.object(sm.sys, "stderr", io.StringIO()) as output:
+            root = Path(tmp)
+            (root / "Cargo.lock").write_text('[[package]]\nname = "example"\nversion = "1.2.3"\n')
+            sm.report_build_diagnostics(result, root)
+        report = json.loads(output.getvalue().removeprefix("build-diagnostics: "))
+        self.assertEqual(len(report["compiler_errors"]), 8)
+        self.assertEqual(report["compiler_errors"][0]["crate"], "example")
+        self.assertEqual(report["compiler_errors"][0]["code"], "E0308")
+        self.assertEqual(report["compiler_errors"][0]["locations"], ["src/main.rs:12:3"])
+        self.assertEqual(report["compiler_errors"][0]["target"], "unknown")
+        self.assertIn("bus-error", report["linker_causes"])
+        self.assertIn("no-space", report["linker_causes"])
+        self.assertNotIn("TOKEN", output.getvalue())
+        self.assertNotIn("\x1b", output.getvalue())
+        self.assertEqual(len(output.getvalue().splitlines()), 1)
+        self.assertLess(len(output.getvalue()), 6000)
+
+    def test_failed_build_script_names_are_checked_against_lockfile(self):
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.object(sm.sys, "stderr", io.StringIO()) as output:
+            root = Path(tmp)
+            (root / "Cargo.lock").write_text('[[package]]\nname = "example"\nversion = "1.2.3"\n')
+            sm.report_build_diagnostics(sm.CommandResult(101, "", "failed to run custom build command for `example v1.2.3`\n"
+                "failed to run custom build command for `SECRET v1.2.3`\nthread 'main' panicked at /workspace/src/example/build.rs:12:7:\nSECRET"), root)
+        report = json.loads(output.getvalue().removeprefix("build-diagnostics: "))
+        self.assertEqual(report["failed_build_scripts"], ["example"])
+        self.assertEqual(report["panic_locations"], ["src/example/build.rs:12:7"])
+        self.assertNotIn("SECRET", output.getvalue())
+
+    def test_build_resource_probe_preserves_exit_and_captures_before_cleanup(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            runner = sm.Runner(Path(tmp), os.environ)
+            # A checkout-local module must not intercept the trusted probe.
+            (Path(tmp) / "json.py").write_text('raise RuntimeError("untrusted checkout module")\n')
+            result = runner.run([sys.executable, "-I", "-c", sm.BUILD_RESOURCE_PROBE, sys.executable, "-c",
+                                 'import sys; print("cargo output"); print("cargo error", file=sys.stderr); sys.exit(7)'], check=False)
+        self.assertEqual(result.returncode, 7)
+        self.assertIn("cargo output", result.stdout)
+        self.assertIn("cargo error", result.stderr)
+        resource = json.loads(result.stdout.splitlines()[-1])
+        self.assertEqual(resource["reason"], "maintenance-resources")
+        self.assertIn("temporary_free_bytes", resource["resources"])
 
     def test_clean_build_failure_keeps_later_release_gates_blocked(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -2090,3 +2191,4 @@ class InitializePhaseTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
