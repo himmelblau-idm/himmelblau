@@ -374,7 +374,8 @@ mod tests {
                 ));
             }
             if matches!(self.user_get_error.load(Ordering::Acquire), 4 | 7) {
-                if matches!(&_pam_next_req, PamAuthRequest::Password { cred } if cred == "direct-totp") {
+                if matches!(&_pam_next_req, PamAuthRequest::Password { cred } if cred == "direct-totp")
+                {
                     return Ok((
                         AuthResult::Next(AuthRequest::HelloTOTP {
                             msg: "Enter local TOTP".to_string(),
@@ -1664,7 +1665,10 @@ mod tests {
                 .set_cache_usertoken(&mut cached, false)
                 .await
                 .unwrap();
-            resolver.client.user_get_error.store(mode, Ordering::Release);
+            resolver
+                .client
+                .user_get_error
+                .store(mode, Ordering::Release);
 
             let accounts = resolver.get_unexpired_nssaccounts().await.unwrap();
             assert_eq!(accounts.len(), 1);
@@ -1724,7 +1728,10 @@ mod tests {
         for mode in [0, 1, 2] {
             let resolver = setup_resolver_with_expiry(expiry).await;
             let token = test_token();
-            resolver.client.user_get_error.store(mode, Ordering::Release);
+            resolver
+                .client
+                .user_get_error
+                .store(mode, Ordering::Release);
             let refreshed = resolver
                 .refresh_cached_usertoken(&token.name)
                 .await
@@ -1735,10 +1742,7 @@ mod tests {
             assert_eq!(refreshed.groups[0].uuid, token.groups[0].uuid);
             assert_eq!(resolver.client.user_get_calls.load(Ordering::Acquire), 1);
             let mut dbtxn = resolver.db.write().await;
-            let (_, cached_expiry) = dbtxn
-                .get_account(&Id::Name(token.name))
-                .unwrap()
-                .unwrap();
+            let (_, cached_expiry) = dbtxn.get_account(&Id::Name(token.name)).unwrap().unwrap();
             assert_eq!(cached_expiry, expiry);
             dbtxn.commit().unwrap();
         }
@@ -1755,7 +1759,10 @@ mod tests {
             for change in ["expire", "remove", "uuid", "tenant", "claims"] {
                 let resolver = setup_resolver_with_expiry(expiry).await;
                 let token = test_token();
-                resolver.client.user_get_error.store(mode, Ordering::Release);
+                resolver
+                    .client
+                    .user_get_error
+                    .store(mode, Ordering::Release);
                 // Stop after the initial eligible snapshot, before provider
                 // work resumes, without relying on wall-clock sleeps.
                 let hsm_guard = resolver.hsm.lock().await;
@@ -2295,9 +2302,7 @@ where
         // Provider work can yield while eligibility or memberships change.
         // Use current claims only if the same cached identity is still eligible.
         let (expired, current) = self.get_cached_usertoken(&id).await?;
-        Ok(current.filter(|token| {
-            !expired && token.uuid == uuid && token.tenant_id == tenant_id
-        }))
+        Ok(current.filter(|token| !expired && token.uuid == uuid && token.tenant_id == tenant_id))
     }
 
     async fn get_cached_grouptokens(&self) -> ResolverResult<Vec<GroupToken>> {
