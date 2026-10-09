@@ -57,6 +57,31 @@ use himmelblau::auth::UserToken as UnixUserToken;
 
 const NXCACHE_SIZE: NonZeroUsize = NonZeroUsize::new(128).unwrap();
 
+// These keys deliberately mirror account_t's UUID/name/SPN/GID conflicts.
+// They are not tenant-scoped because the database's uniqueness constraints are not.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+enum PasswordCacheKey {
+    Uuid(Uuid),
+    Name(String),
+    Spn(String),
+    Gid(u32),
+}
+
+#[derive(Clone, Copy)]
+struct PasswordCacheGeneration {
+    identity_generation: u64,
+    password_generation: Option<u64>,
+    uuid: Uuid,
+    tenant_id: Option<Uuid>,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum CacheUpdateResult {
+    Updated,
+    Superseded,
+    IdentityChanged,
+}
+
 #[allow(clippy::large_enum_variant)]
 pub enum AuthSession {
     InProgress {
@@ -65,6 +90,9 @@ pub enum AuthSession {
         id: Id,
         token: Option<Box<UserToken>>,
         pending_password: Option<(u64, Zeroizing<String>)>,
+        // Retain the accepted identity's order through local PIN/TOTP setup too.
+        cache_generation: u64,
+        identity_staged: bool,
         online_at_init: bool,
         cred_handler: AuthCredHandler,
         /// Some authentication operations may need to spawn background tasks. These tasks need
@@ -103,9 +131,9 @@ where
     nxset: Mutex<HashSet<Id>>,
     nxcache: Mutex<LruCache<Id, SystemTime>>,
     password_generation: AtomicU64,
-    // Keep successful invalidation generations while older sessions may exist.
+    // Keep committed identity observations and password invalidations while older sessions exist.
     // Both this map and all pending sessions disappear on daemon restart.
-    password_cache_generations: Mutex<HashMap<Uuid, u64>>,
+    password_cache_generations: Mutex<HashMap<PasswordCacheKey, PasswordCacheGeneration>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -138,7 +166,7 @@ impl Display for Id {
 
 #[cfg(test)]
 mod tests {
-    use super::{AuthSession, Resolver};
+    use super::{AuthSession, CacheUpdateResult, Resolver};
     use crate::config::InitgroupsMode;
     use crate::db::{Cache, CacheTxn, Db, KeyStoreTxn};
     use crate::idprovider::interface::{
@@ -165,6 +193,7 @@ mod tests {
         user_get_calls: AtomicUsize,
         try_unseal_calls: AtomicUsize,
         user_get_error: AtomicUsize,
+        auth_token: RwLock<UserToken>,
     }
 
     impl OfflineFallbackProvider {
@@ -178,7 +207,15 @@ mod tests {
                 user_get_calls: AtomicUsize::new(0),
                 try_unseal_calls: AtomicUsize::new(0),
                 user_get_error: AtomicUsize::new(0),
+                auth_token: RwLock::new(test_token()),
             }
+        }
+
+        fn auth_token(&self) -> UserToken {
+            self.auth_token
+                .read()
+                .expect("auth token lock poisoned")
+                .clone()
         }
 
         fn set_cache_state(&self, state: CacheState) {
@@ -212,8 +249,10 @@ mod tests {
                     where_: "test provider".to_string(),
                 }),
                 2 => Err(IdpError::BadRequest),
-                3..=5 if matches!(_id, Id::Name(_)) => Ok(UserTokenState::LookupOnly(test_token())),
-                6 => Ok(UserTokenState::Update(test_token())),
+                3..=5 | 7 if matches!(_id, Id::Name(_)) => {
+                    Ok(UserTokenState::LookupOnly(test_token()))
+                }
+                6 => Ok(UserTokenState::Update(self.auth_token())),
                 _ => Ok(UserTokenState::UseCached),
             }
         }
@@ -285,7 +324,7 @@ mod tests {
             _machine_key: &tpm::structures::StorageKey,
             _shutdown_rx: &broadcast::Receiver<()>,
         ) -> Result<(AuthRequest, AuthCredHandler), IdpError> {
-            if matches!(self.user_get_error.load(Ordering::Acquire), 3..=5) {
+            if matches!(self.user_get_error.load(Ordering::Acquire), 3..=5 | 7) {
                 return Ok((
                     AuthRequest::Password {
                         prompt: None,
@@ -316,7 +355,7 @@ mod tests {
             if self.user_get_error.load(Ordering::Acquire) == 5 {
                 return Ok((
                     AuthResult::Success {
-                        token: test_token(),
+                        token: self.auth_token(),
                     },
                     AuthCacheAction::None,
                 ));
@@ -324,7 +363,7 @@ mod tests {
             if self.user_get_error.load(Ordering::Acquire) == 3 {
                 return Ok((
                     AuthResult::Success {
-                        token: test_token(),
+                        token: self.auth_token(),
                     },
                     AuthCacheAction::PasswordHashUpdate {
                         cred: match _pam_next_req {
@@ -334,12 +373,58 @@ mod tests {
                     },
                 ));
             }
-            if self.user_get_error.load(Ordering::Acquire) == 4 {
+            if matches!(self.user_get_error.load(Ordering::Acquire), 4 | 7) {
+                if matches!(&_pam_next_req, PamAuthRequest::Password { cred } if cred == "direct-totp") {
+                    return Ok((
+                        AuthResult::Next(AuthRequest::HelloTOTP {
+                            msg: "Enter local TOTP".to_string(),
+                        }),
+                        AuthCacheAction::None,
+                    ));
+                }
+                if let PamAuthRequest::HelloTOTP { cred } = &_pam_next_req {
+                    return Ok((
+                        AuthResult::Success {
+                            token: self.auth_token(),
+                        },
+                        if cred == "cache-password" {
+                            AuthCacheAction::PasswordHashUpdate {
+                                cred: "late-secret".to_string(),
+                            }
+                        } else {
+                            AuthCacheAction::None
+                        },
+                    ));
+                }
+                if matches!(&_pam_next_req, PamAuthRequest::SetupPin { pin } if pin == "totp") {
+                    return Ok((
+                        AuthResult::Next(AuthRequest::HelloTOTP {
+                            msg: "Enter local TOTP".to_string(),
+                        }),
+                        AuthCacheAction::None,
+                    ));
+                }
+                if matches!(&_pam_next_req, PamAuthRequest::SetupPin { pin } if pin == "retry") {
+                    return Ok((
+                        AuthResult::Next(AuthRequest::SetupPin {
+                            msg: "Try a different PIN".to_string(),
+                        }),
+                        AuthCacheAction::None,
+                    ));
+                }
                 if matches!(_pam_next_req, PamAuthRequest::SetupPin { .. }) {
                     return Ok((
                         AuthResult::Success {
-                            token: test_token(),
+                            token: self.auth_token(),
                         },
+                        AuthCacheAction::None,
+                    ));
+                }
+                if self.user_get_error.load(Ordering::Acquire) == 7 {
+                    return Ok((
+                        AuthResult::Next(AuthRequest::SetupPin {
+                            msg: "Set PIN".to_string(),
+                        }),
                         AuthCacheAction::None,
                     ));
                 }
@@ -1014,6 +1099,10 @@ mod tests {
             if newer_cache_fails {
                 conn.execute_batch(fail_replacement).unwrap();
             }
+            let mut newer_token = test_token();
+            newer_token.displayname = "Newer profile".to_string();
+            newer_token.groups.clear();
+            *resolver.client.auth_token.write().unwrap() = newer_token.clone();
             resolver.client.user_get_error.store(3, Ordering::Release);
             let response = resolver
                 .pam_account_authenticate_step(
@@ -1034,6 +1123,7 @@ mod tests {
                 conn.execute_batch(fail_replacement).unwrap();
             }
 
+            *resolver.client.auth_token.write().unwrap() = test_token();
             resolver.client.user_get_error.store(4, Ordering::Release);
             let response = resolver
                 .pam_account_authenticate_step(
@@ -1045,6 +1135,10 @@ mod tests {
                 .await
                 .unwrap();
             assert!(matches!(response, PamAuthResponse::Success));
+            let cached = resolver.get_cached_usertokens().await.unwrap();
+            assert_eq!(cached.len(), 1);
+            assert_eq!(cached[0].displayname, newer_token.displayname);
+            assert!(cached[0].groups.is_empty());
             assert!(!resolver
                 .check_cache_userpassword(test_token().uuid, "old-secret")
                 .await
@@ -1056,6 +1150,414 @@ mod tests {
                     .unwrap(),
                 !newer_cache_fails
             );
+        }
+    }
+
+    async fn stage_test_pin(
+        resolver: &Resolver<OfflineFallbackProvider>,
+        cache_password: bool,
+    ) -> AuthSession {
+        stage_test_local_auth(resolver, cache_password, false).await
+    }
+
+    async fn stage_test_local_auth(
+        resolver: &Resolver<OfflineFallbackProvider>,
+        cache_password: bool,
+        direct_totp: bool,
+    ) -> AuthSession {
+        resolver
+            .client
+            .user_get_error
+            .store(if cache_password { 4 } else { 7 }, Ordering::Release);
+        let (_shutdown_tx, shutdown_rx) = broadcast::channel(1);
+        let (mut session, _) = resolver
+            .pam_account_authenticate_init(
+                "testuser@example.com",
+                "sshd",
+                false,
+                false,
+                shutdown_rx,
+            )
+            .await
+            .unwrap();
+        let response = resolver
+            .pam_account_authenticate_step(
+                &mut session,
+                PamAuthRequest::Password {
+                    cred: if direct_totp {
+                        "direct-totp".to_string()
+                    } else {
+                        "staged-secret".to_string()
+                    },
+                },
+            )
+            .await
+            .unwrap();
+        if direct_totp {
+            assert!(matches!(response, PamAuthResponse::HelloTOTP { .. }));
+        } else {
+            assert!(matches!(response, PamAuthResponse::SetupPin { .. }));
+        }
+        session
+    }
+
+    async fn complete_test_auth(
+        resolver: &Resolver<OfflineFallbackProvider>,
+        cache_password: bool,
+    ) {
+        resolver
+            .client
+            .user_get_error
+            .store(if cache_password { 3 } else { 5 }, Ordering::Release);
+        let (_shutdown_tx, shutdown_rx) = broadcast::channel(1);
+        let (mut session, _) = resolver
+            .pam_account_authenticate_init(
+                "testuser@example.com",
+                "sshd",
+                false,
+                false,
+                shutdown_rx,
+            )
+            .await
+            .unwrap();
+        let response = resolver
+            .pam_account_authenticate_step(
+                &mut session,
+                PamAuthRequest::Password {
+                    cred: "new-secret".to_string(),
+                },
+            )
+            .await
+            .unwrap();
+        assert!(matches!(response, PamAuthResponse::Success));
+        assert!(matches!(session, AuthSession::Success(_)));
+    }
+
+    #[tokio::test]
+    async fn stale_pin_cannot_restore_identity_replaced_through_any_cache_alias() {
+        for collision in ["all", "name", "spn", "gid", "tenant"] {
+            for replacement in ["password", "failed-password", "passwordless", "refresh"] {
+                let (resolver, conn) = setup_sql_resolver().await;
+                resolver
+                    .set_cache_userpassword(test_token().uuid, "old-secret")
+                    .await
+                    .unwrap();
+                let mut older = stage_test_pin(&resolver, true).await;
+                let mut newer_token = test_token();
+                newer_token.uuid = uuid::Uuid::new_v4();
+                newer_token.name = "replacement".to_string();
+                newer_token.spn = "replacement@example.com".to_string();
+                newer_token.gidnumber += 1;
+                newer_token.displayname = "Replacement identity".to_string();
+                newer_token.groups.clear();
+                match collision {
+                    "all" => {
+                        newer_token.name = test_token().name;
+                        newer_token.spn = test_token().spn;
+                        newer_token.gidnumber = test_token().gidnumber;
+                    }
+                    "name" => newer_token.name = test_token().name,
+                    "spn" => newer_token.spn = test_token().spn,
+                    "gid" => newer_token.gidnumber = test_token().gidnumber,
+                    "tenant" => {
+                        newer_token.uuid = test_token().uuid;
+                        newer_token.tenant_id = Some(uuid::Uuid::new_v4());
+                    }
+                    _ => unreachable!(),
+                }
+                *resolver.client.auth_token.write().unwrap() = newer_token.clone();
+                if replacement == "failed-password" {
+                    conn.execute_batch(
+                        "CREATE TRIGGER fail_password_cache BEFORE UPDATE OF password ON account_t
+                         WHEN NEW.password IS NOT NULL
+                         BEGIN SELECT RAISE(ABORT, 'injected password cache failure'); END;",
+                    )
+                    .unwrap();
+                }
+                if replacement == "refresh" {
+                    resolver.client.user_get_error.store(6, Ordering::Release);
+                    let refreshed = resolver
+                        .refresh_usertoken(&Id::Name(test_token().spn), Some(test_token()))
+                        .await
+                        .unwrap()
+                        .unwrap();
+                    assert_eq!(refreshed.uuid, newer_token.uuid);
+                } else {
+                    complete_test_auth(&resolver, replacement != "passwordless").await;
+                }
+                if replacement == "failed-password" {
+                    conn.execute_batch("DROP TRIGGER fail_password_cache")
+                        .unwrap();
+                }
+
+                *resolver.client.auth_token.write().unwrap() = test_token();
+                resolver.client.user_get_error.store(4, Ordering::Release);
+                let response = resolver
+                    .pam_account_authenticate_step(
+                        &mut older,
+                        PamAuthRequest::SetupPin {
+                            pin: "123456".to_string(),
+                        },
+                    )
+                    .await
+                    .unwrap();
+                assert!(matches!(response, PamAuthResponse::Denied(_)));
+                assert!(matches!(older, AuthSession::Denied));
+                let cached = resolver.get_cached_usertokens().await.unwrap();
+                assert_eq!(cached.len(), 1);
+                assert_eq!(cached[0].uuid, newer_token.uuid);
+                assert_eq!(cached[0].tenant_id, newer_token.tenant_id);
+                assert_eq!(cached[0].displayname, newer_token.displayname);
+                assert!(cached[0].groups.is_empty());
+                for password in ["old-secret", "staged-secret"] {
+                    assert!(!resolver
+                        .check_cache_userpassword(newer_token.uuid, password)
+                        .await
+                        .unwrap());
+                }
+                assert_eq!(
+                    resolver
+                        .check_cache_userpassword(newer_token.uuid, "new-secret")
+                        .await
+                        .unwrap(),
+                    replacement == "password"
+                );
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn passwordless_pin_setup_keeps_its_original_identity_generation() {
+        let resolver = setup_resolver().await;
+        let mut older = stage_test_pin(&resolver, false).await;
+        let mut replacement = test_token();
+        replacement.uuid = uuid::Uuid::new_v4();
+        *resolver.client.auth_token.write().unwrap() = replacement.clone();
+        complete_test_auth(&resolver, false).await;
+        *resolver.client.auth_token.write().unwrap() = test_token();
+        resolver.client.user_get_error.store(7, Ordering::Release);
+        let retry = resolver
+            .pam_account_authenticate_step(
+                &mut older,
+                PamAuthRequest::SetupPin {
+                    pin: "retry".to_string(),
+                },
+            )
+            .await
+            .unwrap();
+        assert!(matches!(retry, PamAuthResponse::SetupPin { .. }));
+        let response = resolver
+            .pam_account_authenticate_step(
+                &mut older,
+                PamAuthRequest::SetupPin {
+                    pin: "123456".to_string(),
+                },
+            )
+            .await
+            .unwrap();
+        assert!(matches!(response, PamAuthResponse::Denied(_)));
+        assert!(matches!(older, AuthSession::Denied));
+        let cached = resolver.get_cached_usertokens().await.unwrap();
+        assert_eq!(cached.len(), 1);
+        assert_eq!(cached[0].uuid, replacement.uuid);
+    }
+
+    #[tokio::test]
+    async fn local_totp_completion_cannot_refresh_a_stale_identity_generation() {
+        for direct_totp in [false, true] {
+            for final_password_update in [false, true] {
+                let resolver = setup_resolver().await;
+                let mut older = stage_test_local_auth(&resolver, false, direct_totp).await;
+                if !direct_totp {
+                    let response = resolver
+                        .pam_account_authenticate_step(
+                            &mut older,
+                            PamAuthRequest::SetupPin {
+                                pin: "totp".to_string(),
+                            },
+                        )
+                        .await
+                        .unwrap();
+                    assert!(matches!(response, PamAuthResponse::HelloTOTP { .. }));
+                }
+                let mut replacement = test_token();
+                replacement.uuid = uuid::Uuid::new_v4();
+                *resolver.client.auth_token.write().unwrap() = replacement.clone();
+                complete_test_auth(&resolver, true).await;
+                *resolver.client.auth_token.write().unwrap() = test_token();
+                resolver.client.user_get_error.store(7, Ordering::Release);
+                let response = resolver
+                    .pam_account_authenticate_step(
+                        &mut older,
+                        PamAuthRequest::HelloTOTP {
+                            cred: if final_password_update {
+                                "cache-password".to_string()
+                            } else {
+                                "123456".to_string()
+                            },
+                        },
+                    )
+                    .await
+                    .unwrap();
+                assert!(matches!(response, PamAuthResponse::Denied(_)));
+                assert!(matches!(older, AuthSession::Denied));
+                let cached = resolver.get_cached_usertokens().await.unwrap();
+                assert_eq!(cached.len(), 1);
+                assert_eq!(cached[0].uuid, replacement.uuid);
+                assert!(resolver
+                    .check_cache_userpassword(replacement.uuid, "new-secret")
+                    .await
+                    .unwrap());
+                assert!(!resolver
+                    .check_cache_userpassword(replacement.uuid, "late-secret")
+                    .await
+                    .unwrap());
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn same_identity_refresh_preserves_claims_without_suppressing_password_invalidation() {
+        for refresh in [false, true] {
+            let resolver = setup_resolver().await;
+            resolver
+                .set_cache_userpassword(test_token().uuid, "old-secret")
+                .await
+                .unwrap();
+            let mut session = stage_test_pin(&resolver, true).await;
+            let mut refreshed = test_token();
+            refreshed.displayname = "Refreshed claims".to_string();
+            refreshed.groups.clear();
+            *resolver.client.auth_token.write().unwrap() = refreshed.clone();
+            if refresh {
+                resolver.client.user_get_error.store(6, Ordering::Release);
+                resolver
+                    .refresh_usertoken(&Id::Name(test_token().spn), Some(test_token()))
+                    .await
+                    .unwrap();
+            } else {
+                complete_test_auth(&resolver, false).await;
+            }
+            assert!(resolver
+                .check_cache_userpassword(test_token().uuid, "old-secret")
+                .await
+                .unwrap());
+            *resolver.client.auth_token.write().unwrap() = test_token();
+            resolver.client.user_get_error.store(4, Ordering::Release);
+            let response = resolver
+                .pam_account_authenticate_step(
+                    &mut session,
+                    PamAuthRequest::SetupPin {
+                        pin: "123456".to_string(),
+                    },
+                )
+                .await
+                .unwrap();
+            assert!(matches!(response, PamAuthResponse::Success));
+            let cached = resolver.get_cached_usertokens().await.unwrap();
+            assert_eq!(cached[0].displayname, refreshed.displayname);
+            assert!(cached[0].groups.is_empty());
+            assert!(!resolver
+                .check_cache_userpassword(test_token().uuid, "old-secret")
+                .await
+                .unwrap());
+            assert!(resolver
+                .check_cache_userpassword(test_token().uuid, "staged-secret")
+                .await
+                .unwrap());
+        }
+    }
+
+    #[tokio::test]
+    async fn stale_passwordless_cache_writer_cannot_replace_newer_identity() {
+        let resolver = setup_resolver().await;
+        let mut newer = test_token();
+        newer.uuid = uuid::Uuid::new_v4();
+        assert_eq!(
+            resolver
+                .set_cache_usertoken_guarded(&mut newer, 2, None)
+                .await
+                .unwrap(),
+            CacheUpdateResult::Updated
+        );
+        assert_eq!(
+            resolver
+                .set_cache_usertoken_guarded(&mut test_token(), 1, None)
+                .await
+                .unwrap(),
+            CacheUpdateResult::IdentityChanged
+        );
+        assert_eq!(
+            resolver.get_cached_usertokens().await.unwrap()[0].uuid,
+            newer.uuid
+        );
+    }
+
+    #[tokio::test]
+    async fn cache_generation_guard_does_not_block_unrelated_identities() {
+        let resolver = setup_resolver().await;
+        let mut unrelated = test_token();
+        unrelated.uuid = uuid::Uuid::new_v4();
+        unrelated.name = "unrelated".to_string();
+        unrelated.spn = "unrelated@example.com".to_string();
+        unrelated.gidnumber += 1;
+        assert_eq!(
+            resolver
+                .set_cache_usertoken_guarded(&mut unrelated, 2, Some("other-secret"))
+                .await
+                .unwrap(),
+            CacheUpdateResult::Updated
+        );
+        assert_eq!(
+            resolver
+                .set_cache_usertoken_guarded(&mut test_token(), 1, Some("original-secret"))
+                .await
+                .unwrap(),
+            CacheUpdateResult::Updated
+        );
+        assert_eq!(resolver.get_cached_usertokens().await.unwrap().len(), 2);
+        assert!(resolver
+            .check_cache_userpassword(unrelated.uuid, "other-secret")
+            .await
+            .unwrap());
+        assert!(resolver
+            .check_cache_userpassword(test_token().uuid, "original-secret")
+            .await
+            .unwrap());
+    }
+
+    #[tokio::test]
+    async fn password_helpers_wait_for_hsm_before_acquiring_database() {
+        let resolver = setup_resolver().await;
+        for write in [true, false] {
+            let hsm_guard = resolver.hsm.lock().await;
+            let password_operation = async {
+                if write {
+                    resolver
+                        .set_cache_userpassword(test_token().uuid, "secret")
+                        .await
+                        .unwrap();
+                } else {
+                    assert!(resolver
+                        .check_cache_userpassword(test_token().uuid, "secret")
+                        .await
+                        .unwrap());
+                }
+            };
+            tokio::pin!(password_operation);
+            tokio::select! {
+                biased;
+                _ = &mut password_operation => panic!("password operation bypassed the HSM lock"),
+                _ = tokio::task::yield_now() => {}
+            }
+            // The provider's HSM -> DB order must remain possible while the
+            // password operation is waiting, rather than form a lock cycle.
+            let dbtxn = tokio::time::timeout(Duration::from_secs(1), resolver.db.write())
+                .await
+                .expect("password operation held the database while waiting for the HSM");
+            dbtxn.commit().unwrap();
+            drop(hsm_guard);
+            password_operation.await;
         }
     }
 
@@ -1102,6 +1604,200 @@ mod tests {
             .check_cache_userpassword(token.uuid, "secret")
             .await
             .unwrap());
+    }
+
+    #[tokio::test]
+    async fn reconciliation_refresh_requires_an_unexpired_cached_identity() {
+        let resolver = setup_resolver().await;
+        let token = test_token();
+        // Even a trusted refresh must not revive an ineligible account for
+        // reconciliation, or discover an account that was not already cached.
+        resolver.client.user_get_error.store(6, Ordering::Release);
+        assert!(resolver
+            .refresh_cached_usertoken(&token.name)
+            .await
+            .unwrap()
+            .is_none());
+        let (expired, cached) = resolver
+            .get_cached_usertoken(&Id::Name(token.name.clone()))
+            .await
+            .unwrap();
+        assert!(expired);
+        assert_eq!(cached.unwrap().uuid, token.uuid);
+
+        resolver.delete_cache_usertoken(token.uuid).await.unwrap();
+        assert!(resolver
+            .refresh_cached_usertoken(&token.name)
+            .await
+            .unwrap()
+            .is_none());
+        resolver.set_nxcache(&Id::Name(token.name.clone())).await;
+        assert!(resolver
+            .refresh_cached_usertoken(&token.name)
+            .await
+            .unwrap()
+            .is_none());
+        assert_eq!(resolver.client.user_get_calls.load(Ordering::Acquire), 0);
+    }
+
+    #[tokio::test]
+    async fn reconciliation_refresh_rejects_lookup_only_and_replacement_identities() {
+        let token = test_token();
+        let other_uuid = uuid::Uuid::new_v4();
+        let other_tenant = Some(uuid::Uuid::new_v4());
+        for (mode, cached_uuid, cached_tenant) in [
+            (3, token.uuid, token.tenant_id),
+            (3, other_uuid, token.tenant_id),
+            (3, token.uuid, other_tenant),
+            (3, token.uuid, None),
+            (6, other_uuid, token.tenant_id),
+            (6, token.uuid, other_tenant),
+            (6, token.uuid, None),
+        ] {
+            let resolver = setup_resolver().await;
+            resolver.delete_cache_usertoken(token.uuid).await.unwrap();
+            let mut cached = token.clone();
+            cached.uuid = cached_uuid;
+            cached.tenant_id = cached_tenant;
+            cached.groups.clear();
+            resolver
+                .set_cache_usertoken(&mut cached, false)
+                .await
+                .unwrap();
+            resolver.client.user_get_error.store(mode, Ordering::Release);
+
+            let accounts = resolver.get_unexpired_nssaccounts().await.unwrap();
+            assert_eq!(accounts.len(), 1);
+            // Both provider modes return the same name and new group claims.
+            // Lookup-only claims remain ineligible even for the same UUID;
+            // trusted updates must still match both the UUID and tenant.
+            assert!(resolver
+                .refresh_cached_usertoken(&accounts[0].name)
+                .await
+                .unwrap()
+                .is_none());
+            assert_eq!(resolver.client.user_get_calls.load(Ordering::Acquire), 1);
+            if mode == 3 {
+                let (expired, cached) = resolver
+                    .get_cached_usertoken(&Id::Name(token.name.clone()))
+                    .await
+                    .unwrap();
+                let cached = cached.unwrap();
+                assert!(!expired);
+                assert_eq!(cached.uuid, cached_uuid);
+                assert_eq!(cached.tenant_id, cached_tenant);
+                assert!(cached.groups.is_empty());
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn reconciliation_refresh_accepts_a_matching_trusted_update() {
+        let resolver = setup_resolver().await;
+        let mut cached = test_token();
+        cached.groups.clear();
+        resolver
+            .set_cache_usertoken(&mut cached, false)
+            .await
+            .unwrap();
+        resolver.client.user_get_error.store(6, Ordering::Release);
+
+        let refreshed = resolver
+            .refresh_cached_usertoken(&cached.name)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(refreshed.uuid, cached.uuid);
+        assert_eq!(refreshed.tenant_id, cached.tenant_id);
+        assert_eq!(refreshed.groups.len(), 1);
+        assert_eq!(refreshed.groups[0].uuid, test_token().groups[0].uuid);
+        assert_eq!(resolver.client.user_get_calls.load(Ordering::Acquire), 1);
+    }
+
+    #[tokio::test]
+    async fn reconciliation_refresh_preserves_unexpired_cached_fallback() {
+        let expiry = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap()
+            .as_secs()
+            + 3600;
+        for mode in [0, 1, 2] {
+            let resolver = setup_resolver_with_expiry(expiry).await;
+            let token = test_token();
+            resolver.client.user_get_error.store(mode, Ordering::Release);
+            let refreshed = resolver
+                .refresh_cached_usertoken(&token.name)
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(refreshed.uuid, token.uuid);
+            assert_eq!(refreshed.tenant_id, token.tenant_id);
+            assert_eq!(refreshed.groups[0].uuid, token.groups[0].uuid);
+            assert_eq!(resolver.client.user_get_calls.load(Ordering::Acquire), 1);
+            let mut dbtxn = resolver.db.write().await;
+            let (_, cached_expiry) = dbtxn
+                .get_account(&Id::Name(token.name))
+                .unwrap()
+                .unwrap();
+            assert_eq!(cached_expiry, expiry);
+            dbtxn.commit().unwrap();
+        }
+    }
+
+    #[tokio::test]
+    async fn reconciliation_refresh_rechecks_cached_eligibility_after_wait() {
+        let expiry = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap()
+            .as_secs()
+            + 3600;
+        for mode in [0, 1, 2] {
+            for change in ["expire", "remove", "uuid", "tenant", "claims"] {
+                let resolver = setup_resolver_with_expiry(expiry).await;
+                let token = test_token();
+                resolver.client.user_get_error.store(mode, Ordering::Release);
+                // Stop after the initial eligible snapshot, before provider
+                // work resumes, without relying on wall-clock sleeps.
+                let hsm_guard = resolver.hsm.lock().await;
+                let refresh = resolver.refresh_cached_usertoken(&token.name);
+                tokio::pin!(refresh);
+                tokio::select! {
+                    biased;
+                    _ = &mut refresh => panic!("refresh bypassed the HSM lock"),
+                    _ = tokio::task::yield_now() => {}
+                }
+                assert_eq!(resolver.client.user_get_calls.load(Ordering::Acquire), 0);
+                match change {
+                    "expire" => resolver.invalidate().await.unwrap(),
+                    "remove" => resolver.delete_cache_usertoken(token.uuid).await.unwrap(),
+                    _ => {
+                        let mut current = token.clone();
+                        current.groups.clear();
+                        if change == "uuid" {
+                            current.uuid = uuid::Uuid::new_v4();
+                        } else if change == "tenant" {
+                            current.tenant_id = Some(uuid::Uuid::new_v4());
+                        }
+                        resolver
+                            .set_cache_usertoken(&mut current, false)
+                            .await
+                            .unwrap();
+                    }
+                }
+                drop(hsm_guard);
+
+                let refreshed = refresh.await.unwrap();
+                if change == "claims" {
+                    let refreshed = refreshed.unwrap();
+                    assert_eq!(refreshed.uuid, token.uuid);
+                    assert_eq!(refreshed.tenant_id, token.tenant_id);
+                    assert!(refreshed.groups.is_empty());
+                } else {
+                    assert!(refreshed.is_none());
+                }
+                assert_eq!(resolver.client.user_get_calls.load(Ordering::Acquire), 1);
+            }
+        }
     }
 
     #[tokio::test]
@@ -1390,6 +2086,8 @@ mod tests {
             id: Id::Name("testuser@example.com".to_string()),
             token: Some(Box::new(test_token())),
             pending_password: None,
+            cache_generation: 0,
+            identity_staged: false,
             online_at_init: true,
             cred_handler: AuthCredHandler::ReauthPassword {
                 reauth_hello_pin: "123456".to_string().into(),
@@ -1578,8 +2276,28 @@ where
         account_id: &str,
     ) -> ResolverResult<Option<UserToken>> {
         let id = Id::Name(account_id.to_string());
-        let (_expired, token) = self.get_cached_usertoken(&id).await?;
-        self.refresh_usertoken(&id, token).await
+        let (false, Some(token)) = self.get_cached_usertoken(&id).await? else {
+            return Ok(None);
+        };
+        let uuid = token.uuid;
+        let tenant_id = token.tenant_id;
+        // Reconciliation may use only the authenticated identity that made
+        // this account eligible, never a lookup-only or replacement identity.
+        let Some((refreshed, true)) = self
+            .refresh_usertoken_with_cacheability(&id, Some((token, true)))
+            .await?
+        else {
+            return Ok(None);
+        };
+        if refreshed.uuid != uuid || refreshed.tenant_id != tenant_id {
+            return Ok(None);
+        }
+        // Provider work can yield while eligibility or memberships change.
+        // Use current claims only if the same cached identity is still eligible.
+        let (expired, current) = self.get_cached_usertoken(&id).await?;
+        Ok(current.filter(|token| {
+            !expired && token.uuid == uuid && token.tenant_id == tenant_id
+        }))
     }
 
     async fn get_cached_grouptokens(&self) -> ResolverResult<Vec<GroupToken>> {
@@ -1734,6 +2452,96 @@ where
         }
     }
 
+    async fn set_cache_usertoken_guarded(
+        &self,
+        token: &mut UserToken,
+        generation: u64,
+        password: Option<&str>,
+    ) -> ResolverResult<CacheUpdateResult> {
+        let keys = [
+            PasswordCacheKey::Uuid(token.uuid),
+            PasswordCacheKey::Name(token.name.clone()),
+            PasswordCacheKey::Spn(token.spn.clone()),
+            PasswordCacheKey::Gid(token.gidnumber),
+        ];
+        let mut generations = self.password_cache_generations.lock().await;
+        let same_identity = |latest: &&PasswordCacheGeneration| {
+            latest.uuid == token.uuid && latest.tenant_id == token.tenant_id
+        };
+        if keys
+            .iter()
+            .filter_map(|key| generations.get(key))
+            .any(|latest| latest.identity_generation > generation && !same_identity(&latest))
+        {
+            return Ok(CacheUpdateResult::IdentityChanged);
+        }
+        let latest_identity_generation = keys
+            .iter()
+            .filter_map(|key| generations.get(key))
+            .filter(same_identity)
+            .map(|latest| latest.identity_generation)
+            .max();
+        let latest_password_generation = keys
+            .iter()
+            .filter_map(|key| generations.get(key))
+            .filter(same_identity)
+            .filter_map(|latest| latest.password_generation)
+            .max();
+        if latest_password_generation.is_some_and(|latest| latest >= generation)
+            || (password.is_none()
+                && latest_identity_generation.is_some_and(|latest| latest > generation))
+        {
+            // Never restore stale identity claims or group memberships either.
+            return Ok(CacheUpdateResult::Superseded);
+        }
+
+        if latest_identity_generation.is_some_and(|latest| latest > generation) {
+            // A same-identity refresh must not suppress password invalidation,
+            // but its newer identity claims and memberships must be preserved.
+            let (_, current) = self
+                .get_cached_usertoken(&Id::Name(token.uuid.hyphenated().to_string()))
+                .await?;
+            let Some(current) = current.filter(|current| {
+                current.uuid == token.uuid && current.tenant_id == token.tenant_id
+            }) else {
+                return Ok(CacheUpdateResult::IdentityChanged);
+            };
+            *token = current;
+        }
+        self.set_cache_usertoken(token, password.is_some()).await?;
+        let keys = [
+            PasswordCacheKey::Uuid(token.uuid),
+            PasswordCacheKey::Name(token.name.clone()),
+            PasswordCacheKey::Spn(token.spn.clone()),
+            PasswordCacheKey::Gid(token.gidnumber),
+        ];
+        // Publish only after durable token storage/invalidation. A passwordless
+        // refresh advances identity ordering without suppressing an accepted
+        // password that still needs to invalidate the previous verifier.
+        let latest = PasswordCacheGeneration {
+            identity_generation: latest_identity_generation
+                .map_or(generation, |latest| latest.max(generation)),
+            password_generation: if password.is_some() {
+                Some(generation)
+            } else {
+                latest_password_generation
+            },
+            uuid: token.uuid,
+            tenant_id: token.tenant_id,
+        };
+        generations.extend(keys.into_iter().map(|key| (key, latest)));
+        if let Some(password) = password {
+            if self
+                .set_cache_userpassword(token.uuid, password)
+                .await
+                .is_err()
+            {
+                error!("Failed to cache offline password after successful authentication");
+            }
+        }
+        Ok(CacheUpdateResult::Updated)
+    }
+
     async fn set_cache_usertoken(
         &self,
         token: &mut UserToken,
@@ -1780,6 +2588,13 @@ where
         }
 
         let mut dbtxn = self.db.write().await;
+        let clear_password = clear_password
+            || dbtxn
+                .get_account(&Id::Name(token.uuid.hyphenated().to_string()))
+                .map_err(|_| ResolverError)?
+                .is_some_and(|(cached, _)| {
+                    cached.uuid == token.uuid && cached.tenant_id != token.tenant_id
+                });
         token
             .groups
             .iter()
@@ -1835,8 +2650,8 @@ where
     }
 
     async fn set_cache_userpassword(&self, a_uuid: Uuid, cred: &str) -> ResolverResult<()> {
-        let mut dbtxn = self.db.write().await;
         let mut hsm_txn = self.hsm.lock().await;
+        let mut dbtxn = self.db.write().await;
         dbtxn
             .update_account_password(a_uuid, cred, hsm_txn.deref_mut(), &self.hmac_key)
             .and_then(|x| dbtxn.commit().map(|_| x))
@@ -1844,8 +2659,8 @@ where
     }
 
     async fn check_cache_userpassword(&self, a_uuid: Uuid, cred: &str) -> ResolverResult<bool> {
-        let mut dbtxn = self.db.write().await;
         let mut hsm_txn = self.hsm.lock().await;
+        let mut dbtxn = self.db.write().await;
         dbtxn
             .check_account_password(a_uuid, cred, hsm_txn.deref_mut(), &self.hmac_key)
             .and_then(|x| dbtxn.commit().map(|_| x))
@@ -1881,14 +2696,26 @@ where
             )
             .await;
 
+        // Order this provider observation before another request can replace it.
+        let generation = self.password_generation.fetch_add(1, Ordering::Relaxed);
         drop(hsm_lock);
         dbtxn.commit().map_err(|_| ())?;
 
         match user_get_result {
             Ok(UserTokenState::Update(mut n_tok)) => {
-                // We have the token!
-                self.set_cache_usertoken(&mut n_tok, false).await?;
-                Ok(Some((n_tok, true)))
+                match self
+                    .set_cache_usertoken_guarded(&mut n_tok, generation, None)
+                    .await?
+                {
+                    CacheUpdateResult::Updated => Ok(Some((n_tok, true))),
+                    CacheUpdateResult::Superseded | CacheUpdateResult::IdentityChanged => {
+                        // A newer observation won. Never return the stale token
+                        // as authenticated/cacheable after discarding its write.
+                        self.get_cached_usertoken(account_id)
+                            .await
+                            .map(|(expired, token)| token.map(|token| (token, !expired)))
+                    }
+                }
             }
             Ok(UserTokenState::LookupOnly(n_tok)) => Ok(Some((n_tok, false))),
             Ok(UserTokenState::NotFound) => {
@@ -2535,6 +3362,8 @@ where
             return Ok((AuthSession::Denied, PamAuthResponse::Unknown));
         }
 
+        // An offline session must not overwrite an identity replaced after its lookup.
+        let cache_generation = self.password_generation.fetch_add(1, Ordering::Relaxed);
         let id = Id::Name(account_id.to_string());
         let (_expired, token) = self.get_cached_usertoken(&id).await?;
         // If we don't have a token here, then NSS has yet to be called. Failing
@@ -2633,6 +3462,8 @@ where
                     id,
                     token: token.map(Box::new),
                     pending_password: None,
+                    cache_generation,
+                    identity_staged: false,
                     online_at_init,
                     cred_handler,
                     shutdown_rx,
@@ -2670,6 +3501,8 @@ where
                 id: _,
                 token: _,
                 pending_password: _,
+                cache_generation: _,
+                identity_staged: _,
                 online_at_init: _,
                 cred_handler: _,
                 shutdown_rx: _,
@@ -2687,6 +3520,8 @@ where
                     id: _,
                     token: Some(ref token),
                     ref mut pending_password,
+                    ref mut cache_generation,
+                    ref mut identity_staged,
                     online_at_init: true,
                     ref mut cred_handler,
                     ref shutdown_rx,
@@ -2717,7 +3552,37 @@ where
                 // Order accepted credentials before releasing the provider locks.
                 // A password staged for PIN setup retains this generation, so
                 // completing an older session cannot restore a revoked verifier.
-                let generation = self.password_generation.fetch_add(1, Ordering::Relaxed);
+                let observation = self.password_generation.fetch_add(1, Ordering::Relaxed);
+                // Local PIN/TOTP setup may take several steps and retries. None
+                // of them re-authenticates the staged remote identity or password.
+                let generation = if *identity_staged {
+                    *cache_generation
+                } else {
+                    observation
+                };
+                if matches!(
+                    &maybe_cache_action,
+                    Ok((
+                        AuthResult::Success { .. }
+                            | AuthResult::Next(
+                                AuthRequest::SetupPin { .. } | AuthRequest::HelloTOTP { .. }
+                            ),
+                        _
+                    ))
+                ) {
+                    *cache_generation = generation;
+                }
+                if matches!(
+                    &maybe_cache_action,
+                    Ok((
+                        AuthResult::Next(
+                            AuthRequest::SetupPin { .. } | AuthRequest::HelloTOTP { .. }
+                        ),
+                        _
+                    ))
+                ) {
+                    *identity_staged = true;
+                }
                 drop(hsm_lock);
                 dbtxn.commit().map_err(|_| ())?;
 
@@ -2771,6 +3636,8 @@ where
                     id: _,
                     token: Some(ref token),
                     pending_password: _,
+                    cache_generation: _,
+                    identity_staged: _,
                     online_at_init,
                     ref mut cred_handler,
                     // Only need in online auth.
@@ -2928,30 +3795,31 @@ where
                     Ok(PamAuthResponse::Unknown)
                 } else {
                     trace!("provider authentication success.");
-                    let pending_password = match &*auth_session {
+                    let (generation, pending_password) = match &*auth_session {
                         AuthSession::InProgress {
-                            pending_password, ..
-                        } => pending_password.as_ref(),
-                        _ => None,
+                            cache_generation,
+                            pending_password,
+                            ..
+                        } => (
+                            pending_password
+                                .as_ref()
+                                .map_or(*cache_generation, |(generation, _)| *generation),
+                            pending_password.as_ref().map(|(_, cred)| cred.as_str()),
+                        ),
+                        _ => return Err(ResolverError),
                     };
-                    if let Some((generation, cred)) = pending_password {
-                        let mut generations = self.password_cache_generations.lock().await;
-                        let replace = generations
-                            .get(&token.uuid)
-                            .is_none_or(|latest| generation > latest);
-                        self.set_cache_usertoken(&mut token, replace).await?;
-                        if replace {
-                            // Invalidation is durable. Advance even if the optional
-                            // replacement fails, so older sessions cannot undo it.
-                            generations.insert(token.uuid, *generation);
-                            if self.set_cache_userpassword(token.uuid, cred).await.is_err() {
-                                error!(
-                                    "Failed to cache offline password after successful authentication"
-                                );
-                            }
-                        }
-                    } else {
-                        self.set_cache_usertoken(&mut token, false).await?;
+                    if self
+                        .set_cache_usertoken_guarded(&mut token, generation, pending_password)
+                        .await?
+                        == CacheUpdateResult::IdentityChanged
+                    {
+                        // Success(name) would let the old session sign in as the
+                        // replacement identity even if no cache write occurred.
+                        *auth_session = AuthSession::Denied;
+                        return Ok(PamAuthResponse::Denied(
+                            "Account identity changed during authentication; sign in again."
+                                .to_string(),
+                        ));
                     }
                     *auth_session = AuthSession::Success(token.spn);
 
