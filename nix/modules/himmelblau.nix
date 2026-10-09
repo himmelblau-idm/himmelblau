@@ -6,6 +6,21 @@
 }:
 let
   cfg = config.services.himmelblau;
+  mayUseLocalTpmDevice = (
+      cfg.settings.tpm_tcti_name == null
+      || cfg.settings.tpm_tcti_name == "device"
+      || lib.hasPrefix "device:" cfg.settings.tpm_tcti_name
+    );
+  targetsRawTpmDevice =
+    mayUseLocalTpmDevice
+    && (
+      cfg.settings.tpm_tcti_name == "device"
+      || cfg.settings.tpm_tcti_name == "device:"
+      || (
+        cfg.settings.tpm_tcti_name != null
+        && builtins.match "device:/dev/tpm[0-9]+" cfg.settings.tpm_tcti_name != null
+      )
+    );
 
   # Convert a value to INI format string
   toIniValue =
@@ -127,6 +142,31 @@ in
   };
 
   config = lib.mkIf cfg.enable {
+    security.tpm2.enable = lib.mkDefault mayUseLocalTpmDevice;
+
+    assertions = [
+      {
+        assertion = !(
+          cfg.settings.hsm_type == "tpm"
+          && mayUseLocalTpmDevice
+          && !config.security.tpm2.enable
+        );
+        message = "services.himmelblau: hsm_type = \"tpm\" with a device TCTI requires security.tpm2.enable = true.";
+      }
+      {
+        assertion = !targetsRawTpmDevice;
+        message = "services.himmelblau: raw TPM device TCTIs (\"device\", \"device:\", and \"device:/dev/tpmN\") are unsupported because the DynamicUser service cannot access /dev/tpmN through security.tpm2.tssGroup; use \"device:/dev/tpmrm0\".";
+      }
+      {
+        assertion = !(
+          config.security.tpm2.enable
+          && mayUseLocalTpmDevice
+          && config.security.tpm2.tssGroup == null
+        );
+        message = "services.himmelblau: TPM device access requires security.tpm2.tssGroup to be set.";
+      }
+    ];
+
     environment.etc."himmelblau/himmelblau.conf".source = configFile;
 
     systemd.tmpfiles.rules = [
@@ -232,6 +272,7 @@ in
 
     systemd.services =
       let
+        tpmAccessRequired = config.security.tpm2.enable && mayUseLocalTpmDevice;
         commonServiceConfig = {
           Type = "notify";
           UMask = "0027";
@@ -255,7 +296,8 @@ in
             "chronyd.service"
             "ntpd.service"
             "network-online.target"
-          ];
+          ] ++ lib.optional tpmAccessRequired "tpm2-udev-trigger.service";
+          after = lib.optional tpmAccessRequired "tpm2-udev-trigger.service";
           before = [ "accounts-daemon.service" ];
           wantedBy = [
             "multi-user.target"
@@ -271,11 +313,16 @@ in
             WatchdogSec = "120s";
             DynamicUser = "yes";
             CacheDirectory = "himmelblaud"; # /var/cache/himmelblaud
+            CacheDirectoryMode = "0750";
             RuntimeDirectory = "himmelblaud"; # /var/run/himmelblaud
             StateDirectory = "himmelblaud"; # /var/lib/himmelblaud
             PrivateTmp = true;
-            # We have to disable this to allow tpmrm0 access for tpm binding.
-            PrivateDevices = false;
+            # Expose host devices only when a TPM-backed HSM mode may need them.
+            PrivateDevices = !tpmAccessRequired;
+            DeviceAllow = lib.optional tpmAccessRequired "char-tpm rw";
+            SupplementaryGroups = lib.optional (
+              tpmAccessRequired && config.security.tpm2.tssGroup != null
+            ) config.security.tpm2.tssGroup;
           };
         };
 
@@ -305,5 +352,4 @@ in
         };
       };
   };
-
 }

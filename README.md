@@ -92,6 +92,12 @@ These two are optional and need to be installed by you:
 - `himmelblau.packages.<arch>.aad-tool`: The cli to interact with your daemon - you probably want to install it.
 - `himmelblau.packages.<arch>.o365`: Installs `teams-for-linux` with shortcuts to the o365 suite
 
+The Nix packages include TPM support. The Himmelblau module enables `security.tpm2.enable` by default and adds
+the daemon to the configured TPM access group. An explicit `security.tpm2.enable = false;` disables this, but
+the module will reject this override when `hsm_type = "tpm"` and the system is configured to use the default or
+another device TCTI. Remote TCTIs do not require local TPM access. You can check the runtime Himmelblau TPM
+status with `sudo aad-tool tpm`.
+
 #### Enabling the himmelblau cachix cache
 
 Himmelblau builds our packages in CI and uploads them to [Cachix](https://www.cachix.org/) so you don't have to compile the software on every update.
