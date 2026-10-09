@@ -615,24 +615,28 @@ mod tests {
         let token = test_token();
         resolver.client.user_get_error.store(6, Ordering::Release);
 
-        assert!(resolver
-            .get_nssaccount_name(&token.spn)
-            .await
-            .unwrap()
-            .unwrap()
-            .cacheable);
+        assert!(
+            resolver
+                .get_nssaccount_name(&token.spn)
+                .await
+                .unwrap()
+                .unwrap()
+                .cacheable
+        );
         let (expired, cached) = resolver
             .get_cached_usertoken(&Id::Name(token.spn))
             .await
             .unwrap();
         assert!(!expired);
         assert_eq!(cached.unwrap().uuid, token.uuid);
-        assert!(resolver
-            .get_nssaccount_gid(token.gidnumber)
-            .await
-            .unwrap()
-            .unwrap()
-            .cacheable);
+        assert!(
+            resolver
+                .get_nssaccount_gid(token.gidnumber)
+                .await
+                .unwrap()
+                .unwrap()
+                .cacheable
+        );
         assert_eq!(resolver.client.user_get_calls.load(Ordering::Acquire), 1);
     }
 
@@ -655,7 +659,14 @@ mod tests {
                 Id::Name(token.name),
                 Id::Gid(token.gidnumber),
             ] {
-                assert!(resolver.get_nssaccount(id).await.unwrap().unwrap().cacheable);
+                assert!(
+                    resolver
+                        .get_nssaccount(id)
+                        .await
+                        .unwrap()
+                        .unwrap()
+                        .cacheable
+                );
             }
             assert_eq!(resolver.client.user_get_calls.load(Ordering::Acquire), 0);
         }
@@ -697,7 +708,14 @@ mod tests {
                 .unwrap();
             assert_eq!(cached.uuid, token.uuid);
             for id in [Id::Name(token.spn.clone()), Id::Gid(token.gidnumber)] {
-                assert!(!resolver.get_nssaccount(id).await.unwrap().unwrap().cacheable);
+                assert!(
+                    !resolver
+                        .get_nssaccount(id)
+                        .await
+                        .unwrap()
+                        .unwrap()
+                        .cacheable
+                );
             }
             let mut dbtxn = resolver.db.write().await;
             let (_, expiry) = dbtxn.get_account(&Id::Name(token.spn)).unwrap().unwrap();
