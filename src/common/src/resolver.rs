@@ -808,8 +808,7 @@ mod tests {
 
     #[tokio::test]
     async fn older_pin_setup_cannot_replace_newer_password_generation() {
-        for (newer_cache_fails, older_cache_fails) in
-            [(false, false), (true, false), (false, true)]
+        for (newer_cache_fails, older_cache_fails) in [(false, false), (true, false), (false, true)]
         {
             let (resolver, conn) = setup_sql_resolver().await;
             resolver.client.user_get_error.store(4, Ordering::Release);
@@ -2746,11 +2745,7 @@ where
                             // Invalidation is durable. Advance even if the optional
                             // replacement fails, so older sessions cannot undo it.
                             generations.insert(token.uuid, *generation);
-                            if self
-                                .set_cache_userpassword(token.uuid, cred)
-                                .await
-                                .is_err()
-                            {
+                            if self.set_cache_userpassword(token.uuid, cred).await.is_err() {
                                 error!(
                                     "Failed to cache offline password after successful authentication"
                                 );
