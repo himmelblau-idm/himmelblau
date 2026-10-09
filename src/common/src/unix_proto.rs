@@ -26,7 +26,7 @@ pub struct NssUser {
     pub gecos: String,
     pub homedir: String,
     pub shell: String,
-    /// Fabricated identities must not enter the NSS fallback cache.
+    /// Lookup-only identities must not enter the NSS fallback cache.
     #[serde(default = "default_true")]
     pub cacheable: bool,
 }

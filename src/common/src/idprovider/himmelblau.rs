@@ -1532,6 +1532,9 @@ impl IdProvider for HimmelblauProvider {
                                         if let Some(old_token) = old_token {
                                             token.displayname.clone_from(&old_token.displayname)
                                         }
+                                        // App credentials authenticate the directory lookup,
+                                        // not this user on the host. Only user authentication
+                                        // or a refresh-token-backed result may populate the cache.
                                         return Ok(UserTokenState::LookupOnly(token));
                                     }
                                     Err(e) => {

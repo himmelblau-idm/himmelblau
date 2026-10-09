@@ -62,7 +62,7 @@ pub enum UserTokenState {
 
     /// Update the cache state with the data found in this UserToken.
     Update(UserToken),
-    /// Return a fabricated identity for lookup without persisting it.
+    /// Return an identity for lookup without persisting it as authenticated.
     LookupOnly(UserToken),
 }
 
