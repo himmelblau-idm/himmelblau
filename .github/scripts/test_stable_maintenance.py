@@ -240,6 +240,7 @@ class BranchAndCliTests(unittest.TestCase):
             self.assertEqual(private_source.stat().st_mode & 0o777, 0o644)
             which.assert_called_once_with("docker")
             argv = runner.run.call_args_list[0].args[0]
+            self.assertEqual(runner.run.call_args_list[0].kwargs["max_output"], sm.MAX_BUILD_OUTPUT_BYTES)
             joined = " ".join(argv)
             self.assertIn("--network=none", argv)
             self.assertIn("--cap-drop=ALL", argv)
@@ -573,6 +574,56 @@ fn main() {
         resource = json.loads(result.stdout.splitlines()[-1])
         self.assertEqual(resource["reason"], "maintenance-resources")
         self.assertIn("temporary_free_bytes", resource["resources"])
+
+    def test_large_cargo_json_build_keeps_exit_status_and_diagnostics(self):
+        """Successful and failed builds can exceed the ordinary 4 MiB budget."""
+        producer = '''
+import json, sys
+artifact = json.dumps({"reason": "compiler-artifact", "padding": "x" * 1024})
+for _ in range(5000):
+    print(artifact)
+if int(sys.argv[1]):
+    print(json.dumps({"reason": "compiler-message", "package_id": "file:///workspace/example#1.2.3",
+                     "target": {"name": "example", "kind": ["bin"], "src_path": "/workspace/src/main.rs"},
+                     "message": {"level": "error", "message": "linking with `cc` failed",
+                                 "children": [{"message": "cannot find -lfixture_missing: No such file"}]}}))
+sys.exit(int(sys.argv[1]))
+'''
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "source"; root.mkdir(); (root / ".git").mkdir()
+            (root / "Cargo.lock").write_text('[[package]]\nname = "example"\nversion = "1.2.3"\n')
+            cache = Path(tmp) / "cache"; cache.mkdir(); (cache / "registry").mkdir()
+            real = sm.Runner(root.resolve(), os.environ)
+            with self.assertRaisesRegex(sm.MaintenanceError, "output exceeded limit"):
+                real.run([sys.executable, "-I", "-c", producer, "0"], check=False)
+            env = {"MAINTENANCE_BUILD_IMAGE": "image@sha256:abc", "MAINTENANCE_PROJECT_CARGO_HOME": str(cache)}
+            for status in (0, 101):
+                def run(argv, **kwargs):
+                    if argv[1] == "rm":
+                        return sm.CommandResult(0, "", "")
+                    return real.run([sys.executable, "-I", "-c", producer, str(status)], **kwargs)
+                runner = mock.Mock(root=root.resolve())
+                runner.run.side_effect = run
+                with self.subTest(status=status), mock.patch.dict(os.environ, env), \
+                     mock.patch.object(sm.shutil, "which", return_value="/usr/bin/docker"), \
+                     mock.patch.object(sm.sys, "stderr", io.StringIO()) as output:
+                    result = sm.locked_build(runner)
+                    self.assertEqual(result.returncode, status)
+                    self.assertGreater(len(result.stdout), 4 * 1024 * 1024)
+                    if status:
+                        report = json.loads(output.getvalue().splitlines()[0].removeprefix("build-diagnostics: "))
+                        self.assertEqual(report["completed_artifacts"], 5000)
+                        self.assertEqual(report["compiler_errors"][0]["crate"], "example")
+                        self.assertEqual(report["missing_libraries"], ["fixture_missing"])
+                    else:
+                        self.assertEqual(output.getvalue(), "")
+            # Other contained commands retain the existing output limit.
+            runner.run.side_effect = None
+            runner.run.return_value = sm.CommandResult(0, "", "")
+            runner.run.reset_mock()
+            with mock.patch.dict(os.environ, env), mock.patch.object(sm.shutil, "which", return_value="/usr/bin/docker"):
+                sm.contained_repo_command(runner, ["cargo", "metadata"], network=False, source_rw=False, cache_rw=False)
+            self.assertEqual(runner.run.call_args_list[0].kwargs["max_output"], 4 * 1024 * 1024)
 
     def test_clean_build_failure_keeps_later_release_gates_blocked(self):
         with tempfile.TemporaryDirectory() as tmp:

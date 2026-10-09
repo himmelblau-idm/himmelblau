@@ -45,6 +45,7 @@ MAX_HTTP_BYTES = 8 * 1024 * 1024
 MAX_REGISTRY_CACHE_DEPTH = 128
 MAX_AI_INPUT_BYTES = 4 * 1024 * 1024
 MAX_AI_OUTPUT_BYTES = 256 * 1024
+MAX_BUILD_OUTPUT_BYTES = 32 * 1024 * 1024
 AUTOMATION_PREFIX = "automation/stable-maintenance/"
 AUTOMATION_LABEL = "automated-stable-maintenance"
 MARKER = "Maintenance-Main-Through:"
@@ -1347,11 +1348,15 @@ def contained_repo_command(
         "-e", "PATH=/usr/local/cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
     ])
     argv[argv.index("CARGO_NET_OFFLINE=true")] = f"CARGO_NET_OFFLINE={'false' if network else 'true'}"
-    if list(command) == ["cargo", "build", "--workspace", "--locked", "--message-format=json"]:
+    json_build = list(command) == ["cargo", "build", "--workspace", "--locked", "--message-format=json"]
+    if json_build:
         command = ["python3", "-I", "-c", BUILD_RESOURCE_PROBE, *command]
     argv.extend([image, *command])
     try:
-        return runner.run(argv, timeout=timeout, check=check)
+        # Workspace JSON includes warnings and artifact metadata as well as
+        # errors. Give that command headroom without lifting all output limits.
+        return runner.run(argv, timeout=timeout, check=check,
+                          max_output=MAX_BUILD_OUTPUT_BYTES if json_build else 4 * 1024 * 1024)
     finally:
         try:
             runner.run([engine, "rm", "-f", container_name], timeout=60, check=False, max_output=64 * 1024)
