@@ -542,7 +542,17 @@ impl<'a> CacheTxn for DbTxn<'a> {
             self.clear_hsm()?;
         }
 
-        self.set_db_version(DBV_MAIN, 1)?;
+        if db_version < 2 {
+            // Older versions cached fabricated lookup identities with a fresh
+            // expiry, indistinguishable from authenticated accounts. Require a
+            // trusted refresh before any of those rows can be reconciled into
+            // local groups, but preserve identities and offline credentials.
+            self.conn
+                .execute("UPDATE account_t SET expiry = 0", [])
+                .map_err(|e| self.sqlite_error("invalidate legacy accounts", &e))?;
+        }
+
+        self.set_db_version(DBV_MAIN, 2)?;
 
         Ok(())
     }
@@ -1160,7 +1170,7 @@ impl<'a> Drop for DbTxn<'a> {
 #[cfg(test)]
 mod tests {
 
-    use super::{Cache, CacheError, CacheTxn, Db, KeyStoreTxn};
+    use super::{Cache, CacheError, CacheTxn, Db, KeyStoreTxn, DBV_MAIN};
     use crate::idprovider::interface::{GroupToken, Id, UserToken};
     use kanidm_hsm_crypto::{provider::BoxedDynTpm, provider::Tpm, AuthValue};
 
@@ -1202,6 +1212,109 @@ mod tests {
     async fn uninitialized_database_has_no_hsm_machine_key() {
         let db = Db::new("").expect("failed to create.");
         assert!(matches!(db.get_loadable_hsm_key().await, Ok(None)));
+    }
+
+    #[tokio::test]
+    async fn test_cache_db_migrate_invalidates_legacy_account_expiry_once() {
+        let db = Db::new("").expect("failed to create.");
+        let mut dbtxn = db.write().await;
+        dbtxn.migrate().unwrap();
+
+        // Version 1 has the same tables, but lookup-only accounts were cached
+        // with future expiries even when they had never authenticated.
+        dbtxn.set_db_version(DBV_MAIN, 1).unwrap();
+        let group = GroupToken {
+            name: "testgroup".to_string(),
+            spn: "testgroup@example.com".to_string(),
+            gidnumber: 2001,
+            uuid: uuid::uuid!("b500be97-8552-42a5-aca0-668bc5625705"),
+        };
+        let lookup_only = UserToken {
+            name: "testuser".to_string(),
+            spn: "testuser@example.com".to_string(),
+            displayname: "Test User".to_string(),
+            real_gidnumber: Some(2000),
+            gidnumber: 2000,
+            uuid: uuid::uuid!("0302b99c-f0f6-41ab-9492-852692b0fd16"),
+            shell: None,
+            groups: vec![group.clone()],
+            tenant_id: Some(uuid::uuid!("58e8a301-2502-4814-81c5-a4d17c399a45")),
+            valid: true,
+        };
+        let authenticated = UserToken {
+            name: "authenticated".to_string(),
+            spn: "authenticated@example.com".to_string(),
+            gidnumber: 2002,
+            uuid: uuid::uuid!("bcb7ca11-7049-4588-a761-aeacbeecffa8"),
+            ..lookup_only.clone()
+        };
+        dbtxn.update_group(&group, 200).unwrap();
+        dbtxn.update_account(&lookup_only, 200).unwrap();
+        dbtxn.update_account(&authenticated, 200).unwrap();
+        let password = b"existing password verifier".to_vec();
+        dbtxn
+            .conn
+            .execute(
+                "UPDATE account_t SET password = ?1 WHERE name = ?2",
+                params![&password, &authenticated.name],
+            )
+            .unwrap();
+        let key_tag = "authenticated@example.com/hello";
+        let key_data = "existing sealed credential".to_string();
+        dbtxn.insert_tagged_hsm_key(key_tag, &key_data).unwrap();
+        assert_eq!(dbtxn.get_unexpired_accounts(100).unwrap().len(), 2);
+        dbtxn.commit().unwrap();
+
+        let mut dbtxn = db.write().await;
+        dbtxn.migrate().unwrap();
+        assert_eq!(dbtxn.get_db_version(DBV_MAIN), 2);
+        assert!(dbtxn.get_unexpired_accounts(100).unwrap().is_empty());
+        for account in [&lookup_only, &authenticated] {
+            let (stored, expiry) = dbtxn
+                .get_account(&Id::Name(account.spn.clone()))
+                .unwrap()
+                .unwrap();
+            assert_eq!(expiry, 0);
+            assert_eq!(
+                serde_json::to_vec(&stored).unwrap(),
+                serde_json::to_vec(account).unwrap()
+            );
+        }
+        let stored_password: Vec<u8> = dbtxn
+            .conn
+            .query_row(
+                "SELECT password FROM account_t WHERE name = ?1",
+                [&authenticated.name],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(stored_password, password);
+        assert_eq!(
+            dbtxn.get_tagged_hsm_key::<String>(key_tag).unwrap(),
+            Some(key_data)
+        );
+        assert_eq!(dbtxn.get_group_members(group.uuid).unwrap().len(), 2);
+        assert_eq!(
+            dbtxn
+                .get_group(&Id::Name(group.spn.clone()))
+                .unwrap()
+                .unwrap()
+                .1,
+            200
+        );
+        dbtxn.commit().unwrap();
+
+        // A subsequent authenticated refresh must survive future startups;
+        // the untouched legacy lookup-only row must remain expired.
+        let mut dbtxn = db.write().await;
+        dbtxn.update_account(&authenticated, 300).unwrap();
+        dbtxn.commit().unwrap();
+        let mut dbtxn = db.write().await;
+        dbtxn.migrate().unwrap();
+        let accounts = dbtxn.get_unexpired_accounts(100).unwrap();
+        assert_eq!(accounts.len(), 1);
+        assert_eq!(accounts[0].uuid, authenticated.uuid);
+        dbtxn.commit().unwrap();
     }
 
     #[tokio::test]

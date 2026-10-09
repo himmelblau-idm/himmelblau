@@ -12,13 +12,14 @@
 use hashbrown::HashSet;
 use libc::uid_t;
 use libkrimes::proto::KerberosCredentials;
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap};
 use std::fmt::Display;
 use std::fs;
 use std::num::NonZeroUsize;
 use std::ops::DerefMut;
 use std::path::Path;
 use std::string::ToString;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, SystemTime};
 
 use lru::LruCache;
@@ -63,7 +64,7 @@ pub enum AuthSession {
         service: String,
         id: Id,
         token: Option<Box<UserToken>>,
-        pending_password: Option<Zeroizing<String>>,
+        pending_password: Option<(u64, Zeroizing<String>)>,
         online_at_init: bool,
         cred_handler: AuthCredHandler,
         /// Some authentication operations may need to spawn background tasks. These tasks need
@@ -101,6 +102,10 @@ where
     allow_id_overrides: HashSet<Id>,
     nxset: Mutex<HashSet<Id>>,
     nxcache: Mutex<LruCache<Id, SystemTime>>,
+    password_generation: AtomicU64,
+    // Keep successful invalidation generations while older sessions may exist.
+    // Both this map and all pending sessions disappear on daemon restart.
+    password_cache_generations: Mutex<HashMap<Uuid, u64>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -321,7 +326,10 @@ mod tests {
                         token: test_token(),
                     },
                     AuthCacheAction::PasswordHashUpdate {
-                        cred: "secret".to_string(),
+                        cred: match _pam_next_req {
+                            PamAuthRequest::Password { cred } => cred,
+                            _ => return Err(IdpError::BadRequest),
+                        },
                     },
                 ));
             }
@@ -339,7 +347,10 @@ mod tests {
                         msg: "Set PIN".to_string(),
                     }),
                     AuthCacheAction::PasswordHashUpdate {
-                        cred: "secret".to_string(),
+                        cred: match _pam_next_req {
+                            PamAuthRequest::Password { cred } => cred,
+                            _ => return Err(IdpError::BadRequest),
+                        },
                     },
                 ));
             }
@@ -743,6 +754,7 @@ mod tests {
             .await
             .is_err());
         assert!(!matches!(session, AuthSession::Success(_)));
+        assert!(resolver.password_cache_generations.lock().await.is_empty());
         let mut dbtxn = resolver.db.write().await;
         let (cached, expiry) = dbtxn.get_account(&Id::Name(token.spn)).unwrap().unwrap();
         assert_eq!(expiry, 0);
@@ -792,6 +804,107 @@ mod tests {
             .check_cache_userpassword(token.uuid, "old-secret")
             .await
             .unwrap());
+    }
+
+    #[tokio::test]
+    async fn older_pin_setup_cannot_replace_newer_password_generation() {
+        for (newer_cache_fails, older_cache_fails) in
+            [(false, false), (true, false), (false, true)]
+        {
+            let (resolver, conn) = setup_sql_resolver().await;
+            resolver.client.user_get_error.store(4, Ordering::Release);
+            let (_shutdown_tx, shutdown_rx) = broadcast::channel(1);
+            // Start B first: credential acceptance, not session creation,
+            // determines which password update is newer.
+            let (mut newer, _) = resolver
+                .pam_account_authenticate_init(
+                    "testuser@example.com",
+                    "sshd",
+                    false,
+                    false,
+                    shutdown_rx.resubscribe(),
+                )
+                .await
+                .unwrap();
+            let (mut older, _) = resolver
+                .pam_account_authenticate_init(
+                    "testuser@example.com",
+                    "sshd",
+                    false,
+                    false,
+                    shutdown_rx,
+                )
+                .await
+                .unwrap();
+            // An initial lookup may have a synthetic UUID. Use only the final
+            // authenticated UUID when comparing password generations.
+            if let AuthSession::InProgress {
+                token: Some(token), ..
+            } = &mut older
+            {
+                token.uuid = uuid::Uuid::new_v4();
+            }
+            let response = resolver
+                .pam_account_authenticate_step(
+                    &mut older,
+                    PamAuthRequest::Password {
+                        cred: "old-secret".to_string(),
+                    },
+                )
+                .await
+                .unwrap();
+            assert!(matches!(response, PamAuthResponse::SetupPin { .. }));
+
+            let fail_replacement =
+                "CREATE TRIGGER fail_password_cache BEFORE UPDATE OF password ON account_t
+                 WHEN NEW.password IS NOT NULL
+                 BEGIN SELECT RAISE(ABORT, 'injected password cache failure'); END;";
+            if newer_cache_fails {
+                conn.execute_batch(fail_replacement).unwrap();
+            }
+            resolver.client.user_get_error.store(3, Ordering::Release);
+            let response = resolver
+                .pam_account_authenticate_step(
+                    &mut newer,
+                    PamAuthRequest::Password {
+                        cred: "new-secret".to_string(),
+                    },
+                )
+                .await
+                .unwrap();
+            assert!(matches!(response, PamAuthResponse::Success));
+            if newer_cache_fails {
+                // A durable invalidation must also supersede older sessions
+                // when its optional replacement failed.
+                conn.execute_batch("DROP TRIGGER fail_password_cache")
+                    .unwrap();
+            } else if older_cache_fails {
+                conn.execute_batch(fail_replacement).unwrap();
+            }
+
+            resolver.client.user_get_error.store(4, Ordering::Release);
+            let response = resolver
+                .pam_account_authenticate_step(
+                    &mut older,
+                    PamAuthRequest::SetupPin {
+                        pin: "123456".to_string(),
+                    },
+                )
+                .await
+                .unwrap();
+            assert!(matches!(response, PamAuthResponse::Success));
+            assert!(!resolver
+                .check_cache_userpassword(test_token().uuid, "old-secret")
+                .await
+                .unwrap());
+            assert_eq!(
+                resolver
+                    .check_cache_userpassword(test_token().uuid, "new-secret")
+                    .await
+                    .unwrap(),
+                !newer_cache_fails
+            );
+        }
     }
 
     #[tokio::test]
@@ -1219,6 +1332,8 @@ where
             allow_id_overrides: allow_id_overrides.into_iter().map(Id::Name).collect(),
             nxset: Mutex::new(HashSet::new()),
             nxcache: Mutex::new(LruCache::new(NXCACHE_SIZE)),
+            password_generation: AtomicU64::new(0),
+            password_cache_generations: Mutex::new(HashMap::new()),
         })
     }
 
@@ -2401,6 +2516,10 @@ where
                     )
                     .await;
 
+                // Order accepted credentials before releasing the provider locks.
+                // A password staged for PIN setup retains this generation, so
+                // completing an older session cannot restore a revoked verifier.
+                let generation = self.password_generation.fetch_add(1, Ordering::Relaxed);
                 drop(hsm_lock);
                 dbtxn.commit().map_err(|_| ())?;
 
@@ -2410,7 +2529,7 @@ where
                         AuthResult::Success { token },
                         AuthCacheAction::PasswordHashUpdate { cred },
                     )) => {
-                        *pending_password = Some(Zeroizing::new(cred));
+                        *pending_password = Some((generation, Zeroizing::new(cred)));
                         Ok(AuthResult::Success { token })
                     }
                     Ok((
@@ -2418,7 +2537,7 @@ where
                         AuthCacheAction::PasswordHashUpdate { cred },
                     )) => {
                         // Wait until the PIN setup completes before caching credentials.
-                        *pending_password = Some(Zeroizing::new(cred));
+                        *pending_password = Some((generation, Zeroizing::new(cred)));
                         Ok(next)
                     }
                     // Password verifiers may only be persisted after the complete
@@ -2611,23 +2730,24 @@ where
                     Ok(PamAuthResponse::Unknown)
                 } else {
                     trace!("provider authentication success.");
-                    let clear_password = matches!(
-                        &*auth_session,
+                    let pending_password = match &*auth_session {
                         AuthSession::InProgress {
-                            pending_password: Some(_),
-                            ..
-                        }
-                    );
-                    self.set_cache_usertoken(&mut token, clear_password).await?;
-                    if let AuthSession::InProgress {
-                        pending_password, ..
-                    } = auth_session
-                    {
-                        if let Some(cred) = pending_password.take() {
-                            // The verifier enables offline authentication; a
-                            // cache failure must not reject an authenticated user.
+                            pending_password, ..
+                        } => pending_password.as_ref(),
+                        _ => None,
+                    };
+                    if let Some((generation, cred)) = pending_password {
+                        let mut generations = self.password_cache_generations.lock().await;
+                        let replace = generations
+                            .get(&token.uuid)
+                            .is_none_or(|latest| generation > latest);
+                        self.set_cache_usertoken(&mut token, replace).await?;
+                        if replace {
+                            // Invalidation is durable. Advance even if the optional
+                            // replacement fails, so older sessions cannot undo it.
+                            generations.insert(token.uuid, *generation);
                             if self
-                                .set_cache_userpassword(token.uuid, &cred)
+                                .set_cache_userpassword(token.uuid, cred)
                                 .await
                                 .is_err()
                             {
@@ -2636,6 +2756,8 @@ where
                                 );
                             }
                         }
+                    } else {
+                        self.set_cache_usertoken(&mut token, false).await?;
                     }
                     *auth_session = AuthSession::Success(token.spn);
 
