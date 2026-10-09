@@ -213,6 +213,7 @@ mod tests {
                 }),
                 2 => Err(IdpError::BadRequest),
                 3..=5 if matches!(_id, Id::Name(_)) => Ok(UserTokenState::LookupOnly(test_token())),
+                6 => Ok(UserTokenState::Update(test_token())),
                 _ => Ok(UserTokenState::UseCached),
             }
         }
@@ -576,6 +577,140 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn lookup_only_user_does_not_revalidate_expired_cached_identity() {
+        let resolver = setup_resolver().await;
+        let token = test_token();
+        resolver
+            .set_cache_userpassword(token.uuid, "secret")
+            .await
+            .unwrap();
+        resolver.client.user_get_error.store(3, Ordering::Release);
+
+        let user = resolver
+            .get_nssaccount_name(&token.spn)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(!user.cacheable);
+        assert!(resolver.get_nssaccounts().await.unwrap().is_empty());
+        let mut dbtxn = resolver.db.write().await;
+        let (cached, expiry) = dbtxn
+            .get_account(&Id::Name(token.spn.clone()))
+            .unwrap()
+            .unwrap();
+        // The lookup-only result deliberately has the same UUID as the
+        // expired row left behind by migration.
+        assert_eq!(cached.uuid, token.uuid);
+        assert_eq!(expiry, 0);
+        dbtxn.commit().unwrap();
+        assert!(resolver
+            .check_cache_userpassword(token.uuid, "secret")
+            .await
+            .unwrap());
+    }
+
+    #[tokio::test]
+    async fn trusted_user_refresh_is_cacheable() {
+        let resolver = setup_resolver().await;
+        let token = test_token();
+        resolver.client.user_get_error.store(6, Ordering::Release);
+
+        assert!(resolver
+            .get_nssaccount_name(&token.spn)
+            .await
+            .unwrap()
+            .unwrap()
+            .cacheable);
+        let (expired, cached) = resolver
+            .get_cached_usertoken(&Id::Name(token.spn))
+            .await
+            .unwrap();
+        assert!(!expired);
+        assert_eq!(cached.unwrap().uuid, token.uuid);
+        assert!(resolver
+            .get_nssaccount_gid(token.gidnumber)
+            .await
+            .unwrap()
+            .unwrap()
+            .cacheable);
+        assert_eq!(resolver.client.user_get_calls.load(Ordering::Acquire), 1);
+    }
+
+    #[tokio::test]
+    async fn unexpired_cached_user_is_cacheable() {
+        let expiry = (SystemTime::now() + Duration::from_secs(3600))
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        for state in [
+            CacheState::Online,
+            CacheState::Offline,
+            CacheState::OfflineNextCheck(SystemTime::now() + Duration::from_secs(60)),
+        ] {
+            let resolver = setup_resolver_with_expiry(expiry).await;
+            resolver.client.set_cache_state(state);
+            let token = test_token();
+            for id in [
+                Id::Name(token.spn),
+                Id::Name(token.name),
+                Id::Gid(token.gidnumber),
+            ] {
+                assert!(resolver.get_nssaccount(id).await.unwrap().unwrap().cacheable);
+            }
+            assert_eq!(resolver.client.user_get_calls.load(Ordering::Acquire), 0);
+        }
+    }
+
+    #[tokio::test]
+    async fn expired_cached_user_remains_available_but_not_cacheable() {
+        for (state, error) in [
+            (CacheState::Offline, 0),
+            (
+                CacheState::OfflineNextCheck(SystemTime::now() + Duration::from_secs(60)),
+                0,
+            ),
+            (CacheState::OfflineNextCheck(SystemTime::UNIX_EPOCH), 0),
+            (CacheState::Online, 0),
+            (CacheState::Online, 1),
+            (CacheState::Online, 2),
+        ] {
+            let resolver = setup_resolver().await;
+            let token = test_token();
+            resolver.client.set_cache_state(state);
+            resolver
+                .client
+                .user_get_error
+                .store(error, Ordering::Release);
+            resolver
+                .client
+                .check_online_result
+                .store(false, Ordering::Release);
+            resolver
+                .set_cache_userpassword(token.uuid, "secret")
+                .await
+                .unwrap();
+
+            let cached = resolver
+                .get_usertoken(Id::Name(token.spn.clone()))
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(cached.uuid, token.uuid);
+            for id in [Id::Name(token.spn.clone()), Id::Gid(token.gidnumber)] {
+                assert!(!resolver.get_nssaccount(id).await.unwrap().unwrap().cacheable);
+            }
+            let mut dbtxn = resolver.db.write().await;
+            let (_, expiry) = dbtxn.get_account(&Id::Name(token.spn)).unwrap().unwrap();
+            assert_eq!(expiry, 0);
+            dbtxn.commit().unwrap();
+            assert!(resolver
+                .check_cache_userpassword(token.uuid, "secret")
+                .await
+                .unwrap());
+        }
+    }
+
+    #[tokio::test]
     async fn online_auth_succeeds_when_offline_password_cache_fails() {
         for (setup_pin, cached_password) in [
             (false, None),
@@ -907,21 +1042,48 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn reconciliation_ignores_expired_accounts() {
+    async fn enumeration_and_reconciliation_ignore_expired_accounts() {
         let resolver = setup_resolver().await;
-        assert_eq!(resolver.get_nssaccounts().await.unwrap().len(), 1);
+        let token = test_token();
+        resolver
+            .set_cache_userpassword(token.uuid, "secret")
+            .await
+            .unwrap();
+        assert!(resolver.get_nssaccounts().await.unwrap().is_empty());
         assert!(resolver
             .get_unexpired_nssaccounts()
             .await
             .unwrap()
             .is_empty());
 
-        let mut token = test_token();
+        let mut fresh_token = token.clone();
+        fresh_token.uuid = uuid::Uuid::new_v4();
+        fresh_token.name = "freshuser".to_string();
+        fresh_token.spn = "freshuser@example.com".to_string();
+        fresh_token.gidnumber += 1;
         resolver
-            .set_cache_usertoken(&mut token, false)
+            .set_cache_usertoken(&mut fresh_token, false)
             .await
             .unwrap();
-        assert_eq!(resolver.get_unexpired_nssaccounts().await.unwrap().len(), 1);
+        for users in [
+            resolver.get_nssaccounts().await.unwrap(),
+            resolver.get_unexpired_nssaccounts().await.unwrap(),
+        ] {
+            assert_eq!(users.len(), 1);
+            assert_eq!(users[0].name, fresh_token.name);
+            assert!(users[0].cacheable);
+        }
+        // Enumeration filters expired accounts without removing their offline
+        // identity or password verifier from the database.
+        assert_eq!(resolver.get_cached_usertokens().await.unwrap().len(), 2);
+        let mut dbtxn = resolver.db.write().await;
+        let (_, expiry) = dbtxn.get_account(&Id::Name(token.spn)).unwrap().unwrap();
+        assert_eq!(expiry, 0);
+        dbtxn.commit().unwrap();
+        assert!(resolver
+            .check_cache_userpassword(token.uuid, "secret")
+            .await
+            .unwrap());
     }
 
     #[tokio::test]
@@ -1387,6 +1549,7 @@ where
             .map_err(|_| ResolverError)
     }
 
+    #[cfg(test)]
     async fn get_cached_usertokens(&self) -> ResolverResult<Vec<UserToken>> {
         let mut dbtxn = self.db.write().await;
         dbtxn.get_accounts().map_err(|_| ResolverError)
@@ -1676,6 +1839,16 @@ where
         account_id: &Id,
         token: Option<UserToken>,
     ) -> ResolverResult<Option<UserToken>> {
+        self.refresh_usertoken_with_cacheability(account_id, token.map(|token| (token, false)))
+            .await
+            .map(|result| result.map(|(token, _)| token))
+    }
+
+    async fn refresh_usertoken_with_cacheability(
+        &self,
+        account_id: &Id,
+        token: Option<(UserToken, bool)>,
+    ) -> ResolverResult<Option<(UserToken, bool)>> {
         let mut hsm_lock = self.hsm.lock().await;
         let mut dbtxn = self.db.write().await;
 
@@ -1683,7 +1856,7 @@ where
             .client
             .unix_user_get(
                 account_id,
-                token.as_ref(),
+                token.as_ref().map(|(token, _)| token),
                 &mut dbtxn,
                 hsm_lock.deref_mut(),
                 &self.machine_key,
@@ -1697,12 +1870,12 @@ where
             Ok(UserTokenState::Update(mut n_tok)) => {
                 // We have the token!
                 self.set_cache_usertoken(&mut n_tok, false).await?;
-                Ok(Some(n_tok))
+                Ok(Some((n_tok, true)))
             }
-            Ok(UserTokenState::LookupOnly(n_tok)) => Ok(Some(n_tok)),
+            Ok(UserTokenState::LookupOnly(n_tok)) => Ok(Some((n_tok, false))),
             Ok(UserTokenState::NotFound) => {
                 // It previously existed, so now purge it.
-                if let Some(tok) = token {
+                if let Some((tok, _)) = token {
                     self.delete_cache_usertoken(tok.uuid).await?;
                 };
                 // Cache the NX here.
@@ -1979,6 +2152,17 @@ where
     }
 
     pub async fn get_usertoken(&self, account_id: Id) -> ResolverResult<Option<UserToken>> {
+        self.get_usertoken_with_cacheability(account_id)
+            .await
+            .map(|result| result.map(|(token, _)| token))
+    }
+
+    // Keep the result's persistence eligibility alongside the token so a
+    // lookup-only response cannot inherit eligibility from an old database row.
+    async fn get_usertoken_with_cacheability(
+        &self,
+        account_id: Id,
+    ) -> ResolverResult<Option<(UserToken, bool)>> {
         // Validate the user isn't in the nxset (aka, it's a local user or group).
         let (name, idnumber) = match account_id.clone() {
             Id::Name(name) => (Some(name), None),
@@ -2001,6 +2185,10 @@ where
                 None => self.get_cachestate(None).await,
             },
         };
+
+        // Expired records remain available for offline use, but must not
+        // repopulate persistent NSS caches without a trusted refresh.
+        let item = item.map(|token| (token, !expired));
 
         match (expired, state) {
             (_, CacheState::Offline) => {
@@ -2026,7 +2214,8 @@ where
                 // Return it.
                 if SystemTime::now() >= time && self.test_connection().await {
                     // We brought ourselves online, lets go
-                    self.refresh_usertoken(&account_id, item).await
+                    self.refresh_usertoken_with_cacheability(&account_id, item)
+                        .await
                 } else {
                     // Unable to bring up connection, return cache.
                     Ok(item)
@@ -2036,7 +2225,8 @@ where
                 trace!("online expired, refresh cache");
                 // Attempt to refresh the item
                 // Return it.
-                self.refresh_usertoken(&account_id, item).await
+                self.refresh_usertoken_with_cacheability(&account_id, item)
+                    .await
             }
         }
         .map(|t| {
@@ -2146,11 +2336,7 @@ where
     }
 
     pub async fn get_nssaccounts(&self) -> ResolverResult<Vec<NssUser>> {
-        self.get_cached_usertokens().await.map(|l| {
-            l.into_iter()
-                .map(|tok| self.nss_user_from_token(tok, true))
-                .collect()
-        })
+        self.get_unexpired_nssaccounts().await
     }
 
     pub async fn get_unexpired_nssaccounts(&self) -> ResolverResult<Vec<NssUser>> {
@@ -2170,14 +2356,9 @@ where
     }
 
     async fn get_nssaccount(&self, account_id: Id) -> ResolverResult<Option<NssUser>> {
-        let token = self.get_usertoken(account_id).await?;
-        let Some(tok) = token else { return Ok(None) };
-        // A lookup-only token is returned to NSS, but never stored there.
-        let (_, cached) = self
-            .get_cached_usertoken(&Id::Name(tok.spn.clone()))
-            .await?;
-        let cacheable = cached.is_some_and(|cached| cached.uuid == tok.uuid);
-        Ok(Some(self.nss_user_from_token(tok, cacheable)))
+        self.get_usertoken_with_cacheability(account_id)
+            .await
+            .map(|result| result.map(|(tok, cacheable)| self.nss_user_from_token(tok, cacheable)))
     }
 
     fn nss_user_from_token(&self, tok: UserToken, cacheable: bool) -> NssUser {
