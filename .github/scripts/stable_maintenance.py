@@ -1347,6 +1347,8 @@ def contained_repo_command(
         "-e", "PATH=/usr/local/cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
     ])
     argv[argv.index("CARGO_NET_OFFLINE=true")] = f"CARGO_NET_OFFLINE={'false' if network else 'true'}"
+    if list(command) == ["cargo", "build", "--workspace", "--locked", "--message-format=json"]:
+        command = ["python3", "-I", "-c", BUILD_RESOURCE_PROBE, *command]
     argv.extend([image, *command])
     try:
         return runner.run(argv, timeout=timeout, check=check)
@@ -1430,16 +1432,171 @@ def permission_error_path_hints(stderr: str) -> list[str]:
     ) if any(path.startswith(prefix) for path in denied_paths)]
 
 
+# Run the probe in the same disposable container before its tmpfs is removed.
+# No repository code or output is evaluated by this trusted wrapper.
+BUILD_RESOURCE_PROBE = """
+import json, os, subprocess, sys
+status = subprocess.call(sys.argv[1:])
+if status:
+    resources = {}
+    for label, path in (("target", "/target"), ("temporary", "/tmp"), ("assets", "/workspace/target")):
+        try:
+            fs = os.statvfs(path)
+            resources[label + "_free_bytes"] = fs.f_bavail * fs.f_frsize
+        except OSError:
+            pass
+    try:
+        with open("/sys/fs/cgroup/memory.events") as handle:
+            for line in handle:
+                key, value = line.split()
+                if key in ("oom", "oom_kill", "max") and value.isdecimal():
+                    resources["memory_" + key] = int(value)
+    except (OSError, ValueError):
+        pass
+    print(json.dumps({"reason": "maintenance-resources", "resources": resources}), flush=True)
+sys.exit(status if status >= 0 else 128 - status)
+"""
+
+
+def build_diagnostic_token(value: Any) -> str:
+    """Allow identifiers, never arbitrary diagnostic text or Actions commands."""
+    return value if isinstance(value, str) and re.fullmatch(r"[A-Za-z0-9_][A-Za-z0-9_.+-]{0,99}", value) else "unknown"
+
+
+def build_diagnostic_location(value: Any) -> str:
+    """Retain bounded source locations without URLs, traversal or source text."""
+    if not isinstance(value, str) or len(value) > 240:
+        return "unknown"
+    if value.startswith("/workspace/"):
+        value = value[len("/workspace/"):]
+    elif value.startswith("/opt/project-cargo/"):
+        value = "project-cache/" + value[len("/opt/project-cargo/"):]
+    elif value.startswith("/target/"):
+        value = "target/" + value[len("/target/"):]
+    if (not re.fullmatch(r"[A-Za-z0-9_.+-]+(?:/[A-Za-z0-9_.+-]+)*", value)
+            or any(part in (".", "..") for part in value.split("/"))):
+        return "unknown"
+    return value
+
+
+def report_build_diagnostics(result: CommandResult, root: Path) -> str:
+    """Summarize Cargo JSON errors and linker operands; do not echo rendered text."""
+    messages: list[str] = []
+    packages: set[tuple[str, str]] = set()
+    if isinstance(root, Path):
+        try:
+            lock = checkout_regular_file(root, "Cargo.lock")
+            data = tomllib.loads(lock.read_text(encoding="utf-8"))
+            rows = data.get("package", [])
+            packages = {(x["name"], x["version"]) for x in (rows if isinstance(rows, list) else [])
+                        if isinstance(x, dict) and isinstance(x.get("name"), str) and isinstance(x.get("version"), str)}
+        except (MaintenanceError, OSError, ValueError):
+            pass  # Diagnostics must not hide the original build failure.
+    errors = []
+    artifacts = 0
+    scripts = 0
+    resources = {}
+    for line in result.stdout.splitlines():
+        if not line.startswith("{") or len(line) > 1024 * 1024:
+            continue
+        try:
+            item = json.loads(line)
+        except (ValueError, RecursionError):
+            continue
+        if not isinstance(item, dict):
+            continue
+        reason = item.get("reason")
+        if reason == "maintenance-resources" and isinstance(item.get("resources"), dict):
+            resources = {key: value for key, value in item["resources"].items()
+                         if key in ("target_free_bytes", "temporary_free_bytes", "assets_free_bytes", "memory_oom", "memory_oom_kill", "memory_max")
+                         and type(value) is int and 0 <= value < 2**63}
+        elif reason == "compiler-artifact":
+            artifacts += 1
+        elif reason == "build-script-executed":
+            scripts += 1
+        elif reason == "compiler-message" and len(errors) < 8:
+            message = item.get("message")
+            target = item.get("target")
+            if not isinstance(message, dict) or not isinstance(target, dict) or message.get("level") != "error":
+                continue
+            # Cargo >= 1.77 package IDs end in #name@version or #version
+            # (the latter for path packages whose directory matches the name).
+            package_id = item.get("package_id")
+            package = package_id.rsplit("#", 1)[-1] if isinstance(package_id, str) else "unknown"
+            if "@" not in package and isinstance(package_id, str):
+                package = package_id.split("#", 1)[0].rstrip("/").rsplit("/", 1)[-1] + "@" + package
+            name, _, version = package.partition("@")
+            if (name, version) not in packages:
+                name = version = "unknown"
+            kinds = target.get("kind")
+            kinds = kinds if isinstance(kinds, list) else []
+            entry = {"crate": build_diagnostic_token(name), "version": build_diagnostic_token(version),
+                     "target": build_diagnostic_token(target.get("name")),
+                     "kind": [x for x in kinds[:4] if x in ("lib", "rlib", "dylib", "cdylib", "staticlib", "proc-macro", "bin", "test", "example", "bench", "custom-build")],
+                     "source": build_diagnostic_location(target.get("src_path"))}
+            code = message.get("code")
+            entry["code"] = code["code"] if isinstance(code, dict) and re.fullmatch(r"E[0-9]{4}", str(code.get("code"))) else "none"
+            spans = message.get("spans")
+            locations = []
+            for span in (spans[:8] if isinstance(spans, list) else []):
+                if not isinstance(span, dict):
+                    continue
+                path = build_diagnostic_location(span.get("file_name"))
+                row, column = span.get("line_start"), span.get("column_start")
+                if path != "unknown" and type(row) is int and type(column) is int and 0 < row < 10**7 and 0 < column < 10**7:
+                    locations.append(f"{path}:{row}:{column}")
+            entry["locations"] = locations
+            errors.append(entry)
+            children = message.get("children")
+            for node in [message, *(children[:16] if isinstance(children, list) else [])]:
+                if isinstance(node, dict) and isinstance(node.get("message"), str):
+                    messages.append(node["message"][:64 * 1024])
+    text = result.stderr + "\n" + "\n".join(messages)
+    lower = text.lower()
+    causes = [name for name, needles in (
+        ("missing-library", ("cannot find -l", "unable to find library -l")),
+        ("undefined-symbol", ("undefined reference to", "undefined symbol:")),
+        ("duplicate-symbol", ("multiple definition of", "duplicate symbol:")),
+        ("killed", ("killed", "signal 9", "sigkill")),
+        ("bus-error", ("bus error", "signal 7", "sigbus")),
+        ("segmentation-fault", ("segmentation fault", "signal 11", "sigsegv")),
+        ("out-of-memory", ("out of memory", "cannot allocate memory")),
+        ("no-space", ("no space left on device",)),
+        ("relocation", ("relocation truncated", "recompile with -fpic")),
+        ("incompatible-library", ("file format not recognized", "incompatible with", "wrong elf class")),
+        ("version-script", ("version script", "version-script")),
+        ("unsupported-option", ("unrecognized command-line option", "unknown argument:", "unknown option:")),
+    ) if any(needle in lower for needle in needles)]
+    libraries = sorted({build_diagnostic_token(x) for x in re.findall(
+        r"(?:cannot find -l|unable to find library -l)([^\s:]+)", text)})[:8]
+    symbols = sorted({build_diagnostic_token(symbol) for pair in re.findall(
+        r"(?:undefined reference to [`']([^`'\n]+)[`']|undefined symbol: ([^\s]+))", text)
+        for symbol in pair if symbol})[:8]
+    # Failed build-script execution is still reported on stderr by Cargo.
+    failed_scripts = sorted({build_diagnostic_token(x) for x in re.findall(
+        r"failed to run custom build command for `([^`\s]+)(?: v[^`]+)?`", result.stderr)
+        if any(name == x for name, _ in packages)})[:8]
+    panics = [f"{build_diagnostic_location(path)}:{row}:{column}" for path, row, column in re.findall(
+        r"panicked at ([^\s]+):([0-9]{1,7}):([0-9]{1,7}):", result.stderr)[:8]]
+    print("build-diagnostics: " + json.dumps({"compiler_errors": errors, "linker_causes": causes,
+          "missing_libraries": libraries, "undefined_symbols": symbols, "failed_build_scripts": failed_scripts,
+          "panic_locations": panics, "completed_artifacts": artifacts, "completed_build_scripts": scripts,
+          "resources": resources},
+          separators=(",", ":")), file=sys.stderr)
+    return text
+
+
 def locked_build(runner: Runner, *, target_dir: Path | None = None) -> CommandResult:
     """Run the contained build and report only bounded, sanitized failure hints."""
     result = contained_repo_command(
-        runner, ["cargo", "build", "--workspace", "--locked"],
+        runner, ["cargo", "build", "--workspace", "--locked", "--message-format=json"],
         network=False, source_rw=False, cache_rw=False, check=False,
     )
     if result.returncode:
         # Subprocess output is untrusted and may contain source text, secrets,
-        # URLs or Actions commands. Emit only fixed hints and bounded numbers.
-        stderr = result.stderr.lower()
+        # URLs or Actions commands. Emit only validated fields and fixed hints.
+        diagnostic_text = report_build_diagnostics(result, runner.root)
+        stderr = diagnostic_text.lower()
         patterns = (
             ("permission-denied", ("permission denied", "operation not permitted")),
             ("read-only-filesystem", ("read-only file system",)),
@@ -1456,11 +1613,11 @@ def locked_build(runner: Runner, *, target_dir: Path | None = None) -> CommandRe
             ("project-cache", "/opt/project-cargo/"),
             ("source", "/workspace/"), ("target", "/target/"),
         ) if prefix in stderr]
-        codes = sorted(set(re.findall(r"error\[(E[0-9]{4})\]", result.stderr)))[:8]
+        codes = sorted(set(re.findall(r"error\[(E[0-9]{4})\]", diagnostic_text)))[:8]
         operations = [name for name, needles in (
             ("read-file", ("couldn't read", "could not read", "failed to read", "unable to read")),
             ("start-process", ("could not execute process", "failed to execute", "failed to spawn")),
-            ("link", ("error: linking with",)),
+            ("link", ("linking with",)),
             ("run-build-script", ("failed to run custom build command",)),
             ("open-file", ("failed to open", "could not open", "unable to open")),
             ("create-temporary-file", ("failed to create temporary file", "couldn't create a temp dir")),
@@ -2584,3 +2741,4 @@ def main(argv: Sequence[str] | None = None) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
