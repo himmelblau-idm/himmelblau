@@ -395,6 +395,7 @@ in
         himmelblaud-tasks = {
           description = "Himmelblau Local Tasks";
           after = commonAfter ++ [ "himmelblaud.service" ];
+          wants = [ "network-online.target" ];
           bindsTo = [ "himmelblaud.service" ];
           wantedBy = [ "multi-user.target" ];
           startLimitIntervalSec = 30;
@@ -436,6 +437,7 @@ in
         commonSocket = {
           after = lib.filter (unit: !(lib.hasSuffix ".socket" unit)) daemonAfter
             ++ [ "sockets.target" ];
+          wants = [ "network-online.target" ];
           before = [ "himmelblaud.service" ];
           partOf = [ "himmelblaud.service" ];
           unitConfig.DefaultDependencies = false;
