@@ -342,7 +342,6 @@ in
             "tpm2-udev-trigger.service"
           ];
           wantedBy = [ "himmelblaud.service" ];
-          requiresMountsFor = [ "/var/lib/private/himmelblaud" ];
           path = [
             pkgs.coreutils
             pkgs.gnugrep
@@ -352,6 +351,7 @@ in
           ];
           unitConfig = {
             DefaultDependencies = false;
+            RequiresMountsFor = [ "/var/lib/private/himmelblaud" ];
           };
           serviceConfig = {
             Type = "oneshot";
