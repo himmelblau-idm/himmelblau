@@ -1349,6 +1349,14 @@ def contained_repo_command(
     ])
     argv[argv.index("CARGO_NET_OFFLINE=true")] = f"CARGO_NET_OFFLINE={'false' if network else 'true'}"
     json_build = list(command) == ["cargo", "build", "--workspace", "--locked", "--message-format=json"]
+    workspace_tests = list(command) == ["cargo", "test", "--workspace", "--locked"]
+    if json_build or workspace_tests:
+        # These are one-shot validation builds: their tmpfs is discarded afterward.
+        # Debug symbols and incremental state can fill /target while linking
+        # the workspace, without providing reusable artifacts or a warm cache.
+        # Keep the dev/test profiles' assertions/checks and all container limits.
+        argv.extend(["-e", "CARGO_PROFILE_DEV_DEBUG=0", "-e", "CARGO_PROFILE_TEST_DEBUG=0",
+                     "-e", "CARGO_INCREMENTAL=0"])
     if json_build:
         command = ["python3", "-I", "-c", BUILD_RESOURCE_PROBE, *command]
     argv.extend([image, *command])
