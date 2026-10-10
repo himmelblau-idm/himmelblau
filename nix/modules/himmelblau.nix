@@ -297,7 +297,7 @@ in
             "ntpd.service"
             "network-online.target"
           ] ++ lib.optional tpmAccessRequired "tpm2-udev-trigger.service";
-          after = lib.optional tpmAccessRequired "tpm2-udev-trigger.service";
+          after = lib.optional config.security.tpm2.enable "himmelblau-hsm-pin-init.service";
           before = [ "accounts-daemon.service" ];
           wantedBy = [
             "multi-user.target"
@@ -323,6 +323,39 @@ in
             SupplementaryGroups = lib.optional (
               tpmAccessRequired && config.security.tpm2.tssGroup != null
             ) config.security.tpm2.tssGroup;
+          } // lib.optionalAttrs config.security.tpm2.enable {
+            LoadCredentialEncrypted = "hsm-pin:/var/lib/himmelblaud/hsm-pin-nopcr.enc";
+            Environment = "HIMMELBLAU_HSM_PIN_PATH=%d/hsm-pin";
+          };
+        };
+
+        himmelblau-hsm-pin-init = lib.mkIf config.security.tpm2.enable {
+          description = "Himmelblau HSM PIN Initialization";
+          before = [ "himmelblaud.service" ];
+          after = [
+            "local-fs.target"
+            "systemd-tpm2-setup.service"
+            "tpm2-udev-trigger.service"
+          ];
+          wants = [
+            "systemd-tpm2-setup.service"
+            "tpm2-udev-trigger.service"
+          ];
+          wantedBy = [ "himmelblaud.service" ];
+          path = [
+            pkgs.coreutils
+            pkgs.gnugrep
+            pkgs.openssl
+            pkgs.systemd
+            pkgs.tpm2-tools
+          ];
+          unitConfig = {
+            DefaultDependencies = false;
+            RequiresMountsFor = [ "/var/lib/private/himmelblaud" ];
+          };
+          serviceConfig = {
+            Type = "oneshot";
+            ExecStart = "${cfg.daemonPackage}/libexec/himmelblau-init-hsm-pin";
           };
         };
 
