@@ -35,6 +35,8 @@ Known deviations from the generated units and their rationale:
 - Use configurable Nix package/configuration paths and Nix-provided tools,
   with additional network/time-service Wants and accounts-daemon/TPM-device
   startup dependencies.
+- Units ordered after network-online.target also explicitly Want it, including
+  tasks and sockets, to satisfy NixOS's per-unit dependency checks.
 - Retain conditional TPM device access, DeviceAllow, and the configured TPM
   group instead of the generator's default PrivateDevices=false and tss group.
 
@@ -278,6 +280,23 @@ class NixosServiceTests(unittest.TestCase):
         daemon = self.units["himmelblaud.service"]["Unit"]
         self.assertIn("nscd.service", daemon["After"].split())
         self.assertNotIn("nscd.service", daemon.get("Conflicts", "").split())
+
+    def test_network_online_ordering_has_explicit_dependencies(self):
+        for name, unit in self.units.items():
+            if "network-online.target" not in unit["Unit"].get("After", "").split():
+                continue
+            with self.subTest(unit=name):
+                dependencies = set()
+                for key in ["Wants", "Requires", "BindsTo"]:
+                    dependencies.update(unit["Unit"].get(key, "").split())
+                self.assertIn("network-online.target", dependencies)
+        self.assertFalse(
+            [
+                warning
+                for warning in self.evaluated["warnings"]
+                if "himmelblau" in warning and "network-online.target" in warning
+            ]
+        )
 
     def test_socket_activation_matches_without_early_boot_activation(self):
         sockets = []

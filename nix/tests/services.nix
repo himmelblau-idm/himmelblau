@@ -34,6 +34,7 @@ in
   version = cfg.systemd.package.version;
   nscdEnabled = cfg.services.nscd.enable;
   tmpfilesRules = cfg.systemd.tmpfiles.rules;
+  warnings = cfg.warnings;
   assertions = map (assertion: assertion.message) (
     builtins.filter (assertion: !assertion.assertion) cfg.assertions
   );
