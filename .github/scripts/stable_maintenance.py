@@ -1311,6 +1311,9 @@ def contained_repo_command(
     user = f"{os.getuid()}:{os.getgid()}" if source_rw or cache_rw or vet_store is not None else "65532:65532"
     argv = [
         engine, "run", "--name", container_name, f"--network={'bridge' if network else 'none'}",
+        # Cargo/tests and the resource probe do not reap orphaned grandchildren.
+        # A tiny init prevents killed script children from remaining as zombies.
+        "--init",
         "--cap-drop=ALL", "--security-opt=no-new-privileges",
         "--user", user, "--pids-limit=512", "--cpus=4", "--memory=8g", "--memory-swap=8g",
         "--ulimit", "nofile=4096:4096", "--ulimit", "fsize=4294967296:4294967296",
@@ -1772,6 +1775,12 @@ def report_test_diagnostics(result: CommandResult, root: Path, *, capture: str =
         hints.append("panic")
     if "assertion" in text and "failed" in text:
         hints.append("assertion-failed")
+    # Fixed labels distinguish the process cleanup assertions without exposing
+    # test names, PIDs, thread counts, or arbitrary panic payloads.
+    if re.search(r"(?m)^grandchild [0-9]{1,10} survived the process-group kill$", text):
+        hints.append("orphan-not-reaped")
+    if re.search(r"(?m)^threads leaked across invocations: [0-9]{1,10} -> [0-9]{1,10}$", text):
+        hints.append("thread-count-increased")
     codes = sorted(set(re.findall(r"error\[(E[0-9]{4})\]", text)))[:8]
     print("test-diagnostics: " + json.dumps({
         "exit": result.returncode, "capture": capture, "failed_targets": targets,
@@ -2896,4 +2905,5 @@ def main(argv: Sequence[str] | None = None) -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
 

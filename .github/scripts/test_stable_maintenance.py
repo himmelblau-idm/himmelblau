@@ -243,6 +243,7 @@ class BranchAndCliTests(unittest.TestCase):
             self.assertEqual(runner.run.call_args_list[0].kwargs["max_output"], sm.MAX_BUILD_OUTPUT_BYTES)
             joined = " ".join(argv)
             self.assertIn("--network=none", argv)
+            self.assertEqual(argv.count("--init"), 1)
             self.assertIn("--cap-drop=ALL", argv)
             self.assertIn("--security-opt=no-new-privileges", argv)
             self.assertIn("/workspace:ro", joined)
@@ -291,6 +292,36 @@ class BranchAndCliTests(unittest.TestCase):
                 'pub fn fixture() {}\n'
                 '#[test]\n#[should_panic]\nfn overflow_checks_remain_enabled() {\n'
                 '    let _ = std::hint::black_box(u32::MAX) + std::hint::black_box(1);\n}\n')
+            with (source / "src/lib.rs").open("a") as handle:
+                handle.write("""
+#[test]
+fn killed_orphan_is_reaped() {
+    use std::io::{BufRead, BufReader};
+    use std::os::unix::process::CommandExt;
+    use std::process::{Command, Stdio};
+    use std::time::{Duration, Instant};
+    extern "C" {
+        fn kill(pid: i32, signal: i32) -> i32;
+    }
+    let mut child = Command::new("/bin/sh")
+        .args(["-c", "sleep 300 & echo $!; wait"])
+        .process_group(0)
+        .stdout(Stdio::piped())
+        .spawn().unwrap();
+    let mut line = String::new();
+    BufReader::new(child.stdout.take().unwrap()).read_line(&mut line).unwrap();
+    let orphan: i32 = line.trim().parse().unwrap();
+    // Kill both the shell and its child, just like the compliance timeout.
+    assert_eq!(unsafe { kill(-(child.id() as i32), 9) }, 0);
+    child.wait().unwrap();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while Instant::now() < deadline {
+        if unsafe { kill(orphan, 0) } != 0 { return; }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    panic!("killed orphan was not reaped by the container init");
+}
+""")
             (source / "Cargo.toml").write_text(
                 '[package]\nname = "asset-mount-fixture"\nversion = "0.1.0"\nedition = "2021"\n')
             (source / "Cargo.lock").write_text(
@@ -331,7 +362,7 @@ fn main() {
             with mock.patch.dict(os.environ, {"MAINTENANCE_PROJECT_CARGO_HOME": str(cargo_home)}):
                 tests = sm.locked_tests(runner)
             self.assertEqual(tests.returncode, 0, tests.stderr)
-            self.assertIn("1 passed", tests.stdout)
+            self.assertIn("2 passed", tests.stdout)
             self.assertEqual((source / "source-sentinel").read_text(), "unchanged")
             self.assertEqual((source / ".git/sentinel").read_text(), "unchanged")
             self.assertEqual((source / "target/host-sentinel").read_text(), "unchanged")
@@ -768,6 +799,22 @@ sys.exit(int(sys.argv[1]))
                 self.assertEqual(report["compile_failed"], ["example"])
                 self.assertEqual(report["causes"], causes)
                 self.assertEqual(report["rust_codes"], codes)
+                self.assertNotIn("SECRET", output.getvalue())
+
+    def test_process_cleanup_diagnostics_do_not_echo_panic_payloads(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            for message, expected in (
+                ("grandchild 123456789 survived the process-group kill", ["orphan-not-reaped"]),
+                ("threads leaked across invocations: 123456789 -> 987654321", ["thread-count-increased"]),
+                ("grandchild SECRET survived the process-group kill", []),
+            ):
+                with self.subTest(message=message), mock.patch.object(sm.sys, "stderr", io.StringIO()) as output:
+                    sm.report_test_diagnostics(sm.CommandResult(101, "", message + "\nSECRET"), root)
+                report = json.loads(output.getvalue().removeprefix("test-diagnostics: "))
+                self.assertEqual(report["hints"], expected)
+                self.assertNotIn("123456789", output.getvalue())
+                self.assertNotIn("987654321", output.getvalue())
                 self.assertNotIn("SECRET", output.getvalue())
 
     def test_test_diagnostics_bound_output_and_handle_invalid_lockfiles(self):
@@ -2521,4 +2568,5 @@ class InitializePhaseTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
 
