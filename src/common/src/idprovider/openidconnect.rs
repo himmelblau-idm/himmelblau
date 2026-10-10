@@ -2857,7 +2857,7 @@ impl IdProvider for OidcProvider {
             }
         };
 
-        Ok(UserTokenState::Update(UserToken {
+        Ok(UserTokenState::LookupOnly(UserToken {
             name: account_id.to_string(),
             spn: account_id.to_string(),
             uuid: object_id,
