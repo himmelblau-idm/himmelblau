@@ -265,6 +265,9 @@ class BranchAndCliTests(unittest.TestCase):
             self.assertIn("RUSTUP_HOME=/usr/local/rustup", argv)
             self.assertIn("PATH=/usr/local/cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin", argv)
             self.assertIn("O365_GEN_DIR=/target/o365-generated", argv)
+            self.assertIn("CARGO_PROFILE_DEV_DEBUG=0", argv)
+            self.assertIn("CARGO_PROFILE_TEST_DEBUG=0", argv)
+            self.assertIn("CARGO_INCREMENTAL=0", argv)
             self.assertIn(sm.BUILD_RESOURCE_PROBE, argv)
             self.assertEqual(argv[-9:], ["python3", "-I", "-c", sm.BUILD_RESOURCE_PROBE,
                              "cargo", "build", "--workspace", "--locked", "--message-format=json"])
@@ -283,13 +286,20 @@ class BranchAndCliTests(unittest.TestCase):
             source = Path(tmp) / "source"; source.mkdir()
             (source / ".git").mkdir()
             (source / "src").mkdir()
-            (source / "src/lib.rs").write_text("pub fn fixture() {}\n")
+            (source / "src/lib.rs").write_text(
+                '#[cfg(not(debug_assertions))]\ncompile_error!("dev assertions disabled");\n'
+                'pub fn fixture() {}\n'
+                '#[test]\n#[should_panic]\nfn overflow_checks_remain_enabled() {\n'
+                '    let _ = std::hint::black_box(u32::MAX) + std::hint::black_box(1);\n}\n')
             (source / "Cargo.toml").write_text(
                 '[package]\nname = "asset-mount-fixture"\nversion = "0.1.0"\nedition = "2021"\n')
             (source / "Cargo.lock").write_text(
                 'version = 3\n\n[[package]]\nname = "asset-mount-fixture"\nversion = "0.1.0"\n')
             (source / "build.rs").write_text("""
 fn main() {
+    assert_eq!(std::env::var("DEBUG").unwrap(), "false");
+    assert_eq!(std::env::var("OPT_LEVEL").unwrap(), "0");
+    assert_eq!(std::env::var("CARGO_INCREMENTAL").unwrap(), "0");
     let output = "target/release/qr-greeter-build";
     std::fs::create_dir_all(output).unwrap();
     std::fs::write(format!("{output}/asset"), "generated").unwrap();
@@ -309,6 +319,22 @@ fn main() {
             with mock.patch.dict(os.environ, {"MAINTENANCE_PROJECT_CARGO_HOME": str(cargo_home)}):
                 result = sm.locked_build(runner)
             self.assertEqual(result.returncode, 0, result.stderr)
+            artifacts = [json.loads(line) for line in result.stdout.splitlines() if line.startswith("{")]
+            profiles = [item["profile"] for item in artifacts if item.get("reason") == "compiler-artifact"]
+            self.assertTrue(profiles)
+            for profile in profiles:
+                self.assertIn(profile["debuginfo"], (None, 0))
+                self.assertEqual(profile["opt_level"], "0")
+                self.assertTrue(profile["debug_assertions"])
+                self.assertTrue(profile["overflow_checks"])
+            # The final test gate compiles in its own fresh /target tmpfs, too.
+            with mock.patch.dict(os.environ, {"MAINTENANCE_PROJECT_CARGO_HOME": str(cargo_home)}):
+                tests = sm.contained_repo_command(
+                    runner, ["cargo", "test", "--workspace", "--locked"],
+                    network=False, source_rw=False, cache_rw=False, check=False,
+                )
+            self.assertEqual(tests.returncode, 0, tests.stderr)
+            self.assertIn("1 passed", tests.stdout)
             self.assertEqual((source / "source-sentinel").read_text(), "unchanged")
             self.assertEqual((source / ".git/sentinel").read_text(), "unchanged")
             self.assertEqual((source / "target/host-sentinel").read_text(), "unchanged")
@@ -624,6 +650,37 @@ sys.exit(int(sys.argv[1]))
             with mock.patch.dict(os.environ, env), mock.patch.object(sm.shutil, "which", return_value="/usr/bin/docker"):
                 sm.contained_repo_command(runner, ["cargo", "metadata"], network=False, source_rw=False, cache_rw=False)
             self.assertEqual(runner.run.call_args_list[0].kwargs["max_output"], 4 * 1024 * 1024)
+
+    def test_disposable_build_settings_are_scoped_and_not_inherited(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "source"; root.mkdir(); (root / ".git").mkdir()
+            cache = Path(tmp) / "cache"; cache.mkdir(); (cache / "registry").mkdir()
+            runner = mock.Mock(root=root.resolve())
+            runner.run.return_value = sm.CommandResult(0, "", "")
+            env = {
+                "MAINTENANCE_BUILD_IMAGE": "build:local",
+                "MAINTENANCE_PROJECT_CARGO_HOME": str(cache),
+                "CARGO_PROFILE_DEV_DEBUG": "2", "CARGO_PROFILE_TEST_DEBUG": "2",
+                "CARGO_INCREMENTAL": "1",
+            }
+            for command, expected in (
+                (["cargo", "build", "--workspace", "--locked", "--message-format=json"],
+                 ["CARGO_PROFILE_DEV_DEBUG=0", "CARGO_PROFILE_TEST_DEBUG=0", "CARGO_INCREMENTAL=0"]),
+                (["cargo", "test", "--workspace", "--locked"],
+                 ["CARGO_PROFILE_DEV_DEBUG=0", "CARGO_PROFILE_TEST_DEBUG=0", "CARGO_INCREMENTAL=0"]),
+                (["cargo", "metadata"], []),
+                (["cargo", "vet", "--locked", "--frozen"], []),
+                (["cargo", "build", "--release"], []),
+                (["crate2nix", "generate"], []),
+            ):
+                with self.subTest(command=command), mock.patch.dict(os.environ, env), \
+                     mock.patch.object(sm.shutil, "which", return_value="/usr/bin/docker"):
+                    runner.run.reset_mock()
+                    sm.contained_repo_command(runner, command, network=False, source_rw=False, cache_rw=False)
+                argv = runner.run.call_args_list[0].args[0]
+                settings = [argv[i + 1] for i, arg in enumerate(argv[:-1]) if arg == "-e"
+                            and argv[i + 1].startswith(("CARGO_PROFILE_", "CARGO_INCREMENTAL"))]
+                self.assertEqual(settings, expected)
 
     def test_clean_build_failure_keeps_later_release_gates_blocked(self):
         with tempfile.TemporaryDirectory() as tmp:
