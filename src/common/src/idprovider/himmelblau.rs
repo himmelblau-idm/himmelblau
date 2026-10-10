@@ -41,6 +41,7 @@ use crate::idprovider::interface::{tpm, UserTokenState};
 use crate::idprovider::oidc_router::OidcRouter;
 use crate::reserved_ids::{is_systemd_dynamic_id, SYSTEMD_DYNAMIC_ID_MAX, SYSTEMD_DYNAMIC_ID_MIN};
 use crate::tpm::confidential_client_creds;
+use crate::unix_passwd::parse_etc_passwd;
 use crate::unix_proto::PamAuthRequest;
 use crate::user_map::UserMap;
 use crate::{
@@ -70,12 +71,10 @@ use kanidm_hsm_crypto::{
     structures::LoadableMsDeviceEnrolmentKey, structures::LoadableMsHelloKey,
     structures::LoadableMsOapxbcRsaKey, structures::SealedData, PinValue,
 };
-use libc::getpwnam;
 use libkrimes::proto::KerberosCredentials;
 use rand::RngExt;
 use reqwest::Url;
 use std::collections::HashMap;
-use std::ffi::CString;
 use std::sync::Arc;
 use std::thread::sleep;
 use std::time::Duration;
@@ -84,6 +83,15 @@ use tokio::sync::{broadcast, Mutex, OnceCell};
 use totp_rs::{Algorithm, Secret, TOTP};
 use uuid::Uuid;
 use zeroize::Zeroizing;
+
+fn local_user_ids_from_passwd(contents: &[u8], username: &str) -> Option<(u32, u32)> {
+    contents
+        .split(|byte| *byte == b'\n')
+        .filter_map(|line| parse_etc_passwd(line).ok())
+        .flatten()
+        .find(|user| user.name == username && !user.name.starts_with(['+', '-']))
+        .map(|user| (user.uid, user.gid))
+}
 
 // AADSTS65002: Consent between first party application and resource is required.
 // This occurs when a tenant has not granted consent for an application to access
@@ -5282,22 +5290,14 @@ impl HimmelblauProvider {
         let user_map = UserMap::new(&self.config.lock().await.get_user_map_file());
         let (uidnumber, gidnumber) = match user_map.get_local_from_upn(&spn) {
             Some(user) => {
-                let pwd = unsafe {
-                    let cstr_user = CString::new(user).map_err(|e| {
-                        error!("Failed converting username to CString: {}", e);
-                        IdpError::BadRequest
-                    })?;
-                    let user = CString::into_raw(cstr_user);
-                    let pwd = getpwnam(user);
-                    if pwd.is_null() {
-                        return Err(IdpError::NotFound {
-                            what: "getpwnam".to_string(),
-                            where_: "local user map".to_string(),
-                        });
-                    }
-                    *pwd
-                };
-                (pwd.pw_uid as u32, pwd.pw_gid as u32)
+                let passwd = std::fs::read("/etc/passwd").map_err(|e| {
+                    error!("Failed reading /etc/passwd for mapped user {}: {}", user, e);
+                    IdpError::BadRequest
+                })?;
+                local_user_ids_from_passwd(&passwd, &user).ok_or(IdpError::NotFound {
+                    what: user,
+                    where_: "local user map".to_string(),
+                })?
             }
             None => {
                 let idmap_cache = StaticIdCache::new(ID_MAP_CACHE, false).map_err(|e| {
@@ -5964,9 +5964,9 @@ mod tests {
     use super::{
         cache_refresh_token_with_loaded_hello_key, cached_prt_or_refresh_token,
         is_device_removed_error, is_mfa_required_for_enrollment, is_sspr_required,
-        is_unavailable_mfa_method_error, mfa_flow_uses_push_hint, password_change_required,
-        unexpired_prt_entry, unseal_refresh_token_with_loaded_hello_key, CONSENT_REQUIRED,
-        PASSWORD_RESET_REGISTRATION_REQUIRED,
+        is_unavailable_mfa_method_error, local_user_ids_from_passwd, mfa_flow_uses_push_hint,
+        password_change_required, unexpired_prt_entry, unseal_refresh_token_with_loaded_hello_key,
+        CONSENT_REQUIRED, PASSWORD_RESET_REGISTRATION_REQUIRED,
     };
     use crate::db::{CacheError, KeyStoreTxn};
     use crate::idprovider::common::RefreshCacheEntry;
@@ -6030,6 +6030,42 @@ mod tests {
         entries: HashMap<String, Vec<u8>>,
         inserted_tags: Vec<String>,
         fail_insert: bool,
+    }
+
+    #[test]
+    fn local_user_lookup_uses_passwd_file_only() {
+        let passwd = b"root:x:0:0:root:/root:/bin/bash\nlocal:x:1000:1001::/home/local:/bin/bash\n";
+
+        assert_eq!(
+            local_user_ids_from_passwd(passwd, "local"),
+            Some((1000, 1001))
+        );
+        assert_eq!(local_user_ids_from_passwd(passwd, "directory-user"), None);
+    }
+
+    #[test]
+    fn local_user_lookup_skips_compat_and_invalid_records() {
+        let passwd = b"+::::::\n+directory-user::::::\nshort:record\ninvalid:x:bad:1001::/:/bin/bash\nlocal:x:1000:1001::/home/local:/bin/bash\n-::::::\n";
+
+        assert_eq!(
+            local_user_ids_from_passwd(passwd, "local"),
+            Some((1000, 1001))
+        );
+        assert_eq!(local_user_ids_from_passwd(passwd, "directory-user"), None);
+        assert_eq!(local_user_ids_from_passwd(passwd, "invalid"), None);
+        assert_eq!(local_user_ids_from_passwd(passwd, "loc"), None);
+    }
+
+    #[test]
+    fn local_user_lookup_keeps_valid_records_before_compat_entries() {
+        let passwd = b"local:x:1000:1001::/home/local:/bin/bash\n+::::::\n+local:x:2000:2001::/:/bin/bash\n-local:x:3000:3001::/:/bin/bash\n";
+
+        assert_eq!(
+            local_user_ids_from_passwd(passwd, "local"),
+            Some((1000, 1001))
+        );
+        assert_eq!(local_user_ids_from_passwd(passwd, "+local"), None);
+        assert_eq!(local_user_ids_from_passwd(passwd, "-local"), None);
     }
 
     impl KeyStoreTxn for RecordingKeyStore {
