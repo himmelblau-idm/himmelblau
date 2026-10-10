@@ -25,6 +25,9 @@ MINVER = {
     "Upholds": 249,
     # Service section
     "FileDescriptorStorePreserve": 254,
+    # systemd/systemd@941a12dc allows socket activation while the associated
+    # service is stopped with resources pinned in its FD store.
+    "PinnedFdStoreSocketActivation": 257,
     "TypeNotifyReload": 253,   # Use Type=notify-reload when >= this; else Type=notify
     "DynamicUser": 235,
     "ProtectSystemStrict": 214,
@@ -212,6 +215,21 @@ def main():
         # Keep comment but we don't add ReadWritePaths for daemon by default since the daemon primarily writes those dirs via XDG helpers.
         pass
 
+    fd_store_preserve = ""
+    if supported("FileDescriptorStorePreserve"):
+        if supported("PinnedFdStoreSocketActivation"):
+            fd_store_preserve = dedent("""\
+                # systemd 257+ can reactivate sockets while this service is stopped
+                # with resources pinned, so retain broker tokens across stop/start.
+                FileDescriptorStorePreserve=yes
+            """).rstrip()
+        else:
+            fd_store_preserve = dedent("""\
+                # systemd 254-256 cannot reactivate sockets while this service is
+                # pinned, so retain broker tokens across atomic restarts only.
+                FileDescriptorStorePreserve=restart
+            """).rstrip()
+
     daemon_unit = f"""\
 # You should not need to edit this file. Instead, use a drop-in file:
 #   systemctl edit himmelblaud.service
@@ -246,7 +264,7 @@ Restart=on-failure
 RestartSec=500ms
 WatchdogSec=120s
 {'FileDescriptorStoreMax=1' if supported('FileDescriptorStoreMax') else ''}
-{'FileDescriptorStorePreserve=yes' if supported('FileDescriptorStorePreserve') else ''}
+{fd_store_preserve}
 
 {daemon_rw_paths_comment}
 
