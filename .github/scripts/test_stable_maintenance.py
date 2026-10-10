@@ -19,6 +19,7 @@ from unittest import mock
 
 SCRIPT = Path(__file__).with_name("stable_maintenance.py")
 DOCKERFILE = SCRIPT.parent.parent / "stable-maintenance.Dockerfile"
+ORPHAN_FIXTURE_FAILURE = "grandchild {orphan} survived the process-group kill"
 WORKFLOW = SCRIPT.parent.parent / "workflows" / "stable-maintenance.yml"
 SPEC = importlib.util.spec_from_file_location("stable_maintenance", SCRIPT)
 assert SPEC and SPEC.loader
@@ -319,9 +320,9 @@ fn killed_orphan_is_reaped() {
         if unsafe { kill(orphan, 0) } != 0 { return; }
         std::thread::sleep(Duration::from_millis(100));
     }
-    panic!("killed orphan was not reaped by the container init");
+    panic!("__ORPHAN_FAILURE__");
 }
-""")
+""".replace("__ORPHAN_FAILURE__", ORPHAN_FIXTURE_FAILURE))
             (source / "Cargo.toml").write_text(
                 '[package]\nname = "asset-mount-fixture"\nversion = "0.1.0"\nedition = "2021"\n')
             (source / "Cargo.lock").write_text(
@@ -805,7 +806,7 @@ sys.exit(int(sys.argv[1]))
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             for message, expected in (
-                ("grandchild 123456789 survived the process-group kill", ["orphan-not-reaped"]),
+                (ORPHAN_FIXTURE_FAILURE.format(orphan=123456789), ["orphan-not-reaped"]),
                 ("threads leaked across invocations: 123456789 -> 987654321", ["thread-count-increased"]),
                 ("grandchild SECRET survived the process-group kill", []),
             ):
