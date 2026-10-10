@@ -573,8 +573,17 @@ in
       type = types.nullOr (types.ints.unsigned);
       default = 25;
       description = ''
-        The timeout in seconds for FIDO/passkey authentication. This is how long
-        the system waits for the user to insert and activate their security key.
+        The timeout in seconds for FIDO/passkey transport waits. This bounds waiting
+        for the user to insert and activate their security key, or to scan the
+        QR/Bluetooth code, connect their phone, and complete passkey authentication.
+        When both transports are offered, they share this deadline rather than
+        receiving separate timeouts. The shared deadline starts before Bluetooth
+        discovery and waiting for the adapter to be powered on.
+        Keyboard interrupts pending during PAM authentication abort the attempt
+        instead of switching to a different authentication method.
+        In the Entra FIDO flow, interactive PIN input runs on the PAM caller thread.
+        Its input timeout and signal handling are controlled by the PAM application,
+        not this option.
       '';
       example = 60;
     };
