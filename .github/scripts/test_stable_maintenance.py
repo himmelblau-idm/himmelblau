@@ -329,16 +329,27 @@ fn main() {
                 self.assertTrue(profile["overflow_checks"])
             # The final test gate compiles in its own fresh /target tmpfs, too.
             with mock.patch.dict(os.environ, {"MAINTENANCE_PROJECT_CARGO_HOME": str(cargo_home)}):
-                tests = sm.contained_repo_command(
-                    runner, ["cargo", "test", "--workspace", "--locked"],
-                    network=False, source_rw=False, cache_rw=False, check=False,
-                )
+                tests = sm.locked_tests(runner)
             self.assertEqual(tests.returncode, 0, tests.stderr)
             self.assertIn("1 passed", tests.stdout)
             self.assertEqual((source / "source-sentinel").read_text(), "unchanged")
             self.assertEqual((source / ".git/sentinel").read_text(), "unchanged")
             self.assertEqual((source / "target/host-sentinel").read_text(), "unchanged")
             self.assertEqual(list((source / "target").iterdir()), [source / "target/host-sentinel"])
+            # Exercise real libtest/Cargo failure output without logging its payload.
+            with (source / "src/lib.rs").open("a") as handle:
+                handle.write('#[test]\nfn intentional_failure() { panic!("SECRET_TEST_PAYLOAD"); }\n')
+            with mock.patch.dict(os.environ, {"MAINTENANCE_PROJECT_CARGO_HOME": str(cargo_home)}), \
+                 mock.patch.object(sm.sys, "stderr", io.StringIO()) as output:
+                failure = sm.locked_tests(runner)
+            self.assertEqual(failure.returncode, 101)
+            report_line = next(line for line in output.getvalue().splitlines() if line.startswith("test-diagnostics: "))
+            diagnostic = json.loads(report_line.removeprefix("test-diagnostics: "))
+            self.assertTrue(any(target["kind"] == "lib" for target in diagnostic["failed_targets"]))
+            self.assertEqual(diagnostic["summaries"][0]["failed"], 1)
+            self.assertIn("target_free_bytes", diagnostic["resources"])
+            self.assertNotIn("SECRET_TEST_PAYLOAD", output.getvalue())
+            self.assertIn('"oom_killed":false', output.getvalue())
             # Exercise the real Cargo/rustc JSON linker error format, too.
             (source / "src/lib.rs").unlink()
             (source / "src/main.rs").write_text("fn main() {}\n")
@@ -681,6 +692,217 @@ sys.exit(int(sys.argv[1]))
                 settings = [argv[i + 1] for i, arg in enumerate(argv[:-1]) if arg == "-e"
                             and argv[i + 1].startswith(("CARGO_PROFILE_", "CARGO_INCREMENTAL"))]
                 self.assertEqual(settings, expected)
+
+    def test_failed_tests_report_only_verified_crates_and_fixed_fields(self):
+        secret = "SECRET_TOKEN_credential"
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "Cargo.lock").write_text('[[package]]\nname = "example"\nversion = "1.2.3"\n')
+            result = sm.CommandResult(101,
+                f"test {secret} ... FAILED\nfailures:\nthread '{secret}' panicked at src/lib.rs:1:2:\n"
+                f"assertion failed: {secret}\n::error::{secret}\x1b[31m\r\n"
+                "test result: FAILED. 10 passed; 2 failed; 1 ignored; 0 measured; 3 filtered out; finished in 0.01s\n"
+                + json.dumps({"reason": "maintenance-resources", "resources": {
+                    "target_free_bytes": 42, "memory_oom_kill": 0, "memory_oom": True,
+                    "memory_max": -1, "assets_free_bytes": 2**63, "TOKEN": secret}}),
+                f"error: test failed, to rerun pass -p example --lib\n"
+                f"error: test failed, to rerun pass -p {secret} --test {secret}\n")
+            with mock.patch.object(sm, "contained_repo_command", return_value=result) as command, \
+                 mock.patch.object(sm.sys, "stderr", io.StringIO()) as output:
+                self.assertIs(sm.locked_tests(mock.Mock(root=root)), result)
+            report = json.loads(output.getvalue().removeprefix("test-diagnostics: "))
+            self.assertEqual(report["exit"], 101)
+            self.assertEqual(report["capture"], "complete")
+            self.assertEqual(report["failed_targets"], [{"crate": "example", "kind": "lib"},
+                                                      {"crate": "unknown", "kind": "test"}])
+            self.assertEqual(report["summaries"], [{"passed": 10, "failed": 2, "ignored": 1, "measured": 0, "filtered": 3}])
+            self.assertEqual(report["resources"], {"target_free_bytes": 42, "memory_oom_kill": 0})
+            self.assertEqual(report["hints"], ["test-failed", "panic", "assertion-failed"])
+            self.assertNotIn(secret, output.getvalue())
+            self.assertNotIn("::error::", output.getvalue())
+            self.assertNotIn("\x1b", output.getvalue())
+            self.assertEqual(len(output.getvalue().splitlines()), 1)
+            self.assertEqual(command.call_args.args[1], ["cargo", "test", "--workspace", "--locked"])
+            self.assertEqual(command.call_args.kwargs, {
+                "network": False, "source_rw": False, "cache_rw": False, "timeout": 3600, "check": False})
+
+    def test_cargo_rerun_arguments_require_matching_delimiters(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "Cargo.lock").write_text('[[package]]\nname = "example"\nversion = "1.2.3"\n')
+            for arguments in ("-p example --lib", "`-p example --lib`", "'-p example --lib'", "`-p example@1.2.3 --test fixture`"):
+                with self.subTest(arguments=arguments), mock.patch.object(sm.sys, "stderr", io.StringIO()) as output:
+                    sm.report_test_diagnostics(sm.CommandResult(101, "", "error: test failed, to rerun pass " + arguments), root)
+                report = json.loads(output.getvalue().removeprefix("test-diagnostics: "))
+                self.assertEqual(report["failed_targets"][0]["crate"], "example")
+            with mock.patch.object(sm.sys, "stderr", io.StringIO()) as output:
+                sm.report_test_diagnostics(sm.CommandResult(101, "", "error: doctest failed, to rerun pass `-p example --doc`"), root)
+            report = json.loads(output.getvalue().removeprefix("test-diagnostics: "))
+            self.assertEqual(report["failed_targets"], [{"crate": "example", "kind": "doc"}])
+            self.assertIn("doctest-failed", report["hints"])
+            for arguments in ("`-p example --lib'", "'-p example --lib`", "`-p example --lib` SECRET", "`-p example --lib"):
+                with self.subTest(arguments=arguments), mock.patch.object(sm.sys, "stderr", io.StringIO()) as output:
+                    sm.report_test_diagnostics(sm.CommandResult(101, "", "error: test failed, to rerun pass " + arguments), root)
+                report = json.loads(output.getvalue().removeprefix("test-diagnostics: "))
+                self.assertEqual(report["failed_targets"], [])
+
+    def test_test_compilation_and_linker_causes_do_not_echo_operands(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "Cargo.lock").write_text('[[package]]\nname = "example"\nversion = "1.2.3"\n')
+            cases = (
+                ("error[E0308]: SECRET", [], ["E0308"]),
+                ("linking with `SECRET` failed: cannot find -lSECRET", ["missing-library"], []),
+                ("undefined reference to `SECRET'", ["undefined-symbol"], []),
+                ("No space left on device: SECRET", ["no-space"], []),
+                ("signal: 9, SIGKILL: kill SECRET", ["killed"], []),
+                ("signal: 7, SIGBUS: SECRET", ["bus-error"], []),
+                ("memory allocation failed: Cannot allocate memory SECRET", ["out-of-memory"], []),
+            )
+            for diagnostic, causes, codes in cases:
+                stderr = (diagnostic + "\nerror: could not compile `example` (lib test) due to 1 previous error\n"
+                          "error: could not compile `SECRET` (bin \"SECRET\") due to 2 previous errors\n")
+                with self.subTest(diagnostic=diagnostic), mock.patch.object(sm.sys, "stderr", io.StringIO()) as output:
+                    sm.report_test_diagnostics(sm.CommandResult(101, "SECRET", stderr), root)
+                report = json.loads(output.getvalue().removeprefix("test-diagnostics: "))
+                self.assertEqual(report["compile_failed"], ["example"])
+                self.assertEqual(report["causes"], causes)
+                self.assertEqual(report["rust_codes"], codes)
+                self.assertNotIn("SECRET", output.getvalue())
+
+    def test_test_diagnostics_bound_output_and_handle_invalid_lockfiles(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            packages = ["crate_" + str(index) + "x" * 80 for index in range(30)]
+            (root / "Cargo.lock").write_text("\n".join(f'[[package]]\nname = "{name}"\nversion = "1.0.0"' for name in packages))
+            stdout = "\n".join("test result: FAILED. 9999999 passed; 9999999 failed; 9999999 ignored; "
+                               "9999999 measured; 9999999 filtered out; finished in 0.00s" for _ in range(30))
+            stderr = "\n".join(f"error: test failed, to rerun pass -p {name} --lib\n"
+                               f"error: could not compile `{name}` (lib test) due to 1 previous error\n"
+                               f"error[E{index:04d}]: SECRET" for index, name in enumerate(packages))
+            result = sm.CommandResult(101, stdout + "\n" + "SECRET" * 10000, stderr)
+            with mock.patch.object(sm.sys, "stderr", io.StringIO()) as output:
+                sm.report_test_diagnostics(result, root)
+            report = json.loads(output.getvalue().removeprefix("test-diagnostics: "))
+            for field in ("failed_targets", "compile_failed", "rust_codes", "summaries"):
+                self.assertEqual(len(report[field]), 8)
+            self.assertNotIn("SECRET", output.getvalue())
+            self.assertLess(len(output.getvalue().encode()), 4096)
+            for invalid in ("not toml", "package = 5", "package = " + "[" * 600 + "0" + "]" * 600, "#" * (4 * 1024 * 1024 + 1)):
+                (root / "Cargo.lock").write_text(invalid)
+                with mock.patch.object(sm.sys, "stderr", io.StringIO()) as output:
+                    sm.report_test_diagnostics(result, root)
+                self.assertNotIn(packages[0], output.getvalue())
+
+    def test_test_capture_retains_bounded_tail_and_still_fails_closed(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            runner = sm.Runner(Path(tmp))
+            for status in (0, 101):
+                for retain_tail in (False, True):
+                    producer = f'import sys; print("START" + "x" * 10000 + "END"); sys.exit({status})'
+                    with self.subTest(status=status, tail=retain_tail), self.assertRaises(sm.CommandCaptureError) as caught:
+                        runner.run([sys.executable, "-I", "-c", producer], check=False,
+                                   max_output=1024, retain_tail=retain_tail)
+                    error = caught.exception
+                    self.assertEqual(error.reason, "output-limit")
+                    self.assertEqual(error.result.returncode, status)
+                    self.assertLessEqual(len(error.result.stdout), 1025)
+                    self.assertEqual("END" in error.result.stdout, retain_tail)
+                    self.assertEqual("START" in error.result.stdout, not retain_tail)
+            with self.assertRaises(sm.CommandCaptureError) as caught:
+                runner.run([sys.executable, "-I", "-c", 'import time; print("partial", flush=True); time.sleep(30)'],
+                           timeout=0.2, retain_tail=True)
+            self.assertEqual(caught.exception.reason, "timeout")
+            self.assertEqual(caught.exception.result.returncode, -9)
+            self.assertIn("partial", caught.exception.result.stdout)
+
+    def test_test_probe_precedes_cleanup_for_failure_timeout_and_overflow(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "source"; root.mkdir(); (root / ".git").mkdir()
+            cache = Path(tmp) / "cache"; cache.mkdir(); (cache / "registry").mkdir()
+            env = {"MAINTENANCE_BUILD_IMAGE": "build:local", "MAINTENANCE_PROJECT_CARGO_HOME": str(cache)}
+            for outcome in ("failure", "timeout", "output-limit", "success"):
+                with self.subTest(outcome=outcome):
+                    result = sm.CommandResult(0 if outcome == "success" else 137, "SECRET", "SECRET")
+                    failure = sm.CommandCaptureError("original capture failure", outcome, result)
+                    calls = []
+                    def run(argv, **kwargs):
+                        calls.append((argv, kwargs))
+                        if argv[1] == "run":
+                            if outcome in ("timeout", "output-limit"):
+                                raise failure
+                            return result
+                        if argv[1] == "inspect":
+                            return sm.CommandResult(0, json.dumps({"OOMKilled": outcome == "failure", "Running": outcome == "timeout",
+                                                                 "ExitCode": 137, "Error": "SECRET"}), "SECRET")
+                        if argv[1] == "exec":
+                            return sm.CommandResult(0, json.dumps({"reason": "maintenance-resources", "resources": {"target_free_bytes": 123}}), "SECRET")
+                        return sm.CommandResult(0, "", "")
+                    runner = mock.Mock(root=root); runner.run.side_effect = run
+                    with mock.patch.dict(os.environ, env), mock.patch.object(sm.shutil, "which", return_value="/usr/bin/docker"), \
+                         mock.patch.object(sm.sys, "stderr", io.StringIO()) as output:
+                        if outcome in ("timeout", "output-limit"):
+                            with self.assertRaises(sm.CommandCaptureError) as caught:
+                                sm.locked_tests(runner)
+                            self.assertIs(caught.exception, failure)
+                            self.assertIn('"capture":"' + outcome + '"', output.getvalue())
+                        else:
+                            self.assertIs(sm.locked_tests(runner), result)
+                    operations = [argv[1] for argv, _ in calls]
+                    expected = ["run", "rm"] if outcome == "success" else ["run", "inspect", "rm"]
+                    if outcome == "timeout":
+                        expected.insert(2, "exec")
+                        self.assertIn('"target_free_bytes":123', output.getvalue())
+                    self.assertEqual(operations, expected)
+                    argv, kwargs = calls[0]
+                    self.assertEqual(kwargs, {"timeout": 3600, "check": False, "max_output": 4 * 1024 * 1024, "retain_tail": True})
+                    self.assertEqual(argv[-8:], ["python3", "-I", "-c", sm.BUILD_RESOURCE_PROBE, "cargo", "test", "--workspace", "--locked"])
+                    for flag in ("--network=none", "--read-only", "--cap-drop=ALL", "--memory=8g", "--memory-swap=8g", "--pids-limit=512", "--cpus=4"):
+                        self.assertIn(flag, argv)
+                    self.assertIn(f"{root}:/workspace:ro", argv)
+                    self.assertIn(f"{root}/.git:/workspace/.git:ro", argv)
+                    self.assertIn("/target:rw,nosuid,nodev,exec,size=6g", argv)
+                    self.assertNotIn("SECRET", output.getvalue())
+                    if outcome == "success":
+                        self.assertEqual(output.getvalue(), "")
+
+    def test_probe_errors_never_mask_test_failure_or_skip_cleanup(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "source"; root.mkdir(); (root / ".git").mkdir()
+            cache = Path(tmp) / "cache"; cache.mkdir(); (cache / "registry").mkdir()
+            for bad_probe in (sm.MaintenanceError("SECRET"), sm.CommandResult(0, "SECRET not JSON", ""),
+                              sm.CommandResult(0, '{"OOMKilled":"SECRET","Running":false,"ExitCode":true}', "")):
+                runner = mock.Mock(root=root)
+                failure = sm.CommandCaptureError("original timeout", "timeout", sm.CommandResult(-9, "", "SECRET"))
+                runner.run.side_effect = [failure, bad_probe, sm.MaintenanceError("cleanup SECRET")]
+                with mock.patch.dict(os.environ, {"MAINTENANCE_BUILD_IMAGE": "build:local", "MAINTENANCE_PROJECT_CARGO_HOME": str(cache)}), \
+                     mock.patch.object(sm.shutil, "which", return_value="/usr/bin/docker"), \
+                     mock.patch.object(sm.sys, "stderr", io.StringIO()) as output, \
+                     self.assertRaises(sm.CommandCaptureError) as caught:
+                    sm.locked_tests(runner)
+                self.assertIs(caught.exception, failure)
+                self.assertEqual(runner.run.call_args_list[-1].args[0][1:3], ["rm", "-f"])
+                self.assertIn('"state":"unavailable"', output.getvalue())
+                self.assertNotIn("SECRET", output.getvalue())
+
+    def test_failed_test_gate_blocks_all_later_release_gates(self):
+        for capture in (None, "timeout", "output-limit"):
+            with tempfile.TemporaryDirectory() as tmp:
+                state = sm.State(Path(tmp) / "state")
+                runner = mock.Mock(root=Path(tmp))
+                result = sm.CommandResult(101, "SECRET", "SECRET")
+                outcome = sm.CommandCaptureError("capture failed", capture, result) if capture else result
+                with mock.patch.object(sm, "locked_build", return_value=sm.CommandResult(0, "", "")), \
+                     mock.patch.object(sm, "contained_repo_command", side_effect=[outcome]) as command, \
+                     mock.patch.object(sm, "locked_vet_gaps") as vet, \
+                     mock.patch.object(sm.sys, "stderr", io.StringIO()) as output, \
+                     self.assertRaises(sm.MaintenanceError):
+                    sm.phase_validate(mock.Mock(), state, runner)
+                self.assertEqual(command.call_count, 1)
+                vet.assert_not_called()
+                self.assertEqual(state.load()["gate_results"], ["clean-build: passed"])
+                self.assertIn("test-diagnostics:", output.getvalue())
+                self.assertNotIn("SECRET", output.getvalue())
 
     def test_clean_build_failure_keeps_later_release_gates_blocked(self):
         with tempfile.TemporaryDirectory() as tmp:

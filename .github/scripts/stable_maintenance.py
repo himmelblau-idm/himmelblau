@@ -203,6 +203,15 @@ class CommandResult:
     stderr: str
 
 
+class CommandCaptureError(MaintenanceError):
+    """A failed bounded capture, retaining bounded output for safe diagnostics."""
+
+    def __init__(self, message: str, reason: str, result: CommandResult):
+        super().__init__(message)
+        self.reason = reason
+        self.result = result
+
+
 class Runner:
     """Bounded argv-only subprocess runner."""
 
@@ -221,7 +230,7 @@ class Runner:
     def run(
         self, argv: Sequence[str], *, timeout: int = 600, check: bool = True,
         input_text: str | None = None, max_output: int = 4 * 1024 * 1024,
-        private_env: Mapping[str, str] | None = None,
+        private_env: Mapping[str, str] | None = None, retain_tail: bool = False,
     ) -> CommandResult:
         if not argv or any("\x00" in str(part) for part in argv):
             raise MaintenanceError("invalid subprocess argv")
@@ -244,10 +253,13 @@ class Runner:
                     if not chunk:
                         break
                     room = max_output + 1 - len(buffers[index])
-                    if room > 0:
-                        buffers[index].extend(chunk[:room])
-                    if len(chunk) > room or len(buffers[index]) > max_output:
+                    if len(chunk) > room or len(buffers[index]) + len(chunk) > max_output:
                         exceeded[index] = True
+                    if retain_tail:
+                        buffers[index].extend(chunk)
+                        del buffers[index][:-max_output]
+                    elif room > 0:
+                        buffers[index].extend(chunk[:room])
             threads = [
                 threading.Thread(target=drain, args=(proc.stdout, 0), daemon=True),
                 threading.Thread(target=drain, args=(proc.stderr, 1), daemon=True),
@@ -256,25 +268,26 @@ class Runner:
             if input_text is not None and proc.stdin is not None:
                 try: proc.stdin.write(input_text.encode()); proc.stdin.close()
                 except BrokenPipeError: pass
+            timed_out = False
             try:
                 returncode = proc.wait(timeout=timeout)
-            except subprocess.TimeoutExpired as exc:
-                os.killpg(proc.pid, signal.SIGKILL); proc.wait()
-                for thread in threads: thread.join(timeout=5)
-                if proc.stdout is not None: proc.stdout.close()
-                if proc.stderr is not None: proc.stderr.close()
-                raise MaintenanceError(f"command timed out: {argv[0]}") from exc
+            except subprocess.TimeoutExpired:
+                timed_out = True
+                os.killpg(proc.pid, signal.SIGKILL)
+                returncode = proc.wait()
             for thread in threads: thread.join(timeout=5)
             if proc.stdout is not None: proc.stdout.close()
             if proc.stderr is not None: proc.stderr.close()
             stdout_raw, stderr_raw = bytes(buffers[0]), bytes(buffers[1])
         except OSError as exc:
             raise MaintenanceError(f"command failed to execute: {argv[0]}") from exc
-        if any(exceeded):
-            raise MaintenanceError(f"command output exceeded limit: {argv[0]}")
         stdout = stdout_raw.decode("utf-8", errors="replace")
         stderr = stderr_raw.decode("utf-8", errors="replace")
         result = CommandResult(returncode, stdout, stderr)
+        if timed_out:
+            raise CommandCaptureError(f"command timed out: {argv[0]}", "timeout", result)
+        if any(exceeded):
+            raise CommandCaptureError(f"command output exceeded limit: {argv[0]}", "output-limit", result)
         if check and returncode:
             raise MaintenanceError(f"command failed ({returncode}): {argv[0]}")
         return result
@@ -1357,14 +1370,23 @@ def contained_repo_command(
         # Keep the dev/test profiles' assertions/checks and all container limits.
         argv.extend(["-e", "CARGO_PROFILE_DEV_DEBUG=0", "-e", "CARGO_PROFILE_TEST_DEBUG=0",
                      "-e", "CARGO_INCREMENTAL=0"])
-    if json_build:
+    if json_build or workspace_tests:
         command = ["python3", "-I", "-c", BUILD_RESOURCE_PROBE, *command]
     argv.extend([image, *command])
     try:
         # Workspace JSON includes warnings and artifact metadata as well as
         # errors. Give that command headroom without lifting all output limits.
-        return runner.run(argv, timeout=timeout, check=check,
-                          max_output=MAX_BUILD_OUTPUT_BYTES if json_build else 4 * 1024 * 1024)
+        kwargs = {"retain_tail": True} if workspace_tests else {}
+        result = runner.run(argv, timeout=timeout, check=check,
+                            max_output=MAX_BUILD_OUTPUT_BYTES if json_build else 4 * 1024 * 1024,
+                            **kwargs)
+        if workspace_tests and result.returncode:
+            report_test_container_state(runner, engine, container_name)
+        return result
+    except MaintenanceError:
+        if workspace_tests:
+            report_test_container_state(runner, engine, container_name)
+        raise
     finally:
         try:
             runner.run([engine, "rm", "-f", container_name], timeout=60, check=False, max_output=64 * 1024)
@@ -1447,28 +1469,71 @@ def permission_error_path_hints(stderr: str) -> list[str]:
 
 # Run the probe in the same disposable container before its tmpfs is removed.
 # No repository code or output is evaluated by this trusted wrapper.
-BUILD_RESOURCE_PROBE = """
-import json, os, subprocess, sys
-status = subprocess.call(sys.argv[1:])
-if status:
-    resources = {}
-    for label, path in (("target", "/target"), ("temporary", "/tmp"), ("assets", "/workspace/target")):
-        try:
-            fs = os.statvfs(path)
-            resources[label + "_free_bytes"] = fs.f_bavail * fs.f_frsize
-        except OSError:
-            pass
+RESOURCE_SNAPSHOT = """
+import json, os
+resources = {}
+for label, path in (("target", "/target"), ("temporary", "/tmp"), ("assets", "/workspace/target")):
     try:
-        with open("/sys/fs/cgroup/memory.events") as handle:
-            for line in handle:
-                key, value = line.split()
-                if key in ("oom", "oom_kill", "max") and value.isdecimal():
-                    resources["memory_" + key] = int(value)
-    except (OSError, ValueError):
+        fs = os.statvfs(path)
+        resources[label + "_free_bytes"] = fs.f_bavail * fs.f_frsize
+    except OSError:
         pass
-    print(json.dumps({"reason": "maintenance-resources", "resources": resources}), flush=True)
-sys.exit(status if status >= 0 else 128 - status)
+try:
+    with open("/sys/fs/cgroup/memory.events") as handle:
+        for line in handle:
+            key, value = line.split()
+            if key in ("oom", "oom_kill", "max") and value.isdecimal():
+                resources["memory_" + key] = int(value)
+except (OSError, ValueError):
+    pass
+print("\\n" + json.dumps({"reason": "maintenance-resources", "resources": resources}), flush=True)
 """
+BUILD_RESOURCE_PROBE = (
+    "import subprocess, sys\nstatus = subprocess.call(sys.argv[1:])\nif status:\n"
+    + "\n".join("    " + line for line in RESOURCE_SNAPSHOT.splitlines())
+    + "\nsys.exit(status if status >= 0 else 128 - status)\n"
+)
+
+
+def resource_diagnostics(stdout: str) -> dict[str, int]:
+    resources = {}
+    for line in stdout.splitlines():
+        if not line.startswith("{") or len(line) > 4096:
+            continue
+        try:
+            item = json.loads(line)
+        except (ValueError, RecursionError):
+            continue
+        if isinstance(item, dict) and item.get("reason") == "maintenance-resources" and isinstance(item.get("resources"), dict):
+            resources = {key: value for key, value in item["resources"].items()
+                         if key in ("target_free_bytes", "temporary_free_bytes", "assets_free_bytes", "memory_oom", "memory_oom_kill", "memory_max")
+                         and type(value) is int and 0 <= value < 2**63}
+    return resources
+
+
+def report_test_container_state(runner: Runner, engine: str, name: str) -> None:
+    """Best-effort numeric evidence before cleanup, even if capture/wrapper died."""
+    evidence: dict[str, Any] = {"state": "unavailable"}
+    try:
+        result = runner.run([engine, "inspect", "--format", "{{json .State}}", name],
+                            timeout=15, check=False, max_output=4096)
+        item = json.loads(result.stdout) if result.returncode == 0 else None
+        if (isinstance(item, dict) and type(item.get("OOMKilled")) is bool
+                and type(item.get("Running")) is bool and type(item.get("ExitCode")) is int
+                and 0 <= item["ExitCode"] <= 255):
+            evidence = {"state": "running" if item["Running"] else "stopped",
+                        "oom_killed": item["OOMKilled"], "exit": item["ExitCode"]}
+            # A host capture timeout kills the Docker client, not necessarily
+            # the container. Sample its tmpfs/cgroup before the finally removes it.
+            if item["Running"]:
+                snapshot = runner.run([engine, "exec", "--user", "65532:65532", name,
+                                       "python3", "-I", "-c", RESOURCE_SNAPSHOT],
+                                      timeout=15, check=False, max_output=4096)
+                if snapshot.returncode == 0:
+                    evidence["resources"] = resource_diagnostics(snapshot.stdout)
+    except (MaintenanceError, ValueError, RecursionError):
+        pass  # Never hide the original failure or prevent container cleanup.
+    print("test-container: " + json.dumps(evidence, separators=(",", ":")), file=sys.stderr)
 
 
 def build_diagnostic_token(value: Any) -> str:
@@ -1490,6 +1555,24 @@ def build_diagnostic_location(value: Any) -> str:
             or any(part in (".", "..") for part in value.split("/"))):
         return "unknown"
     return value
+
+
+def linker_failure_causes(text: str) -> list[str]:
+    lower = text.lower()
+    return [name for name, needles in (
+        ("missing-library", ("cannot find -l", "unable to find library -l")),
+        ("undefined-symbol", ("undefined reference to", "undefined symbol:")),
+        ("duplicate-symbol", ("multiple definition of", "duplicate symbol:")),
+        ("killed", ("killed", "signal 9", "sigkill")),
+        ("bus-error", ("bus error", "signal 7", "sigbus")),
+        ("segmentation-fault", ("segmentation fault", "signal 11", "sigsegv")),
+        ("out-of-memory", ("out of memory", "cannot allocate memory")),
+        ("no-space", ("no space left on device",)),
+        ("relocation", ("relocation truncated", "recompile with -fpic")),
+        ("incompatible-library", ("file format not recognized", "incompatible with", "wrong elf class")),
+        ("version-script", ("version script", "version-script")),
+        ("unsupported-option", ("unrecognized command-line option", "unknown argument:", "unknown option:")),
+    ) if any(needle in lower for needle in needles)]
 
 
 def report_build_diagnostics(result: CommandResult, root: Path) -> str:
@@ -1566,20 +1649,7 @@ def report_build_diagnostics(result: CommandResult, root: Path) -> str:
                     messages.append(node["message"][:64 * 1024])
     text = result.stderr + "\n" + "\n".join(messages)
     lower = text.lower()
-    causes = [name for name, needles in (
-        ("missing-library", ("cannot find -l", "unable to find library -l")),
-        ("undefined-symbol", ("undefined reference to", "undefined symbol:")),
-        ("duplicate-symbol", ("multiple definition of", "duplicate symbol:")),
-        ("killed", ("killed", "signal 9", "sigkill")),
-        ("bus-error", ("bus error", "signal 7", "sigbus")),
-        ("segmentation-fault", ("segmentation fault", "signal 11", "sigsegv")),
-        ("out-of-memory", ("out of memory", "cannot allocate memory")),
-        ("no-space", ("no space left on device",)),
-        ("relocation", ("relocation truncated", "recompile with -fpic")),
-        ("incompatible-library", ("file format not recognized", "incompatible with", "wrong elf class")),
-        ("version-script", ("version script", "version-script")),
-        ("unsupported-option", ("unrecognized command-line option", "unknown argument:", "unknown option:")),
-    ) if any(needle in lower for needle in needles)]
+    causes = linker_failure_causes(text)
     libraries = sorted({build_diagnostic_token(x) for x in re.findall(
         r"(?:cannot find -l|unable to find library -l)([^\s:]+)", text)})[:8]
     symbols = sorted({build_diagnostic_token(symbol) for pair in re.findall(
@@ -1599,6 +1669,21 @@ def report_build_diagnostics(result: CommandResult, root: Path) -> str:
     return text
 
 
+def cargo_failure_hints(stderr: str) -> list[str]:
+    patterns = (
+        ("permission-denied", ("permission denied", "operation not permitted")),
+        ("read-only-filesystem", ("read-only file system",)),
+        ("offline-cache-miss", ("no matching package named", "attempting to make an http request")),
+        ("lockfile-needs-update", ("needs to be updated but --locked was passed",)),
+        ("no-space", ("no space left on device",)),
+        ("build-script-failed", ("failed to run custom build command",)),
+        ("compiler-error", ("could not compile",)),
+        ("docker-daemon", ("cannot connect to the docker daemon",)),
+        ("container-start", ("oci runtime create failed", "failed to create task for container")),
+    )
+    return [name for name, needles in patterns if any(needle in stderr for needle in needles)]
+
+
 def locked_build(runner: Runner, *, target_dir: Path | None = None) -> CommandResult:
     """Run the contained build and report only bounded, sanitized failure hints."""
     result = contained_repo_command(
@@ -1610,18 +1695,7 @@ def locked_build(runner: Runner, *, target_dir: Path | None = None) -> CommandRe
         # URLs or Actions commands. Emit only validated fields and fixed hints.
         diagnostic_text = report_build_diagnostics(result, runner.root)
         stderr = diagnostic_text.lower()
-        patterns = (
-            ("permission-denied", ("permission denied", "operation not permitted")),
-            ("read-only-filesystem", ("read-only file system",)),
-            ("offline-cache-miss", ("no matching package named", "attempting to make an http request")),
-            ("lockfile-needs-update", ("needs to be updated but --locked was passed",)),
-            ("no-space", ("no space left on device",)),
-            ("build-script-failed", ("failed to run custom build command",)),
-            ("compiler-error", ("could not compile",)),
-            ("docker-daemon", ("cannot connect to the docker daemon",)),
-            ("container-start", ("oci runtime create failed", "failed to create task for container")),
-        )
-        hints = [name for name, needles in patterns if any(needle in stderr for needle in needles)]
+        hints = cargo_failure_hints(stderr)
         paths = [name for name, prefix in (
             ("project-cache", "/opt/project-cargo/"),
             ("source", "/workspace/"), ("target", "/target/"),
@@ -1649,6 +1723,77 @@ def locked_build(runner: Runner, *, target_dir: Path | None = None) -> CommandRe
             f"os_errors={','.join(map(str, os_errors)) or 'none'}",
             file=sys.stderr,
         )
+    return result
+
+
+def report_test_diagnostics(result: CommandResult, root: Path, *, capture: str = "complete") -> None:
+    """Never echo harness output, assertions, panic payloads or command lines."""
+    packages = set()
+    if isinstance(root, Path):
+        try:
+            with checkout_regular_file(root, "Cargo.lock").open("rb") as handle:
+                raw = handle.read(4 * 1024 * 1024 + 1)
+            if len(raw) > 4 * 1024 * 1024:
+                raise MaintenanceError("diagnostic lockfile exceeds limit")
+            data = tomllib.loads(raw.decode("utf-8"))
+            packages = {row["name"] for row in data.get("package", [])
+                        if isinstance(row, dict) and isinstance(row.get("name"), str)
+                        and PACKAGE_RE.fullmatch(row["name"])}
+        except (MaintenanceError, OSError, ValueError, TypeError, RecursionError):
+            pass
+    text = result.stdout + "\n" + result.stderr
+    targets = []
+    compile_failed = set()
+    summaries = []
+    # Free-form test names can contain credentials even when identifier-shaped.
+    # Retain only Cargo package names corroborated by the checkout lockfile.
+    for line in text.splitlines():
+        if len(line) > 1024:
+            continue
+        match = re.fullmatch(
+            r"""error: (?:test|doctest) failed, to rerun pass (?P<quote>[`']?)(?:-p (?P<crate>[A-Za-z0-9_-]{1,100})(?:@[A-Za-z0-9_.+-]{1,100})? )?"""
+            r"--(?P<kind>lib|bins?|tests?|examples?|doc)(?: [A-Za-z0-9_-]{1,100})?(?P=quote)", line)
+        if match and len(targets) < 8:
+            target = {"crate": match["crate"] if match["crate"] in packages else "unknown", "kind": match["kind"]}
+            if target not in targets:
+                targets.append(target)
+        match = re.fullmatch(r"error: could not compile `([A-Za-z0-9_-]{1,100})`(?: \(lib(?: test)?\)| \(bin \"[^\"\n]{1,100}\"(?: test)?\)| \(test \"[^\"\n]{1,100}\"\))?(?: due to [0-9]{1,7} previous errors?)?(?:; [0-9]{1,7} warnings? emitted)?", line)
+        if match and match[1] in packages and len(compile_failed) < 8:
+            compile_failed.add(match[1])
+        match = re.fullmatch(r"test result: FAILED\. ([0-9]{1,7}) passed; ([0-9]{1,7}) failed; ([0-9]{1,7}) ignored; ([0-9]{1,7}) measured; ([0-9]{1,7}) filtered out; finished in [0-9.]{1,20}s", line)
+        if match and len(summaries) < 8:
+            summaries.append(dict(zip(("passed", "failed", "ignored", "measured", "filtered"), map(int, match.groups()))))
+    hints = cargo_failure_hints(text.lower())
+    if targets or summaries:
+        hints.append("test-failed")
+    if "doctest failed" in text.lower():
+        hints.append("doctest-failed")
+    if "panicked at" in text:
+        hints.append("panic")
+    if "assertion" in text and "failed" in text:
+        hints.append("assertion-failed")
+    codes = sorted(set(re.findall(r"error\[(E[0-9]{4})\]", text)))[:8]
+    print("test-diagnostics: " + json.dumps({
+        "exit": result.returncode, "capture": capture, "failed_targets": targets,
+        "compile_failed": sorted(compile_failed), "hints": hints,
+        "causes": linker_failure_causes(text), "rust_codes": codes, "summaries": summaries,
+        "resources": resource_diagnostics(result.stdout),
+        "captured_stdout_bytes": len(result.stdout.encode("utf-8")),
+        "captured_stderr_bytes": len(result.stderr.encode("utf-8")),
+    }, separators=(",", ":")), file=sys.stderr)
+
+
+def locked_tests(runner: Runner) -> CommandResult:
+    try:
+        result = contained_repo_command(
+            runner, ["cargo", "test", "--workspace", "--locked"],
+            network=False, source_rw=False, cache_rw=False, timeout=3600, check=False,
+        )
+    except CommandCaptureError as exc:
+        report_test_diagnostics(exc.result, runner.root, capture=exc.reason)
+        raise
+    if result.returncode:
+        report_test_diagnostics(result, runner.root)
     return result
 
 
@@ -2507,10 +2652,7 @@ def phase_validate(args: argparse.Namespace, state: State, runner: Runner) -> No
     if result.returncode:
         raise MaintenanceError("clean locked-down build failed")
     value = state.load(); value.setdefault("gate_results", []).append("clean-build: passed"); state.save(value)
-    tests = contained_repo_command(
-        runner, ["cargo", "test", "--workspace", "--locked"],
-        network=False, source_rw=False, cache_rw=False, timeout=3600, check=False,
-    )
+    tests = locked_tests(runner)
     if tests.returncode:
         raise MaintenanceError("locked-down test gate failed")
     value = state.load(); value.setdefault("gate_results", []).append("workspace-tests: passed"); state.save(value)
