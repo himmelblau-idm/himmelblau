@@ -218,7 +218,9 @@ jobs:
             libgtk-3-dev \
             libwebkit2gtk-4.1-dev
       - name: "Run tests"
-        run: cargo test
+        run: |
+          make test-hsm-pin-init
+          cargo test
         continue-on-error: false
       - name: "Test aad-tool without donation messages"
         run: cargo test -p aad-tool --no-default-features
