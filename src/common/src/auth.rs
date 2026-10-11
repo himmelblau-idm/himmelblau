@@ -1913,12 +1913,18 @@ mod tests {
     fn test_password_state(
         printer: Arc<RecordingPrinter>,
     ) -> (AuthenticateState, std::os::unix::net::UnixListener) {
-        fs::create_dir_all("target").expect("Failed to create target directory");
-        let socket_path = format!("target/himmelblau_auth_test_sock_{}", uuid::Uuid::new_v4());
+        let socket_path = std::env::temp_dir().join(format!(
+            "himmelblau_auth_test_sock_{}",
+            uuid::Uuid::new_v4()
+        ));
         let listener = std::os::unix::net::UnixListener::bind(&socket_path)
             .expect("Failed to bind test socket");
-        let daemon_client =
-            DaemonClientBlocking::new(&socket_path).expect("Failed to connect test socket");
+        let daemon_client = DaemonClientBlocking::new(
+            socket_path
+                .to_str()
+                .expect("Temporary test socket path is not valid UTF-8"),
+        )
+        .expect("Failed to connect test socket");
         (
             AuthenticateState {
                 daemon_client,
