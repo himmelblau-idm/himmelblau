@@ -46,7 +46,8 @@ struct Harness {
 
 impl Harness {
     fn new(tag: &str) -> Harness {
-        let dir = std::env::temp_dir().join(format!(
+        // Stubs are executed, so use Cargo's writable executable target mount.
+        let dir = Path::new(env!("CARGO_TARGET_TMPDIR")).join(format!(
             "o365-url-handler-test-{}-{}",
             tag,
             std::process::id()
@@ -132,11 +133,17 @@ fn flag(argv: &[&str], prefix: &str) -> Option<String> {
 
 /// A stub that records its name and argv, one per line, then exits 0.
 fn write_stub(path: &Path, name: &str, log: &Path) {
+    // Nix build sandboxes have bash on PATH but no /usr/bin/env.
+    let bash = std::env::split_paths(&std::env::var_os("PATH").expect("PATH"))
+        .map(|dir| dir.join("bash"))
+        .find(|path| path.is_file())
+        .expect("bash on PATH");
     fs::write(
         path,
         format!(
-            "#!/usr/bin/env bash\n\
+            "#!{}\n\
              {{ printf '%s\\n' {name}; printf '%s\\n' \"$@\"; }} > '{log}'\n",
+            bash.display(),
             name = name,
             log = log.display(),
         ),
