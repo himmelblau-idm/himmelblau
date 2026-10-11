@@ -70,6 +70,21 @@ pub enum Id {
     Gid(u32),
 }
 
+impl Id {
+    pub fn split_domain(&self) -> Option<&str> {
+        match self {
+            Id::Gid(_) => None,
+            Id::Name(name) => {
+                let parts: Vec<&str> = name.split('@').collect();
+                if parts.len() == 2 {
+                    return Some(parts[1]);
+                }
+                None
+            }
+        }
+    }
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct GroupToken {
     pub name: String,
