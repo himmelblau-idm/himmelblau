@@ -637,6 +637,12 @@ impl HimmelblauConfig {
         }
     }
 
+    /// Whether user discovery and enrollment auth request the Microsoft Intune
+    /// resource instead of the Microsoft Intune Enrollment resource.
+    pub fn get_use_intune_auth_resource(&self) -> bool {
+        self.get_apply_policy() || self.get_intune_auth_resource()
+    }
+
     pub fn write(&self) -> Result<(), Error> {
         self.config.write(self.filename.clone())
     }
@@ -1436,6 +1442,24 @@ mod tests {
         assert_eq!(config.get_apply_policy(), true);
         let config_empty = create_empty_config();
         assert_eq!(config_empty.get_apply_policy(), false);
+    }
+
+    #[test]
+    fn test_get_intune_auth_resource() {
+        let config_data = r#"
+        [global]
+        intune_auth_resource = true
+        "#;
+
+        let temp_file = create_temp_config(config_data);
+        let config = HimmelblauConfig::new(Some(&temp_file)).unwrap();
+
+        assert_eq!(config.get_intune_auth_resource(), true);
+        assert_eq!(config.get_apply_policy(), false);
+        assert_eq!(config.get_use_intune_auth_resource(), true);
+        let config_empty = create_empty_config();
+        assert_eq!(config_empty.get_intune_auth_resource(), false);
+        assert_eq!(config_empty.get_use_intune_auth_resource(), false);
     }
 
     #[test]

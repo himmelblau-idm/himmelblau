@@ -825,6 +825,21 @@ Default: false
 Example: apply_policy = false
 
 .TP
+.B intune_auth_resource
+.RE
+A boolean option that makes Entra ID sign-in authenticate against the Microsoft Intune resource instead of the Microsoft Intune Enrollment resource.
+This applies to the user lookup and to interactive sign-in through the password and MFA flow, which also joins the device to Entra ID when it is not joined yet. The device code flow is not affected.
+Use this when Conditional Access policies treat the two resources differently, including on hosts that are not enrolled in Intune.
+This option does not enroll the device in Intune or apply Intune policies; apply_policy controls both.
+When apply_policy is enabled, the Microsoft Intune resource is always used and this option has no effect.
+
+.P
+Default: false
+
+.P
+Example: intune_auth_resource = true
+
+.TP
 .B authority_host
 .RE
 Specifies the hostname for Microsoft authentication.

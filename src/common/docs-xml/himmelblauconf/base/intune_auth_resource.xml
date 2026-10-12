@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<parameter name="intune_auth_resource"
+           section="global"
+           type="bool"
+           rust_type="bool"
+           documented="true"
+           domain_specific="false"
+           order="3110">
+<description>
+A boolean option that makes Entra ID sign-in authenticate against the Microsoft Intune resource instead of the Microsoft Intune Enrollment resource.
+This applies to the user lookup and to interactive sign-in through the password and MFA flow, which also joins the device to Entra ID when it is not joined yet. The device code flow is not affected.
+Use this when Conditional Access policies treat the two resources differently, including on hosts that are not enrolled in Intune.
+This option does not enroll the device in Intune or apply Intune policies; apply_policy controls both.
+When apply_policy is enabled, the Microsoft Intune resource is always used and this option has no effect.
+</description>
+<conf_description>Authenticate Entra ID sign-in and device join against Microsoft Intune instead of Microsoft Intune Enrollment, without Intune enrollment.</conf_description>
+<default>false</default>
+<example>intune_auth_resource = true</example>
+</parameter>

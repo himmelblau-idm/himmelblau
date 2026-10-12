@@ -640,6 +640,19 @@ in
       example = false;
     };
 
+    intune_auth_resource = mkOption {
+      type = types.nullOr (types.bool);
+      default = false;
+      description = ''
+        A boolean option that makes Entra ID sign-in authenticate against the Microsoft Intune resource instead of the Microsoft Intune Enrollment resource.
+        This applies to the user lookup and to interactive sign-in through the password and MFA flow, which also joins the device to Entra ID when it is not joined yet. The device code flow is not affected.
+        Use this when Conditional Access policies treat the two resources differently, including on hosts that are not enrolled in Intune.
+        This option does not enroll the device in Intune or apply Intune policies; apply_policy controls both.
+        When apply_policy is enabled, the Microsoft Intune resource is always used and this option has no effect.
+      '';
+      example = true;
+    };
+
     authority_host = mkOption {
       type = types.nullOr (types.str);
       default = "login.microsoftonline.com";
