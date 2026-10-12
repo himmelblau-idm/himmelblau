@@ -2873,7 +2873,7 @@ impl IdProvider for OidcProvider {
             }],
             tenant_id: Some(tenant_id),
             valid: true,
-            is_placeholder: false,
+            is_placeholder: token.is_none(),
         }))
     }
 

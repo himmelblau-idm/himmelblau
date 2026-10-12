@@ -229,6 +229,20 @@ impl fmt::Debug for Db {
     }
 }
 
+/// Decode a cached account. Rows written before the `is_placeholder` marker
+/// existed lack the key altogether. Only those, never a record which carries
+/// the marker (even as `false`), are classified by the shape of the old
+/// placeholder, and they are then flagged as placeholders for good.
+fn decode_user_token(raw: &[u8]) -> Result<UserToken, serde_json::Error> {
+    let value: serde_json::Value = serde_json::from_slice(raw)?;
+    let marker_absent = value.get("is_placeholder").is_none();
+    let mut token: UserToken = serde_json::from_value(value)?;
+    if marker_absent && token.has_legacy_placeholder_shape() {
+        token.is_placeholder = true;
+    }
+    Ok(token)
+}
+
 impl<'a> DbTxn<'a> {
     fn new(conn: MutexGuard<'a, Connection>, crypto_policy: &'a CryptoPolicy) -> Self {
         // Start the transaction
@@ -728,7 +742,7 @@ impl<'a> CacheTxn for DbTxn<'a> {
             // token convert with json.
             // If this errors, we specifically return Ok(None) because that triggers
             // the cache to refetch the token.
-            match serde_json::from_slice(token.as_slice()) {
+            match decode_user_token(token.as_slice()) {
                 Ok(t) => {
                     let e = u64::try_from(*expiry).map_err(|e| {
                         error!("u64 convert error -> {:?}", e);
@@ -766,7 +780,7 @@ impl<'a> CacheTxn for DbTxn<'a> {
             // We filter map here so that anything invalid is skipped.
             .filter_map(|token| {
                 // token convert with json.
-                serde_json::from_slice(token.as_slice())
+                decode_user_token(token.as_slice())
                     .map_err(|e| {
                         warn!("get_accounts json error -> {:?}", e);
                     })
@@ -1153,6 +1167,33 @@ impl<'a> CacheTxn for DbTxn<'a> {
             .execute("DELETE FROM group_t WHERE uuid = :g_uuid", [&group_uuid])
             .map(|_| ())
             .map_err(|e| self.sqlite_error("group_t delete", &e))
+    }
+}
+
+#[cfg(test)]
+impl<'a> DbTxn<'a> {
+    /// Rewrite a cached account the way builds without the `is_placeholder`
+    /// marker stored it: the key is absent from the JSON, not merely false.
+    pub(crate) fn strip_placeholder_marker(&mut self, uuid: Uuid) {
+        let raw: Vec<u8> = self
+            .conn
+            .query_row(
+                "SELECT token FROM account_t WHERE uuid = ?1",
+                rusqlite::params![uuid.as_hyphenated().to_string()],
+                |row| row.get(0),
+            )
+            .expect("no such account");
+        let mut value: serde_json::Value = serde_json::from_slice(&raw).unwrap();
+        value.as_object_mut().unwrap().remove("is_placeholder");
+        self.conn
+            .execute(
+                "UPDATE account_t SET token = ?1 WHERE uuid = ?2",
+                rusqlite::params![
+                    serde_json::to_vec(&value).unwrap(),
+                    uuid.as_hyphenated().to_string()
+                ],
+            )
+            .unwrap();
     }
 }
 
@@ -1956,6 +1997,85 @@ mod tests {
             dbtxn.update_account(&placeholder, 2),
             Err(CacheError::IdentityConflict)
         ));
+        dbtxn.commit().unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_cache_db_legacy_placeholder_is_only_guessed_without_the_marker() {
+        let db = Db::new("").unwrap();
+        let mut dbtxn = db.write().await;
+        dbtxn.migrate().unwrap();
+
+        let shaped = |name: &str, uuid: Uuid, gid: u32, display: &str| {
+            let mut token = account(name, name, uuid, gid);
+            token.displayname = display.to_string();
+            token.groups = vec![GroupToken {
+                name: token.name.clone(),
+                spn: token.spn.clone(),
+                uuid: token.uuid,
+                gidnumber: token.gidnumber,
+            }];
+            token
+        };
+        // (token, marker removed from the row, expected classification)
+        let cases = [
+            // Old placeholder: no marker in the row, exact old shape.
+            (
+                shaped(
+                    "a@example.com",
+                    uuid::uuid!("00000000-0000-4000-8000-00000000000a"),
+                    3001,
+                    "",
+                ),
+                true,
+                true,
+            ),
+            // Old authenticated token: no marker, but it has a display name.
+            (
+                shaped(
+                    "b@example.com",
+                    uuid::uuid!("00000000-0000-4000-8000-00000000000b"),
+                    3002,
+                    "B",
+                ),
+                true,
+                false,
+            ),
+            // New authenticated token such as an OIDC identity without a `name`
+            // claim: same shape, but the row carries the marker as false.
+            (
+                shaped(
+                    "c@example.com",
+                    uuid::uuid!("00000000-0000-4000-8000-00000000000c"),
+                    3003,
+                    "",
+                ),
+                false,
+                false,
+            ),
+        ];
+        for (token, strip, _) in &cases {
+            assert!(!token.is_placeholder);
+            dbtxn.update_group(&token.groups[0], 0).unwrap();
+            dbtxn.update_account(token, 0).unwrap();
+            if *strip {
+                dbtxn.strip_placeholder_marker(token.uuid);
+            }
+        }
+        for (token, _, expected) in &cases {
+            let (read, _) = dbtxn
+                .get_account(&Id::Name(token.spn.clone()))
+                .unwrap()
+                .unwrap();
+            assert_eq!(read.is_placeholder, *expected, "{}", token.spn);
+            let listed = dbtxn
+                .get_accounts()
+                .unwrap()
+                .into_iter()
+                .find(|t| t.uuid == token.uuid)
+                .unwrap();
+            assert_eq!(listed.is_placeholder, *expected, "{}", token.spn);
+        }
         dbtxn.commit().unwrap();
     }
 

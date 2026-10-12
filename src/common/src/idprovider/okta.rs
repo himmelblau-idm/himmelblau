@@ -1220,7 +1220,7 @@ impl IdProvider for OktaProvider {
             }],
             tenant_id: Some(self.tenant_id),
             valid: true,
-            is_placeholder: false,
+            is_placeholder: true,
         }))
     }
 

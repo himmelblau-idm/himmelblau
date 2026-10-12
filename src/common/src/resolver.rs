@@ -627,10 +627,15 @@ mod tests {
             .any(|t| t.spn.eq_ignore_ascii_case(spn))
     }
 
+    /// Cache a placeholder. An unmarked one is stored as a build without the
+    /// marker did, with the `is_placeholder` key missing from the row.
     async fn seed_placeholder(resolver: &Resolver<OfflineFallbackProvider>, token: &UserToken) {
         let mut dbtxn = resolver.db.write().await;
         dbtxn.update_group(&token.groups[0], 0).unwrap();
         dbtxn.update_account(token, 0).unwrap();
+        if !token.is_placeholder {
+            dbtxn.strip_placeholder_marker(token.uuid);
+        }
         dbtxn.commit().unwrap();
     }
 
@@ -640,7 +645,9 @@ mod tests {
             let resolver = setup_resolver().await;
             seed_aliased_token(&resolver).await;
             let placeholder = placeholder_for("onprem-user@example.com", marked);
-            assert!(is_placeholder_token(&placeholder));
+            // In memory only the marker counts; the legacy shape is recognised
+            // when the row is read back from the cache.
+            assert_eq!(is_placeholder_token(&placeholder), marked);
             assert!(!is_placeholder_token(&aliased_token()));
             seed_placeholder(&resolver, &placeholder).await;
 
@@ -840,21 +847,25 @@ mod tests {
         }
     }
 
-    #[test]
-    fn legacy_placeholder_is_recognised_only_by_its_exact_shape() {
-        let mut token = test_token();
-        token.groups[0].uuid = token.uuid;
-        token.groups[0].spn.clone_from(&token.spn);
-        let legacy = |token: &UserToken| {
-            let mut serialized = serde_json::to_value(token).unwrap();
-            serialized.as_object_mut().unwrap().remove("is_placeholder");
-            serde_json::from_value::<UserToken>(serialized).unwrap()
-        };
-        // An authenticated token may have a synthetic primary group of its own.
-        assert!(!is_placeholder_token(&legacy(&token)));
-        // The placeholder of an older build has no display name at all.
-        token.displayname = String::new();
-        assert!(is_placeholder_token(&legacy(&token)));
+    #[tokio::test]
+    async fn authenticated_token_shaped_like_a_legacy_placeholder_keeps_its_name() {
+        // An OIDC identity without a `name` claim has no display name and one
+        // synthetic self-group, but it is authenticated and carries the marker.
+        let resolver = setup_resolver().await;
+        seed_aliased_token(&resolver).await;
+        let mut oidc = placeholder_for("onprem-user@example.com", false);
+        assert!(!is_placeholder_token(&oidc));
+        resolver.set_cache_usertoken(&mut oidc).await.unwrap();
+
+        let (_, cached) = resolver
+            .get_cached_usertoken(&Id::Name("onprem-user@example.com".to_string()))
+            .await
+            .unwrap();
+        let cached = cached.unwrap();
+        assert_eq!(cached.uuid, oidc.uuid);
+        assert!(!is_placeholder_token(&cached));
+        // The canonical identity owns the name, the alias owner is restored.
+        assert!(spn_is_cached(&resolver, &aliased_token().spn).await);
     }
 
     #[tokio::test]

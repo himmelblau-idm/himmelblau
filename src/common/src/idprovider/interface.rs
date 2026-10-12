@@ -101,19 +101,27 @@ pub struct UserToken {
 
 impl UserToken {
     /// Is this a record the provider fabricated for a name it could not reject,
-    /// rather than an authenticated identity? New records carry an explicit
-    /// marker. Rows cached before the marker existed are recognised only by the
-    /// exact shape of the old placeholder: no display name, and a single group
-    /// which is the user's own uuid and spn. Authenticated tokens carry a
-    /// display name, so a synthetic primary group alone never qualifies.
+    /// rather than an authenticated identity? Only the explicit marker counts.
+    /// Tokens which are built in memory always set it, so a fresh authenticated
+    /// token (an OIDC identity without a `name` claim, say) is never taken for
+    /// a placeholder because of its shape. Rows cached before the marker existed
+    /// are migrated when they are read, see `has_legacy_placeholder_shape`.
     pub fn is_provisional(&self) -> bool {
         self.is_placeholder
-            || (self.displayname.is_empty()
-                && matches!(
-                    self.groups.as_slice(),
-                    [group] if group.uuid == self.uuid
-                        && group.spn.eq_ignore_ascii_case(&self.spn)
-                ))
+    }
+
+    /// Does this token have the exact shape of the placeholder which builds
+    /// before the explicit marker cached: no display name, and a single group
+    /// which is the user's own uuid and spn? This says nothing about a token
+    /// that carries the marker. It may only be applied to a record in which the
+    /// marker was absent when it was deserialized.
+    pub fn has_legacy_placeholder_shape(&self) -> bool {
+        self.displayname.is_empty()
+            && matches!(
+                self.groups.as_slice(),
+                [group] if group.uuid == self.uuid
+                    && group.spn.eq_ignore_ascii_case(&self.spn)
+            )
     }
 }
 

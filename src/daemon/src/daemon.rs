@@ -386,6 +386,10 @@ async fn reconcile_local_groups_once(
 
     for mut account in accounts {
         let is_sudoer = if sudo_group_ids.is_empty() {
+            account = match cachelayer.get_nssaccount_gid(account.uid).await {
+                Ok(Some(account)) => account,
+                _ => continue,
+            };
             false
         } else {
             let token = match cachelayer
