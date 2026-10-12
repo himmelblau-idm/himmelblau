@@ -164,7 +164,7 @@ fn unseal_refresh_token_with_loaded_hello_key(
 fn normalize_on_premises_sam_account_name(value: Option<&str>) -> Option<String> {
     value
         .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
+        .filter(|value| !value.is_empty() && value.is_ascii() && !value.contains('@'))
 }
 
 fn select_local_name(
@@ -204,7 +204,7 @@ fn select_refreshed_local_name(
 ) -> String {
     match sam {
         Err(()) if local_name_attr == NameAttr::OnPremisesSamAccountName => {
-            old_local_name.unwrap_or(spn).to_string()
+            old_local_name.filter(|name| name.is_ascii()).unwrap_or(spn).to_string()
         }
         value => select_local_name(spn, local_name_attr, value.ok().flatten()),
     }
@@ -6203,7 +6203,7 @@ mod tests {
 
     #[test]
     fn local_name_falls_back_to_spn_for_missing_on_premises_sam_account_name() {
-        for value in [None, Some(""), Some("   ")] {
+        for value in [None, Some(""), Some("   "), Some("ops@legacy"), Some("MÜLLER")] {
             assert_eq!(
                 select_local_name(
                     "user@example.com",

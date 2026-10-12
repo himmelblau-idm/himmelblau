@@ -1217,6 +1217,20 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn provisional_exact_probe_never_authorizes_alias_fallback() {
+        let (resolver, _alice, mut bob) = collision_resolver(false, future_expiry()).await;
+        bob.is_placeholder = true;
+        *resolver.client.exact_token.write().unwrap() = Some(bob.clone());
+        assert!(resolver.get_usertoken(Id::Name(bob.spn.clone())).await.is_err());
+        assert!(resolver.alias_absence.lock().await.get(&bob.spn).is_none());
+        let (_tx, rx) = broadcast::channel(1);
+        assert!(resolver.pam_account_authenticate_init(
+            &bob.spn, "gdm-password", false, false, rx,
+        ).await.is_err());
+        assert!(resolver.client.credential_ids.read().unwrap().is_empty());
+    }
+
+    #[tokio::test]
     async fn alias_requires_explicit_exact_absence_not_generic_negative_cache() {
         let (resolver, alice, bob) = collision_resolver(false, future_expiry()).await;
         let id = Id::Name(bob.spn.clone());
@@ -2090,14 +2104,10 @@ where
         match lookup {
             Ok(UserTokenState::Update(exact)) if exact.spn.eq_ignore_ascii_case(name) => {
                 if is_placeholder_token(&exact) {
-                    // The provider fabricates a placeholder for any name it
-                    // cannot reject, including the expansion of a local name.
-                    // That does not show that this UPN is anyone's own, so the
-                    // cached alias owner keeps the name. Do not cache the
-                    // placeholder, and do not ask again until the proof expires.
-                    let expiry = SystemTime::now() + Duration::from_secs(self.timeout_seconds);
-                    self.alias_absence.lock().await.put(key.clone(), expiry);
-                    return self.get_cached_usertoken(account_id).await;
+                    // A provisional response does not prove exact UPN absence.
+                    // Never route authentication to an alias owner on that basis.
+                    warn!("Exact lookup returned only a provisional identity");
+                    return Err(ResolverError);
                 }
                 let mut exact = exact;
                 self.set_cache_usertoken(&mut exact).await?;
