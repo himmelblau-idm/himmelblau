@@ -1250,6 +1250,7 @@ sys.exit(int(sys.argv[1]))
     def test_pr_body_has_global_utf8_budget_and_reserved_marker(self):
         value = {
             "main_head": "a" * 40,
+            "cutoff": "c" * 40,
             "dependency_updates": [{"crate": "é" * 200, "new": str(i)} for i in range(500)],
             "vet_accepted": [], "dependabot_imported": [], "backports_applied": [],
             "backport_review_required": [{"sha": "b" * 40, "check": "stable-relevance",
@@ -1257,7 +1258,7 @@ sys.exit(int(sys.argv[1]))
         }
         body = sm.build_pr_body(value, max_bytes=4096)
         self.assertLessEqual(len(body.encode()), 4096)
-        self.assertTrue(body.endswith(f"{sm.MARKER} {'a' * 40}"))
+        self.assertTrue(body.endswith(f"{sm.MARKER} {'c' * 40}"))
         self.assertIn("Backports requiring manual review: 1", body)
         self.assertIn("b" * 40, body)
         with mock.patch.dict(os.environ, {"GITHUB_REPOSITORY": "o/r", "GITHUB_RUN_ID": "123"}):
@@ -2775,8 +2776,52 @@ class MaintenanceHistoryTests(unittest.TestCase):
                 sm.phase_release(mock.Mock(), state, runner)
             self.assertTrue(state.load()["metadata_only"])
             self.assertNotIn("version", state.load())
-            self.assertEqual(runner.git(["rev-parse", "HEAD"]).stdout.strip(), refreshed)
+            self.assertEqual(runner.git(["rev-parse", "HEAD^"]).stdout.strip(), refreshed)
+            self.assertEqual(runner.git(["diff", "--name-only", "HEAD^..HEAD"]).stdout, "")
+            self.assertEqual(sm.marker_sha(runner.git(["log", "-1", "--format=%B"]).stdout), refreshed)
             self.assertIn('version = "4.0.5"', (root / "Cargo.toml").read_text())
+
+    def test_metadata_cutoff_is_recovered_after_regular_and_squash_merges(self):
+        for pending_key in (None, "backport_review_required", "backports_deferred"):
+            for squash in (False, True):
+                with self.subTest(pending=pending_key, squash=squash), tempfile.TemporaryDirectory() as tmp:
+                    root = Path(tmp) / "source"
+                    runner = self.repository(root)
+                    initial = runner.git(["rev-parse", "HEAD"]).stdout.strip()
+                    (root / "pending-fix.rs").write_text("main bug fix\n")
+                    main = self.commit(runner, "Fix pending bug")
+                    runner.git(["checkout", "stable-4.x"])
+                    runner.git(["checkout", "-b", "maintenance-fixture"])
+                    (root / "supply-chain").mkdir()
+                    (root / "supply-chain/imports.lock").write_text("refreshed audits\n")
+                    self.commit(runner, "Refresh imported audits")
+                    value = {"original_head": initial, "cutoff": initial, "main_head": main,
+                             "branch": "stable-4.x"}
+                    if pending_key:
+                        value[pending_key] = [{"sha": main}] if pending_key == "backport_review_required" else [main]
+                    state = sm.State(Path(tmp) / "state")
+                    state.save(value)
+                    with mock.patch.object(sm, "contained_repo_command", side_effect=AssertionError("no release generation")):
+                        sm.phase_release(mock.Mock(), state, runner)
+                    through = initial if pending_key else main
+                    self.assertEqual(state.load()["main_through"], through)
+                    self.assertEqual(sm.marker_sha(runner.git(["log", "-1", "--format=%B"]).stdout), through)
+                    body = sm.build_pr_body(state.load())
+                    self.assertEqual(sm.marker_sha(body), through)
+                    # Stale cached progress must never override pending work.
+                    self.assertEqual(sm.marker_sha(sm.build_pr_body({**state.load(), "main_through": main})), through)
+                    runner.git(["checkout", "stable-4.x"])
+                    if squash:
+                        runner.git(["merge", "--squash", "maintenance-fixture"])
+                        runner.git(["commit", "-m", "Merge audit-only maintenance", "-m", body])
+                    else:
+                        runner.git(["merge", "--no-ff", "maintenance-fixture", "-m", "Merge audit-only maintenance"])
+                    following = sm.State(Path(tmp) / "following-state")
+                    sm.phase_initialize(mock.Mock(branch="stable-4.x"), following, runner)
+                    self.assertEqual(following.load()["cutoff"], through)
+                    candidates = runner.git(["rev-list", f"{through}..{main}"]).stdout.splitlines()
+                    self.assertEqual(candidates, [main] if pending_key else [])
+                    self.assertIn('version = "4.0.5"', (root / "Cargo.toml").read_text())
 
 
 class InitializePhaseTests(unittest.TestCase):

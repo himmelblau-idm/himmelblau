@@ -2753,6 +2753,12 @@ def crate2nix_command() -> list[str]:
     return ["crate2nix", "generate"]
 
 
+def maintenance_main_through(value: Mapping[str, Any]) -> str:
+    """Keep unresolved backports eligible regardless of publication type."""
+    pending = value.get("backport_review_required") or value.get("backports_deferred")
+    return require_sha(str(value["cutoff"] if pending else value["main_head"]))
+
+
 def phase_release(args: argparse.Namespace, state: State, runner: Runner) -> None:
     value = state.load()
     if runner.git(["rev-parse", "HEAD"]).stdout.strip() == value["original_head"] and not runner.git(["status", "--porcelain"]).stdout:
@@ -2762,9 +2768,16 @@ def phase_release(args: argparse.Namespace, state: State, runner: Runner) -> Non
     old = parsed.get("workspace", {}).get("package", {}).get("version")
     if not isinstance(old, str):
         raise MaintenanceError("workspace version is missing")
+    through = maintenance_main_through(value)
     changed = runner.git(["diff", "--name-only", f"{value['original_head']}..HEAD"]).stdout.splitlines()
     if changed and all(path.startswith("supply-chain/") for path in changed):
+        runner.git(["diff", "--quiet"])
+        runner.git(["diff", "--cached", "--quiet"])
+        # Persist review progress even when no release/version commit is needed.
+        # A separate checkpoint preserves the metadata commits and their authors.
+        runner.git(["commit", "--allow-empty", "--signoff", "-m", "Record stable maintenance cutoff", "-m", f"{MARKER} {through}"])
         value["metadata_only"] = True
+        value["main_through"] = through
         state.save(value)
         state.event("release", "supply-chain metadata only; version unchanged")
         return
@@ -2778,7 +2791,6 @@ def phase_release(args: argparse.Namespace, state: State, runner: Runner) -> Non
         contained_repo_command(runner, crate2nix_command(), network=False, source_rw=True, cache_rw=False, timeout=1800)
         paths.append("Cargo.nix")
     # Retry unresolved AI decisions and conflicts on the next maintenance run.
-    through = value["cutoff"] if value.get("backport_review_required") or value.get("backports_deferred") else value["main_head"]
     runner.git(["add", "--", *paths]); runner.git(version_commit_args(new, through))
     value["main_through"] = through
     value["version"] = new; state.save(value); state.event("release", "patch version incremented", version=new)
@@ -2872,7 +2884,7 @@ def sanitized_state_details(value: Mapping[str, Any], *, max_items: int = 50) ->
 
 
 def build_pr_body(value: Mapping[str, Any], *, max_bytes: int = 2400) -> str:
-    through = value.get("main_through", value["main_head"])
+    through = maintenance_main_through(value)
     marker = f"{MARKER} {require_sha(str(through))}"
     run_id = os.environ.get("GITHUB_RUN_ID", "")
     repo = os.environ.get("GITHUB_REPOSITORY", "")
