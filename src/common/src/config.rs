@@ -959,32 +959,51 @@ impl HimmelblauConfig {
     /// enabled, it will map the upn to the cn. Otherwise it will return the
     /// name unchanged.
     pub fn map_upn_to_name(&self, upn: &str) -> String {
-        if let Some((name, domain)) = split_username(upn) {
-            let primary = self
-                .get_configured_domains()
-                .first()
-                .map(|e| e.as_str())
-                .unwrap_or("")
-                .to_lowercase();
-            let res;
-            if self.get_name_mapping_script().is_some() {
-                if let Ok(name_mapping_cache) =
-                    MappedNameCache::new(MAPPED_NAME_CACHE, &Mode::ReadOnly)
-                {
-                    res = name_mapping_cache.get_mapped_name(upn);
-                } else {
-                    res = upn.to_string();
-                }
-            // Only perform cn name mapping for the primary domain
-            } else if self.get_cn_name_mapping() && primary == domain.to_lowercase() {
-                res = name.to_string();
-            } else {
-                res = upn.to_string();
-            }
-            res
-        } else {
+        self.map_upn_to_name_impl(upn, MAPPED_NAME_CACHE)
+    }
+
+    /// Inner impl with an injectable mapping cache path for hermetic unit tests.
+    ///
+    /// With a mapping script, the result must not depend on the state of the
+    /// mapping cache: it is empty until a root process has run the script, it
+    /// is keyed by whatever spelling the user typed at login, and a read can
+    /// fail while another process writes it. Returning the UPN in those cases
+    /// gives one account two names, which AccountsService handles as two
+    /// users (it then spins in a reload loop and blocks GDM). So a cache miss
+    /// falls back to the cn mapping of the primary domain, and a cached name
+    /// that only differs in case from the cn is normalized to it.
+    fn map_upn_to_name_impl(&self, upn: &str, cache_path: &str) -> String {
+        let Some((name, domain)) = split_username(upn) else {
             // This isn't a upn, just return the input unchanged
-            upn.to_string()
+            return upn.to_string();
+        };
+        let primary = self
+            .get_configured_domains()
+            .first()
+            .map(|e| e.as_str())
+            .unwrap_or("")
+            .to_lowercase();
+        // Only perform cn name mapping for the primary domain
+        let is_primary_cn = self.get_cn_name_mapping() && primary == domain.to_lowercase();
+
+        if self.get_name_mapping_script().is_none() {
+            return if is_primary_cn {
+                name.to_string()
+            } else {
+                upn.to_string()
+            };
+        }
+
+        let cached = MappedNameCache::new(cache_path, &Mode::ReadOnly)
+            .ok()
+            .and_then(|cache| cache.lookup_mapped_name(upn));
+        match cached {
+            Some(mapped) if is_primary_cn && mapped.eq_ignore_ascii_case(name) => {
+                name.to_lowercase()
+            }
+            Some(mapped) => mapped,
+            None if is_primary_cn => name.to_lowercase(),
+            None => upn.to_string(),
         }
     }
 
@@ -2274,6 +2293,123 @@ mod tests {
         assert_eq!(
             config.map_name_to_upn_impl("user", &passwd),
             Some("user".to_string())
+        );
+    }
+
+    // Throwaway mapping cache so map_upn_to_name_impl can be tested hermetically.
+    fn create_temp_mapping_cache(rows: &[(&str, &str)]) -> String {
+        let file_path = format!("/tmp/himmelblau_test_mapping_{}.db", uuid::Uuid::new_v4());
+        let conn = rusqlite::Connection::open(&file_path).expect("Failed to create mapping cache");
+        conn.execute(
+            "CREATE TABLE mapping (upn TEXT PRIMARY KEY, mapped_name TEXT NOT NULL)",
+            [],
+        )
+        .expect("Failed to create mapping table");
+        for (upn, mapped_name) in rows {
+            conn.execute(
+                "INSERT INTO mapping (upn, mapped_name) VALUES (?1, ?2)",
+                rusqlite::params![upn, mapped_name],
+            )
+            .expect("Failed to insert mapping");
+        }
+        file_path
+    }
+
+    fn script_config() -> HimmelblauConfig {
+        HimmelblauConfig::new(Some(&create_temp_config(
+            r#"
+        [global]
+        name_mapping_script = /path/to/name_mapping_script
+        domains = example.com
+        "#,
+        )))
+        .unwrap()
+    }
+
+    #[test]
+    fn test_map_upn_to_name_script_cache_hit() {
+        let cache = create_temp_mapping_cache(&[("first.last@example.com", "first.last")]);
+        assert_eq!(
+            script_config().map_upn_to_name_impl("first.last@example.com", &cache),
+            "first.last"
+        );
+    }
+
+    #[test]
+    fn test_map_upn_to_name_script_no_cache_falls_back_to_cn() {
+        let missing = format!("/tmp/himmelblau_test_mapping_{}.db", uuid::Uuid::new_v4());
+        assert_eq!(
+            script_config().map_upn_to_name_impl("first.last@example.com", &missing),
+            "first.last"
+        );
+    }
+
+    #[test]
+    fn test_map_upn_to_name_script_cache_miss_falls_back_to_cn() {
+        let cache = create_temp_mapping_cache(&[]);
+        assert_eq!(
+            script_config().map_upn_to_name_impl("first.last@example.com", &cache),
+            "first.last"
+        );
+    }
+
+    #[test]
+    fn test_map_upn_to_name_script_login_spelling_is_normalized() {
+        // The cache is keyed and valued by what the user typed at login.
+        let cache = create_temp_mapping_cache(&[("First.Last@example.com", "First.Last")]);
+        let config = script_config();
+        for upn in [
+            "first.last@example.com",
+            "First.Last@example.com",
+            "FIRST.LAST@EXAMPLE.COM",
+        ] {
+            assert_eq!(
+                config.map_upn_to_name_impl(upn, &cache),
+                "first.last",
+                "{upn} should map to first.last"
+            );
+        }
+    }
+
+    #[test]
+    fn test_map_upn_to_name_script_keeps_renamed_mapping() {
+        let cache = create_temp_mapping_cache(&[("john.doe@example.com", "jdoe")]);
+        assert_eq!(
+            script_config().map_upn_to_name_impl("john.doe@example.com", &cache),
+            "jdoe"
+        );
+    }
+
+    #[test]
+    fn test_map_upn_to_name_script_other_domain_miss_is_unchanged() {
+        let cache = create_temp_mapping_cache(&[]);
+        assert_eq!(
+            script_config().map_upn_to_name_impl("user@contoso.com", &cache),
+            "user@contoso.com"
+        );
+    }
+
+    #[test]
+    fn test_map_upn_to_name_without_script() {
+        let config = HimmelblauConfig::new(Some(&create_temp_config(
+            r#"
+        [global]
+        domains = example.com
+        "#,
+        )))
+        .unwrap();
+        let cache = create_temp_mapping_cache(&[]);
+        assert_eq!(
+            config.map_upn_to_name_impl("First.Last@example.com", &cache),
+            "First.Last"
+        );
+        assert_eq!(
+            config.map_upn_to_name_impl("user@contoso.com", &cache),
+            "user@contoso.com"
+        );
+        assert_eq!(
+            config.map_upn_to_name_impl("localuser", &cache),
+            "localuser"
         );
     }
 
