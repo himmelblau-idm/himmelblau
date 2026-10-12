@@ -17,6 +17,9 @@ use tokio::fs::File;
 use tokio::io::AsyncReadExt;
 use zeroize::{Zeroize, Zeroizing};
 
+use crate::unix_config::HsmType;
+use kanidm_hsm_crypto::structures::LoadableStorageKey;
+
 /// Validates that the HSM PIN file path is within the expected directory
 fn validate_hsm_pin_path(hsm_pin_path: &str) -> Result<PathBuf, Box<dyn Error>> {
     let path = Path::new(hsm_pin_path);
@@ -191,6 +194,24 @@ pub fn open_tpm_if_possible(_tcti_name: &str) -> BoxedDynTpm {
     use kanidm_hsm_crypto::provider::SoftTpm;
     debug!("opened soft tpm");
     BoxedDynTpm::new(SoftTpm::new())
+}
+
+#[doc(hidden)]
+pub fn resolve_hsm_type(
+    configured_hsm_type: &HsmType,
+    existing_machine_key: Option<&LoadableStorageKey>,
+) -> HsmType {
+    match (configured_hsm_type, existing_machine_key) {
+        (
+            HsmType::TpmIfPossible,
+            Some(
+                LoadableStorageKey::SoftAes256GcmV1 { .. }
+                | LoadableStorageKey::SoftAes256GcmV2 { .. },
+            ),
+        ) => HsmType::Soft,
+        (HsmType::TpmIfPossible, Some(LoadableStorageKey::TpmAes128CfbV1 { .. })) => HsmType::Tpm,
+        (configured_hsm_type, _) => configured_hsm_type.clone(),
+    }
 }
 
 #[macro_export]
@@ -412,4 +433,61 @@ pub fn confidential_client_creds<D: crate::db::KeyStoreTxn + Send>(
     }
 
     Ok(None)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::resolve_hsm_type;
+    use crate::unix_config::HsmType;
+    use kanidm_hsm_crypto::structures::LoadableStorageKey;
+    use zeroize::Zeroizing;
+
+    fn soft_machine_key() -> LoadableStorageKey {
+        LoadableStorageKey::SoftAes256GcmV1 {
+            key: Zeroizing::new(vec![0; 32]),
+            tag: [0; 16],
+            iv: [0; 16],
+        }
+    }
+
+    #[test]
+    fn tpm_if_possible_without_persisted_state_remains_dynamic() {
+        assert_eq!(
+            resolve_hsm_type(&HsmType::TpmIfPossible, None),
+            HsmType::TpmIfPossible
+        );
+    }
+
+    #[test]
+    fn tpm_if_possible_reuses_persisted_soft_state() {
+        let machine_key = soft_machine_key();
+        assert_eq!(
+            resolve_hsm_type(&HsmType::TpmIfPossible, Some(&machine_key)),
+            HsmType::Soft
+        );
+    }
+
+    #[cfg(not(feature = "tpm"))]
+    #[test]
+    fn tpm_if_possible_reuses_persisted_tpm_state() {
+        let machine_key = LoadableStorageKey::TpmAes128CfbV1 {
+            private: (),
+            public: (),
+            sk_private: (),
+            sk_public: (),
+        };
+        assert_eq!(
+            resolve_hsm_type(&HsmType::TpmIfPossible, Some(&machine_key)),
+            HsmType::Tpm
+        );
+    }
+
+    #[test]
+    fn explicit_hsm_type_overrides_persisted_state() {
+        let machine_key = soft_machine_key();
+        assert_eq!(
+            resolve_hsm_type(&HsmType::Tpm, Some(&machine_key)),
+            HsmType::Tpm
+        );
+    }
 }
