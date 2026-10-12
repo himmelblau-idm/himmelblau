@@ -692,14 +692,17 @@ impl HimmelblauConfig {
         domains
     }
 
-    pub fn get_configured_entra_domain(&self) -> Option<String> {
-        // The array returned by get_configured_domains() might include "oidc" section
-        self.get_configured_domains()
-            .into_iter()
-            .filter(|x| x != "oidc")
-            .collect::<Vec<String>>()
-            .first()
-            .cloned()
+    pub fn get_configured_entra_domain(&self) -> Result<Option<String>, String> {
+        let mut domains = self.get_configured_domains();
+        domains.retain(|domain| domain != "oidc" && !domain.is_empty());
+        domains.sort_by_key(|domain| domain.to_lowercase());
+        domains.dedup_by(|a, b| a.eq_ignore_ascii_case(b));
+        if domains.len() > 1 {
+            return Err(
+                "Only one Entra domain may be configured; use domain_aliases for aliases".to_string(),
+            );
+        }
+        Ok(domains.into_iter().next())
     }
 
     pub fn get_config_file(&self) -> String {
@@ -792,6 +795,22 @@ impl HimmelblauConfig {
     }
 
     pub async fn get_primary_domain_from_alias(&mut self, alias: &str) -> Option<String> {
+        if self.get_oidc_issuer_url().is_some() {
+            return None;
+        }
+        if let Some(primary) = self.get_primary_domain_from_alias_simple(alias) {
+            return Some(primary);
+        }
+        let primary = self.discover_primary_domain_from_alias(alias).await;
+        let _ = self.write_server_config();
+        primary
+    }
+
+    /// Discover on a private snapshot without writing the shared server config.
+    pub(crate) async fn discover_primary_domain_from_alias(
+        &mut self,
+        alias: &str,
+    ) -> Option<String> {
         // Short-circuit the request if this is an OIDC provider domain.
         if self.get_oidc_issuer_url().is_some() {
             return None;
@@ -808,8 +827,6 @@ impl HimmelblauConfig {
             info!("No domains are configured.");
             return None;
         }
-
-        let mut modified_config = false;
 
         // We don't recognize this alias, so now we need to search for it the
         // hard way by checking for matching tenant id's.
@@ -849,7 +866,6 @@ impl HimmelblauConfig {
                     self.set(&domain, "authority_host", &authority_host);
                     self.set(&domain, "tenant_id", &tenant_id);
                     self.set(&domain, "graph_url", &graph_url);
-                    modified_config = true;
                     tenant_id
                 }
             };
@@ -860,15 +876,11 @@ impl HimmelblauConfig {
                 };
                 domain_aliases.push(alias.to_string());
                 self.set(&domain, "domain_aliases", &domain_aliases.join(","));
-                let _ = self.write_server_config();
                 return Some(domain);
             }
         }
 
         error!("Failed matching alias '{}' to a configured tenant", alias);
-        if modified_config {
-            let _ = self.write_server_config();
-        }
         None
     }
 
@@ -1655,6 +1667,21 @@ mod tests {
 
         let config_empty = create_empty_config();
         assert_eq!(config_empty.get_use_etc_skel(), false);
+    }
+
+    #[test]
+    fn test_single_entra_domain_rejects_multiple_domains() {
+        let mut config = create_empty_config();
+        config.set("global", "domains", "example.com,test.com");
+        assert!(config.get_configured_entra_domain().is_err());
+        config.set("global", "domains", "example.com");
+        config.set("example.com", "domain_aliases", "test.com");
+        assert_eq!(
+            config.get_configured_entra_domain().unwrap(),
+            Some("example.com".to_string())
+        );
+        config.set("test.com", "tenant_id", "other");
+        assert!(config.get_configured_entra_domain().is_err());
     }
 
     #[test]

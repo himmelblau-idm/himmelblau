@@ -69,7 +69,11 @@ impl IdProviderProxy {
             Err(e) => return Err(anyhow!("{:?}", e)),
         };
 
-        let domain = config.lock().await.get_configured_entra_domain();
+        let domain = config
+            .lock()
+            .await
+            .get_configured_entra_domain()
+            .map_err(|error| anyhow!(error))?;
         let oidc_issuer_url = config.lock().await.get_oidc_issuer_url();
         let provider = match (oidc_issuer_url, domain) {
             (None, None) => {
@@ -177,17 +181,49 @@ impl IdProviderProxy {
             (Some(d), Providers::Himmelblau(h)) => {
                 if d == h.domain() {
                     Some(self.provider.clone())
-                } else if self
-                    .config
-                    .lock()
-                    .await
-                    .get_primary_domain_from_alias(d)
-                    .await
-                    .is_some_and(|p| p.as_str() == h.domain())
-                {
-                    Some(self.provider.clone())
                 } else {
-                    None
+                    let mut snapshot = {
+                        let config = self.config.lock().await;
+                        if config
+                            .get_primary_domain_from_alias_simple(d)
+                            .is_some_and(|primary| primary == h.domain())
+                        {
+                            return Ok(self.provider.clone());
+                        }
+                        config.clone()
+                    };
+                    // Federation requests run without the shared config mutex.
+                    if snapshot
+                        .discover_primary_domain_from_alias(d)
+                        .await
+                        .is_some_and(|primary| primary == h.domain())
+                    {
+                        let mut config = self.config.lock().await;
+                        for key in ["tenant_id", "authority_host", "graph_url"] {
+                            if config.get(h.domain(), key).is_none() {
+                                if let Some(value) = snapshot.get(h.domain(), key) {
+                                    config.set(h.domain(), key, &value);
+                                }
+                            }
+                        }
+                        let mut aliases: Vec<String> = config
+                            .get(h.domain(), "domain_aliases")
+                            .unwrap_or_default()
+                            .split(',')
+                            .filter(|alias| !alias.is_empty())
+                            .map(str::to_string)
+                            .collect();
+                        if !aliases.iter().any(|alias| alias.eq_ignore_ascii_case(d)) {
+                            aliases.push(d.to_string());
+                        }
+                        config.set(h.domain(), "domain_aliases", &aliases.join(","));
+                        if let Err(error) = config.write_server_config() {
+                            warn!("Failed persisting verified domain alias: {:?}", error);
+                        }
+                        Some(self.provider.clone())
+                    } else {
+                        None
+                    }
                 }
             }
             (None, Providers::Himmelblau(_)) => None,
