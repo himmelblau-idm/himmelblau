@@ -25,6 +25,8 @@ test('only the repository maintenance bot on its expected branches is exempt', (
     (pr) => { pr.head.repo.full_name = 'external/fork'; },
     (pr) => { pr.head.ref = 'external-branch'; },
     (pr) => { pr.base.ref = 'main'; },
+    (pr) => { pr.base.ref = 'stable-2.x'; pr.head.ref = 'automation/stable-maintenance/stable-2.x-test'; },
+    (pr) => { pr.base.ref = 'stable-3.x'; },
   ]) {
     const pr = maintenancePr();
     mutate(pr);
@@ -49,7 +51,7 @@ function harness(permission, action = 'reopened') {
     },
     paginate: async () => [],
   };
-  return { github, context, core: { info: () => {}, setFailed: assert.fail }, labels };
+  return { github, context, core: { info: () => {}, warning: () => {}, setFailed: assert.fail }, labels };
 }
 
 test('a verified maintainer reopen persists the existing exemption label', async () => {
@@ -62,6 +64,20 @@ test('a verified maintainer reopen persists the existing exemption label', async
 
 test('an external reopen still runs ordinary checks', async () => {
   const fixture = harness('read');
+  await assert.rejects(run(fixture), /ordinary checks reached/);
+  assert.equal(fixture.labels.length, 0);
+});
+
+test('a maintainer reopening a draft persists the override before ready_for_review', async () => {
+  const fixture = harness('write');
+  fixture.context.payload.pull_request.draft = true;
+  await run(fixture);
+  assert.deepEqual(fixture.labels[0].labels, ['slop-guard-exempt']);
+});
+
+test('permission lookup failures do not bypass ordinary screening', async () => {
+  const fixture = harness('read');
+  fixture.github.rest.repos.getCollaboratorPermissionLevel = async () => { throw new Error('API unavailable'); };
   await assert.rejects(run(fixture), /ordinary checks reached/);
   assert.equal(fixture.labels.length, 0);
 });
