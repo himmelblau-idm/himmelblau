@@ -349,7 +349,7 @@ WantedBy=multi-user.target
     # ---- Compose himmelblau-hsm-pin-init.service ----
     # Always generate this file so cargo-deb can find it. On older systemd without
     # LoadCredentialEncrypted support, the service won't be started by himmelblaud.service.
-    hsm_pin_init_unit = """\
+    hsm_pin_init_unit = f"""\
 # You should not need to edit this file. Instead, use a drop-in file:
 #   systemctl edit himmelblau-hsm-pin-init.service
 
@@ -366,6 +366,8 @@ Wants=systemd-tpm2-setup.service
 
 [Service]
 Type=oneshot
+{'StateDirectory=himmelblaud' if supported('CacheRuntimeStateDirs') else ''}
+{'StateDirectoryMode=0700' if supported('CacheRuntimeStateDirs') else ''}
 ExecStart=/usr/libexec/himmelblau-init-hsm-pin
 RuntimeDirectory=himmelblau-hsm-pin
 RuntimeDirectoryMode=0700
