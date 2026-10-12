@@ -288,6 +288,124 @@ class BranchAndCliTests(unittest.TestCase):
             self.assertEqual(cleanup[:3], ["/usr/bin/docker", "rm", "-f"])
             self.assertRegex(cleanup[3], r"^himmelblau-maint-[0-9a-f]{16}$")
 
+    def test_backport_cache_lifecycle_and_partial_setup_cleanup(self):
+        for failure in (None, "create", "holder", "body"):
+            with self.subTest(failure=failure):
+                runner = mock.Mock()
+                def run(argv, **kwargs):
+                    if failure == "create" and argv[1:3] == ["volume", "create"]:
+                        raise sm.MaintenanceError("setup failed")
+                    if failure == "holder" and argv[1:3] == ["run", "--detach"]:
+                        raise sm.MaintenanceError("setup failed")
+                    return sm.CommandResult(0, "", "")
+                runner.run.side_effect = run
+                with mock.patch.dict(os.environ, {"MAINTENANCE_BACKPORT_CACHE": "1", "MAINTENANCE_BUILD_IMAGE": "fixture"}), \
+                     mock.patch.object(sm.shutil, "which", return_value="/usr/bin/docker"):
+                    def exercise():
+                        with sm.backport_build_cache(runner) as volume:
+                            self.assertRegex(volume, r"^himmelblau-maint-backport-[0-9a-f]{32}$")
+                            if failure == "body":
+                                raise sm.MaintenanceError("build failed")
+                    if failure:
+                        with self.assertRaises(sm.MaintenanceError):
+                            exercise()
+                    else:
+                        exercise()
+                commands = [call.args[0] for call in runner.run.call_args_list]
+                self.assertEqual(commands[-2][1:3], ["rm", "-f"])
+                self.assertEqual(commands[-1][1:3], ["volume", "rm"])
+                if failure != "create":
+                    self.assertIn("o=size=6g,uid=65532,gid=65532,mode=0700,nosuid,nodev,exec", commands[0])
+                    self.assertIn("o=size=64m,uid=65532,gid=65532,mode=0700,nosuid,nodev,noexec", commands[1])
+                    holder = commands[2]
+                    for flag in ("--network=none", "--read-only", "--cap-drop=ALL", "--security-opt=no-new-privileges"):
+                        self.assertIn(flag, holder)
+                    self.assertEqual(holder[-4:], ["--entrypoint", "/bin/sleep", "fixture", "infinity"])
+                    self.assertNotIn("/workspace", " ".join(holder))
+
+    def test_backport_cache_disabled_has_no_docker_operations(self):
+        runner = mock.Mock()
+        with mock.patch.dict(os.environ, {"MAINTENANCE_BACKPORT_CACHE": ""}):
+            with sm.backport_build_cache(runner) as volume:
+                self.assertIsNone(volume)
+        runner.run.assert_not_called()
+
+    def test_shared_backport_mounts_preserve_build_boundaries(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp) / "source"; source.mkdir(); (source / ".git").mkdir()
+            home = Path(tmp) / "cargo"; (home / "registry").mkdir(parents=True)
+            runner = mock.Mock(root=source)
+            runner.run.return_value = sm.CommandResult(0, "", "")
+            volume = "himmelblau-maint-backport-" + "a" * 32
+            with mock.patch.dict(os.environ, {"MAINTENANCE_BUILD_IMAGE": "fixture", "MAINTENANCE_PROJECT_CARGO_HOME": str(home)}), \
+                 mock.patch.object(sm.shutil, "which", return_value="/usr/bin/docker"):
+                sm.locked_build(runner, target_volume=volume)
+            argv = runner.run.call_args_list[0].args[0]
+            self.assertIn(f"type=volume,src={volume},dst=/target,volume-nocopy", argv)
+            self.assertIn(f"type=volume,src={volume}-assets,dst=/workspace/target,volume-nocopy", argv)
+            self.assertNotIn("/target:rw,nosuid,nodev,exec,size=6g", argv)
+            for flag in ("--network=none", "--read-only", "--cap-drop=ALL", "--security-opt=no-new-privileges",
+                         "65532:65532", "--memory=8g", "--pids-limit=512", "CARGO_INCREMENTAL=0"):
+                self.assertIn(flag, argv)
+            self.assertIn(f"{source}:/workspace:ro", argv)
+            self.assertIn(f"{source / '.git'}:/workspace/.git:ro", argv)
+            self.assertIn(f"{home / 'registry'}:/opt/project-cargo/registry:ro", argv)
+
+    def test_backport_cache_rejects_other_commands_and_writable_networked_builds(self):
+        command = ["cargo", "build", "--workspace", "--locked", "--message-format=json"]
+        volume = "himmelblau-maint-backport-" + "a" * 32
+        for changes in ({"target_volume": "foreign-volume"}, {"network": True}, {"source_rw": True},
+                        {"cache_rw": True}, {"command": ["cargo", "test", "--workspace", "--locked"]}):
+            args = {"command": command, "network": False, "source_rw": False, "cache_rw": False, "target_volume": volume}
+            args.update(changes)
+            runner = mock.Mock()
+            with self.subTest(changes=changes), mock.patch.dict(os.environ, {"MAINTENANCE_BUILD_IMAGE": "fixture"}), \
+                 mock.patch.object(sm.shutil, "which", return_value="/usr/bin/docker"), self.assertRaises(sm.MaintenanceError):
+                sm.contained_repo_command(runner, **args)
+            runner.run.assert_not_called()
+
+    @unittest.skipUnless(os.environ.get("MAINTENANCE_CONTAINER_TESTS") == "1",
+                         "requires the built maintenance Docker image")
+    def test_backport_cache_reuses_artifacts_and_assets_then_final_build_is_clean(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp) / "source"; (source / "src").mkdir(parents=True); (source / ".git").mkdir()
+            (source / "dep/src").mkdir(parents=True)
+            (source / "Cargo.toml").write_text('[package]\nname="fixture"\nversion="0.1.0"\nedition="2021"\n'
+                                               '[dependencies]\ncache-dep={path="dep"}\n')
+            (source / "dep/Cargo.toml").write_text('[package]\nname="cache-dep"\nversion="0.1.0"\nedition="2021"\n')
+            (source / "dep/src/lib.rs").write_text('pub fn value() -> u32 { 1 }\n')
+            (source / "Cargo.lock").write_text('version=4\n[[package]]\nname="fixture"\nversion="0.1.0"\n'
+                                               'dependencies=["cache-dep"]\n[[package]]\nname="cache-dep"\nversion="0.1.0"\n')
+            (source / "build.rs").write_text('fn main(){std::fs::create_dir_all("target/generated").unwrap();'
+                                            'std::fs::write("target/generated/asset", "asset").unwrap();'
+                                            'println!("cargo:rerun-if-changed=build.rs");}\n')
+            main = 'fn main(){assert_eq!(cache_dep::value(),1);assert_eq!(include_str!("../target/generated/asset"),"asset");}\n'
+            (source / "src/main.rs").write_text(main)
+            home = Path(tmp) / "cargo"; (home / "registry").mkdir(parents=True)
+            runner = sm.Runner(source)
+            def dep_fresh(result):
+                self.assertEqual(result.returncode, 0, result.stderr)
+                rows = [json.loads(line) for line in result.stdout.splitlines() if line.startswith('{')]
+                artifacts = [row["fresh"] for row in rows if row.get("reason") == "compiler-artifact"
+                             and row.get("target", {}).get("name") == "cache_dep"]
+                self.assertEqual(len(artifacts), 1)
+                return artifacts[0]
+            with mock.patch.dict(os.environ, {"MAINTENANCE_PROJECT_CARGO_HOME": str(home), "MAINTENANCE_BACKPORT_CACHE": "1"}):
+                with sm.backport_build_cache(runner) as volume:
+                    self.assertFalse(dep_fresh(sm.locked_build(runner, target_volume=volume)))
+                    self.assertTrue(dep_fresh(sm.locked_build(runner, target_volume=volume)))
+                    # Recompile the caller without rerunning unchanged build.rs;
+                    # its generated /workspace/target asset must still exist.
+                    (source / "src/main.rs").write_text(main + 'fn changed_caller() {}\n')
+                    self.assertTrue(dep_fresh(sm.locked_build(runner, target_volume=volume)))
+                    (source / "src/main.rs").write_text('use cache_dep::missing_helper; fn main(){}\n')
+                    self.assertNotEqual(sm.locked_build(runner, target_volume=volume).returncode, 0)
+                    (source / "src/main.rs").write_text(main)
+                    self.assertTrue(dep_fresh(sm.locked_build(runner, target_volume=volume)))
+                self.assertFalse(dep_fresh(sm.locked_build(runner)))
+                for name in (volume, volume + "-assets"):
+                    self.assertNotEqual(runner.run(["docker", "volume", "inspect", name], check=False).returncode, 0)
+
     @unittest.skipUnless(os.environ.get("MAINTENANCE_CONTAINER_TESTS") == "1",
                          "requires the built maintenance Docker image")
     def test_generated_assets_build_in_read_only_container(self):
@@ -2765,8 +2883,10 @@ class MaintenanceHistoryTests(unittest.TestCase):
                 state.save({"branch": "stable-4.x", "cutoff": baseline, "main_head": later,
                             "backport_candidates": [earlier, broken, later]})
                 snapshots = []
-                def build(current):
+                volume = "himmelblau-maint-backport-" + "a" * 32
+                def build(current, **kwargs):
                     self.assertIs(current, runner)
+                    self.assertEqual(kwargs, {"target_volume": volume})
                     head = runner.git(["rev-parse", "HEAD"]).stdout.strip()
                     snapshots.append(head)
                     bad_import = "resolve_hsm_type" in (root / "cli.py").read_text()
@@ -2778,9 +2898,12 @@ class MaintenanceHistoryTests(unittest.TestCase):
                     # Cargo/container execution is tested separately.
                     return runner.run([sys.executable, "-B", "-c", "import cli"], check=False)
                 output = io.StringIO()
-                with mock.patch.object(sm, "locked_build", side_effect=build), \
+                with mock.patch.object(sm, "backport_build_cache") as cache, \
+                     mock.patch.object(sm, "locked_build", side_effect=build), \
                      mock.patch.object(sm.sys, "stderr", output):
+                    cache.return_value.__enter__.return_value = volume
                     sm.phase_apply_backports(mock.Mock(branch="stable-4.x"), state, runner)
+                cache.return_value.__exit__.assert_called_once()
                 value = state.load()
                 self.assertEqual(len(snapshots), 4)  # Baseline, good, bad, later.
                 self.assertEqual(value["backports_applied"], [earlier, later])

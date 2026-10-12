@@ -33,8 +33,9 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from dataclasses import asdict, dataclass
+from contextlib import contextmanager
 from pathlib import Path, PurePosixPath
-from typing import Any, Iterable, Mapping, Sequence
+from typing import Any, Iterable, Iterator, Mapping, Sequence
 
 
 STABLE_BRANCHES = ("stable-3.x", "stable-4.x")
@@ -1303,6 +1304,7 @@ def contained_repo_command(
     runner: Runner, command: Sequence[str], *, network: bool, source_rw: bool,
     cache_rw: bool, timeout: int = 1800, check: bool = True,
     vet_store: Path | None = None,
+    target_volume: str | None = None,
 ) -> CommandResult:
     if not command or command[0] not in {"cargo", "crate2nix"}:
         raise MaintenanceError("contained repository command is not allowlisted")
@@ -1314,6 +1316,12 @@ def contained_repo_command(
         raise MaintenanceError("docker and MAINTENANCE_BUILD_IMAGE are required")
     if not re.fullmatch(r"[A-Za-z0-9_./:@+-]{1,300}", image):
         raise MaintenanceError("invalid maintenance build image")
+    if target_volume is not None and (
+        not re.fullmatch(r"himmelblau-maint-backport-[0-9a-f]{32}", target_volume)
+        or list(command) != ["cargo", "build", "--workspace", "--locked", "--message-format=json"]
+        or network or source_rw or cache_rw or vet_store is not None
+    ):
+        raise MaintenanceError("backport cache is restricted to isolated locked builds")
     container_name = f"himmelblau-maint-{secrets.token_hex(8)}"
     def required_host_dir(name: str) -> Path:
         raw = os.environ.get(name, "")
@@ -1373,6 +1381,17 @@ def contained_repo_command(
         # Only generated assets are writable inside the read-only source mount.
         "--tmpfs", "/workspace/target:rw,nosuid,nodev,noexec,size=64m,mode=1777",
     ]
+    if target_volume is not None:
+        # Keep both Cargo output and build-script assets across fresh workers.
+        # The trusted holder keeps these bounded tmpfs volumes mounted.
+        for mount in ("/target:rw,nosuid,nodev,exec,size=6g",
+                      "/workspace/target:rw,nosuid,nodev,noexec,size=64m,mode=1777"):
+            index = argv.index(mount)
+            del argv[index - 1:index + 1]
+        argv.extend([
+            "--mount", f"type=volume,src={target_volume},dst=/target,volume-nocopy",
+            "--mount", f"type=volume,src={target_volume}-assets,dst=/workspace/target,volume-nocopy",
+        ])
     if vet_store is not None:
         argv.extend(["-v", f"{vet_store}:/vet-store:rw"])
     if cache_rw:
@@ -1412,10 +1431,9 @@ def contained_repo_command(
     json_build = list(command) == ["cargo", "build", "--workspace", "--locked", "--message-format=json"]
     workspace_tests = list(command) == ["cargo", "test", "--workspace", "--locked"]
     if json_build or workspace_tests:
-        # These are one-shot validation builds: their tmpfs is discarded afterward.
-        # Debug symbols and incremental state can fill /target while linking
-        # the workspace, without providing reusable artifacts or a warm cache.
-        # Keep the dev/test profiles' assertions/checks and all container limits.
+        # Reuse normal Cargo artifacts for backports, but keep debug symbols and
+        # Rust incremental state off so the bounded target does not fill up.
+        # Final validation still gets a private, empty tmpfs.
         argv.extend(["-e", "CARGO_PROFILE_DEV_DEBUG=0", "-e", "CARGO_PROFILE_TEST_DEBUG=0",
                      "-e", "CARGO_INCREMENTAL=0"])
     if json_build or workspace_tests:
@@ -1734,11 +1752,13 @@ def cargo_failure_hints(stderr: str) -> list[str]:
     return [name for name, needles in patterns if any(needle in stderr for needle in needles)]
 
 
-def locked_build(runner: Runner, *, target_dir: Path | None = None) -> CommandResult:
+def locked_build(runner: Runner, *, target_dir: Path | None = None, target_volume: str | None = None) -> CommandResult:
     """Run the contained build and report only bounded, sanitized failure hints."""
+    cache = {"target_volume": target_volume} if target_volume is not None else {}
     result = contained_repo_command(
         runner, ["cargo", "build", "--workspace", "--locked", "--message-format=json"],
         network=False, source_rw=False, cache_rw=False, check=False,
+        **cache,
     )
     if result.returncode:
         # Subprocess output is untrusted and may contain source text, secrets,
@@ -2697,6 +2717,48 @@ def phase_classify_backports(args: argparse.Namespace, state: State, runner: Run
     )
 
 
+@contextmanager
+def backport_build_cache(runner: Runner) -> Iterator[str | None]:
+    """Share bounded, untrusted build output only within this backport phase."""
+    if os.environ.get("MAINTENANCE_BACKPORT_CACHE") != "1":
+        yield None
+        return
+    engine = shutil.which("docker")
+    image = os.environ.get("MAINTENANCE_BUILD_IMAGE", "")
+    if not engine or not re.fullmatch(r"[A-Za-z0-9_./:@+-]{1,300}", image):
+        raise MaintenanceError("backport cache requires docker and a valid maintenance image")
+    volume = f"himmelblau-maint-backport-{secrets.token_hex(16)}"
+    holder = volume + "-holder"
+    try:
+        for name, options in (
+            (volume, "size=6g,uid=65532,gid=65532,mode=0700,nosuid,nodev,exec"),
+            (volume + "-assets", "size=64m,uid=65532,gid=65532,mode=0700,nosuid,nodev,noexec"),
+        ):
+            runner.run([engine, "volume", "create", "--driver", "local", "--opt", "type=tmpfs",
+                        "--opt", "device=tmpfs", "--opt", "o=" + options, name], timeout=60)
+        # A local tmpfs volume empties when its last mount is released. Keep one
+        # trusted sleep process mounted; never reuse a repository-code process.
+        runner.run([
+            engine, "run", "--detach", "--name", holder, "--network=none", "--read-only",
+            "--cap-drop=ALL", "--security-opt=no-new-privileges", "--user", "65532:65532",
+            "--pids-limit=16", "--cpus=0.1", "--memory=32m", "--memory-swap=32m",
+            "--mount", f"type=volume,src={volume},dst=/cache,volume-nocopy",
+            "--mount", f"type=volume,src={volume}-assets,dst=/assets,volume-nocopy",
+            "--entrypoint", "/bin/sleep", image, "infinity",
+        ], timeout=60)
+        print("backport-cache: enabled; target_limit=6g assets_limit=64m", file=sys.stderr)
+        yield volume
+    finally:
+        for command in ([engine, "rm", "-f", holder],
+                        [engine, "volume", "rm", volume + "-assets", volume]):
+            try:
+                result = runner.run(command, timeout=60, check=False, max_output=64 * 1024)
+                if result.returncode:
+                    print("backport-cache: cleanup failed", file=sys.stderr)
+            except MaintenanceError:
+                print("backport-cache: cleanup failed", file=sys.stderr)
+
+
 def phase_apply_backports(args: argparse.Namespace, state: State, runner: Runner) -> None:
     branch = require_branch(args.branch)
     runner.git(["diff", "--quiet"])
@@ -2706,54 +2768,56 @@ def phase_apply_backports(args: argparse.Namespace, state: State, runner: Runner
     value = state.load(); applied, skipped, deferred = [], [], []
     conflicts, build_failed = [], []
     baseline_checked = False
-    for sha in value.get("backport_candidates", []):
-        require_sha(sha)
-        present = runner.git([
-            "log", "-1", "--format=%H", "--fixed-strings", "--grep", f"(cherry picked from commit {sha})",
-        ]).stdout.strip()
-        if present:
-            print(f"backport-debug: sha={sha} result=already-present", file=sys.stderr)
-            skipped.append(sha); continue
-        pre_head = require_sha(runner.git(["rev-parse", "HEAD"]).stdout.strip())
-        if not baseline_checked:
-            # Do not attribute a pre-existing failure to the first backport.
-            print("backport-debug: stage=baseline-build", file=sys.stderr)
-            if locked_build(runner).returncode:
-                raise MaintenanceError("backport baseline build failed")
-            baseline_checked = True
-        pick = runner.git(["cherry-pick", "-x", sha], check=False)
-        if pick.returncode:
-            status = runner.git(["status", "--porcelain=v1"]).stdout
-            if not has_unresolved_conflicts(status):
-                pending = runner.git(["rev-parse", "--verify", "CHERRY_PICK_HEAD"], check=False)
-                if pending.stdout.strip() == sha and not status.strip():
-                    runner.git(["cherry-pick", "--skip"])
-                    print(f"backport-debug: sha={sha} result=already-present-empty", file=sys.stderr)
-                    skipped.append(sha); continue
-            runner.git(["cherry-pick", "--abort"], check=False)
-            runner.git(["reset", "--hard", pre_head])
-            print(f"backport-debug: sha={sha} result=conflict-skipped", file=sys.stderr)
-            skipped.append(sha); conflicts.append(sha); deferred.append(sha); continue
-        failure = None
-        print(f"backport-debug: sha={sha} stage=locked-build", file=sys.stderr)
-        try:
-            result = locked_build(runner)
-            if result.returncode:
-                failure = {"sha": sha, "reason": "build failed", "exit": result.returncode}
-        except MaintenanceError as exc:
-            diagnostic = (
-                exc.reason if isinstance(exc, CommandCaptureError) and exc.reason in ("timeout", "output-limit")
-                else diagnostic_reason(exc)
-            )
-            failure = {"sha": sha, "reason": "build command error", "diagnostic": diagnostic}
-        if failure is not None:
-            # Preserve earlier passing backports and discard only this attempt.
-            # Builds cannot write to source; all generated output is isolated.
-            runner.git(["reset", "--hard", pre_head])
-            print(f"backport-debug: sha={sha} result=build-skipped", file=sys.stderr)
-            skipped.append(sha); build_failed.append(failure); deferred.append(sha); continue
-        applied.append(sha)
-        print(f"backport-debug: sha={sha} result=applied", file=sys.stderr)
+    with backport_build_cache(runner) as volume:
+        cache = {"target_volume": volume} if volume is not None else {}
+        for sha in value.get("backport_candidates", []):
+            require_sha(sha)
+            present = runner.git([
+                "log", "-1", "--format=%H", "--fixed-strings", "--grep", f"(cherry picked from commit {sha})",
+            ]).stdout.strip()
+            if present:
+                print(f"backport-debug: sha={sha} result=already-present", file=sys.stderr)
+                skipped.append(sha); continue
+            pre_head = require_sha(runner.git(["rev-parse", "HEAD"]).stdout.strip())
+            if not baseline_checked:
+                # Do not attribute a pre-existing failure to the first backport.
+                print("backport-debug: stage=baseline-build", file=sys.stderr)
+                if locked_build(runner, **cache).returncode:
+                    raise MaintenanceError("backport baseline build failed")
+                baseline_checked = True
+            pick = runner.git(["cherry-pick", "-x", sha], check=False)
+            if pick.returncode:
+                status = runner.git(["status", "--porcelain=v1"]).stdout
+                if not has_unresolved_conflicts(status):
+                    pending = runner.git(["rev-parse", "--verify", "CHERRY_PICK_HEAD"], check=False)
+                    if pending.stdout.strip() == sha and not status.strip():
+                        runner.git(["cherry-pick", "--skip"])
+                        print(f"backport-debug: sha={sha} result=already-present-empty", file=sys.stderr)
+                        skipped.append(sha); continue
+                runner.git(["cherry-pick", "--abort"], check=False)
+                runner.git(["reset", "--hard", pre_head])
+                print(f"backport-debug: sha={sha} result=conflict-skipped", file=sys.stderr)
+                skipped.append(sha); conflicts.append(sha); deferred.append(sha); continue
+            failure = None
+            print(f"backport-debug: sha={sha} stage=locked-build", file=sys.stderr)
+            try:
+                result = locked_build(runner, **cache)
+                if result.returncode:
+                    failure = {"sha": sha, "reason": "build failed", "exit": result.returncode}
+            except MaintenanceError as exc:
+                diagnostic = (
+                    exc.reason if isinstance(exc, CommandCaptureError) and exc.reason in ("timeout", "output-limit")
+                    else diagnostic_reason(exc)
+                )
+                failure = {"sha": sha, "reason": "build command error", "diagnostic": diagnostic}
+            if failure is not None:
+                # Preserve earlier passing backports and discard only this attempt.
+                # Builds cannot write to source; all generated output is isolated.
+                runner.git(["reset", "--hard", pre_head])
+                print(f"backport-debug: sha={sha} result=build-skipped", file=sys.stderr)
+                skipped.append(sha); build_failed.append(failure); deferred.append(sha); continue
+            applied.append(sha)
+            print(f"backport-debug: sha={sha} result=applied", file=sys.stderr)
     value["backports_applied"] = applied; value["backports_conflict_skipped"] = conflicts
     value["backports_build_failed"] = build_failed
     value["backports_deferred"] = deferred; state.save(value)
