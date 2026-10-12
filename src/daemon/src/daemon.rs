@@ -2398,6 +2398,17 @@ async fn main() -> ExitCode {
                 info!("Stopped resolver");
             });
 
+            // systemd checks for the reload signal handler when it receives READY=1.
+            let mut sighup = match tokio::signal::unix::signal(
+                tokio::signal::unix::SignalKind::hangup(),
+            ) {
+                Ok(signal) => signal,
+                Err(e) => {
+                    error!("Failed to register SIGHUP handler: {}", e);
+                    return ExitCode::FAILURE;
+                }
+            };
+
             info!("Server started ...");
 
             if systemd_booted {
@@ -2435,11 +2446,7 @@ async fn main() -> ExitCode {
                     } => {
                         // Ignore
                     }
-                    Some(()) = async move {
-                        let sigterm = tokio::signal::unix::SignalKind::hangup();
-                        #[allow(clippy::unwrap_used)]
-                        tokio::signal::unix::signal(sigterm).unwrap().recv().await
-                    } => {
+                    Some(()) = sighup.recv() => {
                         // Ignore
                     }
                     Some(()) = async move {
