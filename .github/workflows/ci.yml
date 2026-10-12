@@ -45,6 +45,8 @@ jobs:
           persist-credentials: false
       - name: Test maintenance diagnostics and isolation
         run: PYTHONDONTWRITEBYTECODE=1 python3 .github/scripts/test_stable_maintenance.py
+      - name: Test slop guard policy and maintainer overrides
+        run: node --test .github/scripts/test_slop_checks.js
 
   build:
     name: Build
