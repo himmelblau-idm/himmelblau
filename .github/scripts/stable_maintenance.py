@@ -549,6 +549,48 @@ def parse_locked_cargo_vet_report(result: CommandResult) -> list[VetItem]:
     return list(dict.fromkeys(gaps))
 
 
+def parse_cargo_vet_suggest_report(result: CommandResult) -> list[VetItem]:
+    """Read review commands from cargo-vet's structured suggest report."""
+    error = "cargo-vet suggest failed without parseable audit requirements"
+    if result.returncode != 0:
+        raise MaintenanceError(error)
+    try:
+        report = json.loads(result.stdout)
+    except json.JSONDecodeError as exc:
+        raise MaintenanceError(error) from exc
+    if not isinstance(report, dict) or report.get("conclusion") != "fail (vetting)":
+        raise MaintenanceError(error)
+    suggest = report.get("suggest")
+    suggestions = suggest.get("suggestions") if isinstance(suggest, dict) else None
+    if not isinstance(suggestions, list) or not suggestions:
+        raise MaintenanceError(error)
+    items: list[VetItem] = []
+    for suggestion in suggestions:
+        if not isinstance(suggestion, dict):
+            raise MaintenanceError(error)
+        name = suggestion.get("name")
+        diff = suggestion.get("suggested_diff")
+        if not isinstance(name, str) or not PACKAGE_RE.fullmatch(name) or not isinstance(diff, dict):
+            raise MaintenanceError(error)
+        old, new = diff.get("from"), diff.get("to")
+        if old is not None and not isinstance(old, str):
+            raise MaintenanceError(error)
+        if not isinstance(new, str):
+            raise MaintenanceError(error)
+        try:
+            if old is None:
+                # A git target cannot be represented by the full-version audit
+                # that cargo-vet recommends for a new dependency.
+                SemVer.parse(new)
+            else:
+                SemVer.parse(old)
+                validate_vet_version(new)
+        except ValueError as exc:
+            raise MaintenanceError(error) from exc
+        items.append(VetItem(name, old, new))
+    return list(dict.fromkeys(items))
+
+
 def serialize_audit(crate: str, old: str | None, new: str) -> str:
     if not PACKAGE_RE.fullmatch(crate):
         raise MaintenanceError("invalid crate name in audit")
@@ -1421,16 +1463,14 @@ def locked_vet_gaps(runner: Runner, state_dir: Path) -> list[VetItem]:
 
 
 def reviewable_vet_gaps(runner: Runner, state_dir: Path) -> list[VetItem]:
-    """Combine authoritative locked gaps with cargo-vet's review suggestions."""
+    """Combine authoritative locked gaps with structured review suggestions."""
     locked = locked_vet_gaps(runner, state_dir)
     if not locked:
         return []
     suggested = isolated_vet_command(
-        runner, ["cargo", "vet"], state_dir, network=True,
+        runner, ["cargo", "vet", "suggest", "--output-format=json"], state_dir, network=True,
     )
-    suggestions = parse_cargo_vet_output(suggested.stdout + "\n" + suggested.stderr)
-    if suggested.returncode == 0 or not suggestions:
-        raise MaintenanceError("cargo-vet failed without parseable audit requirements")
+    suggestions = parse_cargo_vet_suggest_report(suggested)
     locked_keys = {(item.crate, item.new) for item in locked}
     suggestion_keys = {(item.crate, item.new) for item in suggestions}
     if suggestion_keys != locked_keys:
