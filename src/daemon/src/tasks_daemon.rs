@@ -612,6 +612,22 @@ async fn handle_tasks(stream: UnixStream, cfg: &HimmelblauConfig) {
         let span = span!(Level::INFO, "TaskRequest");
         let _ = span.enter();
         match next_req {
+            Some(Ok(TaskRequest::LearnNameMapping(supplied, authenticated_upn))) => {
+                let response = match cfg
+                    .learn_authenticated_short_name(&supplied, &authenticated_upn)
+                {
+                    Ok(true) => TaskResponse::Success(0),
+                    Ok(false) => TaskResponse::Success(2),
+                    Err(error) => {
+                        warn!("Failed persisting authenticated name mapping: {}", error);
+                        TaskResponse::Error(error)
+                    }
+                };
+                if let Err(error) = reqs.send(response).await {
+                    error!("Error -> {:?}", error);
+                    return;
+                }
+            }
             Some(Ok(TaskRequest::HomeDirectory(info))) => {
                 debug!("Received task -> HomeDirectory(...)");
                 let domain = split_username(&info.name).map(|(_, domain)| domain);

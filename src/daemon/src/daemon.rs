@@ -287,6 +287,27 @@ async fn is_account_sudoer(
     false
 }
 
+fn authenticated_name_mapping_request(
+    supplied: Option<&str>,
+    authenticated_upn: &str,
+    response: &PamAuthResponse,
+    enabled: bool,
+) -> Option<TaskRequest> {
+    let supplied = supplied?;
+    if enabled
+        && matches!(response, PamAuthResponse::Success)
+        && split_username(supplied).is_some()
+        && supplied.eq_ignore_ascii_case(authenticated_upn)
+    {
+        Some(TaskRequest::LearnNameMapping(
+            supplied.to_string(),
+            authenticated_upn.to_string(),
+        ))
+    } else {
+        None
+    }
+}
+
 async fn submit_local_groups_task(
     task_channel_tx: &Sender<AsyncTaskRequest>,
     account_id: String,
@@ -424,6 +445,7 @@ async fn handle_client(
 
     let mut reqs = Framed::new(sock, ClientCodec);
     let mut pam_auth_session_state = None;
+    let mut pam_supplied_name: Option<String> = None;
 
     // Setup a broadcast channel so that if we have an unexpected disconnection, we can
     // tell consumers to stop work.
@@ -431,6 +453,15 @@ async fn handle_client(
 
     trace!("Waiting for requests ...");
     while let Some(Ok(req)) = reqs.next().await {
+        let (req, supplied_name) = match req {
+            ClientRequest::PamAuthenticateInitWithName(
+                id, service, no_hello_pin, force_reauth, supplied,
+            ) => (
+                ClientRequest::PamAuthenticateInit(id, service, no_hello_pin, force_reauth),
+                Some(supplied),
+            ),
+            request => (request, None),
+        };
         let resp = match req {
             ClientRequest::NssAccounts => {
                 trace!("nssaccounts req");
@@ -511,7 +542,9 @@ async fn handle_client(
                         ClientResponse::Error
                     })
             }
+            ClientRequest::PamAuthenticateInitWithName(..) => unreachable!("normalized above"),
             ClientRequest::PamAuthenticateInit(account_id, service, no_hello_pin, force_reauth) => {
+                pam_supplied_name = supplied_name;
                 let account_id = account_id.to_lowercase();
                 let span = span!(Level::INFO, "pam authenticate init");
                 trace!("pam authenticate init");
@@ -816,6 +849,28 @@ async fn handle_client(
                                                             account_id.clone(),
                                                         )
                                                         .await;
+                                                    }
+
+                                                    if let Some(task) = authenticated_name_mapping_request(
+                                                        pam_supplied_name.take().as_deref(),
+                                                        &account_id,
+                                                        &resp,
+                                                        cfg.learned_name_mapping_enabled(),
+                                                    ) {
+                                                        let (tx, rx) = oneshot::channel();
+                                                        if task_channel_tx
+                                                            .send_timeout((task, tx), Duration::from_secs(1))
+                                                            .await
+                                                            .is_err()
+                                                        {
+                                                            warn!("Unable to queue authenticated name mapping");
+                                                        } else {
+                                                            match time::timeout(Duration::from_secs(5), rx).await {
+                                                                Ok(Ok(TaskOutcome::Status(0))) => debug!("Persisted authenticated name mapping"),
+                                                                Ok(Ok(TaskOutcome::Status(2))) => debug!("Name mapping skipped or already learned"),
+                                                                _ => warn!("Authenticated name mapping was not confirmed persisted"),
+                                                            }
+                                                        }
                                                     }
 
                                                     ClientResponse::PamAuthenticateStepResponse(resp)
@@ -1444,6 +1499,18 @@ mod tests {
     use super::*;
 
     const ACCOUNT_ID: &str = "user@example.com";
+
+    #[test]
+    fn learned_name_task_requires_daemon_verified_success_and_exact_upn() {
+        let success = PamAuthResponse::Success;
+        assert!(authenticated_name_mapping_request(Some("alice@example.com"), "alice@example.com", &success, true).is_some());
+        assert!(authenticated_name_mapping_request(Some("Alice@Example.com"), "alice@example.com", &success, true).is_some());
+        assert!(authenticated_name_mapping_request(Some("alice"), "alice@example.com", &success, true).is_none());
+        assert!(authenticated_name_mapping_request(Some("other@example.com"), "alice@example.com", &success, true).is_none());
+        assert!(authenticated_name_mapping_request(None, "alice@example.com", &success, true).is_none());
+        assert!(authenticated_name_mapping_request(Some("alice@example.com"), "alice@example.com", &success, false).is_none());
+        assert!(authenticated_name_mapping_request(Some("alice@example.com"), "alice@example.com", &PamAuthResponse::Denied("denied".to_string()), true).is_none());
+    }
 
     #[test]
     fn intune_policy_throttle_allows_first_run_and_marks_in_flight() {

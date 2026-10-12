@@ -53,7 +53,7 @@ impl MappedNameCache {
         let path = Path::new(db_path);
         let mut writable = false;
 
-        if !path.exists() && is_root {
+        if !path.exists() && is_root && *mode == Mode::ReadWrite {
             if let Some(parent) = path.parent() {
                 fs::create_dir_all(parent)
                     .map_err(|_| rusqlite::Error::InvalidPath(parent.into()))?;
@@ -163,24 +163,19 @@ impl MappedNameCache {
         }
     }
 
-    pub fn insert_learned_mapping(&self, upn: &str, mapped_name: &str) -> Result<()> {
+    pub fn insert_learned_mapping(&self, upn: &str, mapped_name: &str) -> Result<bool> {
         if !upn.contains('@') || upn == mapped_name {
-            return Ok(());
+            return Ok(false);
         }
-
-        if let Some(conn) = &self.conn {
-            if self.writable {
-                conn.execute(
-                    "INSERT OR IGNORE INTO learned_mapping (upn, mapped_name) VALUES (?1, ?2)",
-                    params![upn, mapped_name],
-                )
-                .map_err(|e| {
-                    error!("Failed to insert learned name mapping for {}: {}", upn, e);
-                    e
-                })?;
-            }
+        if !self.writable {
+            return Err(rusqlite::Error::InvalidQuery);
         }
-        Ok(())
+        let conn = self.conn.as_ref().ok_or(rusqlite::Error::InvalidQuery)?;
+        let changed = conn.execute(
+            "INSERT OR IGNORE INTO learned_mapping (upn, mapped_name) VALUES (?1, ?2)",
+            params![upn, mapped_name],
+        )?;
+        Ok(changed == 1)
     }
 
     pub fn get_learned_mapped_name(&self, upn: &str) -> Option<String> {
@@ -218,6 +213,21 @@ mod tests {
             .join(format!("himmelblau_mapping_test_{}.db", Uuid::new_v4()))
             .to_string_lossy()
             .into_owned()
+    }
+
+    #[test]
+    fn read_only_learning_is_an_error_instead_of_false_success() {
+        let path = temp_db();
+        let writable = MappedNameCache::new_for_test(&path).unwrap();
+        let reader = MappedNameCache::new(&path, &Mode::ReadOnly).unwrap();
+        assert!(reader.insert_learned_mapping("alice@example.com", "alice").is_err());
+        assert_eq!(reader.get_learned_mapped_name("alice@example.com"), None);
+        assert!(writable.insert_learned_mapping("alice@example.com", "alice").unwrap());
+        assert!(!writable.insert_learned_mapping("alice@example.com", "alice").unwrap());
+        assert_eq!(reader.get_upn_from_learned_name("alice"), Some("alice@example.com".to_string()));
+        drop(reader);
+        drop(writable);
+        let _ = fs::remove_file(path);
     }
 
     #[test]

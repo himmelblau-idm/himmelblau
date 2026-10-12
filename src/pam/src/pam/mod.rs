@@ -211,10 +211,6 @@ fn should_capture_keyring_secret(prompt: &str) -> bool {
     prompt.contains("pin") || prompt.contains("password")
 }
 
-fn should_learn_short_name_after_auth(result: &PamResultCode, supplied_name: &str) -> bool {
-    *result == PamResultCode::PAM_SUCCESS && split_username(supplied_name).is_some()
-}
-
 pub struct KeyringCaptureMessagePrinter {
     inner: Arc<dyn MessagePrinter>,
     captured: Arc<Mutex<Option<String>>>,
@@ -484,13 +480,8 @@ impl PamHooks for PamKanidm {
             &service,
             opts,
             msg_printer,
+            Some(&supplied_account_id),
         );
-
-        // Preserve the original PAM username and only learn after a successful
-        // authentication of an explicitly supplied full UPN.
-        if should_learn_short_name_after_auth(&result, &supplied_account_id) {
-            cfg.learn_authenticated_short_name(&supplied_account_id, &account_id);
-        }
 
         if set_authtok && result == PamResultCode::PAM_SUCCESS {
             if let Ok(Some(secret)) = keyring_secret.lock().map(|s| s.clone()) {
@@ -1113,22 +1104,6 @@ impl PamHooks for PamKanidm {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn failed_authentication_never_triggers_short_name_learning() {
-        assert!(!should_learn_short_name_after_auth(
-            &PamResultCode::PAM_AUTH_ERR,
-            "alice@company.com"
-        ));
-        assert!(!should_learn_short_name_after_auth(
-            &PamResultCode::PAM_SUCCESS,
-            "alice"
-        ));
-        assert!(should_learn_short_name_after_auth(
-            &PamResultCode::PAM_SUCCESS,
-            "alice@company.com"
-        ));
-    }
 
     #[test]
     fn test_should_capture_keyring_secret_pin_prompts() {

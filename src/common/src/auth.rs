@@ -1479,6 +1479,7 @@ pub fn wait_for_daemon_client(
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn authenticate_with_client(
     daemon_client: DaemonClientBlocking,
     authtok: Option<String>,
@@ -1487,6 +1488,7 @@ pub fn authenticate_with_client(
     service: &str,
     opts: Options,
     msg_printer: Arc<dyn MessagePrinter>,
+    supplied_name: Option<&str>,
 ) -> PamResultCode {
     i18n::init();
     let mut state = AuthenticateState {
@@ -1501,13 +1503,24 @@ pub fn authenticate_with_client(
         polling_interval: 2,
     };
 
-    // This is the initial request to the daemon
-    let mut req = ClientRequest::PamAuthenticateInit(
-        state.account_id.to_owned(),
-        state.service.to_owned(),
-        state.opts.no_hello_pin,
-        state.opts.force_reauth,
-    );
+    // Carry the original PAM name without trusting it as the authenticated identity.
+    let mut req = match supplied_name {
+        Some(name) if state.cfg.learned_name_mapping_enabled() => {
+            ClientRequest::PamAuthenticateInitWithName(
+                state.account_id.to_owned(),
+                state.service.to_owned(),
+                state.opts.no_hello_pin,
+                state.opts.force_reauth,
+                name.to_owned(),
+            )
+        }
+        _ => ClientRequest::PamAuthenticateInit(
+            state.account_id.to_owned(),
+            state.service.to_owned(),
+            state.opts.no_hello_pin,
+            state.opts.force_reauth,
+        ),
+    };
 
     loop {
         let res = authenticate_request_response(&mut state, &req);
@@ -1540,6 +1553,7 @@ pub fn authenticate(
         service,
         opts,
         msg_printer,
+        None,
     )
 }
 
