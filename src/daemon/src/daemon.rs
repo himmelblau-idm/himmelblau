@@ -1726,6 +1726,12 @@ mod tests {
     }
 }
 
+fn notify_noop_reload() -> io::Result<()> {
+    let monotonic_usec = NotifyState::monotonic_usec_now()?;
+    sd_notify::notify(&[NotifyState::Reloading, monotonic_usec])?;
+    sd_notify::notify(&[NotifyState::Ready])
+}
+
 async fn process_etc_passwd_group(
     cachelayer: &Resolver<HimmelblauMultiProvider>,
 ) -> Result<(), Box<dyn Error>> {
@@ -2447,7 +2453,11 @@ async fn main() -> ExitCode {
                         // Ignore
                     }
                     Some(()) = sighup.recv() => {
-                        // Ignore
+                        if systemd_booted {
+                            if let Err(e) = notify_noop_reload() {
+                                error!("Failed to acknowledge systemd reload: {}", e);
+                            }
+                        }
                     }
                     Some(()) = async move {
                         let sigterm = tokio::signal::unix::SignalKind::user_defined1();
