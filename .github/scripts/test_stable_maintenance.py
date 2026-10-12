@@ -39,7 +39,7 @@ VET_LOCKED_FAILURE = json.dumps({
     "failures": [{"name": "example", "version": "1.0.0", "missing_criteria": ["safe-to-deploy"]}],
     "suggest": None,
 })
-VET_SUGGEST_REPORT = json.dumps({
+VET_CHECK_REPORT = json.dumps({
     "conclusion": "fail (vetting)",
     "failures": [{"name": "example", "version": "1.0.0", "missing_criteria": ["safe-to-deploy"]}],
     "suggest": {"suggestions": [{
@@ -1405,36 +1405,76 @@ class CargoVetTests(unittest.TestCase):
 
     def test_locked_gaps_must_match_review_suggestions(self):
         locked = sm.CommandResult(1, VET_LOCKED_FAILURE, "")
-        mismatched_report = json.loads(VET_SUGGEST_REPORT)
+        mismatched_report = json.loads(VET_CHECK_REPORT)
         mismatched_report["suggest"]["suggestions"][0]["name"] = "other"
-        mismatched = sm.CommandResult(0, json.dumps(mismatched_report), "")
+        mismatched = sm.CommandResult(255, json.dumps(mismatched_report), "")
         with mock.patch.object(sm, "isolated_vet_command", side_effect=[locked, mismatched]), \
              self.assertRaisesRegex(sm.MaintenanceError, "disagree"):
             sm.reviewable_vet_gaps(mock.Mock(), Path("state"))
 
-    def test_structured_suggest_report_is_strict(self):
+    def test_failing_check_preserves_suggestable_exemptions_and_targets_only_new_gaps(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "source"
+            store = root / "supply-chain"
+            store.mkdir(parents=True)
+            config = ('[[exemptions.already-exempted]]\nversion = "1.0.0"\n'
+                      'criteria = ["safe-to-deploy"]\nsuggest = true\n')
+            (store / "config.toml").write_text(config)
+            (store / "audits.toml").write_text("# Existing audits\n")
+            (store / "imports.lock").write_text("# Existing imports\n")
+            runner = mock.Mock(root=root)
+            commands = []
+            def contained(_runner, command, **kwargs):
+                commands.append(command)
+                self.assertEqual((kwargs["vet_store"] / "config.toml").read_text(), config)
+                self.assertFalse(kwargs["source_rw"])
+                self.assertFalse(kwargs["cache_rw"])
+                if command == ["cargo", "vet", "check", "--output-format=json"]:
+                    self.assertTrue(kwargs["network"])
+                    return sm.CommandResult(255, VET_CHECK_REPORT, "")
+                self.assertEqual(command, ["cargo", "vet", "--locked", "--frozen", "--output-format=json"])
+                self.assertFalse(kwargs["network"])
+                return sm.CommandResult(255, VET_LOCKED_FAILURE, "")
+            with mock.patch.object(sm, "contained_repo_command", side_effect=contained):
+                items = sm.reviewable_vet_gaps(runner, Path(tmp))
+            self.assertEqual(items, [sm.VetItem("example", "0.9.0", "1.0.0")])
+            self.assertEqual(len(commands), 2)
+            self.assertEqual((store / "config.toml").read_text(), config)
+
+    def test_unlocked_check_failure_set_must_match_authoritative_locked_gaps(self):
+        report = json.loads(VET_CHECK_REPORT)
+        report["failures"].append({"name": "unexpected", "version": "2.0.0",
+                                   "missing_criteria": ["safe-to-deploy"]})
+        with mock.patch.object(sm, "isolated_vet_command", side_effect=[
+            sm.CommandResult(255, VET_LOCKED_FAILURE, ""), sm.CommandResult(255, json.dumps(report), ""),
+        ]), self.assertRaisesRegex(sm.MaintenanceError, "disagree"):
+            sm.reviewable_vet_gaps(mock.Mock(), Path("state"))
+
+    def test_structured_failing_check_report_is_strict(self):
         self.assertEqual(
-            sm.parse_cargo_vet_suggest_report(sm.CommandResult(0, VET_SUGGEST_REPORT, "")),
+            sm.parse_cargo_vet_check_suggestions(sm.CommandResult(255, VET_CHECK_REPORT, "")),
             [sm.VetItem("example", "0.9.0", "1.0.0")],
         )
         invalid = [
-            (1, VET_SUGGEST_REPORT), (0, VET_SUCCESS), (0, "not json"),
-            (0, '{"conclusion":"fail (vetting)","suggest":null}'),
+            (0, VET_CHECK_REPORT), (-9, VET_CHECK_REPORT), (255, VET_SUCCESS), (255, "not json"),
+            (255, '{"conclusion":"fail (vetting)","suggest":null}'),
         ]
         for code, output in invalid:
             with self.subTest(code=code, output=output), self.assertRaises(sm.MaintenanceError):
-                sm.parse_cargo_vet_suggest_report(sm.CommandResult(code, output, ""))
+                sm.parse_cargo_vet_check_suggestions(sm.CommandResult(code, output, ""))
 
-    def test_structured_suggest_report_supports_inspect_and_git_delta(self):
-        report = json.loads(VET_SUGGEST_REPORT)
+    def test_structured_check_report_supports_inspect_and_git_delta(self):
+        report = json.loads(VET_CHECK_REPORT)
         report["suggest"]["suggestions"] = [
             {"name": "fresh", "suggested_diff": {"from": None, "to": "1.2.3"}},
             {"name": "git-delta", "suggested_diff": {
                 "from": "1.0.0", "to": "1.0.1@git:" + "a" * 40,
             }},
         ]
+        report["failures"] = [{"name": name, "version": version, "missing_criteria": ["safe-to-deploy"]}
+                              for name, version in (("fresh", "1.2.3"), ("git-delta", "1.0.1@git:" + "a" * 40))]
         self.assertEqual(
-            sm.parse_cargo_vet_suggest_report(sm.CommandResult(0, json.dumps(report), "")),
+            sm.parse_cargo_vet_check_suggestions(sm.CommandResult(255, json.dumps(report), "")),
             [sm.VetItem("fresh", None, "1.2.3"),
              sm.VetItem("git-delta", "1.0.0", "1.0.1@git:" + "a" * 40)],
         )
@@ -1471,7 +1511,7 @@ class CargoVetTests(unittest.TestCase):
 
             runner.git.side_effect = git
             vet_failed = sm.CommandResult(1, VET_LOCKED_FAILURE, "")
-            suggestion = sm.CommandResult(0, VET_SUGGEST_REPORT, "")
+            suggestion = sm.CommandResult(255, VET_CHECK_REPORT, "")
             vet_clean = sm.CommandResult(0, VET_SUCCESS, "")
             with mock.patch.object(sm, "contained_repo_command", side_effect=[vet_failed, suggestion, vet_clean]), \
                  mock.patch.object(sm, "AzureAI", return_value=mock.Mock()), \
@@ -1524,7 +1564,7 @@ class CargoVetTests(unittest.TestCase):
                     nonlocal locked_calls
                     self.assertEqual(
                         kwargs["network"],
-                        command == ["cargo", "vet", "suggest", "--output-format=json"],
+                        command == ["cargo", "vet", "check", "--output-format=json"],
                     )
                     self.assertFalse(kwargs["source_rw"])
                     self.assertFalse(kwargs["cache_rw"])
@@ -1532,8 +1572,8 @@ class CargoVetTests(unittest.TestCase):
                     calls.append(store)
                     audits = (root / "supply-chain/audits.toml").read_text()
                     self.assertEqual((store / "audits.toml").read_text(), audits)
-                    if command == ["cargo", "vet", "suggest", "--output-format=json"]:
-                        return sm.CommandResult(0, VET_SUGGEST_REPORT, "")
+                    if command == ["cargo", "vet", "check", "--output-format=json"]:
+                        return sm.CommandResult(255, VET_CHECK_REPORT, "")
                     self.assertEqual(command, ["cargo", "vet", "--locked", "--frozen", "--output-format=json"])
                     locked_calls += 1
                     if locked_calls == 2 and outcome in ("accepted", "final-gap"):
@@ -1668,9 +1708,9 @@ class CargoVetTests(unittest.TestCase):
             })
             stores = []
             def contained(_runner, command, **kwargs):
-                if command == ["cargo", "vet", "suggest", "--output-format=json"]:
+                if command == ["cargo", "vet", "check", "--output-format=json"]:
                     self.assertTrue(kwargs["network"])
-                    return sm.CommandResult(0, VET_SUGGEST_REPORT, "")
+                    return sm.CommandResult(255, VET_CHECK_REPORT, "")
                 self.assertEqual(command, ["cargo", "vet", "--locked", "--frozen", "--output-format=json"])
                 self.assertFalse(kwargs["network"])
                 self.assertFalse(kwargs["source_rw"])
