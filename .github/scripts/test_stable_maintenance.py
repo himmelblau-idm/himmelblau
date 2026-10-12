@@ -2165,8 +2165,10 @@ class MutationBoundaryTests(unittest.TestCase):
             runner.git.side_effect = git
             output = io.StringIO()
             with mock.patch.object(sm, "AzureAI", side_effect=AssertionError("AI must not resolve conflicts")), \
+                 mock.patch.object(sm, "locked_build", return_value=sm.CommandResult(0, "", "")) as build, \
                  mock.patch.object(sm.sys, "stderr", output):
                 sm.phase_apply_backports(mock.Mock(), state, runner)
+            build.assert_called_once_with(runner)
             self.assertEqual(state.load()["backports_applied"], [])
             self.assertEqual(state.load()["backports_conflict_skipped"], [sha])
             self.assertIn(f"backport-debug: sha={sha} result=conflict-skipped", output.getvalue())
@@ -2510,8 +2512,10 @@ class MarkerConflictAndAITests(unittest.TestCase):
                     self.assertIn(f"backport-debug: sha={sha} check={check} decision=true", output.getvalue())
             self.assertNotIn(f"backport-debug: sha={failed}", output.getvalue())
             self.assertIn("backport-summary: phase=classify candidates=3 selected=2 skipped=0 manual_review=1", output.getvalue())
-            with mock.patch.object(sm.sys, "stderr", output):
+            with mock.patch.object(sm.sys, "stderr", output), \
+                 mock.patch.object(sm, "locked_build", return_value=sm.CommandResult(0, "", "")) as build:
                 sm.phase_apply_backports(mock.Mock(), state, runner)
+            self.assertEqual(build.call_count, 3)  # Baseline and both attempted picks.
             self.assertEqual(state.load()["backports_applied"], [earlier, later])
             for sha in (earlier, later):
                 self.assertIn(f"backport-debug: sha={sha} result=applied", output.getvalue())
@@ -2732,6 +2736,88 @@ class MaintenanceHistoryTests(unittest.TestCase):
         runner.git(["add", "."])
         runner.git(["commit", "-m", subject])
         return runner.git(["rev-parse", "HEAD"]).stdout.strip()
+
+    def test_failed_backport_build_restores_earlier_work_and_continues(self):
+        for failure in ("missing-import", "timeout", "capture-error"):
+            with self.subTest(failure=failure), tempfile.TemporaryDirectory() as tmp:
+                runner = self.repository(Path(tmp) / "repo")
+                root = runner.root
+                (root / "common.py").write_text("def existing_helper(): return 1\n")
+                (root / "cli.py").write_text("from common import existing_helper\nassert existing_helper() > 0\n")
+                baseline = self.commit(runner, "Buildable baseline")
+                runner.git(["branch", "-f", "stable-4.x", baseline])
+                (root / "common.py").write_text("def existing_helper(): return 2\n")
+                earlier = self.commit(runner, "Earlier independent fix")
+                (root / "cli.py").write_text("from common import resolve_hsm_type\n")
+                broken = self.commit(runner, "Fix requiring an absent helper")
+                (root / "later.txt").write_text("Later independent fix\n")
+                later = self.commit(runner, "Later independent fix")
+                runner.git(["checkout", "stable-4.x"])
+                state = sm.State(Path(tmp) / "state")
+                state.save({"branch": "stable-4.x", "cutoff": baseline, "main_head": later,
+                            "backport_candidates": [earlier, broken, later]})
+                snapshots = []
+                def build(current):
+                    self.assertIs(current, runner)
+                    head = runner.git(["rev-parse", "HEAD"]).stdout.strip()
+                    snapshots.append(head)
+                    bad_import = "resolve_hsm_type" in (root / "cli.py").read_text()
+                    if bad_import and failure != "missing-import":
+                        if failure == "timeout":
+                            raise sm.CommandCaptureError("command timed out", "timeout", sm.CommandResult(-9, "", "secret"))
+                        raise sm.MaintenanceError("secret capture failure")
+                    # Real subprocess import check reproduces a missing helper;
+                    # Cargo/container execution is tested separately.
+                    return runner.run([sys.executable, "-B", "-c", "import cli"], check=False)
+                output = io.StringIO()
+                with mock.patch.object(sm, "locked_build", side_effect=build), \
+                     mock.patch.object(sm.sys, "stderr", output):
+                    sm.phase_apply_backports(mock.Mock(), state, runner)
+                value = state.load()
+                self.assertEqual(len(snapshots), 4)  # Baseline, good, bad, later.
+                self.assertEqual(value["backports_applied"], [earlier, later])
+                self.assertEqual(value["backports_conflict_skipped"], [])
+                self.assertEqual(value["backports_deferred"], [broken])
+                self.assertEqual(value["backports_build_failed"][0]["sha"], broken)
+                self.assertEqual((root / "common.py").read_text(), "def existing_helper(): return 2\n")
+                self.assertNotIn("resolve_hsm_type", (root / "cli.py").read_text())
+                self.assertTrue((root / "later.txt").is_file())
+                self.assertEqual(runner.git(["status", "--porcelain"]).stdout, "")
+                history = runner.git(["log", "--format=%H"]).stdout.splitlines()
+                self.assertNotIn(snapshots[2], history)
+                self.assertIn(snapshots[1], history)
+                self.assertIn(f"sha={broken} result=build-skipped", output.getvalue())
+                self.assertNotIn("secret", output.getvalue())
+                self.assertEqual(sm.maintenance_main_through(value), baseline)
+                self.assertIn("Backports reverted after build failure: 1", sm.build_pr_body(value))
+                self.assertIn("Backports Build Failed", "\n".join(sm.sanitized_state_details(value)))
+
+    def test_backport_baseline_failure_does_not_mutate_checkout(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            runner = self.repository(Path(tmp) / "repo")
+            (runner.root / "fix.txt").write_text("candidate\n")
+            candidate = self.commit(runner, "Candidate")
+            runner.git(["checkout", "stable-4.x"])
+            before = runner.git(["rev-parse", "HEAD"]).stdout
+            state = sm.State(Path(tmp) / "state")
+            state.save({"branch": "stable-4.x", "backport_candidates": [candidate]})
+            with mock.patch.object(sm, "locked_build", return_value=sm.CommandResult(101, "", "")), \
+                 self.assertRaisesRegex(sm.MaintenanceError, "baseline build failed"):
+                sm.phase_apply_backports(mock.Mock(), state, runner)
+            self.assertEqual(runner.git(["rev-parse", "HEAD"]).stdout, before)
+            self.assertFalse((runner.root / "fix.txt").exists())
+            self.assertEqual(runner.git(["status", "--porcelain"]).stdout, "")
+
+    def test_already_present_backport_does_not_build(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            state = sm.State(Path(tmp) / "state")
+            state.save({"branch": "stable-4.x", "backport_candidates": ["a" * 40]})
+            runner = mock.Mock()
+            runner.git.return_value = sm.CommandResult(0, "b" * 40 + "\n", "")
+            with mock.patch.object(sm, "locked_build", side_effect=AssertionError("no new attempt")):
+                sm.phase_apply_backports(mock.Mock(), state, runner)
+            self.assertEqual(state.load()["backports_applied"], [])
+            self.assertEqual(state.load()["backports_deferred"], [])
 
     def test_recent_direct_backport_does_not_hide_older_fixes(self):
         with tempfile.TemporaryDirectory() as tmp:

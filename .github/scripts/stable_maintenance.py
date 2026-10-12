@@ -2699,6 +2699,8 @@ def phase_classify_backports(args: argparse.Namespace, state: State, runner: Run
 
 def phase_apply_backports(args: argparse.Namespace, state: State, runner: Runner) -> None:
     value = state.load(); applied, skipped, deferred = [], [], []
+    conflicts, build_failed = [], []
+    baseline_checked = False
     for sha in value.get("backport_candidates", []):
         require_sha(sha)
         present = runner.git([
@@ -2708,6 +2710,12 @@ def phase_apply_backports(args: argparse.Namespace, state: State, runner: Runner
             print(f"backport-debug: sha={sha} result=already-present", file=sys.stderr)
             skipped.append(sha); continue
         pre_head = require_sha(runner.git(["rev-parse", "HEAD"]).stdout.strip())
+        if not baseline_checked:
+            # Do not attribute a pre-existing failure to the first backport.
+            print("backport-debug: stage=baseline-build", file=sys.stderr)
+            if locked_build(runner).returncode:
+                raise MaintenanceError("backport baseline build failed")
+            baseline_checked = True
         pick = runner.git(["cherry-pick", "-x", sha], check=False)
         if pick.returncode:
             status = runner.git(["status", "--porcelain=v1"]).stdout
@@ -2720,13 +2728,32 @@ def phase_apply_backports(args: argparse.Namespace, state: State, runner: Runner
             runner.git(["cherry-pick", "--abort"], check=False)
             runner.git(["reset", "--hard", pre_head])
             print(f"backport-debug: sha={sha} result=conflict-skipped", file=sys.stderr)
-            skipped.append(sha); deferred.append(sha); continue
+            skipped.append(sha); conflicts.append(sha); deferred.append(sha); continue
+        failure = None
+        print(f"backport-debug: sha={sha} stage=locked-build", file=sys.stderr)
+        try:
+            result = locked_build(runner)
+            if result.returncode:
+                failure = {"sha": sha, "reason": "build failed", "exit": result.returncode}
+        except MaintenanceError as exc:
+            diagnostic = (
+                exc.reason if isinstance(exc, CommandCaptureError) and exc.reason in ("timeout", "output-limit")
+                else diagnostic_reason(exc)
+            )
+            failure = {"sha": sha, "reason": "build command error", "diagnostic": diagnostic}
+        if failure is not None:
+            # Preserve earlier passing backports and discard only this attempt.
+            # Builds cannot write to source; all generated output is isolated.
+            runner.git(["reset", "--hard", pre_head])
+            print(f"backport-debug: sha={sha} result=build-skipped", file=sys.stderr)
+            skipped.append(sha); build_failed.append(failure); deferred.append(sha); continue
         applied.append(sha)
         print(f"backport-debug: sha={sha} result=applied", file=sys.stderr)
-    value["backports_applied"] = applied; value["backports_conflict_skipped"] = skipped
+    value["backports_applied"] = applied; value["backports_conflict_skipped"] = conflicts
+    value["backports_build_failed"] = build_failed
     value["backports_deferred"] = deferred; state.save(value)
-    state.event("apply-backports", "backports applied", applied=len(applied), skipped=len(skipped))
-    print(f"backport-summary: phase=apply applied={len(applied)} skipped={len(skipped)}", file=sys.stderr)
+    state.event("apply-backports", "backports applied", applied=len(applied), skipped=len(skipped), build_failed=len(build_failed))
+    print(f"backport-summary: phase=apply applied={len(applied)} skipped={len(skipped)} build_failed={len(build_failed)}", file=sys.stderr)
 
 
 def _replace_workspace_version(path: Path, old: str, new: str) -> None:
@@ -2866,6 +2893,7 @@ def sanitized_state_details(value: Mapping[str, Any], *, max_items: int = 50) ->
         "already_covered", "vet_accepted", "vet_rejected", "dependabot_imported", "dependabot_skipped",
         "backport_candidates", "backport_skipped", "backports_applied", "backports_conflict_skipped", "gate_results",
         "backports_deferred",
+        "backports_build_failed",
     )
     lines: list[str] = []
     for key in keys:
@@ -2901,6 +2929,7 @@ def build_pr_body(value: Mapping[str, Any], *, max_bytes: int = 2400) -> str:
         f"- Newly AI-vetted deltas: {len(value.get('vet_accepted', []))}",
         f"- Dependabot PRs imported: {len(value.get('dependabot_imported', []))} (Cargo uses the audited dependency phase)",
         f"- Bug fixes backported: {len(value.get('backports_applied', []))}",
+        f"- Backports reverted after build failure: {len(value.get('backports_build_failed', []))}",
         f"- Backports requiring manual review: {len(value.get('backport_review_required', [])) + len(value.get('backports_deferred', []))}",
         f"- Action PRs skipped: {len(value.get('dependabot_skipped', []))}; quarantined releases: {len(value.get('quarantine_exclusions', []))}",
     ]
@@ -2919,7 +2948,7 @@ def build_pr_body(value: Mapping[str, Any], *, max_bytes: int = 2400) -> str:
     ]
     # Prioritize actionable changes and deferrals; never dump already-covered
     # dependencies into the PR. The complete bounded inventory is in the report.
-    for key in ("backport_review_required", "backports_deferred", "backports_applied", "dependabot_imported", "dependabot_skipped", "dependency_updates"):
+    for key in ("backport_review_required", "backports_build_failed", "backports_deferred", "backports_applied", "dependabot_imported", "dependabot_skipped", "dependency_updates"):
         for item in value.get(key, [])[:3]:
             if isinstance(item, dict):
                 identity = item.get("sha", item.get("number", item.get("crate", "item")))
