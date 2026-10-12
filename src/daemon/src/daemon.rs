@@ -384,11 +384,16 @@ async fn reconcile_local_groups_once(
         }
     };
 
-    for account in accounts {
+    for mut account in accounts {
         let is_sudoer = if sudo_group_ids.is_empty() {
             false
         } else {
-            let token = match cachelayer.refresh_cached_usertoken(&account.name).await {
+            let token = match cachelayer
+                .refresh_cached_usertoken(
+                    account.canonical_name.as_deref().unwrap_or(&account.name),
+                )
+                .await
+            {
                 Ok(Some(token)) => token,
                 Ok(None) => {
                     trace!(
@@ -406,12 +411,27 @@ async fn reconcile_local_groups_once(
                 }
             };
 
+            // Refresh may have changed the local alias. Re-read by UID so the
+            // group task never uses an old name now owned by another account.
+            account = match cachelayer.get_nssaccount_gid(token.gidnumber).await {
+                Ok(Some(account)) => account,
+                _ => continue,
+            };
             token
                 .groups
                 .iter()
                 .any(|group| sudo_group_ids.contains(&group.uuid))
         };
 
+        // The task daemon applies CN/custom name mapping before modifying local
+        // groups. Check that final name as well as the cached name and UID.
+        let local_name = cfg.map_upn_to_name(&account.name);
+        if cachelayer
+            .check_nxset(Some(&local_name), Some(account.uid))
+            .await
+        {
+            continue;
+        }
         if submit_local_groups_task(task_channel_tx, account.name.clone(), is_sudoer)
             .await
             .is_err()

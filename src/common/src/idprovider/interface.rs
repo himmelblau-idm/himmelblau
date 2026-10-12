@@ -80,6 +80,10 @@ pub struct GroupToken {
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct UserToken {
+    /// True only for a provisional account created before authenticated metadata.
+    /// Old cache entries are treated as authoritative, never guessed from groups.
+    #[serde(default)]
+    pub is_placeholder: bool,
     pub name: String,
     pub spn: String,
     pub uuid: Uuid,
@@ -93,6 +97,24 @@ pub struct UserToken {
     pub tenant_id: Option<Uuid>,
     // Defaults to false.
     pub valid: bool,
+}
+
+impl UserToken {
+    /// Is this a record the provider fabricated for a name it could not reject,
+    /// rather than an authenticated identity? New records carry an explicit
+    /// marker. Rows cached before the marker existed are recognised only by the
+    /// exact shape of the old placeholder: no display name, and a single group
+    /// which is the user's own uuid and spn. Authenticated tokens carry a
+    /// display name, so a synthetic primary group alone never qualifies.
+    pub fn is_provisional(&self) -> bool {
+        self.is_placeholder
+            || (self.displayname.is_empty()
+                && matches!(
+                    self.groups.as_slice(),
+                    [group] if group.uuid == self.uuid
+                        && group.spn.eq_ignore_ascii_case(&self.spn)
+                ))
+    }
 }
 
 pub enum AuthCredHandler {
