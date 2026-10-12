@@ -37,7 +37,10 @@ def github_api(path, *, payload=None, not_found=False):
         },
         method="POST" if payload is not None else "GET",
     )
-    for attempt in range(3):
+    # Dispatch POSTs are not idempotent. An ambiguous failure must wait for
+    # the next reconciliation scan to observe runs, never resend immediately.
+    attempts = 3 if payload is None else 1
+    for attempt in range(attempts):
         try:
             with urllib.request.urlopen(request, timeout=30) as response:
                 body = response.read()
@@ -45,31 +48,29 @@ def github_api(path, *, payload=None, not_found=False):
         except urllib.error.HTTPError as exc:
             if exc.code == 404 and not_found:
                 return None
-            if exc.code not in {429, 500, 502, 503, 504} or attempt == 2:
+            if exc.code not in {429, 500, 502, 503, 504} or attempt == attempts - 1:
                 raise RuntimeError(f"GitHub API {path} failed (HTTP {exc.code})") from None
         except urllib.error.URLError:
-            if attempt == 2:
+            if attempt == attempts - 1:
                 raise RuntimeError(f"GitHub API {path} is unavailable") from None
         time.sleep(2 ** attempt)
 
 
 def latest_tag(branch):
     sha = packages.resolve(f"refs/remotes/origin/{branch}")
-    tag = packages.version(sha)
-    if not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", tag):
-        packages.summary(f"{branch}: workspace version {tag!r} is not a stable release; skipping.")
-        return None
-    if tag.split(".", 1)[0] != branch.removeprefix("stable-").removesuffix(".x"):
-        raise ValueError(f"{branch}: workspace version {tag} belongs to another stable branch")
-    try:
+    major = branch.removeprefix("stable-").removesuffix(".x")
+    tags = packages.git("tag", "--merged", sha).splitlines()
+    candidates = [tag for tag in tags
+                  if re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", tag)
+                  and tag.split(".", 1)[0] == major]
+    for tag in sorted(candidates, key=lambda value: tuple(map(int, value.split("."))),
+                      reverse=True):
         tagged_sha = packages.resolve(f"refs/tags/{tag}")
-    except ValueError:
-        raise ValueError(f"{branch}: stable version {tag} has no tag") from None
-    if not packages.ancestor(tagged_sha, sha):
-        raise ValueError(f"{branch}: tag {tag} is not reachable from the branch")
-    if packages.version(tagged_sha) != tag:
-        raise ValueError(f"{branch}: tag {tag} has a different workspace version")
-    return tag
+        if packages.version(tagged_sha) == tag:
+            return tag
+        packages.summary(f"{branch}: ignoring tag {tag} with a different workspace version.")
+    packages.summary(f"{branch}: no reachable stable release tag; skipping.")
+    return None
 
 
 def active_tags(workflow_file, title):
