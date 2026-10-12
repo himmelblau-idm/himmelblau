@@ -1253,11 +1253,44 @@ sys.exit(int(sys.argv[1]))
         self.assertTrue(body.endswith(f"{sm.MARKER} {'a' * 40}"))
         self.assertIn("Backports requiring manual review: 1", body)
         self.assertIn("b" * 40, body)
+        with mock.patch.dict(os.environ, {"GITHUB_REPOSITORY": "o/r", "GITHUB_RUN_ID": "123"}):
+            body = sm.build_pr_body({**value, "already_covered": [{"crate": "noise"}] * 500})
+        self.assertLessEqual(len(body.encode()), 2400)
+        for heading in ("Summary", "What Changed", "Testing", "Automated Checks", "System Integration Impact", "Checklist"):
+            self.assertIn(f"## {heading}", body)
+        self.assertIn("https://github.com/o/r/actions/runs/123", body)
+        self.assertNotIn("noise", body)
 
     def test_runner_rejects_oversized_streamed_output(self):
         runner = sm.Runner(Path.cwd(), {"PATH": os.environ["PATH"]})
         with self.assertRaises(sm.MaintenanceError):
             runner.run([sys.executable, "-c", "import sys; sys.stdout.write('x'*10000)"], max_output=100)
+
+    def test_publish_labels_draft_before_ready_and_metadata_does_not_claim_release(self):
+        for ready_response in (
+            {"data": {"markPullRequestReadyForReview": {"pullRequest": {"isDraft": False}}}},
+            {"errors": [{"message": "cannot mark ready"}]},
+        ):
+            with self.subTest(ready=ready_response), tempfile.TemporaryDirectory() as tmp:
+                state = sm.State(Path(tmp) / "state")
+                state.save({"automation_branch": sm.AUTOMATION_PREFIX + "stable-4.x-test",
+                            "branch": "stable-4.x", "main_head": "a" * 40, "metadata_only": True})
+                runner = mock.Mock()
+                responses = [{"number": 19, "node_id": "PR_test"}, {}, ready_response]
+                with mock.patch.dict(os.environ, {"GITHUB_REPOSITORY": "o/r", "GITHUB_TOKEN": "test-token"}), \
+                     mock.patch.object(sm, "secure_github_push"), \
+                     mock.patch.object(sm, "http_json", side_effect=responses) as http:
+                    if "errors" in ready_response:
+                        with self.assertRaises(sm.MaintenanceError):
+                            sm.phase_publish(mock.Mock(), state, runner)
+                    else:
+                        sm.phase_publish(mock.Mock(), state, runner)
+                calls = http.call_args_list
+                self.assertTrue(calls[0].kwargs["body"]["draft"])
+                self.assertEqual(calls[0].kwargs["body"]["title"], "Refresh stable-4.x supply-chain metadata")
+                self.assertIn("slop-guard-exempt", calls[1].kwargs["body"]["labels"])
+                self.assertEqual(calls[2].args[0], "https://api.github.com/graphql")
+                self.assertEqual(state.load()["pull_request"], 19)
 
 
 class VersionPolicyTests(unittest.TestCase):
@@ -1999,10 +2032,10 @@ class MutationBoundaryTests(unittest.TestCase):
             self.assertIn(f"backport-debug: sha={sha} result=conflict-skipped", output.getvalue())
             self.assertIn("backport-summary: phase=apply applied=0 skipped=1", output.getvalue())
 
-    def test_conflicting_dependabot_pr_is_reset_without_ai(self):
+    def test_invalid_dependabot_transplant_is_reset_without_ai(self):
         with tempfile.TemporaryDirectory() as tmp:
             state = sm.State(Path(tmp) / "state")
-            commit, head, pre_head = "a" * 40, "b" * 40, "c" * 40
+            commit, head, pre_head = "a" * 40, "a" * 40, "c" * 40
             pr = {
                 "number": 17,
                 "user": {"login": "dependabot[bot]"},
@@ -2023,9 +2056,7 @@ class MutationBoundaryTests(unittest.TestCase):
                     return sm.CommandResult(0, "", "")
                 if argv == ["rev-parse", "FETCH_HEAD"]:
                     return sm.CommandResult(0, head + "\n", "")
-                if argv == ["merge-base", "--is-ancestor", "origin/stable-4.x", head]:
-                    return sm.CommandResult(0, "", "")
-                if argv == ["rev-list", "--reverse", f"origin/stable-4.x..{head}"]:
+                if argv == ["rev-list", "--reverse", f"{commit}^..{head}"]:
                     return sm.CommandResult(0, commit + "\n", "")
                 if argv == ["diff-tree", "--no-commit-id", "--name-only", "-r", commit]:
                     return sm.CommandResult(0, ".github/workflows/ci.yml\n", "")
@@ -2033,21 +2064,23 @@ class MutationBoundaryTests(unittest.TestCase):
                     return sm.CommandResult(0, "", "")
                 if argv == ["show", "--format=", "--unified=1", commit]:
                     return sm.CommandResult(0, files[0]["patch"], "")
-                if argv == ["cherry-pick", commit]:
-                    return sm.CommandResult(1, "", "")
-                if argv == ["status", "--porcelain=v1"]:
-                    return sm.CommandResult(0, "UU .github/workflows/ci.yml\n", "")
                 if argv in (["cherry-pick", "--abort"], ["reset", "--hard", pre_head]):
                     return sm.CommandResult(0, "", "")
                 raise AssertionError(argv)
             runner.git.side_effect = git
             with mock.patch.object(sm, "github_repository", return_value="o/r"), \
-                 mock.patch.object(sm, "github_paginated", return_value=[pr]), \
+                 mock.patch.object(sm, "github_paginated", side_effect=lambda url, **kw:
+                                   [{"sha": commit}] if url.endswith("/commits") else [pr]), \
                  mock.patch.object(sm, "_pr_files", return_value=files), \
+                 mock.patch.object(sm, "transplant_action_refs", side_effect=sm.MaintenanceError("invalid immutable diff")) as transplant, \
                  mock.patch.object(sm, "AzureAI", side_effect=AssertionError("AI must not resolve conflicts")):
                 sm.phase_import_dependabot(mock.Mock(branch="stable-4.x"), state, runner)
             self.assertEqual(state.load()["dependabot_imported"], [])
-            self.assertEqual(state.load()["dependabot_skipped"], [{"number": 17, "reason": "validation or cherry-pick failure"}])
+            self.assertEqual(state.load()["dependabot_skipped"], [{
+                "number": 17, "reason": "validation or import failure",
+                "stage": "ref-transplant", "diagnostic": "unclassified-error"}])
+            transplant.assert_called_once_with(runner, files, commit, head)
+            runner.git.assert_any_call(["reset", "--hard", pre_head])
 
 
 class MarkerConflictAndAITests(unittest.TestCase):
@@ -2538,6 +2571,134 @@ class GuardTests(unittest.TestCase):
                 sm.github_paginated("https://api.github.com/repos/o/r/pulls", max_pages=2)
 
 
+class MaintenanceHistoryTests(unittest.TestCase):
+    def repository(self, root):
+        root.mkdir()
+        runner = sm.Runner(root)
+        runner.git(["init", "-b", "main"])
+        runner.git(["config", "user.name", "Maintenance test"])
+        runner.git(["config", "user.email", "maintenance-test@example.invalid"])
+        (root / "Cargo.toml").write_text('[workspace.package]\nversion = "4.0.5"\n')
+        (root / "Cargo.lock").write_text("# lock\n")
+        workflow = root / ".github/workflows/ci.yml"
+        workflow.parent.mkdir(parents=True)
+        workflow.write_text("jobs:\n  test:\n    steps:\n      - uses: a/b@" + "a" * 40 + "\n")
+        self.commit(runner, "Branch point")
+        runner.git(["branch", "stable-4.x"])
+        runner.git(["remote", "add", "origin", str(root)])
+        return runner
+
+    def commit(self, runner, subject):
+        runner.git(["add", "."])
+        runner.git(["commit", "-m", subject])
+        return runner.git(["rev-parse", "HEAD"]).stdout.strip()
+
+    def test_recent_direct_backport_does_not_hide_older_fixes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "source"
+            runner = self.repository(root)
+            base = runner.git(["rev-parse", "HEAD"]).stdout.strip()
+            (root / "missed.rs").write_text("older bug fix\n")
+            missed = self.commit(runner, "Fix older bug")
+            (root / "picked.rs").write_text("directly backported fix\n")
+            picked = self.commit(runner, "Fix newer bug")
+            runner.git(["checkout", "stable-4.x"])
+            runner.git(["cherry-pick", picked])
+            (root / "stable-only").write_text("recent stable work\n")
+            self.commit(runner, "Recent direct stable change")
+            state = sm.State(Path(tmp) / "state")
+            sm.phase_initialize(mock.Mock(branch="stable-4.x"), state, runner)
+            value = state.load()
+            self.assertEqual(value["cutoff"], base)
+            candidates = runner.git(["rev-list", f"{value['cutoff']}..{value['main_head']}"]).stdout.splitlines()
+            self.assertIn(missed, candidates)
+            self.assertIn(picked, value["backports_already_present"])
+
+    def test_main_dependabot_import_excludes_unrelated_main_history(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "source"
+            runner = self.repository(root)
+            (root / "main-feature.rs").write_text("not a stable backport\n")
+            self.commit(runner, "Main feature")
+            workflow = root / ".github/workflows/ci.yml"
+            workflow.write_text(workflow.read_text() + "# unrelated main-only workflow change\n")
+            absent = root / ".github/workflows/main-only.yml"
+            absent.write_text("uses: a/b@" + "a" * 40 + "\n")
+            self.commit(runner, "Main-only workflow")
+            runner.git(["checkout", "-b", "dependabot-action"])
+            path = root / ".github/workflows/ci.yml"
+            path.write_text(path.read_text().replace("a" * 40, "b" * 40))
+            absent.write_text(absent.read_text().replace("a" * 40, "b" * 40))
+            head = self.commit(runner, "Update pinned action")
+            patch = runner.git(["show", "--format=", "--unified=1", head]).stdout
+            pr = {
+                "number": 17, "user": {"login": "dependabot[bot]"},
+                "base": {"ref": "main", "repo": {"full_name": "o/r"}},
+                "head": {"sha": head, "repo": {"full_name": "o/r"}},
+            }
+            runner.git(["checkout", "stable-4.x"])
+            state = sm.State(Path(tmp) / "state")
+            files = [{"filename": name, "status": "modified", "patch": patch}
+                     for name in (".github/workflows/ci.yml", ".github/workflows/main-only.yml")]
+            with mock.patch.object(sm, "github_repository", return_value="o/r"), \
+                 mock.patch.object(sm, "github_paginated", side_effect=lambda url, **kw:
+                                   [{"sha": head}] if url.endswith("/commits") else [pr]), \
+                 mock.patch.object(sm, "_pr_files", return_value=files):
+                sm.phase_import_dependabot(mock.Mock(branch="stable-4.x"), state, runner)
+            self.assertEqual(state.load()["dependabot_imported"], [17])
+            self.assertIn("b" * 40, path.read_text())
+            self.assertFalse((root / "main-feature.rs").exists())
+            self.assertNotIn("main-only", path.read_text())
+            self.assertFalse(absent.exists())
+
+    def test_cargo_dependabot_is_explicitly_delegated_to_audited_updates(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            state = sm.State(Path(tmp) / "state")
+            runner = mock.Mock()
+            pr = {"number": 18, "user": {"login": "dependabot[bot]"},
+                  "base": {"ref": "stable-4.x", "repo": {"full_name": "o/r"}},
+                  "head": {"sha": "b" * 40, "repo": {"full_name": "o/r"}}}
+            with mock.patch.object(sm, "github_repository", return_value="o/r"), \
+                 mock.patch.object(sm, "github_paginated", return_value=[pr]), \
+                 mock.patch.object(sm, "_pr_files", return_value=[{"filename": "Cargo.lock"}]):
+                sm.phase_import_dependabot(mock.Mock(branch="stable-4.x"), state, runner)
+            runner.git.assert_not_called()
+            self.assertEqual(state.load()["dependabot_skipped"], [
+                {"number": 18, "reason": "Cargo handled by audited dependency phase"}])
+
+    def test_release_keeps_unresolved_backports_eligible(self):
+        for pending in ({"backport_review_required": [{"sha": "b" * 40}]}, {"backports_deferred": ["b" * 40]}, {}):
+            with self.subTest(pending=pending), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp) / "source"
+                runner = self.repository(root)
+                initial = runner.git(["rev-parse", "HEAD"]).stdout.strip()
+                (root / "fix.rs").write_text("fixed\n")
+                main = self.commit(runner, "Backported fix")
+                state = sm.State(Path(tmp) / "state")
+                state.save({"original_head": initial, "cutoff": initial, "main_head": main, **pending})
+                with mock.patch.object(sm, "contained_repo_command", return_value=sm.CommandResult(0, "", "")):
+                    sm.phase_release(mock.Mock(), state, runner)
+                marker = sm.marker_sha(runner.git(["log", "-1", "--format=%B"]).stdout)
+                self.assertEqual(marker, initial if pending else main)
+
+    def test_import_refresh_does_not_create_a_version_only_release(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "source"
+            runner = self.repository(root)
+            initial = runner.git(["rev-parse", "HEAD"]).stdout.strip()
+            (root / "supply-chain").mkdir()
+            (root / "supply-chain/imports.lock").write_text("refreshed audits\n")
+            refreshed = self.commit(runner, "Refresh imported audits")
+            state = sm.State(Path(tmp) / "state")
+            state.save({"original_head": initial, "cutoff": initial, "main_head": refreshed})
+            with mock.patch.object(sm, "contained_repo_command", side_effect=AssertionError("no release generation")):
+                sm.phase_release(mock.Mock(), state, runner)
+            self.assertTrue(state.load()["metadata_only"])
+            self.assertNotIn("version", state.load())
+            self.assertEqual(runner.git(["rev-parse", "HEAD"]).stdout.strip(), refreshed)
+            self.assertIn('version = "4.0.5"', (root / "Cargo.toml").read_text())
+
+
 class InitializePhaseTests(unittest.TestCase):
     def test_initialize_requires_remote_head_and_validates_marker_ancestry(self):
         current, main, cutoff = "c" * 40, "d" * 40, "a" * 40
@@ -2557,6 +2718,8 @@ class InitializePhaseTests(unittest.TestCase):
                 if key[0] == "log":
                     return sm.CommandResult(0, f"Version 4.0.5\n\n{sm.MARKER} {cutoff}\n", "")
                 if key[:2] == ("merge-base", "--is-ancestor"):
+                    return sm.CommandResult(0, "", "")
+                if key[0] == "cherry":
                     return sm.CommandResult(0, "", "")
                 raise AssertionError(key)
         with tempfile.TemporaryDirectory() as tmp:
