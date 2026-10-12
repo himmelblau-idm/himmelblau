@@ -1270,7 +1270,6 @@ sys.exit(int(sys.argv[1]))
     def test_publish_labels_draft_before_ready_and_metadata_does_not_claim_release(self):
         for ready_response in (
             {"data": {"markPullRequestReadyForReview": {"pullRequest": {"isDraft": False}}}},
-            {"errors": [{"message": "cannot mark ready"}]},
         ):
             with self.subTest(ready=ready_response), tempfile.TemporaryDirectory() as tmp:
                 state = sm.State(Path(tmp) / "state")
@@ -1281,17 +1280,77 @@ sys.exit(int(sys.argv[1]))
                 with mock.patch.dict(os.environ, {"GITHUB_REPOSITORY": "o/r", "GITHUB_TOKEN": "test-token"}), \
                      mock.patch.object(sm, "secure_github_push"), \
                      mock.patch.object(sm, "http_json", side_effect=responses) as http:
-                    if "errors" in ready_response:
-                        with self.assertRaises(sm.MaintenanceError):
-                            sm.phase_publish(mock.Mock(), state, runner)
-                    else:
-                        sm.phase_publish(mock.Mock(), state, runner)
+                    sm.phase_publish(mock.Mock(), state, runner)
                 calls = http.call_args_list
                 self.assertTrue(calls[0].kwargs["body"]["draft"])
                 self.assertEqual(calls[0].kwargs["body"]["title"], "Refresh stable-4.x supply-chain metadata")
                 self.assertIn("slop-guard-exempt", calls[1].kwargs["body"]["labels"])
                 self.assertEqual(calls[2].args[0], "https://api.github.com/graphql")
                 self.assertEqual(state.load()["pull_request"], 19)
+
+    def test_publish_recovers_ready_errors_and_cleans_up_failed_drafts(self):
+        ready = {"data": {"markPullRequestReadyForReview": {"pullRequest": {"isDraft": False}}}}
+        draft = {"state": "open", "draft": True}
+        closed = {"state": "closed", "draft": True, "number": 19,
+                  "head": {"ref": sm.AUTOMATION_PREFIX + "stable-4.x-test", "repo": {"full_name": "o/r"}},
+                  "labels": [{"name": sm.AUTOMATION_LABEL}], "user": {"login": "github-actions[bot]"}}
+        errors = {"errors": [{"message": "temporary error"}]}
+        for failure in (sm.HTTPStatusError(503), sm.MaintenanceError("invalid JSON"), errors, {}, None):
+            for recovery in ("retry", "already-ready", "cleanup", "cleanup-retry", "cleanup-fails"):
+                with self.subTest(failure=failure, recovery=recovery), tempfile.TemporaryDirectory() as tmp:
+                    state = sm.State(Path(tmp) / "state")
+                    state.save({"automation_branch": sm.AUTOMATION_PREFIX + "stable-4.x-test",
+                                "branch": "stable-4.x", "main_head": "a" * 40, "version": "4.0.6"})
+                    responses = [{"number": 19, "node_id": "PR_test"}, {}, failure]
+                    if recovery == "retry":
+                        responses.extend([draft, ready])
+                    elif recovery == "already-ready":
+                        responses.append({"state": "open", "draft": False})
+                    else:
+                        responses.extend([draft, failure, draft, failure, draft])
+                        if recovery == "cleanup":
+                            responses.append(closed)
+                        elif recovery == "cleanup-retry":
+                            responses.extend([sm.HTTPStatusError(503), closed])
+                        else:
+                            responses.extend([sm.HTTPStatusError(503)] * 3)
+                    with mock.patch.dict(os.environ, {"GITHUB_REPOSITORY": "o/r", "GITHUB_TOKEN": "test-token"}), \
+                         mock.patch.object(sm, "secure_github_push"), \
+                         mock.patch.object(sm, "http_json", side_effect=responses) as http, \
+                         mock.patch.object(sm.time, "sleep") as sleep:
+                        if recovery.startswith("cleanup"):
+                            expected = "close maintenance PR #19" if recovery == "cleanup-fails" else "bounded retries"
+                            with self.assertRaisesRegex(sm.MaintenanceError, expected):
+                                sm.phase_publish(mock.Mock(), state, mock.Mock())
+                        else:
+                            sm.phase_publish(mock.Mock(), state, mock.Mock())
+                    mutations = [call for call in http.call_args_list if call.args[0].endswith("graphql")]
+                    closes = [call for call in http.call_args_list if call.kwargs.get("method") == "PATCH"]
+                    self.assertEqual(len(mutations), 3 if recovery.startswith("cleanup") else 2 if recovery == "retry" else 1)
+                    self.assertEqual(len(closes), {"cleanup": 1, "cleanup-retry": 2, "cleanup-fails": 3}.get(recovery, 0))
+                    self.assertLessEqual(sleep.call_count, 4)
+                    for call in closes:
+                        self.assertEqual(call.kwargs["body"], {"state": "closed"})
+                    if recovery in ("cleanup", "cleanup-retry"):
+                        with mock.patch.object(sm, "github_repository", return_value="o/r"), \
+                             mock.patch.object(sm, "github_paginated", return_value=[closed]), \
+                             mock.patch.object(sm, "github_search_items", return_value=[]), \
+                             mock.patch.object(sm.sys, "stdout", io.StringIO()):
+                            sm.phase_guard(mock.Mock(branch="stable-4.x"), state, mock.Mock())
+                        self.assertFalse(state.load()["skip"])
+
+    def test_publish_cleans_up_invalid_node_and_label_failure(self):
+        for node, label in ((None, {}), ("PR_test", sm.HTTPStatusError(503))):
+            with self.subTest(node=node), tempfile.TemporaryDirectory() as tmp:
+                state = sm.State(Path(tmp) / "state")
+                state.save({"automation_branch": sm.AUTOMATION_PREFIX + "stable-4.x-test",
+                            "branch": "stable-4.x", "main_head": "a" * 40, "version": "4.0.6"})
+                with mock.patch.dict(os.environ, {"GITHUB_REPOSITORY": "o/r", "GITHUB_TOKEN": "test-token"}), \
+                     mock.patch.object(sm, "secure_github_push"), \
+                     mock.patch.object(sm, "http_json", side_effect=[{"number": 19, "node_id": node}, label, {"state": "closed"}]) as http:
+                    with self.assertRaises(sm.MaintenanceError):
+                        sm.phase_publish(mock.Mock(), state, mock.Mock())
+                self.assertEqual(http.call_args.kwargs["body"], {"state": "closed"})
 
 
 class VersionPolicyTests(unittest.TestCase):
