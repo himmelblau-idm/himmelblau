@@ -316,7 +316,8 @@ in
           ] ++ lib.optional config.security.tpm2.enable "himmelblau-hsm-pin-init.service"
             ++ lib.optional tpmAccessRequired "tpm2-udev-trigger.service";
           after = daemonAfter ++ daemonSockets;
-          requires = daemonSockets;
+          requires = daemonSockets
+            ++ lib.optional config.security.tpm2.enable "himmelblau-hsm-pin-init.service";
           before = [
             "accounts-daemon.service"
             "systemd-user-sessions.service"
@@ -380,10 +381,10 @@ in
           ];
           unitConfig = {
             DefaultDependencies = false;
-            ConditionPathExists = "!/var/lib/private/himmelblaud/hsm-pin-nopcr.enc";
           };
           serviceConfig = {
             Type = "oneshot";
+            RemainAfterExit = true;
             ExecStart = "${cfg.daemonPackage}/libexec/himmelblau-init-hsm-pin";
           };
         };

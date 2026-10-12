@@ -135,6 +135,8 @@ if [ -f "$CRED" ]; then
         rm -f "$LEGACY"
     fi
 
+    rm -f "$LEGACY1"
+
     # If a TPM is present and the SRK is now provisioned (including via
     # self-provisioning above), try to upgrade the credential to TPM-bound.
     if [ -e /dev/tpmrm0 ] || [ -e /dev/tpm0 ]; then
@@ -190,8 +192,8 @@ fi
 if printf '%s' "$HSM_PIN" | systemd-creds encrypt --name=hsm-pin $KEY_ARG \
         --tpm2-device=auto - "$CRED"; then
     echo "HSM PIN credential created successfully"
-    rm -f "$LEGACY" 2>/dev/null || true
-    rm -f "$LEGACY1" 2>/dev/null || true
+    rm -f "$LEGACY"
+    rm -f "$LEGACY1"
     exit 0
 else
     echo "ERROR: Failed to create HSM PIN credential"

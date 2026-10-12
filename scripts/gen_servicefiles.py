@@ -345,7 +345,6 @@ DefaultDependencies=no
 # Wants= (not Requires=) so we degrade gracefully on TPM-less systems.
 After=local-fs.target systemd-tpm2-setup.service
 Wants=systemd-tpm2-setup.service
-ConditionPathExists=!/var/lib/private/himmelblaud/hsm-pin-nopcr.enc
 
 [Service]
 Type=oneshot

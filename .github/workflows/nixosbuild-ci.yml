@@ -25,5 +25,10 @@ jobs:
           extra_nix_config: experimental-features = nix-command flakes
 
       - uses: DeterminateSystems/magic-nix-cache-action@84c0677f58dcedf3b91f8223ce36a9ea5b3c84b7
+      - name: Check NixOS service definitions
+        run: |
+          command -v nix-instantiate
+          export NIX_PATH="nixpkgs=$(nix eval --impure --raw --expr '(builtins.getFlake (toString ./.)).inputs.nixpkgs.outPath')"
+          python3 scripts/test_nixos_services.py -v
       - run: nix flake check
       - run: nix build .#daemon .#sso .#broker .#pam .#nss .#aad-tool .#o365 2>&1

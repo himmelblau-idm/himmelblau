@@ -13,8 +13,8 @@ The required nix/tests/services.nix fixture supplies the module evaluation and
 test package placeholders; it is not a runtime or VM test.
 
 Runtime paths, directory defaults, and the tasks service's umask/address-family
-defaults follow the generated units. The HSM initializer retains the generator's
-condition that skips initialization when an encrypted PIN already exists.
+defaults follow the generated units. The HSM initializer runs for existing credentials too, allowing the script
+to upgrade host-only encryption when a TPM becomes available.
 The policy cache tmpfiles rule is written literally in the NixOS module and
 checked for exact equivalence with src/daemon/src/himmelblau-policies.tmpfiles.conf,
 including detection of duplicate or conflicting rules for the same path.
@@ -25,6 +25,8 @@ Known deviations from the generated units and their rationale:
 - Gate HSM initialization, its dependencies, and encrypted credential loading on
   config.security.tpm2.enable, not on whether the daemon needs local TPM devices;
   they remain enabled for remote TCTIs when config.security.tpm2.enable is true.
+- Require and order HSM initialization before the daemon, retaining the successful
+  oneshot so failure to remove plaintext credentials prevents daemon startup.
 - Include NixOS's tpm2-udev-trigger.service in both After and Wants on the HSM
   initializer, following the dependency pattern used by NixOS's tpm2-abrmd
   service to handle TPM udev-rule changes during rebuild activation.
@@ -98,7 +100,10 @@ def evaluate(**args):
     ]
     for name, value in args.items():
         command.extend(["--arg", name, json.dumps(value)])
-    result = subprocess.run(command, capture_output=True, text=True)
+    try:
+        result = subprocess.run(command, capture_output=True, text=True, timeout=300)
+    except subprocess.TimeoutExpired as error:
+        raise RuntimeError("Nix evaluation timed out") from error
     if result.returncode:
         raise RuntimeError(f"Nix evaluation failed:\n{result.stderr}")
     return json.loads(result.stdout)
@@ -122,7 +127,7 @@ class NixosServiceTests(unittest.TestCase):
         scripts.mkdir()
         generator = scripts / "gen_servicefiles.py"
         shutil.copyfile(ROOT / "scripts/gen_servicefiles.py", generator)
-        subprocess.run(
+        generated = subprocess.run(
             [
                 sys.executable,
                 str(generator),
@@ -133,8 +138,10 @@ class NixosServiceTests(unittest.TestCase):
             ],
             capture_output=True,
             text=True,
-            check=True,
+            timeout=60,
         )
+        if generated.returncode:
+            raise RuntimeError(f"gen_servicefiles.py failed:\n{generated.stderr}")
         cls.generated = {
             path.name: parse_unit(path.read_text())
             for directory in [root / "units", root / "platform/systemd"]
@@ -323,8 +330,10 @@ class NixosServiceTests(unittest.TestCase):
         self.assert_directives_match(
             name,
             "Unit",
-            ["Description", "Before", "ConditionPathExists"],
+            ["Description", "Before"],
         )
+        self.assertNotIn("ConditionPathExists", self.units[name]["Unit"])
+        self.assertNotIn("ConditionPathExists", self.generated[name]["Unit"])
         for key in ["After", "Wants"]:
             with self.subTest(directive=key):
                 self.assertEqual(
@@ -334,6 +343,8 @@ class NixosServiceTests(unittest.TestCase):
                 )
         self.assertIn(self.units[name]["Unit"]["DefaultDependencies"], ["false", "no"])
         self.assertNotIn("RequiresMountsFor", self.units[name]["Unit"])
+        self.assertIn(name, self.units["himmelblaud.service"]["Unit"]["Requires"].split())
+        self.assertIn(self.units[name]["Service"]["RemainAfterExit"], ["true", "yes"])
         self.assert_directives_match(name, "Service", ["Type"])
         self.assertTrue(
             self.units[name]["Service"]["ExecStart"].endswith(
