@@ -110,8 +110,8 @@ jobs:
                 if (authorLogin === 'himmelblau-stable-maintenance[bot]'
                     && prSummary.user?.type === 'Bot'
                     && prSummary.head?.repo?.full_name === `${OWNER}/${REPO}`
-                    && /^automation\/stable-maintenance\/stable-[234]\.x-/.test(prSummary.head?.ref || '')
-                    && /^stable-[234]\.x$/.test(prSummary.base?.ref || '')) {
+                    && /^stable-[34]\.x$/.test(prSummary.base?.ref || '')
+                    && (prSummary.head?.ref || '').startsWith(`automation/stable-maintenance/${prSummary.base.ref}-`)) {
                   core.info(`PR #${prNumber}: skip (repository stable-maintenance automation).`);
                   continue;
                 }

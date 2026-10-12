@@ -80,8 +80,8 @@ function isTrustedMaintenancePr(pr, repository) {
   return pr.user?.login === 'himmelblau-stable-maintenance[bot]'
     && pr.user?.type === 'Bot'
     && pr.head?.repo?.full_name === repository
-    && /^automation\/stable-maintenance\/stable-[234]\.x-/.test(pr.head?.ref || '')
-    && /^stable-[234]\.x$/.test(pr.base?.ref || '');
+    && /^stable-[34]\.x$/.test(pr.base?.ref || '')
+    && (pr.head?.ref || '').startsWith(`automation/stable-maintenance/${pr.base.ref}-`);
 }
 
 function isExempt(pr, repository) {
@@ -626,6 +626,27 @@ module.exports = async ({ github, context, core }) => {
 
   core.info(`Evaluating PR #${prNumber} by ${author}.`);
 
+  // Persist an authorized reopen before considering the transient draft pass.
+  if (context.payload.action === 'reopened' && context.actor) {
+    let permission;
+    try {
+      const { data } = await github.rest.repos.getCollaboratorPermissionLevel({
+        owner, repo, username: context.actor,
+      });
+      permission = data.permission;
+    } catch {
+      core.warning(`PR #${prNumber}: unable to verify reopen actor; applying ordinary screening.`);
+    }
+    if (['admin', 'maintain', 'write'].includes(permission)) {
+      await github.rest.issues.addLabels({
+        owner, repo, issue_number: prNumber, labels: [EXEMPT_LABEL],
+      });
+      await deleteExistingComment(github, owner, repo, prNumber);
+      core.info(`PR #${prNumber}: maintainer reopen by ${context.actor}; exemption persisted.`);
+      return;
+    }
+  }
+
   // --- Exemption check ---
   const exemption = isExempt(pr, `${owner}/${repo}`);
   if (exemption.exempt) {
@@ -638,21 +659,6 @@ module.exports = async ({ github, context, core }) => {
       core.info(`PR #${prNumber}: skip (${exemption.reason}).`);
     }
     return;
-  }
-
-  // A maintainer reopen is an explicit override; persist it for scheduled checks.
-  if (context.payload.action === 'reopened' && context.actor) {
-    const { data } = await github.rest.repos.getCollaboratorPermissionLevel({
-      owner, repo, username: context.actor,
-    });
-    if (['admin', 'maintain', 'write'].includes(data.permission)) {
-      await github.rest.issues.addLabels({
-        owner, repo, issue_number: prNumber, labels: [EXEMPT_LABEL],
-      });
-      await deleteExistingComment(github, owner, repo, prNumber);
-      core.info(`PR #${prNumber}: maintainer reopen by ${context.actor}; exemption persisted.`);
-      return;
-    }
   }
 
   // --- Fetch data in parallel ---
