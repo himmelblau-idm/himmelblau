@@ -2938,6 +2938,51 @@ def build_pr_body(value: Mapping[str, Any], *, max_bytes: int = 2400) -> str:
     return body
 
 
+def mark_maintenance_pr_ready(repo: str, number: int, node_id: str, state: State) -> None:
+    for attempt in range(3):
+        try:
+            ready = http_json(
+                "https://api.github.com/graphql", method="POST", headers=github_headers(),
+                body={
+                    "query": "mutation($id:ID!){markPullRequestReadyForReview(input:{pullRequestId:$id}){pullRequest{isDraft}}}",
+                    "variables": {"id": node_id},
+                },
+            )
+            if ready.get("errors") or ready["data"]["markPullRequestReadyForReview"]["pullRequest"]["isDraft"] is not False:
+                raise MaintenanceError("maintenance PR could not be marked ready for review")
+            return
+        except (MaintenanceError, KeyError, TypeError, AttributeError):
+            # A lost response can follow a successful mutation. Confirm the
+            # result before retrying or cleaning up this newly created PR.
+            try:
+                pr = http_json(f"https://api.github.com/repos/{repo}/pulls/{number}", headers=github_headers())
+                if isinstance(pr, dict) and pr.get("state") == "open" and pr.get("draft") is False:
+                    return
+            except MaintenanceError:
+                pass
+            state.event("publish", "ready-for-review attempt failed", number=number, attempt=attempt + 1)
+            if attempt < 2:
+                time.sleep(attempt + 1)
+    raise MaintenanceError("maintenance PR could not be marked ready after bounded retries")
+
+
+def close_failed_maintenance_pr(repo: str, number: int, state: State) -> None:
+    for attempt in range(3):
+        try:
+            closed = http_json(
+                f"https://api.github.com/repos/{repo}/pulls/{number}", method="PATCH", headers=github_headers(),
+                body={"state": "closed"},
+            )
+            if isinstance(closed, dict) and closed.get("state") == "closed":
+                state.event("publish", "closed PR after publication failure", number=number)
+                return
+        except MaintenanceError:
+            pass
+        if attempt < 2:
+            time.sleep(attempt + 1)
+    raise MaintenanceError(f"publication cleanup failed; close maintenance PR #{number} before retrying")
+
+
 def phase_publish(args: argparse.Namespace, state: State, runner: Runner) -> None:
     value = state.load()
     if value.get("no_changes"):
@@ -2965,26 +3010,19 @@ def phase_publish(args: argparse.Namespace, state: State, runner: Runner) -> Non
     number = pr.get("number") if isinstance(pr, dict) else None
     if not isinstance(number, int):
         raise MaintenanceError("GitHub did not return a PR number")
-    http_json(
-        f"https://api.github.com/repos/{repo}/issues/{number}/labels", method="POST", headers=github_headers(),
-        body={"labels": [AUTOMATION_LABEL, "slop-guard-exempt"]},
-    )
     value["pull_request"] = number; state.save(value)
-    node_id = pr.get("node_id")
-    if not isinstance(node_id, str) or not re.fullmatch(r"[A-Za-z0-9_=-]{1,200}", node_id):
-        raise MaintenanceError("GitHub did not return a valid PR node id")
-    ready = http_json(
-        "https://api.github.com/graphql", method="POST", headers=github_headers(),
-        body={
-            "query": "mutation($id:ID!){markPullRequestReadyForReview(input:{pullRequestId:$id}){pullRequest{isDraft}}}",
-            "variables": {"id": node_id},
-        },
-    )
     try:
-        if ready.get("errors") or ready["data"]["markPullRequestReadyForReview"]["pullRequest"]["isDraft"] is not False:
-            raise MaintenanceError("maintenance PR could not be marked ready for review")
-    except (KeyError, TypeError, AttributeError) as exc:
-        raise MaintenanceError("invalid ready-for-review response") from exc
+        http_json(
+            f"https://api.github.com/repos/{repo}/issues/{number}/labels", method="POST", headers=github_headers(),
+            body={"labels": [AUTOMATION_LABEL, "slop-guard-exempt"]},
+        )
+        node_id = pr.get("node_id")
+        if not isinstance(node_id, str) or not re.fullmatch(r"[A-Za-z0-9_=-]{1,200}", node_id):
+            raise MaintenanceError("GitHub did not return a valid PR node id")
+        mark_maintenance_pr_ready(repo, number, node_id, state)
+    except MaintenanceError:
+        close_failed_maintenance_pr(repo, number, state)
+        raise
     state.event("publish", "labeled pull request ready for review", number=number)
 
 
