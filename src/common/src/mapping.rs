@@ -32,6 +32,22 @@ pub struct MappedNameCache {
 }
 
 impl MappedNameCache {
+    fn create_learned_mapping_table(conn: &Connection) -> Result<()> {
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS learned_mapping (
+                    upn TEXT PRIMARY KEY,
+                    mapped_name TEXT NOT NULL
+                 )",
+            [],
+        )?;
+        conn.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS learned_mapping_mapped_name
+             ON learned_mapping (mapped_name)",
+            [],
+        )?;
+        Ok(())
+    }
+
     pub fn new(db_path: &str, mode: &Mode) -> Result<Self> {
         let is_root = unsafe { libc::getuid() } == 0;
         let path = Path::new(db_path);
@@ -49,7 +65,9 @@ impl MappedNameCache {
         let conn = if path.exists() {
             if is_root && *mode == Mode::ReadWrite {
                 writable = true;
-                Some(Connection::open(db_path)?)
+                let conn = Connection::open(db_path)?;
+                Self::create_learned_mapping_table(&conn)?;
+                Some(conn)
             } else {
                 Some(Connection::open_with_flags(
                     db_path,
@@ -66,6 +84,7 @@ impl MappedNameCache {
                      )",
                 [],
             )?;
+            Self::create_learned_mapping_table(&conn)?;
             fs::set_permissions(db_path, fs::Permissions::from_mode(0o644))
                 .map_err(|_| rusqlite::Error::InvalidPath(db_path.into()))?;
             Some(conn)
@@ -74,6 +93,23 @@ impl MappedNameCache {
         };
 
         Ok(MappedNameCache { conn, writable })
+    }
+
+    #[cfg(test)]
+    pub(crate) fn new_for_test(db_path: &str) -> Result<Self> {
+        let conn = Connection::open(db_path)?;
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS mapping (
+                    upn TEXT PRIMARY KEY,
+                    mapped_name TEXT NOT NULL
+                 )",
+            [],
+        )?;
+        Self::create_learned_mapping_table(&conn)?;
+        Ok(MappedNameCache {
+            conn: Some(conn),
+            writable: true,
+        })
     }
 
     pub fn insert_mapping(&self, upn: &str, mapped_name: &str) -> Result<()> {
@@ -125,5 +161,87 @@ impl MappedNameCache {
         } else {
             upn.to_string()
         }
+    }
+
+    pub fn insert_learned_mapping(&self, upn: &str, mapped_name: &str) -> Result<()> {
+        if !upn.contains('@') || upn == mapped_name {
+            return Ok(());
+        }
+
+        if let Some(conn) = &self.conn {
+            if self.writable {
+                conn.execute(
+                    "INSERT OR IGNORE INTO learned_mapping (upn, mapped_name) VALUES (?1, ?2)",
+                    params![upn, mapped_name],
+                )
+                .map_err(|e| {
+                    error!("Failed to insert learned name mapping for {}: {}", upn, e);
+                    e
+                })?;
+            }
+        }
+        Ok(())
+    }
+
+    pub fn get_learned_mapped_name(&self, upn: &str) -> Option<String> {
+        if !upn.contains('@') {
+            return None;
+        }
+
+        let conn = self.conn.as_ref()?;
+        let mut stmt = conn
+            .prepare("SELECT mapped_name FROM learned_mapping WHERE upn = ?1")
+            .ok()?;
+        let mut rows = stmt.query(params![upn]).ok()?;
+        let row = rows.next().ok()??;
+        row.get(0).ok()
+    }
+
+    pub fn get_upn_from_learned_name(&self, mapped_name: &str) -> Option<String> {
+        let conn = self.conn.as_ref()?;
+        let mut stmt = conn
+            .prepare("SELECT upn FROM learned_mapping WHERE mapped_name = ?1 LIMIT 1")
+            .ok()?;
+        let mut rows = stmt.query(params![mapped_name]).ok()?;
+        let row = rows.next().ok()??;
+        row.get(0).ok()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use uuid::Uuid;
+
+    fn temp_db() -> String {
+        std::env::temp_dir()
+            .join(format!("himmelblau_mapping_test_{}.db", Uuid::new_v4()))
+            .to_string_lossy()
+            .into_owned()
+    }
+
+    #[test]
+    fn learned_reverse_lookup_is_persistent() {
+        let path = temp_db();
+        {
+            let cache = MappedNameCache::new_for_test(&path).expect("open mapping cache");
+            cache
+                .insert_learned_mapping("alice@company.com", "alice")
+                .expect("insert mapping");
+            cache
+                .insert_learned_mapping("alice@company.com", "alice")
+                .expect("repeat insert");
+            assert_eq!(
+                cache.get_upn_from_learned_name("alice"),
+                Some("alice@company.com".to_string())
+            );
+        }
+
+        let cache = MappedNameCache::new_for_test(&path).expect("reopen mapping cache");
+        assert_eq!(
+            cache.get_upn_from_learned_name("alice"),
+            Some("alice@company.com".to_string())
+        );
+        let _ = fs::remove_file(path);
     }
 }
