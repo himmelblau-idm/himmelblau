@@ -250,6 +250,7 @@ jobs:
               status=$?
               set -e
               test "$status" -eq 1
+              node --version
               rustc --version | grep -E "^rustc 1\.98\.0 "
               cargo --version | grep -F "cargo 1.98.0"
               cargo-vet --version | grep -F "0.10.2"
