@@ -16,27 +16,25 @@ SPEC.loader.exec_module(scan)
 
 
 class SelectionTests(unittest.TestCase):
-    def test_latest_tag_must_belong_to_branch(self):
-        with patch.object(scan.packages, "resolve", side_effect=["a" * 40, "b" * 40]), \
-             patch.object(scan.packages, "version", side_effect=["4.0.5", "4.0.5"]), \
-             patch.object(scan.packages, "ancestor", return_value=True):
+    def test_latest_reachable_tag_ignores_unreleased_or_prerelease_head(self):
+        with patch.object(scan.packages, "resolve", return_value="a" * 40), \
+             patch.object(scan.packages, "git", return_value="4.0.4\n4.0.5\n4.0.6-rc1\n3.1.14"), \
+             patch.object(scan.packages, "version", return_value="4.0.5") as version:
+            self.assertEqual(scan.latest_tag("stable-4.x"), "4.0.5")
+        version.assert_called_once_with("a" * 40)
+
+    def test_mismatched_tag_version_falls_back_to_valid_release(self):
+        with patch.object(scan.packages, "resolve", return_value="a" * 40), \
+             patch.object(scan.packages, "git", return_value="4.0.5\n4.0.6"), \
+             patch.object(scan.packages, "version", side_effect=["4.0.7", "4.0.5"]), \
+             patch.object(scan.packages, "summary"):
             self.assertEqual(scan.latest_tag("stable-4.x"), "4.0.5")
 
+    def test_no_reachable_release_skips_branch(self):
         with patch.object(scan.packages, "resolve", return_value="a" * 40), \
-             patch.object(scan.packages, "version", return_value="3.1.14"):
-            with self.assertRaisesRegex(ValueError, "another stable branch"):
-                scan.latest_tag("stable-4.x")
-
-    def test_missing_or_unreachable_tag_fails(self):
-        with patch.object(scan.packages, "resolve", side_effect=["a" * 40, ValueError()]), \
-             patch.object(scan.packages, "version", return_value="4.0.6"):
-            with self.assertRaisesRegex(ValueError, "has no tag"):
-                scan.latest_tag("stable-4.x")
-        with patch.object(scan.packages, "resolve", side_effect=["a" * 40, "b" * 40]), \
-             patch.object(scan.packages, "version", return_value="4.0.6"), \
-             patch.object(scan.packages, "ancestor", return_value=False):
-            with self.assertRaisesRegex(ValueError, "not reachable"):
-                scan.latest_tag("stable-4.x")
+             patch.object(scan.packages, "git", return_value="3.1.14\n4.0.6-rc1"), \
+             patch.object(scan.packages, "summary"):
+            self.assertIsNone(scan.latest_tag("stable-4.x"))
 
 
 class PackageStatusTests(unittest.TestCase):
@@ -120,6 +118,26 @@ class ReconciliationTests(unittest.TestCase):
 
 
 class GithubApiTests(unittest.TestCase):
+    def test_ambiguous_dispatch_is_not_retried(self):
+        for error in [urllib.error.URLError("response lost"),
+                      urllib.error.HTTPError("url", 503, "Unavailable", {}, None)]:
+            with self.subTest(error=error), \
+                 patch.dict(os.environ, {"GITHUB_TOKEN": "test"}), \
+                 patch.object(scan.urllib.request, "urlopen", side_effect=error) as request, \
+                 patch.object(scan.time, "sleep") as sleep:
+                with self.assertRaises(RuntimeError):
+                    scan.dispatch("stable-packages.yml", "4.0.5")
+                self.assertEqual(request.call_count, 1)
+                sleep.assert_not_called()
+
+    def test_gets_still_retry_transient_errors(self):
+        with patch.dict(os.environ, {"GITHUB_TOKEN": "test"}), \
+             patch.object(scan.urllib.request, "urlopen", side_effect=urllib.error.URLError("down")) as request, \
+             patch.object(scan.time, "sleep"):
+            with self.assertRaises(RuntimeError):
+                scan.github_api("releases/tags/4.0.5")
+            self.assertEqual(request.call_count, 3)
+
     def test_only_matching_active_run_names_suppress_dispatch(self):
         def runs(path):
             if "status=in_progress" in path:
