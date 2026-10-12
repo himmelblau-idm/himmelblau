@@ -76,8 +76,20 @@ function getFileExtension(filename) {
 // Exemption check
 // ---------------------------------------------------------------------------
 
-function isExempt(pr) {
+function isTrustedMaintenancePr(pr, repository) {
+  return pr.user?.login === 'himmelblau-stable-maintenance[bot]'
+    && pr.user?.type === 'Bot'
+    && pr.head?.repo?.full_name === repository
+    && /^automation\/stable-maintenance\/stable-[234]\.x-/.test(pr.head?.ref || '')
+    && /^stable-[234]\.x$/.test(pr.base?.ref || '');
+}
+
+function isExempt(pr, repository) {
   const login = pr.user?.login || '';
+
+  if (isTrustedMaintenancePr(pr, repository)) {
+    return { exempt: true, reason: 'repository stable-maintenance automation' };
+  }
 
   if (DEPENDABOT_LOGINS.has(login)) {
     return { exempt: true, reason: `author ${login} is dependabot` };
@@ -615,7 +627,7 @@ module.exports = async ({ github, context, core }) => {
   core.info(`Evaluating PR #${prNumber} by ${author}.`);
 
   // --- Exemption check ---
-  const exemption = isExempt(pr);
+  const exemption = isExempt(pr, `${owner}/${repo}`);
   if (exemption.exempt) {
     // If the PR became exempt after a prior failing run (e.g., maintainer
     // added the exempt label, then reopened), clear the stale guidance.
@@ -626,6 +638,21 @@ module.exports = async ({ github, context, core }) => {
       core.info(`PR #${prNumber}: skip (${exemption.reason}).`);
     }
     return;
+  }
+
+  // A maintainer reopen is an explicit override; persist it for scheduled checks.
+  if (context.payload.action === 'reopened' && context.actor) {
+    const { data } = await github.rest.repos.getCollaboratorPermissionLevel({
+      owner, repo, username: context.actor,
+    });
+    if (['admin', 'maintain', 'write'].includes(data.permission)) {
+      await github.rest.issues.addLabels({
+        owner, repo, issue_number: prNumber, labels: [EXEMPT_LABEL],
+      });
+      await deleteExistingComment(github, owner, repo, prNumber);
+      core.info(`PR #${prNumber}: maintainer reopen by ${context.actor}; exemption persisted.`);
+      return;
+    }
   }
 
   // --- Fetch data in parallel ---
@@ -687,3 +714,6 @@ module.exports = async ({ github, context, core }) => {
 
   core.info(`PR #${prNumber}: closed.`);
 };
+
+module.exports.isExempt = isExempt;
+module.exports.isTrustedMaintenancePr = isTrustedMaintenancePr;

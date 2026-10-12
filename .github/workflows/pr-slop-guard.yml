@@ -34,14 +34,12 @@ jobs:
         with:
           egress-policy: audit
 
-      # No explicit `ref:` — actions/checkout defaults to github.ref, which on
-      # pull_request_target resolves to the base branch (never PR head). An
-      # explicit `${{ github.event.pull_request.base.ref }}` is flagged Critical
-      # by OpenSSF Scorecard's Dangerous-Workflow check even though it points
-      # to the same trusted location.
-      - name: Checkout base branch (trusted code only)
+      # Always use the reviewed default-branch policy, including for stable PRs.
+      # Never check out or execute code from the pull request head.
+      - name: Checkout default branch (trusted code only)
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: main
           persist-credentials: false
 
       - name: Run slop checks
@@ -106,6 +104,15 @@ jobs:
 
                 if (DEPENDABOT_LOGINS.has(authorLogin)) {
                   core.info(`PR #${prNumber}: skip (author ${authorLogin} is dependabot).`);
+                  continue;
+                }
+
+                if (authorLogin === 'himmelblau-stable-maintenance[bot]'
+                    && prSummary.user?.type === 'Bot'
+                    && prSummary.head?.repo?.full_name === `${OWNER}/${REPO}`
+                    && /^automation\/stable-maintenance\/stable-[234]\.x-/.test(prSummary.head?.ref || '')
+                    && /^stable-[234]\.x$/.test(prSummary.base?.ref || '')) {
+                  core.info(`PR #${prNumber}: skip (repository stable-maintenance automation).`);
                   continue;
                 }
 
