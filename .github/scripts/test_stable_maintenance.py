@@ -2151,6 +2151,10 @@ class MutationBoundaryTests(unittest.TestCase):
             state.save({"branch": "stable-4.x", "backport_candidates": [sha]})
             runner = mock.Mock()
             def git(argv, **kwargs):
+                if argv in (["diff", "--quiet"], ["diff", "--cached", "--quiet"]):
+                    return sm.CommandResult(0, "", "")
+                if argv == ["branch", "--show-current"]:
+                    return sm.CommandResult(0, "stable-4.x\n", "")
                 if argv[:4] == ["log", "-1", "--format=%H", "--fixed-strings"]:
                     return sm.CommandResult(0, "", "")
                 if argv == ["rev-parse", "HEAD"]:
@@ -2167,7 +2171,7 @@ class MutationBoundaryTests(unittest.TestCase):
             with mock.patch.object(sm, "AzureAI", side_effect=AssertionError("AI must not resolve conflicts")), \
                  mock.patch.object(sm, "locked_build", return_value=sm.CommandResult(0, "", "")) as build, \
                  mock.patch.object(sm.sys, "stderr", output):
-                sm.phase_apply_backports(mock.Mock(), state, runner)
+                sm.phase_apply_backports(mock.Mock(branch="stable-4.x"), state, runner)
             build.assert_called_once_with(runner)
             self.assertEqual(state.load()["backports_applied"], [])
             self.assertEqual(state.load()["backports_conflict_skipped"], [sha])
@@ -2473,6 +2477,10 @@ class MarkerConflictAndAITests(unittest.TestCase):
             runner = mock.Mock()
 
             def git(argv, **kwargs):
+                if argv in (["diff", "--quiet"], ["diff", "--cached", "--quiet"]):
+                    return sm.CommandResult(0, "", "")
+                if argv == ["branch", "--show-current"]:
+                    return sm.CommandResult(0, "stable-4.x\n", "")
                 if argv == ["rev-list", "--reverse", f"{cutoff}..{main}"]:
                     return sm.CommandResult(0, "\n".join([earlier, failed, later]) + "\n", "")
                 if argv[:2] == ["show", "--format=fuller"]:
@@ -2514,7 +2522,7 @@ class MarkerConflictAndAITests(unittest.TestCase):
             self.assertIn("backport-summary: phase=classify candidates=3 selected=2 skipped=0 manual_review=1", output.getvalue())
             with mock.patch.object(sm.sys, "stderr", output), \
                  mock.patch.object(sm, "locked_build", return_value=sm.CommandResult(0, "", "")) as build:
-                sm.phase_apply_backports(mock.Mock(), state, runner)
+                sm.phase_apply_backports(mock.Mock(branch="stable-4.x"), state, runner)
             self.assertEqual(build.call_count, 3)  # Baseline and both attempted picks.
             self.assertEqual(state.load()["backports_applied"], [earlier, later])
             for sha in (earlier, later):
@@ -2772,7 +2780,7 @@ class MaintenanceHistoryTests(unittest.TestCase):
                 output = io.StringIO()
                 with mock.patch.object(sm, "locked_build", side_effect=build), \
                      mock.patch.object(sm.sys, "stderr", output):
-                    sm.phase_apply_backports(mock.Mock(), state, runner)
+                    sm.phase_apply_backports(mock.Mock(branch="stable-4.x"), state, runner)
                 value = state.load()
                 self.assertEqual(len(snapshots), 4)  # Baseline, good, bad, later.
                 self.assertEqual(value["backports_applied"], [earlier, later])
@@ -2803,19 +2811,60 @@ class MaintenanceHistoryTests(unittest.TestCase):
             state.save({"branch": "stable-4.x", "backport_candidates": [candidate]})
             with mock.patch.object(sm, "locked_build", return_value=sm.CommandResult(101, "", "")), \
                  self.assertRaisesRegex(sm.MaintenanceError, "baseline build failed"):
-                sm.phase_apply_backports(mock.Mock(), state, runner)
+                sm.phase_apply_backports(mock.Mock(branch="stable-4.x"), state, runner)
             self.assertEqual(runner.git(["rev-parse", "HEAD"]).stdout, before)
             self.assertFalse((runner.root / "fix.txt").exists())
             self.assertEqual(runner.git(["status", "--porcelain"]).stdout, "")
+
+    def test_backport_entry_guards_preserve_edits_and_reject_wrong_checkout(self):
+        for case in ("unstaged", "staged", "wrong-branch", "detached"):
+            with self.subTest(case=case), tempfile.TemporaryDirectory() as tmp:
+                runner = self.repository(Path(tmp) / "repo")
+                notes = runner.root / "notes.txt"
+                notes.write_text("original\n")
+                baseline = self.commit(runner, "Tracked file baseline")
+                runner.git(["branch", "-f", "stable-4.x", baseline])
+                (runner.root / "fix.txt").write_text("independent candidate\n")
+                candidate = self.commit(runner, "Candidate touching another path")
+                runner.git(["checkout", "stable-4.x"])
+                if case in ("unstaged", "staged"):
+                    notes.write_text("local edits must survive\n")
+                    if case == "staged":
+                        runner.git(["add", "notes.txt"])
+                elif case == "wrong-branch":
+                    runner.git(["checkout", "-b", "unrelated"])
+                else:
+                    runner.git(["checkout", "--detach", baseline])
+                state = sm.State(Path(tmp) / "state")
+                original_state = {"branch": "stable-4.x", "backport_candidates": [candidate]}
+                state.save(original_state)
+                head = runner.git(["rev-parse", "HEAD"]).stdout
+                diff = runner.git(["diff", "--binary"]).stdout
+                staged = runner.git(["diff", "--cached", "--binary"]).stdout
+                contents = notes.read_bytes()
+                with mock.patch.object(sm, "locked_build") as build, \
+                     mock.patch.object(runner, "git", wraps=runner.git) as git, \
+                     self.assertRaises(sm.MaintenanceError):
+                    sm.phase_apply_backports(mock.Mock(branch="stable-4.x"), state, runner)
+                build.assert_not_called()
+                self.assertFalse(any(call.args[0][0] in ("cherry-pick", "reset") for call in git.call_args_list))
+                self.assertEqual(runner.git(["rev-parse", "HEAD"]).stdout, head)
+                self.assertEqual(runner.git(["diff", "--binary"]).stdout, diff)
+                self.assertEqual(runner.git(["diff", "--cached", "--binary"]).stdout, staged)
+                self.assertEqual(notes.read_bytes(), contents)
+                self.assertEqual(state.load(), original_state)
+                self.assertFalse((runner.root / "fix.txt").exists())
 
     def test_already_present_backport_does_not_build(self):
         with tempfile.TemporaryDirectory() as tmp:
             state = sm.State(Path(tmp) / "state")
             state.save({"branch": "stable-4.x", "backport_candidates": ["a" * 40]})
             runner = mock.Mock()
-            runner.git.return_value = sm.CommandResult(0, "b" * 40 + "\n", "")
+            runner.git.side_effect = lambda argv, **kwargs: sm.CommandResult(
+                0, "stable-4.x\n" if argv == ["branch", "--show-current"] else "b" * 40 + "\n", "",
+            )
             with mock.patch.object(sm, "locked_build", side_effect=AssertionError("no new attempt")):
-                sm.phase_apply_backports(mock.Mock(), state, runner)
+                sm.phase_apply_backports(mock.Mock(branch="stable-4.x"), state, runner)
             self.assertEqual(state.load()["backports_applied"], [])
             self.assertEqual(state.load()["backports_deferred"], [])
 

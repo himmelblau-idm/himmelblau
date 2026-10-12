@@ -2698,6 +2698,11 @@ def phase_classify_backports(args: argparse.Namespace, state: State, runner: Run
 
 
 def phase_apply_backports(args: argparse.Namespace, state: State, runner: Runner) -> None:
+    branch = require_branch(args.branch)
+    runner.git(["diff", "--quiet"])
+    runner.git(["diff", "--cached", "--quiet"])
+    if runner.git(["branch", "--show-current"]).stdout.strip() != branch:
+        raise MaintenanceError("apply-backports requires the requested stable branch")
     value = state.load(); applied, skipped, deferred = [], [], []
     conflicts, build_failed = [], []
     baseline_checked = False
