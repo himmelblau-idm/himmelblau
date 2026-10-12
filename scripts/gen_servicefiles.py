@@ -32,6 +32,7 @@ MINVER = {
     "DynamicUser": 235,
     "ProtectSystemStrict": 214,
     "ReadWritePaths": 231,
+    "BindPaths": 233,
     "CapabilityBoundingSet": 21,
     "NoNewPrivileges": 187,
     "PrivateTmp": 1,
@@ -368,6 +369,7 @@ Wants=systemd-tpm2-setup.service
 Type=oneshot
 {'StateDirectory=himmelblaud' if supported('CacheRuntimeStateDirs') else ''}
 {'StateDirectoryMode=0700' if supported('CacheRuntimeStateDirs') else ''}
+{'BindPaths=/run/systemd /var/lib/systemd' if supported('BindPaths') else ''}
 ExecStart=/usr/libexec/himmelblau-init-hsm-pin
 RuntimeDirectory=himmelblau-hsm-pin
 RuntimeDirectoryMode=0700
