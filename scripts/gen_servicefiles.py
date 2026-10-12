@@ -45,7 +45,7 @@ MINVER = {
     "ProtectControlGroups": 232,
     "MemoryDenyWriteExecute": 231,
     "InaccessiblePaths": 231,
-    "CacheRuntimeStateDirs": 235,  # CacheDirectory/RuntimeDirectory/StateDirectory
+    "CacheRuntimeStateDirs": 235,  # CacheDirectory/RuntimeDirectory/StateDirectory/ConfigurationDirectory
     "ConditionPathExists": 12,
     "LoadCredentialEncrypted": 250,
     "FileDescriptorStoreMax": 234,
@@ -147,6 +147,7 @@ def main():
             "UMask=0027",
             "CacheDirectory=himmelblaud",
             "StateDirectory=himmelblaud",
+            "ConfigurationDirectory=himmelblau",
         ])
 
     # ---- Security hardening (toggle by version) ----
@@ -334,6 +335,7 @@ RestartSec=1s
 WatchdogSec=120s
 
 CacheDirectory=nss-himmelblau
+{'ConfigurationDirectory=himmelblau' if supported('CacheRuntimeStateDirs') else ''}
 CapabilityBoundingSet=CAP_CHOWN CAP_FOWNER CAP_DAC_OVERRIDE CAP_DAC_READ_SEARCH CAP_SETUID CAP_SETGID
 AmbientCapabilities=CAP_SETUID CAP_SETGID
 # SystemCallFilter=@aio @basic-io @chown @file-system @io-event @network-io @sync
