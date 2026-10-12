@@ -549,11 +549,14 @@ def parse_locked_cargo_vet_report(result: CommandResult) -> list[VetItem]:
     return list(dict.fromkeys(gaps))
 
 
-def parse_cargo_vet_suggest_report(result: CommandResult) -> list[VetItem]:
-    """Read review commands from cargo-vet's structured suggest report."""
-    error = "cargo-vet suggest failed without parseable audit requirements"
-    if result.returncode != 0:
+def parse_cargo_vet_check_suggestions(result: CommandResult) -> list[VetItem]:
+    """Read structured suggestions from a failing check with exemptions intact."""
+    error = "cargo-vet check failed without parseable audit requirements"
+    if result.returncode <= 0:
         raise MaintenanceError(error)
+    # cargo-vet 0.10.2 exits 255 for vetting failures; its failure report,
+    # rather than a successful process exit, identifies reviewable audit gaps.
+    parse_locked_cargo_vet_report(result)
     try:
         report = json.loads(result.stdout)
     except json.JSONDecodeError as exc:
@@ -1468,12 +1471,16 @@ def reviewable_vet_gaps(runner: Runner, state_dir: Path) -> list[VetItem]:
     if not locked:
         return []
     suggested = isolated_vet_command(
-        runner, ["cargo", "vet", "suggest", "--output-format=json"], state_dir, network=True,
+        runner, ["cargo", "vet", "check", "--output-format=json"], state_dir, network=True,
     )
-    suggestions = parse_cargo_vet_suggest_report(suggested)
+    # `suggest` removes suggestable exemptions and describes the whole backlog.
+    # An unlocked check preserves exemptions and includes the failing targets'
+    # suggestions. The separate locked report remains authoritative.
+    suggestions = parse_cargo_vet_check_suggestions(suggested)
     locked_keys = {(item.crate, item.new) for item in locked}
+    checked_keys = {(item.crate, item.new) for item in parse_locked_cargo_vet_report(suggested)}
     suggestion_keys = {(item.crate, item.new) for item in suggestions}
-    if suggestion_keys != locked_keys:
+    if checked_keys != locked_keys or suggestion_keys != locked_keys:
         raise MaintenanceError("cargo-vet locked gaps and review suggestions disagree")
     by_key: dict[tuple[str, str], list[VetItem]] = {}
     for item in suggestions:
