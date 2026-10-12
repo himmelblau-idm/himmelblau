@@ -46,6 +46,7 @@ RUN apt-get update --snapshot "$UBUNTU_SNAPSHOT" \
         libtss2-dev \
         libudev-dev \
         libunistring-dev \
+        nodejs \
         pkg-config \
         policycoreutils \
         python3 \

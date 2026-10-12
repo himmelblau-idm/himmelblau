@@ -1116,7 +1116,7 @@ sys.exit(int(sys.argv[1]))
         smoke_argv = shlex.split(smoke_command)
         self.assertEqual(smoke_argv[-2], "-euc")
         for command in (
-            "rustc --version", "cargo --version", "cargo-vet --version",
+            "node --version", "rustc --version", "cargo --version", "cargo-vet --version",
             "cargo vet gc", "cargo-audit --version", "crate2nix --version",
         ):
             self.assertIn(command, smoke_argv[-1])
@@ -1144,6 +1144,7 @@ sys.exit(int(sys.argv[1]))
         self.assertIn("COPY --from=rust-toolchain /usr/local/cargo /usr/local/cargo", dockerfile)
         self.assertIn("COPY --from=rust-toolchain /usr/local/rustup /usr/local/rustup", dockerfile)
         self.assertIn("UBUNTU_SNAPSHOT=20260924T000000Z", dockerfile)
+        self.assertRegex(dockerfile, r"(?m)^\s+nodejs \\$")
         for package, version in (("cargo-vet", "0.10.2"), ("cargo-audit", "0.22.2"), ("crate2nix", "0.15.0")):
             self.assertIn(f"{package} --version {version} --locked", dockerfile)
 
