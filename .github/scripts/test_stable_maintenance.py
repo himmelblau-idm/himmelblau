@@ -1456,7 +1456,8 @@ class CargoVetTests(unittest.TestCase):
             [sm.VetItem("example", "0.9.0", "1.0.0")],
         )
         invalid = [
-            (0, VET_CHECK_REPORT), (-9, VET_CHECK_REPORT), (255, VET_SUCCESS), (255, "not json"),
+            (0, VET_CHECK_REPORT), (1, VET_CHECK_REPORT), (137, VET_CHECK_REPORT),
+            (-9, VET_CHECK_REPORT), (255, VET_SUCCESS), (255, "not json"),
             (255, '{"conclusion":"fail (vetting)","suggest":null}'),
         ]
         for code, output in invalid:

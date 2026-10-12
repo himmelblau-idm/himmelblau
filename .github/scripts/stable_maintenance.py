@@ -552,10 +552,10 @@ def parse_locked_cargo_vet_report(result: CommandResult) -> list[VetItem]:
 def parse_cargo_vet_check_suggestions(result: CommandResult) -> list[VetItem]:
     """Read structured suggestions from a failing check with exemptions intact."""
     error = "cargo-vet check failed without parseable audit requirements"
-    if result.returncode <= 0:
+    # cargo-vet 0.10.2 exits 255 for vetting failures. Other statuses can
+    # indicate abnormal termination even if the process already wrote JSON.
+    if result.returncode != 255:
         raise MaintenanceError(error)
-    # cargo-vet 0.10.2 exits 255 for vetting failures; its failure report,
-    # rather than a successful process exit, identifies reviewable audit gaps.
     parse_locked_cargo_vet_report(result)
     try:
         report = json.loads(result.stdout)
