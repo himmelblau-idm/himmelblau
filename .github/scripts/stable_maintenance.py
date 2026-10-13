@@ -33,7 +33,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from dataclasses import asdict, dataclass
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 from pathlib import Path, PurePosixPath
 from typing import Any, Iterable, Iterator, Mapping, Sequence
 
@@ -2749,14 +2749,22 @@ def backport_build_cache(runner: Runner) -> Iterator[str | None]:
         print("backport-cache: enabled; target_limit=6g assets_limit=64m", file=sys.stderr)
         yield volume
     finally:
+        primary_error = sys.exc_info()[1]
+        cleanup_failed = False
         for command in ([engine, "rm", "-f", holder],
                         [engine, "volume", "rm", volume + "-assets", volume]):
             try:
                 result = runner.run(command, timeout=60, check=False, max_output=64 * 1024)
                 if result.returncode:
+                    cleanup_failed = True
                     print("backport-cache: cleanup failed", file=sys.stderr)
             except MaintenanceError:
+                cleanup_failed = True
                 print("backport-cache: cleanup failed", file=sys.stderr)
+        if cleanup_failed:
+            if primary_error is None:
+                raise MaintenanceError("backport cache cleanup failed")
+            primary_error.add_note("backport cache cleanup also failed")
 
 
 def phase_apply_backports(args: argparse.Namespace, state: State, runner: Runner) -> None:
@@ -2768,7 +2776,8 @@ def phase_apply_backports(args: argparse.Namespace, state: State, runner: Runner
     value = state.load(); applied, skipped, deferred = [], [], []
     conflicts, build_failed = [], []
     baseline_checked = False
-    with backport_build_cache(runner) as volume:
+    with ExitStack() as caches:
+        volume = caches.enter_context(backport_build_cache(runner))
         cache = {"target_volume": volume} if volume is not None else {}
         for sha in value.get("backport_candidates", []):
             require_sha(sha)
@@ -2798,18 +2807,34 @@ def phase_apply_backports(args: argparse.Namespace, state: State, runner: Runner
                 runner.git(["reset", "--hard", pre_head])
                 print(f"backport-debug: sha={sha} result=conflict-skipped", file=sys.stderr)
                 skipped.append(sha); conflicts.append(sha); deferred.append(sha); continue
-            failure = None
             print(f"backport-debug: sha={sha} stage=locked-build", file=sys.stderr)
-            try:
-                result = locked_build(runner, **cache)
-                if result.returncode:
-                    failure = {"sha": sha, "reason": "build failed", "exit": result.returncode}
-            except MaintenanceError as exc:
-                diagnostic = (
-                    exc.reason if isinstance(exc, CommandCaptureError) and exc.reason in ("timeout", "output-limit")
-                    else diagnostic_reason(exc)
-                )
-                failure = {"sha": sha, "reason": "build command error", "diagnostic": diagnostic}
+            for _ in range(2):
+                failure = None
+                try:
+                    result = locked_build(runner, **cache)
+                    if result.returncode:
+                        failure = {"sha": sha, "reason": "build failed", "exit": result.returncode}
+                except MaintenanceError as exc:
+                    diagnostic = (
+                        exc.reason if isinstance(exc, CommandCaptureError) and exc.reason in ("timeout", "output-limit")
+                        else diagnostic_reason(exc)
+                    )
+                    failure = {"sha": sha, "reason": "build command error", "diagnostic": diagnostic}
+                if failure is None or not cache:
+                    break
+                # Failed build scripts may damage either volume or exhaust it.
+                # Release both before any retry, then use private fresh output
+                # for the remainder of the phase. Do not retry execution errors.
+                try:
+                    caches.close()
+                except MaintenanceError:
+                    runner.git(["reset", "--hard", pre_head])
+                    raise
+                cache = {}
+                print("backport-cache: discarded after failed build; reuse disabled", file=sys.stderr)
+                if failure["reason"] != "build failed":
+                    break
+                print(f"backport-debug: sha={sha} stage=private-build-retry", file=sys.stderr)
             if failure is not None:
                 # Preserve earlier passing backports and discard only this attempt.
                 # Builds cannot write to source; all generated output is isolated.

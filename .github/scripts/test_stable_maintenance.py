@@ -330,6 +330,35 @@ class BranchAndCliTests(unittest.TestCase):
                 self.assertIsNone(volume)
         runner.run.assert_not_called()
 
+    def test_backport_cache_cleanup_failure_is_fatal_without_masking_primary(self):
+        for failure in ("holder", "volumes", "exception"):
+            for primary in (False, True):
+                with self.subTest(failure=failure, primary=primary):
+                    runner = mock.Mock()
+                    def run(argv, **kwargs):
+                        cleanup = argv[1:3] in (["rm", "-f"], ["volume", "rm"])
+                        if cleanup and failure == "exception":
+                            raise sm.MaintenanceError("cleanup command failed")
+                        bad = ((failure == "holder" and argv[1:3] == ["rm", "-f"]) or
+                               (failure == "volumes" and argv[1:3] == ["volume", "rm"]))
+                        return sm.CommandResult(int(bad), "", "")
+                    runner.run.side_effect = run
+                    original = sm.MaintenanceError("primary build error")
+                    with mock.patch.dict(os.environ, {"MAINTENANCE_BACKPORT_CACHE": "1", "MAINTENANCE_BUILD_IMAGE": "fixture"}), \
+                         mock.patch.object(sm.shutil, "which", return_value="/usr/bin/docker"), \
+                         self.assertRaises(sm.MaintenanceError) as caught:
+                        with sm.backport_build_cache(runner):
+                            if primary:
+                                raise original
+                    if primary:
+                        self.assertIs(caught.exception, original)
+                        self.assertIn("backport cache cleanup also failed", original.__notes__)
+                    else:
+                        self.assertEqual(str(caught.exception), "backport cache cleanup failed")
+                    commands = [call.args[0] for call in runner.run.call_args_list]
+                    self.assertEqual(commands[-2][1:3], ["rm", "-f"])
+                    self.assertEqual(commands[-1][1:3], ["volume", "rm"])
+
     def test_shared_backport_mounts_preserve_build_boundaries(self):
         with tempfile.TemporaryDirectory() as tmp:
             source = Path(tmp) / "source"; source.mkdir(); (source / ".git").mkdir()
@@ -402,6 +431,14 @@ class BranchAndCliTests(unittest.TestCase):
                     self.assertNotEqual(sm.locked_build(runner, target_volume=volume).returncode, 0)
                     (source / "src/main.rs").write_text(main)
                     self.assertTrue(dep_fresh(sm.locked_build(runner, target_volume=volume)))
+                    # A failed build script can corrupt generated assets outside
+                    # Cargo's fingerprint tracking. Disposing the cache must
+                    # let the restored tree regenerate them in a private build.
+                    build_script = (source / "build.rs").read_text()
+                    (source / "build.rs").write_text('fn main(){std::fs::write("target/generated/asset", "poison").unwrap();'
+                                                    'panic!("failed after damaging shared assets");}\n')
+                    self.assertNotEqual(sm.locked_build(runner, target_volume=volume).returncode, 0)
+                    (source / "build.rs").write_text(build_script)
                 self.assertFalse(dep_fresh(sm.locked_build(runner)))
                 for name in (volume, volume + "-assets"):
                     self.assertNotEqual(runner.run(["docker", "volume", "inspect", name], check=False).returncode, 0)
@@ -2886,7 +2923,11 @@ class MaintenanceHistoryTests(unittest.TestCase):
                 volume = "himmelblau-maint-backport-" + "a" * 32
                 def build(current, **kwargs):
                     self.assertIs(current, runner)
-                    self.assertEqual(kwargs, {"target_volume": volume})
+                    if len(snapshots) < 3:
+                        self.assertEqual(kwargs, {"target_volume": volume})
+                    else:
+                        self.assertEqual(kwargs, {})
+                        cache.return_value.__exit__.assert_called_once()
                     head = runner.git(["rev-parse", "HEAD"]).stdout.strip()
                     snapshots.append(head)
                     bad_import = "resolve_hsm_type" in (root / "cli.py").read_text()
@@ -2905,7 +2946,7 @@ class MaintenanceHistoryTests(unittest.TestCase):
                     sm.phase_apply_backports(mock.Mock(branch="stable-4.x"), state, runner)
                 cache.return_value.__exit__.assert_called_once()
                 value = state.load()
-                self.assertEqual(len(snapshots), 4)  # Baseline, good, bad, later.
+                self.assertEqual(len(snapshots), 5 if failure == "missing-import" else 4)
                 self.assertEqual(value["backports_applied"], [earlier, later])
                 self.assertEqual(value["backports_conflict_skipped"], [])
                 self.assertEqual(value["backports_deferred"], [broken])
@@ -2922,6 +2963,56 @@ class MaintenanceHistoryTests(unittest.TestCase):
                 self.assertEqual(sm.maintenance_main_through(value), baseline)
                 self.assertIn("Backports reverted after build failure: 1", sm.build_pr_body(value))
                 self.assertIn("Backports Build Failed", "\n".join(sm.sanitized_state_details(value)))
+
+    def test_cache_capacity_failure_retries_once_privately_and_continues(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            runner = self.repository(Path(tmp) / "repo")
+            (runner.root / "fix.txt").write_text("candidate\n")
+            candidate = self.commit(runner, "Candidate")
+            (runner.root / "later.txt").write_text("later\n")
+            later = self.commit(runner, "Later independent fix")
+            runner.git(["checkout", "stable-4.x"])
+            state = sm.State(Path(tmp) / "state")
+            state.save({"branch": "stable-4.x", "backport_candidates": [candidate, later]})
+            calls = []
+            volume = "himmelblau-maint-backport-" + "b" * 32
+            def build(current, **kwargs):
+                calls.append(kwargs)
+                if len(calls) > 2:
+                    cache.return_value.__exit__.assert_called_once()
+                # Simulate a full shared target/asset volume, then a fresh build.
+                return sm.CommandResult(101 if len(calls) == 2 else 0, "", "No space left on device")
+            with mock.patch.object(sm, "backport_build_cache") as cache, \
+                 mock.patch.object(sm, "locked_build", side_effect=build):
+                cache.return_value.__enter__.return_value = volume
+                sm.phase_apply_backports(mock.Mock(branch="stable-4.x"), state, runner)
+            self.assertEqual(calls, [{"target_volume": volume}, {"target_volume": volume}, {}, {}])
+            self.assertEqual(state.load()["backports_applied"], [candidate, later])
+            self.assertEqual(state.load()["backports_build_failed"], [])
+            self.assertTrue((runner.root / "fix.txt").exists())
+            self.assertTrue((runner.root / "later.txt").exists())
+
+    def test_cache_disposal_failure_restores_candidate_before_aborting(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            runner = self.repository(Path(tmp) / "repo")
+            (runner.root / "fix.txt").write_text("candidate\n")
+            candidate = self.commit(runner, "Candidate")
+            runner.git(["checkout", "stable-4.x"])
+            before = runner.git(["rev-parse", "HEAD"]).stdout
+            state = sm.State(Path(tmp) / "state")
+            original = {"branch": "stable-4.x", "backport_candidates": [candidate]}
+            state.save(original)
+            with mock.patch.object(sm, "backport_build_cache") as cache, \
+                 mock.patch.object(sm, "locked_build", side_effect=[sm.CommandResult(0, "", ""),
+                                                                    sm.CommandResult(101, "", "")]) as build, \
+                 self.assertRaisesRegex(sm.MaintenanceError, "cleanup failed"):
+                cache.return_value.__enter__.return_value = "himmelblau-maint-backport-" + "c" * 32
+                cache.return_value.__exit__.side_effect = sm.MaintenanceError("backport cache cleanup failed")
+                sm.phase_apply_backports(mock.Mock(branch="stable-4.x"), state, runner)
+            self.assertEqual(build.call_count, 2)
+            self.assertEqual(runner.git(["rev-parse", "HEAD"]).stdout, before)
+            self.assertFalse((runner.root / "fix.txt").exists())
+            self.assertEqual(state.load(), original)
 
     def test_backport_baseline_failure_does_not_mutate_checkout(self):
         with tempfile.TemporaryDirectory() as tmp:
