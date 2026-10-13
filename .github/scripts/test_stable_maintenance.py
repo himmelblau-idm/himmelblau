@@ -1145,6 +1145,12 @@ sys.exit(int(sys.argv[1]))
         self.assertIn("permission-workflows: write", workflow)
         self.assertIn("GITHUB_TOKEN: ${{ steps.publish-token.outputs.token }}", workflow)
 
+        concurrency = maintain_job.split("    concurrency:\n", 1)[1].split("    env:\n", 1)[0]
+        self.assertIn("group: stable-maintenance-azure-quota\n", concurrency)
+        self.assertNotIn("${{", concurrency)
+        self.assertIn("cancel-in-progress: false\n", concurrency)
+        self.assertIn("queue: max\n", concurrency)
+
         dockerfile = DOCKERFILE.read_text()
         self.assertRegex(dockerfile, r"FROM rust:1\.98\.0-bookworm@sha256:[0-9a-f]{64} AS rust-toolchain")
         self.assertRegex(dockerfile, r"FROM rust:1\.98\.0-bookworm@sha256:[0-9a-f]{64} AS maintenance-tools")
@@ -1971,8 +1977,9 @@ class CommitFilteringTests(unittest.TestCase):
 
     def test_path_and_author_filters(self):
         self.assertEqual(sm.prefilter_commit("Update stuff", ["Cargo.lock"]), "dependency metadata only")
-        self.assertIsNone(sm.prefilter_commit("Repair testing", [".github/workflows/ci.yml"]))
-        self.assertEqual(sm.prefilter_commit("Repair packaging", [".github/workflows/stable-package-target.yml"]), "CI only")
+        for paths in ([".github/workflows/ci.yml"], [".github/workflows/stable-package-target.yml"],
+                      ["src/a.rs", ".github/workflows/ci.yml"]):
+            self.assertEqual(sm.prefilter_commit("Repair testing", paths), "CI change requires manual backport")
         self.assertEqual(sm.prefilter_commit("Whatever", ["src/a.rs"], author="dependabot[bot]"), "dependabot/dependency update")
         self.assertEqual(sm.prefilter_commit("Merge branch", ["src/a.rs"], parents=2), "merge")
 
@@ -2170,6 +2177,7 @@ class MutationBoundaryTests(unittest.TestCase):
             runner.git.side_effect = git
             output = io.StringIO()
             with mock.patch.object(sm, "AzureAI", side_effect=AssertionError("AI must not resolve conflicts")), \
+                 mock.patch.object(sm, "_commit_record", return_value={"paths": ["src/a.rs"]}), \
                  mock.patch.object(sm, "locked_build", return_value=sm.CommandResult(0, "", "")) as build, \
                  mock.patch.object(sm.sys, "stderr", output):
                 sm.phase_apply_backports(mock.Mock(branch="stable-4.x"), state, runner)
@@ -2522,6 +2530,7 @@ class MarkerConflictAndAITests(unittest.TestCase):
             self.assertNotIn(f"backport-debug: sha={failed}", output.getvalue())
             self.assertIn("backport-summary: phase=classify candidates=3 selected=2 skipped=0 manual_review=1", output.getvalue())
             with mock.patch.object(sm.sys, "stderr", output), \
+                 mock.patch.object(sm, "_commit_record", return_value=record), \
                  mock.patch.object(sm, "locked_build", return_value=sm.CommandResult(0, "", "")) as build:
                 sm.phase_apply_backports(mock.Mock(branch="stable-4.x"), state, runner)
             self.assertEqual(build.call_count, 3)  # Baseline and both attempted picks.
@@ -3137,7 +3146,7 @@ class SequentialMaintenanceTests(unittest.TestCase):
             self.assertEqual(source.read_text(), "fixed stable variant\n")
             self.assertEqual(state.load()["backports_adapted"], [sha])
             self.assertEqual(build.call_count, 2)
-            fmt.assert_called_once_with(runner)
+            fmt.assert_called_once_with(runner, pre_head)
             self.assertIn(sha, runner.git(["log", "-1", "--format=%B"]).stdout)
             self.assertEqual(runner.git(["status", "--porcelain"]).stdout, "")
 
@@ -3185,12 +3194,126 @@ class SequentialMaintenanceTests(unittest.TestCase):
             self.assertEqual(state.load()["backports_deferred"], [sha])
             self.assertEqual(state.load()["backports_repair_failed"][0]["reason"], "format-failed")
 
-    def test_testing_ci_policy_preserves_builds_publication_and_global_config(self):
-        original = "name: CI\npermissions:\n  contents: read\njobs:\n  build:\n    run: package\n  nss-helper:\n    run: docker old\n"
-        self.assertTrue(sm.testing_only_delta(original, original.replace("docker old", "sh test")))
-        for changed in (original.replace("package", "publish"), original.replace("contents: read", "contents: write"),
-                        original + "  release:\n    run: publish\n"):
-            self.assertFalse(sm.testing_only_delta(original, changed))
+    def test_formatter_drift_cannot_be_amended_into_backport(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            runner = self.repository(Path(tmp) / "repo")
+            unrelated = runner.root / "unrelated.rs"
+            unrelated.write_text("fn unrelated() {} // existing formatting drift\n")
+            baseline = self.commit(runner, "Existing stable code")
+            runner.git(["branch", "-f", "stable-4.x", baseline])
+            (runner.root / "earlier.txt").write_text("earlier accepted fix\n")
+            earlier = self.commit(runner, "Earlier independent fix")
+            candidate = runner.root / "fix.rs"
+            candidate.write_text("fn fix() {}\n")
+            rejected = self.commit(runner, "Attempt triggering unrelated rustfmt drift")
+            (runner.root / "later.txt").write_text("later independent fix\n")
+            later = self.commit(runner, "Later independent fix")
+            runner.git(["checkout", "stable-4.x"])
+            state = sm.State(Path(tmp) / "state")
+            state.save({"branch": "stable-4.x", "backport_candidates": [earlier, rejected, later]})
+            def formatter(current, command, **kwargs):
+                if candidate.exists():
+                    candidate.write_text("fn fix() {\n}\n")
+                    unrelated.write_text("fn unrelated() {\n}\n")
+                return sm.CommandResult(0, "", "")
+            with mock.patch.object(sm, "locked_build", return_value=sm.CommandResult(0, "", "")), \
+                 mock.patch.object(sm, "contained_repo_command", side_effect=formatter):
+                sm.phase_apply_backports(mock.Mock(branch="stable-4.x"), state, runner, adaptive=True)
+            value = state.load()
+            self.assertEqual(value["backports_applied"], [earlier, later])
+            self.assertEqual(value["backports_deferred"], [rejected])
+            self.assertEqual(value["backports_repair_failed"][0]["reason"], "format-failed")
+            self.assertFalse(candidate.exists())
+            self.assertEqual(unrelated.read_text(), "fn unrelated() {} // existing formatting drift\n")
+            self.assertTrue((runner.root / "earlier.txt").exists())
+            self.assertTrue((runner.root / "later.txt").exists())
+            self.assertEqual(runner.git(["status", "--porcelain"]).stdout, "")
+
+    def test_ci_backports_require_review_before_ai_build_or_mutation(self):
+        payloads = (
+            "    permissions: {contents: write}\n",
+            "    env: {KEY: '${{ secrets.STABLE_MAINTENANCE_APP_PRIVATE_KEY }}'}\n",
+            "    environment: production\n    runs-on: self-hosted\n",
+            "    uses: owner/repo/.github/workflows/job.yml@main\n    secrets: inherit\n",
+            "    steps:\n      - uses: attacker/action@main\n",
+            "    steps:\n      - run: curl https://example.invalid\n",
+            "    permissions: &grant {contents: write}\n    env: *grant\n",
+            "    steps:\n      - run: cargo fmt --check\n",
+        )
+        for payload in payloads:
+            with self.subTest(payload=payload), tempfile.TemporaryDirectory() as tmp:
+                runner = self.repository(Path(tmp) / "repo")
+                baseline = runner.git(["rev-parse", "HEAD"]).stdout.strip()
+                workflow = runner.root / ".github/workflows/ci.yml"
+                workflow.write_text("name: CI\npermissions: {contents: read}\njobs:\n  fmt:\n" + payload)
+                sha = self.commit(runner, "Fix test job")
+                runner.git(["checkout", "stable-4.x"])
+                original_workflow = workflow.read_text()
+                state = sm.State(Path(tmp) / "state")
+                state.save({"branch": "stable-4.x", "cutoff": baseline, "main_head": sha})
+                with mock.patch.object(sm, "AzureAI") as ai, mock.patch.object(sm, "locked_build") as build:
+                    sm.phase_backports(mock.Mock(branch="stable-4.x"), state, runner)
+                ai.assert_not_called(); build.assert_not_called()
+                self.assertEqual(state.load()["backport_outcomes"][0]["outcome"], "intentional-skip")
+                self.assertEqual(state.load()["backport_skipped"][0]["reason"], "CI change requires manual backport")
+                with mock.patch.object(sm, "AzureAI") as ai:
+                    sm.phase_classify_backports(mock.Mock(branch="stable-4.x"), state, runner, candidates=[sha])
+                ai.assert_not_called()
+                value = state.load(); value["backport_candidates"] = [sha]; state.save(value)
+                with mock.patch.object(sm, "locked_build") as build, mock.patch.object(sm, "format_backport") as fmt:
+                    sm.phase_apply_backports(mock.Mock(branch="stable-4.x"), state, runner, adaptive=True)
+                build.assert_not_called(); fmt.assert_not_called()
+                self.assertEqual(state.load()["backports_deferred"], [sha])
+                self.assertEqual(workflow.read_text(), original_workflow)
+                self.assertEqual(runner.git(["rev-parse", "HEAD"]).stdout.strip(), baseline)
+                ai = mock.Mock()
+                self.assertFalse(sm.repair_backport(runner, sha, baseline, ai))
+                ai.call.assert_not_called()
+
+    def test_ci_admission_sees_quoted_paths_and_both_sides_of_renames(self):
+        for case in ("quoted-name", "renamed-out"):
+            with self.subTest(case=case), tempfile.TemporaryDirectory() as tmp:
+                runner = self.repository(Path(tmp) / "repo")
+                workflow = runner.root / ".github/workflows/wé.yml"
+                workflow.write_text("name: existing\n")
+                baseline = self.commit(runner, "Existing workflow")
+                runner.git(["branch", "-f", "stable-4.x", baseline])
+                if case == "quoted-name":
+                    workflow.write_text("name: changed\n")
+                    (runner.root / "fix.rs").write_text("fn fix() {}\n")
+                else:
+                    workflow.rename(runner.root / "source.rs")
+                sha = self.commit(runner, "Fix existing behavior")
+                self.assertIn(".github/workflows/wé.yml", sm._commit_record(runner, sha)["paths"])
+                runner.git(["checkout", "stable-4.x"])
+                state = sm.State(Path(tmp) / "state")
+                state.save({"branch": "stable-4.x", "backport_candidates": [sha]})
+                with mock.patch.object(sm, "locked_build") as build:
+                    sm.phase_apply_backports(mock.Mock(branch="stable-4.x"), state, runner)
+                build.assert_not_called()
+                self.assertEqual(state.load()["backports_deferred"], [sha])
+                self.assertEqual(workflow.read_text(), "name: existing\n")
+
+    def test_independent_apply_rejects_ci_added_by_parentless_commit(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            runner = self.repository(Path(tmp) / "repo")
+            baseline = runner.git(["rev-parse", "HEAD"]).stdout.strip()
+            runner.git(["checkout", "--orphan", "root-fixture"])
+            workflow = runner.root / ".github/workflows/unreviewed.yml"
+            workflow.write_text("name: unreviewed\n")
+            sha = self.commit(runner, "Fix via root commit")
+            record = sm._commit_record(runner, sha)
+            self.assertEqual(record["parents"], 0)
+            self.assertIn(".github/workflows/unreviewed.yml", record["paths"])
+            runner.git(["checkout", "stable-4.x"])
+            state = sm.State(Path(tmp) / "state")
+            state.save({"branch": "stable-4.x", "backport_candidates": [sha]})
+            with mock.patch.object(sm, "locked_build") as build:
+                sm.phase_apply_backports(mock.Mock(branch="stable-4.x"), state, runner)
+            build.assert_not_called()
+            self.assertEqual(state.load()["backports_deferred"], [sha])
+            self.assertFalse(workflow.exists())
+            self.assertEqual(runner.git(["rev-parse", "HEAD"]).stdout.strip(), baseline)
 
     def test_container_manifest_translation_preserves_containment(self):
         with tempfile.TemporaryDirectory() as tmp:

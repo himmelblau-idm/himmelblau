@@ -47,7 +47,6 @@ MAX_AI_INPUT_BYTES = 4 * 1024 * 1024
 MAX_AI_OUTPUT_BYTES = 256 * 1024
 MAX_BACKPORT_INPUT_BYTES = 192 * 1024
 MAX_BACKPORT_REPAIR_ATTEMPTS = 2
-TESTING_JOBS = frozenset({"fmt", "clippy", "test", "nss-helper", "license", "vet", "machete"})
 MAX_BUILD_OUTPUT_BYTES = 32 * 1024 * 1024
 AUTOMATION_PREFIX = "automation/stable-maintenance/"
 AUTOMATION_LABEL = "automated-stable-maintenance"
@@ -643,8 +642,8 @@ def prefilter_commit(subject: str, paths: Sequence[str], *, author: str = "", pa
         return "known non-fix subject"
     if is_dependency_only(paths):
         return "dependency metadata only"
-    if is_ci_only(paths) and paths != [".github/workflows/ci.yml"]:
-        return "CI only"
+    if any(is_ci_only([path]) for path in paths):
+        return "CI change requires manual backport"
     return None
 
 
@@ -2629,47 +2628,15 @@ def _commit_record(runner: Runner, sha: str) -> dict[str, Any]:
     fields = raw.rstrip("\n").split("\0")
     if len(fields) != 5:
         raise MaintenanceError("unexpected git commit metadata")
-    paths = runner.git(["diff-tree", "--no-commit-id", "--name-only", "-r", sha]).stdout.splitlines()
+    # Keep quoted/non-ASCII names and both sides of renames visible to policy.
+    paths = runner.git(["diff-tree", "--root", "--no-commit-id", "--name-only", "--no-renames", "-z", "-r", sha]).stdout.split("\0")
+    paths = [path for path in paths if path]
     return {"sha": fields[0], "subject": fields[1], "body": fields[2], "author": fields[3], "parents": len(fields[4].split()), "paths": paths}
 
 
 def display_summary(text: str) -> str:
     """One bounded line, safe in Actions logs and Markdown artifacts."""
     return re.sub(r"[^A-Za-z0-9 _.,():/+=-]", "?", str(text))[:180]
-
-
-def testing_only_delta(before: str, after: str) -> bool:
-    def jobs(text: str) -> tuple[str, dict[str, str]]:
-        if text.startswith("jobs:\n"):
-            text = "\n" + text
-        prefix, separator, body = text.partition("\njobs:\n")
-        if not separator or re.search(r"^[^\s#]", body, re.M):
-            raise MaintenanceError("CI workflow structure is not safely inspectable")
-        matches = list(re.finditer(r"^  ([A-Za-z0-9_-]+):[^\n]*\n", body, re.M))
-        if not matches or body[:matches[0].start()].strip():
-            raise MaintenanceError("CI workflow structure is not safely inspectable")
-        result = {}
-        for index, match in enumerate(matches):
-            name = match[1]
-            if name in result:
-                raise MaintenanceError("duplicate CI job")
-            end = matches[index + 1].start() if index + 1 < len(matches) else len(body)
-            result[name] = body[match.start():end]
-        return prefix, result
-    try:
-        old_prefix, old = jobs(before)
-        new_prefix, new = jobs(after)
-    except MaintenanceError:
-        return False
-    changed = {key for key in old.keys() | new.keys() if old.get(key) != new.get(key)}
-    return old_prefix == new_prefix and bool(changed) and changed <= TESTING_JOBS
-
-
-def testing_only_commit(runner: Runner, sha: str) -> bool:
-    path = ".github/workflows/ci.yml"
-    before = runner.git(["show", f"{sha}^:{path}"], check=False)
-    after = runner.git(["show", f"{sha}:{path}"], check=False)
-    return before.returncode == after.returncode == 0 and testing_only_delta(before.stdout, after.stdout)
 
 
 def backport_patch(runner: Runner, record: Mapping[str, Any]) -> str:
@@ -2735,6 +2702,8 @@ def backport_stable_context(runner: Runner, record: Mapping[str, Any], patch: st
 def repair_backport(runner: Runner, sha: str, pre_head: str, ai: AzureAI) -> bool:
     """Accept patch data only: never execute model commands or expand scope."""
     record = _commit_record(runner, sha)
+    if any(is_ci_only([path]) for path in record["paths"]):
+        return False
     upstream = backport_patch(runner, record)
     conflict_context = backport_stable_context(runner, record, upstream)
     runner.git(["cherry-pick", "--abort"], check=False)
@@ -2776,6 +2745,8 @@ def repair_backport(runner: Runner, sha: str, pre_head: str, ai: AzureAI) -> boo
                     raise MaintenanceError("repair patch escaped original paths")
                 if name in {"Cargo.nix", "Cargo.lock"} or name.startswith(("supply-chain/", ".github/scripts/")):
                     raise MaintenanceError("repair patch changes protected metadata")
+                if is_ci_only([name]):
+                    raise MaintenanceError("CI backports require manual review")
                 # Validate every existing component, including symlink parents.
                 resolved = (runner.root / name).resolve()
                 if runner.root not in resolved.parents or any(p.is_symlink() for p in [runner.root / name, *(runner.root / name).parents] if p != runner.root):
@@ -2795,10 +2766,6 @@ def repair_backport(runner: Runner, sha: str, pre_head: str, ai: AzureAI) -> boo
             if not verification["decision"]:
                 return False
             runner.git(["apply", "--index", "-"], input_text=patch)
-            if ".github/workflows/ci.yml" in changed:
-                before = runner.git(["show", f"{pre_head}:.github/workflows/ci.yml"]).stdout
-                if not testing_only_delta(before, checkout_regular_file(runner.root, ".github/workflows/ci.yml").read_text()):
-                    raise MaintenanceError("repair changed non-testing CI")
             runner.git(["commit", "--signoff", "-m", record["subject"], "-m", f"(cherry picked from commit {sha})\n\nAdapted for existing stable functionality."])
             return True
         except MaintenanceError:
@@ -2867,15 +2834,6 @@ def phase_classify_backports(
         reason = prefilter_commit(record["subject"], record["paths"], author=record["author"], parents=record["parents"])
         if reason:
             skipped.append({"sha": sha, "reason": reason}); continue
-        if compact:
-            ci_paths = [path for path in record["paths"] if is_ci_only([path])]
-            if ci_paths and (ci_paths != [".github/workflows/ci.yml"] or not testing_only_commit(runner, sha)):
-                reason = "CI build, publication or workflow policy change"
-                if len(ci_paths) != len(record["paths"]):
-                    review_required.append({"sha": sha, "check": "scope", "reason": "mixed source and protected CI change"})
-                else:
-                    skipped.append({"sha": sha, "reason": "intentional: " + reason})
-                continue
         if ai is None and initialization_error is None:
             try:
                 ai = AzureAI()
@@ -2956,12 +2914,17 @@ def phase_classify_backports(
     )
 
 
-def format_backport(runner: Runner) -> None:
+def format_backport(runner: Runner, pre_head: str) -> None:
+    # Scope formatting to the actual applied/adapted attempt, not all of main's
+    # paths or every file that this rustfmt version chooses to rewrite.
+    allowed = set(runner.git(["diff", "--name-only", require_sha(pre_head), "HEAD", "--"]).stdout.splitlines())
     contained_repo_command(runner, ["cargo", "fmt", "--all"], network=False, source_rw=True, cache_rw=False)
     paths = runner.git(["diff", "--name-only"]).stdout.splitlines()
     if paths:
         if any(not path.endswith(".rs") for path in paths):
             raise MaintenanceError("formatter changed non-Rust source")
+        if not set(paths).issubset(allowed):
+            raise MaintenanceError("formatter changed paths outside the current backport")
         runner.git(["add", "--", *paths])
         runner.git(["commit", "--amend", "--no-edit"])
 
@@ -2984,6 +2947,11 @@ def phase_apply_backports(
         if present:
             print(f"backport-debug: sha={sha} result=already-present", file=sys.stderr)
             skipped.append(sha); continue
+        if any(is_ci_only([path]) for path in _commit_record(runner, sha)["paths"]):
+            # Also enforce the boundary for independent apply-backports calls
+            # with pre-populated state, before a build or checkout mutation.
+            repair_failures.append({"sha": sha, "reason": "CI backports require manual review"})
+            skipped.append(sha); deferred.append(sha); continue
         pre_head = require_sha(runner.git(["rev-parse", "HEAD"]).stdout.strip())
         if not baseline_checked:
             # Do not attribute a pre-existing failure to the first backport.
@@ -3037,7 +3005,7 @@ def phase_apply_backports(
             skipped.append(sha); build_failed.append(failure); deferred.append(sha); continue
         if adaptive:
             try:
-                format_backport(runner)
+                format_backport(runner, pre_head)
             except MaintenanceError as exc:
                 runner.git(["reset", "--hard", pre_head])
                 repair_failures.append({"sha": sha, "reason": "format-failed", "diagnostic": diagnostic_reason(exc)})

@@ -96,8 +96,11 @@ jobs:
       max-parallel: 1
       matrix: ${{ fromJSON(needs.select.outputs.matrix) }}
     concurrency:
-      group: stable-maintenance-${{ matrix.branch }}
+      # Shared Azure quota: serialize all stable targets across workflow runs.
+      group: stable-maintenance-azure-quota
       cancel-in-progress: false
+      # Keep up to 100 pending jobs instead of replacing the prior pending job.
+      queue: max
     env:
       MAINTENANCE_BUILD_IMAGE: himmelblau-stable-maintenance:local
       TARGET_BRANCH: ${{ matrix.branch }}

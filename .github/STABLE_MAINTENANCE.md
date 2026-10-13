@@ -4,8 +4,8 @@ The workflow snapshots trusted tooling from the triggering `main` revision and
 stable source separately. Its `backports` phase inventories commits in ancestry
 order, then completes one commit before evaluating the next:
 
-1. Classify the actual patch and description as a correction to existing behavior
-   or testing CI. A `fix` subject does not authorize a new feature.
+1. Classify the actual patch and description as a correction to existing behavior.
+   A `fix` subject does not authorize a new feature.
 2. Evaluate relevance against the evolving stable worktree, including earlier
    accepted backports. Main-only features remain excluded; uncertainty is pending
    review, not an intentional exclusion.
@@ -15,7 +15,9 @@ order, then completes one commit before evaluating the next:
 4. Build the locked workspace. On failure, restore only this attempt and preserve
    earlier accepted commits. Record compiler codes and leave the item pending.
 5. Run contained `cargo fmt --all` and amend formatting into the backport commit.
-   A formatter failure also rolls back only this attempt.
+   Only Rust paths changed by this applied/adapted attempt may be amended.
+   Formatter changes to unrelated paths or a formatter failure roll back only
+   this attempt and leave it pending.
 
 The final publication gates include a clean locked build, workspace tests,
 formatting, available NSS and packaging-generator tests, cargo-audit, cargo-vet,
@@ -23,11 +25,13 @@ Cargo.nix regeneration, and a clean worktree. They do not replace distro package
 builds, SELinux policy tests, or runtime authentication testing. PRs still require
 human review and are never automatically merged.
 
-Only changes confined to the known testing jobs in `.github/workflows/ci.yml`
-are considered for CI backports. Workflow triggers, permissions, global settings,
-build jobs, package creation and publication stay outside that policy. Mixed
-source/protected-CI changes require review. Dependabot's independently validated
-pinned-action imports retain their existing policy.
+CI backports, including changes confined to testing jobs, are always rejected.
+A testing-job name cannot guarantee safe permissions, secret access, actions or
+commands: an automatically published same-repository PR can trigger that workflow
+before human review. Mixed source/CI commits are also excluded; maintainers can
+backport CI manually when needed. The same boundary applies to independent phase
+calls and AI repairs.
+Dependabot's independently validated pinned-action imports retain their policy.
 
 Backport input is bounded to 192 KiB. Generated lockfile and Cargo.nix diffs are
 excluded from AI context (not from the original cherry-pick), and large stable
@@ -40,7 +44,10 @@ from main.
 Azure retries use 5/10-second backoff for other failures. Throttling respects
 positive server guidance; missing/zero guidance falls back to a 60/120-second
 window plus jitter. Exhausted token quota enforces at least that window. Stable
-targets run serially to avoid competing for the shared deployment's quota.
+targets share the `stable-maintenance-azure-quota` concurrency group across all
+branches and workflow runs. Running work is never canceled by a later dispatch;
+`queue: max` retains up to 100 pending jobs, with additional jobs canceled if
+that queue is full. This avoids competing for the shared deployment's quota.
 Backoffs remain bounded, and failures remain visible rather than becoming negative
 eligibility decisions.
 
