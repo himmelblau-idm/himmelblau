@@ -35,7 +35,9 @@ calls and AI repairs.
 Dependabot's independently validated pinned-action imports retain their policy.
 
 Backport input is bounded to 192 KiB. Generated lockfile and Cargo.nix diffs are
-excluded from AI context (not from the original cherry-pick), and large stable
+excluded from AI context (not from the original cherry-pick). Inventory filenames
+are passed to Git as literal paths so pathspec magic cannot hide changed source
+or reintroduce omitted generated files. Large stable
 files use explicitly labeled excerpts around patch anchors. Missing context is
 not evidence that functionality is absent. AI decisions must record an allowed
 reason; uncertain decisions stay pending. Repairs cannot edit Cargo manifests or

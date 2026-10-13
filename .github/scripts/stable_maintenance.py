@@ -2644,7 +2644,8 @@ def backport_patch(runner: Runner, record: Mapping[str, Any]) -> str:
     paths = [path for path in record["paths"] if path not in generated]
     if not paths:
         raise MaintenanceError("main commit context exceeds budget")
-    patch = runner.git(["show", "--format=", "--no-ext-diff", "--no-textconv", "--patch", record["sha"], "--", *paths],
+    # Inventory filenames are data, including leading ':' and glob characters.
+    patch = runner.git(["--literal-pathspecs", "show", "--format=", "--no-ext-diff", "--no-textconv", "--patch", record["sha"], "--", *paths],
                        max_output=MAX_BACKPORT_INPUT_BYTES // 2).stdout
     return "Generated lockfile/Nix diffs omitted; their paths remain in the inventory.\n" + patch
 

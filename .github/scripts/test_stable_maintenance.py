@@ -3032,6 +3032,22 @@ class SequentialMaintenanceTests(unittest.TestCase):
     repository = MaintenanceHistoryTests.repository
     commit = MaintenanceHistoryTests.commit
 
+    def test_backport_patch_treats_inventory_paths_literally(self):
+        for name in (":(exclude)**", "Cargo.*", "ordinary.rs"):
+            with self.subTest(name=name), tempfile.TemporaryDirectory() as tmp:
+                runner = self.repository(Path(tmp) / "repo")
+                (runner.root / name).write_text("literal filename marker\n")
+                (runner.root / "value.rs").write_text("actual source change marker\n")
+                lock = runner.root / "Cargo.lock"
+                lock.write_text(lock.read_text() + "generated metadata marker\n")
+                sha = self.commit(runner, "Fix source with unusual filename")
+                record = sm._commit_record(runner, sha)
+                self.assertIn(name, record["paths"])
+                patch = sm.backport_patch(runner, record)
+                self.assertIn("+literal filename marker", patch)
+                self.assertIn("+actual source change marker", patch)
+                self.assertNotIn("generated metadata marker", patch)
+
     def test_skewed_merge_history_replays_prerequisite_before_child(self):
         with tempfile.TemporaryDirectory() as tmp:
             runner = self.repository(Path(tmp) / "repo")
