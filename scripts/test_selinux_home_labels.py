@@ -7,8 +7,9 @@ built from src/selinux/src/himmelblaud.te,
 then run: sudo python3 scripts/test_selinux_home_labels.py
 
 Uses private configuration/socket/skeleton mounts and a synthetic UID/GID 0
-HomeDirectory request; no tenant login or identity/enrollment changes. Checks
-every copied fixture entry before any relabeling, then dry-runs restorecon.
+HomeDirectory request; no tenant login or identity/enrollment changes. Verifies
+read-only configuration mounts hide host drop-ins and server config. Checks every
+copied fixture entry before any relabeling, then dry-runs restorecon.
 Global SELinux must be enforcing; reports the loaded task domain's mode without
 changing it. Also tests temporary nested and external prefixes with the
 documented /home file-context equivalence; removes only its own mappings.
@@ -82,14 +83,19 @@ def test_home_prefix(prefix):
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_bytes(content)
         entries = sorted(skeleton.rglob("*"))
-        config, endpoint = root / "config", root / "tasks.sock"
+        configuration = root / "configuration"
+        configuration.mkdir()
+        empty = root / "empty-config"
+        empty.mkdir()
+        config, endpoint = configuration / "himmelblau.conf", root / "tasks.sock"
         unit = root.name
         config.write_text(
             f"[global]\nhome_prefix = {prefix}/\n"
             f"task_socket_path = {endpoint}\nuse_etc_skel = true\nselinux = true\n"
         )
         subprocess.run(["chcon", "-t", "himmelblau_var_run_t", str(root)], check=True)
-        subprocess.run(["chcon", "-t", "himmelblau_etc_t", str(config)], check=True)
+        subprocess.run(["chcon", "-R", "-t", "himmelblau_etc_t",
+                        str(configuration), str(empty)], check=True)
         subprocess.run(["chcon", "-R", "-t", "etc_t", str(skeleton)], check=True)
         with socket.socket(socket.AF_UNIX) as server, (root / "log").open("w") as log:
             server.bind(str(endpoint))
@@ -98,7 +104,10 @@ def test_home_prefix(prefix):
             subprocess.run(["chcon", "-t", "himmelblau_var_run_t", str(endpoint)], check=True)
             task = subprocess.Popen([
                 "systemd-run", "--quiet", "--wait", "--collect", "--unit=" + unit,
-                "-p", f"BindReadOnlyPaths={config}:/etc/himmelblau/himmelblau.conf",
+                "-p", f"BindReadOnlyPaths={configuration}:/etc/himmelblau",
+                "-p", f"BindReadOnlyPaths={empty}:/usr/lib/himmelblau",
+                "-p", f"BindReadOnlyPaths={empty}:/run/himmelblau",
+                "-p", f"BindReadOnlyPaths={empty}:/var/cache/himmelblaud",
                 "-p", f"BindReadOnlyPaths={skeleton}:/etc/skel",
                 "/usr/sbin/himmelblaud_tasks",
             ], stdout=log, stderr=log)
@@ -111,6 +120,19 @@ def test_home_prefix(prefix):
                     if ":himmelblaud_tasks_t:" not in context:
                         raise RuntimeError("Unexpected task daemon domain")
                     print("Task process:", context, flush=True)
+                    view = Path(f"/proc/{pid}/root")
+                    for path in ["/etc/himmelblau", "/usr/lib/himmelblau",
+                                 "/run/himmelblau", "/var/cache/himmelblaud"]:
+                        if not os.statvfs(view / path.lstrip("/")).f_flag & os.ST_RDONLY:
+                            raise RuntimeError(f"Task daemon configuration mount is writable: {path}")
+                    private = view / "etc/himmelblau"
+                    if ({path.name for path in private.iterdir()} != {"himmelblau.conf"}
+                            or (private / "himmelblau.conf").read_bytes() != config.read_bytes()):
+                        raise RuntimeError("Task daemon configuration is not private")
+                    for directory in ["usr/lib/himmelblau", "run/himmelblau",
+                                      "var/cache/himmelblaud"]:
+                        if any((view / directory).iterdir()):
+                            raise RuntimeError("Host configuration is visible to the test daemon")
                     connection.sendall(json.dumps({"HomeDirectory": {
                         "uid": 0, "gid": 0, "name": root.name, "aliases": [alias.name],
                     }}).encode())
