@@ -137,9 +137,7 @@ Daemons:
 - `src/daemon/` — system daemon + tasks daemon
   - `src/daemon/src/daemon.rs` — main daemon
   - `src/daemon/src/tasks_daemon.rs` — tasks daemon
-  - tmpfiles templates:
-    - `src/daemon/src/himmelblaud.tmpfiles.conf`
-    - `src/daemon/src/himmelblau-policies.tmpfiles.conf`
+  - tmpfiles template: `src/daemon/src/himmelblau-policies.tmpfiles.conf`
 
 Auth integration modules:
 

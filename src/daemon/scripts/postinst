@@ -44,9 +44,6 @@ fi
 # Ensure cache directory is created with correct permissions
 systemd-tmpfiles --create /usr/lib/tmpfiles.d/himmelblau-policies.conf 2>/dev/null || true
 
-# Ensure private data directory is created with correct permissions
-systemd-tmpfiles --create /usr/lib/tmpfiles.d/himmelblaud.conf 2>/dev/null || true
-
 # Remove old service files from /etc/systemd/system/ that were installed by v1.4.x
 # These take precedence over the new files in /usr/lib/systemd/system/ and lack
 # the LoadCredentialEncrypted directive needed for HSM pin handling.

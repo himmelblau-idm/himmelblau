@@ -143,8 +143,6 @@ package() {
   install -Dm644 src/config/gdm3_service_override.conf \
     "$pkgdir/usr/lib/systemd/system/display-manager.service.d/override.conf"
 
-  install -Dm644 src/daemon/src/himmelblaud.tmpfiles.conf \
-    "$pkgdir/usr/lib/tmpfiles.d/himmelblaud.conf"
   install -Dm644 src/daemon/src/himmelblau-policies.tmpfiles.conf \
     "$pkgdir/usr/lib/tmpfiles.d/himmelblau-policies.conf"
 
