@@ -4,14 +4,18 @@
 from __future__ import annotations
 
 import datetime as dt
+import hashlib
+import http.server
 import io
 import importlib.util
 import json
 import os
 import shlex
 import stat
+import subprocess
 import tempfile
 import tarfile
+import threading
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -1160,6 +1164,73 @@ sys.exit(int(sys.argv[1]))
         self.assertRegex(dockerfile, r"(?m)^\s+nodejs \\$")
         for package, version in (("cargo-vet", "0.10.2"), ("cargo-audit", "0.22.2"), ("crate2nix", "0.15.0")):
             self.assertIn(f"{package} --version {version} --locked", dockerfile)
+
+    @unittest.skipUnless(Path("/usr/lib/apt/apt-helper").exists(), "native APT transport unavailable")
+    def test_image_apt_policy_recovers_transient_errors_and_rejects_persistent_errors(self):
+        dockerfile = DOCKERFILE.read_text()
+        config_block = dockerfile.split("RUN printf '%s\\n'", 1)[1].split("\n\n", 1)[0]
+        config = shlex.split(config_block.replace("\\\n", ""))
+        self.assertEqual(config[-2:], [">", "/etc/apt/apt.conf.d/80maintenance-network"])
+        config_text = "\n".join(config[:-2]) + "\n"
+        self.assertIn('Acquire::Retries "3";', config_text)
+        self.assertIn('Acquire::http::Timeout "30";', config_text)
+        self.assertIn('Acquire::https::Timeout "30";', config_text)
+        self.assertIn('APT::Update::Error-Mode "any";', config_text)
+        install_block = dockerfile.split("RUN timeout ", 1)[1].split("\n\n", 1)[0]
+        self.assertTrue(install_block.startswith("--kill-after=15s 15m /bin/sh -ec "))
+        install_shell = shlex.split(install_block.replace("\\\n", ""))[-1]
+        self.assertIn('apt-get update --snapshot "$UBUNTU_SNAPSHOT"', install_shell)
+        self.assertIn('apt-get install --snapshot "$UBUNTU_SNAPSHOT"', install_shell)
+        subprocess.run(["/bin/sh", "-n", "-c", install_shell], check=True)
+        build_step = WORKFLOW.read_text().split(
+            "      - name: Build pinned maintenance image without credentials\n", 1,
+        )[1].split("\n      - name:", 1)[0]
+        self.assertIn("timeout-minutes: 30", build_step)
+
+        payload = b"verified package bytes\n"
+        for failures, valid_hash, succeeds in ((2, True, True), (100, True, False), (0, False, False)):
+            with self.subTest(failures=failures, valid_hash=valid_hash), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                config_path = root / "apt.conf"
+                config_path.write_text(config_text)
+                class Handler(http.server.BaseHTTPRequestHandler):
+                    requests = 0
+                    def log_message(self, *args): pass
+                    def do_GET(self):
+                        Handler.requests += 1
+                        if Handler.requests <= failures:
+                            self.send_error(503)
+                        else:
+                            self.send_response(200)
+                            self.send_header("Content-Length", str(len(payload)))
+                            self.end_headers()
+                            self.wfile.write(payload)
+                server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+                worker = threading.Thread(target=server.serve_forever, daemon=True)
+                worker.start()
+                try:
+                    digest = hashlib.sha256(payload if valid_hash else b"different bytes").hexdigest()
+                    result = subprocess.run([
+                        "/usr/lib/apt/apt-helper", "-c", str(config_path),
+                        # The loopback fixture uses the test user's private temp
+                        # directory; no package installation or production UID
+                        # policy is involved, and some test containers prohibit
+                        # switching to APT's _apt account.
+                        "-o", "APT::Sandbox::User=" + __import__("pwd").getpwuid(os.geteuid()).pw_name,
+                        "download-file",
+                        f"http://127.0.0.1:{server.server_port}/package.deb", str(root / "package.deb"),
+                        f"SHA256:{digest}",
+                    ], capture_output=True, text=True, timeout=25)
+                finally:
+                    server.shutdown(); server.server_close(); worker.join(timeout=2)
+                self.assertEqual(result.returncode == 0, succeeds, result.stdout + result.stderr)
+                if succeeds:
+                    self.assertEqual(Handler.requests, 3)
+                    self.assertEqual((root / "package.deb").read_bytes(), payload)
+                elif valid_hash:
+                    self.assertEqual(Handler.requests, 4)  # Initial attempt plus three retries.
+                else:
+                    self.assertIn("Hash Sum mismatch", result.stdout + result.stderr)
 
     def test_checkout_regular_file_accepts_regular_file(self):
         with tempfile.TemporaryDirectory() as tmp:

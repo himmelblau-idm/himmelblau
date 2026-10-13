@@ -27,6 +27,13 @@ Cargo.nix regeneration, and a clean worktree. They do not replace distro package
 builds, SELinux policy tests, or runtime authentication testing. PRs still require
 human review and are never automatically merged.
 
+Image provisioning retries failed APT downloads three times with 30-second
+connection/data timeouts. An incomplete index refresh fails closed; the native
+package update/install has a 15-minute deadline, and the image-build step has a
+30-minute deadline. Persistent service outages still fail the run. The pinned
+Ubuntu snapshot, image digests, signature checks and endpoint allowlist remain
+in force.
+
 CI backports, including changes confined to testing jobs, are always rejected.
 A testing-job name cannot guarantee safe permissions, secret access, actions or
 commands: an automatically published same-repository PR can trigger that workflow
