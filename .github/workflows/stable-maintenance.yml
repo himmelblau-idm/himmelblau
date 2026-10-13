@@ -92,6 +92,8 @@ jobs:
       pull-requests: read
     strategy:
       fail-fast: false
+      # Both stable targets share an Azure deployment's token quota.
+      max-parallel: 1
       matrix: ${{ fromJSON(needs.select.outputs.matrix) }}
     concurrency:
       group: stable-maintenance-${{ matrix.branch }}
@@ -122,6 +124,7 @@ jobs:
             security.ubuntu.com:80
             snapshot.ubuntu.com:443
             static.crates.io:443
+            static.rust-lang.org:443
 
       - name: Export runner-local maintenance paths
         shell: bash
@@ -253,6 +256,7 @@ jobs:
               node --version
               rustc --version | grep -E "^rustc 1\.98\.0 "
               cargo --version | grep -F "cargo 1.98.0"
+              rustfmt --version
               cargo-vet --version | grep -F "0.10.2"
               cargo vet gc
               cargo-audit --version | grep -F "0.22.2"
@@ -306,7 +310,7 @@ jobs:
           --repo-dir source --state-dir "$STATE_DIR"
           import-dependabot --branch "$TARGET_BRANCH"
 
-      - name: Backports — classify main-branch commits
+      - name: Backports — classify, adapt, build and format each commit in order
         if: steps.guard.outputs.proceed == 'true'
         env:
           AZURE_API_KEY: ${{ secrets.AZURE_API_KEY }}
@@ -316,14 +320,7 @@ jobs:
         run: >-
           python3 tooling/.github/scripts/stable_maintenance.py
           --repo-dir source --state-dir "$STATE_DIR"
-          classify-backports --branch "$TARGET_BRANCH"
-
-      - name: Backports — apply relevant bug fixes
-        if: steps.guard.outputs.proceed == 'true'
-        run: >-
-          python3 tooling/.github/scripts/stable_maintenance.py
-          --repo-dir source --state-dir "$STATE_DIR"
-          apply-backports --branch "$TARGET_BRANCH"
+          backports --branch "$TARGET_BRANCH"
 
       - name: Release — increment the patch version
         if: steps.guard.outputs.proceed == 'true'
@@ -365,3 +362,14 @@ jobs:
           python3 tooling/.github/scripts/stable_maintenance.py
           --repo-dir source --state-dir "$STATE_DIR"
           report --branch "$TARGET_BRANCH"
+
+      - name: Preserve sanitized maintenance results
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: stable-maintenance-${{ matrix.branch }}-${{ github.run_attempt }}
+          path: |
+            ${{ env.STATE_DIR }}/report.md
+            ${{ env.STATE_DIR }}/report.json
+          if-no-files-found: warn
+          retention-days: 30
