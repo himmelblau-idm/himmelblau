@@ -26,7 +26,17 @@ COPY --from=rust-toolchain \
 # Crate sources and the project tree are mounted read-only at runtime. The
 # snapshot is deliberately updated only through a reviewed Dockerfile change
 # so rebuilding this image selects the same native package revisions.
-RUN apt-get update --snapshot "$UBUNTU_SNAPSHOT" \
+RUN printf '%s\n' \
+        'Acquire::Retries "3";' \
+        'Acquire::http::Timeout "30";' \
+        'Acquire::https::Timeout "30";' \
+        'APT::Update::Error-Mode "any";' \
+        > /etc/apt/apt.conf.d/80maintenance-network
+
+# Recover individual transient downloads, but stop a persistent outage from
+# consuming the whole maintenance job. Never fall back to a live package set.
+RUN timeout --kill-after=15s 15m /bin/sh -ec ' \
+    apt-get update --snapshot "$UBUNTU_SNAPSHOT" \
     && apt-get install --snapshot "$UBUNTU_SNAPSHOT" --yes --no-install-recommends \
         autoconf \
         build-essential \
@@ -53,7 +63,7 @@ RUN apt-get update --snapshot "$UBUNTU_SNAPSHOT" \
         python3 \
         systemd \
         tpm-udev \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/*'
 
 COPY --from=maintenance-tools \
     /opt/maintenance-tools/bin/cargo-vet \
