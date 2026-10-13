@@ -1177,7 +1177,7 @@ sys.exit(int(sys.argv[1]))
         self.assertIn('Acquire::https::Timeout "30";', config_text)
         self.assertIn('APT::Update::Error-Mode "any";', config_text)
         install_block = dockerfile.split("RUN timeout ", 1)[1].split("\n\n", 1)[0]
-        self.assertTrue(install_block.startswith("--kill-after=15s 15m /bin/sh -ec "))
+        self.assertTrue(install_block.startswith("--kill-after=15s 35m /bin/sh -ec "))
         install_shell = shlex.split(install_block.replace("\\\n", ""))[-1]
         self.assertIn('apt-get update --snapshot "$UBUNTU_SNAPSHOT"', install_shell)
         self.assertIn('apt-get install --snapshot "$UBUNTU_SNAPSHOT"', install_shell)
@@ -1185,7 +1185,7 @@ sys.exit(int(sys.argv[1]))
         build_step = WORKFLOW.read_text().split(
             "      - name: Build pinned maintenance image without credentials\n", 1,
         )[1].split("\n      - name:", 1)[0]
-        self.assertIn("timeout-minutes: 30", build_step)
+        self.assertIn("timeout-minutes: 45", build_step)
 
         payload = b"verified package bytes\n"
         for failures, valid_hash, succeeds in ((2, True, True), (100, True, False), (0, False, False)):

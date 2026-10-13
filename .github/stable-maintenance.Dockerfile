@@ -35,7 +35,9 @@ RUN printf '%s\n' \
 
 # Recover individual transient downloads, but stop a persistent outage from
 # consuming the whole maintenance job. Never fall back to a live package set.
-RUN timeout --kill-after=15s 15m /bin/sh -ec ' \
+# A measured cold build fetched 66.6 MB of indexes at 241 kB/s, then needed
+# another 220 MB of packages. Allow transfer and unpacking time at that rate.
+RUN timeout --kill-after=15s 35m /bin/sh -ec ' \
     apt-get update --snapshot "$UBUNTU_SNAPSHOT" \
     && apt-get install --snapshot "$UBUNTU_SNAPSHOT" --yes --no-install-recommends \
         autoconf \

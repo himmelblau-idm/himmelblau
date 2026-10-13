@@ -29,8 +29,10 @@ human review and are never automatically merged.
 
 Image provisioning retries failed APT downloads three times with 30-second
 connection/data timeouts. An incomplete index refresh fails closed; the native
-package update/install has a 15-minute deadline, and the image-build step has a
-30-minute deadline. Persistent service outages still fail the run. The pinned
+package update/install has a 35-minute deadline, and the image-build step has a
+45-minute deadline. These budgets allow the measured cold transfer of 66.6 MB of
+indexes and 220 MB of packages at 241 kB/s, plus unpacking and build overhead.
+Persistent service outages still fail the run. The pinned
 Ubuntu snapshot, image digests, signature checks and endpoint allowlist remain
 in force.
 
