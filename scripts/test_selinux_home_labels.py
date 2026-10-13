@@ -1,18 +1,22 @@
 #!/usr/bin/env python3
 """Test home creation as root ONLY in a disposable Fedora/Aurora SELinux VM.
 
-Requires Himmelblau and its SELinux package, Python 3, setools-console and
-policycoreutils. Install the policy built from src/selinux/src/himmelblaud.te,
+Requires Himmelblau and its SELinux package, Python 3, setools-console,
+policycoreutils and policycoreutils-python-utils (semanage). Install the policy
+built from src/selinux/src/himmelblaud.te,
 then run: sudo python3 scripts/test_selinux_home_labels.py
 
 Uses private configuration/socket/skeleton mounts and a synthetic UID/GID 0
 HomeDirectory request; no tenant login or identity/enrollment changes. Checks
 every copied fixture entry before any relabeling, then dry-runs restorecon.
 Global SELinux must be enforcing; reports the loaded task domain's mode without
-changing it. Removes the temporary unit, home and alias on completion.
+changing it. Also tests temporary nested and external prefixes with the
+documented /home file-context equivalence; removes only its own mappings.
+Removes the temporary unit, home, alias and prefixes on completion.
 """
 
 import argparse
+from contextlib import contextmanager
 import json
 import os
 from pathlib import Path
@@ -36,44 +40,34 @@ SKELETON_FILES = {
 
 
 def output(*args):
+    """Run a checked command and return its trimmed stdout."""
     return subprocess.check_output(args, text=True).strip()
 
 
 def label_type(path):
+    """Read the actual SELinux type without following an alias symlink."""
     context = os.getxattr(path, "security.selinux", follow_symlinks=False)
     return context.decode().rstrip("\0").split(":")[2]
 
 
 def expected_type(path):
-    return output("matchpathcon", "-n", str(path)).split(":")[2]
+    """Look up the persistent file-context type expected for a path."""
+    context = output("matchpathcon", "-n", str(path))
+    return None if context == "<<none>>" else context.split(":")[2]
 
 
-def main():
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument(
-        "--home-prefix", choices=["/home", "/var/home"],
-        default="/var/home" if Path("/var/home").is_dir() else "/home",
-    )
-    args = parser.parse_args()
-    if os.geteuid() != 0:
-        raise RuntimeError("Run as root in a disposable test VM")
-    mode = output("getenforce")
-    if mode != "Enforcing":
-        raise RuntimeError("This regression requires global SELinux Enforcing")
-    print(output("rpm", "-q", "himmelblau", "himmelblau-selinux",
-                 "selinux-policy", "selinux-policy-targeted"), flush=True)
-    permissive_types = output("seinfo", "--permissive=himmelblaud_tasks_t")
-    permissive = bool(re.search(
-        r"^\s*(?:type\s+)?himmelblaud_tasks_t(?:[,;\s]|$)",
-        permissive_types, re.M,
-    ))
-    print("Global SELinux:", mode, flush=True)
-    print("Loaded himmelblaud_tasks_t:",
-          "permissive" if permissive else "enforcing", flush=True)
-    prefix = Path(args.home_prefix)
-    print(f"Parent {prefix}:", label_type(prefix), flush=True)
-    if label_type(prefix) != "home_root_t":
-        raise RuntimeError(f"Correct the parent label before testing: restorecon {prefix}")
+def require_home_prefix(prefix):
+    """Reject a prefix unless both its actual and persistent types are home_root_t."""
+    actual, expected = label_type(prefix), expected_type(prefix)
+    print(f"Parent {prefix}: actual={actual}, expected={expected}", flush=True)
+    if actual != "home_root_t" or expected != "home_root_t":
+        raise ValueError("Configure the prefix's /home file-context equivalence "
+                         "and restorecon it first; see home_prefix documentation")
+
+
+def test_home_prefix(prefix):
+    """Create a home through the real task domain and verify its copied fixture."""
+    require_home_prefix(prefix)
     failures = []
     with tempfile.TemporaryDirectory(prefix="himmel-home-label-") as directory:
         root = Path(directory)
@@ -138,6 +132,8 @@ def main():
                     print(f"{name}: actual={actual}, expected={expected}", flush=True)
                     if actual != expected:
                         failures.append(name + " label")
+                    if actual != "user_home_dir_t" or expected != "user_home_dir_t":
+                        failures.append(name + " must be user_home_dir_t")
                 if not alias.is_symlink() or os.readlink(alias) != home.name:
                     failures.append("alias target")
                 mismatches = 0
@@ -181,6 +177,65 @@ def main():
     print("FAIL: " + ", ".join(failures) if failures
           else "PASS: home, alias and skeleton", flush=True)
     return 1 if failures else 0
+
+
+@contextmanager
+def custom_home_prefix(parent):
+    """Own an empty prefix and its temporary /home equivalence, then clean both."""
+    with tempfile.TemporaryDirectory(prefix="himmel-prefix-", dir=parent) as directory:
+        prefix = Path(directory).resolve()
+        mapped = False
+        try:
+            # A parent-only relabel must not masquerade as a configured subtree.
+            subprocess.run(["chcon", "-t", "home_root_t", str(prefix)], check=True)
+            try:
+                require_home_prefix(prefix)
+            except ValueError:
+                print("PASS: parent-only relabel refused", flush=True)
+            else:
+                raise RuntimeError("Prefix without a /home equivalence was accepted")
+            subprocess.run(["semanage", "fcontext", "-a", "-e", "/home", str(prefix)],
+                           check=True)
+            mapped = True
+            subprocess.run(["restorecon", str(prefix)], check=True)
+            yield prefix
+        finally:
+            if mapped:
+                subprocess.run(["semanage", "fcontext", "-d", str(prefix)], check=True)
+
+
+def main():
+    """Check prerequisites and test standard, nested and external home prefixes."""
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--home-prefix", type=Path,
+        default=Path("/var/home") if Path("/var/home").is_dir() else Path("/home"),
+        help="existing home prefix; custom prefixes need the documented equivalence",
+    )
+    args = parser.parse_args()
+    if os.geteuid() != 0:
+        raise RuntimeError("Run as root in a disposable test VM")
+    mode = output("getenforce")
+    if mode != "Enforcing":
+        raise RuntimeError("This regression requires global SELinux Enforcing")
+    print(output("rpm", "-q", "himmelblau", "himmelblau-selinux",
+                 "selinux-policy", "selinux-policy-targeted"), flush=True)
+    permissive_types = output("seinfo", "--permissive=himmelblaud_tasks_t")
+    permissive = bool(re.search(
+        r"^\s*(?:type\s+)?himmelblaud_tasks_t(?:[,;\s]|$)",
+        permissive_types, re.M,
+    ))
+    print("Global SELinux:", mode, flush=True)
+    print("Loaded himmelblaud_tasks_t:",
+          "permissive" if permissive else "enforcing", flush=True)
+    prefix = args.home_prefix.resolve(strict=True)
+    print("CASE configured prefix", flush=True)
+    failed = test_home_prefix(prefix)
+    for name, parent in [("nested", prefix), ("external", Path("/var/tmp"))]:
+        with custom_home_prefix(parent) as custom:
+            print(f"CASE {name} prefix", flush=True)
+            failed |= test_home_prefix(custom)
+    return failed
 
 
 if __name__ == "__main__":
