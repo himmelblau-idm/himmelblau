@@ -222,7 +222,7 @@ jobs:
 
       - name: Build pinned maintenance image without credentials
         if: steps.guard.outputs.proceed == 'true'
-        timeout-minutes: 30
+        timeout-minutes: 45
         shell: bash
         run: |
           set -euo pipefail
