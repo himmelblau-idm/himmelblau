@@ -1,4 +1,5 @@
 name: Check cache, build and publish missing stable packages
+run-name: Stable packages ${{ inputs.tag || github.event.release.tag_name || github.event.client_payload.tag || github.ref_name }}
 
 on:
   release:

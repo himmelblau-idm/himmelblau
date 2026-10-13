@@ -1203,7 +1203,7 @@ impl IdProvider for OktaProvider {
                 (id, id)
             }
         };
-        Ok(UserTokenState::Update(UserToken {
+        Ok(UserTokenState::LookupOnly(UserToken {
             name: account.into(),
             spn: account.into(),
             uuid: object_id,

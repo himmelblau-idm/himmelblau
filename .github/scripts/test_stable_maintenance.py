@@ -19,6 +19,7 @@ from unittest import mock
 
 SCRIPT = Path(__file__).with_name("stable_maintenance.py")
 DOCKERFILE = SCRIPT.parent.parent / "stable-maintenance.Dockerfile"
+ORPHAN_FIXTURE_FAILURE = "grandchild {orphan} survived the process-group kill"
 WORKFLOW = SCRIPT.parent.parent / "workflows" / "stable-maintenance.yml"
 SPEC = importlib.util.spec_from_file_location("stable_maintenance", SCRIPT)
 assert SPEC and SPEC.loader
@@ -38,7 +39,14 @@ VET_LOCKED_FAILURE = json.dumps({
     "failures": [{"name": "example", "version": "1.0.0", "missing_criteria": ["safe-to-deploy"]}],
     "suggest": None,
 })
-VET_DELTA_SUGGESTION = "cargo vet diff example 0.9.0 1.0.0"
+VET_CHECK_REPORT = json.dumps({
+    "conclusion": "fail (vetting)",
+    "failures": [{"name": "example", "version": "1.0.0", "missing_criteria": ["safe-to-deploy"]}],
+    "suggest": {"suggestions": [{
+        "name": "example", "suggested_criteria": ["safe-to-deploy"],
+        "suggested_diff": {"from": "0.9.0", "to": "1.0.0"},
+    }]},
+})
 
 UTC = dt.timezone.utc
 NOW = dt.datetime(2026, 9, 24, 12, tzinfo=UTC)
@@ -240,8 +248,10 @@ class BranchAndCliTests(unittest.TestCase):
             self.assertEqual(private_source.stat().st_mode & 0o777, 0o644)
             which.assert_called_once_with("docker")
             argv = runner.run.call_args_list[0].args[0]
+            self.assertEqual(runner.run.call_args_list[0].kwargs["max_output"], sm.MAX_BUILD_OUTPUT_BYTES)
             joined = " ".join(argv)
             self.assertIn("--network=none", argv)
+            self.assertEqual(argv.count("--init"), 1)
             self.assertIn("--cap-drop=ALL", argv)
             self.assertIn("--security-opt=no-new-privileges", argv)
             self.assertIn("/workspace:ro", joined)
@@ -264,6 +274,12 @@ class BranchAndCliTests(unittest.TestCase):
             self.assertIn("RUSTUP_HOME=/usr/local/rustup", argv)
             self.assertIn("PATH=/usr/local/cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin", argv)
             self.assertIn("O365_GEN_DIR=/target/o365-generated", argv)
+            self.assertIn("CARGO_PROFILE_DEV_DEBUG=0", argv)
+            self.assertIn("CARGO_PROFILE_TEST_DEBUG=0", argv)
+            self.assertIn("CARGO_INCREMENTAL=0", argv)
+            self.assertIn(sm.BUILD_RESOURCE_PROBE, argv)
+            self.assertEqual(argv[-9:], ["python3", "-I", "-c", sm.BUILD_RESOURCE_PROBE,
+                             "cargo", "build", "--workspace", "--locked", "--message-format=json"])
             for limit in ("65532:65532", "--pids-limit=512", "--cpus=4", "--memory=8g", "--memory-swap=8g"):
                 self.assertIn(limit, argv)
             self.assertNotIn("AZURE", joined)
@@ -279,13 +295,50 @@ class BranchAndCliTests(unittest.TestCase):
             source = Path(tmp) / "source"; source.mkdir()
             (source / ".git").mkdir()
             (source / "src").mkdir()
-            (source / "src/lib.rs").write_text("pub fn fixture() {}\n")
+            (source / "src/lib.rs").write_text(
+                '#[cfg(not(debug_assertions))]\ncompile_error!("dev assertions disabled");\n'
+                'pub fn fixture() {}\n'
+                '#[test]\n#[should_panic]\nfn overflow_checks_remain_enabled() {\n'
+                '    let _ = std::hint::black_box(u32::MAX) + std::hint::black_box(1);\n}\n')
+            with (source / "src/lib.rs").open("a") as handle:
+                handle.write("""
+#[test]
+fn killed_orphan_is_reaped() {
+    use std::io::{BufRead, BufReader};
+    use std::os::unix::process::CommandExt;
+    use std::process::{Command, Stdio};
+    use std::time::{Duration, Instant};
+    extern "C" {
+        fn kill(pid: i32, signal: i32) -> i32;
+    }
+    let mut child = Command::new("/bin/sh")
+        .args(["-c", "sleep 300 & echo $!; wait"])
+        .process_group(0)
+        .stdout(Stdio::piped())
+        .spawn().unwrap();
+    let mut line = String::new();
+    BufReader::new(child.stdout.take().unwrap()).read_line(&mut line).unwrap();
+    let orphan: i32 = line.trim().parse().unwrap();
+    // Kill both the shell and its child, just like the compliance timeout.
+    assert_eq!(unsafe { kill(-(child.id() as i32), 9) }, 0);
+    child.wait().unwrap();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while Instant::now() < deadline {
+        if unsafe { kill(orphan, 0) } != 0 { return; }
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    panic!("__ORPHAN_FAILURE__");
+}
+""".replace("__ORPHAN_FAILURE__", ORPHAN_FIXTURE_FAILURE))
             (source / "Cargo.toml").write_text(
                 '[package]\nname = "asset-mount-fixture"\nversion = "0.1.0"\nedition = "2021"\n')
             (source / "Cargo.lock").write_text(
                 'version = 3\n\n[[package]]\nname = "asset-mount-fixture"\nversion = "0.1.0"\n')
             (source / "build.rs").write_text("""
 fn main() {
+    assert_eq!(std::env::var("DEBUG").unwrap(), "false");
+    assert_eq!(std::env::var("OPT_LEVEL").unwrap(), "0");
+    assert_eq!(std::env::var("CARGO_INCREMENTAL").unwrap(), "0");
     let output = "target/release/qr-greeter-build";
     std::fs::create_dir_all(output).unwrap();
     std::fs::write(format!("{output}/asset"), "generated").unwrap();
@@ -305,10 +358,54 @@ fn main() {
             with mock.patch.dict(os.environ, {"MAINTENANCE_PROJECT_CARGO_HOME": str(cargo_home)}):
                 result = sm.locked_build(runner)
             self.assertEqual(result.returncode, 0, result.stderr)
+            artifacts = [json.loads(line) for line in result.stdout.splitlines() if line.startswith("{")]
+            profiles = [item["profile"] for item in artifacts if item.get("reason") == "compiler-artifact"]
+            self.assertTrue(profiles)
+            for profile in profiles:
+                self.assertIn(profile["debuginfo"], (None, 0))
+                self.assertEqual(profile["opt_level"], "0")
+                self.assertTrue(profile["debug_assertions"])
+                self.assertTrue(profile["overflow_checks"])
+            # The final test gate compiles in its own fresh /target tmpfs, too.
+            with mock.patch.dict(os.environ, {"MAINTENANCE_PROJECT_CARGO_HOME": str(cargo_home)}):
+                tests = sm.locked_tests(runner)
+            self.assertEqual(tests.returncode, 0, tests.stderr)
+            self.assertIn("2 passed", tests.stdout)
             self.assertEqual((source / "source-sentinel").read_text(), "unchanged")
             self.assertEqual((source / ".git/sentinel").read_text(), "unchanged")
             self.assertEqual((source / "target/host-sentinel").read_text(), "unchanged")
             self.assertEqual(list((source / "target").iterdir()), [source / "target/host-sentinel"])
+            # Exercise real libtest/Cargo failure output without logging its payload.
+            with (source / "src/lib.rs").open("a") as handle:
+                handle.write('#[test]\nfn intentional_failure() { panic!("SECRET_TEST_PAYLOAD"); }\n')
+            with mock.patch.dict(os.environ, {"MAINTENANCE_PROJECT_CARGO_HOME": str(cargo_home)}), \
+                 mock.patch.object(sm.sys, "stderr", io.StringIO()) as output:
+                failure = sm.locked_tests(runner)
+            self.assertEqual(failure.returncode, 101)
+            report_line = next(line for line in output.getvalue().splitlines() if line.startswith("test-diagnostics: "))
+            diagnostic = json.loads(report_line.removeprefix("test-diagnostics: "))
+            self.assertTrue(any(target["kind"] == "lib" for target in diagnostic["failed_targets"]))
+            self.assertEqual(diagnostic["summaries"][0]["failed"], 1)
+            self.assertIn("target_free_bytes", diagnostic["resources"])
+            self.assertNotIn("SECRET_TEST_PAYLOAD", output.getvalue())
+            self.assertIn('"oom_killed":false', output.getvalue())
+            # Exercise the real Cargo/rustc JSON linker error format, too.
+            (source / "src/lib.rs").unlink()
+            (source / "src/main.rs").write_text("fn main() {}\n")
+            (source / "build.rs").write_text(
+                'fn main() { println!("cargo:rustc-link-lib=maintenance_missing_fixture"); }\n')
+            with mock.patch.dict(os.environ, {"MAINTENANCE_PROJECT_CARGO_HOME": str(cargo_home)}), \
+                 mock.patch.object(sm.sys, "stderr", io.StringIO()) as output:
+                failure = sm.locked_build(runner)
+            self.assertNotEqual(failure.returncode, 0)
+            diagnostic = json.loads(output.getvalue().splitlines()[0].removeprefix("build-diagnostics: "))
+            self.assertIn("maintenance_missing_fixture", diagnostic["missing_libraries"])
+            self.assertTrue(any(x["crate"] == "asset-mount-fixture" and "bin" in x["kind"]
+                                for x in diagnostic["compiler_errors"]))
+            self.assertIn("target_free_bytes", diagnostic["resources"])
+            self.assertEqual((source / "source-sentinel").read_text(), "unchanged")
+            self.assertEqual((source / ".git/sentinel").read_text(), "unchanged")
+            self.assertEqual((source / "target/host-sentinel").read_text(), "unchanged")
 
     def test_generated_assets_mount_rejects_unsafe_host_mountpoints(self):
         for kind in ("file", "symlink", "dangling-symlink"):
@@ -371,9 +468,9 @@ fn main() {
                 self.assertNotIn(secret, diagnostic)
                 self.assertNotIn("::error::", diagnostic)
                 self.assertNotIn("\x1b", diagnostic)
-                self.assertEqual(len(diagnostic.splitlines()), 1)
-                self.assertLess(len(diagnostic), 600)
-                self.assertEqual(command.call_args.args[1], ["cargo", "build", "--workspace", "--locked"])
+                self.assertEqual(len(diagnostic.splitlines()), 2)
+                self.assertLess(len(diagnostic), 1200)
+                self.assertEqual(command.call_args.args[1], ["cargo", "build", "--workspace", "--locked", "--message-format=json"])
                 self.assertEqual(command.call_args.kwargs, {
                     "network": False, "source_rw": False, "cache_rw": False, "check": False,
                 })
@@ -418,8 +515,8 @@ fn main() {
                 self.assertNotIn(secret, diagnostic)
                 self.assertNotIn("::error::", diagnostic)
                 self.assertNotIn("\x1b", diagnostic)
-                self.assertEqual(len(diagnostic.splitlines()), 1)
-                self.assertLess(len(diagnostic), 900)
+                self.assertEqual(len(diagnostic.splitlines()), 2)
+                self.assertLess(len(diagnostic), 1200)
         stderr = "\n".join(f"Permission denied (os error {number})" for number in range(20))
         with mock.patch.object(sm, "contained_repo_command", return_value=sm.CommandResult(101, "", stderr)), \
              mock.patch.object(sm.sys, "stderr", io.StringIO()) as output:
@@ -470,8 +567,397 @@ fn main() {
                 self.assertNotIn(secret, diagnostic)
                 self.assertNotIn("::error::", diagnostic)
                 self.assertNotIn("\x1b", diagnostic)
-                self.assertEqual(len(diagnostic.splitlines()), 1)
-                self.assertLess(len(diagnostic), 900)
+                self.assertEqual(len(diagnostic.splitlines()), 2)
+                self.assertLess(len(diagnostic), 1200)
+
+    def test_cargo_json_build_diagnostics_identify_linker_failure_and_progress(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "Cargo.lock").write_text('version = 3\n[[package]]\nname = "example"\nversion = "1.2.3"\n')
+            message = {"reason": "compiler-message", "package_id": "registry+https://registry.invalid/index#example@1.2.3",
+                       "target": {"name": "example", "kind": ["bin"], "src_path": "/workspace/src/main.rs"},
+                       "message": {"level": "error", "message": "linking with `cc` failed: exit status: 1",
+                                   "code": None, "spans": [], "rendered": "::error::SECRET_RENDERED",
+                                   "children": [{"message": "cc SECRET_ARGUMENT /SECRET/PATH"},
+                                                {"message": "rust-lld: error: unable to find library -lkrb5\nrust-lld: error: undefined symbol: krb5_init_context"}]}}
+            stdout = "\n".join(json.dumps(x) for x in (
+                {"reason": "compiler-artifact"}, {"reason": "build-script-executed", "env": [["TOKEN", "SECRET_ENV"]]},
+                message, {"reason": "maintenance-resources", "resources": {"memory_oom_kill": 1, "target_free_bytes": 123, "TOKEN": "SECRET_ENV"}}))
+            result = sm.CommandResult(101, stdout, "could not compile example")
+            with mock.patch.object(sm, "contained_repo_command", return_value=result), \
+                 mock.patch.object(sm.sys, "stderr", io.StringIO()) as output:
+                self.assertIs(sm.locked_build(mock.Mock(root=root)), result)
+            report = json.loads(output.getvalue().splitlines()[0].removeprefix("build-diagnostics: "))
+            self.assertEqual(report["compiler_errors"][0], {"crate": "example", "version": "1.2.3", "target": "example",
+                "kind": ["bin"], "source": "src/main.rs", "code": "none", "locations": []})
+            self.assertEqual(report["missing_libraries"], ["krb5"])
+            self.assertEqual(report["undefined_symbols"], ["krb5_init_context"])
+            self.assertEqual(report["linker_causes"], ["missing-library", "undefined-symbol"])
+            self.assertEqual(report["resources"], {"memory_oom_kill": 1, "target_free_bytes": 123})
+            self.assertEqual((report["completed_artifacts"], report["completed_build_scripts"]), (1, 1))
+            self.assertIn("operations=link", output.getvalue())
+            self.assertNotIn("SECRET", output.getvalue())
+            self.assertNotIn("::error::", output.getvalue())
+
+    def test_cargo_json_diagnostics_are_bounded_and_reject_unsafe_fields(self):
+        item = {"reason": "compiler-message", "package_id": "file:///workspace/example#1.2.3",
+                "target": {"name": "::error::TOKEN\n", "kind": ["bin", "::error::TOKEN"], "src_path": "../../TOKEN"},
+                "message": {"level": "error", "code": {"code": "E0308"}, "message": "TOKEN\x1b[31m",
+                            "spans": [{"file_name": "src/main.rs", "line_start": 12, "column_start": 3, "text": ["TOKEN"]},
+                                      {"file_name": "https://TOKEN", "line_start": 1, "column_start": 1}], "children": None}}
+        malformed = ['not JSON TOKEN', '{broken', '[]', '{"reason":"compiler-message","message":null}',
+                     '{"reason":"compiler-message","message":{"level":"error"},"target":null}']
+        result = sm.CommandResult(101, "\n".join([*malformed, *[json.dumps(item) for _ in range(20)]]),
+                                  "undefined reference to `::error::TOKEN'\nNo space left on device\nBus error")
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.object(sm.sys, "stderr", io.StringIO()) as output:
+            root = Path(tmp)
+            (root / "Cargo.lock").write_text('[[package]]\nname = "example"\nversion = "1.2.3"\n')
+            sm.report_build_diagnostics(result, root)
+        report = json.loads(output.getvalue().removeprefix("build-diagnostics: "))
+        self.assertEqual(len(report["compiler_errors"]), 8)
+        self.assertEqual(report["compiler_errors"][0]["crate"], "example")
+        self.assertEqual(report["compiler_errors"][0]["code"], "E0308")
+        self.assertEqual(report["compiler_errors"][0]["locations"], ["src/main.rs:12:3"])
+        self.assertEqual(report["compiler_errors"][0]["target"], "unknown")
+        self.assertIn("bus-error", report["linker_causes"])
+        self.assertIn("no-space", report["linker_causes"])
+        self.assertNotIn("TOKEN", output.getvalue())
+        self.assertNotIn("\x1b", output.getvalue())
+        self.assertEqual(len(output.getvalue().splitlines()), 1)
+        self.assertLess(len(output.getvalue()), 6000)
+
+    def test_failed_build_script_names_are_checked_against_lockfile(self):
+        with tempfile.TemporaryDirectory() as tmp, mock.patch.object(sm.sys, "stderr", io.StringIO()) as output:
+            root = Path(tmp)
+            (root / "Cargo.lock").write_text('[[package]]\nname = "example"\nversion = "1.2.3"\n')
+            sm.report_build_diagnostics(sm.CommandResult(101, "", "failed to run custom build command for `example v1.2.3`\n"
+                "failed to run custom build command for `SECRET v1.2.3`\nthread 'main' panicked at /workspace/src/example/build.rs:12:7:\nSECRET"), root)
+        report = json.loads(output.getvalue().removeprefix("build-diagnostics: "))
+        self.assertEqual(report["failed_build_scripts"], ["example"])
+        self.assertEqual(report["panic_locations"], ["src/example/build.rs:12:7"])
+        self.assertNotIn("SECRET", output.getvalue())
+
+    def test_build_resource_probe_preserves_exit_and_captures_before_cleanup(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            runner = sm.Runner(Path(tmp), os.environ)
+            # A checkout-local module must not intercept the trusted probe.
+            (Path(tmp) / "json.py").write_text('raise RuntimeError("untrusted checkout module")\n')
+            result = runner.run([sys.executable, "-I", "-c", sm.BUILD_RESOURCE_PROBE, sys.executable, "-c",
+                                 'import sys; print("cargo output"); print("cargo error", file=sys.stderr); sys.exit(7)'], check=False)
+        self.assertEqual(result.returncode, 7)
+        self.assertIn("cargo output", result.stdout)
+        self.assertIn("cargo error", result.stderr)
+        resource = json.loads(result.stdout.splitlines()[-1])
+        self.assertEqual(resource["reason"], "maintenance-resources")
+        self.assertIn("temporary_free_bytes", resource["resources"])
+
+    def test_large_cargo_json_build_keeps_exit_status_and_diagnostics(self):
+        """Successful and failed builds can exceed the ordinary 4 MiB budget."""
+        producer = '''
+import json, sys
+artifact = json.dumps({"reason": "compiler-artifact", "padding": "x" * 1024})
+for _ in range(5000):
+    print(artifact)
+if int(sys.argv[1]):
+    print(json.dumps({"reason": "compiler-message", "package_id": "file:///workspace/example#1.2.3",
+                     "target": {"name": "example", "kind": ["bin"], "src_path": "/workspace/src/main.rs"},
+                     "message": {"level": "error", "message": "linking with `cc` failed",
+                                 "children": [{"message": "cannot find -lfixture_missing: No such file"}]}}))
+sys.exit(int(sys.argv[1]))
+'''
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "source"; root.mkdir(); (root / ".git").mkdir()
+            (root / "Cargo.lock").write_text('[[package]]\nname = "example"\nversion = "1.2.3"\n')
+            cache = Path(tmp) / "cache"; cache.mkdir(); (cache / "registry").mkdir()
+            real = sm.Runner(root.resolve(), os.environ)
+            with self.assertRaisesRegex(sm.MaintenanceError, "output exceeded limit"):
+                real.run([sys.executable, "-I", "-c", producer, "0"], check=False)
+            env = {"MAINTENANCE_BUILD_IMAGE": "image@sha256:abc", "MAINTENANCE_PROJECT_CARGO_HOME": str(cache)}
+            for status in (0, 101):
+                def run(argv, **kwargs):
+                    if argv[1] == "rm":
+                        return sm.CommandResult(0, "", "")
+                    return real.run([sys.executable, "-I", "-c", producer, str(status)], **kwargs)
+                runner = mock.Mock(root=root.resolve())
+                runner.run.side_effect = run
+                with self.subTest(status=status), mock.patch.dict(os.environ, env), \
+                     mock.patch.object(sm.shutil, "which", return_value="/usr/bin/docker"), \
+                     mock.patch.object(sm.sys, "stderr", io.StringIO()) as output:
+                    result = sm.locked_build(runner)
+                    self.assertEqual(result.returncode, status)
+                    self.assertGreater(len(result.stdout), 4 * 1024 * 1024)
+                    if status:
+                        report = json.loads(output.getvalue().splitlines()[0].removeprefix("build-diagnostics: "))
+                        self.assertEqual(report["completed_artifacts"], 5000)
+                        self.assertEqual(report["compiler_errors"][0]["crate"], "example")
+                        self.assertEqual(report["missing_libraries"], ["fixture_missing"])
+                    else:
+                        self.assertEqual(output.getvalue(), "")
+            # Other contained commands retain the existing output limit.
+            runner.run.side_effect = None
+            runner.run.return_value = sm.CommandResult(0, "", "")
+            runner.run.reset_mock()
+            with mock.patch.dict(os.environ, env), mock.patch.object(sm.shutil, "which", return_value="/usr/bin/docker"):
+                sm.contained_repo_command(runner, ["cargo", "metadata"], network=False, source_rw=False, cache_rw=False)
+            self.assertEqual(runner.run.call_args_list[0].kwargs["max_output"], 4 * 1024 * 1024)
+
+    def test_disposable_build_settings_are_scoped_and_not_inherited(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "source"; root.mkdir(); (root / ".git").mkdir()
+            cache = Path(tmp) / "cache"; cache.mkdir(); (cache / "registry").mkdir()
+            runner = mock.Mock(root=root.resolve())
+            runner.run.return_value = sm.CommandResult(0, "", "")
+            env = {
+                "MAINTENANCE_BUILD_IMAGE": "build:local",
+                "MAINTENANCE_PROJECT_CARGO_HOME": str(cache),
+                "CARGO_PROFILE_DEV_DEBUG": "2", "CARGO_PROFILE_TEST_DEBUG": "2",
+                "CARGO_INCREMENTAL": "1",
+            }
+            for command, expected in (
+                (["cargo", "build", "--workspace", "--locked", "--message-format=json"],
+                 ["CARGO_PROFILE_DEV_DEBUG=0", "CARGO_PROFILE_TEST_DEBUG=0", "CARGO_INCREMENTAL=0"]),
+                (["cargo", "test", "--workspace", "--locked"],
+                 ["CARGO_PROFILE_DEV_DEBUG=0", "CARGO_PROFILE_TEST_DEBUG=0", "CARGO_INCREMENTAL=0"]),
+                (["cargo", "metadata"], []),
+                (["cargo", "vet", "--locked", "--frozen"], []),
+                (["cargo", "build", "--release"], []),
+                (["crate2nix", "generate"], []),
+            ):
+                with self.subTest(command=command), mock.patch.dict(os.environ, env), \
+                     mock.patch.object(sm.shutil, "which", return_value="/usr/bin/docker"):
+                    runner.run.reset_mock()
+                    sm.contained_repo_command(runner, command, network=False, source_rw=False, cache_rw=False)
+                argv = runner.run.call_args_list[0].args[0]
+                settings = [argv[i + 1] for i, arg in enumerate(argv[:-1]) if arg == "-e"
+                            and argv[i + 1].startswith(("CARGO_PROFILE_", "CARGO_INCREMENTAL"))]
+                self.assertEqual(settings, expected)
+
+    def test_failed_tests_report_only_verified_crates_and_fixed_fields(self):
+        secret = "SECRET_TOKEN_credential"
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "Cargo.lock").write_text('[[package]]\nname = "example"\nversion = "1.2.3"\n')
+            result = sm.CommandResult(101,
+                f"test {secret} ... FAILED\nfailures:\nthread '{secret}' panicked at src/lib.rs:1:2:\n"
+                f"assertion failed: {secret}\n::error::{secret}\x1b[31m\r\n"
+                "test result: FAILED. 10 passed; 2 failed; 1 ignored; 0 measured; 3 filtered out; finished in 0.01s\n"
+                + json.dumps({"reason": "maintenance-resources", "resources": {
+                    "target_free_bytes": 42, "memory_oom_kill": 0, "memory_oom": True,
+                    "memory_max": -1, "assets_free_bytes": 2**63, "TOKEN": secret}}),
+                f"error: test failed, to rerun pass -p example --lib\n"
+                f"error: test failed, to rerun pass -p {secret} --test {secret}\n")
+            with mock.patch.object(sm, "contained_repo_command", return_value=result) as command, \
+                 mock.patch.object(sm.sys, "stderr", io.StringIO()) as output:
+                self.assertIs(sm.locked_tests(mock.Mock(root=root)), result)
+            report = json.loads(output.getvalue().removeprefix("test-diagnostics: "))
+            self.assertEqual(report["exit"], 101)
+            self.assertEqual(report["capture"], "complete")
+            self.assertEqual(report["failed_targets"], [{"crate": "example", "kind": "lib"},
+                                                      {"crate": "unknown", "kind": "test"}])
+            self.assertEqual(report["summaries"], [{"passed": 10, "failed": 2, "ignored": 1, "measured": 0, "filtered": 3}])
+            self.assertEqual(report["resources"], {"target_free_bytes": 42, "memory_oom_kill": 0})
+            self.assertEqual(report["hints"], ["test-failed", "panic", "assertion-failed"])
+            self.assertNotIn(secret, output.getvalue())
+            self.assertNotIn("::error::", output.getvalue())
+            self.assertNotIn("\x1b", output.getvalue())
+            self.assertEqual(len(output.getvalue().splitlines()), 1)
+            self.assertEqual(command.call_args.args[1], ["cargo", "test", "--workspace", "--locked"])
+            self.assertEqual(command.call_args.kwargs, {
+                "network": False, "source_rw": False, "cache_rw": False, "timeout": 3600, "check": False})
+
+    def test_cargo_rerun_arguments_require_matching_delimiters(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "Cargo.lock").write_text('[[package]]\nname = "example"\nversion = "1.2.3"\n')
+            for arguments in ("-p example --lib", "`-p example --lib`", "'-p example --lib'", "`-p example@1.2.3 --test fixture`"):
+                with self.subTest(arguments=arguments), mock.patch.object(sm.sys, "stderr", io.StringIO()) as output:
+                    sm.report_test_diagnostics(sm.CommandResult(101, "", "error: test failed, to rerun pass " + arguments), root)
+                report = json.loads(output.getvalue().removeprefix("test-diagnostics: "))
+                self.assertEqual(report["failed_targets"][0]["crate"], "example")
+            with mock.patch.object(sm.sys, "stderr", io.StringIO()) as output:
+                sm.report_test_diagnostics(sm.CommandResult(101, "", "error: doctest failed, to rerun pass `-p example --doc`"), root)
+            report = json.loads(output.getvalue().removeprefix("test-diagnostics: "))
+            self.assertEqual(report["failed_targets"], [{"crate": "example", "kind": "doc"}])
+            self.assertIn("doctest-failed", report["hints"])
+            for arguments in ("`-p example --lib'", "'-p example --lib`", "`-p example --lib` SECRET", "`-p example --lib"):
+                with self.subTest(arguments=arguments), mock.patch.object(sm.sys, "stderr", io.StringIO()) as output:
+                    sm.report_test_diagnostics(sm.CommandResult(101, "", "error: test failed, to rerun pass " + arguments), root)
+                report = json.loads(output.getvalue().removeprefix("test-diagnostics: "))
+                self.assertEqual(report["failed_targets"], [])
+
+    def test_test_compilation_and_linker_causes_do_not_echo_operands(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "Cargo.lock").write_text('[[package]]\nname = "example"\nversion = "1.2.3"\n')
+            cases = (
+                ("error[E0308]: SECRET", [], ["E0308"]),
+                ("linking with `SECRET` failed: cannot find -lSECRET", ["missing-library"], []),
+                ("undefined reference to `SECRET'", ["undefined-symbol"], []),
+                ("No space left on device: SECRET", ["no-space"], []),
+                ("signal: 9, SIGKILL: kill SECRET", ["killed"], []),
+                ("signal: 7, SIGBUS: SECRET", ["bus-error"], []),
+                ("memory allocation failed: Cannot allocate memory SECRET", ["out-of-memory"], []),
+            )
+            for diagnostic, causes, codes in cases:
+                stderr = (diagnostic + "\nerror: could not compile `example` (lib test) due to 1 previous error\n"
+                          "error: could not compile `SECRET` (bin \"SECRET\") due to 2 previous errors\n")
+                with self.subTest(diagnostic=diagnostic), mock.patch.object(sm.sys, "stderr", io.StringIO()) as output:
+                    sm.report_test_diagnostics(sm.CommandResult(101, "SECRET", stderr), root)
+                report = json.loads(output.getvalue().removeprefix("test-diagnostics: "))
+                self.assertEqual(report["compile_failed"], ["example"])
+                self.assertEqual(report["causes"], causes)
+                self.assertEqual(report["rust_codes"], codes)
+                self.assertNotIn("SECRET", output.getvalue())
+
+    def test_process_cleanup_diagnostics_do_not_echo_panic_payloads(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            for message, expected in (
+                (ORPHAN_FIXTURE_FAILURE.format(orphan=123456789), ["orphan-not-reaped"]),
+                ("threads leaked across invocations: 123456789 -> 987654321", ["thread-count-increased"]),
+                ("grandchild SECRET survived the process-group kill", []),
+            ):
+                with self.subTest(message=message), mock.patch.object(sm.sys, "stderr", io.StringIO()) as output:
+                    sm.report_test_diagnostics(sm.CommandResult(101, "", message + "\nSECRET"), root)
+                report = json.loads(output.getvalue().removeprefix("test-diagnostics: "))
+                self.assertEqual(report["hints"], expected)
+                self.assertNotIn("123456789", output.getvalue())
+                self.assertNotIn("987654321", output.getvalue())
+                self.assertNotIn("SECRET", output.getvalue())
+
+    def test_test_diagnostics_bound_output_and_handle_invalid_lockfiles(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            packages = ["crate_" + str(index) + "x" * 80 for index in range(30)]
+            (root / "Cargo.lock").write_text("\n".join(f'[[package]]\nname = "{name}"\nversion = "1.0.0"' for name in packages))
+            stdout = "\n".join("test result: FAILED. 9999999 passed; 9999999 failed; 9999999 ignored; "
+                               "9999999 measured; 9999999 filtered out; finished in 0.00s" for _ in range(30))
+            stderr = "\n".join(f"error: test failed, to rerun pass -p {name} --lib\n"
+                               f"error: could not compile `{name}` (lib test) due to 1 previous error\n"
+                               f"error[E{index:04d}]: SECRET" for index, name in enumerate(packages))
+            result = sm.CommandResult(101, stdout + "\n" + "SECRET" * 10000, stderr)
+            with mock.patch.object(sm.sys, "stderr", io.StringIO()) as output:
+                sm.report_test_diagnostics(result, root)
+            report = json.loads(output.getvalue().removeprefix("test-diagnostics: "))
+            for field in ("failed_targets", "compile_failed", "rust_codes", "summaries"):
+                self.assertEqual(len(report[field]), 8)
+            self.assertNotIn("SECRET", output.getvalue())
+            self.assertLess(len(output.getvalue().encode()), 4096)
+            for invalid in ("not toml", "package = 5", "package = " + "[" * 600 + "0" + "]" * 600, "#" * (4 * 1024 * 1024 + 1)):
+                (root / "Cargo.lock").write_text(invalid)
+                with mock.patch.object(sm.sys, "stderr", io.StringIO()) as output:
+                    sm.report_test_diagnostics(result, root)
+                self.assertNotIn(packages[0], output.getvalue())
+
+    def test_test_capture_retains_bounded_tail_and_still_fails_closed(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            runner = sm.Runner(Path(tmp))
+            for status in (0, 101):
+                for retain_tail in (False, True):
+                    producer = f'import sys; print("START" + "x" * 10000 + "END"); sys.exit({status})'
+                    with self.subTest(status=status, tail=retain_tail), self.assertRaises(sm.CommandCaptureError) as caught:
+                        runner.run([sys.executable, "-I", "-c", producer], check=False,
+                                   max_output=1024, retain_tail=retain_tail)
+                    error = caught.exception
+                    self.assertEqual(error.reason, "output-limit")
+                    self.assertEqual(error.result.returncode, status)
+                    self.assertLessEqual(len(error.result.stdout), 1025)
+                    self.assertEqual("END" in error.result.stdout, retain_tail)
+                    self.assertEqual("START" in error.result.stdout, not retain_tail)
+            with self.assertRaises(sm.CommandCaptureError) as caught:
+                runner.run([sys.executable, "-I", "-c", 'import time; print("partial", flush=True); time.sleep(30)'],
+                           timeout=0.2, retain_tail=True)
+            self.assertEqual(caught.exception.reason, "timeout")
+            self.assertEqual(caught.exception.result.returncode, -9)
+            self.assertIn("partial", caught.exception.result.stdout)
+
+    def test_test_probe_precedes_cleanup_for_failure_timeout_and_overflow(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "source"; root.mkdir(); (root / ".git").mkdir()
+            cache = Path(tmp) / "cache"; cache.mkdir(); (cache / "registry").mkdir()
+            env = {"MAINTENANCE_BUILD_IMAGE": "build:local", "MAINTENANCE_PROJECT_CARGO_HOME": str(cache)}
+            for outcome in ("failure", "timeout", "output-limit", "success"):
+                with self.subTest(outcome=outcome):
+                    result = sm.CommandResult(0 if outcome == "success" else 137, "SECRET", "SECRET")
+                    failure = sm.CommandCaptureError("original capture failure", outcome, result)
+                    calls = []
+                    def run(argv, **kwargs):
+                        calls.append((argv, kwargs))
+                        if argv[1] == "run":
+                            if outcome in ("timeout", "output-limit"):
+                                raise failure
+                            return result
+                        if argv[1] == "inspect":
+                            return sm.CommandResult(0, json.dumps({"OOMKilled": outcome == "failure", "Running": outcome == "timeout",
+                                                                 "ExitCode": 137, "Error": "SECRET"}), "SECRET")
+                        if argv[1] == "exec":
+                            return sm.CommandResult(0, json.dumps({"reason": "maintenance-resources", "resources": {"target_free_bytes": 123}}), "SECRET")
+                        return sm.CommandResult(0, "", "")
+                    runner = mock.Mock(root=root); runner.run.side_effect = run
+                    with mock.patch.dict(os.environ, env), mock.patch.object(sm.shutil, "which", return_value="/usr/bin/docker"), \
+                         mock.patch.object(sm.sys, "stderr", io.StringIO()) as output:
+                        if outcome in ("timeout", "output-limit"):
+                            with self.assertRaises(sm.CommandCaptureError) as caught:
+                                sm.locked_tests(runner)
+                            self.assertIs(caught.exception, failure)
+                            self.assertIn('"capture":"' + outcome + '"', output.getvalue())
+                        else:
+                            self.assertIs(sm.locked_tests(runner), result)
+                    operations = [argv[1] for argv, _ in calls]
+                    expected = ["run", "rm"] if outcome == "success" else ["run", "inspect", "rm"]
+                    if outcome == "timeout":
+                        expected.insert(2, "exec")
+                        self.assertIn('"target_free_bytes":123', output.getvalue())
+                    self.assertEqual(operations, expected)
+                    argv, kwargs = calls[0]
+                    self.assertEqual(kwargs, {"timeout": 3600, "check": False, "max_output": 4 * 1024 * 1024, "retain_tail": True})
+                    self.assertEqual(argv[-8:], ["python3", "-I", "-c", sm.BUILD_RESOURCE_PROBE, "cargo", "test", "--workspace", "--locked"])
+                    for flag in ("--network=none", "--read-only", "--cap-drop=ALL", "--memory=8g", "--memory-swap=8g", "--pids-limit=512", "--cpus=4"):
+                        self.assertIn(flag, argv)
+                    self.assertIn(f"{root}:/workspace:ro", argv)
+                    self.assertIn(f"{root}/.git:/workspace/.git:ro", argv)
+                    self.assertIn("/target:rw,nosuid,nodev,exec,size=6g", argv)
+                    self.assertNotIn("SECRET", output.getvalue())
+                    if outcome == "success":
+                        self.assertEqual(output.getvalue(), "")
+
+    def test_probe_errors_never_mask_test_failure_or_skip_cleanup(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "source"; root.mkdir(); (root / ".git").mkdir()
+            cache = Path(tmp) / "cache"; cache.mkdir(); (cache / "registry").mkdir()
+            for bad_probe in (sm.MaintenanceError("SECRET"), sm.CommandResult(0, "SECRET not JSON", ""),
+                              sm.CommandResult(0, '{"OOMKilled":"SECRET","Running":false,"ExitCode":true}', "")):
+                runner = mock.Mock(root=root)
+                failure = sm.CommandCaptureError("original timeout", "timeout", sm.CommandResult(-9, "", "SECRET"))
+                runner.run.side_effect = [failure, bad_probe, sm.MaintenanceError("cleanup SECRET")]
+                with mock.patch.dict(os.environ, {"MAINTENANCE_BUILD_IMAGE": "build:local", "MAINTENANCE_PROJECT_CARGO_HOME": str(cache)}), \
+                     mock.patch.object(sm.shutil, "which", return_value="/usr/bin/docker"), \
+                     mock.patch.object(sm.sys, "stderr", io.StringIO()) as output, \
+                     self.assertRaises(sm.CommandCaptureError) as caught:
+                    sm.locked_tests(runner)
+                self.assertIs(caught.exception, failure)
+                self.assertEqual(runner.run.call_args_list[-1].args[0][1:3], ["rm", "-f"])
+                self.assertIn('"state":"unavailable"', output.getvalue())
+                self.assertNotIn("SECRET", output.getvalue())
+
+    def test_failed_test_gate_blocks_all_later_release_gates(self):
+        for capture in (None, "timeout", "output-limit"):
+            with tempfile.TemporaryDirectory() as tmp:
+                state = sm.State(Path(tmp) / "state")
+                runner = mock.Mock(root=Path(tmp))
+                result = sm.CommandResult(101, "SECRET", "SECRET")
+                outcome = sm.CommandCaptureError("capture failed", capture, result) if capture else result
+                with mock.patch.object(sm, "locked_build", return_value=sm.CommandResult(0, "", "")), \
+                     mock.patch.object(sm, "contained_repo_command", side_effect=[outcome]) as command, \
+                     mock.patch.object(sm, "locked_vet_gaps") as vet, \
+                     mock.patch.object(sm.sys, "stderr", io.StringIO()) as output, \
+                     self.assertRaises(sm.MaintenanceError):
+                    sm.phase_validate(mock.Mock(), state, runner)
+                self.assertEqual(command.call_count, 1)
+                vet.assert_not_called()
+                self.assertEqual(state.load()["gate_results"], ["clean-build: passed"])
+                self.assertIn("test-diagnostics:", output.getvalue())
+                self.assertNotIn("SECRET", output.getvalue())
 
     def test_clean_build_failure_keeps_later_release_gates_blocked(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -637,7 +1123,7 @@ fn main() {
         smoke_argv = shlex.split(smoke_command)
         self.assertEqual(smoke_argv[-2], "-euc")
         for command in (
-            "rustc --version", "cargo --version", "cargo-vet --version",
+            "node --version", "rustc --version", "cargo --version", "cargo-vet --version",
             "cargo vet gc", "cargo-audit --version", "crate2nix --version",
         ):
             self.assertIn(command, smoke_argv[-1])
@@ -665,6 +1151,7 @@ fn main() {
         self.assertIn("COPY --from=rust-toolchain /usr/local/cargo /usr/local/cargo", dockerfile)
         self.assertIn("COPY --from=rust-toolchain /usr/local/rustup /usr/local/rustup", dockerfile)
         self.assertIn("UBUNTU_SNAPSHOT=20260924T000000Z", dockerfile)
+        self.assertRegex(dockerfile, r"(?m)^\s+nodejs \\$")
         for package, version in (("cargo-vet", "0.10.2"), ("cargo-audit", "0.22.2"), ("crate2nix", "0.15.0")):
             self.assertIn(f"{package} --version {version} --locked", dockerfile)
 
@@ -763,6 +1250,7 @@ fn main() {
     def test_pr_body_has_global_utf8_budget_and_reserved_marker(self):
         value = {
             "main_head": "a" * 40,
+            "cutoff": "c" * 40,
             "dependency_updates": [{"crate": "é" * 200, "new": str(i)} for i in range(500)],
             "vet_accepted": [], "dependabot_imported": [], "backports_applied": [],
             "backport_review_required": [{"sha": "b" * 40, "check": "stable-relevance",
@@ -770,14 +1258,106 @@ fn main() {
         }
         body = sm.build_pr_body(value, max_bytes=4096)
         self.assertLessEqual(len(body.encode()), 4096)
-        self.assertTrue(body.endswith(f"{sm.MARKER} {'a' * 40}"))
+        self.assertTrue(body.endswith(f"{sm.MARKER} {'c' * 40}"))
         self.assertIn("Backports requiring manual review: 1", body)
         self.assertIn("b" * 40, body)
+        with mock.patch.dict(os.environ, {"GITHUB_REPOSITORY": "o/r", "GITHUB_RUN_ID": "123"}):
+            body = sm.build_pr_body({**value, "already_covered": [{"crate": "noise"}] * 500})
+        self.assertLessEqual(len(body.encode()), 2400)
+        for heading in ("Summary", "What Changed", "Testing", "Automated Checks", "System Integration Impact", "Checklist"):
+            self.assertIn(f"## {heading}", body)
+        self.assertIn("https://github.com/o/r/actions/runs/123", body)
+        self.assertNotIn("noise", body)
 
     def test_runner_rejects_oversized_streamed_output(self):
         runner = sm.Runner(Path.cwd(), {"PATH": os.environ["PATH"]})
         with self.assertRaises(sm.MaintenanceError):
             runner.run([sys.executable, "-c", "import sys; sys.stdout.write('x'*10000)"], max_output=100)
+
+    def test_publish_labels_draft_before_ready_and_metadata_does_not_claim_release(self):
+        for ready_response in (
+            {"data": {"markPullRequestReadyForReview": {"pullRequest": {"isDraft": False}}}},
+        ):
+            with self.subTest(ready=ready_response), tempfile.TemporaryDirectory() as tmp:
+                state = sm.State(Path(tmp) / "state")
+                state.save({"automation_branch": sm.AUTOMATION_PREFIX + "stable-4.x-test",
+                            "branch": "stable-4.x", "main_head": "a" * 40, "metadata_only": True})
+                runner = mock.Mock()
+                responses = [{"number": 19, "node_id": "PR_test"}, {}, ready_response]
+                with mock.patch.dict(os.environ, {"GITHUB_REPOSITORY": "o/r", "GITHUB_TOKEN": "test-token"}), \
+                     mock.patch.object(sm, "secure_github_push"), \
+                     mock.patch.object(sm, "http_json", side_effect=responses) as http:
+                    sm.phase_publish(mock.Mock(), state, runner)
+                calls = http.call_args_list
+                self.assertTrue(calls[0].kwargs["body"]["draft"])
+                self.assertEqual(calls[0].kwargs["body"]["title"], "Refresh stable-4.x supply-chain metadata")
+                self.assertIn("slop-guard-exempt", calls[1].kwargs["body"]["labels"])
+                self.assertEqual(calls[2].args[0], "https://api.github.com/graphql")
+                self.assertEqual(state.load()["pull_request"], 19)
+
+    def test_publish_recovers_ready_errors_and_cleans_up_failed_drafts(self):
+        ready = {"data": {"markPullRequestReadyForReview": {"pullRequest": {"isDraft": False}}}}
+        draft = {"state": "open", "draft": True}
+        closed = {"state": "closed", "draft": True, "number": 19,
+                  "head": {"ref": sm.AUTOMATION_PREFIX + "stable-4.x-test", "repo": {"full_name": "o/r"}},
+                  "labels": [{"name": sm.AUTOMATION_LABEL}], "user": {"login": "github-actions[bot]"}}
+        errors = {"errors": [{"message": "temporary error"}]}
+        for failure in (sm.HTTPStatusError(503), sm.MaintenanceError("invalid JSON"), errors, {}, None):
+            for recovery in ("retry", "already-ready", "cleanup", "cleanup-retry", "cleanup-fails"):
+                with self.subTest(failure=failure, recovery=recovery), tempfile.TemporaryDirectory() as tmp:
+                    state = sm.State(Path(tmp) / "state")
+                    state.save({"automation_branch": sm.AUTOMATION_PREFIX + "stable-4.x-test",
+                                "branch": "stable-4.x", "main_head": "a" * 40, "version": "4.0.6"})
+                    responses = [{"number": 19, "node_id": "PR_test"}, {}, failure]
+                    if recovery == "retry":
+                        responses.extend([draft, ready])
+                    elif recovery == "already-ready":
+                        responses.append({"state": "open", "draft": False})
+                    else:
+                        responses.extend([draft, failure, draft, failure, draft])
+                        if recovery == "cleanup":
+                            responses.append(closed)
+                        elif recovery == "cleanup-retry":
+                            responses.extend([sm.HTTPStatusError(503), closed])
+                        else:
+                            responses.extend([sm.HTTPStatusError(503)] * 3)
+                    with mock.patch.dict(os.environ, {"GITHUB_REPOSITORY": "o/r", "GITHUB_TOKEN": "test-token"}), \
+                         mock.patch.object(sm, "secure_github_push"), \
+                         mock.patch.object(sm, "http_json", side_effect=responses) as http, \
+                         mock.patch.object(sm.time, "sleep") as sleep:
+                        if recovery.startswith("cleanup"):
+                            expected = "close maintenance PR #19" if recovery == "cleanup-fails" else "bounded retries"
+                            with self.assertRaisesRegex(sm.MaintenanceError, expected):
+                                sm.phase_publish(mock.Mock(), state, mock.Mock())
+                        else:
+                            sm.phase_publish(mock.Mock(), state, mock.Mock())
+                    mutations = [call for call in http.call_args_list if call.args[0].endswith("graphql")]
+                    closes = [call for call in http.call_args_list if call.kwargs.get("method") == "PATCH"]
+                    self.assertEqual(len(mutations), 3 if recovery.startswith("cleanup") else 2 if recovery == "retry" else 1)
+                    self.assertEqual(len(closes), {"cleanup": 1, "cleanup-retry": 2, "cleanup-fails": 3}.get(recovery, 0))
+                    self.assertLessEqual(sleep.call_count, 4)
+                    for call in closes:
+                        self.assertEqual(call.kwargs["body"], {"state": "closed"})
+                    if recovery in ("cleanup", "cleanup-retry"):
+                        with mock.patch.object(sm, "github_repository", return_value="o/r"), \
+                             mock.patch.object(sm, "github_paginated", return_value=[closed]), \
+                             mock.patch.object(sm, "github_search_items", return_value=[]), \
+                             mock.patch.object(sm.sys, "stdout", io.StringIO()):
+                            sm.phase_guard(mock.Mock(branch="stable-4.x"), state, mock.Mock())
+                        self.assertFalse(state.load()["skip"])
+
+    def test_publish_cleans_up_invalid_node_and_label_failure(self):
+        for node, label in ((None, {}), ("PR_test", sm.HTTPStatusError(503))):
+            with self.subTest(node=node), tempfile.TemporaryDirectory() as tmp:
+                state = sm.State(Path(tmp) / "state")
+                state.save({"automation_branch": sm.AUTOMATION_PREFIX + "stable-4.x-test",
+                            "branch": "stable-4.x", "main_head": "a" * 40, "version": "4.0.6"})
+                with mock.patch.dict(os.environ, {"GITHUB_REPOSITORY": "o/r", "GITHUB_TOKEN": "test-token"}), \
+                     mock.patch.object(sm, "secure_github_push"), \
+                     mock.patch.object(sm, "http_json", side_effect=[{"number": 19, "node_id": node}, label, {"state": "closed"}]) as http:
+                    with self.assertRaises(sm.MaintenanceError):
+                        sm.phase_publish(mock.Mock(), state, mock.Mock())
+                self.assertEqual(http.call_args.kwargs["body"], {"state": "closed"})
 
 
 class VersionPolicyTests(unittest.TestCase):
@@ -918,10 +1498,80 @@ class CargoVetTests(unittest.TestCase):
 
     def test_locked_gaps_must_match_review_suggestions(self):
         locked = sm.CommandResult(1, VET_LOCKED_FAILURE, "")
-        mismatched = sm.CommandResult(1, "cargo vet diff other 0.9.0 1.0.0", "")
+        mismatched_report = json.loads(VET_CHECK_REPORT)
+        mismatched_report["suggest"]["suggestions"][0]["name"] = "other"
+        mismatched = sm.CommandResult(255, json.dumps(mismatched_report), "")
         with mock.patch.object(sm, "isolated_vet_command", side_effect=[locked, mismatched]), \
              self.assertRaisesRegex(sm.MaintenanceError, "disagree"):
             sm.reviewable_vet_gaps(mock.Mock(), Path("state"))
+
+    def test_failing_check_preserves_suggestable_exemptions_and_targets_only_new_gaps(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "source"
+            store = root / "supply-chain"
+            store.mkdir(parents=True)
+            config = ('[[exemptions.already-exempted]]\nversion = "1.0.0"\n'
+                      'criteria = ["safe-to-deploy"]\nsuggest = true\n')
+            (store / "config.toml").write_text(config)
+            (store / "audits.toml").write_text("# Existing audits\n")
+            (store / "imports.lock").write_text("# Existing imports\n")
+            runner = mock.Mock(root=root)
+            commands = []
+            def contained(_runner, command, **kwargs):
+                commands.append(command)
+                self.assertEqual((kwargs["vet_store"] / "config.toml").read_text(), config)
+                self.assertFalse(kwargs["source_rw"])
+                self.assertFalse(kwargs["cache_rw"])
+                if command == ["cargo", "vet", "check", "--output-format=json"]:
+                    self.assertTrue(kwargs["network"])
+                    return sm.CommandResult(255, VET_CHECK_REPORT, "")
+                self.assertEqual(command, ["cargo", "vet", "--locked", "--frozen", "--output-format=json"])
+                self.assertFalse(kwargs["network"])
+                return sm.CommandResult(255, VET_LOCKED_FAILURE, "")
+            with mock.patch.object(sm, "contained_repo_command", side_effect=contained):
+                items = sm.reviewable_vet_gaps(runner, Path(tmp))
+            self.assertEqual(items, [sm.VetItem("example", "0.9.0", "1.0.0")])
+            self.assertEqual(len(commands), 2)
+            self.assertEqual((store / "config.toml").read_text(), config)
+
+    def test_unlocked_check_failure_set_must_match_authoritative_locked_gaps(self):
+        report = json.loads(VET_CHECK_REPORT)
+        report["failures"].append({"name": "unexpected", "version": "2.0.0",
+                                   "missing_criteria": ["safe-to-deploy"]})
+        with mock.patch.object(sm, "isolated_vet_command", side_effect=[
+            sm.CommandResult(255, VET_LOCKED_FAILURE, ""), sm.CommandResult(255, json.dumps(report), ""),
+        ]), self.assertRaisesRegex(sm.MaintenanceError, "disagree"):
+            sm.reviewable_vet_gaps(mock.Mock(), Path("state"))
+
+    def test_structured_failing_check_report_is_strict(self):
+        self.assertEqual(
+            sm.parse_cargo_vet_check_suggestions(sm.CommandResult(255, VET_CHECK_REPORT, "")),
+            [sm.VetItem("example", "0.9.0", "1.0.0")],
+        )
+        invalid = [
+            (0, VET_CHECK_REPORT), (1, VET_CHECK_REPORT), (137, VET_CHECK_REPORT),
+            (-9, VET_CHECK_REPORT), (255, VET_SUCCESS), (255, "not json"),
+            (255, '{"conclusion":"fail (vetting)","suggest":null}'),
+        ]
+        for code, output in invalid:
+            with self.subTest(code=code, output=output), self.assertRaises(sm.MaintenanceError):
+                sm.parse_cargo_vet_check_suggestions(sm.CommandResult(code, output, ""))
+
+    def test_structured_check_report_supports_inspect_and_git_delta(self):
+        report = json.loads(VET_CHECK_REPORT)
+        report["suggest"]["suggestions"] = [
+            {"name": "fresh", "suggested_diff": {"from": None, "to": "1.2.3"}},
+            {"name": "git-delta", "suggested_diff": {
+                "from": "1.0.0", "to": "1.0.1@git:" + "a" * 40,
+            }},
+        ]
+        report["failures"] = [{"name": name, "version": version, "missing_criteria": ["safe-to-deploy"]}
+                              for name, version in (("fresh", "1.2.3"), ("git-delta", "1.0.1@git:" + "a" * 40))]
+        self.assertEqual(
+            sm.parse_cargo_vet_check_suggestions(sm.CommandResult(255, json.dumps(report), "")),
+            [sm.VetItem("fresh", None, "1.2.3"),
+             sm.VetItem("git-delta", "1.0.0", "1.0.1@git:" + "a" * 40)],
+        )
 
     def test_audit_serialization_delta_and_full_version(self):
         delta = sm.serialize_audit("serde", "1.0.1", "1.0.2")
@@ -955,7 +1605,7 @@ class CargoVetTests(unittest.TestCase):
 
             runner.git.side_effect = git
             vet_failed = sm.CommandResult(1, VET_LOCKED_FAILURE, "")
-            suggestion = sm.CommandResult(1, VET_DELTA_SUGGESTION, "")
+            suggestion = sm.CommandResult(255, VET_CHECK_REPORT, "")
             vet_clean = sm.CommandResult(0, VET_SUCCESS, "")
             with mock.patch.object(sm, "contained_repo_command", side_effect=[vet_failed, suggestion, vet_clean]), \
                  mock.patch.object(sm, "AzureAI", return_value=mock.Mock()), \
@@ -1006,15 +1656,18 @@ class CargoVetTests(unittest.TestCase):
 
                 def contained(_runner, command, **kwargs):
                     nonlocal locked_calls
-                    self.assertEqual(kwargs["network"], command == ["cargo", "vet"])
+                    self.assertEqual(
+                        kwargs["network"],
+                        command == ["cargo", "vet", "check", "--output-format=json"],
+                    )
                     self.assertFalse(kwargs["source_rw"])
                     self.assertFalse(kwargs["cache_rw"])
                     store = kwargs["vet_store"]
                     calls.append(store)
                     audits = (root / "supply-chain/audits.toml").read_text()
                     self.assertEqual((store / "audits.toml").read_text(), audits)
-                    if command == ["cargo", "vet"]:
-                        return sm.CommandResult(1, VET_DELTA_SUGGESTION, "")
+                    if command == ["cargo", "vet", "check", "--output-format=json"]:
+                        return sm.CommandResult(255, VET_CHECK_REPORT, "")
                     self.assertEqual(command, ["cargo", "vet", "--locked", "--frozen", "--output-format=json"])
                     locked_calls += 1
                     if locked_calls == 2 and outcome in ("accepted", "final-gap"):
@@ -1149,9 +1802,9 @@ class CargoVetTests(unittest.TestCase):
             })
             stores = []
             def contained(_runner, command, **kwargs):
-                if command == ["cargo", "vet"]:
+                if command == ["cargo", "vet", "check", "--output-format=json"]:
                     self.assertTrue(kwargs["network"])
-                    return sm.CommandResult(1, VET_DELTA_SUGGESTION, "")
+                    return sm.CommandResult(255, VET_CHECK_REPORT, "")
                 self.assertEqual(command, ["cargo", "vet", "--locked", "--frozen", "--output-format=json"])
                 self.assertFalse(kwargs["network"])
                 self.assertFalse(kwargs["source_rw"])
@@ -1498,6 +2151,10 @@ class MutationBoundaryTests(unittest.TestCase):
             state.save({"branch": "stable-4.x", "backport_candidates": [sha]})
             runner = mock.Mock()
             def git(argv, **kwargs):
+                if argv in (["diff", "--quiet"], ["diff", "--cached", "--quiet"]):
+                    return sm.CommandResult(0, "", "")
+                if argv == ["branch", "--show-current"]:
+                    return sm.CommandResult(0, "stable-4.x\n", "")
                 if argv[:4] == ["log", "-1", "--format=%H", "--fixed-strings"]:
                     return sm.CommandResult(0, "", "")
                 if argv == ["rev-parse", "HEAD"]:
@@ -1512,17 +2169,19 @@ class MutationBoundaryTests(unittest.TestCase):
             runner.git.side_effect = git
             output = io.StringIO()
             with mock.patch.object(sm, "AzureAI", side_effect=AssertionError("AI must not resolve conflicts")), \
+                 mock.patch.object(sm, "locked_build", return_value=sm.CommandResult(0, "", "")) as build, \
                  mock.patch.object(sm.sys, "stderr", output):
-                sm.phase_apply_backports(mock.Mock(), state, runner)
+                sm.phase_apply_backports(mock.Mock(branch="stable-4.x"), state, runner)
+            build.assert_called_once_with(runner)
             self.assertEqual(state.load()["backports_applied"], [])
             self.assertEqual(state.load()["backports_conflict_skipped"], [sha])
             self.assertIn(f"backport-debug: sha={sha} result=conflict-skipped", output.getvalue())
             self.assertIn("backport-summary: phase=apply applied=0 skipped=1", output.getvalue())
 
-    def test_conflicting_dependabot_pr_is_reset_without_ai(self):
+    def test_invalid_dependabot_transplant_is_reset_without_ai(self):
         with tempfile.TemporaryDirectory() as tmp:
             state = sm.State(Path(tmp) / "state")
-            commit, head, pre_head = "a" * 40, "b" * 40, "c" * 40
+            commit, head, pre_head = "a" * 40, "a" * 40, "c" * 40
             pr = {
                 "number": 17,
                 "user": {"login": "dependabot[bot]"},
@@ -1543,9 +2202,7 @@ class MutationBoundaryTests(unittest.TestCase):
                     return sm.CommandResult(0, "", "")
                 if argv == ["rev-parse", "FETCH_HEAD"]:
                     return sm.CommandResult(0, head + "\n", "")
-                if argv == ["merge-base", "--is-ancestor", "origin/stable-4.x", head]:
-                    return sm.CommandResult(0, "", "")
-                if argv == ["rev-list", "--reverse", f"origin/stable-4.x..{head}"]:
+                if argv == ["rev-list", "--reverse", f"{commit}^..{head}"]:
                     return sm.CommandResult(0, commit + "\n", "")
                 if argv == ["diff-tree", "--no-commit-id", "--name-only", "-r", commit]:
                     return sm.CommandResult(0, ".github/workflows/ci.yml\n", "")
@@ -1553,21 +2210,23 @@ class MutationBoundaryTests(unittest.TestCase):
                     return sm.CommandResult(0, "", "")
                 if argv == ["show", "--format=", "--unified=1", commit]:
                     return sm.CommandResult(0, files[0]["patch"], "")
-                if argv == ["cherry-pick", commit]:
-                    return sm.CommandResult(1, "", "")
-                if argv == ["status", "--porcelain=v1"]:
-                    return sm.CommandResult(0, "UU .github/workflows/ci.yml\n", "")
                 if argv in (["cherry-pick", "--abort"], ["reset", "--hard", pre_head]):
                     return sm.CommandResult(0, "", "")
                 raise AssertionError(argv)
             runner.git.side_effect = git
             with mock.patch.object(sm, "github_repository", return_value="o/r"), \
-                 mock.patch.object(sm, "github_paginated", return_value=[pr]), \
+                 mock.patch.object(sm, "github_paginated", side_effect=lambda url, **kw:
+                                   [{"sha": commit}] if url.endswith("/commits") else [pr]), \
                  mock.patch.object(sm, "_pr_files", return_value=files), \
+                 mock.patch.object(sm, "transplant_action_refs", side_effect=sm.MaintenanceError("invalid immutable diff")) as transplant, \
                  mock.patch.object(sm, "AzureAI", side_effect=AssertionError("AI must not resolve conflicts")):
                 sm.phase_import_dependabot(mock.Mock(branch="stable-4.x"), state, runner)
             self.assertEqual(state.load()["dependabot_imported"], [])
-            self.assertEqual(state.load()["dependabot_skipped"], [{"number": 17, "reason": "validation or cherry-pick failure"}])
+            self.assertEqual(state.load()["dependabot_skipped"], [{
+                "number": 17, "reason": "validation or import failure",
+                "stage": "ref-transplant", "diagnostic": "unclassified-error"}])
+            transplant.assert_called_once_with(runner, files, commit, head)
+            runner.git.assert_any_call(["reset", "--hard", pre_head])
 
 
 class MarkerConflictAndAITests(unittest.TestCase):
@@ -1818,6 +2477,10 @@ class MarkerConflictAndAITests(unittest.TestCase):
             runner = mock.Mock()
 
             def git(argv, **kwargs):
+                if argv in (["diff", "--quiet"], ["diff", "--cached", "--quiet"]):
+                    return sm.CommandResult(0, "", "")
+                if argv == ["branch", "--show-current"]:
+                    return sm.CommandResult(0, "stable-4.x\n", "")
                 if argv == ["rev-list", "--reverse", f"{cutoff}..{main}"]:
                     return sm.CommandResult(0, "\n".join([earlier, failed, later]) + "\n", "")
                 if argv[:2] == ["show", "--format=fuller"]:
@@ -1857,8 +2520,10 @@ class MarkerConflictAndAITests(unittest.TestCase):
                     self.assertIn(f"backport-debug: sha={sha} check={check} decision=true", output.getvalue())
             self.assertNotIn(f"backport-debug: sha={failed}", output.getvalue())
             self.assertIn("backport-summary: phase=classify candidates=3 selected=2 skipped=0 manual_review=1", output.getvalue())
-            with mock.patch.object(sm.sys, "stderr", output):
-                sm.phase_apply_backports(mock.Mock(), state, runner)
+            with mock.patch.object(sm.sys, "stderr", output), \
+                 mock.patch.object(sm, "locked_build", return_value=sm.CommandResult(0, "", "")) as build:
+                sm.phase_apply_backports(mock.Mock(branch="stable-4.x"), state, runner)
+            self.assertEqual(build.call_count, 3)  # Baseline and both attempted picks.
             self.assertEqual(state.load()["backports_applied"], [earlier, later])
             for sha in (earlier, later):
                 self.assertIn(f"backport-debug: sha={sha} result=applied", output.getvalue())
@@ -2058,6 +2723,301 @@ class GuardTests(unittest.TestCase):
                 sm.github_paginated("https://api.github.com/repos/o/r/pulls", max_pages=2)
 
 
+class MaintenanceHistoryTests(unittest.TestCase):
+    def repository(self, root):
+        root.mkdir()
+        runner = sm.Runner(root)
+        runner.git(["init", "-b", "main"])
+        runner.git(["config", "user.name", "Maintenance test"])
+        runner.git(["config", "user.email", "maintenance-test@example.invalid"])
+        (root / "Cargo.toml").write_text('[workspace.package]\nversion = "4.0.5"\n')
+        (root / "Cargo.lock").write_text("# lock\n")
+        workflow = root / ".github/workflows/ci.yml"
+        workflow.parent.mkdir(parents=True)
+        workflow.write_text("jobs:\n  test:\n    steps:\n      - uses: a/b@" + "a" * 40 + "\n")
+        self.commit(runner, "Branch point")
+        runner.git(["branch", "stable-4.x"])
+        runner.git(["remote", "add", "origin", str(root)])
+        return runner
+
+    def commit(self, runner, subject):
+        runner.git(["add", "."])
+        runner.git(["commit", "-m", subject])
+        return runner.git(["rev-parse", "HEAD"]).stdout.strip()
+
+    def test_failed_backport_build_restores_earlier_work_and_continues(self):
+        for failure in ("missing-import", "timeout", "capture-error"):
+            with self.subTest(failure=failure), tempfile.TemporaryDirectory() as tmp:
+                runner = self.repository(Path(tmp) / "repo")
+                root = runner.root
+                (root / "common.py").write_text("def existing_helper(): return 1\n")
+                (root / "cli.py").write_text("from common import existing_helper\nassert existing_helper() > 0\n")
+                baseline = self.commit(runner, "Buildable baseline")
+                runner.git(["branch", "-f", "stable-4.x", baseline])
+                (root / "common.py").write_text("def existing_helper(): return 2\n")
+                earlier = self.commit(runner, "Earlier independent fix")
+                (root / "cli.py").write_text("from common import resolve_hsm_type\n")
+                broken = self.commit(runner, "Fix requiring an absent helper")
+                (root / "later.txt").write_text("Later independent fix\n")
+                later = self.commit(runner, "Later independent fix")
+                runner.git(["checkout", "stable-4.x"])
+                state = sm.State(Path(tmp) / "state")
+                state.save({"branch": "stable-4.x", "cutoff": baseline, "main_head": later,
+                            "backport_candidates": [earlier, broken, later]})
+                snapshots = []
+                def build(current):
+                    self.assertIs(current, runner)
+                    head = runner.git(["rev-parse", "HEAD"]).stdout.strip()
+                    snapshots.append(head)
+                    bad_import = "resolve_hsm_type" in (root / "cli.py").read_text()
+                    if bad_import and failure != "missing-import":
+                        if failure == "timeout":
+                            raise sm.CommandCaptureError("command timed out", "timeout", sm.CommandResult(-9, "", "secret"))
+                        raise sm.MaintenanceError("secret capture failure")
+                    # Real subprocess import check reproduces a missing helper;
+                    # Cargo/container execution is tested separately.
+                    return runner.run([sys.executable, "-B", "-c", "import cli"], check=False)
+                output = io.StringIO()
+                with mock.patch.object(sm, "locked_build", side_effect=build), \
+                     mock.patch.object(sm.sys, "stderr", output):
+                    sm.phase_apply_backports(mock.Mock(branch="stable-4.x"), state, runner)
+                value = state.load()
+                self.assertEqual(len(snapshots), 4)  # Baseline, good, bad, later.
+                self.assertEqual(value["backports_applied"], [earlier, later])
+                self.assertEqual(value["backports_conflict_skipped"], [])
+                self.assertEqual(value["backports_deferred"], [broken])
+                self.assertEqual(value["backports_build_failed"][0]["sha"], broken)
+                self.assertEqual((root / "common.py").read_text(), "def existing_helper(): return 2\n")
+                self.assertNotIn("resolve_hsm_type", (root / "cli.py").read_text())
+                self.assertTrue((root / "later.txt").is_file())
+                self.assertEqual(runner.git(["status", "--porcelain"]).stdout, "")
+                history = runner.git(["log", "--format=%H"]).stdout.splitlines()
+                self.assertNotIn(snapshots[2], history)
+                self.assertIn(snapshots[1], history)
+                self.assertIn(f"sha={broken} result=build-skipped", output.getvalue())
+                self.assertNotIn("secret", output.getvalue())
+                self.assertEqual(sm.maintenance_main_through(value), baseline)
+                self.assertIn("Backports reverted after build failure: 1", sm.build_pr_body(value))
+                self.assertIn("Backports Build Failed", "\n".join(sm.sanitized_state_details(value)))
+
+    def test_backport_baseline_failure_does_not_mutate_checkout(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            runner = self.repository(Path(tmp) / "repo")
+            (runner.root / "fix.txt").write_text("candidate\n")
+            candidate = self.commit(runner, "Candidate")
+            runner.git(["checkout", "stable-4.x"])
+            before = runner.git(["rev-parse", "HEAD"]).stdout
+            state = sm.State(Path(tmp) / "state")
+            state.save({"branch": "stable-4.x", "backport_candidates": [candidate]})
+            with mock.patch.object(sm, "locked_build", return_value=sm.CommandResult(101, "", "")), \
+                 self.assertRaisesRegex(sm.MaintenanceError, "baseline build failed"):
+                sm.phase_apply_backports(mock.Mock(branch="stable-4.x"), state, runner)
+            self.assertEqual(runner.git(["rev-parse", "HEAD"]).stdout, before)
+            self.assertFalse((runner.root / "fix.txt").exists())
+            self.assertEqual(runner.git(["status", "--porcelain"]).stdout, "")
+
+    def test_backport_entry_guards_preserve_edits_and_reject_wrong_checkout(self):
+        for case in ("unstaged", "staged", "wrong-branch", "detached"):
+            with self.subTest(case=case), tempfile.TemporaryDirectory() as tmp:
+                runner = self.repository(Path(tmp) / "repo")
+                notes = runner.root / "notes.txt"
+                notes.write_text("original\n")
+                baseline = self.commit(runner, "Tracked file baseline")
+                runner.git(["branch", "-f", "stable-4.x", baseline])
+                (runner.root / "fix.txt").write_text("independent candidate\n")
+                candidate = self.commit(runner, "Candidate touching another path")
+                runner.git(["checkout", "stable-4.x"])
+                if case in ("unstaged", "staged"):
+                    notes.write_text("local edits must survive\n")
+                    if case == "staged":
+                        runner.git(["add", "notes.txt"])
+                elif case == "wrong-branch":
+                    runner.git(["checkout", "-b", "unrelated"])
+                else:
+                    runner.git(["checkout", "--detach", baseline])
+                state = sm.State(Path(tmp) / "state")
+                original_state = {"branch": "stable-4.x", "backport_candidates": [candidate]}
+                state.save(original_state)
+                head = runner.git(["rev-parse", "HEAD"]).stdout
+                diff = runner.git(["diff", "--binary"]).stdout
+                staged = runner.git(["diff", "--cached", "--binary"]).stdout
+                contents = notes.read_bytes()
+                with mock.patch.object(sm, "locked_build") as build, \
+                     mock.patch.object(runner, "git", wraps=runner.git) as git, \
+                     self.assertRaises(sm.MaintenanceError):
+                    sm.phase_apply_backports(mock.Mock(branch="stable-4.x"), state, runner)
+                build.assert_not_called()
+                self.assertFalse(any(call.args[0][0] in ("cherry-pick", "reset") for call in git.call_args_list))
+                self.assertEqual(runner.git(["rev-parse", "HEAD"]).stdout, head)
+                self.assertEqual(runner.git(["diff", "--binary"]).stdout, diff)
+                self.assertEqual(runner.git(["diff", "--cached", "--binary"]).stdout, staged)
+                self.assertEqual(notes.read_bytes(), contents)
+                self.assertEqual(state.load(), original_state)
+                self.assertFalse((runner.root / "fix.txt").exists())
+
+    def test_already_present_backport_does_not_build(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            state = sm.State(Path(tmp) / "state")
+            state.save({"branch": "stable-4.x", "backport_candidates": ["a" * 40]})
+            runner = mock.Mock()
+            runner.git.side_effect = lambda argv, **kwargs: sm.CommandResult(
+                0, "stable-4.x\n" if argv == ["branch", "--show-current"] else "b" * 40 + "\n", "",
+            )
+            with mock.patch.object(sm, "locked_build", side_effect=AssertionError("no new attempt")):
+                sm.phase_apply_backports(mock.Mock(branch="stable-4.x"), state, runner)
+            self.assertEqual(state.load()["backports_applied"], [])
+            self.assertEqual(state.load()["backports_deferred"], [])
+
+    def test_recent_direct_backport_does_not_hide_older_fixes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "source"
+            runner = self.repository(root)
+            base = runner.git(["rev-parse", "HEAD"]).stdout.strip()
+            (root / "missed.rs").write_text("older bug fix\n")
+            missed = self.commit(runner, "Fix older bug")
+            (root / "picked.rs").write_text("directly backported fix\n")
+            picked = self.commit(runner, "Fix newer bug")
+            runner.git(["checkout", "stable-4.x"])
+            runner.git(["cherry-pick", picked])
+            (root / "stable-only").write_text("recent stable work\n")
+            self.commit(runner, "Recent direct stable change")
+            state = sm.State(Path(tmp) / "state")
+            sm.phase_initialize(mock.Mock(branch="stable-4.x"), state, runner)
+            value = state.load()
+            self.assertEqual(value["cutoff"], base)
+            candidates = runner.git(["rev-list", f"{value['cutoff']}..{value['main_head']}"]).stdout.splitlines()
+            self.assertIn(missed, candidates)
+            self.assertIn(picked, value["backports_already_present"])
+
+    def test_main_dependabot_import_excludes_unrelated_main_history(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "source"
+            runner = self.repository(root)
+            (root / "main-feature.rs").write_text("not a stable backport\n")
+            self.commit(runner, "Main feature")
+            workflow = root / ".github/workflows/ci.yml"
+            workflow.write_text(workflow.read_text() + "# unrelated main-only workflow change\n")
+            absent = root / ".github/workflows/main-only.yml"
+            absent.write_text("uses: a/b@" + "a" * 40 + "\n")
+            self.commit(runner, "Main-only workflow")
+            runner.git(["checkout", "-b", "dependabot-action"])
+            path = root / ".github/workflows/ci.yml"
+            path.write_text(path.read_text().replace("a" * 40, "b" * 40))
+            absent.write_text(absent.read_text().replace("a" * 40, "b" * 40))
+            head = self.commit(runner, "Update pinned action")
+            patch = runner.git(["show", "--format=", "--unified=1", head]).stdout
+            pr = {
+                "number": 17, "user": {"login": "dependabot[bot]"},
+                "base": {"ref": "main", "repo": {"full_name": "o/r"}},
+                "head": {"sha": head, "repo": {"full_name": "o/r"}},
+            }
+            runner.git(["checkout", "stable-4.x"])
+            state = sm.State(Path(tmp) / "state")
+            files = [{"filename": name, "status": "modified", "patch": patch}
+                     for name in (".github/workflows/ci.yml", ".github/workflows/main-only.yml")]
+            with mock.patch.object(sm, "github_repository", return_value="o/r"), \
+                 mock.patch.object(sm, "github_paginated", side_effect=lambda url, **kw:
+                                   [{"sha": head}] if url.endswith("/commits") else [pr]), \
+                 mock.patch.object(sm, "_pr_files", return_value=files):
+                sm.phase_import_dependabot(mock.Mock(branch="stable-4.x"), state, runner)
+            self.assertEqual(state.load()["dependabot_imported"], [17])
+            self.assertIn("b" * 40, path.read_text())
+            self.assertFalse((root / "main-feature.rs").exists())
+            self.assertNotIn("main-only", path.read_text())
+            self.assertFalse(absent.exists())
+
+    def test_cargo_dependabot_is_explicitly_delegated_to_audited_updates(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            state = sm.State(Path(tmp) / "state")
+            runner = mock.Mock()
+            pr = {"number": 18, "user": {"login": "dependabot[bot]"},
+                  "base": {"ref": "stable-4.x", "repo": {"full_name": "o/r"}},
+                  "head": {"sha": "b" * 40, "repo": {"full_name": "o/r"}}}
+            with mock.patch.object(sm, "github_repository", return_value="o/r"), \
+                 mock.patch.object(sm, "github_paginated", return_value=[pr]), \
+                 mock.patch.object(sm, "_pr_files", return_value=[{"filename": "Cargo.lock"}]):
+                sm.phase_import_dependabot(mock.Mock(branch="stable-4.x"), state, runner)
+            runner.git.assert_not_called()
+            self.assertEqual(state.load()["dependabot_skipped"], [
+                {"number": 18, "reason": "Cargo handled by audited dependency phase"}])
+
+    def test_release_keeps_unresolved_backports_eligible(self):
+        for pending in ({"backport_review_required": [{"sha": "b" * 40}]}, {"backports_deferred": ["b" * 40]}, {}):
+            with self.subTest(pending=pending), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp) / "source"
+                runner = self.repository(root)
+                initial = runner.git(["rev-parse", "HEAD"]).stdout.strip()
+                (root / "fix.rs").write_text("fixed\n")
+                main = self.commit(runner, "Backported fix")
+                state = sm.State(Path(tmp) / "state")
+                state.save({"original_head": initial, "cutoff": initial, "main_head": main, **pending})
+                with mock.patch.object(sm, "contained_repo_command", return_value=sm.CommandResult(0, "", "")):
+                    sm.phase_release(mock.Mock(), state, runner)
+                marker = sm.marker_sha(runner.git(["log", "-1", "--format=%B"]).stdout)
+                self.assertEqual(marker, initial if pending else main)
+
+    def test_import_refresh_does_not_create_a_version_only_release(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "source"
+            runner = self.repository(root)
+            initial = runner.git(["rev-parse", "HEAD"]).stdout.strip()
+            (root / "supply-chain").mkdir()
+            (root / "supply-chain/imports.lock").write_text("refreshed audits\n")
+            refreshed = self.commit(runner, "Refresh imported audits")
+            state = sm.State(Path(tmp) / "state")
+            state.save({"original_head": initial, "cutoff": initial, "main_head": refreshed})
+            with mock.patch.object(sm, "contained_repo_command", side_effect=AssertionError("no release generation")):
+                sm.phase_release(mock.Mock(), state, runner)
+            self.assertTrue(state.load()["metadata_only"])
+            self.assertNotIn("version", state.load())
+            self.assertEqual(runner.git(["rev-parse", "HEAD^"]).stdout.strip(), refreshed)
+            self.assertEqual(runner.git(["diff", "--name-only", "HEAD^..HEAD"]).stdout, "")
+            self.assertEqual(sm.marker_sha(runner.git(["log", "-1", "--format=%B"]).stdout), refreshed)
+            self.assertIn('version = "4.0.5"', (root / "Cargo.toml").read_text())
+
+    def test_metadata_cutoff_is_recovered_after_regular_and_squash_merges(self):
+        for pending_key in (None, "backport_review_required", "backports_deferred"):
+            for squash in (False, True):
+                with self.subTest(pending=pending_key, squash=squash), tempfile.TemporaryDirectory() as tmp:
+                    root = Path(tmp) / "source"
+                    runner = self.repository(root)
+                    initial = runner.git(["rev-parse", "HEAD"]).stdout.strip()
+                    (root / "pending-fix.rs").write_text("main bug fix\n")
+                    main = self.commit(runner, "Fix pending bug")
+                    runner.git(["checkout", "stable-4.x"])
+                    runner.git(["checkout", "-b", "maintenance-fixture"])
+                    (root / "supply-chain").mkdir()
+                    (root / "supply-chain/imports.lock").write_text("refreshed audits\n")
+                    self.commit(runner, "Refresh imported audits")
+                    value = {"original_head": initial, "cutoff": initial, "main_head": main,
+                             "branch": "stable-4.x"}
+                    if pending_key:
+                        value[pending_key] = [{"sha": main}] if pending_key == "backport_review_required" else [main]
+                    state = sm.State(Path(tmp) / "state")
+                    state.save(value)
+                    with mock.patch.object(sm, "contained_repo_command", side_effect=AssertionError("no release generation")):
+                        sm.phase_release(mock.Mock(), state, runner)
+                    through = initial if pending_key else main
+                    self.assertEqual(state.load()["main_through"], through)
+                    self.assertEqual(sm.marker_sha(runner.git(["log", "-1", "--format=%B"]).stdout), through)
+                    body = sm.build_pr_body(state.load())
+                    self.assertEqual(sm.marker_sha(body), through)
+                    # Stale cached progress must never override pending work.
+                    self.assertEqual(sm.marker_sha(sm.build_pr_body({**state.load(), "main_through": main})), through)
+                    runner.git(["checkout", "stable-4.x"])
+                    if squash:
+                        runner.git(["merge", "--squash", "maintenance-fixture"])
+                        runner.git(["commit", "-m", "Merge audit-only maintenance", "-m", body])
+                    else:
+                        runner.git(["merge", "--no-ff", "maintenance-fixture", "-m", "Merge audit-only maintenance"])
+                    following = sm.State(Path(tmp) / "following-state")
+                    sm.phase_initialize(mock.Mock(branch="stable-4.x"), following, runner)
+                    self.assertEqual(following.load()["cutoff"], through)
+                    candidates = runner.git(["rev-list", f"{through}..{main}"]).stdout.splitlines()
+                    self.assertEqual(candidates, [main] if pending_key else [])
+                    self.assertIn('version = "4.0.5"', (root / "Cargo.toml").read_text())
+
+
 class InitializePhaseTests(unittest.TestCase):
     def test_initialize_requires_remote_head_and_validates_marker_ancestry(self):
         current, main, cutoff = "c" * 40, "d" * 40, "a" * 40
@@ -2078,6 +3038,8 @@ class InitializePhaseTests(unittest.TestCase):
                     return sm.CommandResult(0, f"Version 4.0.5\n\n{sm.MARKER} {cutoff}\n", "")
                 if key[:2] == ("merge-base", "--is-ancestor"):
                     return sm.CommandResult(0, "", "")
+                if key[0] == "cherry":
+                    return sm.CommandResult(0, "", "")
                 raise AssertionError(key)
         with tempfile.TemporaryDirectory() as tmp:
             state = sm.State(Path(tmp) / "state")
@@ -2090,3 +3052,5 @@ class InitializePhaseTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+

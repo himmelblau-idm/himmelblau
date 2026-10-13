@@ -88,6 +88,14 @@ impl NssCache {
     pub fn insert_user(&self, user: &NssUser) -> Result<()> {
         if let Some(conn) = &self.conn {
             if self.writable {
+                if !user.cacheable {
+                    // A lookup-only result must also invalidate older fallback rows.
+                    conn.execute(
+                        "DELETE FROM nss_passwd WHERE name = ?1 OR uid = ?2",
+                        params![user.name, user.uid],
+                    )?;
+                    return Ok(());
+                }
                 let now = SystemTime::now()
                     .duration_since(UNIX_EPOCH)
                     .unwrap_or_default()
@@ -149,6 +157,7 @@ impl NssCache {
                     gecos: row.get(3).ok()?,
                     homedir: row.get(4).ok()?,
                     shell: row.get(5).ok()?,
+                    cacheable: true,
                 })
             } else {
                 None
@@ -188,6 +197,7 @@ impl NssCache {
                         gecos: row.get(3)?,
                         homedir: row.get(4)?,
                         shell: row.get(5)?,
+                        cacheable: true,
                     }))
                 } else {
                     Ok(None)
@@ -202,5 +212,94 @@ impl NssCache {
         }
 
         users
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used)]
+    use super::NssCache;
+    use crate::idprovider::interface::Id;
+    use crate::unix_proto::NssUser;
+    use rusqlite::Connection;
+
+    fn test_cache() -> NssCache {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE nss_passwd (
+                name TEXT PRIMARY KEY, uid INTEGER, gid INTEGER, gecos TEXT,
+                homedir TEXT, shell TEXT, last_updated INTEGER
+            )",
+        )
+        .unwrap();
+        NssCache {
+            conn: Some(conn),
+            writable: true,
+        }
+    }
+
+    fn test_user() -> NssUser {
+        NssUser {
+            name: "user@example.com".to_string(),
+            uid: 2000,
+            gid: 2000,
+            gecos: String::new(),
+            homedir: "/home/user".to_string(),
+            shell: "/bin/sh".to_string(),
+            cacheable: false,
+        }
+    }
+
+    #[test]
+    fn lookup_only_user_does_not_enter_fallback_cache() {
+        let cache = test_cache();
+        let mut user = test_user();
+        let id = Id::Name(user.name.clone());
+
+        cache.insert_user(&user).unwrap();
+        assert!(cache.get_user(&id).is_none());
+        user.cacheable = true;
+        cache.insert_user(&user).unwrap();
+        assert!(cache.get_user(&id).is_some());
+    }
+
+    #[test]
+    fn lookup_only_user_evicts_matching_fallback_rows() {
+        for (name, uid) in [
+            ("user@example.com", 2000),
+            ("user@example.com", 3000),
+            ("renamed@example.com", 2000),
+        ] {
+            let cache = test_cache();
+            let mut user = test_user();
+            user.cacheable = true;
+            let cached_name = Id::Name(user.name.clone());
+            let cached_uid = Id::Gid(user.uid);
+            cache.insert_user(&user).unwrap();
+            assert!(cache.get_user(&cached_name).is_some());
+            assert!(cache.get_user(&cached_uid).is_some());
+
+            let mut unrelated = test_user();
+            unrelated.name = "unrelated@example.com".to_string();
+            unrelated.uid = 4000;
+            unrelated.gid = 4000;
+            unrelated.cacheable = true;
+            cache.insert_user(&unrelated).unwrap();
+
+            user.name = name.to_string();
+            user.uid = uid;
+            user.cacheable = false;
+            cache.insert_user(&user).unwrap();
+
+            assert!(cache.get_user(&cached_name).is_none());
+            assert!(cache.get_user(&cached_uid).is_none());
+            assert!(cache.get_user(&Id::Name(user.name.clone())).is_none());
+            assert!(cache.get_user(&Id::Gid(user.uid)).is_none());
+            assert!(cache.get_user(&Id::Name(unrelated.name.clone())).is_some());
+            assert!(cache.get_user(&Id::Gid(unrelated.uid)).is_some());
+            let users = cache.get_users();
+            assert_eq!(users.len(), 1);
+            assert_eq!(users[0].name, unrelated.name);
+        }
     }
 }

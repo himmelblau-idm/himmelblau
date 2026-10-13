@@ -7745,7 +7745,7 @@ rec {
           }
           {
             name = "rand";
-            packageId = "rand 0.10.2";
+            packageId = "rand 0.10.3";
           }
           {
             name = "regex";
@@ -14483,11 +14483,11 @@ rec {
         features = {
         };
       };
-      "rand 0.10.2" = rec {
+      "rand 0.10.3" = rec {
         crateName = "rand";
-        version = "0.10.2";
+        version = "0.10.3";
         edition = "2024";
-        sha256 = "105yqkdzqbgggd3r1yjm9jg0zvibfdsmxylvxxkmblwc0lxgmxf7";
+        sha256 = "1bxlhj4m9zrgfgk1yirf0nny86izrngscydfx9w387n9rfbgpjb5";
         authors = [
           "The Rand Project Developers"
           "The Rust Project Developers"
