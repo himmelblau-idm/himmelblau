@@ -359,7 +359,6 @@ pub fn fido_auth(
             timeout_ms,
             prompt,
             presence_prompt,
-            None,
         ),
         timeout_ms,
     ))
@@ -372,19 +371,8 @@ async fn fido_auth_inner(
     timeout_ms: u64,
     prompt: &str,
     presence_prompt: &str,
-    qr_suffix: Option<&str>,
 ) -> Result<String, PamResultCode> {
-    // Send FIDO_INSERT prompt, optionally with QR data appended to avoid
-    // multiple PAM conversation round-trips (GDM adds ~2.5s per call).
-    let msg = match qr_suffix {
-        Some(suffix) => format!("[FIDO_INSERT] {}\n{}", prompt, suffix),
-        None => format!("[FIDO_INSERT] {}", prompt),
-    };
-    if qr_suffix.is_some() {
-        msg_printer.print_sensitive(&msg);
-    } else {
-        msg_printer.print_text(&msg);
-    }
+    msg_printer.print_text(&format!("[FIDO_INSERT] {}", prompt));
 
     let mut manager = AuthenticatorService::new().map_err(|e| {
         error!("{:?}", e);
@@ -599,11 +587,31 @@ async fn race_fido_transports<T>(
     }
 }
 
-struct FidoQrTask<T> {
+async fn race_fido_with_bluetooth<T, F>(
+    usb: impl Future<Output = Result<T, PamResultCode>>,
+    bluetooth: impl Future<Output = BluetoothState> + Send + 'static,
+    qr: impl FnOnce() -> F,
+) -> Result<T, PamResultCode>
+where
+    F: Future<Output = Result<T, PamResultCode>>,
+{
+    // Discovery may progress during USB PIN input, but the task never owns PAM.
+    let mut probe = FidoTask::spawn(async move { Ok(bluetooth.await) });
+    race_fido_transports(usb, async {
+        if !matches!(probe.result().await?, BluetoothState::PoweredOn) {
+            debug!("QR/Bluetooth transport unavailable; continuing USB authentication");
+            return Err(PamResultCode::PAM_CRED_INSUFFICIENT);
+        }
+        qr().await
+    })
+    .await
+}
+
+struct FidoTask<T> {
     handle: tokio::task::JoinHandle<Result<T, PamResultCode>>,
 }
 
-impl<T: Send + 'static> FidoQrTask<T> {
+impl<T: Send + 'static> FidoTask<T> {
     fn spawn(operation: impl Future<Output = Result<T, PamResultCode>> + Send + 'static) -> Self {
         Self {
             handle: tokio::spawn(operation),
@@ -612,13 +620,13 @@ impl<T: Send + 'static> FidoQrTask<T> {
 
     async fn result(&mut self) -> Result<T, PamResultCode> {
         (&mut self.handle).await.map_err(|e| {
-            error!("QR/Bluetooth authentication task failed: {:?}", e);
+            error!("FIDO transport task failed: {:?}", e);
             PamResultCode::PAM_AUTH_ERR
         })?
     }
 }
 
-impl<T> Drop for FidoQrTask<T> {
+impl<T> Drop for FidoTask<T> {
     fn drop(&mut self) {
         self.handle.abort();
     }
@@ -774,29 +782,23 @@ async fn check_bluetooth_on_connection(conn: &zbus::Connection) -> BluetoothStat
 async fn qr_bluetooth_fido_auth(
     msg_printer: Arc<dyn MessagePrinter>,
     fido_challenge: String,
-    _fido_allow_list: Vec<String>,
     qr_prompt: &str,
-    device: Option<CableQrCodeDevice>,
 ) -> Result<String, PamResultCode> {
-    let device = match device {
-        Some(d) => d,
-        None => {
-            let d = CableQrCodeDevice::new_transient(
-                QrCodeOperationHint::GetAssertionRequest,
-                CableTransports::CloudAssistedOnly,
-            )
-            .map_err(|e| {
-                error!("Failed to create QR/Bluetooth device: {:?}", e);
-                PamResultCode::PAM_CRED_INSUFFICIENT
-            })?;
-            let qr_url = d.qr_code.to_string();
-            // Combine into one message to avoid GDM per-message delay.
-            let message = qr_bluetooth_message(msg_printer.as_ref(), qr_prompt, &qr_url)?;
-            msg_printer.print_sensitive(&message);
-            d
-        }
-    };
-    qr_bluetooth_assertion(device, fido_challenge).await
+    let device = CableQrCodeDevice::new_transient(
+        QrCodeOperationHint::GetAssertionRequest,
+        CableTransports::CloudAssistedOnly,
+    )
+    .map_err(|e| {
+        error!("Failed to create QR/Bluetooth device: {:?}", e);
+        PamResultCode::PAM_CRED_INSUFFICIENT
+    })?;
+    let qr_url = device.qr_code.to_string();
+    // Keep the label and QR payload together for the greeter presentation.
+    let message = qr_bluetooth_message(msg_printer.as_ref(), qr_prompt, &qr_url)?;
+    msg_printer.print_sensitive(&message);
+    // Protocol tasks do not own PAM callbacks and can progress during PIN input.
+    let mut qr = FidoTask::spawn(qr_bluetooth_assertion(device, fido_challenge));
+    qr.result().await
 }
 
 async fn qr_bluetooth_assertion(
@@ -914,25 +916,8 @@ async fn fido_auth_with_qr_bluetooth_inner(
     presence_prompt: &str,
     qr_prompt: &str,
 ) -> Result<String, PamResultCode> {
-    // Create caBLE device upfront so we can send all PAM messages
-    // (FIDO_INSERT + QR_BT_LABEL + QR_BT) in a single print_text call
-    // from within fido_auth. This avoids concurrent PAM conversation
-    // calls that block each other for ~2.5s each in GDM.
-    let cable_device = CableQrCodeDevice::new_transient(
-        QrCodeOperationHint::GetAssertionRequest,
-        CableTransports::CloudAssistedOnly,
-    )
-    .map_err(|e| {
-        error!("Failed to create QR/Bluetooth device: {:?}", e);
-        PamResultCode::PAM_CRED_INSUFFICIENT
-    })?;
-    let qr_url = cable_device.qr_code.to_string();
-    let qr_suffix = qr_bluetooth_message(msg_printer.as_ref(), qr_prompt, &qr_url)?;
-    // Only the protocol runs in the task; all PAM presentation and input stay
-    // on the caller, even while a security-key PIN conversation is active.
-    let mut qr = FidoQrTask::spawn(qr_bluetooth_assertion(cable_device, fido_challenge.clone()));
-
-    race_fido_transports(
+    let qr_challenge = fido_challenge.clone();
+    race_fido_with_bluetooth(
         fido_auth_inner(
             msg_printer.clone(),
             fido_challenge,
@@ -940,9 +925,9 @@ async fn fido_auth_with_qr_bluetooth_inner(
             timeout_ms,
             prompt,
             presence_prompt,
-            Some(&qr_suffix),
         ),
-        qr.result(),
+        check_bluetooth(),
+        || qr_bluetooth_fido_auth(msg_printer.clone(), qr_challenge, qr_prompt),
     )
     .await
 }
@@ -1462,11 +1447,13 @@ async fn prepare_fido_transport_with<F>(
     has_physical_security_key: bool,
     has_cross_device: bool,
     can_display_qr: bool,
+    budget: &FidoBudget,
     mut bluetooth: impl FnMut() -> F,
 ) -> Result<FidoAuthMethod, PamResultCode>
 where
     F: Future<Output = BluetoothState>,
 {
+    budget.remaining()?;
     let mut bt_state = if has_cross_device && can_display_qr {
         bluetooth().await
     } else {
@@ -1485,10 +1472,16 @@ where
         && matches!(bt_state, BluetoothState::PoweredOff)
     {
         msg_printer.print_text(&tr("Enable Bluetooth to sign in with your phone."));
+        let retry_interval = Duration::from_secs(1);
         for _ in 0..30 {
-            tokio::time::sleep(Duration::from_secs(1)).await;
+            // Return unavailable before the outer deadline aborts the attempt.
+            if budget.remaining()? <= retry_interval + BLUETOOTH_PROBE_TIMEOUT {
+                debug!("Bluetooth remains powered off; requesting authentication fallback");
+                break;
+            }
+            tokio::time::sleep(retry_interval).await;
             bt_state = bluetooth().await;
-            if matches!(bt_state, BluetoothState::PoweredOn) {
+            if !matches!(bt_state, BluetoothState::PoweredOff) {
                 break;
             }
         }
@@ -1528,19 +1521,10 @@ fn handle_pam_auth_response_fido(
     let mut failure_message = tr("FIDO authentication failed.");
     let result = rt.block_on(wait_for_fido_with_budget(
         async {
-            let method = prepare_fido_transport_with(
-                state.msg_printer.as_ref(),
-                has_physical_security_key,
-                has_cross_device,
-                can_display_qr,
-                check_bluetooth,
-            )
-            .await?;
-            let remaining_ms = budget.remaining_ms()?;
-            let assertion = match method {
-                FidoAuthMethod::Unavailable => return Ok(None),
-                FidoAuthMethod::SecurityKeyAndQrBluetooth => {
-                    debug!("FIDO auth: attempting both security key and QR/Bluetooth");
+            if has_physical_security_key {
+                let remaining_ms = budget.remaining_ms()?;
+                let assertion = if has_cross_device && can_display_qr {
+                    debug!("FIDO auth: starting USB alongside Bluetooth discovery");
                     failure_message = tr("Security key and QR/Bluetooth authentication failed.");
                     fido_auth_with_qr_bluetooth_inner(
                         &state.msg_printer,
@@ -1552,20 +1536,7 @@ fn handle_pam_auth_response_fido(
                         &qr_prompt,
                     )
                     .await?
-                }
-                FidoAuthMethod::QrBluetooth => {
-                    debug!("FIDO auth: attempting QR/Bluetooth");
-                    failure_message = tr("QR/Bluetooth authentication failed.");
-                    qr_bluetooth_fido_auth(
-                        state.msg_printer.clone(),
-                        fido_challenge,
-                        fido_allow_list,
-                        &qr_prompt,
-                        None,
-                    )
-                    .await?
-                }
-                FidoAuthMethod::SecurityKey => {
+                } else {
                     debug!("FIDO auth: attempting security key");
                     failure_message = tr("Security key authentication failed.");
                     fido_auth_inner(
@@ -1575,9 +1546,31 @@ fn handle_pam_auth_response_fido(
                         remaining_ms,
                         &fido_prompt,
                         &fido_presence_prompt,
-                        None,
                     )
                     .await?
+                };
+                return Ok(Some(assertion));
+            }
+            let method = prepare_fido_transport_with(
+                state.msg_printer.as_ref(),
+                false,
+                has_cross_device,
+                can_display_qr,
+                &budget,
+                check_bluetooth,
+            )
+            .await?;
+            let assertion = match method {
+                FidoAuthMethod::Unavailable => return Ok(None),
+                FidoAuthMethod::QrBluetooth => {
+                    debug!("FIDO auth: attempting QR/Bluetooth");
+                    failure_message = tr("QR/Bluetooth authentication failed.");
+                    qr_bluetooth_fido_auth(state.msg_printer.clone(), fido_challenge, &qr_prompt)
+                        .await?
+                }
+                FidoAuthMethod::SecurityKey | FidoAuthMethod::SecurityKeyAndQrBluetooth => {
+                    error!("QR-only FIDO preparation selected an unavailable USB transport");
+                    return Err(PamResultCode::PAM_SYSTEM_ERR);
                 }
             };
             Ok(Some(assertion))
@@ -2885,6 +2878,150 @@ mod fido_cancellation_tests {
     }
 
     #[tokio::test]
+    async fn fido_usb_succeeds_while_bluetooth_probe_is_pending() {
+        let qr_started = AtomicBool::new(false);
+        let result = wait_for_fido(
+            race_fido_with_bluetooth(
+                async {
+                    tokio::time::sleep(Duration::from_millis(20)).await;
+                    Ok("usb")
+                },
+                std::future::pending::<BluetoothState>(),
+                || async {
+                    qr_started.store(true, Ordering::Release);
+                    Ok("phone")
+                },
+            ),
+            250,
+        )
+        .await;
+        assert_eq!(result, Ok("usb"));
+        assert!(!qr_started.load(Ordering::Acquire));
+    }
+
+    #[tokio::test]
+    async fn fido_usb_winner_cancels_pending_bluetooth_probe() {
+        struct Dropped(Arc<AtomicBool>);
+        impl Drop for Dropped {
+            fn drop(&mut self) {
+                self.0.store(true, Ordering::Release);
+            }
+        }
+        let cancelled = Arc::new(AtomicBool::new(false));
+        let probe_cancelled = cancelled.clone();
+        let (started, ready) = tokio::sync::oneshot::channel();
+        let result = wait_for_fido(
+            race_fido_with_bluetooth(
+                async {
+                    ready.await.unwrap();
+                    Ok("usb")
+                },
+                async {
+                    let _guard = Dropped(probe_cancelled);
+                    started.send(()).unwrap();
+                    std::future::pending::<BluetoothState>().await
+                },
+                || async { Ok("phone") },
+            ),
+            1000,
+        )
+        .await;
+        assert_eq!(result, Ok("usb"));
+        tokio::time::timeout(Duration::from_millis(250), async {
+            while !cancelled.load(Ordering::Acquire) {
+                tokio::time::sleep(Duration::from_millis(1)).await;
+            }
+        })
+        .await
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn fido_unavailable_bluetooth_does_not_start_qr_or_stop_usb() {
+        for state in [BluetoothState::PoweredOff, BluetoothState::NoAdapter] {
+            let qr_started = AtomicBool::new(false);
+            let result = wait_for_fido(
+                race_fido_with_bluetooth(
+                    async {
+                        tokio::time::sleep(Duration::from_millis(20)).await;
+                        Ok("usb")
+                    },
+                    std::future::ready(state),
+                    || async {
+                        qr_started.store(true, Ordering::Release);
+                        Ok("phone")
+                    },
+                ),
+                1000,
+            )
+            .await;
+            assert_eq!(result, Ok("usb"));
+            assert!(!qr_started.load(Ordering::Acquire));
+        }
+    }
+
+    #[tokio::test]
+    async fn fido_usb_failure_keeps_bluetooth_discovery_and_qr_available() {
+        let result = wait_for_fido(
+            race_fido_with_bluetooth(
+                async { Err(PamResultCode::PAM_CRED_INSUFFICIENT) },
+                async {
+                    tokio::time::sleep(Duration::from_millis(20)).await;
+                    BluetoothState::PoweredOn
+                },
+                || async { Ok("phone") },
+            ),
+            1000,
+        )
+        .await;
+        assert_eq!(result, Ok("phone"));
+    }
+
+    #[tokio::test]
+    async fn fido_late_bluetooth_qr_success_cancels_active_usb() {
+        let cancellations = Arc::new(AtomicUsize::new(0));
+        let result = wait_for_fido(
+            race_fido_with_bluetooth(
+                waiting_usb(
+                    cancellations.clone(),
+                    Arc::new(SimpleMessagePrinter::default()),
+                ),
+                async {
+                    tokio::time::sleep(Duration::from_millis(20)).await;
+                    BluetoothState::PoweredOn
+                },
+                || async {
+                    tokio::time::sleep(Duration::from_millis(20)).await;
+                    Ok(())
+                },
+            ),
+            1000,
+        )
+        .await;
+        assert_eq!(result, Ok(()));
+        assert_eq!(cancellations.load(Ordering::Relaxed), 1);
+    }
+
+    #[tokio::test]
+    async fn fido_shared_deadline_cancels_usb_during_bluetooth_discovery() {
+        let cancellations = Arc::new(AtomicUsize::new(0));
+        let result = wait_for_fido(
+            race_fido_with_bluetooth(
+                waiting_usb(
+                    cancellations.clone(),
+                    Arc::new(SimpleMessagePrinter::default()),
+                ),
+                std::future::pending::<BluetoothState>(),
+                || std::future::pending::<Result<(), PamResultCode>>(),
+            ),
+            20,
+        )
+        .await;
+        assert_eq!(result, Err(PamResultCode::PAM_CRED_INSUFFICIENT));
+        assert_eq!(cancellations.load(Ordering::Relaxed), 1);
+    }
+
+    #[tokio::test]
     async fn fido_race_aborts_instead_of_waiting_for_another_transport() {
         for usb_aborts in [true, false] {
             let result = tokio::time::timeout(
@@ -2975,7 +3112,7 @@ mod fido_cancellation_tests {
         let completed = Arc::new(AtomicBool::new(false));
         let qr_entered = entered.clone();
         let qr_completed = completed.clone();
-        let mut qr = FidoQrTask::spawn(async move {
+        let mut qr = FidoTask::spawn(async move {
             while !qr_entered.load(Ordering::Acquire) {
                 tokio::time::sleep(Duration::from_millis(1)).await;
             }
@@ -3017,7 +3154,7 @@ mod fido_cancellation_tests {
         let cancelled = Arc::new(AtomicBool::new(false));
         let task_cancelled = cancelled.clone();
         let (started, ready) = tokio::sync::oneshot::channel();
-        let qr = FidoQrTask::spawn(async move {
+        let qr = FidoTask::spawn(async move {
             let _guard = Dropped(task_cancelled);
             started.send(()).unwrap();
             std::future::pending::<Result<(), PamResultCode>>().await
@@ -3045,15 +3182,17 @@ mod fido_cancellation_tests {
     }
 
     #[tokio::test]
-    async fn fido_bluetooth_preparation_respects_deadline() {
+    async fn fido_bluetooth_preparation_preserves_password_fallback() {
         let mut checks = 0;
         let started = Instant::now();
-        let result = wait_for_fido(
+        let budget = FidoBudget::new(20);
+        let result = wait_for_fido_with_budget(
             prepare_fido_transport_with(
                 &SimpleMessagePrinter::default(),
                 false,
                 true,
                 true,
+                &budget,
                 || {
                     checks += 1;
                     std::future::ready(if checks == 1 {
@@ -3063,24 +3202,133 @@ mod fido_cancellation_tests {
                     })
                 },
             ),
-            20,
+            &budget,
         )
         .await;
-        assert_eq!(result, Err(PamResultCode::PAM_CRED_INSUFFICIENT));
+        assert_eq!(result, Ok(FidoAuthMethod::Unavailable));
+        assert_eq!(checks, 1, "a retry without enough budget must not start");
         assert!(started.elapsed() < Duration::from_millis(250));
     }
 
     #[tokio::test]
-    async fn fido_bluetooth_discovery_respects_deadline() {
-        let result = wait_for_fido(
+    async fn fido_bluetooth_power_off_stops_retrying_before_default_deadline() {
+        let budget = FidoBudget {
+            started: Instant::now() - Duration::from_millis(22_800),
+            timeout: Duration::from_secs(25),
+        };
+        let mut checks = 0;
+        let result = wait_for_fido_with_budget(
             prepare_fido_transport_with(
                 &SimpleMessagePrinter::default(),
                 false,
                 true,
                 true,
+                &budget,
+                || {
+                    checks += 1;
+                    std::future::ready(BluetoothState::PoweredOff)
+                },
+            ),
+            &budget,
+        )
+        .await;
+        assert_eq!(result, Ok(FidoAuthMethod::Unavailable));
+        assert_eq!(
+            checks, 2,
+            "must stop when another sleep and probe cannot fit"
+        );
+        assert!(!budget.remaining().unwrap().is_zero());
+    }
+
+    #[tokio::test]
+    async fn fido_bluetooth_power_on_keeps_remaining_transport_budget() {
+        let budget = FidoBudget::new(3000);
+        let mut checks = 0;
+        let result = wait_for_fido_with_budget(
+            prepare_fido_transport_with(
+                &SimpleMessagePrinter::default(),
+                false,
+                true,
+                true,
+                &budget,
+                || {
+                    checks += 1;
+                    std::future::ready(if checks == 1 {
+                        BluetoothState::PoweredOff
+                    } else {
+                        BluetoothState::PoweredOn
+                    })
+                },
+            ),
+            &budget,
+        )
+        .await;
+        assert_eq!(result, Ok(FidoAuthMethod::QrBluetooth));
+        assert_eq!(checks, 2);
+        let remaining = budget.remaining_ms().unwrap();
+        assert!(remaining > 0 && remaining <= 2000);
+    }
+
+    #[tokio::test]
+    async fn fido_expired_bluetooth_preparation_does_not_probe_or_fallback() {
+        let budget = FidoBudget::new(0);
+        let mut checked = false;
+        let result = prepare_fido_transport_with(
+            &SimpleMessagePrinter::default(),
+            false,
+            true,
+            true,
+            &budget,
+            || {
+                checked = true;
+                std::future::ready(BluetoothState::PoweredOff)
+            },
+        )
+        .await;
+        assert_eq!(result, Err(PamResultCode::PAM_CRED_INSUFFICIENT));
+        assert!(!checked);
+    }
+
+    #[tokio::test]
+    async fn fido_bluetooth_disappearing_during_power_wait_selects_fallback() {
+        let budget = FidoBudget::new(10_000);
+        let mut checks = 0;
+        let result = wait_for_fido_with_budget(
+            prepare_fido_transport_with(
+                &SimpleMessagePrinter::default(),
+                false,
+                true,
+                true,
+                &budget,
+                || {
+                    checks += 1;
+                    std::future::ready(if checks == 1 {
+                        BluetoothState::PoweredOff
+                    } else {
+                        BluetoothState::NoAdapter
+                    })
+                },
+            ),
+            &budget,
+        )
+        .await;
+        assert_eq!(result, Ok(FidoAuthMethod::Unavailable));
+        assert_eq!(checks, 2);
+    }
+
+    #[tokio::test]
+    async fn fido_bluetooth_discovery_respects_deadline() {
+        let budget = FidoBudget::new(20);
+        let result = wait_for_fido_with_budget(
+            prepare_fido_transport_with(
+                &SimpleMessagePrinter::default(),
+                false,
+                true,
+                true,
+                &budget,
                 std::future::pending::<BluetoothState>,
             ),
-            20,
+            &budget,
         )
         .await;
         assert_eq!(result, Err(PamResultCode::PAM_CRED_INSUFFICIENT));
@@ -3088,11 +3336,17 @@ mod fido_cancellation_tests {
 
     #[tokio::test]
     async fn fido_stalled_bluetooth_probe_preserves_usb_fallback() {
-        let result = wait_for_fido(
-            prepare_fido_transport_with(&SimpleMessagePrinter::default(), true, true, true, || {
-                probe_bluetooth_with(std::future::pending::<BluetoothState>())
-            }),
-            2000,
+        let budget = FidoBudget::new(2000);
+        let result = wait_for_fido_with_budget(
+            prepare_fido_transport_with(
+                &SimpleMessagePrinter::default(),
+                true,
+                true,
+                true,
+                &budget,
+                || probe_bluetooth_with(std::future::pending::<BluetoothState>()),
+            ),
+            &budget,
         )
         .await;
         assert_eq!(result, Ok(FidoAuthMethod::SecurityKey));
@@ -3106,11 +3360,13 @@ mod fido_cancellation_tests {
             (false, false, true, FidoAuthMethod::Unavailable),
         ] {
             let mut checked = false;
+            let budget = FidoBudget::new(1000);
             let method = prepare_fido_transport_with(
                 &SimpleMessagePrinter::default(),
                 has_security_key,
                 has_cross_device,
                 can_display_qr,
+                &budget,
                 || {
                     checked = true;
                     std::future::ready(BluetoothState::PoweredOn)
@@ -3133,6 +3389,7 @@ mod fido_cancellation_tests {
                     false,
                     true,
                     true,
+                    &budget,
                     || async {
                         tokio::time::sleep(Duration::from_millis(40)).await;
                         BluetoothState::PoweredOn
@@ -3370,13 +3627,15 @@ mod fido_cancellation_tests {
             let caller = libc::pthread_self();
             let rt = Runtime::new().unwrap();
 
-            for (signal, with_usb, with_bluetooth) in [
-                (libc::SIGINT, false, false),
-                (libc::SIGQUIT, false, false),
-                (libc::SIGINT, true, false),
-                (libc::SIGQUIT, true, false),
-                (libc::SIGINT, false, true),
-                (libc::SIGQUIT, false, true),
+            for (signal, with_usb, with_bluetooth, with_discovery) in [
+                (libc::SIGINT, false, false, false),
+                (libc::SIGQUIT, false, false, false),
+                (libc::SIGINT, true, false, false),
+                (libc::SIGQUIT, true, false, false),
+                (libc::SIGINT, false, true, false),
+                (libc::SIGQUIT, false, true, false),
+                (libc::SIGINT, true, false, true),
+                (libc::SIGQUIT, true, false, true),
             ] {
                 let cancellations = Arc::new(AtomicUsize::new(0));
                 let sender = thread::spawn(move || {
@@ -3384,11 +3643,12 @@ mod fido_cancellation_tests {
                     assert_eq!(libc::pthread_kill(caller, signal), 0);
                 });
                 let started = Instant::now();
+                let budget = FidoBudget::new(60_000);
                 let result = rt
                     .block_on(async {
                         tokio::time::timeout(
                             Duration::from_secs(1),
-                            wait_for_fido(
+                            wait_for_fido_with_budget(
                                 async {
                                     if with_bluetooth {
                                         prepare_fido_transport_with(
@@ -3396,10 +3656,21 @@ mod fido_cancellation_tests {
                                             false,
                                             true,
                                             true,
+                                            &budget,
                                             || std::future::ready(BluetoothState::PoweredOff),
                                         )
                                         .await?;
                                         Ok(())
+                                    } else if with_discovery {
+                                        race_fido_with_bluetooth(
+                                            waiting_usb(
+                                                cancellations.clone(),
+                                                Arc::new(SimpleMessagePrinter::default()),
+                                            ),
+                                            std::future::pending::<BluetoothState>(),
+                                            || std::future::pending::<Result<(), PamResultCode>>(),
+                                        )
+                                        .await
                                     } else if with_usb {
                                         race_fido_transports(
                                             waiting_usb(
@@ -3413,7 +3684,7 @@ mod fido_cancellation_tests {
                                         std::future::pending::<Result<(), PamResultCode>>().await
                                     }
                                 },
-                                60_000,
+                                &budget,
                             ),
                         )
                         .await
@@ -3591,11 +3862,17 @@ mod bluetooth_probe_tests {
         }
         stalled.store(true, Ordering::Release);
         let started = Instant::now();
-        let method = wait_for_fido(
-            prepare_fido_transport_with(&SimpleMessagePrinter::default(), true, true, true, || {
-                probe_bluetooth_with(check_bluetooth_on_connection(&client))
-            }),
-            2000,
+        let budget = FidoBudget::new(2000);
+        let method = wait_for_fido_with_budget(
+            prepare_fido_transport_with(
+                &SimpleMessagePrinter::default(),
+                true,
+                true,
+                true,
+                &budget,
+                || probe_bluetooth_with(check_bluetooth_on_connection(&client)),
+            ),
+            &budget,
         )
         .await;
         assert_eq!(method, Ok(FidoAuthMethod::SecurityKey));

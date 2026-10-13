@@ -580,8 +580,13 @@ in
         receiving separate timeouts. The shared deadline starts before Bluetooth
         discovery and waiting for the adapter to be powered on.
         Bluetooth availability probes do not start BlueZ and are limited to one
-        second within this deadline. A failed probe disables QR transport; any
-        remaining FIDO budget is available for security-key authentication.
+        second within this deadline. When security-key authentication is available,
+        it starts alongside Bluetooth discovery rather than waiting for the probe.
+        QR authentication is added if Bluetooth is powered on. A failed probe
+        disables QR transport without stopping the security-key attempt.
+        If Bluetooth remains powered off and no security-key method is available,
+        the power-on wait stops before the deadline to request password authentication.
+        Timeouts during an active QR or security-key attempt still fail authentication.
         Keyboard interrupts pending during PAM authentication abort the attempt
         instead of switching to a different authentication method.
         In the Entra FIDO flow, interactive PIN input runs on the PAM caller thread.
