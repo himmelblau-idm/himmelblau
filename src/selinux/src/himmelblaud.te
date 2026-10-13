@@ -796,6 +796,14 @@ optional {
 optional {
 	require {
 		type user_home_dir_t;
+		type cache_home_t;
+	}
+	type_transition himmelblaud_tasks_t user_home_dir_t:dir cache_home_t ".cache";
+}
+
+optional {
+	require {
+		type user_home_dir_t;
 		type config_home_t;
 	}
 	type_transition himmelblaud_tasks_t user_home_dir_t:dir config_home_t ".config";

@@ -32,6 +32,7 @@ import tempfile
 # The daemon copies this private fixture through its /etc/skel bind mount.
 SKELETON_FILES = {
     ".bashrc": b"# Himmelblau home-label regression\n",
+    ".cache/nested/cache.data": b"cache fixture\n",
     "Documents/nested/example.txt": b"ordinary nested content\n",
     ".config/himmelblau/nested/settings.conf": b"fixture=true\n",
     ".local/share/notes.txt": b"shared data\n",
