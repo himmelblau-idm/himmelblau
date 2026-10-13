@@ -1362,6 +1362,13 @@ fn authenticate_request_response(
         }
     };
 
+    if !matches!(
+        response,
+        PamAuthResponse::MFAPoll { .. } | PamAuthResponse::MFAPollWait
+    ) {
+        state.poll_attempt = -1;
+    }
+
     match response {
         PamAuthResponse::Unknown => handle_pam_auth_response_unknown(state),
         PamAuthResponse::Success => handle_pam_auth_response_success(),
@@ -1952,6 +1959,64 @@ mod tests {
             },
             listener,
         )
+    }
+
+    #[test]
+    fn completed_poll_can_be_followed_by_another_poll_after_input() {
+        use std::io::{Read, Write};
+
+        let printer = Arc::new(RecordingPrinter::default());
+        let (mut state, listener) = test_password_state(printer.clone());
+        state.poll_attempt = 3;
+        let socket_path = listener
+            .local_addr()
+            .unwrap()
+            .as_pathname()
+            .unwrap()
+            .to_owned();
+        let server = thread::spawn(move || {
+            let (mut socket, _) = listener.accept().unwrap();
+            socket
+                .set_read_timeout(Some(Duration::from_secs(5)))
+                .unwrap();
+            let mut data = Vec::new();
+            let mut buffer = [0; 1024];
+            loop {
+                let count = socket.read(&mut buffer).unwrap();
+                assert_ne!(count, 0);
+                data.extend_from_slice(&buffer[..count]);
+                if serde_json::from_slice::<ClientRequest>(&data).is_ok() {
+                    break;
+                }
+            }
+            let response = ClientResponse::PamAuthenticateStepResponse(PamAuthResponse::Input {
+                msg: "Enter verification code".into(),
+                echo_on: false,
+            });
+            socket
+                .write_all(&serde_json::to_vec(&response).unwrap())
+                .unwrap();
+        });
+        let next = authenticate_request_response(
+            &mut state,
+            &ClientRequest::PamAuthenticateStep(PamAuthRequest::MFAPoll { poll_attempt: 3 }),
+        );
+        assert!(matches!(
+            next,
+            PamWhatNext::Next(ClientRequest::PamAuthenticateStep(
+                PamAuthRequest::Input { .. }
+            ))
+        ));
+        let next = handle_pam_auth_response_mfapoll(&mut state, "Approve enrollment", 0, false);
+        assert!(matches!(
+            next,
+            PamWhatNext::Next(ClientRequest::PamAuthenticateStep(
+                PamAuthRequest::MFAPoll { poll_attempt: 0 }
+            ))
+        ));
+        assert!(printer.error.lock().unwrap().is_empty());
+        server.join().unwrap();
+        fs::remove_file(socket_path).unwrap();
     }
 
     #[test]
